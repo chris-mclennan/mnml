@@ -2963,3 +2963,80 @@ right — painted cell for cell against `docs/ui-spec/rust-git-120x40.txt`
   git_mode.test` (enters, stages from the detail column, types in the
   box, leaves), `git_graph_detail.test` and `git_graph_detail_wrap.test`
   re-aimed. Corpus 360/361 (the designed skip); no `git_*.test` flipped.
+
+## Overlays (2026-09-07, branch `overlays`) — `// changed:` notes
+
+The prompts, confirms, pickers, the palette, which-key, the help
+overlay and click discovery painted as the Rust editor paints them,
+against `docs/ui-spec/rust-{palette,picker,rename,delete,goto,whichkey,
+help,discovery,close}-120x40.txt` (the steps beside each).
+
+- `// changed (frames):` `ui/overlay.zig` gained `Look` — `popup`
+  (rounded, the tooltip / menu / hover), `menu` (square, the title in
+  plain bold: Rust's `popup_menu` — prompt, confirm, which-key) and
+  `modal` (square, the title an accent chip: Rust's `modal_panel` —
+  picker, help, discovery). `frameLook` / `boxLook`; `frame` / `box`
+  stay `.popup`. `render.drawOverlay` places the prompt, the confirm,
+  the picker and which-key on the whole screen, as Rust's
+  `frame.area()` does — they sat on the pane area before.
+- `// changed (confirm):` `ui/confirm.zig` has two button rows —
+  `.bracket` (the close prompt: `  [S]ave  ` from the left, gap 2, six
+  rows) and `.plain` (a delete: `  Delete  ` / ` Delete permanently ` /
+  ` Cancel ` right-aligned, gap 1, five rows). The tree's delete asks
+  Rust's `Delete <rel>?` (a directory: `recursively? (n entries)`,
+  an entry in the trash: `(permanent — already in the trash)`) with
+  Cancel focused — Enter is not the destructive act (`tree_delete_enter`
+  / `files_trash_clipboard` re-aimed). `Overlay.confirm.return_focus`
+  as the prompt's, so the mode chip reads TREE under it.
+- `// changed (prompt):` the rename is `Rename <rel>` seeded with the
+  name (`tree.acceptRename`: a bare name stays beside the source);
+  go-to-line is `Go to line  (currently N)`. The close-prompt and
+  quit messages lost their two leading spaces — the painter indents.
+- `// changed (tree):` `Tree.previewCursor` — under the standard profile
+  with `ui.tree_preview_on_arrow` an arrow / page / home / end / j k g G
+  / ← → opens the file under the cursor as the preview (`App.openPreview`
+  replaces the last clean preview pane, `App.preview_pane`) and hands
+  focus back to the tree. The first cursor row is the first entry, not
+  the section header (Rust's header is not a row). The rename / delete
+  specs need both; the tree track owns the italic preview tab, not here.
+- `// changed (which-key):` the title is `<leader>` / `<leader> f`;
+  labels carry their own `+`; the root reads as Rust's (`e explorer`,
+  `q close buffer`, `w write/save`, no `x`); `+pr` is there with two
+  `dead` leaves (`whichkey.Node.dead` — a row for a command neither
+  editor has; a press says so). Zero differing lines.
+- `// changed (picker):` `ui/fuzzy.zig` is Rust's `fuzzy_match` bonus
+  for bonus, counting code points; `Picker.rank` is Rust's `refilter`
+  (`RankOpts`: priority, score_bonus, the palette's ids for the exact-id
+  pin and the substring +100) and `dispatch.refilterPicker` calls it —
+  the label alone is scored. The box is Rust's geometry (`Picker.place`,
+  `ui.picker_position`), the row Rust's budget (marker, label with the
+  matched characters in the accent, gap, ` detail `, the bar column).
+  The wheel walks the cursor; the bar's track pages. `Overlay.picker`
+  carries `priority` / `score_bonus`.
+- `// changed (palette / files):` the palette row is `group  ·  title
+  ·  id`, the detail the default chords joined by ` / `
+  (`cmd_picker.chordHint`), the pane-scoped +20; `Open file` is Rust's
+  list (`cmd_picker.walkTree`: recents, the tree's order with dotfiles
+  and `.gitignore`, cross-workspace recents a tier below) with the
+  directory as the detail. Residue: the palette's count and three git
+  rows are commands only mnml-zig has (914 vs 796).
+- `// changed (help):` `ui/help_overlay.zig` (state, keys, painter) and
+  `app/help.zig` (Rust's `build_help` rows from the registry and the
+  active keymap reversed — `Chord.unpack` / `format` — plus the modes
+  and stress-meter sections); `Overlay.help`. F1 is `view.help`
+  (toggle), as in Rust; `view.discovery` is unbound. The cheatsheet
+  pane stays on `<leader>ch` / `view.cheatsheet`. Residue: section
+  counts (Zig's registry is larger).
+- `// changed (discovery):` `Overlay.discovery` — Rust's panel
+  (`discovery.Category`, eleven rows with the frame's hit counts, a row
+  press flashes the family for two seconds via `App.discovery_flash`,
+  F1 / Esc / a press elsewhere close). The old label-every-hit overlay
+  and `discovery.explain` are gone; `describe` stays for the tooltip and
+  the info view. The GIT rail header, gutter, fold and code-lens rows
+  count nothing — those register no hit here.
+- `// changed (tests):` unit tests in `overlay.zig`, `confirm.zig`,
+  `fuzzy.zig` (Rust's table), `picker.zig` (geometry at 80 / 120 / 200,
+  the palette row, rank), `which_key.zig`, `help_overlay.zig`,
+  `app/help.zig`, `app/discovery.zig`, `app/trash.zig`, `cmd_picker.zig`;
+  e2e `overlay_{help,palette,picker,prompts,whichkey}.test`,
+  `ui_discovery_f1.test` re-aimed.

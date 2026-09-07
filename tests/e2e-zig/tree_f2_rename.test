@@ -1,13 +1,13 @@
 # zig-only
 # F2 with the tree focused renames the selected row (VS Code's Explorer
 # chord); the global `lsp.rename` binding on F2 only applies to an
-# editor. The prompt is seeded with the row's path.
+# editor. The prompt is `Rename <path>`, seeded with the name.
 write a.txt "aa"
 command view.focus_tree
 key r
 key end
 key f2
-expect screen contains "Rename to (workspace-relative)"
+expect screen contains "Rename a.txt"
 expect screen lacks "no language server"
 key ctrl+u
 type b.txt

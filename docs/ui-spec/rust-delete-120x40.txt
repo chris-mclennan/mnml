@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │  .gitignore 󰅖   󰐕                                                                 
+▌ │     requests           │ .gitignore
+ 󰍉 │     src                │   1 # Added by mnml — workspace state: IPC, session, and HTTP
+ 󰊢 │     󱼅  main.rs          │   2 # history / captured traffic / env values (these carry secrets)
+  │      .gitignore       ? │   3 .mnml/
+ 󰐱 │      package.json       │   4 # Added by mnml — workspace state: IPC, session, and HTTP
+ 󰎒 │     󰂺 README.md          │   5 # history / captured traffic / env values (these carry secrets)
+ 󰚩 │                          │   6 .rqst/
+ 󰅣 │  mixr                   │
+  │                          │
+  │  acmeco-claude-workspa… │      ┌ Delete ───────────────────────────────────┐
+  │                          │      │ Delete .gitignore?                        │
+ 󱘣 │  acmeco-mnml-workspace  │      │                                           │
+   │                          │      │    Delete    Delete permanently   Cancel  │
+   │  adx                    │      └───────────────────────────────────────────┘
+   │                          │
+   │  acmeco-claude-plugins  │
+   │                          │
+   │  acmeco-inbox           │
+   │                          │
+   │  acmeco-mobile          │
+   │                          │
+   │  acmeco-playwright      │
+   │                          │
+   │  acmeco-site            │
+   │                          │
+   │──────────────────────────│
+   │ .gitignore — Git ignor ⋮ │
+   │                         ┃│
+   │ Path patterns excluded  ┃│
+   │ from `git status` / `git┃│
+   │ add`. mnml's own file   ┃│
+   │ picker excludes `.git/` ┃│
+   │ unconditionally         ││
+   │ regardless of what's    ││                        ┌─────────────────────────────────────────────────────────── × ┐
+  │ listed here. [Enter]    ││                        │ LSP: Failed to discover workspace.Consider adding the `Car…  │
+   │                          │                        └──────────────────────────────────────────────────────────────┘
+ TREE   main  󰐙 2   .gitignore          F 57% ▲1.0  󱼀 󰐎  LSP 1  WRAP  262B  Ln 1/6 Col 1    08:36  ws   —
+

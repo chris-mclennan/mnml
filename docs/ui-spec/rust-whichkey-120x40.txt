@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │ 󰐕                                                                                   
+▌ │     requests           │
+ 󰍉 │     src                │
+ 󰊢 │     󱼅  main.rs          │
+  │      .gitignore       ? │
+ 󰐱 │      package.json       │
+ 󰎒 │     󰂺 README.md          │
+ 󰚩 │                          │
+ 󰅣 │  mixr                   │
+  │                          │                                                            _
+  │  acmeco-claude-workspa… │                            _ __ ___    _ __    _ __ ___   | |
+  │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+ 󱘣 │  acmeco-mnml-workspace  │                           | | | | | | | | | | | | | | | | | |
+   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │  adx                    │
+   │                          │                                     workspace · ws
+   │  acmeco-claude-plugins  │                                         on main
+   │                          │
+   │  acmeco-inbox           │                                        Shortcuts
+   │                          │                                     ──────────────
+   │  acmeco-mobile          │                                     ^P     find file
+   │                          │                                    ^R     recent files
+   │  acmeco-playwright      │                                   ^K     which-key menu
+ ┌ <leader> ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │/ → toggle comment             H → +harpoon                   i → +integrations                                     │
+ │1 → harpoon 1                  I → +insert                    l → +lsp                                              │
+ │2 → harpoon 2                  L → +lang/run                  m → markdown preview                                  │
+ │3 → harpoon 3                  P → +pr                        n → line numbers                                      │
+ │4 → harpoon 4                  T → +test                      o → run task…                                         │
+ │5 → harpoon 5                  a → +ai/term                   p → command palette                                   │
+ │6 → harpoon 6                  b → +buffer                    q → close buffer                                      │
+ │7 → harpoon 7                  c → +nvchad                    s → +split                                            │
+ │8 → harpoon 8                  e → explorer                   t → +toggle                                           │
+ │9 → harpoon 9                  f → +find                      w → write/save                                        │
+ │? → cheatsheet (all chords)    g → +git                                                                             │
+ │B → open browser (Chrome/CDP)  h → +http                                                                            │
+ │  esc to cancel                                                                                                     │
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+

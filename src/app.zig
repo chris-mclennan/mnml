@@ -38,6 +38,7 @@ const doc_store = @import("app/doc_store.zig");
 pub const DocStore = doc_store.DocStore;
 const snippets = @import("app/snippets.zig");
 const md_preview = @import("app/md_preview.zig");
+const discovery_app = @import("app/discovery.zig");
 const image = @import("image/root.zig");
 const image_pane = @import("app/image_pane.zig");
 const whichkey = @import("app/whichkey.zig");
@@ -132,6 +133,7 @@ pub const AppEvent = event.AppEvent;
 pub const Prompt = prompt_mod;
 pub const Confirm = confirm_mod;
 pub const Picker = picker_mod;
+pub const HelpUi = @import("ui/help_overlay.zig");
 pub const FindBar = find_bar_mod;
 pub const FindState = find_mod.FindState;
 
@@ -371,7 +373,7 @@ pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Al
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
-pub const InfoKind = enum { welcome, about, discovery };
+pub const InfoKind = enum { welcome, about };
 
 pub const Overlay = union(enum) {
     none,
@@ -387,8 +389,21 @@ pub const Overlay = union(enum) {
         /// value; null is the active pane).
         return_focus: ?FocusId = null,
     },
-    confirm: struct { state: Confirm.State, purpose: ConfirmPurpose, message: []u8 },
+    confirm: struct {
+        state: Confirm.State,
+        purpose: ConfirmPurpose,
+        message: []u8,
+        /// As the prompt's: where focus goes when the box closes. The
+        /// tree's delete names `.tree`, so the mode chip reads TREE
+        /// under the box and the arrows keep walking rows after it.
+        return_focus: ?FocusId = null,
+    },
     info: InfoKind,
+    /// `view.discovery`: the click-target panel (`app/discovery.zig`).
+    discovery,
+    /// `view.help` / F1: the keymap reference (`ui/help_overlay.zig`,
+    /// rows from `app/help.zig`).
+    help: HelpUi.State,
     which_key: whichkey.State,
     picker: struct {
         state: Picker.State,
@@ -404,6 +419,13 @@ pub const Overlay = union(enum) {
         /// Parallel to `labels`: the chord hint after the label; an
         /// empty string paints nothing.
         hints: [][]u8 = &.{},
+        /// Parallel to `labels` (or empty): Rust's `PickerItem.priority`
+        /// — a tier that always beats the score (the file picker pins
+        /// workspace files over cross-workspace recents with it).
+        priority: []u8 = &.{},
+        /// Parallel to `labels` (or empty): Rust's `score_bonus`, added
+        /// to the fuzzy score (the palette's pane-scoped +20).
+        score_bonus: []i64 = &.{},
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
         /// The themes picker previews as the cursor moves; Esc puts
@@ -421,7 +443,8 @@ pub const Overlay = union(enum) {
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
-            .none, .which_key, .info, .wizard => {},
+            .none, .which_key, .info, .discovery, .wizard => {},
+            .help => |*h| h.deinit(gpa),
             .settings => |*s| s.deinit(gpa),
             .menu => |*m| {
                 m.closeSub(gpa);
@@ -446,6 +469,8 @@ pub const Overlay = union(enum) {
                 gpa.free(p.details);
                 for (p.hints) |h| gpa.free(h);
                 gpa.free(p.hints);
+                gpa.free(p.priority);
+                gpa.free(p.score_bonus);
                 p.filtered.deinit(gpa);
             },
         }
@@ -775,6 +800,13 @@ pub const App = struct {
     /// at the top of `render`).
     image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
+    /// The click-discovery panel's flash: the family a row press lit,
+    /// until when (`discovery.flashRow`).
+    discovery_flash: ?discovery_app.Flash = null,
+    /// The pane the tree's arrow-preview opened last (`openPreview`):
+    /// the next preview replaces it while it is clean, so browsing
+    /// the tree leaves one tab behind, not one per file.
+    preview_pane: ?PaneId = null,
     find_bar: ?FindBarState = null,
     /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
     find_history: std.ArrayListUnmanaged([]u8) = .empty,
@@ -1387,6 +1419,25 @@ pub const App = struct {
         };
     }
 
+    /// Opens `path` as the preview: a file already open is shown
+    /// where it is; otherwise the previous preview pane goes (when it
+    /// is still open and clean) and the new one takes its place.
+    pub fn openPreview(self: *App, path: []const u8) !PaneId {
+        if (self.panes.findPath(path)) |id| {
+            self.showPane(id);
+            return id;
+        }
+        if (self.preview_pane) |old| {
+            if (self.panes.get(old)) |p| {
+                if (!p.dirty()) try self.forceClosePane(old);
+            }
+            self.preview_pane = null;
+        }
+        const id = try self.openPath(path);
+        self.preview_pane = id;
+        return id;
+    }
+
     pub fn openPath(self: *App, path: []const u8) !PaneId {
         try self.noteRecent(path);
         // A request file opens as a request pane on its first block; a
@@ -1593,7 +1644,7 @@ pub const App = struct {
         const pane = self.panes.get(id) orelse return;
         if (self.isSharedView(id)) return self.forceClosePane(id);
         if (!force and pane.dirty()) {
-            const msg = try std.fmt.allocPrint(self.gpa, "  {s} has unsaved changes.", .{pane.title()});
+            const msg = try std.fmt.allocPrint(self.gpa, "{s} has unsaved changes.", .{pane.title()});
             errdefer self.gpa.free(msg);
             self.overlay.deinit(self.gpa);
             self.overlay = .{ .confirm = .{
@@ -1927,6 +1978,7 @@ pub const App = struct {
         try update.tick(self);
         session.tick(self, now);
         trash.tick(self, now);
+        discovery_app.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.

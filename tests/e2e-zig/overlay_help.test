@@ -1,0 +1,27 @@
+# zig-only
+# The help overlay: sections with their counts, the filter, folding,
+# and the scroll keys — Rust's F1 box.
+key f1
+expect screen contains "┌ Help "
+expect screen contains "▾ ── stress meter ── (6)"
+expect screen contains "▾ ── app ── "
+expect screen contains "ctrl+q"
+expect screen contains "Quit mnml"
+# c folds every section; e opens them again.
+key c
+expect screen contains "▸ ── modes ── (10)"
+expect screen lacks "NORMAL"
+key e
+expect screen contains "▾ ── modes ── (10)"
+expect screen contains "NORMAL"
+# / takes the filter: a query keeps the matching rows and the hint says so.
+type /
+type quit
+expect screen contains "/quit"
+expect screen contains "Quit mnml"
+expect screen lacks "NORMAL"
+expect screen contains "typing… · Enter/Esc leave input · Backspace edit"
+key enter
+expect screen contains "filter: quit   (/ to edit)"
+key esc
+expect screen lacks "┌ Help "

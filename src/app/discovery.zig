@@ -1,13 +1,19 @@
-//! Discoverability: what every click target is, in words.
+//! Discoverability: what every click target is, in words — and the
+//! click-discovery panel.
 //!
 //! `describe` turns a `HitTarget` — the frame's own record of what it
-//! painted — into a one-line title and a detail line. Three things read
-//! it: the hover tooltip near the pointer (`ui.hover_tooltip`), the
+//! painted — into a one-line title and a detail line. Two things read
+//! it: the hover tooltip near the pointer (`ui.hover_tooltip`) and the
 //! info view at the bottom of the left rail (`ui.hover_help`,
-//! `app/info_view.zig`, for the targets it has no copy of its own for),
-//! and the F1 click-discovery overlay, which tints every registered rect,
-//! labels it with the hit's own label (`row:todos:3`), and explains the
-//! next thing clicked instead of acting on it.
+//! `app/info_view.zig`, for the targets it has no copy of its own for).
+//!
+//! `view.discovery` opens the panel the Rust editor has: a modal box a
+//! third of the way down listing its eleven click-target families, each
+//! with a green `[n]` count of the rects on screen right now (`[ ]` for
+//! none) and what a click there does; a click on a row flashes the
+//! matching rects yellow for two seconds; F1 / Esc / a click elsewhere
+//! close it. The counts come from the hit map of the frame under the
+//! box.
 //!
 //! The hover surfaces only wake on real pointer motion (`App.hover_live`,
 //! set by a `.motion` / `.drag` report and cleared by a press), so a
@@ -33,6 +39,8 @@ const integrations = @import("integrations.zig");
 const command = @import("../core/command.zig");
 const activity_bar = @import("activity_bar.zig");
 const tree_mod = @import("tree.zig");
+const git_toolbar = @import("../ui/git_toolbar.zig");
+const overlay = @import("../ui/overlay.zig");
 
 pub const Tip = tooltip.Tip;
 
@@ -267,7 +275,7 @@ pub fn hoverTip(app: *App, arena: Allocator) Allocator.Error!?Tip {
 
 /// The popup (`ui.hover_tooltip`), after everything else.
 pub fn drawTooltip(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
-    if (!app.cfg.ui.hover_tooltip or app.overlay == .info) return;
+    if (!app.cfg.ui.hover_tooltip or app.overlay == .info or app.overlay == .discovery) return;
     const h = app.hover orelse return;
     const tip = (try hoverTip(app, ui.arena)) orelse return;
     tooltip.draw(ui, screen, h.x, h.y, tip);
@@ -277,59 +285,169 @@ pub fn drawTooltip(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
 
 /// Every hit the frame registered, tinted and labelled; a title row on
 /// top says what a click will do now.
-pub fn drawOverlay(app: *App, ui: Ui, screen: Rect) void {
-    const th = ui.theme;
-    const tint = Theme.onBg(th.fg, th.match.bg);
-    // Snapshot: painting labels registers nothing, but be explicit.
-    const entries = app.hits.items.items;
-    var labelled_editor: ?app_mod.PaneId = null;
-    for (entries) |e| {
-        const r = e.rect.intersect(screen);
-        if (r.isEmpty()) continue;
-        var yy = r.y;
-        while (yy < r.bottom()) : (yy += 1) {
-            var xx = r.x;
-            while (xx < r.right()) : (xx += 1) {
-                if (ui.canvas.screen.readCell(xx, yy)) |cell| {
-                    var c = cell;
-                    c.style.bg = th.match.bg;
-                    ui.canvas.put(xx, yy, c);
-                }
-            }
-        }
-        // One label per editor, not one per visible line.
-        if (e.target == .editor_cell) {
-            if (labelled_editor) |seen| if (seen == e.target.editor_cell.pane) continue;
-            labelled_editor = e.target.editor_cell.pane;
-        }
-        // The cell grid borrows the label's bytes: they must outlive
-        // this loop, so they go on the frame arena, not the stack.
-        var aw: std.Io.Writer.Allocating = .init(ui.arena);
-        e.target.writeLabel(&aw.writer) catch continue;
-        const label = aw.written();
-        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(label, r.w), tint);
+/// Rust's `DiscoveryCategory`, in the panel's row order.
+pub const Category = enum(u8) {
+    statusline_mode,
+    statusline_branch,
+    statusline_workspace,
+    statusline_clock,
+    bufferline_tabs,
+    rail_git_header,
+    editor_gutter,
+    diff_toolbar,
+    fold_chips,
+    code_lens_chips,
+    split_dividers,
+
+    pub const count = @typeInfo(Category).@"enum".fields.len;
+
+    pub fn label(c: Category) []const u8 {
+        return switch (c) {
+            .statusline_mode => "Mode chip",
+            .statusline_branch => "Branch chip",
+            .statusline_workspace => "Workspace chip",
+            .statusline_clock => "Clock chip",
+            .bufferline_tabs => "Bufferline tabs",
+            .rail_git_header => "> GIT rail header",
+            .editor_gutter => "Editor gutter",
+            .diff_toolbar => "Diff toolbar",
+            .fold_chips => "Fold chips (⋯)",
+            .code_lens_chips => "Code-lens chips (⚡)",
+            .split_dividers => "Split dividers",
+        };
     }
-    const title = if (ui.ascii) " Click Discovery - every highlighted cell is a click target; click one to learn what it does - Esc closes " else " Click Discovery — every highlighted cell is a click target; click one to learn what it does · Esc closes ";
-    const bar = Rect.init(screen.x, screen.y, screen.w, 1);
-    ui.fill(bar, th.chip_active);
-    _ = ui.putStr(bar.x, bar.y, bar.w, ui.clipStr(title, bar.w), Theme.onBg(th.chip_active, th.chip_active.bg));
+
+    pub fn detail(c: Category) []const u8 {
+        return switch (c) {
+            .statusline_mode => "click: toggle vim/standard · right-click: input menu",
+            .statusline_branch => "click: commit graph · right-click: git ops menu",
+            .statusline_workspace => "click: switch repo · right-click: workspace menu",
+            .statusline_clock => "click: local↔UTC · right-click: clock menu",
+            .bufferline_tabs => "click: focus · middle: close · right-click: tab menu",
+            .rail_git_header => "Fetch / Pull / Push / Stage all / Commit / Graph",
+            .editor_gutter => "right-click line: breakpoint / goto def / refs / blame…",
+            .diff_toolbar => "Hunk / Inline / Split / Wrap / Close chips",
+            .fold_chips => "click to expand the folded block",
+            .code_lens_chips => "click to run the lens command",
+            .split_dividers => "hover turns yellow · drag to resize",
+        };
+    }
+
+    /// Whether `target` belongs to the family. The GIT rail header,
+    /// the gutter, the fold and code-lens chips register no hit of
+    /// their own here, so those rows count nothing.
+    pub fn owns(c: Category, target: HitTarget) bool {
+        const SegId = statusline_app.SegId;
+        return switch (c) {
+            .statusline_mode => target == .statusline_seg and target.statusline_seg == statusline.seg_mode,
+            .statusline_branch => target == .statusline_seg and target.statusline_seg == SegId.branch.raw(),
+            .statusline_workspace => target == .statusline_seg and target.statusline_seg == SegId.workspace.raw(),
+            .statusline_clock => target == .statusline_seg and target.statusline_seg == SegId.clock.raw(),
+            .bufferline_tabs => target == .tab,
+            .diff_toolbar => target == .script_hit and target.script_hit.id >= git_toolbar.hit_base and target.script_hit.id < git_toolbar.hit_base + 0x100_0000,
+            // The sidebar's and the right panel's dividers are chrome, not splits.
+            .split_dividers => target == .divider and target.divider != render.tree_divider_id and target.divider != render.right_divider_id,
+            .rail_git_header, .editor_gutter, .fold_chips, .code_lens_chips => false,
+        };
+    }
+};
+
+pub const flash_ms: i64 = 2000;
+
+/// A row's flash: the family and when it ends (`App.discovery_flash`).
+pub const Flash = struct { cat: Category, until_ms: i64 };
+
+pub const title = " Click Discovery — F1 / Esc to close · click row to flash ";
+pub const legend = " green count = visible now · click row to flash rects ";
+
+/// The rects on screen for `cat`, from the frame's hit map.
+fn countOf(app: *App, cat: Category) usize {
+    var n: usize = 0;
+    for (app.hits.items.items) |e| if (cat.owns(e.target)) {
+        n += 1;
+    };
+    return n;
 }
 
-/// A press while the overlay is up: explain the target under it.
-pub fn explain(app: *App, target: ?HitTarget) Allocator.Error!void {
-    const arena = app.frame.allocator();
-    const tgt = target orelse {
-        app.toast("nothing clickable there", .{});
-        return;
+/// Rust's `discovery::draw` — the panel, then the flash on top. Every
+/// row registers `.overlay_item(i)` with its category's index.
+pub fn drawOverlay(app: *App, ui: Ui, screen: Rect) void {
+    const th = ui.theme;
+    // The counts are of the frame under the box: read before the
+    // panel's own hits join the map.
+    var counts: [Category.count]usize = undefined;
+    inline for (@typeInfo(Category).@"enum".fields, 0..) |f, i| counts[i] = countOf(app, @enumFromInt(f.value));
+    var inner_w: u16 = 0;
+    inline for (@typeInfo(Category).@"enum".fields) |f| {
+        const c: Category = @enumFromInt(f.value);
+        inner_w = @max(inner_w, ui.width(c.label()) + 2 + ui.width(c.detail()) + 6);
+    }
+    inner_w = @max(inner_w, ui.width(title) + 4);
+    const w: u16 = @min(inner_w + 4, screen.w);
+    const h: u16 = @min(@as(u16, Category.count) + 4, screen.h);
+    const inner = overlay.boxLook(ui, screen, w, h, std.mem.trim(u8, title, " "), .third, .modal);
+    if (inner.isEmpty()) return;
+    const bg = th.overlay_bg.bg;
+    const flash: ?Category = if (app.discovery_flash) |f| (if (app.now_ms < f.until_ms) f.cat else null) else null;
+    var live_count = Theme.onBg(th.chip_active, th.info_fg.fg);
+    live_count.bold = true;
+    var flash_count = Theme.onBg(th.chip_active, th.warn_fg.fg);
+    flash_count.bold = true;
+    const dead_count = Theme.onBg(th.muted, th.chip.bg);
+    inline for (@typeInfo(Category).@"enum".fields, 0..) |f, i| {
+        if (i < inner.h -| 1) {
+            const c: Category = @enumFromInt(f.value);
+            const r = inner.row(@intCast(i));
+            const live = counts[i] > 0;
+            const flashing = flash != null and flash.? == c;
+            const chip = if (live) ui.fmt("[{d}]", .{counts[i]}) else "[ ]";
+            var x = r.x + 1;
+            x += ui.putStr(x, r.y, r.right() -| x, chip, if (flashing) flash_count else if (live) live_count else dead_count);
+            x += 2;
+            var label_style = if (flashing) Theme.onBg(th.warn_fg, bg) else if (live) Theme.onBg(th.fg, bg) else Theme.onBg(th.muted, bg);
+            label_style.bold = flashing or live;
+            label_style.ul_style = if (flashing) .single else .off;
+            x += ui.putStr(x, r.y, r.right() -| x, ui.clipStr(c.label(), r.right() -| x), label_style);
+            x += 2;
+            var detail_style = Theme.onBg(th.muted, bg);
+            if (!live) detail_style.dim = true;
+            _ = ui.putStr(x, r.y, r.right() -| x, ui.clipStr(c.detail(), r.right() -| x), detail_style);
+            ui.hit(r, .{ .overlay_item = @intCast(i) });
+        }
+    }
+    if (inner.h > Category.count) {
+        const lr = inner.row(Category.count);
+        var legend_style = Theme.onBg(th.muted, bg);
+        legend_style.italic = true;
+        _ = ui.putStr(lr.x, lr.y, lr.w, ui.clipStr(legend, lr.w), legend_style);
+    }
+    if (flash) |cat| drawFlash(app, ui, cat);
+}
+
+/// A yellow band over every rect of the flashing family — over the
+/// panel too, as Rust paints it last.
+fn drawFlash(app: *App, ui: Ui, cat: Category) void {
+    const th = ui.theme;
+    var band = Theme.onBg(th.chip_active, th.warn_fg.fg);
+    band.bold = true;
+    // The hit map grows as the panel paints; the flash reads the
+    // targets that were there before it.
+    for (app.hits.items.items) |e| if (cat.owns(e.target) and !e.rect.isEmpty()) ui.fill(e.rect, band);
+}
+
+/// A press on row `i` of the panel: flash its family for two seconds.
+pub fn flashRow(app: *App, i: usize) void {
+    if (i >= Category.count) return;
+    app.discovery_flash = .{ .cat = @enumFromInt(i), .until_ms = app.now_ms + flash_ms };
+    app.needs_render = true;
+}
+
+/// The flash's end, from `App.tick`.
+pub fn tick(app: *App, now: i64) void {
+    if (app.discovery_flash) |f| if (now >= f.until_ms) {
+        app.discovery_flash = null;
+        app.needs_render = true;
     };
-    const tip = (try describe(app, arena, tgt)) orelse {
-        var buf: [96]u8 = undefined;
-        var w: std.Io.Writer = .fixed(&buf);
-        tgt.writeLabel(&w) catch {};
-        app.toast("{s}", .{w.buffered()});
-        return;
-    };
-    if (tip.detail) |d| app.toast("{s} — {s}", .{ tip.title, d }) else app.toast("{s}", .{tip.title});
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -375,50 +493,39 @@ test "describe: every hit kind has words; the statusline ids each say what a cli
     try t.expect(std.mem.indexOf(u8, plus.detail.?, "Panels") != null);
 }
 
-test "F1: the overlay labels every hit and the next click explains instead of acting; Esc closes" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+test "view.discovery: Rust's panel — the families with their counts, a row press flashes, F1 / Esc / a press elsewhere close" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();
-    app.tree.visible = false;
-    _ = try app.openScratch();
-    try app.render();
-    var mode_rect: ?Rect = null;
-    var n_hits: usize = 0;
-    for (app.hits.items.items) |e| {
-        n_hits += 1;
-        if (e.target == .statusline_seg and e.target.statusline_seg == statusline.seg_mode) mode_rect = e.rect;
-    }
-    try t.expect(n_hits > 3);
     try app.handle(.{ .key = Key.named(.{ .f = 1 }) });
-    try t.expect(app.overlay == .info and app.overlay.info == .discovery);
+    try t.expect(app.overlay == .help);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try command.run(&app, .{ .static = .@"view.discovery" });
+    try t.expect(app.overlay == .discovery);
     const text = try screenText(&app);
     defer t.allocator.free(text);
-    try t.expect(std.mem.indexOf(u8, text, "Click Discovery") != null);
-    // Every hit of the underlying frame is labelled with its own label.
-    var labelled: usize = 0;
-    for (app.hits.items.items) |e| {
-        var buf: [96]u8 = undefined;
-        var w: std.Io.Writer = .fixed(&buf);
-        try e.target.writeLabel(&w);
-        const label = w.buffered();
-        const shown = if (label.len > e.rect.w) label[0..@min(label.len, e.rect.w -| 1)] else label;
-        if (e.target != .editor_cell and shown.len > 0 and std.mem.indexOf(u8, text, shown) != null) labelled += 1;
-    }
-    try t.expect(labelled >= 4);
-    // A wide enough rect shows its whole label; a narrow one clips to
-    // its width (the editor's per-run cells, the six-cell mode chip).
-    try t.expect(std.mem.indexOf(u8, text, "tab:0:0") != null);
-    try t.expect(std.mem.indexOf(u8, text, "edit…") != null);
-    try t.expect(std.mem.indexOf(u8, text, "statu…") != null);
-    // A click on the mode chip explains it and does not toggle the keymap.
-    const style_before = app.input_style;
-    try app.handle(.{ .mouse = .{ .x = mode_rect.?.x, .y = mode_rect.?.y, .kind = .press, .button = .left } });
-    try t.expect(app.overlay == .none);
-    try t.expectEqual(style_before, app.input_style);
-    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "toggle vim") != null);
-    // Esc closes it without a word.
+    // The statusline's four chips are on screen: [1] each; no tabs: [ ].
+    try t.expect(std.mem.indexOf(u8, text, "┌ Click Discovery — F1 / Esc to close · click row to flash ─") != null);
+    try t.expect(std.mem.indexOf(u8, text, "[1]  Mode chip  click: toggle vim/standard · right-click: input menu") != null);
+    try t.expect(std.mem.indexOf(u8, text, "[1]  Clock chip  click: local↔UTC · right-click: clock menu") != null);
+    try t.expect(std.mem.indexOf(u8, text, "[ ]  Bufferline tabs  click: focus · middle: close · right-click: tab menu") != null);
+    try t.expect(std.mem.indexOf(u8, text, "[ ]  Split dividers  hover turns yellow · drag to resize") != null);
+    try t.expect(std.mem.indexOf(u8, text, "green count = visible now · click row to flash rects") != null);
+    // The rows are hits by category; a press flashes for two seconds.
+    // h 15, a third down: y 8; row 0 on 9.
+    try t.expectEqual(@as(u32, 0), app.hits.at(40, 9).?.overlay_item);
+    try app.handle(.{ .mouse = .{ .x = 40, .y = 9, .kind = .press, .button = .left } });
+    try t.expect(app.overlay == .discovery);
+    try t.expect(app.discovery_flash != null);
+    try t.expect(app.discovery_flash.?.cat == .statusline_mode);
+    try app.render();
+    try app.tick(app.now_ms + flash_ms + 1);
+    try t.expect(app.discovery_flash == null);
+    // F1 closes; so does a press off the panel.
     try app.handle(.{ .key = Key.named(.{ .f = 1 }) });
-    try t.expect(app.overlay == .info);
-    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try command.run(&app, .{ .static = .@"view.discovery" });
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = 60, .y = 2, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
 }
 

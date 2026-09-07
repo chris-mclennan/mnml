@@ -150,7 +150,7 @@ fn quit(app: *App) CommandError!void {
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.dirty()) {
         n += 1;
     };
-    const msg = try std.fmt.allocPrint(app.gpa, "  {d} buffer(s) have unsaved changes.", .{n});
+    const msg = try std.fmt.allocPrint(app.gpa, "{d} buffer(s) have unsaved changes.", .{n});
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{

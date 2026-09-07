@@ -39,15 +39,36 @@ pub fn place(screen: Rect, w_in: u16, h_in: u16, anchor: Anchor) Rect {
     return .{ .x = x, .y = y, .w = w, .h = h };
 }
 
+/// The three frames the Rust editor draws. `popup` is the rounded
+/// transient one (a tooltip, a context menu, a hover card); `menu` is
+/// the square dialog frame with the title as plain bold text (a
+/// prompt, a confirm, the which-key popup — Rust's `popup_menu`);
+/// `modal` is the square panel frame with the title as an accent chip
+/// (the picker, the help overlay, click discovery — Rust's
+/// `modal_panel`).
+pub const Look = enum { popup, menu, modal };
+
 /// Clears `r`, paints the frame and the title, returns the inner rect.
 pub fn frame(ui: Ui, r: Rect, title: ?[]const u8) Rect {
+    return frameLook(ui, r, title, .popup);
+}
+
+/// `frame` with an explicit `Look`.
+pub fn frameLook(ui: Ui, r: Rect, title: ?[]const u8, look: Look) Rect {
     const t = ui.theme;
     ui.fill(r, t.overlay_bg);
     if (r.w < 2 or r.h < 2) return Rect.empty;
-    const kind: @import("border.zig").Kind = if (ui.ascii) .ascii else .rounded;
+    const kind: @import("border.zig").Kind = if (ui.ascii) .ascii else switch (look) {
+        .popup => .rounded,
+        .menu, .modal => .single,
+    };
     if (title) |tt| {
         const text = ui.fmt(" {s} ", .{tt});
-        const segs = [_]Segment{.{ .text = text, .style = t.overlay_title }};
+        const style = switch (look) {
+            .popup, .menu => t.overlay_title,
+            .modal => t.chip_active,
+        };
+        const segs = [_]Segment{.{ .text = text, .style = style }};
         return ui.canvas.border(r, kind, t.overlay_border, &segs);
     }
     return ui.canvas.border(r, kind, t.overlay_border, null);
@@ -56,6 +77,11 @@ pub fn frame(ui: Ui, r: Rect, title: ?[]const u8) Rect {
 /// `place` then `frame`: the box's inner rect.
 pub fn box(ui: Ui, screen: Rect, w: u16, h: u16, title: ?[]const u8, anchor: Anchor) Rect {
     return frame(ui, place(screen, w, h, anchor), title);
+}
+
+/// `box` with an explicit `Look`.
+pub fn boxLook(ui: Ui, screen: Rect, w: u16, h: u16, title: ?[]const u8, anchor: Anchor, look: Look) Rect {
+    return frameLook(ui, place(screen, w, h, anchor), title, look);
 }
 
 /// A dim hint row (`  enter to submit · esc to cancel`); `·` becomes
@@ -118,4 +144,20 @@ test "box paints the frame with its title and returns the inner rect" {
     try testing.expect(box(ui, f.full(), 1, 1, null, .top).isEmpty());
     hint(ui, Rect.init(0, 4, 20, 1), "  enter · esc");
     try f.expectRow(4, "  enter - esc");
+}
+
+test "the menu and modal looks are square; the modal title is the accent chip" {
+    var f = try Fixture.init(20, 5);
+    defer f.deinit();
+    _ = boxLook(f.ui(), f.full(), 14, 4, "Delete", .top, .menu);
+    try f.expectRow(0, "   ┌ Delete ────┐");
+    try f.expectRow(3, "   └────────────┘");
+    try testing.expect(f.bgEql(5, 0, f.theme.overlay_bg));
+    _ = boxLook(f.ui(), f.full(), 14, 4, "Help", .top, .modal);
+    try f.expectRow(0, "   ┌ Help ──────┐");
+    try testing.expect(f.bgEql(5, 0, f.theme.chip_active));
+    var ui = f.ui();
+    ui.ascii = true;
+    _ = boxLook(ui, f.full(), 14, 4, "Help", .top, .modal);
+    try f.expectRow(0, "   + Help ------+");
 }

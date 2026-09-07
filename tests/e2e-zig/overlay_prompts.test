@@ -1,0 +1,36 @@
+# zig-only
+# The prompts and confirms as Rust paints them: go-to-line names the
+# current line, the tree's rename is `Rename <path>` seeded with the
+# name, the delete asks `Delete <path>?` with Cancel focused, and a
+# dirty buffer's close asks Save / Discard / Cancel.
+write a.txt "one\ntwo\nthree\n"
+open a.txt
+key down
+key ctrl+g
+expect screen contains "┌ Go to line  (currently 2) "
+expect screen contains "enter to submit · esc to cancel"
+type 3
+key enter
+expect screen contains "Ln 3/"
+command view.focus_tree
+key r
+key end
+key f2
+expect screen contains "┌ Rename a.txt "
+expect screen contains "│ a.txt"
+key esc
+command file.delete
+expect screen contains "┌ Delete "
+expect screen contains "Delete a.txt?"
+expect screen contains "  Delete    Delete permanently   Cancel  "
+key enter
+expect screen lacks "Delete a.txt?"
+expect file a.txt contains "one"
+command view.focus_pane
+type x
+key ctrl+w
+expect screen contains "┌ Unsaved changes "
+expect screen contains "  a.txt has unsaved changes."
+expect screen contains "[S]ave      [D]iscard      [C]ancel"
+key c
+expect screen lacks "Unsaved changes"

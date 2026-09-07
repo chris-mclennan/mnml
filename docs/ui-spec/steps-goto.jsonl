@@ -1,0 +1,6 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":800}
+{"cmd":"key","key":"ctrl+g"}
+{"cmd":"wait_ms","ms":600}

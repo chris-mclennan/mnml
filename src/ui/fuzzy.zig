@@ -1,18 +1,21 @@
-//! Fuzzy scoring for the pickers and the palette: case-insensitive
-//! subsequence match with bonuses for what a person typing a name
-//! means — consecutive runs, word starts, camel humps, the exact phrase
-//! at a word boundary, the exact token — and penalties for gaps, a late
+//! Fuzzy scoring for the pickers and the palette — the Rust editor's
+//! `fuzzy_match`, bonus for bonus, so the palette ranks as it does
+//! there: a case-insensitive subsequence match with rewards for what a
+//! person typing a name means — consecutive runs (+15), word starts
+//! (+12), camel humps (+8), the exact phrase at a word boundary (+50),
+//! the whole token besides (+150) — and penalties for gaps, a late
 //! first hit and a long haystack. `score` is the contract (`null` = not
 //! a match; higher is better); `match` also returns the matched byte
 //! positions so a picker can highlight them.
 //!
-//! Two habits from the Rust picker are kept: `_`, `-` and `.` in the
-//! query are dropped before the subsequence walk, so a dotted command
-//! id matches its title (`http.send_streaming` finds "HTTP: send …
-//! stream"); and the ORIGINAL query is tried as a boundary substring
-//! first, so typing the tail of an id (`.deselect`) lands on the
-//! contiguous run instead of a greedy scatter that loses to shorter
-//! names.
+//! Two habits are Rust's: `_`, `-` and `.` in the query are dropped
+//! before the subsequence walk, so a dotted command id matches its
+//! title (`http.send_streaming` finds "HTTP: send … stream"); and the
+//! ORIGINAL query is tried as a boundary substring first, so typing the
+//! tail of an id (`.deselect`) lands on the contiguous run instead of a
+//! greedy scatter that loses to shorter names. Lengths and positions
+//! are counted in code points, as Rust counts chars — a `·` in a
+//! palette row costs one, not two.
 
 const std = @import("std");
 
@@ -26,118 +29,181 @@ pub const Match = struct {
 
 /// The score alone. An empty query matches everything at the base score.
 pub fn score(query: []const u8, text: []const u8) ?u32 {
-    var buf: [256]usize = undefined;
-    return scoreInto(query, text, &buf);
+    var buf: [max_hits]usize = undefined;
+    var n: usize = 0;
+    return scoreImpl(query, text, &buf, &n);
 }
 
 /// The score and the matched positions, on `arena`.
 pub fn match(arena: Allocator, query: []const u8, text: []const u8) Allocator.Error!?Match {
-    var buf: [256]usize = undefined;
+    var buf: [max_hits]usize = undefined;
     var n: usize = 0;
     const s = scoreImpl(query, text, &buf, &n) orelse return null;
     return .{ .score = s, .positions = try arena.dupe(usize, buf[0..n]) };
 }
 
-fn scoreInto(query: []const u8, text: []const u8, buf: []usize) ?u32 {
-    var n: usize = 0;
-    return scoreImpl(query, text, buf, &n);
-}
-
 /// Scores are offset so a poor match is still non-negative: `base` is
-/// what an empty query yields.
+/// what an empty query yields. Rust's raw score is `s - base`.
 pub const base: u32 = 1000;
 
-fn isBoundary(c: u8) bool {
+/// The longest haystack scored in code points; a longer one is scored
+/// on its first `max_chars` (a palette row is well under it).
+pub const max_chars: usize = 512;
+const max_hits: usize = 256;
+
+fn isBoundary(c: u21) bool {
     return switch (c) {
         '/', '_', '-', '.', ' ', ':' => true,
         else => false,
     };
 }
 
-fn isSeparator(c: u8) bool {
+fn isSeparator(c: u21) bool {
     return c == '_' or c == '-' or c == '.';
 }
 
-fn scoreImpl(query_in: []const u8, text: []const u8, buf: []usize, n_out: *usize) ?u32 {
-    const query = std.mem.trim(u8, query_in, " \t");
-    n_out.* = 0;
-    if (query.len == 0) return base;
-    var n: usize = 0;
+fn lower(c: u21) u21 {
+    return if (c < 0x80) std.ascii.toLower(@intCast(c)) else c;
+}
 
-    // Pass 1: the query as a case-insensitive substring at a boundary.
+fn isUpper(c: u21) bool {
+    return c < 0x80 and std.ascii.isUpper(@intCast(c));
+}
+
+fn isLower(c: u21) bool {
+    return c < 0x80 and std.ascii.isLower(@intCast(c));
+}
+
+/// `text` as code points with each one's byte offset; invalid bytes
+/// count as one code point each.
+fn decode(text: []const u8, chars: []u21, offs: []usize) usize {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < text.len and n < chars.len) {
+        const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+        const cp: u21 = if (i + len <= text.len) std.unicode.utf8Decode(text[i .. i + len]) catch text[i] else text[i];
+        chars[n] = cp;
+        offs[n] = i;
+        n += 1;
+        i += @max(len, 1);
+    }
+    return n;
+}
+
+fn scoreImpl(query_in: []const u8, text: []const u8, buf: []usize, n_out: *usize) ?u32 {
+    n_out.* = 0;
+    var qchars: [max_chars]u21 = undefined;
+    var qoffs: [max_chars]usize = undefined;
+    const qn_raw = decode(query_in, &qchars, &qoffs);
+    // Rust normalises the needle by dropping `_` `-` `.` and lower-casing.
+    var nl: [max_chars]u21 = undefined;
+    var nl_n: usize = 0;
+    for (qchars[0..qn_raw]) |c| {
+        if (isSeparator(c)) continue;
+        nl[nl_n] = lower(c);
+        nl_n += 1;
+    }
+    if (nl_n == 0) return base;
+
+    var hchars: [max_chars]u21 = undefined;
+    var hoffs: [max_chars]usize = undefined;
+    const n = decode(text, &hchars, &hoffs);
+    var hlower: [max_chars]u21 = undefined;
+    for (hchars[0..n], 0..) |c, i| hlower[i] = lower(c);
+
+    // The trimmed original query, lower-cased, for the substring passes.
+    const trimmed = std.mem.trim(u8, query_in, " \t\r\n");
+    var tchars: [max_chars]u21 = undefined;
+    var toffs: [max_chars]usize = undefined;
+    const tn = decode(trimmed, &tchars, &toffs);
+    for (tchars[0..tn], 0..) |c, i| tchars[i] = lower(c);
+
+    var matched: [max_hits]usize = undefined; // char indices
+    var mn: usize = 0;
+
+    // Pass 1: the original query as a case-insensitive substring at a boundary.
     var used_substring = false;
-    if (query.len <= text.len) {
+    if (tn > 0 and tn <= n) {
         var start: usize = 0;
-        while (start + query.len <= text.len) : (start += 1) {
-            if (!std.ascii.startsWithIgnoreCase(text[start..], query)) continue;
-            const at_boundary = start == 0 or isBoundary(text[start - 1]);
+        outer: while (start + tn <= n) : (start += 1) {
+            for (tchars[0..tn], 0..) |qc, off| if (hlower[start + off] != qc) continue :outer;
+            const at_boundary = start == 0 or isBoundary(hchars[start - 1]);
             if (!at_boundary) continue;
             var i: usize = 0;
-            while (i < query.len and n < buf.len) : (i += 1) {
-                buf[n] = start + i;
-                n += 1;
+            while (i < tn and mn < matched.len) : (i += 1) {
+                matched[mn] = start + i;
+                mn += 1;
             }
             used_substring = true;
             break;
         }
     }
 
-    // Pass 2: greedy subsequence on the query with separators dropped.
+    // Pass 2: greedy forward subsequence on the normalised needle.
     if (!used_substring) {
         var hi: usize = 0;
-        for (query) |qc| {
-            if (isSeparator(qc)) continue;
-            const lq = std.ascii.toLower(qc);
+        for (nl[0..nl_n]) |nc| {
             var found: ?usize = null;
-            while (hi < text.len) {
-                const i = hi;
-                hi += 1;
-                if (std.ascii.toLower(text[i]) == lq) {
-                    found = i;
+            while (hi < n) {
+                if (hlower[hi] == nc) {
+                    found = hi;
+                    hi += 1;
                     break;
                 }
+                hi += 1;
             }
             const i = found orelse return null;
-            if (n < buf.len) {
-                buf[n] = i;
-                n += 1;
+            if (mn < matched.len) {
+                matched[mn] = i;
+                mn += 1;
             }
         }
-        if (n == 0) return base; // the query was separators only
     }
 
     var s: i64 = 0;
     var prev: ?usize = null;
-    for (buf[0..n]) |i| {
+    for (matched[0..mn]) |i| {
         if (prev) |p| {
             if (i == p + 1) s += 15 else s -= @intCast(i - p - 1);
         } else {
             s += 5;
         }
-        if (i == 0 or isBoundary(text[i - 1])) s += 12;
-        if (i > 0 and std.ascii.isUpper(text[i]) and std.ascii.isLower(text[i - 1])) s += 8;
+        if (i == 0 or isBoundary(hchars[i - 1])) s += 12;
+        if (i > 0 and isUpper(hchars[i]) and isLower(hchars[i - 1])) s += 8;
         prev = i;
     }
-    s -= @intCast(text.len / 8);
-    s -= @intCast(buf[0] / 2);
+    s -= @intCast(n / 8);
+    s -= @intCast(matched[0] / 2);
 
-    // Exact phrase at a boundary: +50; a whole token besides: +150.
-    if (query.len <= text.len) {
+    // The exact phrase at a boundary: +50; a whole token besides: +150.
+    if (tn > 0 and tn <= n) {
         var pos: usize = 0;
-        while (pos + query.len <= text.len) : (pos += 1) {
-            if (!std.ascii.startsWithIgnoreCase(text[pos..], query)) continue;
-            const at_boundary = pos == 0 or isBoundary(text[pos - 1]);
+        outer: while (pos + tn <= n) : (pos += 1) {
+            for (tchars[0..tn], 0..) |qc, off| if (hlower[pos + off] != qc) continue :outer;
+            const at_boundary = pos == 0 or isBoundary(hchars[pos - 1]);
             if (!at_boundary) continue;
             s += 50;
-            const end = pos + query.len;
-            if (end == text.len or isBoundary(text[end])) s += 150;
+            const end = pos + tn;
+            if (end == n or switch (hchars[end]) {
+                '.', ' ', ':', '-', '/' => true,
+                else => false,
+            }) s += 150;
             break;
         }
     }
 
-    n_out.* = n;
+    var k: usize = 0;
+    while (k < mn and k < buf.len) : (k += 1) buf[k] = hoffs[matched[k]];
+    n_out.* = k;
     const clamped: i64 = @max(0, @as(i64, base) + s);
     return @intCast(clamped);
+}
+
+/// Rust's raw score for `query` against `text`: the bonuses and
+/// penalties alone, null when it does not match.
+pub fn raw(query: []const u8, text: []const u8) ?i64 {
+    const s = score(query, text) orelse return null;
+    return @as(i64, s) - base;
 }
 
 // ── tests ──
@@ -149,17 +215,37 @@ test "subsequence, case-insensitive; a miss is null; empty matches at base" {
     try testing.expect(score("abc", "xaxbx") == null);
     try testing.expect(score("ABC", "a b c") != null);
     try testing.expectEqual(base, score("", "anything").?);
-    try testing.expectEqual(base, score("  ", "anything").?);
+    // Rust keeps a needle's spaces: two of them do not match a word.
+    try testing.expect(score("  ", "anything") == null);
+    try testing.expectEqual(base, score("_", "anything").?);
     try testing.expect(score("z", "") == null);
+    try testing.expect(score("xyz", "abc") == null);
 }
 
-test "consecutive and boundary hits outrank a scatter" {
-    const tight = score("open", "open file").?;
-    const scattered = score("open", "o p e n x").?;
-    try testing.expect(tight > scattered);
-    const at_word = score("file", "picker.files").?;
-    const mid_word = score("file", "profile").?;
-    try testing.expect(at_word > mid_word);
+test "Rust's table: contiguous beats scattered, boundary beats mid-word, the exact phrase and the exact id win" {
+    // fuzzy.rs: contiguous_beats_scattered
+    try testing.expect(raw("main", "src/main.rs").? > raw("main", "m_a_i_n.txt").?);
+    // boundary_bonus / exact_phrase_boost_gated_on_word_boundary
+    try testing.expect(raw("fk", "foo_key").? > raw("fk", "xafkx").?);
+    // exact_phrase_boost_at_word_boundary
+    try testing.expect(raw("abc", "some abc thing").? > raw("abc", "somexabcthing").?);
+    // exact_id_beats_prefix_of_longer_id
+    const winner = raw("integrations.refresh", "integrations  ·  Integrations: re-scan manifests in .mnml/integrations/  ·  integrations.refresh").?;
+    const loser = raw("integrations.refresh", "integrations  ·  Integrations: refresh installed-binary detection  ·  integrations.refresh_binary_cache").?;
+    try testing.expect(winner > loser);
+    // case_insensitive_subsequence: positions 0 and 2
+    const m = (try match(testing.allocator, "ab", "AxBy")).?;
+    defer testing.allocator.free(m.positions);
+    try testing.expectEqualSlices(usize, &.{ 0, 2 }, m.positions);
+}
+
+test "the raw numbers are Rust's: the palette's git rows" {
+    // `git` against `git  ·  Git: diff the worktree  ·  git.diff` (44 chars):
+    // first hit +5, boundary +12, then +15 +15 with boundaries none;
+    // -44/8 = -5, -0; +50 phrase, +150 token → 242.
+    try testing.expectEqual(@as(i64, 242), raw("git", "git  ·  Git: diff the worktree  ·  git.diff").?);
+    // 52 chars: -6 → 241. The `·` counts one, as Rust's char does.
+    try testing.expectEqual(@as(i64, 241), raw("git", "git  ·  Git: diff this file (split)  ·  git.diff_file").?);
 }
 
 test "a dotted command id finds its title; the id's tail finds the contiguous run" {
@@ -173,9 +259,13 @@ test "a dotted command id finds its title; the id's tail finds the contiguous ru
     try testing.expect(score("hover-help", "view.toggle_hover-help").? > score("hover-help", "view.hover_help_x").?);
 }
 
-test "positions are ascending and inside the text" {
+test "positions are byte offsets, ascending and inside the text" {
     const m = (try match(testing.allocator, "mz", "mnml-zig")).?;
     defer testing.allocator.free(m.positions);
     try testing.expectEqualSlices(usize, &.{ 0, 5 }, m.positions);
     try testing.expect(try match(testing.allocator, "q", "mnml-zig") == null);
+    // Past a two-byte `·` the byte offset moves by two, the score by one.
+    const dot = (try match(testing.allocator, "diff", "g  ·  diff")).?;
+    defer testing.allocator.free(dot.positions);
+    try testing.expectEqualSlices(usize, &.{ 7, 8, 9, 10 }, dot.positions);
 }

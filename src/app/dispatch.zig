@@ -70,6 +70,8 @@ const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const toast_mod = @import("../ui/toast.zig");
 const discovery = @import("discovery.zig");
+const help_app = @import("help.zig");
+const HelpUi = app_mod.HelpUi;
 const image_pane = @import("image_pane.zig");
 const tree_mod = @import("tree.zig");
 const info_view_app = @import("info_view.zig");
@@ -628,6 +630,7 @@ fn runLeaderHit(app: *App, hit: LeaderHit) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .dead => |d| app.toast("{s}: not a command in this build", .{d.id}),
         .group => {
             app.overlay.deinit(app.gpa);
             var state: whichkey.State = .{};
@@ -654,7 +657,7 @@ fn closeOverlay(app: *App) void {
     // Esc on a `:s///c` box keeps what was replaced and stops.
     if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
     git_app.overlayClosing(app);
-    const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else if (app.overlay == .prompt) app.overlay.prompt.return_focus else null;
+    const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else if (app.overlay == .prompt) app.overlay.prompt.return_focus else if (app.overlay == .confirm) app.overlay.confirm.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
         app.focus = f;
@@ -813,6 +816,10 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             const node = whichkey.lookup(w.slice()) orelse return closeOverlay(app);
             switch (node.*) {
                 .group => {},
+                .dead => |d| {
+                    closeOverlay(app);
+                    app.toast("{s}: not a command in this build", .{d.id});
+                },
                 .cmd => |cmd| {
                     closeOverlay(app);
                     command.run(app, .{ .static = cmd.id }) catch |err| switch (err) {
@@ -838,6 +845,9 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         .settings => try settings_app.key(app, k),
         .wizard => try first_launch.key(app, k),
         .info => closeOverlay(app),
+        // The discovery panel: F1 and Esc close it, as Rust's does.
+        .discovery => if (k.code == .esc or (k.code == .f and k.code.f == 1)) closeOverlay(app),
+        .help => try help_app.key(app, k),
         .menu => |*m| {
             // A menu-bar menu: ← / → step to the neighbouring menu.
             if (try menu_bar.menuKey(app, k)) return;
@@ -890,28 +900,22 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
     }
 }
 
+/// Rust's `refilter`: the label alone is scored (the palette's carries
+/// the group and the id), then priority desc, score desc, index asc.
+/// The command palette pins an exact id and boosts an id that contains
+/// the query (`Picker.rank`).
 pub fn refilterPicker(app: *App) Allocator.Error!void {
     const p = &app.overlay.picker;
     p.filtered.clearRetainingCapacity();
-    const q = p.state.query.items;
-    const Scored = struct { idx: u32, score: u32 };
-    var scored: std.ArrayListUnmanaged(Scored) = .empty;
-    defer scored.deinit(app.gpa);
-    for (p.labels, 0..) |label, i| {
-        // The detail (a command id, a path) is a weaker signal than the label.
-        var best = fuzzy.score(q, label);
-        if (i < p.details.len) if (fuzzy.score(q, p.details[i])) |sd| {
-            const weak = sd -| 50;
-            best = if (best) |b| @max(b, weak) else weak;
-        };
-        if (best) |s| try scored.append(app.gpa, .{ .idx = @intCast(i), .score = s });
-    }
-    if (q.len > 0) std.mem.sort(Scored, scored.items, {}, struct {
-        fn lt(_: void, a: Scored, b: Scored) bool {
-            return a.score > b.score or (a.score == b.score and a.idx < b.idx);
-        }
-    }.lt);
-    for (scored.items) |s| try p.filtered.append(app.gpa, s.idx);
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const items = try arena.alloc(Picker.Item, p.labels.len);
+    for (p.labels, 0..) |label, i| items[i] = .{ .label = label };
+    const ids: []const []const u8 = if (p.kind == .commands) try cmd_picker.commandIds(app, arena) else &.{};
+    const order = try Picker.rank(arena, p.state.query.items, items, .{ .priority = p.priority, .score_bonus = p.score_bonus, .ids = ids });
+    try p.filtered.ensureTotalCapacity(app.gpa, order.len);
+    for (order) |i| p.filtered.appendAssumeCapacity(@intCast(i));
     if (p.state.cursor >= p.filtered.items.len) p.state.cursor = 0;
 }
 
@@ -1124,11 +1128,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     if (m.kind == .motion) return;
     // A press anywhere puts flash's labels away.
     if (m.kind == .press) flash.cancel(app);
-    // The click-discovery overlay: the press explains its target.
-    if (m.kind == .press and app.overlay == .info and app.overlay.info == .discovery) {
-        const under = app.hits.at(m.x, m.y);
+    // The click-discovery panel: a press on one of its rows flashes the
+    // family it names; a press anywhere else closes it (Rust).
+    if (m.kind == .press and app.overlay == .discovery) {
+        if (app.hits.at(m.x, m.y)) |under| if (under == .overlay_item) return discovery.flashRow(app, under.overlay_item);
         closeOverlay(app);
-        return discovery.explain(app, under);
+        return;
     }
     const target = app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
@@ -1143,6 +1148,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         switch (app.overlay) {
             .menu => if (target != .menu_item) closeOverlay(app),
             .info => {
+                closeOverlay(app);
+                return;
+            },
+            // The help box: a press off its rows and bar closes it.
+            .help => if (target != .overlay_item and target != .scrollbar) {
                 closeOverlay(app);
                 return;
             },
@@ -1211,6 +1221,33 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
             },
             .pane => |id| {
+                // The picker's bar: the wheel walks the cursor, a press
+                // on the track jumps the list to that fraction.
+                if (id == HelpUi.scrollbar_owner and app.overlay == .help) {
+                    if (wheel) {
+                        const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
+                        help_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
+                    } else if (m.kind == .press and m.button == .left) {
+                        const track = hitRect(app, m.x, m.y) orelse return;
+                        const h = &app.overlay.help;
+                        if (track.h > 0) h.scroll = @min((@as(usize, m.y - track.y) * h.line_count) / track.h, h.line_count -| h.body_rows);
+                        app.needs_render = true;
+                    }
+                    return;
+                }
+                if (id == Picker.scrollbar_owner and app.overlay == .picker) {
+                    const p = &app.overlay.picker;
+                    if (wheel) {
+                        const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
+                        Picker.wheel(&p.state, if (m.kind == .scroll_down) lines else -lines, p.filtered.items.len);
+                    } else if (m.kind == .press and m.button == .left) {
+                        const track = hitRect(app, m.x, m.y) orelse return;
+                        const n = p.filtered.items.len;
+                        if (track.h > 0 and n > 0) p.state.cursor = @min((@as(usize, m.y - track.y) * n) / track.h, n - 1);
+                    }
+                    cmd_picker.preview(app);
+                    return;
+                }
                 if (wheel) return wheelOnPane(app, id, m, count);
                 if (m.kind != .press or m.button != .left) return;
                 const track = hitRect(app, m.x, m.y) orelse return;
@@ -1364,10 +1401,21 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             _ = try files_pane.open(app, dir);
         },
         .overlay_item => |i| {
-            // The wheel over the Settings box scrolls its list.
+            // The wheel over the Settings box scrolls its list; over the
+            // picker it walks the cursor, as Rust's does.
             if (wheel and app.overlay == .settings) {
                 const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
                 return settings_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
+            }
+            if (wheel and app.overlay == .picker) {
+                const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
+                Picker.wheel(&app.overlay.picker.state, if (m.kind == .scroll_down) lines else -lines, app.overlay.picker.filtered.items.len);
+                cmd_picker.preview(app);
+                return;
+            }
+            if (wheel and app.overlay == .help) {
+                const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
+                return help_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
             }
             if (m.kind != .press) return;
             switch (app.overlay) {
@@ -1379,6 +1427,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     try acceptConfirm(app, purpose, i);
                 },
                 .picker => try cmd_picker.accept(app, i),
+                .help => try help_app.click(app, i),
                 .which_key => |*w| {
                     const kids = whichkey.continuations(w.slice());
                     if (i >= kids.len) return;
@@ -1684,7 +1733,7 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
 /// preview back (the themes picker) and closes.
 fn pressOutside(app: *App) void {
     switch (app.overlay) {
-        .menu, .info => closeOverlay(app),
+        .menu, .info, .discovery, .help => closeOverlay(app),
         .settings => settings_app.close(app),
         .picker => {
             cmd_picker.cancel(app);

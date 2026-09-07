@@ -1,0 +1,16 @@
+# zig-only
+# `Open file` (Ctrl+P) as Rust lists it: the workspace's files in the
+# tree's order with the directory as the detail, the query narrowing
+# them with `N of M`, Enter opening the pick.
+write src/main.rs "fn main() {}\n"
+write README.md "# hi\n"
+key ctrl+p
+expect screen contains "┌ Open file "
+expect screen contains "src/main.rs"
+expect screen contains " src "
+type ma
+expect screen contains " 1 of "
+expect screen contains "▌src/main.rs"
+expect screen lacks "README.md"
+key enter
+expect pane main.rs

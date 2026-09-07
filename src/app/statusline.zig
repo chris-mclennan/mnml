@@ -115,6 +115,7 @@ fn focusUnder(app: *const App) FocusId {
     return switch (app.focus) {
         .overlay => switch (app.overlay) {
             .prompt => |p| p.return_focus orelse fallback,
+            .confirm => |c| c.return_focus orelse fallback,
             .menu => |m| m.return_focus,
             else => fallback,
         },
