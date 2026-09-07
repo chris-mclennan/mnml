@@ -305,11 +305,9 @@ fn lessName(_: void, a: []const u8, b: []const u8) bool {
 
 /// A worktree item's text: `branch (dir)`, or the label alone when it
 /// is the directory's name or `(detached)`.
-fn worktreeShown(arena: Allocator, item: []const u8) Allocator.Error!struct { path: []const u8, label: []const u8, shown: []const u8 } {
-    const sep = std.mem.indexOfScalar(u8, item, '\x1f');
-    const path = if (sep) |s| item[0..s] else item;
-    var label: []const u8 = if (sep) |s| item[s + 1 ..] else "";
-    if (label.len == 0) label = "(detached)";
+fn worktreeShown(arena: Allocator, item: parse.Worktree) Allocator.Error!struct { path: []const u8, label: []const u8, shown: []const u8 } {
+    const path = item.path;
+    const label = item.label();
     const dir = std.fs.path.basename(path);
     const shown = if (std.mem.eql(u8, label, dir) or (label.len > 0 and label[0] == '(')) label else try std.fmt.allocPrint(arena, "{s} ({s})", .{ label, dir });
     return .{ .path = path, .label = label, .shown = shown };
@@ -841,8 +839,8 @@ test "rows: worktrees, local A–Z with the current one marked, remotes stripped
         .{ .name = "origin/HEAD", .time = 0, .current = false, .remote = true },
     };
     app.git.rail_branches = @constCast(&bs);
-    const wts = [_][]const u8{ "/repo/ws\x1fmain", "/repo/wt-feature\x1ffeature" };
-    app.git.rail_worktrees = &wts;
+    const wts = [_]parse.Worktree{ .{ .path = "/repo/ws", .branch = "main", .main = true }, .{ .path = "/repo/wt-feature", .branch = "feature" } };
+    app.git.rail_worktrees = @constCast(&wts);
     var list = try rows(&app, arena);
     // WORKTREES 2, gap, LOCAL 4 (bugfix folder first), gap, REMOTE 1, gap.
     try testing.expectEqual(@as(usize, 14), list.len);
