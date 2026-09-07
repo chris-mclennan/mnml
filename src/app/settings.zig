@@ -154,6 +154,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.clock", .label = "Clock in statusline", .section = .ui, .scope = .home },
     .{ .path = "ui.menu_bar", .label = "Menu bar", .section = .ui, .scope = .home },
     .{ .path = "ui.activity_bar", .label = "Activity bar", .section = .ui, .scope = .home },
+    .{ .path = "ui.debug_toolbar", .label = "Debug toolbar strip", .section = .ui, .scope = .home },
     .{ .path = "ui.bufferline_diag_style", .label = "Diag chip on tabs", .section = .ui, .scope = .home },
     .{ .path = "ui.expand_indicator", .label = "Expand indicator", .section = .ui, .scope = .home },
     .{ .path = "ui.picker_position", .label = "Picker position", .section = .ui, .scope = .home },
@@ -188,6 +189,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.trim_trailing_ws_on_save", .label = "Trim trailing whitespace on save", .section = .editor, .scope = .workspace },
     .{ .path = "editor.ensure_trailing_newline", .label = "Ensure trailing newline", .section = .editor, .scope = .workspace },
     .{ .path = "editor.breadcrumb", .label = "Breadcrumb", .section = .editor, .scope = .home },
+    .{ .path = "editor.inline_values", .label = "Inline debugger values", .section = .editor, .scope = .workspace },
     .{ .path = "editor.cursor_blink", .label = "Cursor blink", .section = .editor, .scope = .home },
     .{ .path = "editor.wheel_moves_cursor", .label = "Mouse wheel moves cursor", .section = .editor, .scope = .home },
     .{ .path = "editor.scroll_accel", .label = "Scroll acceleration", .section = .editor, .scope = .home },
@@ -818,7 +820,7 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
 }
 
 test "the overlay renders the sections and the footer names the target file" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 70 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 80 });
     defer app.deinit();
     try open(&app);
     try app.render();
@@ -843,7 +845,7 @@ test "number rows: → steps the right panel width, writes it, and the config se
     try tmp.dir.createDirPath(t.io, "ws/.mnml");
     const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
     defer t.allocator.free(ws);
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 60, .cfg = .{ .ui = .{ .right_panel_visible = true, .right_panel_width = 30 } } });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 80, .cfg = .{ .ui = .{ .right_panel_visible = true, .right_panel_width = 30 } } });
     defer app.deinit();
     // `right_panel_visible` opens the right column on the first section
     // that lives there (the diagnostics, fresh).
