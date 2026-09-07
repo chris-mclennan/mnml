@@ -1,5 +1,5 @@
 # Git mode (src/app/git_palette.zig): the Git section swaps the sidebar
-# for the git palette and the editor area for one graph tab per repo;
+# for the branches panel and the editor area for one graph tab per repo;
 # the detail column's `[+]` stages a file through the worker; leaving
 # through Explorer puts the tree and the editor back. The screen is
 # 120x40: the sidebar snaps to 24, the detail column is 31 wide from
@@ -14,12 +14,13 @@ write new.txt "hello\n"
 open seed.txt
 command view.activity_git
 wait 800
-expect screen contains " GIT "
-expect screen contains "⎇ main"
+expect screen lacks " GIT "
+expect screen contains "Viewing 2"
 expect screen contains "/ filter"
-expect screen contains "▾ LOCAL         1"
-expect screen contains "● main"
-expect screen contains "▾ WORKTREES     1"
+expect screen contains "󰅀 󰌢 LOCAL"
+expect screen contains "󰄬 󰘬 main"
+expect screen contains "󰅀 󰐅 WORKTREES"
+expect screen contains "󰄬 󰋜 main"
 expect screen contains "COMMIT MESSAGE"
 expect screen contains "1 change(s) · 1 new"
 expect screen contains "Unstaged Files (1)"

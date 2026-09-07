@@ -105,12 +105,13 @@ pub const Confirm = union(enum) {
     discard_hunk: struct { pane: PaneId },
     delete_branch: []u8,
     worktree_remove: []u8,
-    /// A branch-rail row: checkout after a yes.
+    /// A palette row: checkout after a yes (a tag lands detached).
     checkout: []u8,
+    tag_delete: []u8,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove, .checkout => |s| gpa.free(s),
+            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete => |s| gpa.free(s),
             .none, .discard_hunk => {},
         }
     }
@@ -1630,6 +1631,7 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         .delete_branch => |b| try submitOp(app, try requireRepo(app), .{ .delete_branch = try gpa.dupe(u8, b) }),
         .worktree_remove => |p| try submitOp(app, try requireRepo(app), .{ .worktree_remove = try gpa.dupe(u8, p) }),
         .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
+        .tag_delete => |t| try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, t) }),
     }
 }
 
@@ -2822,7 +2824,7 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     try testing.expect(st.status != null);
     try testing.expectEqual(@as(u32, 1), st.badge());
     var txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "GIT") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Viewing ") != null);
     // The WIP row: at this width the summary is all the list shows.
     try testing.expect(std.mem.indexOf(u8, txt, "1 change(s) \u{B7} 1 new") != null);
     testing.allocator.free(txt);
@@ -2994,20 +2996,27 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expectEqual(@as(usize, 1), panes.len);
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} LOCAL         2") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25CB} feature") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25CF} main") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} WORKTREES     1") != null);
+    // The branches panel: the pill, Viewing N (2 locals + 1 worktree),
+    // the filter, LOCAL with the check on main, WORKTREES with the house.
+    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") == null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0322} LOCAL") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  \u{F062C} feature") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F062C} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0405} WORKTREES") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F02DC} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F03D7} STASHES") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F04FB} TAGS") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "git graph") == null);
     testing.allocator.free(txt);
-    // Enter on the feature row selects it and keeps the palette's focus.
+    // A click on the feature row selects it and keeps the palette's focus.
     const rows = try git_palette.rows(&f.app, f.app.frame.allocator());
     var feature_row: ?usize = null;
     for (rows, 0..) |r, i| if (r == .branch and std.mem.eql(u8, r.branch.name, "feature")) {
         feature_row = i;
     };
-    try git_palette.activate(&f.app, feature_row.?);
+    try git_palette.select(&f.app, feature_row.?);
     try testing.expectEqualStrings("feature", f.app.git_palette.selected.?);
     try testing.expect(f.app.focus == .pane);
     // Leaving through another section restores the editor.

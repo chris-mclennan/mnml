@@ -88,7 +88,8 @@ pub const Job = union(enum) {
     push,
     push_tags,
     stash: ?[]u8,
-    stash_pop,
+    /// The stash to pop; null pops the most recent.
+    stash_pop: ?[]u8,
     stash_apply: []u8,
     stash_drop: []u8,
     tag: []u8,
@@ -133,13 +134,13 @@ pub const Job = union(enum) {
                 gpa.free(w.path);
                 if (w.branch) |b| gpa.free(b);
             },
-            .stash => |s| if (s) |m| gpa.free(m),
+            .stash, .stash_pop => |s| if (s) |m| gpa.free(m),
             .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
             .rail => {},
-            .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .stash_pop, .undo, .redo, .head_sha => {},
+            .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
         }
     }
 };
@@ -660,7 +661,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 try simple(repo, io, r, &.{ "stash", "push", "-u", "-q", "-m", msg }, try std.fmt.allocPrint(arena, "stashed: {s}", .{msg}));
             } else try simple(repo, io, r, &.{ "stash", "push", "-u", "-q" }, "stashed");
         },
-        .stash_pop => try simple(repo, io, r, &.{ "stash", "pop", "-q" }, "stash popped"),
+        .stash_pop => |ref| if (ref) |x| try simple(repo, io, r, &.{ "stash", "pop", "-q", x }, "stash popped") else try simple(repo, io, r, &.{ "stash", "pop", "-q" }, "stash popped"),
         .stash_apply => |ref| try simple(repo, io, r, &.{ "stash", "apply", "-q", ref }, try std.fmt.allocPrint(arena, "applied {s}", .{ref})),
         .stash_drop => |ref| try simple(repo, io, r, &.{ "stash", "drop", "-q", ref }, try std.fmt.allocPrint(arena, "dropped {s}", .{ref})),
         .tag => |name| try simple(repo, io, r, &.{ "tag", "-a", name, "-m", name }, try std.fmt.allocPrint(arena, "tagged {s}", .{name})),

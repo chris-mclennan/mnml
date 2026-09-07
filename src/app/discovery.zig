@@ -137,7 +137,6 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .git_palette => |part| switch (part) {
             .repo => .{ .title = "Repo", .detail = "click: switch repo · reopen a closed one · add a workspace" },
-            .branch => .{ .title = "Branch", .detail = "click opens the checkout picker" },
         },
         .info_view => |part| switch (part) {
             .kebab => .{ .title = "Sidebar menu", .detail = "click: turn the info panel off" },

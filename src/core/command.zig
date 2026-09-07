@@ -567,9 +567,31 @@ pub const MenuAction = union(enum) {
 };
 
 /// What a git palette menu row does, with the index of the row it
-/// names (a rail branch, a worktree, a PR, a repo, a closed repo).
+/// names (a rail branch, a remote, a worktree, a stash, a tag, a repo,
+/// a closed repo).
 pub const GitPaletteAct = struct {
-    what: enum { checkout, merge, rebase, new_branch, delete_branch, copy_name, worktree_shell, worktree_copy_path, worktree_remove, pr_open, pr_copy, switch_repo, reopen_repo },
+    what: enum {
+        checkout,
+        merge,
+        rebase,
+        new_branch,
+        delete_branch,
+        copy_name,
+        remote_fetch,
+        remote_copy_url,
+        worktree_open,
+        worktree_shell,
+        worktree_copy_path,
+        worktree_remove,
+        stash_apply,
+        stash_pop,
+        stash_drop,
+        tag_checkout,
+        tag_delete,
+        tag_copy,
+        switch_repo,
+        reopen_repo,
+    },
     idx: u32,
 };
 
