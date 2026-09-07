@@ -498,6 +498,24 @@ pub fn build(b: *std.Build) void {
         .dest_dir = .{ .override = gate_dir },
         .dest_sub_path = b.fmt("mnml-hello{s}", .{if (target.result.os.tag == .windows) ".exe" else ""}),
     }).step);
+
+    // ── fake DAP adapter ──
+    // `mnml-fake-dap` (tools/fake_dap/) is the deterministic debug adapter
+    // the DAP client test and the `dap_session_*.test` scripts drive; it
+    // is installed beside the exe, its path reaches the unit tests as a
+    // build option and the corpus as `$MNML_FAKE_DAP` (main.zig's `test`).
+    const fake_dap_mod = b.createModule(.{ .root_source_file = b.path("tools/fake_dap/main.zig"), .target = target, .optimize = optimize });
+    const fake_dap = b.addExecutable(.{ .name = "mnml-fake-dap", .root_module = fake_dap_mod });
+    const fake_dap_install = b.addInstallArtifact(fake_dap, .{});
+    b.getInstallStep().dependOn(&fake_dap_install.step);
+    const fake_dap_exe_name = b.fmt("mnml-fake-dap{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    build_options.addOption([]const u8, "fake_dap_exe", b.getInstallPath(.bin, fake_dap_exe_name));
+    tests_run.step.dependOn(&fake_dap_install.step);
+    e2e_run.step.dependOn(&fake_dap_install.step);
+    gate_in_test.step.dependOn(&fake_dap_install.step);
+    corpus_run.step.dependOn(&fake_dap_install.step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_dap_mod, .filters = test_filters })).step);
+    gate_step.dependOn(&b.addInstallArtifact(fake_dap, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_dap_exe_name }).step);
     // ── end sdk ──
 
 }
