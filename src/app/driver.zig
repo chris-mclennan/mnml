@@ -46,6 +46,7 @@ pub const AppDriver = struct {
                 .data_root = cfg.data_root,
                 .cols = cfg.cols,
                 .rows = cfg.rows,
+                .env = cfg.env,
                 // The runner made this workspace itself: its `.mnml/init.lua`
                 // is the script under test.
                 .workspace_trusted = true,

@@ -71,6 +71,16 @@ zig build                              # the binary
 ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60   # the width sweep
 ```
 
+The debugger has a real oracle too: `tools/fake_dap/` is
+`mnml-fake-dap`, a deterministic Debug Adapter that runs the launched
+file as a tiny line-oriented program (its `README.md` has the language
+and the requests). `zig build` installs it, `mnml-zig test` exports its
+path as `MNML_FAKE_DAP`, and the `dap_session_*.test` scripts seed
+`.mnml/config.zon` with `.dap.dbg.cmd = "$MNML_FAKE_DAP"` and a
+`prog.dbg` to stop, step, watch, evaluate and set variables through the
+real client and panes — no toolchain, the same events on every platform.
+A debug-UI change is tested against it, not against a hand-written reply.
+
 The corpus number must not go down. 225/226 is the current line (the
 one failure asserts TOML in a workspace config, by design); a change
 that drops it is not finished.

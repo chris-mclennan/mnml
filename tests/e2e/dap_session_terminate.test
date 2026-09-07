@@ -1,0 +1,21 @@
+# DAP session — pause and terminate. `sleep` runs until the debugger
+# pauses it: dap.run leaves the program running, dap.pause stops it on
+# the sleep line, dap.terminate ends the session and the debug pane is
+# back to its no-session state.
+write prog.dbg "let x = 1\nsleep\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+
+command dap.run
+expect screen contains "adapter"
+command dap.show
+expect screen contains "running"
+
+command dap.pause
+expect screen contains "dap: stopped (pause)"
+expect screen contains "prog.dbg:2  main"
+expect screen contains "x: int = 1"
+
+command dap.terminate
+expect screen contains "dap: terminated"
+expect screen contains "(no session"
