@@ -572,7 +572,21 @@ that the oldest slot reads `+K more…`.
   answering). `window/showMessage` toasts only MessageType 1 (Error), with
   Rust's `LSP: ` prefix, at the plain (info) level, the text verbatim.
   The `LSP N` statusline count is the live (`!transport.isDead()`) entries
-  of `app.lsp.servers`, unchanged.
+  of `app.lsp.servers`, unchanged. After a `didChange` the file's
+  `documentSymbol` is asked again once edits pause 150 ms
+  (`symbols_due`, `lsp.tick`) — the set behind the outline and the
+  statusline's `› name` follows the buffer; Rust's chip reads a live
+  regex outline instead. `$NAME` in `.lsp.<x>.cmd` / `.args` expands
+  from the environment (as a debug adapter's); an `.lsp` table written
+  to `.mnml/config.zon` after launch is read on the first miss
+  (`refreshServers`, trusted workspaces). `Server.deinit` waits up to
+  250 ms for the child to leave on `exit` before the pipes close.
+  `tools/fake_lsp/` (`mnml-fake-lsp`, `$MNML_FAKE_LSP`,
+  `build_options.fake_lsp_exe`) is the deterministic server the
+  `lsp_fake_*.test` scripts and the app integration test drive.
+- `// changed (render, 2026-09-07 lsp-fixture):` the toast stack moves up
+  one row while the flash cue is armed, as it does for the Undo chip —
+  both take the panes' last row, which the stack now sits on.
 - `// changed (app):` [superseded above] a language server is spawned only when a root
   marker is found for it (or its spec has none); the missing-binary toast
   (`LSP: <cmd> not installed — \`<hint>\``, once per server per session)

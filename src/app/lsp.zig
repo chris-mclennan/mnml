@@ -219,6 +219,10 @@ pub const State = struct {
     /// By absolute path (owned keys).
     diags: std.StringHashMapUnmanaged(*FileDiags) = .empty,
     symbols: std.StringHashMapUnmanaged(*SymbolSet) = .empty,
+    /// Files whose symbols are behind the buffer: the `didChange` went
+    /// out, `documentSymbol` follows once the typing pauses (owned keys,
+    /// the value the due time).
+    symbols_due: std.StringHashMapUnmanaged(i64) = .empty,
     completion: ?Completion = null,
     hover: ?Hover = null,
     peek: ?Peek = null,
@@ -273,6 +277,9 @@ pub const State = struct {
             e.value_ptr.*.destroy(gpa);
         }
         self.symbols.deinit(gpa);
+        var sd = self.symbols_due.keyIterator();
+        while (sd.next()) |k| gpa.free(k.*);
+        self.symbols_due.deinit(gpa);
         if (self.completion) |*c| c.destroy(gpa);
         if (self.hover) |*h| h.arena.deinit();
         if (self.peek) |*p| p.arena.deinit();
@@ -601,6 +608,7 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
             const new_text = text[@min(sp.start, text.len)..@min(sp.new_end, text.len)];
             s.didChange(path, &.{.{ .range = .{ .start = start, .end = end }, .text = new_text }}) catch {};
             ed.doc.lsp_seen = head;
+            markSymbolsDue(app, path);
             return;
         }
     } else if (!full and splices.len == 0) {
@@ -608,6 +616,40 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
     }
     s.didChange(path, &.{.{ .range = null, .text = text }}) catch {};
     ed.doc.lsp_seen = head;
+    markSymbolsDue(app, path);
+}
+
+/// After a `didChange`: the server's symbols for `path` (the outline,
+/// the statusline's `› name`) describe the old text. `documentSymbol`
+/// goes out again once the edits pause for `symbols_debounce_ms`
+/// (`tick`), so a burst of keystrokes costs one request, and a deleted
+/// function leaves the breadcrumb as it leaves the buffer — Rust's chip
+/// reads a live regex outline and never lags.
+fn markSymbolsDue(app: *App, path: []const u8) void {
+    if (!app.lsp.symbols.contains(path)) return;
+    const due = app.now_ms + symbols_debounce_ms;
+    if (app.lsp.symbols_due.getPtr(path)) |slot| {
+        slot.* = due;
+        return;
+    }
+    const key = app.gpa.dupe(u8, path) catch return;
+    app.lsp.symbols_due.put(app.gpa, key, due) catch app.gpa.free(key);
+}
+
+pub const symbols_debounce_ms: i64 = 150;
+
+/// The due symbol refreshes: one `documentSymbol` per quiet file.
+fn refreshDueSymbols(app: *App, now: i64) Allocator.Error!void {
+    if (app.lsp.symbols_due.count() == 0) return;
+    var ready: std.ArrayListUnmanaged([]const u8) = .empty;
+    const arena = app.frame.allocator();
+    var it = app.lsp.symbols_due.iterator();
+    while (it.next()) |e| if (now >= e.value_ptr.*) try ready.append(arena, e.key_ptr.*);
+    for (ready.items) |path| {
+        const kv = app.lsp.symbols_due.fetchRemove(path) orelse continue;
+        defer app.gpa.free(kv.key);
+        if (serverFor(app, kv.key)) |s| requestSymbols(app, s, kv.key);
+    }
 }
 
 // ─── events (D1: adopt or free, on every path) ──────────────────────────
@@ -719,6 +761,7 @@ fn runDeferred(app: *App, s: *Server) Allocator.Error!void {
 /// Per tick: a held command goes out once its server is ready and quiet
 /// past the grace, or at its deadline regardless.
 pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    try refreshDueSymbols(app, now);
     const d = app.lsp.deferred orelse return;
     if (d.not_before_ms == 0) return; // `initialize` has not answered
     for (app.lsp.servers.items) |s| if (s.id == d.server) {
@@ -2774,6 +2817,16 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
         fn closed(c: Probe) bool {
             return logHas(c, "textDocument/didClose\n");
         }
+        fn oneSymbol(c: Probe) bool {
+            var it = c.app.lsp.symbols.valueIterator();
+            const v = it.next() orelse return false;
+            return v.*.items.len == 1 and std.mem.eql(u8, v.*.items[0].name, "foo");
+        }
+        fn noSymbol(c: Probe) bool {
+            var it = c.app.lsp.symbols.valueIterator();
+            const v = it.next() orelse return false;
+            return v.*.items.len == 0;
+        }
     };
     try pumpUntil(&app, ctx, Cond.started, 5000);
     const s = app.lsp.servers.items[0];
@@ -2788,6 +2841,20 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     try testing.expectEqual(@as(usize, 1), n);
     try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "LSP: Failed to discover workspace.\nConsider adding the `Cargo.toml`"));
     try testing.expect(Cond.logHas(ctx, "initialize\ninitialized\ntextDocument/didOpen\n"));
+
+    // The symbols landed (`fn foo`); an edit that removes the function
+    // sends didChange from the frame and, after the debounce, asks
+    // again: the set empties, so the breadcrumb cannot name a deleted fn.
+    try pumpUntil(&app, ctx, Cond.oneSymbol, 5000);
+    try app.activeEditor().?.buf.editor.setText("let y = 2;\n");
+    var spent: u32 = 0;
+    while (!Cond.noSymbol(ctx)) : (spent += 10) {
+        if (spent > 5000) return error.Timeout;
+        try app.render();
+        try io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(io));
+    }
+    try testing.expect(Cond.logHas(ctx, "textDocument/didChange\ntextDocument/documentSymbol\n"));
 
     try command.run(&app, .{ .static = .@"buffer.close" });
     try pumpUntil(&app, ctx, Cond.closed, 2000);

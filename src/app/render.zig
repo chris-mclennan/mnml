@@ -426,10 +426,15 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
     try lsp.drawPopups(app, ui, panes_area);
-    // The Undo chip takes the toasts' spacer row; the stack sits above it.
+    // The stack sits on the panes' last row, against the statusline, as
+    // Rust's does. The Undo chip takes that row when it is up, and so
+    // does the flash cue (`drawFlashCue`, right-aligned there): the
+    // stack moves up one so neither is covered.
     var toast_area = panes_area;
     if (app.undo_chip) |u| {
         toast_mod.drawUndo(ui, panes_area, u.label);
+        toast_area.h -|= 1;
+    } else if (app.flash != null) {
         toast_area.h -|= 1;
     }
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
