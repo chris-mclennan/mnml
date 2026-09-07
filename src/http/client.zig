@@ -245,15 +245,21 @@ pub const SendOptions = struct {
 pub fn send(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Allocator.Error!Outcome {
     return sendInner(gpa, io, req, opts) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => .{ .err = try describe(gpa, err) },
+        else => .{ .err = try describe(gpa, err, req.url) },
     };
 }
 
-fn describe(gpa: Allocator, err: anyerror) Allocator.Error![]u8 {
+/// The words for a transport failure. A connect-class error (refused,
+/// unreachable, a name that does not resolve) reads as reqwest's does
+/// in Rust — `connection failed: error sending request for url (<url>)`
+/// — with the cause after it; the URL is what the user looks for.
+fn describe(gpa: Allocator, err: anyerror, url: []const u8) Allocator.Error![]u8 {
     const name = @errorName(err);
+    switch (err) {
+        error.ConnectionRefused, error.ConnectionResetByPeer, error.ConnectionTimedOut, error.NetworkUnreachable, error.HostUnreachable, error.UnknownHostName, error.NameServerFailure, error.TemporaryNameServerFailure, error.HostLacksNetworkAddresses => return std.fmt.allocPrint(gpa, "connection failed: error sending request for url ({s}): {s}", .{ url, name }),
+        else => {},
+    }
     const prefix: []const u8 = switch (err) {
-        error.ConnectionRefused, error.ConnectionResetByPeer, error.ConnectionTimedOut, error.NetworkUnreachable, error.HostUnreachable => "connection failed: ",
-        error.UnknownHostName, error.NameServerFailure, error.TemporaryNameServerFailure, error.HostLacksNetworkAddresses => "dns: ",
         error.TlsInitializationFailed, error.TlsFailure, error.CertificateBundleLoadFailure => "tls: ",
         error.UnsupportedUriScheme, error.UriMissingHost, error.InvalidFormat, error.InvalidPort, error.UnexpectedCharacter, error.InvalidMethod => "bad request: ",
         error.Canceled => "canceled: ",

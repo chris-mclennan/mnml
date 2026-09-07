@@ -3,24 +3,30 @@
 # tab on the left, a second tab on the right with its own strip; bringing
 # the right tab to the left swaps the halves so both stay visible; the
 # split is pane state and the orientation cycles with its own command.
+# The strips are Rust's: every label always shows, the active one
+# carries a `━` bar on the row below — so the halves are told apart by
+# the `│` between them and by what each half's content says.
 write anchor.txt anchor
 open anchor.txt
 command http.new
-expect screen contains "[Body]  Headers   Params"
-expect screen lacks "[Vars]"
+expect screen contains "Params  Body  Headers  Auth  Vars  Script"
+expect screen lacks "Script│"
+expect screen lacks "env: dev.env"
 command http.toggle_edit_split
 expect screen contains "edit split: Body | Vars"
-expect screen contains "[Body]  Headers   Params"
-expect screen contains "[Vars]"
+# Two strips: the left one ends at the divider, the right one follows
+# it; the right half is the Vars tab.
+expect screen contains "Script│  Params  Body"
+expect screen contains "env: dev.env"
 # Ctrl+5 (Vars) on the left swaps the halves: both tabs stay on screen.
 key ctrl+5
-expect screen contains "[Vars]  Script"
-expect screen contains "[Body]  Headers   Params"
+expect screen contains "Script│  Params  Body"
+expect screen contains "env: dev.env"
 # Off again: only the primary strip is left, and it now shows Vars.
 command http.toggle_edit_split
 expect screen contains "edit split: off"
-expect screen contains "[Vars]  Script"
-expect screen lacks "[Body]  Headers   Params"
+expect screen lacks "Script│"
+expect screen contains "env: dev.env"
 command http.toggle_split_orientation
 expect screen contains "request / response: vertical"
 command http.toggle_split_orientation

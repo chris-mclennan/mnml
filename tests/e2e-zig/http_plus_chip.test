@@ -9,11 +9,13 @@ expect screen contains "HTTP (0)"
 click 114 1
 expect screen contains "new request"
 expect screen contains "Send"
-rightclick 40 4
+# The Body content is row 9 (the Request box's strip is rows 7 / 8);
+# the URL box's text row is 4, from column 45 on this half-width pane.
+rightclick 40 9
 expect screen contains "╭ Body"
 expect screen contains "Paste curl from clipboard"
 key esc
-rightclick 40 2
+rightclick 50 4
 expect screen contains "╭ URL"
 key esc
 expect screen lacks "╭ URL"

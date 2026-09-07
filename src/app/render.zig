@@ -108,6 +108,7 @@ const files_pane = @import("files_pane.zig");
 const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
 const rail_mod = @import("../ui/activity_bar.zig");
+const icons = @import("../ui/icons.zig");
 
 /// Below this width the palette bar row is not painted at all (a tiny
 /// screen); Rust's chrome row needs its 48-cell cluster or shows the
@@ -141,10 +142,13 @@ pub const Button = enum(u32) {
     tabs_label = 10,
     theme_toggle = 11,
     window_close = 12,
-    /// The strip's right end: a shell, split right, split down.
+    /// The strip's right end: a shell, split right, split down, maximize.
     split_term = 13,
     split_right = 14,
     split_down = 15,
+    split_max = 16,
+    /// The strip's ` +N hidden ` chip: the buffer picker.
+    hidden_tabs = 17,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -512,18 +516,6 @@ fn integrationEnabled(app: *const App, id: []const u8) bool {
     return false;
 }
 
-/// The split buttons at the right end of the strip that touches the
-/// body's top-right corner (Rust paints them at the bufferline's right
-/// end); returns the width they took off it.
-fn drawSplitButtons(app: *App, ui: Ui, strip: Rect) Allocator.Error!u16 {
-    return bufferline.drawSplitButtons(ui, strip, .{
-        .term = @intFromEnum(Button.split_term),
-        .right = @intFromEnum(Button.split_right),
-        .down = @intFromEnum(Button.split_down),
-        .ai = try aiChips(app, ui),
-    });
-}
-
 // ── end palette bar ──
 
 fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
@@ -553,15 +545,82 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
     }
 }
 
-/// The tabs of leaf `lid` for the strip. The strip lists documents,
-/// not windows: a second window on a file already in the strip folds
-/// into the first tab (which is active when either window is).
-fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
+/// The icon a pane's tab carries — the Rust editor's `icon_for_pane`:
+/// a file's devicon, else one glyph per pane kind in its colour. A
+/// Request pane has none (its method pill is the identity) and hands
+/// back the method's colour for the pill.
+pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
+    const p = app.theme.palette;
+    // Each row names the `--ascii` twin first, then the glyph.
+    return switch (pane.*) {
+        .editor => |*e| icons.forName(std.fs.path.basename(e.buf.doc.path orelse "untitled"), false, false, ascii),
+        .md_preview => |*m| icons.forName(std.fs.path.basename(m.path), false, false, ascii),
+        .diff => kindIcon(ascii, "\u{B1}", "\u{F0E7E}", p.orange),
+        .git_graph => kindIcon(ascii, "\u{2387}", "\u{F02A2}", p.orange),
+        .git_status => kindIcon(ascii, "\u{B1}", "\u{F1D2}", p.green),
+        .request => |*r| .{ .glyph = "", .color = request_pane.methodColor(&app.theme, r.methodName()) },
+        .pty => kindIcon(ascii, bufferline.term_ascii, bufferline.term_glyph, p.green),
+        .ai, .ai_apply => kindIcon(ascii, "\u{2726}", "\u{F0E0A}", p.purple),
+        .tests => kindIcon(ascii, "\u{2713}", "\u{F0668}", p.green),
+        .browser => kindIcon(ascii, "\u{25C9}", "\u{F059F}", p.blue),
+        .grep => kindIcon(ascii, "\u{2315}", "\u{F0349}", p.yellow),
+        .flaky => kindIcon(ascii, "\u{224B}", "\u{F0668}", p.purple),
+        .outline => kindIcon(ascii, "\u{2325}", "\u{F01BD}", p.purple),
+        .files => kindIcon(ascii, "\u{25A4}", "\u{F0770}", p.blue),
+        .list => |*l| if (l.kind == .cmdline_history) kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment) else kindIcon(ascii, "\u{2315}", "\u{F0349}", p.teal),
+        .script => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
+        .cheatsheet => kindIcon(ascii, "?", "\u{F128}", p.yellow),
+        .debug => kindIcon(ascii, "\u{1F41B}", "\u{F188}", p.red),
+        .dap_repl => kindIcon(ascii, ">", "\u{F018D}", p.cyan),
+        .image => kindIcon(ascii, "\u{25A4}", "\u{F021F}", p.purple),
+        .claude_agents => kindIcon(ascii, "\u{25C6}", "\u{F06A9}", p.purple),
+        .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
+        .spend_report => kindIcon(ascii, "$", "\u{F01C2}", p.orange),
+        .mount => kindIcon(ascii, "M", "\u{F0BD3}", p.cyan),
+        .integrations, .marketplace => kindIcon(ascii, "\u{25C8}", "\u{F0431}", p.cyan),
+    };
+}
+
+/// One pane kind's glyph in its colour, or the `--ascii` twin.
+fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color) icons.Icon {
+    return .{ .glyph = if (ascii) twin else nerd, .color = color };
+}
+
+/// `✗N` / `⚠N` (or `●` under `dot`) for an editor with diagnostics,
+/// per `ui.bufferline_diag_style` — Rust's `diag_chip_for`.
+const DiagChip = struct { text: []const u8, severity: bufferline.Severity };
+
+fn diagChip(app: *App, ui: Ui, e: *EditorPane) DiagChip {
+    const none: DiagChip = .{ .text = "", .severity = .none };
+    if (app.cfg.ui.bufferline_diag_style == .off) return none;
+    const path = e.buf.doc.path orelse return none;
+    var err: usize = 0;
+    var warn: usize = 0;
+    for (lsp.diagnosticsFor(app, path)) |d| switch (d.severity) {
+        .err => err += 1,
+        .warning => warn += 1,
+        else => {},
+    };
+    if (err == 0 and warn == 0) return none;
+    const sev: bufferline.Severity = if (err > 0) .err else .warning;
+    if (app.cfg.ui.bufferline_diag_style == .dot) return .{ .text = bufferline.dirty_dot, .severity = sev };
+    return .{ .text = if (err > 0) ui.fmt("\u{2717}{d}", .{err}) else ui.fmt("\u{26A0}{d}", .{warn}), .severity = sev };
+}
+
+/// The tabs of leaf `lid` for the strip, as the painter wants them —
+/// one builder for the paint, the drop router and the wheel, so none
+/// can drift from the others. The strip lists documents, not windows:
+/// a second window on a file already in the strip folds into the first
+/// tab (which is active when either window is). A Request pane's title
+/// splits into the method pill and the rest.
+pub fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
     var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
     const leaf = layout.leaf(lid) orelse return tabs.items;
     for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
         const active = leaf.active == id;
+        var diag: bufferline.Severity = .none;
+        var diag_text: []const u8 = "";
         if (p.asEditor()) |e| {
             var folded = false;
             for (tabs.items) |*tab| {
@@ -572,94 +631,81 @@ fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Al
                 break;
             }
             if (folded) continue;
+            const d = diagChip(app, ui, e);
+            diag = d.severity;
+            diag_text = d.text;
         }
-        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = active, .kind = if (p.* == .pty) .pty else .file, .pinned = p.pinned() });
+        const icon = paneIcon(app, p, ui.ascii);
+        var title = p.title();
+        var verb: ?[]const u8 = null;
+        if (p.* == .request) if (std.mem.indexOfScalar(u8, title, ' ')) |sp| {
+            verb = title[0..sp];
+            title = std.mem.trimStart(u8, title[sp..], " ");
+        };
+        try tabs.append(ui.arena, .{
+            .id = id,
+            .title = title,
+            .glyph = icon.glyph,
+            .icon_color = icon.color,
+            .verb = verb,
+            .active = active,
+            .dirty = p.dirty(),
+            .pinned = p.pinned(),
+            .diag = diag_text,
+            .diag_severity = diag,
+        });
     }
     return tabs.items;
 }
 
+/// The split cluster's ids — the same four on every strip; a click
+/// focuses the leaf under it first (`dispatch`).
+fn splitIds(app: *App, ui: Ui) Allocator.Error!bufferline.SplitIds {
+    return .{
+        .term = @intFromEnum(Button.split_term),
+        .right = @intFromEnum(Button.split_right),
+        .down = @intFromEnum(Button.split_down),
+        .max = @intFromEnum(Button.split_max),
+        .ai = try aiChips(app, ui),
+    };
+}
+
+/// The markdown mode chip for the leaf's active pane: `  Preview ` on
+/// a markdown editor, ` ✏ Edit ` on a preview. A click is the command.
+fn modeChip(app: *App, ui: Ui, active: PaneId) ?bufferline.ModeChip {
+    const pane = app.panes.get(active) orelse return null;
+    return switch (pane.*) {
+        .md_preview => .{ .label = if (ui.ascii) " e Edit " else " \u{F044} Edit ", .button = md_preview.button_edit, .kind = .preview_md },
+        .editor => |*e| if (e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?)) .{ .label = if (ui.ascii) " p Preview " else " \u{F06E} Preview ", .button = md_preview.button_preview, .kind = .edit_md } else null,
+        else => null,
+    };
+}
+
 /// The leaf's tab strip. The window (`Leaf.strip_first`) is re-fitted
 /// to the active tab when that changed since the last paint, else it
-/// stays where the wheel / markers left it; what was painted goes back
+/// stays where the wheel / chevrons left it; what was painted goes back
 /// on the leaf so the wheel knows whether there is anything to scroll.
-fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId, li: usize, strip: Rect) void {
-    const tabs = tabsOf(app, ui, layout, lid) catch return;
-    var first: usize = 0;
-    if (layout.leaf(lid)) |leaf| {
-        if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
-            first = bufferline.fitActive(ui, strip, tabs, bufferline.plus_w);
-            leaf.strip_anchor = leaf.active;
-        } else first = leaf.strip_first;
-    }
-    const win = bufferline.draw(ui, strip, tabs, .{
+fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId, li: usize, strip: Rect) Allocator.Error!void {
+    const tabs = try tabsOf(app, ui, layout, lid);
+    const leaf = layout.leaf(lid) orelse return;
+    var opts: bufferline.Opts = .{
         .leaf = @intCast(li),
         .new_tab = Button.newTab(li),
-        .first = first,
+        .first = leaf.strip_first,
         .scroll_left = Button.tabScroll(li, .left),
         .scroll_right = Button.tabScroll(li, .right),
-    });
-    if (layout.leaf(lid)) |leaf| {
-        leaf.strip_first = win.first;
-        leaf.strip_hidden_right = win.hidden_right;
-    }
-}
-
-/// The markdown chip at the right end of the active leaf's strip:
-/// `✏ Edit` on a preview, ` Preview` on a markdown editor. A click is
-/// the command.
-fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
-    const active = app.active orelse return 0;
-    const pane = app.panes.get(active) orelse return 0;
-    const label: []const u8, const button: u32 = switch (pane.*) {
-        .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
-        .editor => |*e| if (e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
-        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
+        .split = try splitIds(app, ui),
+        .mode_chip = modeChip(app, ui, leaf.active),
+        .hidden_button = @intFromEnum(Button.hidden_tabs),
+        .zoomed = app.zen,
     };
-    const w = ui.width(label);
-    if (area.w < w + 2) return 0;
-    const r = Rect.init(area.right() - w, area.y, w, 1);
-    ui.fill(r, app.theme.chip);
-    _ = ui.putStr(r.x, r.y, w, label, app.theme.chip);
-    ui.hit(r, .{ .button = button });
-    return w;
-}
-
-/// `editor.breadcrumb`: the file's path as `dir › dir › name`, right-
-/// aligned on the active leaf's strip after the tabs, before the
-/// markdown chip. Painted only when the whole crumb fits past the tabs
-/// — a clipped path reads as a different file.
-fn drawBreadcrumb(app: *App, ui: Ui, pane: *app_mod.Pane, strip: Rect, reserved: u16) void {
-    const path = switch (pane.*) {
-        .editor => |*e| e.buf.doc.path orelse return,
-        .md_preview => |*m| m.path,
-        else => return,
-    };
-    const rel = app.relPath(path);
-    const sep: []const u8 = if (ui.ascii) " > " else " › ";
-    var crumb: std.ArrayListUnmanaged(u8) = .empty;
-    var it = std.mem.splitScalar(u8, rel, '/');
-    var first = true;
-    while (it.next()) |part| {
-        if (part.len == 0) continue;
-        if (!first) crumb.appendSlice(ui.arena, sep) catch return;
-        crumb.appendSlice(ui.arena, part) catch return;
-        first = false;
+    if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
+        opts.first = bufferline.fitActive(ui, strip, tabs, leaf.strip_first, opts);
+        leaf.strip_anchor = leaf.active;
     }
-    const text = ui.fmt(" {s} ", .{crumb.items});
-    const w = ui.width(text);
-    // The tabs' extent: the right edge of the last `.tab` / `+` hit on this row.
-    var tabs_end: u16 = strip.x;
-    for (app.hits.items.items) |h| {
-        if (h.rect.y != strip.y or h.rect.x < strip.x or h.rect.right() > strip.right()) continue;
-        if (h.target == .tab or (h.target == .button and render_button_is_new_tab(h.target.button))) tabs_end = @max(tabs_end, h.rect.right());
-    }
-    const right = strip.right() - reserved;
-    if (right < tabs_end + w + 1) return;
-    _ = ui.putStrRight(right, strip.y, w, text, Theme.onBg(app.theme.muted, app.theme.bufferline.bg));
-}
-
-fn render_button_is_new_tab(id: u32) bool {
-    return Button.newTabLeaf(id) != null;
+    const win = bufferline.draw(ui, strip, tabs, opts);
+    leaf.strip_first = win.first;
+    leaf.strip_hidden_right = win.hidden_right;
 }
 
 // ── welcome ──
@@ -791,9 +837,10 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         // An empty frame keeps the strip row so the `+` is where the
         // first tab will land.
         if (body.h >= 2) {
-            var strip = body.row(0);
-            strip.w -|= try drawSplitButtons(app, ui, strip);
-            _ = bufferline.draw(ui, strip, &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0) });
+            // Rust's empty strip has no maximize button.
+            var ids = try splitIds(app, ui);
+            ids.max = null;
+            _ = bufferline.draw(ui, body.row(0), &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0), .split = ids });
         }
         drawWelcome(app, ui, if (body.h >= 2) body.splitTop(1).rest else Rect.empty);
         return;
@@ -817,15 +864,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         var rect = pr.rect;
         if (rect.h >= 2 and !app.zen) {
             const s = rect.splitTop(1);
-            var strip = s.top;
-            // The strip in the body's top-right corner carries the
-            // split buttons (Rust: the bufferline's right end).
-            if (strip.y == body.y and strip.right() == body.right()) strip.w -|= try drawSplitButtons(app, ui, strip);
-            drawStrip(app, ui, layout, pr.leaf, li, strip);
-            if (app.active == pr.pane) {
-                const md_w = drawMdChip(app, ui, strip);
-                if (app.cfg.editor.breadcrumb) drawBreadcrumb(app, ui, pane, strip, md_w);
-            }
+            try drawStrip(app, ui, layout, pr.leaf, li, s.top);
             rect = s.rest;
         }
         switch (pane.*) {
@@ -1058,9 +1097,42 @@ fn wordMatches(arena: Allocator, ed: *const @import("../editor/editor.zig").Edit
     return out.items;
 }
 
+/// The breadcrumb's segments: the workspace-relative path's components
+/// (a file outside the workspace shows its whole path).
+pub fn breadcrumbNames(app: *App, arena: Allocator, path: []const u8) Allocator.Error![]const []const u8 {
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, app.relPath(path), '/');
+    while (it.next()) |part| if (part.len > 0) try names.append(arena, part);
+    return names.items;
+}
+
+/// The directory a breadcrumb segment opens: a directory segment
+/// itself, the file's segment its parent.
+pub fn breadcrumbDir(app: *App, arena: Allocator, path: []const u8, idx: usize) Allocator.Error!?[]const u8 {
+    const names = try breadcrumbNames(app, arena, path);
+    if (names.len == 0) return null;
+    const rel = app.relPath(path);
+    const root: []const u8 = if (rel.ptr == path.ptr) "/" else app.workspace;
+    const take = @min(idx + 1, names.len - 1);
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    try parts.append(arena, root);
+    try parts.appendSlice(arena, names[0..take]);
+    return try std.fs.path.join(arena, parts.items);
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
+    // ── breadcrumb ──
+    // The row under the strip: the file's path, one segment a target.
+    if (app.cfg.editor.breadcrumb and rect.h >= 3) if (e.buf.doc.path) |path| {
+        const names = try breadcrumbNames(app, arena, path);
+        if (names.len > 0) {
+            const s = rect.splitTop(editor_view.breadcrumb_h);
+            editor_view.drawBreadcrumb(ui, id, s.top, names);
+            rect = s.rest;
+        }
+    };
     // The find bar docks under the pane it belongs to.
     var bar: ?Rect = null;
     if (app.find_bar) |*fb| if (fb.pane == id and rect.h >= 2) {
@@ -1507,8 +1579,9 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     try t.expect(app.hits.at(5, 3).? == .editor_cell);
     try t.expect(app.hits.at(5, 1).? == .tab);
     try t.expectEqual(@as(u32, 0), app.hits.at(5, 1).?.tab.leaf);
-    // The `+` after the last tab, the mode chip on the statusline.
-    try t.expectEqual(Button.newTab(0), app.hits.at(12, 1).?.button);
+    // The `+` after the last tab (` glyph [scratch] × ` is 15 cells), the
+    // mode chip on the statusline.
+    try t.expectEqual(Button.newTab(0), app.hits.at(17, 1).?.button);
     try t.expectEqual(@as(u32, 0), app.hits.at(2, 6).?.statusline_seg);
     // gutter is max(digits, 3) + 2 = 5 cells; the cursor sits at col 2.
     try t.expectEqual(@as(u16, 7), app.cursor_pos.?.x);
@@ -1650,7 +1723,7 @@ test "ui toggles: cluster mode picks the full or compact right cluster; the AI c
     for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
 }
 
-test "ui toggles: the breadcrumb sits on the strip after the tabs and follows editor.breadcrumb" {
+test "ui toggles: the breadcrumb row under the strip follows editor.breadcrumb" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .cols = 80, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
@@ -1734,9 +1807,13 @@ test "the chrome row is the Rust dump's, cell for cell, at 120 and 80 columns; e
     try t.expect(std.mem.startsWith(u8, row1, " \u{F0415}"));
     try t.expect(std.mem.indexOf(u8, row1[0..std.mem.indexOfScalar(u8, row1, '\n').?], "\u{EA85}  \u{EB56}  \u{EB57}") != null);
     try t.expectEqual(Button.newTab(0), app.hits.at(1, 1).?.button);
-    try t.expectEqual(@intFromEnum(Button.split_term), app.hits.at(112, 1).?.button);
-    try t.expectEqual(@intFromEnum(Button.split_right), app.hits.at(115, 1).?.button);
-    try t.expectEqual(@intFromEnum(Button.split_down), app.hits.at(118, 1).?.button);
+    // The empty layout's cluster is Rust's three buttons — the
+    // maximize one joins once a pane is open (`rust-120x40.txt` row 1
+    // ends `  ` at columns 111 / 114 / 117).
+    try t.expectEqual(@intFromEnum(Button.split_term), app.hits.at(111, 1).?.button);
+    try t.expectEqual(@intFromEnum(Button.split_right), app.hits.at(114, 1).?.button);
+    try t.expectEqual(@intFromEnum(Button.split_down), app.hits.at(117, 1).?.button);
+    try t.expect(app.hits.at(110, 1) == null or app.hits.at(110, 1).?.button != @intFromEnum(Button.split_max));
     app.tree.visible = true;
     try app.render();
     try t.expectEqual(Button.newTab(0), app.hits.at(32, 1).?.button);

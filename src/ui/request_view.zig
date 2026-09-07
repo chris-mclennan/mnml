@@ -1,7 +1,33 @@
-//! The request pane's face: a Request block (method chip + URL row, the
-//! six-tab edit strip, the tab's content), a Response block (its own
-//! tab strip, the status chip, the body through `editor_view`), and an
-//! AI strip at the bottom. Paints a plain `Model` the app assembles —
+//! The request pane's face — the Rust editor's `request_view.rs`, cell
+//! for cell against `docs/ui-spec/rust-request-120x40.txt`:
+//!
+//! ```text
+//! ┌ Method ────┐┌ URL ────────────────────────────────────────┐┌ Send ──┐
+//! │  GET     ▼ ││ https://httpbin.org/get                     ││ ▶ Send │
+//! └────────────┘└─────────────────────────────────────────────┘└────────┘
+//! ┌─────────────────────────────────────────────────────[⇔]─[A ▥ ▤]─┐
+//! │  Params  Body  Headers  Auth  Vars  Script                      │
+//! │          ━━━━                                                   │
+//! │ 1                                                               │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ┌───────────────────────────────────────────── 200 OK  · 2ms · 49 B ┐
+//! │  Body  Headers 5  Cookies  Timeline  Tests      wrap   copy   JSON ▼  │
+//! │  ━━━━                                                           │
+//! │                                                                 │
+//! │ 1 {                                                             │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ┌ AI ─────────────────────────────────────────────────────────────┐
+//! │ click here to ask a custom question   · `a` quick debug         │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! A blank row, then the top bar of bordered boxes (Method / URL /
+//! Send; from 95 cells also Env / Save / Clear / Copy as…; under 44
+//! Method and URL alone), then the Request box — its tab strip with a
+//! `━` bar under the active tab, the tab's content — and the Response
+//! box (its own strip, the status title on its top border once a
+//! response is in), stacked, or side by side from 100 cells, and the
+//! AI box at the bottom. Paints a plain `Model` the app assembles —
 //! this file never sees `App`, `Buffer` or a request object.
 //!
 //! Hits are `.script_hit{ pane, id }`; the ids are the `hit_*` consts
@@ -15,6 +41,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const text_field = @import("text_field.zig");
 const editor_view = @import("editor_view.zig");
+const border = @import("border.zig");
 const ids = @import("../core/ids.zig");
 
 pub const Style = vaxis.Style;
@@ -23,32 +50,38 @@ pub const Caret = text_field.Caret;
 pub const PaneId = ids.PaneId;
 
 pub const EditTab = enum {
+    params,
     body,
     headers,
-    params,
     auth,
     vars,
     source,
 
-    pub const all = [_]EditTab{ .body, .headers, .params, .auth, .vars, .source };
+    /// Rust's strip order.
+    pub const all = [_]EditTab{ .params, .body, .headers, .auth, .vars, .source };
 
     pub fn label(t: EditTab) []const u8 {
         return switch (t) {
+            .params => "Params",
             .body => "Body",
             .headers => "Headers",
-            .params => "Params",
             .auth => "Auth",
             .vars => "Vars",
             .source => "Script",
         };
     }
 
+    fn index(t: EditTab) usize {
+        for (all, 0..) |x, i| if (x == t) return i;
+        unreachable;
+    }
+
     pub fn next(t: EditTab) EditTab {
-        return all[(@intFromEnum(t) + 1) % all.len];
+        return all[(t.index() + 1) % all.len];
     }
 
     pub fn prev(t: EditTab) EditTab {
-        return all[(@intFromEnum(t) + all.len - 1) % all.len];
+        return all[(t.index() + all.len - 1) % all.len];
     }
 
     /// A tab whose content is a text buffer the caret lives in.
@@ -93,7 +126,7 @@ pub const Field = enum { url, method, content };
 
 pub const Pair = struct { key: []const u8, value: []const u8 };
 
-/// The inline key / value row being typed on the Params or Headers tab.
+/// The inline key / value row being typed on the Params tab.
 pub const Draft = struct {
     key: []const u8,
     value: []const u8,
@@ -105,10 +138,10 @@ pub const Draft = struct {
 pub const AuthRow = struct { id: []const u8, label: []const u8, glyph: []const u8 };
 
 pub const auth_rows = [_]AuthRow{
-    .{ .id = "set_bearer", .label = "Set Bearer token…", .glyph = "+" },
-    .{ .id = "set_basic", .label = "Set Basic auth…", .glyph = "+" },
-    .{ .id = "set_api_key", .label = "Set X-Api-Key…", .glyph = "+" },
-    .{ .id = "clear", .label = "Clear Authorization", .glyph = "×" },
+    .{ .id = "set_bearer", .label = "Set Bearer token\u{2026}", .glyph = "+" },
+    .{ .id = "set_basic", .label = "Set Basic auth (user:pass)\u{2026}", .glyph = "+" },
+    .{ .id = "set_api_key", .label = "Set X-Api-Key\u{2026}", .glyph = "+" },
+    .{ .id = "clear", .label = "Clear Authorization", .glyph = "\u{00D7}" },
 };
 
 pub const VarRow = struct { name: []const u8, value: ?[]const u8 };
@@ -128,11 +161,15 @@ pub const VarSpan = struct { start: usize, end: usize, resolved: bool, id: u32 }
 /// the left half's share in percent, `scroll` its own row offset.
 pub const SplitModel = struct { tab: EditTab, ratio: u8, scroll: *usize };
 
-/// How the Request and Response blocks share the pane.
+/// How the Request and Response blocks share the pane — Rust's
+/// `SplitOrientation`: `auto` stacks under 100 cells and goes side by
+/// side from there.
 pub const Orientation = enum {
     auto,
     vertical,
     horizontal,
+
+    pub const auto_horizontal_threshold: u16 = 100;
 
     pub fn next(o: Orientation) Orientation {
         return switch (o) {
@@ -149,6 +186,13 @@ pub const Orientation = enum {
             .horizontal => "horizontal (side by side)",
         };
     }
+
+    pub fn resolve(o: Orientation, w: u16) Orientation {
+        return switch (o) {
+            .auto => if (w >= auto_horizontal_threshold) .horizontal else .vertical,
+            else => o,
+        };
+    }
 };
 
 pub const ResponseModel = struct {
@@ -156,6 +200,7 @@ pub const ResponseModel = struct {
     status_text: []const u8,
     headers: []const Pair,
     body: []const u8,
+    /// The size the title shows: the body as it came off the wire.
     body_bytes: usize,
     truncated: bool,
     timing: Timing,
@@ -164,7 +209,6 @@ pub const ResponseModel = struct {
     spans: []const editor_view.Span = &.{},
     /// `✓ schema valid` / `✗ 2 schema error(s)` / assertion lines.
     tests: []const []const u8 = &.{},
-    footer: ?[]const u8 = null,
 };
 
 pub const Model = struct {
@@ -188,6 +232,8 @@ pub const Model = struct {
     auth_current: ?[]const u8,
     vars: []const VarRow,
     env_name: ?[]const u8,
+    /// The env came from a session override (the Env box paints cyan).
+    env_override: bool = false,
     /// Scroll of the text tabs' content (rows).
     edit_scroll: *usize,
     sending: bool,
@@ -203,7 +249,6 @@ pub const Model = struct {
     body_wrap: bool,
     focused: bool,
     source_path: ?[]const u8,
-    ai_hint: []const u8 = "ask Claude about this request — lands in Phase 7",
     /// `{{VAR}}` tokens per text field; `id`s index one flat list the
     /// app keeps beside the model.
     url_vars: []const VarSpan = &.{},
@@ -211,6 +256,17 @@ pub const Model = struct {
     headers_vars: []const VarSpan = &.{},
     split: ?SplitModel = null,
     orientation: Orientation = .auto,
+
+    /// Never fired: Rust's "not sent yet" placeholder state.
+    pub fn idle(m: Model) bool {
+        return m.response == null and !m.sending and m.failed == null and m.stream == null;
+    }
+
+    /// A URL `{{VAR}}` the env does not resolve (the Env box paints yellow).
+    fn urlUnresolved(m: Model) bool {
+        for (m.url_vars) |v| if (!v.resolved) return true;
+        return false;
+    }
 };
 
 // ── hit ids ──
@@ -222,9 +278,21 @@ pub const hit_env: u32 = 13;
 pub const hit_wrap: u32 = 14;
 pub const hit_split_toggle: u32 = 15;
 pub const hit_split_divider: u32 = 16;
-pub const hit_split_tab_base: u32 = 40; // + EditTab index (the right half's strip)
 pub const hit_resp_tab_base: u32 = 20; // + ResponseTab index
 pub const hit_resp_body: u32 = 30;
+pub const hit_split_tab_base: u32 = 40; // + EditTab index (the right half's strip)
+/// The Request box's `[A ▥ ▤]` chip: the next orientation.
+pub const hit_orient: u32 = 50;
+/// The AI box, and the response strip's `⚡ AI` chip.
+pub const hit_ai: u32 = 51;
+pub const hit_ai_chip: u32 = 52;
+/// The response strip's `copy` chip and its type chip.
+pub const hit_copy: u32 = 53;
+pub const hit_type: u32 = 54;
+/// The top bar's Save / Clear / Copy as… boxes.
+pub const hit_save: u32 = 55;
+pub const hit_clear: u32 = 56;
+pub const hit_code: u32 = 57;
 pub const hit_param_row: u32 = 100; // + row
 pub const hit_auth_row: u32 = 200; // + row
 pub const hit_var_row: u32 = 300; // + row
@@ -235,12 +303,14 @@ pub const hit_content: u32 = 402;
 pub const hit_edit_area: u32 = 403;
 /// The right half's text content: a click there swaps the halves.
 pub const hit_split_content: u32 = 404;
+/// The Params table's `+ Add row` and the draft row's `✓`.
+pub const hit_add_row: u32 = 405;
+pub const hit_draft_commit: u32 = 406;
+/// A Params row's `✕`.
+pub const hit_param_del: u32 = 500; // + row
 pub const hit_var_base: u32 = 1000; // + VarSpan.id
 
-pub const ai_rows: u16 = 2;
-pub const min_request_rows: u16 = 5;
-
-/// The status chip's colours by class.
+/// The status chip's colours by class (the HTTP panel's recent rows).
 pub fn statusStyle(t: *const Theme, status: u16) Style {
     const ink: Color = .{ .rgb = .{ 0x1e, 0x22, 0x27 } };
     const bg: Color = switch (status / 100) {
@@ -253,191 +323,632 @@ pub fn statusStyle(t: *const Theme, status: u16) Style {
     return .{ .fg = ink, .bg = bg, .bold = true };
 }
 
-/// How the pane splits: the request block, the response block, the AI
-/// strip. The request block takes what its content needs up to 45 %.
-pub const Zones = struct { request: Rect, response: Rect, ai: Rect };
+// ─── layout ─────────────────────────────────────────────────────────────
+
+/// Which boxes the top bar has room for — Rust's `TopBarTier`.
+pub const Tier = enum { full, medium, small, none };
+
+const method_w: u16 = 14;
+const min_url_w: u16 = 20;
+const env_w: u16 = 14;
+const send_w: u16 = 10;
+const save_w: u16 = 10;
+const clear_w: u16 = 11;
+const code_w: u16 = 16;
+const full_w: u16 = method_w + min_url_w + env_w + send_w + save_w + clear_w + code_w;
+const medium_w: u16 = method_w + min_url_w + send_w;
+const small_w: u16 = method_w + min_url_w;
+
+pub fn tierFor(w: u16, h: u16) Tier {
+    if (h < 3) return .none;
+    if (w >= full_w) return .full;
+    if (w >= medium_w) return .medium;
+    if (w >= small_w) return .small;
+    return .none;
+}
+
+/// The pane's zones: a blank row (from 8 rows), the top bar, the two
+/// blocks, the AI box — Rust's `draw` geometry.
+pub const Zones = struct { top: Rect, request: Rect, response: Rect, ai: Rect, tier: Tier };
 
 pub fn zones(area: Rect, m: Model) Zones {
-    var rest = area;
-    var ai = Rect.empty;
-    if (rest.h >= min_request_rows + ai_rows + 3) {
-        const s = rest.splitBottom(ai_rows);
-        ai = s.rest;
-        rest = s.top;
+    const pad: u16 = if (area.h >= 8) 1 else 0;
+    const top_h: u16 = @min(3, area.h -| pad);
+    const ai_h: u16 = @min(3, area.h -| pad -| top_h);
+    const middle: u16 = area.h -| pad -| top_h -| ai_h;
+    const top = Rect.init(area.x, area.y + pad, area.w, top_h);
+    const ai = Rect.init(area.x, area.y + pad + top_h + middle, area.w, ai_h);
+    const mid_y = area.y + pad + top_h;
+    var request: Rect = undefined;
+    var response: Rect = undefined;
+    switch (m.orientation.resolve(area.w)) {
+        .horizontal => {
+            const req_w = area.w / 2;
+            request = Rect.init(area.x, mid_y, req_w, middle);
+            response = Rect.init(area.x + req_w, mid_y, area.w - req_w, middle);
+        },
+        else => {
+            const req_h = @max(middle / 2, @min(6, middle));
+            request = Rect.init(area.x, mid_y, area.w, req_h);
+            response = Rect.init(area.x, mid_y + req_h, area.w, middle - req_h);
+        },
     }
-    if (m.orientation == .horizontal and rest.w >= 40) {
-        const req_w: u16 = @max(rest.w * 45 / 100, 20);
-        const s = rest.splitLeft(req_w);
-        return .{ .request = s.left, .response = s.rest, .ai = ai };
-    }
-    const content_rows: u16 = switch (m.edit_tab) {
-        .body => @intCast(@min(std.mem.count(u8, m.body, "\n") + 2, 12)),
-        .headers => @intCast(@min(std.mem.count(u8, m.headers_text, "\n") + 2, 12)),
-        .source => @intCast(@min(std.mem.count(u8, m.source, "\n") + 2, 12)),
-        .params => @intCast(@min(m.params.len + 2, 12)),
-        .auth => 6,
-        .vars => @intCast(@min(m.vars.len + 2, 12)),
-    };
-    const want: u16 = 3 + @max(content_rows, 3); // header + tabs + content
-    const cap: u16 = @max(rest.h * 45 / 100, min_request_rows);
-    const req_h: u16 = @min(@min(want, cap), rest.h);
-    const s = rest.splitTop(req_h);
-    return .{ .request = s.top, .response = s.rest, .ai = ai };
+    return .{ .top = top, .request = request, .response = response, .ai = ai, .tier = tierFor(top.w, top.h) };
+}
+
+/// Where the Request box's edit content is (under its strip), for the
+/// app's divider drag.
+pub fn editArea(area: Rect, m: Model) ?Rect {
+    const inner = zones(area, m).request.inset(1);
+    if (inner.h <= 2 or inner.w == 0) return null;
+    return Rect.init(inner.x, inner.y + 2, inner.w, inner.h - 2);
+}
+
+// ─── boxes ──────────────────────────────────────────────────────────────
+
+fn frameStyle(ui: Ui) Style {
+    const p = ui.theme.palette;
+    return .{ .fg = p.bg3, .bg = p.bg_dark };
+}
+
+/// Rust's `bordered_plain(title)`: a plain frame in `bg3`, the title
+/// ` title ` in the comment colour on the top edge; the inner rect.
+fn box(ui: Ui, r: Rect, title: []const u8) Rect {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return r.inset(1);
+    ui.fill(r, .{ .bg = p.bg_dark });
+    const kind: border.Kind = if (ui.ascii) .ascii else .single;
+    if (title.len == 0) return border.draw(ui.canvas, r, kind, frameStyle(ui), null);
+    const segs = [_]border.Segment{.{ .text = ui.fmt(" {s} ", .{title}), .style = .{ .fg = p.comment, .bg = p.bg_dark } }};
+    return border.draw(ui.canvas, r, kind, frameStyle(ui), &segs);
+}
+
+/// A one-row box whose text is centred — the Send / Save / Clear /
+/// Copy as… boxes.
+fn labelBox(ui: Ui, pane: PaneId, r: Rect, title: []const u8, text: []const u8, color: Color, hit: u32) void {
+    const p = ui.theme.palette;
+    const inner = box(ui, r, title);
+    if (inner.isEmpty()) return;
+    const w = ui.width(text);
+    const x = inner.x + (inner.w -| w) / 2;
+    _ = ui.putStr(x, inner.y, inner.right() -| x, text, .{ .fg = color, .bg = p.bg_dark, .bold = true });
+    ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit } });
 }
 
 pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
-    const t = ui.theme;
-    ui.fill(area, t.bg);
+    const p = ui.theme.palette;
+    ui.fill(area, .{ .bg = p.bg_dark });
     if (area.isEmpty()) return null;
     const z = zones(area, m);
-    var caret: ?Caret = null;
-    if (drawRequest(ui, pane, z.request, m)) |c| caret = c;
-    drawResponse(ui, pane, z.response, m);
-    drawAi(ui, z.ai, m);
-    return if (m.focused) caret else null;
+    const url_caret = drawTopBar(ui, pane, z, m);
+    const edit_caret = drawRequestBox(ui, pane, z.request, m);
+    drawResponseBox(ui, pane, z.response, m);
+    drawAiBox(ui, pane, z.ai);
+    if (!m.focused) return null;
+    // The URL box's caret wins when both are set (the pane's default
+    // focus is the URL).
+    return url_caret orelse edit_caret;
 }
 
-fn drawRequest(ui: Ui, pane: PaneId, r: Rect, m: Model) ?Caret {
-    const t = ui.theme;
-    if (r.h == 0) return null;
-    const active_block = m.focused and m.block == .request;
+// ─── the top bar ────────────────────────────────────────────────────────
+
+/// `[Method][URL][Env][Send][Save][Clear][Copy as…]` across the top,
+/// fewer boxes as the pane narrows.
+fn drawTopBar(ui: Ui, pane: PaneId, z: Zones, m: Model) ?Caret {
+    const p = ui.theme.palette;
+    const r = z.top;
+    if (z.tier == .none) return null;
+    const y = r.y;
     var caret: ?Caret = null;
-
-    // ── row 0: method chip · URL · Send ──
-    const row0 = r.row(0);
-    ui.fill(row0, t.bg);
-    var x = row0.x + 1;
-    const method_label = ui.fmt(" {s} ", .{m.method});
-    const mw = ui.width(method_label);
-    const method_style: Style = if (active_block and m.field == .method) Theme.onBg(t.chip_active, t.chip_active.bg) else t.chip;
-    var ms = method_style;
-    ms.bold = true;
-    _ = ui.putStr(x, row0.y, mw, method_label, ms);
-    ui.hit(Rect.init(x, row0.y, mw, 1), .{ .script_hit = .{ .pane = pane, .id = hit_method } });
-    x += mw + 1;
-    const send_label: []const u8 = if (m.sending) " ⋯ " else if (ui.ascii) " Send " else " Send ⏎ ";
-    const sw = ui.width(send_label);
-    const url_w = row0.right() -| (x + sw + 2);
-    const url_rect = Rect.init(x, row0.y, url_w, 1);
-    const url_focused = active_block and m.field == .url;
-    const url_style = if (url_focused) Theme.onBg(t.fg, t.cursor_line.bg) else t.fg;
-    if (text_field.draw(ui, url_rect, m.url, m.url_caret, .{ .style = url_style, .placeholder = "https://… (press Ctrl+Enter to send)", .focused = url_focused })) |c| caret = c;
-    ui.hit(url_rect, .{ .script_hit = .{ .pane = pane, .id = hit_url } });
-    paintVarsOnField(ui, pane, url_rect, m.url, if (url_focused) m.url_caret else 0, m.url_vars, url_style.bg);
-    if (row0.w > sw + mw + 6) {
-        const sx = row0.right() - sw - 1;
-        const send_style = Theme.onBg(t.accent, t.chip.bg);
-        _ = ui.putStr(sx, row0.y, sw, send_label, send_style);
-        ui.hit(Rect.init(sx, row0.y, sw, 1), .{ .script_hit = .{ .pane = pane, .id = hit_send } });
-    }
-    if (r.h == 1) return caret;
-
-    // ── row 1: the edit tab strip + env chip ──
-    const row1 = r.row(1);
-    ui.fill(row1, t.bg);
-    x = row1.x + 1;
-    for (EditTab.all, 0..) |tab, i| {
-        const active = tab == m.edit_tab;
-        const label = if (active) ui.fmt("[{s}]", .{tab.label()}) else ui.fmt(" {s} ", .{tab.label()});
-        const w = ui.width(label);
-        if (x + w > row1.right()) break;
-        var st = if (active) t.accent else t.muted;
-        if (active) st.bold = true;
-        _ = ui.putStr(x, row1.y, w, label, st);
-        ui.hit(Rect.init(x, row1.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_tab_base + @as(u32, @intCast(i)) } });
-        x += w + 1;
-    }
-    var right_edge = row1.right();
-    if (m.env_name) |env| {
-        const chip = ui.fmt(" env: {s} ", .{env});
-        const cw = ui.width(chip);
-        if (right_edge > x + cw + 1) {
-            const cx = right_edge - cw - 1;
-            _ = ui.putStr(cx, row1.y, cw, chip, t.chip);
-            ui.hit(Rect.init(cx, row1.y, cw, 1), .{ .script_hit = .{ .pane = pane, .id = hit_env } });
-            right_edge = cx;
-        }
-    }
-    {
-        const chip: []const u8 = if (ui.ascii) " <> " else " ⇔ ";
-        const cw = ui.width(chip);
-        if (right_edge > x + cw + 1) {
-            const cx = right_edge - cw - 1;
-            _ = ui.putStr(cx, row1.y, cw, chip, if (m.split != null) Theme.onBg(t.accent, t.chip.bg) else t.chip);
-            ui.hit(Rect.init(cx, row1.y, cw, 1), .{ .script_hit = .{ .pane = pane, .id = hit_split_toggle } });
-        }
-    }
-    if (r.h == 2) return caret;
-
-    // ── rows 2..: the tab's content — one half, or two side by side ──
-    const content = Rect.init(r.x, r.y + 2, r.w, r.h - 2);
-    ui.hit(content, .{ .script_hit = .{ .pane = pane, .id = hit_edit_area } });
-    const content_focused = active_block and m.field == .content;
-    // The URL caret from row 0 stands unless the content has one.
-    const split = m.split orelse {
-        return drawTabContent(ui, pane, content, m.edit_tab, m, content_focused, m.edit_scroll, false) orelse caret;
+    const method_r = Rect.init(r.x, y, method_w, r.h);
+    const tail: u16 = switch (z.tier) {
+        .full => env_w + send_w + save_w + clear_w + code_w,
+        .medium => send_w,
+        .small, .none => 0,
     };
-    if (content.w < 16) return drawTabContent(ui, pane, content, m.edit_tab, m, content_focused, m.edit_scroll, false) orelse caret;
-    const left_w: u16 = @intCast(std.math.clamp(@as(u32, content.w) * split.ratio / 100, 6, content.w - 7));
-    const left = Rect.init(content.x, content.y, left_w, content.h);
-    const divider = Rect.init(content.x + left_w, content.y, 1, content.h);
-    const right = Rect.init(content.x + left_w + 1, content.y, content.w - left_w - 1, content.h);
-    if (drawTabContent(ui, pane, left, m.edit_tab, m, content_focused, m.edit_scroll, false)) |c| caret = c;
-    const dstyle = if (ui.hovered(divider)) t.accent else t.border;
-    var dy = divider.y;
-    while (dy < divider.bottom()) : (dy += 1) _ = ui.putStr(divider.x, dy, 1, if (ui.ascii) "|" else "│", dstyle);
-    ui.hit(divider, .{ .script_hit = .{ .pane = pane, .id = hit_split_divider } });
-    // The right half's own strip, then its content.
-    const strip = right.row(0);
-    var sx = strip.x + 1;
-    for (EditTab.all, 0..) |tab, i| {
-        const active = tab == split.tab;
-        const label = if (active) ui.fmt("[{s}]", .{tab.label()}) else ui.fmt(" {s} ", .{tab.label()});
-        const w = ui.width(label);
-        if (sx + w > strip.right()) break;
-        _ = ui.putStr(sx, strip.y, w, label, if (active) t.accent else t.muted);
-        ui.hit(Rect.init(sx, strip.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_split_tab_base + @as(u32, @intCast(i)) } });
-        sx += w + 1;
+    const url_w = r.w -| method_w -| tail;
+    const url_r = Rect.init(r.x + method_w, y, url_w, r.h);
+    // Method: the verb as a chip in its colour, a `▼` at the right.
+    {
+        const inner = box(ui, method_r, "Method");
+        if (!inner.isEmpty()) {
+            const chip = ui.fmt(" {s} ", .{m.method});
+            var x = inner.x + 1;
+            x += ui.putStr(x, inner.y, inner.right() -| x, chip, .{ .fg = p.bg_dark, .bg = methodColor(p, m.method), .bold = true });
+            if (inner.right() >= 2) _ = ui.putStr(inner.right() - 2, inner.y, 1, "\u{25BC}", .{ .fg = p.comment, .bg = p.bg_dark });
+            ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit_method } });
+        }
     }
-    if (right.h > 1) _ = drawTabContent(ui, pane, Rect.init(right.x, right.y + 1, right.w, right.h - 1), split.tab, m, false, split.scroll, true);
+    // URL: the text one cell in, its `{{VAR}}`s in their colours.
+    {
+        const inner = box(ui, url_r, "URL");
+        if (!inner.isEmpty() and inner.w > 1) {
+            const field = Rect.init(inner.x + 1, inner.y, inner.w - 1, 1);
+            const focused = m.focused and m.block == .request and m.field == .url;
+            const style: Style = .{ .fg = p.fg, .bg = p.bg_dark };
+            ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit_url } });
+            if (m.url.len == 0) {
+                _ = ui.putStr(field.x, field.y, field.w, "Enter request URL", .{ .fg = p.comment, .bg = p.bg_dark, .italic = true });
+                if (focused) caret = .{ .x = field.x, .y = field.y };
+            } else {
+                if (text_field.draw(ui, field, m.url, m.url_caret, .{ .style = style, .placeholder = "", .focused = focused })) |c| caret = c;
+                paintVarsOnField(ui, pane, field, m.url, if (focused) m.url_caret else 0, m.url_vars, p.bg_dark);
+            }
+        }
+    }
+    if (z.tier == .small) return caret;
+    var x = url_r.right();
+    if (z.tier == .full) {
+        // Env: the name, `▾`; yellow with an unresolved URL var, cyan
+        // under a session override.
+        const inner = box(ui, Rect.init(x, y, env_w, r.h), "Env");
+        if (!inner.isEmpty()) {
+            const name = m.env_name orelse "none";
+            const short = if (ui.width(name) > 6) ui.fmt("{s}\u{2026}", .{ui.clipStr(name, 5)}) else name;
+            const text = ui.fmt(" {s} \u{25BE} ", .{short});
+            const color = if (m.urlUnresolved()) p.yellow else if (m.env_name == null) p.comment else if (m.env_override) p.cyan else p.fg;
+            const w = ui.width(text);
+            const tx = inner.x + (inner.w -| w) / 2;
+            _ = ui.putStr(tx, inner.y, inner.right() -| tx, text, .{ .fg = color, .bg = p.bg_dark, .bold = true });
+            ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit_env } });
+        }
+        x += env_w;
+    }
+    // Send: `▶ Send` — green when there is a URL, dim without one,
+    // `⟳  Abort` in yellow while a send is out.
+    {
+        const url_empty = std.mem.trim(u8, m.url, " \t").len == 0;
+        const text: []const u8 = if (m.sending) " \u{27F3}  Abort " else if (ui.ascii) " > Send " else " \u{25B6} Send ";
+        const color = if (m.sending) p.yellow else if (m.stream != null) p.cyan else if (url_empty) p.comment else p.green;
+        labelBox(ui, pane, Rect.init(x, y, send_w, r.h), "Send", text, color, hit_send);
+        x += send_w;
+    }
+    if (z.tier == .full) {
+        const url_empty = std.mem.trim(u8, m.url, " \t").len == 0;
+        labelBox(ui, pane, Rect.init(x, y, save_w, r.h), "Save", " \u{2398} Save ", if (url_empty) p.comment else p.blue, hit_save);
+        x += save_w;
+        labelBox(ui, pane, Rect.init(x, y, clear_w, r.h), "Clear", " \u{2715} Clear ", p.orange, hit_clear);
+        x += clear_w;
+        labelBox(ui, pane, Rect.init(x, y, code_w, r.h), "Copy as\u{2026}", " </> Copy as\u{2026} ", p.purple, hit_code);
+    }
     return caret;
 }
 
-/// One edit tab's content into `r`. `secondary` is the split's right
-/// half: no caret, and its text area registers `hit_split_content` so
-/// a click there brings the tab to the left.
-fn drawTabContent(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool, scroll: *usize, secondary: bool) ?Caret {
-    const t = ui.theme;
+/// The method's colour — Rust's `method_color`: GET green, POST orange,
+/// PUT blue, PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple.
+pub fn methodColor(p: Theme.Palette, m: []const u8) Color {
+    const Row = struct { name: []const u8, color: Color };
+    const rows = [_]Row{
+        .{ .name = "GET", .color = p.green },      .{ .name = "POST", .color = p.orange }, .{ .name = "PUT", .color = p.blue },
+        .{ .name = "PATCH", .color = p.cyan },     .{ .name = "DELETE", .color = p.red },  .{ .name = "HEAD", .color = p.yellow },
+        .{ .name = "OPTIONS", .color = p.purple },
+    };
+    for (rows) |r| if (std.ascii.eqlIgnoreCase(r.name, m)) return r.color;
+    return p.blue;
+}
+
+// ─── the Request box ────────────────────────────────────────────────────
+
+fn drawRequestBox(ui: Ui, pane: PaneId, r: Rect, m: Model) ?Caret {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return null;
+    const inner = box(ui, r, "");
+    // The chips on the top border: `[A ▥ ▤]` two cells in from the
+    // corner, `[⇔]` one cell left of it.
+    if (r.w >= 7 + 4) {
+        const ox = r.right() - 7 - 2;
+        const bracket: Style = .{ .fg = p.bg3, .bg = p.bg_dark };
+        const on: Style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true };
+        const off: Style = .{ .fg = p.comment, .bg = p.bg_dark };
+        const ground: Style = .{ .bg = p.bg_dark };
+        var x = ox;
+        x += ui.putStr(x, r.y, 1, "[", bracket);
+        x += ui.putStr(x, r.y, 1, "A", if (m.orientation == .auto) on else off);
+        x += ui.putStr(x, r.y, 1, " ", ground);
+        x += ui.putStr(x, r.y, 1, if (ui.ascii) "-" else "\u{25A5}", if (m.orientation == .vertical) on else off);
+        x += ui.putStr(x, r.y, 1, " ", ground);
+        x += ui.putStr(x, r.y, 1, if (ui.ascii) "|" else "\u{25A4}", if (m.orientation == .horizontal) on else off);
+        _ = ui.putStr(x, r.y, 1, "]", bracket);
+        ui.hit(Rect.init(ox, r.y, 7, 1), .{ .script_hit = .{ .pane = pane, .id = hit_orient } });
+        if (ox > r.x + 4) {
+            const sx = ox - 3 - 1;
+            _ = ui.putStr(sx, r.y, 1, "[", bracket);
+            _ = ui.putStr(sx + 1, r.y, 1, if (ui.ascii) "=" else "\u{21D4}", if (m.split != null) on else off);
+            _ = ui.putStr(sx + 2, r.y, 1, "]", bracket);
+            ui.hit(Rect.init(sx, r.y, 3, 1), .{ .script_hit = .{ .pane = pane, .id = hit_split_toggle } });
+        }
+    }
+    if (inner.isEmpty()) return null;
+    ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit_edit_area } });
+    const focused = m.focused and m.block == .request and m.field == .content;
+    const split = m.split orelse return drawEdit(ui, pane, inner, m.edit_tab, m, focused, m.edit_scroll, false);
+    // Side by side from 49 cells: each half its own strip.
+    const min_side: u16 = 24;
+    if (inner.w <= min_side * 2) return drawEdit(ui, pane, inner, m.edit_tab, m, focused, m.edit_scroll, false);
+    const raw: u16 = @intCast(@as(u32, inner.w) * std.math.clamp(split.ratio, 10, 90) / 100);
+    const left_w: u16 = @min(@max(raw, min_side), inner.w - min_side - 1);
+    const left = Rect.init(inner.x, inner.y, left_w, inner.h);
+    const divider = Rect.init(inner.x + left_w, inner.y, 1, inner.h);
+    const right = Rect.init(inner.x + left_w + 1, inner.y, inner.w - left_w - 1, inner.h);
+    const caret = drawEdit(ui, pane, left, m.edit_tab, m, focused, m.edit_scroll, false);
+    var dy = divider.y;
+    while (dy < divider.bottom()) : (dy += 1) _ = ui.putStr(divider.x, dy, 1, if (ui.ascii) "|" else "\u{2502}", .{ .fg = p.bg3, .bg = p.bg_dark });
+    ui.hit(divider, .{ .script_hit = .{ .pane = pane, .id = hit_split_divider } });
+    _ = drawEdit(ui, pane, right, split.tab, m, false, split.scroll, true);
+    return caret;
+}
+
+/// The strip and one tab's content into `r` — Rust's `draw_edit`.
+/// `secondary` is the split's right half: no caret, its strip on the
+/// `hit_split_tab_base` ids, its text area on `hit_split_content`.
+fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool, scroll: *usize, secondary: bool) ?Caret {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return null;
+    // Row 0 the labels from column 2, two cells apart; row 1 the `━`
+    // under the active one.
+    var x = r.x + 2;
+    for (EditTab.all, 0..) |t, i| {
+        const label = t.label();
+        const w = ui.width(label);
+        if (x + w > r.right()) break;
+        const cur = t == tab;
+        _ = ui.putStr(x, r.y, w, label, if (cur) .{ .fg = p.fg, .bg = p.bg_dark, .bold = true } else .{ .fg = p.comment, .bg = p.bg_dark });
+        if (cur and r.h > 1) {
+            var k: u16 = 0;
+            while (k < w) : (k += 1) _ = ui.putStr(x + k, r.y + 1, 1, if (ui.ascii) "=" else "\u{2501}", .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true });
+        }
+        ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = (if (secondary) hit_split_tab_base else hit_tab_base) + @as(u32, @intCast(i)) } });
+        x += w + 2;
+    }
+    if (r.h <= 2) return null;
+    const content = Rect.init(r.x, r.y + 2, r.w, r.h - 2);
     const content_hit = if (secondary) hit_split_content else hit_content;
     switch (tab) {
-        .body => return drawTextArea(ui, pane, r, m.body, m.body_caret, focused, scroll, "(request body — type here, Ctrl+Enter sends)", m.body_vars, content_hit),
-        .headers => return drawTextArea(ui, pane, r, m.headers_text, m.headers_caret, focused, scroll, "(Name: value per line)", m.headers_vars, content_hit),
+        .body => {
+            const c = drawBody(ui, pane, content, m, focused, scroll, content_hit);
+            drawSendState(ui, content, m, linesOf(m.body) -| scroll.*);
+            return c;
+        },
+        .headers => {
+            const c = drawTextLines(ui, pane, content, m.headers_text, m.headers_caret, focused, scroll, "(Name: value per line)", m.headers_vars, content_hit);
+            drawSendState(ui, content, m, if (m.headers_text.len == 0) 1 else linesOf(m.headers_text) -| scroll.*);
+            return c;
+        },
         .source => {
-            _ = ui.putStr(r.x + 1, r.y, r.w -| 2, ui.clipStr("Source — type / paste curl or .http here · :http.paste_source (Ctrl+Enter)", r.w -| 2), t.muted);
-            if (r.h > 1) {
-                const inner = Rect.init(r.x, r.y + 1, r.w, r.h - 1);
-                return drawTextArea(ui, pane, inner, m.source, m.source_caret, focused, scroll, "", &.{}, content_hit);
-            }
+            _ = ui.putStr(content.x, content.y, content.w, "    Source \u{2014} type / paste curl or .http here \u{00B7} :http.paste_source (Ctrl+Enter)", dim(p));
+            if (content.h <= 2) return null;
+            const c = drawTextLines(ui, pane, Rect.init(content.x, content.y + 2, content.w, content.h - 2), m.source, m.source_caret, focused, scroll, "(empty \u{2014} paste here, or Ctrl+Shift+V to read clipboard)", &.{}, content_hit);
+            drawSendState(ui, content, m, 2 + (if (m.source.len == 0) 1 else linesOf(m.source) -| scroll.*));
+            return c;
+        },
+        .params => {
+            _ = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .params, hit_param_row, hit_param_del, !secondary, m.row_cursor, focused);
             return null;
         },
-        .params => return drawParams(ui, pane, r, m, focused),
         .auth => {
-            drawAuth(ui, pane, r, m, focused);
+            drawAuth(ui, pane, content, m, focused);
             return null;
         },
         .vars => {
-            drawVars(ui, pane, r, m, focused);
+            drawVars(ui, pane, content, m, focused);
             return null;
         },
     }
 }
 
-/// The style a `{{VAR}}` paints in: the variable role when the env has
-/// it, the error role when it does not.
+fn dim(p: Theme.Palette) Style {
+    return .{ .fg = p.comment, .bg = p.bg_dark };
+}
+
+fn linesOf(text: []const u8) usize {
+    return std.mem.count(u8, text, "\n") + 1;
+}
+
+/// Rust `draw_edit`'s tail: a blank row under the tab's `used` rows,
+/// then the send's state — `⟳  sending…` in yellow, `▶ streaming · N
+/// events received` in cyan, `✗ last send: <error>` in red. Nothing
+/// while idle or once a response is in (its box says it all).
+fn drawSendState(ui: Ui, content: Rect, m: Model, used: usize) void {
+    const p = ui.theme.palette;
+    const y = content.y + @as(u16, @intCast(@min(used, content.h))) + 1;
+    if (y >= content.bottom()) return;
+    if (m.failed) |e| {
+        _ = ui.putStr(content.x, y, content.w, ui.fmt("  \u{2717} last send: {s}", .{e}), .{ .fg = p.red, .bg = p.bg_dark });
+    } else if (m.stream) |st| {
+        _ = ui.putStr(content.x, y, content.w, ui.fmt("  \u{25B6} streaming \u{00B7} {d} events received", .{st.events}), .{ .fg = p.cyan, .bg = p.bg_dark });
+    } else if (m.sending) {
+        _ = ui.putStr(content.x, y, content.w, "  \u{27F3}  sending\u{2026}", .{ .fg = p.yellow, .bg = p.bg_dark });
+    }
+}
+
+/// The Body tab: a ` N ` gutter per line, the text in the grey
+/// foreground, `{{VAR}}`s in their colours; an empty body is a ` 1 `
+/// row with the caret after it.
+fn drawBody(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool, scroll: *usize, content_hit: u32) ?Caret {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return null;
+    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = content_hit } });
+    if (m.body.len == 0) {
+        _ = ui.putStr(r.x, r.y, r.w, " 1 ", dim(p));
+        return if (focused) .{ .x = r.x + 3, .y = r.y } else null;
+    }
+    const total = std.mem.count(u8, m.body, "\n") + 1;
+    const gw: u16 = digitsOf(total) + 2;
+    return drawTextArea(ui, pane, r, m.body, m.body_caret, focused, scroll, m.body_vars, gw, .{ .fg = p.grey_fg, .bg = p.bg_dark }, true);
+}
+
+/// ` N ` with the number right-aligned to `digits` — Rust's
+/// `format!(" {:>width$} ", n)`.
+fn gutterText(ui: Ui, n: usize, digits: u16) []const u8 {
+    var tmp: [24]u8 = undefined;
+    const num = std.fmt.bufPrint(&tmp, "{d}", .{n}) catch "";
+    const pad: usize = @as(usize, digits) -| num.len;
+    const buf = ui.arena.alloc(u8, pad + num.len + 2) catch return " ";
+    @memset(buf, ' ');
+    @memcpy(buf[1 + pad .. 1 + pad + num.len], num);
+    return buf;
+}
+
+fn digitsOf(n: usize) u16 {
+    var v = n;
+    var d: u16 = 1;
+    while (v >= 10) : (v /= 10) d += 1;
+    return d;
+}
+
+/// The Headers / Script tabs: lines four cells in, no gutter.
+fn drawTextLines(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, placeholder: []const u8, vars: []const VarSpan, content_hit: u32) ?Caret {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return null;
+    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = content_hit } });
+    if (text.len == 0) {
+        _ = ui.putStr(r.x, r.y, r.w, ui.fmt("    {s}", .{placeholder}), dim(p));
+        return if (focused) .{ .x = r.x + 4, .y = r.y } else null;
+    }
+    return drawTextArea(ui, pane, r, text, caret, focused, scroll, vars, 4, .{ .fg = p.fg, .bg = p.bg_dark }, false);
+}
+
+/// A multi-line buffer: rows from `scroll`, the caret's row kept on
+/// screen, each line after `indent` cells (a ` N ` gutter when
+/// `numbered`). Returns the caret cell when focused.
+fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, vars: []const VarSpan, indent: u16, style: Style, numbered: bool) ?Caret {
+    const p = ui.theme.palette;
+    const at = @min(caret, text.len);
+    var caret_line: usize = 0;
+    var line_start: usize = 0;
+    for (text[0..at], 0..) |c, i| if (c == '\n') {
+        caret_line += 1;
+        line_start = i + 1;
+    };
+    const rows: usize = r.h;
+    if (caret_line < scroll.*) scroll.* = caret_line;
+    if (caret_line >= scroll.* + rows) scroll.* = caret_line + 1 - rows;
+    var out: ?Caret = null;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var line_no: usize = 0;
+    var y: u16 = 0;
+    var line_off: usize = 0;
+    while (it.next()) |line| : ({
+        line_no += 1;
+        line_off += line.len + 1;
+    }) {
+        if (line_no < scroll.*) continue;
+        if (y >= r.h) break;
+        const row = r.row(y);
+        if (numbered) _ = ui.putStr(row.x, row.y, indent, gutterText(ui, line_no + 1, indent -| 2), dim(p));
+        const lx = row.x + indent;
+        const lw = row.w -| indent;
+        if (line_no == caret_line) {
+            const col_bytes = at - line_start;
+            const before = line[0..@min(col_bytes, line.len)];
+            const cw = ui.width(before);
+            // Scroll the line left when the caret is past the width.
+            var shown = line;
+            var cx = cw;
+            if (cw >= lw and lw > 0) {
+                var drop: usize = 0;
+                var dropped_w: u16 = 0;
+                while (cx >= lw and drop < before.len) {
+                    const step = text_field.nextCp(before, drop) - drop;
+                    dropped_w += ui.width(before[drop .. drop + step]);
+                    drop += step;
+                    cx = cw - dropped_w;
+                }
+                shown = line[drop..];
+            }
+            _ = ui.putStr(lx, row.y, lw, ui.clipStr(shown, lw), style);
+            paintVarsOnLine(ui, pane, lx, row.y, lw, line, line.len - shown.len, line_off, vars, p.bg_dark);
+            if (focused) out = .{ .x = lx + @min(cx, lw -| 1), .y = row.y };
+        } else {
+            _ = ui.putStr(lx, row.y, lw, ui.clipStr(line, lw), style);
+            paintVarsOnLine(ui, pane, lx, row.y, lw, line, 0, line_off, vars, p.bg_dark);
+        }
+        y += 1;
+    }
+    return out;
+}
+
+// ─── the key / value table ──────────────────────────────────────────────
+
+const KvKind = enum { params, headers, vars };
+
+/// Rust's `render_kv_table`: `┌──┬──┬───┐`, a Name / Value header, one
+/// row per pair with a red `✕`, the draft row with a `✓`, `+ Add row`
+/// under it. Returns the rows painted.
+fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft, kind: KvKind, row_hit: u32, del_hit: ?u32, add: bool, cursor: usize, focused: bool) u16 {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return 0;
+    const table_w: u16 = std.math.clamp(r.w -| 2 -| 3, 20, 100);
+    const x_col_w: u16 = 3;
+    const inner_w: u16 = table_w -| x_col_w -| 4;
+    const name_w: u16 = @max(inner_w * 35 / 100, 8);
+    const value_w: u16 = inner_w -| name_w;
+    const line: Style = .{ .fg = p.bg3, .bg = p.bg_dark };
+    const ascii = ui.ascii;
+    var ry: u16 = 0;
+    const Ctx = struct {
+        ui: Ui,
+        r: Rect,
+        name_w: u16,
+        value_w: u16,
+        x_col_w: u16,
+        line: Style,
+        ascii: bool,
+
+        /// One cell at `x`, clipped to the area (Rust's rows overflow
+        /// their box by a cell and ratatui cuts them there).
+        fn put(c: @This(), x: u16, y: u16, s: []const u8, style: Style) u16 {
+            if (x >= c.r.right()) return 0;
+            return c.ui.putStr(x, y, c.r.right() - x, s, style);
+        }
+
+        fn rule(c: @This(), y: u16, left: []const u8, sep: []const u8, right: []const u8) void {
+            if (y >= c.r.h) return;
+            const row = c.r.row(y);
+            var x = row.x + 2;
+            const h: []const u8 = if (c.ascii) "-" else "\u{2500}";
+            x += c.put(x, row.y, if (c.ascii) "+" else left, c.line);
+            x = c.dashes(x, row.y, c.name_w + 2, h);
+            x += c.put(x, row.y, if (c.ascii) "+" else sep, c.line);
+            x = c.dashes(x, row.y, c.value_w + 2, h);
+            x += c.put(x, row.y, if (c.ascii) "+" else sep, c.line);
+            x = c.dashes(x, row.y, c.x_col_w, h);
+            _ = c.put(x, row.y, if (c.ascii) "+" else right, c.line);
+        }
+
+        fn dashes(c: @This(), x0: u16, y: u16, n: u16, h: []const u8) u16 {
+            var x = x0;
+            var k: u16 = 0;
+            while (k < n) : (k += 1) x += c.put(x, y, h, c.line);
+            return x;
+        }
+
+        /// `  │ key │ value │ x │`; the cells' x for the caller's hits.
+        fn cells(c: @This(), y: u16, key: []const u8, key_style: Style, value: []const u8, value_style: Style, xg: []const u8, x_style: Style) struct { key_x: u16, value_x: u16, x_x: u16 } {
+            const rr = c.r.row(y);
+            const v: []const u8 = if (c.ascii) "|" else "\u{2502}";
+            var x = rr.x + 2;
+            x += c.put(x, rr.y, v, c.line);
+            x += 1;
+            const key_x = x;
+            _ = c.put(x, rr.y, c.ui.clipStr(key, c.name_w), key_style);
+            x += c.name_w + 1;
+            x += c.put(x, rr.y, v, c.line);
+            x += 1;
+            const value_x = x;
+            _ = c.put(x, rr.y, c.ui.clipStr(value, c.value_w), value_style);
+            x += c.value_w + 1;
+            x += c.put(x, rr.y, v, c.line);
+            const x_x = x;
+            x += c.put(x, rr.y, xg, x_style);
+            _ = c.put(x, rr.y, v, c.line);
+            return .{ .key_x = key_x, .value_x = value_x, .x_x = x_x };
+        }
+    };
+    const c: Ctx = .{ .ui = ui, .r = r, .name_w = name_w, .value_w = value_w, .x_col_w = x_col_w, .line = line, .ascii = ascii };
+    c.rule(ry, "\u{250C}", "\u{252C}", "\u{2510}");
+    ry += 1;
+    if (ry < r.h) {
+        const hdr: Style = .{ .fg = p.comment, .bg = p.bg_dark, .bold = true };
+        _ = c.cells(ry, "Name", hdr, "Value", hdr, "   ", .{ .bg = p.bg_dark });
+    }
+    ry += 1;
+    c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}");
+    ry += 1;
+    const key_color = switch (kind) {
+        .params => p.fg,
+        .headers, .vars => p.cyan,
+    };
+    for (data, 0..) |pair, i| {
+        if (ry >= r.h) break;
+        const sel = focused and draft == null and i == cursor;
+        const key_style: Style = .{ .fg = if (sel) p.cyan else key_color, .bg = p.bg_dark, .bold = true };
+        const value_style: Style = .{ .fg = if (pair.value.len == 0 and kind == .vars) p.comment else p.fg, .bg = p.bg_dark };
+        const cells = c.cells(ry, pair.key, key_style, pair.value, value_style, if (del_hit != null) " \u{2715} " else "   ", .{ .fg = p.red, .bg = p.bg_dark });
+        const rr = r.row(ry);
+        ui.hit(Rect.init(rr.x, rr.y, table_w + 2, 1), .{ .script_hit = .{ .pane = pane, .id = row_hit + @as(u32, @intCast(i)) } });
+        if (del_hit) |d| ui.hit(Rect.init(cells.x_x, rr.y, x_col_w, 1), .{ .script_hit = .{ .pane = pane, .id = d + @as(u32, @intCast(i)) } });
+        ry += 1;
+        if (i + 1 < data.len or draft != null) {
+            c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}");
+            ry += 1;
+        }
+    }
+    if (draft) |d| if (ry < r.h) {
+        const mark: []const u8 = if (ascii) "|" else "\u{258F}";
+        const key_display = if (d.key.len == 0 and !d.on_value) mark else if (d.key.len == 0) "(name)" else if (!d.on_value) ui.fmt("{s}{s}", .{ d.key, mark }) else d.key;
+        const val_display = if (d.value.len == 0 and d.on_value) mark else if (d.value.len == 0) "(value)" else if (d.on_value) ui.fmt("{s}{s}", .{ d.value, mark }) else d.value;
+        const active: Style = .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true };
+        const ready = std.mem.trim(u8, d.key, " ").len > 0 and std.mem.trim(u8, d.value, " ").len > 0;
+        const cells = c.cells(ry, key_display, if (d.on_value) dim(p) else active, val_display, if (d.on_value) active else dim(p), if (ascii) " v " else " \u{2713} ", .{ .fg = if (ready) p.green else p.comment, .bg = p.bg_dark, .bold = true });
+        const rr = r.row(ry);
+        ui.hit(Rect.init(cells.key_x, rr.y, name_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_key } });
+        ui.hit(Rect.init(cells.value_x, rr.y, value_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_value } });
+        ui.hit(Rect.init(cells.x_x, rr.y, x_col_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_commit } });
+        ry += 1;
+    };
+    c.rule(ry, "\u{2514}", "\u{2534}", "\u{2518}");
+    ry += 1;
+    if (ry < r.h) {
+        const rr = r.row(ry);
+        if (draft == null) {
+            if (add) {
+                _ = ui.putStr(rr.x + 2, rr.y, rr.w -| 2, "+ Add row", .{ .fg = p.green, .bg = p.bg_dark, .bold = true });
+                ui.hit(rr, .{ .script_hit = .{ .pane = pane, .id = hit_add_row } });
+            }
+        } else {
+            _ = ui.putStr(rr.x, rr.y, rr.w, "    (Tab \u{00B7} `:`  \u{00B7}  Enter \u{2192} add + new row  \u{00B7}  Shift+Enter \u{2192} done  \u{00B7}  Esc \u{2192} cancel)", dim(p));
+        }
+        ry += 1;
+    }
+    return ry;
+}
+
+fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return;
+    const cur = m.auth_current;
+    const summary: []const u8 = if (cur) |v|
+        (if (std.mem.startsWith(u8, v, "Bearer ")) ui.fmt("Bearer \u{00B7} {s}", .{ui.clipStr(v[7..], 20)}) else if (std.mem.startsWith(u8, v, "Basic ")) "Basic \u{00B7} (base64 user:pass)" else if (v.len > 24) ui.fmt("{s}\u{2026}", .{v[0..22]}) else v)
+    else
+        "(no Authorization header \u{2014} request will be unauthenticated)";
+    var x = r.x;
+    x += ui.putStr(x, r.y, r.w, "    Current:  ", dim(p));
+    _ = ui.putStr(x, r.y, r.right() -| x, summary, .{ .fg = if (cur != null) p.cyan else p.comment, .bg = p.bg_dark, .bold = true });
+    var y: u16 = 2;
+    for (auth_rows, 0..) |row_def, i| {
+        if (y >= r.h) break;
+        const row = r.row(y);
+        const sel = focused and i == m.row_cursor;
+        const bg = if (sel) p.cyan else p.bg_dark;
+        const fg = if (sel) p.bg_dark else if (std.mem.eql(u8, row_def.id, "clear")) p.red else p.fg;
+        ui.fill(row, .{ .bg = bg });
+        _ = ui.putStr(row.x + 2, row.y, row.w -| 2, ui.fmt("{s} {s}", .{ row_def.glyph, row_def.label }), .{ .fg = fg, .bg = bg, .bold = true });
+        ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(i)) } });
+        y += 1;
+    }
+}
+
+fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return;
+    var x = r.x;
+    x += ui.putStr(x, r.y, r.w, "    env: ", dim(p));
+    x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s}.env", .{m.env_name orelse "dev"}), .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true });
+    _ = ui.putStr(x, r.y, r.right() -| x, "   \u{00B7} click cell to edit \u{00B7} Tab commits \u{00B7} Esc cancels", dim(p));
+    if (r.h <= 2) return;
+    const rows = ui.arena.alloc(Pair, m.vars.len) catch return;
+    for (m.vars, 0..) |v, i| rows[i] = .{ .key = v.name, .value = v.value orelse "" };
+    _ = drawKvTable(ui, pane, Rect.init(r.x, r.y + 2, r.w, r.h - 2), rows, null, .vars, hit_var_row, null, false, m.row_cursor, focused);
+}
+
+// ─── vars ───────────────────────────────────────────────────────────────
+
+/// The style a `{{VAR}}` paints in: cyan when the env has it, red
+/// when it does not — bold either way.
 pub fn varStyle(t: *const Theme, resolved: bool, bg: Color) Style {
-    var st = Theme.onBg(if (resolved) t.syntax.variable else t.error_fg, bg);
-    st.bold = true;
-    return st;
+    const p = t.palette;
+    return .{ .fg = if (resolved) p.cyan else p.red, .bg = bg, .bold = true };
 }
 
 /// Overpaint the `{{VAR}}` tokens of one painted line: `line` is the
@@ -515,7 +1026,7 @@ pub fn drawVarTip(ui: Ui, screen: Rect, anchor: Rect, name: []const u8, value: ?
     const text = if (value) |v|
         ui.fmt(" {{{{{s}}}}} = {s} ", .{ name, std.mem.sliceTo(v, '\n') })
     else
-        ui.fmt(" {{{{{s}}}}} — not defined in env {s} ", .{ name, env_name orelse "?" });
+        ui.fmt(" {{{{{s}}}}} \u{2014} not defined in env {s} ", .{ name, env_name orelse "?" });
     const w: u16 = @min(ui.width(text), screen.w);
     if (w == 0) return;
     var x = anchor.x;
@@ -527,323 +1038,373 @@ pub fn drawVarTip(ui: Ui, screen: Rect, anchor: Rect, name: []const u8, value: ?
     _ = ui.putStr(x, y, w, ui.clipStr(text, w), style);
 }
 
-/// A multi-line buffer: rows from `scroll`, the caret's row kept on
-/// screen. Returns the caret cell when focused.
-fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, placeholder: []const u8, vars: []const VarSpan, content_hit: u32) ?Caret {
-    const t = ui.theme;
-    if (r.isEmpty()) return null;
-    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = content_hit } });
-    if (text.len == 0) {
-        _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(placeholder, r.w -| 1), t.muted);
-        return if (focused) .{ .x = r.x + 1, .y = r.y } else null;
-    }
-    // Line of the caret.
-    const at = @min(caret, text.len);
-    var caret_line: usize = 0;
-    var line_start: usize = 0;
-    for (text[0..at], 0..) |c, i| if (c == '\n') {
-        caret_line += 1;
-        line_start = i + 1;
+// ─── the Response box ───────────────────────────────────────────────────
+
+/// The response's type label for the strip's chip — Rust's
+/// `detect_response_content_type`: the content-type header first, the
+/// body's first character after that, `—` with no response.
+pub fn typeLabel(m: Model) []const u8 {
+    const r = m.response orelse return "\u{2014}";
+    for (r.headers) |h| if (std.ascii.eqlIgnoreCase(h.key, "content-type")) {
+        const v = h.value;
+        const has = struct {
+            fn f(hay: []const u8, needle: []const u8) bool {
+                return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+            }
+        }.f;
+        if (has(v, "json")) return "JSON";
+        if (has(v, "html")) return "HTML";
+        if (has(v, "xml")) return "XML";
+        if (has(v, "javascript") or has(v, "ecmascript")) return "JS";
+        if (has(v, "css")) return "CSS";
+        if (std.ascii.startsWithIgnoreCase(v, "image/")) return "IMAGE";
+        if (std.ascii.startsWithIgnoreCase(v, "video/")) return "VIDEO";
+        if (std.ascii.startsWithIgnoreCase(v, "audio/")) return "AUDIO";
+        if (has(v, "pdf")) return "PDF";
+        if (has(v, "octet-stream") or has(v, "zip") or has(v, "gzip") or has(v, "tar") or has(v, "protobuf") or has(v, "msgpack")) return "BINARY";
+        if (has(v, "plain") or has(v, "text/")) return "TEXT";
     };
-    const rows: usize = r.h;
-    if (caret_line < scroll.*) scroll.* = caret_line;
-    if (caret_line >= scroll.* + rows) scroll.* = caret_line + 1 - rows;
-    var out: ?Caret = null;
-    var it = std.mem.splitScalar(u8, text, '\n');
-    var line_no: usize = 0;
+    const head = std.mem.trimStart(u8, r.body, " \t\r\n");
+    if (head.len == 0) return "TEXT";
+    return switch (head[0]) {
+        '{', '[' => "JSON",
+        '<' => "XML",
+        else => "TEXT",
+    };
+}
+
+/// Rust's `is_response_failure`: a non-2xx, a failed send, or a pane
+/// that never fired.
+fn isFailure(m: Model) bool {
+    if (m.failed != null or m.idle()) return true;
+    if (m.response) |r| return r.status < 200 or r.status >= 300;
+    return false;
+}
+
+fn drawResponseBox(ui: Ui, pane: PaneId, r: Rect, m: Model) void {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return;
+    const inner = box(ui, r, "");
+    drawStatusTitle(ui, r, m);
+    if (inner.isEmpty()) return;
+    var content = inner;
+    if (inner.h >= 3) {
+        drawResponseStrip(ui, pane, inner, m);
+        content = Rect.init(inner.x, inner.y + 2, inner.w, inner.h - 2);
+    }
+    ui.hit(content, .{ .script_hit = .{ .pane = pane, .id = hit_resp_body } });
+    // The rows, then the window `resp_view.scroll_line` picks.
+    const lines = responseRows(ui, content.w, m);
+    const max_scroll = lines.len -| content.h;
+    if (m.resp_view.scroll_line > max_scroll) m.resp_view.scroll_line = @intCast(max_scroll);
+    const first: usize = m.resp_view.scroll_line;
     var y: u16 = 0;
-    var line_off: usize = 0;
-    while (it.next()) |line| : ({
-        line_no += 1;
-        line_off += line.len + 1;
+    var i = first;
+    while (i < lines.len and y < content.h) : ({
+        i += 1;
+        y += 1;
     }) {
-        if (line_no < scroll.*) continue;
-        if (y >= r.h) break;
-        const row = r.row(y);
-        const lx = row.x + 1;
-        const lw = row.w -| 1;
-        if (line_no == caret_line) {
-            if (focused) ui.fill(row, t.cursor_line);
-            const col_bytes = at - line_start;
-            const before = line[0..@min(col_bytes, line.len)];
-            const cw = ui.width(before);
-            // Scroll the line left when the caret is past the width.
-            var shown = line;
-            var cx = cw;
-            if (cw >= lw and lw > 0) {
-                var drop: usize = 0;
-                var dropped_w: u16 = 0;
-                while (cx >= lw and drop < before.len) {
-                    const step = text_field.nextCp(before, drop) - drop;
-                    dropped_w += ui.width(before[drop .. drop + step]);
-                    drop += step;
-                    cx = cw - dropped_w;
-                }
-                shown = line[drop..];
-            }
-            _ = ui.putStr(lx, row.y, lw, ui.clipStr(shown, lw), if (focused) Theme.onBg(t.fg, t.cursor_line.bg) else t.fg);
-            paintVarsOnLine(ui, pane, lx, row.y, lw, line, line.len - shown.len, line_off, vars, if (focused) t.cursor_line.bg else t.bg.bg);
-            if (focused) out = .{ .x = lx + @min(cx, lw -| 1), .y = row.y };
-        } else {
-            _ = ui.putStr(lx, row.y, lw, ui.clipStr(line, lw), t.fg);
-            paintVarsOnLine(ui, pane, lx, row.y, lw, line, 0, line_off, vars, t.bg.bg);
-        }
-        y += 1;
-    }
-    return out;
-}
-
-fn drawParams(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) ?Caret {
-    const t = ui.theme;
-    if (r.isEmpty()) return null;
-    var caret: ?Caret = null;
-    const key_w: u16 = @min(@max(r.w / 3, 8), 32);
-    var y: u16 = 0;
-    for (m.params, 0..) |p, i| {
-        if (y >= r.h) break;
-        const row = r.row(y);
-        const sel = focused and m.draft == null and i == m.row_cursor;
-        if (sel) ui.fill(row, t.cursor_line);
-        const bg = if (sel) t.cursor_line.bg else t.bg.bg;
-        _ = ui.putStr(row.x + 1, row.y, key_w, ui.clipStr(p.key, key_w), Theme.onBg(t.accent, bg));
-        _ = ui.putStr(row.x + 1 + key_w + 1, row.y, row.w -| (key_w + 3), ui.clipStr(p.value, row.w -| (key_w + 3)), Theme.onBg(t.fg, bg));
-        ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_param_row + @as(u32, @intCast(i)) } });
-        y += 1;
-    }
-    if (y < r.h) {
-        const row = r.row(y);
-        if (m.draft) |d| {
-            ui.fill(row, t.cursor_line);
-            const key_rect = Rect.init(row.x + 1, row.y, key_w, 1);
-            const val_rect = Rect.init(row.x + 1 + key_w + 1, row.y, row.w -| (key_w + 3), 1);
-            const key_focused = focused and !d.on_value;
-            const val_focused = focused and d.on_value;
-            if (text_field.draw(ui, key_rect, d.key, d.key_caret, .{ .style = Theme.onBg(t.accent, t.cursor_line.bg), .placeholder = "(name)", .focused = key_focused })) |c| caret = c;
-            if (text_field.draw(ui, val_rect, d.value, d.value_caret, .{ .style = Theme.onBg(t.fg, t.cursor_line.bg), .placeholder = "(value)", .focused = val_focused })) |c| caret = c;
-            ui.hit(key_rect, .{ .script_hit = .{ .pane = pane, .id = hit_draft_key } });
-            ui.hit(val_rect, .{ .script_hit = .{ .pane = pane, .id = hit_draft_value } });
-        } else {
-            const label = if (m.params.len == 0) "+ Add new parameter… (a)   ·   the URL has no query string" else "+ Add new parameter… (a)   ·   d deletes the row";
-            _ = ui.putStr(row.x + 1, row.y, row.w -| 1, ui.clipStr(label, row.w -| 1), t.muted);
-            ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_draft_key } });
+        const row = content.row(y);
+        var x = row.x;
+        for (lines[i].segs) |seg| {
+            if (x >= row.right()) break;
+            x += ui.putStr(x, row.y, row.right() -| x, seg.text, seg.style);
         }
     }
-    return caret;
+    _ = p;
 }
 
-fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
-    const t = ui.theme;
-    if (r.isEmpty()) return;
-    const cur = m.auth_current orelse "(none)";
-    const shown = if (cur.len > 60) ui.fmt("{s}…", .{cur[0..58]}) else cur;
-    _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(ui.fmt("Current:  {s}", .{shown}), r.w -| 1), t.muted);
-    var y: u16 = 1;
-    for (auth_rows, 0..) |row_def, i| {
-        if (y >= r.h) break;
-        const row = r.row(y);
-        const sel = focused and i == m.row_cursor;
-        if (sel) ui.fill(row, t.cursor_line);
-        const bg = if (sel) t.cursor_line.bg else t.bg.bg;
-        _ = ui.putStr(row.x + 1, row.y, 2, row_def.glyph, Theme.onBg(t.accent, bg));
-        _ = ui.putStr(row.x + 3, row.y, row.w -| 3, ui.clipStr(row_def.label, row.w -| 3), Theme.onBg(t.fg, bg));
-        ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(i)) } });
-        y += 1;
-    }
-}
-
-fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
-    const t = ui.theme;
-    if (r.isEmpty()) return;
-    if (m.vars.len == 0) {
-        _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr("no {{VAR}} references in this request", r.w -| 1), t.muted);
-        return;
-    }
-    const key_w: u16 = @min(@max(r.w / 3, 8), 32);
-    var y: u16 = 0;
-    for (m.vars, 0..) |v, i| {
-        if (y >= r.h) break;
-        const row = r.row(y);
-        const sel = focused and i == m.row_cursor;
-        if (sel) ui.fill(row, t.cursor_line);
-        const bg = if (sel) t.cursor_line.bg else t.bg.bg;
-        _ = ui.putStr(row.x + 1, row.y, key_w, ui.clipStr(ui.fmt("{{{{{s}}}}}", .{v.name}), key_w), Theme.onBg(if (v.value != null) t.info_fg else t.error_fg, bg));
-        const value = v.value orelse "not defined in active env";
-        _ = ui.putStr(row.x + 1 + key_w + 1, row.y, row.w -| (key_w + 3), ui.clipStr(value, row.w -| (key_w + 3)), Theme.onBg(if (v.value != null) t.fg else t.muted, bg));
-        ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_var_row + @as(u32, @intCast(i)) } });
-        y += 1;
-    }
-}
-
-fn drawResponse(ui: Ui, pane: PaneId, r: Rect, m: Model) void {
-    const t = ui.theme;
-    if (r.isEmpty()) return;
-    ui.fill(r, t.bg);
-    const active_block = m.focused and m.block == .response;
-    // ── header: tab strip + status chip ──
-    const head = r.row(0);
-    ui.fill(head, t.panel_bg);
-    var x = head.x + 1;
-    for (ResponseTab.all, 0..) |tab, i| {
-        const active = tab == m.response_tab;
-        const label = if (active) ui.fmt("[{s}]", .{tab.label()}) else ui.fmt(" {s} ", .{tab.label()});
-        const w = ui.width(label);
-        if (x + w > head.right()) break;
-        var st = Theme.onBg(if (active) t.accent else t.muted, t.panel_bg.bg);
-        if (active and active_block) st.bold = true;
-        _ = ui.putStr(x, head.y, w, label, st);
-        ui.hit(Rect.init(x, head.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_resp_tab_base + @as(u32, @intCast(i)) } });
-        x += w + 1;
-    }
-    var right = head.right() -| 1;
-    if (m.response) |resp| {
-        const chip = ui.fmt(" {d} ", .{resp.status});
-        const cw = ui.width(chip);
-        const meta = if (m.stream) |st|
-            (if (st.is_sse) ui.fmt(" streaming · {d} event(s) · {s} · {d} ms ", .{ st.events, fmtBytes(ui, st.bytes), st.elapsed_ms }) else ui.fmt(" streaming · {s} received · {d} ms ", .{ fmtBytes(ui, st.bytes), st.elapsed_ms }))
-        else
-            ui.fmt(" {s} · {d} ms · {s}{s} ", .{ resp.status_text, resp.timing.total_ms, fmtBytes(ui, resp.body_bytes), if (resp.truncated) " (truncated)" else "" });
-        const metaw = ui.width(meta);
-        if (right > x + cw + metaw + 6) {
-            right = ui.putStrRight(right, head.y, metaw, meta, Theme.onBg(if (m.stream != null) t.warn_fg else t.muted, t.panel_bg.bg));
-            const cx = right -| cw;
-            _ = ui.putStr(cx, head.y, cw, chip, statusStyle(t, resp.status));
-            right = cx -| 1;
-        } else if (right > x + cw + 2) {
-            const cx = right -| cw;
-            _ = ui.putStr(cx, head.y, cw, chip, statusStyle(t, resp.status));
-            right = cx -| 1;
-        }
-        const wrap_chip: []const u8 = if (m.body_wrap) " wrap ✓ " else " wrap ";
-        const ww = ui.width(wrap_chip);
-        if (right > x + ww + 2) {
-            const wx = right -| ww;
-            _ = ui.putStr(wx, head.y, ww, wrap_chip, Theme.onBg(if (m.body_wrap) t.accent else t.muted, t.panel_bg.bg));
-            ui.hit(Rect.init(wx, head.y, ww, 1), .{ .script_hit = .{ .pane = pane, .id = hit_wrap } });
-        }
-    } else if (m.sending) {
-        const label = " sending… ";
-        _ = ui.putStrRight(right, head.y, ui.width(label), label, Theme.onBg(t.warn_fg, t.panel_bg.bg));
+/// ` 200 OK  · 2ms · 49 B ` right-aligned on the box's top edge —
+/// Rust's `response_status_title`; sending, streaming and a failure
+/// have their own; a pane that never fired shows none.
+fn drawStatusTitle(ui: Ui, r: Rect, m: Model) void {
+    const p = ui.theme.palette;
+    if (r.w < 4) return;
+    const ground: Color = p.bg_dark;
+    var segs: std.ArrayListUnmanaged(vaxis.Segment) = .empty;
+    if (m.sending) {
+        segs.append(ui.arena, .{ .text = " \u{27F3} sending\u{2026} ", .style = .{ .fg = p.yellow, .bg = ground, .bold = true } }) catch return;
+    } else if (m.stream) |st| {
+        segs.append(ui.arena, .{ .text = ui.fmt(" \u{25B6} streaming \u{00B7} {d} events ", .{st.events}), .style = .{ .fg = p.cyan, .bg = ground, .bold = true } }) catch return;
     } else if (m.failed != null) {
-        const label = " failed ";
-        _ = ui.putStrRight(right, head.y, ui.width(label), label, .{ .fg = .{ .rgb = .{ 0x1e, 0x22, 0x27 } }, .bg = t.error_fg.fg, .bold = true });
-    }
-    if (r.h == 1) return;
-    const body_area = Rect.init(r.x, r.y + 1, r.w, r.h - 1);
-    ui.hit(body_area, .{ .script_hit = .{ .pane = pane, .id = hit_resp_body } });
+        segs.append(ui.arena, .{ .text = " \u{2717} failed ", .style = .{ .fg = p.red, .bg = ground, .bold = true } }) catch return;
+    } else if (m.response) |resp| {
+        const color = switch (resp.status / 100) {
+            2 => p.green,
+            3 => p.yellow,
+            4 => p.orange,
+            5 => p.red,
+            else => p.bg3,
+        };
+        const sep: vaxis.Segment = .{ .text = " \u{00B7} ", .style = .{ .fg = p.comment, .bg = ground } };
+        segs.append(ui.arena, .{ .text = ui.fmt(" {d} {s} ", .{ resp.status, resp.status_text }), .style = .{ .fg = color, .bg = ground, .bold = true } }) catch return;
+        segs.append(ui.arena, sep) catch return;
+        segs.append(ui.arena, .{ .text = ui.fmt("{d}ms", .{resp.timing.total_ms}), .style = .{ .fg = p.comment, .bg = ground } }) catch return;
+        segs.append(ui.arena, sep) catch return;
+        segs.append(ui.arena, .{ .text = ui.fmt("{s} ", .{humanBytes(ui, resp.body_bytes)}), .style = .{ .fg = p.comment, .bg = ground } }) catch return;
+    } else return;
+    var total: u16 = 0;
+    for (segs.items) |s| total += ui.width(s.text);
+    if (total + 2 > r.w) return;
+    var x = r.right() - 1 - total;
+    for (segs.items) |s| x += ui.putStr(x, r.y, r.right() -| x, s.text, s.style);
+}
 
-    if (m.response == null) {
-        var y: u16 = body_area.y;
-        if (m.sent_line) |line| {
-            _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr(line, body_area.w -| 1), t.muted);
-            y += 1;
+/// Rust's `human_bytes`: `999 B`, `1.2 KB`, `1.2 MB`.
+pub fn humanBytes(ui: Ui, n: usize) []const u8 {
+    if (n < 1024) return ui.fmt("{d} B", .{n});
+    if (n < 1024 * 1024) return ui.fmt("{d:.1} KB", .{@as(f64, @floatFromInt(n)) / 1024.0});
+    return ui.fmt("{d:.1} MB", .{@as(f64, @floatFromInt(n)) / (1024.0 * 1024.0)});
+}
+
+/// `  Body  Headers N  Cookies N  Timeline  Tests` with the `━` under
+/// the active tab on the row below, and the chips from the right:
+/// ` TYPE ▼ `, ` copy `, ` wrap `, and ` ⚡ AI ` when the response is
+/// a failure — Rust's `paint_response_tab_strip`.
+fn drawResponseStrip(ui: Ui, pane: PaneId, inner: Rect, m: Model) void {
+    const p = ui.theme.palette;
+    const label_y = inner.y;
+    const bar_y = inner.y + 1;
+    var x = inner.x + 2;
+    for (ResponseTab.all, 0..) |t, i| {
+        var label = t.label();
+        if (m.response) |resp| {
+            if (t == .headers and resp.headers.len > 0) label = ui.fmt("Headers {d}", .{resp.headers.len});
+            if (t == .cookies and resp.cookies.len > 0) label = ui.fmt("Cookies {d}", .{resp.cookies.len});
         }
-        if (m.failed) |msg| {
-            if (y < body_area.bottom()) _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr(ui.fmt("✗ {s}", .{msg}), body_area.w -| 1), t.error_fg);
-            return;
+        const w = ui.width(label);
+        if (x + w > inner.right()) break;
+        const cur = t == m.response_tab;
+        _ = ui.putStr(x, label_y, w, label, if (cur) .{ .fg = p.fg, .bg = p.bg_dark, .bold = true } else dim(p));
+        if (cur) {
+            var k: u16 = 0;
+            while (k < w) : (k += 1) _ = ui.putStr(x + k, bar_y, 1, if (ui.ascii) "=" else "\u{2501}", .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true });
         }
-        const hint: []const u8 = if (m.sending) "sending…" else "no response yet — press Ctrl+Enter (or the Send chip) to send";
-        const hw = @min(ui.width(hint), body_area.w -| 2);
-        const hy = body_area.y + body_area.h / 2;
-        _ = ui.putStr(body_area.x + (body_area.w -| hw) / 2, hy, hw, ui.clipStr(hint, hw), t.muted);
-        return;
+        ui.hit(Rect.init(x, label_y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_resp_tab_base + @as(u32, @intCast(i)) } });
+        x += w + 2;
     }
-    const resp = m.response.?;
+    // The chips, right to left, one cell of strip between.
+    var right_edge = inner.right() - 1;
+    const Chip = struct { text: []const u8, style: Style, id: u32 };
+    const type_text = ui.fmt(" {s} \u{25BC} ", .{typeLabel(m)});
+    const chips = [_]Chip{
+        .{ .text = type_text, .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true }, .id = hit_type },
+        .{ .text = " copy ", .style = dim(p), .id = hit_copy },
+        .{ .text = " wrap ", .style = if (m.body_wrap) .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } else dim(p), .id = hit_wrap },
+        .{ .text = if (ui.ascii) " * AI " else " \u{26A1} AI ", .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true }, .id = hit_ai_chip },
+    };
+    for (chips, 0..) |c, i| {
+        if (i == 3 and !isFailure(m)) break;
+        // Rust sizes a chip by its characters, so the wide `⚡` spills a
+        // cell into the gap; the same count keeps the columns.
+        const w: u16 = @intCast(std.unicode.utf8CountCodepoints(c.text) catch c.text.len);
+        if (right_edge <= inner.x + w + 2) break;
+        const cx = right_edge - w;
+        _ = ui.putStr(cx, label_y, w, c.text, c.style);
+        ui.hit(Rect.init(cx, label_y, w, 1), .{ .script_hit = .{ .pane = pane, .id = c.id } });
+        right_edge = cx - 1;
+    }
+}
+
+const Seg = vaxis.Segment;
+const Line = struct { segs: []const Seg };
+
+fn plain(ui: Ui, text: []const u8, style: Style) Line {
+    const segs = ui.arena.alloc(Seg, 1) catch return .{ .segs = &.{} };
+    segs[0] = .{ .text = text, .style = style };
+    return .{ .segs = segs };
+}
+
+fn lineOf(ui: Ui, parts: []const Seg) Line {
+    return .{ .segs = ui.arena.dupe(Seg, parts) catch &.{} };
+}
+
+/// The Response content as rows — Rust's `draw_response`.
+fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
+    const p = ui.theme.palette;
+    var out: std.ArrayListUnmanaged(Line) = .empty;
+    const body_style: Style = .{ .fg = p.fg, .bg = p.bg_dark };
+    const push = struct {
+        fn f(o: *std.ArrayListUnmanaged(Line), a: Allocator, l: Line) void {
+            o.append(a, l) catch {};
+        }
+    }.f;
+    if (m.sending) {
+        push(&out, ui.arena, plain(ui, "  \u{27F3}  sending\u{2026}", .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true }));
+        return out.items;
+    }
+    if (m.stream) |_| if (m.response) |resp| {
+        push(&out, ui.arena, plain(ui, ui.fmt("  \u{25B6} streaming \u{00B7} {d} {s}", .{ resp.status, resp.status_text }), .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true }));
+        push(&out, ui.arena, plain(ui, "", body_style));
+        var it = std.mem.splitScalar(u8, resp.body, '\n');
+        while (it.next()) |l| push(&out, ui.arena, plain(ui, l, body_style));
+        return out.items;
+    };
+    if (m.failed) |e| {
+        push(&out, ui.arena, plain(ui, ui.fmt("  \u{2717} {s}", .{e}), .{ .fg = p.red, .bg = p.bg_dark, .bold = true }));
+        return out.items;
+    }
+    const resp = m.response orelse {
+        push(&out, ui.arena, plain(ui, "  not sent yet \u{00B7} press `r` to fire", dim(p)));
+        return out.items;
+    };
     switch (m.response_tab) {
-        .body => {
-            const doc: editor_view.Doc = .{
-                .text = resp.body,
-                .cursor = 0,
-                .anchor = null,
-                .spans = resp.spans,
-                .wrap = m.body_wrap,
-                .tab_width = 4,
-                .line_numbers = false,
-                .focused = false,
-                .scrollbar = true,
-            };
-            m.resp_view.pinAt(0);
-            var text_rect = body_area;
-            if (resp.footer) |f| if (text_rect.h >= 3) {
-                const s = text_rect.splitBottom(1);
-                text_rect = s.top;
-                _ = ui.putStr(s.rest.x + 1, s.rest.y, s.rest.w -| 1, ui.clipStr(f, s.rest.w -| 1), t.muted);
-            };
-            _ = editor_view.draw(ui, pane, text_rect, m.resp_view, doc);
-        },
         .headers => {
-            var y: u16 = body_area.y;
-            if (m.sent_line) |line| {
-                _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr(line, body_area.w -| 1), t.muted);
-                y += 1;
-            }
-            const first = m.resp_view.scroll_line;
-            for (resp.headers, 0..) |h, i| {
-                if (i < first) continue;
-                if (y >= body_area.bottom()) break;
-                const kx = body_area.x + 1;
-                const kw = ui.putStr(kx, y, body_area.w -| 1, ui.fmt("{s}: ", .{h.key}), t.accent);
-                _ = ui.putStr(kx + kw, y, body_area.w -| (1 + kw), ui.clipStr(h.value, body_area.w -| (1 + kw)), t.fg);
-                y += 1;
-            }
+            for (resp.headers) |h| push(&out, ui.arena, lineOf(ui, &.{
+                .{ .text = "  ", .style = body_style },
+                .{ .text = h.key, .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } },
+                .{ .text = ": ", .style = dim(p) },
+                .{ .text = h.value, .style = body_style },
+            }));
         },
         .cookies => {
-            var y: u16 = body_area.y;
             if (resp.cookies.len == 0) {
-                _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, "no Set-Cookie headers in this response", t.muted);
-                return;
-            }
-            for (resp.cookies) |c| {
-                if (y >= body_area.bottom()) break;
-                _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr(c, body_area.w -| 1), t.fg);
-                y += 1;
+                push(&out, ui.arena, plain(ui, "  (no cookies set by this response)", dim(p)));
+            } else for (resp.cookies) |c| {
+                // `name=value; attrs`: the name cyan, the value, the
+                // attributes dim on the row below.
+                const semi = std.mem.indexOfScalar(u8, c, ';') orelse c.len;
+                const nv = c[0..semi];
+                const eq = std.mem.indexOfScalar(u8, nv, '=') orelse nv.len;
+                push(&out, ui.arena, lineOf(ui, &.{
+                    .{ .text = "  ", .style = body_style },
+                    .{ .text = nv[0..eq], .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } },
+                    .{ .text = " = ", .style = dim(p) },
+                    .{ .text = if (eq < nv.len) nv[eq + 1 ..] else "", .style = body_style },
+                }));
+                if (semi < c.len) push(&out, ui.arena, plain(ui, ui.fmt("    {s}", .{std.mem.trim(u8, c[semi + 1 ..], " ")}), dim(p)));
+                push(&out, ui.arena, plain(ui, "", body_style));
             }
         },
         .timeline => {
-            const lines = [_][]const u8{
-                ui.fmt("wait     {d} ms   (send → first byte of the head)", .{resp.timing.wait_ms}),
-                ui.fmt("receive  {d} ms   (head → body complete)", .{resp.timing.receive_ms}),
-                ui.fmt("total    {d} ms", .{resp.timing.total_ms}),
-                ui.fmt("size     {s}", .{fmtBytes(ui, resp.body_bytes)}),
-            };
-            var y: u16 = body_area.y;
-            for (lines) |l| {
-                if (y >= body_area.bottom()) break;
-                _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr(l, body_area.w -| 1), t.fg);
-                y += 1;
-            }
+            const max = @max(@max(resp.timing.wait_ms, resp.timing.receive_ms), 1);
+            const bar_w: u64 = 40;
+            const label_style: Style = .{ .fg = p.comment, .bg = p.bg_dark, .bold = true };
+            push(&out, ui.arena, lineOf(ui, &.{ .{ .text = "  Wait     ", .style = label_style }, .{ .text = "(connect + TLS + send + headers received)", .style = dim(p) } }));
+            push(&out, ui.arena, timelineBar(ui, resp.timing.wait_ms, max, bar_w, p.blue));
+            push(&out, ui.arena, plain(ui, "", body_style));
+            push(&out, ui.arena, lineOf(ui, &.{ .{ .text = "  Receive  ", .style = label_style }, .{ .text = "(body read)", .style = dim(p) } }));
+            push(&out, ui.arena, timelineBar(ui, resp.timing.receive_ms, max, bar_w, p.green));
+            push(&out, ui.arena, plain(ui, "", body_style));
+            push(&out, ui.arena, plain(ui, ui.fmt("  Total    {d} ms", .{resp.timing.total_ms}), .{ .fg = p.fg, .bg = p.bg_dark, .bold = true }));
         },
         .tests => {
-            var y: u16 = body_area.y;
             if (resp.tests.len == 0) {
-                _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr("no assertions — add `# @assert status == 200` lines, or a sibling <name>.schema.json", body_area.w -| 1), t.muted);
-                return;
+                push(&out, ui.arena, plain(ui, "  (no assertions in this request)", dim(p)));
+            } else for (resp.tests) |t| push(&out, ui.arena, testLine(ui, t));
+        },
+        .body => {
+            // A blank row, then the body with a ` N ` gutter and its
+            // syntax spans; `wrap` continues a long line under a blank
+            // gutter.
+            push(&out, ui.arena, plain(ui, "", body_style));
+            var total: usize = 1;
+            for (resp.body) |c| if (c == '\n') {
+                total += 1;
+            };
+            if (resp.body.len > 0 and resp.body[resp.body.len - 1] == '\n') total -= 1;
+            const gw: u16 = digitsOf(@max(total, 1)) + 2;
+            const wrap_w: ?usize = if (m.body_wrap) @max(w -| 2, 20) else null;
+            var it = std.mem.splitScalar(u8, resp.body, '\n');
+            var n: usize = 0;
+            var off: usize = 0;
+            while (it.next()) |l| : (off += l.len + 1) {
+                if (off >= resp.body.len and l.len == 0) break;
+                n += 1;
+                const gutter: Seg = .{ .text = gutterText(ui, n, gw - 2), .style = dim(p) };
+                const blank: Seg = .{ .text = ui.fmt("{s: <[1]}", .{ "", gw }), .style = body_style };
+                if (wrap_w) |ww| if (ui.width(l) > ww) {
+                    var rest = l;
+                    var first = true;
+                    while (rest.len > 0) {
+                        const cut = cutAt(ui, rest, @intCast(ww));
+                        push(&out, ui.arena, lineOf(ui, &.{ if (first) gutter else blank, .{ .text = rest[0..cut], .style = body_style } }));
+                        rest = rest[cut..];
+                        first = false;
+                    }
+                    continue;
+                };
+                push(&out, ui.arena, spanLine(ui, gutter, l, off, resp.spans, body_style));
             }
-            for (resp.tests) |line| {
-                if (y >= body_area.bottom()) break;
-                const style = if (std.mem.startsWith(u8, line, "✓")) t.info_fg else if (std.mem.startsWith(u8, line, "✗")) t.error_fg else t.fg;
-                _ = ui.putStr(body_area.x + 1, y, body_area.w -| 1, ui.clipStr(line, body_area.w -| 1), style);
-                y += 1;
+            if (resp.tests.len > 0) {
+                push(&out, ui.arena, plain(ui, "", body_style));
+                for (resp.tests) |t| push(&out, ui.arena, testLine(ui, t));
             }
         },
     }
+    return out.items;
 }
 
-fn drawAi(ui: Ui, r: Rect, m: Model) void {
-    const t = ui.theme;
-    if (r.isEmpty()) return;
-    const head = r.row(0);
-    ui.fill(head, t.panel_bg);
-    _ = ui.putStr(head.x + 1, head.y, head.w -| 1, " AI ", Theme.onBg(t.accent, t.panel_bg.bg));
-    if (r.h > 1) {
-        const row = r.row(1);
-        _ = ui.putStr(row.x + 1, row.y, row.w -| 1, ui.clipStr(m.ai_hint, row.w -| 1), t.muted);
+fn testLine(ui: Ui, t: []const u8) Line {
+    const p = ui.theme.palette;
+    const ok = std.mem.startsWith(u8, t, "\u{2713}");
+    const bad = std.mem.startsWith(u8, t, "\u{2717}");
+    return plain(ui, ui.fmt("  {s}", .{t}), .{ .fg = if (ok) p.green else if (bad) p.red else p.fg, .bg = p.bg_dark, .bold = bad });
+}
+
+fn timelineBar(ui: Ui, ms: u64, max: u64, bar_w: u64, color: Color) Line {
+    const p = ui.theme.palette;
+    const filled: usize = @intCast(ms * bar_w / max);
+    const empty: usize = @intCast(bar_w - @min(bar_w, ms * bar_w / max));
+    var full: std.ArrayListUnmanaged(u8) = .empty;
+    var rest: std.ArrayListUnmanaged(u8) = .empty;
+    for (0..filled) |_| full.appendSlice(ui.arena, if (ui.ascii) "#" else "\u{2588}") catch {};
+    for (0..empty) |_| rest.appendSlice(ui.arena, if (ui.ascii) "." else "\u{2591}") catch {};
+    return lineOf(ui, &.{
+        .{ .text = "  ", .style = .{ .bg = p.bg_dark } },
+        .{ .text = full.items, .style = .{ .fg = color, .bg = p.bg_dark } },
+        .{ .text = rest.items, .style = .{ .fg = p.bg3, .bg = p.bg_dark } },
+        .{ .text = ui.fmt("  {d} ms", .{ms}), .style = dim(p) },
+    });
+}
+
+/// One body line split at the syntax spans that cover it.
+fn spanLine(ui: Ui, gutter: Seg, l: []const u8, off: usize, spans: []const editor_view.Span, base: Style) Line {
+    var segs: std.ArrayListUnmanaged(Seg) = .empty;
+    segs.append(ui.arena, gutter) catch return .{ .segs = &.{} };
+    var at: usize = 0;
+    const end = off + l.len;
+    for (spans) |sp| {
+        if (sp.end <= off + at or sp.start >= end) continue;
+        const s = @max(sp.start, off) - off;
+        const e = @min(sp.end, end) - off;
+        if (s > at) segs.append(ui.arena, .{ .text = l[at..s], .style = base }) catch break;
+        var st = sp.style;
+        st.bg = base.bg;
+        segs.append(ui.arena, .{ .text = l[s..e], .style = st }) catch break;
+        at = e;
     }
+    if (at < l.len) segs.append(ui.arena, .{ .text = l[at..], .style = base }) catch {};
+    return .{ .segs = segs.items };
+}
+
+/// The byte length of the longest prefix of `s` that fits `w` cells.
+fn cutAt(ui: Ui, s: []const u8, w: u16) usize {
+    var used: u16 = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| {
+        const cw: u16 = @intCast(ui.canvas.cellWidth(g.bytes(s)));
+        if (used + cw > w) return if (g.start == 0) g.len else g.start;
+        used += cw;
+    }
+    return s.len;
+}
+
+// ─── the AI box ─────────────────────────────────────────────────────────
+
+fn drawAiBox(ui: Ui, pane: PaneId, r: Rect) void {
+    const p = ui.theme.palette;
+    if (r.isEmpty()) return;
+    const inner = box(ui, r, "AI");
+    if (inner.isEmpty()) return;
+    var x = inner.x + 1;
+    x += ui.putStr(x, inner.y, inner.right() -| x, "click here to ask a custom question", dim(p));
+    _ = ui.putStr(x, inner.y, inner.right() -| x, "   \u{00B7} `a` quick debug", dim(p));
+    ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit_ai } });
 }
 
 pub fn fmtBytes(ui: Ui, n: usize) []const u8 {
-    if (n < 1024) return ui.fmt("{d} B", .{n});
-    if (n < 1024 * 1024) return ui.fmt("{d}.{d} KB", .{ n / 1024, (n % 1024) * 10 / 1024 });
-    return ui.fmt("{d}.{d} MB", .{ n / (1024 * 1024), (n % (1024 * 1024)) * 10 / (1024 * 1024) });
+    return humanBytes(ui, n);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -851,155 +1412,259 @@ pub fn fmtBytes(ui: Ui, n: usize) []const u8 {
 const testing = std.testing;
 const fixture = @import("test_fixture.zig");
 
-test "tabs cycle both ways and the labels are the six the strip paints" {
-    try testing.expectEqual(EditTab.headers, EditTab.body.next());
-    try testing.expectEqual(EditTab.body, EditTab.source.next());
-    try testing.expectEqual(EditTab.source, EditTab.body.prev());
-    try testing.expectEqualStrings("Script", EditTab.source.label());
-    try testing.expectEqual(ResponseTab.tests, ResponseTab.body.prev());
-    try testing.expect(EditTab.source.isText() and !EditTab.params.isText());
-}
-
-test "draw: method chip, tabs, status chip and the AI strip land; hits registered" {
-    var fx = try fixture.init(100, 30);
-    defer fx.deinit();
-    var view: editor_view.ViewState = .{};
-    var scroll: usize = 0;
-    const resp: ResponseModel = .{
-        .status = 418,
-        .status_text = "I'm a teapot",
-        .headers = &.{.{ .key = "content-type", .value = "text/plain" }},
-        .body = "teapot",
-        .body_bytes = 6,
-        .truncated = false,
-        .timing = .{ .wait_ms = 1, .receive_ms = 2, .total_ms = 3 },
-        .cookies = &.{},
-    };
-    const m: Model = .{
-        .method = "POST",
-        .url = "https://x/y",
-        .url_caret = 3,
-        .block = .request,
-        .field = .url,
-        .edit_tab = .params,
-        .body = "",
-        .body_caret = 0,
-        .headers_text = "",
-        .headers_caret = 0,
-        .source = "",
-        .source_caret = 0,
-        .params = &.{.{ .key = "a", .value = "1" }},
-        .draft = .{ .key = "", .value = "", .key_caret = 0, .value_caret = 0, .on_value = false },
-        .row_cursor = 0,
-        .auth_current = null,
-        .vars = &.{},
-        .env_name = "dev",
-        .edit_scroll = &scroll,
-        .sending = false,
-        .failed = null,
-        .response = resp,
-        .sent_line = "POST https://x/y",
-        .response_tab = .body,
-        .resp_view = &view,
-        .body_wrap = false,
-        .focused = true,
-        .source_path = null,
-    };
-    const ui = fx.ui();
-    const caret = draw(ui, 3, ui.canvas.full(), m);
-    try testing.expect(caret != null);
-    const txt = try fx.text();
-    try testing.expect(std.mem.indexOf(u8, txt, " POST ") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "[Params]") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "(value)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "env: dev") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, " 418 ") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "teapot") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\n  AI") != null);
-    // the Send chip and the Headers tab are hits
-    var found_send = false;
-    var found_tab = false;
-    for (fx.hits.items.items) |h| switch (h.target) {
-        .script_hit => |s| {
-            if (s.id == hit_send) found_send = true;
-            if (s.id == hit_tab_base + 1) found_tab = true;
-        },
-        else => {},
-    };
-    try testing.expect(found_send and found_tab);
-}
-
-test "draw: the edit split paints both halves with their strips and the divider; {{VAR}} spans register hits; the tip lands" {
-    var fx = try fixture.init(100, 24);
-    defer fx.deinit();
-    var scroll: usize = 0;
-    var split_scroll: usize = 0;
-    var view = editor_view.ViewState{};
-    const m: Model = .{
+fn baseModel(scroll: *usize, view: *editor_view.ViewState) Model {
+    return .{
         .method = "GET",
-        .url = "https://{{HOST}}/a",
+        .url = "https://httpbin.org/get",
         .url_caret = 0,
         .block = .request,
-        .field = .content,
+        .field = .url,
         .edit_tab = .body,
-        .body = "{\"k\": \"{{V}}\"}",
+        .body = "",
         .body_caret = 0,
-        .headers_text = "",
+        .headers_text = "Accept: application/json\n",
         .headers_caret = 0,
         .source = "",
         .source_caret = 0,
         .params = &.{},
-        .draft = .{ .key = "", .value = "", .key_caret = 0, .value_caret = 0, .on_value = false },
+        .draft = null,
         .row_cursor = 0,
         .auth_current = null,
         .vars = &.{},
-        .env_name = "dev",
-        .edit_scroll = &scroll,
+        .env_name = null,
+        .edit_scroll = scroll,
         .sending = false,
         .failed = null,
         .response = null,
         .sent_line = null,
         .response_tab = .body,
-        .resp_view = &view,
+        .resp_view = view,
         .body_wrap = false,
         .focused = true,
         .source_path = null,
-        .url_vars = &.{.{ .start = 8, .end = 16, .resolved = true, .id = 0 }},
-        .body_vars = &.{.{ .start = 7, .end = 12, .resolved = false, .id = 1 }},
-        .split = .{ .tab = .vars, .ratio = 50, .scroll = &split_scroll },
     };
+}
+
+test "tabs cycle both ways in Rust's order; the labels are the six the strip paints" {
+    try testing.expectEqual(EditTab.body, EditTab.params.next());
+    try testing.expectEqual(EditTab.headers, EditTab.body.next());
+    try testing.expectEqual(EditTab.params, EditTab.source.next());
+    try testing.expectEqual(EditTab.source, EditTab.params.prev());
+    try testing.expectEqualStrings("Script", EditTab.source.label());
+    try testing.expectEqual(ResponseTab.tests, ResponseTab.body.prev());
+    try testing.expect(EditTab.source.isText() and !EditTab.params.isText());
+    try testing.expectEqual(Orientation.vertical, Orientation.auto.resolve(89));
+    try testing.expectEqual(Orientation.horizontal, Orientation.auto.resolve(120));
+    try testing.expectEqual(Tier.medium, tierFor(89, 3));
+    try testing.expectEqual(Tier.full, tierFor(120, 3));
+    try testing.expectEqual(Tier.small, tierFor(40, 3));
+}
+
+test "the spec's request pane, cell for cell: the top bar, the Request box with its strip and chips, the idle Response box, the AI box; the hits" {
+    // `docs/ui-spec/rust-request-120x40.txt` columns 31..120, rows 2..37
+    // (row 38 is the statusline, 39 the message line).
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    const m = baseModel(&scroll, &view);
+    const ui = fx.ui();
+    const caret = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(0, "");
+    try fx.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ "\u{2500}" ** 58 ++ "\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}");
+    try fx.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ " " ** 39 ++ "\u{2502}\u{2502} \u{25B6} Send \u{2502}");
+    try fx.expectRow(3, "\u{2514}" ++ "\u{2500}" ** 12 ++ "\u{2518}\u{2514}" ++ "\u{2500}" ** 63 ++ "\u{2518}\u{2514}" ++ "\u{2500}" ** 8 ++ "\u{2518}");
+    try fx.expectRow(4, "\u{250C}" ++ "\u{2500}" ** 75 ++ "[\u{21D4}]\u{2500}[A \u{25A5} \u{25A4}]\u{2500}\u{2510}");
+    try fx.expectRow(5, "\u{2502}  Params  Body  Headers  Auth  Vars  Script" ++ " " ** 44 ++ "\u{2502}");
+    try fx.expectRow(6, "\u{2502}          \u{2501}\u{2501}\u{2501}\u{2501}" ++ " " ** 73 ++ "\u{2502}");
+    try fx.expectRow(7, "\u{2502} 1" ++ " " ** 85 ++ "\u{2502}");
+    try fx.expectRow(17, "\u{2514}" ++ "\u{2500}" ** 87 ++ "\u{2518}");
+    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 87 ++ "\u{2510}");
+    // The fixture's row reader prints the wide `⚡` once (the headless
+    // dump shows its second cell as a space).
+    try fx.expectRow(19, "\u{2502}  Body  Headers  Cookies  Timeline  Tests                    \u{26A1} AI  wrap   copy   \u{2014} \u{25BC}  \u{2502}");
+    try fx.expectRow(20, "\u{2502}  \u{2501}\u{2501}\u{2501}\u{2501}" ++ " " ** 81 ++ "\u{2502}");
+    try fx.expectRow(21, "\u{2502}  not sent yet \u{00B7} press `r` to fire" ++ " " ** 53 ++ "\u{2502}");
+    try fx.expectRow(32, "\u{2514}" ++ "\u{2500}" ** 87 ++ "\u{2518}");
+    try fx.expectRow(33, "\u{250C} AI " ++ "\u{2500}" ** 83 ++ "\u{2510}");
+    try fx.expectRow(34, "\u{2502} click here to ask a custom question   \u{00B7} `a` quick debug" ++ " " ** 31 ++ "\u{2502}");
+    try fx.expectRow(35, "\u{2514}" ++ "\u{2500}" ** 87 ++ "\u{2518}");
+    // The caret sits at the URL's start; the hits.
+    try testing.expectEqual(@as(u16, 16), caret.?.x);
+    try testing.expectEqual(@as(u16, 2), caret.?.y);
+    try testing.expectEqual(hit_method, fx.hits.at(3, 2).?.script_hit.id);
+    try testing.expectEqual(hit_url, fx.hits.at(30, 2).?.script_hit.id);
+    try testing.expectEqual(hit_send, fx.hits.at(83, 2).?.script_hit.id);
+    try testing.expectEqual(hit_split_toggle, fx.hits.at(77, 4).?.script_hit.id);
+    try testing.expectEqual(hit_orient, fx.hits.at(82, 4).?.script_hit.id);
+    try testing.expectEqual(hit_tab_base + 1, fx.hits.at(11, 5).?.script_hit.id);
+    try testing.expectEqual(hit_tab_base + 5, fx.hits.at(38, 5).?.script_hit.id);
+    try testing.expectEqual(hit_content, fx.hits.at(20, 8).?.script_hit.id);
+    try testing.expectEqual(hit_resp_tab_base + 3, fx.hits.at(30, 19).?.script_hit.id);
+    try testing.expectEqual(hit_ai_chip, fx.hits.at(64, 19).?.script_hit.id);
+    try testing.expectEqual(hit_wrap, fx.hits.at(71, 19).?.script_hit.id);
+    try testing.expectEqual(hit_copy, fx.hits.at(78, 19).?.script_hit.id);
+    try testing.expectEqual(hit_type, fx.hits.at(84, 19).?.script_hit.id);
+    try testing.expectEqual(hit_resp_body, fx.hits.at(30, 25).?.script_hit.id);
+    try testing.expectEqual(hit_ai, fx.hits.at(10, 34).?.script_hit.id);
+    // Colours: the method chip on green, the active tab bold, the bar
+    // yellow, the send green.
+    try testing.expect(fx.bgEql(3, 2, .{ .bg = fx.theme.palette.green }));
+    try testing.expect(fx.style(11, 5).bold);
+    try testing.expect(!fx.style(3, 5).bold);
+    try testing.expect(fx.fgEql(11, 6, .{ .fg = fx.theme.palette.yellow }));
+    try testing.expect(fx.fgEql(80, 2, .{ .fg = fx.theme.palette.green }));
+}
+
+test "after a send: the status title on the Response border, the Headers count, no AI chip on a 2xx, the gutter rows; wrap and scroll" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    const headers = [_]Pair{ .{ .key = "Content-Type", .value = "application/json" }, .{ .key = "Content-Length", .value = "49" }, .{ .key = "Server", .value = "x" }, .{ .key = "Date", .value = "y" }, .{ .key = "Last-Modified", .value = "z" } };
+    m.response = .{
+        .status = 200,
+        .status_text = "OK",
+        .headers = &headers,
+        .body = "{\n  \"ok\": true,\n  \"items\": [\n    1,\n    2,\n    3\n  ],\n  \"name\": \"mnml\"\n}",
+        .body_bytes = 49,
+        .truncated = false,
+        .timing = .{ .wait_ms = 1, .receive_ms = 1, .total_ms = 2 },
+        .cookies = &.{},
+    };
+    m.block = .response;
+    m.field = .content;
     const ui = fx.ui();
     _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 65 ++ " 200 OK  \u{00B7} 2ms \u{00B7} 49 B \u{2510}");
+    try fx.expectRow(19, "\u{2502}  Body  Headers 5  Cookies  Timeline  Tests                      wrap   copy   JSON \u{25BC}  \u{2502}");
+    try fx.expectRow(21, "\u{2502}" ++ " " ** 87 ++ "\u{2502}");
+    try fx.expectRow(22, "\u{2502} 1 {" ++ " " ** 83 ++ "\u{2502}");
+    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ " " ** 71 ++ "\u{2502}");
+    try fx.expectRow(30, "\u{2502} 9 }" ++ " " ** 83 ++ "\u{2502}");
+    try testing.expect(fx.fgEql(70, 18, .{ .fg = fx.theme.palette.green }));
+    // The Headers tab lists `key: value`.
+    m.response_tab = .headers;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ " " ** 55 ++ "\u{2502}");
+    // Scrolling a long body: twenty lines, the window from the third
+    // row; the gutter is right-aligned to two digits.
+    m.response_tab = .body;
+    m.response.?.body = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20";
+    view.scroll_line = 2;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(21, "\u{2502}  2 l2" ++ " " ** 81 ++ "\u{2502}");
+    try fx.expectRow(29, "\u{2502} 10 l10" ++ " " ** 80 ++ "\u{2502}");
+    // Past the end the window is pulled back.
+    view.scroll_line = 40;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    // Twenty-one rows in an eleven-row window.
+    try testing.expectEqual(@as(u32, 10), view.scroll_line);
+    // Wrap: a body line past the width continues under a blank gutter
+    // (the first chunk is a cell wider than the box, as Rust's, and is
+    // clipped at the border).
+    view.scroll_line = 0;
+    m.body_wrap = true;
+    m.response.?.body = "a" ** 100;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(22, "\u{2502} 1 " ++ "a" ** 84 ++ "\u{2502}");
+    try fx.expectRow(23, "\u{2502}   " ++ "a" ** 15 ++ " " ** 69 ++ "\u{2502}");
+    // A failure: the title and the AI chip.
+    m.response = null;
+    m.failed = "connection refused";
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 77 ++ " \u{2717} failed \u{2510}");
+    try fx.expectRow(21, "\u{2502}  \u{2717} connection refused" ++ " " ** 65 ++ "\u{2502}");
+    // Rust `draw_edit`'s tail under the request body: a blank row, then
+    // the failure in red; while sending, the spinner line.
+    try fx.expectRow(8, "\u{2502}" ++ " " ** 87 ++ "\u{2502}");
+    try fx.expectRow(9, "\u{2502}  \u{2717} last send: connection refused" ++ " " ** 54 ++ "\u{2502}");
+    try testing.expect(fx.fgEql(4, 9, .{ .fg = fx.theme.palette.red }));
+    m.failed = null;
+    m.sending = true;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(9, "\u{2502}  \u{27F3}  sending\u{2026}" ++ " " ** 74 ++ "\u{2502}");
+    m.sending = false;
+    try testing.expectEqual(hit_ai_chip, fx.hits.at(64, 19).?.script_hit.id);
+}
+
+test "the Params table, the draft row and Add row; the split halves; a wide pane goes side by side with the full top bar" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var split_scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    m.edit_tab = .params;
+    m.field = .content;
+    m.params = &.{.{ .key = "a", .value = "1" }};
+    m.url_vars = &.{.{ .start = 8, .end = 15, .resolved = true, .id = 0 }};
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    // table_w = clamp(87 - 5, 20, 100) = 82; name 26, value 49.
+    try fx.expectRow(6, "\u{2502}  \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}" ++ " " ** 79 ++ "\u{2502}");
+    // Rust's table is a cell wider than the box (its own right edge is
+    // clipped away), so the last column is the box border.
+    try fx.expectRow(7, "\u{2502}  \u{250C}" ++ "\u{2500}" ** 28 ++ "\u{252C}" ++ "\u{2500}" ** 51 ++ "\u{252C}\u{2500}\u{2500}\u{2500}\u{2502}");
+    try fx.expectRow(8, "\u{2502}  \u{2502} Name" ++ " " ** 22 ++ " \u{2502} Value" ++ " " ** 44 ++ " \u{2502}   \u{2502}");
+    try fx.expectRow(10, "\u{2502}  \u{2502} a" ++ " " ** 25 ++ " \u{2502} 1" ++ " " ** 48 ++ " \u{2502} \u{2715} \u{2502}");
+    try fx.expectRow(11, "\u{2502}  \u{2514}" ++ "\u{2500}" ** 28 ++ "\u{2534}" ++ "\u{2500}" ** 51 ++ "\u{2534}\u{2500}\u{2500}\u{2500}\u{2502}");
+    try fx.expectRow(12, "\u{2502}  + Add row" ++ " " ** 76 ++ "\u{2502}");
+    try testing.expectEqual(hit_param_row, fx.hits.at(10, 10).?.script_hit.id);
+    try testing.expectEqual(hit_param_del, fx.hits.at(85, 10).?.script_hit.id);
+    try testing.expectEqual(hit_add_row, fx.hits.at(5, 12).?.script_hit.id);
+    try testing.expectEqual(hit_var_base, fx.hits.at(24, 2).?.script_hit.id);
+    // The draft row: the caret mark in the name, `✓` dim until both
+    // cells hold text.
+    m.draft = .{ .key = "", .value = "", .key_caret = 0, .value_caret = 0, .on_value = false };
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(12, "\u{2502}  \u{2502} \u{258F}" ++ " " ** 25 ++ " \u{2502} (value)" ++ " " ** 42 ++ " \u{2502} \u{2713} \u{2502}");
+    try testing.expectEqual(hit_draft_commit, fx.hits.at(85, 12).?.script_hit.id);
+    try testing.expectEqual(hit_draft_value, fx.hits.at(40, 12).?.script_hit.id);
+    try testing.expect(fx.fgEql(85, 12, .{ .fg = fx.theme.palette.comment }));
+    // The split: both halves carry a strip, the divider is a hit.
+    m.draft = null;
+    m.split = .{ .tab = .vars, .ratio = 50, .scroll = &split_scroll };
+    _ = draw(ui, 3, ui.canvas.full(), m);
     const txt = try fx.text();
-    try testing.expect(std.mem.indexOf(u8, txt, "[Body]  Headers") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "[Vars]") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "│") != null);
-    var found_divider = false;
-    var found_split_tab = false;
-    var found_toggle = false;
-    var found_url_var = false;
-    var found_body_var = false;
-    var var_rect: ?Rect = null;
-    for (fx.hits.items.items) |h| switch (h.target) {
-        .script_hit => |s| {
-            if (s.id == hit_split_divider) found_divider = true;
-            if (s.id == hit_split_tab_base + 4) found_split_tab = true;
-            if (s.id == hit_split_toggle) found_toggle = true;
-            if (s.id == hit_var_base + 0) {
-                found_url_var = true;
-                var_rect = h.rect;
-            }
-            if (s.id == hit_var_base + 1) found_body_var = true;
-        },
-        else => {},
-    };
-    try testing.expect(found_divider and found_split_tab and found_toggle and found_url_var and found_body_var);
-    // The URL span covers exactly `{{HOST}}`: 8 cells, starting 8 past the URL's first cell.
-    try testing.expectEqual(@as(u16, 8), var_rect.?.w);
-    drawVarTip(ui, ui.canvas.full(), var_rect.?, "HOST", "https://dev", "dev");
+    // The 43-cell left half holds the strip exactly; the divider follows.
+    try testing.expect(std.mem.indexOf(u8, txt, "Params  Body  Headers  Auth  Vars  Script\u{2502}  Params  Body") != null);
+    try testing.expectEqual(hit_split_divider, fx.hits.at(44, 8).?.script_hit.id);
+    try testing.expectEqual(hit_split_tab_base + 4, fx.hits.at(78, 5).?.script_hit.id);
+    try testing.expect(fx.fgEql(77, 4, .{ .fg = fx.theme.palette.cyan }));
+    // 120 cells: the full top bar, the blocks side by side.
+    var wide = try fixture.init(120, 40);
+    defer wide.deinit();
+    m.split = null;
+    m.env_name = "dev";
+    const wui = wide.ui();
+    _ = draw(wui, 3, wui.canvas.full(), m);
+    try wide.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ "\u{2500}" ** 38 ++ "\u{2510}\u{250C} Env \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}\u{250C} Save \u{2500}\u{2500}\u{2510}\u{250C} Clear \u{2500}\u{2500}\u{2510}\u{250C} Copy as\u{2026} \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    try wide.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ " " ** 19 ++ "\u{2502}\u{2502}   dev \u{25BE}    \u{2502}\u{2502} \u{25B6} Send \u{2502}\u{2502} \u{2398} Save \u{2502}\u{2502} \u{2715} Clear \u{2502}\u{2502} </> Copy as\u{2026} \u{2502}");
+    try testing.expectEqual(hit_env, wide.hits.at(60, 2).?.script_hit.id);
+    // Method 0..13, URL 14..58, Env 59..72, Send 73..82, Save 83..92,
+    // Clear 93..103, Copy as… 104..119.
+    try testing.expectEqual(hit_send, wide.hits.at(77, 2).?.script_hit.id);
+    try testing.expectEqual(hit_save, wide.hits.at(86, 2).?.script_hit.id);
+    try testing.expectEqual(hit_clear, wide.hits.at(96, 2).?.script_hit.id);
+    try testing.expectEqual(hit_code, wide.hits.at(108, 2).?.script_hit.id);
+    const wt = try wide.text();
+    try testing.expect(std.mem.indexOf(u8, wt, "\u{2510}\u{250C}" ++ "\u{2500}" ** 3) != null);
+    try testing.expect(std.mem.indexOf(u8, wt, "not sent yet") != null);
+    const z = zones(wui.canvas.full(), m);
+    try testing.expectEqual(@as(u16, 60), z.request.w);
+    try testing.expectEqual(@as(u16, 60), z.response.x);
+}
+
+test "the var tip lands under its anchor" {
+    var fx = try fixture.init(60, 6);
+    defer fx.deinit();
+    const ui = fx.ui();
+    drawVarTip(ui, ui.canvas.full(), Rect.init(10, 1, 8, 1), "HOST", "https://dev", "dev");
+    const txt = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, txt, "{{HOST}} = https://dev") != null);
+    drawVarTip(ui, ui.canvas.full(), Rect.init(10, 1, 8, 1), "NOPE", null, "dev");
     const txt2 = try fx.text();
-    try testing.expect(std.mem.indexOf(u8, txt2, "{{HOST}} = https://dev") != null);
-    drawVarTip(ui, ui.canvas.full(), var_rect.?, "NOPE", null, "dev");
-    const txt3 = try fx.text();
-    try testing.expect(std.mem.indexOf(u8, txt3, "{{NOPE}} — not defined in env dev") != null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "{{NOPE}} \u{2014} not defined in env dev") != null);
 }

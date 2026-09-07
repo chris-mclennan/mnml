@@ -1,7 +1,9 @@
 # zig-only
-# Tab strip overflow: hidden tabs show as ‹ › markers, the wheel over
-# the strip scrolls it a tab at a time, the markers click, and the `+`
-# stays at the end. 16 tabs at 120 columns with the tree open cannot fit.
+# Sixteen tabs overflow the strip (Rust's chips: an icon, the name,
+# `󰅖`, three cells between). The strip ends on the active tab with
+# the `󰐕` after it and the `󰅁  󰅂` chevrons on the right; the
+# wheel over the strip scrolls it a tab at a time, back to the first
+# tab and forward again; Ctrl+Tab wraps to the first tab and reveals it.
 write alpha.zig "const alpha = 1;\n"
 write t1.txt "t1\n"
 write t2.txt "t2\n"
@@ -34,14 +36,12 @@ open t12.txt
 open t13.txt
 open t14.txt
 open t15.txt
-# The active tab (t15) is in view; the first ones hide behind ‹; the + is there.
-expect screen contains "‹ "
-expect screen contains "t15.txt   󰐕"
-expect screen lacks "alpha.zig   t1.txt"
-# Wheel up over the strip: one hidden tab comes back on the left, the last hides behind ›.
+expect screen contains "t15.txt 󰅖 󰐕"
+expect screen contains "󰅁  󰅂"
+expect screen lacks "alpha.zig 󰅖   󰈙 t1.txt"
 scroll 60 1 up
-expect screen contains " ›"
-expect screen lacks "t15.txt   󰐕"
+expect screen lacks "t15.txt 󰅖 󰐕"
+expect screen contains "t10.txt 󰅖"
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
@@ -49,14 +49,12 @@ scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
-# (one more: the split buttons take nine cells off the strip's right end)
 scroll 60 1 up
-expect screen contains "alpha.zig   t1.txt"
-expect screen lacks "‹ "
-# Wheel down brings the tail back; the + never left.
+scroll 60 1 up
+scroll 60 1 up
+expect screen contains "  alpha.zig 󰅖   󰈙 t1.txt 󰅖"
 scroll 60 1 down
-expect screen lacks "alpha.zig   t1.txt"
+expect screen lacks "alpha.zig 󰅖   󰈙 t1.txt"
 expect screen contains "󰐕"
-# Switching the active tab re-windows to it.
 key ctrl+tab
 expect screen contains "alpha.zig"

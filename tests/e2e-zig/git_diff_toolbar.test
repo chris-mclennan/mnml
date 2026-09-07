@@ -1,0 +1,55 @@
+# zig-only
+# The diff pane's toolbars (src/ui/diff_view.zig, src/ui/git_toolbar.zig):
+# the banner's Stage chip stages the hunk, Discard asks first, the
+# toolbar's Wrap continues a long line on the next row, and its `×`
+# closes the pane. The pane sits at column 31 (the tree is 30 wide):
+# row 2 is the git toolbar, row 3 the diff toolbar, row 4 the banner.
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.rs "fn alpha() {}\n"
+write long.txt "short\n"
+shell git add code.rs long.txt
+shell git commit -q -m "initial"
+shell printf "fn beta() {}\n" > code.rs
+shell printf "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL_MARKER_END\n" > long.txt
+open code.rs
+command git.diff_file
+expect screen contains "Hunk 1/1  code.rs"
+expect screen contains "Stage   Discard"
+# Discard asks first; esc keeps the hunk.
+click 109 4
+expect screen contains "Discard this hunk"
+key esc
+expect screen lacks "Discard this hunk"
+expect screen contains "+ fn beta() {}"
+# Stage: the file diff (HEAD against the worktree) keeps the hunk, the
+# worktree diff (the index against the worktree) no longer has it.
+click 101 4
+wait 800
+expect screen contains "staged hunk 1 of code.rs"
+command git.diff
+wait 800
+expect pane "diff: worktree"
+expect screen contains "Hunk 1/1  long.txt"
+expect screen lacks "fn beta"
+# The `×` closes the pane; the file diff is what is left, and its own
+# `×` leaves the editor.
+click 117 3
+expect pane "diff: code.rs"
+click 117 3
+expect pane code.rs
+expect screen lacks "Hunk   Inline"
+# Wrap on a long line: the tail is clipped until the toggle is on.
+open long.txt
+command git.diff_file
+expect screen contains "Hunk 1/1  long.txt"
+expect screen lacks "MARKER_END"
+click 60 3
+expect screen contains "MARKER_END"
+click 60 3
+expect screen lacks "MARKER_END"
+# The git toolbar's Fetch runs the command: no remote, so it says so.
+click 74 2
+wait 800
+expect screen contains "fetch"

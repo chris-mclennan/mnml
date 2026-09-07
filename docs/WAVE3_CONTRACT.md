@@ -2765,3 +2765,96 @@ The spec is `docs/ui-spec/rust-120x40.txt`, columns 4–29 of rows 1–37;
   buttons; `app/menu_bar.zig` walks every row of every menu for a
   runner; `tests/e2e-zig/menu_bar_top_row.test` clicks the chip, the
   `+`, File, a row, the `»` and a hidden menu.
+
+## Editor, diff and request panes to the Rust spec (2026-09-06, branch `editor-panes`) — `// changed:` notes
+
+The three pane specs (`docs/ui-spec/rust-editor-120x40.txt`,
+`rust-diff-120x40.txt`, `rust-request-120x40.txt`) and their step
+files, painted cell for cell. What moved, and where the Zig side still
+differs on purpose.
+
+- `// changed (bufferline):` a chip is Rust's ` glyph name badge ` —
+  the file's devicon, the name cut at `name_cap`, the close `󰅖` on every
+  tab (red on the active one), three cells to the next chip, the ` 󰐕 `
+  after the last; a Request tab has no glyph and a method pill; the
+  ` 󰅁  󰅂 ` pair sits at the right whenever a leaf holds two or more
+  tabs, dim and inert with nothing to scroll to. The empty strip keeps
+  Rust's three split buttons (the maximize button is gone). Pty tabs
+  lost the `│` divider and the `$` suffix the old strip invented; the
+  `HitTarget.tab_close` doc now says badge cells. Six zig-only `.test`
+  files that asserted the old strip (`close_split_sole_pane`,
+  `files_open_split`, `plus_menu_kebab`, `pty_tabs`, `tab_strip_overflow`,
+  `ui_undo_close_others_order`) now assert the Rust geometry, each
+  checked against the Rust binary through `tools/ui-diff.sh` first
+  (sixteen-tab overflow and a four-tab strip are cell-identical).
+- `// changed (tab drop):` `dispatch.dropTab` uses Rust's
+  `tab_strip_insert_idx`: the slot before the first chip whose
+  three-quarter point is right of the pointer, applied after the dragged
+  tab is taken out — a drop past a neighbour's middle lands after it.
+  The centre rule with the same-leaf decrement made the Rust corpus's
+  `mouse_tab_reorder.test` a no-op on the new chip widths.
+- `// changed (strip wheel):` the wheel over a strip scrolls it a tab
+  at a time and clamps at the fill. Rust lets the strip overshoot the
+  fill and then paints a `+N hidden` count chip for the tabs scrolled
+  off the left; the Zig chip counts filtered tabs only. Not in any
+  pane spec; left as is.
+- `// changed (breadcrumb):` the editor's ` src › main.rs ` row under
+  the strip (`editor_view.zig`) registers `HitTarget.breadcrumb{ pane,
+  idx }`; a click opens a Files pane at the directory the segment
+  names, the F1 overlay explains it. Pinned rows and the sticky
+  header moved one row down with it.
+- `// changed (git toolbar, diff pane):` `git_toolbar.zig` is the row
+  of ` icon label ` buttons above a diff pane and the git graph,
+  centred, buttons dropping from the right until the rest fit, `Pop`
+  after `Stash` while there is a stash. `diff_view.zig` paints Rust's
+  three views — Inline (the whole file, the default), Hunk (`@@`
+  headers with their own chips, three lines of context), Split (old
+  left, new right, a header across both, a `·` filler) — under the
+  diff toolbar (`Hunk   Inline   Split  │  Wrap … ×`) and the
+  `Hunk N/M  file` banner with Stage / Discard (Unstage on a staged
+  scope); the `/` filter keeps the hunks holding the needle; the right
+  edge is the change-density strip. `App.git_divider` is gone.
+- `// changed (request pane):` `request_view.zig` paints Rust's boxes
+  — Method / URL / Send (Env / Save / Clear / Copy as… from 95 cells),
+  the Request box with its `━`-underlined strip and `[⇔]─[A ▥ ▤]`
+  chips, the Response box with the status title on its border and its
+  own strip, the AI box. The tab title cuts the scheme and the query
+  as Rust does. Under the Body / Headers / Source rows Rust
+  `draw_edit`'s tail is painted: a blank row, then `⟳  sending…`,
+  `▶ streaming · N events received` or `✗ last send: <error>`; the
+  Params / Auth / Vars tabs do not paint it (their row count is not
+  known to the caller). A JSON response is re-indented for the view
+  only — `RequestPane.resp_pretty` / `displayBody()` feed the
+  highlighter and the painter; `Response.body` stays the wire body
+  (history, the diff, copy, the byte count on the title). The first
+  cut had rewritten the body in `setResponse`, which broke two
+  `http.zig` tests and would have put the pretty text into history.
+- `// changed (send failure text):` `client.describe` takes the URL:
+  a connect-class failure (refused, unreachable, a name that does not
+  resolve) reads `connection failed: error sending request for url
+  (<url>): <cause>` — reqwest's words in Rust, so the corpus's
+  `env-resolution-mnml-overrides-rqst.test` finds the expanded host on
+  the screen; the Zig cause is kept after it.
+- `// changed (headless startup):` `e2e.driver.Config.startup_hook`
+  — the headless loop runs the terminal loop's `startup` hook (config
+  tasks, then the session restore); the `.test` runner leaves it off.
+  A restored tree replaces the expanded set and keeps the top-level
+  directories the session left shut (`tree.restored`).
+- `// changed (residue):` the `ui-diff` runs differ from Rust in the
+  LSP toast, the `LSP 1` chip and the `󱼀 󰐎` chips (cut), the version
+  and the sampled system chip, and — on the diff run — the info panel:
+  Rust still shows `fn · RS · main.rs` with the LSP chords there because
+  its hover-help debounce (350 ms, committed on a later frame) never
+  saw a redraw before the dump; a live Rust window shows `diff:
+  worktree`, which is what Zig paints at once. The diff spec needs
+  the fixture's `src/main.rs` dirty (`z` appended); the editor and
+  request specs need it clean.
+- `// changed (tests):` `tests/e2e-zig/editor_tab_breadcrumb.test`,
+  `git_diff_toolbar.test`, `git_diff_views.test`, `http_request_pane.test`
+  (new), `http_edit_split.test`, `http_plus_chip.test` (updated) —
+  each fails on main's binary. Unit tests: the spec snapshots with
+  their hits in `bufferline.zig`, `diff_view.zig`, `git_toolbar.zig`,
+  `request_view.zig`, `editor_view.zig` (the breadcrumb row); the
+  wire-body / view-text test in `request_pane.zig` and the send-state
+  rows in `request_view.zig`, each watched failing with a break in the
+  painter first.

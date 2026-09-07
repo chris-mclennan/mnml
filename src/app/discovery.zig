@@ -50,6 +50,16 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .divider => .{ .title = "Divider", .detail = "drag to resize" },
         .tab_close => .{ .title = "Close tab", .detail = "click closes this pane" },
+        .breadcrumb => |bc| blk: {
+            const e = app.panes.editor(bc.pane) orelse break :blk null;
+            const path = e.buf.doc.path orelse break :blk null;
+            const names = try render.breadcrumbNames(app, arena, path);
+            if (bc.idx >= names.len) break :blk null;
+            break :blk .{
+                .title = try f.fmt(arena, "Breadcrumb: {s}", .{names[bc.idx]}),
+                .detail = "click opens a Files pane at this directory",
+            };
+        },
         .dock => |d| .{
             .title = try f.fmt(arena, "Dock widget {d}", .{d.id}),
             .detail = "click focuses · drag the header moves it · right-click: widget menu",

@@ -1,27 +1,41 @@
-//! Bufferline — one row of tabs on `theme.bufferline`. Each tab is
-//! ` title ` (plus `● ` when dirty, in `theme.tab_dirty`), the active one
-//! in `theme.tab_active`, the rest in `theme.tab_inactive`, one cell of
-//! strip between them. Every painted tab registers a `.tab{leaf, idx}`
-//! hit in the same statement as its paint; the `+` after the last tab
-//! registers the `.button` the caller names.
+//! Bufferline — a leaf's tab strip, the row the Rust editor paints above
+//! every leaf (`paint_leaf_tab_strip`), cell for cell:
 //!
-//! // changed: the strip is per leaf (a tab drags between leaves), so
-//! `draw` takes `Opts{ leaf, new_tab }` — the leaf index the hits carry
-//! and the id of the `+` button, if wanted.
+//! ```text
+//!  main.rs 󰅖   󰹾 diff: worktree 󰅖   󰐕            󰅁  󰅂
+//! ```
 //!
-//! Tabs that do not fit are not painted at all: a half tab is a dead
-//! click target. The strip is a window: `Opts.first` is the first
-//! painted position (the caller keeps it per leaf and re-fits it with
-//! `fitActive` when the active tab changes); hidden tabs on either side
-//! show as `‹` / `›` markers that register the caller's scroll buttons,
-//! and the `+` keeps its place after the `›`, never pushed off.
+//! A chip is ` glyph name badge ` — one cell, the file's devicon in its
+//! colour, one cell, the name (cut to `name_cap` cells with `…`), one
+//! cell, the badge, one cell. The badge is the close `󰅖` (red on the
+//! active chip, grey on the rest, brighter under the pointer), the pin
+//! `` on a pinned tab, or `●` on an unsaved one (the pointer turns it
+//! back into `×` so one click still closes). A Request pane has no
+//! glyph; its method sits in a solid pill before the name. An LSP count
+//! (`✗3` / `⚠2`) goes between the name and the badge. The active chip
+//! is on the editor's ground in the bold foreground; the others on the
+//! strip's ground, dim. Chips sit one cell apart; the ` 󰐕 ` follows the
+//! last one on the editor's ground.
 //!
-//! Pty tabs form the session strip: they are painted after the file
-//! tabs behind a `│` divider, as ` label$ × ` — the `$` marks a
-//! terminal, the `×` registers a `.tab_close` hit on top of the tab's
-//! own so one click closes a session. The hits carry the leaf's tab
-//! index, not the painted position, so the app never re-derives the
-//! order.
+//! The right end, from the edge inward: the four split buttons (a
+//! shell, split right, split down, maximize — each ` glyph `), before
+//! them the AI chips that are enabled (dropped one by one on a strip
+//! short of room), before those the markdown mode chip, and before that
+//! the ` 󰅁  󰅂 ` pair whenever the leaf holds two or more tabs — lit and
+//! registered only when there is something to scroll to, painted dim
+//! otherwise so the strip does not reflow at either end.
+//!
+//! The strip is a window: `Opts.first` is the scroll offset (the caller
+//! keeps it on the leaf, the wheel and the chevrons move it). `draw`
+//! clamps it to the smallest offset whose tail still fills the strip,
+//! so a stale offset never strands tabs off the left edge. Every chip
+//! registers `.tab{leaf, idx}` as it paints; its last two cells
+//! `.tab_close` on top when the badge was drawn and the tab is not
+//! pinned. The hits carry the leaf's tab index, never the painted
+//! position.
+//!
+//! The chrome row's right cluster (`drawCluster`) lives here too — it
+//! shares the `+` / `×` glyphs.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -31,132 +45,397 @@ const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
 
 const Style = vaxis.Style;
+const Color = vaxis.Color;
 
 pub const PaneId = ids.PaneId;
 
-pub const Kind = enum { file, pty };
+pub const Severity = enum { none, warning, err };
 
 pub const Tab = struct {
     id: PaneId,
+    /// The name shown; for a Request pane the part after the method.
     title: []const u8,
-    dirty: bool,
-    active: bool,
-    kind: Kind = .file,
-    /// Paints the pin glyph before the title.
+    /// The icon before the name; empty skips the slot (Rust's
+    /// `skip_icon`: a Request pane's method pill is its identity).
+    glyph: []const u8 = "",
+    icon_color: Color = .default,
+    /// A Request pane's method — painted as a pill on `icon_color`.
+    verb: ?[]const u8 = null,
+    active: bool = false,
+    dirty: bool = false,
     pinned: bool = false,
+    /// Italic name: a preview tab.
+    preview: bool = false,
+    /// `✗3` / `⚠2` / `●` from the diagnostics, or empty.
+    diag: []const u8 = "",
+    diag_severity: Severity = .none,
 };
 
-/// The pin glyph (nf-fa-thumb_tack) and its ASCII twin, one cell each.
-pub const pin_glyph = "\u{f08d}";
-pub const pin_ascii = "^";
+/// The markdown mode chip left of the split buttons: `  Preview ` on
+/// a markdown editor (purple), ` ✏ Edit ` on a preview (blue).
+pub const ModeChip = struct {
+    label: []const u8,
+    button: u32,
+    kind: enum { edit_md, preview_md },
+};
+
+pub const AiChip = struct { id: u32, glyph: []const u8, fallback: []const u8, live: bool };
+
+/// The split cluster's `.button` ids; `ai` paints before the four.
+/// The cluster's ids. `max` is null on the empty layout — Rust paints
+/// three buttons there, the maximize one only once a pane is open.
+pub const SplitIds = struct { term: u32, right: u32, down: u32, max: ?u32, ai: []const AiChip = &.{} };
 
 pub const Opts = struct {
     /// What the `.tab` hits carry as their leaf.
     leaf: u32 = 0,
-    /// Paint ` + ` after the last tab and register it as this `.button`.
+    /// Paint ` 󰐕 ` after the last tab and register it as this `.button`.
     new_tab: ?u32 = null,
-    /// The first painted position (visual order); null fits the window
-    /// to the active tab. Clamped so the strip never shows fewer tabs
-    /// than it could.
-    first: ?usize = null,
-    /// The `.button` ids the `‹` / `›` markers register, when wanted.
+    /// The scroll offset — the first tab painted. Clamped by `draw`.
+    first: usize = 0,
+    /// The `.button` ids the chevrons register when they can scroll.
     scroll_left: ?u32 = null,
     scroll_right: ?u32 = null,
+    split: ?SplitIds = null,
+    mode_chip: ?ModeChip = null,
+    /// Tabs the caller kept off the strip; they count into ` +N hidden `.
+    hidden_extra: usize = 0,
+    /// The `.button` the ` +N hidden ` chip registers (a buffer picker).
+    hidden_button: ?u32 = null,
+    /// The leaf is zoomed: the maximize button shows the restore glyph.
+    zoomed: bool = false,
 };
 
-/// What `draw` painted: the window it settled on and how many tabs
-/// sit outside it on each side.
-pub const Window = struct { first: usize = 0, hidden_left: usize = 0, hidden_right: usize = 0 };
+/// What `draw` painted: the offset it settled on, how many chips it
+/// painted, and how many tabs sit outside the window on each side.
+pub const Window = struct { first: usize = 0, painted: usize = 0, hidden_left: usize = 0, hidden_right: usize = 0 };
 
-/// The width of the `+` chip.
-pub const plus_w: u16 = 3;
-/// The width of a `‹ ` / ` ›` marker.
-pub const marker_w: u16 = 2;
-
-/// The tab positions a caller needs to route a drop: the `x` each tab
-/// starts at and its width, in strip order from `first`.
+/// The tab positions a caller needs to route a drop: the `x` each chip
+/// starts at and its width, in strip order from the offset.
 pub const Slot = struct { idx: usize, x: u16, w: u16 };
 
-/// ` title ` plus ` ●` when dirty; a pty tab is ` title$ × `.
-fn tabWidth(ui: Ui, tab: Tab) u16 {
-    const base = 2 + ui.width(tab.title) + @as(u16, if (tab.dirty) 2 else 0) + @as(u16, if (tab.pinned) 2 else 0);
-    return if (tab.kind == .pty) base + 1 + close_w else base;
-}
+/// The most cells a name takes before it is cut.
+pub const name_cap: u16 = 18;
+/// ` 󰐕 `.
+pub const plus_w: u16 = 3;
+/// ` 󰅁 ` — one chevron slot.
+pub const arrow_w: u16 = 3;
+/// One split button.
+pub const split_button_w: u16 = 3;
+/// The four split buttons.
+pub const split_buttons_w: u16 = 4 * split_button_w;
 
-/// The ` ×` cells of a pty tab.
-const close_w: u16 = 2;
-
-fn countKind(tabs: []const Tab, kind: Kind) usize {
-    var n: usize = 0;
-    for (tabs) |tab| n += @intFromBool(tab.kind == kind);
-    return n;
-}
-
-/// The tab at painted position `pos`: the file tabs in order, then
-/// the pty tabs in order.
-fn atVisual(tabs: []const Tab, pos: usize) usize {
-    const files = countKind(tabs, .file);
-    const want: Kind = if (pos < files) .file else .pty;
-    var skip = if (pos < files) pos else pos - files;
-    for (tabs, 0..) |tab, i| {
-        if (tab.kind != want) continue;
-        if (skip == 0) return i;
-        skip -= 1;
-    }
-    unreachable;
-}
-
-pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
-    const t = ui.theme;
-    ui.fill(area, t.bufferline);
-    if (area.isEmpty()) return .{};
-    const y = area.y;
-    const plus: u16 = if (opts.new_tab != null) plus_w else 0;
-    // The window: never past the first position from which the rest fits.
-    const want = opts.first orelse fitActive(ui, area, tabs, plus);
-    const first = @min(want, maxFirst(ui, area, tabs, plus));
-    var strip = area;
-    if (first > 0) {
-        // `‹ `: tabs are hidden on the left.
-        const lr = Rect.init(area.x, y, marker_w, 1);
-        _ = ui.putStr(lr.x, y, marker_w, if (ui.ascii) "< " else "‹ ", Theme.onBg(t.accent, t.bufferline.bg));
-        if (opts.scroll_left) |id| ui.hit(lr, .{ .button = id });
-        strip = Rect.init(area.x + marker_w, y, area.w -| marker_w, 1);
-    }
-    // Does the rest fit beside the `+`? If not, reserve the `›` too.
-    const fit_all = countFit(ui, strip.w -| plus, tabs, first) == tabs.len - first;
-    const reserve: u16 = plus + (if (fit_all) 0 else marker_w);
-    const paint_w = strip.w -| reserve;
-    var res = drawTabs(ui, Rect.init(strip.x, y, paint_w, 1), tabs, first, opts.leaf, null);
-    // A strip too narrow to fit one tab beside the markers still shows
-    // the first windowed tab (clipped): the active tab is never hidden
-    // behind a marker it left no room for.
-    if (res.painted == 0 and tabs.len > first)
-        res = drawTabs(ui, Rect.init(strip.x, y, strip.w, 1), tabs, first, opts.leaf, null);
-    var x = res.end;
-    const hidden_right = tabs.len - first - res.painted;
-    if (hidden_right > 0 and x + marker_w <= area.right()) {
-        const rr = Rect.init(x, y, marker_w, 1);
-        _ = ui.putStr(rr.x, y, marker_w, if (ui.ascii) " >" else " ›", Theme.onBg(t.accent, t.bufferline.bg));
-        if (opts.scroll_right) |id| ui.hit(rr, .{ .button = id });
-        x += marker_w + 1;
-    }
-    if (opts.new_tab) |id| {
-        if (x + plus_w <= area.right()) {
-            const r = Rect.init(x, y, plus_w, 1);
-            _ = ui.putStr(x, y, plus_w, if (ui.ascii) " " ++ plus_ascii ++ " " else " " ++ plus_glyph ++ " ", Theme.onBg(t.muted, t.bufferline.bg));
-            ui.hit(r, .{ .button = id });
-        }
-    }
-    return .{ .first = first, .hidden_left = first, .hidden_right = hidden_right };
-}
-
-/// nf-md-plus — the `+` of the strip and of the chrome row's right
-/// cluster (Rust paints both with it); nf-md-close is their `×`.
+// The glyphs, each with its `--ascii` twin.
+/// nf-md-plus — the strip's `+` and the chrome row's; nf-md-close their `×`.
 pub const plus_glyph = "\u{F0415}";
 pub const plus_ascii = "+";
 pub const close_glyph = "\u{F0156}";
 pub const close_ascii = "x";
+/// nf-fa-thumb_tack.
+pub const pin_glyph = "\u{F08D}";
+pub const pin_ascii = "P";
+/// nf-md-chevron_left / nf-md-chevron_right.
+pub const arrow_left_glyph = "\u{F0141}";
+pub const arrow_left_ascii = "<";
+pub const arrow_right_glyph = "\u{F0142}";
+pub const arrow_right_ascii = ">";
+/// codicon terminal / split-horizontal / split-vertical.
+pub const term_glyph = "\u{EA85}";
+pub const term_ascii = "$";
+pub const split_right_glyph = "\u{EB56}";
+pub const split_right_ascii = "|";
+pub const split_down_glyph = "\u{EB57}";
+pub const split_down_ascii = "-";
+/// nf-fa-expand / nf-fa-compress.
+pub const maximize_glyph = "\u{F065}";
+pub const maximize_ascii = "[";
+pub const restore_glyph = "\u{F066}";
+pub const restore_ascii = "]";
+pub const dirty_dot = "\u{25CF}";
+
+// ─── one chip ───────────────────────────────────────────────────────────
+
+/// The name as it will paint: cut to `name_cap`.
+fn chipName(ui: Ui, tab: Tab) []const u8 {
+    return ui.clipStr(tab.title, name_cap);
+}
+
+/// The chip's natural width: ` glyph ` (or one cell without one), the
+/// method pill and its gap, the name and a cell, the diagnostics and a
+/// cell, the badge and a cell.
+pub fn chipWidth(ui: Ui, tab: Tab) u16 {
+    const icon: u16 = if (tab.glyph.len == 0) 1 else 2 + ui.width(tab.glyph);
+    const verb: u16 = if (tab.verb) |v| ui.width(v) + 3 else 0;
+    const diag: u16 = if (tab.diag.len == 0) 0 else ui.width(tab.diag) + 1;
+    return icon + verb + ui.width(chipName(ui, tab)) + 1 + diag + 2;
+}
+
+const Badge = struct { text: []const u8, fg: Color, closes: bool };
+
+fn badgeOf(ui: Ui, tab: Tab, hovered: bool) Badge {
+    const p = ui.theme.palette;
+    const close: []const u8 = if (ui.ascii) close_ascii else close_glyph;
+    if (tab.pinned) return .{ .text = if (ui.ascii) pin_ascii else pin_glyph, .fg = p.yellow, .closes = false };
+    if (tab.active) return .{ .text = close, .fg = p.red, .closes = true };
+    if (hovered and tab.dirty) return .{ .text = close, .fg = p.orange, .closes = true };
+    if (hovered) return .{ .text = close, .fg = p.grey_fg, .closes = true };
+    if (tab.dirty) return .{ .text = dirty_dot, .fg = p.orange, .closes = true };
+    return .{ .text = close, .fg = p.grey, .closes = true };
+}
+
+/// Paints one chip at `x`, clipped to `avail` cells, and registers its
+/// hits. Returns the cells it took.
+fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16) u16 {
+    if (avail == 0) return 0;
+    const p = ui.theme.palette;
+    const natural = chipWidth(ui, tab);
+    const w = @min(natural, avail);
+    const rect = Rect.init(x, y, w, 1);
+    const bg = if (tab.active) p.bg else p.bg_darker;
+    const badge = badgeOf(ui, tab, ui.hovered(rect));
+    ui.fill(rect, .{ .bg = bg });
+    const end = x + w;
+    var cx = x;
+    if (tab.glyph.len == 0) {
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    } else {
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+        cx += ui.putStr(cx, y, end - cx, tab.glyph, .{ .fg = tab.icon_color, .bg = bg });
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    }
+    if (tab.verb) |v| {
+        const pill: Style = .{ .fg = bg, .bg = tab.icon_color, .bold = true };
+        cx += ui.putStr(cx, y, end - cx, " ", pill);
+        cx += ui.putStr(cx, y, end - cx, v, pill);
+        cx += ui.putStr(cx, y, end - cx, " ", pill);
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    }
+    const name_style: Style = .{ .fg = if (tab.active) p.fg else p.grey_fg, .bg = bg, .bold = tab.active, .italic = tab.preview };
+    cx += ui.putStr(cx, y, end - cx, chipName(ui, tab), name_style);
+    cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    if (tab.diag.len > 0) {
+        const fg = if (tab.diag_severity == .err) p.red else p.yellow;
+        cx += ui.putStr(cx, y, end - cx, tab.diag, .{ .fg = fg, .bg = bg });
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    }
+    cx += ui.putStr(cx, y, end - cx, badge.text, .{ .fg = badge.fg, .bg = bg });
+    _ = ui.putStr(cx, y, end -| cx, " ", .{ .bg = bg });
+    ui.hit(rect, .{ .tab = .{ .leaf = leaf, .idx = idx } });
+    // The close target only where the badge really painted: a cut chip
+    // would put it over the name's last letters.
+    if (badge.closes and w >= 2 and natural <= w) ui.hit(Rect.init(end - 2, y, 2, 1), .{ .tab_close = .{ .leaf = leaf, .idx = idx } });
+    return w;
+}
+
+// ─── the strip ──────────────────────────────────────────────────────────
+
+/// Where the right-end furniture sits for `area`, before any tab is laid.
+const Geometry = struct {
+    /// Tabs stop here.
+    tabs_right: u16,
+    arrows_x: u16,
+    arrows_w: u16,
+    mode_x: u16,
+    split_x: u16,
+    n_ai: usize,
+};
+
+fn geometry(ui: Ui, area: Rect, tabs_len: usize, opts: Opts) Geometry {
+    var n_ai: usize = if (opts.split) |s| s.ai.len else 0;
+    const base: u16 = if (opts.split) |sp| (if (sp.max != null) split_buttons_w else split_buttons_w - split_button_w) else 0;
+    while (n_ai > 0 and area.w < base + @as(u16, @intCast(n_ai)) * split_button_w) n_ai -= 1;
+    const split_total = base + @as(u16, @intCast(n_ai)) * split_button_w;
+    const mode_w: u16 = if (opts.mode_chip) |m| ui.width(m.label) else 0;
+    const right = area.right();
+    const tabs_right0 = right -| (split_total + mode_w);
+    const arrows_w: u16 = if (tabs_len >= 2) 2 * arrow_w else 0;
+    const arrows_x = @max(tabs_right0 -| arrows_w, area.x);
+    return .{
+        .tabs_right = @max(arrows_x -| plus_w, area.x),
+        .arrows_x = arrows_x,
+        .arrows_w = arrows_w,
+        .mode_x = @max(right -| (split_total + mode_w), area.x),
+        .split_x = @max(right -| split_total, area.x),
+        .n_ai = n_ai,
+    };
+}
+
+/// The smallest offset at or below `raw` whose tail still fills `room`
+/// cells — chips measured whole, a cell of gap between them.
+fn clampScroll(ui: Ui, tabs: []const Tab, room: u16, raw: usize) usize {
+    if (tabs.len == 0) return 0;
+    const want = @min(raw, tabs.len - 1);
+    if (want == 0) return 0;
+    var used: u16 = 0;
+    var max_scroll = want;
+    var i = tabs.len;
+    while (i > 0) {
+        i -= 1;
+        const w = chipWidth(ui, tabs[i]);
+        const next = used + w + @as(u16, if (used > 0) 1 else 0);
+        if (next > room) break;
+        used = next;
+        max_scroll = i;
+    }
+    return @min(want, max_scroll);
+}
+
+/// How many chips from `first` paint (whole or cut) in `room` cells.
+fn countPainted(ui: Ui, tabs: []const Tab, room: u16, first: usize) usize {
+    var x: u16 = 0;
+    var n: usize = 0;
+    var i = first;
+    while (i < tabs.len) : (i += 1) {
+        if (x >= room) break;
+        x += @min(chipWidth(ui, tabs[i]), room - x) + 1;
+        n += 1;
+    }
+    return n;
+}
+
+/// The offset to paint from when the active tab changed: `current` when
+/// the active tab is already in view, else the active tab itself (the
+/// clamp pulls it back so the tail fills the strip).
+pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
+    if (tabs.len == 0) return 0;
+    const g = geometry(ui, area, tabs.len, opts);
+    const room = g.tabs_right -| area.x;
+    const first = clampScroll(ui, tabs, room, current);
+    var active: usize = 0;
+    for (tabs, 0..) |tab, i| if (tab.active) {
+        active = i;
+    };
+    if (active >= first and active < first + countPainted(ui, tabs, room, first)) return first;
+    return clampScroll(ui, tabs, room, active);
+}
+
+pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
+    const t = ui.theme;
+    const p = t.palette;
+    ui.fill(area, t.bufferline);
+    if (area.isEmpty()) return .{};
+    const y = area.y;
+    const g = geometry(ui, area, tabs.len, opts);
+
+    // The tabs from the clamped offset, a cell of strip between chips.
+    const first = clampScroll(ui, tabs, g.tabs_right -| area.x, opts.first);
+    var x = area.x;
+    var painted: usize = 0;
+    var i = first;
+    while (i < tabs.len) : (i += 1) {
+        if (x >= g.tabs_right) break;
+        const w = paintChip(ui, x, y, g.tabs_right - x, tabs[i], opts.leaf, @intCast(i));
+        if (w == 0) break;
+        x += w + 1;
+        painted += 1;
+    }
+    const hidden_right = tabs.len - first - painted;
+
+    // The chevrons: lit only with somewhere to go.
+    if (g.arrows_w > 0) {
+        const pair = [_]struct { glyph: []const u8, ascii: []const u8, on: bool, id: ?u32 }{
+            .{ .glyph = arrow_left_glyph, .ascii = arrow_left_ascii, .on = first > 0, .id = opts.scroll_left },
+            .{ .glyph = arrow_right_glyph, .ascii = arrow_right_ascii, .on = hidden_right > 0, .id = opts.scroll_right },
+        };
+        for (pair, 0..) |a, slot| {
+            const ax = g.arrows_x + @as(u16, @intCast(slot)) * arrow_w;
+            if (ax + arrow_w > area.right()) break;
+            const r = Rect.init(ax, y, arrow_w, 1);
+            const style: Style = if (a.on) .{ .fg = p.fg, .bg = p.bg2 } else .{ .fg = p.comment, .bg = p.bg_darker, .dim = true };
+            ui.fill(r, style);
+            _ = ui.putStr(ax + 1, y, 1, if (ui.ascii) a.ascii else a.glyph, style);
+            if (a.on) if (a.id) |id| ui.hit(r, .{ .button = id });
+        }
+    }
+
+    // ` 󰐕 ` after the last chip, in its own slot before the chevrons.
+    var after_plus = x;
+    if (opts.new_tab) |id| {
+        const plus_x = @max(@min(x, g.arrows_x -| plus_w), area.x);
+        if (plus_x + plus_w <= g.arrows_x) {
+            const r = Rect.init(plus_x, y, plus_w, 1);
+            ui.fill(r, .{ .bg = p.bg });
+            _ = ui.putStr(plus_x + 1, y, 1, if (ui.ascii) plus_ascii else plus_glyph, .{ .fg = p.green, .bg = p.bg, .bold = true });
+            ui.hit(r, .{ .button = id });
+            after_plus = plus_x + plus_w;
+        }
+    }
+    // ` +N hidden `: the tabs that are still there.
+    const hidden_total = hidden_right + opts.hidden_extra;
+    if (hidden_total > 0) {
+        const label = ui.fmt(" +{d} hidden ", .{hidden_total});
+        const w = ui.width(label);
+        if (after_plus + w <= g.arrows_x) {
+            const r = Rect.init(after_plus, y, w, 1);
+            _ = ui.putStr(after_plus, y, w, label, .{ .fg = p.comment, .bg = p.bg2 });
+            if (opts.hidden_button) |id| ui.hit(r, .{ .button = id });
+        }
+    }
+
+    if (opts.mode_chip) |m| {
+        const w = ui.width(m.label);
+        if (g.mode_x + w <= area.right()) {
+            const r = Rect.init(g.mode_x, y, w, 1);
+            const style: Style = .{ .fg = p.bg_darker, .bg = if (m.kind == .edit_md) p.purple else p.blue, .bold = true };
+            _ = ui.putStr(g.mode_x, y, w, m.label, style);
+            ui.hit(r, .{ .button = m.button });
+        }
+    }
+
+    if (opts.split) |s| drawSplit(ui, g.split_x, y, area.right(), s, g.n_ai, opts.zoomed);
+
+    return .{ .first = first, .painted = painted, .hidden_left = first, .hidden_right = hidden_right };
+}
+
+/// The split cluster from `x`: the AI chips, then ` term `, ` right `,
+/// ` down `, ` maximize `.
+fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, zoomed: bool) void {
+    const t = ui.theme;
+    const p = t.palette;
+    const bg = p.bg_darker;
+    var x = x0;
+    const Btn = struct { glyph: []const u8, ascii: []const u8, fg: Color, id: u32 };
+    var buttons: [8]Btn = undefined;
+    var n: usize = 0;
+    for (s.ai[0..n_ai]) |chip| {
+        buttons[n] = .{ .glyph = chip.glyph, .ascii = chip.fallback, .fg = if (chip.live) t.accent.fg else t.muted.fg, .id = chip.id };
+        n += 1;
+    }
+    buttons[n] = .{ .glyph = term_glyph, .ascii = term_ascii, .fg = .{ .index = 15 }, .id = s.term };
+    buttons[n + 1] = .{ .glyph = split_right_glyph, .ascii = split_right_ascii, .fg = p.comment, .id = s.right };
+    buttons[n + 2] = .{ .glyph = split_down_glyph, .ascii = split_down_ascii, .fg = p.comment, .id = s.down };
+    n += 3;
+    if (s.max) |max_id| {
+        buttons[n] = if (zoomed) .{ .glyph = restore_glyph, .ascii = restore_ascii, .fg = p.cyan, .id = max_id } else .{ .glyph = maximize_glyph, .ascii = maximize_ascii, .fg = p.comment, .id = max_id };
+        n += 1;
+    }
+    for (buttons[0..n]) |b| {
+        if (x + split_button_w > right) break;
+        const r = Rect.init(x, y, split_button_w, 1);
+        ui.fill(r, .{ .bg = bg });
+        _ = ui.putStr(x + 1, y, 1, if (ui.ascii) b.ascii else b.glyph, .{ .fg = b.fg, .bg = bg });
+        ui.hit(r, .{ .button = b.id });
+        x += split_button_w;
+    }
+}
+
+/// Where each chip sits from offset `first` — the drop router asks this
+/// to place a dragged tab between two others without repainting. Chips
+/// are laid at their natural width; one past the strip's edge is not
+/// listed.
+pub fn slotsFrom(ui: Ui, area: Rect, tabs: []const Tab, first: usize, out: []Slot) []Slot {
+    var n: usize = 0;
+    var x = area.x;
+    var i = first;
+    while (i < tabs.len and n < out.len) : (i += 1) {
+        if (x >= area.right()) break;
+        const w = chipWidth(ui, tabs[i]);
+        out[n] = .{ .idx = i, .x = x, .w = w };
+        n += 1;
+        x += w + 1;
+    }
+    return out[0..n];
+}
 
 // ─── the chrome row's right cluster ─────────────────────────────────────
 //
@@ -261,7 +540,7 @@ pub fn drawCluster(ui: Ui, area: Rect, c: Cluster, id: ClusterIds) void {
             const active = i == c.active;
             const dirty = i < c.dirty.len and c.dirty[i];
             const style: Style = if (active) .{ .fg = pal.bg_darker, .bg = pal.blue, .bold = true } else .{ .fg = pal.fg, .bg = chip_bg };
-            const label = ui.fmt("{s}{d} ", .{ @as([]const u8, if (dirty) "\u{25CF}" else " "), i + 1 });
+            const label = ui.fmt("{s}{d} ", .{ @as([]const u8, if (dirty) dirty_dot else " "), i + 1 });
             const w = ui.width(label);
             const r = Rect.init(x, y, w, 1);
             ui.fill(r, style);
@@ -287,9 +566,9 @@ pub fn drawCluster(ui: Ui, area: Rect, c: Cluster, id: ClusterIds) void {
     const bar: Style = .{ .fg = pal.comment, .bg = chip_bg };
     if (c.on_alt) {
         _ = ui.putStr(x, y, 1, "\u{2501}", bar);
-        _ = ui.putStr(x + 1, y, 1, "\u{25CF}", dot);
+        _ = ui.putStr(x + 1, y, 1, dirty_dot, dot);
     } else {
-        _ = ui.putStr(x, y, 1, "\u{25CF}", dot);
+        _ = ui.putStr(x, y, 1, dirty_dot, dot);
         _ = ui.putStr(x + 1, y, 1, "\u{2501}", bar);
     }
     ui.hit(pill, .{ .button = id.theme });
@@ -301,194 +580,21 @@ pub fn drawCluster(ui: Ui, area: Rect, c: Cluster, id: ClusterIds) void {
     ui.hit(close, .{ .button = id.close });
 }
 
-// ─── the strip's split buttons ──────────────────────────────────────────
-//
-// Rust's `paint_split_buttons`: at the strip's right end, the AI chips
-// that are enabled, then ` $ ` (a shell in a split), `  ` (split
-// right) and `  ` (split down). The three are never dropped; the AI
-// chips go from the end when the strip is short of room.
-
-pub const AiChip = struct { id: u32, glyph: []const u8, fallback: []const u8, live: bool };
-
-pub const SplitIds = struct { term: u32, right: u32, down: u32, ai: []const AiChip = &.{} };
-
-/// The three buttons, 3 cells each.
-pub const split_buttons_w: u16 = 9;
-/// codicon terminal / split-horizontal / split-vertical, with their
-/// ASCII twins.
-pub const term_glyph = "\u{EA85}";
-pub const term_ascii = "$";
-pub const split_right_glyph = "\u{EB56}";
-pub const split_right_ascii = "|";
-pub const split_down_glyph = "\u{EB57}";
-pub const split_down_ascii = "-";
-
-/// Paints the cluster at the right end of `area` and returns its width
-/// (0 when the area cannot hold the three).
-pub fn drawSplitButtons(ui: Ui, area: Rect, id: SplitIds) u16 {
-    if (area.w < split_buttons_w) return 0;
-    const t = ui.theme;
-    const pal = t.palette;
-    const y = area.y;
-    var n_ai: usize = id.ai.len;
-    while (n_ai > 0 and area.w < split_buttons_w + @as(u16, @intCast(n_ai)) * 3) n_ai -= 1;
-    const total: u16 = split_buttons_w + @as(u16, @intCast(n_ai)) * 3;
-    var x = area.right() - total;
-    const bg = pal.bg_darker;
-    for (id.ai[0..n_ai]) |chip| {
-        const r = Rect.init(x, y, 3, 1);
-        ui.fill(r, .{ .bg = bg });
-        _ = ui.putStr(x + 1, y, 1, if (ui.ascii) chip.fallback else chip.glyph, if (chip.live) Theme.onBg(t.accent, bg) else Theme.onBg(t.muted, bg));
-        ui.hit(r, .{ .button = chip.id });
-        x += 3;
-    }
-    const term = Rect.init(x, y, 3, 1);
-    ui.fill(term, .{ .bg = bg });
-    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) term_ascii else term_glyph, .{ .fg = pal.fg, .bg = bg });
-    ui.hit(term, .{ .button = id.term });
-    x += 3;
-    const right = Rect.init(x, y, 3, 1);
-    ui.fill(right, .{ .bg = bg });
-    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) split_right_ascii else split_right_glyph, .{ .fg = pal.comment, .bg = bg });
-    ui.hit(right, .{ .button = id.right });
-    x += 3;
-    const down = Rect.init(x, y, 3, 1);
-    ui.fill(down, .{ .bg = bg });
-    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) split_down_ascii else split_down_glyph, .{ .fg = pal.comment, .bg = bg });
-    ui.hit(down, .{ .button = id.down });
-    return total;
-}
-
-/// The first position from which the active tab is in view — the
-/// window a change of active tab re-fits to. `area` is the whole
-/// strip: the `+` and the markers a window needs are reserved here.
-pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, reserve: u16) usize {
-    if (tabs.len == 0) return 0;
-    var active: usize = 0;
-    for (0..tabs.len) |pos| if (tabs[atVisual(tabs, pos)].active) {
-        active = pos;
-    };
-    // Widen the window leftward from the active tab as far as the strip
-    // holds, so the active tab is always the last one fully shown. A
-    // window that starts past the first tab paints a `‹`; tabs after
-    // the active one need the `›`.
-    const right_marker: u16 = if (active + 1 < tabs.len) marker_w else 0;
-    var first: usize = active;
-    while (first > 0) {
-        const cand = first - 1;
-        const left_marker: u16 = if (cand > 0) marker_w else 0;
-        const avail = area.w -| reserve -| right_marker -| left_marker;
-        if (countFit(ui, avail, tabs, cand) < active - cand + 1) break;
-        first = cand;
-    }
-    return first;
-}
-
-/// The smallest first position from which every remaining tab fits
-/// beside `reserve` cells — a window past it hides tabs for nothing.
-fn maxFirst(ui: Ui, area: Rect, tabs: []const Tab, reserve: u16) usize {
-    var first: usize = 0;
-    while (first + 1 < tabs.len) : (first += 1) {
-        const w = area.w -| (if (first > 0) marker_w else 0) -| reserve;
-        if (countFit(ui, w, tabs, first) == tabs.len - first) break;
-    }
-    return first;
-}
-
-/// How many tabs from `first` on paint whole in `width` cells.
-fn countFit(ui: Ui, width: u16, tabs: []const Tab, first: usize) usize {
-    const files = countKind(tabs, .file);
-    const has_divider = files > 0 and files < tabs.len;
-    var x: u16 = 0;
-    var n: usize = 0;
-    var pos = first;
-    while (pos < tabs.len) : (pos += 1) {
-        if (has_divider and pos == files and pos > first) {
-            if (x + 2 > width) break;
-            x += 2;
-        }
-        const w = tabWidth(ui, tabs[atVisual(tabs, pos)]);
-        if (x + w > width) break;
-        x += w + 1;
-        n += 1;
-    }
-    return n;
-}
-
-/// Where each tab would sit for `area` — the drop router asks this to
-/// place a dragged tab between two others without repainting.
-pub fn slots(ui: Ui, area: Rect, tabs: []const Tab, out: []Slot) []Slot {
-    return slotsFrom(ui, area, tabs, fitActive(ui, area, tabs, 0), out);
-}
-
-/// `slots` from a given window — the one the strip painted.
-pub fn slotsFrom(ui: Ui, area: Rect, tabs: []const Tab, first: usize, out: []Slot) []Slot {
-    var n: usize = 0;
-    _ = drawTabs(ui, area, tabs, first, 0, .{ .out = out, .n = &n });
-    return out[0..n];
-}
-
-const SlotSink = struct { out: []Slot, n: *usize };
-
-const TabsResult = struct { end: u16, painted: usize };
-
-/// Paints (or, with a sink, only measures) the tabs from `first`.
-/// Returns the x just past the last painted tab (plus a cell of
-/// strip) and how many were painted.
-fn drawTabs(ui: Ui, area: Rect, tabs: []const Tab, first: usize, leaf: u32, sink: ?SlotSink) TabsResult {
-    const t = ui.theme;
-    const y = area.y;
-    if (tabs.len == 0) return .{ .end = area.x, .painted = 0 };
-    const files = countKind(tabs, .file);
-    const has_divider = files > 0 and files < tabs.len;
-
-    var x = area.x;
-    var painted: usize = 0;
-    var pos = first;
-    while (pos < tabs.len) : (pos += 1) {
-        if (has_divider and pos == files and pos > first) {
-            // The strip divider sits in the gap after the last file tab.
-            if (x + 2 > area.right()) break;
-            if (sink == null) _ = ui.putStr(x, y, 1, if (ui.ascii) "|" else "│", Theme.onBg(t.muted, t.bufferline.bg));
-            x += 2;
-        }
-        const i = atVisual(tabs, pos);
-        const tab = tabs[i];
-        const w = tabWidth(ui, tab);
-        if (x + w > area.right()) break;
-        painted += 1;
-        if (sink) |sk| {
-            if (sk.n.* < sk.out.len) {
-                sk.out[sk.n.*] = .{ .idx = i, .x = x, .w = w };
-                sk.n.* += 1;
-            }
-            x += w + 1;
-            continue;
-        }
-        const style = if (tab.active) t.tab_active else t.tab_inactive;
-        const r = Rect.init(x, y, w, 1);
-        ui.fill(r, style);
-        var tx = x + 1;
-        if (tab.pinned) tx += ui.putStr(tx, y, 2, if (ui.ascii) pin_ascii ++ " " else pin_glyph ++ " ", Theme.onBg(t.tab_dirty, style.bg));
-        tx += ui.putStr(tx, y, w - (tx - x), tab.title, style);
-        if (tab.kind == .pty) tx += ui.putStr(tx, y, 1, "$", Theme.onBg(t.muted, style.bg));
-        if (tab.dirty) tx += ui.putStr(tx, y, 2, " ●", Theme.onBg(t.tab_dirty, style.bg));
-        ui.hit(r, .{ .tab = .{ .leaf = leaf, .idx = @intCast(i) } });
-        if (tab.kind == .pty) {
-            const cr = Rect.init(tx, y, close_w, 1);
-            const hot = ui.hovered(cr);
-            _ = ui.putStr(tx, y, close_w, if (ui.ascii) " x" else " ×", Theme.onBg(if (hot) t.error_fg else t.muted, style.bg));
-            ui.hit(cr, .{ .tab_close = .{ .leaf = leaf, .idx = @intCast(i) } });
-        }
-        x += w + 1;
-    }
-    return .{ .end = x, .painted = painted };
-}
-
 // ── tests ──
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
+
+const split_ids: SplitIds = .{ .term = 1, .right = 2, .down = 3, .max = 4 };
+
+// The pane glyphs the spec rows carry — the painter takes them from the
+// caller (`render.paneIcon`); each with the `--ascii` twin that side paints.
+const rust_glyph = "\u{E68B}";
+const rust_ascii = "R";
+const diff_glyph = "\u{F0E7E}";
+const diff_ascii = "\u{B1}";
+const preview_glyph = "\u{F06E}";
+const preview_ascii = "p";
 
 fn hasButton(f: *Fixture, id: u32) bool {
     for (f.hits.items.items) |h| if (h.target == .button and h.target.button == id) return true;
@@ -500,148 +606,224 @@ fn hasTab(f: *Fixture, idx: u16) bool {
     return false;
 }
 
-test "an overflowing strip shows ‹ › markers with their buttons and keeps the + reachable; the window is clamped" {
+/// The four split buttons, ` glyph ` each.
+const split_cluster = " " ++ term_glyph ++ "  " ++ split_right_glyph ++ "  " ++ split_down_glyph ++ "  " ++ maximize_glyph ++ " ";
+/// The strip columns of `docs/ui-spec/rust-editor-120x40.txt` row 1
+/// (31..120): one rust file, the `+`, the split cluster.
+const spec_editor_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 61 ++ split_cluster;
+/// `rust-diff-120x40.txt` row 1: two tabs, the `+`, the chevrons.
+const spec_diff_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ diff_glyph ++ " diff: worktree " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 34 ++ " " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph ++ " " ++ split_cluster;
+/// `rust-request-120x40.txt` row 1: the method pill, no glyph.
+const spec_request_strip = "  GET  httpbin.org/get " ++ close_glyph ++ "   " ++ plus_glyph;
+
+test "one file tab is the Rust editor spec's strip, cell for cell, with its hits" {
+    var f = try Fixture.init(89, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{.{ .id = 7, .title = "main.rs", .glyph = rust_glyph, .active = true }};
+    const w = draw(f.ui(), f.full(), &tabs, .{ .leaf = 2, .new_tab = 77, .split = split_ids });
+    try f.expectRow(0, std.mem.trimEnd(u8, spec_editor_strip, " "));
+    try testing.expectEqual(@as(usize, 1), w.painted);
+    // The chip, its close, the +, the four buttons.
+    try testing.expectEqual(@as(u32, 2), f.hits.at(4, 0).?.tab.leaf);
+    try testing.expectEqual(@as(u16, 0), f.hits.at(1, 0).?.tab.idx);
+    try testing.expect(f.hits.at(11, 0).? == .tab_close);
+    try testing.expect(f.hits.at(12, 0).? == .tab_close);
+    try testing.expect(f.hits.at(13, 0) == null);
+    try testing.expectEqual(@as(u32, 77), f.hits.at(15, 0).?.button);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(78, 0).?.button);
+    try testing.expectEqual(@as(u32, 2), f.hits.at(81, 0).?.button);
+    try testing.expectEqual(@as(u32, 3), f.hits.at(84, 0).?.button);
+    try testing.expectEqual(@as(u32, 4), f.hits.at(87, 0).?.button);
+    // The active chip is on the editor's ground, bold; the + is green.
+    try testing.expect(f.bgEql(4, 0, .{ .bg = f.theme.palette.bg }));
+    try testing.expect(f.style(4, 0).bold);
+    try testing.expect(f.fgEql(15, 0, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(11, 0, .{ .fg = f.theme.palette.red }));
+    // The gap is strip.
+    try testing.expect(f.bgEql(13, 0, f.theme.bufferline));
+}
+
+test "two tabs bring the chevrons: the diff spec's strip; dim and inert with nothing to scroll" {
+    var f = try Fixture.init(89, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{
+        .{ .id = 7, .title = "main.rs", .glyph = rust_glyph },
+        .{ .id = 8, .title = "diff: worktree", .glyph = diff_glyph, .active = true },
+    };
+    _ = draw(f.ui(), f.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .split = split_ids });
+    try f.expectRow(0, std.mem.trimEnd(u8, spec_diff_strip, " "));
+    try testing.expect(!hasButton(&f, 70));
+    try testing.expect(!hasButton(&f, 71));
+    try testing.expect(f.style(72, 0).dim);
+    // The inactive chip's badge is the grey close glyph, and it closes.
+    try testing.expect(f.fgEql(11, 0, .{ .fg = f.theme.palette.grey }));
+    try testing.expectEqual(@as(u16, 0), f.hits.at(12, 0).?.tab_close.idx);
+    try testing.expectEqual(@as(u16, 1), f.hits.at(33, 0).?.tab_close.idx);
+    try testing.expectEqual(@as(u16, 1), f.hits.at(20, 0).?.tab.idx);
+}
+
+test "a request tab has no glyph and a method pill; a dirty tab a dot the pointer turns into ×; a pinned tab never closes" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    const req = [_]Tab{.{ .id = 1, .title = "httpbin.org/get", .verb = "GET", .icon_color = f.theme.palette.green, .active = true }};
+    _ = draw(f.ui(), f.full(), &req, .{ .new_tab = 9 });
+    try f.expectRow(0, spec_request_strip);
+    try testing.expect(f.bgEql(3, 0, .{ .bg = f.theme.palette.green }));
+    try testing.expectEqual(@as(u32, 9), f.hits.at(27, 0).?.button);
+
+    // Two tabs: the chevron pair sits at the right end, dim.
+    var g = try Fixture.init(40, 1);
+    defer g.deinit();
+    const tabs = [_]Tab{
+        .{ .id = 1, .title = "a.txt", .glyph = "x", .dirty = true },
+        .{ .id = 2, .title = "b.txt", .glyph = "x", .pinned = true, .active = true },
+    };
+    const chevrons = " " ** 13 ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph;
+    _ = draw(g.ui(), g.full(), &tabs, .{});
+    try g.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_glyph ++ chevrons);
+    try testing.expect(g.fgEql(9, 0, .{ .fg = g.theme.palette.orange }));
+    try testing.expect(g.hits.at(10, 0).? == .tab_close);
+    try testing.expect(g.hits.at(22, 0).? == .tab);
+    // The pointer over the dirty chip: the × in orange.
+    var ui = g.ui();
+    ui.hover = .{ .x = 4, .y = 0 };
+    _ = draw(ui, g.full(), &tabs, .{});
+    try g.expectRow(0, " x a.txt " ++ close_glyph ++ "   x b.txt " ++ pin_glyph ++ chevrons);
+    try testing.expect(g.fgEql(9, 0, .{ .fg = g.theme.palette.orange }));
+    // ASCII twins, with the + and the split cluster.
+    var h = try Fixture.init(60, 1);
+    defer h.deinit();
+    h.ascii = true;
+    _ = draw(h.ui(), h.full(), &tabs, .{ .new_tab = 9, .split = split_ids });
+    try h.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_ascii ++ "   " ++ plus_ascii ++ " " ** 17 ++ arrow_left_ascii ++ "  " ++ arrow_right_ascii ++ "  " ++ term_ascii ++ "  " ++ split_right_ascii ++ "  " ++ split_down_ascii ++ "  " ++ maximize_ascii);
+    try testing.expectEqual(@as(u32, 9), h.hits.at(25, 0).?.button);
+}
+
+test "a long name is cut to name_cap; a chip cut by the edge keeps its tab hit and loses its close" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{.{ .id = 1, .title = "a_very_long_file_name_indeed.txt", .glyph = "x", .active = true }};
+    _ = draw(f.ui(), f.full(), &tabs, .{});
+    // Seventeen characters and the ellipsis: eighteen cells, as Rust's `clip_to_cells`.
+    try f.expectRow(0, " x a_very_long_file_… " ++ close_glyph);
+    // Eight cells: the `+` slot is reserved even with no `+` to paint
+    // (Rust carves it before the tabs), so five are left for the chip.
+    var g = try Fixture.init(8, 1);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), &tabs, .{});
+    try g.expectRow(0, " x a_");
+    try testing.expect(g.hits.at(4, 0).? == .tab);
+    try testing.expect(g.hits.at(5, 0) == null);
+    for (g.hits.items.items) |h| try testing.expect(h.target != .tab_close);
+}
+
+test "an overflowing strip: the offset clamps to what fills it, the chevrons light with their buttons, the + stays" {
     var f = try Fixture.init(40, 1);
     defer f.deinit();
     const tabs = [_]Tab{
-        .{ .id = 1, .title = "one.txt", .dirty = false, .active = false },
-        .{ .id = 2, .title = "two.txt", .dirty = false, .active = false },
-        .{ .id = 3, .title = "three.txt", .dirty = false, .active = false },
-        .{ .id = 4, .title = "four.txt", .dirty = false, .active = false },
-        .{ .id = 5, .title = "five.txt", .dirty = false, .active = true },
+        .{ .id = 1, .title = "one.txt", .glyph = "x" },
+        .{ .id = 2, .title = "two.txt", .glyph = "x" },
+        .{ .id = 3, .title = "three.txt", .glyph = "x" },
+        .{ .id = 4, .title = "four.txt", .glyph = "x" },
+        .{ .id = 5, .title = "five.txt", .glyph = "x", .active = true },
     };
-    // From the start: the ones that fit, then › and the +.
-    const w0 = draw(f.ui(), f.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .first = 0 });
-    try f.expectRow(0, " one.txt   two.txt   three.txt   ›  \u{F0415}");
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71 };
+    // From the start: 40 cells hold two chips whole and three cells of
+    // the third; the + takes its reserved slot before the chevrons.
+    const w0 = draw(f.ui(), f.full(), &tabs, opts);
+    try f.expectRow(0, " x one.txt " ++ close_glyph ++ "   x two.txt " ++ close_glyph ++ "   x  " ++ plus_glyph ++ "  " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph);
     try testing.expectEqual(@as(usize, 0), w0.first);
+    try testing.expectEqual(@as(usize, 3), w0.painted);
     try testing.expectEqual(@as(usize, 2), w0.hidden_right);
-    try testing.expect(hasButton(&f, 71)); // the › marker's scroll button
-    try testing.expect(hasButton(&f, 77)); // the + is still reachable
-    // The active tab is last: fitActive windows to it, ‹ marks the hidden ones.
-    const first = fitActive(f.ui(), f.full(), &tabs, plus_w);
-    try testing.expectEqual(@as(usize, 2), first);
+    try testing.expect(!hasButton(&f, 70));
+    try testing.expectEqual(@as(u32, 71), f.hits.at(38, 0).?.button);
+    try testing.expectEqual(@as(u32, 77), f.hits.at(32, 0).?.button);
+    // The cut third chip keeps its tab hit and has no close.
+    try testing.expectEqual(@as(u16, 2), f.hits.at(29, 0).?.tab.idx);
+    try testing.expect(f.hits.at(30, 0).? == .tab);
+    // The active tab is last: fitActive jumps to it and the clamp pulls
+    // back to the offset whose tail fills the strip.
+    const first = fitActive(f.ui(), f.full(), &tabs, 0, opts);
+    try testing.expectEqual(@as(usize, 3), first);
     var g = try Fixture.init(40, 1);
     defer g.deinit();
     const w1 = draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .first = first });
-    try g.expectRow(0, "‹  three.txt   four.txt   five.txt   \u{F0415}");
-    try testing.expectEqual(@as(usize, 2), w1.hidden_left);
+    try g.expectRow(0, " x four.txt " ++ close_glyph ++ "   x five.txt " ++ close_glyph ++ "   " ++ plus_glyph ++ "   " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph);
+    try testing.expectEqual(@as(usize, 3), w1.hidden_left);
     try testing.expectEqual(@as(usize, 0), w1.hidden_right);
-    try testing.expectEqual(@as(u32, 70), g.hits.at(0, 0).?.button); // the ‹ marker
-    try testing.expect(hasButton(&g, 77)); // + still there
-    try testing.expect(hasTab(&g, 4)); // five.txt (idx 4) visible
-    // A window past the point where the rest fits is pulled back.
-    var h = try Fixture.init(40, 1);
-    defer h.deinit();
-    const w2 = draw(h.ui(), h.full(), &tabs, .{ .new_tab = 77, .first = 4 });
-    try testing.expectEqual(@as(usize, 2), w2.first);
-    // Everything fits: no markers at all.
-    var k = try Fixture.init(80, 1);
+    try testing.expectEqual(@as(u32, 70), g.hits.at(35, 0).?.button);
+    try testing.expect(!hasButton(&g, 71));
+    try testing.expect(hasTab(&g, 4));
+    // A stale offset past that is pulled back; the active tab already in
+    // view keeps the offset.
+    try testing.expectEqual(@as(usize, 3), draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .first = 4 }).first);
+    try testing.expectEqual(@as(usize, 3), fitActive(g.ui(), g.full(), &tabs, 4, opts));
+    // Everything fits: the chevrons stay, dim.
+    var k = try Fixture.init(90, 1);
     defer k.deinit();
-    const w3 = draw(k.ui(), k.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71 });
+    const w3 = draw(k.ui(), k.full(), &tabs, opts);
     try testing.expectEqual(@as(usize, 0), w3.hidden_right);
-    try k.expectLacks("›");
-    try k.expectLacks("‹");
+    try testing.expect(!hasButton(&k, 70) and !hasButton(&k, 71));
+    try k.expectContains(arrow_left_glyph ++ "  " ++ arrow_right_glyph);
+    // No tabs: the + alone at the left.
+    var e = try Fixture.init(20, 1);
+    defer e.deinit();
+    _ = draw(e.ui(), e.full(), &.{}, .{ .new_tab = 1 });
+    try e.expectRow(0, " " ++ plus_glyph);
+    _ = draw(e.ui(), Rect.empty, &.{}, .{ .new_tab = 1 });
 }
 
-test "tabs paint in order with the active style and a dirty dot, and register hits" {
+test "the hidden chip counts the filtered tabs; the mode chip sits before the cluster; AI chips drop first" {
+    var f = try Fixture.init(56, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{.{ .id = 1, .title = "a.md", .glyph = "x", .active = true }};
+    const ai = [_]AiChip{ .{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .live = true }, .{ .id = 41, .glyph = "\u{276F}", .fallback = ">", .live = false } };
+    _ = draw(f.ui(), f.full(), &tabs, .{
+        .new_tab = 9,
+        .hidden_extra = 3,
+        .hidden_button = 8,
+        .mode_chip = .{ .label = " " ++ preview_glyph ++ " Preview ", .button = 5, .kind = .edit_md },
+        .split = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &ai },
+    });
+    try f.expectRow(0, std.mem.trimEnd(u8, " x a.md " ++ close_glyph ++ "   " ++ plus_glyph ++ "  +3 hidden    " ++ preview_glyph ++ " Preview  ✳  ❯ " ++ split_cluster, " "));
+    try testing.expectEqual(@as(u32, 8), f.hits.at(15, 0).?.button);
+    try testing.expectEqual(@as(u32, 5), f.hits.at(30, 0).?.button);
+    try testing.expect(f.bgEql(30, 0, .{ .bg = f.theme.palette.purple }));
+    try testing.expectEqual(@as(u32, 40), f.hits.at(39, 0).?.button);
+    try testing.expectEqual(@as(u32, 41), f.hits.at(42, 0).?.button);
+    try testing.expectEqual(@as(u32, 4), f.hits.at(54, 0).?.button);
+    // Short of room, the AI chips go before the four.
+    var g = try Fixture.init(15, 1);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), &.{}, .{ .split = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &ai } });
+    try g.expectRow(0, std.mem.trimEnd(u8, " ✳ " ++ split_cluster, " "));
+    var h = try Fixture.init(12, 1);
+    defer h.deinit();
+    _ = draw(h.ui(), h.full(), &.{}, .{ .split = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &ai }, .zoomed = true });
+    try h.expectRow(0, " " ++ term_glyph ++ "  " ++ split_right_glyph ++ "  " ++ split_down_glyph ++ "  " ++ restore_glyph);
+    try testing.expect(h.fgEql(10, 0, .{ .fg = h.theme.palette.cyan }));
+    // The ASCII twins of the test glyphs are spelled beside them.
+    try testing.expect(rust_ascii.len + diff_ascii.len + preview_ascii.len > 0);
+}
+
+test "slots follow the painted order at natural widths" {
     var f = try Fixture.init(40, 1);
     defer f.deinit();
     const tabs = [_]Tab{
-        .{ .id = 1, .title = "a.txt", .dirty = false, .active = false },
-        .{ .id = 2, .title = "b.txt", .dirty = true, .active = true },
-        .{ .id = 3, .title = "c.txt", .dirty = false, .active = false },
+        .{ .id = 1, .title = "a.txt", .glyph = "x" },
+        .{ .id = 2, .title = "b.txt", .glyph = "x", .active = true },
+        .{ .id = 3, .title = "c.txt", .glyph = "x" },
     };
-    _ = draw(f.ui(), f.full(), &tabs, .{ .leaf = 3, .new_tab = 77 });
-    try f.expectRow(0, " a.txt   b.txt ●   c.txt   \u{F0415}");
-    try testing.expectEqual(@as(u32, 3), f.hits.at(3, 0).?.tab.leaf);
-    try testing.expectEqual(@as(u32, 77), f.hits.at(26, 0).?.button);
-    var slot_buf: [8]Slot = undefined;
-    const sl = slots(f.ui(), f.full(), &tabs, &slot_buf);
+    var buf: [8]Slot = undefined;
+    const sl = slotsFrom(f.ui(), f.full(), &tabs, 0, &buf);
     try testing.expectEqual(@as(usize, 3), sl.len);
-    try testing.expectEqual(@as(u16, 8), sl[1].x);
-    try testing.expectEqual(@as(u16, 9), sl[1].w);
-    try testing.expect(f.bgEql(1, 0, f.theme.tab_inactive));
-    try testing.expect(f.bgEql(9, 0, f.theme.tab_active));
-    try testing.expect(f.style(9, 0).bold);
-    try testing.expect(f.fgEql(15, 0, f.theme.tab_dirty));
-    try testing.expectEqual(@as(u16, 0), f.hits.at(3, 0).?.tab.idx);
-    try testing.expectEqual(@as(u16, 1), f.hits.at(15, 0).?.tab.idx);
-    try testing.expectEqual(@as(u16, 2), f.hits.at(20, 0).?.tab.idx);
-    // The gap between tabs is strip, not a tab.
-    try testing.expect(f.hits.at(7, 0) == null);
-    try testing.expect(f.bgEql(7, 0, f.theme.bufferline));
-}
-
-test "a tab that does not fit is dropped whole; the active tab is always shown" {
-    var f = try Fixture.init(12, 1);
-    defer f.deinit();
-    const tabs = [_]Tab{
-        .{ .id = 1, .title = "alpha", .dirty = false, .active = false },
-        .{ .id = 2, .title = "beta", .dirty = false, .active = false },
-        .{ .id = 3, .title = "gamma", .dirty = false, .active = true },
-    };
-    _ = draw(f.ui(), f.full(), &tabs, .{});
-    // The active tab is last, so the window starts past the first: `‹`.
-    try f.expectRow(0, "‹  gamma");
-    try testing.expectEqual(@as(u16, 2), f.hits.at(2, 0).?.tab.idx);
-    try testing.expect(f.hits.at(9, 0) == null);
-
-    var g = try Fixture.init(14, 1);
-    defer g.deinit();
-    const two = [_]Tab{
-        .{ .id = 1, .title = "alpha", .dirty = false, .active = true },
-        .{ .id = 2, .title = "beta", .dirty = false, .active = false },
-    };
-    _ = draw(g.ui(), g.full(), &two, .{});
-    try g.expectRow(0, " alpha   beta");
-    _ = draw(g.ui(), Rect.empty, &two, .{});
-    _ = draw(g.ui(), g.full(), &.{}, .{ .new_tab = 1 });
-    try g.expectRow(0, " \u{F0415}");
-}
-
-test "pty tabs cluster after the files behind a divider, carry `$` and a close hit that keeps the leaf index" {
-    var f = try Fixture.init(48, 1);
-    defer f.deinit();
-    const tabs = [_]Tab{
-        .{ .id = 5, .title = "zsh", .dirty = false, .active = false, .kind = .pty },
-        .{ .id = 1, .title = "a.txt", .dirty = false, .active = true },
-        .{ .id = 2, .title = "b.txt", .dirty = false, .active = false },
-    };
-    _ = draw(f.ui(), f.full(), &tabs, .{ .leaf = 1, .new_tab = 9 });
-    try f.expectRow(0, " a.txt   b.txt  │  zsh$ ×   \u{F0415}");
-    // The file tabs keep their leaf indices; the pty tab is index 0.
-    try testing.expectEqual(@as(u16, 1), f.hits.at(2, 0).?.tab.idx);
-    try testing.expectEqual(@as(u16, 2), f.hits.at(10, 0).?.tab.idx);
-    try testing.expectEqual(@as(u16, 0), f.hits.at(20, 0).?.tab.idx);
-    // The `×` wins over the tab beneath it.
-    const close = f.hits.at(24, 0).?;
-    try testing.expect(close == .tab_close);
-    try testing.expectEqual(@as(u16, 0), close.tab_close.idx);
-    try testing.expectEqual(@as(u32, 1), close.tab_close.leaf);
-    try testing.expectEqual(@as(u32, 9), f.hits.at(27, 0).?.button);
-    // The divider is strip, not a tab.
-    try testing.expect(f.hits.at(16, 0) == null);
-    // Slots follow the painted order but name the leaf index.
-    var slot_buf: [8]Slot = undefined;
-    const sl = slots(f.ui(), f.full(), &tabs, &slot_buf);
-    try testing.expectEqual(@as(usize, 3), sl.len);
-    try testing.expectEqual(@as(usize, 1), sl[0].idx);
-    try testing.expectEqual(@as(usize, 0), sl[2].idx);
-    try testing.expectEqual(@as(u16, 18), sl[2].x);
-    // ASCII: `x` for the close, `|` for the divider.
-    f.ascii = true;
-    _ = draw(f.ui(), f.full(), &tabs, .{});
-    try f.expectRow(0, " a.txt   b.txt  |  zsh$ x");
-    // An active pty on a narrow strip is still brought into view.
-    var g = try Fixture.init(12, 1);
-    defer g.deinit();
-    const two = [_]Tab{
-        .{ .id = 1, .title = "alpha", .dirty = false, .active = false },
-        .{ .id = 5, .title = "sh", .dirty = false, .active = true, .kind = .pty },
-    };
-    _ = draw(g.ui(), g.full(), &two, .{});
-    try g.expectRow(0, "‹  sh$ ×");
-    try testing.expect(hasTab(&g, 1)); // the active pty tab (idx 1) shows
+    try testing.expectEqual(@as(u16, 0), sl[0].x);
+    try testing.expectEqual(@as(u16, 11), sl[0].w);
+    try testing.expectEqual(@as(u16, 12), sl[1].x);
+    try testing.expectEqual(@as(usize, 2), sl[2].idx);
+    const from1 = slotsFrom(f.ui(), f.full(), &tabs, 1, &buf);
+    try testing.expectEqual(@as(usize, 2), from1.len);
+    try testing.expectEqual(@as(usize, 1), from1[0].idx);
 }
 
 const cluster_ids: ClusterIds = .{ .new_tab = 10, .tabs_label = 11, .page_base = 0x40, .page_close_base = 0x60, .theme = 12, .close = 13 };
@@ -652,7 +834,7 @@ test "the right cluster: compact is Rust's `+ ●━ ×` on one page, full adds 
     const one: Cluster = .{ .compact = true };
     try testing.expectEqual(@as(u16, 10), clusterWidth(one));
     drawCluster(f.ui(), Rect.init(10, 0, 10, 1), one, cluster_ids);
-    try f.expectRow(0, "           \u{F0415}  ●━  \u{F0156}");
+    try f.expectRow(0, "           " ++ plus_glyph ++ "  ●━  " ++ close_glyph);
     try testing.expectEqual(@as(u32, 10), f.hits.at(11, 0).?.button);
     try testing.expectEqual(@as(u32, 12), f.hits.at(15, 0).?.button);
     try testing.expectEqual(@as(u32, 13), f.hits.at(18, 0).?.button);
@@ -664,7 +846,7 @@ test "the right cluster: compact is Rust's `+ ●━ ×` on one page, full adds 
     const w = clusterWidth(two);
     try testing.expectEqual(@as(u16, 3 + 6 + 3 + 3 + 2 + 1 + 3 + 3), w);
     drawCluster(g.ui(), Rect.init(0, 0, w, 1), two, cluster_ids);
-    try g.expectRow(0, " \u{F0415}  TABS  1 ●2 \u{F0156}  ━●  \u{F0156}");
+    try g.expectRow(0, " " ++ plus_glyph ++ "  TABS  1 ●2 " ++ close_glyph ++ "  ━●  " ++ close_glyph);
     try testing.expectEqual(@as(u32, 11), g.hits.at(5, 0).?.button);
     try testing.expectEqual(@as(u32, 0x40), g.hits.at(10, 0).?.button);
     try testing.expectEqual(@as(u32, 0x41), g.hits.at(13, 0).?.button);
@@ -680,29 +862,4 @@ test "the right cluster: compact is Rust's `+ ●━ ×` on one page, full adds 
     try testing.expectEqual(ClusterFit{ .w = 10, .compact = true }, pickCluster(bar, 84, .{}, .compact).?);
     try testing.expectEqual(ClusterFit{ .w = 10, .compact = true }, pickCluster(Rect.init(0, 0, 80, 1), 64, .{}, .auto).?);
     try testing.expect(pickCluster(Rect.init(0, 0, 76, 1), 64, .{}, .expanded) == null);
-}
-
-test "the split buttons sit at the strip's right end; AI chips go first when there is no room for them" {
-    var f = try Fixture.init(30, 1);
-    defer f.deinit();
-    const ai = [_]AiChip{ .{ .id = 4, .glyph = "\u{2733}", .fallback = "*", .live = true }, .{ .id = 5, .glyph = "\u{276F}", .fallback = ">", .live = false } };
-    try testing.expectEqual(@as(u16, 15), drawSplitButtons(f.ui(), f.full(), .{ .term = 1, .right = 2, .down = 3, .ai = &ai }));
-    try f.expectRow(0, "                ✳  ❯  \u{EA85}  \u{EB56}  \u{EB57}");
-    try testing.expectEqual(@as(u32, 4), f.hits.at(16, 0).?.button);
-    try testing.expectEqual(@as(u32, 1), f.hits.at(22, 0).?.button);
-    try testing.expectEqual(@as(u32, 2), f.hits.at(25, 0).?.button);
-    try testing.expectEqual(@as(u32, 3), f.hits.at(28, 0).?.button);
-    var g = try Fixture.init(12, 1);
-    defer g.deinit();
-    try testing.expectEqual(@as(u16, 12), drawSplitButtons(g.ui(), g.full(), .{ .term = 1, .right = 2, .down = 3, .ai = &ai }));
-    try g.expectRow(0, " ✳  \u{EA85}  \u{EB56}  \u{EB57}");
-    var h = try Fixture.init(8, 1);
-    defer h.deinit();
-    try testing.expectEqual(@as(u16, 0), drawSplitButtons(h.ui(), h.full(), .{ .term = 1, .right = 2, .down = 3 }));
-    h.ascii = true;
-    var k = try Fixture.init(9, 1);
-    defer k.deinit();
-    k.ascii = true;
-    _ = drawSplitButtons(k.ui(), k.full(), .{ .term = 1, .right = 2, .down = 3 });
-    try k.expectRow(0, " $  |  -");
 }

@@ -560,7 +560,6 @@ pub const Drag = union(enum) {
     /// A dock widget's title bar; `moved` once the pointer left the cell.
     dock: DockDrag,
     /// A diff pane's split divider.
-    git_divider: PaneId,
     /// A graph pane's detail divider.
     graph_divider: PaneId,
 };

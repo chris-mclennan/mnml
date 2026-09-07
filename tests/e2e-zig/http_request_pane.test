@@ -1,0 +1,60 @@
+# zig-only
+# The request pane painted as the Rust editor paints it
+# (src/ui/request_view.zig): the Method / URL / Send boxes, the Request
+# box with its tab strip, the Response box with its own strip, the AI
+# box. The pane sits at column 31 (the tree is 30 wide): row 3 is the
+# top bar's border, row 4 its text, row 7 the request strip, row 21 the
+# response strip. A mocked send fills the Response box.
+write probe.http "GET http://127.0.0.1:19876/probe\nAccept: application/json\n"
+write probe.http.mock.json "{\"status\":418,\"status_text\":\"I'm a teapot\",\"headers\":[[\"Content-Type\",\"application/json\"],[\"Server\",\"mock\"]],\"body\":\"{\\\"teapot\\\": true}\",\"ts\":1}"
+open probe.http
+expect pane "GET  127.0.0.1:19876/probe"
+expect screen contains "┌ Method ────┐┌ URL "
+expect screen contains "│  GET     ▼ ││ http://127.0.0.1:19876/probe"
+expect screen contains "┌ Send ──┐"
+expect screen contains "▶ Send"
+expect screen contains "[⇔]─[A ▥ ▤]─┐"
+expect screen contains "│  Params  Body  Headers  Auth  Vars  Script"
+expect screen contains "│          ━━━━"
+expect screen contains "│ 1 "
+expect screen contains "│  Body  Headers  Cookies  Timeline  Tests"
+expect screen contains "⚡  AI  wrap   copy   — ▼  │"
+expect screen contains "not sent yet · press `r` to fire"
+expect screen contains "┌ AI ─"
+expect screen contains "click here to ask a custom question   · `a` quick debug"
+# The tabs by click: Params (a table), Headers (the header lines), Auth.
+click 36 7
+expect screen contains "│  ━━━━━━"
+expect screen contains "│ Name"
+expect screen contains "+ Add row"
+click 50 7
+expect screen contains "    Accept: application/json"
+click 58 7
+expect screen contains "Current:  (no Authorization header"
+expect screen contains "+ Set Bearer token…"
+click 43 7
+expect screen contains "│          ━━━━"
+# The send: the mock lands as the response — the status title on the
+# Response border, the header count on its strip, the type chip, the
+# body with its gutter; a 4xx keeps the `⚡ AI` chip.
+command http.send
+wait 600
+command http.replay_mock
+wait 300
+expect screen contains "418 I'm a teapot  ·"
+expect screen contains "Headers 2  Cookies"
+expect screen contains "JSON ▼"
+expect screen contains "│ 1 {"
+expect screen contains "\"teapot\": true"
+expect screen contains "⚡  AI"
+# The response tabs by click: Headers, Timeline, back to Body.
+click 42 21
+expect screen contains "Content-Type: application/json"
+click 60 21
+expect screen contains "Wait     (connect + TLS + send + headers received)"
+expect screen contains "Total    "
+click 34 21
+expect screen contains "│ 1 {"
+# The `[A ▥ ▤]` chip cycles the orientation.
+click 113 6
+expect screen contains "layout: vertical"

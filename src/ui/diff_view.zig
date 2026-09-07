@@ -1,25 +1,39 @@
-//! The diff pane's paint in its three views.
+//! The diff pane's paint — the Rust editor's `diff_view.rs`, cell for
+//! cell against `docs/ui-spec/rust-diff-120x40.txt`:
 //!
-//! * **Hunk** — one row per file header, hunk header and diff line, a
-//!   two-column line-number gutter (old | new), `+` lines in the add
-//!   colour and `-` lines in the delete colour.
-//! * **Inline** — the whole file as one continuous column (the app
-//!   fetches full context for it): no hunk headers, one line-number
-//!   column, changed rows tinted.
+//! ```text
+//!  󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
+//!  Hunk   Inline   Split  │  Wrap                                                      ×
+//! Hunk 1/1  src/main.rs                                                Stage   Discard
+//!   1   1    fn main() {}
+//!   2   2    y
+//!       3 ▏+ z
+//! ```
+//!
+//! Row 0 is the git toolbar (`git_toolbar.zig`), row 1 the diff toolbar
+//! (the three view chips, a `│`, the Wrap toggle, the red `×`), then the
+//! body: the `Hunk N/M  file` banner with the hunk's action chips
+//! right-aligned (Stage / Discard on a worktree diff, Unstage on a
+//! staged one), the `/` filter banner while one is set, and the rows.
+//!
+//! * **Inline** (the default) — the whole file as one column: a
+//!   `<old> <new> ` gutter, the `▏` marker in the change's colour, the
+//!   `+` / `-` sign, the text; changed rows sit on a tinted ground.
+//! * **Hunk** — the same rows under a `▶ v @@ … @@  file +N -M` header
+//!   per hunk with its own chips, a spacer row after each hunk.
 //! * **Split** — old on the left, new on the right, hunks aligned pair
-//!   by pair; a divider the pointer can drag.
+//!   by pair under a header row that spans both columns; a filler half
+//!   is the `bg2` ground with a `·` sign.
 //!
-//! Every view shares the header (title, then the three view chips), the
-//! `/` filter banner, intraline highlighting on a removed / added pair
-//! (`src/git/intraline.zig`), and the change-density strip on the right
-//! edge — one cell per band of rows, green / red / yellow for what the
-//! band holds, clickable to jump there.
+//! The right edge is three columns: a pad, the change-density strip
+//! (`▎` per band — green / red / yellow for what the band holds; a
+//! click jumps there) and the scrollbar (`bg2` track, `comment` thumb).
 //!
 //! The app owns the parsed files and the flattened rows (`flatten`,
 //! `pairs`); the view keeps only the scroll. Rows register
-//! `.script_hit{ pane, id = row index }`; the chips, the divider and the
-//! strip use ids above `special_base` (`chipId`, `divider_id`,
-//! `stripId`) so one prong in the app can tell them apart.
+//! `.script_hit{ pane, id = row index }`; the toolbar chips, the banner
+//! chips, the per-hunk chips and the strip use ids above `special_base`
+//! so one prong in the app can tell them apart.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -27,12 +41,14 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
+const git_toolbar = @import("git_toolbar.zig");
 const parse = @import("../git/parse.zig");
 const intraline = @import("../git/intraline.zig");
 const ids = @import("../core/ids.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
+const Color = vaxis.Color;
 const PaneId = ids.PaneId;
 
 pub const Mode = enum {
@@ -64,16 +80,19 @@ pub const Mode = enum {
 
 /// One painted row of the diff, addressing the parsed structure.
 pub const Row = union(enum) {
-    file: u32,
-    hunk: struct { file: u32, hunk: u32 },
+    hunk: HunkRef,
     line: struct { file: u32, hunk: u32, line: u32 },
+    /// The spacer after a hunk.
     blank,
 };
 
-/// A split-view row: a file header, or one aligned pair — an index into
-/// the hunk's lines on each side, null for the filler half.
+pub const HunkRef = struct { file: u32, hunk: u32 };
+
+/// A split-view row: a hunk header spanning both columns, one aligned
+/// pair — an index into the hunk's lines on each side, null for the
+/// filler half — or the spacer after a hunk.
 pub const SplitRow = union(enum) {
-    file: u32,
+    hunk: HunkRef,
     pair: Pair,
     blank,
 };
@@ -83,14 +102,56 @@ pub const Pair = struct { file: u32, hunk: u32, left: ?u32, right: ?u32 };
 /// What a band of rows holds, for the density strip.
 pub const Kind = enum { none, add, del, both };
 
+/// Which action chips the diff's scope offers — Rust's
+/// `chip_actions_for_scope`: a worktree / file / HEAD diff stages or
+/// discards a hunk, a staged diff unstages one, a commit shows none.
+pub const Actions = enum { none, unstaged, staged };
+
+pub const Action = enum(u8) {
+    stage,
+    discard,
+    unstage,
+
+    pub fn label(a: Action) []const u8 {
+        return switch (a) {
+            .stage => " Stage ",
+            .discard => " Discard ",
+            .unstage => " Unstage ",
+        };
+    }
+
+    fn color(a: Action, p: Theme.Palette) Color {
+        return switch (a) {
+            .stage => p.green,
+            .discard => p.red,
+            .unstage => p.orange,
+        };
+    }
+};
+
+pub fn actionsOf(actions: Actions) []const Action {
+    return switch (actions) {
+        .none => &.{},
+        .unstaged => &.{ .stage, .discard },
+        .staged => &.{.unstage},
+    };
+}
+
 // ─── hit ids ────────────────────────────────────────────────────────────
 
 /// Row ids stay below this; everything above names a control.
 pub const special_base: u32 = 0xF000_0000;
-pub const divider_id: u32 = 0xF000_0001;
+/// The `/` filter banner: a press puts the keys in the filter.
 pub const filter_id: u32 = 0xF000_0002;
+/// The toolbar's ` Wrap ` toggle and its ` × `.
+pub const wrap_id: u32 = 0xF000_0003;
+pub const close_id: u32 = 0xF000_0004;
+/// The banner's chips: the cursor hunk.
+const action_base: u32 = 0xF000_0010;
 const chip_base: u32 = 0xF100_0000;
 const strip_base: u32 = 0xF200_0000;
+/// A per-hunk header chip: `hunk_chip_base + row * 4 + action`.
+const hunk_chip_base: u32 = 0xF400_0000;
 
 pub fn chipId(m: Mode) u32 {
     return chip_base + @intFromEnum(m);
@@ -99,6 +160,15 @@ pub fn chipId(m: Mode) u32 {
 pub fn chipOf(id: u32) ?Mode {
     if (id < chip_base or id >= chip_base + 3) return null;
     return @enumFromInt(id - chip_base);
+}
+
+pub fn actionId(a: Action) u32 {
+    return action_base + @intFromEnum(a);
+}
+
+pub fn actionOf(id: u32) ?Action {
+    if (id < action_base or id >= action_base + 3) return null;
+    return @enumFromInt(id - action_base);
 }
 
 pub fn stripId(cell: u16) u32 {
@@ -110,32 +180,43 @@ pub fn stripCellOf(id: u32) ?u16 {
     return @intCast(id - strip_base);
 }
 
+pub const HunkChip = struct { row: u32, action: Action };
+
+pub fn hunkChipId(row: u32, a: Action) u32 {
+    return hunk_chip_base + row * 4 + @intFromEnum(a);
+}
+
+pub fn hunkChipOf(id: u32) ?HunkChip {
+    if (id < hunk_chip_base or id >= hunk_chip_base + 0x0100_0000) return null;
+    const off = id - hunk_chip_base;
+    if (off % 4 >= 3) return null;
+    return .{ .row = off / 4, .action = @enumFromInt(off % 4) };
+}
+
 // ─── rows ───────────────────────────────────────────────────────────────
 
-/// The rows a diff paints: a file header, then per hunk its header and
-/// lines, a blank between files.
+/// The rows a diff paints: per hunk its header, its lines, a spacer.
 pub fn flatten(arena: Allocator, files: []const parse.FileDiff) Allocator.Error![]Row {
     var out: std.ArrayListUnmanaged(Row) = .empty;
     for (files, 0..) |f, fi| {
-        if (fi > 0) try out.append(arena, .blank);
-        try out.append(arena, .{ .file = @intCast(fi) });
         for (f.hunks, 0..) |h, hi| {
             try out.append(arena, .{ .hunk = .{ .file = @intCast(fi), .hunk = @intCast(hi) } });
             for (h.lines, 0..) |_, li| try out.append(arena, .{ .line = .{ .file = @intCast(fi), .hunk = @intCast(hi), .line = @intCast(li) } });
+            try out.append(arena, .blank);
         }
     }
     return out.items;
 }
 
-/// The split view's rows: context lines on both sides, a run of removed
-/// lines zipped with the run of added lines that follows it, the longer
-/// run's tail against a filler.
+/// The split view's rows: per hunk its header, then context lines on
+/// both sides, a run of removed lines zipped with the run of added
+/// lines that follows it, the longer run's tail against a filler, and
+/// a spacer.
 pub fn pairs(arena: Allocator, files: []const parse.FileDiff) Allocator.Error![]SplitRow {
     var out: std.ArrayListUnmanaged(SplitRow) = .empty;
     for (files, 0..) |f, fi| {
-        if (fi > 0) try out.append(arena, .blank);
-        try out.append(arena, .{ .file = @intCast(fi) });
         for (f.hunks, 0..) |h, hi| {
+            try out.append(arena, .{ .hunk = .{ .file = @intCast(fi), .hunk = @intCast(hi) } });
             var i: usize = 0;
             while (i < h.lines.len) {
                 const l = h.lines[i];
@@ -167,9 +248,27 @@ pub fn pairs(arena: Allocator, files: []const parse.FileDiff) Allocator.Error![]
                     },
                 }
             }
+            try out.append(arena, .blank);
         }
     }
     return out.items;
+}
+
+/// The hunk a row belongs to, if any.
+pub fn rowHunk(row: Row) ?HunkRef {
+    return switch (row) {
+        .hunk => |h| h,
+        .line => |l| .{ .file = l.file, .hunk = l.hunk },
+        .blank => null,
+    };
+}
+
+pub fn splitRowHunk(row: SplitRow) ?HunkRef {
+    return switch (row) {
+        .hunk => |h| h,
+        .pair => |p| .{ .file = p.file, .hunk = p.hunk },
+        .blank => null,
+    };
 }
 
 pub fn rowKind(files: []const parse.FileDiff, row: Row) Kind {
@@ -244,16 +343,15 @@ pub fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
     return false;
 }
 
-/// The rows to show under `needle`: every row of a matching hunk, the
-/// file headers of files with a match, nothing else. An empty needle
-/// keeps every row; `hide_hunks` drops hunk-header rows (the Inline
-/// view has no use for them).
+/// The rows to show under `needle`: every row of a matching hunk,
+/// nothing else. An empty needle keeps every row; `hide_hunks` drops
+/// the hunk headers and the spacers (the Inline view is one continuous
+/// file).
 pub fn filterRows(arena: Allocator, files: []const parse.FileDiff, rows: []const Row, needle: []const u8, hide_hunks: bool) Allocator.Error![]u32 {
     var out: std.ArrayListUnmanaged(u32) = .empty;
     for (rows, 0..) |r, i| {
         const keep = switch (r) {
-            .blank => needle.len == 0,
-            .file => |fi| needle.len == 0 or fileMatches(files[fi], needle),
+            .blank => !hide_hunks and needle.len == 0,
             .hunk => |h| !hide_hunks and hunkMatches(files[h.file].hunks[h.hunk], needle),
             .line => |l| hunkMatches(files[l.file].hunks[l.hunk], needle),
         };
@@ -268,7 +366,7 @@ pub fn filterSplitRows(arena: Allocator, files: []const parse.FileDiff, rows: []
     for (rows, 0..) |r, i| {
         const keep = switch (r) {
             .blank => needle.len == 0,
-            .file => |fi| needle.len == 0 or fileMatches(files[fi], needle),
+            .hunk => |h| hunkMatches(files[h.file].hunks[h.hunk], needle),
             .pair => |p| hunkMatches(files[p.file].hunks[p.hunk], needle),
         };
         if (keep) try out.append(arena, @intCast(i));
@@ -276,13 +374,10 @@ pub fn filterSplitRows(arena: Allocator, files: []const parse.FileDiff, rows: []
     return out.toOwnedSlice(arena);
 }
 
-fn fileMatches(f: parse.FileDiff, needle: []const u8) bool {
-    for (f.hunks) |h| if (hunkMatches(h, needle)) return true;
-    return false;
-}
-
 // ─── styles ─────────────────────────────────────────────────────────────
 
+/// A whole added / removed line in its colour — the AI apply view's
+/// unified preview (`ai_apply_view.zig`), which has no row tint.
 pub fn addStyle(t: *const Theme, base: Style) Style {
     return Theme.withFg(base, t.syntax.string.fg);
 }
@@ -291,34 +386,61 @@ pub fn delStyle(t: *const Theme, base: Style) Style {
     return Theme.withFg(base, t.error_fg.fg);
 }
 
-/// The changed words inside a paired line: the same colour, the
-/// selection ground behind it.
-pub fn emphStyle(t: *const Theme, base: Style) Style {
-    var s = Theme.onBg(base, t.selection.bg);
-    s.bold = true;
-    return s;
+/// `fg` over `bg` at `alpha / 255` — Rust's `blend_over`; `fallback`
+/// when either is not an RGB colour.
+pub fn blendOver(fg: Color, bg: Color, alpha: u16, fallback: Color) Color {
+    if (fg != .rgb or bg != .rgb) return fallback;
+    const f = fg.rgb;
+    const b = bg.rgb;
+    const inv = 255 - alpha;
+    var out: [3]u8 = undefined;
+    for (0..3) |i| out[i] = @intCast((@as(u16, f[i]) * alpha + @as(u16, b[i]) * inv) / 255);
+    return .{ .rgb = out };
 }
 
-fn filterHitStyle(t: *const Theme, base: Style) Style {
-    var s = Theme.onBg(base, t.match.bg);
-    s.bold = true;
-    return s;
+/// The ground of an added row: the theme's green over the body at ~18 %.
+pub fn addedRowBg(p: Theme.Palette) Color {
+    return blendOver(p.green, p.bg_dark, 45, .{ .rgb = .{ 20, 48, 28 } });
 }
 
-/// Width of the two-column gutter for the widest line number in `files`.
-fn gutterWidth(files: []const parse.FileDiff) u16 {
-    return 2 * @max(digitsOf(files), 3) + 3;
+pub fn removedRowBg(p: Theme.Palette) Color {
+    return blendOver(p.red, p.bg_dark, 45, .{ .rgb = .{ 56, 22, 26 } });
 }
 
-fn digitsOf(files: []const parse.FileDiff) u16 {
-    var max: u32 = 1;
-    for (files) |f| for (f.hunks) |h| {
-        max = @max(max, h.old_start + h.old_count);
-        max = @max(max, h.new_start + h.new_count);
+fn digits(n: u32) u16 {
+    var v = n;
+    var d: u16 = 1;
+    while (v >= 10) : (v /= 10) d += 1;
+    return d;
+}
+
+/// Rust's `compute_gutter_width`: `<old> <new> `, each column sized to
+/// its side's widest line number, three at least.
+pub fn gutterWidth(files: []const parse.FileDiff) u16 {
+    var max_old: u32 = 1;
+    var max_new: u32 = 1;
+    for (files) |f| for (f.hunks) |h| for (h.lines) |l| {
+        if (l.old_no) |n| max_old = @max(max_old, n);
+        if (l.new_no) |n| max_new = @max(max_new, n);
     };
-    var digits: u16 = 1;
-    while (max >= 10) : (max /= 10) digits += 1;
-    return digits;
+    return @max(digits(max_old), 3) + 1 + @max(digits(max_new), 3) + 1;
+}
+
+/// `<old> <new> ` clamped to `gw` — empty slots are blank.
+fn gutterText(ui: Ui, old_no: ?u32, new_no: ?u32, gw: u16) []const u8 {
+    if (gw == 0) return "";
+    const each: usize = (gw -| 2) / 2;
+    const buf = ui.arena.alloc(u8, each * 2 + 2) catch return "";
+    @memset(buf, ' ');
+    inline for (.{ old_no, new_no }, 0..) |no, side| {
+        if (no) |n| {
+            var tmp: [12]u8 = undefined;
+            const s = std.fmt.bufPrint(&tmp, "{d}", .{n}) catch "";
+            const start = side * (each + 1);
+            if (s.len <= each) @memcpy(buf[start + each - s.len .. start + each], s) else @memcpy(buf[start .. start + each], s[0..each]);
+        }
+    }
+    return buf;
 }
 
 // ─── the document ───────────────────────────────────────────────────────
@@ -333,21 +455,28 @@ pub const Doc = struct {
     shown: []const u32,
     split_rows: []const SplitRow = &.{},
     split_shown: []const u32 = &.{},
-    mode: Mode = .hunk,
+    mode: Mode = .flat,
     /// Index into `rows` (Hunk / Inline) or `split_rows` (Split).
     cursor: usize,
     focused: bool,
-    header: []const u8,
     filter: []const u8 = "",
     filter_mode: bool = false,
-    /// The old side's share of the split body, in percent.
-    ratio: u16 = 50,
     intraline: bool = true,
+    /// The toolbar's Wrap: long lines continue on the next row.
+    wrap: bool = false,
+    /// Which chips the banner and the hunk headers carry.
+    actions: Actions = .unstaged,
+    /// The diff has not arrived yet (`  loading…` instead of `  (no changes)`).
+    pending: bool = false,
+    /// `Pop` joins the git toolbar after `Stash`.
+    has_stash: bool = false,
+    /// `ui.expand_indicator = triangle`: `▾` instead of `v` on hunk headers.
+    triangle: bool = false,
 };
 
-/// What `draw` measured, for the app's drag and click handling.
+/// What `draw` measured, for the app's click handling.
 pub const Painted = struct {
-    /// The rows' area (below the header and the filter banner).
+    /// The rows' area (below the toolbars).
     body: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
     /// The strip's cell count.
     strip_cells: u16 = 0,
@@ -372,102 +501,385 @@ pub fn partnerOf(lines: []const parse.DiffLine, i: usize) ?usize {
     return null;
 }
 
+/// Rust's `draw`: the git toolbar when the pane is 8 rows and 40 cells
+/// or more, the diff toolbar from 5 rows, the body below.
 pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
-    const t = ui.theme;
-    ui.fill(area, t.bg);
+    const p = ui.theme.palette;
+    ui.fill(area, .{ .bg = p.bg_dark });
     var painted: Painted = .{};
     if (area.isEmpty()) return painted;
-    drawHeader(ui, pane, area.row(0), doc);
-    if (area.h < 2) return painted;
-    var body = area.splitTop(1).rest;
-    if (doc.filter_mode or doc.filter.len > 0) {
-        drawFilterBanner(ui, pane, body.row(0), doc);
-        body = body.splitTop(1).rest;
-        if (body.isEmpty()) return painted;
+    var body = area;
+    if (area.h >= 8 and area.w >= 40) {
+        const s = body.splitTop(1);
+        git_toolbar.draw(ui, s.top, .{ .pane = pane, .has_stash = doc.has_stash });
+        body = s.rest;
+    }
+    if (area.h >= 5) {
+        const s = body.splitTop(1);
+        drawToolbar(ui, pane, s.top, doc);
+        body = s.rest;
     }
     painted.body = body;
-    const total = if (doc.mode == .split) doc.split_shown.len else doc.shown.len;
-    if (total == 0) {
-        const msg: []const u8 = if (doc.files.len == 0) "No differences." else if (doc.filter.len > 0) "No hunk matches the filter." else "";
-        _ = ui.putStr(body.x + 2, body.y + 1, body.w -| 2, msg, Theme.onBg(t.muted, t.bg.bg));
+    if (body.isEmpty()) return painted;
+    var hunks: usize = 0;
+    for (doc.files) |f| hunks += f.hunks.len;
+    if (hunks == 0) {
+        const msg: []const u8 = if (doc.pending) "  loading\u{2026}" else "  (no changes)";
+        _ = ui.putStr(body.x, body.y, body.w, msg, .{ .fg = p.comment, .bg = p.bg_dark });
         return painted;
     }
-    // The strip takes the right edge when there is room for it.
+    // The right edge: a pad, the change strip, the scrollbar — when
+    // the body is wide enough for them (Rust's per-view thresholds).
+    const min_w: u16 = switch (doc.mode) {
+        .flat => 18,
+        .hunk => 17,
+        .split => 34,
+    };
+    const pad_w: u16 = if (doc.mode == .hunk) 0 else 1;
     var rows_area = body;
     var strip: ?Rect = null;
-    if (body.w > 8) {
-        const s = body.splitRight(1);
-        rows_area = s.left;
-        strip = s.rest;
+    var bar: ?Rect = null;
+    if (body.w >= min_w) {
+        const reserved: u16 = 2 + pad_w;
+        rows_area = Rect.init(body.x, body.y, body.w - reserved, body.h);
+        strip = Rect.init(body.right() - 2, body.y, 1, body.h);
+        bar = Rect.init(body.right() - 1, body.y, 1, body.h);
     }
-    const cursor_pos = shownIndex(doc, total);
+    if (doc.mode == .split and rows_area.w < 16) {
+        _ = ui.putStr(rows_area.x, rows_area.y, rows_area.w, " pane too narrow for split view ", .{ .fg = p.comment, .bg = p.bg_dark });
+        return painted;
+    }
+    // The list: the banner, the filter banner, the shown rows.
+    const list = List.init(ui, doc, rows_area.w);
+    const total = list.len();
+    const cursor_pos = list.prefix + shownIndex(doc);
     const win = list_panel.scrollWindow(&view.scroll, cursor_pos, total, rows_area.h);
-    switch (doc.mode) {
-        .hunk, .flat => drawUnified(ui, pane, rows_area, doc, win.first),
-        .split => drawSplit(ui, pane, rows_area, doc, win.first),
+    var y: u16 = 0;
+    var i = win.first;
+    while (i < total and y < rows_area.h) : (i += 1) {
+        y += paintListRow(ui, pane, rows_area, y, list, i, doc);
     }
     if (strip) |s| {
         painted.strip_cells = s.h;
-        drawStrip(ui, pane, s, doc, win.first, rows_area.h);
+        drawStrip(ui, pane, s, list, doc);
     }
+    if (bar) |b| drawScrollbar(ui, pane, b, total, win.first, rows_area.h);
     return painted;
 }
 
 /// Where the cursor's row sits in the shown list (the nearest shown row
 /// before it when the cursor's own row is filtered out).
-fn shownIndex(doc: Doc, total: usize) usize {
+fn shownIndex(doc: Doc) usize {
     const shown = if (doc.mode == .split) doc.split_shown else doc.shown;
     var best: usize = 0;
-    for (shown[0..total], 0..) |r, i| {
+    for (shown, 0..) |r, i| {
         if (r == doc.cursor) return i;
         if (r < doc.cursor) best = i;
     }
     return best;
 }
 
-fn drawHeader(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
-    const t = ui.theme;
-    var x = r.x;
-    const end = r.right();
-    x += ui.putStr(x, r.y, end -| x, ui.clipStr(doc.header, end -| x), Theme.onBg(t.accent, t.bg.bg));
-    // The three view chips, `[Split]` for the active one.
-    inline for (.{ Mode.hunk, Mode.flat, Mode.split }) |m| {
-        const active = doc.mode == m;
-        const label = if (active) ui.fmt("[{s}]", .{m.label()}) else ui.fmt(" {s} ", .{m.label()});
-        const w = ui.width(label);
-        if (x + w + 1 <= end) {
-            const style = if (active) Theme.onBg(t.chip_active, t.bg.bg) else Theme.onBg(t.muted, t.bg.bg);
-            const cr = Rect.init(x, r.y, w, 1);
-            _ = ui.putStr(x, r.y, w, label, style);
-            ui.hit(cr, .{ .script_hit = .{ .pane = pane, .id = chipId(m) } });
-            x += w + 1;
+/// The cursor's hunk, for the banner: the cursor row's, else the
+/// first.
+fn cursorHunk(doc: Doc) ?HunkRef {
+    if (doc.mode == .split) {
+        if (doc.cursor < doc.split_rows.len) if (splitRowHunk(doc.split_rows[doc.cursor])) |h| return h;
+        for (doc.split_rows) |r| if (splitRowHunk(r)) |h| return h;
+        return null;
+    }
+    if (doc.cursor < doc.rows.len) if (rowHunk(doc.rows[doc.cursor])) |h| return h;
+    for (doc.rows) |r| if (rowHunk(r)) |h| return h;
+    return null;
+}
+
+/// The hunk's ordinal across the files, 1-based, and the count.
+fn hunkOrdinal(doc: Doc, at: HunkRef) struct { n: usize, of: usize } {
+    var n: usize = 0;
+    var of: usize = 0;
+    for (doc.files, 0..) |f, fi| for (f.hunks, 0..) |_, hi| {
+        of += 1;
+        if (fi == at.file and hi == at.hunk) n = of;
+    };
+    return .{ .n = n, .of = of };
+}
+
+/// The virtual list the body scrolls: `prefix` rows (the banner while
+/// the scope has actions, the filter banner while one is set) and then
+/// the shown rows.
+const List = struct {
+    banner: bool,
+    filter: bool,
+    prefix: usize,
+    shown: []const u32,
+    /// The body width the banner's chips align to.
+    w: u16,
+
+    fn init(ui: Ui, doc: Doc, w: u16) List {
+        _ = ui;
+        var hunks: usize = 0;
+        for (doc.files) |f| hunks += f.hunks.len;
+        const banner = doc.actions != .none and hunks > 0;
+        const filter = doc.filter_mode or doc.filter.len > 0;
+        return .{
+            .banner = banner,
+            .filter = filter,
+            .prefix = @as(usize, @intFromBool(banner)) + @intFromBool(filter),
+            .shown = if (doc.mode == .split) doc.split_shown else doc.shown,
+            .w = w,
+        };
+    }
+
+    fn len(l: List) usize {
+        return l.prefix + l.shown.len;
+    }
+
+    /// The kind of list row `i`, for the strip.
+    fn kind(l: List, doc: Doc, i: usize) Kind {
+        if (i < l.prefix) return .none;
+        const ri = l.shown[i - l.prefix];
+        return if (doc.mode == .split) splitRowKind(doc.files, doc.split_rows[ri]) else rowKind(doc.files, doc.rows[ri]);
+    }
+};
+
+// ─── the toolbar ────────────────────────────────────────────────────────
+
+/// ` Hunk   Inline   Split  │  Wrap … × ` — Rust's `draw_diff_toolbar`.
+fn drawToolbar(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
+    const p = ui.theme.palette;
+    const bg = p.bg_darker;
+    ui.fill(r, .{ .bg = bg });
+    const on: Style = .{ .fg = p.bg_dark, .bg = p.green, .bold = true };
+    const off: Style = .{ .fg = p.fg, .bg = p.bg2, .bold = true };
+    var x = r.x + 1;
+    const Chip = struct { label: []const u8, id: u32, on: bool };
+    const chips = [_]Chip{
+        .{ .label = " Hunk ", .id = chipId(.hunk), .on = doc.mode == .hunk },
+        .{ .label = " Inline ", .id = chipId(.flat), .on = doc.mode == .flat },
+        .{ .label = " Split ", .id = chipId(.split), .on = doc.mode == .split },
+        .{ .label = " Wrap ", .id = wrap_id, .on = doc.wrap },
+    };
+    for (chips, 0..) |c, i| {
+        if (i == 3) x += ui.putStr(x, r.y, r.right() -| x, " \u{2502} ", .{ .fg = p.grey, .bg = bg });
+        const w = ui.width(c.label);
+        if (x + w > r.right()) break;
+        _ = ui.putStr(x, r.y, w, c.label, if (c.on) on else off);
+        ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = c.id } });
+        x += w;
+        if (i < 2) x += 1;
+    }
+    // The red ` × ` at the right end, one cell in.
+    const close = " \u{00D7} ";
+    if (r.right() > 4) {
+        const cx = r.right() - 4;
+        if (cx >= x) {
+            _ = ui.putStr(cx, r.y, 3, close, .{ .fg = p.bg_dark, .bg = p.red, .bold = true });
+            ui.hit(Rect.init(cx, r.y, 3, 1), .{ .script_hit = .{ .pane = pane, .id = close_id } });
         }
     }
 }
 
+// ─── the body ───────────────────────────────────────────────────────────
+
+/// Paints list row `i` at `y` and returns the screen rows it took (a
+/// wrapped line takes several).
+fn paintListRow(ui: Ui, pane: PaneId, area: Rect, y: u16, list: List, i: usize, doc: Doc) u16 {
+    const r = area.row(y);
+    if (i < list.prefix) {
+        if (i == 0 and list.banner) drawBanner(ui, pane, r, doc) else drawFilterBanner(ui, pane, r, doc);
+        return 1;
+    }
+    const ri = list.shown[i - list.prefix];
+    return switch (doc.mode) {
+        .hunk, .flat => drawUnifiedRow(ui, pane, area, y, ri, doc),
+        .split => drawSplitRow(ui, pane, r, ri, doc),
+    };
+}
+
+/// ` Hunk N/M  file` with the scope's chips right-aligned — Rust's
+/// `active_hunk_chips_row`; the chips act on the cursor's hunk.
+fn drawBanner(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
+    const p = ui.theme.palette;
+    ui.fill(r, .{ .bg = p.bg_darker });
+    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = special_base } });
+    const at = cursorHunk(doc) orelse return;
+    const ord = hunkOrdinal(doc, at);
+    const label = ui.fmt(" Hunk {d}/{d}  {s}", .{ ord.n, ord.of, doc.files[at.file].path() });
+    const lw = ui.putStr(r.x, r.y, r.w, label, .{ .fg = p.cyan, .bg = p.bg_darker, .bold = true });
+    const actions = actionsOf(doc.actions);
+    var chips_w: u16 = 0;
+    for (actions) |a| chips_w += ui.width(a.label()) + 1;
+    if (r.w <= lw + chips_w) return;
+    var x = r.right() - chips_w;
+    for (actions) |a| {
+        x += 1;
+        const w = ui.width(a.label());
+        _ = ui.putStr(x, r.y, w, a.label(), .{ .fg = p.bg_dark, .bg = a.color(p), .bold = true });
+        ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = actionId(a) } });
+        x += w;
+    }
+}
+
+/// ` / needle_  Backspace · Enter · Esc clears ` — Rust's `filter_status_line`.
 fn drawFilterBanner(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
-    const t = ui.theme;
-    const label = if (doc.filter_mode) ui.fmt(" / {s}_", .{doc.filter}) else ui.fmt(" filter: {s}", .{doc.filter});
-    const hint: []const u8 = if (doc.filter_mode) "  enter keeps · esc clears" else "  n / p next match · esc clears";
-    ui.fill(r, t.panel_bg);
+    const p = ui.theme.palette;
+    ui.fill(r, .{ .bg = p.bg_darker });
+    const label = if (doc.filter_mode) ui.fmt(" / {s}_  ", .{doc.filter}) else ui.fmt(" filter: {s}  ", .{doc.filter});
+    const hint: []const u8 = if (doc.filter_mode) " Backspace \u{00B7} Enter \u{00B7} Esc clears " else " Esc clears ";
     var x = r.x;
-    x += ui.putStr(x, r.y, r.w, ui.clipStr(label, r.w), Theme.onBg(t.warn_fg, t.panel_bg.bg));
-    _ = ui.putStr(x, r.y, r.right() -| x, hint, Theme.onBg(t.muted, t.panel_bg.bg));
+    x += ui.putStr(x, r.y, r.w, label, .{ .fg = p.bg_dark, .bg = p.yellow, .bold = true });
+    _ = ui.putStr(x, r.y, r.right() -| x, hint, .{ .fg = p.comment, .bg = p.bg_darker });
     ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = filter_id } });
 }
 
-/// Paints `text` from `x`, `base` styled, the intraline `ranges` in the
-/// emphasis style and the filter's matches in the match style. A tab
-/// paints as four cells; the ranges index the text as given.
-fn paintLine(ui: Ui, x: u16, y: u16, max_w: u16, text: []const u8, base: Style, ranges: []const intraline.Range, doc: Doc) void {
-    const t = ui.theme;
+/// The row's ground: tinted for a change, `bg2` under the cursor.
+fn rowGround(p: Theme.Palette, kind: parse.LineKind, on_cursor: bool) Color {
+    if (on_cursor) return p.bg2;
+    return switch (kind) {
+        .add => addedRowBg(p),
+        .del => removedRowBg(p),
+        .context, .meta => p.bg_dark,
+    };
+}
+
+fn drawUnifiedRow(ui: Ui, pane: PaneId, area: Rect, y0: u16, ri: u32, doc: Doc) u16 {
+    const p = ui.theme.palette;
+    const r = area.row(y0);
+    const on_cursor = ri == doc.cursor and doc.focused;
+    switch (doc.rows[ri]) {
+        .blank => {
+            ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+            return 1;
+        },
+        .hunk => |h| {
+            drawHunkHeader(ui, pane, r, ri, h, doc, on_cursor);
+            return 1;
+        },
+        .line => |l| {
+            const lines = doc.files[l.file].hunks[l.hunk].lines;
+            const line = lines[l.line];
+            const gw = gutterWidth(doc.files);
+            const bg = rowGround(p, line.kind, on_cursor);
+            ui.fill(r, .{ .bg = bg });
+            const marker: []const u8 = switch (line.kind) {
+                .add, .del => if (ui.ascii) "|" else "\u{258F}",
+                .context, .meta => " ",
+            };
+            const marker_fg = switch (line.kind) {
+                .add => p.green,
+                .del => p.red,
+                .context, .meta => p.grey,
+            };
+            const sign: []const u8 = switch (line.kind) {
+                .add => "+",
+                .del => "-",
+                .context => " ",
+                .meta => "\\",
+            };
+            const text = if (line.kind == .meta) "No newline at end of file" else line.text;
+            const fg = if (line.kind == .meta) p.comment else p.fg;
+            var x = r.x;
+            x += ui.putStr(x, r.y, r.right() -| x, gutterText(ui, line.old_no, line.new_no, gw), .{ .fg = p.comment, .bg = bg });
+            x += ui.putStr(x, r.y, r.right() -| x, marker, .{ .fg = marker_fg, .bg = bg });
+            const text_x = x + 2;
+            const body_w = r.right() -| text_x;
+            const ranges = rangesFor(ui, lines, l.line, doc);
+            // Rust: `{sign} {prefix}` dim, the changed middle bold, the
+            // suffix dim — when the line has a partner.
+            const dim = ranges.len > 0;
+            _ = ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s} ", .{sign}), .{ .fg = if (dim) p.comment else fg, .bg = bg });
+            const base: Style = .{ .fg = fg, .bg = bg };
+            if (!doc.wrap or ui.width(text) <= body_w or body_w == 0) {
+                paintLine(ui, text_x, r.y, body_w, text, base, ranges, doc, dim);
+                ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+                return 1;
+            }
+            // Wrapped: the rest continues on blank-gutter rows.
+            var rows: u16 = 0;
+            var rest = text;
+            while (rest.len > 0 and y0 + rows < area.h) {
+                const rr = area.row(y0 + rows);
+                if (rows > 0) {
+                    ui.fill(rr, .{ .bg = bg });
+                    _ = ui.putStr(rr.x + gw, rr.y, 1, marker, .{ .fg = marker_fg, .bg = bg });
+                }
+                const cut = cutAt(ui, rest, body_w);
+                paintLine(ui, text_x, rr.y, body_w, rest[0..cut], base, &.{}, doc, false);
+                ui.hit(rr, .{ .script_hit = .{ .pane = pane, .id = ri } });
+                rest = rest[cut..];
+                rows += 1;
+            }
+            return @max(rows, 1);
+        },
+    }
+}
+
+/// The byte length of the longest prefix of `s` that fits `w` cells.
+fn cutAt(ui: Ui, s: []const u8, w: u16) usize {
+    var used: u16 = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| {
+        const cw: u16 = @intCast(ui.canvas.cellWidth(g.bytes(s)));
+        if (used + cw > w) return if (g.start == 0) g.len else g.start;
+        used += cw;
+    }
+    return s.len;
+}
+
+/// `▶ v @@ -1,2 +1,3 @@  file +N -M` with the chips right-aligned —
+/// Rust's per-hunk header in the Hunk view.
+fn drawHunkHeader(ui: Ui, pane: PaneId, r: Rect, ri: u32, h: HunkRef, doc: Doc, on_cursor: bool) void {
+    const p = ui.theme.palette;
+    const hunk = doc.files[h.file].hunks[h.hunk];
+    const bg = if (on_cursor) p.bg2 else p.bg_dark;
+    ui.fill(r, .{ .bg = bg });
+    var added: usize = 0;
+    var removed: usize = 0;
+    for (hunk.lines) |l| switch (l.kind) {
+        .add => added += 1,
+        .del => removed += 1,
+        else => {},
+    };
+    var x = r.x;
+    const end = r.right();
+    x += ui.putStr(x, r.y, end -| x, if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", .{ .fg = p.yellow, .bg = bg });
+    x += ui.putStr(x, r.y, end -| x, if (doc.triangle) (if (ui.ascii) "v " else "\u{25BE} ") else "v ", .{ .fg = p.purple, .bg = bg });
+    x += ui.putStr(x, r.y, end -| x, ui.fmt("{s}  ", .{hunk.header}), .{ .fg = p.cyan, .bg = bg, .bold = on_cursor });
+    x += ui.putStr(x, r.y, end -| x, doc.files[h.file].path(), .{ .fg = p.blue, .bg = bg });
+    x += ui.putStr(x, r.y, end -| x, ui.fmt(" +{d} -{d}", .{ added, removed }), .{ .fg = p.comment, .bg = bg });
+    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+    const actions = actionsOf(doc.actions);
+    var chips_w: u16 = 0;
+    for (actions) |a| chips_w += ui.width(a.label()) + 1;
+    if (chips_w == 0 or r.w <= (x - r.x) + chips_w) return;
+    var cx = end - chips_w;
+    for (actions) |a| {
+        cx += 1;
+        const w = ui.width(a.label());
+        _ = ui.putStr(cx, r.y, w, a.label(), .{ .fg = p.bg_dark, .bg = a.color(p), .bold = true });
+        ui.hit(Rect.init(cx, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hunkChipId(ri, a) } });
+        cx += w;
+    }
+}
+
+/// Paints `text` from `x`, `base` styled; with `dim` the cells outside
+/// the intraline `ranges` take the comment colour and those inside are
+/// bold (Rust's paired-line treatment); the filter's matches paint
+/// yellow. A tab paints as four cells; the ranges index the text as
+/// given.
+fn paintLine(ui: Ui, x: u16, y: u16, max_w: u16, text: []const u8, base: Style, ranges: []const intraline.Range, doc: Doc, dim: bool) void {
+    const p = ui.theme.palette;
     var used: u16 = 0;
     var it = vaxis.unicode.graphemeIterator(text);
     while (it.next()) |g| {
         const bytes = g.bytes(text);
         var style = base;
-        if (intraline.contains(ranges, g.start)) style = emphStyle(t, base);
-        if (doc.filter.len > 0 and inFilterMatch(text, g.start, doc.filter)) style = filterHitStyle(t, style);
+        if (dim) {
+            if (intraline.contains(ranges, g.start)) style.bold = true else style.fg = p.comment;
+        }
+        if (doc.filter.len > 0 and inFilterMatch(text, g.start, doc.filter)) {
+            style.fg = p.yellow;
+            style.bold = true;
+        }
         if (bytes.len == 1 and bytes[0] == '\t') {
             var k: u16 = 0;
             while (k < 4 and used < max_w) : (k += 1) {
@@ -500,6 +912,7 @@ fn rangesFor(ui: Ui, lines: []const parse.DiffLine, li: usize, doc: Doc) []const
     const p = partnerOf(lines, li) orelse return &.{};
     const a = lines[li];
     const b = lines[p];
+    if (a.text.len == 0 or b.text.len == 0) return &.{};
     if (a.kind == .del) {
         const r = intraline.diff(ui.arena, a.text, b.text) catch return &.{};
         return r.old;
@@ -508,182 +921,116 @@ fn rangesFor(ui: Ui, lines: []const parse.DiffLine, li: usize, doc: Doc) []const
     return r.new;
 }
 
-fn fileLabel(ui: Ui, f: parse.FileDiff) []const u8 {
-    const tag: []const u8 = switch (f.status) {
-        .added => "new file",
-        .deleted => "deleted",
-        .renamed => "renamed",
-        .modified => "modified",
-    };
-    const bar: []const u8 = if (ui.ascii) "==" else "──";
-    if (f.status == .renamed and f.old_path != null)
-        return ui.fmt("{s} {s} → {s}  ({d} hunk{s}, {s})", .{ bar, f.old_path.?, f.path(), f.hunks.len, if (f.hunks.len == 1) "" else "s", tag });
-    return ui.fmt("{s} {s}  ({d} hunk{s}, {s}{s})", .{ bar, f.path(), f.hunks.len, if (f.hunks.len == 1) "" else "s", tag, if (f.binary) ", binary" else "" });
-}
+// ─── split ──────────────────────────────────────────────────────────────
 
-fn drawUnified(ui: Ui, pane: PaneId, body: Rect, doc: Doc, first: usize) void {
-    const t = ui.theme;
-    const digits = @max(digitsOf(doc.files), 3);
-    const gw: u16 = if (doc.mode == .flat) digits + 2 else gutterWidth(doc.files);
-    const num_w: u16 = if (doc.mode == .flat) digits else (gw - 3) / 2;
-    var y: u16 = 0;
-    var i = first;
-    while (i < doc.shown.len and y < body.h) : ({
-        i += 1;
-        y += 1;
-    }) {
-        const ri = doc.shown[i];
-        const r = body.row(y);
-        const sel = ri == doc.cursor and doc.focused;
-        var base: Style = if (sel) Theme.onBg(t.fg, t.cursor_line.bg) else t.bg;
-        if (sel) ui.fill(r, t.cursor_line);
-        const text_x = r.x + gw;
-        const text_w = r.w -| gw;
-        switch (doc.rows[ri]) {
-            .blank => {},
-            .file => |fi| {
-                var s = Theme.onBg(t.accent, base.bg);
-                s.bold = true;
-                _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(fileLabel(ui, doc.files[fi]), r.w), s);
-            },
-            .hunk => |h| {
-                const hunk = doc.files[h.file].hunks[h.hunk];
-                _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(hunk.header, r.w), Theme.onBg(t.info_fg, base.bg));
-            },
-            .line => |l| {
-                const lines = doc.files[l.file].hunks[l.hunk].lines;
-                const line = lines[l.line];
-                // Inline tints the whole row so a change reads without
-                // the sign column.
-                if (doc.mode == .flat and !sel and line.kind != .context) {
-                    base = Theme.onBg(base, t.panel_bg.bg);
-                    ui.fill(r, base);
-                }
-                const style: Style = switch (line.kind) {
-                    .add => addStyle(t, base),
-                    .del => delStyle(t, base),
-                    .context => base,
-                    .meta => Theme.onBg(t.muted, base.bg),
-                };
-                const gstyle = Theme.onBg(t.gutter, base.bg);
-                if (doc.mode == .flat) {
-                    if (line.new_no orelse line.old_no) |n| _ = ui.putStrRight(r.x + num_w, r.y, num_w, ui.fmt("{d}", .{n}), gstyle);
-                } else {
-                    if (line.old_no) |n| _ = ui.putStrRight(r.x + num_w, r.y, num_w, ui.fmt("{d}", .{n}), gstyle);
-                    if (line.new_no) |n| _ = ui.putStrRight(r.x + 2 * num_w + 1, r.y, num_w, ui.fmt("{d}", .{n}), gstyle);
-                }
-                const sign: []const u8 = switch (line.kind) {
-                    .add => "+",
-                    .del => "-",
-                    .context => " ",
-                    .meta => "\\",
-                };
-                _ = ui.putStr(r.x + gw - 1, r.y, 1, sign, style);
-                paintLine(ui, text_x, r.y, text_w, line.text, style, rangesFor(ui, lines, l.line, doc), doc);
-            },
-        }
-        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+/// Rust's `render_split`: a 5-cell gutter and a sign per side, ` │ `
+/// between, each side's text padded to its column.
+fn drawSplitRow(ui: Ui, pane: PaneId, r: Rect, ri: u32, doc: Doc) u16 {
+    const p = ui.theme.palette;
+    const on_cursor = ri == doc.cursor and doc.focused;
+    switch (doc.split_rows[ri]) {
+        .blank => {
+            ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+        },
+        .hunk => |h| {
+            const hunk = doc.files[h.file].hunks[h.hunk];
+            const bg = if (on_cursor) p.bg2 else p.bg_darker;
+            ui.fill(r, .{ .bg = bg });
+            const text = ui.fmt("{s}{s}  {s}", .{ if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", hunk.header, doc.files[h.file].path() });
+            _ = ui.putStr(r.x, r.y, r.w, text, .{ .fg = p.cyan, .bg = bg, .bold = on_cursor });
+            ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+        },
+        .pair => |pr| {
+            const lines = doc.files[pr.file].hunks[pr.hunk].lines;
+            const gutter_w: u16 = 5;
+            const col_w: u16 = (r.w -| 13) / 2;
+            var x = r.x;
+            x = drawSide(ui, r, x, lines, pr.left, gutter_w, col_w, true, doc, on_cursor);
+            x += ui.putStr(x, r.y, r.right() -| x, if (ui.ascii) " | " else " \u{2502} ", .{ .fg = p.grey, .bg = p.bg_dark });
+            _ = drawSide(ui, r, x, lines, pr.right, gutter_w, col_w, false, doc, on_cursor);
+            ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+        },
     }
+    return 1;
 }
 
-fn drawSplit(ui: Ui, pane: PaneId, body: Rect, doc: Doc, first: usize) void {
-    const t = ui.theme;
-    const num_w = @max(digitsOf(doc.files), 3);
-    const ratio = std.math.clamp(doc.ratio, 15, 85);
-    const left_w: u16 = @intCast(@as(u32, body.w -| 1) * ratio / 100);
-    const div_x = body.x + left_w;
-    const right_x = div_x + 1;
-    const right_w = body.right() -| right_x;
-    const div_glyph: []const u8 = if (ui.ascii) "|" else "│";
-    var y: u16 = 0;
-    var i = first;
-    while (i < doc.split_shown.len and y < body.h) : ({
-        i += 1;
-        y += 1;
-    }) {
-        const ri = doc.split_shown[i];
-        const r = body.row(y);
-        const sel = ri == doc.cursor and doc.focused;
-        const base: Style = if (sel) Theme.onBg(t.fg, t.cursor_line.bg) else t.bg;
-        if (sel) ui.fill(r, t.cursor_line);
-        switch (doc.split_rows[ri]) {
-            .blank => {},
-            .file => |fi| {
-                var s = Theme.onBg(t.accent, base.bg);
-                s.bold = true;
-                _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(fileLabel(ui, doc.files[fi]), r.w), s);
-            },
-            .pair => |p| {
-                const lines = doc.files[p.file].hunks[p.hunk].lines;
-                drawSide(ui, Rect.init(r.x, r.y, left_w, 1), lines, p.left, num_w, base, doc, true);
-                drawSide(ui, Rect.init(right_x, r.y, right_w, 1), lines, p.right, num_w, base, doc, false);
-            },
-        }
-        if (doc.split_rows[ri] == .pair) _ = ui.putStr(div_x, r.y, 1, div_glyph, Theme.onBg(t.border, base.bg));
-        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
-    }
-    // Rows below the last one still carry the divider, and the whole
-    // column is the drag handle — registered last so it wins the click.
-    while (y < body.h) : (y += 1) _ = ui.putStr(div_x, body.y + y, 1, div_glyph, Theme.onBg(t.border, t.bg.bg));
-    ui.hit(Rect.init(div_x, body.y, 1, body.h), .{ .script_hit = .{ .pane = pane, .id = divider_id } });
-}
-
-fn drawSide(ui: Ui, r: Rect, lines: []const parse.DiffLine, idx: ?u32, num_w: u16, base: Style, doc: Doc, left: bool) void {
-    const t = ui.theme;
-    const banded = !std.meta.eql(base.bg, t.bg.bg);
+/// One side of a pair from `x0`; returns where it ended.
+fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, gutter_w: u16, col_w: u16, left: bool, doc: Doc, on_cursor: bool) u16 {
+    const p = ui.theme.palette;
+    const end = r.right();
+    var x = x0;
+    const side_w = gutter_w + 1 + col_w;
     const li = idx orelse {
-        // A filler half: the panel ground so the alignment is visible.
-        if (!banded) ui.fill(r, Theme.onBg(base, t.panel_bg.bg));
-        return;
+        // A filler half: the `bg2` ground, a `·` for a sign.
+        const bg = if (on_cursor) p.bg2 else p.bg2;
+        ui.fill(Rect.init(x, r.y, @min(side_w, end -| x), 1), .{ .bg = bg });
+        x += gutter_w;
+        _ = ui.putStr(x, r.y, end -| x, "\u{00B7}", .{ .fg = p.comment, .bg = bg, .bold = true });
+        return x0 + side_w;
     };
     const line = lines[li];
-    var side_base = base;
-    if (line.kind != .context and !banded) {
-        side_base = Theme.onBg(base, t.panel_bg.bg);
-        ui.fill(r, side_base);
-    }
-    const style: Style = switch (line.kind) {
-        .add => addStyle(t, side_base),
-        .del => delStyle(t, side_base),
-        .context => side_base,
-        .meta => Theme.onBg(t.muted, side_base.bg),
-    };
+    const bg = rowGround(p, line.kind, on_cursor);
+    ui.fill(Rect.init(x, r.y, @min(side_w, end -| x), 1), .{ .bg = bg });
     const no = if (left) line.old_no else line.new_no;
-    if (no) |n| _ = ui.putStrRight(r.x + num_w, r.y, num_w, ui.fmt("{d}", .{n}), Theme.onBg(t.gutter, side_base.bg));
-    const text_x = r.x + num_w + 1;
-    const text_w = r.right() -| text_x;
-    paintLine(ui, text_x, r.y, text_w, line.text, style, rangesFor(ui, lines, li, doc), doc);
+    if (no) |n| _ = ui.putStrRight(x + gutter_w - 1, r.y, gutter_w - 1, ui.fmt("{d}", .{n}), .{ .fg = p.comment, .bg = bg });
+    x += gutter_w;
+    const sign: []const u8 = switch (line.kind) {
+        .add => "+",
+        .del => "-",
+        .context, .meta => " ",
+    };
+    const sign_fg = switch (line.kind) {
+        .add => p.green,
+        .del => p.red,
+        .context, .meta => p.fg,
+    };
+    x += ui.putStr(x, r.y, end -| x, sign, .{ .fg = sign_fg, .bg = bg, .bold = true });
+    x += 1;
+    const ranges = rangesFor(ui, lines, li, doc);
+    const fg = if (line.kind == .meta) p.comment else p.fg;
+    paintLine(ui, x, r.y, @min(col_w -| 1, end -| x), line.text, .{ .fg = fg, .bg = bg }, ranges, doc, ranges.len > 0);
+    return x0 + side_w;
 }
 
-fn drawStrip(ui: Ui, pane: PaneId, s: Rect, doc: Doc, first: usize, visible: u16) void {
-    const t = ui.theme;
-    const total = if (doc.mode == .split) doc.split_shown.len else doc.shown.len;
+// ─── the right edge ─────────────────────────────────────────────────────
+
+/// The change strip: `▎` per band in the band's colour, blank elsewhere;
+/// a click jumps to the band's first row.
+fn drawStrip(ui: Ui, pane: PaneId, s: Rect, list: List, doc: Doc) void {
+    const p = ui.theme.palette;
+    const total = list.len();
     const kinds = ui.arena.alloc(Kind, total) catch return;
-    for (0..total) |i| {
-        kinds[i] = if (doc.mode == .split) splitRowKind(doc.files, doc.split_rows[doc.split_shown[i]]) else rowKind(doc.files, doc.rows[doc.shown[i]]);
-    }
+    for (0..total) |i| kinds[i] = list.kind(doc, i);
     const bands = density(ui.arena, kinds, s.h) catch return;
-    // The visible window, as the thumb the strip doubles as.
-    const scrolls = total > visible;
-    const thumb_lo = if (total == 0) 0 else first * s.h / total;
-    const thumb_hi = if (total == 0) 0 else @min(@max((first + visible) * s.h / total, thumb_lo + 1), s.h);
     for (bands, 0..) |k, cy| {
         const y: u16 = s.y + @as(u16, @intCast(cy));
-        const in_thumb = scrolls and cy >= thumb_lo and cy < thumb_hi;
-        const bg = if (in_thumb) t.cursor_line.bg else t.panel_bg.bg;
-        const glyph: []const u8 = switch (k) {
-            .none => if (in_thumb) (if (ui.ascii) "#" else "▌") else " ",
-            else => if (ui.ascii) "|" else "▎",
+        const fg: ?Color = switch (k) {
+            .none => null,
+            .add => p.green,
+            .del => p.red,
+            .both => p.yellow,
         };
-        const fg = switch (k) {
-            .none => t.muted.fg,
-            .add => t.syntax.string.fg,
-            .del => t.error_fg.fg,
-            .both => t.warn_fg.fg,
-        };
-        _ = ui.putStr(s.x, y, 1, glyph, Theme.onBg(Theme.withFg(t.bg, fg), bg));
+        if (fg) |c| {
+            _ = ui.putStr(s.x, y, 1, if (ui.ascii) "|" else "\u{258E}", .{ .fg = c, .bg = p.bg_dark });
+        } else ui.fill(Rect.init(s.x, y, 1, 1), .{ .bg = p.bg_dark });
         ui.hit(Rect.init(s.x, y, 1, 1), .{ .script_hit = .{ .pane = pane, .id = stripId(@intCast(cy)) } });
     }
+}
+
+/// `bg2` track, `comment` thumb while the list overflows the body.
+fn drawScrollbar(ui: Ui, pane: PaneId, b: Rect, total: usize, scroll: usize, visible: u16) void {
+    const p = ui.theme.palette;
+    ui.fill(b, .{ .bg = p.bg2 });
+    const cells: usize = b.h;
+    if (total > visible and visible > 0) {
+        const thumb_h = @max(cells * visible / total, 1);
+        const max_scroll = total - visible;
+        const max_top = cells -| thumb_h;
+        const top = if (max_scroll == 0) 0 else scroll * max_top / max_scroll;
+        var cy = top;
+        while (cy < @min(top + thumb_h, cells)) : (cy += 1) ui.fill(Rect.init(b.x, b.y + @as(u16, @intCast(cy)), 1, 1), .{ .bg = p.comment });
+    }
+    for (0..cells) |cy| ui.hit(Rect.init(b.x, b.y + @as(u16, @intCast(cy)), 1, 1), .{ .script_hit = .{ .pane = pane, .id = stripId(@intCast(cy)) } });
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -699,63 +1046,159 @@ const sample =
     "-fn alpha() {}\n" ++
     "+fn beta() {}\n";
 
+/// The spec's diff: `src/main.rs` with a line appended, as `git diff`
+/// with the whole file for context reports it.
+const spec_diff =
+    "diff --git a/src/main.rs b/src/main.rs\n" ++
+    "--- a/src/main.rs\n" ++
+    "+++ b/src/main.rs\n" ++
+    "@@ -1,2 +1,3 @@\n" ++
+    " fn main() {}\n" ++
+    " y\n" ++
+    "+z\n";
+
 fn identity(arena: Allocator, n: usize) ![]u32 {
     const out = try arena.alloc(u32, n);
     for (out, 0..) |*o, i| o.* = @intCast(i);
     return out;
 }
 
-test "flatten lists file, hunk and lines; draw paints the signs, the chips and registers row hits" {
-    var a = std.heap.ArenaAllocator.init(testing.allocator);
-    defer a.deinit();
-    const files = try parse.parseDiff(a.allocator(), sample);
-    const rows = try flatten(a.allocator(), files);
-    try testing.expectEqual(@as(usize, 4), rows.len);
-    try testing.expect(rows[0] == .file);
-    try testing.expect(rows[1] == .hunk);
-    try testing.expect(rows[3] == .line);
-
-    var f = try Fixture.init(60, 6);
-    defer f.deinit();
-    var st: State = .{};
-    _ = draw(f.ui(), 2, Rect.init(0, 0, 60, 6), &st, .{ .files = files, .rows = rows, .shown = try identity(a.allocator(), rows.len), .cursor = 2, .focused = true, .header = " diff: code.rs " });
-    try f.expectRow(0, " diff: code.rs [Hunk]  Inline   Split");
-    try f.expectRow(1, "── code.rs  (1 hunk, modified)");
-    try f.expectRow(2, "@@ -1 +1 @@");
-    try f.expectRow(3, "  1     -fn alpha() {}");
-    // The strip's band for the `-` line lands on this row: `▎` at x = 59.
-    try f.expectRow(4, try std.fmt.allocPrint(a.allocator(), "{s:<59}▎", .{"      1 +fn beta() {}"}));
-    try testing.expectEqual(@as(u32, 3), f.hits.at(5, 4).?.script_hit.id);
-    try testing.expectEqual(chipId(.split), f.hits.at(33, 0).?.script_hit.id);
-    // The strip sits on the right edge, one hit per cell.
-    try testing.expect(stripCellOf(f.hits.at(59, 1).?.script_hit.id) != null);
+fn glyph(a: git_toolbar.Action) []const u8 {
+    return git_toolbar.glyphOf(a);
 }
 
-test "intraline: the changed word of a paired line is emphasised, the rest is not" {
+/// `s` padded with spaces to `cells` columns (every glyph here is one
+/// cell), then `tail`.
+fn padTo(arena: Allocator, s: []const u8, cells: usize, tail: []const u8) ![]const u8 {
+    const w = try std.unicode.utf8CountCodepoints(s);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(arena, s);
+    try out.appendNTimes(arena, ' ', cells -| w);
+    try out.appendSlice(arena, tail);
+    return out.items;
+}
+
+test "the spec's diff pane, cell for cell: toolbar rows, the banner with its chips, the Inline rows; every control is a hit" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const files = try parse.parseDiff(a.allocator(), sample);
-    const rows = try flatten(a.allocator(), files);
-    const lines = files[0].hunks[0].lines;
-    try testing.expectEqual(@as(?usize, 1), partnerOf(lines, 0));
-    try testing.expectEqual(@as(?usize, 0), partnerOf(lines, 1));
-    var f = try Fixture.init(60, 6);
+    const arena = a.allocator();
+    const files = try parse.parseDiff(arena, spec_diff);
+    const rows = try flatten(arena, files);
+    const shown = try filterRows(arena, files, rows, "", true);
+    // `docs/ui-spec/rust-diff-120x40.txt` columns 31..120, rows 2..38.
+    var f = try Fixture.init(89, 37);
     defer f.deinit();
     var st: State = .{};
-    _ = draw(f.ui(), 2, Rect.init(0, 0, 60, 6), &st, .{ .files = files, .rows = rows, .shown = try identity(a.allocator(), rows.len), .cursor = 0, .focused = false, .header = " d " });
-    // Row 3 is `  1     -fn alpha() {}`: text starts at x = 9; the
-    // changed span is `alph` (the trailing `a` is common with `beta`),
-    // bytes 3..7 of the line → cells 12..15.
-    const emph = emphStyle(&f.theme, delStyle(&f.theme, f.theme.bg));
-    try testing.expect(f.bgEql(12, 3, emph));
-    try testing.expect(f.bgEql(15, 3, emph));
-    try testing.expect(!f.bgEql(9, 3, emph));
-    try testing.expect(!f.bgEql(16, 3, emph));
-    // The added side: `bet`, bytes 3..6 → cells 12..14.
-    const emph_add = emphStyle(&f.theme, addStyle(&f.theme, f.theme.bg));
-    try testing.expect(f.bgEql(12, 4, emph_add));
-    try testing.expect(f.bgEql(14, 4, emph_add));
-    try testing.expect(!f.bgEql(15, 4, emph_add));
+    const painted = draw(f.ui(), 2, f.full(), &st, .{ .files = files, .rows = rows, .shown = shown, .cursor = 1, .focused = true });
+    try f.expectRow(0, try std.fmt.allocPrint(arena, " {s} Undo   {s} Redo   {s} Pull   {s} Push   {s} Fetch   {s} Branch   {s} Commit   {s} Stash   {s} Reflog", .{
+        glyph(.undo), glyph(.redo), glyph(.pull), glyph(.push), glyph(.fetch), glyph(.branch), glyph(.commit), glyph(.stash), glyph(.reflog),
+    }));
+    try f.expectRow(1, try padTo(arena, "  Hunk   Inline   Split  \u{2502}  Wrap", 86, "\u{00D7}"));
+    try f.expectRow(2, try padTo(arena, " Hunk 1/1  src/main.rs", 70, "Stage   Discard"));
+    try f.expectRow(3, "  1   1    fn main() {}");
+    try f.expectRow(4, "  2   2    y");
+    try f.expectRow(5, "      3 \u{258F}+ z");
+    try f.expectRow(6, "");
+    try testing.expectEqual(@as(u16, 2), painted.body.y);
+    try testing.expectEqual(@as(u16, 35), painted.strip_cells);
+    // The change strip: the added row is the last of four, so its
+    // band is the bottom fifth — rows 29..36 of the pane at column 87.
+    try f.expectRow(31, try std.fmt.allocPrint(arena, "{s:<87}\u{258E}", .{""}));
+    try f.expectRow(28, "");
+    // Hits: the toolbar chips, the close, the chips, the strip, the rows.
+    try testing.expectEqual(git_toolbar.hitId(.undo), f.hits.at(3, 0).?.script_hit.id);
+    try testing.expectEqual(chipId(.hunk), f.hits.at(2, 1).?.script_hit.id);
+    try testing.expectEqual(chipId(.flat), f.hits.at(9, 1).?.script_hit.id);
+    try testing.expectEqual(chipId(.split), f.hits.at(18, 1).?.script_hit.id);
+    try testing.expectEqual(wrap_id, f.hits.at(28, 1).?.script_hit.id);
+    try testing.expectEqual(close_id, f.hits.at(86, 1).?.script_hit.id);
+    try testing.expectEqual(actionId(.stage), f.hits.at(72, 2).?.script_hit.id);
+    try testing.expectEqual(actionId(.discard), f.hits.at(80, 2).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(5, 3).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 3), f.hits.at(5, 5).?.script_hit.id);
+    try testing.expect(stripCellOf(f.hits.at(87, 10).?.script_hit.id) != null);
+    try testing.expect(stripCellOf(f.hits.at(88, 10).?.script_hit.id) != null);
+    try testing.expectEqual(@as(?Action, .stage), actionOf(actionId(.stage)));
+    try testing.expectEqual(@as(?Action, null), actionOf(chipId(.hunk)));
+    // Colours: the active view chip on green, the close on red, the
+    // added row on its tint with the marker green.
+    try testing.expect(f.bgEql(9, 1, .{ .bg = f.theme.palette.green }));
+    try testing.expect(f.bgEql(2, 1, .{ .bg = f.theme.palette.bg2 }));
+    try testing.expect(f.bgEql(86, 1, .{ .bg = f.theme.palette.red }));
+    try testing.expect(f.bgEql(12, 5, .{ .bg = addedRowBg(f.theme.palette) }));
+    try testing.expect(f.fgEql(8, 5, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(11, 5, .{ .fg = f.theme.palette.fg }));
+}
+
+test "flatten lists hunk, lines and spacer; the Hunk view paints the header with its chips; Wrap continues a long line" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const files = try parse.parseDiff(arena, sample);
+    const rows = try flatten(arena, files);
+    try testing.expectEqual(@as(usize, 4), rows.len);
+    try testing.expect(rows[0] == .hunk);
+    try testing.expect(rows[1] == .line);
+    try testing.expect(rows[3] == .blank);
+    // Seven rows: under eight there is no git toolbar.
+    var f = try Fixture.init(60, 7);
+    defer f.deinit();
+    var st: State = .{};
+    _ = draw(f.ui(), 2, f.full(), &st, .{ .files = files, .rows = rows, .shown = try identity(arena, rows.len), .mode = .hunk, .cursor = 0, .focused = true });
+    // The Hunk view has no pad column: the strip at 58, the bar at 59.
+    try f.expectRow(0, try padTo(arena, "  Hunk   Inline   Split  \u{2502}  Wrap", 57, "\u{00D7}"));
+    try f.expectRow(1, try padTo(arena, " Hunk 1/1  code.rs", 42, "Stage   Discard"));
+    try f.expectRow(2, try padTo(arena, "\u{25B6} v @@ -1 +1 @@  code.rs +1 -1", 42, "Stage   Discard"));
+    try f.expectRow(3, "  1     \u{258F}- fn alpha() {}");
+    // The strip's band for the removed row lands on row 4.
+    try f.expectRow(4, try padTo(arena, "      1 \u{258F}+ fn beta() {}", 58, "\u{258E}"));
+    try testing.expectEqual(hunkChipId(0, .discard), f.hits.at(50, 2).?.script_hit.id);
+    try testing.expectEqual(@as(?HunkChip, .{ .row = 0, .action = .discard }), hunkChipOf(hunkChipId(0, .discard)));
+    try testing.expectEqual(@as(?HunkChip, null), hunkChipOf(actionId(.stage)));
+    try testing.expect(stripCellOf(f.hits.at(58, 3).?.script_hit.id) != null);
+    // A paired line: the changed word in the body colour, bold; the
+    // rest dimmed.
+    // `fn alpha() {}` from col 11: `alph` (14..17) is the change.
+    try testing.expect(f.style(14, 3).bold);
+    try testing.expect(!f.style(11, 3).bold);
+    try testing.expect(f.fgEql(11, 3, .{ .fg = f.theme.palette.comment }));
+    // Wrap: a 70-cell line at 40 columns continues on a second row.
+    const long = "diff --git a/l.txt b/l.txt\n--- a/l.txt\n+++ b/l.txt\n@@ -1 +1 @@\n-" ++ "a" ** 30 ++ "\n+" ++ "b" ** 30 ++ "\n";
+    const lf = try parse.parseDiff(arena, long);
+    const lrows = try flatten(arena, lf);
+    var g = try Fixture.init(30, 8);
+    defer g.deinit();
+    var gst: State = .{};
+    _ = draw(g.ui(), 2, g.full(), &gst, .{ .files = lf, .rows = lrows, .shown = try filterRows(arena, lf, lrows, "", true), .cursor = 1, .focused = false, .wrap = true, .intraline = false });
+    // Both lines wrap: the `-` on rows 2 / 3, the `+` on 4 / 5; the
+    // strip's removed band covers 4 / 5.
+    try g.expectRow(2, "  1     \u{258F}- aaaaaaaaaaaaaaaa");
+    try g.expectRow(3, "        \u{258F}  aaaaaaaaaaaaaa");
+    try g.expectRow(4, try padTo(arena, "      1 \u{258F}+ bbbbbbbbbbbbbbbb", 28, "\u{258E}"));
+    try g.expectRow(5, try padTo(arena, "        \u{258F}  bbbbbbbbbbbbbb", 28, "\u{258E}"));
+    try testing.expectEqual(@as(u32, 2), g.hits.at(10, 5).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 1), g.hits.at(10, 3).?.script_hit.id);
+}
+
+test "no hunks: `(no changes)`, or `loading…` while pending; a staged scope offers Unstage; a commit none" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var f = try Fixture.init(50, 10);
+    defer f.deinit();
+    var st: State = .{};
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = &.{}, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
+    try f.expectRow(2, "  (no changes)");
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = &.{}, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true, .pending = true });
+    try f.expectRow(2, "  loading\u{2026}");
+    const files = try parse.parseDiff(arena, sample);
+    const rows = try flatten(arena, files);
+    const shown = try filterRows(arena, files, rows, "", true);
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = rows, .shown = shown, .cursor = 1, .focused = true, .actions = .staged });
+    try f.expectRow(2, try padTo(arena, " Hunk 1/1  code.rs", 39, "Unstage"));
+    try testing.expectEqual(actionId(.unstage), f.hits.at(44, 2).?.script_hit.id);
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = rows, .shown = shown, .cursor = 1, .focused = true, .actions = .none });
+    try f.expectRow(2, try padTo(arena, "  1     \u{258F}- fn alpha() {}", 48, "\u{258E}"));
 }
 
 const two_hunks =
@@ -776,53 +1219,54 @@ const two_hunks =
     "+new three\n" ++
     " ctx2\n";
 
-test "pairs: context on both sides, removed runs zipped with added runs, the tail against a filler" {
+test "pairs: a header per hunk, context on both sides, removed runs zipped with added runs, the tail against a filler" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const files = try parse.parseDiff(a.allocator(), two_hunks);
     const sr = try pairs(a.allocator(), files);
-    // file, keep, apple/apricot, keep2, ctx, old one/new one, old two/new two, -/new three, ctx2
-    try testing.expectEqual(@as(usize, 9), sr.len);
-    try testing.expect(sr[0] == .file);
+    // hunk, keep, apple/apricot, keep2, blank, hunk, ctx, old one/new one, old two/new two, -/new three, ctx2, blank
+    try testing.expectEqual(@as(usize, 12), sr.len);
+    try testing.expect(sr[0] == .hunk);
     try testing.expectEqual(@as(?u32, 0), sr[1].pair.left);
     try testing.expectEqual(@as(?u32, 0), sr[1].pair.right);
     try testing.expectEqual(@as(?u32, 1), sr[2].pair.left);
     try testing.expectEqual(@as(?u32, 2), sr[2].pair.right);
-    try testing.expectEqual(@as(?u32, 1), sr[5].pair.left);
-    try testing.expectEqual(@as(?u32, 3), sr[5].pair.right);
-    try testing.expectEqual(@as(?u32, 2), sr[6].pair.left);
-    try testing.expectEqual(@as(?u32, 4), sr[6].pair.right);
-    try testing.expectEqual(@as(?u32, null), sr[7].pair.left);
-    try testing.expectEqual(@as(?u32, 5), sr[7].pair.right);
+    try testing.expect(sr[4] == .blank);
+    try testing.expect(sr[5] == .hunk);
+    try testing.expectEqual(@as(?u32, 1), sr[7].pair.left);
+    try testing.expectEqual(@as(?u32, 3), sr[7].pair.right);
+    try testing.expectEqual(@as(?u32, null), sr[9].pair.left);
+    try testing.expectEqual(@as(?u32, 5), sr[9].pair.right);
     try testing.expectEqual(Kind.both, splitRowKind(files, sr[2]));
-    try testing.expectEqual(Kind.add, splitRowKind(files, sr[7]));
+    try testing.expectEqual(Kind.add, splitRowKind(files, sr[9]));
     try testing.expectEqual(Kind.none, splitRowKind(files, sr[1]));
 }
 
-test "split draw: old left, new right, a divider hit spanning the body, aligned line numbers" {
+test "split draw: a header across both columns, old left, new right, a filler with a dot" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
     const files = try parse.parseDiff(arena, two_hunks);
     const rows = try flatten(arena, files);
     const sr = try pairs(arena, files);
-    var f = try Fixture.init(61, 12);
+    var f = try Fixture.init(60, 14);
     defer f.deinit();
     var st: State = .{};
     var ui = f.ui();
     ui.ascii = true;
-    const p = draw(ui, 4, Rect.init(0, 0, 61, 12), &st, .{ .files = files, .rows = rows, .shown = try identity(arena, rows.len), .split_rows = sr, .split_shown = try identity(arena, sr.len), .mode = .split, .cursor = 2, .focused = true, .header = " d " });
-    try testing.expectEqual(@as(u16, 1), p.body.y);
-    // Body is 60 wide (strip takes 1); the left half is 29 cells, the
-    // divider at x = 29, the right half from 30.
-    // Column 60 is the density strip: a band with a change paints `|`.
-    try f.expectRow(1, "== a.txt  (2 hunks, modified)");
-    try f.expectRow(2, try std.fmt.allocPrint(arena, "{s:<29}|{s}", .{ "  1 keep", "  1 keep" }));
-    try f.expectRow(3, try std.fmt.allocPrint(arena, "{s:<29}|{s}", .{ "  2 apple", "  2 apricot" }));
-    try f.expectRow(8, try std.fmt.allocPrint(arena, "{s:<29}|{s:<30}|", .{ "", " 13 new three" }));
-    try testing.expectEqual(divider_id, f.hits.at(29, 5).?.script_hit.id);
-    try testing.expectEqual(divider_id, f.hits.at(29, 11).?.script_hit.id);
-    try testing.expectEqual(@as(u32, 3), f.hits.at(3, 4).?.script_hit.id);
+    const p = draw(ui, 4, f.full(), &st, .{ .files = files, .rows = rows, .shown = try identity(arena, rows.len), .split_rows = sr, .split_shown = try identity(arena, sr.len), .mode = .split, .cursor = 2, .focused = true });
+    // Both toolbars, then the banner: the rows start at 3.
+    try testing.expectEqual(@as(u16, 2), p.body.y);
+    // Body 57 wide (three reserved): col_w = (57 - 13) / 2 = 22, so a
+    // side is 28 cells and the ` | ` sits at 28.
+    try f.expectRow(3, "  @@ -1,3 +1,3 @@  a.txt");
+    // Rows with a change end in the strip's ASCII `|` at 58.
+    try f.expectRow(4, try padTo(arena, "   1   keep", 28, " |    1   keep"));
+    try f.expectRow(5, try padTo(arena, try padTo(arena, "   2 - apple", 28, " |    2 + apricot"), 58, "|"));
+    try f.expectRow(12, try padTo(arena, try padTo(arena, "     \u{00B7}", 28, " |   13 + new three"), 58, "|"));
+    try testing.expectEqual(@as(u32, 9), f.hits.at(3, 12).?.script_hit.id);
+    try testing.expect(f.bgEql(3, 12, .{ .bg = f.theme.palette.bg2 }));
+    try testing.expect(f.bgEql(3, 5, .{ .bg = f.theme.palette.bg2 }));
 }
 
 test "density: bands take the union of their rows; a strip cell maps back to its band's first row" {
@@ -841,24 +1285,34 @@ test "density: bands take the union of their rows; a strip cell maps back to its
     try testing.expectEqual(@as(usize, 0), stripCellRow(0, 0, 8));
 }
 
-test "filter: only the hunks holding the needle stay, with their file header; the inline view drops hunk rows" {
+test "filter: only the hunks holding the needle stay; the inline view drops hunk rows and spacers; the banner paints" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const files = try parse.parseDiff(a.allocator(), two_hunks);
-    const rows = try flatten(a.allocator(), files);
-    try testing.expectEqual(rows.len, (try filterRows(a.allocator(), files, rows, "", false)).len);
-    const shown = try filterRows(a.allocator(), files, rows, "APRIC", false);
-    // file, hunk 1 header, its four lines.
-    try testing.expectEqual(@as(usize, 6), shown.len);
-    try testing.expect(rows[shown[0]] == .file);
-    try testing.expect(rows[shown[1]] == .hunk);
-    try testing.expectEqual(@as(u32, 0), rows[shown[1]].hunk.hunk);
-    const none = try filterRows(a.allocator(), files, rows, "zzz", false);
+    const arena = a.allocator();
+    const files = try parse.parseDiff(arena, two_hunks);
+    const rows = try flatten(arena, files);
+    try testing.expectEqual(rows.len, (try filterRows(arena, files, rows, "", false)).len);
+    const shown = try filterRows(arena, files, rows, "APRIC", false);
+    // hunk 1 header and its four lines; the spacers go with a needle.
+    try testing.expectEqual(@as(usize, 5), shown.len);
+    try testing.expect(rows[shown[0]] == .hunk);
+    try testing.expectEqual(@as(u32, 0), rows[shown[0]].hunk.hunk);
+    const none = try filterRows(arena, files, rows, "zzz", false);
     try testing.expectEqual(@as(usize, 0), none.len);
-    const inline_rows = try filterRows(a.allocator(), files, rows, "", true);
-    for (inline_rows) |i| try testing.expect(rows[i] != .hunk);
-    const sr = try pairs(a.allocator(), files);
-    const split_shown = try filterSplitRows(a.allocator(), files, sr, "three");
-    // file + the second hunk's five pairs.
+    const inline_rows = try filterRows(arena, files, rows, "", true);
+    for (inline_rows) |i| try testing.expect(rows[i] == .line);
+    const sr = try pairs(arena, files);
+    const split_shown = try filterSplitRows(arena, files, sr, "three");
+    // The second hunk's header and five pairs.
     try testing.expectEqual(@as(usize, 6), split_shown.len);
+    var f = try Fixture.init(60, 7);
+    defer f.deinit();
+    var st: State = .{};
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = rows, .shown = shown, .cursor = 0, .focused = true, .filter = "apric", .filter_mode = true, .actions = .none });
+    try f.expectRow(1, " / apric_   Backspace \u{00B7} Enter \u{00B7} Esc clears");
+    try testing.expectEqual(filter_id, f.hits.at(3, 1).?.script_hit.id);
+    // `apricot` on row 5: the match paints yellow, the tail does not.
+    try f.expectRow(5, try padTo(arena, "      2 \u{258F}+ apricot", 58, "\u{258E}"));
+    try testing.expect(f.fgEql(11, 5, .{ .fg = f.theme.palette.yellow }));
+    try testing.expect(!f.fgEql(17, 5, .{ .fg = f.theme.palette.yellow }));
 }

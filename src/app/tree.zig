@@ -106,6 +106,10 @@ pub const Tree = struct {
     expanded: std.StringHashMapUnmanaged(void) = .empty,
     /// Top-level directories a refresh has already met (owned keys).
     seen_top: std.StringHashMapUnmanaged(void) = .empty,
+    /// The expansion set came from a saved session: the next listing
+    /// records the top-level directories as seen without opening them
+    /// (Rust's `set_expanded_dirs` replaces the set and opens nothing).
+    restored: bool = false,
     /// Every directory the rows were read from, by absolute path
     /// (owned keys), stamped as it was read. `watch.check` refreshes
     /// the tree when one of them moves on disk.
@@ -272,12 +276,14 @@ pub const Tree = struct {
     /// and the rows must be read again.
     fn openNewTopDirs(self: *Tree, depth: u8) Allocator.Error!bool {
         var opened = false;
+        const open = !self.restored;
+        self.restored = false;
         for (self.rows.items) |row| {
             if (row.header or row.root != 0 or !row.is_dir or row.depth != depth or self.seen_top.contains(row.rel)) continue;
             const key = try self.gpa.dupe(u8, row.rel);
             errdefer self.gpa.free(key);
             try self.seen_top.put(self.gpa, key, {});
-            if (isNoisy(row.name())) continue;
+            if (!open or isNoisy(row.name())) continue;
             try self.setExpanded(row.rel, true);
             opened = true;
         }

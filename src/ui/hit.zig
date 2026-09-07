@@ -60,9 +60,13 @@ pub const HitTarget = union(enum) {
     pane: PaneId,
     divider: u32,
     tab: TabRef,
-    /// The `×` on a pty tab (`bufferline.zig`): the same leaf / index
-    /// as the `.tab` it sits on; a press closes that pane.
+    /// The badge cells of a tab (`bufferline.zig`): the same leaf /
+    /// index as the `.tab` it sits on; a press closes that pane.
     tab_close: TabRef,
+    /// A segment of an editor's breadcrumb row (`editor_view.zig`):
+    /// the `idx`-th path component; a press opens a Files pane at the
+    /// directory it names (the file's own segment: its parent).
+    breadcrumb: struct { pane: PaneId, idx: u16 },
     row: PanelRow,
     kebab: PanelRow,
     chip: struct { panel: PanelId, kind: ChipKind },
@@ -106,6 +110,7 @@ pub const HitTarget = union(enum) {
                 else => try w.print(":{s}", .{@tagName(p)}),
             },
             .tab, .tab_close => |v| try w.print(":{d}:{d}", .{ v.leaf, v.idx }),
+            .breadcrumb => |v| try w.print(":{d}:{d}", .{ v.pane, v.idx }),
             .row, .kebab => |v| try w.print(":{s}:{d}", .{ @tagName(v.panel), v.idx }),
             .chip => |v| try w.print(":{s}:{s}", .{ @tagName(v.panel), @tagName(v.kind) }),
             .filter_input => |p| try w.print(":{s}", .{@tagName(p)}),
@@ -255,6 +260,8 @@ fn expectLabel(expected: []const u8, t: HitTarget) !void {
 test "labels are the tag plus the payload" {
     try expectLabel("pane:4", .{ .pane = 4 });
     try expectLabel("tab:0:2", .{ .tab = .{ .leaf = 0, .idx = 2 } });
+    try expectLabel("tab_close:0:2", .{ .tab_close = .{ .leaf = 0, .idx = 2 } });
+    try expectLabel("breadcrumb:3:1", .{ .breadcrumb = .{ .pane = 3, .idx = 1 } });
     try expectLabel("row:todos:3", .{ .row = .{ .panel = .todos, .idx = 3 } });
     try expectLabel("kebab:notes:0", .{ .kebab = .{ .panel = .notes, .idx = 0 } });
     try expectLabel("chip:findings:sort", .{ .chip = .{ .panel = .findings, .kind = .sort } });

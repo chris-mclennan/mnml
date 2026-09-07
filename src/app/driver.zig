@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const dispatch = @import("dispatch.zig");
+const tasks = @import("tasks.zig");
 const e2e = @import("../e2e/driver.zig");
 const key_mod = @import("../core/key.zig");
 const command = @import("../core/command.zig");
@@ -57,6 +58,13 @@ pub const AppDriver = struct {
         // headless loop runs on a config from files, like the terminal
         // does, and shows the real coverage — the UI diff reads it.
         if (cfg.loaded == null) try self.app.env.put("MNML_ARTIFACTS_HOME", cfg.data_root);
+        if (cfg.startup_hook) {
+            // As `tui/loop.zig` does before its first frame: the config's
+            // tasks, then the hook that restores the session and runs
+            // the startup names.
+            try tasks.installFromConfig(&self.app, &self.app.cfg);
+            self.app.hooks.emit(&self.app, .startup);
+        }
         return self;
     }
 

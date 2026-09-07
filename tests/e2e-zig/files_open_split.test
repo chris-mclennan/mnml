@@ -1,12 +1,11 @@
 # zig-only
-# `files.open_split` puts a second browser beside the focused one — one
-# new pane (VS Code's Split Editor Right is +1). It used to open a
-# duplicate tab in the current group as well as the split.
+# `files.open_split` opens a second Files pane in a new leaf: two
+# strips each with their own ` 󰝰 sub 󰅖 ` tab and `󰐕`, never two
+# Files tabs on one strip.
 write sub/a.txt "a"
 command files.open
 key enter
 expect screen contains "› sub"
 command files.open_split
-# Each group's strip shows one `sub` tab; the duplicate would sit beside it.
-expect screen lacks "sub   sub"
-expect screen contains "sub   󰐕"
+expect screen lacks "sub 󰅖   󰝰 sub"
+expect screen contains "󰝰 sub 󰅖   󰐕"

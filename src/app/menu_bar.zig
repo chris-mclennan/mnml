@@ -461,6 +461,8 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         .split_term => .{ .title = "New terminal", .detail = "click: open a shell in a split (term.shell)" },
         .split_right => .{ .title = "Split right", .detail = "click: side by side (view.split_right)" },
         .split_down => .{ .title = "Split down", .detail = "click: stacked (view.split_down)" },
+        .split_max => .{ .title = "Maximize", .detail = "click: this pane alone, zen (view.zen)" },
+        .hidden_tabs => .{ .title = "Hidden tabs", .detail = "click: the buffer picker lists every tab, shown or not (picker.buffers)" },
         .ai_claude => .{ .title = "Claude Code", .detail = "click opens the session (ai.claude_code)" },
         .ai_codex => .{ .title = "Codex", .detail = "click opens the session (ai.codex)" },
         else => null,

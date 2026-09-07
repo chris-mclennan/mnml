@@ -1,18 +1,16 @@
 # zig-only
-# Pty chrome: a terminal's tab carries `$` and a `×`; dragged onto the
-# file strip it joins the session cluster behind a divider; `:bn` /
-# `:bp` step over it unless banged; `:rename` relabels it; and
-# `term.scratch_toggle` shows one scratch shell below, hides it when
-# focused, and brings the same one back.
+# Pty panes on the strip, painted as Rust paints them: `  <label> 󰅖 `
+# like any tab, no divider, no `$`. `:bn` skips pty tabs, `:bn!` does
+# not; `:rename` retitles; the scratch terminal toggles; a click on a
+# pty tab's `󰅖` kills it.
 write a.txt "alpha\n"
 open a.txt
 command view.toggle_tree
 ex term sleep 30
-expect screen contains "sleep 30$ ×"
+expect screen contains "sleep 30 󰅖"
 expect pane sleep 30
-# Row 20 is the lower leaf's strip, row 1 the upper one's.
 drag 2 20 12 1
-expect screen contains "a.txt  │  sleep 30$ ×"
+expect screen contains " 󰈙 a.txt 󰅖    sleep 30 󰅖   󰐕"
 expect pane sleep 30
 ex bn
 expect pane a.txt
@@ -21,16 +19,15 @@ expect pane a.txt
 ex bn!
 expect pane sleep 30
 ex rename build
-expect screen contains "build$ ×"
+expect screen contains "build 󰅖"
 expect pane build
 command term.scratch_toggle
 expect pane scratch
-expect screen contains "scratch$ ×"
+expect screen contains "scratch 󰅖"
 command term.scratch_toggle
-expect screen lacks "scratch$"
+expect screen lacks "scratch 󰅖"
 expect pane build
 command term.scratch_toggle
 expect pane scratch
-# The × closes the session in one click: row 1, cell 18 of ` a.txt  │  build$ ×`.
-click 18 1
-expect screen lacks "build$"
+click 21 1
+expect screen lacks "build 󰅖"
