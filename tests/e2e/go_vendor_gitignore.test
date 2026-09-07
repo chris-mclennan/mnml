@@ -1,0 +1,14 @@
+# vendor/ dir should be hidden with .gitignore
+
+shell printf 'module github.com/example/app\n\ngo 1.22\n' > go.mod
+shell mkdir -p vendor/github.com/pkg
+shell echo "package errors" > vendor/github.com/pkg/errors.go
+shell mkdir -p cmd/server
+shell printf 'package main\n\nfunc main() {}\n' > cmd/server/main.go
+shell echo 'vendor/' > .gitignore
+
+command tree.refresh
+open cmd/server/main.go
+wait 100
+expect screen contains "cmd"
+expect screen lacks "vendor"

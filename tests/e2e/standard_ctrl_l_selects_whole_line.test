@@ -1,0 +1,25 @@
+# qa-7th vscode SEV-2 regression — standard mode Ctrl+L selects the
+# WHOLE current line, not just line_start..cursor. Previously was
+# using SelectLine (vim V semantics) which left cursor in place;
+# now uses SelectLineToEnd which moves cursor to line_end+1.
+
+write notes.txt "hello world\nsecond line\n"
+open notes.txt
+
+# Cursor lands at start; move it into the middle of line 1.
+key right
+key right
+key right
+key right
+key right
+
+# Ctrl+L — should select the whole line, not just the 5 chars before.
+key ctrl+l
+
+# The status chip shows the selection length. With SelectLineToEnd
+# the selection covers 'hello world\n' = 12 cells. SelectLine would
+# have shown just 5.
+# The status pane reflects selection state; verify via screen contains.
+# (Statusline shows "Sel N" when there's an active selection.)
+expect screen contains "Sel "
+expect screen lacks "Sel 5 "

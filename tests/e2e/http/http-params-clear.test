@@ -1,0 +1,18 @@
+# http.params_clear strips the ?... query string from the URL.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+type "https://example.com/api?a=1&b=2"
+
+key ctrl+3
+# Params tab renders key + value in adjacent cells (no " = "
+# separator). Check for the individual pieces on screen.
+expect screen contains "a"
+expect screen contains "1"
+
+command http.params_clear
+
+expect screen contains "cleared"

@@ -1,0 +1,25 @@
+# Vim visual-block (Ctrl+V) — yank a rectangle, paste verifies clipboard.
+# 4 rows of "abcdef"; we anchor at (0,1), extend down to (2,1) right to (2,2),
+# yank, then `:reg` toasts the clipboard to confirm "bc\nhi\nno" landed.
+write grid.txt "abcdef\nghijkl\nmnopqr\nstuvwx"
+open grid.txt
+command editor.use_vim
+
+# Cursor at (0,0); move right 1 → (0,1).
+key right
+
+# Enter visual block; extend down 2, right 1 → rectangle (0,1)..(2,2).
+key ctrl+v
+key down
+key down
+key right
+
+# Yank the block — clipboard now holds the column slice rows 0..=2.
+key y
+
+# `:reg` toasts the clipboard contents (newlines render as ↵). The rect
+# was chars at rows 0..=2 cols 1..=2: "bc", "hi", "no" joined by ↵.
+key :
+type reg
+key enter
+expect screen contains "bc↵hi↵no"

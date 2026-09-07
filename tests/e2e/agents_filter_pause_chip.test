@@ -1,0 +1,23 @@
+# Verifies the "· paused (filter)" chip renders in filter mode.
+#
+# Was a SEV-3 regression in 54301a9: pause_chip was computed but the
+# filter_mode format string didn't interpolate it. Fixed in ef66d8e —
+# the filter-mode title now includes {pause_chip} so the live-tail-
+# suspended signal is visible exactly when relevant.
+
+write placeholder.txt x
+open placeholder.txt
+
+command ai.dashboard
+
+# Without filter mode, normal title.
+expect screen contains "sort:"
+
+# Enter filter mode — title now shows the pause-(filter) chip.
+key /
+expect screen contains "enter applies"
+expect screen contains "paused (filter)"
+
+# Esc exits filter mode.
+key esc
+expect screen lacks "enter applies"

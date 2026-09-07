@@ -1,0 +1,51 @@
+# Line-range with mark refs — `:'a,'bd`, plus `:'<,'>` for the last visual
+# selection.
+
+write data.txt "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta"
+open data.txt
+
+command editor.use_vim
+
+# Move to line 2 ("beta") and set mark a.
+key down
+key m
+key a
+
+# Move to line 4 ("delta") and set mark b.
+key down
+key down
+key m
+key b
+
+# `:'a,'bd` — delete lines 2..4 inclusive (beta, gamma, delta).
+key :
+type "'a,'bd"
+key enter
+
+# Verify on disk after save.
+command file.save
+expect file data.txt contains "alpha\nepsilon\nzeta"
+expect file data.txt lacks "beta"
+expect file data.txt lacks "gamma"
+expect file data.txt lacks "delta"
+
+# Set up a fresh visual selection for the `'<` / `'>` form.
+write data2.txt "one\ntwo\nthree\nfour\nfive"
+open data2.txt
+# In Normal at line 1. Enter visual-line, extend down 2 lines (covers 1-3),
+# yank to close the selection (closes selection ⇒ remembers last visual).
+key V
+key down
+key down
+key y
+
+# Now `:'<,'>d` should delete those same three lines.
+key :
+type "'<,'>d"
+key enter
+
+command file.save
+expect file data2.txt contains "four\nfive"
+expect file data2.txt lacks "one"
+expect file data2.txt lacks "two"
+expect file data2.txt lacks "three"

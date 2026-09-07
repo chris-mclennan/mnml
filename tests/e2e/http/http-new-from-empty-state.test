@@ -1,0 +1,16 @@
+# SEV-1 regression guard: with no prior panes, http.new used to leave
+# Layout::Empty. Confirm the pane actually draws.
+# The three-panel layout (Request/Response/AI) removed the [Edit][Response]
+# tab strip — assertions updated to check elements that ARE in the new
+# layout (method chip, response section header, ai section header).
+
+command http.new
+
+expect screen contains "GET"
+# Response block dropped its title text — the sub-tab strip
+# (Body / Headers / Timeline / Tests) is the label now. Check
+# the tab-strip is present via its first tab.
+expect screen contains "Body"
+# AI section keeps its "AI" title (uppercase).
+expect screen contains "AI"
+expect pane "request"

@@ -1,0 +1,10 @@
+# http.new opens a blank Request pane in Edit view with no source file.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+expect screen contains "GET"
+expect screen contains "press"
+expect pane "request"

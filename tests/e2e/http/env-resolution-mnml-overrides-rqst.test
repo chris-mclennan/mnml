@@ -1,0 +1,15 @@
+# Env resolution: .mnml/env/<name>.env overrides the same key from
+# .rqst/env/<name>.env. The Request pane's expanded URL must show the
+# .mnml value, not the .rqst one.
+
+write .rqst/config "default_env=dev"
+write .rqst/env/dev.env "BASE_URL=https://rqst.example.com"
+write .mnml/env/dev.env "BASE_URL=https://mnml.example.com"
+write api.curl "curl '{{BASE_URL}}/health'"
+
+open api.curl
+
+command http.send
+
+expect screen contains "mnml.example.com"
+expect screen lacks "rqst.example.com"

@@ -1,0 +1,13 @@
+# http.paste_curl reads the clipboard, parses as curl, populates fields.
+# Seed clipboard via http.copy_curl from an open .curl editor.
+
+write sample.curl "curl -X POST 'https://httpbin.org/post' -H 'Content-Type: application/json'"
+open sample.curl
+
+command http.copy_curl
+
+command http.new
+command http.paste_curl
+
+expect screen contains "httpbin.org"
+expect screen contains "POST"

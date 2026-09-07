@@ -1,0 +1,7 @@
+# Go syntax: struct literals, interface, channel ops, generics
+
+write main.go package main\n\nimport "fmt"\n\ntype User struct {\n\tID   int\n\tName string\n}\n\nfunc greet(u User) string {\n\treturn fmt.Sprintf("Hello, %s!", u.Name)\n}\n\nfunc main() {\n\tch := make(chan string, 1)\n\tu := User{ID: 1, Name: "Alice"}\n\tch <- greet(u)\n\tfmt.Println(<-ch)\n}\n
+open main.go
+expect pane "main.go"
+expect screen contains "package main"
+expect highlights at_least 8

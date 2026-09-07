@@ -1,0 +1,13 @@
+# Verify that :ai.spend_today fires the "computing spend… (background)"
+# toast on first open (the background-thread refactor, f9e7dfa).
+#
+# The toast is fired BEFORE poll_pending() drains the worker channel,
+# so it appears regardless of how fast the thread finishes. The 4s TTL
+# means it is still visible right after the command fires.
+
+write placeholder.txt hello
+open placeholder.txt
+
+command ai.spend_today
+expect screen contains "computing spend"
+expect screen contains "AI spend (24h)"

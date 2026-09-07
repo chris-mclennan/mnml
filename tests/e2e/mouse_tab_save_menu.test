@@ -1,0 +1,16 @@
+# Right-click on a bufferline tab whose buffer is dirty now offers
+# "Save" at the top of the menu. SEV-2 VS-Code-mouse hunt finding
+# (2026-06-07): "No Save button anywhere — the right-click menu had
+# Close/Close-others/Close-all/Copy-path but no Save."
+write a.txt "alpha"
+open a.txt
+command view.toggle_tree
+
+# Type into the buffer so it's dirty.
+type "X"
+expect dirty true
+
+# Right-click the tab at row 1 (bufferline row), col 4 (inside tab).
+rightclick 4 1
+expect screen contains "Save"
+expect screen contains "Close"

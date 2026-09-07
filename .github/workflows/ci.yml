@@ -27,26 +27,6 @@ jobs:
       - name: Checkout mnml-zig
         uses: actions/checkout@v7
 
-      # tests/e2e is a symlink into the Rust repo — the shared .test corpus
-      # lives there until Rust freezes (DESIGN.md, side-by-side mechanics).
-      # A runner has no sibling checkout, so fetch just that directory and
-      # put a real copy where the symlink was. A copy, not a relink: on
-      # Windows the symlink checks out as a plain file, and cp works there
-      # too.
-      - name: Checkout the .test corpus (chris-mclennan/mnml tests/e2e)
-        uses: actions/checkout@v7
-        with:
-          repository: chris-mclennan/mnml
-          path: _corpus/mnml
-          sparse-checkout: tests/e2e
-          sparse-checkout-cone-mode: true
-      - name: Place the corpus at tests/e2e
-        shell: bash
-        run: |
-          rm -rf tests/e2e
-          cp -R _corpus/mnml/tests/e2e tests/e2e
-          echo "$(ls tests/e2e/*.test | wc -l) .test files"
-
       # setup-zig caches the global cache dir (~/.cache/zig on Linux/macOS,
       # %LOCALAPPDATA%\zig on Windows) itself — that is what `use-cache`
       # (default on) does — so there is no separate actions/cache step.

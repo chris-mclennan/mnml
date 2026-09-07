@@ -1,0 +1,24 @@
+write src/index.ts export const x = 1;\n
+open src/index.ts
+wait 100
+
+command view.toggle_right_panel
+wait 50
+
+command outline.show
+wait 100
+
+command lsp.diagnostics
+wait 100
+
+key Ctrl+Shift+[
+wait 50
+expect screen contains "index.ts"
+
+key Ctrl+Shift+]
+wait 50
+expect screen contains "index.ts"
+
+key Ctrl+Shift+W
+wait 50
+expect screen contains "index.ts"

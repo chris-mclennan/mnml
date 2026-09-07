@@ -1,0 +1,17 @@
+# Treesitter-context (sticky scope) — paints the enclosing fn / struct
+# header at the top of the viewport when the cursor is deep inside.
+# Off by default; `:set stickycontext` flips it on.
+
+write code.rs "fn outer() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n    let f = 6;\n    let g = 7;\n    let h = 8;\n    let i = 9;\n    let j = 10;\n    let k = 11;\n    let l = 12;\n    let m = 13;\n    let n = 14;\n    let o = 15;\n    let p = 16;\n    let q = 17;\n    let r = 18;\n    let s = 19;\n    let t = 20;\n    let u = 21;\n    let v = 22;\n    let w = 23;\n    let x = 24;\n    let y = 25;\n    let z = 26;\n}\n"
+
+open code.rs
+
+# Enable sticky context.
+command view.toggle_sticky_context
+expect screen contains "sticky context: on"
+
+# Jump to the end of the buffer — fn header `outer` should scroll off.
+key G
+
+# The sticky-context overlay paints `fn outer() {` as the top row.
+expect screen contains "fn outer()"

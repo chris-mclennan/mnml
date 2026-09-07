@@ -1,0 +1,52 @@
+# Vim visual-block `I` (insert at leftmost col) and `A` (append after
+# rightmost col): the typed run is replayed on every row in the rect.
+
+# 3 lines of "abcdef". Block at rows 0..=2, cols 1..=3. `I` puts cursor at
+# (0,1), enters Insert. Type "XX" and Esc — every line's col 1 should now
+# read "aXX..." (the original chars b, h, n pushed right).
+write grid.txt "abcdef\nghijkl\nmnopqr"
+open grid.txt
+command editor.use_vim
+
+# Position cursor at (0,1).
+key right
+
+# Start block, extend down 2 + right 2 → rect rows 0..=2 cols 1..=3.
+key ctrl+v
+key down
+key down
+key right
+key right
+
+# Block insert. The handler enters Insert mode; "XX" is typed at (0,1).
+# On Esc, the App's tick (we call it via a wait below) replays XX on
+# rows 1 and 2 at col 1.
+key I
+type "XX"
+key escape
+
+# Force a tick so block_insert_replay_if_done fires.
+wait 60
+
+command file.save
+expect file grid.txt contains "aXXbcdef\ngXXhijkl\nmXXnopqr"
+
+# Block A — append after the rightmost col of a rect.
+write grid2.txt "abc\ndef\nghi"
+open grid2.txt
+key right
+key ctrl+v
+key down
+key down
+key right
+# Rect rows 0..=2 cols 1..=2. A puts cursor at (0, 3) (after rightmost).
+key A
+type "YY"
+key escape
+
+wait 60
+
+command file.save
+# col 3 is the EOL of "abc" / "def" / "ghi"; YY appended at line end on
+# all 3.
+expect file grid2.txt contains "abcYY\ndefYY\nghiYY"

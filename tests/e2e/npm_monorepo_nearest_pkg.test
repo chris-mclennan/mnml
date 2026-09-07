@@ -1,0 +1,30 @@
+# npm runner monorepo: when the active editor is in a sub-package,
+# npm commands should walk up from the editor's directory to find the
+# nearest package.json — NOT always use the workspace root.
+# Guards the 5d4c4f0 SEV-2 fix.
+#
+# Layout:
+#   (workspace root) — no package.json here
+#   packages/app/package.json (has "test": "jest", "build": "webpack")
+#   packages/app/src/index.ts (active editor)
+#
+# Before fix: root-only walk finds no package.json → toasts "no package.json".
+# After fix: walks up from src/ → finds packages/app/package.json → opens pty.
+#
+# NOTE: Only the FIRST runner command while the editor is active is tested here.
+# After a pty pane opens and becomes active, subsequent commands lose the
+# monorepo context (known limitation — separate finding).
+
+shell mkdir -p packages/app/src
+shell echo '{"name":"app-pkg","scripts":{"test":"jest","build":"webpack"}}' > packages/app/package.json
+shell echo "export const x = 1;" > packages/app/src/index.ts
+
+open packages/app/src/index.ts
+wait 50
+
+# npm.build → subcmd "run build" → walk up from packages/app/src/ →
+# finds packages/app/package.json with "build" script → opens pty, no toast.
+command npm.build
+wait 200
+expect screen lacks "no package.json"
+expect screen lacks "no `build` script"

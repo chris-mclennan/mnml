@@ -1,0 +1,14 @@
+# http.import_har reads HAR JSON from clipboard and writes one .curl per
+# entry into .rqst/captured/har-<ts>/.
+
+write har.json {"log":{"entries":[{"startedDateTime":"2024-01-01T00:00:00Z","request":{"method":"GET","url":"https://api.example.com/users","headers":[]}},{"startedDateTime":"2024-01-01T00:00:01Z","request":{"method":"POST","url":"https://api.example.com/items","headers":[]}}]}}
+
+open har.json
+
+command editor.use_vim
+key y
+key y
+
+command http.import_har
+
+expect screen contains "wrote 2 curls"

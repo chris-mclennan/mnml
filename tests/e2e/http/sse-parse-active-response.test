@@ -1,0 +1,16 @@
+# sse.parse_active_response reads the active Done response body as SSE events.
+# Inject a two-event SSE body via replay_mock.
+
+write sse.curl "curl 'http://127.0.0.1:19876/stream'"
+write sse.curl.mock.json {"status":200,"status_text":"OK","headers":[],"body":"event: ping\\ndata: hello\\n\\nevent: pong\\ndata: world\\n\\n","ts":1}
+
+open sse.curl
+
+command http.send
+wait 600
+command http.replay_mock
+
+command sse.parse_active_response
+
+expect screen contains "2 event(s)"
+expect screen contains "ping"

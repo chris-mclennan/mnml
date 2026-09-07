@@ -1,0 +1,10 @@
+# typescript-language-server not installed: should toast, not crash.
+# CI won't have the language server on PATH.
+
+write src/greet.ts function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n
+open src/greet.ts
+wait 300
+# File content renders normally
+expect screen contains "greet"
+expect screen contains "Hello"
+# (no crash — if we got here, it's OK)

@@ -1,0 +1,7 @@
+# TypeScript + TSX file highlighting
+
+write src/App.tsx import React, { useState } from 'react';\n\ninterface Props {\n  title: string;\n}\n\nconst App: React.FC<Props> = ({ title }) => {\n  const [count, setCount] = useState<number>(0);\n  return (\n    <div className="app">\n      <h1>{title}</h1>\n      <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>\n    </div>\n  );\n};\n\nexport default App;\n
+open src/App.tsx
+expect pane "App.tsx"
+expect screen contains "interface Props"
+expect highlights at_least 10

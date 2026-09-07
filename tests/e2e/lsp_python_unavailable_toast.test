@@ -1,0 +1,7 @@
+# pyright-langserver not installed: should toast, not crash.
+
+write src/app.py from typing import Optional\n\ndef greet(name: str) -> str:\n    return f"Hello, {name}!"\n
+open src/app.py
+wait 300
+expect screen contains "greet"
+expect screen contains "Hello"

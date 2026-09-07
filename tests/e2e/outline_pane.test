@@ -1,0 +1,18 @@
+# `outline.show` opens a persistent symbol outline next to the source.
+# Without an LSP, the no-LSP regex_outline fallback (covers rs/py/js/ts/
+# go/rb/c/cpp) populates the list from the buffer's text.
+
+write code.rs "fn alpha() {\n    println!(\"a\");\n}\n\nfn beta() {\n    println!(\"b\");\n}\n\nstruct Gamma {\n    x: u32,\n}\n"
+open code.rs
+
+# Open the outline pane in a split next to the source.
+command outline.show
+
+# All three top-level symbols should be visible in the outline list.
+expect screen contains "alpha"
+expect screen contains "beta"
+expect screen contains "Gamma"
+
+# Refresh re-runs the regex pass without changing the visible list.
+command outline.show
+expect screen contains "alpha"

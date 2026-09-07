@@ -1,0 +1,21 @@
+# TypeScript workspace with no go.mod — go.* runners should toast.
+
+shell echo '{"name":"app"}' > package.json
+shell mkdir -p src
+shell echo 'export const x = 1;' > src/index.ts
+
+command go.test
+wait 50
+expect screen contains "no go.mod"
+
+key esc
+
+command go.build
+wait 50
+expect screen contains "no go.mod"
+
+key esc
+
+command go.vet
+wait 50
+expect screen contains "no go.mod"

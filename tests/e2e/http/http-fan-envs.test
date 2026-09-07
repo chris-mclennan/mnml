@@ -1,0 +1,15 @@
+# http.fan_envs fires the active request against every .mnml/env/*.env in
+# parallel. Connections to 127.0.0.1:19877 fail immediately (ECONNREFUSED)
+# so the test is fast and network-independent.
+
+write probe.curl "curl 'http://127.0.0.1:19877/health'"
+write .mnml/env/prod.env "BASE_URL=prod.example.com"
+write .mnml/env/staging.env "BASE_URL=staging.example.com"
+write .mnml/env/dev.env "BASE_URL=dev.example.com"
+
+open probe.curl
+
+command http.fan_envs
+
+expect screen contains "fan_envs"
+expect screen contains "0/3 OK"

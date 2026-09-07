@@ -216,7 +216,7 @@ fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: [
 
 /// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--parse] [--stub]`
 ///
-/// Runs `.test` scripts (default `tests/e2e` + `tests/e2e-zig`). `--gate` runs the Phase-0
+/// Runs `.test` scripts (default `tests/e2e`). `--gate` runs the Phase-0
 /// gate list from `tools/gate.txt`. `--filter` keeps the files whose
 /// name contains it (what `zig build test -Dtest-filter=…` passes);
 /// `--skip` (repeatable) leaves a file out and says so. `--parse` only
@@ -287,10 +287,6 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     }
     if (paths.items.len == 0) {
         try paths.append(gpa, "tests/e2e");
-        // `tests/e2e` is the shared suite (a symlink to Rust mnml's);
-        // Zig-only scripts live beside it, where the Rust runner — which
-        // walks recursively and knows no `# zig-only` — cannot see them.
-        try paths.append(gpa, "tests/e2e-zig");
     }
 
     if (parse_only) return parseOnly(gpa, io, paths.items, w);

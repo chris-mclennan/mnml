@@ -1,0 +1,35 @@
+# vim Ctrl+W >/< adjust split width. After splitting and growing the
+# active leaf, the toast still works; we can't easily inspect rect widths
+# from the screen, so we just verify the chord doesn't error out and the
+# subsequent operations still work.
+
+write a.txt "AAA"
+write b.txt "BBB"
+open a.txt
+
+command editor.use_vim
+
+# Split, open b.txt in the new pane.
+key ctrl+w
+key v
+key :
+type "e b.txt"
+key enter
+
+# Both visible.
+expect screen contains "AAA"
+expect screen contains "BBB"
+
+# Grow the active (right) pane's width — chord should not error.
+key ctrl+w
+key >
+key ctrl+w
+key >
+
+# Equalize back.
+key ctrl+w
+key =
+
+# Both still visible.
+expect screen contains "AAA"
+expect screen contains "BBB"

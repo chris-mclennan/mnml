@@ -1,0 +1,10 @@
+# Python workspace with tests/ dir containing real test files (no pyproject.toml).
+# Should pass detection (tests/ + .py files)
+
+shell mkdir -p tests
+shell printf 'def test_something():\n    assert True\n' > tests/test_sample.py
+# No pyproject.toml, no setup.py
+
+command pytest.run
+wait 200
+expect screen lacks "pytest: no pyproject.toml"

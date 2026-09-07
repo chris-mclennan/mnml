@@ -1,0 +1,26 @@
+# Vim visual-block `c` — delete the rect first, then enter Insert at the
+# rect's leftmost column on every row. Typed run is replayed on other rows.
+
+write grid.txt "abcdef\nghijkl\nmnopqr"
+open grid.txt
+command editor.use_vim
+
+# Cursor at (0, 0). Move to (0, 1), enter visual block, extend down 2 + right 2
+# → rect rows 0..=2 cols 1..=3.
+key right
+key ctrl+v
+key down
+key down
+key right
+key right
+
+# Block change: delete the rect, then enter Insert. Type "ZZ".
+key c
+type "ZZ"
+key escape
+
+command file.save
+# Original was "abcdef\nghijkl\nmnopqr"; deleting cols 1..=3 leaves
+# "aef\ngkl\nmqr"; inserting "ZZ" at col 1 on each row gives
+# "aZZef\ngZZkl\nmZZqr".
+expect file grid.txt contains "aZZef\ngZZkl\nmZZqr"

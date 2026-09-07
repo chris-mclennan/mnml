@@ -1,0 +1,13 @@
+# go.run with multiple cmd/* dirs opens a picker, not a pty.
+
+shell printf 'module github.com/example/myapp\n\ngo 1.22\n' > go.mod
+shell mkdir -p cmd/server cmd/worker
+shell printf 'package main\n\nfunc main() {}\n' > cmd/server/main.go
+shell printf 'package main\n\nfunc main() {}\n' > cmd/worker/main.go
+
+command go.run
+wait 100
+# With 2 cmd/ dirs, should open a picker (no pty spawned immediately)
+expect screen lacks "no go.mod"
+# picker title should appear
+expect screen contains "go run"

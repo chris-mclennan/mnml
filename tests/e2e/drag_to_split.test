@@ -1,0 +1,20 @@
+# Drag a bufferline tab onto a pane body → create a split (drag-to-split).
+# Tree hidden so the editor fills the 120-wide screen.
+write a.txt AAAAAAAA
+write b.txt BBBBBBBB
+open a.txt
+command view.toggle_tree
+open b.txt
+
+# Only b.txt is visible now; a.txt is a background tab (its tab sits on row 1).
+# Before the drag the right-pane content isn't on screen yet.
+expect screen contains "BBBBBBBB"
+expect screen lacks "AAAAAAAA"
+
+# Drag a.txt's tab (col 5, row 1) straight down into the LEFT zone of the pane.
+# → splits the pane: a.txt on the left, b.txt on the right. The dragged pane
+# (a.txt) becomes active. Straight-down path avoids crossing other tabs.
+drag 5 1 5 25
+expect screen contains "AAAAAAAA"
+expect screen contains "BBBBBBBB"
+expect pane "a.txt"

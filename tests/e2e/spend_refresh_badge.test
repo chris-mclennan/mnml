@@ -1,0 +1,22 @@
+# Verify that pressing r in the SpendReport pane restarts the
+# background worker (loading badge reappears). f9e7dfa.
+#
+# After open: background thread completes fast on an empty workspace
+# so "computing…" may not be visible in title. We verify r does not
+# crash and the pane header is stable.
+
+write placeholder.txt x
+open placeholder.txt
+
+command ai.spend_today
+# Pane opens, title includes the sort chip.
+expect screen contains "AI spend (24h)"
+expect screen contains "sort:"
+
+# Let background thread settle.
+wait 200
+
+# Refresh via r — should fire another background load, briefly show
+# the toast again (or the settled totals if thread is instant).
+key r
+expect screen contains "AI spend (24h)"

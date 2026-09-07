@@ -1,0 +1,17 @@
+# Python workspace: pytest detects pyproject.toml
+
+shell printf '[build-system]\nrequires = ["setuptools"]\n\n[project]\nname = "myapp"\n' > pyproject.toml
+shell mkdir -p tests/unit
+shell printf 'def test_basic():\n    assert 1 + 1 == 2\n' > tests/unit/test_basic.py
+shell mkdir -p src
+write src/app.py from typing import Optional\n\ndef greet(name: str) -> str:\n    return f"Hello, {name}!"\n
+
+# pytest.run should open pty (not toast)
+command pytest.run
+wait 200
+expect screen lacks "pytest: no pyproject.toml"
+
+# pytest.failed should also open pty
+command pytest.failed
+wait 200
+expect screen lacks "pytest: no pyproject.toml"

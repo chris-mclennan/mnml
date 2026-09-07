@@ -1,0 +1,15 @@
+# go.run with a single cmd/<app>/ dir auto-picks that binary.
+# Verifies the cmd-detection branch in run_go_subcommand when exactly
+# one cmd/<name>/ directory is present at the go.mod root.
+
+shell echo 'module example.com/myapp\n\ngo 1.22' > go.mod
+shell mkdir -p cmd/server
+shell echo 'package main\n\nfunc main() {}' > cmd/server/main.go
+
+command go.run
+wait 200
+
+# Should NOT toast "no go.mod" and should NOT show a picker (only 1 cmd dir).
+expect screen lacks "no go.mod"
+# The pty pane opens with `go run ./cmd/server` as its label.
+expect screen lacks "go run: pick a cmd"

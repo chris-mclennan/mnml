@@ -1,0 +1,11 @@
+# Rust workspace (Cargo.toml) with NO Python markers.
+# pytest should still toast even with a bare tests/ dir.
+
+shell echo '[package]\nname = "mylib"\nversion = "0.1.0"' > Cargo.toml
+shell mkdir -p tests
+shell echo '// Rust integration test' > tests/integration.rs
+# tests/ has .rs files, NOT .py files
+
+command pytest.run
+wait 100
+expect screen contains "no pyproject.toml"

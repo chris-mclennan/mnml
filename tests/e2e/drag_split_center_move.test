@@ -1,0 +1,14 @@
+# Drag a tab onto the CENTER of a pane → move it in (no split); the
+# displaced buffer becomes a background tab (still open, not shown).
+write aa.txt AAAAAAAA
+write bb.txt BBBBBBBB
+open aa.txt
+command view.toggle_tree
+open bb.txt
+
+# bb.txt visible, aa.txt background. Drag aa.txt's tab to the pane center
+# → the pane now shows aa.txt; bb.txt is backgrounded (not on screen).
+drag 5 1 60 18
+expect pane "aa.txt"
+expect screen contains "AAAAAAAA"
+expect screen lacks "BBBBBBBB"

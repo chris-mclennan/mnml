@@ -1,0 +1,15 @@
+# DAP REPL — open the pane (no session needed) and submit an expression;
+# without a live adapter the row lands as "no DAP session" instead of
+# pending. Verifies the pane lifecycle + input plumbing.
+
+write code.rs "fn main() {}\n"
+open code.rs
+
+command dap.repl
+expect pane "DAP REPL"
+
+# Type an expression + submit.
+type "x + 1"
+key enter
+expect screen contains "x + 1"
+expect screen contains "no DAP session"

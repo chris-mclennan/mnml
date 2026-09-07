@@ -1,0 +1,8 @@
+# :cookies.delete picker — on an empty jar, toasts and bails.
+
+write anchor.txt anchor
+open anchor.txt
+
+command cookies.delete
+
+expect screen contains "jar is empty"

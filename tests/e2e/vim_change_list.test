@@ -1,0 +1,44 @@
+# vim `g;` walks back through the per-buffer change list — the previous
+# edit's position. `g,` walks forward.
+
+# Seed a multi-line file so place_cursor coordinates aren't clamped.
+write file.txt "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9"
+open file.txt
+
+# Switch to vim and stay in normal mode.
+command editor.use_vim
+
+# Edit at row 0 (insert at beginning of line 0).
+key i
+type X
+key esc
+
+# Move down to row 5 and edit there.
+key j
+key j
+key j
+key j
+key j
+key i
+type Y
+key esc
+
+# Move the cursor away from the recent edit so the first `g;` is informative
+# (otherwise it just lands on where we already are).
+key k
+key k
+
+# First g; jumps to the most-recent edit position (row 6 = the Y edit).
+key g
+key ;
+expect screen contains "g; → 6:"
+
+# Second g; walks one further back — to the X edit on row 1.
+key g
+key ;
+expect screen contains "g; → 1:"
+
+# g, walks forward through the change list.
+key g
+key ,
+expect screen contains "g, → 6:"

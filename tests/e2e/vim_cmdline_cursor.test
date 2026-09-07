@@ -1,0 +1,33 @@
+# Vim `:` cmdline mid-line editing with cursor (Left / Right / Home / End /
+# Delete / Backspace at the caret position, not just the end).
+
+write data.txt "hi"
+open data.txt
+command editor.use_vim
+
+# Type ":wq", then Left twice → caret between : and w. The pending-display
+# in the statusline shows the caret as `▏`. So screen should contain ":▏wq".
+key :
+type "wq"
+key left
+key left
+expect screen contains ":▏wq"
+
+# Insert a `b` at the caret → ":bwq" with caret between b and w.
+key b
+expect screen contains ":b▏wq"
+
+# Home → caret to start.
+key home
+expect screen contains ":▏bwq"
+
+# End → caret to end.
+key end
+expect screen contains ":bwq▏"
+
+# Backspace at end deletes the `q`.
+key backspace
+expect screen contains ":bw▏"
+
+# Esc closes the cmdline.
+key escape

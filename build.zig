@@ -156,8 +156,8 @@ pub fn build(b: *std.Build) void {
     const tests_run = b.addRunArtifact(tests);
     test_step.dependOn(&tests_run.step);
     // ── e2e: the .test corpus under `zig build` ──
-    // `zig build e2e [-- ARGS]` runs the whole corpus (tests/e2e +
-    // tests/e2e-zig) through the runner with `shell` steps allowed;
+    // `zig build e2e [-- ARGS]` runs the whole corpus (tests/e2e)
+    // through the runner with `shell` steps allowed;
     // `zig build test` also runs the Phase-0 gate subset, and
     // `-Dtest-filter` narrows the .test files by name as it narrows
     // the unit tests (`--filter`). `check` runs the full corpus, minus
@@ -176,7 +176,7 @@ pub fn build(b: *std.Build) void {
             return r;
         }
     }.make;
-    const e2e_step = b.step("e2e", "Run the .test corpus (tests/e2e + tests/e2e-zig) through the runner; `-- ARGS` reach `mnml-zig test`");
+    const e2e_step = b.step("e2e", "Run the .test corpus (tests/e2e) through the runner; `-- ARGS` reach `mnml-zig test`");
     const e2e_run = e2eRun(b, exe, "mnml-zig test (the corpus)", &.{}, test_filter);
     if (b.args) |args| e2e_run.addArgs(args);
     e2e_step.dependOn(&e2e_run.step);
@@ -269,8 +269,8 @@ pub fn build(b: *std.Build) void {
     sweep_run.has_side_effects = true;
     sweep_run.step.dependOn(&gate_run.step);
     const defaults_run = b.addRunArtifact(exe);
-    defaults_run.setName("mnml-zig test tests/e2e-zig/defaults.test");
-    defaults_run.addArgs(&.{ "test", "tests/e2e-zig/defaults.test" });
+    defaults_run.setName("mnml-zig test tests/e2e/defaults.test");
+    defaults_run.addArgs(&.{ "test", "tests/e2e/defaults.test" });
     defaults_run.setCwd(b.path("."));
     defaults_run.has_side_effects = true;
     defaults_run.step.dependOn(&sweep_run.step);

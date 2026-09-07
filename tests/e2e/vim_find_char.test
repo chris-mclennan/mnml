@@ -1,0 +1,28 @@
+# Vim `f<char>` / `F<char>` / `t<char>` jumps on the cursor's line; `df<char>`
+# deletes up to and including the target.
+write line.txt "alpha beta gamma delta"
+open line.txt
+command editor.use_vim
+
+# f-b → cursor at the 'b' of "beta".
+key f
+key b
+key d
+key l
+expect screen contains "alpha eta gamma delta"
+
+# F-e from current spot → backward find. (Cursor is at " eta…" after the
+# delete; the leading 'e' is from "beta"'s 'e' that lost its 'b'.)
+# Use a fresh fixture.
+write again.txt "alpha beta gamma delta"
+open again.txt
+command editor.use_vim
+key f
+key g
+# Now cursor is on 'g' of "gamma". `dt` + space deletes up to-not-including
+# the next space: "gamma" → deleted, " delta" left.
+key d
+key t
+key space
+expect screen contains "alpha beta  delta"
+expect screen lacks "gamma"

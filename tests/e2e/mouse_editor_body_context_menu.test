@@ -1,0 +1,17 @@
+# Right-clicking on the editor body (not the gutter) opens a text-
+# scoped context menu with LSP / fold / select-all-occurrences /
+# Save items. SEV-2 VS-Code-mouse hunt finding (2026-06-07):
+# "Editor text body has no right-click context menu — every other
+# surface has one; text is the blind spot."
+write doc.txt "ED01\nED02\nED03\nED04\nED05\nED06\nED07\nED08\nED09\nED10"
+open doc.txt
+command view.toggle_tree
+
+# Right-click in the editor body — screen row 5 (editor starts at
+# row 2), col 40 (well past any gutter).
+rightclick 40 5
+expect screen contains "Go to definition"
+expect screen contains "Find references"
+expect screen contains "Hover info"
+expect screen contains "Rename symbol"
+expect screen contains "Toggle fold"

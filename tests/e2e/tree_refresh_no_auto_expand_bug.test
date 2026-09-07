@@ -1,0 +1,25 @@
+# Bug probe: tree.refresh does NOT re-run auto-expand for newly-added
+# top-level dirs. A directory created after App::new() + tree.refresh
+# remains COLLAPSED — its children are invisible until manually expanded.
+#
+# Real-world impact: user does `git clone repo packages/newpkg` inside
+# their workspace, then `:tree.refresh` — they see `packages/newpkg`
+# but NOT its children (collapsed, no expand).
+#
+# This test documents the current behavior so a fix is detectable.
+
+shell mkdir -p alpha/src alpha/tests
+shell echo 'export const a = 1;' > alpha/src/index.ts
+shell echo 'test("a", () => {})' > alpha/tests/alpha.test.ts
+shell mkdir -p beta/src
+shell echo 'export const b = 2;' > beta/src/index.ts
+
+# Refresh to pick up the new dirs
+command tree.refresh
+
+# alpha/ shows at root level (correct)
+expect screen contains "alpha"
+# BUT alpha/src/ is NOT visible — alpha is collapsed (not auto-expanded)
+# This is the current behavior — the test documents it as a known limitation.
+# If auto-expand is added to refresh, this expect should be updated to:
+#   expect screen contains "src"

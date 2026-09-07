@@ -1,0 +1,29 @@
+# go toast format: subcmd strings like "test ./..." and "build ./..."
+# produce malformed toast IDs: "go.test ./...: no go.mod at ..."
+# instead of "go.test: no go.mod at ..."
+
+command go.test
+wait 50
+expect screen contains "go.test"
+expect screen lacks "go.test ./..."
+
+key esc
+
+command go.build
+wait 50
+expect screen contains "go.build"
+expect screen lacks "go.build ./..."
+
+key esc
+
+command go.vet
+wait 50
+expect screen contains "go.vet"
+expect screen lacks "go.vet ./..."
+
+key esc
+
+command go.run
+wait 50
+expect screen contains "go.run"
+expect screen lacks "go.run ."

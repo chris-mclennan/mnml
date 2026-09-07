@@ -1,0 +1,13 @@
+# A left-click on a file row in the tree opens that file.
+write aa.txt content-of-aa
+write bb.txt content-of-bb
+open aa.txt
+command tree.refresh
+
+# Rail since the v0.2.17 up-nav cleanup (a76e7de3 — the `..` row
+# moved into the header chip): menu/palette bar row 0, workspace
+# header row 1, aa.txt row 2, bb.txt row 3. Click bb.txt.
+expect pane "aa.txt"
+click 5 3
+expect pane "bb.txt"
+expect screen contains "content-of-bb"

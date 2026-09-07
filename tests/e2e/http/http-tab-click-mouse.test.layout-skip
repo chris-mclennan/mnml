@@ -1,0 +1,12 @@
+# Mouse: click on the Headers Edit-tab chip switches the active tab.
+# No prior pane → http.new fills the screen (Layout::Leaf, area.x=0, area.y=2).
+# Tab strip at screen y=6. Headers chip rect x range ~9–17.
+
+command view.toggle_tree
+command http.new
+
+expect screen contains "[Body]"
+
+click 13 6
+
+expect screen contains "[Headers]"

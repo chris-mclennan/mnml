@@ -1,0 +1,14 @@
+# Mouse: click at column X in the URL field positions the byte cursor there.
+# label_offset=6; click at x=9 → visual_col=3 → caret at char 3.
+
+command view.toggle_tree
+command http.new
+
+type "https://example.com/api"
+
+# Click at x=9, y=5 (URL row). visual_col = 9-6 = 3 → before 'p'.
+click 9 5
+
+type "Z"
+
+expect screen contains "httZps"

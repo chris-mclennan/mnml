@@ -1,0 +1,31 @@
+# `buffer.reopen` (Ctrl+Shift+T) — pop the most-recently-closed editor
+# off `App.closed_buffers` and re-open it at its saved cursor position.
+
+# Three buffers; we'll close two of them and reopen them in LIFO order.
+write a.txt "alpha"
+write b.txt "beta"
+write c.txt "gamma"
+
+open a.txt
+open b.txt
+open c.txt
+# Now `c.txt` is active (last opened).
+
+expect screen contains "gamma"
+
+# Close the active buffer (c).
+command buffer.close
+# `b.txt` is now active.
+expect screen contains "beta"
+
+# Close `b.txt` too.
+command buffer.close
+# `a.txt` is now active.
+expect screen contains "alpha"
+
+# Reopen the most-recently-closed (LIFO: b.txt first, c.txt second).
+command buffer.reopen
+expect screen contains "beta"
+
+command buffer.reopen
+expect screen contains "gamma"

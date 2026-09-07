@@ -1,0 +1,9 @@
+# cargo.clippy passes "clippy --all-targets" as subcmd, which means
+# the toast for a workspace WITHOUT Cargo.toml would say:
+# "cargo.clippy --all-targets: no Cargo.toml at ..."
+# instead of "cargo.clippy: no Cargo.toml at ..."
+
+command cargo.clippy
+wait 50
+expect screen contains "cargo.clippy"
+expect screen lacks "cargo.clippy --all-targets"

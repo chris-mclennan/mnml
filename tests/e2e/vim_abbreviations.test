@@ -1,0 +1,35 @@
+# vim abbreviations: `:ab key value` then typing `key<space>` in Insert
+# mode expands to `value `.
+write notes.txt "alpha"
+open notes.txt
+command editor.use_vim
+
+# Set the abbreviation `omw` ⇒ "on my way"
+key :
+type ab omw on my way
+key enter
+expect screen contains ":ab omw"
+
+# Move to end of buffer (line 1, col 0).
+# Enter Insert mode; type a literal " omw" then Space (the trigger that
+# fires expansion).
+key A
+key space
+type omw
+key space
+key escape
+expect screen contains "alpha on my way "
+
+# `:una omw` removes it.
+key :
+type una omw
+key enter
+expect screen contains ":una omw"
+
+# Now typing "omw" + space shouldn't expand — should stay as "omw ".
+key A
+key space
+type omw
+key space
+key escape
+expect screen contains "on my way  omw "

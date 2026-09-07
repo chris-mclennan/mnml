@@ -1,0 +1,17 @@
+# DAP hit-count breakpoints — `dap.set_breakpoint_hit_count` opens
+# a prompt seeded with any existing hit-condition; accept records
+# the expression. Empty input clears it (without removing the BP).
+
+write loop.py "for i in range(10):\n    print(i)\n"
+open loop.py
+command editor.use_vim
+
+# Cursor on the print line.
+key j
+command dap.set_breakpoint_hit_count
+expect screen contains "Hit-count condition"
+
+# Common shape: stop after the 5th hit.
+type ">= 5"
+key enter
+expect screen contains "bp line 2 hit-count >= 5"

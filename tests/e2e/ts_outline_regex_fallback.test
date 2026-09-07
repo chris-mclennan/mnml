@@ -1,0 +1,17 @@
+# outline.show on a TypeScript file (no LSP on PATH in CI) falls back to
+# the regex outline.  Verifies that the regex outline populates the pane
+# with functions, classes, interfaces and types from a .ts file.
+
+write src/index.ts "export interface User { id: number; name: string; }\nexport class AuthService {\n  async login(user: User): Promise<boolean> {\n    return true;\n  }\n}\nexport type Token = string;\nexport function hashPassword(pw: string): Token {\n  return pw;\n}\n"
+
+open src/index.ts
+wait 50
+
+command outline.show
+wait 200
+
+# Regex outline should have extracted: AuthService (class), login (fn),
+# User (interface), Token (type), hashPassword (fn)
+expect screen contains "AuthService"
+expect screen contains "login"
+expect screen contains "User"

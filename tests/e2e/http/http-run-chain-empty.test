@@ -1,0 +1,6 @@
+# :http.run_chain toasts when no .chain.json files exist in
+# .mnml/chains/. Covers the picker's empty-state path.
+
+command http.run_chain
+
+expect screen contains "no chains at"

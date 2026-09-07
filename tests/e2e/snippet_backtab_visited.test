@@ -1,0 +1,44 @@
+# Snippet Backtab to a visited stop — should land the cursor at the END
+# of the user's typed content there (the recorded exit cursor), not at
+# the original placeholder position. Then typing extends what was typed
+# rather than overwriting from the start.
+
+snippet rs forr "for $1 in $2 {\n    $0\n}"
+
+write code.rs ""
+open code.rs
+
+# Trigger expansion + type into the first two stops.
+type forr
+command snippet.expand
+# Extra render cycle after expansion so pending_tree_edits and the
+# snippet session's edits_consumed counter are settled. On a loaded
+# macOS CI runner the harness's 50ms render sleep can extend past the
+# 120ms highlights-idle gate, draining pending_tree_edits and putting
+# edits_consumed into an edge case where the first char of the next
+# tight type-loop misses its stop-shift. The wait below also drains
+# the async work (qa-sweep 2026-06-29 wait-step fix: ticks the app
+# every 25ms during the sleep instead of being a bare sleep).
+wait 150
+type i
+key tab
+# Same guard before filling stop $2.
+wait 150
+type items
+# Extra settle before the assertion — 150ms is enough
+# between edits but the final read needs more headroom on
+# loaded macOS CI runners.
+wait 1000
+
+# Sanity: before Backtab the line is "for i in items {".
+expect screen contains "for i in items {"
+
+# At this point cursor sits at end of "items" (the $2 stop's typed end).
+# Backtab returns to $1 — must land at the END of "i", not at the start.
+key shift+tab
+
+# Type something — it must append to "i", giving "i_var" not "_vari".
+type _var
+
+# Verify the appended content shows up in the right place.
+expect screen contains "for i_var in items {"

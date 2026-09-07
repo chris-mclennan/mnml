@@ -1,0 +1,11 @@
+# Double-clicking a tree file opens it (a permanent tab). Guards the
+# deferred-open path for the count>=2 case.
+write aa.txt aa-content
+write bb.txt bb-content
+open aa.txt
+command tree.refresh
+# Rail since the v0.2.17 up-nav cleanup (a76e7de3): menu/palette
+# bar row 0, workspace header row 1, aa.txt row 2, bb.txt row 3.
+doubleclick 5 3
+expect pane "bb.txt"
+expect screen contains "bb-content"

@@ -1,0 +1,26 @@
+# REGRESSION: a prior build called open_curl_scratch twice per
+# CapturedRows accept, producing two scratch panes from one log entry.
+# Verify exactly one scratch pane opens on a single accept.
+
+write .rqst/captured/log.jsonl "{\"at\":1,\"request_id\":\"r1\",\"method\":\"GET\",\"url\":\"https://captured.example.com/api/items\",\"headers\":[],\"body\":null,\"paused\":false}"
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.view_captured
+
+expect screen contains "Captured requests"
+expect screen contains "captured.example.com/api/items"
+
+key enter
+
+# Captured picker now opens a Request pane (method + URL fields)
+# instead of a scratch curl buffer. Check the pane title carries
+# the URL — and the orphan-scratch regression is guarded by
+# `expect screen lacks "captured.example.com/api/itemscaptured.example.com/api/items"`
+# (which would trigger if two panes opened for one accept).
+expect screen contains "GET"
+expect screen contains "captured.example.com/api/items"
+expect pane "captured.example.com/api/items"
+
+expect screen lacks "api/itemscaptured.example.com"

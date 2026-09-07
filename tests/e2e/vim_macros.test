@@ -1,0 +1,31 @@
+# vim macros — vim canonical: `q<reg>` starts recording into <reg>,
+# `q` alone stops. mnml convenience: `qq` records into the anonymous
+# `'@'` register; `@@` and bare `@` replay anonymous.
+
+write code.txt "hello\nworld\nfoo\nbar"
+open code.txt
+
+command editor.use_vim
+
+# Start anonymous recording: qq. Then i → X → esc → j (next line).
+# Stop: q.
+key q
+key q
+key i
+type X
+key esc
+key j
+key q
+
+# After recording: line 0 should now be "Xhello", cursor on line 1.
+expect screen contains "Xhello"
+
+# Replay with @@ (anonymous): same actions on the next line.
+key @
+key @
+expect screen contains "Xworld"
+
+# And again.
+key @
+key @
+expect screen contains "Xfoo"

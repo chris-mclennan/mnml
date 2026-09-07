@@ -1,0 +1,8 @@
+# :cookies.clear empties the jar and toasts "cleared N entries" (0 when empty).
+
+write anchor.txt anchor
+open anchor.txt
+
+command cookies.clear
+
+expect screen contains "cleared 0 entries"

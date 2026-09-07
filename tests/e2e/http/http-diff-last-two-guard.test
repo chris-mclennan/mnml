@@ -1,0 +1,17 @@
+# http.diff_last_two guard: needs ≥2 successful sends. http.replay_mock sets
+# rp.state = Done directly without going through drain_http_jobs, so
+# prev_response stays None — confirm the guard toast fires.
+
+write probe.curl "curl 'http://127.0.0.1:19876/probe'"
+write probe.curl.mock.json {"status":200,"status_text":"OK","headers":[],"body":"first response","ts":1}
+
+open probe.curl
+
+command http.send
+wait 600
+
+command http.replay_mock
+
+command http.diff_last_two
+
+expect screen contains "need at least 2 successful sends"

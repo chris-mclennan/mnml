@@ -1,0 +1,16 @@
+# Ctrl+K opens the which-key leader menu (any input mode); a group key descends
+# into it; Esc closes it.
+write src.txt hello world
+open src.txt
+expect screen lacks "+split"
+
+key ctrl+k
+expect screen contains "+split"
+
+# Descend into the +split group — its leaves show up.
+key s
+expect screen contains "split right"
+expect screen contains "split down"
+
+key esc
+expect screen lacks "split right"

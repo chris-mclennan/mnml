@@ -1,0 +1,15 @@
+# lsp.diagnostics routes to right panel when visible.
+
+shell echo '{"name":"app"}' > package.json
+write src/api.ts interface Foo {\n  x: string;\n}\n
+open src/api.ts
+wait 100
+
+# Toggle right panel on
+command view.toggle_right_panel
+wait 100
+
+# Open diagnostics pane — should route to right panel
+command lsp.diagnostics
+wait 100
+expect screen contains "api.ts"

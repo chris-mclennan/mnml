@@ -1,0 +1,22 @@
+# Go workspace: go.mod detected by runners.
+
+shell printf 'module github.com/example/myapp\n\ngo 1.22\n' > go.mod
+shell mkdir -p cmd/server
+shell printf 'package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Hello")\n}\n' > cmd/server/main.go
+shell mkdir -p internal/handler
+shell printf 'package handler\n\nimport "net/http"\n\nfunc Root(w http.ResponseWriter, r *http.Request) {}\n' > internal/handler/root.go
+
+# go.test should open pty
+command go.test
+wait 200
+expect screen lacks "no go.mod"
+
+# go.build should open pty
+command go.build
+wait 200
+expect screen lacks "no go.mod"
+
+# go.vet should open pty
+command go.vet
+wait 200
+expect screen lacks "no go.mod"

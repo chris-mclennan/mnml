@@ -1,0 +1,25 @@
+# Regression: the file tree HIDES __pycache__ (and other build-artifact
+# dirs) even without a .gitignore.
+#
+# History: 2026-06-28 3rd multilang-dev-user pass found the tree
+# surfaced __pycache__ / node_modules / target / .next / dist / build
+# / vendor whenever no .gitignore was committed — while the file
+# picker (Ctrl+P) already hardcoded exclusions for the same dirs.
+# Inconsistent signals to the user; a Django dev with no .gitignore
+# would see __pycache__ in the tree rail. Fixed 2026-06-28 by adding
+# the same hardcoded exclusion list to src/tree.rs. This fixture
+# locks the fix.
+
+shell mkdir -p __pycache__
+shell touch __pycache__/app.cpython-312.pyc
+shell mkdir -p src
+shell echo 'print("hi")' > src/app.py
+
+command tree.refresh
+wait 200
+
+# __pycache__ must NOT be visible in the tree (hardcoded exclusion),
+# even though no .gitignore is present.
+expect screen lacks "__pycache__"
+# The real source dir IS visible.
+expect screen contains "src"

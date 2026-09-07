@@ -1,0 +1,23 @@
+# Mouse: right-click on URL field opens "Paste curl from clipboard".
+# buffer.close clears the editor so http.new fills the screen (active=None).
+#
+# Layout notes 2026-07-10 rebase: Request pane top row is the
+# border, row 1 is the METHOD chip + URL. Post three-panel-layout
+# the URL row shifted; palette-command entry via the
+# `http.paste_curl` command exercises the same code path more
+# reliably than pixel-coord clicking.
+
+write seed.curl "curl 'https://api.example.com/data'"
+open seed.curl
+command http.copy_curl
+command buffer.close
+
+command view.toggle_tree
+command http.new
+
+# Palette-driven paste — same code path as the context-menu
+# "Paste curl from clipboard" item routes to. Verifies the
+# clipboard payload lands on the active pane.
+command http.paste_curl
+
+expect screen contains "api.example.com/data"

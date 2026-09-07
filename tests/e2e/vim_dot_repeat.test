@@ -1,0 +1,30 @@
+# vim `.` — repeat the last change.
+write code.txt "alpha\nbravo\ncharlie\ndelta\nend"
+open code.txt
+command editor.use_vim
+
+# Type `iX<esc>` on line 1 — inserts "X" before "alpha".
+key i
+type X
+key escape
+expect screen contains "Xalpha"
+
+# Move down. Hit `.` to repeat the iX<esc> change → "Xbravo".
+key j
+key 0
+key .
+expect screen contains "Xbravo"
+
+# And on line 3.
+key j
+key 0
+key .
+expect screen contains "Xcharlie"
+
+# One-shot change: `dd` deletes the current line.
+key d
+key d
+expect screen lacks "Xcharlie"
+# Repeat `dd` with `.` — deletes the next line ("delta").
+key .
+expect screen lacks "delta"

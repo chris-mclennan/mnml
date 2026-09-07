@@ -1,0 +1,30 @@
+# TypeScript monorepo: npm.test should spawn the pty at the sub-package
+# containing the active file, not at the workspace root. Fixed 2026-06-28
+# via `run_manifest_command` walking up from the active editor's directory
+# (`src/app/playwright.rs:396+`). This test freezes the fix so future
+# tester rounds don't chase it as an open bug.
+#
+# The assertion below (`expect screen lacks "no package.json"`) confirms
+# the manifest walk succeeded — a stronger cwd assertion needs a `spawn`
+# command that captures the child pty's cwd; not exposed in headless yet.
+# For a real cwd probe see `scratchpad/npm_monorepo_cwd_real.test`
+# (multilang-dev R2 repro), which asserts on the sub-package's own
+# script output ("PKG-A-RAN").
+
+shell mkdir -p packages/pkg-a/src
+shell echo '{"name":"root","workspaces":["packages/*"]}' > package.json
+shell echo '{"name":"pkg-a","scripts":{"test":"echo PKG-A-TEST"}}' > packages/pkg-a/package.json
+shell echo 'export const x = 1;' > packages/pkg-a/src/index.ts
+
+open packages/pkg-a/src/index.ts
+wait 50
+
+command npm.test
+wait 200
+
+# The pty label is "npm test" and CWD is the workspace root, not pkg-a.
+# We can verify by checking the pane title does NOT contain "pkg-a".
+# (The pty opens: "npm test" in /workspace-root/, not in packages/pkg-a/)
+expect screen lacks "no package.json"
+# Pane opens successfully — but it's at the wrong cwd (workspace root).
+# No way to assert cwd directly in headless; the bug is in the pty profile.

@@ -1,0 +1,13 @@
+# Vim-mode drag-select — same as mouse_drag_select.test but in vim
+# mode. The drag should enter VISUAL mode (vim's selection mode) and
+# the `Sel N` indicator should appear.
+command editor.use_vim
+write doc.txt "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+open doc.txt
+command view.toggle_tree
+expect screen contains "NORMAL"
+
+# Drag from column 10 to column 20 on screen row 2.
+drag 10 2 20 2
+expect screen contains "VISUAL"
+expect screen contains "Sel "

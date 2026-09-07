@@ -1,0 +1,17 @@
+# http.cycle_method advances GET → POST → PUT → PATCH …
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+expect screen contains "GET"
+
+command http.cycle_method
+expect screen contains "POST"
+
+command http.cycle_method
+expect screen contains "PUT"
+
+command http.cycle_method
+expect screen contains "PATCH"

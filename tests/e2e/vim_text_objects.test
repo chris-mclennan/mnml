@@ -1,0 +1,74 @@
+# Vim text objects — `diw` deletes the inner word; `daw` includes trailing
+# whitespace; same shape for `ciw` / `caw`. Cursor doesn't need to be at the
+# start of the word.
+write code.txt "alpha beta gamma"
+open code.txt
+command editor.use_vim
+
+# Cursor sits on the 'b' of "beta" (col 6 = "alpha "). Use `f` is missing in
+# vim coverage; jump via `0` + word-motion `w`.
+key 0
+key w
+# Now cursor is at the start of "beta".
+key d
+key i
+key w
+expect screen contains "alpha  gamma"
+expect screen lacks "beta"
+
+# Set up "around word" — daw should leave just "alpha gamma" if we start on the
+# middle word + trailing space.
+write code2.txt "alpha beta gamma"
+open code2.txt
+command editor.use_vim
+key 0
+key w
+key d
+key a
+key w
+expect screen contains "alpha gamma"
+expect screen lacks "beta"
+
+# Quote text objects — di" deletes the contents of a double-quoted string.
+write quoted.txt "let s = \"hello world\";"
+open quoted.txt
+command editor.use_vim
+# Move into the string. After `0` cursor is at start; jump to col 10 with `l`s.
+key 0
+key w
+key w
+key w
+# Cursor is now near the string. Run di".
+key d
+key i
+key "
+expect screen contains "let s = \"\";"
+expect screen lacks "hello"
+
+# Paragraph text objects — dip deletes a paragraph.
+write para.txt "first paragraph\nstill first\n\nsecond paragraph\nstill second\n\nthird"
+open para.txt
+command editor.use_vim
+# Cursor at top, on "first paragraph". dip deletes lines 0-1.
+key d
+key i
+key p
+expect screen contains "second paragraph"
+expect screen lacks "first paragraph"
+
+# Bracket text objects — di( deletes inside parens.
+write parens.txt "call(arg1, arg2)"
+open parens.txt
+command editor.use_vim
+# Move past "call(" — `l` five times places the cursor at 'a' of "arg1".
+key 0
+key l
+key l
+key l
+key l
+key l
+key d
+key i
+key (
+expect screen contains "call()"
+expect screen lacks "arg1"

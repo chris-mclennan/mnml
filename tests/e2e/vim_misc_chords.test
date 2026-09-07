@@ -1,0 +1,33 @@
+# Coverage for several recent vim chords:
+#   Ctrl+A increment number, Ctrl+X decrement
+#   J join lines (single space, eats indent)
+#   ~ toggle case + advance
+
+write code.txt "value = 41\nfoo\n   bar\nhello"
+open code.txt
+
+command editor.use_vim
+
+# Cursor starts at (0,0) on `value = 41`. Ctrl+A increments the next number.
+key ctrl+a
+expect screen contains "value = 42"
+
+# Ctrl+X decrements. Twice ⇒ 40.
+key ctrl+x
+key ctrl+x
+expect screen contains "value = 40"
+
+# Move down one line to "foo". J joins "foo" + "   bar" → "foo bar".
+key j
+key J
+expect screen contains "foo bar"
+
+# `~` toggles case of char under cursor. After J, cursor sits on the inserted
+# space (between foo and bar). Move to start of line, press ~ four times to
+# uppercase "foo " → "FOO ".
+key 0
+key ~
+key ~
+key ~
+key ~
+expect screen contains "FOO bar"

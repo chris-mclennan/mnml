@@ -1,0 +1,40 @@
+# Vim named registers — `"a yy` yanks line into register a; `"b yy` yanks
+# another line into register b; `"a p` pastes from register a, etc.
+write data.txt "alpha\nbravo\ncharlie\nend"
+open data.txt
+command editor.use_vim
+
+# Yank line 1 ("alpha") into register a.
+key "
+key a
+key y
+key y
+
+# Move to line 2, yank ("bravo") into register b.
+key down
+key "
+key b
+key y
+key y
+
+# Move to end (line 4 "end"). Paste from register a (alpha) below it.
+key G
+key "
+key a
+key p
+expect screen contains "end"
+expect screen contains "alpha"
+
+# Now also paste from register b (bravo).
+key "
+key b
+key p
+expect screen contains "bravo"
+
+# `:reg` should mention both registers (the toast lists them sorted).
+key :
+type reg
+key enter
+expect screen contains ":reg"
+expect screen contains "alpha"
+expect screen contains "bravo"

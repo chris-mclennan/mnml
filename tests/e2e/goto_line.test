@@ -1,0 +1,11 @@
+# Ctrl+G opens a "Go to line" prompt — type 3, Enter, cursor lands on line 3.
+write notes.txt "line one\nline two\nline three\nline four\n"
+open notes.txt
+
+command editor.goto_line
+expect screen contains "Go to line"
+type 3
+key enter
+
+# The statusline shows "Ln 3" when the cursor is on row 3.
+expect screen contains "Ln 3"

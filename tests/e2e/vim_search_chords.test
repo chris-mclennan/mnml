@@ -1,0 +1,22 @@
+# vim search chords: `/` opens find, `n` next, `N` prev.
+
+write text.txt "alpha\nbravo\nalpha\ncharlie\nalpha"
+open text.txt
+
+command editor.use_vim
+
+# `/` opens the find prompt.
+key /
+type "alpha"
+key enter
+
+# Cursor lands at first match — line 1, char 0.
+expect screen contains "Ln 1/5"
+
+# `n` advances to next match (line 3).
+key n
+expect screen contains "Ln 3/5"
+
+# `N` goes back to line 1.
+key N
+expect screen contains "Ln 1/5"

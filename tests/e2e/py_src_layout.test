@@ -1,0 +1,14 @@
+# Python src/ layout: src/, tests/, docs/
+
+shell mkdir -p src tests docs
+shell printf 'def greet(): pass\n' > src/app.py
+shell printf 'def test_greet(): pass\n' > tests/test_app.py
+shell echo '# Docs' > docs/index.md
+shell printf '[build-system]\nrequires = ["setuptools"]\n' > pyproject.toml
+
+command tree.refresh
+open src/app.py
+wait 100
+expect screen contains "src"
+expect screen contains "tests"
+expect screen contains "docs"

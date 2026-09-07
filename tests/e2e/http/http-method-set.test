@@ -1,0 +1,17 @@
+# http.set_method.* palette commands set the method directly.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+expect screen contains "GET"
+
+command http.set_method.post
+expect screen contains "method: POST"
+expect screen contains "POST"
+
+command http.set_method.put
+expect screen contains "method: PUT"
+
+command http.set_method.delete
+expect screen contains "method: DELETE"

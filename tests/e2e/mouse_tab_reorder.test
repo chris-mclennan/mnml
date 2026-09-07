@@ -1,0 +1,13 @@
+# Dragging a bufferline tab onto another tab reorders them.
+# (Guards the drag-reorder path through the deferred-reveal mouse handlers.)
+write aa.txt aa-content
+write bb.txt bb-content
+open aa.txt
+open bb.txt
+command view.toggle_tree
+
+# Order: aa.txt (x~1), bb.txt (x~13), on row 1. Drag aa onto bb → order
+# becomes bb, aa. Then the FIRST tab slot should be bb.txt.
+drag 5 1 18 1
+click 4 1
+expect pane "bb.txt"
