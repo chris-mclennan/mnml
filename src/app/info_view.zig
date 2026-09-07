@@ -131,6 +131,9 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
         .pty => .{ .title = p.title(), .body = "Terminal pane — Ctrl+Alt+H to detach, Ctrl+Alt+K to kill." },
         .md_preview => .{ .title = p.title(), .body = "Rendered markdown preview — click header chip to jump back to source." },
         .ai => .{ .title = p.title(), .body = "Claude / Codex session — type at the bottom prompt." },
+        // Rust's `describe_active_pane` says nothing for the graph: the
+        // box keeps the sidebar's own words in git mode.
+        .git_graph => null,
         else => .{ .title = p.title() },
     };
 }
@@ -175,8 +178,14 @@ fn isWord(c: u8) bool {
 fn emptyCopy(app: *App) Copy {
     return switch (app.focus) {
         .tree => .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." },
-        .panel => .{ .title = "Right panel", .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
-        .pane, .overlay => .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
+        .panel => |p| if (p == .git and app.git_palette.active) .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." } else .{ .title = "Right panel", .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
+        // In git mode the graph pane says nothing of its own and Rust's box
+        // shows the sidebar's words.
+        .pane => |id| if (app.git_palette.active and app.panes.get(id) != null and app.panes.get(id).?.* == .git_graph)
+            .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." }
+        else
+            .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
+        .overlay => .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
     };
 }
 

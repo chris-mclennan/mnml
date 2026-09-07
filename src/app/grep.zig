@@ -369,6 +369,7 @@ pub fn acceptQuery(app: *App, text: []const u8) Allocator.Error!void {
 /// `view.activity_search`: the grep pane if there is one, else the
 /// prompt that makes one.
 fn activitySearch(app: *App) CommandError!void {
+    @import("activity_bar.zig").enter(app, .search);
     if (find(app)) |id| {
         app.showPane(id);
         app.focus = .{ .pane = id };

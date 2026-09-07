@@ -1,8 +1,6 @@
-//! The git status rows — one paint shared by the rail (`ListPanel`) and
-//! the status pane. A row is a group header (`Staged (2)`) or an entry
-//! (`M src/a.zig`), the letter coloured by what it means — or one of
-//! the branch rail's rows below them: a section header (`▾ Branches
-//! (3)`), a branch with its tracking counts, a worktree, an open PR.
+//! The git status rows of the status pane. A row is a group header
+//! (`Staged (2)`) or an entry (`M src/a.zig`), the letter coloured by
+//! what it means.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -16,45 +14,17 @@ const ids = @import("../core/ids.zig");
 const Style = vaxis.Style;
 const PaneId = ids.PaneId;
 
-pub const Kind = enum { status, section, branch, worktree, pr, note };
-
-pub const RailSection = enum {
-    branches,
-    worktrees,
-    prs,
-
-    pub fn label(s: RailSection) []const u8 {
-        return switch (s) {
-            .branches => "Branches",
-            .worktrees => "Worktrees",
-            .prs => "Pull requests",
-        };
-    }
-};
-
 pub const Row = struct {
     header: bool,
     group: parse.Group,
-    kind: Kind = .status,
     /// The porcelain letter (`M A D R ? U`); 0 on a header.
     code: u8 = 0,
-    /// Repo-relative; borrowed from the status snapshot. A rail row's
-    /// text (the branch name, the worktree path, the PR title).
+    /// Repo-relative; borrowed from the status snapshot.
     path: []const u8 = "",
-    /// Index into `Status.entries` (or the rail's list for its rows).
+    /// Index into `Status.entries`.
     entry: u32 = 0,
     /// Entries in the group (headers only).
     count: u32 = 0,
-    /// A rail row's trailing text (`↑2 ↓1`, the worktree's branch, the
-    /// PR's branch).
-    detail: []const u8 = "",
-    /// The checked-out branch / the main worktree.
-    current: bool = false,
-    /// A remote branch.
-    remote: bool = false,
-    section: RailSection = .branches,
-    /// A section header that is folded.
-    folded: bool = false,
 };
 
 /// The colour of a status letter: added green, deleted red, modified
@@ -88,7 +58,6 @@ pub fn groupStyle(t: *const Theme, group: parse.Group, base: Style) Style {
 pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     const t = ui.theme;
     const base = list_panel.rowStyle(t, selected);
-    if (row.kind != .status) return paintRailRow(ui, r, row, base);
     if (row.header) {
         const label = ui.fmt("{s} ({d})", .{ row.group.label(), row.count });
         _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(label, r.w), groupStyle(t, row.group, base));
@@ -108,58 +77,6 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
         _ = ui.putStr(x, r.y, end -| x, shown[s + 1 ..], Theme.onBg(t.fg, base.bg));
     } else {
         _ = ui.putStr(x, r.y, end -| x, shown, Theme.onBg(t.fg, base.bg));
-    }
-}
-
-/// The branch rail's rows. A section header carries its fold marker;
-/// a branch its tracking counts (`↑2 ↓1`, `gone`), the checked-out one
-/// bold with `*`; a worktree its path then branch; a PR its number.
-fn paintRailRow(ui: Ui, r: Rect, row: Row, base: Style) void {
-    const t = ui.theme;
-    const end = r.right();
-    switch (row.kind) {
-        .section => {
-            const marker: []const u8 = if (row.folded) (if (ui.ascii) ">" else "▸") else (if (ui.ascii) "v" else "▾");
-            const label = ui.fmt("{s} {s} ({d})", .{ marker, row.section.label(), row.count });
-            var s = Theme.onBg(t.accent, base.bg);
-            s.bold = true;
-            _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(label, r.w), s);
-        },
-        .branch => {
-            var x = r.x + 1;
-            var name_style = Theme.onBg(if (row.remote) t.muted else t.fg, base.bg);
-            if (row.current) {
-                name_style = Theme.onBg(t.syntax.string, base.bg);
-                name_style.bold = true;
-            }
-            x += ui.putStr(x, r.y, end -| x, if (row.current) "* " else "  ", name_style);
-            const detail_w = ui.width(row.detail);
-            const name_max: u16 = if (row.detail.len > 0 and end -| x > detail_w + 2) end - x - detail_w - 1 else end -| x;
-            x += ui.putStr(x, r.y, name_max, ui.clipStr(row.path, name_max), name_style);
-            if (row.detail.len > 0 and end -| x >= detail_w) {
-                const ds = Theme.onBg(if (std.mem.eql(u8, row.detail, "gone")) t.error_fg else t.info_fg, base.bg);
-                _ = ui.putStrRight(end, r.y, detail_w, row.detail, ds);
-            }
-        },
-        .worktree => {
-            var x = r.x + 1;
-            x += ui.putStr(x, r.y, end -| x, if (row.current) "* " else "  ", base);
-            const detail = if (row.detail.len > 0) ui.fmt(" ({s})", .{row.detail}) else "";
-            const dw = ui.width(detail);
-            const path_max: u16 = if (end -| x > dw) end - x - dw else 0;
-            x += ui.putStr(x, r.y, path_max, clipLeft(ui, row.path, path_max), Theme.onBg(t.fg, base.bg));
-            _ = ui.putStr(x, r.y, end -| x, detail, Theme.onBg(t.muted, base.bg));
-        },
-        .pr => {
-            var x = r.x + 1;
-            x += ui.putStr(x, r.y, end -| x, ui.fmt("#{d} ", .{row.entry}), Theme.onBg(t.warn_fg, base.bg));
-            const detail_w = ui.width(row.detail);
-            const title_max: u16 = if (row.detail.len > 0 and end -| x > detail_w + 2) end - x - detail_w - 1 else end -| x;
-            x += ui.putStr(x, r.y, title_max, ui.clipStr(row.path, title_max), Theme.onBg(t.fg, base.bg));
-            if (row.detail.len > 0 and end -| x >= detail_w) _ = ui.putStrRight(end, r.y, detail_w, row.detail, Theme.onBg(t.muted, base.bg));
-        },
-        .note => _ = ui.putStr(r.x + 3, r.y, r.w -| 3, ui.clipStr(row.path, r.w -| 3), Theme.onBg(t.muted, base.bg)),
-        .status => unreachable,
     }
 }
 
@@ -263,20 +180,6 @@ test "drawPane: header, rows with hits, the cursor row banded" {
     try testing.expect(h == .script_hit);
     try testing.expectEqual(@as(u32, 1), h.script_hit.id);
     try testing.expectEqual(@as(PaneId, 3), h.script_hit.pane);
-}
-
-test "rail rows: a folded section header, the current branch with its counts, a worktree, a PR" {
-    var f = try Fixture.init(40, 6);
-    defer f.deinit();
-    const ui = f.ui();
-    paintRow(ui, Rect.init(0, 0, 40, 1), .{ .header = true, .group = .staged, .kind = .section, .section = .branches, .count = 2, .folded = true }, false);
-    try f.expectRow(0, "▸ Branches (2)");
-    paintRow(ui, Rect.init(0, 1, 40, 1), .{ .header = false, .group = .staged, .kind = .branch, .path = "main", .detail = "↑2 ↓1", .current = true }, false);
-    try f.expectRow(1, " * main                            ↑2 ↓1");
-    paintRow(ui, Rect.init(0, 2, 40, 1), .{ .header = false, .group = .staged, .kind = .worktree, .path = "/w/feature", .detail = "feature" }, false);
-    try f.expectRow(2, "   /w/feature (feature)");
-    paintRow(ui, Rect.init(0, 3, 40, 1), .{ .header = false, .group = .staged, .kind = .pr, .entry = 12, .path = "Fix it", .detail = "fix/it" }, false);
-    try f.expectRow(3, " #12 Fix it                       fix/it");
 }
 
 test "drawPane paints the provider badge on the header's right edge and registers its hit" {

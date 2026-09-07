@@ -1,0 +1,24 @@
+ ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
+   │ GIT       │ 󰊢 ws 󰅖   󰊢 mixr 󰅖   󰊢 acmeco-claude-wor…  󰐕  󰅁  󰅂        
+  │  ws 󰅀      │    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch
+ 󰍉 │ ⎇ main     │     G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA
+▌󰊢 │            │▌▶       │ 2 change(s) · 2 new    │               │
+  │ 󰍉 … filter │▌    ●─╮ │ merge feature          │   09/06 20:00 │ 7ce273514
+ 󰐱 │            │▌    ● │ │ main work              │   09/06 20:00 │ 34b03ced4
+ 󰎒 │ ▾ WORKTREES│▌    │ ● │ feature work           │   09/06 20:00 │ 3ec2bf9e8
+ 󰚩 │   ⌂ main (w│▌    ●─╯ │ init                   │   09/06 03:55 │ 482589dd2
+ 󰅣 │            │
+  │ ▾ LOCAL 2  │
+  │────────────│
+  │ Sidebar  ⋮ │
+ 󱘣 │           ┃│
+   │ Arrows or ┃│
+   │ j/k walk  ┃│
+   │ rows.     ┃│
+   │ Enter     ┃│
+   │ opens the ││
+   │ selection.││
+  │ Ctrl+Shift││
+   │            │
+ VIEW   main … [no file]     F 57% ▲1.0  󱼀 󰐎  WRAP    05:46  ws   —
+

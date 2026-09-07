@@ -13,6 +13,8 @@ const PaneId = app_mod.PaneId;
 const Config = app_mod.Config;
 const Layout = app_mod.Layout;
 const layout_mod = @import("layout.zig");
+const activity_bar = @import("activity_bar.zig");
+const git_palette = @import("git_palette.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const Rect = @import("../ui/rect.zig");
@@ -192,22 +194,27 @@ fn closeRightPanel(app: *App) CommandError!void {
 }
 
 fn activityTodos(app: *App) CommandError!void {
+    activity_bar.enter(app, .todos);
     showRightPanel(app, .todos);
 }
 
 fn activityNotes(app: *App) CommandError!void {
+    activity_bar.enter(app, .notes);
     showRightPanel(app, .notes);
 }
 
 fn activityFindings(app: *App) CommandError!void {
+    activity_bar.enter(app, .findings);
     showRightPanel(app, .findings);
 }
 
 fn activitySessions(app: *App) CommandError!void {
+    activity_bar.enter(app, .sessions);
     showRightPanel(app, .sessions);
 }
 
 fn activityExplorer(app: *App) CommandError!void {
+    activity_bar.enter(app, .explorer);
     app.tree.visible = true;
     if (app.activeBuffer()) |b| b.input.onBlur();
     app.focus = .tree;
@@ -220,11 +227,14 @@ fn notInBuild(app: *App, what: []const u8) CommandError!void {
 }
 
 fn activityHttp(app: *App) CommandError!void {
+    activity_bar.enter(app, .http);
     showRightPanel(app, .http);
 }
 
+/// Git mode (`app/git_palette.zig`): the palette in the sidebar, one
+/// graph tab per repo.
 fn activityGit(app: *App) CommandError!void {
-    showRightPanel(app, .git);
+    try git_palette.enter(app);
 }
 
 // ─── splits ─────────────────────────────────────────────────────────────

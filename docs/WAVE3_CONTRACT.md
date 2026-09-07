@@ -2858,3 +2858,108 @@ differs on purpose.
   wire-body / view-text test in `request_pane.zig` and the send-state
   rows in `request_view.zig`, each watched failing with a break in the
   painter first.
+
+## Git mode (2026-09-07, branch `git-mode`) — `// changed:` notes
+
+The Git activity section as the Rust editor has it — the palette in
+the sidebar, one graph tab per repo, the detail column on the graph's
+right — painted cell for cell against `docs/ui-spec/rust-git-120x40.txt`
+(`steps-graph2.jsonl`) and the new `rust-git-80x24.txt`.
+
+- `// changed (mode):` `src/app/git_palette.zig` — `State.active` is
+  Rust's `active_section == Git`, `State.pre` its `pre_git_layout`.
+  `view.activity_git` / `git.graph` / `git.branch_rail_toggle` enter:
+  `git.discover` runs again (the workspace roots may have landed after
+  the first tick's look), the sidebar snaps to a fifth of the screen,
+  the current layout is stashed and replaced by one leaf holding a
+  `git_graph` tab per discovered repo (reused when it exists, skipped
+  when its tab was closed this session — `App.forceClosePane` records
+  the repo, the strip's `+` and the pill's `Reopen:` rows bring it
+  back through `git.reopen_repo`), the focus lands on the graph as
+  Rust's `open_git_graph` leaves it. `activity_bar.enter(app, s)` is
+  the first line of every `view.activity_*` runner: any other section
+  leaves, which puts the stashed layout back (the graph panes stay in
+  the store). `activity_bar.active` reports Git while the mode is on,
+  whatever has the focus. The right-panel GIT rail and its branch-rail
+  rows are gone; `PanelId.git` now names the palette (its `.row` /
+  `.filter_input` / `.chip` / `.scrollbar` hits), and `git.State` lost
+  `rail`, `filtered`, `rail_open`, `rail_folded`, `selectedRow`.
+- `// changed (palette):` `src/ui/git_palette.zig` — the caps header
+  with the refresh chip, the ` repo 󰅀 ` pill (`HitTarget.git_palette =
+  .repo`, the Repos menu: switch / reopen / add workspace), the `⎇`
+  row with `↑n ↓n` (`.branch`, the checkout picker), Rust's filter row
+  (the glyph at the second cell, the `…` tail clip keeping `max_text`
+  code points), then WORKTREES / LOCAL / REMOTE / PULL REQUESTS: a
+  header row per section with its count two cells in from the edge,
+  `/`-prefix folder rows, `⌂ · ● ○ ☁` markers, a gap row after each.
+  The rows come flat from `git_palette.rows` — the same list the click
+  and key handlers rebuild, so an index means the same thing in both;
+  the scroll skips item rows and keeps headers, as Rust does. A left
+  click / Enter selects the ref and jumps the graph to its commit
+  (`sha` from the rail's `for-each-ref`, no rev-parse round trip);
+  right-click / `m` opens Rust's row menus through
+  `MenuAction.git_palette` (`core/command.GitPaletteAct`).
+- `// changed (graph):` `src/ui/git_graph_view.zig` rewritten to the
+  spec: the git toolbar row (`git_toolbar.zig`, dropped under 40
+  cells or 6 rows), the list on the left with Rust's column header and
+  `compute_column_widths` (sha 9, date 13/11/6, author 8..22 from the
+  visible window, branch chips 8..24), rows as `▌` in the lane colour,
+  `▶ `, chips, the graph cells with `lane_spacing` pads joining `─`
+  runs, ` │ ` separators, the subject padded, the author and the
+  `MM/DD HH:MM` date (UTC, `TZ_OFFSET_HOURS` honoured as Rust does)
+  right-aligned, the nine-char sha, two pad cells. `layout` is Rust's
+  lane walk: rounded corners `╭╮╰╯`, a freed lane cools for five rows,
+  `┼` where a `─` run crosses a passing lane, colour = lane index.
+  The detail column at Rust's width (drag → `ui.git_graph_detail_col`
+  → a third clamped 28..60, none under 80) shows the working tree on
+  the WIP row — `─ WIP @ branch · summary`, `▾ Unstaged Files (n)` with
+  ` Stage All ` at the edge and a ` [+] ` per row, `▾ Staged Files (n)`
+  with ` Unstage All ` and ` [−] `, the commit box pinned to the bottom
+  (`▾ Commit · …`, the textarea, ` Commit  AI Message  Clear `, the
+  hint) — and a commit's `─ sha · author · age ─` rule, reflowed and
+  wrapped message, parents and `changed files (n):` otherwise. The
+  hit ids: rows by virtual index, `sortId`, `divider_id`,
+  `wipButtonId` (the two section buttons, the box's three, the
+  textarea), `wipFileId` (a row / its button, unstaged / staged),
+  `detailRowId` moved to `0xF800_0000` — `0xF300_0000` is the toolbar's.
+  A cut button keeps its visible cells as a hit (Rust drops the rect
+  whole: a 31-cell column's Stage All is dead there).
+- `// changed (graph state):` `GraphPane` gained `name` (the tab's
+  title — the repo's), the commit box (`wip_text` / `wip_cursor` /
+  `wip_focused` / `wip_ai`) and lost `detail_open`: the column is
+  always there. `SortCol` is Rust's `none / author / date / sha`.
+  Keys: Enter opens the selected commit's diff (the WIP row's: HEAD's),
+  Tab walks the detail column's files (`s` / `u` stage and unstage a
+  working-tree row, Enter opens the file's diff), `c` on the WIP row
+  commits the box's text (the prompt when it is empty), `C` asks for
+  an AI message (`git.ai_commit` — the reply still lands in the
+  prompt, not the box), Ctrl+Enter in the box commits, Esc blurs.
+  `git.graph_detail` focuses the column. `wipFiles` is the one list —
+  unstaged (modified / untracked `?` / conflicted `!`) then staged,
+  A–Z — the painter, the keys and the clicks share; an untracked
+  directory shows as its name (git's own untracked mode: `git status`
+  no longer runs `--untracked-files=all`, so the status pane and the
+  tree marks list `requests/` once, as Rust reads it). `git log` runs
+  `--date-order`, Rust's order.
+- `// changed (chrome):` `pane.title()` of a graph is its repo's name;
+  `info_view` says nothing for a graph pane and shows the sidebar's
+  words in git mode (Rust's box); the statusline's mode chip reads
+  `VIEW` there as Rust's does. `discovery.describe` explains the pill
+  and the branch row. `git_status_view.zig` paints status rows only.
+- `// changed (residue):` the `ui-diff` git runs differ from Rust in
+  the statusline's cut `󱼀 󰐎` cells only; at 80×24 also in the
+  statusline's narrow rule (Rust `main …`, Zig `main  󰐙 2`), which is
+  the statusline track's. `steps-editor` / `steps-diff` / `steps-http`
+  are at main's counts (8 / 28 / 2). Not in this cut: stashes and tags
+  sections (the rail has no such data yet), the `+N more` branch cap,
+  the hash-typing header chip (the jump stays a prompt), the AI
+  message streaming into the box.
+- `// changed (tests):` `git_palette.zig` (spec rows, hits, colours,
+  scroll, folders), `git_graph_view.zig` (the spec's rows at 95, the
+  lane table, the detail width precedence, the sort arrows, the
+  helpers, the commit detail and the caret), `app/git_palette.zig`
+  (rows, filter, folds, activate), `app/git.zig` (enter / leave /
+  reuse; the smoke, graph and WIP tests re-aimed); `tests/e2e-zig/
+  git_mode.test` (enters, stages from the detail column, types in the
+  box, leaves), `git_graph_detail.test` and `git_graph_detail_wrap.test`
+  re-aimed. Corpus 360/361 (the designed skip); no `git_*.test` flipped.

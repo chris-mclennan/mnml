@@ -74,6 +74,7 @@ const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
 const git_app = @import("app/git.zig");
+const git_palette_app = @import("app/git_palette.zig");
 const ai_app = @import("app/ai.zig");
 const agents = @import("app/agents.zig");
 const spend = @import("app/spend.zig");
@@ -686,6 +687,8 @@ pub const App = struct {
     /// The editor body before the dock's inline strips came off it.
     dock_area: Rect = .{},
     git: git_app.State,
+    /// Git mode: the palette in the sidebar (`app/git_palette.zig`).
+    git_palette: git_palette_app.State = .{},
     snippets: snippets.State,
     ai: ai_app.State = .{},
     dap: dap.State = .{},
@@ -1088,6 +1091,7 @@ pub const App = struct {
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
+        self.git_palette.deinit(gpa);
         self.marketplace.deinit(gpa, self.io);
         self.ipc_fx.deinit(gpa);
         self.flaky.deinit(gpa);
@@ -1608,6 +1612,8 @@ pub const App = struct {
 
     pub fn forceClosePane(self: *App, id: PaneId) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
+        // A graph tab closed is a repo hidden for the session (Rust `close_pane`).
+        if (pane.* == .git_graph) if (self.git.repoById(pane.git_graph.repo)) |r| try git_palette_app.noteClosed(self, r.path);
         // Editors and markdown previews are files: they can come back —
         // once the last window on the file goes.
         const shared = self.isSharedView(id);

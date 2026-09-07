@@ -32,6 +32,7 @@ const tooltip = @import("../ui/tooltip.zig");
 const context_menus = @import("context_menus.zig");
 const settings = @import("settings.zig");
 const dap = @import("dap.zig");
+const git_palette = @import("git_palette.zig");
 
 pub const Section = rail.Section;
 pub const Part = rail.Part;
@@ -81,8 +82,11 @@ pub fn shown(app: *const App) bool {
     };
 }
 
-/// The section the rail marks.
+/// The section the rail marks. Git mode is a state (Rust's
+/// `active_section == Git`): while it is on, the mark is Git whatever
+/// has the focus.
 pub fn active(app: *App) Section {
+    if (app.git_palette.active) return .git;
     switch (app.focus) {
         .tree => return .explorer,
         .panel => |p| if (sectionOfPanel(p)) |s| return s,
@@ -116,6 +120,13 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
         .git_status, .git_graph => .git,
         else => null,
     };
+}
+
+/// Every `view.activity_*` runner's first line: entering a section
+/// other than Git leaves git mode (Rust `set_activity_section`'s
+/// `leaving_git`), which puts the stashed layout back.
+pub fn enter(app: *App, s: Section) void {
+    if (s != .git) git_palette.leave(app);
 }
 
 /// What the painter needs this frame.
@@ -185,14 +196,17 @@ pub fn describe(part: Part) tooltip.Tip {
 // ─── the runners ────────────────────────────────────────────────────────
 
 fn activityDebug(app: *App) CommandError!void {
+    enter(app, .debug);
     return dap.showDebug(app);
 }
 
 fn activityAgents(app: *App) CommandError!void {
+    enter(app, .agents);
     return command.run(app, .{ .static = .@"ai.dashboard" });
 }
 
 fn activityCloudAgents(app: *App) CommandError!void {
+    enter(app, .cloud_agents);
     return app.diag.fail(app.frame.allocator(), "cloud agents (AWS ECS / Managed Agents) are not in this build yet", .{});
 }
 

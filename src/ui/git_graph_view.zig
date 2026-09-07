@@ -1,162 +1,227 @@
-//! The commit graph: lanes laid out from parent ids (`layout`), then
-//! painted one commit per row — `<lanes> <sha> <subject>  <author> <age>`
-//! with `lane_spacing` blank cells between lanes. The app owns the
-//! commits and the lanes; the view keeps the scroll.
+//! The commit graph pane, cell for cell the Rust editor's
+//! `ui/git_graph_view.rs`: the git toolbar on top, the commit list on
+//! the left under its column header, the detail column on the right.
 //!
-//! Layout is the classic column walk over a topological list: a commit
-//! takes the lane its hash was expected in (or a fresh one), hands the
-//! lane to its first parent, and opens a lane per extra parent that is
-//! not already expected somewhere. A row's cells then read as: the node
-//! in its lane, `│` for every other lane still open, and `─` runs with
-//! `┐` / `┘` where the merge edges leave the node's lane.
+//! ```text
+//!    󰕌 Undo   󰑎 Redo    Pull    Push  …
+//!      G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA    │─ WIP @ main · 1 change(s) · 1
+//! ▌▶       │ 1 change(s) · 1 new    │               │            │
+//! ▌    ●─╮ │ merge feature          │   09/06 20:00 │ 7ce273514  │  ▾ Unstaged Files (1)  Stage A
+//! ▌    ● │ │ main work              │   09/06 20:00 │ 34b03ced4  │    ? .gitignore           [+]
+//! ```
+//!
+//! A row is `▌` in its lane's colour, `▶ ` on the cursor row, the
+//! branch chips, the graph cells with `lane_spacing` pad cells between
+//! lanes, then ` │ ` separators around the subject, author, date and
+//! sha columns, two cells of pad after the sha. The header's `G…` is
+//! `GRAPH` cut to the graph's width. The detail column is the working
+//! tree on the WIP row — its file lists with `[+]` / `[−]` and the
+//! commit box at the bottom — and a commit's message and files
+//! otherwise. Lanes come from `layout`, Rust's walk with the
+//! five-row lane cooldown and the rounded corners.
+//!
+//! Every click target registers in the statement that paints it; the
+//! ids are below `special_base` for the rows (their virtual index)
+//! and above it for everything else.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
-const list_panel = @import("list_panel.zig");
 const clip = @import("clip.zig");
+const git_toolbar = @import("git_toolbar.zig");
+const text_field = @import("text_field.zig");
 const parse = @import("../git/parse.zig");
 const ids = @import("../core/ids.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
+const Color = vaxis.Color;
 const PaneId = ids.PaneId;
+pub const Caret = text_field.Caret;
 
-pub const Cell = enum { empty, node, pass, horiz, branch_right, branch_left, merge_right, merge_left };
+// ─── lanes ──────────────────────────────────────────────────────────────
+
+pub const Glyph = enum {
+    blank,
+    node,
+    pass,
+    horiz,
+    cross,
+    /// `╭` — a branch opening to the left of the node.
+    tl,
+    /// `╮` — a branch opening to the right.
+    tr,
+    /// `╰` — a lane closing in from the left.
+    bl,
+    /// `╯` — a lane closing in from the right.
+    br,
+
+    pub fn text(g: Glyph, ascii: bool) []const u8 {
+        if (ascii) return switch (g) {
+            .blank => " ",
+            .node => "*",
+            .pass => "|",
+            .horiz => "-",
+            .cross => "+",
+            .tl, .br => "/",
+            .tr, .bl => "\\",
+        };
+        return switch (g) {
+            .blank => " ",
+            .node => "\u{25CF}",
+            .pass => "\u{2502}",
+            .horiz => "\u{2500}",
+            .cross => "\u{253C}",
+            .tl => "\u{256D}",
+            .tr => "\u{256E}",
+            .bl => "\u{2570}",
+            .br => "\u{256F}",
+        };
+    }
+
+    /// Rust's `opens_right` / `opens_left`: whether the cell's stroke
+    /// continues into the pad after / before it.
+    fn opensRight(g: Glyph) bool {
+        return g == .tl or g == .bl or g == .horiz or g == .cross;
+    }
+    fn opensLeft(g: Glyph) bool {
+        return g == .tr or g == .br or g == .horiz or g == .cross;
+    }
+};
+
+pub const LaneCell = struct { g: Glyph = .blank, color: u8 = 0 };
 
 /// One commit's row of the graph.
 pub const Lane = struct {
     /// The column the commit sits in.
     lane: u16,
     /// One per column that exists at this row.
-    cells: []Cell,
+    cells: []LaneCell,
 };
 
-/// Lanes for `commits` (children before parents). Every slice borrows
-/// `arena`.
+pub const lane_colors: u8 = 6;
+const cooldown: u16 = 5;
+
+/// Lanes for `commits` (children before parents) — Rust `log::layout`:
+/// a commit takes the lane waiting for it (or a fresh one), other lanes
+/// waiting for it close in with a corner, extra parents open lanes of
+/// their own, a freed lane is not reused for five rows, and a `─` run
+/// joins the node to its furthest corner, crossing passing lanes with
+/// `┼`. Every slice borrows `arena`.
 pub fn layout(arena: Allocator, commits: []const parse.Commit) Allocator.Error![]Lane {
-    var out = try arena.alloc(Lane, commits.len);
-    // Column → the hash expected next in it (null = free).
-    var active: std.ArrayListUnmanaged(?[]const u8) = .empty;
-    for (commits, 0..) |c, i| {
-        // The lane this commit was expected in, else the first free one.
-        var lane: ?usize = null;
-        for (active.items, 0..) |h, k| if (h != null and std.mem.eql(u8, h.?, c.hash)) {
-            lane = k;
+    const out = try arena.alloc(Lane, commits.len);
+    var lanes: std.ArrayListUnmanaged(?[]const u8) = .empty;
+    var cool: std.ArrayListUnmanaged(u16) = .empty;
+    for (commits, 0..) |c, ci| {
+        for (cool.items) |*cd| cd.* -|= 1;
+        var mine: ?usize = null;
+        for (lanes.items, 0..) |l, i| if (l != null and std.mem.eql(u8, l.?, c.hash)) {
+            mine = i;
             break;
         };
-        if (lane == null) {
-            for (active.items, 0..) |h, k| if (h == null) {
-                lane = k;
+        const my_lane = mine orelse blk: {
+            try lanes.append(arena, null);
+            try cool.append(arena, 0);
+            break :blk lanes.items.len - 1;
+        };
+        var merging: std.ArrayListUnmanaged(usize) = .empty;
+        for (lanes.items, 0..) |l, i| if (i != my_lane and l != null and std.mem.eql(u8, l.?, c.hash)) try merging.append(arena, i);
+        var branch_to: std.ArrayListUnmanaged(usize) = .empty;
+        if (c.parents.len > 1) for (c.parents[1..]) |p| {
+            var heads = false;
+            for (lanes.items) |l| if (l != null and std.mem.eql(u8, l.?, p)) {
+                heads = true;
+            };
+            if (heads) continue;
+            var free: ?usize = null;
+            for (lanes.items, 0..) |l, i| if (i != my_lane and l == null and cool.items[i] == 0) {
+                free = i;
                 break;
             };
-        }
-        if (lane == null) {
-            try active.append(arena, null);
-            lane = active.items.len - 1;
-        }
-        const me = lane.?;
-        // Any other column that also expected this commit (a sibling
-        // branch merging back in) closes into me.
-        var closing: std.ArrayListUnmanaged(usize) = .empty;
-        for (active.items, 0..) |h, k| if (k != me and h != null and std.mem.eql(u8, h.?, c.hash)) {
-            try closing.append(arena, k);
-            active.items[k] = null;
+            const slot = free orelse blk: {
+                try lanes.append(arena, null);
+                try cool.append(arena, 0);
+                break :blk lanes.items.len - 1;
+            };
+            lanes.items[slot] = p;
+            try branch_to.append(arena, slot);
         };
-        // The first parent inherits my column; extra parents open theirs.
-        var opening: std.ArrayListUnmanaged(usize) = .empty;
-        if (c.parents.len == 0) {
-            active.items[me] = null;
-        } else {
-            active.items[me] = c.parents[0];
-            for (c.parents[1..]) |p| {
-                var have = false;
-                for (active.items) |h| if (h != null and std.mem.eql(u8, h.?, p)) {
-                    have = true;
-                };
-                if (have) continue;
-                var slot: ?usize = null;
-                for (active.items, 0..) |h, k| if (h == null and k != me) {
-                    slot = k;
-                    break;
-                };
-                if (slot == null) {
-                    try active.append(arena, null);
-                    slot = active.items.len - 1;
-                }
-                active.items[slot.?] = p;
-                try opening.append(arena, slot.?);
+        const cells = try arena.alloc(LaneCell, lanes.items.len);
+        for (lanes.items, 0..) |l, i| {
+            const color: u8 = @intCast(i % lane_colors);
+            cells[i] = .{ .g = .blank, .color = color };
+            if (i == my_lane) {
+                cells[i] = .{ .g = .node, .color = color };
+            } else if (std.mem.indexOfScalar(usize, merging.items, i) != null) {
+                cells[i] = .{ .g = if (i < my_lane) .bl else .br, .color = color };
+            } else if (std.mem.indexOfScalar(usize, branch_to.items, i) != null) {
+                cells[i] = .{ .g = if (i < my_lane) .tl else .tr, .color = color };
+            } else if (l != null) {
+                cells[i] = .{ .g = .pass, .color = color };
             }
         }
-        // The row is as wide as the columns still open after it, or
-        // any edge that ends in this row — a lane closing into the node
-        // is painted on this row even though it is free from the next.
-        var width: usize = me + 1;
-        for (closing.items) |k| width = @max(width, k + 1);
-        for (opening.items) |k| width = @max(width, k + 1);
-        // Trim trailing free columns so the graph does not keep growing.
-        while (active.items.len > 0 and active.items[active.items.len - 1] == null) _ = active.pop();
-        width = @max(width, active.items.len);
-        const cells = try arena.alloc(Cell, width);
-        @memset(cells, .empty);
-        for (active.items, 0..) |h, k| if (h != null and k != me) {
-            cells[k] = .pass;
-        };
-        cells[me] = .node;
-        for (closing.items) |k| markEdge(cells, me, k, true);
-        for (opening.items) |k| markEdge(cells, me, k, false);
-        out[i] = .{ .lane = @intCast(me), .cells = cells };
+        var lo = my_lane;
+        var hi = my_lane;
+        for (merging.items) |e| {
+            lo = @min(lo, e);
+            hi = @max(hi, e);
+        }
+        for (branch_to.items) |e| {
+            lo = @min(lo, e);
+            hi = @max(hi, e);
+        }
+        var x = lo + 1;
+        while (x < hi) : (x += 1) {
+            if (cells[x].g == .blank) {
+                cells[x] = .{ .g = .horiz, .color = @intCast(my_lane % lane_colors) };
+            } else if (cells[x].g == .pass) {
+                cells[x].g = .cross;
+            }
+        }
+        out[ci] = .{ .lane = @intCast(my_lane), .cells = cells };
+        for (merging.items) |i| {
+            lanes.items[i] = null;
+            cool.items[i] = cooldown;
+        }
+        lanes.items[my_lane] = if (c.parents.len > 0) c.parents[0] else null;
+        if (lanes.items[my_lane] == null) cool.items[my_lane] = cooldown;
+        while (lanes.items.len > 0 and lanes.items[lanes.items.len - 1] == null) {
+            _ = lanes.pop();
+            _ = cool.pop();
+        }
     }
     return out;
-}
-
-/// A horizontal run from `me` to `k` ending in a corner; `closing`
-/// draws the corner as the lane's end (`┘`), else as its start (`┐`).
-fn markEdge(cells: []Cell, me: usize, k: usize, closing: bool) void {
-    if (k > cells.len - 1) return;
-    const lo = @min(me, k);
-    const hi = @max(me, k);
-    var x = lo + 1;
-    while (x < hi) : (x += 1) if (cells[x] == .empty) {
-        cells[x] = .horiz;
-    };
-    cells[k] = if (k > me) (if (closing) .merge_right else .branch_right) else (if (closing) .merge_left else .branch_left);
 }
 
 pub const State = struct {
     scroll: usize = 0,
     detail_scroll: usize = 0,
+    /// A jump landed off screen: centre it on the next paint.
+    center_next: bool = false,
 };
+
+// ─── sort ───────────────────────────────────────────────────────────────
 
 pub const SortCol = enum {
     none,
-    date,
     author,
-    subject,
-
-    pub fn label(c: SortCol) []const u8 {
-        return switch (c) {
-            .none => "GRAPH",
-            .date => "DATE",
-            .author => "AUTHOR",
-            .subject => "SUBJECT",
-        };
-    }
+    date,
+    sha,
 
     pub fn next(c: SortCol) SortCol {
         return switch (c) {
             .none => .date,
             .date => .author,
-            .author => .subject,
-            .subject => .none,
+            .author => .sha,
+            .sha => .none,
         };
     }
 };
 
 /// `none` is git's own topological order (the lanes only make sense
-/// there); a column sorts the list and the lanes collapse to a dot.
+/// there); a column sorts the list.
 pub const Sort = struct {
     col: SortCol = .none,
     asc: bool = false,
@@ -164,8 +229,8 @@ pub const Sort = struct {
 
 /// The display order under `sort`: indices into `commits`. `none`
 /// keeps git's order; date sorts newest first unless `asc`; author and
-/// subject sort A–Z (case-insensitive) unless `!asc`… — every column
-/// reads `asc` the same way, and ties keep git's order.
+/// sha sort A–Z when `asc` — every column reads `asc` the same way,
+/// and ties keep git's order.
 pub fn sortOrder(arena: Allocator, commits: []const parse.Commit, sort: Sort) Allocator.Error![]u32 {
     const out = try arena.alloc(u32, commits.len);
     for (out, 0..) |*o, i| o.* = @intCast(i);
@@ -180,7 +245,7 @@ pub fn sortOrder(arena: Allocator, commits: []const parse.Commit, sort: Sort) Al
                 .none => .eq,
                 .date => std.math.order(ca.time, cb.time),
                 .author => orderIgnoreCase(ca.author, cb.author),
-                .subject => orderIgnoreCase(ca.subject, cb.subject),
+                .sha => orderIgnoreCase(ca.hash, cb.hash),
             };
             if (ord == .eq) return a < b;
             return if (ctx.sort.asc) ord == .lt else ord == .gt;
@@ -219,7 +284,13 @@ pub const special_base: u32 = 0xF000_0000;
 pub const divider_id: u32 = 0xF000_0001;
 const sort_base: u32 = 0xF100_0000;
 const wip_btn_base: u32 = 0xF200_0000;
-const detail_row_base: u32 = 0xF300_0000;
+// 0xF300_0000 is the git toolbar's.
+const wip_unstaged_base: u32 = 0xF400_0000;
+const wip_staged_base: u32 = 0xF500_0000;
+const wip_stage_base: u32 = 0xF600_0000;
+const wip_unstage_base: u32 = 0xF700_0000;
+const detail_row_base: u32 = 0xF800_0000;
+const span: u32 = 0x0100_0000;
 
 pub fn sortId(c: SortCol) u32 {
     return sort_base + @intFromEnum(c);
@@ -230,16 +301,34 @@ pub fn sortOf(id: u32) ?SortCol {
     return @enumFromInt(id - sort_base);
 }
 
-/// The three WIP buttons, in paint order.
-pub const WipButton = enum { stage_all, unstage_all, commit };
+/// The detail column's controls: the two section buttons, the commit
+/// box's three, and the textarea itself.
+pub const WipButton = enum { stage_all, unstage_all, commit, ai_message, clear, textarea };
 
 pub fn wipButtonId(b: WipButton) u32 {
     return wip_btn_base + @intFromEnum(b);
 }
 
 pub fn wipButtonOf(id: u32) ?WipButton {
-    if (id < wip_btn_base or id >= wip_btn_base + 3) return null;
+    const n: u32 = @typeInfo(WipButton).@"enum".fields.len;
+    if (id < wip_btn_base or id >= wip_btn_base + n) return null;
     return @enumFromInt(id - wip_btn_base);
+}
+
+/// A file row of the working tree, or its `[+]` / `[−]`.
+pub const WipFileHit = struct { idx: u32, staged: bool, button: bool };
+
+pub fn wipFileId(h: WipFileHit) u32 {
+    const base: u32 = if (h.button) (if (h.staged) wip_unstage_base else wip_stage_base) else (if (h.staged) wip_staged_base else wip_unstaged_base);
+    return base + h.idx;
+}
+
+pub fn wipFileOf(id: u32) ?WipFileHit {
+    if (id >= wip_unstaged_base and id < wip_unstaged_base + span) return .{ .idx = id - wip_unstaged_base, .staged = false, .button = false };
+    if (id >= wip_staged_base and id < wip_staged_base + span) return .{ .idx = id - wip_staged_base, .staged = true, .button = false };
+    if (id >= wip_stage_base and id < wip_stage_base + span) return .{ .idx = id - wip_stage_base, .staged = false, .button = true };
+    if (id >= wip_unstage_base and id < wip_unstage_base + span) return .{ .idx = id - wip_unstage_base, .staged = true, .button = true };
+    return null;
 }
 
 pub fn detailRowId(i: u32) u32 {
@@ -247,21 +336,41 @@ pub fn detailRowId(i: u32) u32 {
 }
 
 pub fn detailRowOf(id: u32) ?u32 {
-    if (id < detail_row_base or id >= detail_row_base + 0x100_0000) return null;
+    if (id < detail_row_base or id >= detail_row_base + span) return null;
     return id - detail_row_base;
 }
 
 // ─── the document ───────────────────────────────────────────────────────
 
-/// What the detail panel shows: a commit (its message and files), or
-/// the working tree (its entries, with the staging buttons).
+/// One working-tree file for the detail column.
+pub const WipFile = struct { path: []const u8, letter: u8 };
+
+/// The commit box's text and state.
+pub const CommitDoc = struct {
+    text: []const u8 = "",
+    cursor: usize = 0,
+    focused: bool = false,
+    ai_streaming: bool = false,
+};
+
+/// The working tree, for the WIP row's detail column.
+pub const WipDoc = struct {
+    branch: ?[]const u8,
+    /// Rust's `format_wip_summary`: `2 change(s) · 1 staged · 1 new`.
+    summary: []const u8,
+    unstaged: []const WipFile = &.{},
+    staged: []const WipFile = &.{},
+    commit: CommitDoc = .{},
+};
+
+/// A commit's detail column.
 pub const DetailDoc = struct {
-    title: []const u8,
+    short: []const u8,
+    author: []const u8,
+    age: []const u8,
     message: []const u8 = "",
+    parents: []const []const u8 = &.{},
     files: []const parse.DetailFile = &.{},
-    /// The working tree's rows instead of a commit's.
-    wip: bool = false,
-    entries: []const parse.Entry = &.{},
     pending: bool = false,
 };
 
@@ -273,239 +382,589 @@ pub const Doc = struct {
     /// Over the virtual rows: the WIP row first when `has_wip`.
     cursor: usize,
     focused: bool,
-    header: []const u8,
     lane_spacing: u16 = 1,
-    /// Unix seconds, for the age column.
+    /// Unix seconds, for the ages.
     now: i64,
     sort: Sort = .{},
+    /// The active filters, chipped over the subject header; null = none.
+    filter_label: ?[]const u8 = null,
     has_wip: bool = false,
-    /// `WIP @ main · 3 changes`
-    wip_label: []const u8 = "",
-    /// The detail panel, when open; `detail_w` is its width (0 = none).
+    /// The working tree, painted in the detail column on the WIP row.
+    wip: ?WipDoc = null,
+    /// The selected commit's detail, painted otherwise.
     detail: ?DetailDoc = null,
-    detail_w: u16 = 0,
-    detail_focus: bool = false,
-    detail_cursor: usize = 0,
+    /// The detail column's width: a drag or config override, else a third.
+    detail_w: ?u16 = null,
+    branch_col: ?u16 = null,
+    author_col: ?u16 = null,
+    has_stash: bool = false,
 };
 
 /// What `draw` measured.
 pub const Painted = struct {
-    body: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
-    list: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
-    detail: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
+    /// The rows under the column header.
+    body: Rect = Rect.empty,
+    list: Rect = Rect.empty,
+    detail: Rect = Rect.empty,
+    /// The commit box, when painted.
+    textarea: Rect = Rect.empty,
+    /// The terminal cursor, when the commit box has the focus.
+    caret: ?Caret = null,
 };
 
-const lane_palette_len = 6;
-
-fn laneStyle(t: *const Theme, lane: usize, base: Style) Style {
-    return Theme.withFg(base, switch (lane % lane_palette_len) {
-        0 => t.accent.fg,
-        1 => t.syntax.string.fg,
-        2 => t.warn_fg.fg,
-        3 => t.info_fg.fg,
-        4 => t.syntax.keyword.fg,
-        else => t.error_fg.fg,
-    });
-}
-
-fn glyph(c: Cell, ascii: bool) []const u8 {
-    if (ascii) return switch (c) {
-        .empty => " ",
-        .node => "*",
-        .pass => "|",
-        .horiz => "-",
-        .branch_right, .branch_left => "\\",
-        .merge_right, .merge_left => "/",
-    };
-    return switch (c) {
-        .empty => " ",
-        .node => "●",
-        .pass => "│",
-        .horiz => "─",
-        .branch_right => "┐",
-        .branch_left => "┌",
-        .merge_right => "┘",
-        .merge_left => "└",
-    };
-}
+pub const sha_right_pad: u16 = 2;
 
 pub fn totalRows(doc: Doc) usize {
     return doc.commits.len + @as(usize, if (doc.has_wip) 1 else 0);
 }
 
-pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
-    const t = ui.theme;
-    ui.fill(area, t.bg);
-    var painted: Painted = .{};
-    if (area.isEmpty()) return painted;
-    _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(doc.header, area.w), Theme.onBg(t.accent, t.bg.bg));
-    if (area.h < 3) return painted;
-    const below = area.splitTop(1).rest;
-    drawColumnHeader(ui, pane, below.row(0), doc);
-    const body = below.splitTop(1).rest;
-    painted.body = body;
-    // The detail panel takes the right side when there is room.
-    var list = body;
-    if (doc.detail != null and doc.detail_w > 0 and body.w >= 60) {
-        const dw: u16 = @min(doc.detail_w, body.w / 2);
-        list = Rect.init(body.x, body.y, body.w - dw - 1, body.h);
-        const div_x = list.right();
-        const div_glyph: []const u8 = if (ui.ascii) "|" else "│";
-        var y: u16 = 0;
-        while (y < body.h) : (y += 1) _ = ui.putStr(div_x, body.y + y, 1, div_glyph, Theme.onBg(t.border, t.bg.bg));
-        ui.hit(Rect.init(div_x, body.y, 1, body.h), .{ .script_hit = .{ .pane = pane, .id = divider_id } });
-        const detail = Rect.init(div_x + 1, body.y, dw, body.h);
-        painted.detail = detail;
-        drawDetail(ui, pane, detail, view, doc, doc.detail.?);
-    }
-    painted.list = list;
-    drawList(ui, pane, list, view, doc);
-    return painted;
+fn laneColor(pal: Theme.Palette, idx: u8) Color {
+    return switch (idx % lane_colors) {
+        0 => pal.blue,
+        1 => pal.green,
+        2 => pal.yellow,
+        3 => pal.purple,
+        4 => pal.cyan,
+        else => pal.orange,
+    };
 }
 
-/// `  GRAPH   DATE ▼   AUTHOR   SUBJECT` — each a chip; the active sort
-/// carries its arrow and the chip ground.
-fn drawColumnHeader(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
-    const t = ui.theme;
-    ui.fill(r, t.panel_bg);
-    var x = r.x + 1;
-    const end = r.right();
-    inline for (.{ SortCol.none, SortCol.date, SortCol.author, SortCol.subject }) |c| {
-        const active = doc.sort.col == c;
-        const arrow: []const u8 = if (!active or c == .none) "" else if (doc.sort.asc) (if (ui.ascii) " ^" else " ▲") else (if (ui.ascii) " v" else " ▼");
-        const label = ui.fmt(" {s}{s} ", .{ c.label(), arrow });
-        const w = ui.width(label);
-        if (x + w <= end) {
-            const style = if (active) Theme.onBg(t.chip_active, t.panel_bg.bg) else Theme.onBg(t.muted, t.panel_bg.bg);
-            const cr = Rect.init(x, r.y, w, 1);
-            _ = ui.putStr(x, r.y, w, label, style);
-            ui.hit(cr, .{ .script_hit = .{ .pane = pane, .id = sortId(c) } });
-            x += w + 1;
+/// Code points, as Rust's `chars().count()` measures.
+fn chars(s: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(s) catch s.len;
+}
+
+fn takeChars(s: []const u8, n: usize) []const u8 {
+    var i: usize = 0;
+    var count: usize = 0;
+    while (i < s.len and count < n) : (count += 1) i += std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
+    return s[0..i];
+}
+
+fn skipChars(s: []const u8, n: usize) []const u8 {
+    return s[takeChars(s, n).len..];
+}
+
+/// Rust `pad_or_truncate`: exactly `width` code points, `…` closing a cut.
+pub fn padOrTruncate(arena: Allocator, s: []const u8, width: usize, ascii: bool) Allocator.Error![]const u8 {
+    if (width == 0) return "";
+    const n = chars(s);
+    if (n == width) return s;
+    if (n < width) {
+        const out = try arena.alloc(u8, s.len + (width - n));
+        @memcpy(out[0..s.len], s);
+        @memset(out[s.len..], ' ');
+        return out;
+    }
+    const ell: []const u8 = if (ascii) "~" else "\u{2026}";
+    if (width == 1) return ell;
+    return std.fmt.allocPrint(arena, "{s}{s}", .{ takeChars(s, width - 1), ell });
+}
+
+/// Rust `right_align`: `s` at the right of `width` code points, its
+/// head cut behind `…` when too long.
+pub fn rightAlign(arena: Allocator, s: []const u8, width: usize, ascii: bool) Allocator.Error![]const u8 {
+    if (width == 0) return "";
+    const n = chars(s);
+    if (n == width) return s;
+    if (n < width) {
+        const out = try arena.alloc(u8, s.len + (width - n));
+        @memset(out[0 .. width - n], ' ');
+        @memcpy(out[width - n ..], s);
+        return out;
+    }
+    const ell: []const u8 = if (ascii) "~" else "\u{2026}";
+    if (width == 1) return ell;
+    return std.fmt.allocPrint(arena, "{s}{s}", .{ ell, skipChars(s, n - (width - 1)) });
+}
+
+/// Rust `format_commit_datetime`: `MM/DD HH:MM` in UTC, shifted by
+/// `TZ_OFFSET_HOURS` when the environment sets it.
+pub fn commitDateTime(buf: []u8, secs: i64, offset_hours: i64) []const u8 {
+    const local = secs +| offset_hours * 3600;
+    const days = @divFloor(local, 86_400);
+    const day_secs = @mod(local, 86_400);
+    const hh: u32 = @intCast(@divFloor(day_secs, 3600));
+    const mm: u32 = @intCast(@mod(@divFloor(day_secs, 60), 60));
+    const ymd = daysToYmd(days);
+    return std.fmt.bufPrint(buf, "{d:0>2}/{d:0>2} {d:0>2}:{d:0>2}", .{ ymd.m, ymd.d, hh, mm }) catch "";
+}
+
+/// Howard Hinnant's civil-from-days.
+fn daysToYmd(days: i64) struct { y: i64, m: u32, d: u32 } {
+    const z = days + 719_468;
+    const era = @divFloor(z, 146_097);
+    const doe: u64 = @intCast(z - era * 146_097);
+    const yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    const y: i64 = @as(i64, @intCast(yoe)) + era * 400;
+    const doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const mp = (5 * doy + 2) / 153;
+    const d: u32 = @intCast(doy - (153 * mp + 2) / 5 + 1);
+    const m: u32 = @intCast(if (mp < 10) mp + 3 else mp - 9);
+    return .{ .y = if (m <= 2) y + 1 else y, .m = m, .d = d };
+}
+
+/// Rust `humanize_age`: `now`, `3m`, `5h`, `2d`, `7w`, `4mo`, `2y`.
+pub fn humanizeAge(buf: []u8, secs: i64) []const u8 {
+    const s = @max(secs, 0);
+    if (s < 60) return "now";
+    const m = @divFloor(s, 60);
+    if (m < 60) return std.fmt.bufPrint(buf, "{d}m", .{m}) catch "";
+    const h = @divFloor(m, 60);
+    if (h < 24) return std.fmt.bufPrint(buf, "{d}h", .{h}) catch "";
+    const d = @divFloor(h, 24);
+    if (d < 14) return std.fmt.bufPrint(buf, "{d}d", .{d}) catch "";
+    const w = @divFloor(d, 7);
+    if (w < 9) return std.fmt.bufPrint(buf, "{d}w", .{w}) catch "";
+    const mo = @divFloor(d, 30);
+    if (mo < 24) return std.fmt.bufPrint(buf, "{d}mo", .{mo}) catch "";
+    return std.fmt.bufPrint(buf, "{d}y", .{@divFloor(d, 365)}) catch "";
+}
+
+// ─── refs → chips ───────────────────────────────────────────────────────
+
+pub const RefKind = enum { head, local, remote, tag };
+pub const RefLabel = struct { kind: RefKind, name: []const u8 };
+
+/// `HEAD -> main, origin/main, tag: v1` → the chips in Rust's order:
+/// HEAD, local branches, remotes, tags, each group A–Z.
+pub fn refLabels(arena: Allocator, refs: []const u8) Allocator.Error![]RefLabel {
+    var out: std.ArrayListUnmanaged(RefLabel) = .empty;
+    var it = std.mem.splitSequence(u8, refs, ", ");
+    while (it.next()) |raw| {
+        const r = std.mem.trim(u8, raw, " ");
+        if (r.len == 0) continue;
+        if (std.mem.startsWith(u8, r, "HEAD -> ")) {
+            try out.append(arena, .{ .kind = .head, .name = "HEAD" });
+            try out.append(arena, .{ .kind = .local, .name = r["HEAD -> ".len..] });
+        } else if (std.mem.eql(u8, r, "HEAD")) {
+            try out.append(arena, .{ .kind = .head, .name = "HEAD" });
+        } else if (std.mem.startsWith(u8, r, "tag: ")) {
+            try out.append(arena, .{ .kind = .tag, .name = r["tag: ".len..] });
+        } else if (std.mem.indexOfScalar(u8, r, '/') != null) {
+            if (!std.mem.endsWith(u8, r, "/HEAD")) try out.append(arena, .{ .kind = .remote, .name = r });
+        } else {
+            try out.append(arena, .{ .kind = .local, .name = r });
         }
     }
+    const Ctx = struct {
+        fn lt(_: void, a: RefLabel, b: RefLabel) bool {
+            if (a.kind != b.kind) return @intFromEnum(a.kind) < @intFromEnum(b.kind);
+            return std.mem.lessThan(u8, a.name, b.name);
+        }
+    };
+    std.mem.sort(RefLabel, out.items, {}, Ctx.lt);
+    return out.items;
 }
 
-fn drawList(ui: Ui, pane: PaneId, body: Rect, view: *State, doc: Doc) void {
+/// Rust `chip_width_for_refs`: the chips joined by one space.
+fn chipWidth(labels: []const RefLabel) usize {
+    var sum: usize = 0;
+    for (labels, 0..) |r, i| {
+        sum += chars(r.name) + @as(usize, if (r.kind == .tag) 1 else 0);
+        if (i + 1 < labels.len) sum += 1;
+    }
+    return sum;
+}
+
+// ─── columns ────────────────────────────────────────────────────────────
+
+pub const Cols = struct { branch: usize = 0, author: usize = 0, age: usize = 0, sha: usize = 0 };
+pub const AutoSize = struct { branch_chars: usize, author_chars: usize, branch_override: ?u16, author_override: ?u16 };
+
+/// Rust `compute_column_widths`: the sha, the date, the author and the
+/// branch chips take their room in that order, each with its ` │ `,
+/// after the fixed cells and twenty for the subject.
+pub fn computeColumnWidths(total: usize, graph_w: usize, auto: AutoSize) Cols {
+    const min_fixed = 1 + 2 + graph_w + 3 + 20;
+    var remaining = total -| min_fixed;
+    var w: Cols = .{};
+    if (remaining >= 9 + 3) {
+        w.sha = 9;
+        remaining -= 9 + 3;
+    }
+    if (remaining >= 13 + 3) {
+        w.age = 13;
+        remaining -= 13 + 3;
+    } else if (remaining >= 11 + 3) {
+        w.age = 11;
+        remaining -= 11 + 3;
+    } else if (remaining >= 6 + 3) {
+        w.age = 6;
+        remaining -= 6 + 3;
+    }
+    const author_target: usize = if (auto.author_override) |n| n else std.math.clamp(auto.author_chars, 8, 22);
+    if (author_target > 0 and remaining >= author_target + 3) {
+        w.author = author_target;
+        remaining -= author_target + 3;
+    }
+    const branch_target: usize = if (auto.branch_override) |n| n else (if (auto.branch_chars == 0) 0 else std.math.clamp(auto.branch_chars, 8, 24));
+    if (branch_target > 0 and remaining >= branch_target + 3) w.branch = @min(branch_target, remaining -| 3);
+    return w;
+}
+
+/// Rust `reveal_scroll`: stepping scrolls the minimum; a jump to a row
+/// off screen lands it a third of the way down.
+pub fn revealScroll(selected: usize, scroll: usize, h: usize, want_center: bool) usize {
+    if (h == 0) return scroll;
+    const visible = selected >= scroll and selected < scroll + h;
+    if (want_center and !visible) return selected -| (h / 3);
+    if (selected < scroll) return selected;
+    if (selected >= scroll + h) return selected + 1 - h;
+    return scroll;
+}
+
+// ─── paint ──────────────────────────────────────────────────────────────
+
+/// A pen along one row.
+const Pen = struct {
+    ui: Ui,
+    x: u16,
+    y: u16,
+    end: u16,
+
+    fn put(p: *Pen, s: []const u8, style: Style) void {
+        p.x += p.ui.putStr(p.x, p.y, p.end -| p.x, s, style);
+    }
+
+    fn spaces(p: *Pen, n: usize, style: Style) void {
+        var i: usize = 0;
+        while (i < n) : (i += 1) p.put(" ", style);
+    }
+};
+
+pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     const t = ui.theme;
+    const pal = t.palette;
+    const arena = ui.arena;
+    const ground: Style = .{ .bg = pal.bg_dark };
+    var painted: Painted = .{};
+    ui.fill(area, ground);
+    if (area.isEmpty()) return painted;
     const total = totalRows(doc);
     if (total == 0) {
-        _ = ui.putStr(body.x + 2, body.y + 1, body.w -| 2, "No commits.", Theme.onBg(t.muted, t.bg.bg));
-        return;
+        _ = ui.putStr(area.x, area.y, area.w, "  (no commits — not a git repo, or empty history)", Theme.withFg(ground, pal.comment));
+        return painted;
     }
-    const wip: usize = if (doc.has_wip) 1 else 0;
-    var widest: usize = 1;
-    for (doc.lanes) |l| widest = @max(widest, l.cells.len);
-    const step: u16 = 1 + doc.lane_spacing;
-    const graph_w: u16 = if (doc.sort.col == .none) @intCast(@min(widest * step + 1, body.w / 2)) else 2;
-    const win = list_panel.scrollWindow(&view.scroll, doc.cursor, total, body.h);
+    const cursor = @min(doc.cursor, total - 1);
+
+    // ── the toolbar ──
+    var body_full = area;
+    if (area.w >= 40 and area.h >= 6) {
+        git_toolbar.draw(ui, area.row(0), .{ .pane = pane, .has_stash = doc.has_stash });
+        body_full = area.splitTop(1).rest;
+    }
+
+    // ── list | detail ──
+    const detail_w: u16 = if (body_full.w >= 80)
+        (if (doc.detail_w) |w| std.math.clamp(w, 20, body_full.w -| 40) else std.math.clamp(body_full.w / 3, 28, 60))
+    else
+        0;
+    var list_area = body_full;
+    var detail_area: ?Rect = null;
+    if (detail_w > 0) {
+        list_area = Rect.init(body_full.x, body_full.y, body_full.w - detail_w - 1, body_full.h);
+        detail_area = Rect.init(body_full.right() - detail_w, body_full.y, detail_w, body_full.h);
+        const div = Rect.init(list_area.right(), body_full.y, 1, body_full.h);
+        var y: u16 = 0;
+        while (y < div.h) : (y += 1) _ = ui.putStr(div.x, div.y + y, 1, if (ui.ascii) "|" else "\u{2502}", Theme.withFg(ground, pal.grey));
+        ui.hit(div, .{ .script_hit = .{ .pane = pane, .id = divider_id } });
+    }
+    painted.list = list_area;
+    if (list_area.h == 0) return painted;
+    const header_area = list_area.row(0);
+    const body = list_area.splitTop(1).rest;
+    painted.body = body;
+    const lane_pad: usize = doc.lane_spacing;
+
+    // ── the window ──
+    const h: usize = body.h;
+    const want_center = view.center_next;
+    view.center_next = false;
+    view.scroll = revealScroll(cursor, view.scroll, h, want_center);
+    view.scroll = @min(view.scroll, total -| @min(h, total));
+    const wip_off: usize = if (doc.has_wip) 1 else 0;
+    const first = view.scroll;
+    const last = @min(total, first + h);
+
+    var graph_w: usize = 0;
+    var auto_branch: usize = 0;
+    var auto_author: usize = 0;
+    var v = first;
+    while (v < last) : (v += 1) {
+        if (doc.has_wip and v == 0) continue;
+        const ci = doc.order[v - wip_off];
+        if (ci < doc.lanes.len) graph_w = @max(graph_w, doc.lanes[ci].cells.len);
+        const labels = refLabels(arena, doc.commits[ci].refs) catch &.{};
+        auto_branch = @max(auto_branch, chipWidth(labels));
+        auto_author = @max(auto_author, chars(doc.commits[ci].author));
+    }
+    graph_w = @min(graph_w, 24);
+    const cols = computeColumnWidths(@as(usize, body.w) -| sha_right_pad, graph_w, .{
+        .branch_chars = auto_branch,
+        .author_chars = auto_author,
+        .branch_override = doc.branch_col,
+        .author_override = doc.author_col,
+    });
+    drawHeader(ui, pane, header_area, doc, cols, graph_w);
+
+    // ── the rows ──
+    const graph_col_w = graph_w + lane_pad * (graph_w -| 1);
+    const branch_section: usize = if (cols.branch > 0) cols.branch + 3 else 2;
+    const suffix_used = (if (cols.author > 0) cols.author + 3 else 0) + (if (cols.age > 0) cols.age + 3 else 0) + (if (cols.sha > 0) cols.sha + 3 else 0) + sha_right_pad;
+    const prefix_used = 1 + 2 + branch_section + graph_col_w + 3;
+    const subject_w = @as(usize, body.w) -| (prefix_used + suffix_used);
+    const offset_hours: i64 = if (std.c.getenv("TZ_OFFSET_HOURS")) |p| (std.fmt.parseInt(i64, std.mem.span(p), 10) catch 0) else 0;
+    v = first;
     var y: u16 = 0;
-    var i = win.first;
-    while (i < total and y < body.h) : ({
-        i += 1;
+    while (v < last) : ({
+        v += 1;
         y += 1;
     }) {
         const r = body.row(y);
-        const sel = i == doc.cursor and doc.focused and !doc.detail_focus;
-        const base: Style = if (sel) Theme.onBg(t.fg, t.cursor_line.bg) else t.bg;
-        if (sel) ui.fill(r, t.cursor_line);
-        if (doc.has_wip and i == 0) {
-            // The row first, the buttons after it: the last hit wins.
+        const selected = v == cursor;
+        const row_bg: Color = if (selected) pal.bg2 else pal.bg_dark;
+        const base: Style = .{ .bg = row_bg };
+        ui.fill(r, base);
+        var pen: Pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
+        const sep = Theme.withFg(base, pal.line);
+        if (doc.has_wip and v == 0) {
+            // The WIP row: the yellow lane bar, the summary in the subject.
+            pen.put("\u{258C}", Theme.withFg(base, pal.yellow));
+            pen.put(if (selected) "\u{25B6} " else "  ", Theme.withFg(base, pal.yellow));
+            if (cols.branch > 0) {
+                var s = Theme.withFg(base, pal.yellow);
+                s.bold = true;
+                pen.put(padOrTruncate(arena, ui.fmt("WIP @ {s}", .{if (doc.wip) |w| (w.branch orelse "\u{2026}") else "\u{2026}"}), cols.branch, ui.ascii) catch "", s);
+                pen.put(" \u{2502} ", sep);
+            } else pen.put("  ", base);
+            pen.spaces(graph_col_w, base);
+            pen.put(" \u{2502} ", sep);
+            var s = Theme.withFg(base, pal.yellow);
+            s.italic = true;
+            pen.put(padOrTruncate(arena, if (doc.wip) |w| w.summary else "", subject_w, ui.ascii) catch "", s);
+            if (cols.author > 0) {
+                pen.put(" \u{2502} ", sep);
+                pen.spaces(cols.author, base);
+            }
+            if (cols.age > 0) {
+                pen.put(" \u{2502} ", sep);
+                pen.spaces(cols.age, base);
+            }
+            if (cols.sha > 0) {
+                pen.put(" \u{2502} ", sep);
+                pen.spaces(cols.sha, base);
+            }
             ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = 0 } });
-            drawWipRow(ui, pane, r, doc, base, graph_w);
             continue;
         }
-        const ci = doc.order[i - wip];
+        const ci = doc.order[v - wip_off];
         const c = doc.commits[ci];
-        // Lanes (git's order only); sorted lists get a dot.
-        if (doc.sort.col == .none) {
-            if (ci < doc.lanes.len) {
-                const l = doc.lanes[ci];
-                for (l.cells, 0..) |cell, k| {
-                    const x: u16 = r.x + @as(u16, @intCast(k)) * step;
-                    if (x >= r.x + graph_w) break;
-                    const colour_lane: usize = if (cell == .node) l.lane else k;
-                    _ = ui.putStr(x, r.y, 1, glyph(cell, ui.ascii), laneStyle(t, colour_lane, base));
-                    // The spacing cells continue a horizontal run.
-                    if (doc.lane_spacing > 0 and k + 1 < l.cells.len) {
-                        const joins = switch (cell) {
-                            .horiz, .branch_left, .merge_left => true,
-                            .node => l.cells[k + 1] == .horiz or l.cells[k + 1] == .branch_right or l.cells[k + 1] == .merge_right,
-                            else => false,
-                        };
-                        if (joins) {
-                            var s: u16 = 1;
-                            while (s <= doc.lane_spacing) : (s += 1) _ = ui.putStr(x + s, r.y, 1, glyph(.horiz, ui.ascii), laneStyle(t, l.lane, base));
-                        }
-                    }
-                }
+        const lane: Lane = if (ci < doc.lanes.len) doc.lanes[ci] else .{ .lane = 0, .cells = &.{} };
+        pen.put("\u{258C}", Theme.withFg(base, laneColor(pal, @intCast(lane.lane))));
+        pen.put(if (selected) "\u{25B6} " else "  ", Theme.withFg(base, pal.yellow));
+        if (cols.branch > 0) {
+            drawBranchChips(ui, &pen, refLabels(arena, c.refs) catch &.{}, cols.branch, base);
+            pen.put(" \u{2502} ", sep);
+        } else pen.put("  ", base);
+        var k: usize = 0;
+        while (k < graph_w) : (k += 1) {
+            const cell: LaneCell = if (k < lane.cells.len) lane.cells[k] else .{};
+            pen.put(cell.g.text(ui.ascii), Theme.withFg(base, laneColor(pal, cell.color)));
+            if (lane_pad > 0 and k + 1 < graph_w) {
+                const next: LaneCell = if (k + 1 < lane.cells.len) lane.cells[k + 1] else .{};
+                const joins = cell.g.opensRight() or next.g.opensLeft();
+                const color = if (cell.g.opensRight()) cell.color else next.color;
+                var p: usize = 0;
+                while (p < lane_pad) : (p += 1) pen.put(if (joins) Glyph.horiz.text(ui.ascii) else " ", if (joins) Theme.withFg(base, laneColor(pal, color)) else base);
             }
-        } else {
-            _ = ui.putStr(r.x, r.y, 1, if (ui.ascii) "*" else "·", laneStyle(t, 0, base));
         }
-        var x = r.x + graph_w;
-        const end = r.right();
-        var sha_style = Theme.onBg(t.warn_fg, base.bg);
-        sha_style.bold = false;
-        x += ui.putStr(x, r.y, end -| x, c.short(), sha_style);
-        x += ui.putStr(x, r.y, end -| x, " ", base);
-        if (c.refs.len > 0) {
-            x += ui.putStr(x, r.y, end -| x, ui.fmt("({s}) ", .{c.refs}), Theme.onBg(t.info_fg, base.bg));
+        pen.put(" \u{2502} ", sep);
+        pen.put(padOrTruncate(arena, c.subject, subject_w, ui.ascii) catch "", Theme.withFg(base, pal.fg));
+        if (cols.author > 0) {
+            pen.put(" \u{2502} ", sep);
+            pen.put(rightAlign(arena, c.author, cols.author, ui.ascii) catch "", Theme.withFg(base, pal.comment));
         }
-        var age_buf: [16]u8 = undefined;
-        const age = parse.relativeAge(&age_buf, c.time, doc.now);
-        const tail = ui.fmt("{s} {s}", .{ c.author, age });
-        const tail_w = ui.width(tail);
-        const avail: u16 = end -| x;
-        const subj_w = if (avail > tail_w + 2) avail - tail_w - 2 else avail;
-        x += ui.putStr(x, r.y, subj_w, ui.clipStr(c.subject, subj_w), Theme.onBg(t.fg, base.bg));
-        if (avail > tail_w + 2) _ = ui.putStrRight(end, r.y, tail_w, tail, Theme.onBg(t.muted, base.bg));
-        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(i) } });
+        if (cols.age > 0) {
+            var buf: [16]u8 = undefined;
+            pen.put(" \u{2502} ", sep);
+            pen.put(rightAlign(arena, commitDateTime(&buf, c.time, offset_hours), cols.age, ui.ascii) catch "", Theme.withFg(base, pal.comment));
+        }
+        if (cols.sha > 0) {
+            pen.put(" \u{2502} ", sep);
+            pen.put(rightAlign(arena, c.hash[0..@min(9, c.hash.len)], cols.sha, ui.ascii) catch "", Theme.withFg(base, pal.orange));
+        }
+        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(v) } });
     }
-    if (win.needs_bar and body.w > 4) {
+
+    // ── the list's scrollbar: a plain track, the thumb when it scrolls ──
+    if (body.w >= 8 and body.h > 0) {
         const bar = Rect.init(body.right() - 1, body.y, 1, body.h);
-        @import("scrollbar.zig").drawVertical(ui, bar, .{ .pane = pane }, total, body.h, view.scroll);
+        ui.fill(bar, .{ .bg = pal.bg2 });
+        const cells: usize = bar.h;
+        if (total > cells) {
+            const thumb_h = @max((cells * cells) / total, 1);
+            const max_scroll = total - cells;
+            const max_top = cells -| thumb_h;
+            const top = if (max_scroll > 0) (view.scroll * max_top) / max_scroll else 0;
+            var cy = top;
+            while (cy < @min(top + thumb_h, cells)) : (cy += 1) ui.fill(Rect.init(bar.x, bar.y + @as(u16, @intCast(cy)), 1, 1), .{ .bg = pal.comment });
+        }
+        ui.hit(bar, .{ .scrollbar = .{ .owner = .{ .pane = pane }, .axis = .v } });
+    }
+
+    // ── the detail column ──
+    if (detail_area) |da| {
+        painted.detail = da;
+        if (doc.has_wip and cursor == 0) {
+            if (doc.wip) |w| {
+                const wp = drawWipDetail(ui, pane, da, w);
+                painted.textarea = wp.textarea;
+                painted.caret = wp.caret;
+            }
+        } else if (doc.detail) |d| {
+            drawDetail(ui, pane, da, view, d);
+        }
+    }
+    return painted;
+}
+
+/// The column header row: `BRANCH / TAG │ GRAPH │ COMMIT MESSAGE │ AUTHOR │ DATE / TIME │ SHA`.
+fn drawHeader(ui: Ui, pane: PaneId, area: Rect, doc: Doc, cols: Cols, graph_w: usize) void {
+    const t = ui.theme;
+    const pal = t.palette;
+    const arena = ui.arena;
+    const bg: Style = .{ .bg = pal.bg_darker };
+    ui.fill(area, bg);
+    if (area.isEmpty()) return;
+    var pen: Pen = .{ .ui = ui, .x = area.x, .y = area.y, .end = area.right() };
+    const sep = Theme.withFg(bg, pal.grey);
+    var label = Theme.withFg(bg, pal.comment);
+    label.bold = true;
+    pen.put("   ", bg);
+    if (cols.branch > 0) {
+        pen.put(padOrTruncate(arena, "BRANCH / TAG", cols.branch, ui.ascii) catch "", label);
+        pen.put(" \u{2502} ", sep);
+    } else pen.put("  ", bg);
+    pen.put(padOrTruncate(arena, "GRAPH", graph_w, ui.ascii) catch "", label);
+    pen.put(" \u{2502} ", sep);
+    const branch_section: usize = if (cols.branch > 0) cols.branch + 3 else 2;
+    const fixed_used = 1 + 2 + branch_section + graph_w + 3 + (if (cols.author > 0) cols.author + 3 else 0) + (if (cols.age > 0) cols.age + 3 else 0) + (if (cols.sha > 0) cols.sha + 3 else 0) + sha_right_pad;
+    const subject_w = @as(usize, area.w) -| fixed_used;
+    if (doc.filter_label) |chip| {
+        var s = Theme.onBg(Theme.withFg(bg, pal.bg_darker), pal.yellow);
+        s.bold = true;
+        pen.put(padOrTruncate(arena, chip, subject_w, ui.ascii) catch "", s);
+    } else {
+        pen.put(padOrTruncate(arena, "COMMIT MESSAGE", subject_w, ui.ascii) catch "", label);
+    }
+    const sortable = [_]struct { col: SortCol, w: usize, name: []const u8 }{
+        .{ .col = .author, .w = cols.author, .name = "AUTHOR" },
+        .{ .col = .date, .w = cols.age, .name = "DATE / TIME" },
+        .{ .col = .sha, .w = cols.sha, .name = "SHA" },
+    };
+    for (sortable) |s| {
+        if (s.w == 0) continue;
+        pen.put(" \u{2502} ", sep);
+        const active = doc.sort.col == s.col;
+        const glyph: []const u8 = if (!active) "  " else if (doc.sort.asc) (if (ui.ascii) " ^" else " \u{25B2}") else (if (ui.ascii) " v" else " \u{25BC}");
+        var style = Theme.withFg(bg, if (active) pal.yellow else pal.comment);
+        style.bold = true;
+        const x = pen.x;
+        pen.put(rightAlign(arena, ui.fmt("{s}{s}", .{ s.name, glyph }), s.w, ui.ascii) catch "", style);
+        ui.hit(Rect.init(x, area.y, @intCast(@min(s.w, @as(usize, area.right() -| x))), 1), .{ .script_hit = .{ .pane = pane, .id = sortId(s.col) } });
     }
 }
 
-/// `● WIP @ main · 3 changes    [stage all] [unstage all] [commit…]`
-fn drawWipRow(ui: Ui, pane: PaneId, r: Rect, doc: Doc, base: Style, graph_w: u16) void {
-    const t = ui.theme;
-    _ = ui.putStr(r.x, r.y, 1, if (ui.ascii) "*" else "●", Theme.onBg(t.warn_fg, base.bg));
-    var x = r.x + graph_w;
-    const end = r.right();
-    var s = Theme.onBg(t.warn_fg, base.bg);
-    s.bold = true;
-    x += ui.putStr(x, r.y, end -| x, ui.clipStr(doc.wip_label, end -| x), s);
-    x += 2;
-    drawWipButtons(ui, pane, r, x, base);
+/// Rust `render_branch_chips`: HEAD cyan bold, branches green, remotes
+/// purple, tags yellow with `⊙`, one space apart, `+N` when they do
+/// not fit, padded to the column.
+fn drawBranchChips(ui: Ui, pen: *Pen, labels: []const RefLabel, width: usize, base: Style) void {
+    const pal = ui.theme.palette;
+    var used: usize = 0;
+    for (labels, 0..) |r, i| {
+        const text = if (r.kind == .tag) ui.fmt("{s}{s}", .{ if (ui.ascii) "o" else "\u{2299}", r.name }) else r.name;
+        const needed = chars(text) + @as(usize, if (i + 1 < labels.len) 1 else 0);
+        if (used + needed > width) {
+            const tail = ui.fmt("+{d}", .{labels.len - i});
+            if (used + chars(tail) <= width) {
+                pen.put(tail, Theme.withFg(base, pal.comment));
+                used += chars(tail);
+            }
+            break;
+        }
+        var s = Theme.withFg(base, switch (r.kind) {
+            .head => pal.cyan,
+            .local => pal.green,
+            .remote => pal.purple,
+            .tag => pal.yellow,
+        });
+        s.bold = r.kind == .head;
+        pen.put(text, s);
+        used += chars(text);
+        if (i + 1 < labels.len) {
+            pen.put(" ", base);
+            used += 1;
+        }
+    }
+    if (used < width) pen.spaces(width - used, base);
 }
 
-pub const wip_buttons = [_]struct { b: WipButton, label: []const u8 }{
-    .{ .b = .stage_all, .label = "[stage all]" },
-    .{ .b = .unstage_all, .label = "[unstage all]" },
-    .{ .b = .commit, .label = "[commit…]" },
+// ─── the detail column: a commit ────────────────────────────────────────
+
+const Seg = struct { text: []const u8, style: Style };
+const Line = struct {
+    segs: []const Seg,
+    /// A file row: its index, for the hit.
+    file: ?u32 = null,
 };
 
-fn drawWipButtons(ui: Ui, pane: PaneId, r: Rect, start_x: u16, base: Style) void {
-    const t = ui.theme;
-    var x = start_x;
-    const end = r.right();
-    for (wip_buttons) |wb| {
-        const label = if (ui.ascii and wb.b == .commit) "[commit...]" else wb.label;
-        const w = ui.width(label);
-        if (x + w > end) break;
-        const br = Rect.init(x, r.y, w, 1);
-        const style = if (ui.hovered(br)) Theme.onBg(t.chip_active, base.bg) else Theme.onBg(t.chip, base.bg);
-        _ = ui.putStr(x, r.y, w, label, style);
-        ui.hit(br, .{ .script_hit = .{ .pane = pane, .id = wipButtonId(wb.b) } });
-        x += w + 1;
+fn lineOf(arena: Allocator, segs: []const Seg) Allocator.Error!Line {
+    return .{ .segs = try arena.dupe(Seg, segs) };
+}
+
+pub const Para = struct { text: []const u8, pre: bool };
+
+/// Rust `reflow_commit_message`: the subject alone, blank lines and
+/// indented lines verbatim, list items their own paragraph, the rest
+/// joined into one logical line per paragraph.
+pub fn reflowMessage(arena: Allocator, message: []const u8) Allocator.Error![]const Para {
+    var out: std.ArrayListUnmanaged(Para) = .empty;
+    var para: std.ArrayListUnmanaged(u8) = .empty;
+    var it = std.mem.splitScalar(u8, message, '\n');
+    var i: usize = 0;
+    while (it.next()) |raw_line| : (i += 1) {
+        const raw = std.mem.trimEnd(u8, raw_line, "\r");
+        if (i == 0) {
+            try out.append(arena, .{ .text = raw, .pre = false });
+            continue;
+        }
+        const trimmed = std.mem.trim(u8, raw, " \t");
+        const list_item = std.mem.startsWith(u8, trimmed, "- ") or std.mem.startsWith(u8, trimmed, "* ") or std.mem.startsWith(u8, trimmed, "\u{2022} ");
+        if (trimmed.len == 0) {
+            if (para.items.len > 0) try out.append(arena, .{ .text = try para.toOwnedSlice(arena), .pre = false });
+            try out.append(arena, .{ .text = "", .pre = true });
+        } else if (raw[0] == ' ' or raw[0] == '\t') {
+            if (para.items.len > 0) try out.append(arena, .{ .text = try para.toOwnedSlice(arena), .pre = false });
+            try out.append(arena, .{ .text = raw, .pre = true });
+        } else if (list_item) {
+            if (para.items.len > 0) try out.append(arena, .{ .text = try para.toOwnedSlice(arena), .pre = false });
+            try para.appendSlice(arena, std.mem.trimEnd(u8, raw, " \t"));
+        } else if (para.items.len == 0) {
+            try para.appendSlice(arena, std.mem.trimEnd(u8, raw, " \t"));
+        } else {
+            try para.append(arena, ' ');
+            try para.appendSlice(arena, trimmed);
+        }
     }
+    if (para.items.len > 0) try out.append(arena, .{ .text = try para.toOwnedSlice(arena), .pre = false });
+    return out.items;
 }
 
 /// Bytes of `rest` that go on one row of width `w`: the longest prefix
 /// that fits, cut back to the last space when the line continues. Never
 /// past `rest.len` — the caller slices `rest` by it.
-fn wrapTake(rest: []const u8, w: u16, method: vaxis.gwidth.Method) usize {
+pub fn wrapTake(rest: []const u8, w: u16, method: vaxis.gwidth.Method) usize {
     var take = clip.fitCells(rest, w, method);
     if (take < rest.len) {
         if (std.mem.lastIndexOfScalar(u8, rest[0..take], ' ')) |sp| if (sp > 0) {
@@ -515,85 +974,350 @@ fn wrapTake(rest: []const u8, w: u16, method: vaxis.gwidth.Method) usize {
     return take;
 }
 
-/// The detail panel: title, the message wrapped to the width, a blank,
-/// `files (n)` and one row per file (the cursor row banded when the
-/// panel has focus). The working tree shows its entries instead, with
-/// the staging buttons on the first row.
-fn drawDetail(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc, d: DetailDoc) void {
+/// A commit's detail: `─ sha · author · age ────`, the message reflowed
+/// and wrapped, its parents, `changed files (n):` and one row per file.
+fn drawDetail(ui: Ui, pane: PaneId, area: Rect, view: *State, d: DetailDoc) void {
     const t = ui.theme;
-    ui.fill(area, t.panel_bg);
+    const pal = t.palette;
+    const arena = ui.arena;
+    const bg: Style = .{ .bg = pal.bg };
+    ui.fill(area, bg);
     if (area.w < 4 or area.h == 0) return;
-    const inner = Rect.init(area.x + 1, area.y, area.w -| 2, area.h);
-    // Lines to paint, then a window over them so a long message scrolls.
-    var lines: std.ArrayListUnmanaged(struct { text: []const u8, style: Style, file: ?u32 = null, buttons: bool = false }) = .empty;
-    var title = Theme.onBg(t.accent, t.panel_bg.bg);
-    title.bold = true;
-    lines.append(ui.arena, .{ .text = d.title, .style = title }) catch return;
-    if (d.wip) {
-        lines.append(ui.arena, .{ .text = "", .style = t.panel_bg, .buttons = true }) catch return;
-        lines.append(ui.arena, .{ .text = ui.fmt("changes ({d})", .{d.entries.len}), .style = Theme.onBg(t.muted, t.panel_bg.bg) }) catch return;
-        for (d.entries, 0..) |e, i| {
-            lines.append(ui.arena, .{ .text = ui.fmt("{c} {s}", .{ e.code, e.path }), .style = codeStyle(t, e.code, t.panel_bg), .file = @intCast(i) }) catch return;
-        }
-    } else if (d.pending) {
-        lines.append(ui.arena, .{ .text = "loading…", .style = Theme.onBg(t.muted, t.panel_bg.bg) }) catch return;
+    const w: usize = area.w;
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
+    const head = ui.fmt(" {s} \u{B7} {s} \u{B7} {s} ", .{ d.short, d.author, d.age });
+    const dashes = w -| (chars(head) + 1);
+    const dash: []const u8 = if (ui.ascii) "-" else "\u{2500}";
+    var dash_run: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < dashes) : (i += 1) dash_run.appendSlice(arena, dash) catch return;
+    lines.append(arena, lineOf(arena, &.{
+        .{ .text = dash, .style = Theme.withFg(bg, pal.line) },
+        .{ .text = head, .style = Theme.withFg(bg, pal.orange) },
+        .{ .text = dash_run.items, .style = Theme.withFg(bg, pal.line) },
+    }) catch return) catch return;
+    if (d.pending) {
+        lines.append(arena, lineOf(arena, &.{.{ .text = "  loading\u{2026}", .style = Theme.withFg(bg, pal.comment) }}) catch return) catch return;
     } else {
-        var it = std.mem.splitScalar(u8, d.message, '\n');
-        while (it.next()) |raw| {
-            const line = std.mem.trimEnd(u8, raw, "\r");
-            // Wrap at the width, on spaces where there is one.
-            var rest = line;
-            if (rest.len == 0) lines.append(ui.arena, .{ .text = "", .style = t.panel_bg }) catch return;
+        const paras = reflowMessage(arena, d.message) catch return;
+        for (paras) |p| {
+            const fg = Theme.withFg(bg, pal.fg);
+            if (p.pre) {
+                lines.append(arena, lineOf(arena, &.{.{ .text = ui.fmt("  {s}", .{p.text}), .style = fg }}) catch return) catch return;
+                continue;
+            }
+            var rest: []const u8 = ui.fmt("  {s}", .{p.text});
             while (rest.len > 0) {
-                const take = wrapTake(rest, inner.w, ui.canvas.widthMethod());
+                const take = wrapTake(rest, @intCast(w), ui.canvas.widthMethod());
                 if (take == 0) break;
-                lines.append(ui.arena, .{ .text = std.mem.trimEnd(u8, rest[0..take], " "), .style = Theme.onBg(t.fg, t.panel_bg.bg) }) catch return;
+                lines.append(arena, lineOf(arena, &.{.{ .text = std.mem.trimEnd(u8, rest[0..take], " "), .style = fg }}) catch return) catch return;
                 rest = rest[take..];
             }
         }
-        lines.append(ui.arena, .{ .text = "", .style = t.panel_bg }) catch return;
-        lines.append(ui.arena, .{ .text = ui.fmt("files ({d})", .{d.files.len}), .style = Theme.onBg(t.muted, t.panel_bg.bg) }) catch return;
-        for (d.files, 0..) |f, i| {
-            lines.append(ui.arena, .{ .text = ui.fmt("{c} {s}", .{ f.status, f.path }), .style = codeStyle(t, f.status, t.panel_bg), .file = @intCast(i) }) catch return;
+        if (d.parents.len > 0) {
+            var text: std.ArrayListUnmanaged(u8) = .empty;
+            text.appendSlice(arena, "  parents: ") catch return;
+            for (d.parents, 0..) |p, k| {
+                if (k > 0) text.appendSlice(arena, "  ") catch return;
+                text.appendSlice(arena, p[0..@min(9, p.len)]) catch return;
+            }
+            lines.append(arena, lineOf(arena, &.{.{ .text = text.items, .style = Theme.withFg(bg, pal.comment) }}) catch return) catch return;
         }
+        lines.append(arena, lineOf(arena, &.{}) catch return) catch return;
+        var hs = Theme.withFg(bg, pal.comment);
+        hs.bold = true;
+        lines.append(arena, lineOf(arena, &.{.{ .text = ui.fmt("  changed files ({d}):", .{d.files.len}), .style = hs }}) catch return) catch return;
+        const total = d.files.len;
+        const avail = @as(usize, area.h) -| (lines.items.len + 1);
+        const shown = @min(total, avail -| 1);
+        for (d.files[0..shown], 0..) |f, idx| {
+            const color = switch (f.status) {
+                'A' => pal.green,
+                'M' => pal.yellow,
+                'D' => pal.red,
+                'R' => pal.blue,
+                'C' => pal.cyan,
+                else => pal.comment,
+            };
+            const prefix = ui.fmt("  {c} ", .{f.status});
+            const pad = w -| (chars(prefix) + chars(f.path));
+            var l = lineOf(arena, &.{
+                .{ .text = prefix, .style = Theme.withFg(bg, color) },
+                .{ .text = f.path, .style = Theme.withFg(bg, pal.fg) },
+                .{ .text = padOrTruncate(arena, "", pad, ui.ascii) catch "", .style = bg },
+            }) catch return;
+            l.file = @intCast(idx);
+            lines.append(arena, l) catch return;
+        }
+        if (shown < total) lines.append(arena, lineOf(arena, &.{.{ .text = ui.fmt("  \u{2026} and {d} more", .{total - shown}), .style = Theme.withFg(bg, pal.comment) }}) catch return) catch return;
     }
-    // The cursor row (a file) stays in view.
-    var cursor_line: usize = 0;
-    for (lines.items, 0..) |l, i| if (l.file != null and l.file.? == doc.detail_cursor) {
-        cursor_line = i;
-    };
-    const win = list_panel.scrollWindow(&view.detail_scroll, if (doc.detail_focus) cursor_line else view.detail_scroll, lines.items.len, inner.h);
+    view.detail_scroll = 0;
     var y: u16 = 0;
-    var i = win.first;
-    while (i < lines.items.len and y < inner.h) : ({
-        i += 1;
-        y += 1;
-    }) {
-        const l = lines.items[i];
-        const r = inner.row(y);
-        const sel = l.file != null and l.file.? == doc.detail_cursor and doc.detail_focus and doc.focused;
-        var style = l.style;
-        if (sel) {
-            ui.fill(r, t.cursor_line);
-            style = Theme.onBg(style, t.cursor_line.bg);
-        }
-        if (l.buttons) {
-            drawWipButtons(ui, pane, r, r.x, t.panel_bg);
-            continue;
-        }
-        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(l.text, r.w), style);
+    for (lines.items) |l| {
+        if (y >= area.h) break;
+        const r = area.row(y);
+        var pen: Pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
+        for (l.segs) |s| pen.put(s.text, s.style);
         if (l.file) |fi| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = detailRowId(fi) } });
+        y += 1;
     }
 }
 
-fn codeStyle(t: *const Theme, code: u8, base: Style) Style {
-    return Theme.withFg(base, switch (code) {
-        'A' => t.syntax.string.fg,
-        'D' => t.error_fg.fg,
-        'M', 'R', 'C', 'T' => t.warn_fg.fg,
-        'U' => t.error_fg.fg,
-        else => t.muted.fg,
-    });
+// ─── the detail column: the working tree ────────────────────────────────
+
+const WipPainted = struct { textarea: Rect = Rect.empty, caret: ?Caret = null };
+
+/// Rust's ladder for the commit box: ten rows, eight, four, none.
+fn commitHeight(h: u16) u16 {
+    if (h >= 14) return 10;
+    if (h >= 10) return 8;
+    if (h >= 6) return 4;
+    return 0;
+}
+
+/// The working tree: `─ WIP @ branch · summary`, `▾ Unstaged Files (n)`
+/// with ` Stage All ` at the edge and a `[+]` per row, `▾ Staged Files
+/// (n)` with ` Unstage All ` and `[−]`, then the commit box pinned to the
+/// bottom.
+fn drawWipDetail(ui: Ui, pane: PaneId, area: Rect, wd: WipDoc) WipPainted {
+    const t = ui.theme;
+    const pal = t.palette;
+    const arena = ui.arena;
+    const bg: Style = .{ .bg = pal.bg };
+    const out: WipPainted = .{};
+    ui.fill(area, bg);
+    const commit_h = commitHeight(area.h);
+    const files_area = Rect.init(area.x, area.y, area.w, area.h -| commit_h);
+    const commit_area = Rect.init(area.x, area.y + (area.h -| commit_h), area.w, commit_h);
+    const w: usize = files_area.w;
+
+    const Hit = struct { line: usize, x0: usize, x1: usize, id: u32 };
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
+    var hits: std.ArrayListUnmanaged(Hit) = .empty;
+
+    // Header.
+    const head_full = ui.fmt(" WIP @ {s} \u{B7} {s}", .{ wd.branch orelse "(detached)", wd.summary });
+    const head = takeChars(head_full, w -| 1);
+    var hs = Theme.withFg(bg, pal.yellow);
+    hs.bold = true;
+    lines.append(arena, lineOf(arena, &.{ .{ .text = if (ui.ascii) "-" else "\u{2500}", .style = Theme.withFg(bg, pal.line) }, .{ .text = head, .style = hs } }) catch return out) catch return out;
+    lines.append(arena, lineOf(arena, &.{}) catch return out) catch return out;
+
+    const sections = [_]struct { label: []const u8, files: []const WipFile, button: []const u8, staged: bool, accent: Color }{
+        .{ .label = "Unstaged Files", .files = wd.unstaged, .button = " Stage All ", .staged = false, .accent = pal.green },
+        .{ .label = "Staged Files", .files = wd.staged, .button = " Unstage All ", .staged = true, .accent = pal.orange },
+    };
+    for (sections) |sec| {
+        const label_text = ui.fmt("  {s} {s} ({d})", .{ if (ui.ascii) "v" else "\u{25BE}", sec.label, sec.files.len });
+        const label_chars = chars(label_text);
+        const btn_chars = chars(sec.button);
+        const padding = @max(w -| (label_chars + btn_chars), 1);
+        var ls = Theme.withFg(bg, pal.fg);
+        ls.bold = true;
+        const active = sec.files.len > 0;
+        var bs = if (active) Theme.onBg(Theme.withFg(bg, pal.bg_dark), sec.accent) else Theme.withFg(bg, pal.comment);
+        bs.bold = active;
+        if (active) hits.append(arena, .{ .line = lines.items.len, .x0 = label_chars + padding, .x1 = label_chars + padding + btn_chars, .id = wipButtonId(if (sec.staged) .unstage_all else .stage_all) }) catch return out;
+        lines.append(arena, lineOf(arena, &.{
+            .{ .text = label_text, .style = ls },
+            .{ .text = padOrTruncate(arena, "", padding, ui.ascii) catch "", .style = bg },
+            .{ .text = sec.button, .style = bs },
+        }) catch return out) catch return out;
+        const btn: []const u8 = if (sec.staged) " [\u{2212}] " else " [+] ";
+        const btn_w = chars(btn);
+        for (sec.files, 0..) |f, i| {
+            const prefix = ui.fmt("    {c} ", .{f.letter});
+            const prefix_chars = chars(prefix);
+            const path_avail = @max(w -| (prefix_chars + btn_w + 1), 8);
+            const color = switch (f.letter) {
+                'M' => pal.yellow,
+                '?' => pal.comment,
+                '!' => pal.red,
+                'A' => pal.green,
+                'D' => pal.red,
+                else => pal.fg,
+            };
+            var fbs = Theme.onBg(Theme.withFg(bg, pal.bg_dark), sec.accent);
+            fbs.bold = true;
+            hits.append(arena, .{ .line = lines.items.len, .x0 = 0, .x1 = prefix_chars + path_avail, .id = wipFileId(.{ .idx = @intCast(i), .staged = sec.staged, .button = false }) }) catch return out;
+            hits.append(arena, .{ .line = lines.items.len, .x0 = prefix_chars + path_avail + 1, .x1 = prefix_chars + path_avail + 1 + btn_w, .id = wipFileId(.{ .idx = @intCast(i), .staged = sec.staged, .button = true }) }) catch return out;
+            lines.append(arena, lineOf(arena, &.{
+                .{ .text = prefix, .style = Theme.withFg(bg, color) },
+                .{ .text = padOrTruncate(arena, f.path, path_avail, ui.ascii) catch "", .style = Theme.withFg(bg, pal.fg) },
+                .{ .text = " ", .style = bg },
+                .{ .text = btn, .style = fbs },
+            }) catch return out) catch return out;
+        }
+        lines.append(arena, lineOf(arena, &.{}) catch return out) catch return out;
+    }
+
+    // The overflow: the last visible row says how many more.
+    const files_max: usize = files_area.h;
+    if (lines.items.len > files_max and files_max > 0) {
+        const dropped = lines.items.len - files_max + 1;
+        lines.shrinkRetainingCapacity(files_max - 1);
+        lines.append(arena, lineOf(arena, &.{.{ .text = ui.fmt("  \u{2026} and {d} more", .{dropped}), .style = Theme.withFg(bg, pal.comment) }}) catch return out) catch return out;
+    }
+    for (lines.items, 0..) |l, i| {
+        if (i >= files_area.h) break;
+        const r = files_area.row(@intCast(i));
+        var pen: Pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
+        for (l.segs) |s| pen.put(s.text, s.style);
+    }
+    // The hits, in paint order: a row's `[+]` sits over the row. A
+    // button cut by the column's edge keeps its visible cells (Rust
+    // drops the rect whole — a narrow column's Stage All is dead there).
+    for (hits.items) |hh| {
+        if (hh.line >= files_area.h or hh.line >= lines.items.len) continue;
+        if (hh.x0 >= w) continue;
+        const x1 = @min(hh.x1, w);
+        const r = Rect.init(files_area.x + @as(u16, @intCast(hh.x0)), files_area.y + @as(u16, @intCast(hh.line)), @intCast(x1 - hh.x0), 1);
+        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = hh.id } });
+    }
+
+    if (commit_h == 0) return out;
+    return drawCommitSection(ui, pane, commit_area, wd);
+}
+
+/// The commit box: `▾ Commit · N file(s) staged`, the textarea, the
+/// Commit / AI Message / Clear buttons, the hint.
+fn drawCommitSection(ui: Ui, pane: PaneId, area: Rect, wd: WipDoc) WipPainted {
+    const t = ui.theme;
+    const pal = t.palette;
+    const arena = ui.arena;
+    const bg: Style = .{ .bg = pal.bg };
+    var out: WipPainted = .{};
+    ui.fill(area, bg);
+    const staged_count = wd.staged.len;
+    const h = area.h;
+    const textarea_rows: u16 = @max(h -| @as(u16, if (h >= 5) 3 else 2), 1);
+    const textarea_y = area.y + 1;
+    const buttons_y = textarea_y + textarea_rows;
+    const hint_y = buttons_y + 1;
+    const header = if (staged_count == 0) ui.fmt("  {s} Commit  \u{B7} (nothing staged)", .{if (ui.ascii) "v" else "\u{25BE}"}) else ui.fmt("  {s} Commit  \u{B7} {d} file(s) staged", .{ if (ui.ascii) "v" else "\u{25BE}", staged_count });
+    var hs = Theme.withFg(bg, pal.fg);
+    hs.bold = true;
+    _ = ui.putStr(area.x, area.y, area.w, padOrTruncate(arena, header, area.w, ui.ascii) catch "", hs);
+    const pad_x: u16 = 2;
+    const content_w = area.w -| pad_x * 2;
+    if (content_w >= 4 and textarea_rows >= 1) {
+        const ta = Rect.init(area.x + pad_x, textarea_y, content_w, textarea_rows);
+        out.textarea = ta;
+        out.caret = drawTextarea(ui, pane, ta, wd.commit);
+        drawCommitButtons(ui, pane, Rect.init(area.x, buttons_y, area.w, 1), staged_count, wd.commit);
+        if (h >= 5) {
+            const hint: []const u8 = if (wd.commit.focused) "  Enter newline \u{B7} Esc unfocus \u{B7} Ctrl+Enter commit" else "  Click textarea to type \u{B7} c commit \u{B7} C AI message";
+            _ = ui.putStr(area.x, hint_y, area.w, padOrTruncate(arena, hint, area.w, ui.ascii) catch "", Theme.withFg(bg, pal.comment));
+        }
+        return out;
+    }
+    drawCommitButtons(ui, pane, Rect.init(area.x, area.y + 1, area.w, 1), staged_count, wd.commit);
+    return out;
+}
+
+/// Rust `layout_textarea_rows`: `(start, end)` byte ranges of the rows,
+/// char-wrapped at `width`, split on `\n`; at least one row.
+pub fn textareaRows(arena: Allocator, text: []const u8, width: usize) Allocator.Error![]const [2]usize {
+    var rows: std.ArrayListUnmanaged([2]usize) = .empty;
+    if (width == 0) {
+        try rows.append(arena, .{ 0, text.len });
+        return rows.items;
+    }
+    var row_start: usize = 0;
+    var cols: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) {
+        const n = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+        if (text[i] == '\n') {
+            try rows.append(arena, .{ row_start, i });
+            row_start = i + 1;
+            cols = 0;
+            i += 1;
+            continue;
+        }
+        if (cols >= width) {
+            try rows.append(arena, .{ row_start, i });
+            row_start = i;
+            cols = 0;
+        }
+        cols += 1;
+        i += n;
+    }
+    try rows.append(arena, .{ row_start, text.len });
+    return rows.items;
+}
+
+/// The row and column (code points) of byte `cursor` in `rows`.
+pub fn locateCursor(rows: []const [2]usize, text: []const u8, cursor: usize) struct { row: usize, col: usize } {
+    var idx: usize = 0;
+    for (rows, 0..) |r, i| {
+        idx = i;
+        if (cursor >= r[0] and cursor <= r[1]) break;
+    }
+    const start = rows[idx][0];
+    return .{ .row = idx, .col = chars(text[start..@min(cursor, text.len)]) };
+}
+
+fn drawTextarea(ui: Ui, pane: PaneId, area: Rect, c: CommitDoc) ?Caret {
+    const pal = ui.theme.palette;
+    const arena = ui.arena;
+    const bg: Style = .{ .bg = if (c.focused) pal.bg_dark else pal.bg2 };
+    ui.fill(area, bg);
+    ui.hit(area, .{ .script_hit = .{ .pane = pane, .id = wipButtonId(.textarea) } });
+    const content_w: usize = area.w;
+    if (content_w == 0 or area.h == 0) return null;
+    const rows = textareaRows(arena, c.text, content_w) catch return null;
+    const cur = locateCursor(rows, c.text, c.cursor);
+    const visible_h: usize = area.h;
+    const scroll = if (cur.row >= visible_h) cur.row + 1 - visible_h else 0;
+    var vrow: usize = 0;
+    while (vrow < visible_h) : (vrow += 1) {
+        const actual = scroll + vrow;
+        const line: []const u8 = if (actual < rows.len) c.text[rows[actual][0]..rows[actual][1]] else "";
+        _ = ui.putStr(area.x, area.y + @as(u16, @intCast(vrow)), area.w, padOrTruncate(arena, line, content_w, ui.ascii) catch "", Theme.withFg(bg, pal.fg));
+    }
+    if (c.text.len == 0 and !c.focused) {
+        const placeholder: []const u8 = if (c.ai_streaming) " (asking Claude for a commit message\u{2026}) " else " click here \u{B7} then type a commit message ";
+        var ps = Theme.withFg(bg, pal.comment);
+        ps.italic = true;
+        _ = ui.putStr(area.x, area.y, area.w, padOrTruncate(arena, placeholder, content_w, ui.ascii) catch "", ps);
+    }
+    if (c.focused) {
+        const visual_row = cur.row -| scroll;
+        if (visual_row < visible_h and cur.col <= content_w) return .{ .x = area.x + @as(u16, @intCast(cur.col)), .y = area.y + @as(u16, @intCast(visual_row)) };
+    }
+    return null;
+}
+
+fn buttonStyle(base: Style, fg: Color, on_bg: Color, active: bool, off: Style) Style {
+    if (!active) return off;
+    var s = Theme.onBg(Theme.withFg(base, fg), on_bg);
+    s.bold = true;
+    return s;
+}
+
+fn drawCommitButtons(ui: Ui, pane: PaneId, area: Rect, staged_count: usize, c: CommitDoc) void {
+    const pal = ui.theme.palette;
+    const bg: Style = .{ .bg = pal.bg };
+    ui.fill(area, bg);
+    const blank = std.mem.trim(u8, c.text, " \t\r\n").len == 0;
+    const commit_active = staged_count > 0 and !blank and !c.ai_streaming;
+    const ai_active = staged_count > 0 and !c.ai_streaming;
+    const clear_active = c.text.len > 0 and !c.ai_streaming;
+    const off = Theme.onBg(Theme.withFg(bg, pal.comment), pal.bg2);
+    const buttons = [_]struct { label: []const u8, style: Style, id: u32 }{
+        .{ .label = " Commit ", .style = buttonStyle(bg, pal.bg_dark, pal.green, commit_active, off), .id = wipButtonId(.commit) },
+        .{ .label = if (c.ai_streaming) " AI writing\u{2026} " else " AI Message ", .style = if (c.ai_streaming) buttonStyle(bg, pal.bg_dark, pal.yellow, true, off) else buttonStyle(bg, pal.bg_dark, pal.blue, ai_active, off), .id = wipButtonId(.ai_message) },
+        .{ .label = " Clear ", .style = buttonStyle(bg, pal.bg_dark, pal.red, clear_active, off), .id = wipButtonId(.clear) },
+    };
+    var pen: Pen = .{ .ui = ui, .x = area.x, .y = area.y, .end = area.right() };
+    pen.put("  ", bg);
+    for (buttons, 0..) |b, i| {
+        if (i > 0) pen.put("  ", bg);
+        const x = pen.x;
+        pen.put(b.label, b.style);
+        ui.hit(Rect.init(x, area.y, @intCast(@min(chars(b.label), @as(usize, area.right() -| x))), 1), .{ .script_hit = .{ .pane = pane, .id = b.id } });
+    }
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -619,150 +1343,253 @@ test "layout: a linear chain stays in lane 0" {
     for (l) |row| {
         try testing.expectEqual(@as(u16, 0), row.lane);
         try testing.expectEqual(@as(usize, 1), row.cells.len);
-        try testing.expectEqual(Cell.node, row.cells[0]);
+        try testing.expectEqual(Glyph.node, row.cells[0].g);
     }
 }
 
-test "layout: a merge opens a second lane for its second parent, which closes at the fork point" {
+test "layout: the fixture's merge — ●─╮ / ● │ / │ ● / ●─╯ — with the lane colours; a freed lane cools down before reuse" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    // m merges f (a feature commit off base) into main's x.
-    //   m -> x, f ; x -> base ; f -> base ; base
+    // merge → (main work, feature work); both → init.
     const cs = [_]parse.Commit{ commit("m", &.{ "x", "f" }), commit("x", &.{"base"}), commit("f", &.{"base"}), commit("base", &.{}) };
     const l = try layout(a.allocator(), &cs);
-    try testing.expectEqual(@as(u16, 0), l[0].lane);
     try testing.expectEqual(@as(usize, 2), l[0].cells.len);
-    try testing.expectEqual(Cell.node, l[0].cells[0]);
-    try testing.expectEqual(Cell.branch_right, l[0].cells[1]);
-    // x: lane 0, with f's lane passing beside it.
-    try testing.expectEqual(@as(u16, 0), l[1].lane);
-    try testing.expectEqual(Cell.pass, l[1].cells[1]);
-    // f sits in lane 1 while main's lane passes.
+    try testing.expectEqual(Glyph.node, l[0].cells[0].g);
+    try testing.expectEqual(Glyph.tr, l[0].cells[1].g);
+    try testing.expectEqual(@as(u8, 1), l[0].cells[1].color);
+    try testing.expectEqual(Glyph.node, l[1].cells[0].g);
+    try testing.expectEqual(Glyph.pass, l[1].cells[1].g);
+    try testing.expectEqual(Glyph.pass, l[2].cells[0].g);
+    try testing.expectEqual(Glyph.node, l[2].cells[1].g);
     try testing.expectEqual(@as(u16, 1), l[2].lane);
-    try testing.expectEqual(Cell.pass, l[2].cells[0]);
-    try testing.expectEqual(Cell.node, l[2].cells[1]);
-    // base: both lanes expected it; lane 1 closes into lane 0.
-    try testing.expectEqual(@as(u16, 0), l[3].lane);
-    try testing.expectEqual(Cell.node, l[3].cells[0]);
-    try testing.expectEqual(Cell.merge_right, l[3].cells[1]);
+    try testing.expectEqual(Glyph.node, l[3].cells[0].g);
+    try testing.expectEqual(Glyph.br, l[3].cells[1].g);
+    try testing.expectEqualStrings("\u{256E}", Glyph.tr.text(false));
+    try testing.expectEqualStrings("\u{256F}", Glyph.br.text(false));
+    try testing.expectEqualStrings("\\", Glyph.tr.text(true));
+    // A branch opened right after lane 1 was freed takes a new lane 3,
+    // not the cooling lane 1 (lane 2 is still live, so nothing trims).
+    const cs2 = [_]parse.Commit{ commit("m", &.{ "x", "f", "y" }), commit("f", &.{}), commit("x", &.{ "x2", "h" }), commit("y", &.{}), commit("x2", &.{}), commit("h", &.{}) };
+    const l2 = try layout(a.allocator(), &cs2);
+    try testing.expectEqual(@as(usize, 4), l2[2].cells.len);
+    try testing.expectEqual(Glyph.node, l2[2].cells[0].g);
+    try testing.expectEqual(Glyph.horiz, l2[2].cells[1].g);
+    try testing.expectEqual(Glyph.cross, l2[2].cells[2].g);
+    try testing.expectEqual(Glyph.tr, l2[2].cells[3].g);
 }
 
-test "draw paints lanes, sha, subject, the column chips, and registers row hits" {
-    var a = std.heap.ArenaAllocator.init(testing.allocator);
-    defer a.deinit();
-    const cs = [_]parse.Commit{ commit("aaaaaaaaaa", &.{"bbbbbbbbbb"}), commit("bbbbbbbbbb", &.{}) };
-    const l = try layout(a.allocator(), &cs);
-    var f = try Fixture.init(50, 5);
-    defer f.deinit();
-    var st: State = .{};
-    var ui = f.ui();
-    ui.ascii = true;
-    _ = draw(ui, 1, Rect.init(0, 0, 50, 5), &st, .{ .commits = &cs, .lanes = l, .order = try identity(a.allocator(), 2), .cursor = 0, .focused = true, .header = " graph ", .lane_spacing = 1, .now = 0 });
-    try f.expectRow(0, " graph");
-    try f.expectRow(1, "  GRAPH   DATE   AUTHOR   SUBJECT");
-    try f.expectContains("*  aaaaaaa aaaaaaaaaa");
-    try f.expectContains("*  bbbbbbb bbbbbbbbbb");
-    try testing.expectEqual(@as(u32, 1), f.hits.at(3, 3).?.script_hit.id);
-    try testing.expectEqual(sortId(.date), f.hits.at(11, 1).?.script_hit.id);
-}
-
-const three = [_]parse.Commit{
-    .{ .hash = "c1", .parents = &.{}, .author = "zed", .time = 30, .refs = "", .subject = "beta" },
-    .{ .hash = "b2", .parents = &.{}, .author = "Amy", .time = 10, .refs = "", .subject = "alpha" },
-    .{ .hash = "a3", .parents = &.{}, .author = "mia", .time = 20, .refs = "", .subject = "Gamma" },
-};
-
-test "sortOrder: none keeps git's order; date newest first (asc flips); author and subject A–Z ignoring case" {
+test "the spec's rows at 95 wide: the toolbar, the column header, the WIP row, the merge row with the date and the nine-char sha, the divider and the detail column" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    try testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, try sortOrder(arena, &three, .{}));
-    try testing.expectEqualSlices(u32, &.{ 0, 2, 1 }, try sortOrder(arena, &three, .{ .col = .date }));
-    try testing.expectEqualSlices(u32, &.{ 1, 2, 0 }, try sortOrder(arena, &three, .{ .col = .date, .asc = true }));
-    try testing.expectEqualSlices(u32, &.{ 1, 2, 0 }, try sortOrder(arena, &three, .{ .col = .author, .asc = true }));
-    try testing.expectEqualSlices(u32, &.{ 0, 2, 1 }, try sortOrder(arena, &three, .{ .col = .author, .asc = false }));
-    try testing.expectEqualSlices(u32, &.{ 1, 0, 2 }, try sortOrder(arena, &three, .{ .col = .subject, .asc = true }));
+    const cs = [_]parse.Commit{
+        .{ .hash = "7ce273514abc", .parents = &.{ "34b03ced4abc", "3ec2bf9e8abc" }, .author = "Chris", .time = 1757188800, .refs = "HEAD -> main", .subject = "merge feature" },
+        .{ .hash = "34b03ced4abc", .parents = &.{"482589dd2abc"}, .author = "Chris", .time = 1757188800, .refs = "", .subject = "main work" },
+        .{ .hash = "3ec2bf9e8abc", .parents = &.{"482589dd2abc"}, .author = "Chris", .time = 1757188800, .refs = "feature", .subject = "feature work" },
+        .{ .hash = "482589dd2abc", .parents = &.{}, .author = "Chris", .time = 1757130900, .refs = "", .subject = "init" },
+    };
+    const l = try layout(arena, &cs);
+    var f = try Fixture.init(95, 37);
+    defer f.deinit();
+    var st: State = .{};
+    const files = [_]WipFile{.{ .path = ".gitignore", .letter = '?' }};
+    const p = draw(f.ui(), 1, f.full(), &st, .{
+        .commits = &cs,
+        .lanes = l,
+        .order = try identity(arena, 4),
+        .cursor = 0,
+        .focused = true,
+        .now = 1757260800,
+        .has_wip = true,
+        .wip = .{ .branch = "main", .summary = "1 change(s) \u{B7} 1 new", .unstaged = &files },
+    });
+    try f.expectRow(0, try std.fmt.allocPrint(arena, "    {s} Undo   {s} Redo   {s} Pull   {s} Push   {s} Fetch   {s} Branch   {s} Commit   {s} Stash   {s} Reflog", .{ git_toolbar.glyphOf(.undo), git_toolbar.glyphOf(.redo), git_toolbar.glyphOf(.pull), git_toolbar.glyphOf(.push), git_toolbar.glyphOf(.fetch), git_toolbar.glyphOf(.branch), git_toolbar.glyphOf(.commit), git_toolbar.glyphOf(.stash), git_toolbar.glyphOf(.reflog) }));
+    try f.expectRow(1, "     G\u{2026} \u{2502} COMMIT MESSAGE          \u{2502} DATE / TIME   \u{2502}     SHA    \u{2502}\u{2500} WIP @ main \u{B7} 1 change(s) \u{B7} 1");
+    try f.expectRow(2, "\u{258C}\u{25B6}       \u{2502} 1 change(s) \u{B7} 1 new    \u{2502}               \u{2502}            \u{2502}");
+    try f.expectRow(3, "\u{258C}    \u{25CF}\u{2500}\u{256E} \u{2502} merge feature          \u{2502}   09/06 20:00 \u{2502} 7ce273514  \u{2502}  \u{25BE} Unstaged Files (1)  Stage A");
+    try f.expectRow(4, "\u{258C}    \u{25CF} \u{2502} \u{2502} main work              \u{2502}   09/06 20:00 \u{2502} 34b03ced4  \u{2502}    ? .gitignore           [+]");
+    try f.expectRow(5, "\u{258C}    \u{2502} \u{25CF} \u{2502} feature work           \u{2502}   09/06 20:00 \u{2502} 3ec2bf9e8  \u{2502}");
+    try f.expectRow(6, "\u{258C}    \u{25CF}\u{2500}\u{256F} \u{2502} init                   \u{2502}   09/06 03:55 \u{2502} 482589dd2  \u{2502}  \u{25BE} Staged Files (0)  Unstage A");
+    try f.expectRow(27, "                                                               \u{2502}  \u{25BE} Commit  \u{B7} (nothing staged)");
+    try f.expectRow(28, "                                                               \u{2502}   click here \u{B7} then type a \u{2026}");
+    try f.expectRow(35, "                                                               \u{2502}   Commit    AI Message    Clea");
+    try f.expectRow(36, "                                                               \u{2502}  Click textarea to type \u{B7} c c\u{2026}");
+    try testing.expect(p.detail.eql(Rect.init(64, 1, 31, 36)));
+    try testing.expect(p.textarea.eql(Rect.init(66, 28, 27, 7)));
+    // The hits: the rows by index, the sort columns, the divider, the
+    // file row and its [+], the textarea and the three buttons.
+    try testing.expectEqual(@as(u32, 0), f.hits.at(10, 2).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(10, 3).?.script_hit.id);
+    try testing.expectEqual(sortId(.date), f.hits.at(40, 1).?.script_hit.id);
+    try testing.expectEqual(sortId(.sha), f.hits.at(58, 1).?.script_hit.id);
+    try testing.expectEqual(divider_id, f.hits.at(63, 10).?.script_hit.id);
+    try testing.expectEqual(wipButtonId(.stage_all), f.hits.at(90, 3).?.script_hit.id);
+    try testing.expectEqual(WipFileHit{ .idx = 0, .staged = false, .button = false }, wipFileOf(f.hits.at(70, 4).?.script_hit.id).?);
+    try testing.expectEqual(WipFileHit{ .idx = 0, .staged = false, .button = true }, wipFileOf(f.hits.at(92, 4).?.script_hit.id).?);
+    try testing.expectEqual(wipButtonId(.textarea), f.hits.at(70, 29).?.script_hit.id);
+    try testing.expectEqual(wipButtonId(.commit), f.hits.at(68, 35).?.script_hit.id);
+    try testing.expectEqual(wipButtonId(.ai_message), f.hits.at(80, 35).?.script_hit.id);
+    try testing.expectEqual(wipButtonId(.clear), f.hits.at(92, 35).?.script_hit.id);
+    // Unstage All is inert with nothing staged.
+    try testing.expect(f.hits.at(90, 6) == null or f.hits.at(90, 6).?.script_hit.id != wipButtonId(.unstage_all));
+    // The lane colours: lane 0 blue, lane 1 green; the sha orange.
+    try testing.expect(f.fgEql(5, 3, .{ .fg = f.theme.palette.blue }));
+    try testing.expect(f.fgEql(7, 3, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(52, 3, .{ .fg = f.theme.palette.orange }));
+    try testing.expect(f.bgEql(10, 2, .{ .bg = f.theme.palette.bg2 }));
+    try testing.expect(f.bgEql(10, 3, .{ .bg = f.theme.palette.bg_dark }));
 }
 
-test "findByHashPrefix: case-insensitive, the first match wins, an empty prefix matches nothing" {
-    try testing.expectEqual(@as(?usize, 2), findByHashPrefix(&three, "A3"));
-    try testing.expectEqual(@as(?usize, 0), findByHashPrefix(&three, "c"));
-    try testing.expectEqual(@as(?usize, null), findByHashPrefix(&three, ""));
-    try testing.expectEqual(@as(?usize, null), findByHashPrefix(&three, "zz"));
-    try testing.expectEqual(@as(?usize, null), findByHashPrefix(&three, "c1c1c1"));
-}
-
-test "the WIP row paints its three buttons with hits, and the detail panel lists a commit's files" {
+test "the detail column's width: the drag override wins, then the config, else a third clamped to 28..60; under 80 there is none" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
     const cs = [_]parse.Commit{commit("aaaaaaaaaa", &.{})};
     const l = try layout(arena, &cs);
-    var f = try Fixture.init(120, 8);
+    var st: State = .{};
+    const widths = [_]struct { w: u16, override: ?u16, want: u16 }{
+        .{ .w = 95, .override = null, .want = 31 },
+        .{ .w = 200, .override = null, .want = 60 },
+        .{ .w = 80, .override = null, .want = 28 },
+        .{ .w = 95, .override = 40, .want = 40 },
+        .{ .w = 95, .override = 10, .want = 20 },
+        .{ .w = 95, .override = 90, .want = 55 },
+        .{ .w = 79, .override = 40, .want = 0 },
+    };
+    for (widths) |w| {
+        var f = try Fixture.init(w.w, 20);
+        defer f.deinit();
+        const p = draw(f.ui(), 1, f.full(), &st, .{ .commits = &cs, .lanes = l, .order = try identity(arena, 1), .cursor = 0, .focused = true, .now = 0, .detail_w = w.override, .detail = .{ .short = "aaaaaaaaa", .author = "a", .age = "now", .message = "aaaaaaaaaa" } });
+        try testing.expectEqual(w.want, p.detail.w);
+    }
+}
+
+test "sortOrder: none keeps git's order; date newest first (asc flips); author and sha A–Z ignoring case; the header's arrow follows" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const three = [_]parse.Commit{
+        .{ .hash = "c1", .parents = &.{}, .author = "zed", .time = 30, .refs = "", .subject = "beta" },
+        .{ .hash = "b2", .parents = &.{}, .author = "Amy", .time = 10, .refs = "", .subject = "alpha" },
+        .{ .hash = "a3", .parents = &.{}, .author = "mia", .time = 20, .refs = "", .subject = "Gamma" },
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, try sortOrder(arena, &three, .{}));
+    try testing.expectEqualSlices(u32, &.{ 0, 2, 1 }, try sortOrder(arena, &three, .{ .col = .date }));
+    try testing.expectEqualSlices(u32, &.{ 1, 2, 0 }, try sortOrder(arena, &three, .{ .col = .date, .asc = true }));
+    try testing.expectEqualSlices(u32, &.{ 1, 2, 0 }, try sortOrder(arena, &three, .{ .col = .author, .asc = true }));
+    try testing.expectEqualSlices(u32, &.{ 2, 1, 0 }, try sortOrder(arena, &three, .{ .col = .sha, .asc = true }));
+    try testing.expectEqual(@as(?usize, 2), findByHashPrefix(&three, "A3"));
+    try testing.expectEqual(@as(?usize, null), findByHashPrefix(&three, ""));
+    const l = try layout(arena, &three);
+    var f = try Fixture.init(70, 6);
     defer f.deinit();
     var st: State = .{};
-    var ui = f.ui();
-    ui.ascii = true;
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .commits = &three, .lanes = l, .order = try sortOrder(arena, &three, .{ .col = .date }), .cursor = 0, .focused = true, .now = 0, .sort = .{ .col = .date } });
+    try f.expectContains("DATE / TIME \u{25BC}");
+    try f.expectContains("beta");
+    try testing.expect(f.hits.at(3, 2).?.script_hit.id == 0);
+}
+
+test "helpers: padOrTruncate and rightAlign by code points, the UTC date, the ages, the chips from a refs line, the columns, the textarea rows" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    try testing.expectEqualStrings("ab   ", try padOrTruncate(arena, "ab", 5, false));
+    try testing.expectEqualStrings("abcd\u{2026}", try padOrTruncate(arena, "abcdefg", 5, false));
+    try testing.expectEqualStrings("\u{2026}", try padOrTruncate(arena, "abc", 1, false));
+    try testing.expectEqualStrings("   ab", try rightAlign(arena, "ab", 5, false));
+    try testing.expectEqualStrings("\u{2026}defg", try rightAlign(arena, "abcdefg", 5, false));
+    try testing.expectEqualStrings("\u{B7}\u{B7}  ", try padOrTruncate(arena, "\u{B7}\u{B7}", 4, false));
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("09/06 20:00", commitDateTime(&buf, 1757188800, 0));
+    try testing.expectEqualStrings("09/06 22:00", commitDateTime(&buf, 1757188800, 2));
+    try testing.expectEqualStrings("01/01 00:00", commitDateTime(&buf, 0, 0));
+    try testing.expectEqualStrings("now", humanizeAge(&buf, 5));
+    try testing.expectEqualStrings("3m", humanizeAge(&buf, 200));
+    try testing.expectEqualStrings("5h", humanizeAge(&buf, 5 * 3600));
+    try testing.expectEqualStrings("2d", humanizeAge(&buf, 2 * 86400));
+    try testing.expectEqualStrings("3w", humanizeAge(&buf, 21 * 86400));
+    try testing.expectEqualStrings("4mo", humanizeAge(&buf, 130 * 86400));
+    try testing.expectEqualStrings("2y", humanizeAge(&buf, 800 * 86400));
+    const labels = try refLabels(arena, "HEAD -> main, origin/main, tag: v1, feature, origin/HEAD");
+    try testing.expectEqual(@as(usize, 5), labels.len);
+    try testing.expectEqual(RefKind.head, labels[0].kind);
+    try testing.expectEqualStrings("feature", labels[1].name);
+    try testing.expectEqualStrings("main", labels[2].name);
+    try testing.expectEqual(RefKind.remote, labels[3].kind);
+    try testing.expectEqual(RefKind.tag, labels[4].kind);
+    try testing.expectEqual(@as(usize, 4 + 1 + 7 + 1 + 4 + 1 + 11 + 1 + 3), chipWidth(labels));
+    const rows = try textareaRows(arena, "hello world\nab", 5);
+    try testing.expectEqual(@as(usize, 4), rows.len);
+    try testing.expectEqual([2]usize{ 0, 5 }, rows[0]);
+    try testing.expectEqual([2]usize{ 5, 10 }, rows[1]);
+    try testing.expectEqual([2]usize{ 10, 11 }, rows[2]);
+    try testing.expectEqual([2]usize{ 12, 14 }, rows[3]);
+    const c = locateCursor(rows, "hello world\nab", 13);
+    try testing.expectEqual(@as(usize, 3), c.row);
+    try testing.expectEqual(@as(usize, 1), c.col);
+    const cols = computeColumnWidths(61, 2, .{ .branch_chars = 12, .author_chars = 14, .branch_override = null, .author_override = null });
+    try testing.expectEqual(@as(usize, 9), cols.sha);
+    try testing.expectEqual(@as(usize, 13), cols.age);
+    try testing.expectEqual(@as(usize, 0), cols.author);
+    try testing.expectEqual(@as(usize, 0), cols.branch);
+    const wide = computeColumnWidths(150, 2, .{ .branch_chars = 12, .author_chars = 14, .branch_override = null, .author_override = null });
+    try testing.expectEqual(@as(usize, 14), wide.author);
+    try testing.expectEqual(@as(usize, 12), wide.branch);
+    try testing.expectEqual(@as(usize, 7), revealScroll(10, 0, 10, true));
+    try testing.expectEqual(@as(usize, 1), revealScroll(10, 0, 10, false));
+    try testing.expectEqual(@as(usize, 0), revealScroll(3, 0, 10, true));
+}
+
+test "a commit's detail: the header rule, the reflowed message wrapped to the width, the parents, the file rows with hits; a focused commit box returns the caret" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const cs = [_]parse.Commit{commit("aaaaaaaaaa", &.{})};
+    const l = try layout(arena, &cs);
+    var f = try Fixture.init(100, 20);
+    defer f.deinit();
+    var st: State = .{};
     const files = [_]parse.DetailFile{ .{ .status = 'M', .path = "src/a.zig" }, .{ .status = 'A', .path = "new.txt" } };
-    const p = draw(ui, 1, Rect.init(0, 0, 120, 8), &st, .{
+    const p = draw(f.ui(), 1, f.full(), &st, .{
         .commits = &cs,
         .lanes = l,
         .order = try identity(arena, 1),
         .cursor = 0,
         .focused = true,
-        .header = " graph ",
+        .now = 0,
+        .detail = .{ .short = "aaaaaaaaa", .author = "amy", .age = "2d", .message = "Subject line\n\nA body that is long\nenough to wrap inside the panel.\n\n    code kept\n- item", .parents = &.{ "bbbbbbbbbbbb", "cccccccccccc" }, .files = &files },
+    });
+    try testing.expectEqual(@as(u16, 33), p.detail.w);
+    const x = p.detail.x;
+    try f.expectContains("\u{2500} aaaaaaaaa \u{B7} amy \u{B7} 2d \u{2500}");
+    try f.expectContains("  Subject line");
+    try f.expectContains("  A body that is long enough to");
+    try f.expectContains("      code kept");
+    try f.expectContains("  - item");
+    try f.expectContains("  parents: bbbbbbbbb  cccccccc");
+    try f.expectContains("  changed files (2):");
+    try f.expectContains("  M src/a.zig");
+    try f.expectContains("  A new.txt");
+    var found: ?u32 = null;
+    var y: u16 = 0;
+    while (y < 20) : (y += 1) if (f.hits.at(x + 3, y)) |h| if (h == .script_hit) if (detailRowOf(h.script_hit.id)) |i| if (i == 1) {
+        found = i;
+    };
+    try testing.expectEqual(@as(?u32, 1), found);
+    // The commit box with the focus: the caret after the text.
+    var g = try Fixture.init(100, 20);
+    defer g.deinit();
+    const q = draw(g.ui(), 1, g.full(), &st, .{
+        .commits = &cs,
+        .lanes = l,
+        .order = try identity(arena, 1),
+        .cursor = 0,
+        .focused = true,
         .now = 0,
         .has_wip = true,
-        .wip_label = "WIP @ main · 2 changes",
-        .detail = .{ .title = "aaaaaaa · a", .message = "Subject line\n\nA body that is long enough to wrap inside the panel.", .files = &files },
-        .detail_w = 40,
-        .detail_focus = true,
-        .detail_cursor = 1,
+        .wip = .{ .branch = "main", .summary = "working tree clean", .commit = .{ .text = "fix: it", .cursor = 7, .focused = true } },
     });
-    try testing.expectEqual(@as(u16, 40), p.detail.w);
-    try f.expectContains("WIP @ main · 2 changes");
-    try f.expectContains("[stage all] [unstage all] [commit...]");
-    // The buttons sit on row 2 (title, chips, WIP); find them by hit.
-    var found_stage = false;
-    var found_commit = false;
-    var x: u16 = 0;
-    while (x < p.list.right()) : (x += 1) {
-        if (f.hits.at(x, 2)) |h| if (h == .script_hit) {
-            if (wipButtonOf(h.script_hit.id)) |b| switch (b) {
-                .stage_all => found_stage = true,
-                .commit => found_commit = true,
-                else => {},
-            };
-        };
-    }
-    try testing.expect(found_stage);
-    try testing.expect(found_commit);
-    try testing.expectEqual(@as(u32, 0), f.hits.at(1, 2).?.script_hit.id);
-    try testing.expectEqual(@as(u32, 1), f.hits.at(1, 3).?.script_hit.id);
-    try testing.expectEqual(divider_id, f.hits.at(p.list.right(), 4).?.script_hit.id);
-    try f.expectContains("files (2)");
-    try f.expectContains("M src/a.zig");
-    try f.expectContains("A new.txt");
-    try testing.expectEqual(@as(u32, 1), detailRowOf(f.hits.at(p.detail.x + 2, 7).?.script_hit.id).?);
-}
-
-test "wrapTake: a line one cell wider than the panel takes the width, not the clipped form's bytes" {
-    const line = "x" ** 41;
-    try testing.expectEqual(@as(usize, 40), wrapTake(line, 40, .unicode));
-    try testing.expectEqual(@as(usize, 41), wrapTake(line, 41, .unicode));
-    try testing.expectEqual(@as(usize, 41), wrapTake(line, 120, .unicode));
-    // A continuing line breaks after its last space; a lone word does not.
-    try testing.expectEqual(@as(usize, 6), wrapTake("hello world", 8, .unicode));
-    try testing.expectEqual(@as(usize, 8), wrapTake("helloworld", 8, .unicode));
-    // Every width against every length walks the remainder without
-    // slicing past it — the loop drawDetail runs.
-    var w: u16 = 1;
-    while (w <= 45) : (w += 1) {
-        var rest: []const u8 = line;
-        while (rest.len > 0) {
-            const take = wrapTake(rest, w, .unicode);
-            try testing.expect(take > 0 and take <= rest.len);
-            rest = rest[take..];
-        }
-    }
+    try testing.expectEqual(Caret{ .x = q.textarea.x + 7, .y = q.textarea.y }, q.caret.?);
+    try g.expectContains("  Enter newline \u{B7} Esc unfocus \u{B7} \u{2026}");
 }
