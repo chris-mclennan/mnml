@@ -37,6 +37,9 @@ pub const Config = struct {
     /// The merged config the App starts on. The runner never loads a
     /// file: every `.test` runs on `e2e_defaults`.
     cfg: config.Config = e2e_defaults,
+    /// What the App's children inherit; the process's own when null.
+    /// The runner adds `MNML_FAKE_DAP` for the `dap_session_*` scripts.
+    env: ?*const std.process.Environ.Map = null,
     /// The loader's result when `cfg` came from files (the headless
     /// loop). Ownership passes to `Factory.create`, success or failure.
     loaded: ?config.Loaded = null,

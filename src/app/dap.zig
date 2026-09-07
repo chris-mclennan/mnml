@@ -36,6 +36,8 @@ const types = @import("../dap/types.zig");
 const syntax = @import("syntax.zig");
 const layout_mod = @import("layout.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const config = @import("../config/root.zig");
+const build_options = @import("build_options");
 
 pub const Session = client.Session;
 pub const Breakpoint = types.Breakpoint;
@@ -96,10 +98,15 @@ pub const State = struct {
     session: ?*Session = null,
     next_session: u32 = 1,
     arrow: ?Arrow = null,
+    /// The config layers read again by `dap.run` when the active file
+    /// had no adapter (an adapter added to `.mnml/config.zon` after
+    /// launch); `app.cfg.dap` borrows from it from then on.
+    adapters_loaded: ?config.Loaded = null,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.session) |s| s.deinit();
         self.session = null;
+        if (self.adapters_loaded) |*l| l.deinit();
         var it = self.breakpoints.iterator();
         while (it.next()) |e| {
             gpa.free(e.key_ptr.*);
@@ -427,9 +434,31 @@ pub fn run(app: *App) CommandError!void {
     const ep = try editorWithPath(app);
     const path = try arena.dupe(u8, ep.path);
     const ext = std.fs.path.extension(path);
-    const found = adapterFor(app, path) orelse return app.diag.fail(arena, "dap: no .dap.{s} adapter in config", .{if (ext.len > 1) ext[1..] else "<ext>"});
+    const found = adapterFor(app, path) orelse blk: {
+        try refreshAdapters(app);
+        break :blk adapterFor(app, path) orelse return app.diag.fail(arena, "dap: no .dap.{s} adapter in config", .{if (ext.len > 1) ext[1..] else "<ext>"});
+    };
     if (found.cfg.cmd.len == 0) return app.diag.fail(arena, "dap: .dap.{s} has no cmd", .{found.name});
     return startSession(app, found.cfg, path, null);
+}
+
+/// No adapter matched: read the config layers again and take their
+/// `.dap` table, so an adapter written to `.mnml/config.zon` after
+/// launch is found without a restart. Exec-bearing, hence trusted
+/// workspaces only; the data root is this App's, not the environment's.
+fn refreshAdapters(app: *App) Allocator.Error!void {
+    if (!app.workspace_trusted) return;
+    var env = try app.env.clone(app.gpa);
+    defer env.deinit();
+    if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
+    var fresh = try config.load.load(app.gpa, app.io, .{ .workspace = app.workspace, .trust = .trusted, .env = .{ .vars = &env } });
+    if (fresh.config.dap.count() == 0) {
+        fresh.deinit();
+        return;
+    }
+    if (app.dap.adapters_loaded) |*old| old.deinit();
+    app.dap.adapters_loaded = fresh;
+    app.cfg.dap = fresh.config.dap;
 }
 
 /// Spawn `cfg`'s adapter with its launch body (substituted), or a body
@@ -437,9 +466,11 @@ pub fn run(app: *App) CommandError!void {
 pub fn startSession(app: *App, cfg: app_mod.Config.DapAdapter, file: []const u8, body_override: ?[]const u8) CommandError!void {
     const arena = app.frame.allocator();
     endSession(app);
+    // `$NAME` in the command or an argument comes from the environment
+    // (`$MNML_FAKE_DAP` is how the corpus reaches the fake adapter).
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, cfg.cmd);
-    for (cfg.args) |a| try argv.append(arena, a);
+    try argv.append(arena, try client.expandEnv(arena, cfg.cmd, &app.env));
+    for (cfg.args) |a| try argv.append(arena, try client.expandEnv(arena, a, &app.env));
     const raw = body_override orelse blk: {
         if (cfg.launch.isEmpty()) break :blk "{\"program\":\"${file}\",\"cwd\":\"${workspaceFolder}\"}";
         var aw: std.Io.Writer.Allocating = .init(arena);
@@ -1523,4 +1554,173 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     try group.await(io);
     (F{ .handle = c2s[0], .flags = flags }).close(io);
     (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
+
+// ─── the real fake adapter (mnml-fake-dap), out of process ─────────────
+
+/// The program the integration test debugs, as `prog.dbg` in a temp
+/// workspace. Line numbers matter: the breakpoint goes on 4.
+const fake_program =
+    \\let x = 1
+    \\let p = struct{a=1,b="two"}
+    \\print "hello"
+    \\x = x + 1
+    \\fn f
+    \\  let y = 10
+    \\  x = x * y
+    \\end
+    \\call f
+    \\print x
+    \\
+;
+
+test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a breakpoint → stack/scopes/variables (a struct expands) → next → evaluate → setVariable → continue → terminated" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_dap_exe;
+    std.Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.writeFile(io, .{ .sub_path = "prog.dbg", .data = fake_program });
+    const file = try std.fs.path.join(gpa, &.{ ws, "prog.dbg" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_DAP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    const e = app.activeEditor().?;
+    e.buf.editor.placeCursor(3, 0);
+    try command.run(&app, .{ .static = .@"dap.toggle_breakpoint" });
+    try addWatch(&app, "x + 100");
+    try command.run(&app, .{ .static = .@"dap.show" });
+
+    // The adapter comes from `$MNML_FAKE_DAP`, as a `.test` would write it.
+    try startSession(&app, .{ .cmd = "$MNML_FAKE_DAP" }, file, null);
+    const s = app.dap.session.?;
+    const Cond = struct {
+        fn stopped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.stopped != null and ss.variables.contains(1) and ss.watch_results.contains("x + 100") and ss.threads.len > 0 and ss.output.items.len > 0;
+        }
+        fn expanded(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.variables.contains(1000);
+        }
+        fn stepped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.stopped != null and std.mem.eql(u8, ss.stopped.?.reason, "step") and ss.frames.len > 0 and ss.frames[0].line == 9 and ss.variables.contains(1) and ss.watch_results.contains("x + 100");
+        }
+        fn replied(a: *App) bool {
+            const id = a.panes.findKind(.dap_repl) orelse return false;
+            const p = &a.panes.get(id).?.dap_repl;
+            return p.history.items.len > 0 and !p.history.items[0].pending;
+        }
+        fn setVar(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            const vars = ss.variables.get(1) orelse return false;
+            return vars.len > 0 and std.mem.eql(u8, vars[0].value, "7") and std.mem.eql(u8, ss.watch_results.get("x + 100").?.value, "107");
+        }
+        fn ended(a: *App) bool {
+            return a.dap.session == null;
+        }
+    };
+
+    // The stop: the ▶ on line 4, the stack, the scope's variables, the
+    // watch, the output line.
+    try pumpUntil(&app, &app, Cond.stopped, 10_000);
+    try testing.expect(s.initialized);
+    try testing.expectEqualStrings("breakpoint", s.stopped.?.reason);
+    try testing.expectEqual(@as(usize, 1), s.frames.len);
+    try testing.expectEqualStrings("main", s.frames[0].name);
+    try testing.expectEqual(@as(u32, 4), s.frames[0].line);
+    try testing.expectEqualStrings(file, s.frames[0].source.?);
+    try testing.expectEqual(@as(u32, 3), app.dap.arrow.?.line);
+    try testing.expectEqual(@as(usize, 3), e.buf.editor.currentLine());
+    try testing.expectEqualStrings("main", s.threads[0].name);
+    try testing.expectEqual(@as(usize, 2), s.scopes.len);
+    try testing.expectEqualStrings("Locals", s.scopes[0].name);
+    try testing.expectEqualStrings("Globals", s.scopes[1].name);
+    try testing.expectEqual(@as(usize, 2), s.filters.items.len);
+    try testing.expect(s.enabled_filters.contains("uncaught"));
+    try testing.expect(!s.enabled_filters.contains("error"));
+    const locals = s.variables.get(1).?;
+    try testing.expectEqual(@as(usize, 2), locals.len);
+    try testing.expectEqualStrings("x", locals[0].name);
+    try testing.expectEqualStrings("1", locals[0].value);
+    try testing.expectEqualStrings("int", locals[0].ty.?);
+    try testing.expectEqualStrings("p", locals[1].name);
+    try testing.expectEqualStrings("{a=1, b=\"two\"}", locals[1].value);
+    try testing.expectEqual(@as(i64, 1000), locals[1].variables_reference);
+    try testing.expectEqualStrings("101", s.watch_results.get("x + 100").?.value);
+    try testing.expectEqualStrings("int", s.watch_results.get("x + 100").?.ty.?);
+    try testing.expectEqualStrings("hello", s.output.items[0].text);
+    try testing.expectEqualStrings("stdout", s.output.items[0].category);
+
+    // Expanding the struct fetches its fields.
+    try s.expanded.put(gpa, 1000, {});
+    try s.requestVariables(1000);
+    try pumpUntil(&app, &app, Cond.expanded, 10_000);
+    const kids = s.variables.get(1000).?;
+    try testing.expectEqual(@as(usize, 2), kids.len);
+    try testing.expectEqualStrings("a", kids[0].name);
+    try testing.expectEqualStrings("1", kids[0].value);
+    try testing.expectEqualStrings("b", kids[1].name);
+    try testing.expectEqualStrings("\"two\"", kids[1].value);
+    try testing.expectEqualStrings("string", kids[1].ty.?);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rows = try s.variableRows(arena.allocator());
+    // Locals, x, p, a, b, Globals (Globals is not expanded: the scopes
+    // reply expanded both; its rows come after).
+    try testing.expect(rows.len >= 6);
+    try testing.expectEqualStrings("p: struct", rows[2].label);
+    try testing.expectEqual(@as(u8, 2), rows[3].depth);
+    try testing.expectEqualStrings("a", rows[3].name);
+
+    // next: `x = x + 1` runs; the stop is on line 9 (`fn f` is skipped),
+    // the cache refilled, the watch re-evaluated.
+    try command.run(&app, .{ .static = .@"dap.next" });
+    try pumpUntil(&app, &app, Cond.stepped, 10_000);
+    try testing.expectEqual(@as(u32, 8), app.dap.arrow.?.line);
+    try testing.expectEqualStrings("2", s.variables.get(1).?[0].value);
+    try testing.expectEqualStrings("102", s.watch_results.get("x + 100").?.value);
+    try testing.expect(!s.variables.contains(1000));
+
+    // The REPL evaluates against the stop; a bad expression is an error row.
+    try command.run(&app, .{ .static = .@"dap.repl" });
+    for ("x * 10") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try pumpUntil(&app, &app, Cond.replied, 10_000);
+    const repl = &app.panes.get(app.panes.findKind(.dap_repl).?).?.dap_repl;
+    try testing.expectEqualStrings("20", repl.history.items[0].value);
+    try testing.expectEqualStrings("int", repl.history.items[0].ty.?);
+    for ("nope") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    const Cond2 = struct {
+        fn replied2(a: *App) bool {
+            const id = a.panes.findKind(.dap_repl) orelse return false;
+            const p = &a.panes.get(id).?.dap_repl;
+            return p.history.items.len > 1 and !p.history.items[1].pending;
+        }
+    };
+    try pumpUntil(&app, &app, Cond2.replied2, 10_000);
+    try testing.expectEqualStrings("no such variable", repl.history.items[1].err.?);
+
+    // setVariable: the Locals scope's `x` becomes 7; the parent is
+    // re-fetched and the watch follows.
+    try acceptSetVariable(&app, 1, "x", "7");
+    try pumpUntil(&app, &app, Cond.setVar, 10_000);
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "set = 7"));
+
+    // continue: f runs (x = 70), `print x`, the program ends: exited +
+    // terminated take the session down.
+    try command.run(&app, .{ .static = .@"dap.continue" });
+    try pumpUntil(&app, &app, Cond.ended, 10_000);
+    try testing.expect(app.dap.arrow == null);
+    try testing.expect(app.lastToast() != null);
 }

@@ -65,6 +65,10 @@ pub const Options = struct {
     tmp_root: []const u8 = "/tmp",
     /// The isolated `MNML_DATA_ROOT` every driver persists into.
     data_root: []const u8,
+    /// The environment every App's children inherit (`mnml-zig test`
+    /// passes the process's with `MNML_FAKE_DAP` added); null = the
+    /// process's own.
+    env: ?*const std.process.Environ.Map = null,
     /// Detect leaks without logging the leaked allocations. The list is
     /// what makes a leak fixable, so it stays on outside the harness's own
     /// tests (whose runner treats any logged error as a failure).
@@ -163,6 +167,7 @@ const Run = struct {
                 .data_root = self.opts.data_root,
                 .cols = self.size.cols,
                 .rows = self.size.rows,
+                .env = self.opts.env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
             const result = self.runScript(&script);

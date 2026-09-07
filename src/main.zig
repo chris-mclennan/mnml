@@ -214,6 +214,19 @@ fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: [
 
 // ─── mnml-zig test ──────────────────────────────────────────────────────
 
+/// `mnml-fake-dap` beside this executable, else the path `zig build`
+/// installs it at; null when neither exists. Owned.
+fn fakeDapPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    const name = if (@import("builtin").os.tag == .windows) "mnml-fake-dap.exe" else "mnml-fake-dap";
+    if (std.process.executableDirPathAlloc(io, gpa)) |dir| {
+        defer gpa.free(dir);
+        const beside = try std.fs.path.join(gpa, &.{ dir, name });
+        if (Io.Dir.cwd().access(io, beside, .{})) |_| return beside else |_| gpa.free(beside);
+    } else |_| {}
+    const installed = build_options.fake_dap_exe;
+    if (Io.Dir.cwd().access(io, installed, .{})) |_| return try gpa.dupe(u8, installed) else |_| return null;
+}
+
 /// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--parse] [--stub]`
 ///
 /// Runs `.test` scripts (default `tests/e2e`). `--gate` runs the Phase-0
@@ -304,6 +317,16 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         Io.Dir.cwd().deleteTree(io, data_root) catch {};
         gpa.free(data_root);
     }
+    // The `dap_session_*` scripts seed a `.dap` adapter whose `cmd` is
+    // `$MNML_FAKE_DAP`: the fake adapter installed beside this binary
+    // (`zig build`), or the build's install path when the runner is
+    // elsewhere. An operator's own value wins.
+    if (env.get("MNML_FAKE_DAP") == null) {
+        if (try fakeDapPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_FAKE_DAP", p);
+        }
+    }
     const opts: e2e.Options = .{
         .allow_shell = allow_shell,
         .network = network,
@@ -314,6 +337,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         .data_root = data_root,
         .name_filter = name_filter,
         .skip = skips.items,
+        .env = env,
     };
 
     var stub_factory: e2e.driver.StubFactory = .{};

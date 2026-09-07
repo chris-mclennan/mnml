@@ -660,6 +660,36 @@ fn appendEscaped(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8
     };
 }
 
+/// `$NAME` / `${NAME}` in an adapter's `cmd` or an argument, from
+/// `env`; a name that is not set stays as written. What lets a config
+/// point at a binary by variable — `$MNML_FAKE_DAP`, which the `.test`
+/// runner exports — without an absolute path in the file. Owned result.
+pub fn expandEnv(gpa: Allocator, text: []const u8, env: *const std.process.Environ.Map) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '$' and i + 1 < text.len) {
+            const braced = text[i + 1] == '{';
+            const start = if (braced) i + 2 else i + 1;
+            var end = start;
+            while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
+            const name = text[start..end];
+            const closed = !braced or (end < text.len and text[end] == '}');
+            if (name.len > 0 and closed) {
+                if (env.get(name)) |v| {
+                    try out.appendSlice(gpa, v);
+                    i = if (braced) end + 1 else end;
+                    continue;
+                }
+            }
+        }
+        try out.append(gpa, text[i]);
+        i += 1;
+    }
+    return out.toOwnedSlice(gpa);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -745,4 +775,21 @@ test "variableRows flattens scopes and only the expanded composites" {
     // A resume drops the cache and the expansion state.
     s.onResumed();
     try testing.expectEqual(@as(usize, 0), (try s.variableRows(arena.allocator())).len);
+}
+
+test "expandEnv: $NAME and ${NAME} from the map; unknown names and bare dollars stay" {
+    const gpa = testing.allocator;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_DAP", "/zig-out/bin/mnml-fake-dap");
+    try env.put("N", "1");
+    const a = try expandEnv(gpa, "$MNML_FAKE_DAP", &env);
+    defer gpa.free(a);
+    try testing.expectEqualStrings("/zig-out/bin/mnml-fake-dap", a);
+    const b = try expandEnv(gpa, "x${N}y$N/$NOPE ${UNCLOSED $ $$", &env);
+    defer gpa.free(b);
+    try testing.expectEqualStrings("x1y1/$NOPE ${UNCLOSED $ $$", b);
+    const c = try expandEnv(gpa, "plain", &env);
+    defer gpa.free(c);
+    try testing.expectEqualStrings("plain", c);
 }
