@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ DEBUG                  + │  prog.dbg 󰅖   󰐕                       │  Debug 󰅖   󰐕                         
+  │  󰍉 / filter              │ prog.dbg                                   │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
+   │▌● prog.dbg:4 · main      │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛                     │ ── started prog.dbg ──
+ 󰍉 │ ▾ VARIABLES (4)          │   1 let x = 1  x = 1                       │ hello
+   │ ▾ Locals                 │   2 let p = struct{a=1,b="two"}  p = {a=1, │
+ 󰊢 │     x: int = 1           │   3 print "hello"                          │
+   │   ▸ p: struct = {a=1, b=…│▶  4 x = x + 1  x = 1                       │
+▌ │ ▾ Globals                │   5 f╭────────────────────────────────────────────────────────────╮
+   │     x: int = 1           │   6  │x: int = 1                                                  │
+ 󰐱 │   ▸ p: struct = {a=1, b=…│   7  │Locals · debugger value · right-click the gutter: breakpoin…│
+   │ ▾ WATCH (0)              │   8 e╰────────────────────────────────────────────────────────────╯
+ 󰎒 │     no watches — w adds …│   9 call f                                 │
+   │ ▾ CALL STACK (1)         │  10 print x                                │
+ 󰚩 │   ● thread main          │                                            │
+   │   ▶ prog.dbg:4  main     │                                            │
+ 󰅣 │ ▾ BREAKPOINTS (1)        │                                            │
+   │   [x] prog.dbg:4         │                                            │
+  │   [ ] All errors         │                                            │
+   │   [x] Uncaught errors    │                                            │
+  │                          │                                            │
+   │                          │                                            │
+  │                          │                                            │
+   │                          │                                            │
+ 󱘣 │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │──────────────────────────│                                            │
+   │ x: int = 1             ⋮ │                                            │
+   │                          │                                            │
+   │ Locals · debugger value  │                                            │
+   │ · right-click the        │                                            │
+   │ gutter: breakpoints      │                                            │
+  │                          │                                            │
+   │                          │                                            │ > expression — Tab completes, ↑↓ history
+ VIEW  [no file]                                                                    F 57% ▲1.0    16:19  ws   —
+

@@ -90,7 +90,11 @@ pub fn status(app: *App, arena: Allocator) Allocator.Error!view.Status {
             const f = s.frames[0];
             const src = if (f.source) |sp| std.fs.path.basename(sp) else "?";
             const thread = threadName(s, st.thread_id);
-            return .{ .kind = .stopped, .text = try std.fmt.allocPrint(arena, "stopped at {s}:{d} \u{B7} thread {s}", .{ src, f.line, thread }) };
+            return .{
+                .kind = .stopped,
+                .text = try std.fmt.allocPrint(arena, "stopped at {s}:{d} \u{B7} thread {s}", .{ src, f.line, thread }),
+                .short = try std.fmt.allocPrint(arena, "{s}:{d} \u{B7} {s}", .{ src, f.line, thread }),
+            };
         }
         return .{ .kind = .stopped, .text = try std.fmt.allocPrint(arena, "stopped ({s})", .{st.label()}) };
     }

@@ -78,3 +78,31 @@ workspace at 120×40:
   the editor (`EDIT`), the rail still marking the explorer. The Zig
   right column matches those; the strip's `⌥1` / `+`, the outline's
   scrollbar column and its `/ filter` hint are the outline pane's.
+
+## The debugger (Zig-authored, 2026-09-07)
+
+The debug UI is the one deliberate departure from same-look: the Rust
+debug pane was never driven by anyone, so these screens are the spec
+and there is no Rust side to diff against. `tools/zig-spec.sh NAME
+[COLSxROWS]` seeds a throwaway workspace with `prog.dbg` (the program
+`src/app/dap.zig`'s integration test debugs), names `mnml-fake-dap` as
+the `.dbg` adapter in a throwaway data root (the home layer is trusted,
+so no dialog), feeds `steps-NAME.jsonl` over IPC and keeps the screen:
+
+- `zig-debug-stopped-120x40.txt` — `steps-debug-stopped.jsonl`: a
+  breakpoint on line 4, `dap.run`, `dap.show`. The DEBUG section in the
+  left column (the status row's narrow form `● prog.dbg:4 · main`,
+  VARIABLES with both scopes, WATCH, CALL STACK, BREAKPOINTS with the
+  adapter's two exception filters), the editor with the ▶ and its band,
+  the step toolbar strip under the breadcrumb, `  x = 1` inline values,
+  the hover tooltip over `x` (`ui.hover_tooltip`), and the Debug pane —
+  toolbar, `── started prog.dbg ──`, `hello`, the input row.
+- `zig-debug-stopped-80x24.txt` — the same at 80×24: the toolbar drops
+  to icons, the section scrolls, nothing overflows.
+- `zig-debug-console-120x40.txt` — `steps-debug-console.jsonl`: three
+  evaluations in the console (`2 : int`, a foldable struct, an error)
+  and a Tab completion.
+- `zig-debug-breakpoints-120x40.txt` — `steps-debug-breakpoints.jsonl`:
+  no session; a conditional (◐), a logpoint (◆), a plain (●) and a
+  disabled (○) breakpoint in the gutter, the BREAKPOINTS rows, and the
+  row menu opened with `view.context_menu_at_focus`.

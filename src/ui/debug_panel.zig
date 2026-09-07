@@ -41,9 +41,12 @@ pub const Sub = enum {
 };
 
 /// `● stopped at prog.dbg:3 · thread main`, `▶ running`, `○ no session`.
+/// `short` is the narrow form (`prog.dbg:3 · main`), painted when the
+/// full text does not fit the row.
 pub const Status = struct {
     kind: enum { none, starting, running, stopped, exited },
     text: []const u8,
+    short: ?[]const u8 = null,
 };
 
 pub const Header = struct { sub: Sub, count: usize, collapsed: bool };
@@ -132,7 +135,8 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             x += ui.putStr(x, r.y, end -| x, " ", base);
             var st = Theme.withFg(base, if (s.kind == .stopped) t.fg.fg else t.muted.fg);
             st.bold = s.kind == .stopped;
-            _ = ui.putStr(x, r.y, end -| x, ui.clipStr(s.text, end -| x), st);
+            const text: []const u8 = if (s.short) |sh| (if (ui.fitsIn(s.text, end -| x)) s.text else sh) else s.text;
+            _ = ui.putStr(x, r.y, end -| x, ui.clipStr(text, end -| x), st);
         },
         .header => |h| {
             var st = Theme.withFg(base, t.accent.fg);
@@ -256,7 +260,7 @@ test "every row kind paints its shape at the shipped width (26 cells) and regist
     var st: Panel.State = .{};
     defer st.deinit(testing.allocator);
     const rows = [_]Row{
-        .{ .status = .{ .kind = .stopped, .text = "stopped at prog.dbg:3 · thread main" } },
+        .{ .status = .{ .kind = .stopped, .text = "stopped at prog.dbg:3 · thread main", .short = "prog.dbg:3 · main" } },
         .{ .header = .{ .sub = .variables, .count = 2, .collapsed = false } },
         .{ .variable = .{ .row = .{ .depth = 0, .is_scope = true, .label = "Locals", .name = "Locals", .value = "", .var_ref = 1, .expanded = true, .expandable = true, .parent_ref = 0 }, .changed = false } },
         .{ .variable = .{ .row = .{ .depth = 1, .is_scope = false, .label = "x: int", .name = "x", .value = "7", .var_ref = 0, .expanded = false, .expandable = false, .parent_ref = 1 }, .changed = true } },
@@ -271,7 +275,7 @@ test "every row kind paints its shape at the shipped width (26 cells) and regist
     };
     _ = Panel.draw(&st, f.ui(), f.full(), props(&rows));
     try f.expectContains("DEBUG");
-    try f.expectRow(2, "▌● stopped at prog.dbg:3 …");
+    try f.expectRow(2, "▌● prog.dbg:3 · main");
     try f.expectRow(3, " ▾ VARIABLES (2)");
     try f.expectRow(4, " ▾ Locals");
     try f.expectRow(5, "     x: int = 7");

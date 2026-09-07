@@ -1,0 +1,34 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"open","path":"prog.dbg"}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"run-command","id":"dap.toggle_breakpoint_conditional"}
+{"cmd":"type","text":"x > 0"}
+{"cmd":"key","key":"enter"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"run-command","id":"dap.set_breakpoint_log_message"}
+{"cmd":"type","text":"hello {x}"}
+{"cmd":"key","key":"enter"}
+{"cmd":"key","key":"down"}
+{"cmd":"run-command","id":"dap.toggle_breakpoint"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"run-command","id":"dap.toggle_breakpoint"}
+{"cmd":"run-command","id":"dap.toggle_breakpoint_enabled"}
+{"cmd":"run-command","id":"view.activity_debug"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"wait_ms","ms":4200}
+{"cmd":"run-command","id":"view.context_menu_at_focus"}
+{"cmd":"wait_ms","ms":400}
