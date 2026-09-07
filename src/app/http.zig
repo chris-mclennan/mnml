@@ -1596,7 +1596,7 @@ test "a .curl file opens as a request pane; http.new opens a blank one; the fiel
     try testing.expectEqual(id, try app.openPath(path));
     try command.run(&app, .{ .static = .@"http.new" });
     const blank = activeRequest(&app).?;
-    try testing.expectEqualStrings("new request", blank.title());
+    try testing.expectEqualStrings("GET  new request", blank.title());
     try testing.expect(blank.block == .request and blank.field == .url);
     try command.run(&app, .{ .static = .@"http.set_method.post" });
     try testing.expectEqualStrings("method: POST", app.lastToast().?);

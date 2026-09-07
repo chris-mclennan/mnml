@@ -918,5 +918,5 @@ test "the green + chip on the header opens a blank request; its hit is the .new 
     try f.app.handle(.{ .mouse = .{ .x = found.?.x, .y = found.?.y, .kind = .press, .button = .left } });
     const pane = f.app.panes.get(f.app.active.?).?;
     try testing.expect(pane.* == .request);
-    try testing.expectEqualStrings("new request", pane.title());
+    try testing.expectEqualStrings("GET  new request", pane.title());
 }

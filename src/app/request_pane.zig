@@ -18,10 +18,13 @@ const Key = app_mod.Key;
 const key_mod = @import("../core/key.zig");
 const Mouse = key_mod.Mouse;
 const Rect = @import("../ui/rect.zig");
+const Theme = @import("../ui/theme.zig");
+const vaxis = @import("vaxis");
 const Ui = @import("../ui/context.zig");
 const text_field = @import("../ui/text_field.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const view = @import("../ui/request_view.zig");
+const command = @import("../core/command.zig");
 const parse = @import("../http/parse.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
@@ -101,6 +104,22 @@ pub const Draft = struct {
     }
 };
 
+/// The method's colour — the tab's pill, the request box's frame, the
+/// method chip (Rust's `icon_for_pane` table): GET green, POST orange,
+/// PUT blue, PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple,
+/// anything else blue.
+pub fn methodColor(t: *const Theme, m: []const u8) vaxis.Color {
+    const p = t.palette;
+    const Row = struct { name: []const u8, color: vaxis.Color };
+    const rows = [_]Row{
+        .{ .name = "GET", .color = p.green },      .{ .name = "POST", .color = p.orange }, .{ .name = "PUT", .color = p.blue },
+        .{ .name = "PATCH", .color = p.cyan },     .{ .name = "DELETE", .color = p.red },  .{ .name = "HEAD", .color = p.yellow },
+        .{ .name = "OPTIONS", .color = p.purple },
+    };
+    for (rows) |r| if (std.ascii.eqlIgnoreCase(r.name, m)) return r.color;
+    return p.blue;
+}
+
 pub const RequestPane = struct {
     gpa: Allocator,
     /// The committed request: method, headers, body. `url` is the buffer.
@@ -141,6 +160,10 @@ pub const RequestPane = struct {
     resp_editor: ?*editor_mod.Editor = null,
     resp_syntax: syntax.Syntax,
     body_wrap: bool = false,
+    /// A JSON response re-indented for the view, as the Rust view
+    /// pretty-prints it at paint time. The response keeps the wire
+    /// body (history, the diff, copy and the status title use that).
+    resp_pretty: ?[]u8 = null,
     /// Edited since it was loaded or saved.
     edited: bool = false,
     /// Opened by browsing (a single click); replaced by the next browse.
@@ -161,7 +184,7 @@ pub const RequestPane = struct {
     pub fn init(gpa: Allocator) Allocator.Error!RequestPane {
         var req = try Request.init(gpa);
         errdefer req.deinit(gpa);
-        const title_buf = try gpa.dupe(u8, "new request");
+        const title_buf = try gpa.dupe(u8, "GET  new request");
         return .{ .gpa = gpa, .request = req, .title_buf = title_buf, .resp_syntax = syntax.Syntax.init(gpa) };
     }
 
@@ -183,6 +206,7 @@ pub const RequestPane = struct {
         self.tests.deinit(gpa);
         if (self.draft) |*d| d.deinit(gpa);
         if (self.resp_editor) |e| e.deinit();
+        if (self.resp_pretty) |b| gpa.free(b);
         self.resp_syntax.deinit();
     }
 
@@ -227,21 +251,46 @@ pub const RequestPane = struct {
         self.headers_caret = self.headers_text.items.len;
     }
 
+    /// The tab label, Rust's `RequestPane::title`: `METHOD  summary`
+    /// when the file's leading `# …` comment named it, else `METHOD
+    /// host/path` (the scheme, query and fragment cut — the pill
+    /// carries the method, the rest reads as the request), else the
+    /// source file's name, else `METHOD  new request`.
     pub fn refreshTitle(self: *RequestPane) Allocator.Error!void {
         const gpa = self.gpa;
         const url = std.mem.trim(u8, self.url.items, " \t");
-        const fresh = if (self.summary) |s|
-            try std.fmt.allocPrint(gpa, "{s}  {s}", .{ self.request.method, s })
-        else if (url.len == 0)
-            try gpa.dupe(u8, "new request")
+        const summary = if (self.summary) |s| std.mem.trim(u8, s, " \t") else "";
+        const fresh = if (summary.len > 0)
+            try std.fmt.allocPrint(gpa, "{s}  {s}", .{ self.request.method, summary })
+        else if (url.len > 0)
+            try std.fmt.allocPrint(gpa, "{s}  {s}", .{ self.request.method, shortUrl(url) })
+        else if (self.source_path) |p|
+            try gpa.dupe(u8, std.fs.path.basename(p))
         else
-            try std.fmt.allocPrint(gpa, "{s}  {s}", .{ self.request.method, url });
+            try std.fmt.allocPrint(gpa, "{s}  new request", .{self.request.method});
         gpa.free(self.title_buf);
         self.title_buf = fresh;
     }
 
+    /// `https://host/path?q#f` → `host/path`.
+    pub fn shortUrl(url: []const u8) []const u8 {
+        var s = url;
+        inline for (.{ "https://", "http://" }) |scheme| {
+            if (std.mem.startsWith(u8, s, scheme)) {
+                s = s[scheme.len..];
+                break;
+            }
+        }
+        const cut = std.mem.indexOfAny(u8, s, "?#") orelse s.len;
+        return s[0..cut];
+    }
+
     pub fn title(self: *const RequestPane) []const u8 {
         return self.title_buf;
+    }
+
+    pub fn methodName(self: *const RequestPane) []const u8 {
+        return self.request.method;
     }
 
     pub fn setMethod(self: *RequestPane, m: []const u8) Allocator.Error!void {
@@ -304,8 +353,17 @@ pub const RequestPane = struct {
     /// A response landed (from the wire or a mock). The previous Done
     /// response is kept for the diff; the body goes through the
     /// highlighter.
-    pub fn setResponse(self: *RequestPane, resp: Response) Allocator.Error!void {
+    pub fn setResponse(self: *RequestPane, resp_in: Response) Allocator.Error!void {
         self.keepAsPrev();
+        const resp = resp_in;
+        if (resp.kind() == .json) {
+            if (std.json.parseFromSlice(std.json.Value, self.gpa, resp.body, .{})) |parsed| {
+                defer parsed.deinit();
+                if (std.json.Stringify.valueAlloc(self.gpa, parsed.value, .{ .whitespace = .indent_2 })) |pretty| {
+                    if (std.mem.eql(u8, pretty, resp.body)) self.gpa.free(pretty) else self.resp_pretty = pretty;
+                } else |_| {}
+            } else |_| {}
+        }
         self.state = .{ .done = resp };
         self.resp_view = .{};
         self.response_tab = .body;
@@ -317,6 +375,8 @@ pub const RequestPane = struct {
     /// is dropped. The state is `.idle` afterwards.
     pub fn keepAsPrev(self: *RequestPane) void {
         const gpa = self.gpa;
+        if (self.resp_pretty) |b| gpa.free(b);
+        self.resp_pretty = null;
         if (self.state == .done) {
             if (self.prev) |*p| p.deinit(gpa);
             self.prev = self.state.done;
@@ -326,6 +386,8 @@ pub const RequestPane = struct {
 
     pub fn setFailed(self: *RequestPane, msg: []const u8) Allocator.Error!void {
         const copy = try self.gpa.dupe(u8, msg);
+        if (self.resp_pretty) |b| self.gpa.free(b);
+        self.resp_pretty = null;
         self.state.deinit(self.gpa);
         self.state = .{ .failed = copy };
         self.block = .response;
@@ -351,22 +413,30 @@ pub const RequestPane = struct {
     /// Bodies up to this size get tree-sitter spans.
     const highlight_cap: usize = 1024 * 1024;
 
+    /// The body as the viewer shows it: re-indented JSON, else the wire body.
+    pub fn displayBody(self: *RequestPane) []const u8 {
+        if (self.resp_pretty) |b| return b;
+        const resp = self.response() orelse return "";
+        return resp.body;
+    }
+
     fn highlightResponse(self: *RequestPane) Allocator.Error!void {
         const resp = self.response() orelse return;
         if (self.resp_editor) |e| e.deinit();
         self.resp_editor = null;
         self.resp_syntax.deinit();
         self.resp_syntax = syntax.Syntax.init(self.gpa);
-        if (resp.body.len == 0 or resp.body.len > highlight_cap) return;
+        const body = self.displayBody();
+        if (body.len == 0 or body.len > highlight_cap) return;
         const pseudo: []const u8 = switch (resp.kind()) {
             .json => "response.json",
             .html => "response.html",
             .xml => "response.xml",
             .text => return,
         };
-        const ed = try editor_mod.Editor.init(self.gpa, resp.body);
+        const ed = try editor_mod.Editor.init(self.gpa, body);
         errdefer ed.deinit();
-        self.resp_syntax.setLanguage(pseudo, resp.body);
+        self.resp_syntax.setLanguage(pseudo, body);
         if (!self.resp_syntax.hasLanguage()) {
             ed.deinit();
             return;
@@ -398,6 +468,23 @@ pub const RequestPane = struct {
     /// Enter the request block on `tab`; the caret lands in its content.
     /// In the split, bringing the right half's tab to the left swaps the
     /// halves so both stay visible.
+    /// The top bar's Clear: every field empty, the committed request
+    /// with them.
+    pub fn clearFields(self: *RequestPane) Allocator.Error!void {
+        const gpa = self.gpa;
+        self.url.clearRetainingCapacity();
+        self.url_caret = 0;
+        self.body.clearRetainingCapacity();
+        self.body_caret = 0;
+        self.headers_text.clearRetainingCapacity();
+        self.headers_caret = 0;
+        self.source.clearRetainingCapacity();
+        self.source_caret = 0;
+        self.request.clearHeaders(gpa);
+        try self.commit();
+        self.edited = true;
+    }
+
     pub fn showTab(self: *RequestPane, tab: EditTab) void {
         if (self.split and tab == self.split_tab and tab != self.edit_tab) self.split_tab = self.edit_tab;
         self.edit_tab = tab;
@@ -807,7 +894,7 @@ fn responseKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
 }
 
 fn clampScroll(rp: *RequestPane) void {
-    const body: []const u8 = if (rp.response()) |r| r.body else if (rp.streaming()) |st| st.body.items else "";
+    const body: []const u8 = if (rp.response() != null) rp.displayBody() else if (rp.streaming()) |st| st.body.items else "";
     const total: u32 = @intCast(std.mem.count(u8, body, "\n") + 1);
     if (rp.resp_view.scroll_line >= total) rp.resp_view.scroll_line = total -| 1;
 }
@@ -903,6 +990,11 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         rp.row_cursor = hit_id - view.hit_param_row;
         return;
     }
+    if (hit_id >= view.hit_param_del and hit_id < view.hit_param_del + 100) {
+        rp.showTab(.params);
+        try rp.removeParam(hit_id - view.hit_param_del);
+        return;
+    }
     if (hit_id >= view.hit_auth_row and hit_id < view.hit_auth_row + 100) {
         rp.showTab(.auth);
         rp.row_cursor = hit_id - view.hit_auth_row;
@@ -913,6 +1005,46 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         rp.showTab(.vars);
         rp.row_cursor = hit_id - view.hit_var_row;
         return;
+    }
+    switch (hit_id) {
+        view.hit_orient => {
+            rp.orientation = rp.orientation.next();
+            app.toast("layout: {s}", .{rp.orientation.label()});
+            return;
+        },
+        view.hit_ai => return runCmd(app, .@"http.ai_debug"),
+        view.hit_ai_chip => return runCmd(app, .@"http.copy_ai_prompt"),
+        view.hit_save => return runCmd(app, .@"http.save"),
+        view.hit_code => return @import("cmd_http.zig").copyAsPicker(app) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+        },
+        view.hit_clear => {
+            try rp.clearFields();
+            app.toast("request cleared", .{});
+            return;
+        },
+        view.hit_copy => {
+            if (rp.response()) |r| {
+                try app.clipboard.set(r.body, false);
+                app.toast("response body copied", .{});
+            } else app.toast("no response yet", .{});
+            return;
+        },
+        view.hit_type => {
+            app.toast("response format follows the content-type", .{});
+            return;
+        },
+        view.hit_add_row => {
+            rp.showTab(.params);
+            if (rp.draft == null) try rp.startDraft();
+            return;
+        },
+        view.hit_draft_commit => {
+            _ = try rp.commitDraft();
+            return;
+        },
+        else => {},
     }
     switch (hit_id) {
         view.hit_method => {
@@ -931,7 +1063,8 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
                 return;
             }
             if (hit_rect) |r| {
-                const col: usize = m.x -| r.x;
+                // The box's text starts one cell in.
+                const col: usize = m.x -| (r.x + 1);
                 rp.url_caret = byteAtCol(rp.url.items, col);
             }
         },
@@ -959,6 +1092,13 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         },
         else => {},
     }
+}
+
+fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
+    command.run(app, .{ .static = id }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+    };
 }
 
 fn byteAtCol(text: []const u8, col: usize) usize {
@@ -1020,14 +1160,13 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
             .status = r.status,
             .status_text = r.status_text,
             .headers = hs,
-            .body = r.body,
+            .body = rp.displayBody(),
             .body_bytes = r.body.len,
             .truncated = r.truncated,
             .timing = .{ .wait_ms = r.timing.wait_ms, .receive_ms = r.timing.receive_ms, .total_ms = r.timing.total_ms },
             .cookies = try r.setCookies(arena),
             .spans = try rp.responseSpans(arena, &app.theme),
             .tests = tests,
-            .footer = if (rp.tests.items.len > 0) rp.tests.items[0] else null,
         };
     }
     const m: view.Model = .{
@@ -1049,6 +1188,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .auth_current = auth_current,
         .vars = vars,
         .env_name = env_name,
+        .env_override = app.http.env_override != null,
         .edit_scroll = &rp.edit_scroll,
         .sending = rp.isSending(),
         .failed = if (rp.state == .failed) rp.state.failed else null,
@@ -1067,8 +1207,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .orientation = rp.orientation,
     };
     const caret = view.draw(ui, id, area, m);
-    const z = view.zones(area, m);
-    rp.edit_area = if (z.request.h > 2) Rect.init(z.request.x, z.request.y + 2, z.request.w, z.request.h - 2) else null;
+    rp.edit_area = view.editArea(area, m);
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
         app.pane_cols = @max(area.w, 1);
@@ -1090,11 +1229,12 @@ const testing = std.testing;
 test "load / commit round-trip; the title follows method and url; params draft commits to the URL" {
     var rp = try RequestPane.init(testing.allocator);
     defer rp.deinit();
-    try testing.expectEqualStrings("new request", rp.title());
+    try testing.expectEqualStrings("GET  new request", rp.title());
     var req = try parse.parse(testing.allocator, "curl -X POST 'https://x/a?k=1' -H 'A: 1' --data-raw '{}'");
     try rp.load(req);
     req = undefined;
-    try testing.expectEqualStrings("POST  https://x/a?k=1", rp.title());
+    // Rust's `title`: the scheme and the query are cut from the label.
+    try testing.expectEqualStrings("POST  x/a", rp.title());
     try testing.expectEqualStrings("A: 1\n", rp.headers_text.items);
     try testing.expectEqualStrings("{}", rp.body.items);
     try rp.headers_text.appendSlice(testing.allocator, "B: 2\n");
@@ -1152,6 +1292,31 @@ test "split: toggling picks a second tab; showing the right tab swaps the halves
     try testing.expect(rp.split and rp.split_tab == .body);
     rp.split_ratio = 30;
     try testing.expectEqual(@as(u8, 30), rp.split_ratio);
+}
+
+test "a JSON response keeps its wire body; the view text is re-indented, and goes when the response does" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    const gpa = testing.allocator;
+    const mk = struct {
+        fn f(a: Allocator, body: []const u8) Allocator.Error!Response {
+            return .{ .status = 200, .status_text = try a.dupe(u8, "OK"), .final_url = try a.dupe(u8, "http://x/"), .headers = &.{}, .body = try a.dupe(u8, body) };
+        }
+    }.f;
+    try rp.setResponse(try mk(gpa, "{\"a\":1}"));
+    try testing.expectEqualStrings("{\"a\":1}", rp.response().?.body);
+    try testing.expectEqualStrings("{\n  \"a\": 1\n}", rp.displayBody());
+    // Already indented, or not JSON: the view text is the body itself.
+    try rp.setResponse(try mk(gpa, "{\n  \"a\": 1\n}"));
+    try testing.expect(rp.resp_pretty == null);
+    try testing.expectEqualStrings("{\n  \"a\": 1\n}", rp.displayBody());
+    try rp.setResponse(try mk(gpa, "plain"));
+    try testing.expect(rp.resp_pretty == null and rp.prev != null);
+    try rp.setResponse(try mk(gpa, "[1,2]"));
+    try testing.expectEqualStrings("[\n  1,\n  2\n]", rp.displayBody());
+    try rp.setFailed("boom");
+    try testing.expect(rp.resp_pretty == null and rp.response() == null);
+    try testing.expectEqualStrings("", rp.displayBody());
 }
 
 test "varAtCaret finds the token under the URL caret; inlineVar replaces every occurrence across the fields" {
