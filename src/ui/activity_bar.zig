@@ -25,7 +25,10 @@ const Style = Ui.Style;
 /// Padding, glyph, padding.
 pub const width: u16 = 3;
 
-/// The sections, top to bottom.
+/// The sections, top to bottom. `diagnostics` and `outline` are Rust's
+/// right-panel panes: they have a side and a column like the rest
+/// (`app/side.zig`) but no rail row — `rail` is what the bar paints.
+/// // changed (section-side): the two hidden members.
 pub const Section = enum(u8) {
     explorer,
     search,
@@ -39,8 +42,12 @@ pub const Section = enum(u8) {
     notes,
     todos,
     findings,
+    diagnostics,
+    outline,
 
     pub const all = std.enums.values(Section);
+    /// The rows the rail paints, in order.
+    pub const rail = all[0..12];
 
     pub const Meta = struct {
         /// The Nerd Font glyph (Rust's codepoint).
@@ -65,6 +72,8 @@ pub const Section = enum(u8) {
             .notes => .{ .glyph = "\u{f249}", .fallback = "N", .label = "Notes" }, // nf-fa-sticky_note
             .todos => .{ .glyph = "\u{f046}", .fallback = "O", .label = "TODOs" }, // nf-fa-check_square
             .findings => .{ .glyph = "\u{f1623}", .fallback = "F", .label = "Findings" }, // nf-md-file_search
+            .diagnostics => .{ .glyph = "\u{f071}", .fallback = "!", .label = "Diagnostics" }, // nf-fa-warning (never on the rail)
+            .outline => .{ .glyph = "\u{f01bd}", .fallback = "=", .label = "Outline" }, // nf-md-file_tree (never on the rail)
         };
     }
 
@@ -121,7 +130,7 @@ pub fn layout(area: Rect, extra_items: usize) Layout {
     const end_y = area.y + area.h -| 3;
     const first_y = area.y + 1;
     const avail: usize = end_y -| first_y;
-    const items = Section.all.len + extra_items;
+    const items = Section.rail.len + extra_items;
     return .{
         .first_y = first_y,
         .step = if (items * 2 > avail) 1 else 2,
@@ -147,7 +156,7 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
         _ = ui.putStr(glyph_x, gy, glyph_w, if (ui.ascii) gear_ascii else gear_nerd, muted);
         ui.hit(row, .{ .rail = .gear });
     }
-    for (Section.all) |s| {
+    for (Section.rail) |s| {
         const y = lay.sectionY(s) orelse break;
         const row = Rect.init(area.x, y, area.w, 1);
         const m = s.meta();
@@ -182,10 +191,12 @@ fn bold(s: Style) Style {
 const t = std.testing;
 const test_fixture = @import("test_fixture.zig");
 
-test "glyph table: twelve sections in Rust's order, each glyph one codepoint with a one-character ASCII twin and a label" {
-    try t.expectEqual(@as(usize, 12), Section.all.len);
-    try t.expectEqual(Section.explorer, Section.all[0]);
-    try t.expectEqual(Section.findings, Section.all[11]);
+test "glyph table: twelve rail sections in Rust's order (plus the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
+    try t.expectEqual(@as(usize, 12), Section.rail.len);
+    try t.expectEqual(@as(usize, 14), Section.all.len);
+    try t.expectEqual(Section.explorer, Section.rail[0]);
+    try t.expectEqual(Section.findings, Section.rail[11]);
+    try t.expectEqual(Section.outline, Section.all[13]);
     var seen_glyphs: [Section.all.len]u21 = undefined;
     for (Section.all, 0..) |s, i| {
         const m = s.meta();
@@ -243,7 +254,7 @@ test "draw: the indicator sits beside the active glyph, every section and the ge
     try t.expectEqualStrings(indicator, fx.cell(0, lay.sectionY(.git).?).char.grapheme);
     try t.expectEqualStrings(Section.git.meta().glyph, fx.cell(1, lay.sectionY(.git).?).char.grapheme);
     try t.expectEqualStrings(gear_nerd, fx.cell(1, lay.gear_y.?).char.grapheme);
-    for (Section.all) |s| {
+    for (Section.rail) |s| {
         const y = lay.sectionY(s).?;
         try t.expectEqual(s, fx.hits.at(0, y).?.rail.section);
         try t.expectEqual(s, fx.hits.at(2, y).?.rail.section);

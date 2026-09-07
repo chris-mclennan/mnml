@@ -8,6 +8,13 @@
 //! the one already open). Enter / a click jumps to the symbol; the row
 //! the source cursor is inside is highlighted so the list follows the
 //! cursor; `r` refreshes, `esc` returns to the source, `q` closes.
+//!
+//! // changed (section-side): the outline is also a section with a side
+//! (Rust's right-panel pane). While its column is open, `outline.show`
+//! routes into it — `App.outline_panel` is a pane kept in the store
+//! outside the layout, painted by `drawPanel` — and otherwise splits,
+//! Rust's rule. The right column's walk (`side.show`) always uses the
+//! column (`showInColumn`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -27,6 +34,8 @@ const highlight = @import("highlight");
 const structure = highlight.structure;
 const lsp = @import("lsp.zig");
 const lsp_types = @import("../lsp/types.zig");
+const side = @import("side.zig");
+const empty_state = @import("../ui/empty_state.zig");
 
 pub const table = .{
     .@"outline.show" = &show,
@@ -78,19 +87,21 @@ pub const OutlinePane = struct {
 
 /// Open the outline for the active editor beside it, or refresh the one
 /// already watching it.
-fn show(app: *App) CommandError!void {
+/// The editor an outline would list: the active editor, or the source
+/// of the active outline.
+fn sourceOf(app: *App) CommandError!PaneId {
     const active = app.active orelse return error.NoActivePane;
-    const source: PaneId = if (app.panes.get(active)) |p| switch (p.*) {
+    const p = app.panes.get(active) orelse return error.NoActivePane;
+    return switch (p.*) {
         .editor => active,
         .outline => |*o| o.source,
-        .md_preview => return app.diag.fail(app.frame.allocator(), "outline: not for a preview", .{}),
-        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
-    } else return error.NoActivePane;
-    if (app.panes.findOutline(source)) |id| {
-        try refresh(app, id);
-        app.showPane(id);
-        return;
-    }
+        .md_preview => app.diag.fail(app.frame.allocator(), "outline: not for a preview", .{}),
+        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => error.NotAnEditor,
+    };
+}
+
+/// A fresh outline pane on `source`, in the store.
+fn create(app: *App, source: PaneId) CommandError!PaneId {
     const src = app.panes.editor(source) orelse return error.NotAnEditor;
     const title: []const u8 = if (src.buf.doc.path) |p| std.fs.path.basename(p) else "[scratch]";
     var pane = try OutlinePane.init(app.gpa, source, title);
@@ -98,9 +109,75 @@ fn show(app: *App) CommandError!void {
     const id = try app.panes.add(.{ .outline = pane });
     pane = undefined;
     try refresh(app, id);
+    return id;
+}
+
+/// The split-pane outline for `source`, if one is in the layout (the
+/// column's pane is not).
+fn findSplit(app: *App, source: PaneId) ?PaneId {
+    const id = app.panes.findOutline(source) orelse return null;
+    if (app.outline_panel == id) {
+        // The column's pane matched; look past it.
+        for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
+            .outline => |*o| if (o.source == source and @as(PaneId, @intCast(i)) != id) return @intCast(i),
+            else => {},
+        };
+        return null;
+    }
+    return id;
+}
+
+fn show(app: *App) CommandError!void {
+    const source = try sourceOf(app);
+    if (findSplit(app, source)) |id| {
+        try refresh(app, id);
+        app.showPane(id);
+        return;
+    }
+    // Rust's rule: the outline routes into its column while that is
+    // open, and opens a split otherwise.
+    if (side.shown(app, side.sideOf(app, .outline)) != null) return showInColumn(app);
+    const id = try create(app, source);
     const layout = app.layouts.current();
     if (try layout.split(source, .horizontal, id) == null) _ = try layout.showIn(null, id);
     app.setActive(id);
+}
+
+/// The outline in its column, on the active editor — or the column's
+/// empty state when there is none.
+pub fn showInColumn(app: *App) CommandError!void {
+    const source: ?PaneId = sourceOf(app) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    };
+    if (source) |src| {
+        if (app.outline_panel) |id| {
+            const same = if (app.panes.get(id)) |p| (if (p.asOutline()) |o| o.source == src else false) else false;
+            if (same) {
+                try refresh(app, id);
+            } else {
+                try app.forceClosePane(id);
+                app.outline_panel = try create(app, src);
+            }
+        } else app.outline_panel = try create(app, src);
+    }
+    side.place(app, .outline, true);
+}
+
+/// The column's outline (`PanelId.outline`), or its empty state.
+pub fn drawPanel(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    if (app.outline_panel) |id| if (app.panes.get(id)) |p| if (p.asOutline()) |o| {
+        return draw(app, ui, id, o, area, app.focus == .panel and app.focus.panel == .outline);
+    };
+    const bg = @import("../ui/theme.zig").onBg(ui.theme.fg, ui.theme.palette.bg_darker);
+    ui.canvas.fill(area, bg);
+    _ = empty_state.draw(ui, area, .{ .message = "No outline yet", .hint = "outline.show on an open file" }, bg);
+}
+
+/// The keys go back to the source — in a pane or in the column.
+fn focusSource(app: *App, src: PaneId) void {
+    app.setActive(src);
+    if (app.focus == .panel) app.focus = .{ .pane = src };
 }
 
 /// Rebuild the symbol list from the source's current text.
@@ -145,7 +222,7 @@ pub fn jump(app: *App, id: PaneId, idx: usize) void {
     const src = app.panes.editor(o.source) orelse return;
     src.buf.editor.anchor = null;
     src.buf.editor.placeCursor(@min(s.line, @as(u32, @intCast(src.buf.editor.lineCount() - 1))), s.col);
-    app.setActive(o.source);
+    focusSource(app, o.source);
 }
 
 /// A click on a row: the hit names the source line/col; find the item.
@@ -159,8 +236,10 @@ pub fn close(app: *App, id: PaneId) Allocator.Error!void {
     const pane = app.panes.get(id) orelse return;
     const o = pane.asOutline() orelse return;
     const back = o.source;
+    // The column's outline closes its column with it.
+    if (app.outline_panel == id) side.hide(app, .outline);
     try app.forceClosePane(id);
-    if (app.panes.get(back) != null) app.setActive(back);
+    if (app.panes.get(back) != null) focusSource(app, back);
 }
 
 /// Keys while the outline has focus. False lets the chord chain see it.
@@ -178,7 +257,7 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
         .page_down => o.cursor = @min(o.cursor + page, n -| 1),
         .page_up => o.cursor -|= page,
         .enter => jump(app, id, o.cursor),
-        .esc => app.setActive(o.source),
+        .esc => focusSource(app, o.source),
         .char => |c| switch (c) {
             'j' => o.cursor = @min(o.cursor + 1, n -| 1),
             'k' => o.cursor -|= 1,
@@ -196,19 +275,19 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
 
 /// One frame of the pane: refresh when the source changed since the
 /// last frame, then paint with the source cursor's item highlighted.
-pub fn draw(app: *App, ui: Ui, id: PaneId, o: *OutlinePane, area: Rect) Allocator.Error!void {
+pub fn draw(app: *App, ui: Ui, id: PaneId, o: *OutlinePane, area: Rect, focused: bool) Allocator.Error!void {
     var current: ?usize = null;
     if (app.panes.editor(o.source)) |src| {
         if (src.syntax.dirty or o.items.items.len == 0) try refresh(app, id);
         current = o.itemAt(@intCast(src.buf.editor.currentLine()));
         // Follow the source cursor when the outline is not being driven.
-        if (app.active != id) if (current) |c| {
+        if (!focused) if (current) |c| {
             o.cursor = c;
         };
     }
     const rows = try ui.arena.alloc(outline_view.Row, o.items.items.len);
     for (o.items.items, 0..) |s, i| rows[i] = .{ .name = s.name, .kind = s.kind, .line = s.line, .col = s.col, .depth = s.depth };
-    outline_view.draw(ui, id, area, &o.scroll, .{ .title = o.title, .rows = rows, .cursor = o.cursor, .current = current, .focused = app.active == id });
+    outline_view.draw(ui, id, area, &o.scroll, .{ .title = o.title, .rows = rows, .cursor = o.cursor, .current = current, .focused = focused });
 }
 
 // ── the line-shape fallback ────────────────────────────────────────────

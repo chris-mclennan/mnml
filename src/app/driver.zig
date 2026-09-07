@@ -9,6 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
+const side = @import("side.zig");
 const App = app_mod.App;
 const dispatch = @import("dispatch.zig");
 const tasks = @import("tasks.zig");
@@ -170,10 +171,11 @@ pub const AppDriver = struct {
             try panes.append(a, .{ .title = try a.dupe(u8, pane.title()), .dirty = pane.dirty() });
         };
         var st: screen_mod.Status = .{
+            // Rust's wire words: a left-column section is the sidebar.
             .focus = switch (app.focus) {
                 .tree => .tree,
                 .pane, .overlay => .pane,
-                .panel => .right_panel,
+                .panel => |pid| if (side.sideOf(app, side.sectionOfPanel(pid)) == .left) .tree else .right_panel,
             },
             .active_pane = if (app.active) |id| @as(usize, id) else null,
             .active_file = "",
@@ -183,7 +185,7 @@ pub const AppDriver = struct {
             .tree_cursor = app.tree.cursor,
             .tree_selection = try a.dupe(u8, try app.tree.selectionPath(app)),
             .tree_visible = app.tree.visible,
-            .right_panel_visible = false,
+            .right_panel_visible = side.shown(app, .right) != null,
             .right_panel_panes = &.{},
             .right_panel_active_idx = 0,
             .panes = panes.items,

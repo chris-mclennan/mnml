@@ -36,6 +36,7 @@ const git = @import("git.zig");
 const client = @import("../git/client.zig");
 const parse = @import("../git/parse.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const side = @import("side.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
 
 pub const Section = view.Section;
@@ -94,12 +95,11 @@ pub const State = struct {
 
 // ─── entering and leaving ───────────────────────────────────────────────
 
-/// Rust's snap: the sidebar takes a fifth of the screen when that is
-/// at least eight cells.
+/// Rust's snap: the palette's column takes a fifth of the screen when
+/// that is at least eight cells (`side.snapGit`), and shows the palette.
 pub fn snapSidebar(app: *App) void {
-    const target: u16 = @intCast(@as(u32, app.screen.width) * 20 / 100);
-    if (target >= 8) app.tree.width = target;
-    app.tree.visible = true;
+    side.snapGit(app);
+    side.place(app, .git, false);
 }
 
 /// Enter git mode (idempotent): the sidebar becomes the palette, the
@@ -121,7 +121,6 @@ pub fn enter(app: *App) CommandError!void {
         }
         st.active = true;
     }
-    if (app.right_panel != null and app.right_panel.? == .git) app.right_panel = null;
     try rebuildTabs(app);
     if (app.git.activeRepo() != null) {
         git.requestStatus(app) catch {};
@@ -159,6 +158,10 @@ pub fn leave(app: *App) void {
         app.setActive(null);
     }
     app.afterSplitChange();
+    // The palette leaves its column; the explorer takes the column back
+    // when it is its own (Rust's tree returns with the layout).
+    side.remove(app, .git);
+    if (side.sideOf(app, .explorer) == side.sideOf(app, .git) and side.shown(app, side.sideOf(app, .git)) == null) side.place(app, .explorer, false);
     if (app.focus == .panel and app.focus.panel == .git) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
     app.needs_render = true;
 }
@@ -167,8 +170,7 @@ pub fn leave(app: *App) void {
 pub fn toggle(app: *App) CommandError!void {
     if (app.git_palette.active) {
         leave(app);
-        app.focus = .tree;
-        app.tree.visible = true;
+        side.place(app, .explorer, true);
         return;
     }
     try enter(app);

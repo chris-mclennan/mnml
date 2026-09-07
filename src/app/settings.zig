@@ -28,6 +28,7 @@ const suggest = @import("../ai/suggest.zig");
 const ai_app = @import("ai.zig");
 const Config = config.Config;
 const command = @import("../core/command.zig");
+const side = @import("side.zig");
 const input = @import("../input/mod.zig");
 const Theme = @import("../ui/theme.zig");
 const ui_settings = @import("../ui/settings.zig");
@@ -174,6 +175,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
     .{ .path = "ui.right_panel_width", .label = "Right panel width", .section = .ui, .scope = .workspace, .number = .{ .min = 8, .max = 120, .step = 2 } },
     .{ .path = "ui.tree_width", .label = "Tree width", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.tree_width_min, .max = config.Config.tree_width_max, .step = 2 } },
+    .{ .path = "ui.sidebar_side", .label = "Default sidebar side", .section = .ui, .scope = .home },
     .{ .path = "ui.color_column", .label = "Colour column (0 = off)", .section = .ui, .scope = .workspace, .number = .{ .min = 0, .max = 240, .step = 4 } },
     .{ .path = "ui.wheel_lines", .label = "Lines per wheel notch", .section = .ui, .scope = .home, .number = .{ .min = 1, .max = 12, .step = 1 } },
     .{ .path = "ui.md_image_rows", .label = "Markdown image rows", .section = .ui, .scope = .home, .number = .{ .min = 3, .max = 40, .step = 1 } },
@@ -618,13 +620,18 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
     } else if (comptime std.mem.eql(u8, path, "ui.tree_width")) {
         app.tree.width = app.cfg.ui.tree_width;
     } else if (comptime std.mem.eql(u8, path, "ui.right_panel_width")) {
-        app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
+        app.side.right_width = @max(app.cfg.ui.right_panel_width, 8);
     } else if (comptime std.mem.eql(u8, path, "ui.right_panel_visible")) {
-        if (app.cfg.ui.right_panel_visible and app.right_panel == null) app.right_panel = .todos;
-        if (!app.cfg.ui.right_panel_visible and app.right_panel != null) {
-            app.right_panel = null;
-            if (app.focus == .panel) app.focus = .overlay;
-        }
+        const is_open = side.shown(app, .right) != null;
+        if (app.cfg.ui.right_panel_visible != is_open) side.toggleColumn(app, .right) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        };
+        // The overlay keeps the keys while it is up.
+        if (app.overlay != .none) app.focus = .overlay;
+    } else if (comptime std.mem.eql(u8, path, "ui.sidebar_side")) {
+        side.reseed(app);
+        if (app.overlay != .none) app.focus = .overlay;
     } else if (comptime std.mem.eql(u8, path, "editor.tab_width")) {
         for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.buf.setInputStyle(app.input_style, app.editorConfig()),
@@ -838,8 +845,10 @@ test "number rows: → steps the right panel width, writes it, and the config se
     defer t.allocator.free(ws);
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 60, .cfg = .{ .ui = .{ .right_panel_visible = true, .right_panel_width = 30 } } });
     defer app.deinit();
-    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
-    try t.expectEqual(@as(u16, 30), app.right_panel_width);
+    // `right_panel_visible` opens the right column on the first section
+    // that lives there (the diagnostics, fresh).
+    try t.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
+    try t.expectEqual(@as(u16, 30), app.side.right_width);
     try open(&app);
     const list = try items(&app, app.frame.allocator());
     for (list, 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Right panel width")) {
@@ -849,7 +858,7 @@ test "number rows: → steps the right panel width, writes it, and the config se
     };
     try app.handle(.{ .key = Key.named(.right) });
     try t.expectEqual(@as(u16, 32), app.cfg.ui.right_panel_width);
-    try t.expectEqual(@as(u16, 32), app.right_panel_width);
+    try t.expectEqual(@as(u16, 32), app.side.right_width);
     try app.handle(.{ .key = Key.named(.left) });
     try app.handle(.{ .key = Key.named(.left) });
     try t.expectEqual(@as(u16, 28), app.cfg.ui.right_panel_width);
@@ -863,7 +872,8 @@ test "number rows: → steps the right panel width, writes it, and the config se
         app.overlay.settings.ui.cursor = i;
     };
     try app.handle(.{ .key = Key.named(.right) });
-    try t.expect(app.right_panel == null);
+    try t.expect(side.shown(&app, .right) == null);
+    try t.expect(app.focus == .overlay);
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expectEqual(@as(u16, 30), app.cfg.ui.right_panel_width);
     try t.expect((try readOrNull(tmp, "ws/.mnml/config.zon")) == null);

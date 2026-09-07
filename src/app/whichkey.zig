@@ -76,6 +76,8 @@ pub const root: Node = .{
                 cmd('w', .@"view.focus_next_split", "focus next"),
                 cmd('c', .@"view.close_split", "close split"),
                 cmd('o', .@"view.close_others", "close others"),
+                cmd('H', .@"view.move_section_left", "section → left side"),
+                cmd('L', .@"view.move_section_right", "section → right side"),
             }),
             group('l', "+lsp", &.{
                 cmd('a', .@"lsp.code_action", "code actions"),
@@ -269,7 +271,7 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expectEqual(CommandId.@"view.split_right", lookup("sv").?.cmd.id);
     try std.testing.expect(lookup("zz") == null);
     try std.testing.expect(lookup("svx") == null);
-    try std.testing.expect(continuations("s").len == 9);
+    try std.testing.expect(continuations("s").len == 11);
     try std.testing.expect(continuations("sv").len == 0);
 }
 

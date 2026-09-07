@@ -29,7 +29,8 @@ const Layout = layout_mod.Layout;
 const pty_pane = @import("pty_pane.zig");
 const md_preview = @import("md_preview.zig");
 const hooks = @import("../core/hooks.zig");
-const panel = @import("../core/panel.zig");
+const side_mod = @import("side.zig");
+const Section = @import("../ui/activity_bar.zig").Section;
 const theme_mod = @import("../ui/theme.zig");
 const zen = @import("zen.zig");
 const command = @import("../core/command.zig");
@@ -91,8 +92,14 @@ pub const Saved = struct {
     tree_width: u16 = 30,
     tree_show_hidden: bool = false,
     tree_expanded: []const []const u8 = &.{},
-    right_panel: ?panel.PanelId = null,
+    /// The right column's width; `tree_width` is the left's.
     right_panel_width: u16 = 40,
+    /// What each column shows (`tree_visible` stays the explorer's own
+    /// flag, as in Rust). // changed (section-side): replaces `right_panel`.
+    left: ?Section = null,
+    right: ?Section = null,
+    /// Where every section with a column surface lives.
+    sides: Config.SectionSide = .{},
     zen: bool = false,
     theme: []const u8 = "",
     /// Nine entries; `""` is an empty slot.
@@ -241,8 +248,12 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     while (kit.next()) |k| try expanded.append(arena, k.*);
     std.mem.sort([]const u8, expanded.items, {}, lessThan);
     saved.tree_expanded = expanded.items;
-    saved.right_panel = app.right_panel;
-    saved.right_panel_width = app.right_panel_width;
+    saved.right_panel_width = app.side.right_width;
+    saved.left = app.side.open.get(.left);
+    saved.right = app.side.open.get(.right);
+    inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
+        @field(saved.sides, f.name) = app.side.of.get(@field(Section, f.name));
+    }
     saved.zen = app.zen;
     saved.theme = app.theme.name;
 
@@ -417,8 +428,22 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     }
     app.tree.restored = true;
     app.tree.loaded = false; // re-listed on the next frame with the expansions applied
-    app.right_panel = saved.right_panel;
-    app.right_panel_width = @max(saved.right_panel_width, 8);
+    app.side.right_width = @max(saved.right_panel_width, 8);
+    inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
+        if (@field(saved.sides, f.name)) |s| app.side.of.set(@field(Section, f.name), s);
+    }
+    // A column shows a section only if the section lives there (a
+    // hand-edited file cannot put TODOS in both columns).
+    for ([_]Config.Side{ .left, .right }, [_]?Section{ saved.left, saved.right }) |s, sec| {
+        const ok = if (sec) |x| side_mod.surface(x) != null and side_mod.sideOf(app, x) == s else false;
+        app.side.open.set(s, if (ok) sec else null);
+        app.side.last.set(s, if (ok) sec else null);
+    }
+    // An older file has no `left`: the explorer is where `tree_visible`
+    // says. The tree is on screen only when its column shows it.
+    const es = side_mod.sideOf(app, .explorer);
+    if (saved.tree_visible and app.side.open.get(es) == null) app.side.open.set(es, .explorer);
+    if (app.side.open.get(es) != .explorer) app.tree.visible = false;
     zen.set(app, saved.zen);
     if (saved.theme.len > 0) if (theme_mod.byName(saved.theme)) |th| {
         if (!std.mem.eql(u8, th.name, app.theme.name)) app.setTheme(th);

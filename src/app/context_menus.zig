@@ -20,6 +20,7 @@ const CommandError = command.CommandError;
 const MenuItem = command.MenuItem;
 const Mouse = @import("../core/key.zig").Mouse;
 const activity_bar = @import("activity_bar.zig");
+const side = @import("side.zig");
 
 pub const table = .{
     .@"buffer.close_others" = &closeOthers,
@@ -299,11 +300,20 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
         .notes => &.{.{ .label = "+ New note", .action = .{ .command = .@"notes.new" } }},
         .todos => &.{.{ .label = "Rescan", .action = .{ .command = .@"todos.refresh" } }},
         .findings => &.{},
+        .diagnostics, .outline => &.{},
     };
-    const rows = try app.gpa.alloc(MenuItem, 1 + verbs.len);
+    // A section with a column surface can change sides (VS Code's
+    // "Move to right side"); a pane section has no side.
+    const move: ?MenuItem = if (side.surface(s) != null) (if (side.sideOf(app, s) == .left)
+        .{ .label = "Move to right side", .action = .{ .command = .@"view.move_section_right" } }
+    else
+        .{ .label = "Move to left side", .action = .{ .command = .@"view.move_section_left" } }) else null;
+    const extra: usize = if (move != null) 1 else 0;
+    const rows = try app.gpa.alloc(MenuItem, 1 + extra + verbs.len);
     errdefer app.gpa.free(rows);
     rows[0] = show;
-    @memcpy(rows[1..], verbs);
+    if (move) |m| rows[1] = m;
+    @memcpy(rows[1 + extra ..], verbs);
     try app.openMenu(s.meta().label, rows, x, y);
 }
 
@@ -650,7 +660,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .git => app.git_palette.cursor,
                 .http => app.http_panel.list.cursor,
                 .diagnostics => app.lsp.panel.cursor,
-                .notes, .findings, .sessions => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
+                .notes, .findings, .sessions, .outline => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
             const m: Mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = .left };
@@ -659,7 +669,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .git => try @import("git_palette.zig").openRowMenu(app, cursor, r.x, r.y),
                 .http => try @import("http_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .diagnostics => try @import("lsp.zig").rowMouse(app, @intCast(cursor), .{ .x = r.x, .y = r.y, .kind = .press, .button = .right }),
-                .notes, .findings, .sessions => {},
+                .notes, .findings, .sessions, .outline => {},
             }
         },
         .pane => |id| {

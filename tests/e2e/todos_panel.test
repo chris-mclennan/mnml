@@ -5,6 +5,10 @@
 write src/a.zig "const x = 1;\n// TODO: wire the frobnicator\n// FIXME: leaks on error\n"
 write docs/plan.md "# Plan\n- REVIEW the retry budget\n"
 command view.activity_todos
+# The panel lives on the left (Rust's placement) in the tree's 30
+# columns, where the header keeps only the chips' icons; drag the
+# column's divider out to 60 so the rows read in full.
+drag 30 5 60 5
 command todos.refresh
 expect screen contains TODOS
 expect screen contains "sort: Newest first"

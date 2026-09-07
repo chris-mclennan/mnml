@@ -4,6 +4,10 @@
 write .mnml/notes/note-1.md "# Ship it\n\nbody\n"
 write .mnml/notes/ideas.md "loose thought\n"
 command view.activity_notes
+# The panel lives on the left (Rust's placement) in the tree's 30
+# columns, where the header keeps only the chips' icons; drag the
+# column's divider out to 60 so the rows read in full.
+drag 30 5 60 5
 wait 400
 expect screen contains NOTES
 expect screen contains "sort: Newest first"

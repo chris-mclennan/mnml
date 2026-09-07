@@ -5,10 +5,10 @@
 //! `render.frameRects` carves its rect off the sidebar.
 //!
 //! Rust keeps `active_section` as state and swaps the sidebar's content
-//! on it. Here the sections already have surfaces of their own — the
-//! tree, the right-panel slot, a pane — so the marked section is read
-//! off them: the focused surface first, then the open right panel, then
-//! the tree. A click runs the section's `view.activity_*` command, the
+//! on it. Here the sections already have surfaces of their own — a
+//! column (`app/side.zig`), a pane — so the marked section is read off
+//! them: the focused surface first, then the right column, then the
+//! left. A click runs the section's `view.activity_*` command, the
 //! same id the right-click menu's first row names, so the palette and
 //! the rail cannot drift apart.
 //!
@@ -31,6 +31,7 @@ const rail = @import("../ui/activity_bar.zig");
 const tooltip = @import("../ui/tooltip.zig");
 const context_menus = @import("context_menus.zig");
 const settings = @import("settings.zig");
+const side = @import("side.zig");
 const dap = @import("dap.zig");
 const git_palette = @import("git_palette.zig");
 
@@ -64,6 +65,8 @@ pub fn commandOf(s: Section) command.CommandId {
         .notes => .@"view.activity_notes",
         .todos => .@"view.activity_todos",
         .findings => .@"view.activity_findings",
+        .diagnostics => .@"lsp.diagnostics",
+        .outline => .@"outline.show",
     };
 }
 
@@ -89,25 +92,13 @@ pub fn active(app: *App) Section {
     if (app.git_palette.active) return .git;
     switch (app.focus) {
         .tree => return .explorer,
-        .panel => |p| if (sectionOfPanel(p)) |s| return s,
+        .panel => |p| return side.sectionOfPanel(p),
         .pane => |id| if (sectionOfPane(app, id)) |s| return s,
         .overlay => {},
     }
-    if (app.right_panel) |p| if (sectionOfPanel(p)) |s| return s;
+    if (side.shown(app, .right)) |s| return s;
     if (app.active) |id| if (sectionOfPane(app, id)) |s| return s;
-    return .explorer;
-}
-
-fn sectionOfPanel(p: PanelId) ?Section {
-    return switch (p) {
-        .todos => .todos,
-        .notes => .notes,
-        .findings => .findings,
-        .sessions => .sessions,
-        .git => .git,
-        .http => .http,
-        .diagnostics => null,
-    };
+    return side.shown(app, .left) orelse .explorer;
 }
 
 fn sectionOfPane(app: *App, id: PaneId) ?Section {
@@ -191,6 +182,8 @@ pub fn describe(part: Part) tooltip.Tip {
             .notes => "click: Notes rail · .mnml/notes/*.md persistent scratch · right-click: menu",
             .todos => "click: TODOs rail · TODO / FIXME / XXX / HACK / REVIEW hits · right-click: menu",
             .findings => "click: Findings rail · .mnml/findings/*.md tester / review reports · right-click: menu",
+            .diagnostics => "click: Diagnostics · the language servers' problems list",
+            .outline => "click: Outline · the symbols of the active file",
         } },
     };
 }
@@ -268,7 +261,7 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try t.expect(r.eql(Rect.init(0, 1, rail.width, 37)));
     // The border column beside it, in the tree's own rows.
     try t.expectEqualStrings("│", app.screen.readCell(3, 2).?.char.grapheme);
-    for (Section.all) |s| {
+    for (Section.rail) |s| {
         const y = sectionRow(&app, s);
         try t.expectEqual(s, app.hits.at(0, y).?.rail.section);
         try t.expectEqual(s, app.hits.at(2, y).?.rail.section);
@@ -278,22 +271,25 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try t.expectEqual(Section.explorer, active(&app));
     try t.expectEqualStrings("▌", app.screen.readCell(0, sectionRow(&app, .explorer)).?.char.grapheme);
     try t.expectEqualStrings(" ", app.screen.readCell(0, sectionRow(&app, .todos)).?.char.grapheme);
-    // Click TODOs: the right panel opens on it, the mark moves.
+    // Click TODOs: it takes the tree's column (a left section, as in
+    // Rust), the mark moves.
     try press(&app, 1, sectionRow(&app, .todos), .left);
-    try t.expectEqual(PanelId.todos, app.right_panel.?);
+    try t.expectEqual(Section.todos, side.shown(&app, .left).?);
+    try t.expect(!app.tree.visible);
     try t.expectEqual(Section.todos, active(&app));
     try app.render();
     try t.expectEqualStrings("▌", app.screen.readCell(0, sectionRow(&app, .todos)).?.char.grapheme);
     try t.expectEqualStrings(" ", app.screen.readCell(0, sectionRow(&app, .explorer)).?.char.grapheme);
-    // Notes, then Explorer: the tree takes focus back and the mark with it,
-    // the panel staying open on the right.
+    // Notes on the right, then Explorer: the tree takes focus back and
+    // the mark with it, NOTES staying open on the right.
+    try side.move(&app, .notes, .right);
     try press(&app, 1, sectionRow(&app, .notes), .left);
-    try t.expectEqual(PanelId.notes, app.right_panel.?);
+    try t.expectEqual(Section.notes, side.shown(&app, .right).?);
     try t.expectEqual(Section.notes, active(&app));
     try press(&app, 1, sectionRow(&app, .explorer), .left);
     try t.expect(app.focus == .tree);
     try t.expectEqual(Section.explorer, active(&app));
-    try t.expectEqual(PanelId.notes, app.right_panel.?);
+    try t.expectEqual(Section.notes, side.shown(&app, .right).?);
     // A pane surface: Search opens the grep prompt; Debug the DAP pane.
     try press(&app, 1, sectionRow(&app, .debug), .left);
     try t.expectEqual(Section.debug, active(&app));
@@ -303,10 +299,20 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try t.expectEqualStrings("Source control", app.overlay.menu.title);
     try t.expectEqualStrings("Show Source control", app.overlay.menu.items[0].label);
     try t.expectEqual(command.CommandId.@"view.activity_git", app.overlay.menu.items[0].action.command);
-    try t.expectEqualStrings("Open git graph", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("Move to right side", app.overlay.menu.items[1].label);
+    try t.expectEqual(command.CommandId.@"view.move_section_right", app.overlay.menu.items[1].action.command);
+    try t.expectEqualStrings("Open git graph", app.overlay.menu.items[2].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try press(&app, 1, sectionRow(&app, .http), .right);
-    try t.expectEqualStrings("+ New request", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("+ New request", app.overlay.menu.items[2].label);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    // A section on the right offers the way back; a pane section
+    // (Search) has no side and no such row.
+    try press(&app, 1, sectionRow(&app, .notes), .right);
+    try t.expectEqualStrings("Move to left side", app.overlay.menu.items[1].label);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try press(&app, 1, sectionRow(&app, .search), .right);
+    try t.expectEqualStrings("New search", app.overlay.menu.items[1].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     // The gear: Settings on the left, the mnml menu on the right.
     try press(&app, 1, 36, .right);
@@ -361,7 +367,7 @@ test "ui.activity_bar: hidden gives the tree the columns back; auto paints the r
 }
 
 test "describe: every rail part has words, and the section's says what a click shows" {
-    for (Section.all) |s| {
+    for (Section.rail) |s| {
         const tip = describe(.{ .section = s });
         try t.expectEqualStrings(s.meta().label, tip.title);
         try t.expect(std.mem.startsWith(u8, tip.detail.?, "click: "));
