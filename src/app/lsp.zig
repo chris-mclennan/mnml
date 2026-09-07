@@ -1310,6 +1310,9 @@ pub fn closePeek(app: *App) void {
 // ── hover + signature help ──
 
 pub fn hover(app: *App) CommandError!void {
+    // While the debugger is stopped, `K` / the hover verb evaluates the
+    // word under the cursor instead (`dap.hoverAtCursor`).
+    if (try @import("dap.zig").hoverAtCursor(app)) return;
     const t = try requireServer(app, "hover");
     try sendAt(app, t, .hover, "textDocument/hover", @intCast(@min(t.e.buf.editor.cursor, std.math.maxInt(u32))));
 }
@@ -1317,6 +1320,12 @@ pub fn hover(app: *App) CommandError!void {
 pub fn signatureHelp(app: *App) CommandError!void {
     const t = try requireServer(app, "signature help");
     try sendAt(app, t, .signature_help, "textDocument/signatureHelp", @intCast(@min(t.e.buf.editor.cursor, std.math.maxInt(u32))));
+}
+
+/// The hover box with `lines`, anchored at byte `at` of `pane` — for
+/// the debugger's evaluations (`dap.evaluate_hover`).
+pub fn showHoverLines(app: *App, pane: PaneId, at: usize, lines: []const []const u8) Allocator.Error!void {
+    return showHover(app, .{ .pane = pane, .extra = @intCast(@min(at, std.math.maxInt(u32))) }, lines, 0);
 }
 
 fn showHover(app: *App, ctx: Ctx, lines: []const []const u8, active: usize) Allocator.Error!void {

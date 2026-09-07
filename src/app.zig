@@ -60,6 +60,7 @@ const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const notes = @import("notes.zig");
 const findings = @import("findings.zig");
+const debug_panel = @import("app/debug_panel.zig");
 const sessions = @import("sessions.zig");
 const dock = @import("app/dock.zig");
 const panel_mod = @import("core/panel.zig");
@@ -220,6 +221,9 @@ pub const PromptPurpose = union(enum) {
     dap_hit_count: BpTarget,
     /// DAP: a new value for `name` under `parent_ref` (owned name).
     dap_set_variable: struct { parent_ref: i64, name: []u8 },
+    /// The watch expression being replaced (owned).
+    dap_edit_watch: []u8,
+    dap_bp_log: BpTarget,
     /// LSP: the new name for the symbol at the cursor.
     lsp_rename,
     /// LSP: a `workspace/symbol` query.
@@ -263,8 +267,9 @@ pub const PromptPurpose = union(enum) {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);
             },
-            .dap_bp_condition, .dap_hit_count => |b| gpa.free(b.path),
+            .dap_bp_condition, .dap_hit_count, .dap_bp_log => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
+            .dap_edit_watch => |w| gpa.free(w),
             else => {},
         }
     }
@@ -722,6 +727,8 @@ pub const App = struct {
     snippets: snippets.State,
     ai: ai_app.State = .{},
     dap: dap.State = .{},
+    /// The DEBUG section's cursor, folds and last-stop values.
+    debug_panel: debug_panel.State = .{},
     lsp: lsp.State = .{},
     focus: FocusId = .tree,
     active: ?PaneId = null,
@@ -1130,6 +1137,7 @@ pub const App = struct {
         self.todos.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
+        self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
         self.dock.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
@@ -2198,6 +2206,8 @@ test {
     _ = @import("lsp/client.zig");
     _ = @import("app/dap.zig");
     _ = @import("app/cmd_dap.zig");
+    _ = @import("app/debug_panel.zig");
+    _ = @import("ui/debug_panel.zig");
     _ = @import("app/lsp.zig");
     _ = @import("app/cmd_lsp.zig");
     _ = @import("ui/completion_view.zig");
@@ -2205,7 +2215,7 @@ test {
     _ = @import("ui/peek_view.zig");
     _ = @import("ui/diagnostics_view.zig");
     _ = @import("ui/dap_view.zig");
-    _ = @import("ui/dap_repl_view.zig");
+    _ = @import("ui/debug_toolbar.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");
     _ = @import("ui/confirm.zig");

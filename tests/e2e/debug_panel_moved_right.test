@@ -1,0 +1,24 @@
+# The DEBUG section moved to the right column is the same section: a
+# stop still fills it, its keys still work.
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+command dap.toggle_breakpoint
+command view.activity_debug
+expect screen contains "[x] prog.dbg:4"
+command view.move_section_right
+expect screen contains "Run and debug → right side"
+expect screen contains "[x] prog.dbg:4"
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶ prog.dbg:4  main"
+expect screen contains "x: int = 1"
+command view.activity_debug
+key w
+expect screen contains "Watch expression"
+type "x + 5"
+key enter
+expect screen contains "⌖ x + 5 = 6 : int"
+command dap.terminate

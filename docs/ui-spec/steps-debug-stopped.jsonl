@@ -1,0 +1,14 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"open","path":"prog.dbg"}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"run-command","id":"dap.toggle_breakpoint"}
+{"cmd":"run-command","id":"dap.run"}
+{"cmd":"wait_ms","ms":1500}
+{"cmd":"run-command","id":"dap.show"}
+{"cmd":"wait_ms","ms":4200}
+{"cmd":"hover","col":36,"row":7}
+{"cmd":"wait_ms","ms":400}

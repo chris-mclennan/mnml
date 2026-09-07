@@ -47,6 +47,9 @@ const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
+const debug_panel = @import("debug_panel.zig");
+const debug_toolbar = @import("../ui/debug_toolbar.zig");
+const CellHit = @FieldType(@import("../ui/hit.zig").HitTarget, "editor_cell");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
@@ -162,6 +165,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .todos => try todos.handleKey(app, k),
             .notes => try notes.handleKey(app, k),
             .findings => try findings.handleKey(app, k),
+            .debug => try debug_panel.handleKey(app, k),
             .git => try git_palette.handleKey(app, k),
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
@@ -239,11 +243,6 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .debug => |*d| {
             if (try dap.debugKey(app, id, d, k)) return;
-            _ = try chordChain(app, k);
-            return;
-        },
-        .dap_repl => |*r| {
-            if (try dap.replKey(app, id, r, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -523,7 +522,7 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             // entry of the which-key menu itself (`space n`, `space s v`):
             // the popup owns every key under an armed leader, however
             // fast it was typed.
-            const menu = if (!was_first and k.code != .esc) leaderLookup(app.chord.seq[0..app.chord.len]) else null;
+            const menu = if (!was_first and k.code != .esc) leaderLookup(app.chord.seq[0..app.chord.len], app.input_style == .vim) else null;
             app.chord.clear(app.gpa);
             if (menu) |hit| {
                 if (fallback) |fb| freeTarget(app, fb);
@@ -607,7 +606,7 @@ pub fn expireChords(app: *App) Allocator.Error!void {
     if (app.chord.deadline_ms == null) return;
     const fallback = app.chord.fallback;
     app.chord.fallback = null;
-    const menu = if (fallback == null) leaderLookup(app.chord.seq[0..app.chord.len]) else null;
+    const menu = if (fallback == null) leaderLookup(app.chord.seq[0..app.chord.len], app.input_style == .vim) else null;
     app.chord.clear(app.gpa);
     if (fallback) |fb| {
         defer freeTarget(app, fb);
@@ -621,7 +620,7 @@ const LeaderHit = struct { node: *const whichkey.Node, path: [whichkey.max_depth
 /// The which-key node a chord chain names: `seq[0]` the bare leader and
 /// every later chord a plain char (shifted letters are the uppercase
 /// entries — `space T`).
-fn leaderLookup(seq: []const Chord) ?LeaderHit {
+fn leaderLookup(seq: []const Chord, vim: bool) ?LeaderHit {
     if (seq.len < 2 or seq.len - 1 > whichkey.max_depth) return null;
     if (!seq[0].eql(Chord.of(Key.char(' ')))) return null;
     var hit: LeaderHit = .{ .node = undefined, .path = undefined, .len = seq.len - 1 };
@@ -633,7 +632,7 @@ fn leaderLookup(seq: []const Chord) ?LeaderHit {
         if (c.mods.ctrl or c.mods.alt or c.mods.super or ch >= 128) return null;
         hit.path[i] = if (c.mods.shift and ch >= 'a' and ch <= 'z') @intCast(ch - ('a' - 'A')) else @intCast(ch);
     }
-    hit.node = whichkey.lookup(hit.path[0..hit.len]) orelse return null;
+    hit.node = whichkey.lookupIn(hit.path[0..hit.len], vim) orelse return null;
     return hit;
 }
 
@@ -769,7 +768,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .todos => try todos.setSort(app, s.sort),
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -831,7 +830,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             if (c >= 128 or w.len >= whichkey.max_depth) return closeOverlay(app);
             w.path[w.len] = @intCast(c);
             w.len += 1;
-            const node = whichkey.lookup(w.slice()) orelse return closeOverlay(app);
+            const node = whichkey.lookupIn(w.slice(), app.input_style == .vim) orelse return closeOverlay(app);
             switch (node.*) {
                 .group => {},
                 .dead => |d| {
@@ -989,6 +988,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_bp_condition => |b| try dap.acceptCondition(app, b.path, b.line, text),
         .dap_hit_count => |b| try dap.acceptHitCount(app, b.path, b.line, text),
         .dap_set_variable => |sv| try dap.acceptSetVariable(app, sv.parent_ref, sv.name, text),
+        .dap_edit_watch => |old| try dap.acceptEditWatch(app, old, text),
+        .dap_bp_log => |b| try dap.acceptLogMessage(app, b.path, b.line, text),
         .lsp_rename => try lsp.acceptRename(app, text),
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
         .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
@@ -1196,6 +1197,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.rowMouse(app, pr.idx, m),
             .notes => try notes.rowMouse(app, pr.idx, m),
             .findings => try findings.rowMouse(app, pr.idx, m),
+            .debug => try debug_panel.rowMouse(app, pr.idx, m),
             .sessions => try sessions.rowMouse(app, pr.idx, m),
             .git => try git_palette.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
@@ -1206,6 +1208,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.kebabMouse(app, pr.idx, m),
             .notes => try notes.kebabMouse(app, pr.idx, m),
             .findings => try findings.kebabMouse(app, pr.idx, m),
+            .debug => try debug_panel.kebabMouse(app, pr.idx, m),
             .sessions => try sessions.kebabMouse(app, pr.idx, m),
             .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
@@ -1215,6 +1218,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.chipMouse(app, c.kind, m),
             .notes => try notes.chipMouse(app, c.kind, m),
             .findings => try findings.chipMouse(app, c.kind, m),
+            .debug => try debug_panel.chipMouse(app, c.kind, m),
             .sessions => try sessions.chipMouse(app, c.kind, m),
             .git => try git_palette.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
@@ -1225,6 +1229,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => todos.filterMouse(app, m),
             .notes => notes.filterMouse(app, m),
             .findings => findings.filterMouse(app, m),
+            .debug => debug_panel.filterMouse(app, m),
             .sessions => sessions.filterMouse(app, m),
             .git => git_palette.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
@@ -1236,6 +1241,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
                 .notes => if (hitRect(app, m.x, m.y)) |r| notes.scrollbarMouse(app, r, m),
                 .findings => if (hitRect(app, m.x, m.y)) |r| findings.scrollbarMouse(app, r, m),
+                .debug => if (hitRect(app, m.x, m.y)) |r| debug_panel.scrollbarMouse(app, r, m),
                 .sessions => if (hitRect(app, m.x, m.y)) |r| sessions.scrollbarMouse(app, r, m),
                 .git => if (hitRect(app, m.x, m.y)) |r| git_palette.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
@@ -1325,66 +1331,28 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => {},
             }
         },
-        .editor_cell => |cell| {
-            if (wheel) return wheelOnPane(app, cell.pane, m, count);
-            if (m.kind != .press) return;
-            // The outline and the preview reuse the cell hit: a row is a
-            // jump, a row is a scroll target.
-            if (app.panes.get(cell.pane)) |p| switch (p.*) {
-                .outline => {
-                    if (m.button == .left) {
+        .editor_cell => |cell| return editorCellMouse(app, cell, m, count, wheel),
+        // The gutter: the sign cell toggles a breakpoint on a left press,
+        // a right press opens the breakpoint menu on that line; anything
+        // else is the editor cell at column 0 (the cursor moves, a drag
+        // selects).
+        .gutter => |g| {
+            if (m.kind == .press and (m.button == .right or m.button == .left)) {
+                if (app.panes.editor(g.pane)) |e| {
+                    const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                    if (m.button == .right or m.x == r.x) {
                         if (app.overlay != .none) closeOverlay(app);
-                        outline.clickRow(app, cell.pane, cell.line, cell.col);
+                        if (app.active != g.pane) app.showPane(g.pane);
+                        const ed = e.buf.editor;
+                        const line = @min(g.line, ed.lineCount() -| 1);
+                        ed.anchor = null;
+                        ed.placeCursor(line, 0);
+                        if (m.button == .right) return context_menus.openGutterMenu(app, m.x, m.y);
+                        return dap.gutterToggle(app, g.pane, line);
                     }
-                    return;
-                },
-                .md_preview => {
-                    if (app.overlay != .none) closeOverlay(app);
-                    app.showPane(cell.pane);
-                    return;
-                },
-                else => {},
-            };
-            if (app.overlay != .none) closeOverlay(app);
-            if (app.active != cell.pane) app.showPane(cell.pane);
-            const e = app.panes.editor(cell.pane) orelse return;
-            const ed = e.buf.editor;
-            const line = @min(cell.line, ed.lineCount() - 1);
-            // The column under the pointer: the hit's first column plus the offset.
-            const hit_rect = hitRect(app, m.x, m.y) orelse return;
-            const col = cell.col + (m.x - hit_rect.x);
-            const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
-            // `ui.click_echo`: the word under a left press underlines
-            // for 120 ms — "did that click land?".
-            if (m.button == .left and app.cfg.ui.click_echo) {
-                const r = find_mod.wordAt(ed.bytes(), byte) orelse find_mod.Range{ .start = byte, .end = @min(byte + 1, ed.len()) };
-                app.click_echo = .{ .pane = cell.pane, .start = r.start, .end = r.end, .until_ms = app.now_ms + app_mod.click_echo_ms };
+                }
             }
-            switch (m.button) {
-                .right => {
-                    // Right-click inside a selection keeps it; elsewhere it moves the cursor.
-                    if (ed.selection()) |sel| {
-                        if (byte < sel[0] or byte > sel[1]) {
-                            ed.anchor = null;
-                            ed.setCursor(byte);
-                        }
-                    } else ed.setCursor(byte);
-                    try context_menus.openEditorMenu(app, m.x, m.y);
-                },
-                .middle => {
-                    ed.anchor = null;
-                    ed.setCursor(byte);
-                    // X11's middle click pastes the primary selection: `"*`.
-                    // Falls back to the unnamed register where the sink cannot read.
-                    app.clipboard.setPendingRegister('*');
-                    const text = app.clipboard.text();
-                    if (text.len > 0) {
-                        const copy = try app.frame.allocator().dupe(u8, text);
-                        _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
-                    }
-                },
-                else => try editorPress(app, cell.pane, e, byte, m),
-            }
+            return editorCellMouse(app, .{ .pane = g.pane, .line = g.line, .col = 0 }, m, count, wheel);
         },
         .tab => |tb| {
             if (wheel) return tabStripStep(app, tb.leaf, if (m.kind == .scroll_down) 1 else -1);
@@ -1451,7 +1419,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .picker => try cmd_picker.accept(app, i),
                 .help => try help_app.click(app, i),
                 .which_key => |*w| {
-                    const kids = whichkey.continuations(w.slice());
+                    const kids = whichkey.continuations(app.frame.allocator(), w.slice(), app.input_style == .vim);
                     if (i >= kids.len) return;
                     try overlayKey(app, Key.char(kids[i].key));
                 },
@@ -1515,7 +1483,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
-                .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
+                .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
                 .websocket => {},
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
@@ -1524,7 +1492,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 // A code lens segment sits above `lens_hit_base`; the
                 // `{{VAR}}` spans below it.
-                .editor => |*e| if (sh.id >= decor.lens_hit_base) {
+                // The debug toolbar strip's buttons sit above both.
+                .editor => |*e| if (debug_toolbar.actionOf(sh.id) != null) {
+                    if (m.button == .left) try dap.click(app, sh.pane, sh.id);
+                } else if (sh.id >= decor.lens_hit_base) {
                     if (m.button == .left) try decor.scriptHit(app, sh.pane, sh.id);
                 } else try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
                 .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
@@ -1903,7 +1874,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .grep => |*g| grep.scrollBy(g, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
-        .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .debug => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .browser => |*b| browser_pane.scrollBy(b, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
@@ -2161,6 +2132,72 @@ fn dropTreeFile(app: *App, idx: usize, x: u16, y: u16, copy: bool) Allocator.Err
         return;
     }
     _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+}
+
+/// The editor text under the pointer (`.editor_cell`): the wheel, a
+/// click that places the cursor (or opens the editor menu), a drag
+/// that selects. The gutter routes here too once its own presses
+/// (a breakpoint toggle, the breakpoint menu) are taken.
+fn editorCellMouse(app: *App, cell: CellHit, m: Mouse, count: u16, wheel: bool) Allocator.Error!void {
+    if (wheel) return wheelOnPane(app, cell.pane, m, count);
+    if (m.kind != .press) return;
+    // The outline and the preview reuse the cell hit: a row is a
+    // jump, a row is a scroll target.
+    if (app.panes.get(cell.pane)) |p| switch (p.*) {
+        .outline => {
+            if (m.button == .left) {
+                if (app.overlay != .none) closeOverlay(app);
+                outline.clickRow(app, cell.pane, cell.line, cell.col);
+            }
+            return;
+        },
+        .md_preview => {
+            if (app.overlay != .none) closeOverlay(app);
+            app.showPane(cell.pane);
+            return;
+        },
+        else => {},
+    };
+    if (app.overlay != .none) closeOverlay(app);
+    if (app.active != cell.pane) app.showPane(cell.pane);
+    const e = app.panes.editor(cell.pane) orelse return;
+    const ed = e.buf.editor;
+    const line = @min(cell.line, ed.lineCount() - 1);
+    // The column under the pointer: the hit's first column plus the offset.
+    const hit_rect = hitRect(app, m.x, m.y) orelse return;
+    const col = cell.col + (m.x - hit_rect.x);
+    const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+    // `ui.click_echo`: the word under a left press underlines
+    // for 120 ms — "did that click land?".
+    if (m.button == .left and app.cfg.ui.click_echo) {
+        const r = find_mod.wordAt(ed.bytes(), byte) orelse find_mod.Range{ .start = byte, .end = @min(byte + 1, ed.len()) };
+        app.click_echo = .{ .pane = cell.pane, .start = r.start, .end = r.end, .until_ms = app.now_ms + app_mod.click_echo_ms };
+    }
+    switch (m.button) {
+        .right => {
+            // Right-click inside a selection keeps it; elsewhere it moves the cursor.
+            if (ed.selection()) |sel| {
+                if (byte < sel[0] or byte > sel[1]) {
+                    ed.anchor = null;
+                    ed.setCursor(byte);
+                }
+            } else ed.setCursor(byte);
+            try context_menus.openEditorMenu(app, m.x, m.y);
+        },
+        .middle => {
+            ed.anchor = null;
+            ed.setCursor(byte);
+            // X11's middle click pastes the primary selection: `"*`.
+            // Falls back to the unnamed register where the sink cannot read.
+            app.clipboard.setPendingRegister('*');
+            const text = app.clipboard.text();
+            if (text.len > 0) {
+                const copy = try app.frame.allocator().dupe(u8, text);
+                _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
+            }
+        },
+        else => try editorPress(app, cell.pane, e, byte, m),
+    }
 }
 
 fn hitRect(app: *App, x: u16, y: u16) ?Rect {

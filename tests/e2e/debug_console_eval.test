@@ -1,0 +1,35 @@
+# The Debug Console — an expression evaluates against the stop with
+# its type, a struct value renders whole, an unknown name is an error
+# line; Tab completes a variable or watch name.
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+command dap.toggle_breakpoint
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command dap.add_watch
+type "xyzzy"
+key enter
+command dap.repl
+expect pane "Debug"
+type "x * 2"
+key enter
+expect screen contains "> x * 2"
+expect screen contains "2 : int"
+type "p"
+key enter
+expect screen contains "{a=1, b=\"two\"} : struct"
+type "nope"
+key enter
+expect screen contains "err: no such variable"
+type "xy"
+key tab
+expect screen contains "> xyzzy"
+key ctrl+u
+type "x"
+key tab
+expect screen contains "> x"
+command dap.terminate

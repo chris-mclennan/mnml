@@ -156,10 +156,8 @@ pub const Pane = union(enum) {
     spend_report: spend.SpendPane,
     /// Workspace grep results (`find.grep`).
     grep: grep.GrepPane,
-    /// The debugger: call stack, variables + watches, output.
+    /// The debugger's console pane (toolbar + output + evaluations).
     debug: dap.DebugPane,
-    /// The debugger's REPL.
-    dap_repl: dap.DapReplPane,
     /// An HTTP request and its response (`http.new`, a `.curl` file).
     request: RequestPane,
     /// A persistent WebSocket connection (`ws.connect`).
@@ -211,7 +209,6 @@ pub const Pane = union(enum) {
             .spend_report => |*s| s.deinit(io),
             .grep => |*g| g.deinit(io),
             .debug => {},
-            .dap_repl => |*r| r.deinit(),
         }
     }
 
@@ -235,7 +232,6 @@ pub const Pane = union(enum) {
             .spend_report => return "AI spend (24h)",
             .grep => return "Search",
             .debug => return "Debug",
-            .dap_repl => return "DAP REPL",
             .request => |*r| return r.title(),
             .websocket => |*w| return w.title(),
             .browser => |*b| return b.title(),
@@ -253,7 +249,7 @@ pub const Pane = union(enum) {
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 

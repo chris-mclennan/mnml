@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ DEBUG                  + │  prog.dbg 󰅖   󰐕                                                                   
+  │  󰍉 / filter              │ prog.dbg
+   │ ○ no session             │◐  1 let x = 1
+ 󰍉 │ ▾ VARIABLES (0)          │   2 let p = struct{a=1,b="two"}
+   │     no session — F5 star…│◆  3 print "hello"
+ 󰊢 │ ▾ WATCH (0)              │●  4 x = x + 1
+   │     no watches — w adds …│   5 fn f
+▌ │ ▾ CALL STACK (0)         │   6   let y = 10
+   │     no session           │   7   x = x * y
+ 󰐱 │ ▾ BREAKPOINTS (4)        │   8 end
+   │╭ Breakpoint ─────────────╮○  9 call f
+ 󰎒 ││    Go to line          │  10 print x
+   ││    Disable             │
+ 󰚩 ││─────────────────────────│
+   ││    Edit condition…     │
+ 󰅣 ││    Edit hit count…     │
+   ││    Edit log message…   │
+  ││─────────────────────────│
+   ││    Remove              │
+  │╰─────────────────────────╯
+   │                          │
+  │                          │
+   │                          │
+ 󱘣 │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │──────────────────────────│
+   │ call  ·  DBG  ·  prog. ⋮ │
+   │                          │
+   │ [gd] Definition · [gr]   │
+   │ References · [K] Hover · │
+   │ [F2] Rename              │
+  │                          │
+   │                          │
+ TREE   prog.dbg                                            F 57% ▲1.0  111B  Ln 9/10 Col 1    16:20  ws   dbg
+

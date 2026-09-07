@@ -1,0 +1,24 @@
+# width: 120
+# The step toolbar — Step over clicked on the strip over the editor
+# runs one line (the stop moves to line 9, past fn f); Step into
+# clicked on the Debug pane's toolbar enters f. The cells are the
+# 120×40 layout's (the runner paints no breadcrumb row, so the strip is row 2).
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+command dap.toggle_breakpoint
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command dap.show
+expect screen contains "▶ prog.dbg:4  main"
+click 36 2
+expect screen contains "dap: stopped (step)"
+expect screen contains "▶ prog.dbg:9  main"
+click 85 2
+expect screen contains "▶ prog.dbg:6  f"
+expect screen contains "prog.dbg:9  main"
+click 97 2
+expect screen contains "dap: terminated"

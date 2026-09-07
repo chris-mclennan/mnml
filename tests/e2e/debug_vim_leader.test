@@ -1,0 +1,44 @@
+# nvim-dap's leader chords under vim: <leader>db toggles a breakpoint,
+# <leader>dc starts (continue without a session), <leader>do steps
+# over, <leader>dw prompts for a watch, <leader>du shows and hides the
+# DEBUG section, <leader>dt terminates. F10 works under vim too.
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+key space
+key d
+key b
+expect screen contains "breakpoint set: line 4"
+key space
+key d
+key c
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+key space
+key d
+key o
+expect screen contains "dap: stopped (step)"
+key f10
+expect screen contains "Ln 10/10"
+key space
+key d
+key w
+expect screen contains "Watch expression"
+key esc
+key space
+key d
+key u
+expect screen contains "▾ VARIABLES"
+# The section has the keys now (Space is its checkbox key); Esc hands
+# them back to the editor, where the leader chord hides it again.
+key esc
+key space
+key d
+key u
+expect screen lacks "▾ VARIABLES"
+key space
+key d
+key t
+expect screen contains "dap: terminated"

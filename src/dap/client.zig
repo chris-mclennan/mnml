@@ -43,6 +43,7 @@ pub const ReqKind = enum(u16) {
     variables,
     evaluate_repl,
     evaluate_watch,
+    evaluate_hover,
     set_variable,
     terminate,
     disconnect,
@@ -100,6 +101,9 @@ pub const Session = struct {
     running: bool = false,
     /// The thread the last `stopped` named; step requests address it.
     thread: ?i64 = null,
+    /// The frame the call stack selected; null = the top frame. What
+    /// `evaluate` and the scopes address. Reset on every stop.
+    frame_id: ?i64 = null,
     stopped: ?types.Stopped = null,
     exited: bool = false,
 
@@ -121,6 +125,10 @@ pub const Session = struct {
     /// pending record's `ctx`. Owned strings; a slot is freed when its
     /// reply lands and reused after.
     evals: std.ArrayListUnmanaged(?[]u8) = .empty,
+    /// The path behind each in-flight `setBreakpoints`, indexed by the
+    /// pending record's `ctx`, so the reply's `verified` flags land on
+    /// the right file. Owned strings, slots reused like `evals`.
+    bp_paths: std.ArrayListUnmanaged(?[]u8) = .empty,
 
     pub const max_output = 2000;
 
@@ -199,6 +207,8 @@ pub const Session = struct {
         self.watch_results.deinit(gpa);
         for (self.evals.items) |e| if (e) |s| gpa.free(s);
         self.evals.deinit(gpa);
+        for (self.bp_paths.items) |e| if (e) |s| gpa.free(s);
+        self.bp_paths.deinit(gpa);
         self.variables.deinit(gpa);
         self.expanded.deinit(gpa);
         self.vars.deinit();
@@ -299,23 +309,56 @@ pub const Session = struct {
         self.configured = true;
     }
 
-    /// The whole list for one file — DAP replaces per source.
+    /// The whole list for one file — DAP replaces per source. Disabled
+    /// breakpoints are left out; the reply's `verified` flags map onto
+    /// the enabled ones in order (`takeBpPath`).
     pub fn setBreakpoints(self: *Session, path: []const u8, bps: []const types.Breakpoint) SendError!void {
-        const Bp = struct { line: u32, condition: ?[]const u8 = null, hitCondition: ?[]const u8 = null };
-        const list = try self.gpa.alloc(Bp, bps.len);
+        const Bp = struct { line: u32, condition: ?[]const u8 = null, hitCondition: ?[]const u8 = null, logMessage: ?[]const u8 = null };
+        var n: usize = 0;
+        for (bps) |b| if (b.enabled) {
+            n += 1;
+        };
+        const list = try self.gpa.alloc(Bp, n);
         defer self.gpa.free(list);
-        const lines = try self.gpa.alloc(u32, bps.len);
+        const lines = try self.gpa.alloc(u32, n);
         defer self.gpa.free(lines);
-        for (bps, 0..) |b, i| {
-            list[i] = .{ .line = b.line + 1, .condition = b.condition, .hitCondition = b.hit_condition };
+        var i: usize = 0;
+        for (bps) |b| if (b.enabled) {
+            list[i] = .{ .line = b.line + 1, .condition = b.condition, .hitCondition = b.hit_condition, .logMessage = b.log_message };
             lines[i] = b.line + 1;
-        }
-        _ = try self.request(.set_breakpoints, "setBreakpoints", .{
+            i += 1;
+        };
+        const slot = try self.rememberBpPath(path);
+        errdefer self.forgetBpPath(slot);
+        _ = try self.requestCtx(.set_breakpoints, "setBreakpoints", .{
             .source = .{ .path = path, .name = std.fs.path.basename(path) },
             .breakpoints = list,
             .lines = lines,
             .sourceModified = false,
-        });
+        }, slot);
+    }
+
+    fn rememberBpPath(self: *Session, path: []const u8) Allocator.Error!u64 {
+        const copy = try self.gpa.dupe(u8, path);
+        errdefer self.gpa.free(copy);
+        for (self.bp_paths.items, 0..) |e, i| if (e == null) {
+            self.bp_paths.items[i] = copy;
+            return i;
+        };
+        try self.bp_paths.append(self.gpa, copy);
+        return self.bp_paths.items.len - 1;
+    }
+
+    /// The path a `setBreakpoints` slot named; the caller frees it.
+    pub fn takeBpPath(self: *Session, slot: u64) ?[]u8 {
+        if (slot >= self.bp_paths.items.len) return null;
+        const e = self.bp_paths.items[slot];
+        self.bp_paths.items[slot] = null;
+        return e;
+    }
+
+    fn forgetBpPath(self: *Session, slot: u64) void {
+        if (self.takeBpPath(slot)) |e| self.gpa.free(e);
     }
 
     pub fn setExceptionBreakpoints(self: *Session) SendError!void {
@@ -360,17 +403,25 @@ pub const Session = struct {
         _ = try self.requestCtx(.variables, "variables", .{ .variablesReference = ref }, @bitCast(ref));
     }
 
-    pub const EvalContext = enum { repl, watch };
+    pub const EvalContext = enum { repl, watch, hover };
 
-    /// `evaluate` against the top frame (or globally). The expression is
-    /// remembered so the reply can name it.
+    /// The frame evaluations and scopes address: the selected one, else
+    /// the top of the stack.
+    pub fn currentFrame(self: *const Session) ?i64 {
+        if (self.frame_id) |f| return f;
+        return if (self.frames.len > 0) self.frames[0].id else null;
+    }
+
+    /// `evaluate` against the current frame (or globally). The
+    /// expression is remembered so the reply can name it.
     pub fn evaluate(self: *Session, expr: []const u8, context: EvalContext) SendError!i64 {
         const slot = try self.rememberEval(expr);
         errdefer self.forgetEval(slot);
-        const frame_id: ?i64 = if (self.frames.len > 0) self.frames[0].id else null;
+        const frame_id: ?i64 = self.currentFrame();
         const kind: ReqKind = switch (context) {
             .repl => .evaluate_repl,
             .watch => .evaluate_watch,
+            .hover => .evaluate_hover,
         };
         return self.requestCtx(kind, "evaluate", .{ .expression = expr, .context = @tagName(context), .frameId = frame_id }, slot);
     }
@@ -412,6 +463,7 @@ pub const Session = struct {
     pub fn onResumed(self: *Session) void {
         if (self.stopped) |*s| s.deinit(self.gpa);
         self.stopped = null;
+        self.frame_id = null;
         self.running = true;
         self.scopes = &.{};
         self.variables.clearRetainingCapacity();
@@ -505,6 +557,7 @@ pub const Session = struct {
         if (self.stopped) |*old| old.deinit(self.gpa);
         self.stopped = st;
         self.thread = thread_id;
+        self.frame_id = null;
         self.running = false;
     }
 

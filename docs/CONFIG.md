@@ -46,6 +46,7 @@ otherwise. Copy what you need; leave the rest out.
         .format_on_type = false,
         .autosave_on_focus_loss = false,
         .inlay_hints = true,
+        .inline_values = true, // while the debugger is stopped: `  x = 1` after a line that names x
         .cursor_blink = false,
         .semantic_tokens_viewport = false,
         .code_lens = true,
@@ -146,6 +147,7 @@ otherwise. Copy what you need; leave the rest out.
         .projects_dir = "", // "~/code"; ~ is expanded
         .menu_bar = .always, // .always | .auto | .hidden
         .activity_bar = .always, // .always | .auto (pointer in column 0 reveals) | .hidden
+        .debug_toolbar = .auto, // the step toolbar strip over the editor: .auto (while a debug session is live) | .always | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
         // The coverage chip reads `.tattle-claude-artifacts` under
         // `MNML_ARTIFACTS_HOME` when that is set, else your home directory.

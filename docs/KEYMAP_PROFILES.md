@@ -89,6 +89,31 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.cut` / `file.paste` | `y y` / `d d` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot move a file (the property `ctrl+v` lacks); a stray key between the two cancels. `D` duplicates in both profiles |
 
+## Debugger
+
+Two complete doors to the same `dap.*` commands, neither a patch on the
+other: the vim profile gets nvim-dap's leader chords (a `+debug`
+which-key group under `<leader>d`), the standard profile VS Code's
+function keys. The F-keys are `both`, so a vim user keeps them too.
+
+| command | vim | standard / both |
+|---|---|---|
+| `dap.toggle_breakpoint` | `<leader>db` | `F9` |
+| `dap.toggle_breakpoint_conditional` | `<leader>dB` | `Shift+F9` |
+| `dap.set_breakpoint_log_message` | `<leader>dl` | — |
+| `dap.run` | — | `F5` |
+| `dap.continue` (starts a session when there is none) | `<leader>dc` | `Shift+F5` |
+| `dap.next` | `<leader>do` | `F10` |
+| `dap.step_in` | `<leader>di` | `F11` |
+| `dap.step_out` | `<leader>dO` | `Shift+F11` |
+| `dap.pause` | `<leader>dp` | — |
+| `dap.restart` | `<leader>dR` | — |
+| `dap.terminate` | `<leader>dt` | — |
+| `dap.repl` (focus the debug console) | `<leader>dr` | — |
+| `dap.add_watch` | `<leader>dw` | — |
+| `dap.toggle_panel` (the DEBUG section) | `<leader>du` | `Ctrl+Shift+D` (`view.activity_debug`) |
+| `dap.evaluate_hover` | `<leader>dh`, and `K` while stopped | — |
+
 ## Ctrl-O / Ctrl-I / Tab in the vim profile
 
 - **NORMAL `Ctrl-O`** is the jumplist (`nav.back`); **INSERT `Ctrl-O`** is

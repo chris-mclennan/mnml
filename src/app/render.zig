@@ -62,6 +62,7 @@ const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
+const debug_panel = @import("debug_panel.zig");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
 const settings_app = @import("settings.zig");
@@ -95,6 +96,7 @@ const flaky = @import("flaky.zig");
 const flaky_view = @import("../ui/flaky_view.zig");
 const grep_view = @import("../ui/grep_view.zig");
 const dap = @import("dap.zig");
+const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
@@ -600,8 +602,9 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .http => try http_panel.draw(app, ui, area),
         .sessions => try sessions.draw(app, ui, area),
         .outline => try outline.drawPanel(app, ui, area),
+        .debug => try debug_panel.draw(app, ui, area),
         // Pane-backed sections never own a column (`side.surface`).
-        .search, .debug, .integrations, .agents, .cloud_agents => unreachable,
+        .search, .integrations, .agents, .cloud_agents => unreachable,
     }
 }
 
@@ -631,7 +634,6 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .script => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
         .cheatsheet => kindIcon(ascii, "?", "\u{F128}", p.yellow),
         .debug => kindIcon(ascii, "\u{1F41B}", "\u{F188}", p.red),
-        .dap_repl => kindIcon(ascii, ">", "\u{F018D}", p.cyan),
         .image => kindIcon(ascii, "\u{25A4}", "\u{F021F}", p.purple),
         .claude_agents => kindIcon(ascii, "\u{25C6}", "\u{F06A9}", p.purple),
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
@@ -951,7 +953,6 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 grep_view.draw(ui, pr.pane, rect, g, app.active == pr.pane and app.focus == .pane);
             },
             .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
-            .dap_repl => |*r| try dap.drawRepl(app, ui, pr.pane, r, rect),
             .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
             .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
             .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
@@ -1122,6 +1123,27 @@ fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
     _ = ui.putStrRight(rect.right(), rect.bottom() - 1, rect.w, hint, ui.theme.current_match);
 }
 
+/// Two sorted virtual-text lists as one, by byte (the debugger's inline
+/// values after the language server's hints at the same byte).
+fn mergeVirtual(arena: Allocator, a: []const editor_view.VirtualText, b: []const editor_view.VirtualText) Allocator.Error![]const editor_view.VirtualText {
+    if (b.len == 0) return a;
+    if (a.len == 0) return b;
+    const out = try arena.alloc(editor_view.VirtualText, a.len + b.len);
+    var i: usize = 0;
+    var j: usize = 0;
+    var k: usize = 0;
+    while (i < a.len or j < b.len) : (k += 1) {
+        if (j >= b.len or (i < a.len and a[i].byte <= b[j].byte)) {
+            out[k] = a[i];
+            i += 1;
+        } else {
+            out[k] = b[j];
+            j += 1;
+        }
+    }
+    return out;
+}
+
 /// The gutter's marks, in priority order: the debugger's signs first (a
 /// breakpoint, the ▶ of a stop), then a diagnostic's dot on the lines
 /// they leave, then git's change bars — the view paints the first sign
@@ -1192,6 +1214,13 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
             editor_view.drawBreadcrumb(ui, id, s.top, names);
             rect = s.rest;
         }
+    };
+    // The debugger's step toolbar, docked over the editor while a
+    // session is live (`ui.debug_toolbar`).
+    if (rect.h >= 3) if (dap.stripPane(app)) |sp| if (sp == id) {
+        const s = rect.splitTop(1);
+        _ = debug_toolbar.draw(ui, s.top, .{ .pane = id, .state = dap.sessionState(app) });
+        rect = s.rest;
     };
     // The find bar docks under the pane it belongs to.
     var bar: ?Rect = null;
@@ -1280,7 +1309,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
-        .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
+        .virtual_text = try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)),
+        .stopped_line = dap.stoppedLine(app, e),
         .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
         // ── ui toggles ──
         .relative_numbers = app.cfg.ui.relative_line_numbers,
@@ -1407,7 +1437,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             // Rust's title is the leader and the keys typed so far.
             const path = w.slice();
             const title: []const u8 = if (path.len == 0) "<leader>" else ui.fmt("<leader> {s}", .{path});
-            const kids = whichkey.continuations(path);
+            const kids = whichkey.continuations(ui.arena, path, app.input_style == .vim);
             const entries = try ui.arena.alloc(which_key.Entry, kids.len);
             for (kids, 0..) |k, i| {
                 const key = try ui.arena.alloc(u8, 1);
@@ -1669,8 +1699,12 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     try t.expectEqual(@as(u32, 0), app.hits.at(3, 1).?.tab.leaf);
     try t.expectEqual(@as(u32, 1), app.hits.at(64, 1).?.tab.leaf);
     try t.expect(app.hits.at(60, 10).? == .divider);
-    try t.expect(app.hits.at(3, 2).? == .editor_cell);
-    try t.expectEqual(@as(u32, 0), app.hits.at(3, 2).?.editor_cell.line);
+    // The gutter is its own hit (a breakpoint's home); the text past it
+    // is the cell.
+    try t.expect(app.hits.at(3, 2).? == .gutter);
+    try t.expectEqual(@as(u32, 0), app.hits.at(3, 2).?.gutter.line);
+    try t.expect(app.hits.at(9, 2).? == .editor_cell);
+    try t.expectEqual(@as(u32, 0), app.hits.at(9, 2).?.editor_cell.line);
     try t.expectEqual(statusline.seg_mode, app.hits.at(2, 38).?.statusline_seg);
     try t.expect(app.hits.at(60, 38) == null);
 }

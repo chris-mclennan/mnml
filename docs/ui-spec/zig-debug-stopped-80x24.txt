@@ -1,0 +1,24 @@
+ ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
+   │ DEBUG                  + │  prog.d 󰐕         │  Debug  󰐕        
+  │  󰍉 / filter              │ prog.dbg               │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
+ 󰍉 │▌● prog.dbg:4 · main     █│  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛 │ ── started prog.dbg ──
+ 󰊢 │ ▾ VARIABLES (4)         █│   1 let x = 1  x = 1   │ hello
+▌ │ ▾ Locals                █│   2 let p = struct{a=1,│
+ 󰐱 │     x: int = 1          █│   3 print "hello"      │
+ 󰎒 │   ▸ p: struct = {a=1, b…█│▶  4 x = x + 1  x = 1   │
+ 󰚩 │ ▾ Globals    ╭────────────────────────────────────────────────────────────╮
+ 󰅣 │     x: int = │x: int = 1                                                  │
+  │   ▸ p: struct│Locals · debugger value · right-click the gutter: breakpoin…│
+  │ ▾ WATCH (0)  ╰────────────────────────────────────────────────────────────╯
+  │     no watches — w adds…█│   9 call f             │
+ 󱘣 │ ▾ CALL STACK (1)        █│  10 print x            │
+   │──────────────────────────│                        │
+   │ x: int = 1             ⋮ │                        │
+   │                          │                        │
+   │ Locals · debugger value  │                        │
+   │ · right-click the        │                        │
+   │ gutter: breakpoints      │                        │
+  │                          │                        │
+   │                          │                        │ > expression — Tab comp
+ VIEW  [no file]                            F 57% ▲1.0    16:20  ws   —
+

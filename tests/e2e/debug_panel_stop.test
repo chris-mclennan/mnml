@@ -1,0 +1,36 @@
+# DEBUG section — a stop fills it: the status row (its narrow form at
+# the sidebar's width), the locals with types and values, a struct row
+# that expands, the frame marked in CALL STACK, the breakpoint row and
+# the adapter's exception filters under BREAKPOINTS.
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 4"
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command view.activity_debug
+expect screen contains "prog.dbg:4 · main"
+expect screen contains "▾ VARIABLES (4)"
+expect screen contains "x: int = 1"
+expect screen contains "▸ p: struct = {a=1, b="
+expect screen contains "▶ prog.dbg:4  main"
+expect screen contains "[x] prog.dbg:4"
+expect screen contains "[x] Uncaught errors"
+expect screen contains "[ ] All errors"
+
+# Enter on the struct row expands it; its fields land under it.
+key j
+key j
+key j
+key j
+key enter
+expect screen contains "a: int = 1"
+expect screen contains "b: string = \"two\""
+
+command dap.terminate
+expect screen contains "dap: terminated"
+expect screen contains "○ no session"

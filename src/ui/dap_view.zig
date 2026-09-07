@@ -1,174 +1,120 @@
-//! The debug pane's paint: a status row, then three stacked sections —
-//! CALL STACK (one row per frame), VARIABLES (the watches first, then
-//! the flattened scope tree) and OUTPUT (the tail of what the debuggee
-//! printed). The focused section's cursor row is banded; the other
-//! section's cursor is dimmer so both positions stay visible.
+//! The debug pane: the step toolbar on its first row, then the Debug
+//! Console — VS Code's shape: one scrollback holding the program's
+//! output, the `> expr` echoes of what was evaluated, their results
+//! (a composite expands under its line), errors, and session notes
+//! (`── started prog.dbg ──`), with the input row at the bottom.
 //!
-//! Rows register `.script_hit{pane, id}`: a frame is its index, a
-//! variable row is `vars_base + index`, a watch is `watch_base + index`.
-//! The app decodes them (`app/dap.zig`).
+//! The app hands in the entries already flattened to lines on the
+//! frame arena; the view keeps nothing. An evaluation's lines register
+//! `.script_hit{ pane, entry }` so a click folds / unfolds it; the input
+//! row registers `input_hit`; the toolbar registers its own ids
+//! (`debug_toolbar.zig`).
+//!
+//! Zig-authored: this is the spec (`docs/ui-spec/zig-debug-console-*`).
 
 const std = @import("std");
 const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
-const list_panel = @import("list_panel.zig");
-const scrollbar = @import("scrollbar.zig");
+const text_field = @import("text_field.zig");
+const toolbar = @import("debug_toolbar.zig");
 const ids = @import("../core/ids.zig");
-const types = @import("../dap/types.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Style = vaxis.Style;
-pub const VarRow = types.VarRow;
+pub const Caret = text_field.Caret;
 
-pub const vars_base: u32 = 0x1000_0000;
-pub const watch_base: u32 = 0x2000_0000;
+pub const prompt = "> ";
+/// The `.script_hit` id of the input row.
+pub const input_hit: u32 = std.math.maxInt(u32);
+/// Entry ids sit below this; the toolbar's above it.
+pub const max_entry: u32 = toolbar.hit_base - 1;
 
-pub const Section = enum { stack, variables };
-
-pub const Frame = struct { label: []const u8 };
-pub const Watch = struct { expression: []const u8, value: []const u8, is_err: bool };
-
-pub const Props = struct {
-    /// `● stopped (breakpoint) · thread 1`, `▶ running`, `(no session)`.
-    status: []const u8,
-    stopped: bool,
-    has_session: bool,
-    frames: []const Frame,
-    stack_cursor: usize,
-    watches: []const Watch,
-    vars: []const VarRow,
-    /// Cursor over the watches + vars rows as one list (watches first).
-    vars_cursor: usize,
-    output: []const []const u8,
-    section: Section,
-    focused: bool,
+/// One painted line of the scrollback.
+pub const Line = struct {
+    pub const Kind = enum { stdout, stderr, console, note, echo, result, err, pending, child };
+    kind: Kind,
+    text: []const u8,
+    /// The evaluation this line belongs to (a click toggles it).
+    entry: ?u32 = null,
 };
 
-/// The three scroll offsets the pane keeps.
-pub const Scrolls = struct { stack: usize = 0, vars: usize = 0 };
+pub const Props = struct {
+    lines: []const Line,
+    /// Lines hidden past the bottom (0 follows the tail).
+    scroll: usize,
+    input: []const u8,
+    caret: usize,
+    state: toolbar.SessionState,
+    focused: bool,
+    show_toolbar: bool = true,
+};
 
-pub fn draw(ui: Ui, pane: PaneId, area: Rect, scrolls: *Scrolls, p: Props) void {
+fn lineStyle(t: *const Theme, kind: Line.Kind, bg: vaxis.Color) Style {
+    return switch (kind) {
+        .stdout => Theme.onBg(t.fg, bg),
+        .stderr => Theme.onBg(t.error_fg, bg),
+        .console => Theme.onBg(t.muted, bg),
+        .note => blk: {
+            var s = Theme.onBg(t.muted, bg);
+            s.italic = true;
+            break :blk s;
+        },
+        .echo => Theme.onBg(t.accent, bg),
+        .result => Theme.onBg(t.info_fg, bg),
+        .err => Theme.onBg(t.error_fg, bg),
+        .pending, .child => Theme.onBg(t.muted, bg),
+    };
+}
+
+/// Returns the input caret when focused.
+pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: Props) ?Caret {
     const t = ui.theme;
     ui.fill(area, t.panel_bg);
-    if (area.isEmpty()) return;
+    if (area.isEmpty()) return null;
     const bg = t.panel_bg.bg;
-    // Status row.
-    var x = area.x;
-    x += ui.putStr(x, area.y, area.w, " Debug ", Theme.onBg(Theme.withFg(t.tab_active, t.accent.fg), bg));
-    x += 1;
-    const status_style = Theme.onBg(if (p.stopped) t.error_fg else if (p.has_session) t.info_fg else t.muted, bg);
-    _ = ui.putStr(x, area.y, area.right() -| x, ui.clipStr(p.status, area.right() -| x), status_style);
-    if (area.h < 4) return;
-    var rest = Rect.init(area.x, area.y + 1, area.w, area.h - 1);
-    // Output takes the bottom: up to a quarter, at least 3 rows when
-    // there is room, and only when there is something to show.
-    const out_h: u16 = if (p.output.len == 0 or rest.h < 8) 0 else @max(@min(@as(u16, @intCast(@min(p.output.len + 1, 64))), rest.h / 4), 3);
-    if (out_h > 0) {
-        const s = rest.splitBottom(out_h);
-        rest = s.top;
-        drawOutput(ui, s.rest, p.output);
+    var rest = area;
+    if (p.show_toolbar) {
+        const s = rest.splitTop(1);
+        _ = toolbar.draw(ui, s.top, .{ .pane = pane, .state = p.state });
+        rest = s.rest;
     }
-    // The stack takes a third (at least 3 rows), the variables the rest.
-    const stack_h: u16 = @max(@min(@as(u16, @intCast(@min(p.frames.len + 1, 64))), rest.h / 3), 3);
-    const s = rest.splitTop(@min(stack_h, rest.h));
-    drawStack(ui, pane, s.top, &scrolls.stack, p);
-    if (s.rest.h > 0) drawVariables(ui, pane, s.rest, &scrolls.vars, p);
-}
-
-fn sectionHeader(ui: Ui, r: Rect, label: []const u8, active: bool) void {
-    const t = ui.theme;
-    const style = Theme.onBg(if (active) t.accent else t.muted, t.panel_bg.bg);
-    ui.fill(r, style);
-    _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(ui.fmt(" {s} ", .{label}), r.w), style);
-}
-
-fn drawStack(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
-    const t = ui.theme;
-    const bg = t.panel_bg.bg;
-    sectionHeader(ui, area.row(0), "CALL STACK", p.section == .stack);
-    if (area.h < 2) return;
-    const list = Rect.init(area.x, area.y + 1, area.w, area.h - 1);
-    if (p.frames.len == 0) {
-        const msg: []const u8 = if (p.has_session) "  (no frames — waiting for a stop)" else "  (no frames — start a session + hit a breakpoint)";
-        _ = ui.putStr(list.x, list.y, list.w, ui.clipStr(msg, list.w), Theme.onBg(t.muted, bg));
-        return;
+    if (rest.h < 1) return null;
+    // Input row.
+    const input_row = rest.row(rest.h - 1);
+    const pw = ui.putStr(input_row.x + 1, input_row.y, input_row.w -| 1, prompt, Theme.onBg(t.accent, bg));
+    const field = Rect.init(input_row.x + 1 + pw, input_row.y, input_row.w -| (1 + pw), 1);
+    const caret = text_field.draw(ui, field, p.input, p.caret, .{
+        .style = Theme.onBg(t.fg, bg),
+        .placeholder = if (p.state == .stopped) "expression \u{2014} Tab completes, \u{2191}\u{2193} history" else "expression (evaluates once stopped)",
+        .focused = p.focused,
+    });
+    ui.hit(input_row, .{ .script_hit = .{ .pane = pane, .id = input_hit } });
+    if (rest.h < 2) return caret;
+    // The scrollback: the last `body.h` lines before the scroll offset.
+    const body = Rect.init(rest.x, rest.y, rest.w, rest.h - 1);
+    if (p.lines.len == 0) {
+        _ = ui.putStr(body.x + 1, body.y, body.w -| 1, ui.clipStr("Debug console \u{2014} program output and evaluations land here", body.w -| 1), Theme.onBg(t.muted, bg));
+        return caret;
     }
-    const win = list_panel.scrollWindow(scroll, p.stack_cursor, p.frames.len, list.h);
-    const cols = list.splitRight(if (win.needs_bar and list.w > 8) 1 else 0);
-    var i: usize = 0;
-    while (i < win.visible) : (i += 1) {
-        const idx = win.first + i;
-        const r = cols.left.row(@intCast(i));
-        const active = p.section == .stack and p.focused;
-        const style: Style = if (idx == p.stack_cursor) (if (active) Theme.onBg(t.panel_bg, t.cursor_line.bg) else Theme.onBg(t.panel_bg, t.selection.bg)) else t.panel_bg;
-        ui.fill(r, style);
-        var cx = r.x;
-        cx += ui.putStr(cx, r.y, r.w, if (idx == p.stack_cursor) (if (ui.ascii) "> " else "▶ ") else "  ", Theme.withFg(style, t.accent.fg));
-        _ = ui.putStr(cx, r.y, r.right() -| cx, ui.clipStr(p.frames[idx].label, r.right() -| cx), Theme.withFg(style, t.fg.fg));
-        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(idx) } });
-    }
-    if (win.needs_bar and list.w > 8) scrollbar.drawVertical(ui, cols.rest, .{ .pane = pane }, p.frames.len, list.h, scroll.*);
-}
-
-fn drawVariables(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
-    const t = ui.theme;
-    const bg = t.panel_bg.bg;
-    sectionHeader(ui, area.row(0), "VARIABLES", p.section == .variables);
-    if (area.h < 2) return;
-    const list = Rect.init(area.x, area.y + 1, area.w, area.h - 1);
-    const total = p.watches.len + p.vars.len;
-    if (total == 0) {
-        const msg: []const u8 = if (p.has_session) "  (waiting for stopped state…)" else "  (no session — start one with dap.run)";
-        _ = ui.putStr(list.x, list.y, list.w, ui.clipStr(msg, list.w), Theme.onBg(t.muted, bg));
-        return;
-    }
-    const win = list_panel.scrollWindow(scroll, p.vars_cursor, total, list.h);
-    const cols = list.splitRight(if (win.needs_bar and list.w > 8) 1 else 0);
-    var i: usize = 0;
-    while (i < win.visible) : (i += 1) {
-        const idx = win.first + i;
-        const r = cols.left.row(@intCast(i));
-        const active = p.section == .variables and p.focused;
-        const style: Style = if (idx == p.vars_cursor) (if (active) Theme.onBg(t.panel_bg, t.cursor_line.bg) else Theme.onBg(t.panel_bg, t.selection.bg)) else t.panel_bg;
-        ui.fill(r, style);
-        if (idx < p.watches.len) {
-            const w = p.watches[idx];
-            var cx = r.x;
-            cx += ui.putStr(cx, r.y, r.w, if (ui.ascii) "  @ " else "  ⌖ ", Theme.withFg(style, t.warn_fg.fg));
-            cx += ui.putStr(cx, r.y, r.right() -| cx, ui.clipStr(w.expression, r.right() -| cx), Theme.withFg(style, t.fg.fg));
-            cx += ui.putStr(cx, r.y, r.right() -| cx, " = ", Theme.withFg(style, t.muted.fg));
-            _ = ui.putStr(cx, r.y, r.right() -| cx, ui.clipStr(w.value, r.right() -| cx), Theme.withFg(style, if (w.is_err) t.error_fg.fg else t.info_fg.fg));
-            ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = watch_base + @as(u32, @intCast(idx)) } });
-            continue;
+    const end = p.lines.len -| p.scroll;
+    const first = end -| body.h;
+    var y: u16 = body.y;
+    for (p.lines[first..end]) |l| {
+        const r = Rect.init(body.x, y, body.w, 1);
+        const style = lineStyle(t, l.kind, bg);
+        if (l.kind == .echo) {
+            var cx = r.x + 1;
+            cx += ui.putStr(cx, y, r.w -| 1, prompt, style);
+            _ = ui.putStr(cx, y, r.right() -| cx, ui.clipStr(l.text, r.right() -| cx), Theme.onBg(t.fg, bg));
+        } else {
+            _ = ui.putStr(r.x + 1, y, r.w -| 1, ui.clipStr(l.text, r.w -| 1), style);
         }
-        const row = p.vars[idx - p.watches.len];
-        var cx = r.x + 2 + @as(u16, row.depth) * 2;
-        const chevron: []const u8 = if (row.expandable) (if (row.expanded) (if (ui.ascii) "v " else "▾ ") else (if (ui.ascii) "> " else "▸ ")) else "  ";
-        cx += ui.putStr(cx, r.y, r.right() -| cx, chevron, Theme.withFg(style, t.accent.fg));
-        const label_style = Theme.withFg(style, if (row.is_scope) t.accent.fg else t.fg.fg);
-        cx += ui.putStr(cx, r.y, r.right() -| cx, ui.clipStr(row.label, r.right() -| cx), label_style);
-        if (row.value.len > 0) {
-            cx += ui.putStr(cx, r.y, r.right() -| cx, " = ", Theme.withFg(style, t.muted.fg));
-            _ = ui.putStr(cx, r.y, r.right() -| cx, ui.clipStr(row.value, r.right() -| cx), Theme.withFg(style, t.info_fg.fg));
-        }
-        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = vars_base + @as(u32, @intCast(idx - p.watches.len)) } });
-    }
-    if (win.needs_bar and list.w > 8) scrollbar.drawVertical(ui, cols.rest, .{ .pane = pane }, total, list.h, scroll.*);
-}
-
-fn drawOutput(ui: Ui, area: Rect, output: []const []const u8) void {
-    const t = ui.theme;
-    sectionHeader(ui, area.row(0), "OUTPUT", false);
-    if (area.h < 2) return;
-    const rows: usize = area.h - 1;
-    const first = output.len -| rows;
-    var y: u16 = area.y + 1;
-    for (output[first..]) |line| {
-        _ = ui.putStr(area.x + 1, y, area.w -| 1, ui.clipStr(line, area.w -| 1), Theme.onBg(t.fg, t.panel_bg.bg));
+        if (l.entry) |e| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = e } });
         y += 1;
     }
+    return caret;
 }
 
 // ── tests ──
@@ -176,34 +122,44 @@ fn drawOutput(ui: Ui, area: Rect, output: []const []const u8) void {
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 
-test "no session: the empty-state rows and the watch list still paint" {
-    var f = try Fixture.init(50, 10);
+test "toolbar, the scrollback's tail, the echo rows as hits, the input row with its caret" {
+    var f = try Fixture.init(90, 8);
     defer f.deinit();
-    var sc: Scrolls = .{};
-    const watches = [_]Watch{.{ .expression = "my_var.field", .value = "(no value)", .is_err = false }};
-    draw(f.ui(), 3, f.full(), &sc, .{ .status = "(no session — dap.run starts one)", .stopped = false, .has_session = false, .frames = &.{}, .stack_cursor = 0, .watches = &watches, .vars = &.{}, .vars_cursor = 0, .output = &.{}, .section = .variables, .focused = true });
-    try f.expectContains(" Debug ");
-    try f.expectContains("(no frames — start a session + hit a breakpoint)");
-    try f.expectContains("⌖ my_var.field = (no value)");
-    try testing.expectEqual(watch_base, f.hits.at(4, 5).?.script_hit.id);
+    const lines = [_]Line{
+        .{ .kind = .note, .text = "\u{2500}\u{2500} started prog.dbg \u{2500}\u{2500}" },
+        .{ .kind = .stdout, .text = "hello" },
+        .{ .kind = .stderr, .text = "throw: boom" },
+        .{ .kind = .echo, .text = "x * 2", .entry = 0 },
+        .{ .kind = .result, .text = "  10 : int", .entry = 0 },
+        .{ .kind = .echo, .text = "p", .entry = 1 },
+        .{ .kind = .result, .text = "  \u{25BE} {a=1, b=2} : struct", .entry = 1 },
+        .{ .kind = .child, .text = "      a : int = 1", .entry = 1 },
+    };
+    const caret = draw(f.ui(), 4, f.full(), .{ .lines = &lines, .scroll = 0, .input = "y", .caret = 1, .state = .stopped, .focused = true });
+    try f.expectContains(" Continue ");
+    try f.expectContains(" throw: boom");
+    try f.expectContains(" > x * 2");
+    try f.expectContains("   10 : int");
+    try f.expectContains("       a : int = 1");
+    try f.expectRow(7, " > y");
+    try testing.expectEqual(@as(u16, 4), caret.?.x);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(3, 5).?.script_hit.id);
+    try testing.expectEqual(input_hit, f.hits.at(3, 7).?.script_hit.id);
+    try testing.expectEqual(toolbar.hitId(.@"continue"), f.hits.at(3, 0).?.script_hit.id);
+    // The first line scrolled off: six body rows hold the last six.
+    try f.expectLacks("started prog.dbg");
+    // Scrolled back by two, the tail's last two lines go.
+    var g = try Fixture.init(90, 8);
+    defer g.deinit();
+    _ = draw(g.ui(), 4, g.full(), .{ .lines = &lines, .scroll = 2, .input = "", .caret = 0, .state = .stopped, .focused = false });
+    try g.expectContains("started prog.dbg");
+    try g.expectLacks("a : int = 1");
 }
 
-test "a stop: frames, the variables tree with chevrons, the output tail" {
-    var f = try Fixture.init(60, 14);
+test "an empty console says so; the strip can be left out" {
+    var f = try Fixture.init(60, 3);
     defer f.deinit();
-    var sc: Scrolls = .{};
-    const frames = [_]Frame{ .{ .label = "main.py:3  main" }, .{ .label = "main.py:9  <module>" } };
-    const vars = [_]VarRow{
-        .{ .depth = 0, .is_scope = true, .label = "Locals", .name = "Locals", .value = "", .var_ref = 10, .expanded = true, .expandable = true, .parent_ref = 0 },
-        .{ .depth = 1, .is_scope = false, .label = "n: int", .name = "n", .value = "3", .var_ref = 0, .expanded = false, .expandable = false, .parent_ref = 10 },
-    };
-    const out = [_][]const u8{ "hello", "world" };
-    draw(f.ui(), 1, f.full(), &sc, .{ .status = "● stopped (breakpoint) · thread 1", .stopped = true, .has_session = true, .frames = &frames, .stack_cursor = 0, .watches = &.{}, .vars = &vars, .vars_cursor = 1, .output = &out, .section = .stack, .focused = true });
-    try f.expectContains("▶ main.py:3  main");
-    try f.expectContains("▾ Locals");
-    try f.expectContains("    n: int = 3");
-    try f.expectContains(" OUTPUT");
-    try f.expectContains(" world");
-    try testing.expectEqual(@as(u32, 1), f.hits.at(4, 3).?.script_hit.id);
-    try testing.expectEqual(vars_base + 1, f.hits.at(6, 6).?.script_hit.id);
+    _ = draw(f.ui(), 0, f.full(), .{ .lines = &.{}, .scroll = 0, .input = "", .caret = 0, .state = .none, .focused = true, .show_toolbar = false });
+    try f.expectContains("Debug console");
+    try testing.expect(f.hits.at(3, 0) == null);
 }

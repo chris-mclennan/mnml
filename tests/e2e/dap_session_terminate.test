@@ -18,4 +18,4 @@ expect screen contains "x: int = 1"
 
 command dap.terminate
 expect screen contains "dap: terminated"
-expect screen contains "(no session"
+expect screen contains "no session"

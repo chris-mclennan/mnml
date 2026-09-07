@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ DEBUG                  + │  prog.dbg 󰅖   󰐕                       │  Debug 󰅖   󰐕                         
+  │  󰍉 / filter              │ prog.dbg                                   │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
+   │▌● prog.dbg:4 · main      │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛                     │ ── started prog.dbg ──
+ 󰍉 │ ▾ VARIABLES (4)          │   1 let x = 1  x = 1                       │ hello
+   │ ▾ Locals                 │   2 let p = struct{a=1,b="two"}  p = {a=1, │ > x * 2
+ 󰊢 │     x: int = 1           │   3 print "hello"                          │   2 : int
+   │   ▸ p: struct = {a=1, b=…│▶  4 x = x + 1  x = 1                       │ > p
+▌ │ ▾ Globals                │   5 fn f                                   │   ▸ {a=1, b="two"} : struct
+   │     x: int = 1           │   6   let y = 10                           │ > nope
+ 󰐱 │   ▸ p: struct = {a=1, b=…│   7   x = x * y                            │   err: no such variable
+   │ ▾ WATCH (0)              │   8 end                                    │
+ 󰎒 │     no watches — w adds …│   9 call f                                 │
+   │ ▾ CALL STACK (1)         │  10 print x                                │
+ 󰚩 │   ● thread main          │                                            │
+   │   ▶ prog.dbg:4  main     │                                            │
+ 󰅣 │ ▾ BREAKPOINTS (1)        │                                            │
+   │   [x] prog.dbg:4         │                                            │
+  │   [ ] All errors         │                                            │
+   │   [x] Uncaught errors    │                                            │
+  │                          │                                            │
+   │                          │                                            │
+  │                          │                                            │
+   │                          │                                            │
+ 󱘣 │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │──────────────────────────│                                            │
+   │ Debug                  ⋮ │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+   │                          │                                            │
+  │                          │                                            │
+   │                          │                                            │ > p
+ VIEW  [no file]                                                                    F 57% ▲1.0    16:19  ws   —
+

@@ -96,7 +96,7 @@ fn sourceOf(app: *App) CommandError!PaneId {
         .editor => active,
         .outline => |*o| o.source,
         .md_preview => app.diag.fail(app.frame.allocator(), "outline: not for a preview", .{}),
-        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => error.NotAnEditor,
+        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => error.NotAnEditor,
     };
 }
 

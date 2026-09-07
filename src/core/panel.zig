@@ -12,7 +12,9 @@ const ConfigSort = @import("../config/Config.zig").ListSort;
 /// // changed (http-more): `http` — the seven-section HTTP sidebar.
 /// // changed (section-side): `outline` — the symbol outline drawn in a
 /// column (`App.outline_panel` is its pane) when its column is open.
-pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline };
+/// // changed (debug-ui): `debug` — the DEBUG section (variables, watch,
+/// call stack, breakpoints) is a column surface like the rest.
+pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

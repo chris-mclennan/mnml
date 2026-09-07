@@ -148,9 +148,18 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = try f.fmt(arena, "{s} item", .{if (app.panes.get(sh.pane)) |p| @tagName(std.meta.activeTag(p.*)) else "pane"}),
             .detail = "click selects · click again acts",
         },
-        .editor_cell => |cell| .{
-            .title = try f.fmt(arena, "Line {d}", .{cell.line + 1}),
-            .detail = "click places the cursor · drag selects · right-click: editor menu",
+        // While the debugger is stopped, the word under the pointer shows
+        // its value (the variables the last stop fetched, no round trip).
+        .editor_cell => |cell| blk: {
+            if (try @import("dap.zig").hoverValue(app, arena, cell.pane, cell.line, cell.col)) |tip| break :blk tip;
+            break :blk .{
+                .title = try f.fmt(arena, "Line {d}", .{cell.line + 1}),
+                .detail = "click places the cursor · drag selects · right-click: editor menu",
+            };
+        },
+        .gutter => |g| .{
+            .title = try f.fmt(arena, "Line {d} gutter", .{g.line + 1}),
+            .detail = "click the sign cell: toggle breakpoint · right-click: breakpoint menu",
         },
         .overlay_item => .{ .title = "Overlay item", .detail = "click chooses it" },
         .rail => |part| activity_bar.describe(part),
@@ -347,7 +356,8 @@ pub const Category = enum(u8) {
             .diff_toolbar => target == .script_hit and target.script_hit.id >= git_toolbar.hit_base and target.script_hit.id < git_toolbar.hit_base + 0x100_0000,
             // The sidebar's and the right panel's dividers are chrome, not splits.
             .split_dividers => target == .divider and target.divider != render.tree_divider_id and target.divider != render.right_divider_id,
-            .rail_git_header, .editor_gutter, .fold_chips, .code_lens_chips => false,
+            .editor_gutter => target == .gutter,
+            .rail_git_header, .fold_chips, .code_lens_chips => false,
         };
     }
 };

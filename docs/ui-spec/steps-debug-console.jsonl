@@ -1,0 +1,24 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"open","path":"prog.dbg"}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"run-command","id":"dap.toggle_breakpoint"}
+{"cmd":"run-command","id":"dap.run"}
+{"cmd":"wait_ms","ms":1500}
+{"cmd":"run-command","id":"dap.show"}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"run-command","id":"dap.repl"}
+{"cmd":"type","text":"x * 2"}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"type","text":"p"}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"type","text":"nope"}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"tab"}
+{"cmd":"wait_ms","ms":4200}
