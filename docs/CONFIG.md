@@ -49,12 +49,14 @@ otherwise. Copy what you need; leave the rest out.
         .inline_values = true, // while the debugger is stopped: `  x = 1` after a line that names x
         .cursor_blink = false,
         .semantic_tokens_viewport = false,
+        .semantic_tokens = true, // lay a server's semantic tokens over the syntax highlighting (off leaves tree-sitter alone)
         .code_lens = true,
         .text_width = 80,
         .ensure_trailing_newline = true,
         .chord_timeout_ms = 500, // vim's timeoutlen; clamped to 100..5000
         .wheel_moves_cursor = .auto, // .auto | .always | .never
         .scroll_accel = .normal, // .off | .gentle | .normal | .fast
+        .persistent_undo = false, // keep each file's undo + redo stacks in <data root>/undo/ across launches
         .clipboard = .auto, // .auto | .os | .internal — what `"+` / `"*` / Ctrl+C reach
     },
 
@@ -77,7 +79,17 @@ otherwise. Copy what you need; leave the rest out.
         // pane (search, debug, …) have no side. The session keeps the
         // sides a user moved; these are the starting point.
         .sidebar_side = .left, // .left | .right (the Settings row "Default sidebar side")
-        .section_side = .{}, // per section: .explorer / .git / .sessions / .http / .notes / .todos / .findings / .diagnostics / .outline = .left | .right
+        .section_side = .{ // per section, null = follow sidebar_side (outline and diagnostics: the other side)
+            .explorer = null, // .left | .right
+            .git = null,
+            .sessions = null,
+            .http = null,
+            .notes = null,
+            .todos = null,
+            .findings = null,
+            .diagnostics = null,
+            .outline = null,
+        },
         .auto_hide_narrow_width = 0, // 0 = never auto-hide the tree
         .auto_equalize_splits = false,
         .relative_line_numbers = false,
@@ -94,6 +106,7 @@ otherwise. Copy what you need; leave the rest out.
         .highlight_trailing_ws = false,
         .clock = true,
         .stress_meter = false,
+        .check_updates = true, // ask GitHub for the newest release once per launch; MNML_NO_UPDATE_CHECK=1 also skips it
         .activity_bar_pinned_integrations = .{}, // integration ids
         .plus_menu_pinned = .{},
         .plus_menu_hidden = .{},
@@ -108,6 +121,7 @@ otherwise. Copy what you need; leave the rest out.
         .color_column = 0, // 0 = off
         .wrap = false,
         .highlight_todo_keywords = false,
+        .todo_keywords = .{ "TODO", "FIXME", "XXX", "HACK", "REVIEW" }, // what the TODOS panel scans for (after a comment opener, or a markdown list item)
         .render_markdown = false,
         .markdown_opens_rendered = true,
         .always_show_fold_arrows = false,
@@ -217,6 +231,20 @@ otherwise. Copy what you need; leave the rest out.
             .claude = .{ .backend = null }, // wins over .backend
             .codex = .{ .backend = null },
         },
+        // A named way to start claude / codex; the AI chip's right-click lists
+        // them and the mnml-ai-<name> shim exports .env. The built-in `default`
+        // (the bare binary) is implicit.
+        .launch_profiles = .{
+            .{
+                .name = "work",
+                .product = .claude, // .claude | .codex
+                .binary = "claude", // a path, or a name on PATH
+                .args = .{},
+                .env = .{ "KEY=VALUE" },
+                .cwd_mode = .workspace, // .workspace | .home | .file_dir
+            },
+        },
+        .default_profile = .{ .claude = null, .codex = null }, // a profile name per product; null = the built-in
         .inline_suggestions = true,
         .claude_show_all_accounts = false,
         .claude_meter_mode = .compact, // .off | .compact | .ticker
@@ -287,12 +315,17 @@ otherwise. Copy what you need; leave the rest out.
 
     // ── formatters / linters (exec-bearing) ────────────────────────────
     .formatters = .{
-        .rs = .{ .cmd = .{ "rustfmt", "--edition", "2024" } },
+        .rs = .{ .cmd = .{ "rustfmt", "--edition", "2024" } }, // stdin → stdout
         .zig = .{ .cmd = .{ "zig", "fmt", "--stdin" } },
+        // A tool that rewrites the file: the buffer is written, the tool runs
+        // on {file} (the workspace-relative path), the result is read back.
+        .go = .{ .cmd = .{ "gofmt", "-w", "{file}" }, .in_place = true },
     },
     .linters = .{
         .sh = .{ .cmd = .{ "shellcheck", "-f", "gcc" }, .parser = .shellcheck },
-        // .parser: .vimgrep (default, path:line:col: msg) | .eslint | .tsc | .ruff | .shellcheck
+        // .parser: .vimgrep (default, path:line:col: msg) | .eslint | .tsc | .ruff | .shellcheck | .pattern
+        // .pattern matches a line template of placeholders literally between them:
+        .log = .{ .cmd = .{ "mylint", "{file}" }, .parser = .pattern, .pattern = "{file}:{line}:{col}: {severity}: {message}" },
     },
 
     // ── dap (exec-bearing) ─────────────────────────────────────────────
@@ -411,6 +444,8 @@ workspace layer and everything else still applies:
 | `.dap.<name>` | when you start a debug session |
 | `.startup.layout[]` with `.kind = .pty` | immediately, on open |
 | `.startup.tasks` | immediately, on open |
+| `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
+| `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
 
 (`.tasks.<name>` bodies are not in the table: a task only runs when you
 ask for it by name.)
@@ -435,8 +470,8 @@ next to it, keeping the newest 50.
 ### The settings overlay
 
 `view.settings`, `:settings`, or `Ctrl+,` opens the sectioned list —
-`── UI ──`, `── Editor ──`, `── Integrations ──`, `── Reset ──` — one row
-per discrete-choice key:
+`── UI ──`, `── Editor ──`, `── AI ──`, `── Integrations ──`, `── Reset ──`
+— one row per discrete-choice key, and a `‹ [32] ›` row per number:
 
 ```
  ▸ Line numbers:      off / [on]
@@ -460,9 +495,11 @@ the config, the input style, the theme, and the exact bytes of every
 file written since the overlay opened — a file that did not exist is
 removed again.
 
-v1 rows are discrete choices only (bools, enums, the theme); numbers
-and text (`tree_width`, `projects_dir`, …) stay TOML-era file edits
-until v2.
+Rows are discrete choices (bools, enums, the theme) and numbers
+(`tree_width`, `right_panel_width`, `wheel_lines`, `md_image_rows`,
+`hover_help_height`, `color_column`, `tab_width`, `text_width`,
+`chord_timeout_ms` — 70 rows in all); text (`projects_dir`, the
+labels) stays a file edit.
 
 ### Themes
 
