@@ -1,9 +1,12 @@
-//! Which-key — the hint popup for a pending prefix: `Leader`, `Vim: g`,
-//! `+split`. A bottom-anchored box listing every continuation as
-//! `key → label` in as many columns as fit, column-major so the eye
-//! reads down. Groups paint as `+label` in the accent, leaves in the
-//! text color with the key in the warning yellow. Stateless: the app
-//! hands in the entries for the current prefix each frame.
+//! Which-key — the hint popup for a pending prefix: `<leader>`,
+//! `<leader> f`, `Vim: g`. A square box two cells narrower than the
+//! screen, sitting just above the statusline, listing every
+//! continuation as `key → label` in as many columns as fit (a cell is
+//! the widest label plus six), column-major so the eye reads down.
+//! Groups paint in the accent — their labels carry the `+` — leaves in
+//! the text color with the key in the warning yellow; `  esc to cancel`
+//! closes the list. Stateless: the app hands in the entries for the
+//! current prefix each frame.
 //!
 //! Entries are sorted by key here so a keymap can register them in any
 //! order and the popup still reads alphabetically. `→` is `->` under
@@ -45,7 +48,7 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
     var label_w: u16 = 0;
     for (entries) |e| {
         key_w = @max(key_w, ui.width(e.key));
-        label_w = @max(label_w, ui.width(e.label) + @as(u16, if (e.is_group) 1 else 0));
+        label_w = @max(label_w, ui.width(e.label));
     }
     const cell_w = @max(min_cell_w, key_w + arr_w + label_w + 2);
     const avail_w = @max(area.w -| 4, cell_w);
@@ -54,7 +57,7 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
     const rows_n: usize = @max(1, (n + cols - 1) / cols);
     const panel_h: u16 = @max(4, @min(@as(u16, @intCast(@min(rows_n, 1000))) + 3, area.h -| 2));
     const panel_w: u16 = @max(@min(area.w, 20), area.w -| 2);
-    const inner = overlay.box(ui, area, panel_w, panel_h, title, .above_bottom);
+    const inner = overlay.boxLook(ui, area, panel_w, panel_h, title, .above_bottom, .menu);
     if (inner.isEmpty()) return;
 
     const actual_cols: usize = @max(1, inner.w / cell_w);
@@ -83,7 +86,6 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
             x += key_w -| kw;
             x += ui.putStr(x, y, end -| x, e.key, if (e.is_group) key_group else key_leaf);
             x += ui.putStr(x, y, end -| x, arr, arrow_style);
-            if (e.is_group) x += ui.putStr(x, y, end -| x, "+", label_group);
             _ = ui.putStr(x, y, end -| x, ui.clipStr(e.label, end -| x), if (e.is_group) label_group else label_leaf);
         }
     }
@@ -98,8 +100,8 @@ const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 
 const leader = [_]Entry{
-    .{ .key = "s", .label = "split", .is_group = true },
-    .{ .key = "f", .label = "find", .is_group = true },
+    .{ .key = "s", .label = "+split", .is_group = true },
+    .{ .key = "f", .label = "+find", .is_group = true },
     .{ .key = "e", .label = "explorer" },
     .{ .key = "q", .label = "quit" },
 };
@@ -107,8 +109,8 @@ const leader = [_]Entry{
 test "entries sort by key, groups get a + and the accent, the box sits above the last row" {
     var f = try Fixture.init(60, 12);
     defer f.deinit();
-    draw(f.ui(), f.full(), "Leader", &leader);
-    try f.expectContains(" Leader ");
+    draw(f.ui(), f.full(), "<leader>", &leader);
+    try f.expectContains(" <leader> ");
     try f.expectContains("+split");
     try f.expectContains("+find");
     try f.expectContains("e → explorer");
@@ -119,8 +121,8 @@ test "entries sort by key, groups get a + and the accent, the box sits above the
     try f.expectRow(11, "");
     try f.expectRow(6, "");
     var buf: [256]u8 = undefined;
-    try testing.expect(std.mem.startsWith(u8, f.row(7, &buf), " ╭ Leader "));
-    try testing.expect(std.mem.startsWith(u8, f.row(10, &buf), " ╰"));
+    try testing.expect(std.mem.startsWith(u8, f.row(7, &buf), " ┌ <leader> "));
+    try testing.expect(std.mem.startsWith(u8, f.row(10, &buf), " └"));
     // Sorted: e, f, q, s left to right.
     const row8 = try testing.allocator.dupe(u8, f.row(8, &buf));
     defer testing.allocator.free(row8);
@@ -143,10 +145,10 @@ test "the gate's shape: a group then its leaves; ascii arrows; narrow screens" {
     try f.expectContains("+split");
     try f.expectLacks("split right");
     const split = [_]Entry{ .{ .key = "l", .label = "split right" }, .{ .key = "j", .label = "split down" } };
-    draw(ui, f.full(), "Leader s", &split);
+    draw(ui, f.full(), "<leader> s", &split);
     try f.expectContains("split right");
     try f.expectContains("split down");
-    try f.expectContains("Leader s");
+    try f.expectContains("<leader> s");
     ui.ascii = true;
     draw(ui, f.full(), "Vim: g", &split);
     try f.expectContains("j -> split down");

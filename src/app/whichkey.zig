@@ -3,7 +3,10 @@
 //! key descends; a leaf runs its command. A binding is a leaf *or* a
 //! group, never both, so the state is just the path typed so far.
 //!
-//! Every leaf names a `CommandId` — a typo is a compile error.
+//! Every leaf names a `CommandId` — a typo is a compile error — except
+//! a `dead` leaf, which is a row the Rust popup shows for a command
+//! that no longer exists there either (the `+pr` pair went with the
+//! SCM split); pressing it says so.
 
 const std = @import("std");
 const command = @import("../core/command.zig");
@@ -12,11 +15,13 @@ const CommandId = command.CommandId;
 pub const Node = union(enum) {
     cmd: struct { id: CommandId, label: []const u8 },
     group: struct { label: []const u8, kids: []const Entry },
+    dead: struct { id: []const u8, label: []const u8 },
 
     pub fn label(n: *const Node) []const u8 {
         return switch (n.*) {
             .cmd => |c| c.label,
             .group => |g| g.label,
+            .dead => |d| d.label,
         };
     }
 };
@@ -25,6 +30,10 @@ pub const Entry = struct { key: u8, node: Node };
 
 fn cmd(key: u8, id: CommandId, label: []const u8) Entry {
     return .{ .key = key, .node = .{ .cmd = .{ .id = id, .label = label } } };
+}
+
+fn dead(key: u8, id: []const u8, label: []const u8) Entry {
+    return .{ .key = key, .node = .{ .dead = .{ .id = id, .label = label } } };
 }
 
 fn group(key: u8, label: []const u8, kids: []const Entry) Entry {
@@ -44,10 +53,9 @@ pub const root: Node = .{
             }),
             cmd('/', .@"editor.toggle_line_comment", "toggle comment"),
             cmd('n', .@"view.toggle_line_numbers", "line numbers"),
-            cmd('e', .@"view.toggle_tree", "file tree"),
-            cmd('x', .@"buffer.close", "close buffer"),
-            cmd('w', .@"file.save", "save"),
-            cmd('q', .@"app.quit", "quit"),
+            cmd('e', .@"view.toggle_tree", "explorer"),
+            cmd('w', .@"file.save", "write/save"),
+            cmd('q', .@"buffer.close", "close buffer"),
             group('c', "+nvchad", &.{
                 cmd('h', .@"view.cheatsheet", "cheatsheet (all chords)"),
             }),
@@ -178,8 +186,13 @@ pub const root: Node = .{
                     cmd('p', .@"go.run_path", "go run <path> (prompt)"),
                 }),
             }),
-            // Rust's `P` (+pr) group is not here: `pr.picker` / `pr.refresh`
-            // are cut with the Rust integration binaries (docs/PARITY.md, Cuts).
+            // Rust's `+pr` leaves name `pr.picker` / `pr.refresh`, commands
+            // that no longer exist in Rust either (the SCM split): the rows
+            // paint, the press explains.
+            group('P', "+pr", &.{
+                dead('p', "pr.picker", "PRs: cross-host picker (Enter URL / Tab pipeline)"),
+                dead('r', "pr.refresh", "PRs: refresh cross-host cache (background)"),
+            }),
             // `i p` (`integrations.icon_picker`) waits on the icon-rail track.
             group('i', "+integrations", &.{
                 cmd('d', .@"integrations.show_details", "detail pane (description / buttons / links)"),
@@ -235,7 +248,7 @@ pub fn lookup(path: []const u8) ?*const Node {
                     if (k.key == ch) break &k.node;
                 } else return null;
             },
-            .cmd => return null,
+            .cmd, .dead => return null,
         }
     }
     return node;
@@ -246,7 +259,7 @@ pub fn continuations(path: []const u8) []const Entry {
     const n = lookup(path) orelse return &.{};
     return switch (n.*) {
         .group => |g| g.kids,
-        .cmd => &.{},
+        .cmd, .dead => &.{},
     };
 }
 
@@ -283,8 +296,15 @@ test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves 
     try t.expectEqual(CommandId.@"view.toggle_hidden_all", lookup("tH").?.cmd.id);
     try t.expectEqual(CommandId.@"editor.toggle_keymap", lookup("tk").?.cmd.id);
     try t.expectEqual(CommandId.@"theme.pick", lookup("tt").?.cmd.id);
-    // The cut groups and leaves are not offered.
-    try t.expect(lookup("P") == null);
+    // Rust's root leaves: e / q / w read as its popup does; x is not one.
+    try t.expectEqual(CommandId.@"buffer.close", lookup("q").?.cmd.id);
+    try t.expectEqualStrings("explorer", lookup("e").?.label());
+    try t.expectEqualStrings("write/save", lookup("w").?.label());
+    try t.expect(lookup("x") == null);
+    // The +pr group paints with its two dead leaves; the cut ones are not offered.
+    try t.expectEqualStrings("+pr", lookup("P").?.label());
+    try t.expectEqualStrings("pr.picker", lookup("Pp").?.dead.id);
+    try t.expect(lookup("Ppx") == null);
     try t.expect(lookup("aM") == null);
     try t.expect(lookup("ip") == null);
     try t.expect(lookup("Lcr") == null);
@@ -295,7 +315,7 @@ test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves 
 
 fn expectUniqueKeys(n: *const Node) !void {
     switch (n.*) {
-        .cmd => {},
+        .cmd, .dead => {},
         .group => |g| {
             for (g.kids, 0..) |a, i| {
                 for (g.kids[i + 1 ..]) |b| if (a.key == b.key) {

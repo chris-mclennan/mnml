@@ -16,7 +16,7 @@ expect screen contains "Col 1 "
 type " e"
 expect screen lacks " "
 expect screen contains "Col 1 "
-expect screen lacks "╭ Leader"
+expect screen lacks "┌ <leader>"
 type " e"
 expect screen contains " "
 expect screen contains "Col 1 "
@@ -27,5 +27,5 @@ expect screen lacks "╭ Files"
 key space
 key esc
 wait 700
-expect screen lacks "╭ Leader"
+expect screen lacks "┌ <leader>"
 expect screen contains "Col 1 "

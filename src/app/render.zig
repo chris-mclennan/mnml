@@ -1347,9 +1347,9 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             if (picker_mod.draw(ui, screen, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {
+            // Rust's title is the leader and the keys typed so far.
             const path = w.slice();
-            const node = whichkey.lookup(path);
-            const title: []const u8 = if (path.len == 0) "Leader" else if (node) |n| n.label() else "?";
+            const title: []const u8 = if (path.len == 0) "<leader>" else ui.fmt("<leader> {s}", .{path});
             const kids = whichkey.continuations(path);
             const entries = try ui.arena.alloc(which_key.Entry, kids.len);
             for (kids, 0..) |k, i| {

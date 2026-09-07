@@ -628,6 +628,7 @@ fn runLeaderHit(app: *App, hit: LeaderHit) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .dead => |d| app.toast("{s}: not a command in this build", .{d.id}),
         .group => {
             app.overlay.deinit(app.gpa);
             var state: whichkey.State = .{};
@@ -813,6 +814,10 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             const node = whichkey.lookup(w.slice()) orelse return closeOverlay(app);
             switch (node.*) {
                 .group => {},
+                .dead => |d| {
+                    closeOverlay(app);
+                    app.toast("{s}: not a command in this build", .{d.id});
+                },
                 .cmd => |cmd| {
                     closeOverlay(app);
                     command.run(app, .{ .static = cmd.id }) catch |err| switch (err) {
