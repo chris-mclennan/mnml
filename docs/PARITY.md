@@ -25,22 +25,22 @@ line), not by hand.
 | Editing & input | 49 | 0 | 0 | 0 | 49 |
 | Panes, splits & tab pages | 20 | 0 | 0 | 0 | 20 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
-| Navigation & search | 30 | 0 | 0 | 0 | 30 |
+| Navigation & search | 31 | 0 | 0 | 0 | 31 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
-| Git | 37 | 0 | 2 | 0 | 39 |
+| Git | 38 | 1 | 2 | 0 | 41 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
 | AI | 20 | 0 | 1 | 0 | 21 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
 | HTTP request client | 42 | 0 | 1 | 0 | 43 |
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
-| Debugging (DAP) | 13 | 0 | 0 | 0 | 13 |
-| Testing & quality | 9 | 0 | 0 | 0 | 9 |
-| UI & theming | 71 | 0 | 4 | 0 | 75 |
+| Debugging (DAP) | 24 | 0 | 0 | 0 | 24 |
+| Testing & quality | 15 | 0 | 0 | 0 | 15 |
+| UI & theming | 74 | 1 | 4 | 1 | 80 |
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
-| Headless, IPC & extensibility | 36 | 1 | 2 | 2 | 41 |
+| Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **464** | **1** | **10** | **2** | **477** |
+| **total** | **485** | **4** | **10** | **3** | **502** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -48,13 +48,13 @@ table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
 and bridge v2 — the last two beyond the Rust list.
 
-Ids: 913 in `src/commands/specs.zig`; 845 have runners (33 of them the deliberate `cutRunner` / `notInBuild` stubs), 68 have none. `zig build -Dpartial=false` names each one.
+Ids: 933 in `src/commands/specs.zig`; 870 have runners (34 of them the deliberate `cutRunner` / `notInBuild` stubs), 63 have none. `zig build -Dpartial=false` stops at the first of them (`app.reset_to_defaults`); the counts are the runner tables `src/core/command.zig` merges, diffed against the spec ids. The 63 are listed under Remaining — none of them is the only door to a row marked `done` above.
 
 ## Landed since the first ledger
 
 The first ledger was written at `de423c5` (Phases 0–8). Ten merges since,
-each with a `docs/parity-notes/<track>.md` that named the rows it flipped
-and the file proving each; every claim was re-checked against the source
+each with a `docs/parity-notes/<track>.md` (folded into this page and
+deleted at `5498f87`) that named the rows it flipped and the file proving each; every claim was re-checked against the source
 before the row moved (a disputed one is at the bottom). The notes are
 folded in here and in `docs/WAVE3_CONTRACT.md`'s `// changed:` sections.
 
@@ -75,6 +75,30 @@ that named it.
 | `misc` | 18 | `ai.apply` as a reviewed diff, launch profiles, the pty tab strip family, the Playwright pane + flaky dashboard, the corpus under `zig build test`, IPC tier-2 effects, `--startup-picker`, `mnml.app`, glyph audit (kept `partial`) |
 | independent re-check | 16 | rows no note named: the integration / manifest layer, the palette-bar chip strip, the marketplace, the integrations pane and its tabs / kebab / enable toggle, `integrations.refresh`, `ui.integration_icons`, the editor breadcrumb; the three new rows |
 
+## Landed since the recount (2026-09-05 → 2026-09-07)
+
+The recount above was taken at `a38b759`. Twelve tracks merged after it
+— the same-look tracks measured against the Rust screen dumps in
+`docs/ui-spec/` (`tools/ui-diff.sh`), then the debugger, which is the
+one deliberate departure from same-look (`tools/zig-spec.sh` dumps the
+Zig screen as its own spec). Each row below was re-checked against the
+source on 2026-09-07; the rows they touched carry the new pointers.
+
+| track | merged | what the rows now say |
+|---|---|---|
+| `rail` | 2026-09-06 | the activity bar as its own component (`src/ui/activity_bar.zig`, `src/app/activity_bar.zig`), `ui.activity_bar` always / auto / hidden, the rail menu, badges on Rust's pulse; `view.activity_debug` / `activity_agents` / `activity_cloud_agents` got runners |
+| `statusline` | 2026-09-06 | the row is Rust's (`src/app/statusline.zig` builds the lanes in Rust's order; `src/ui/statusline.zig` paints them); the indent / encoding / input-style chips are gone, the mode chip cycles the keymap; every chip routed and described |
+| `welcome` | 2026-09-06 | the welcome pane matches rows 10–28 of `rust-120x40.txt` |
+| `tree` | 2026-09-06 | `src/ui/tree_view.zig` + `src/ui/icons.zig` (nvim-web-devicons as comptime data), the header chips, neo-tree connectors, the info view (`src/ui/info_view.zig`) replacing the tooltip help box |
+| `menu-bar` | 2026-09-06 | row 0 is Rust's `draw_palette_bar` cell for cell (`src/ui/menu_bar.zig`), the ten menus (`src/app/menu_bar.zig`), F10 / Alt+letter; the old bar's stress copy and green Marketplace `+` are gone — the Rust row shows neither |
+| `editor-panes` | 2026-09-06 | the bufferline chips, the breadcrumb row, the git toolbar (`src/ui/git_toolbar.zig`), the diff pane's three views, the request pane's boxes |
+| `git-mode` | 2026-09-07 | the Git section takes the sidebar as the git palette (`src/app/git_palette.zig`, `src/ui/git_palette.zig`), one graph tab per repo, the detail column always there with the WIP staging and the commit box; the right-panel GIT rail and its branch-rail rows are gone |
+| `overlays` | 2026-09-07 | prompt / confirm / picker / palette / which-key / help / discovery painted as Rust's; F1 is `view.help`; `ui/fuzzy.zig` is Rust's scorer |
+| `debug-mode` | 2026-09-07 | `mnml-fake-dap` (`tools/fake_dap/`), `$NAME` in an adapter's `cmd`, `dap.run` re-reads `.dap` |
+| `git-status` | 2026-09-07 | the staging pane is Rust's `git_status_view.rs` cell for cell; the provider badge and the grouped rail rows went with the old pane |
+| `section-side` | 2026-09-07 | every section has a side (`src/app/side.zig`); two columns replace the sidebar + right-panel slot; `view.move_section_left` / `_right`, `:sidebar`, `Ctrl-W H` / `L`; `ui.sidebar_side` / `ui.section_side`; `ui.right_panel_width` back to Rust's 32 |
+| `debug-ui` | 2026-09-07 | the DEBUG section, the step toolbar and its strip, the Debug Console (`Pane.dap_repl` and `ui/dap_repl_view.zig` are gone), gutter breakpoint editing, inline and hover values, nvim-dap chords |
+
 ## Remaining — what is still `missing` or `partial`, with an estimate
 
 S = a day, M = a few days, L = a week or more, for one person who knows
@@ -82,10 +106,14 @@ the tree. Nothing left is larger than M.
 
 | item | size | section |
 |---|---|---|
-| Integration-icon rail in the tree (`IntegrationIcon` has `in_palette_bar` only); `integrations.icon_picker`; the In-Development tab (`integrations.show_in_dev` toasts) | M | Headless, IPC & extensibility |
+| Integration-icon rail in the tree (`IntegrationIcon` has `in_palette_bar` only); `integrations.icon_picker`; the In-Development tab (`integrations.show_in_dev` toasts) — the pinned launcher slots wait on the Zig integrations (`docs/ui-spec/README.md`) | M | Headless, IPC & extensibility |
+| The palette bar's green `+` (→ Marketplace) and the row-0 stress copy: the chrome row is Rust's `rust-120x40.txt` cell for cell now and shows neither; `integrations.show_marketplace` is reached from the `+` menu's Integrations submenu and `M` in the integrations pane, the stress meter from the statusline | S | UI & theming |
+| The status pane's clickable provider badge: the glyph paints in the statusline's branch and PR chips (`providerGlyph` / `hostTag` in `src/app/statusline.zig`), but no badge is a click target for `git.browse_commit` since the pane was re-cut to the Rust spec | S | Git |
+| Git mode residue (`git-mode` notes): stashes and tags sections in the palette, the `+N more` branch cap, the hash-typing header chip, the AI message streaming into the commit box | S | Git |
+| 63 spec ids without a runner (`zig build -Dpartial=false` refuses the build): `app.choose_data_layout` `app.reset_to_defaults` `bookmarks.open` `coverage.chip_show_*` (4) `debug.toggle_click_inspector` `editor.input_mode_menu` `editor.insert_alt_filename` `editor.insert_last_inserted` `editor.insert_last_search` `editor.keyword_complete` / `_back` `editor.repeat_last_substitute` `integrations.audit_shadowed_binaries` `integrations.check_updates_now` `integrations.configure_picker` `integrations.diag` `integrations.edit_claude_glyph` / `edit_codex_glyph` `integrations.fire_auto_updates_now` `integrations.icon_picker` `keys.doctor` `launcher.add_local` `layout.merge_to_tabs` / `spread_to_splits` `markdown.cycle_engine` `markdown.link_check` `mounts.refresh` `noop` `palette` `search.toggle_case_sensitive` / `toggle_whole_word` `setup.install_to_path` `view.ai_layout_grid` / `_tabs` `view.cluster_mode_*` (3) `view.commands_reference` `view.git_commit_focus` `view.host_active_in_bottom_panel` `view.manage_workspaces` `view.move_to_new_tab` `view.open_default_workspace` `view.remove_workspace` `view.reveal_active` `view.reveal_in_tree` `view.tab_bar_ai_*` (4) `view.toggle_bottom_panel` `view.toggle_integrations_section` `view.toggle_picker_position` `view.toggle_tree_section` `view.toggle_zoom` `view.workspace_menu` `vim.dot_repeat` `vim.go_to_last_insert` `vim.macro_replay` / `macro_toggle`. Several are Rust ids whose feature lives under another door here (the `view.*_mode_*` setters are Settings rows; the `vim.*` verbs are the handler's); each still needs a runner or a `cutRunner` before `-Dpartial` can go | M | Headless, IPC & extensibility |
 
 Everything else the first Remaining list named landed on the `remaining`
-branch (2026-09-05): MRU buffers, pins and `tab.reopen`; the symbol,
+branch (2026-09-05; the corpus was 351/352 then — the one failure asserted TOML; it asserts ZON since 2026-09-07 and the corpus is 393/393): MRU buffers, pins and `tab.reopen`; the symbol,
 snippet and fold commands; the NvChad which-key groups; find history;
 the `⟳` chip menu with auto-refresh and the SEARCH / AGENTS row menus;
 Settings → AI and the 60 % × 70 % box; the legacy launcher-script row;
@@ -103,7 +131,7 @@ trust sink. Each row names its file and its test.
 | brotli response decoding | `std.compress` has gzip / deflate / zstd, not brotli; the HTTP client asks for the encodings it can decode | `Accept-Encoding` never lists `br` (`src/http/client.zig`); a forced `br` body is shown raw with a toast |
 | WebP images | no decoder in `zigimg` for this release; PNG / JPEG / GIF render over kitty / iTerm2 / sixel | `view.image_open` and the markdown preview show the `[image: alt]` placeholder for `.webp` |
 | Glyph-builder SVG preview and Nerd Font patching | SVG rasterising and font patching have no Zig path; the audit / bake half is `zig build glyph-audit` | `integrations.glyph_builder` / `patch_nerd_font_svg` toast the reason (`src/app/cmd_app.zig` `cutRunner`) |
-| TOML anywhere (config, themes, manifests, `trusted_workspaces.toml`) | E1 / E2: every persisted format is ZON; the final Rust release ships `mnml export-config-zon` | `docs/CONFIG.md`; the one corpus failure (`settings_persist_to_workspace.test`) asserts TOML by design; the Zig twin in `tests/e2e/` passes |
+| TOML anywhere (config, themes, manifests, `trusted_workspaces.toml`) | E1 / E2: every persisted format is ZON; the final Rust release ships `mnml export-config-zon` | `docs/CONFIG.md`; `settings_persist_to_workspace.test` asserts the workspace `.mnml/config.zon` (the Rust corpus asserted a TOML file there — re-aimed 2026-09-07, so the corpus reads 393/393) |
 | The Rust integration binaries and the crates.io marketplace of them (`mnml-forge-*`, `mnml-aws-*`, …) | E5: integrations are rewritten in Zig on a v2 bridge after the cutover; the 0.2.x crates stay published for 0.2.x users | `pr.picker` / `pr.refresh` toast the reason; `:term <binary>` still runs any installed binary as a pty pane; a `crates_keyword` marketplace source is accepted and lists nothing |
 | now-playing / Sonos / mixr transport | macOS-only AppleScript + a sibling-app IPC; not a terminal-IDE concern for the successor | every `sonos.*` / `mixr.*` / `audio.*` id toasts the reason (`cutRunner`); `sonos.*` config keys are accepted and ignored |
 | Playwright as the generic `test.*` runner | the generic `test.*` runners keep the project's own command (cargo / npm / go / pytest); Playwright has its own ids (`test.run_playwright*`, the Tests pane) — listed here because the spec titles still say "Playwright" | `test.run_*` run the project's own test command |
@@ -167,7 +195,7 @@ trust sink. Each row names its file and its test.
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
 | Recursive binary split tree | done | `src/app/layout.zig` | |
-| Every tool view a `Pane` | done | `src/app/pane.zig` — 27 variants | |
+| Every tool view a `Pane` | done | `src/app/pane.zig` — 26 variants | `Pane.dap_repl` folded into `Pane.debug` (the toolbar over the Debug Console) on 2026-09-07 |
 | Split side-by-side / stacked | done | `view.split_right` / `split_down`, `:sp` / `:vs` | |
 | `Ctrl-W` focus `h j k l w` | done | `src/input/vim.zig` `.window` | |
 | `Ctrl-W` split / close / only `s v q c o` | done | same | |
@@ -218,9 +246,9 @@ trust sink. Each row names its file and its test.
 
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
-| One fuzzy core | done | `src/ui/fuzzy.zig`, `src/ui/picker.zig` | |
-| File finder | done | `picker.files` in `src/app/cmd_picker.zig` | `ctrl+o` in the vim profile is the jumplist now |
-| Command palette | done | `cmd_picker.zig` `palette` | |
+| One fuzzy core | done | `src/ui/fuzzy.zig`, `src/ui/picker.zig` | `fuzzy.score` is Rust's `fuzzy_match` bonus for bonus (code points); `Picker.rank` is Rust's `refilter` (priority, score, index); the box is Rust's geometry (`Picker.place`, `ui.picker_position`) and never exceeds the screen |
+| File finder | done | `picker.files` in `src/app/cmd_picker.zig` (`walkTree`) | Rust's `Open file` list — recents, the tree's order with dotfiles and `.gitignore`, cross-workspace recents a tier below, the directory as the detail; `ctrl+o` in the vim profile is the jumplist now |
+| Command palette | done | `cmd_picker.zig` `palette`, `chordHint` | rows `group  ·  title  ·  id`, the default chords as the detail; `rust-palette-120x40.txt` |
 | Buffer switcher | done | `picker.buffers` | |
 | Symbol picker | done | `lsp.symbols` / `lsp.workspace_symbols` / `picker.workspace_symbol` in `src/app/cmd_lsp.zig` → one `.lsp_symbols` picker (`symbolsPicker` in `lsp.zig`) | `picker.workspace_symbol` (`workspaceSymbolPicker`) sends an empty `workspace/symbol` query straight into the picker — VS Code `Ctrl+T`, the picker's own filter narrows; the no-server test in `lsp.zig` |
 | Marks picker | done | `picker.marks` in `src/app/cmd_app.zig` | lists the global marks too |
@@ -228,9 +256,10 @@ trust sink. Each row names its file and its test.
 | Recent-commands picker | done | `picker.recent_commands` in `cmd_app.zig` (+ `view.cmdline_history`) | |
 | Which-key leader popup | done | `src/app/whichkey.zig`, `src/ui/which_key.zig` | every group row below is done |
 | Which-key `f` find | done | `whichkey.zig` | `f g` → `find.grep` |
-| Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` has the NvChad leaves — explorer, right panel (+ next / prev / close tab), keymap, theme, hidden files (focused / all) — plus wrap / numbers; `g` and `a` carry the Rust leaves (`a M` mixr is cut) |
-| Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e/whichkey_groups.test` | `P` (+pr) is dropped — `pr.*` are cut with the Rust integration binaries; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
-| Which-key root leaves `/ n e w q` | done | `whichkey.zig` | `x` closes a buffer here |
+| Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` has the NvChad leaves — explorer, right panel (+ next / prev / close tab), keymap, theme, hidden files (focused / all) — plus wrap / numbers; `s H` / `s L` move the focused section to the other column; `g` and `a` carry the Rust leaves (`a M` mixr is cut) |
+| Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e/whichkey_groups.test` | `P` (+pr) is there with two `dead` leaves (`whichkey.Node.dead` — a row for a command neither editor has; a press says so), as Rust shows it; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
+| Which-key root leaves `/ n e w q` | done | `whichkey.zig` | the root reads as Rust's — `e explorer`, `q close buffer`, `w write/save`, no `x`; the title is `<leader>` / `<leader> f`; `rust-whichkey-120x40.txt` at zero differing lines |
+| Which-key `d` +debug — the vim profile's | done | `groupVim('d', "+debug")` in `whichkey.zig`, `Entry.vim_only`; `tests/e2e/debug_vim_leader.test` | nvim-dap's leader chords (`b B l c o i O p R t r w u h`); the standard profile's `Ctrl+K` popup keeps Rust's rows (`steps-whichkey` stays at zero differing lines) |
 | Which-key root leaves `? B m p o` | done | `whichkey.zig` | cheatsheet / browser / markdown preview / palette / task |
 | In-buffer find — literal, smart-case, incremental | done | `src/app/find.zig`, `src/app/cmd_find.zig`, `src/ui/find_bar.zig` | |
 | In-buffer find — regex | done | `src/regex/regex.zig` (Oniguruma via ghostty's `pkg/oniguruma`), `src/regex/vim.zig`, `regex` / `bad_pattern` in `find.zig`, `find.toggle_regex` | vim patterns; `ctrl+r` / the `.*` chip; a bad pattern toasts why |
@@ -260,9 +289,9 @@ trust sink. Each row names its file and its test.
 | Go-to definition / declaration / type-definition / implementation | done | `lsp.goto_*` | |
 | Find references | done | `lsp.references` | |
 | Document + workspace symbols | done | `lsp.symbols` / `workspace_symbols` | |
-| Outline pane | done | `src/app/outline.zig` | |
+| Outline pane | done | `src/app/outline.zig` (`drawPanel`), `Section.outline` / `PanelId.outline`, `outline.show` | a section with a side, right by default; `outline.show` keeps Rust's rule — the column when it is open, else a split (`App.outline_panel`); `rust-outline-120x40.txt` |
 | Diagnostics — gutter signs | done | `lsp.zig`, `src/ui/editor_view.zig` | |
-| Diagnostics — Problems pane | done | `src/ui/diagnostics_view.zig`, `PanelId.diagnostics` | |
+| Diagnostics — Problems pane | done | `src/ui/diagnostics_view.zig`, `PanelId.diagnostics` / `Section.diagnostics`, `lsp.drawPanel` | a section with a side, right by default; `lsp.diagnostics` places it |
 | `]d` / `[d` | done | `lsp.next_diagnostic` / `prev_diagnostic` | |
 | External linters | done | `src/lsp/tools.zig`, `lintOnHook` / `lintPath` / `lintWorker` in `src/app/lsp_format.zig` | on open and on save, a worker per run; findings merge beside the server's as server id 0 |
 | Code actions — quick-fix | done | `quickFix` in `lsp.zig` | |
@@ -292,26 +321,28 @@ trust sink. Each row names its file and its test.
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
 | Gutter signs | done | `marksFor` in `src/app/git.zig` | |
-| Branch chip with ahead / behind / counts | done | `statusSegment` in `git.zig` | |
-| Clickable provider badge | done | `badge_id` in `src/ui/git_status_view.zig`, `git.State.provider` | the status pane's header; a click runs `git.browse_commit` |
+| Branch chip with ahead / behind / counts | done | `SegId.branch` in `src/app/statusline.zig` (`⇡N ⇣N` + the NvChad file counts, the provider glyph); the palette's `⎇` row with `↑n ↓n` in `src/ui/git_palette.zig` | a click opens the status pane, a right-click the branch menu (`dispatch.zig`); `git.tick` discovers on the first tick so the chip shows before any git pane opens |
+| Clickable provider badge | partial | `git.State.provider`; `providerGlyph` / `hostTag` in `src/app/statusline.zig` | the glyph paints in the branch chip and the PR chip (a click on the PR chip opens it in the browser); the status pane's header badge went with the pane's re-cut to `rust-git-status-120x40.txt` (2026-09-07), so nothing clicks through to `git.browse_commit` — the command stays in the palette |
 | Diff pane — Hunk view | done | `src/ui/diff_view.zig`, `openDiff` | |
 | Diff pane — Inline view | done | `Mode.flat`, `drawUnified` in `diff_view.zig`, `git.diff_toggle_view` | the whole file, one number column, changed rows tinted |
-| Diff pane — Split view | done | `pairs` / `drawSplit` in `diff_view.zig`, `dragDivider` in `git.zig` | removed runs zipped with added runs; the divider drags 15–85 % |
+| Diff pane — Split view | done | `pairs` / `drawSplit` in `diff_view.zig`; the diff toolbar `Hunk   Inline   Split` | removed runs zipped with added runs, a header across both, a `·` filler; `rust-diff-120x40.txt`; `// changed:` the draggable split divider (`App.git_divider`) went with the re-cut to the Rust spec |
 | Per-hunk stage / unstage / discard | done | `applyHunk`, `s` `u` `x` in `diffKey` | |
 | Intraline highlighting | done | `src/git/intraline.zig`, `rangesFor` in `diff_view.zig` | prefix / suffix peel then LCS, capped at 64 K cells |
 | Diff `/`-filter | done | `filterRows` / `filterSplitRows` in `diff_view.zig`, `refilterDiff` in `git.zig`, `git.diff_filter` | hunks holding the needle; `n` / `p` walk the matches |
 | Change-density minimap | done | `density` / `drawStrip` in `diff_view.zig` | one cell per band on the right edge, clickable |
-| Staging view — lists | done | `src/ui/git_status_view.zig`, `git.status_pane` | |
+| Staging view — lists | done | `src/ui/git_status_view.zig`, `git.status_pane`; `statusFiles` / `statusPaneKey` in `git.zig`; `tests/e2e/git_status_*.test` | Rust's `git_status_view.rs` cell for cell (`rust-git-status-120x40.txt` / `-80x24.txt`): `on <branch>   N unstaged · M staged`, the hint row, `Unstaged changes (N)` / `Staged changes (N)`, `✓ working tree clean`; every hint word is a hit; keys `j k space s u a A ⏎ c C r b B w` |
 | Stage / unstage whole files | done | `git.stage` / `unstage` / `*_all` in `src/app/cmd_git.zig` | |
 | Dive into hunks | done | `git.diff_file` | |
-| Commit from the IDE | done | `git.commit` | |
-| Commit graph — coloured lanes | done | `src/ui/git_graph_view.zig`, `git.graph` | |
-| Graph — detail panel | done | `drawDetail` in `git_graph_view.zig`, `requestDetail` / `openDetail` in `git.zig`, `git.graph_detail` | Enter opens it, Tab focuses it, Enter on a file opens that file's diff; the width drags |
+| Commit from the IDE | done | `git.commit`; the graph's commit box (`wip_text` / `wip_cursor` on `GraphPane`) | the prompt, or the box pinned to the detail column's bottom — Ctrl+Enter commits, `C` asks for an AI message |
+| Commit graph — coloured lanes | done | `src/ui/git_graph_view.zig` (`layout`), `git.graph` | rewritten to `rust-git-120x40.txt`: Rust's lane walk (rounded corners, a freed lane cools for five rows, `┼` crossings, colour = lane index), Rust's column widths, the `MM/DD HH:MM` date, the git toolbar row above |
+| Graph — detail panel | done | `drawDetail` in `git_graph_view.zig`, `requestDetail` / `openDetail` in `git.zig`, `git.graph_detail` | always there at Rust's width (a drag persists `ui.git_graph_detail_col`; none under 80 columns); `git.graph_detail` focuses it, Tab walks its files, Enter opens a file's diff; a commit's `─ sha · author · age ─` rule, the wrapped message, parents and changed files |
 | Graph — sortable columns | done | `sortOrder` in `git_graph_view.zig`, `setSort` in `git.zig`, `git.graph_sort` | GRAPH / DATE / AUTHOR / SUBJECT chips; `s` cycles |
 | Graph — filters | done | `git.graph_filter_*` | |
 | Graph — hash-jump | done | `findByHashPrefix` in `git_graph_view.zig`, `git.graph_jump_hash` | `/` in the pane |
-| Graph — WIP row + staging buttons | done | `drawWipRow` in `git_graph_view.zig`, `syncWip` in `git.zig` | `[stage all] [unstage all] [commit…]`; `a` / `A` / `c` on the row |
-| Branch rail | done | `appendRailRows` / `requestRail` / `toggleRail` in `git.zig`, `parseTrack` / `parsePrs` in `src/git/parse.zig`, `git.branch_rail_toggle` | branches / worktrees / PRs as folding sections; PRs via `gh pr list --json`, a toast when `gh` is missing |
+| Graph — WIP row + staging buttons | done | `wipButtonId` / `wipFileId` in `git_graph_view.zig`, `wipFiles` / `syncWip` in `git.zig` | on the WIP row the detail column shows `▾ Unstaged Files (n)` with ` Stage All ` and a ` [+] ` per row, `▾ Staged Files (n)` with ` Unstage All ` / ` [−] `, and the commit box (` Commit  AI Message  Clear `); `s` / `u` on a row, `c` on the WIP row commits the box; a cut button keeps its visible cells as a hit |
+| Branch rail | done | the git palette: `src/app/git_palette.zig` (`rows`, the filter, the folds), `src/ui/git_palette.zig`; `requestRail` in `git.zig`, `parseTrack` / `parsePrs` in `src/git/parse.zig`; `git.branch_rail_toggle` enters git mode | WORKTREES / LOCAL (folder-grouped by the first `/`) / REMOTE / PULL REQUESTS as folding sections with counts, the ` repo 󰅀 ` pill, the `⎇` row, Rust's `/` filter; PRs via `gh pr list --json`, a toast when `gh` is missing; stashes and tags sections are not there yet (Remaining) |
+| Git mode — the section takes the sidebar, one graph tab per repo | done | `src/app/git_palette.zig` (`State.active` / `State.pre`), `activity_bar.enter`, `git.reopen_repo`; `tests/e2e/git_mode.test` | `view.activity_git` / `git.graph` enter: the sidebar snaps to a fifth of the screen, the layout is stashed and replaced by one leaf of `git_graph` tabs (reused when they exist); any other section leaves and the layout comes back, the panes stay in the store; `rust-git-120x40.txt` / `-80x24.txt`; beyond the Rust list as a row, Rust's `open_git_graph` as behaviour |
+| Git toolbar above the diff pane and the graph | done | `src/ui/git_toolbar.zig`; `tests/e2e/git_diff_toolbar.test` | Undo · Redo · Pull · Push · Fetch · Branch · Commit · Stash (· Pop while there is one) · Reflog; buttons drop from the right, one always stays; not painted under 40 cells or 6 rows |
 | Checkout / create / delete | done | `git.checkout` / `new_branch` / `delete_branch` | |
 | Worktree management | done | `git.worktree_*` | |
 | Fetch / pull / push | done | `git.fetch` / `pull` / `push` / `push_tags` | |
@@ -494,21 +525,38 @@ trust sink. Each row names its file and its test.
 
 ## Debugging (DAP)
 
+The one deliberate departure from same-look: the Rust debug pane was
+never driven by anyone, so the Zig screens are the spec
+(`docs/ui-spec/zig-debug-*.txt`, cut by `tools/zig-spec.sh`), and every
+row below is tested against `mnml-fake-dap` rather than a hand-written
+reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
+
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
-| Launch | done | `src/dap/client.zig`, `src/app/dap.zig`, `dap.run` | |
+| Launch | done | `src/dap/client.zig`, `src/app/dap.zig`, `dap.run` (`F5`) | `$NAME` / `${NAME}` in an adapter's `cmd` or an argument expands from the environment; `dap.run` re-reads the config's `.dap` table when the file has no adapter yet (trusted workspaces only) |
 | Attach | done | `dap.attach` | |
-| Breakpoints — toggle / list / clear | done | `dap.*_breakpoint*` | |
-| Conditional breakpoints | done | `toggle_breakpoint_conditional` | |
-| Hit-count breakpoints | done | `dap.set_breakpoint_hit_count` | |
-| Exception-breakpoints picker | done | `dap.exceptions` | |
-| Step controls | done | `src/app/cmd_dap.zig` | |
-| Call-stack pane | done | `src/ui/dap_view.zig` | |
-| Variables tree | done | `variableRows` in `dap/client.zig` | |
-| Set-variable | done | `dap.set_variable` | |
-| Watch expressions | done | `dap.add_watch` / `remove_watch` / `clear_watches` | |
-| REPL with lazy expand | done | `src/ui/dap_repl_view.zig` | |
-| Reverse debugging | done | `dap.step_back` / `reverse_continue` | |
+| Breakpoints — toggle / list / clear | done | `dap.toggle_breakpoint` (`F9` / `<leader>db`), `dap.list_breakpoints`, `dap.clear_all_breakpoints`; `types.Breakpoint` in `src/dap/types.zig` | `enabled` / `log_message` / `verified` per breakpoint; the reply's `verified` lands per file |
+| Conditional breakpoints | done | `dap.toggle_breakpoint_conditional` (`Shift+F9` / `<leader>dB`) | |
+| Hit-count breakpoints | done | `dap.set_breakpoint_hit_count` | `>= 5`, `% 10`, … |
+| Logpoints, enable / disable, all on / off | done | `dap.set_breakpoint_log_message` (`<leader>dl`), `dap.toggle_breakpoint_enabled`, `dap.remove_breakpoint`, `dap.enable_all_breakpoints` / `disable_all_breakpoints` | beyond the Rust list; the `dap.*breakpoint*` prompts act on the DEBUG section's selected row when it has the keys, else the cursor line (`bpTarget`) |
+| Gutter breakpoints — glyphs, click, right-click editing | done | `HitTarget.gutter` in `src/ui/hit.zig`, the `.gutter` prong in `dispatch.zig` → `dap.gutterToggle`, `openGutterMenu` in `context_menus.zig`; `tests/e2e/debug_panel_breakpoint_toggle.test` | `●` plain, `◐` conditional / hit-counted, `◆` logpoint, `○` disabled, unverified muted; a left press on the sign cell toggles, a right press opens the Breakpoint menu (condition, hit count, log message, enable, remove) |
+| Exception-breakpoints picker | done | `dap.exceptions` | the adapter's filters, listed under BREAKPOINTS too |
+| Step controls | done | `src/app/cmd_dap.zig` | `F10` / `F11` / `Shift+F11` / `Shift+F5`, `<leader>do` / `di` / `dO` / `dc`; `dap.pause` (`<leader>dp`), `dap.terminate` (`<leader>dt`); `dap.continue` starts a session when there is none (nvim-dap); `dap.restart` (`<leader>dR`) starts the last file again |
+| Step toolbar + the strip over the editor | done | `src/ui/debug_toolbar.zig`; the strip in `render.zig` behind `ui.debug_toolbar` (auto / always / hidden); `tests/e2e/debug_toolbar_click.test` | Start / Continue / Pause · Step over · Step into · Step out · Restart · Stop as ` icon label ` chips (nf-md glyphs, `--ascii` twins); labels drop first, then buttons from the right; the first row of `Pane.debug`, and a strip over the active editor while a session is live |
+| DEBUG sidebar section — VARIABLES / WATCH / CALL STACK / BREAKPOINTS | done | `src/app/debug_panel.zig`, `src/ui/debug_panel.zig` (`PanelId.debug`, `Section.debug`); `view.activity_debug` (`Ctrl+Shift+D`), `dap.toggle_panel` (`<leader>du`), `dap.show`; `tests/e2e/debug_panel_stop.test` | one `ListPanel(Row)` list: a status row (`● prog.dbg:4 · main`), four foldable headers with counts, every row a hit with a right-click menu of command ids; the `dap.*_selected` family (`toggle_section`, `toggle_selected`, `edit_selected`, `remove_selected`, `open_selected`, `watch_selected`, `copy_value`, `edit_watch`) so a key, a menu row and the palette share one runner; a value that changed since the last resume paints in the warning colour; the section has a side like the rest (`tests/e2e/debug_panel_moved_right.test`) |
+| Call stack | done | the CALL STACK section (threads, then the current thread's frames); `dap.open_selected`, `dap.pick_thread` | a chosen frame sets `Session.frame_id`; evaluations and scopes follow it; Enter jumps to the frame's line |
+| Variables tree | done | `variableRows` in `src/dap/client.zig`, the VARIABLES section | scopes as trees; a struct expands; `dap.copy_value` |
+| Set-variable | done | `dap.set_variable`, `dap.edit_selected`; `tests/e2e/debug_panel_set_variable.test` | |
+| Watch expressions | done | `dap.add_watch` (`<leader>dw`) / `remove_watch` / `clear_watches` / `watch_selected` / `edit_watch`, the WATCH section; `tests/e2e/debug_panel_watch.test` | watches survive the session; `(no value)` without one |
+| Debug Console (the REPL) | done | `src/ui/dap_view.zig`, `dap.State.console` in `src/app/dap.zig`, `dap.repl` (`<leader>dr`), `dap.clear_console` (Ctrl+L); `tests/e2e/debug_console_eval.test` | VS Code's shape: the program's output, `> expr` echoes, results (a composite folds on click), errors and `── started / exited ──` notes in one scrollback kept across sessions; an input row with ↑↓ history and Tab completion of variable / watch names; `// changed:` `Pane.dap_repl` and `ui/dap_repl_view.zig` are gone — `Pane.debug` is the toolbar over the console |
+| Inline values | done | `dap.inlineValuesFor` in `src/app/dap.zig`, merged with the LSP virtual text in `render.zig`; `editor.inline_values`; `tests/e2e/debug_inline_values.test` | `  name = value` after every line up to the stop that names a scope variable; beyond the Rust list |
+| Hover values, `K` evaluates | done | `dap.hoverValue` (the tooltip on a cell, from the fetched scopes), `dap.evaluate_hover` (`<leader>dh`; `lsp.hover` / vim `K` evaluates the word through the adapter first while stopped, into the hover box); `tests/e2e/debug_vim_k_hover.test` | beyond the Rust list |
+| The stopped line | done | `Doc.stopped_line` in `src/ui/editor_view.zig`, the ▶ in the gutter | the line wears the band; the stop jumps to the file and focuses the editor |
+| Reverse debugging | done | `dap.step_back` / `reverse_continue` | the runners exist; the fake adapter advertises no step-back |
+| nvim-dap chords + VS Code F-keys | done | `.vim` / `.both` keys in `specs.zig`, pinned by the `both key profiles` test in `cmd_dap.zig`; `docs/KEYMAP_PROFILES.md` → Debugger | `<leader>d b B l c o i O p R t r w u h`; the F-keys are `both`, so a vim user keeps them; no `dap.*` chord is standard-only |
+| Settings rows | done | `editor.inline_values` (Settings → Editor “Inline debugger values”), `ui.debug_toolbar` (Settings → UI “Debug toolbar strip”) in `src/app/settings.zig` | |
+| The fake adapter — `mnml-fake-dap` | done | `tools/fake_dap/{main,program}.zig` + `README.md`, installed by `zig build`; `MNML_FAKE_DAP` exported by `mnml-zig test` (`src/main.zig`) and the runner (`src/e2e/runner.zig`); the client's integration test in `src/app/dap.zig` spawns it | a deterministic DAP server over stdio that runs a tiny line-oriented language (breakpoints with conditions and hit counts, stepping, `call` frames, structs, exceptions, output, `sleep` / `pause`); a script writes `.dap.dbg.cmd = "$MNML_FAKE_DAP"` and a `prog.dbg`; the same works outside the corpus; beyond the Rust list |
+| The Zig-authored spec | done | `docs/ui-spec/zig-debug-{stopped,console,breakpoints}-120x40.txt`, `zig-debug-stopped-80x24.txt` (`tools/zig-spec.sh`); `tools/debug-demo.sh [vim|standard]` opens the same seed on a real screen | the dumps are the spec; nothing on the Rust side to diff against |
 
 ## Testing & quality
 
@@ -521,16 +569,23 @@ trust sink. Each row names its file and its test.
 | Flaky dashboard | done | `src/app/flaky.zig`, `src/ui/flaky_view.zig`, `flaky.show` | `<ws>/.mnml/flaky.zon`, most flips first |
 | `.test` DSL | done | `src/e2e/parser.zig` (a superset) | |
 | Drives the real `App` | done | `src/e2e/driver.zig`, `app_factory` in `main.zig` | |
-| Runs via `mnml-zig test` | done | `testSubcommand` in `src/main.zig` | `--gate`, `--sizes`, `--filter`, the directives |
-| Runs under the unit-test harness | done | the `── e2e ──` blocks in `build.zig` | `zig build test` runs the gate; `zig build check` the full corpus (minus the TOML-by-design file); `zig build e2e` |
+| Runs via `mnml-zig test` | done | `testSubcommand` in `src/main.zig` | `--gate`, `--sizes`, `--filter`, the directives; exports `MNML_FAKE_DAP`; a `# requires: network` file is skipped (`http/http-bench-running-toast.test`), so 394 `.test` files read 393/393 |
+| Runs under the unit-test harness | done | the `── e2e ──` blocks in `build.zig` | `zig build test` runs the unit suite (1205 tests: 1203 pass, 2 skip) then the gate; `zig build check` runs fmt, both optimize modes, the gate, the width sweep, `defaults.test` and the full corpus; `zig build e2e` the corpus alone |
+| `tools/ui-diff.sh` — the Rust screen as the spec | done | `tools/ui-diff.sh WS RS_DATA ZIG_DATA [STEPS] [COLSxROWS]`, `docs/ui-spec/` (`rust-*.txt` dumps, one `steps-*.jsonl` per screen, the README) | both binaries headless on one workspace and config, a row-by-row diff; the session is snapshotted around each run; every chrome track is measured with it — Zig-only |
+| `tools/zig-spec.sh` — a Zig-only screen as its own spec | done | `tools/zig-spec.sh NAME [COLSxROWS] [OUT_DIR]` | headless on a throwaway workspace wired to the fake adapter, one steps file in, the screen kept as `docs/ui-spec/zig-<name>-<size>.txt`; Zig-only |
+| `tools/debug-demo.sh` | done | `tools/debug-demo.sh [vim\|standard]` | the debugger on a real screen — the same seed as `zig-spec.sh`, the workspace deleted when mnml-zig exits; Zig-only |
+| `tools/break-check.sh` | done | `tools/break-check.sh <test> <file> <sed-expr>` | proves a unit test can fail on a scratch copy; exit 2 when the break did not land (a `zig fmt` reflow), 3 when the broken copy does not compile, 4 when no test matched; Zig-only |
+| `tools/pty-mouse-check.py` | done | `tools/pty-mouse-check.py [BIN] [WORKSPACE]` | the real binary in a pty answering the probes like ghostty: cell coordinates asked for (mode 1006, never 1016), one click opens a file, a right-click opens the row menu, a wheel notch reaches the app; Zig-only |
+| `zig build gate-build -Dtarget=…` | done | `build.zig` | the exe and every test binary compiled for a foreign target without running — the Windows / Linux gate; Zig-only |
 
 ## UI & theming
 
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
-| File-tree rail | done | `src/app/tree.zig` | |
+| File-tree rail | done | `src/app/tree.zig`, `src/ui/tree_view.zig`, `src/ui/icons.zig` | Rust's `tree_view.rs` cell for cell (columns 4–29 of `rust-120x40.txt`): the ` ▾ ~/path/ ` header with its chips, neo-tree connectors (mnml's baked U+F1F04 / U+F1F05), nvim-web-devicons, git badges right-aligned; the standard profile's arrow-preview (`Tree.previewCursor`); the info view (`src/ui/info_view.zig`) in the panel's bottom rows |
+| Activity bar — the icon rail | done | `src/ui/activity_bar.zig`, `src/app/activity_bar.zig`, `ui.activity_bar` (always / auto / hidden), `view.activity_bar_cycle`, `openRailMenu` / `openGearMenu` in `context_menus.zig` | Rust's twelve sections, order and codepoints, the `▌` mark, the gear; the marked section is read off the surfaces; a click runs the section's `view.activity_*`; badges on Rust's pulse; the pinned launcher slots wait on the Zig integrations |
 | Bufferline | done | `src/ui/bufferline.zig` | |
-| Powerline statusline | done | `src/ui/statusline.zig` | |
+| Powerline statusline | done | `src/ui/statusline.zig` (the two lanes, the arrows at every colour hand-off), `src/app/statusline.zig` (the chips in Rust's order) | left: mode · host segments · branch · PR · file · diagnostics · symbol · macro · find; right: host segments · tests · Claude · Codex · coverage · transfer · LSP · RESTRICTED · WRAP · autosave · size · Ln/Col · Sel · stress · bell · clock · workspace · language; the row is pinned against `rust-120x40.txt` / `rust-80x24.txt` |
 | Cmdline bar | done | `render.zig` `FrameRects.cmdline` | |
 | Which-key | done | `src/ui/which_key.zig` | |
 | Indent guides | done | `src/ui/editor_view.zig` | |
@@ -541,21 +596,23 @@ trust sink. Each row names its file and its test.
 | `-copy` / `-copy-N` bump | done | `copyName` in `file_clipboard.zig` | |
 | Tree drag → "Move to X?" | done | `dropTreeFile` in `dispatch.zig` | |
 | `Alt`-drag copies | done | `Drag.tree.copy` (the press's Alt, or the release's) in `dispatch.zig`; `confirmMove(…, copy)` / `acceptCopy` in `tree.zig` | *Copy to folder* confirm; the copy runs on the transfer worker, the original stays |
-| Right side panel — toggle, `Ctrl+Shift+B` | done | `view.toggle_right_panel` | |
-| Right panel — drag grip | done | `dispatch.zig`, `right_divider_id` | |
-| Right panel — persisted visible + width | done | `ui.right_panel_visible` / `ui.right_panel_width` read in `initWith` (`src/app.zig`), number rows in `settings.zig` | `// changed:` the default width is 40, not 32 — 32 drops the sort chip to its icon; a session restore still overrides |
+| Right side panel — toggle, `Ctrl+Shift+B` | done | `view.toggle_right_panel` → `src/app/side.zig` | `// changed:` Rust's sidebar + tabbed right panel are one idea — every section has a side, the frame has two columns and each shows one section; the toggle opens the right column on the last section shown there, else the first whose side is right |
+| Sections have a side — move left / right | done | `src/app/side.zig` (`State`, `place` / `remove`, `move`, `ctrlWCommand`), `view.move_section_left` / `_right`, `:sidebar left\|right` in `ex.zig`, vim `Ctrl-W H` / `L` in a section or the tree, which-key `s H` / `s L`, the rail menu's *Move to right / left side* (`MenuAction.move_section`); `ui.sidebar_side`, `ui.section_side`; `session.zon` `sides`; `tests/e2e/section_move_{command,rail_rightclick,vim_ctrl_w,ex_sidebar}.test` | TODOS / NOTES / FINDINGS start on the left, the outline and the diagnostics on the right (Rust's placement); a section that opens a pane (search, agents) has no side; a left-column section reads `TREE` in the mode chip, the right column `PANEL`; beyond the Rust list |
+| Right panel — drag grip | done | `right_divider_id` / `FrameRects.right_divider` in `render.zig`, `dispatch.zig` | Rust's 21-column clamp |
+| Right panel — persisted visible + width | done | `ui.right_panel_visible` read in `initWith` (`src/app.zig`), `ui.right_panel_width` in `side.State.init` (floored at 8), number rows in `settings.zig` | the default width is Rust's 32 (the section-side track put it back from 40; the panels' chrome at 26–32 cells is the panel track's); a session restore still overrides |
 | `:set rightpanel` / `rightpanel!` / `norightpanel` | done | `src/app/ex.zig` | |
-| Right-panel icon in the palette bar | done | `right_panel_codicon` / `tree_codicon` in `render.zig` | codicon `layout-sidebar-right-off` (EC00), the mirror of the sidebar's EC02; `#` / `=` under `--ascii` |
+| Right-panel icon in the palette bar | done | the nav cluster in `src/ui/menu_bar.zig` (`Button.toggle_tree` / `toggle_right_panel`) | codicon layout-sidebar-left-off / -right-off either side of the workspace chip, cell for cell with row 0 of `rust-120x40.txt` |
 | `<leader>tr` | done | the `t` group in `whichkey.zig` | `view.toggle_right_panel`; `t ]` / `t [` / `t x` step and close the panel's tabs |
-| Outline / diagnostics hosted in the panel | done | `render.zig`, `lsp.drawPanel` | |
-| `×` evicts the hosted pane | done | `view.right_panel_close_tab` | |
+| Outline / diagnostics hosted in the panel | done | `Section.outline` / `Section.diagnostics` (a side and a column, no rail row), `outline.drawPanel` / `lsp.drawPanel` | right by default (Rust's `right_panel_panes`); the column carries Rust's strip row — the title and a `×` |
+| `×` evicts the hosted pane | done | `view.right_panel_close_tab` (`ctrl+alt+w`), `Button.right_close` on the column's strip row (`render.zig`) | closes the right column |
 | Empty-state copy | done | `src/ui/empty_state.zig` | |
-| Right-panel next / prev tab | done | `view.right_panel_next_tab` / `prev_tab` in `cmd_view.zig` | |
+| Right-panel next / prev tab | done | `view.right_panel_next_tab` / `prev_tab` in `src/app/side.zig` | walk the sections whose side is right; the keys stay where they are (Rust's panel) |
 | Keyboard right-click `Shift+F10` | done | `contextMenuAtFocus` in `context_menus.zig`, `view.context_menu_at_focus` | tree row / panel row / active tab, anchored at the thing's rect |
-| Palette bar — sidebar + panel toggles + palette chip | done | `drawPaletteBar` in `render.zig` | |
-| Palette bar — integration chips | done | `chips` in `src/app/integrations.zig`, `drawChips` in `src/ui/integrations_view.zig` | config icons and installed manifests with a chip, in `ui.integration_icon_order` |
-| Palette bar — `+` add-integration | done | `Button.add_integration` in `drawPaletteBar` (`add_codicon`, green) → `integrations.show_marketplace` | at the right end of the chip strip; the `+` menu's Integrations submenu stays |
-| Palette bar — narrow drops TABS | done | `palette_bar_narrow_width` (80) / `palette_bar_min_width` (40) in `render.zig` | below 80 the bar stays: the cluster's extras (badges, AI chips, the stress copy, the `+`) drop and the palette chip is the icon; below 40 it goes; the frame tests pin 39 / 40 / 48 / 120 |
+| Palette bar — sidebar + panel toggles + palette chip | done | `drawPaletteBar` in `render.zig` over `src/ui/menu_bar.zig` (`rust_row_120` / `rust_row_80` pin row 0) | the centred 48-cell nav cluster — sidebar toggle · ` ← ` ` → ` · the workspace chip `  󰍉  <name>  ` · ` ▾ ` · right-panel toggle — then Rust's right cluster from `bufferline.zig` (` + `, ` TABS `, a chip per tab page, the theme pill, the ` × ` that quits; `ui.top_bar_cluster_mode`) |
+| Menu bar — the ten menus | done | `src/app/menu_bar.zig`, `src/ui/menu_bar.zig`, `ui.menu_bar` (always / auto / hidden), `view.menu_bar_open` / `menu_bar_cycle`; `tests/e2e/menu_bar_top_row.test` | ` ❯_  mnml ` then File / Edit / Selection / View / Go / Run / Terminal / Window / Help; every row a registered command (an enum) with its chord under the active profile and Rust's glyph; F10 opens File, Alt+letter a menu, ← / → step; words that do not fit collapse behind ` » ` |
+| Palette bar — integration chips | done | `chips` in `src/app/integrations.zig`, `drawGapChips` in `render.zig` (`integrations.chipClick`) | the enabled icons on Rust's 5-cell stride in the gap between the sidebar toggle and the cluster (the browser globe by default), in `ui.integration_icon_order`; the pinned launcher icons wait on the Zig integrations |
+| Palette bar — `+` add-integration | partial | `integrations.show_marketplace` from the `+` menu's Integrations submenu (`context_menus.zig`) and `M` in the integrations pane | the bar's green `+` chip is not painted: row 0 is `rust-120x40.txt` cell for cell (menu-bar track, 2026-09-06) and the Rust row shows no such chip; see Remaining |
+| Palette bar — narrow drops TABS | done | the hidden-word rule in `src/ui/menu_bar.zig` (`rust_row_80`), `pickCluster` in `bufferline.zig` | Rust's rule: a 50-cell cluster estimate bounds the menu words, a 3-cell slot is kept for the ` » ` while words remain; at 80 columns only the brand menu fits, the gap chip drops and the right cluster is the compact one (`rust-80x24.txt`); the chip alone below 48 columns |
 | Menu glyphs | done | `src/ui/menu_glyph.zig`, `paintMenuRows` in `render.zig` | one glyph per command group; `MenuItem.icon` overrides |
 | `ascii_icons` blanks glyphs | done | `forItem(it, ascii)` in `menu_glyph.zig` | every group glyph has a one-character ASCII twin |
 | `menu.glyph_audit` | done | `menuAuditCmd` in `src/app/glyph_audit.zig` | the menu glyph table (group · codepoint · catalog name · ASCII twin · one-codepoint check) then the source audit, in a scratch pane; needs the workspace's `data/nerd-glyphnames.json` (the mnml-zig tree) |
@@ -565,7 +622,8 @@ trust sink. Each row names its file and its test.
 | `plus_menu_pinned` / `hidden` | done | `App.plus_pinned` / `plus_hidden`, `persistPlus` in `context_menus.zig` | written back to the home config |
 | `ui.external_browser` | done | `src/app/browser_open.zig` (`argv`), used by `git.openExternal` and `lsp_decor.openExternal` | `open -a <name>` / `start "" <name>` / `<name> <url>`; the trust layer strips the key from an untrusted workspace before it is read |
 | 94 themes | done | `themes/*.zon`, `src/ui/theme.zig`, `theme.pick` | committed ZON, parsed at comptime |
-| F1 click-discovery overlay | done | `src/app/discovery.zig` (`drawOverlay`, `explain`), `view.discovery` | every hit tinted and labelled; the next click explains |
+| Help overlay — F1 keymap reference | done | `view.help` (`f1`), `src/ui/help_overlay.zig`, `src/app/help.zig` | Rust's `build_help`: the mode chips, the stress meter, then every command group with the chords the active keymap binds; `/` filters, `c` / `e` fold and open every section; `rust-help-120x40.txt` |
+| Click-discovery panel | done | `Overlay.discovery`, `discovery.Category` / `App.discovery_flash` in `src/app/discovery.zig`, `view.discovery` (unbound, as in Rust) | eleven rows with the frame's hit counts; a row press flashes that family for two seconds; F1 / Esc / a press elsewhere close; `rust-discovery-120x40.txt`; `// changed:` the old label-every-hit overlay is gone |
 | Hover tooltips on chips | done | `describe` in `discovery.zig`, `src/ui/tooltip.zig` | `ui.hover_tooltip` popup and the `ui.hover_help` rail box; wake on motion only |
 | Right-click menus throughout | done | `src/app/context_menus.zig` — editor / tab / tree / mode / `+` / request / todos / stress / branch / diagnostics / bell / toast | |
 | Welcome pane (no pane open) | done | `src/ui/welcome.zig`, the `// ── welcome ──` block in `src/app/render.zig` | logo · workspace · branch · Recent Files · Shortcuts · version; rows 10–28 of `docs/ui-spec/rust-120x40.txt` match |
@@ -585,7 +643,7 @@ trust sink. Each row names its file and its test.
 | Idle `♪` chip, `preferred_music_app` | cut | same; config keys accepted and ignored | |
 | Mixr panel size chips | cut | same | |
 | Stress meter — statusline bar | done | `src/app/stress.zig`, `render.zig` | p95 of a 120-sample ring |
-| Stress meter — bufferline copy | done | `Button.stress` in `drawPaletteBar` | the same four blocks + p95 in the bar's right cluster, hidden when idle; click toasts, right-click the meter menu |
+| Stress meter — bufferline copy | missing | — | the row-0 copy went with the chrome row's re-cut to `rust-120x40.txt` (menu-bar track): the Rust row shows none; the statusline meter, its tooltip and its menu stay |
 | Stress meter — hover numbers | done | `describeSegment(.stress)` in `discovery.zig` | p50 / p95 / max / n in the tooltip |
 | Stress meter — right-click Reset / Copy / Toast | done | `openStressMenu` in `context_menus.zig`, `perf.copy_stress` | |
 | Stress meter — hidden when idle, 120 samples | done | `stress.zig` | |
@@ -595,13 +653,13 @@ trust sink. Each row names its file and its test.
 | `:messages` picker | done | `messages.show` in `src/app/messages.zig` | |
 | `:messages!` dump | done | `dump` in `messages.zig`, `:messages!` in `ex.zig` | |
 | Persists per workspace | done | `session.zig` `messages` | |
-| Bell chip — three states | done | `bell_seg` in `render.drawStatusline` | idle `○`, yellow count, red count; the clock beside it |
+| Bell chip — three states | done | `SegId.bell` in `src/app/statusline.zig` | always there; the colour carries the level — idle, yellow count, red count; the clock beside it |
 | Zen mode | done | `src/app/zen.zig` (`view.zen` / `view.fullscreen`) | |
-| Clickable statusline | done | `Seg.id` in `src/ui/statusline.zig`, `.statusline_seg` in `dispatch.zig` | branch / diagnostics / AI / bell / stress / indent / encoding / transfers / input style; host segments above `seg_dyn_base` |
+| Clickable statusline | done | `SegId` in `src/app/statusline.zig`, `Seg.hit` in `src/ui/statusline.zig`, `.statusline_seg` in `dispatch.zig` | mode / position / file / language / branch / PR / diagnostics / symbol / macro / find / tests / Claude / Codex / coverage / transfer / LSP / WRAP / autosave / size / bell / stress / clock / workspace; host segments above `seg_dyn_base`; `// changed:` the indent, encoding and input-style chips are gone — the Rust row has none, the mode chip cycles the keymap |
 | Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e/palette_bar_clock.test` |
-| Settings overlay | done | `src/app/settings.zig`, `src/ui/settings.zig` | 39 discrete rows + 9 number rows (`‹ [32] ›`) |
+| Settings overlay | done | `src/app/settings.zig` (`rows`), `src/ui/settings.zig` | 61 discrete rows + 9 number rows (`‹ [32] ›`) — 70, with the activity bar, the debug toolbar strip, the default sidebar side and the inline debugger values among them |
 | `:set` for every discrete field | done | `src/app/ex.zig` | Zig-only |
-| The `ui.*` toggles | done | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`), `click_echo` (a 120 ms double underline under a left press — `App.click_echo`, `Doc.echo`), `coverage_chip_mode` (`coverage.zig`: the `F` / `C` chip from the two `trends.json` files, four modes), `menu_bar` (`menu_bar.zig`: File / Edit / View / Go / Help on the bar row — always / auto / hidden, `view.menu_bar_cycle` / `menu_bar_open`), `auto_equalize_splits` (`App.afterSplitChange`); each has a test that changes a cell |
+| The `ui.*` toggles | done | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`), `click_echo` (a 120 ms double underline under a left press — `App.click_echo`, `Doc.echo`), `coverage_chip_mode` (`coverage.zig`: the `F` / `C` chip from the two `trends.json` files, four modes), `menu_bar` (`menu_bar.zig`: the ten menus on the bar row — always / auto / hidden, `view.menu_bar_cycle` / `menu_bar_open`), `activity_bar` (`activity_bar.zig`, the same three words), `debug_toolbar` (`render.zig`: the strip over the editor), `sidebar_side` / `section_side` (`side.zig`), `auto_equalize_splits` (`App.afterSplitChange`); each has a test that changes a cell |
 | Update check | done | `src/app/update.zig` | GitHub releases JSON on a worker; `ui.check_updates`, `MNML_NO_UPDATE_CHECK` |
 | Startup picker | done | `src/app/startup_picker.zig` | |
 
@@ -638,9 +696,9 @@ trust sink. Each row names its file and its test.
 | Manifest-declared dynamic commands | done | `src/app/integrations.zig` (the scan of `<data root>/integrations/*.zon` and `<ws>/.mnml/integrations/*.zon`), `src/bridge/manifest.zig` (the SDK's schema), `owner = .integration` in `DynRegistry` | each command opens a `Pane.mount` or a pty, or runs the manifest's `ex` line |
 | `integrations.refresh` | done | `refreshCmd` in `integrations.zig` | |
 | `.ui.integration_icons` config | done | read by `chips` in `integrations.zig` | |
-| Launcher-icon strip | done | the palette-bar chip strip (`drawChips` in `integrations_view.zig`) | |
+| Launcher-icon strip | done | `drawGapChips` in `render.zig` over `integrations.chips` | the enabled config icons in the bar's gap on Rust's stride; installed manifests' chips join them once the Zig integrations exist |
 | Integration-icon rail | missing | `IntegrationIcon` has `in_palette_bar` only; nothing places an icon in the tree rail | |
-| `+` add-integration → Marketplace | done | `Button.add_integration` in `render.zig` → `integrations.show_marketplace` | the green codicon chip at the end of the palette bar's strip; the `+` menu row stays |
+| `+` add-integration → Marketplace | partial | `integrations.show_marketplace` from the `+` menu's Integrations submenu and the integrations pane's `M` | the bar chip is not painted (the Rust row 0 shows none); see the UI section and Remaining |
 | Marketplace | done | `src/app/marketplace.zig`, `Pane.marketplace`, `src/ui/marketplace_view.zig`, `marketplace.*` | `github_launcher_folder` and `github_monorepo_apps` sources; a `crates_keyword` source lists nothing |
 | `integrations.toggle_enabled`, `<leader>iE` | done | `toggleEnabled` in `integrations.zig` (a picker); the `i` group in `whichkey.zig` | `i d` details, `i h` / `i I` / `i r` the tool panes |
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
@@ -661,7 +719,7 @@ trust sink. Each row names its file and its test.
 | `ui.check_updates = false` opt-out | done | `Config.zig`, `update.zig` | + `MNML_NO_UPDATE_CHECK=1` |
 | Skipped in headless | done | the `startup` hook is the terminal loop's | |
 | `zig build docs` → `docs/commands.md` | done | `tools/gen_commands.zig`, `build.zig` | Zig-only |
-| `zig build check` (E7 gates) | done | `build.zig`, `tools/break-check.sh`, `tests/e2e/defaults.test` | Zig-only |
+| `zig build check` (E7 gates) | done | `build.zig`, `tools/break-check.sh`, `tests/e2e/defaults.test` | fmt → Debug tests → ReleaseSafe tests → the gate → the width sweep → `defaults.test` → the full corpus; Zig-only |
 | Session file `.mnml/session.zon` | done | `src/app/session.zig` | ZON, never JSON |
 | Lua scripting — `.mnml/init.lua`, the `mnml` table | done | `src/scripting/lua.zig`, `src/scripting/api.zig`, `script.reload` / `script.edit_init`, the `init_lua` trust sink | beyond the Rust list (D10); a 20 ms budget per entry |
 | Bridge v2 — `Pane.mount` over a socket | done | `src/bridge/host.zig` / `wire.zig`, `src/app/mount_pane.zig`, `mount.open` | beyond the Rust list; the SDK is `sdk/mnml-sdk` |
@@ -670,8 +728,8 @@ trust sink. Each row names its file and its test.
 
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
-| Tree-sitter highlighting, 39+ languages | done | `grammars` in `build.zig` (42), `src/highlight/table.zig` | |
-| Every Rust-listed language | done | same | Zig adds make, regex, markdown_inline, ocaml_interface |
+| Tree-sitter highlighting, 39+ languages | done | `grammars` in `build.zig` (41 entries), `src/highlight/table.zig` | the Rust `Cargo.toml` pins 38 grammar crates; `markdown_inline` and `ocaml_interface` are separate entries here where Rust's `md` / `ocaml` crates carry both |
+| Every Rust-listed language | done | same | every one of the 38 has an entry (`tsx` is its own here, `typescript`'s in Rust) |
 | Repo-local queries (hcl / proto / vue) | done | `local_queries` in `build.zig` | |
 | Language injection | done | `src/highlight/engine.zig`, `predicate.zig` | markdown fences, `<script>` / `<style>` tested |
 | Extension / filename / injection-name mapping | done | `src/highlight/table.zig` aliases | comptime-validated |
@@ -679,7 +737,10 @@ trust sink. Each row names its file and its test.
 ## Disputed
 
 Claims in a parity note that did not check out against the source. The
-row keeps the status the source supports.
+row keeps the status the source supports. *(2026-09-07: kept as the
+record of that check. The glyph rows are `done` since `62e607e` — the
+runners landed — and the 812 / 901 line was that day's count; the Ids
+line at the top of this page is today's.)*
 
 | note | claim | what was looked for | row stays |
 |---|---|---|---|

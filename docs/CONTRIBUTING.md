@@ -57,8 +57,11 @@ wrote the change.
 ## The oracle
 
 `tests/e2e` is the `.test` corpus: the scripts inherited from the Rust
-repo and the ones written here, one folder (366 files at the time of
-writing). The corpus is a regression net, not a pixel oracle: `expect screen contains`
+repo and the ones written here, one real folder (a copy, not a symlink):
+394 `.test` files at the time of writing, 393 of which run at 120×40
+(`http/http-bench-running-toast.test` is `# requires: network`), plus
+three parked `.test.*-skip` beside them. The corpus is a regression net,
+not a pixel oracle: `expect screen contains`
 is substring-tolerant, so a re-skin survives it, and a script that
 breaks on a deliberate cosmetic change is updated as normal maintenance
 — the commit says so.
@@ -69,6 +72,7 @@ zig build                              # the binary
 ./zig-out/bin/mnml-zig test --gate     # the 47-file Phase-0 gate
 ./zig-out/bin/mnml-zig test tests/e2e/defaults.test
 ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60   # the width sweep
+zig build e2e -- --filter dap_                                   # the corpus through the build, args passed on
 ```
 
 The debugger has a real oracle too: `tools/fake_dap/` is
@@ -79,11 +83,12 @@ path as `MNML_FAKE_DAP`, and the `dap_session_*.test` scripts seed
 `.mnml/config.zon` with `.dap.dbg.cmd = "$MNML_FAKE_DAP"` and a
 `prog.dbg` to stop, step, watch, evaluate and set variables through the
 real client and panes — no toolchain, the same events on every platform.
-A debug-UI change is tested against it, not against a hand-written reply.
+A debug-UI change is tested against it, not against a hand-written reply;
+`tools/debug-demo.sh [vim|standard]` opens the same seed on a real screen.
 
-The corpus number must not go down. 225/226 is the current line (the
-one failure asserts TOML in a workspace config, by design); a change
-that drops it is not finished.
+The corpus number must not go down. 393/393 is the current line
+(2026-09-07); a change that drops it is not finished. A file that is
+re-aimed at a deliberate change says so in the commit.
 
 ## Tests
 
@@ -97,6 +102,12 @@ that drops it is not finished.
   `-Doptimize=ReleaseSafe` (what ships). A test that passes in one and
   not the other is a bug in the code, not the test.
 - `-Dtest-filter=<substring>` runs the matching tests only.
+- `zig build test --summary all` prints one line per test binary; the
+  total is 1205 tests (1203 pass, 2 skip) at the time of writing.
+- `docs/CONFIG.md`'s `zon` block is decoded by a test
+  (`docs config example parses clean`), so a new `Config` field goes
+  into the block in the same commit, at its default with one line of
+  meaning.
 
 ## Break-checks
 
@@ -120,20 +131,56 @@ did not compile (a compile error is not the test failing); exit 4 means
 no test matched the name. Put the invocation, or its output, in the
 commit body or the PR.
 
-## The gate
+## The gate — the verification sequence
 
-`zig build check` runs the safety gates in one step — what CI runs:
+Before a branch is offered, in this order (each step runs on what the
+step before it proved):
 
-1. `zig fmt --check` over `src`, `build.zig`, `tools`;
-2. the unit tests in Debug, then in ReleaseSafe;
-3. the Phase-0 gate (`tools/gate.txt`) at 120x40;
-4. the same gate swept at 80x24 / 120x40 / 200x60 — content assertions
-   hold at 120x40, the other sizes assert no panic, no leak, no rect
-   painted outside its parent;
-5. `tests/e2e/defaults.test`.
+1. `zig fmt --check src build.zig tools`;
+2. `zig build test -Doptimize=Debug`, then `zig build test -Doptimize=ReleaseSafe`;
+3. `zig build -Doptimize=ReleaseSafe` — the binary the next two steps
+   run on, the one that ships;
+4. the sweep: `./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60`
+   — the Phase-0 gate (`tools/gate.txt`, 47 files) at three sizes;
+   content assertions hold at 120x40, the other sizes assert no panic,
+   no leak, no rect painted outside its parent;
+5. the corpus: `./zig-out/bin/mnml-zig test` (393/393);
+6. the Windows gate: `zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe`
+   — the exe and every test binary compiled, not run (Zig's lazy
+   analysis only checks target-gated code when that target is built);
+7. `zig build glyph-audit` — every Nerd Font literal in `src/` against
+   `data/nerd-glyphnames.json`, with its `--ascii` twin;
+8. `tools/pty-mouse-check.py` — the real binary in a pty answering the
+   probes like ghostty; one click opens a file, a right-click opens the
+   row menu, a wheel notch reaches the app;
+9. `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when the
+   change touches chrome (see *Spec dumps* below) — the diff counts must
+   not grow.
 
-Run the full corpus as well before offering a branch that touches the
-editor, the input layer or the frame.
+`zig build check` runs 1, 2, the gate, the sweep, `tests/e2e/defaults.test`
+and the full corpus in one step on the exe of that invocation — so
+`zig build check -Doptimize=ReleaseSafe` is steps 1–5 in one line; 6–9
+are run by hand.
+
+## Spec dumps
+
+The same-look tracks are measured against the Rust editor's screen,
+not described from memory. `docs/ui-spec/README.md` lists every dump
+and the steps file that produced it.
+
+```sh
+tools/ui-diff.sh WS RS_DATA ZIG_DATA docs/ui-spec/steps-palette.jsonl 120x40
+    # both binaries headless on one workspace + config, one JSONL of IPC
+    # commands each, a row-by-row diff; the session is snapshotted around it
+tools/zig-spec.sh debug-stopped 120x40
+    # a Zig-only screen (the debugger — nothing on the Rust side to diff
+    # against): headless on a throwaway workspace wired to the fake
+    # adapter, kept as docs/ui-spec/zig-<name>-<size>.txt — the dump IS the spec
+tools/debug-demo.sh vim
+    # the same seed on a real screen, deleted when mnml-zig exits
+```
+
+`MNML_RUST_BIN` / `MNML_ZIG_BIN` point the scripts at other binaries.
 
 ## Docs
 
@@ -142,7 +189,12 @@ editor, the input layer or the frame.
 and every group appears. Do not edit it by hand; add the id to the spec
 table and rebuild. `docs/PARITY.md` is the parity ledger the cutover
 decision reads — a row moves from `missing` to `done` in the commit that
-lands the runner, never before.
+lands the runner, never before, and its pointer column names the file
+and the test. `docs/DESIGN.md` is the plan: it is annotated with dated
+`*// changed:*` notes where the tree departs from it, never rewritten.
+`docs/KEYMAP_PROFILES.md` lists every chord that differs between the
+profiles; the debugger's and the section-move chords are pinned by
+tests (`src/app/cmd_dap.zig`, `src/app/side.zig`).
 
 ## Subagents
 

@@ -59,6 +59,10 @@ zig build test                              # the unit suite (leak = failure)
 zig build test -Doptimize=ReleaseSafe
 zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
                                             # cross-compile exe + every test binary, no run
+zig build check                             # fmt, tests in both modes, the gate, the sweep, the corpus
+zig build e2e                               # the .test corpus alone (`-- ARGS` reach `mnml-zig test`)
+zig build docs                              # regenerate docs/commands.md from the spec table
+zig build glyph-audit                       # every Nerd Font glyph in src/ has its --ascii twin
 zig build release                           # all five targets → zig-out/release/<triple>/
 zig build dist -Dversion=0.3.0              # + archives, sha256s, installers, manifest → zig-out/dist/
 ```
@@ -68,13 +72,21 @@ manifest version, the git short SHA and `-dirty` (`0.3.0-dev+g76ccf5b-dirty`).
 `-Dipc-subdir=` and the marker name keep a dev build's IPC beside a running
 0.2.x (`ipc-zig`, `mnml-zig-running-$USER.workspace`).
 
+Before offering a change, the sequence in `docs/CONTRIBUTING.md` → *The
+gate*: fmt, the unit tests in Debug and ReleaseSafe, a ReleaseSafe build,
+the width sweep and the corpus on that build, the Windows gate-build, the
+glyph audit, `tools/pty-mouse-check.py`, and `tools/ui-diff.sh` on every
+`docs/ui-spec/steps-*.jsonl` when chrome changed.
+
 ## The `.test` oracle
 
 The end-to-end suite is a line-based script format — `write`, `open`, `key`,
 `type`, then `expect screen | file | dirty | pane` — run headlessly against the
 same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
 repo's suite, copied here when Rust froze, plus the scripts written for this
-codebase; it is the definition of parity: 365 of 365 green at 120x40.
+codebase; it is the definition of parity: 394 `.test` files, 393 of 393
+green at 120x40 (the one left out is `# requires: network`). The unit suite
+is 1205 tests (`zig build test --summary all`).
 
 ```sh
 ./zig-out/bin/mnml-zig test                          # the whole corpus
@@ -86,15 +98,28 @@ codebase; it is the definition of parity: 365 of 365 green at 120x40.
 Every file runs on a `DebugAllocator` with safety on and asserts a clean
 `deinit`; at 80x24 and 200x60 the assertion is no panic, no leak, no rect
 outside its parent. `MNML_E2E_ALLOW_SHELL=1` lets the files that spawn a shell
-run.
+run. The debugger's scripts run against `mnml-fake-dap` (`tools/fake_dap/`,
+installed by `zig build`): a deterministic Debug Adapter the runner exports as
+`MNML_FAKE_DAP`, so the debug UI is tested for real on every platform with no
+toolchain. `tools/debug-demo.sh` opens the same setup on a real screen.
 
 ## Where things are
 
 - `docs/DESIGN.md` — the design: architecture decisions D1–D10, the phase plan,
-  the release pipeline (E6), the safety gates (E7), the cutover checklist.
+  the release pipeline (E6), the safety gates (E7), the cutover checklist —
+  annotated with dated `// changed:` notes where the tree departs from it.
+- `docs/PARITY.md` — the parity ledger against the Rust `FEATURES.md`, one row
+  per feature with the file that proves it; the cutover decision reads it.
+- `docs/commands.md` — every command id, group and default chord (generated).
+- `docs/ui-spec/` — the Rust editor's screen dumps the chrome is measured
+  against (`tools/ui-diff.sh`), and the Zig-authored debug screens
+  (`tools/zig-spec.sh`).
 - `docs/CONVENTIONS.md` — what a diff is checked against.
 - `docs/CONFIG.md` — the complete commented `config.zon`.
-- `docs/KEYMAP_PROFILES.md` — the vim and standard profiles.
+- `docs/KEYMAP_PROFILES.md` — the vim and standard profiles: every chord that
+  differs, the debugger's two doors, the section moves.
+- `docs/CONTRIBUTING.md` — worktrees, commits, the oracle, the verification
+  sequence, break-checks.
 - `docs/RELEASE.md` — cutting a release, and the two traps in it.
 - `CHANGELOG.md` — what a user notices, release by release.
 - The manual: [mnml.sh](https://mnml.sh).

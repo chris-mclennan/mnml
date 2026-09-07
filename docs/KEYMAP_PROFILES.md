@@ -89,6 +89,29 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.cut` / `file.paste` | `y y` / `d d` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot move a file (the property `ctrl+v` lacks); a stray key between the two cancels. `D` duplicates in both profiles |
 
+## Sections and columns
+
+Every activity section has a side (`src/app/side.zig`); the two columns
+replace Rust's sidebar and tabbed right panel. The vim chords are
+Neovim's window family read from a section; the standard profile has
+no chord for the moves — the palette, the rail's right-click menu
+(*Move to right / left side*) and `:sidebar left|right` are its doors.
+Pinned by the `ctrlWCommand` and `vim:` tests in `src/app/side.zig`.
+
+| command | vim | standard / both |
+|---|---|---|
+| `view.move_section_left` | `Ctrl-W H` in a section or the tree; `<leader>sH` | — (`:sidebar left`, the rail menu, the palette) |
+| `view.move_section_right` | `Ctrl-W L` in a section or the tree; `<leader>sL` | — (`:sidebar right`) |
+| `view.toggle_tree` (the left column) | `Ctrl-N`, `<leader>e` | `Ctrl+B` |
+| `view.toggle_right_panel` (the right column) | `<leader>tr` | `Ctrl+Shift+B` (both) |
+| `view.focus_right_panel` | — | `Ctrl+K R` |
+| `view.right_panel_next_tab` / `prev_tab` | `<leader>t]` / `<leader>t[` | — |
+| `view.right_panel_close_tab` | `<leader>tx` | `Ctrl+Alt+W` (both) |
+
+In an editor `Ctrl-W H` / `L` keep Neovim's meaning — move the split to
+the far edge; only a focused section or the tree reads them as a side
+move.
+
 ## Debugger
 
 Two complete doors to the same `dap.*` commands, neither a patch on the
@@ -113,6 +136,13 @@ function keys. The F-keys are `both`, so a vim user keeps them too.
 | `dap.add_watch` | `<leader>dw` | — |
 | `dap.toggle_panel` (the DEBUG section) | `<leader>du` | `Ctrl+Shift+D` (`view.activity_debug`) |
 | `dap.evaluate_hover` | `<leader>dh`, and `K` while stopped | — |
+| `dap.show` (the section and the console) | — | — (palette) |
+
+Every chord above is checked against `src/commands/specs.zig` by the
+`both key profiles` test in `src/app/cmd_dap.zig`, which also asserts
+that no `dap.*` chord is standard-only. The `+debug` which-key group is
+`vim_only` (`src/app/whichkey.zig`): the standard profile's `Ctrl+K`
+popup keeps Rust's rows.
 
 ## Ctrl-O / Ctrl-I / Tab in the vim profile
 
