@@ -13,6 +13,7 @@
 //! mode. `shown` hands the app the readings; `segment` is the text.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -167,9 +168,14 @@ fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
 /// The directory holding `.tattle-claude-artifacts`: `MNML_ARTIFACTS_HOME`
 /// when set (the e2e driver points it at the test's own root, so a
 /// developer's real coverage never paints into a test's statusline),
-/// else the home directory.
+/// else the home directory — except under the test runner, where only
+/// the variable counts: a unit test that builds an App on the process
+/// environment must not read the developer's own trends files (they
+/// widened the row by a chip and cut the position out of a 48-column
+/// frame on the author's machine, and on no one else's).
 fn artifactsHome(app: *App) ?[]const u8 {
     if (app.env.get("MNML_ARTIFACTS_HOME")) |v| return if (v.len == 0) null else v;
+    if (builtin.is_test) return null;
     return app.homeDir() orelse app.env.get("HOME");
 }
 
@@ -346,7 +352,7 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     const root = buf[0..n];
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 12 });
     defer app.deinit();
-    try app.env.put("HOME", root);
+    try app.env.put("MNML_ARTIFACTS_HOME", root);
     app.now_ms = 10_000;
     try t.expect((try segment(&app, app.frame.allocator())) == null);
     // Two apps: 80/90 (ui/api) over 3 features and 60/— over 1 → (85·3 + 60·1)/4 = 78.75.

@@ -21,9 +21,8 @@
 //! input-style chip — the Rust screen has none; the keymap is what the
 //! mode chip cycles, and the far-right chip is the language. The Sonos
 //! cluster is cut; the now-playing cluster is `app/now_playing.zig`'s.
-//! What Zig has that Rust lacks stays: the transfer chip, a Lua script's
-//! segments, and the drop rule for a right lane that still does not fit
-//! after the left is clipped.
+//! What Zig has that Rust lacks stays: the transfer chip and a Lua
+//! script's segments. The overflow rule is Rust's (`ui/statusline.zig`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -477,7 +476,6 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{sl.formatByteSize(&buf, e.buf.editor.bytes().len)}), p.comment, p.bg2).withHit(SegId.filesize.raw()));
         const pos = e.buf.editor.rowCol();
         try push(&right, arena, Seg.init(ui.fmt(" Ln {d}/{d} Col {d} ", .{ pos.row + 1, e.buf.editor.lineCount(), pos.col + 1 }), p.fg, p.bg2).withHit(sl.seg_position));
-        right.items[right.items.len - 1].sticky = true;
         if (e.buf.editor.selection()) |sel| if (sel[1] > sel[0]) {
             const n = std.unicode.utf8CountCodepoints(e.buf.editor.bytes()[sel[0]..sel[1]]) catch sel[1] - sel[0];
             try push(&right, arena, Seg.init(ui.fmt(" Sel {d} ", .{n}), p.bg_darker, p.yellow).withHit(SegId.sel.raw()));
@@ -798,7 +796,13 @@ test "at 80 columns the row is the Rust 80×24 spec's: the branch clips to `main
     try testing.expect(std.mem.indexOf(u8, long, "…") != null);
     try testing.expect(std.mem.indexOf(u8, long, "-indeed.txt") == null);
     try testing.expect(std.mem.indexOf(u8, long, " Ln 1/") != null);
-    try testing.expect(std.mem.endsWith(u8, trimRight(long), sl.pl_left_nerd ++ "  txt"));
+    // The right lane is wider than what three cells of name leave: it
+    // runs on from the name and the edge cuts it — the clock is the last
+    // chip to show, the workspace and the language are past the edge,
+    // as Rust's one line of spans would be cut.
+    try testing.expect(b.colOf(22, sl.seg_language) == null);
+    try testing.expect(b.colOf(22, SegId.workspace.raw()) == null);
+    try testing.expect(b.colOf(22, SegId.bell.raw()) != null);
 }
 
 // ─── every chip: a hit, a description, an action ─────────────────────────
@@ -908,6 +912,68 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
     try testing.expect(b.colOf(38, sl.seg_dyn_base) != null);
     try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
+}
+
+// ─── the narrow rule, at four widths ─────────────────────────────────────
+
+test "the narrow rule at 120 / 100 / 80 / 60 columns: the gap shrinks, then the branch clips to `main …`, then to `…` and the edge cuts the right lane" {
+    const spec = specRow(spec_120x40, 38);
+    // The gap is the first run of four spaces: a chip holds at most two.
+    const gap = std.mem.indexOf(u8, spec, "    ").?;
+    var after_gap = gap;
+    while (after_gap < spec.len and spec[after_gap] == ' ') after_gap += 1;
+    const spec_left = spec[0..gap];
+    const spec_right = trimRight(spec[after_gap..]);
+    const porcelain = "# branch.head main\n? stray.txt\n";
+    // 120 is the spec (the row test above). 100: the same chips, twenty
+    // cells of gap fewer — the Rust row at 100×40 (`tools/ui-diff.sh`,
+    // 2026-09-07) on the fixture reads exactly so.
+    {
+        var b = try Bench.init(100, 40);
+        defer b.deinit();
+        try b.onMain(porcelain);
+        b.app.focus = .tree;
+        const row = try b.row(38);
+        const lw = try std.unicode.utf8CountCodepoints(spec_left);
+        // The dump is right-trimmed: the language chip's last cell is a
+        // space it does not carry.
+        const rw = 1 + try std.unicode.utf8CountCodepoints(spec_right);
+        const spaces = " " ** 100;
+        const expected_row = try std.fmt.allocPrint(b.app.frame.allocator(), "{s}{s}{s}", .{ spec_left, spaces[0 .. 100 - lw - rw], spec_right });
+        try testing.expectEqualStrings(expected_row, trimRight(try normaliseClock(b.app.frame.allocator(), expected_row, row)));
+        try testing.expect(std.mem.indexOf(u8, row, " main  " ++ sl.added_glyph ++ " 1 ") != null);
+        try testing.expectEqual(sl.seg_language, b.app.hits.at(98, 38).?.statusline_seg);
+    }
+    // 80: the Rust 80×24 dump — the branch gives up its counts, `main …`.
+    {
+        var b = try Bench.init(80, 24);
+        defer b.deinit();
+        try b.onMain(porcelain);
+        b.app.focus = .tree;
+        const row = try b.row(22);
+        const expected = try spec80Row(b.app.frame.allocator());
+        try testing.expectEqualStrings(trimRight(expected), trimRight(try normaliseClock(b.app.frame.allocator(), expected, row)));
+        const dots = std.mem.indexOf(u8, row, "…").?;
+        try testing.expectEqual(@as(usize, 15), try std.unicode.utf8CountCodepoints(row[0..dots]));
+        try testing.expectEqual(sl.seg_language, b.app.hits.at(78, 22).?.statusline_seg);
+    }
+    // 60: the Rust row at 60×24 (`tools/ui-diff.sh`, 2026-09-07): the
+    // branch is its glyph and `…`, the lanes touch, the row ends in the
+    // clock — the workspace and the language are past the edge.
+    {
+        var b = try Bench.init(60, 24);
+        defer b.deinit();
+        try b.onMain(porcelain);
+        b.app.focus = .tree;
+        const row = try b.row(22);
+        const expected = " TREE " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ "…" ++ sl.pl_right_nerd ++ " [no file] " ++ sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " " ++ sl.bell_glyph ++ "  " ++ spec_clock;
+        try testing.expectEqualStrings(expected, trimRight(try normaliseClock(b.app.frame.allocator(), expected, row)));
+        const dots = std.mem.indexOf(u8, row, "…").?;
+        try testing.expectEqual(@as(usize, 9), try std.unicode.utf8CountCodepoints(row[0..dots]));
+        try testing.expect(b.colOf(22, SegId.workspace.raw()) == null);
+        try testing.expect(b.colOf(22, sl.seg_language) == null);
+        try testing.expectEqual(SegId.clock.raw(), b.app.hits.at(58, 22).?.statusline_seg);
+    }
 }
 
 // ─── the coverage chip on fixed inputs ───────────────────────────────────

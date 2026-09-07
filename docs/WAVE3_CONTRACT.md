@@ -2663,6 +2663,26 @@ break-check.
   `--ascii` paints `B` / `A` / `S`, `>`, `||`, `>|` and Rust's one-cell
   breather. docs/PARITY.md's "now-playing cut" entry is the docs
   track's to amend.
+- `// changed (ui, 2026-09-07):` the overflow rule is Rust's, whole.
+  The right lane is measured whole; the longest left chip clips to what
+  it leaves less four cells of air (floor three); and when the row is
+  still too narrow the right lane follows the left lane directly and
+  the screen edge cuts it — Rust's one `Line` of spans. The Rust editor
+  at 60×24 on the fixture reads ` TREE  … [no file]  F 57% ▲1.0  󱼀 󰐎
+  WRAP    18:00` and stops: the workspace and the language are past the
+  edge, and `ui/statusline.zig` / `app/statusline.zig` pin that row and
+  the 100- and 80-column ones (identical to Rust's — `tools/ui-diff.sh`
+  at 100×40 shows no difference) at four widths. The earlier drop rule
+  (right chips leftmost-first, a `sticky` cursor position) is gone with
+  the field; at the gate sizes the two rules never differed.
+- `// changed (app, 2026-09-07):` `coverage.artifactsHome` reads only
+  `MNML_ARTIFACTS_HOME` under the test runner (`builtin.is_test`), never
+  HOME: a unit test that builds an App on the process environment was
+  painting the developer's own trends file into its row — fifteen cells
+  that, with the cluster's six, cut the cursor position out of a
+  48-column frame on one machine and no other (`render.zig`, `lsp.zig`
+  tests). The e2e driver already set the variable; the unit tests now
+  match it.
 - Cut, per the spec: the Sonos cluster. Not in this build: the Claude
   chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
   spend until the usage endpoint is called; the LSP progress (`⟳ …`),
