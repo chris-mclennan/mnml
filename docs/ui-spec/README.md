@@ -78,9 +78,17 @@ timing, not a regression (`tools/fake_lsp/` is the deterministic proof).
 **Run the harness on a private copy of the fixture.** `tools/ui-diff.sh`
 writes the IPC command file under `<ws>/.mnml/` and both data dirs'
 session files; two runs on the same paths cross-talk (another run's
-keystrokes land in your screen, and the number jumps). `cp -R
-mnml-zig-worktrees/chrome-fixture /tmp/fixture-<me>` once, then pass
-those `ws` / `rs-data` / `zig-data` paths.
+keystrokes land in your screen, and the number jumps). Copy
+`mnml-zig-worktrees/chrome-fixture` to a sibling directory (not under
+`/tmp`: the Zig app resolves the workspace to its realpath and
+`session.zig` compares that string with the one the session file
+names, so `/tmp/x` never matches its own `/private/tmp/x` — a 4-row
+`session: … belongs to … — ignored` toast on every screen, and the
+tree no longer restored), then rewrite the original fixture path in
+BOTH `ws/.mnml/session.zon` (Zig) and `ws/.mnml/session.json` (Rust)
+to the copy's — each side ignores a session that names another
+workspace, and the two must agree on `src` being open. Pass the copy's
+`ws` / `rs-data` / `zig-data`.
 
 ## Sections and their sides (2026-09-07)
 
