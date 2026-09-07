@@ -196,9 +196,12 @@ fn useStandard(app: *App) CommandError!void {
 }
 
 fn gotoLine(app: *App) CommandError!void {
-    _ = try app.requireEditor();
+    const e = try app.requireEditor();
+    // Rust's title names the line the cursor is on.
+    const title = try std.fmt.allocPrint(app.gpa, "Go to line  (currently {d})", .{e.buf.editor.rowCol().row + 1});
+    errdefer app.gpa.free(title);
     app.overlay.deinit(app.gpa);
-    app.overlay = .{ .prompt = .{ .state = Prompt.init(app.gpa, "Go to line"), .purpose = .goto_line } };
+    app.overlay = .{ .prompt = .{ .state = Prompt.init(app.gpa, title), .purpose = .goto_line, .title_owned = title } };
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -618,6 +621,6 @@ test "goto_line opens the prompt titled exactly `Go to line`" {
     defer app.deinit();
     try command.run(&app, .{ .static = .@"editor.goto_line" });
     try t.expect(app.overlay == .prompt);
-    try t.expectEqualStrings("Go to line", app.overlay.prompt.state.title);
+    try t.expectEqualStrings("Go to line  (currently 1)", app.overlay.prompt.state.title);
     try t.expect(app.focus == .overlay);
 }

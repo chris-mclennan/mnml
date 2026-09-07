@@ -10,9 +10,9 @@ command view.focus_tree
 key r
 key end
 key f2
-expect screen contains "Rename to"
+expect screen contains "Rename b.txt"
 key escape
-expect screen lacks "Rename to"
+expect screen lacks "Rename b.txt"
 key enter
 expect pane b.txt
 expect dirty false

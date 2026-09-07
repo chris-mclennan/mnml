@@ -181,6 +181,21 @@ fn removeOutright(app: *App, path: []const u8) !void {
 
 /// Ask before deleting `paths` (absolute). Cancel is the default; the
 /// permanent button is there for whoever wants to skip the trash.
+/// Entries under `dir`, recursively, stopping at `cap`.
+fn entryCount(app: *App, path: []const u8, cap: usize) usize {
+    var d = Io.Dir.cwd().openDir(app.io, path, .{ .iterate = true }) catch return 0;
+    defer d.close(app.io);
+    var walker = d.walk(app.gpa) catch return 0;
+    defer walker.deinit();
+    var n: usize = 0;
+    while (n < cap) {
+        const e = walker.next(app.io) catch break;
+        if (e == null) break;
+        n += 1;
+    }
+    return n;
+}
+
 pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void {
     if (paths.len == 0) return;
     const gpa = app.gpa;
@@ -196,26 +211,34 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
     }
     const permanent_only = isTrashEntry(app, paths[0]);
     const first_dir = if (Io.Dir.cwd().statFile(app.io, paths[0], .{})) |st| st.kind == .directory else |_| false;
-    const msg = if (paths.len == 1)
-        try std.fmt.allocPrint(gpa, "  Delete {s}{s}?{s}", .{ app.relPath(paths[0]), if (first_dir) "/" else "", if (permanent_only) " This cannot be undone." else " It goes to the trash." })
-    else
-        try std.fmt.allocPrint(gpa, "  Delete {d} items?{s}", .{ paths.len, if (permanent_only) " This cannot be undone." else " They go to the trash." });
+    // Rust's question: `Delete <rel>?`, a directory's with its entry
+    // count, an entry already in the trash flagged permanent. The
+    // buttons say where it goes.
+    const msg = if (paths.len > 1)
+        try std.fmt.allocPrint(gpa, "Delete {d} items?{s}", .{ paths.len, if (permanent_only) "  (permanent — already in the trash)" else "" })
+    else if (first_dir) blk: {
+        const n_entries = entryCount(app, paths[0], 500);
+        var nb: [24]u8 = undefined;
+        const hint = if (n_entries >= 500) "500+ entries" else std.fmt.bufPrint(&nb, "{d} entr{s}", .{ n_entries, if (n_entries == 1) "y" else "ies" }) catch "entries";
+        break :blk try std.fmt.allocPrint(gpa, "Delete {s} recursively? ({s}){s}", .{ app.relPath(paths[0]), hint, if (permanent_only) "  (permanent — already in the trash)" else "" });
+    } else try std.fmt.allocPrint(gpa, "Delete {s}?{s}", .{ app.relPath(paths[0]), if (permanent_only) "  (permanent — already in the trash)" else "" });
     errdefer gpa.free(msg);
+    const choices: []const app_mod.Confirm.Choice = if (permanent_only) &permanent_choices else &delete_choices;
     app.overlay.deinit(gpa);
     app.overlay = .{
         .confirm = .{
             .state = .{
-                .title = if (permanent_only) "Delete permanently" else "Delete",
+                .title = "Delete",
                 .message = msg,
-                .choices = if (permanent_only) &permanent_choices else &delete_choices,
-                // Enter takes the action, as every other confirm's does: the
-                // trash is one keystroke away from undo, and the permanent form
-                // says "cannot be undone" in its message. A Cancel default made
-                // right-click → Delete → Enter a silent no-op.
-                .selected = 0,
+                .choices = choices,
+                // Cancel is the focus, as in Rust: a destructive box's
+                // Enter must not be the destructive act.
+                .selected = choices.len - 1,
+                .buttons = .plain,
             },
             .purpose = .{ .delete_paths = .{ .paths = owned, .permanent_only = permanent_only } },
             .message = msg,
+            .return_focus = if (app.focus == .tree) .tree else null,
         },
     };
     app.focus = .overlay;
@@ -630,7 +653,7 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
     try t.expectEqual(@as(i64, 1000 + prune_every_ms), app.trash.last_prune_ms);
 }
 
-test "the confirm: Delete is the default and enter trashes with a toast, the permanent button skips the trash; inside the trash only the permanent form is offered" {
+test "the confirm: Cancel is the default (Rust's), d trashes with a toast, p skips the trash; inside the trash only the permanent form is offered" {
     var env = try Env.init();
     defer env.deinit();
     var app = try env.app();
@@ -643,15 +666,20 @@ test "the confirm: Delete is the default and enter trashes with a toast, the per
     defer t.allocator.free(b);
     try confirmDelete(&app, &.{a});
     try t.expect(app.overlay == .confirm);
-    try t.expectEqual(@as(usize, 0), app.overlay.confirm.state.selected);
+    try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.selected);
     try t.expectEqual(@as(usize, 3), app.overlay.confirm.state.choices.len);
-    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "a.txt") != null);
-    // Esc is the silent way out; enter on the default trashes and says so.
+    try t.expect(app.overlay.confirm.state.buttons == .plain);
+    try t.expectEqualStrings("Delete a.txt?", app.overlay.confirm.state.message);
+    // Esc and Enter (on Cancel) are the silent ways out; `d` trashes and says so.
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expect(app.overlay == .none);
     try t.expect(exists(&app, a));
     try confirmDelete(&app, &.{a});
     try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(exists(&app, a));
+    try confirmDelete(&app, &.{a});
+    try app.handle(.{ .key = Key.char('d') });
     try t.expect(!exists(&app, a));
     try t.expectEqual(@as(usize, 1), count(&app));
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "deleted a.txt") != null);
@@ -659,7 +687,7 @@ test "the confirm: Delete is the default and enter trashes with a toast, the per
     try app.handle(.{ .key = Key.char('p') });
     try t.expect(!exists(&app, b));
     try t.expectEqual(@as(usize, 1), count(&app));
-    // Inside the trash: two choices, the title says permanent.
+    // Inside the trash: two choices, the question says permanent.
     const td = try dir(&app, app.frame.allocator());
     var d = try Io.Dir.cwd().openDir(t.io, td, .{ .iterate = true });
     defer d.close(t.io);
@@ -669,8 +697,10 @@ test "the confirm: Delete is the default and enter trashes with a toast, the per
     defer t.allocator.free(entry_abs);
     try confirmDelete(&app, &.{entry_abs});
     try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.choices.len);
-    try t.expectEqualStrings("Delete permanently", app.overlay.confirm.state.title);
-    try t.expectEqual(@as(usize, 0), app.overlay.confirm.state.selected);
+    try t.expectEqualStrings("Delete", app.overlay.confirm.state.title);
+    try t.expect(std.mem.endsWith(u8, app.overlay.confirm.state.message, "(permanent — already in the trash)"));
+    try t.expectEqual(@as(usize, 1), app.overlay.confirm.state.selected);
+    try app.handle(.{ .key = Key.named(.left) });
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqual(@as(usize, 0), count(&app));
 }

@@ -256,8 +256,16 @@ pub const Tree = struct {
     pub fn refresh(self: *Tree, app: *App) Allocator.Error!void {
         try self.syncRoots(app);
         self.clearRows();
+        const first = !self.loaded;
         self.loaded = true;
-        if (self.roots.items.len > 0) return self.refreshRoots(app);
+        if (self.roots.items.len > 0) {
+            try self.refreshRoots(app);
+            // Rust's cursor starts on the first entry — its section
+            // header is not a row — so three arrows from a fresh start
+            // land on the same file here.
+            if (first and self.cursor == 0 and self.rows.items.len > 1 and self.rows.items[0].header and self.primary_expanded) self.cursor = 1;
+            return;
+        }
         // The primary section folded: no rows, the header alone.
         if (!self.primary_expanded) {
             self.cursor = 0;
@@ -466,15 +474,39 @@ pub const Tree = struct {
         }
         const n = self.rows.items.len;
         switch (k.code) {
-            .down => self.cursor = @min(self.cursor + 1, n -| 1),
-            .up => self.cursor -|= 1,
-            .home => self.cursor = 0,
-            .end => self.cursor = n -| 1,
-            .page_down => self.cursor = @min(self.cursor + 10, n -| 1),
-            .page_up => self.cursor -|= 10,
+            .down => {
+                self.cursor = @min(self.cursor + 1, n -| 1);
+                try self.previewCursor(app);
+            },
+            .up => {
+                self.cursor -|= 1;
+                try self.previewCursor(app);
+            },
+            .home => {
+                self.cursor = 0;
+                try self.previewCursor(app);
+            },
+            .end => {
+                self.cursor = n -| 1;
+                try self.previewCursor(app);
+            },
+            .page_down => {
+                self.cursor = @min(self.cursor + 10, n -| 1);
+                try self.previewCursor(app);
+            },
+            .page_up => {
+                self.cursor -|= 10;
+                try self.previewCursor(app);
+            },
             .enter => try self.activate(app, self.cursor),
-            .right => try self.expandOrOpen(app),
-            .left => try self.collapseOrParent(app),
+            .right => {
+                try self.expandOrOpen(app);
+                try self.previewCursor(app);
+            },
+            .left => {
+                try self.collapseOrParent(app);
+                try self.previewCursor(app);
+            },
             .esc => {
                 if (app.active) |a| app.focus = .{ .pane = a };
             },
@@ -486,10 +518,22 @@ pub const Tree = struct {
                 try runCmd(app, .@"file.rename");
             },
             .char => |c| switch (c) {
-                'j' => self.cursor = @min(self.cursor + 1, n -| 1),
-                'k' => self.cursor -|= 1,
-                'g' => self.cursor = 0,
-                'G' => self.cursor = n -| 1,
+                'j' => {
+                    self.cursor = @min(self.cursor + 1, n -| 1);
+                    try self.previewCursor(app);
+                },
+                'k' => {
+                    self.cursor -|= 1;
+                    try self.previewCursor(app);
+                },
+                'g' => {
+                    self.cursor = 0;
+                    try self.previewCursor(app);
+                },
+                'G' => {
+                    self.cursor = n -| 1;
+                    try self.previewCursor(app);
+                },
                 'l', ' ' => try self.expandOrOpen(app),
                 'h' => try self.collapseOrParent(app),
                 'o' => try self.activate(app, self.cursor),
@@ -518,6 +562,27 @@ pub const Tree = struct {
         }
         app.needs_render = true;
         return true;
+    }
+
+    /// VS Code's preview: under the standard profile (and
+    /// `ui.tree_preview_on_arrow`) the file the cursor lands on opens
+    /// as the preview pane, the focus staying in the tree so the next
+    /// arrow keeps browsing. A directory or header row opens nothing.
+    fn previewCursor(self: *Tree, app: *App) Allocator.Error!void {
+        if (app.input_style != .standard or !app.cfg.ui.tree_preview_on_arrow) return;
+        if (self.cursor >= self.rows.items.len) return;
+        const row = self.rows.items[self.cursor];
+        if (row.header or row.is_dir) return;
+        const rel = try app.frame.allocator().dupe(u8, row.rel);
+        const abs = try app.absPath(rel);
+        _ = app.openPreview(abs) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+                return;
+            },
+        };
+        app.focus = .tree;
     }
 
     fn rootExpanded(self: *const Tree, root: u8) bool {
@@ -967,9 +1032,14 @@ fn rename(app: *App) CommandError!void {
     const rel = try app.gpa.dupe(u8, row.rel);
     errdefer app.gpa.free(rel);
     app.overlay.deinit(app.gpa);
-    var state = app_mod.Prompt.init(app.gpa, "Rename to (workspace-relative)");
-    try state.setText(app.gpa, rel);
-    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .return_focus = promptReturnFocus(app) } };
+    // Rust's prompt: `Rename <rel>` seeded with the name alone — a bare
+    // name stays beside the file; a path with `/` moves it there.
+    const title = try std.fmt.allocPrint(app.gpa, "Rename {s}", .{app.relPath(rel)});
+    errdefer app.gpa.free(title);
+    var state = app_mod.Prompt.init(app.gpa, title);
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    try state.seed(app.gpa, row.name());
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .title_owned = title, .return_focus = promptReturnFocus(app) } };
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -1091,10 +1161,10 @@ pub fn acceptNewFolder(app: *App, dir: []const u8, text: []const u8) Allocator.E
 pub fn acceptRename(app: *App, from: []const u8, text: []const u8) Allocator.Error!void {
     const arena = app.frame.allocator();
     var to = cleanRel(app, text) orelse return;
-    // A bare name typed for an absolute source (a Files pane's row) stays
-    // beside it — it is not a workspace-relative path.
-    if (std.fs.path.isAbsolute(from) and std.mem.indexOfScalar(u8, to, '/') == null and !std.fs.path.isAbsolute(to)) {
-        to = try std.fs.path.join(arena, &.{ std.fs.path.dirname(from) orelse "/", to });
+    // A bare name stays beside the source — a rename, not a move to the
+    // workspace root (or, for a Files pane's absolute row, to the cwd).
+    if (std.mem.indexOfScalar(u8, to, '/') == null and !std.fs.path.isAbsolute(to)) {
+        if (std.fs.path.dirname(from)) |dir| to = try std.fs.path.join(arena, &.{ dir, to });
     }
     if (std.mem.eql(u8, to, from)) return;
     const to_abs = try app.absPath(to);
@@ -1348,7 +1418,7 @@ test "tree: F2 opens the rename prompt seeded with the row; other function keys 
     try t.expect(app.overlay == .none);
     try t.expect(try app.tree.handleKey(&app, Key{ .code = .{ .f = 2 }, .mods = .{} }));
     try t.expect(app.overlay == .prompt);
-    try t.expectEqualStrings("Rename to (workspace-relative)", app.overlay.prompt.state.title);
+    try t.expectEqualStrings("Rename a.txt", app.overlay.prompt.state.title);
     try t.expectEqualStrings("a.txt", app.overlay.prompt.state.text());
     try t.expect(app.focus == .overlay);
 }

@@ -12,8 +12,8 @@ expect screen contains "out/"
 # Row 1 is a.txt: delete offers the trash and the permanent form.
 key j
 command file.delete
-expect screen contains "Delete a.txt? It goes to the trash."
-expect screen contains "Delete [P]ermanently"
+expect screen contains "Delete a.txt?"
+expect screen contains "Delete permanently"
 key d
 expect screen contains "deleted a.txt"
 expect screen contains "(2)"

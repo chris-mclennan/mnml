@@ -387,7 +387,15 @@ pub const Overlay = union(enum) {
         /// value; null is the active pane).
         return_focus: ?FocusId = null,
     },
-    confirm: struct { state: Confirm.State, purpose: ConfirmPurpose, message: []u8 },
+    confirm: struct {
+        state: Confirm.State,
+        purpose: ConfirmPurpose,
+        message: []u8,
+        /// As the prompt's: where focus goes when the box closes. The
+        /// tree's delete names `.tree`, so the mode chip reads TREE
+        /// under the box and the arrows keep walking rows after it.
+        return_focus: ?FocusId = null,
+    },
     info: InfoKind,
     which_key: whichkey.State,
     picker: struct {
@@ -775,6 +783,10 @@ pub const App = struct {
     /// at the top of `render`).
     image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
+    /// The pane the tree's arrow-preview opened last (`openPreview`):
+    /// the next preview replaces it while it is clean, so browsing
+    /// the tree leaves one tab behind, not one per file.
+    preview_pane: ?PaneId = null,
     find_bar: ?FindBarState = null,
     /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
     find_history: std.ArrayListUnmanaged([]u8) = .empty,
@@ -1387,6 +1399,25 @@ pub const App = struct {
         };
     }
 
+    /// Opens `path` as the preview: a file already open is shown
+    /// where it is; otherwise the previous preview pane goes (when it
+    /// is still open and clean) and the new one takes its place.
+    pub fn openPreview(self: *App, path: []const u8) !PaneId {
+        if (self.panes.findPath(path)) |id| {
+            self.showPane(id);
+            return id;
+        }
+        if (self.preview_pane) |old| {
+            if (self.panes.get(old)) |p| {
+                if (!p.dirty()) try self.forceClosePane(old);
+            }
+            self.preview_pane = null;
+        }
+        const id = try self.openPath(path);
+        self.preview_pane = id;
+        return id;
+    }
+
     pub fn openPath(self: *App, path: []const u8) !PaneId {
         try self.noteRecent(path);
         // A request file opens as a request pane on its first block; a
@@ -1593,7 +1624,7 @@ pub const App = struct {
         const pane = self.panes.get(id) orelse return;
         if (self.isSharedView(id)) return self.forceClosePane(id);
         if (!force and pane.dirty()) {
-            const msg = try std.fmt.allocPrint(self.gpa, "  {s} has unsaved changes.", .{pane.title()});
+            const msg = try std.fmt.allocPrint(self.gpa, "{s} has unsaved changes.", .{pane.title()});
             errdefer self.gpa.free(msg);
             self.overlay.deinit(self.gpa);
             self.overlay = .{ .confirm = .{

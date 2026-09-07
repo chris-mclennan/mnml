@@ -1,12 +1,17 @@
 # zig-only
-# The tree's delete confirm: enter takes the default choice — Delete (to
-# the trash) — and toasts, the way every other confirm answers enter.
+# The tree's delete confirm (Rust's): Cancel is the focused button, so
+# Enter is a silent way out; `d` trashes and toasts.
 write a.txt "aa"
 command view.focus_tree
 key r
 key end
 command file.delete
-expect screen contains "Delete a.txt? It goes to the trash."
+expect screen contains "Delete a.txt?"
+expect screen contains "Delete permanently"
 key enter
+expect screen lacks "a.txt?"
+expect file a.txt contains "aa"
+command file.delete
+key d
 expect screen contains "deleted a.txt"
 expect screen lacks "a.txt?"

@@ -2,6 +2,10 @@
 //! way down the screen with one editable row and a hint under it.
 //! `Go to line`, a commit message, a rename, a filter value: one shape.
 //!
+//! The frame is Rust's `popup_menu` — square, the title in plain bold
+//! on the top edge — 4 rows tall, `max(title, 56) + 4` wide, centred on
+//! the whole screen a third of the way down.
+//!
 //! The field is a `text_field`, so the caret, arrows, word deletes and
 //! paste are all there. Enter submits and remembers the line; ↑/↓ walk
 //! that history the way a shell does. The title is painted exactly as
@@ -175,7 +179,7 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) ?Caret {
     const t = ui.theme;
     const title_w = ui.width(s.title) + 2;
     const w = @min(@max(title_w, min_width) + 4, area.w -| 2);
-    const inner = overlay.box(ui, area, @max(w, @min(area.w, 8)), height, s.title, .third);
+    const inner = overlay.boxLook(ui, area, @max(w, @min(area.w, 8)), height, s.title, .third, .menu);
     if (inner.isEmpty()) return null;
     const field_row = inner.row(0);
     const field = Rect.init(field_row.x + 1, field_row.y, field_row.w -| 2, 1);
@@ -213,7 +217,7 @@ test "the box carries its title verbatim, the input takes the caret, the hint si
     try f.expectContains("line number");
     try f.expectContains("enter to submit · esc to cancel");
     // 60 wide, a third down: x = 10, y = (12-4)/3 = 2; input at row 3.
-    try f.expectRow(2, "          ╭ Go to line " ++ "─" ** 46 ++ "╮");
+    try f.expectRow(2, "          ┌ Go to line " ++ "─" ** 46 ++ "┐");
     try testing.expectEqual(Caret{ .x = 12, .y = 3 }, caret.?);
     try testing.expectEqual(@as(u32, 0), f.hits.at(30, 3).?.overlay_item);
     try testing.expect(f.hits.at(30, 4) == null);

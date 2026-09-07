@@ -1324,13 +1324,18 @@ fn drawCmdline(app: *App, ui: Ui, area: Rect) void {
     app.cursor_pos = .{ .x = cx, .y = area.y };
 }
 
+/// The prompt, the confirm, the picker and the which-key popup are
+/// placed on the whole screen, as Rust places them (`frame.area()`);
+/// `body` is the pane area the rest anchor to.
 fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
+    _ = body;
+    const screen = ui.canvas.full();
     switch (app.overlay) {
         .none => {},
-        .prompt => |*p| if (prompt_mod.draw(ui, body, &p.state)) |c| {
+        .prompt => |*p| if (prompt_mod.draw(ui, screen, &p.state)) |c| {
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
-        .confirm => |*c| confirm_mod.draw(ui, body, &c.state),
+        .confirm => |*c| confirm_mod.draw(ui, screen, &c.state),
         .picker => |*p| {
             const items = try ui.arena.alloc(picker_mod.Item, p.filtered.items.len);
             for (p.filtered.items, 0..) |idx, i| items[i] = .{
@@ -1339,7 +1344,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 .hint = if (p.hints.len > idx and p.hints[idx].len > 0) p.hints[idx] else null,
             };
             p.state.total = p.labels.len;
-            if (picker_mod.draw(ui, body, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
+            if (picker_mod.draw(ui, screen, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {
             const path = w.slice();
@@ -1352,7 +1357,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 key[0] = k.key;
                 entries[i] = .{ .key = key, .label = k.node.label(), .is_group = k.node == .group };
             }
-            which_key.draw(ui, body, title, entries);
+            which_key.draw(ui, screen, title, entries);
         },
         // A menu paints last of all, after the toasts (`render`).
         .menu => {},
