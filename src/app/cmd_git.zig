@@ -122,7 +122,7 @@ fn refresh(app: *App) CommandError!void {
 /// active editor's file.
 fn diffFile(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
-    if (selectedRow(app)) |row| return git.actOnRow(app, row, .open);
+    if (try selectedRow(app)) |row| return git.actOnRow(app, row, .open);
     const rel = try activeRel(app, repo);
     _ = try git.openDiff(app, repo, .file, rel, null, null);
 }
@@ -260,23 +260,20 @@ fn blameToggle(app: *App) CommandError!void {
 
 // ─── staging ────────────────────────────────────────────────────────────
 
-/// The rail's or the status pane's selected row when one has focus.
-fn selectedRow(app: *App) ?git.Row {
+/// The status pane's cursor row when one has focus.
+fn selectedRow(app: *App) CommandError!?git.Row {
     const id = app.active orelse return null;
     const p = app.panes.get(id) orelse return null;
     return switch (p.*) {
-        .git_status => |*s| if (s.cursor < app.git.rows.items.len) app.git.rows.items[s.cursor] else null,
+        .git_status => |*s| try git.statusPaneRow(app, s),
         else => null,
     };
 }
 
 fn rowOrActiveFile(app: *App, repo: *client.Repo) CommandError!git.Row {
-    if (selectedRow(app)) |row| {
-        if (row.header) return app.diag.fail(arena(app), "git: a group header is selected", .{});
-        return row;
-    }
+    if (try selectedRow(app)) |row| return row;
     const rel = try activeRel(app, repo);
-    return .{ .header = false, .group = .unstaged, .code = 'M', .path = rel };
+    return .{ .path = rel, .letter = 'M', .staged = false };
 }
 
 fn stage(app: *App) CommandError!void {
@@ -295,7 +292,7 @@ fn discard(app: *App) CommandError!void {
 }
 
 fn openFile(app: *App) CommandError!void {
-    const row = selectedRow(app) orelse return app.diag.fail(arena(app), "git: nothing selected", .{});
+    const row = (try selectedRow(app)) orelse return app.diag.fail(arena(app), "git: nothing selected", .{});
     try git.openRowFile(app, row);
 }
 
