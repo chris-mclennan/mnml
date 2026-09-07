@@ -290,6 +290,9 @@ otherwise. Copy what you need; leave the rest out.
             .args = .{},
             .launch = .{ .program = "${workspaceFolder}/zig-out/bin/mnml-zig" }, // verbatim
         },
+        // `$NAME` / `${NAME}` in .cmd or an argument expands from the
+        // environment when the adapter is spawned; dap.run re-reads
+        // this table when the file has no adapter yet (trusted only).
     },
 
     // ── browser / ci / integrations ────────────────────────────────────

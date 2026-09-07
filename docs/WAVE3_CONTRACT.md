@@ -573,6 +573,28 @@ that the oldest slot reads `+K more…`.
 
 ---
 
+## Fake DAP adapter — `// changed:` notes (2026-09-07)
+
+- `// changed (tools):` `tools/fake_dap/` is `mnml-fake-dap`, a
+  deterministic Debug Adapter over stdio that runs the launched file as
+  a tiny line-oriented program (`README.md` there). `zig build` installs
+  it beside the exe; `build_options.fake_dap_exe` is its path for the
+  unit tests; `gate-build` carries it so it cross-builds like the app.
+- `// changed (app):` `dap/client.expandEnv` — `$NAME` / `${NAME}` in a
+  `.dap.<name>.cmd` or argument expands from the App's environment
+  before the spawn. `dap.run` that finds no adapter for the file reads
+  the config layers again (`config.load.load`, trusted workspaces only,
+  the App's own data root) and takes their `.dap` table
+  (`State.adapters_loaded` keeps the arena) — an adapter added to
+  `.mnml/config.zon` after launch is found without a restart.
+- `// changed (e2e):` `e2e.Config.env` / `runner.Options.env` carry the
+  environment an App's children inherit; `mnml-zig test` exports
+  `MNML_FAKE_DAP` (the adapter beside the runner, else the install
+  path) into it. The `dap_session_*.test` scripts seed
+  `.dap.dbg.cmd = "$MNML_FAKE_DAP"` and drive a real session.
+
+---
+
 ## Merge notes — lsp-dap ⨯ (git + ai) (2026-09-04)
 
 - `// changed (ui):` git's `gutter_marks: []const GutterMark` and
