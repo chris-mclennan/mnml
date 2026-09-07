@@ -277,8 +277,9 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
             .{ .label = "Commit…", .action = .{ .command = .@"git.commit" } },
         },
         .debug => &.{
-            .{ .label = "Run", .action = .{ .command = .@"dap.run" } },
+            .{ .label = "Start debugging", .action = .{ .command = .@"dap.run" } },
             .{ .label = "Toggle breakpoint at cursor", .action = .{ .command = .@"dap.toggle_breakpoint" } },
+            .{ .label = "Debug console", .action = .{ .command = .@"dap.repl" } },
         },
         .integrations => &.{
             .{ .label = "Refresh integrations", .action = .{ .command = .@"integrations.refresh" } },
@@ -660,6 +661,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .git => app.git_palette.cursor,
                 .http => app.http_panel.list.cursor,
                 .diagnostics => app.lsp.panel.cursor,
+                .debug => app.debug_panel.list.cursor,
                 .notes, .findings, .sessions, .outline => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
@@ -669,6 +671,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .git => try @import("git_palette.zig").openRowMenu(app, cursor, r.x, r.y),
                 .http => try @import("http_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .diagnostics => try @import("lsp.zig").rowMouse(app, @intCast(cursor), .{ .x = r.x, .y = r.y, .kind = .press, .button = .right }),
+                .debug => try @import("debug_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .notes, .findings, .sessions, .outline => {},
             }
         },

@@ -62,6 +62,7 @@ const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
+const debug_panel = @import("debug_panel.zig");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
 const settings_app = @import("settings.zig");
@@ -600,8 +601,9 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .http => try http_panel.draw(app, ui, area),
         .sessions => try sessions.draw(app, ui, area),
         .outline => try outline.drawPanel(app, ui, area),
+        .debug => try debug_panel.draw(app, ui, area),
         // Pane-backed sections never own a column (`side.surface`).
-        .search, .debug, .integrations, .agents, .cloud_agents => unreachable,
+        .search, .integrations, .agents, .cloud_agents => unreachable,
     }
 }
 

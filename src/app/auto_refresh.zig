@@ -52,6 +52,7 @@ fn label(panel: PanelId) []const u8 {
         .diagnostics => "DIAGNOSTICS",
         .http => "HTTP",
         .outline => "OUTLINE",
+        .debug => "DEBUG",
     };
 }
 
@@ -65,6 +66,7 @@ fn refreshId(panel: PanelId) command.CommandId {
         .diagnostics => .@"lsp.diagnostics",
         .http => .@"http.refresh",
         .outline => .@"outline.show",
+        .debug => .@"dap.run",
     };
 }
 

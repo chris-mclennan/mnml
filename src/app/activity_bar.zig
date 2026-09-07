@@ -32,7 +32,6 @@ const tooltip = @import("../ui/tooltip.zig");
 const context_menus = @import("context_menus.zig");
 const settings = @import("settings.zig");
 const side = @import("side.zig");
-const dap = @import("dap.zig");
 const git_palette = @import("git_palette.zig");
 
 pub const Section = rail.Section;
@@ -181,7 +180,7 @@ pub fn describe(part: Part) tooltip.Tip {
             .explorer => "click: Files rail · workspace file tree · new file / folder · right-click: menu",
             .search => "click: Search rail · ripgrep across the workspace · right-click: menu",
             .git => "click: Git rail · status · commits · branches · worktrees · stash · right-click: menu",
-            .debug => "click: Debug rail · breakpoints · watches · call stack · right-click: menu",
+            .debug => "click: Debug rail · variables · watch · call stack · breakpoints · right-click: menu",
             .integrations => "click: Integrations rail · browser / mixr / integration tools · + to add · right-click: menu",
             .sessions => "click: Sessions rail · Claude / Codex / shell sessions · right-click: menu",
             .agents => "click: Agents rail · running Claude Code + Codex sessions · right-click: menu",
@@ -198,9 +197,11 @@ pub fn describe(part: Part) tooltip.Tip {
 
 // ─── the runners ────────────────────────────────────────────────────────
 
+/// `view.activity_debug`: the DEBUG section in its column, the keys
+/// with it (`ctrl+shift+d`). The console pane is `dap.show` / `dap.repl`.
 fn activityDebug(app: *App) CommandError!void {
     enter(app, .debug);
-    return dap.showDebug(app);
+    side.place(app, .debug, true);
 }
 
 fn activityAgents(app: *App) CommandError!void {

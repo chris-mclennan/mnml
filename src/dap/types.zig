@@ -18,11 +18,29 @@ pub const Breakpoint = struct {
     condition: ?[]u8 = null,
     /// DAP `hitCondition` — `>= 5`, `% 10`. Owned.
     hit_condition: ?[]u8 = null,
+    /// DAP `logMessage` — a logpoint: the adapter prints it instead of
+    /// stopping. Owned.
+    log_message: ?[]u8 = null,
+    /// A disabled breakpoint stays in the list (its condition kept) and
+    /// is left out of what the adapter is sent.
+    enabled: bool = true,
+    /// The adapter's `verified` from the last `setBreakpoints` reply;
+    /// null until one lands (or while disabled).
+    verified: ?bool = null,
 
     pub fn deinit(self: *Breakpoint, gpa: Allocator) void {
         if (self.condition) |c| gpa.free(c);
         if (self.hit_condition) |h| gpa.free(h);
+        if (self.log_message) |l| gpa.free(l);
         self.* = undefined;
+    }
+
+    /// The gutter's word for it: a plain stop, a conditional one (a
+    /// condition or a hit count), a logpoint.
+    pub fn kind(self: *const Breakpoint) enum { plain, conditional, log } {
+        if (self.log_message != null) return .log;
+        if (self.condition != null or self.hit_condition != null) return .conditional;
+        return .plain;
     }
 };
 

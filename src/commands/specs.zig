@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 Rust ids plus 39 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 797 Rust ids plus 55 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -611,6 +611,24 @@ pub const specs = [_]Spec{
     .{ .id = "dap.repl", .title = "DAP: open the REPL pane (evaluate expressions)", .group = "dap" },
     .{ .id = "dap.exceptions", .title = "DAP: toggle exception breakpoints (→ picker)", .group = "dap" },
     .{ .id = "dap.set_breakpoint_hit_count", .title = "DAP: set hit-count on breakpoint (e.g. >= 5, % 10)", .group = "dap" },
+    // Zig-only (debug-ui): the DEBUG section, its row verbs, the
+    // toolbar's restart, logpoints, enable/disable, hover evaluation.
+    .{ .id = "dap.restart", .title = "DAP: restart the session (stop, then start again on the same file)", .group = "dap" },
+    .{ .id = "dap.toggle_panel", .title = "DAP: toggle the DEBUG section (variables · watch · call stack · breakpoints)", .group = "dap" },
+    .{ .id = "dap.toggle_section", .title = "DAP: fold / unfold the section or variable under the cursor", .group = "dap" },
+    .{ .id = "dap.toggle_selected", .title = "DAP: flip the checkbox / fold under the cursor (Space)", .group = "dap" },
+    .{ .id = "dap.edit_selected", .title = "DAP: edit the row under the cursor (a value, a watch, a condition)", .group = "dap" },
+    .{ .id = "dap.remove_selected", .title = "DAP: remove the watch or breakpoint under the cursor", .group = "dap" },
+    .{ .id = "dap.open_selected", .title = "DAP: jump to the frame / breakpoint / thread under the cursor", .group = "dap" },
+    .{ .id = "dap.watch_selected", .title = "DAP: watch the variable under the cursor", .group = "dap" },
+    .{ .id = "dap.copy_value", .title = "DAP: copy the value under the cursor", .group = "dap" },
+    .{ .id = "dap.edit_watch", .title = "DAP: edit the watch expression under the cursor", .group = "dap" },
+    .{ .id = "dap.toggle_breakpoint_enabled", .title = "DAP: enable / disable the breakpoint (cursor line, or the row under the cursor)", .group = "dap" },
+    .{ .id = "dap.remove_breakpoint", .title = "DAP: remove the breakpoint (cursor line, or the row under the cursor)", .group = "dap" },
+    .{ .id = "dap.set_breakpoint_log_message", .title = "DAP: set a log message on the breakpoint (a logpoint)", .group = "dap" },
+    .{ .id = "dap.enable_all_breakpoints", .title = "DAP: enable every breakpoint", .group = "dap" },
+    .{ .id = "dap.disable_all_breakpoints", .title = "DAP: disable every breakpoint", .group = "dap" },
+    .{ .id = "dap.evaluate_hover", .title = "DAP: evaluate the word under the cursor into the hover box", .group = "dap" },
     .{ .id = "lsp.code_action", .title = "LSP: code actions at cursor (→ picker)", .group = "lsp", .keys = .{ .both = &.{"ctrl+."} } },
     .{ .id = "lsp.quick_fix", .title = "LSP: quick fix (auto-apply first code action)", .group = "lsp", .keys = .{ .both = &.{"alt+enter"} } },
     .{ .id = "lsp.organize_imports", .title = "LSP: organize imports", .group = "lsp", .keys = .{ .both = &.{"alt+shift+o"} } },
@@ -976,7 +994,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "916 specs, unique ids" {
+test "932 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -988,6 +1006,6 @@ test "916 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 916), specs.len);
+    try std.testing.expectEqual(@as(usize, 932), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

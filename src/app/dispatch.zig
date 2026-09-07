@@ -47,6 +47,7 @@ const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
+const debug_panel = @import("debug_panel.zig");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
@@ -162,6 +163,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .todos => try todos.handleKey(app, k),
             .notes => try notes.handleKey(app, k),
             .findings => try findings.handleKey(app, k),
+            .debug => try debug_panel.handleKey(app, k),
             .git => try git_palette.handleKey(app, k),
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
@@ -769,7 +771,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .todos => try todos.setSort(app, s.sort),
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -989,6 +991,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_bp_condition => |b| try dap.acceptCondition(app, b.path, b.line, text),
         .dap_hit_count => |b| try dap.acceptHitCount(app, b.path, b.line, text),
         .dap_set_variable => |sv| try dap.acceptSetVariable(app, sv.parent_ref, sv.name, text),
+        .dap_edit_watch => |old| try dap.acceptEditWatch(app, old, text),
+        .dap_bp_log => |b| try dap.acceptLogMessage(app, b.path, b.line, text),
         .lsp_rename => try lsp.acceptRename(app, text),
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
         .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
@@ -1196,6 +1200,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.rowMouse(app, pr.idx, m),
             .notes => try notes.rowMouse(app, pr.idx, m),
             .findings => try findings.rowMouse(app, pr.idx, m),
+            .debug => try debug_panel.rowMouse(app, pr.idx, m),
             .sessions => try sessions.rowMouse(app, pr.idx, m),
             .git => try git_palette.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
@@ -1206,6 +1211,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.kebabMouse(app, pr.idx, m),
             .notes => try notes.kebabMouse(app, pr.idx, m),
             .findings => try findings.kebabMouse(app, pr.idx, m),
+            .debug => try debug_panel.kebabMouse(app, pr.idx, m),
             .sessions => try sessions.kebabMouse(app, pr.idx, m),
             .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
@@ -1215,6 +1221,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.chipMouse(app, c.kind, m),
             .notes => try notes.chipMouse(app, c.kind, m),
             .findings => try findings.chipMouse(app, c.kind, m),
+            .debug => try debug_panel.chipMouse(app, c.kind, m),
             .sessions => try sessions.chipMouse(app, c.kind, m),
             .git => try git_palette.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
@@ -1225,6 +1232,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => todos.filterMouse(app, m),
             .notes => notes.filterMouse(app, m),
             .findings => findings.filterMouse(app, m),
+            .debug => debug_panel.filterMouse(app, m),
             .sessions => sessions.filterMouse(app, m),
             .git => git_palette.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
@@ -1236,6 +1244,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
                 .notes => if (hitRect(app, m.x, m.y)) |r| notes.scrollbarMouse(app, r, m),
                 .findings => if (hitRect(app, m.x, m.y)) |r| findings.scrollbarMouse(app, r, m),
+                .debug => if (hitRect(app, m.x, m.y)) |r| debug_panel.scrollbarMouse(app, r, m),
                 .sessions => if (hitRect(app, m.x, m.y)) |r| sessions.scrollbarMouse(app, r, m),
                 .git => if (hitRect(app, m.x, m.y)) |r| git_palette.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),

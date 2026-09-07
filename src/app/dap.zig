@@ -36,6 +36,11 @@ const types = @import("../dap/types.zig");
 const syntax = @import("syntax.zig");
 const layout_mod = @import("layout.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const debug_panel = @import("debug_panel.zig");
+const side = @import("side.zig");
+const activity_bar = @import("activity_bar.zig");
+const lsp = @import("lsp.zig");
+const find_mod = @import("find.zig");
 const config = @import("../config/root.zig");
 const build_options = @import("build_options");
 
@@ -102,6 +107,11 @@ pub const State = struct {
     /// had no adapter (an adapter added to `.mnml/config.zon` after
     /// launch); `app.cfg.dap` borrows from it from then on.
     adapters_loaded: ?config.Loaded = null,
+    /// The file the last session was started on — what `dap.restart`
+    /// starts again. Owned.
+    last_file: ?[]u8 = null,
+    /// Where the pending `evaluate_hover` shows its answer.
+    hover_at: ?struct { pane: PaneId, byte: usize } = null,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.session) |s| s.deinit();
@@ -117,6 +127,7 @@ pub const State = struct {
         for (self.watches.items) |w| gpa.free(w);
         self.watches.deinit(gpa);
         if (self.arrow) |a| gpa.free(a.path);
+        if (self.last_file) |f| gpa.free(f);
     }
 
     pub fn bpsFor(self: *const State, path: []const u8) []const Breakpoint {
@@ -164,11 +175,26 @@ fn editorWithPath(app: *App) CommandError!struct { e: *EditorPane, path: []const
     return .{ .e = e, .path = path };
 }
 
-/// Flip the breakpoint on the cursor line. Returns whether one was set.
+/// The breakpoint a `dap.*breakpoint*` command acts on: the row under
+/// the DEBUG section's cursor when it has the keys, else the editor's
+/// cursor line. `path` is a frame copy.
+const BpTarget = struct { path: []const u8, line: u32 };
+
+fn bpTarget(app: *App) CommandError!BpTarget {
+    if (try debug_panel.selectedBreakpoint(app)) |b| return .{ .path = b.path, .line = b.line };
+    const ep = try editorWithPath(app);
+    return .{ .path = ep.path, .line = @intCast(ep.e.buf.editor.currentLine()) };
+}
+
+/// Flip the breakpoint on the cursor line.
 pub fn toggleBreakpoint(app: *App) CommandError!void {
     const ep = try editorWithPath(app);
-    const line: u32 = @intCast(ep.e.buf.editor.currentLine());
-    const list = try listFor(app, ep.path);
+    return toggleBreakpointAt(app, ep.path, @intCast(ep.e.buf.editor.currentLine()));
+}
+
+/// Flip the breakpoint on `line` of `path` (the gutter's click).
+pub fn toggleBreakpointAt(app: *App, path: []const u8, line: u32) CommandError!void {
+    const list = try listFor(app, path);
     if (indexOfLine(list, line)) |i| {
         var bp = list.orderedRemove(i);
         bp.deinit(app.gpa);
@@ -179,7 +205,49 @@ pub fn toggleBreakpoint(app: *App) CommandError!void {
         app.toast("breakpoint set: line {d}", .{line + 1});
     }
     app.needs_render = true;
-    syncBreakpoints(app, ep.path);
+    syncBreakpoints(app, path);
+}
+
+/// `dap.toggle_breakpoint_enabled`: a disabled breakpoint keeps its
+/// condition and leaves the adapter's list.
+pub fn toggleEnabled(app: *App) CommandError!void {
+    const t = try bpTarget(app);
+    const list = app.dap.breakpoints.getPtr(t.path) orelse return app.diag.fail(app.frame.allocator(), "no breakpoint on line {d}", .{t.line + 1});
+    const i = indexOfLine(list, t.line) orelse return app.diag.fail(app.frame.allocator(), "no breakpoint on line {d}", .{t.line + 1});
+    const bp = &list.items[i];
+    bp.enabled = !bp.enabled;
+    if (!bp.enabled) bp.verified = null;
+    app.toast("breakpoint line {d}: {s}", .{ t.line + 1, if (bp.enabled) "enabled" else "disabled" });
+    app.needs_render = true;
+    syncBreakpoints(app, t.path);
+}
+
+/// `dap.remove_breakpoint`.
+pub fn removeBreakpoint(app: *App) CommandError!void {
+    const t = try bpTarget(app);
+    const list = app.dap.breakpoints.getPtr(t.path) orelse return app.diag.fail(app.frame.allocator(), "no breakpoint on line {d}", .{t.line + 1});
+    const i = indexOfLine(list, t.line) orelse return app.diag.fail(app.frame.allocator(), "no breakpoint on line {d}", .{t.line + 1});
+    var bp = list.orderedRemove(i);
+    bp.deinit(app.gpa);
+    app.toast("breakpoint cleared: line {d}", .{t.line + 1});
+    app.needs_render = true;
+    syncBreakpoints(app, t.path);
+}
+
+/// `dap.enable_all_breakpoints` / `dap.disable_all_breakpoints`.
+pub fn setAllEnabled(app: *App, on: bool) CommandError!void {
+    var n: usize = 0;
+    var it = app.dap.breakpoints.iterator();
+    while (it.next()) |e| {
+        for (e.value_ptr.items) |*b| if (b.enabled != on) {
+            b.enabled = on;
+            if (!on) b.verified = null;
+            n += 1;
+        };
+        syncBreakpoints(app, e.key_ptr.*);
+    }
+    app.toast("{s} {d} breakpoint{s}", .{ if (on) "enabled" else "disabled", n, if (n == 1) "" else "s" });
+    app.needs_render = true;
 }
 
 /// Push one file's list to a live, initialized adapter.
@@ -236,22 +304,46 @@ pub fn listBreakpoints(app: *App) CommandError!void {
 /// `dap.toggle_breakpoint_conditional`: a prompt seeded with the
 /// line's condition; accept records it (empty = a plain breakpoint).
 pub fn conditionPrompt(app: *App) CommandError!void {
-    const ep = try editorWithPath(app);
-    const line: u32 = @intCast(ep.e.buf.editor.currentLine());
-    const seed: []const u8 = if (app.dap.breakpoints.get(ep.path)) |list| (if (indexOfLine(&list, line)) |i| list.items[i].condition orelse "" else "") else "";
-    const title = try std.fmt.allocPrint(app.gpa, "Breakpoint condition (line {d})", .{line + 1});
+    const t = try bpTarget(app);
+    const seed: []const u8 = if (app.dap.breakpoints.get(t.path)) |list| (if (indexOfLine(&list, t.line)) |i| list.items[i].condition orelse "" else "") else "";
+    const title = try std.fmt.allocPrint(app.gpa, "Breakpoint condition (line {d})", .{t.line + 1});
     errdefer app.gpa.free(title);
-    try openBpPrompt(app, title, seed, .{ .dap_bp_condition = .{ .path = try app.gpa.dupe(u8, ep.path), .line = line } });
+    try openBpPrompt(app, title, seed, .{ .dap_bp_condition = .{ .path = try app.gpa.dupe(u8, t.path), .line = t.line } });
+}
+
+/// `dap.set_breakpoint_log_message`: a logpoint — the adapter prints
+/// the message (with `{expr}` interpolation) instead of stopping.
+pub fn logMessagePrompt(app: *App) CommandError!void {
+    const t = try bpTarget(app);
+    const seed: []const u8 = if (app.dap.breakpoints.get(t.path)) |list| (if (indexOfLine(&list, t.line)) |i| list.items[i].log_message orelse "" else "") else "";
+    const title = try std.fmt.allocPrint(app.gpa, "Log message (line {d})  e.g. x is {{x}}", .{t.line + 1});
+    errdefer app.gpa.free(title);
+    try openBpPrompt(app, title, seed, .{ .dap_bp_log = .{ .path = try app.gpa.dupe(u8, t.path), .line = t.line } });
+}
+
+pub fn acceptLogMessage(app: *App, path: []const u8, line: u32, text_in: []const u8) Allocator.Error!void {
+    const text = std.mem.trim(u8, text_in, " \t");
+    const list = try listFor(app, path);
+    const i = indexOfLine(list, line) orelse blk: {
+        try list.append(app.gpa, .{ .line = line });
+        sortByLine(list);
+        break :blk indexOfLine(list, line).?;
+    };
+    const bp = &list.items[i];
+    if (bp.log_message) |l| app.gpa.free(l);
+    bp.log_message = if (text.len == 0) null else try app.gpa.dupe(u8, text);
+    if (text.len == 0) app.toast("bp line {d}: log message cleared", .{line + 1}) else app.toast("bp line {d}: log \"{s}\"", .{ line + 1, text });
+    app.needs_render = true;
+    syncBreakpoints(app, path);
 }
 
 /// `dap.set_breakpoint_hit_count`: the same for `hitCondition`.
 pub fn hitCountPrompt(app: *App) CommandError!void {
-    const ep = try editorWithPath(app);
-    const line: u32 = @intCast(ep.e.buf.editor.currentLine());
-    const seed: []const u8 = if (app.dap.breakpoints.get(ep.path)) |list| (if (indexOfLine(&list, line)) |i| list.items[i].hit_condition orelse "" else "") else "";
-    const title = try std.fmt.allocPrint(app.gpa, "Hit-count condition (line {d})  e.g. >= 5  or  % 10", .{line + 1});
+    const t = try bpTarget(app);
+    const seed: []const u8 = if (app.dap.breakpoints.get(t.path)) |list| (if (indexOfLine(&list, t.line)) |i| list.items[i].hit_condition orelse "" else "") else "";
+    const title = try std.fmt.allocPrint(app.gpa, "Hit-count condition (line {d})  e.g. >= 5  or  % 10", .{t.line + 1});
     errdefer app.gpa.free(title);
-    try openBpPrompt(app, title, seed, .{ .dap_hit_count = .{ .path = try app.gpa.dupe(u8, ep.path), .line = line } });
+    try openBpPrompt(app, title, seed, .{ .dap_hit_count = .{ .path = try app.gpa.dupe(u8, t.path), .line = t.line } });
 }
 
 fn openBpPrompt(app: *App, title_owned: []u8, seed: []const u8, purpose: app_mod.PromptPurpose) CommandError!void {
@@ -301,13 +393,19 @@ pub fn acceptHitCount(app: *App, path: []const u8, line: u32, text_in: []const u
 }
 
 /// The gutter marks for `path`: the ▶ of a stop wins over a
-/// breakpoint's `●` (`◆` conditional, `◈` hit-count). Frame arena.
+/// breakpoint's `●` (`◐` conditional or hit-counted, `◆` a logpoint,
+/// `○` disabled); one the adapter did not verify paints muted. Frame arena.
 pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.GutterMark {
     const p = path orelse return &.{};
     var out: std.ArrayListUnmanaged(editor_view.GutterMark) = .empty;
     for (app.dap.bpsFor(p)) |b| {
-        const glyph: []const u8 = if (b.condition != null) (if (ascii) "#" else "◆") else if (b.hit_condition != null) (if (ascii) "@" else "◈") else (if (ascii) "*" else "●");
-        try out.append(arena, .{ .line = b.line, .kind = .sign, .glyph = glyph, .style = theme.error_fg });
+        const glyph: []const u8 = if (!b.enabled) (if (ascii) "o" else "\u{25CB}") else switch (b.kind()) {
+            .plain => if (ascii) "*" else "\u{25CF}",
+            .conditional => if (ascii) "#" else "\u{25D0}",
+            .log => if (ascii) "@" else "\u{25C6}",
+        };
+        const dim = !b.enabled or (b.verified != null and !b.verified.?);
+        try out.append(arena, .{ .line = b.line, .kind = .sign, .glyph = glyph, .style = if (dim) theme.muted else theme.error_fg });
     }
     if (app.dap.arrow) |a| if (std.mem.eql(u8, a.path, p)) {
         // Replace the breakpoint's mark on that line rather than add.
@@ -370,7 +468,44 @@ pub fn removeWatchPicker(app: *App) CommandError!void {
     try cmd_picker.openPickerWith(app, "Remove watch", .dap_remove_watch, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), hints);
 }
 
-fn removeWatch(app: *App, expr: []const u8) void {
+/// `dap.edit_watch`: a prompt seeded with the expression; accept
+/// replaces it in place (its position kept).
+pub fn editWatchPrompt(app: *App, expr: []const u8) CommandError!void {
+    const old = try app.gpa.dupe(u8, expr);
+    errdefer app.gpa.free(old);
+    var state = app_mod.Prompt.init(app.gpa, "Edit watch expression");
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    try state.setText(app.gpa, expr);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .dap_edit_watch = old } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+pub fn acceptEditWatch(app: *App, old: []const u8, text_in: []const u8) Allocator.Error!void {
+    const expr = std.mem.trim(u8, text_in, " \t");
+    const st = &app.dap;
+    if (expr.len == 0) {
+        const copy = try app.frame.allocator().dupe(u8, old);
+        removeWatch(app, copy);
+        return;
+    }
+    for (st.watches.items, 0..) |w, i| if (std.mem.eql(u8, w, old)) {
+        const copy = try app.gpa.dupe(u8, expr);
+        app.gpa.free(st.watches.items[i]);
+        st.watches.items[i] = copy;
+        if (st.session) |s| {
+            s.removeWatchResult(old);
+            if (s.stopped != null) _ = s.evaluate(expr, .watch) catch 0;
+        }
+        app.toast("watch: {s} \u{2192} {s}", .{ old, expr });
+        app.needs_render = true;
+        return;
+    };
+    try addWatch(app, expr);
+}
+
+pub fn removeWatch(app: *App, expr: []const u8) void {
     const st = &app.dap;
     var i: usize = 0;
     while (i < st.watches.items.len) {
@@ -491,7 +626,89 @@ pub fn startSession(app: *App, cfg: app_mod.Config.DapAdapter, file: []const u8,
         endSession(app);
         return app.diag.fail(arena, "dap init failed: {s}", .{@errorName(err)});
     };
+    const remembered = try app.gpa.dupe(u8, file);
+    if (app.dap.last_file) |old| app.gpa.free(old);
+    app.dap.last_file = remembered;
     app.toast("dap: spawned {s} adapter", .{cfg.cmd});
+}
+
+/// `dap.restart`: the last session's file again — VS Code's ↻. Without
+/// a session to remember, the active file.
+pub fn restart(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const file = if (app.dap.last_file) |f| try arena.dupe(u8, f) else (try editorWithPath(app)).path;
+    const found = adapterFor(app, file) orelse return app.diag.fail(arena, "dap: no adapter for {s}", .{std.fs.path.basename(file)});
+    if (app.dap.session) |s| s.terminate() catch {};
+    try startSession(app, found.cfg, file, null);
+    app.toast("dap: restarted", .{});
+}
+
+/// `dap.evaluate_hover` (vim `K` while stopped, `<leader>dh`): the
+/// word under the cursor, evaluated in the current frame, into the
+/// hover box. False when there is nothing to evaluate here, so the
+/// LSP hover can have the key.
+pub fn hoverAtCursor(app: *App) CommandError!bool {
+    const s = app.dap.session orelse return false;
+    if (s.stopped == null) return false;
+    const pane = app.active orelse return false;
+    const e = app.panes.editor(pane) orelse return false;
+    const ed = e.buf.editor;
+    const r = find_mod.wordAt(ed.bytes(), ed.cursor) orelse return false;
+    const word = try app.frame.allocator().dupe(u8, ed.bytes()[r.start..r.end]);
+    app.dap.hover_at = .{ .pane = pane, .byte = r.start };
+    _ = s.evaluate(word, .hover) catch |err| return app.diag.fail(app.frame.allocator(), "dap evaluate: {s}", .{@errorName(err)});
+    return true;
+}
+
+pub fn evaluateHover(app: *App) CommandError!void {
+    if (try hoverAtCursor(app)) return;
+    if (app.dap.session == null or app.dap.session.?.stopped == null) return app.diag.fail(app.frame.allocator(), "dap: not stopped", .{});
+    return app.diag.fail(app.frame.allocator(), "dap: no word under the cursor", .{});
+}
+
+/// `dap.toggle_section` on a composite variable: expand or collapse it.
+pub fn toggleExpand(app: *App, row: types.VarRow) CommandError!void {
+    const s = app.dap.session orelse return;
+    if (!row.expandable) return;
+    if (row.expanded) {
+        _ = s.expanded.remove(row.var_ref);
+    } else {
+        try s.expanded.put(app.gpa, row.var_ref, {});
+        if (!s.variables.contains(row.var_ref)) s.requestVariables(row.var_ref) catch {};
+    }
+    app.needs_render = true;
+}
+
+/// A frame in the call stack: the scopes follow it, evaluations
+/// address it, the editor jumps to it.
+pub fn selectFrame(app: *App, idx: usize) CommandError!void {
+    const s = try requireStopped(app);
+    if (idx >= s.frames.len) return app.diag.fail(app.frame.allocator(), "dap: no frame {d}", .{idx});
+    const f = s.frames[idx];
+    s.frame_id = f.id;
+    s.scopes = &.{};
+    s.variables.clearRetainingCapacity();
+    s.requestScopes(f.id) catch {};
+    evaluateWatches(app);
+    if (f.source) |src| try jumpTo(app, src, f.line -| 1);
+    app.needs_render = true;
+}
+
+pub fn selectThread(app: *App, id: i64) CommandError!void {
+    const s = app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session", .{});
+    s.thread = id;
+    s.requestStackTrace(id) catch {};
+    app.toast("dap: thread {d}", .{id});
+    app.needs_render = true;
+}
+
+/// An exception filter row's checkbox.
+pub fn toggleFilter(app: *App, id: []const u8) CommandError!void {
+    const s = app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session", .{});
+    const on = try s.toggleFilter(id);
+    s.setExceptionBreakpoints() catch |err| app.toast("dap setExceptionBreakpoints: {s}", .{@errorName(err)});
+    app.toast("exception {s}: {s}", .{ id, if (on) "on" else "off" });
+    app.needs_render = true;
 }
 
 fn requireStopped(app: *App) CommandError!*Session {
@@ -502,6 +719,8 @@ fn requireStopped(app: *App) CommandError!*Session {
 
 /// The step / resume family: a thread-addressed request, failures toasted.
 pub fn threadCommand(app: *App, kind: client.ReqKind, verb: []const u8) CommandError!void {
+    // nvim-dap's `continue()`: without a session it starts one.
+    if (kind == .@"continue" and app.dap.session == null) return run(app);
     const s = if (kind == .pause) (app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session (run dap.run first)", .{})) else try requireStopped(app);
     s.threadRequest(kind, verb) catch |err| return app.diag.fail(app.frame.allocator(), "dap {s}: {s}", .{ verb, @errorName(err) });
 }
@@ -608,7 +827,7 @@ fn handleMessage(app: *App, s: *Session, v: jsonrpc.Value) Allocator.Error!void 
 fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, success: bool, message: ?[]const u8, body: ?jsonrpc.Value) Allocator.Error!void {
     if (!success) {
         switch (kind) {
-            .evaluate_repl, .evaluate_watch => {},
+            .evaluate_repl, .evaluate_watch, .evaluate_hover, .set_breakpoints => {},
             .disconnect, .terminate, .cancel => return,
             else => app.toast("dap {s}: {s}", .{ @tagName(kind), message orelse "failed" }),
         }
@@ -655,6 +874,31 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
             if (parent != 0) s.requestVariables(parent) catch {};
             evaluateWatches(app);
         },
+        .set_breakpoints => {
+            const path = s.takeBpPath(ctx) orelse return;
+            defer app.gpa.free(path);
+            if (!success) return;
+            const list = app.dap.breakpoints.getPtr(path) orelse return;
+            const replies: []const jsonrpc.Value = if (body) |b| jsonrpc.getArr(b, "breakpoints") orelse &.{} else &.{};
+            var i: usize = 0;
+            for (list.items) |*b| if (b.enabled) {
+                b.verified = if (i < replies.len) (jsonrpc.getBool(replies[i], "verified") orelse true) else null;
+                i += 1;
+            };
+        },
+        .evaluate_hover => {
+            const expr = s.takeEval(ctx) orelse return;
+            defer app.gpa.free(expr);
+            const at = app.dap.hover_at orelse return;
+            app.dap.hover_at = null;
+            const arena = app.frame.allocator();
+            const line: []const u8 = if (success) blk: {
+                const value = if (body) |b| jsonrpc.getStr(b, "result") orelse "" else "";
+                const ty = if (body) |b| jsonrpc.getStr(b, "type") else null;
+                break :blk if (ty) |t| try std.fmt.allocPrint(arena, "{s}: {s} = {s}", .{ expr, t, value }) else try std.fmt.allocPrint(arena, "{s} = {s}", .{ expr, value });
+            } else try std.fmt.allocPrint(arena, "{s}: {s}", .{ expr, message orelse "cannot evaluate" });
+            try lsp.showHoverLines(app, at.pane, at.byte, &.{line});
+        },
         else => {},
     }
 }
@@ -675,6 +919,7 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
         s.requestThreads() catch {};
         app.toast("dap: stopped ({s})", .{s.stopped.?.label()});
     } else if (std.mem.eql(u8, name, "continued")) {
+        try debug_panel.snapshotValues(app);
         s.onResumed();
         s.clearWatchResults();
         clearArrow(app);
@@ -735,7 +980,11 @@ fn openSingleton(app: *App, tag: std.meta.Tag(app_mod.Pane), pane: app_mod.Pane)
     app.setActive(id);
 }
 
+/// `dap.show`: the DEBUG section in its column and the console pane
+/// beside the editor — the whole debug layout in one go.
 pub fn showDebug(app: *App) CommandError!void {
+    activity_bar.enter(app, .debug);
+    side.place(app, .debug, false);
     return openSingleton(app, .debug, .{ .debug = .{} });
 }
 
@@ -875,7 +1124,10 @@ pub fn debugKey(app: *App, id: PaneId, p: *DebugPane, k: Key) Allocator.Error!bo
             'G' => cursor.* = n -| 1,
             'w' => try watchSelected(app, p),
             'y' => try yankSelected(app, p),
-            's' => try setVariablePrompt(app),
+            's' => setVariablePrompt(app) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            },
             'd' => if (p.section == .variables and p.vars_cursor < app.dap.watches.items.len) {
                 const expr = try arena.dupe(u8, app.dap.watches.items[p.vars_cursor]);
                 removeWatch(app, expr);
@@ -959,7 +1211,8 @@ fn yankSelected(app: *App, p: *DebugPane) Allocator.Error!void {
 /// `dap.set_variable`: a prompt seeded with the selected variable's
 /// value. Without a debug pane, a session, or a variable row there is
 /// nothing to set and the command is a quiet no-op.
-pub fn setVariablePrompt(app: *App) Allocator.Error!void {
+pub fn setVariablePrompt(app: *App) CommandError!void {
+    if (try debug_panel.selectedVariable(app)) |row| return setVariableFor(app, row);
     const active = app.active orelse return;
     const pane = app.panes.get(active) orelse return;
     const p: *DebugPane = switch (pane.*) {
@@ -967,6 +1220,11 @@ pub fn setVariablePrompt(app: *App) Allocator.Error!void {
         else => return,
     };
     const row = (try selectedVar(app, p)) orelse return;
+    return setVariableFor(app, row);
+}
+
+/// The prompt for one variable row, seeded with its value.
+pub fn setVariableFor(app: *App, row: types.VarRow) CommandError!void {
     if (row.is_scope) {
         app.toast("can't set a scope row", .{});
         return;

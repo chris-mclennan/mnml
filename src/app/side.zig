@@ -55,7 +55,9 @@ pub fn surface(s: Section) ?Surface {
         .findings => .{ .panel = .findings },
         .diagnostics => .{ .panel = .diagnostics },
         .outline => .{ .panel = .outline },
-        .search, .debug, .integrations, .agents, .cloud_agents => null,
+        // // changed (debug-ui): the DEBUG section is a column surface.
+        .debug => .{ .panel = .debug },
+        .search, .integrations, .agents, .cloud_agents => null,
     };
 }
 
@@ -69,6 +71,7 @@ pub fn sectionOfPanel(p: PanelId) Section {
         .diagnostics => .diagnostics,
         .http => .http,
         .outline => .outline,
+        .debug => .debug,
     };
 }
 

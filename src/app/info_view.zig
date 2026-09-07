@@ -185,6 +185,7 @@ fn sectionTitle(p: app_mod.PanelId) []const u8 {
         .diagnostics => "Diagnostics",
         .http => "HTTP",
         .outline => "Outline",
+        .debug => "Run and debug",
     };
 }
 
