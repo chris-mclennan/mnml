@@ -375,6 +375,9 @@ test "flash: a pane change disarms" {
 test "flash: the frame paints each label over its match and the cue on the last row; both go with the state" {
     var app = try vimApp("one ab two\nthree ab four\nab", 12);
     defer app.deinit();
+    // The `use_vim` toast sits on the pane's last row (as Rust's toasts
+    // do, against the statusline) and would cover the cue: let it expire.
+    try app.tick(app.now_ms + app_mod.toast_ttl_ms + 1);
     try press(&app, Key.char('s'));
     try press(&app, Key.char('a'));
     try press(&app, Key.char('b'));

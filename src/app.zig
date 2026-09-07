@@ -1282,9 +1282,13 @@ pub const App = struct {
         // stack does: rust-analyzer says `Failed to discover workspace`
         // twice at startup and a retried failure says the same thing
         // three times — one box with a count, not three.
-        for (self.toasts.items) |*t| if (t.id == null and t.expires_ms != std.math.maxInt(i64) and std.mem.eql(u8, t.text, s)) {
-            t.repeats +|= 1;
-            t.expires_ms = self.now_ms + toast_ttl_ms;
+        for (self.toasts.items, 0..) |*t, i| if (t.id == null and t.expires_ms != std.math.maxInt(i64) and std.mem.eql(u8, t.text, s)) {
+            // Bumped to the newest slot, where a fresh one would land:
+            // `lastToast` and the box nearest the statusline are it.
+            var again = self.toasts.orderedRemove(i);
+            again.repeats +|= 1;
+            again.expires_ms = self.now_ms + toast_ttl_ms;
+            self.toasts.appendAssumeCapacity(again);
             self.gpa.free(s);
             self.needs_render = true;
             return;
@@ -2404,6 +2408,11 @@ test "an identical toast while its twin is up coalesces into one box with a coun
     app.toast("LSP: rust-analyzer exited", .{});
     try app.toastPersistent("p", "LSP: rust-analyzer exited", .info);
     try std.testing.expectEqual(@as(usize, 3), app.toasts.items.len);
+    // The repeat of an older text becomes the newest: `lastToast` is it.
+    app.toast("LSP: Failed to discover workspace.", .{});
+    try std.testing.expectEqual(@as(usize, 3), app.toasts.items.len);
+    try std.testing.expectEqualStrings("LSP: Failed to discover workspace.", app.lastToast().?);
+    try std.testing.expectEqual(@as(u32, 3), app.toasts.items[app.toasts.items.len - 1].repeats);
 }
 
 test "editorconfig reaches an opened buffer; a scratch takes the config's save prefs; the dead config fields are read" {

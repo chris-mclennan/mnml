@@ -2577,7 +2577,8 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
                         .integer => |i| i,
                         else => -1,
                     } else -1;
-                    const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":2,\"message\":\"ran {s} #{d}\"}}}}", .{ cmd, first }) catch return;
+                    // Type 1 (Error): the only kind the client toasts, as Rust's.
+                    const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":1,\"message\":\"ran {s} #{d}\"}}}}", .{ cmd, first }) catch return;
                     defer gpa.free(note);
                     jsonrpc.writeFrame(io, out, note) catch return;
                 } else if (std.mem.eql(u8, m, "textDocument/documentColor")) {
