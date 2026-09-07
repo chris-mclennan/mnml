@@ -9,11 +9,28 @@
 //! The palette's rows are built here from the rail data the worker
 //! posts (`git.State.rail_*`), filtered and folded by this state, and
 //! handed to the painter flat — the click and the key handlers rebuild
-//! the same list, so a row index means the same thing in both.
+//! the same list, so a row index means the same thing in both. Five
+//! sections in a fixed order: LOCAL, REMOTE (each remote with its
+//! branches under it), WORKTREES, STASHES, TAGS. A section folds on a
+//! click on its header or Enter; the folds live in `State.collapsed`
+//! for the whole run (they survive leaving and re-entering the mode
+//! and switching repos).
+//!
+//! A click on a row selects it — the cursor moves there and, for a
+//! ref, the graph tab jumps to its commit. Enter, or a click on the row
+//! the cursor is already on, ACTS: a local branch checks out, a remote
+//! branch becomes a local tracking branch of its short name, a
+//! worktree opens (its directory joins the tree as a workspace root
+//! and the graph tab switches to it), a stash applies (and stays), a
+//! tag checks out detached after the confirm. The row menus do the
+//! rest (pop / drop a stash, delete a tag, remove a worktree, …).
 //!
 //! // changed: Rust keeps `active_section` and `pre_git_layout` on the
 //! app; here the mode is `State.active` and the stash `State.pre`, and
 //! `activity_bar.enter` is the one place every other section leaves it.
+//! // changed (git-palette): the branches panel replaces Rust's GIT
+//! header / `⎇ branch` row / folder-grouped LOCAL / PULL REQUESTS; the
+//! Rust dump's sidebar rows are the accepted difference.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -38,6 +55,9 @@ const parse = @import("../git/parse.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const side = @import("side.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
+const list_panel = @import("../ui/list_panel.zig");
+const pty_pane = @import("pty_pane.zig");
+const remote_mod = @import("../git/remote.zig");
 
 pub const Section = view.Section;
 pub const Row = view.Row;
@@ -56,27 +76,24 @@ pub const State = struct {
     /// Repos whose tab was closed this session (their paths, owned):
     /// not reopened on re-entry until `reopen`.
     closed: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The folded sections, kept for the run.
     collapsed: std.enums.EnumSet(Section) = .initEmpty(),
-    /// `LOCAL:folder` keys of the folded branch groups. Owned.
-    folded: std.ArrayListUnmanaged([]u8) = .empty,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
     filter_focused: bool = false,
-    /// The last clicked ref's name. Owned.
+    /// The last selected ref's name (a click, Enter). Owned.
     selected: ?[]u8 = null,
     scroll: usize = 0,
     /// The keyboard cursor over the rows.
     cursor: usize = 0,
-    /// What the last paint measured.
-    body_rows: usize = 0,
-    total_items: usize = 0,
+    /// What the last paint measured: rows of room, rows in all.
+    visible: usize = 0,
+    total: usize = 0,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.pre) |*p| p.layout.deinit();
         for (self.closed.items) |c| gpa.free(c);
         self.closed.deinit(gpa);
-        for (self.folded.items) |f| gpa.free(f);
-        self.folded.deinit(gpa);
         self.filter.deinit(gpa);
         if (self.selected) |s| gpa.free(s);
         self.* = .{};
@@ -84,11 +101,6 @@ pub const State = struct {
 
     pub fn isClosed(self: *const State, path: []const u8) bool {
         for (self.closed.items) |c| if (std.mem.eql(u8, c, path)) return true;
-        return false;
-    }
-
-    fn isFolded(self: *const State, key: []const u8) bool {
-        for (self.folded.items) |f| if (std.mem.eql(u8, f, key)) return true;
         return false;
     }
 };
@@ -299,20 +311,14 @@ fn matches(filter: []const u8, s: []const u8) bool {
     return false;
 }
 
-fn lessName(_: void, a: []const u8, b: []const u8) bool {
-    return std.mem.lessThan(u8, a, b);
-}
-
-/// A worktree item's text: `branch (dir)`, or the label alone when it
-/// is the directory's name or `(detached)`.
-fn worktreeShown(arena: Allocator, item: []const u8) Allocator.Error!struct { path: []const u8, label: []const u8, shown: []const u8 } {
-    const sep = std.mem.indexOfScalar(u8, item, '\x1f');
-    const path = if (sep) |s| item[0..s] else item;
-    var label: []const u8 = if (sep) |s| item[s + 1 ..] else "";
-    if (label.len == 0) label = "(detached)";
-    const dir = std.fs.path.basename(path);
-    const shown = if (std.mem.eql(u8, label, dir) or (label.len > 0 and label[0] == '(')) label else try std.fmt.allocPrint(arena, "{s} ({s})", .{ label, dir });
-    return .{ .path = path, .label = label, .shown = shown };
+/// A worktree's text: `branch (dir)`, the branch alone when it is the
+/// directory's name, `dir (detached)` for a tree on no branch.
+fn worktreeShown(arena: Allocator, w: parse.Worktree) Allocator.Error![]const u8 {
+    const label = w.label();
+    const dir = std.fs.path.basename(w.path);
+    if (std.mem.eql(u8, label, dir)) return label;
+    if (label.len > 0 and label[0] == '(') return try std.fmt.allocPrint(arena, "{s} {s}", .{ dir, label });
+    return try std.fmt.allocPrint(arena, "{s} ({s})", .{ label, dir });
 }
 
 /// Whether two directory paths name the same place, through symlinks
@@ -324,9 +330,22 @@ fn samePath(app: *App, arena: Allocator, a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, ra, rb);
 }
 
-/// The palette's rows for this frame, on `arena`: the sections in
-/// Rust's order with the filter applied, a folded section keeping its
-/// header, a gap row after each.
+/// The rail branch of `name`, if listed.
+fn branchNamed(gs: *const git.State, name: []const u8) ?parse.Branch {
+    for (gs.rail_branches) |b| if (std.mem.eql(u8, b.name, name)) return b;
+    return null;
+}
+
+const SortCtx = struct {
+    bs: []const parse.Branch,
+    fn lt(c: @This(), a: u32, b: u32) bool {
+        return std.mem.lessThan(u8, c.bs[a].name, c.bs[b].name);
+    }
+};
+
+/// The palette's rows for this frame, on `arena`: the five sections in
+/// their order with the filter applied, a folded section keeping its
+/// header (its count is the filtered one), a gap row after each.
 pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
     const st = &app.git_palette;
     const gs = &app.git;
@@ -334,107 +353,125 @@ pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
     var out: std.ArrayListUnmanaged(Row) = .empty;
     const repo_path: []const u8 = if (gs.activeRepo()) |r| r.path else "";
 
-    // WORKTREES — the current one is the repo the palette is on.
-    if (gs.rail_worktrees.len > 0) {
-        try out.append(arena, .{ .section = .{ .s = .worktrees, .count = @intCast(gs.rail_worktrees.len), .collapsed = st.collapsed.contains(.worktrees) } });
-        if (!st.collapsed.contains(.worktrees)) {
-            for (gs.rail_worktrees, 0..) |item, i| {
-                const w = try worktreeShown(arena, item);
-                if (!matches(filter, w.label) and !matches(filter, std.fs.path.basename(w.path))) continue;
-                try out.append(arena, .{ .worktree = .{ .idx = @intCast(i), .shown = w.shown, .current = (repo_path.len > 0 and samePath(app, arena, w.path, repo_path)) or (repo_path.len == 0 and i == 0) } });
-            }
-        }
-        try out.append(arena, .gap);
-    }
-
-    // LOCAL — A–Z, grouped by the first `/`.
+    // LOCAL — A–Z.
     {
         var idxs: std.ArrayListUnmanaged(u32) = .empty;
         for (gs.rail_branches, 0..) |b, i| if (!b.remote and matches(filter, b.name)) try idxs.append(arena, @intCast(i));
-        const Ctx = struct {
-            bs: []const parse.Branch,
-            fn lt(c: @This(), a: u32, b: u32) bool {
-                return std.mem.lessThan(u8, c.bs[a].name, c.bs[b].name);
-            }
+        std.mem.sort(u32, idxs.items, SortCtx{ .bs = gs.rail_branches }, SortCtx.lt);
+        const collapsed = st.collapsed.contains(.local);
+        try out.append(arena, .{ .section = .{ .s = .local, .count = @intCast(idxs.items.len), .collapsed = collapsed } });
+        if (!collapsed) for (idxs.items) |i| {
+            const b = gs.rail_branches[i];
+            try out.append(arena, .{ .branch = .{ .idx = i, .name = b.name, .current = b.current, .ahead = b.ahead, .behind = b.behind } });
         };
-        std.mem.sort(u32, idxs.items, Ctx{ .bs = gs.rail_branches }, Ctx.lt);
-        if (idxs.items.len > 0) {
-            const collapsed = st.collapsed.contains(.local);
-            try out.append(arena, .{ .section = .{ .s = .local, .count = @intCast(idxs.items.len), .collapsed = collapsed } });
-            if (!collapsed) {
-                const names = try arena.alloc([]const u8, idxs.items.len);
-                for (names, idxs.items) |*n, i| n.* = gs.rail_branches[i].name;
-                for (try view.groupByFolder(arena, names)) |g| {
-                    const in_folder = g.folder.len > 0;
-                    if (in_folder) {
-                        const key = try std.fmt.allocPrint(arena, "LOCAL:{s}", .{g.folder});
-                        const folded = st.isFolded(key);
-                        try out.append(arena, .{ .folder = .{ .s = .local, .name = g.folder, .count = @intCast(g.idxs.len), .collapsed = folded } });
-                        if (folded) continue;
-                    }
-                    for (g.idxs) |k| {
-                        const b = gs.rail_branches[idxs.items[k]];
-                        const shown = if (in_folder) b.name[g.folder.len + 1 ..] else b.name;
-                        try out.append(arena, .{ .branch = .{ .idx = idxs.items[k], .shown = shown, .name = b.name, .current = b.current, .in_folder = in_folder } });
-                    }
-                }
-            }
-            try out.append(arena, .gap);
-        }
+        try out.append(arena, .gap);
     }
 
-    // REMOTE — the host prefix stripped for display, grouped the same way.
+    // REMOTE — each remote, its branches under it without the prefix.
     {
         var idxs: std.ArrayListUnmanaged(u32) = .empty;
         for (gs.rail_branches, 0..) |b, i| if (b.remote and !std.mem.endsWith(u8, b.name, "/HEAD") and matches(filter, b.name)) try idxs.append(arena, @intCast(i));
-        const Ctx = struct {
-            bs: []const parse.Branch,
-            fn lt(c: @This(), a: u32, b: u32) bool {
-                return std.mem.lessThan(u8, c.bs[a].name, c.bs[b].name);
-            }
-        };
-        std.mem.sort(u32, idxs.items, Ctx{ .bs = gs.rail_branches }, Ctx.lt);
-        if (idxs.items.len > 0) {
-            const collapsed = st.collapsed.contains(.remote);
-            try out.append(arena, .{ .section = .{ .s = .remote, .count = @intCast(idxs.items.len), .collapsed = collapsed } });
-            if (!collapsed) {
-                const stripped = try arena.alloc([]const u8, idxs.items.len);
-                for (stripped, idxs.items) |*s, i| {
-                    const full = gs.rail_branches[i].name;
-                    s.* = if (std.mem.indexOfScalar(u8, full, '/')) |sl| full[sl + 1 ..] else full;
-                }
-                for (try view.groupByFolder(arena, stripped)) |g| {
-                    const in_folder = g.folder.len > 0;
-                    if (in_folder) {
-                        const key = try std.fmt.allocPrint(arena, "REMOTE:{s}", .{g.folder});
-                        const folded = st.isFolded(key);
-                        try out.append(arena, .{ .folder = .{ .s = .remote, .name = g.folder, .count = @intCast(g.idxs.len), .collapsed = folded } });
-                        if (folded) continue;
-                    }
-                    for (g.idxs) |k| {
-                        const shown = if (in_folder) stripped[k][g.folder.len + 1 ..] else stripped[k];
-                        try out.append(arena, .{ .remote = .{ .idx = idxs.items[k], .shown = shown, .name = gs.rail_branches[idxs.items[k]].name, .in_folder = in_folder } });
-                    }
-                }
-            }
-            try out.append(arena, .gap);
-        }
-    }
-
-    // PULL REQUESTS
-    if (gs.rail_prs.len > 0) {
-        const collapsed = st.collapsed.contains(.prs);
-        try out.append(arena, .{ .section = .{ .s = .prs, .count = @intCast(gs.rail_prs.len), .collapsed = collapsed } });
+        std.mem.sort(u32, idxs.items, SortCtx{ .bs = gs.rail_branches }, SortCtx.lt);
+        const collapsed = st.collapsed.contains(.remote);
+        try out.append(arena, .{ .section = .{ .s = .remote, .count = @intCast(idxs.items.len), .collapsed = collapsed } });
         if (!collapsed) {
-            const cur = gs.branchLabel() orelse "";
-            for (gs.rail_prs, 0..) |pr, i| {
-                if (!matches(filter, pr.title)) continue;
-                try out.append(arena, .{ .pr = .{ .idx = @intCast(i), .number = pr.number, .title = pr.title, .current = std.mem.eql(u8, pr.branch, cur) } });
+            // The remotes `git remote -v` lists, then any prefix a branch
+            // carries that none of them named.
+            var names: std.ArrayListUnmanaged([]const u8) = .empty;
+            for (gs.rail_remotes) |r| try names.append(arena, r.name);
+            for (idxs.items) |i| {
+                const full = gs.rail_branches[i].name;
+                const prefix = full[0 .. std.mem.indexOfScalar(u8, full, '/') orelse full.len];
+                var known = false;
+                for (names.items) |n| if (std.mem.eql(u8, n, prefix)) {
+                    known = true;
+                };
+                if (!known) try names.append(arena, prefix);
+            }
+            for (names.items, 0..) |name, ri| {
+                var any = false;
+                for (idxs.items) |i| if (std.mem.startsWith(u8, gs.rail_branches[i].name, name) and gs.rail_branches[i].name.len > name.len and gs.rail_branches[i].name[name.len] == '/') {
+                    any = true;
+                };
+                if (!any and filter.len > 0) continue;
+                const github = if (ri < gs.rail_remotes.len) gs.rail_remotes[ri].provider == .github else false;
+                try out.append(arena, .{ .remote = .{ .idx = @intCast(ri), .name = name, .github = github } });
+                for (idxs.items) |i| {
+                    const full = gs.rail_branches[i].name;
+                    if (!(std.mem.startsWith(u8, full, name) and full.len > name.len and full[name.len] == '/')) continue;
+                    try out.append(arena, .{ .remote_branch = .{ .idx = i, .name = full, .shown = full[name.len + 1 ..] } });
+                }
             }
         }
         try out.append(arena, .gap);
     }
+
+    // WORKTREES — git's order, the main tree first.
+    {
+        var count: u32 = 0;
+        var items: std.ArrayListUnmanaged(Row) = .empty;
+        for (gs.rail_worktrees, 0..) |w, i| {
+            const shown = try worktreeShown(arena, w);
+            if (!matches(filter, w.label()) and !matches(filter, std.fs.path.basename(w.path))) continue;
+            count += 1;
+            const current = (repo_path.len > 0 and samePath(app, arena, w.path, repo_path)) or (repo_path.len == 0 and i == 0);
+            const b = if (w.branch.len > 0) branchNamed(gs, w.branch) else null;
+            try items.append(arena, .{ .worktree = .{
+                .idx = @intCast(i),
+                .shown = shown,
+                .main = w.main,
+                .current = current,
+                .locked = w.locked,
+                .dirty = w.dirty,
+                .ahead = if (b) |x| x.ahead else 0,
+                .behind = if (b) |x| x.behind else 0,
+            } });
+        }
+        const collapsed = st.collapsed.contains(.worktrees);
+        try out.append(arena, .{ .section = .{ .s = .worktrees, .count = count, .collapsed = collapsed } });
+        if (!collapsed) try out.appendSlice(arena, items.items);
+        try out.append(arena, .gap);
+    }
+
+    // STASHES — newest first, as `stash list` prints them.
+    {
+        var count: u32 = 0;
+        var items: std.ArrayListUnmanaged(Row) = .empty;
+        for (gs.rail_stashes, 0..) |s, i| {
+            if (!matches(filter, s.message) and !matches(filter, s.ref) and !matches(filter, s.sha)) continue;
+            count += 1;
+            try items.append(arena, .{ .stash = .{ .idx = @intCast(i), .sha = s.sha, .message = s.message } });
+        }
+        const collapsed = st.collapsed.contains(.stashes);
+        try out.append(arena, .{ .section = .{ .s = .stashes, .count = count, .collapsed = collapsed } });
+        if (!collapsed) try out.appendSlice(arena, items.items);
+        try out.append(arena, .gap);
+    }
+
+    // TAGS — newest first, as the worker sorted them.
+    {
+        var count: u32 = 0;
+        var items: std.ArrayListUnmanaged(Row) = .empty;
+        for (gs.rail_tags, 0..) |t, i| {
+            if (!matches(filter, t.name)) continue;
+            count += 1;
+            try items.append(arena, .{ .tag = .{ .idx = @intCast(i), .name = t.name } });
+        }
+        const collapsed = st.collapsed.contains(.tags);
+        try out.append(arena, .{ .section = .{ .s = .tags, .count = count, .collapsed = collapsed } });
+        if (!collapsed) try out.appendSlice(arena, items.items);
+        try out.append(arena, .gap);
+    }
     return out.items;
+}
+
+/// `Viewing N`: the item rows in `list`.
+pub fn viewing(list: []const Row) usize {
+    var n: usize = 0;
+    for (list) |r| if (r.isItem()) {
+        n += 1;
+    };
+    return n;
 }
 
 // ─── draw (D6) ──────────────────────────────────────────────────────────
@@ -448,23 +485,23 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const list = try rows(app, ui.arena);
     if (st.cursor >= list.len) st.cursor = list.len -| 1;
     const repo_name: []const u8 = if (gs.activeRepo()) |r| r.name else std.fs.path.basename(app.workspace);
-    const status = gs.status;
     const painted = view.draw(ui, area, .{
         .rows = list,
         .repo = repo_name,
-        .branch = gs.branchLabel(),
-        .ahead = if (status) |s| s.ahead else 0,
-        .behind = if (status) |s| s.behind else 0,
+        .viewing = viewing(list),
         .filter = st.filter.items,
+        .filter_caret = st.filter_caret,
         .filter_focused = st.filter_focused,
-        .selected = st.selected,
-        .cursor = if (list.len > 0) st.cursor else null,
+        .cursor = st.cursor,
         .scroll = st.scroll,
     });
-    st.body_rows = painted.body_rows;
-    st.total_items = painted.total_items;
-    if (st.scroll > painted.total_items -| 1) st.scroll = painted.total_items -| 1;
-    if (gs.busy > 0 or gs.rail_pending) @import("../ui/list_panel.zig").paintSpinner(ui, area, "GIT", app.now_ms);
+    st.scroll = painted.scroll;
+    st.visible = painted.visible;
+    st.total = list.len;
+    if (painted.caret) |c| if (st.filter_focused and app.focus == .panel and app.focus.panel == .git) {
+        app.cursor_pos = .{ .x = c.x, .y = c.y };
+    };
+    if (gs.busy > 0 or gs.rail_pending) list_panel.paintSpinner(ui, area, repo_name, app.now_ms);
 }
 
 // ─── acting on a row ────────────────────────────────────────────────────
@@ -481,28 +518,37 @@ fn setSelected(app: *App, name: ?[]const u8) Allocator.Error!void {
     st.selected = if (name) |n| try app.gpa.dupe(u8, n) else null;
 }
 
-fn toggleFold(app: *App, key: []const u8) Allocator.Error!void {
-    const st = &app.git_palette;
-    for (st.folded.items, 0..) |f, i| if (std.mem.eql(u8, f, key)) {
-        app.gpa.free(st.folded.orderedRemove(i));
-        return;
+/// The commit a row stands for: a branch's sha, a worktree's HEAD, a
+/// stash's commit, a tag's peeled commit.
+fn rowSha(app: *App, row: Row) ?[]const u8 {
+    const gs = &app.git;
+    return switch (row) {
+        .branch => |b| if (b.idx < gs.rail_branches.len) gs.rail_branches[b.idx].sha else null,
+        .remote_branch => |b| if (b.idx < gs.rail_branches.len) gs.rail_branches[b.idx].sha else null,
+        .worktree => |w| if (w.idx < gs.rail_worktrees.len) gs.rail_worktrees[w.idx].head else null,
+        .stash => |s| if (s.idx < gs.rail_stashes.len) gs.rail_stashes[s.idx].sha else null,
+        .tag => |t| if (t.idx < gs.rail_tags.len) gs.rail_tags[t.idx].sha else null,
+        else => null,
     };
-    try st.folded.append(app.gpa, try app.gpa.dupe(u8, key));
 }
 
-/// The branch a worktree is on, else its own name (a detached one).
-fn refSha(app: *App, name: []const u8) ?[]const u8 {
-    for (app.git.rail_branches) |b| if (std.mem.eql(u8, b.name, name)) return b.sha;
-    return null;
+/// The name a row selects: a branch's, a worktree's label, a stash's
+/// ref, a tag's.
+fn rowName(app: *App, row: Row) ?[]const u8 {
+    const gs = &app.git;
+    return switch (row) {
+        .branch => |b| b.name,
+        .remote_branch => |b| b.name,
+        .worktree => |w| if (w.idx < gs.rail_worktrees.len) gs.rail_worktrees[w.idx].label() else null,
+        .stash => |s| if (s.idx < gs.rail_stashes.len) gs.rail_stashes[s.idx].ref else null,
+        .tag => |t| t.name,
+        else => null,
+    };
 }
 
-/// Rust `git_jump_to_ref`: the active graph's cursor lands on the ref's
-/// commit; the palette keeps the focus.
-fn jumpToRef(app: *App, name: []const u8) Allocator.Error!void {
-    const sha = refSha(app, name) orelse {
-        app.toast("git: cannot resolve `{s}`", .{name});
-        return;
-    };
+/// The active graph's cursor lands on `sha`'s commit; the palette keeps
+/// the focus. A commit the graph has not loaded is said, not sought.
+fn jumpToSha(app: *App, sha: []const u8, name: []const u8) void {
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
         .git_graph => |*g| if (app.layouts.current().leafOf(@intCast(i)) != null) {
             if (graph_view.findByHashPrefix(g.commits, sha)) |ci| {
@@ -522,38 +568,116 @@ fn jumpToRef(app: *App, name: []const u8) Allocator.Error!void {
     app.toast("git: `{s}` is not in the open graph", .{name});
 }
 
-/// Enter / a left click: a header folds, a ref jumps the graph to its
-/// commit, a PR opens in the browser.
-pub fn activate(app: *App, idx: usize) Allocator.Error!void {
+/// A click on a row: the cursor moves there; a ref is selected and the
+/// graph jumps to its commit; a header folds.
+pub fn select(app: *App, idx: usize) Allocator.Error!void {
     const st = &app.git_palette;
     const row = (try rowAt(app, idx)) orelse return;
+    st.cursor = idx;
     switch (row) {
-        .gap => {},
+        .gap, .remote => {},
         .section => |s| st.collapsed.toggle(s.s),
-        .folder => |f| try toggleFold(app, try std.fmt.allocPrint(app.frame.allocator(), "{s}:{s}", .{ f.s.label(), f.name })),
-        .worktree => |w| {
-            try setSelected(app, w.shown);
-            if (w.idx < app.git.rail_worktrees.len) {
-                const wt = try worktreeShown(app.frame.allocator(), app.git.rail_worktrees[w.idx]);
-                try jumpToRef(app, wt.label);
-            }
+        else => {
+            const name = rowName(app, row) orelse return;
+            try setSelected(app, name);
+            if (rowSha(app, row)) |sha| jumpToSha(app, sha, name) else app.toast("git: cannot resolve `{s}`", .{name});
         },
-        .branch => |b| {
-            try setSelected(app, b.name);
-            try jumpToRef(app, b.name);
-        },
-        .remote => |m| {
-            try setSelected(app, m.name);
-            try jumpToRef(app, m.name);
-        },
-        .pr => |pr| if (pr.idx < app.git.rail_prs.len) git.openExternal(app, app.git.rail_prs[pr.idx].url),
     }
     app.needs_render = true;
 }
 
-/// The row's menu (Rust `open_git_rail_context_menu`).
+/// Enter, or a click on the row the cursor is on: the row's action.
+pub fn activate(app: *App, idx: usize) Allocator.Error!void {
+    const st = &app.git_palette;
+    const gs = &app.git;
+    const gpa = app.gpa;
+    const row = (try rowAt(app, idx)) orelse return;
+    st.cursor = idx;
+    const result: CommandError!void = blk: {
+        switch (row) {
+            .gap, .remote => {},
+            .section => |s| st.collapsed.toggle(s.s),
+            .branch => |b| {
+                try setSelected(app, b.name);
+                if (b.current) {
+                    app.toast("already on {s}", .{b.name});
+                    break :blk;
+                }
+                const repo = git.requireRepo(app) catch |err| break :blk err;
+                break :blk git.submitOp(app, repo, .{ .checkout = try gpa.dupe(u8, b.name) });
+            },
+            .remote_branch => |b| {
+                try setSelected(app, b.name);
+                break :blk checkoutTracking(app, b.name);
+            },
+            .worktree => |w| {
+                if (w.idx >= gs.rail_worktrees.len) break :blk;
+                try setSelected(app, gs.rail_worktrees[w.idx].label());
+                break :blk openWorktree(app, gs.rail_worktrees[w.idx]);
+            },
+            .stash => |s| {
+                if (s.idx >= gs.rail_stashes.len) break :blk;
+                const ref = gs.rail_stashes[s.idx].ref;
+                try setSelected(app, ref);
+                const repo = git.requireRepo(app) catch |err| break :blk err;
+                break :blk git.submitOp(app, repo, .{ .stash_apply = try gpa.dupe(u8, ref) });
+            },
+            .tag => |t| {
+                try setSelected(app, t.name);
+                break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, t.name) }, try std.fmt.allocPrint(gpa, "  Checkout tag {s}? (detached HEAD)", .{t.name}));
+            },
+        }
+    };
+    git.runToast(app, result);
+    app.needs_render = true;
+}
+
+/// A remote branch checks out as a local tracking branch of its short
+/// name — git's own guess, as the checkout picker does it.
+fn checkoutTracking(app: *App, full: []const u8) CommandError!void {
+    const repo = try git.requireRepo(app);
+    const local = if (std.mem.indexOfScalar(u8, full, '/')) |s| full[s + 1 ..] else full;
+    try git.submitOp(app, repo, .{ .checkout = try app.gpa.dupe(u8, local) });
+}
+
+/// Open a worktree: its directory joins the tree as a workspace root
+/// (unless it is one, or the workspace itself), the repos are
+/// rediscovered so it has a graph tab, and that tab becomes the active
+/// one — the palette then lists that tree's refs.
+fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
+    const st = &app.git_palette;
+    const gs = &app.git;
+    const arena = app.frame.allocator();
+    // Already the active repo: nothing to open.
+    if (gs.activeRepo()) |r| if (samePath(app, arena, r.path, w.path)) {
+        if (w.head.len > 0) jumpToSha(app, w.head, w.label());
+        return;
+    };
+    // Known already (a nested tree, an extra root): switch to it.
+    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) {
+        try git.switchTo(app, i);
+        try rebuildTabs(app);
+        return;
+    };
+    _ = app.tree.addRoot(app, w.path, null) catch |err| switch (err) {
+        error.AlreadyOpen => {},
+        error.NotADirectory => return app.diag.fail(arena, "worktree: {s} is not a directory", .{w.path}),
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    try git.discover(app);
+    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) {
+        try git.switchTo(app, i);
+        if (st.active) try rebuildTabs(app);
+        app.toast("worktree: {s}", .{w.path});
+        return;
+    };
+    app.toast("worktree: {s} added to the workspace", .{w.path});
+}
+
+/// The row's menu.
 pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
     const gpa = app.gpa;
+    const gs = &app.git;
     const arena = app.frame.allocator();
     const row = (try rowAt(app, idx)) orelse return;
     switch (row) {
@@ -572,35 +696,52 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             };
             try app.openMenu(if (b.current) try std.fmt.allocPrint(arena, "\u{25CF} {s}", .{name}) else name, try gpa.dupe(MenuItem, items), x, y);
         },
-        .remote => |m| {
+        .remote_branch => |m| {
             const items = try gpa.dupe(MenuItem, &.{
                 .{ .label = try std.fmt.allocPrint(arena, "Checkout {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .checkout, .idx = m.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{m.name}), .action = .{ .git_palette = .{ .what = .merge, .idx = m.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Rebase current onto {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .rebase, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{m.name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = m.idx } } },
             });
             try app.openMenu(m.name, items, x, y);
         },
-        .worktree => |w| {
-            if (w.idx >= app.git.rail_worktrees.len) return;
-            const wt = try worktreeShown(arena, app.git.rail_worktrees[w.idx]);
+        .remote => |r| {
             var items: std.ArrayListUnmanaged(MenuItem) = .empty;
             errdefer items.deinit(gpa);
+            try items.append(gpa, .{ .label = "Fetch", .action = .{ .git_palette = .{ .what = .remote_fetch, .idx = r.idx } } });
+            if (r.idx < gs.rail_remotes.len) try items.append(gpa, .{ .label = "Copy URL", .action = .{ .git_palette = .{ .what = .remote_copy_url, .idx = r.idx } } });
+            try app.openMenu(r.name, try items.toOwnedSlice(gpa), x, y);
+        },
+        .worktree => |w| {
+            if (w.idx >= gs.rail_worktrees.len) return;
+            const wt = gs.rail_worktrees[w.idx];
+            var items: std.ArrayListUnmanaged(MenuItem) = .empty;
+            errdefer items.deinit(gpa);
+            try items.append(gpa, .{ .label = "Open", .action = .{ .git_palette = .{ .what = .worktree_open, .idx = w.idx } } });
             try items.append(gpa, .{ .label = "Open shell here", .action = .{ .git_palette = .{ .what = .worktree_shell, .idx = w.idx } } });
             try items.append(gpa, .{ .label = "Copy path", .action = .{ .git_palette = .{ .what = .worktree_copy_path, .idx = w.idx } } });
             try items.append(gpa, .{ .label = "New worktree\u{2026}", .action = .{ .command = .@"git.worktree_add" } });
-            if (!w.current) try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_remove, .idx = w.idx } } });
-            try app.openMenu(try std.fmt.allocPrint(arena, "{s}  {s}", .{ wt.label, wt.path }), try items.toOwnedSlice(gpa), x, y);
+            if (!w.main and !w.current) try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_remove, .idx = w.idx } } });
+            try app.openMenu(try std.fmt.allocPrint(arena, "{s}  {s}", .{ wt.label(), wt.path }), try items.toOwnedSlice(gpa), x, y);
         },
-        .pr => |pr| {
-            if (pr.idx >= app.git.rail_prs.len) return;
-            const p = app.git.rail_prs[pr.idx];
+        .stash => |s| {
+            if (s.idx >= gs.rail_stashes.len) return;
             const items = try gpa.dupe(MenuItem, &.{
-                .{ .label = "Open in browser", .action = .{ .git_palette = .{ .what = .pr_open, .idx = pr.idx } } },
-                .{ .label = "Copy URL", .action = .{ .git_palette = .{ .what = .pr_copy, .idx = pr.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Checkout branch ({s})", .{p.branch}), .action = .{ .git_palette = .{ .what = .checkout, .idx = pr.idx } } },
+                .{ .label = "Apply (keep)", .action = .{ .git_palette = .{ .what = .stash_apply, .idx = s.idx } } },
+                .{ .label = "Pop (apply + drop)", .action = .{ .git_palette = .{ .what = .stash_pop, .idx = s.idx } } },
+                .{ .label = "Drop\u{2026}", .action = .{ .git_palette = .{ .what = .stash_drop, .idx = s.idx } } },
             });
-            try app.openMenu(try std.fmt.allocPrint(arena, "#{d} \u{2014} {s}", .{ p.number, p.title }), items, x, y);
+            try app.openMenu(try std.fmt.allocPrint(arena, "{s} {s}", .{ gs.rail_stashes[s.idx].ref, s.message }), items, x, y);
         },
-        .section, .folder, .gap => {},
+        .tag => |t| {
+            const items = try gpa.dupe(MenuItem, &.{
+                .{ .label = try std.fmt.allocPrint(arena, "Checkout {s} (detached)", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_checkout, .idx = t.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_copy, .idx = t.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_delete, .idx = t.idx } } },
+            });
+            try app.openMenu(t.name, items, x, y);
+        },
+        .section, .gap => {},
     }
 }
 
@@ -608,44 +749,68 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
 pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
     const gs = &app.git;
     const gpa = app.gpa;
+    const arena = app.frame.allocator();
     const result: CommandError!void = blk: {
         switch (a.what) {
             .switch_repo => break :blk git.switchTo(app, a.idx),
             .reopen_repo => break :blk reopen(app, a.idx),
-            .pr_open, .pr_copy => {
-                if (a.idx >= gs.rail_prs.len) break :blk;
-                const url = gs.rail_prs[a.idx].url;
-                if (a.what == .pr_open) git.openExternal(app, url) else {
-                    try app.clipboard.setYank(url, false);
-                    app.toast("copied {s}", .{url});
-                }
+            .remote_fetch => break :blk command.run(app, .{ .static = .@"git.fetch" }),
+            .remote_copy_url => {
+                if (a.idx >= gs.rail_remotes.len) break :blk;
+                const url = gs.rail_remotes[a.idx].url;
+                try app.clipboard.setYank(url, false);
+                app.toast("copied {s}", .{url});
                 break :blk;
             },
-            .worktree_shell, .worktree_copy_path, .worktree_remove => {
+            .worktree_open, .worktree_shell, .worktree_copy_path, .worktree_remove => {
                 if (a.idx >= gs.rail_worktrees.len) break :blk;
-                const wt = try worktreeShown(app.frame.allocator(), gs.rail_worktrees[a.idx]);
+                const wt = gs.rail_worktrees[a.idx];
                 switch (a.what) {
+                    .worktree_open => break :blk openWorktree(app, wt),
                     .worktree_copy_path => {
                         try app.clipboard.setYank(wt.path, false);
                         app.toast("copied {s}", .{wt.path});
                     },
-                    .worktree_shell => break :blk command.run(app, .{ .static = .@"git.worktrees" }),
+                    .worktree_shell => {
+                        const opened = pty_pane.open(app, .{ .cwd = wt.path, .label = try std.fmt.allocPrint(arena, "shell: {s}", .{std.fs.path.basename(wt.path)}), .placement = .below, .kind = .shell });
+                        _ = opened catch |err| break :blk err;
+                    },
                     else => break :blk git.openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, wt.path) }, try std.fmt.allocPrint(gpa, "  Remove worktree {s}?", .{wt.path})),
+                }
+                break :blk;
+            },
+            .stash_apply, .stash_pop, .stash_drop => {
+                if (a.idx >= gs.rail_stashes.len) break :blk;
+                const ref = gs.rail_stashes[a.idx].ref;
+                const repo = git.requireRepo(app) catch |err| break :blk err;
+                switch (a.what) {
+                    .stash_apply => break :blk git.submitOp(app, repo, .{ .stash_apply = try gpa.dupe(u8, ref) }),
+                    .stash_pop => break :blk git.submitOp(app, repo, .{ .stash_pop = try gpa.dupe(u8, ref) }),
+                    else => break :blk git.submitOp(app, repo, .{ .stash_drop = try gpa.dupe(u8, ref) }),
+                }
+            },
+            .tag_checkout, .tag_delete, .tag_copy => {
+                if (a.idx >= gs.rail_tags.len) break :blk;
+                const name = gs.rail_tags[a.idx].name;
+                switch (a.what) {
+                    .tag_checkout => break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Checkout tag {s}? (detached HEAD)", .{name})),
+                    .tag_delete => break :blk git.openConfirm(app, .{ .tag_delete = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete tag {s}?", .{name})),
+                    else => {
+                        try app.clipboard.setYank(name, false);
+                        app.toast("copied {s}", .{name});
+                    },
                 }
                 break :blk;
             },
             else => {},
         }
-        // The branch actions: `idx` is a rail branch, or a PR's branch.
-        const name: []const u8 = if (a.what == .checkout and a.idx < gs.rail_prs.len and a.idx >= gs.rail_branches.len) gs.rail_prs[a.idx].branch else if (a.idx < gs.rail_branches.len) gs.rail_branches[a.idx].name else break :blk;
+        // The branch actions: `idx` is a rail branch, local or remote.
+        if (a.idx >= gs.rail_branches.len) break :blk;
+        const b = gs.rail_branches[a.idx];
+        const name = b.name;
         const repo = git.requireRepo(app) catch |err| break :blk err;
         switch (a.what) {
-            .checkout => {
-                // A remote ref checks out as a local branch of its short name.
-                const b = if (a.idx < gs.rail_branches.len) gs.rail_branches[a.idx] else null;
-                const local = if (b != null and b.?.remote) (if (std.mem.indexOfScalar(u8, name, '/')) |s| name[s + 1 ..] else name) else name;
-                break :blk git.submitOp(app, repo, .{ .checkout = try gpa.dupe(u8, local) });
-            },
+            .checkout => break :blk if (b.remote) checkoutTracking(app, name) else git.submitOp(app, repo, .{ .checkout = try gpa.dupe(u8, name) }),
             .merge => break :blk git.submitOp(app, repo, .{ .merge = try gpa.dupe(u8, name) }),
             .rebase => break :blk git.submitOp(app, repo, .{ .rebase = try gpa.dupe(u8, name) }),
             .new_branch => break :blk command.run(app, .{ .static = .@"git.new_branch" }),
@@ -673,16 +838,19 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     switch (m.kind) {
         .press => {
             st.filter_focused = false;
+            const was_here = st.cursor == idx and app.focus == .panel and app.focus.panel == .git;
             focusPalette(app);
-            st.cursor = idx;
             switch (m.button) {
-                .left => try activate(app, idx),
-                .right => try openRowMenu(app, idx, m.x, m.y),
+                .left => if (was_here) try activate(app, idx) else try select(app, idx),
+                .right => {
+                    st.cursor = idx;
+                    try openRowMenu(app, idx, m.x, m.y);
+                },
                 else => {},
             }
         },
         .scroll_up => st.scroll -|= 3,
-        .scroll_down => st.scroll = @min(st.scroll + 3, st.total_items -| 1),
+        .scroll_down => st.scroll = @min(st.scroll + 3, st.total -| st.visible),
         else => {},
     }
     app.needs_render = true;
@@ -694,7 +862,6 @@ pub fn partMouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
     focusPalette(app);
     switch (part) {
         .repo => try openReposMenu(app, m.x, m.y + 1),
-        .branch => if (m.button == .left) git.runToast(app, command.run(app, .{ .static = .@"git.checkout" })) else try openReposMenu(app, m.x, m.y + 1),
     }
 }
 
@@ -722,53 +889,74 @@ pub fn filterMouse(app: *App, m: Mouse) void {
 
 pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
     const st = &app.git_palette;
-    const total = st.total_items;
+    const total = st.total;
     if (total == 0 or bar.h == 0) return;
+    const max = total -| st.visible;
     switch (m.kind) {
         .press, .drag => {
             focusPalette(app);
             const off: usize = m.y -| bar.y;
-            st.scroll = @min(off * total / bar.h, total - 1);
+            st.scroll = @min(off * total / bar.h, max);
+            // The cursor follows so the paint's clamp keeps the scroll.
+            st.cursor = @min(@max(st.cursor, st.scroll), st.scroll + st.visible -| 1);
         },
         .scroll_up => st.scroll -|= 3,
-        .scroll_down => st.scroll = @min(st.scroll + 3, total - 1),
+        .scroll_down => st.scroll = @min(st.scroll + 3, max),
         else => {},
     }
     app.needs_render = true;
 }
 
-/// The wheel anywhere over the palette.
+/// The wheel anywhere over the palette. The cursor stays inside the
+/// window so the paint's clamp does not pull the scroll back.
 pub fn wheel(app: *App, down: bool) void {
     const st = &app.git_palette;
-    if (down) st.scroll = @min(st.scroll + 3, st.total_items -| 1) else st.scroll -|= 3;
+    if (down) st.scroll = @min(st.scroll + 3, st.total -| st.visible) else st.scroll -|= 3;
+    st.cursor = @min(@max(st.cursor, st.scroll), st.scroll + st.visible -| 1);
     app.needs_render = true;
 }
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
-fn step(app: *App, list: []const Row, from: usize, down: bool) usize {
-    _ = app;
+/// The next stop from `from` in the direction, skipping gaps; `from`
+/// when there is none.
+fn step(list: []const Row, from: usize, down: bool, n: usize) usize {
     if (list.len == 0) return 0;
     var i = from;
-    while (true) {
+    var left = n;
+    var last = from;
+    while (left > 0) {
         if (down) {
-            if (i + 1 >= list.len) return from;
+            if (i + 1 >= list.len) break;
             i += 1;
         } else {
-            if (i == 0) return from;
+            if (i == 0) break;
             i -= 1;
         }
-        if (list[i] != .gap) return i;
+        if (list[i].isStop()) {
+            last = i;
+            left -= 1;
+        }
     }
+    return last;
 }
 
-/// The palette's keys: the filter when it has focus (Esc clears then
-/// blurs, Enter blurs), else j/k and the arrows over the rows, Enter
-/// acts, `m` opens the row's menu, `/` focuses the filter, `r`
-/// refreshes, `c` commits, Esc hands the focus to the graph.
+fn lastStop(list: []const Row) usize {
+    var i = list.len;
+    while (i > 0) : (i -= 1) if (list[i - 1].isStop()) return i - 1;
+    return 0;
+}
+
+/// The palette's keys, the list panels' contract: in the filter Esc
+/// clears then blurs, Enter blurs, the arrows still move; otherwise
+/// j/k and the arrows move, g/G and Home/End jump, the page keys page,
+/// Enter acts, `m` opens the row's menu, `/` focuses the filter, `r`
+/// refreshes, `c` commits, `n` makes a branch, Esc hands the focus to
+/// the graph.
 pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     const st = &app.git_palette;
     const list = try rows(app, app.frame.allocator());
+    const page = @max(1, st.visible);
     if (st.filter_focused) {
         switch (k.code) {
             .esc => {
@@ -778,32 +966,48 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
                 } else st.filter_focused = false;
             },
             .enter => st.filter_focused = false,
-            .up => st.cursor = step(app, list, st.cursor, false),
-            .down => st.cursor = step(app, list, st.cursor, true),
+            .up => st.cursor = step(list, st.cursor, false, 1),
+            .down => st.cursor = step(list, st.cursor, true, 1),
             else => {
-                if (try text_field.handleKey(&st.filter, &st.filter_caret, app.gpa, k) == .ignored) return false;
-                st.scroll = 0;
+                if (k.mods.ctrl and k.code == .char and (k.code.char == 'n' or k.code.char == 'p')) {
+                    st.cursor = step(list, st.cursor, k.code.char == 'n', 1);
+                } else switch (try text_field.handleKey(&st.filter, &st.filter_caret, app.gpa, k)) {
+                    .ignored => return false,
+                    .moved => {},
+                    .changed => st.cursor = 0,
+                }
             },
         }
         app.needs_render = true;
         return true;
     }
     switch (k.code) {
-        .up => st.cursor = step(app, list, st.cursor, false),
-        .down => st.cursor = step(app, list, st.cursor, true),
+        .up => st.cursor = step(list, st.cursor, false, 1),
+        .down => st.cursor = step(list, st.cursor, true, 1),
         .home => st.cursor = 0,
-        .end => st.cursor = list.len -| 1,
+        .end => st.cursor = lastStop(list),
+        .page_up => st.cursor = step(list, st.cursor, false, page),
+        .page_down => st.cursor = step(list, st.cursor, true, page),
         .enter => try activate(app, st.cursor),
         .esc => {
-            if (app.active) |a| app.focus = .{ .pane = a };
+            if (st.filter.items.len > 0) {
+                st.filter.clearRetainingCapacity();
+                st.filter_caret = 0;
+                st.cursor = 0;
+            } else if (app.active) |a| app.focus = .{ .pane = a };
         },
         .char => |c| {
-            if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
-            switch (c) {
-                'j' => st.cursor = step(app, list, st.cursor, true),
-                'k' => st.cursor = step(app, list, st.cursor, false),
+            if (k.mods.ctrl) switch (c) {
+                'n' => st.cursor = step(list, st.cursor, true, 1),
+                'p' => st.cursor = step(list, st.cursor, false, 1),
+                'd' => st.cursor = step(list, st.cursor, true, page / 2),
+                'u' => st.cursor = step(list, st.cursor, false, page / 2),
+                else => return false,
+            } else if (k.mods.alt or k.mods.super) return false else switch (c) {
+                'j' => st.cursor = step(list, st.cursor, true, 1),
+                'k' => st.cursor = step(list, st.cursor, false, 1),
                 'g' => st.cursor = 0,
-                'G' => st.cursor = list.len -| 1,
+                'G' => st.cursor = lastStop(list),
                 '/' => st.filter_focused = true,
                 'm' => try openRowMenu(app, st.cursor, 6, 8),
                 'r' => try chipMouse(app, .refresh, .{ .x = 0, .y = 0, .kind = .press, .button = .left }),
@@ -822,71 +1026,244 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
 
 const testing = std.testing;
 
-test "rows: worktrees, local A–Z with the current one marked, remotes stripped of the host, a filter narrows and empties sections, a fold keeps its header" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try tmp.dir.realPath(testing.io, &buf);
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = buf[0..n], .data_root = buf[0..n], .cols = 120, .rows = 40 });
-    defer app.deinit();
+/// A test app on a fresh `git init` workspace; each test discovers it
+/// up front so the actions that need a repo find this one and never
+/// re-discover (which would drop the seed). The worker runs against
+/// the empty repo; nothing the tests submit lands anywhere else.
+const TestApp = struct {
+    tmp: testing.TmpDir,
+    root: []u8,
+    app: App,
+
+    fn init() !TestApp {
+        var tmp = testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try tmp.dir.realPath(testing.io, &buf);
+        const root = try testing.allocator.dupe(u8, buf[0..n]);
+        errdefer testing.allocator.free(root);
+        const res = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "git", "init", "-q", "-b", "main" }, .cwd = .{ .path = root } });
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+        const app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+        return .{ .tmp = tmp, .root = root, .app = app };
+    }
+
+    fn deinit(t: *TestApp) void {
+        unseed(&t.app);
+        t.app.deinit();
+        testing.allocator.free(t.root);
+        t.tmp.cleanup();
+    }
+};
+
+/// Two locals, a github remote with three branches, two worktrees (the
+/// workspace itself, and one locked and dirty), a stash, two tags — the
+/// seed every palette test reads.
+var seed_branches = [_]parse.Branch{
+    .{ .name = "main", .time = 0, .current = true, .remote = false, .sha = "aaaa111", .ahead = 1, .behind = 3 },
+    .{ .name = "feature", .time = 0, .current = false, .remote = false, .sha = "bbbb222" },
+    .{ .name = "origin/main", .time = 0, .current = false, .remote = true, .sha = "aaaa111" },
+    .{ .name = "origin/feature", .time = 0, .current = false, .remote = true, .sha = "bbbb222" },
+    .{ .name = "origin/hotfix", .time = 0, .current = false, .remote = true, .sha = "cccc333" },
+    .{ .name = "origin/HEAD", .time = 0, .current = false, .remote = true },
+};
+var seed_worktrees = [_]parse.Worktree{
+    .{ .path = "", .branch = "main", .head = "aaaa111", .main = true },
+    .{ .path = "/repo/wt-fix", .branch = "fix", .head = "cccc333", .locked = true, .lock_reason = "keep", .dirty = true },
+};
+var seed_remotes = [_]parse.Remote{.{ .name = "origin", .url = "git@github.com:me/thing.git", .provider = .github }};
+var seed_stashes = [_]parse.Stash{.{ .sha = "ab12cd3", .ref = "stash@{0}", .message = "On main: half done" }};
+var seed_tags = [_]parse.Tag{ .{ .name = "v2.0", .sha = "aaaa111", .annotated = true }, .{ .name = "v1.0", .sha = "bbbb222", .annotated = false } };
+
+fn seed(app: *App) void {
+    seed_worktrees[0].path = app.workspace;
+    app.git.rail_branches = &seed_branches;
+    app.git.rail_worktrees = &seed_worktrees;
+    app.git.rail_remotes = &seed_remotes;
+    app.git.rail_stashes = &seed_stashes;
+    app.git.rail_tags = &seed_tags;
+}
+
+fn unseed(app: *App) void {
+    app.git.rail_branches = &.{};
+    app.git.rail_worktrees = &.{};
+    app.git.rail_remotes = &.{};
+    app.git.rail_stashes = &.{};
+    app.git.rail_tags = &.{};
+}
+
+test "rows: the five sections in order with their counts; LOCAL A–Z with the current one and its ahead / behind; each remote with its branches stripped of the prefix; the worktrees' lock and dirty state; stashes and tags" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try testing.expect(app.git.activeRepo() != null);
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    const bs = [_]parse.Branch{
-        .{ .name = "main", .time = 0, .current = true, .remote = false, .sha = "aaaa" },
-        .{ .name = "feature", .time = 0, .current = false, .remote = false, .sha = "bbbb" },
-        .{ .name = "bugfix/two", .time = 0, .current = false, .remote = false },
-        .{ .name = "bugfix/one", .time = 0, .current = false, .remote = false },
-        .{ .name = "origin/main", .time = 0, .current = false, .remote = true },
-        .{ .name = "origin/HEAD", .time = 0, .current = false, .remote = true },
-    };
-    app.git.rail_branches = @constCast(&bs);
-    const wts = [_][]const u8{ "/repo/ws\x1fmain", "/repo/wt-feature\x1ffeature" };
-    app.git.rail_worktrees = &wts;
-    var list = try rows(&app, arena);
-    // WORKTREES 2, gap, LOCAL 4 (bugfix folder first), gap, REMOTE 1, gap.
-    try testing.expectEqual(@as(usize, 14), list.len);
-    try testing.expectEqual(Section.worktrees, list[0].section.s);
-    try testing.expectEqualStrings("main (ws)", list[1].worktree.shown);
-    try testing.expectEqualStrings("feature (wt-feature)", list[2].worktree.shown);
+    seed(app);
+    const list = try rows(app, arena);
+    // LOCAL 2 + gap, REMOTE (origin + 3) + gap, WORKTREES 2 + gap, STASHES 1 + gap, TAGS 2 + gap.
+    try testing.expectEqual(@as(usize, 21), list.len);
+    try testing.expectEqual(Section.local, list[0].section.s);
+    try testing.expectEqual(@as(u32, 2), list[0].section.count);
+    try testing.expectEqualStrings("feature", list[1].branch.name);
+    try testing.expectEqualStrings("main", list[2].branch.name);
+    try testing.expect(list[2].branch.current);
+    try testing.expectEqual(@as(u32, 1), list[2].branch.ahead);
+    try testing.expectEqual(@as(u32, 3), list[2].branch.behind);
     try testing.expect(list[3] == .gap);
-    try testing.expectEqual(@as(u32, 4), list[4].section.count);
-    try testing.expectEqualStrings("bugfix", list[5].folder.name);
-    try testing.expectEqualStrings("one", list[6].branch.shown);
-    try testing.expectEqualStrings("bugfix/one", list[6].branch.name);
-    try testing.expect(list[6].branch.in_folder);
-    try testing.expectEqualStrings("two", list[7].branch.shown);
-    try testing.expectEqualStrings("feature", list[8].branch.shown);
-    try testing.expectEqualStrings("main", list[9].branch.shown);
-    try testing.expect(list[9].branch.current);
-    try testing.expect(list[10] == .gap);
-    try testing.expectEqual(@as(u32, 1), list[11].section.count);
-    try testing.expectEqualStrings("main", list[12].remote.shown);
-    try testing.expectEqualStrings("origin/main", list[12].remote.name);
-    // The filter keeps LOCAL's matches and drops the sections without any.
-    try app.git_palette.filter.appendSlice(testing.allocator, "feat");
-    list = try rows(&app, arena);
-    try testing.expectEqual(@as(usize, 6), list.len);
-    try testing.expectEqualStrings("feature (wt-feature)", list[1].worktree.shown);
-    try testing.expectEqualStrings("feature", list[4].branch.shown);
+    try testing.expectEqual(Section.remote, list[4].section.s);
+    try testing.expectEqual(@as(u32, 3), list[4].section.count);
+    try testing.expectEqualStrings("origin", list[5].remote.name);
+    try testing.expect(list[5].remote.github);
+    try testing.expectEqualStrings("feature", list[6].remote_branch.shown);
+    try testing.expectEqualStrings("origin/feature", list[6].remote_branch.name);
+    try testing.expectEqualStrings("hotfix", list[7].remote_branch.shown);
+    try testing.expectEqualStrings("main", list[8].remote_branch.shown);
+    try testing.expect(list[9] == .gap);
+    try testing.expectEqual(Section.worktrees, list[10].section.s);
+    try testing.expect(std.mem.startsWith(u8, list[11].worktree.shown, "main ("));
+    try testing.expect(list[11].worktree.main);
+    try testing.expect(!list[11].worktree.locked);
+    // The workspace's own tree is the current one, with main's counts.
+    try testing.expect(list[11].worktree.current);
+    try testing.expectEqual(@as(u32, 1), list[11].worktree.ahead);
+    try testing.expectEqualStrings("fix (wt-fix)", list[12].worktree.shown);
+    try testing.expect(list[12].worktree.locked and list[12].worktree.dirty and !list[12].worktree.main);
+    try testing.expectEqual(Section.stashes, list[14].section.s);
+    try testing.expectEqualStrings("ab12cd3", list[15].stash.sha);
+    try testing.expectEqualStrings("On main: half done", list[15].stash.message);
+    try testing.expectEqual(Section.tags, list[17].section.s);
+    try testing.expectEqualStrings("v2.0", list[18].tag.name);
+    try testing.expectEqualStrings("v1.0", list[19].tag.name);
+    try testing.expectEqual(@as(usize, 10), viewing(list));
+}
+
+test "the filter narrows every section by substring and Viewing N follows; a folded section keeps its header and count; the folds survive the mode's leave and re-entry" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try testing.expect(app.git.activeRepo() != null);
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    seed(app);
+    try app.git_palette.filter.appendSlice(testing.allocator, "fea");
+    var list = try rows(app, arena);
+    // LOCAL feature; REMOTE origin/feature; the rest empty but headed.
+    try testing.expectEqual(@as(u32, 1), list[0].section.count);
+    try testing.expectEqualStrings("feature", list[1].branch.name);
+    try testing.expectEqual(@as(u32, 1), list[3].section.count);
+    try testing.expectEqualStrings("origin", list[4].remote.name);
+    try testing.expectEqualStrings("feature", list[5].remote_branch.shown);
+    try testing.expectEqual(@as(u32, 0), list[7].section.count);
+    try testing.expect(list[8] == .gap);
+    try testing.expectEqual(@as(u32, 0), list[9].section.count);
+    try testing.expectEqual(@as(u32, 0), list[11].section.count);
+    try testing.expectEqual(@as(usize, 2), viewing(list));
     app.git_palette.filter.clearRetainingCapacity();
-    // A folded LOCAL keeps its header and count; a folded folder its row.
-    app.git_palette.collapsed.insert(.local);
-    list = try rows(&app, arena);
-    try testing.expectEqual(@as(u32, 4), list[4].section.count);
-    try testing.expect(list[4].section.collapsed);
-    try testing.expect(list[5] == .gap);
-    app.git_palette.collapsed.remove(.local);
-    try toggleFold(&app, "LOCAL:bugfix");
-    list = try rows(&app, arena);
-    try testing.expect(list[5].folder.collapsed);
-    try testing.expectEqualStrings("feature", list[6].branch.shown);
-    // Enter on a header folds it; on a branch it selects and jumps.
-    try activate(&app, 0);
-    try testing.expect(app.git_palette.collapsed.contains(.worktrees));
-    list = try rows(&app, arena);
-    try activate(&app, 4);
-    try testing.expectEqualStrings("feature", app.git_palette.selected.?);
-    app.git.rail_branches = &.{};
-    app.git.rail_worktrees = &.{};
+    try app.git_palette.filter.appendSlice(testing.allocator, "v1");
+    list = try rows(app, arena);
+    try testing.expectEqual(@as(u32, 1), list[list.len - 3].section.count);
+    try testing.expectEqualStrings("v1.0", list[list.len - 2].tag.name);
+    try testing.expectEqual(@as(usize, 1), viewing(list));
+    app.git_palette.filter.clearRetainingCapacity();
+    // Fold LOCAL through Enter on its header; the count stays.
+    try activate(app, 0);
+    list = try rows(app, arena);
+    try testing.expect(list[0].section.collapsed);
+    try testing.expectEqual(@as(u32, 2), list[0].section.count);
+    try testing.expect(list[1] == .gap);
+    try testing.expectEqual(@as(usize, 8), viewing(list));
+    // Leave and re-enter the mode: the fold is still there.
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    try testing.expect(app.git_palette.collapsed.contains(.local));
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
+}
+
+test "a click selects and a second click on the same row acts: the stash applies through the worker, a remote branch asks for its short name, the tag confirm names detached HEAD; the keys skip the gaps" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try testing.expect(app.git.activeRepo() != null);
+    seed(app);
+    const st = &app.git_palette;
+    // Down from LOCAL's header lands on feature, then main, then skips the gap to REMOTE.
+    try testing.expect(try handleKey(app, .{ .code = .down }));
+    try testing.expectEqual(@as(usize, 1), st.cursor);
+    _ = try handleKey(app, .{ .code = .{ .char = 'j' } });
+    _ = try handleKey(app, .{ .code = .{ .char = 'j' } });
+    try testing.expectEqual(@as(usize, 4), st.cursor);
+    _ = try handleKey(app, .{ .code = .{ .char = 'G' } });
+    try testing.expectEqual(@as(usize, 19), st.cursor);
+    _ = try handleKey(app, .{ .code = .{ .char = 'g' } });
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    // A click on the stash row selects it (no repo: the graph jump only toasts).
+    try rowMouse(app, 15, .{ .x = 5, .y = 20, .kind = .press, .button = .left });
+    try testing.expectEqual(@as(usize, 15), st.cursor);
+    try testing.expectEqualStrings("stash@{0}", st.selected.?);
+    try testing.expect(app.focus == .panel and app.focus.panel == .git);
+    // The second click acts: with no repo the action fails loudly, not silently.
+    try rowMouse(app, 15, .{ .x = 5, .y = 20, .kind = .press, .button = .left });
+    try testing.expect(app.lastToast() != null);
+    // Enter on the tag row opens the confirm.
+    st.cursor = 18;
+    _ = try handleKey(app, .{ .code = .enter });
+    try testing.expect(app.git.confirm == .checkout);
+    try testing.expectEqualStrings("v2.0", app.git.confirm.checkout);
+    try testing.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "detached HEAD") != null);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try testing.expect(app.overlay == .none);
+    // `/` focuses the filter; typing narrows and puts the cursor back on top; Esc clears.
+    _ = try handleKey(app, .{ .code = .{ .char = '/' } });
+    try testing.expect(st.filter_focused);
+    _ = try handleKey(app, .{ .code = .{ .char = 'v' } });
+    try testing.expectEqualStrings("v", st.filter.items);
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    _ = try handleKey(app, .{ .code = .esc });
+    try testing.expectEqual(@as(usize, 0), st.filter.items.len);
+    try testing.expect(st.filter_focused);
+    _ = try handleKey(app, .{ .code = .esc });
+    try testing.expect(!st.filter_focused);
+}
+
+test "every row menu names actions that resolve, and each menu action reaches the worker or a confirm" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try testing.expect(app.git.activeRepo() != null);
+    seed(app);
+    const list = try rows(app, app.frame.allocator());
+    // Open the menu on every stop: no crash, a title, at least one row
+    // whose command id — when it is a command — is a registered one.
+    for (list, 0..) |r, i| {
+        if (!r.isStop() or r == .section) continue;
+        try openRowMenu(app, i, 3, 3);
+        try testing.expect(app.overlay.menu.items.len > 0);
+        for (app.overlay.menu.items) |it| switch (it.action) {
+            .command => |id| try testing.expect(command.by_name.get(command.name(id)) != null),
+            .git_palette => {},
+            else => return error.TestUnexpectedResult,
+        };
+        try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    }
+    // The tag delete confirm.
+    try menuAction(app, .{ .what = .tag_delete, .idx = 1 });
+    try testing.expect(app.git.confirm == .tag_delete);
+    try testing.expectEqualStrings("v1.0", app.git.confirm.tag_delete);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    // The copies land on the clipboard.
+    try menuAction(app, .{ .what = .remote_copy_url, .idx = 0 });
+    try testing.expectEqualStrings("git@github.com:me/thing.git", app.clipboard.text());
+    try menuAction(app, .{ .what = .tag_copy, .idx = 0 });
+    try testing.expectEqualStrings("v2.0", app.clipboard.text());
+    try menuAction(app, .{ .what = .worktree_copy_path, .idx = 1 });
+    try testing.expectEqualStrings("/repo/wt-fix", app.clipboard.text());
 }

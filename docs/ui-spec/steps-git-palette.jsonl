@@ -1,0 +1,6 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"git.graph"}
+{"cmd":"wait_ms","ms":1500}
+{"cmd":"run-command","id":"git.graph"}
+{"cmd":"wait_ms","ms":1500}

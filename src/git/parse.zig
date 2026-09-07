@@ -15,6 +15,7 @@
 //!   unstage or discard one hunk on its own.
 
 const std = @import("std");
+const remote_mod = @import("remote.zig");
 const Allocator = std.mem.Allocator;
 
 // ─── status ─────────────────────────────────────────────────────────────
@@ -746,6 +747,166 @@ fn jsonString(v: ?std.json.Value) []const u8 {
     };
 }
 
+// ─── worktrees ──────────────────────────────────────────────────────────
+
+/// One entry of `git worktree list --porcelain`. The first entry is
+/// the repository's own directory (`main`); `dirty` is what the worker
+/// found running `status --porcelain` inside the tree.
+pub const Worktree = struct {
+    path: []const u8,
+    /// The short branch name; empty when detached or bare.
+    branch: []const u8 = "",
+    head: []const u8 = "",
+    detached: bool = false,
+    bare: bool = false,
+    /// `git worktree lock`ed, with the note it was given, if any.
+    locked: bool = false,
+    lock_reason: []const u8 = "",
+    main: bool = false,
+    dirty: bool = false,
+
+    /// The branch, or `(detached)` / `(bare)`.
+    pub fn label(w: Worktree) []const u8 {
+        if (w.branch.len > 0) return w.branch;
+        return if (w.bare) "(bare)" else "(detached)";
+    }
+};
+
+/// `worktree <path>` / `HEAD <sha>` / `branch refs/heads/x` or
+/// `detached` / `bare` / `locked [reason]` / `prunable …`, a blank
+/// line between entries.
+pub fn parseWorktrees(arena: Allocator, text: []const u8) Allocator.Error![]Worktree {
+    var out: std.ArrayListUnmanaged(Worktree) = .empty;
+    var cur: ?Worktree = null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (std.mem.startsWith(u8, line, "worktree ")) {
+            if (cur) |c| try out.append(arena, c);
+            cur = .{ .path = try arena.dupe(u8, line["worktree ".len..]), .main = out.items.len == 0 };
+        } else if (cur == null) {
+            continue;
+        } else if (std.mem.startsWith(u8, line, "HEAD ")) {
+            cur.?.head = try arena.dupe(u8, line["HEAD ".len..]);
+        } else if (std.mem.startsWith(u8, line, "branch ")) {
+            const b = line["branch ".len..];
+            cur.?.branch = try arena.dupe(u8, if (std.mem.startsWith(u8, b, "refs/heads/")) b["refs/heads/".len..] else b);
+        } else if (std.mem.eql(u8, line, "detached")) {
+            cur.?.detached = true;
+        } else if (std.mem.eql(u8, line, "bare")) {
+            cur.?.bare = true;
+        } else if (std.mem.eql(u8, line, "locked") or std.mem.startsWith(u8, line, "locked ")) {
+            cur.?.locked = true;
+            if (line.len > "locked ".len) cur.?.lock_reason = try arena.dupe(u8, line["locked ".len..]);
+        } else if (line.len == 0) {
+            try out.append(arena, cur.?);
+            cur = null;
+        }
+    }
+    if (cur) |c| try out.append(arena, c);
+    return out.items;
+}
+
+// ─── stashes ────────────────────────────────────────────────────────────
+
+/// One line of `git stash list --format=%h%x1f%gd%x1f%s`.
+pub const Stash = struct {
+    /// The stash commit's short sha.
+    sha: []const u8,
+    /// `stash@{N}` — what `apply` / `pop` / `drop` name.
+    ref: []const u8,
+    /// `%s`: `On main: note` or `WIP on main: abc123 subject`.
+    message: []const u8,
+};
+
+pub fn parseStashes(arena: Allocator, text: []const u8) Allocator.Error![]Stash {
+    var out: std.ArrayListUnmanaged(Stash) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        var f = std.mem.splitScalar(u8, line, '\x1f');
+        const sha = f.next() orelse continue;
+        const ref = f.next() orelse continue;
+        try out.append(arena, .{
+            .sha = try arena.dupe(u8, sha),
+            .ref = try arena.dupe(u8, ref),
+            .message = try arena.dupe(u8, f.rest()),
+        });
+    }
+    return out.items;
+}
+
+// ─── tags ───────────────────────────────────────────────────────────────
+
+/// `for-each-ref` over `refs/tags`, newest first: the name, the tag
+/// object's sha and the commit it peels to (empty for a lightweight
+/// tag, whose object IS the commit).
+pub const tag_format = "%(refname:short)%1f%(objectname:short)%1f%(*objectname:short)";
+
+pub const Tag = struct {
+    name: []const u8,
+    /// The commit the tag points at — the peeled sha when annotated.
+    sha: []const u8,
+    annotated: bool,
+};
+
+pub fn parseTags(arena: Allocator, text: []const u8) Allocator.Error![]Tag {
+    var out: std.ArrayListUnmanaged(Tag) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        var f = std.mem.splitScalar(u8, line, '\x1f');
+        const name = f.next() orelse continue;
+        const object = f.next() orelse "";
+        const peeled = f.next() orelse "";
+        try out.append(arena, .{
+            .name = try arena.dupe(u8, name),
+            .sha = try arena.dupe(u8, if (peeled.len > 0) peeled else object),
+            .annotated = peeled.len > 0,
+        });
+    }
+    return out.items;
+}
+
+// ─── remotes ────────────────────────────────────────────────────────────
+
+/// One remote from `git remote -v` (its fetch line) and the forge its
+/// URL names.
+pub const Remote = struct {
+    name: []const u8,
+    url: []const u8,
+    provider: remote_mod.Provider,
+};
+
+/// `origin<TAB>git@host:o/r.git (fetch)` lines; the push lines are
+/// skipped so each remote lists once.
+pub fn parseRemotes(arena: Allocator, text: []const u8) Allocator.Error![]Remote {
+    var out: std.ArrayListUnmanaged(Remote) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        const tab = std.mem.indexOfScalar(u8, line, '\t') orelse continue;
+        const name = line[0..tab];
+        var rest = line[tab + 1 ..];
+        if (std.mem.endsWith(u8, rest, " (push)")) continue;
+        if (std.mem.endsWith(u8, rest, " (fetch)")) rest = rest[0 .. rest.len - " (fetch)".len];
+        var dup = false;
+        for (out.items) |r| if (std.mem.eql(u8, r.name, name)) {
+            dup = true;
+        };
+        if (dup) continue;
+        try out.append(arena, .{
+            .name = try arena.dupe(u8, name),
+            .url = try arena.dupe(u8, rest),
+            .provider = remote_mod.providerOf(rest),
+        });
+    }
+    return out.items;
+}
+
 // ─── a commit's files ───────────────────────────────────────────────────
 
 /// One line of `git diff-tree --name-status`: the letter and the path
@@ -1063,4 +1224,66 @@ test "parseNameStatus keeps the rename's new path and unquotes" {
     try testing.expectEqualStrings("new.zig", files[1].path);
     try testing.expectEqual(@as(u8, 'R'), files[1].status);
     try testing.expectEqualStrings("sp ace.txt", files[2].path);
+}
+
+test "parseWorktrees: the first entry is main; a locked one keeps its reason; detached and bare entries have no branch" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const text = "worktree /r/ws\nHEAD aaaa\nbranch refs/heads/main\n\nworktree /r/wt-fix\nHEAD bbbb\nbranch refs/heads/fix\nlocked keep me\n\nworktree /r/wt-det\nHEAD cccc\ndetached\nlocked\n\nworktree /r/bare\nbare\n";
+    const ws = try parseWorktrees(a.allocator(), text);
+    try testing.expectEqual(@as(usize, 4), ws.len);
+    try testing.expect(ws[0].main);
+    try testing.expectEqualStrings("/r/ws", ws[0].path);
+    try testing.expectEqualStrings("main", ws[0].branch);
+    try testing.expect(!ws[0].locked);
+    try testing.expect(!ws[1].main);
+    try testing.expect(ws[1].locked);
+    try testing.expectEqualStrings("keep me", ws[1].lock_reason);
+    try testing.expectEqualStrings("fix", ws[1].label());
+    try testing.expect(ws[2].detached and ws[2].locked);
+    try testing.expectEqualStrings("", ws[2].lock_reason);
+    try testing.expectEqualStrings("(detached)", ws[2].label());
+    try testing.expect(ws[3].bare);
+    try testing.expectEqualStrings("(bare)", ws[3].label());
+    try testing.expect(!ws[0].dirty);
+    // No trailing blank line: the last entry still lands.
+    const one = try parseWorktrees(a.allocator(), "worktree /x\nHEAD 1\nbranch refs/heads/b");
+    try testing.expectEqual(@as(usize, 1), one.len);
+    try testing.expectEqualStrings("b", one[0].branch);
+}
+
+test "parseStashes: sha, ref and the message with its own separators kept" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const ss = try parseStashes(a.allocator(), "ab12cd3\x1fstash@{0}\x1fOn main: wip thing\n9f8e7d6\x1fstash@{1}\x1fWIP on fix: 1234567 subject\n");
+    try testing.expectEqual(@as(usize, 2), ss.len);
+    try testing.expectEqualStrings("ab12cd3", ss[0].sha);
+    try testing.expectEqualStrings("stash@{0}", ss[0].ref);
+    try testing.expectEqualStrings("On main: wip thing", ss[0].message);
+    try testing.expectEqualStrings("stash@{1}", ss[1].ref);
+    try testing.expectEqual(@as(usize, 0), (try parseStashes(a.allocator(), "")).len);
+}
+
+test "parseTags: an annotated tag peels to its commit, a lightweight one is its own object" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const ts = try parseTags(a.allocator(), "v2.0\x1ftag0bj\x1fc0mm1t\nv1.0\x1fl1ght\x1f\n");
+    try testing.expectEqual(@as(usize, 2), ts.len);
+    try testing.expectEqualStrings("v2.0", ts[0].name);
+    try testing.expectEqualStrings("c0mm1t", ts[0].sha);
+    try testing.expect(ts[0].annotated);
+    try testing.expectEqualStrings("l1ght", ts[1].sha);
+    try testing.expect(!ts[1].annotated);
+}
+
+test "parseRemotes: one row per remote from the fetch lines, the forge read off the URL" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const rs = try parseRemotes(a.allocator(), "origin\tgit@github.com:me/thing.git (fetch)\norigin\tgit@github.com:me/thing.git (push)\nmirror\thttps://code.example.org/me/thing (fetch)\nmirror\thttps://code.example.org/me/thing (push)\n");
+    try testing.expectEqual(@as(usize, 2), rs.len);
+    try testing.expectEqualStrings("origin", rs[0].name);
+    try testing.expectEqualStrings("git@github.com:me/thing.git", rs[0].url);
+    try testing.expectEqual(remote_mod.Provider.github, rs[0].provider);
+    try testing.expectEqualStrings("mirror", rs[1].name);
+    try testing.expectEqual(remote_mod.Provider.other, rs[1].provider);
 }

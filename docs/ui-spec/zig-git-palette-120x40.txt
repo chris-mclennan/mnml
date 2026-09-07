@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ws 󰅀             │ 󰊢 ws 󰅖   󰐕                                                                               
+  │ Viewing 11         │    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
+   │  󰍉 / filter        │     G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA    │─ fa2107d76 · spec · 1d ───────
+ 󰍉 │                    │▌▶   ●─╮ │ On main: half done     │   09/06 20:00 │ fa2107d76  │  On main: half done
+   │▌󰅀 󰌢 LOCAL        2 │▌    │ ● │ index on main: 30ef8c… │   09/06 20:00 │ c320ee567  │  parents: 30ef8c750  c320ee567
+▌󰊢 │  󰘬 feature         │▌    ●─╯ │ third                  │   09/06 20:00 │ 30ef8c750  │
+   │󰄬 󰘬 main         1↑ │▌    ●   │ second                 │   09/06 20:00 │ a1cdabd8d  │  changed files (2):
+  │                    │▌    ●   │ init                   │   09/06 20:00 │ 13b130f2d  │  M a.txt
+   │ 󰅀 󰅟 REMOTE       3 │                                                               │  M a.txt
+ 󰐱 │  󰊤 origin          │                                                               │
+   │    󰘬 feature       │                                                               │
+ 󰎒 │    󰘬 hotfix        │                                                               │
+   │    󰘬 main          │                                                               │
+ 󰚩 │                    │                                                               │
+   │ 󰅀 󰐅 WORKTREES    3 │                                                               │
+ 󰅣 │󰄬 󰋜 main (ws)    1↑ │                                                               │
+   │  󰐅 wt-dirty (de… ● │                                                               │
+  │󰌾 󰐅 feature (wt-lo… │                                                               │
+   │                    │                                                               │
+  │ 󰅀 󰏗 STASHES      1 │                                                               │
+   │  fa2107d On main:… │                                                               │
+  │                    │                                                               │
+   │ 󰅀 󰓻 TAGS         2 │                                                               │
+ 󱘣 │  󰓹 v2.0            │                                                               │
+   │  󰓹 v1.0            │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │────────────────────│                                                               │
+   │ Sidebar          ⋮ │                                                               │
+   │                   ┃│                                                               │
+   │ Arrows or j/k walk┃│                                                               │
+   │ rows. Enter opens ┃│                                                               │
+   │ the selection.    ┃│                                                               │
+  │ Ctrl+Shift+P opens││                                                               │
+   │                    │                                                               │
+ VIEW   main  ⇡1  [no file]                                                       F 57% ▲1.0    18:59  ws   —
+

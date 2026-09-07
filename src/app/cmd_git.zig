@@ -452,7 +452,7 @@ fn stash(app: *App) CommandError!void {
 
 fn stashPop(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
-    try git.submitOp(app, repo, .stash_pop);
+    try git.submitOp(app, repo, .{ .stash_pop = null });
 }
 
 fn stashList(app: *App) CommandError!void {

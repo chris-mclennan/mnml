@@ -115,3 +115,32 @@ so no dialog), feeds `steps-NAME.jsonl` over IPC and keeps the screen:
   no session; a conditional (◐), a logpoint (◆), a plain (●) and a
   disabled (○) breakpoint in the gutter, the BREAKPOINTS rows, and the
   row menu opened with `view.context_menu_at_focus`.
+
+## The branches panel (Zig-authored, 2026-09-07)
+
+The git column is the second deliberate departure from same-look: the
+Rust sidebar's `GIT` header, `⎇ branch` row, folder-grouped LOCAL and
+PULL REQUESTS are replaced by a branches panel, so the sidebar rows of
+`rust-git-120x40.txt` / `rust-git-80x24.txt` are the accepted
+difference and only the PANE (cols 31+) is still measured against
+them. `tools/zig-spec-git.sh NAME [COLSxROWS]` seeds a throwaway repo
+— two locals (`main` one commit ahead of its upstream, `feature`), a
+remote `origin` with three branches whose URL names github.com, two
+linked worktrees (`wt-locked` on feature, locked; `wt-dirty` detached
+with an untracked file), one stash, two tags — feeds
+`steps-NAME.jsonl` over IPC and keeps the screen; the shared fixture
+is never touched.
+
+- `zig-git-palette-120x40.txt` — `steps-git-palette.jsonl` (the
+  graph2 steps): the repo pill with the refresh chip at its edge,
+  `Viewing 11`, the list panels' filter row, a blank, then LOCAL (the
+  check, the green ground and `1↑` on main), REMOTE (`origin` with the
+  GitHub glyph, its three branches indented without the prefix),
+  WORKTREES (the house on the main tree with `1↑`, the lock in the
+  gutter of `wt-locked`, the blue dot at the edge of `wt-dirty`),
+  STASHES (`sha message`), TAGS newest first. The cursor rests on
+  LOCAL with the muted marker, as every list panel's does.
+- `zig-git-palette-80x24.txt` — the same at 80×24: the column is 12
+  cells, labels and names clip with `…` before the counts and the
+  right-edge cells, the list scrolls with the scrollbar in its last
+  column, nothing overflows.

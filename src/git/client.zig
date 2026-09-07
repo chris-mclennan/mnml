@@ -88,7 +88,8 @@ pub const Job = union(enum) {
     push,
     push_tags,
     stash: ?[]u8,
-    stash_pop,
+    /// The stash to pop; null pops the most recent.
+    stash_pop: ?[]u8,
     stash_apply: []u8,
     stash_drop: []u8,
     tag: []u8,
@@ -108,8 +109,9 @@ pub const Job = union(enum) {
     commit_detail: []u8,
     /// The text an AI commit-message prompt is built from.
     ai_context: AiContext,
-    /// The branch rail: branches with tracking counts, worktrees, and
-    /// open PRs through `gh` when the UI found it on PATH.
+    /// The branch rail: branches with tracking counts, worktrees with
+    /// their lock and dirty state, remotes with their forge, stashes,
+    /// tags, and open PRs through `gh` when the UI found it on PATH.
     rail: struct { gh: bool },
 
     pub fn deinit(j: Job, gpa: Allocator) void {
@@ -132,13 +134,13 @@ pub const Job = union(enum) {
                 gpa.free(w.path);
                 if (w.branch) |b| gpa.free(b);
             },
-            .stash => |s| if (s) |m| gpa.free(m),
+            .stash, .stash_pop => |s| if (s) |m| gpa.free(m),
             .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
             .rail => {},
-            .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .stash_pop, .undo, .redo, .head_sha => {},
+            .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
         }
     }
 };
@@ -167,7 +169,15 @@ pub const Result = struct {
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
-        rail: struct { branches: []parse.Branch, worktrees: []const []const u8, prs: []parse.Pr, gh: bool },
+        rail: struct {
+            branches: []parse.Branch,
+            worktrees: []parse.Worktree,
+            remotes: []parse.Remote,
+            stashes: []parse.Stash,
+            tags: []parse.Tag,
+            prs: []parse.Pr,
+            gh: bool,
+        },
     };
 
     pub fn create(gpa: Allocator, repo: u32) Allocator.Error!*Result {
@@ -503,6 +513,12 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .rail => |opts| {
             const branches = try allBranches(repo, io, arena);
             const worktrees = try worktreeList(repo, io, arena);
+            const remotes_out = try git(repo, io, arena, &.{ "remote", "-v" }, null);
+            const remotes = try parse.parseRemotes(arena, if (remotes_out.ok) remotes_out.stdout else "");
+            const stash_out = try git(repo, io, arena, &.{ "stash", "list", "--format=%h%x1f%gd%x1f%s" }, null);
+            const stashes = try parse.parseStashes(arena, if (stash_out.ok) stash_out.stdout else "");
+            const tag_out = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-version:refname", "--sort=-creatordate", "--format=" ++ parse.tag_format, "refs/tags" }, null);
+            const tags = try parse.parseTags(arena, if (tag_out.ok) tag_out.stdout else "");
             var prs: []parse.Pr = &.{};
             if (opts.gh) {
                 const out = run(repo, io, arena, &.{ "gh", "pr", "list", "--json", "number,title,headRefName,url", "--limit", "50" }) catch |err| switch (err) {
@@ -511,7 +527,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 };
                 if (out.ok) prs = try parse.parsePrs(arena, out.stdout);
             }
-            r.payload = .{ .rail = .{ .branches = branches, .worktrees = worktrees, .prs = prs, .gh = opts.gh } };
+            r.payload = .{ .rail = .{ .branches = branches, .worktrees = worktrees, .remotes = remotes, .stashes = stashes, .tags = tags, .prs = prs, .gh = opts.gh } };
         },
         .list => |kind| {
             const out = switch (kind) {
@@ -523,21 +539,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             var items: std.ArrayListUnmanaged([]const u8) = .empty;
             if (out.ok) {
                 if (kind == .worktrees) {
-                    // `worktree <path>` / `branch refs/heads/x` / blank per entry.
-                    var path: ?[]const u8 = null;
-                    var it = std.mem.splitScalar(u8, out.stdout, '\n');
-                    while (it.next()) |line| {
-                        if (std.mem.startsWith(u8, line, "worktree ")) {
-                            path = line["worktree ".len..];
-                        } else if (std.mem.startsWith(u8, line, "branch ")) {
-                            const b = line["branch ".len..];
-                            const short = if (std.mem.startsWith(u8, b, "refs/heads/")) b["refs/heads/".len..] else b;
-                            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f{s}", .{ path orelse "", short }));
-                            path = null;
-                        } else if (line.len == 0 and path != null) {
-                            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f(detached)", .{path.?}));
-                            path = null;
-                        }
+                    // `<path>\x1f<branch>` per entry, as the pickers read it.
+                    for (try parse.parseWorktrees(arena, out.stdout)) |w| {
+                        try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f{s}", .{ w.path, w.label() }));
                     }
                 } else {
                     var it = std.mem.splitScalar(u8, out.stdout, '\n');
@@ -657,7 +661,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 try simple(repo, io, r, &.{ "stash", "push", "-u", "-q", "-m", msg }, try std.fmt.allocPrint(arena, "stashed: {s}", .{msg}));
             } else try simple(repo, io, r, &.{ "stash", "push", "-u", "-q" }, "stashed");
         },
-        .stash_pop => try simple(repo, io, r, &.{ "stash", "pop", "-q" }, "stash popped"),
+        .stash_pop => |ref| if (ref) |x| try simple(repo, io, r, &.{ "stash", "pop", "-q", x }, "stash popped") else try simple(repo, io, r, &.{ "stash", "pop", "-q" }, "stash popped"),
         .stash_apply => |ref| try simple(repo, io, r, &.{ "stash", "apply", "-q", ref }, try std.fmt.allocPrint(arena, "applied {s}", .{ref})),
         .stash_drop => |ref| try simple(repo, io, r, &.{ "stash", "drop", "-q", ref }, try std.fmt.allocPrint(arena, "dropped {s}", .{ref})),
         .tag => |name| try simple(repo, io, r, &.{ "tag", "-a", name, "-m", name }, try std.fmt.allocPrint(arena, "tagged {s}", .{name})),
@@ -742,28 +746,19 @@ fn allBranches(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Branch {
     return all;
 }
 
-/// `git worktree list --porcelain` as `<path>\x1f<branch>` items.
-fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]const []const u8 {
+/// `git worktree list --porcelain`, each tree then asked whether it is
+/// dirty (`status --porcelain` inside it says anything). A tree that
+/// cannot be read — a stale entry, a bare one — counts as clean.
+fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Worktree {
     const out = try git(repo, io, arena, &.{ "worktree", "list", "--porcelain" }, null);
-    var items: std.ArrayListUnmanaged([]const u8) = .empty;
-    if (!out.ok) return items.items;
-    // `worktree <path>` / `branch refs/heads/x` / blank per entry.
-    var path: ?[]const u8 = null;
-    var it = std.mem.splitScalar(u8, out.stdout, '\n');
-    while (it.next()) |line| {
-        if (std.mem.startsWith(u8, line, "worktree ")) {
-            path = line["worktree ".len..];
-        } else if (std.mem.startsWith(u8, line, "branch ")) {
-            const b = line["branch ".len..];
-            const short = if (std.mem.startsWith(u8, b, "refs/heads/")) b["refs/heads/".len..] else b;
-            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f{s}", .{ path orelse "", short }));
-            path = null;
-        } else if (line.len == 0 and path != null) {
-            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f(detached)", .{path.?}));
-            path = null;
-        }
+    if (!out.ok) return &.{};
+    const trees = try parse.parseWorktrees(arena, out.stdout);
+    for (trees) |*w| {
+        if (w.bare) continue;
+        const st = try git(repo, io, arena, &.{ "-C", w.path, "status", "--porcelain" }, null);
+        w.dirty = st.ok and trimmed(st.stdout).len > 0;
     }
-    return items.items;
+    return trees;
 }
 
 /// Run a non-git binary (`gh`) in the repo, the same way `git` runs.

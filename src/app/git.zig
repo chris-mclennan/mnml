@@ -105,12 +105,13 @@ pub const Confirm = union(enum) {
     discard_hunk: struct { pane: PaneId },
     delete_branch: []u8,
     worktree_remove: []u8,
-    /// A branch-rail row: checkout after a yes.
+    /// A palette row: checkout after a yes (a tag lands detached).
     checkout: []u8,
+    tag_delete: []u8,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove, .checkout => |s| gpa.free(s),
+            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete => |s| gpa.free(s),
             .none, .discard_hunk => {},
         }
     }
@@ -332,7 +333,10 @@ pub const State = struct {
     rail_pending: bool = false,
     rail_snapshot: alloc.SnapshotArena,
     rail_branches: []parse.Branch = &.{},
-    rail_worktrees: []const []const u8 = &.{},
+    rail_worktrees: []parse.Worktree = &.{},
+    rail_remotes: []parse.Remote = &.{},
+    rail_stashes: []parse.Stash = &.{},
+    rail_tags: []parse.Tag = &.{},
     rail_prs: []parse.Pr = &.{},
     /// The rail was asked for without `gh`; said once.
     rail_gh_toasted: bool = false,
@@ -904,6 +908,9 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             adoptArena(&st.rail_snapshot.arena, &result.arena, gpa);
             st.rail_branches = rail.branches;
             st.rail_worktrees = rail.worktrees;
+            st.rail_remotes = rail.remotes;
+            st.rail_stashes = rail.stashes;
+            st.rail_tags = rail.tags;
             st.rail_prs = rail.prs;
             st.rail_loaded = true;
             if (!rail.gh and !st.rail_gh_toasted) {
@@ -958,6 +965,9 @@ fn clearStatus(app: *App) void {
     st.provider = .none;
     st.rail_branches = &.{};
     st.rail_worktrees = &.{};
+    st.rail_remotes = &.{};
+    st.rail_stashes = &.{};
+    st.rail_tags = &.{};
     st.rail_prs = &.{};
     st.rail_loaded = false;
     st.rail_pending = false;
@@ -1621,6 +1631,7 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         .delete_branch => |b| try submitOp(app, try requireRepo(app), .{ .delete_branch = try gpa.dupe(u8, b) }),
         .worktree_remove => |p| try submitOp(app, try requireRepo(app), .{ .worktree_remove = try gpa.dupe(u8, p) }),
         .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
+        .tag_delete => |t| try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, t) }),
     }
 }
 
@@ -2813,7 +2824,7 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     try testing.expect(st.status != null);
     try testing.expectEqual(@as(u32, 1), st.badge());
     var txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "GIT") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Viewing ") != null);
     // The WIP row: at this width the summary is all the list shows.
     try testing.expect(std.mem.indexOf(u8, txt, "1 change(s) \u{B7} 1 new") != null);
     testing.allocator.free(txt);
@@ -2985,20 +2996,27 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expectEqual(@as(usize, 1), panes.len);
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} LOCAL         2") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25CB} feature") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25CF} main") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} WORKTREES     1") != null);
+    // The branches panel: the pill, Viewing N (2 locals + 1 worktree),
+    // the filter, LOCAL with the check on main, WORKTREES with the house.
+    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") == null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0322} LOCAL") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  \u{F062C} feature") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F062C} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0405} WORKTREES") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F02DC} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F03D7} STASHES") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F04FB} TAGS") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "git graph") == null);
     testing.allocator.free(txt);
-    // Enter on the feature row selects it and keeps the palette's focus.
+    // A click on the feature row selects it and keeps the palette's focus.
     const rows = try git_palette.rows(&f.app, f.app.frame.allocator());
     var feature_row: ?usize = null;
     for (rows, 0..) |r, i| if (r == .branch and std.mem.eql(u8, r.branch.name, "feature")) {
         feature_row = i;
     };
-    try git_palette.activate(&f.app, feature_row.?);
+    try git_palette.select(&f.app, feature_row.?);
     try testing.expectEqualStrings("feature", f.app.git_palette.selected.?);
     try testing.expect(f.app.focus == .pane);
     // Leaving through another section restores the editor.
@@ -3012,6 +3030,74 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try command.run(&f.app, .{ .static = .@"git.graph" });
     const again = try f.app.layouts.current().allPanes(f.app.frame.allocator());
     try testing.expectEqualSlices(PaneId, panes, again);
+}
+
+test "the rail carries the worker's data: a stash, two tags newest first, a remote with its forge, and each worktree's lock and dirty state" {
+    var f = try Fixture.init(120, 40);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    // The app's own `.mnml/` and the nested trees must not dirty main.
+    try f.write(".gitignore", ".mnml/\n.wt-*/\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.sh(&.{ "tag", "v1.0" });
+    try f.write("a.txt", "two\n");
+    try f.sh(&.{ "commit", "-q", "-am", "second" });
+    try f.sh(&.{ "tag", "-a", "v2.0", "-m", "release two" });
+    try f.sh(&.{ "remote", "add", "origin", "git@github.com:me/thing.git" });
+    try f.write("a.txt", "three\n");
+    try f.sh(&.{ "stash", "push", "-q", "-m", "half done" });
+    const locked = try std.fs.path.join(testing.allocator, &.{ f.root, ".wt-locked" });
+    defer testing.allocator.free(locked);
+    const dirty = try std.fs.path.join(testing.allocator, &.{ f.root, ".wt-dirty" });
+    defer testing.allocator.free(dirty);
+    try f.sh(&.{ "worktree", "add", "-q", "-b", "locked-branch", locked });
+    try f.sh(&.{ "worktree", "lock", "--reason", "keep", locked });
+    try f.sh(&.{ "worktree", "add", "-q", "-b", "dirty-branch", dirty });
+    try f.write(".wt-dirty/new.txt", "x\n");
+    try command.run(&f.app, .{ .static = .@"view.activity_git" });
+    try f.settle(4000);
+    const st = &f.app.git;
+    try testing.expect(st.rail_loaded);
+    // Stash: one, with the note.
+    try testing.expectEqual(@as(usize, 1), st.rail_stashes.len);
+    try testing.expectEqualStrings("stash@{0}", st.rail_stashes[0].ref);
+    try testing.expect(std.mem.endsWith(u8, st.rail_stashes[0].message, "half done"));
+    try testing.expect(st.rail_stashes[0].sha.len >= 7);
+    // Tags newest first; the annotated one peels to a commit sha.
+    try testing.expectEqual(@as(usize, 2), st.rail_tags.len);
+    try testing.expectEqualStrings("v2.0", st.rail_tags[0].name);
+    try testing.expect(st.rail_tags[0].annotated);
+    try testing.expectEqualStrings("v1.0", st.rail_tags[1].name);
+    try testing.expect(!st.rail_tags[1].annotated);
+    // The remote and its forge.
+    try testing.expectEqual(@as(usize, 1), st.rail_remotes.len);
+    try testing.expectEqualStrings("origin", st.rail_remotes[0].name);
+    try testing.expectEqual(remote_mod.Provider.github, st.rail_remotes[0].provider);
+    // Worktrees: main first and clean, the locked one with its reason,
+    // the dirty one flagged.
+    try testing.expectEqual(@as(usize, 3), st.rail_worktrees.len);
+    try testing.expect(st.rail_worktrees[0].main);
+    try testing.expectEqualStrings("main", st.rail_worktrees[0].branch);
+    try testing.expect(!st.rail_worktrees[0].dirty);
+    try testing.expect(!st.rail_worktrees[0].locked);
+    var seen_locked = false;
+    var seen_dirty = false;
+    for (st.rail_worktrees[1..]) |w| {
+        try testing.expect(!w.main);
+        if (std.mem.eql(u8, w.branch, "locked-branch")) {
+            seen_locked = true;
+            try testing.expect(w.locked);
+            try testing.expectEqualStrings("keep", w.lock_reason);
+            try testing.expect(!w.dirty);
+        } else if (std.mem.eql(u8, w.branch, "dirty-branch")) {
+            seen_dirty = true;
+            try testing.expect(w.dirty);
+            try testing.expect(!w.locked);
+        }
+    }
+    try testing.expect(seen_locked and seen_dirty);
 }
 
 test "git.worktree_add: Tab completes the path — the first word — and leaves the branch after it alone" {
