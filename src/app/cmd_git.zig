@@ -575,11 +575,7 @@ fn graphJumpHash(app: *App) CommandError!void {
 fn graphDetail(app: *App) CommandError!void {
     const g = try requireGraph(app);
     git.syncWip(app, g);
-    if (g.detail_open and !g.detail_focus) {
-        g.detail_focus = true;
-        app.needs_render = true;
-        return;
-    }
+    g.detail_focus = true;
     try git.openDetail(app, g);
 }
 

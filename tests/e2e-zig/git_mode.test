@@ -1,0 +1,47 @@
+# zig-only
+# Git mode (src/app/git_palette.zig): the Git section swaps the sidebar
+# for the git palette and the editor area for one graph tab per repo;
+# the detail column's `[+]` stages a file through the worker; leaving
+# through Explorer puts the tree and the editor back. The screen is
+# 120x40: the sidebar snaps to 24, the detail column is 31 wide from
+# column 89, and `[+]` sits at 116..118 on the file's row.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+write new.txt "hello\n"
+open seed.txt
+command view.activity_git
+wait 800
+expect screen contains " GIT "
+expect screen contains "⎇ main"
+expect screen contains "/ filter"
+expect screen contains "▾ LOCAL         1"
+expect screen contains "● main"
+expect screen contains "▾ WORKTREES     1"
+expect screen contains "COMMIT MESSAGE"
+expect screen contains "1 change(s) · 1 new"
+expect screen contains "Unstaged Files (1)"
+expect screen contains "? new.txt"
+expect screen contains "Staged Files (0)"
+expect screen lacks "git graph"
+# The file's [+] stages it: it moves to the Staged list.
+click 117 6
+wait 1500
+expect screen contains "Unstaged Files (0)"
+expect screen contains "Staged Files (1)"
+expect screen contains "A new.txt"
+expect screen contains "1 change(s) · 1 staged"
+# The commit box takes a click and the typed text.
+click 100 30
+type "add new"
+expect screen contains "add new"
+expect screen contains "Enter newline"
+key esc
+# Leaving through Explorer restores the tree and the editor.
+command view.activity_explorer
+expect screen lacks "LOCAL"
+expect screen lacks "COMMIT MESSAGE"
+expect pane seed.txt

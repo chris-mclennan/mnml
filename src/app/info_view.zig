@@ -179,7 +179,13 @@ fn emptyCopy(app: *App) Copy {
     return switch (app.focus) {
         .tree => .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." },
         .panel => |p| if (p == .git and app.git_palette.active) .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." } else .{ .title = "Right panel", .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
-        .pane, .overlay => .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
+        // In git mode the graph pane says nothing of its own and Rust's box
+        // shows the sidebar's words.
+        .pane => |id| if (app.git_palette.active and app.panes.get(id) != null and app.panes.get(id).?.* == .git_graph)
+            .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." }
+        else
+            .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
+        .overlay => .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
     };
 }
 

@@ -1,9 +1,10 @@
 # zig-only
-# The commit graph's detail panel (src/ui/git_graph_view.zig): enter on
-# a commit opens it with the message and the file list; j moves the
-# cursor and the panel follows; tab hands it the focus; `s` sorts by
-# the next column and the chip says so; `/` jumps by hash prefix; a
-# dirty tree puts the WIP row with its buttons first.
+# The commit graph pane (src/ui/git_graph_view.zig) in git mode: the
+# column header, the rows with their nine-char sha, the detail column
+# on the right following the cursor — a commit's message and files, or
+# the working tree with its file lists on the WIP row. `s` sorts by the
+# next column and the header carries the arrow; `/` jumps by hash
+# prefix; tab hands the keys to the detail column.
 shell git init -q -b main
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
@@ -14,38 +15,39 @@ write b.txt "two\n"
 shell git add b.txt
 shell git commit -q -m "second commit"
 command git.graph
-expect screen contains "2 commits"
-expect screen contains "GRAPH"
+wait 500
+expect screen contains "COMMIT MESSAGE"
+expect screen contains "DATE / TIME"
 expect screen contains "second commit"
 expect screen contains "first commit"
-# Enter: the detail panel for the selected (newest) commit.
-key enter
-wait 300
-expect screen contains "files (1)"
-expect screen contains "A b.txt"
-# Down: the panel follows the cursor.
+# The detail column: the newest commit's files, without a keystroke.
+expect screen contains "changed files (1):"
+expect screen contains "  A b.txt"
+# Down: the column follows the cursor.
 key j
 wait 300
-expect screen contains "A a.txt"
-expect screen lacks "A b.txt"
-# Tab focuses the panel; esc hands the focus back; esc closes it.
+expect screen contains "  A a.txt"
+expect screen lacks "  A b.txt"
+# Tab focuses the column; esc hands the keys back.
 key tab
 key esc
-key esc
-expect screen lacks "files (1)"
-# Sort by date: the chip carries the arrow; the lanes fold to a dot.
+# Sort by date: the header carries the arrow; the author column is not
+# on at this width, so the sha's turn comes next.
 key s
-expect screen contains "DATE ▼"
+expect screen contains "DATE / TIME ▼"
 key s
-expect screen contains "AUTHOR ▼"
 key s
+expect screen contains "SHA ▼"
 key s
 expect screen lacks "▼"
-# A dirty tree: the WIP row and its buttons lead the list.
+# A dirty tree: the WIP row leads the list and the column shows the
+# working tree with its Stage All button.
 write c.txt "three\n"
 command git.refresh
 wait 500
-command git.graph
-expect screen contains "WIP @ main"
-expect screen contains "[stage all]"
-expect screen contains "[commit…]"
+key g
+expect screen contains "1 change(s) · 1 new"
+expect screen contains "Unstaged Files (1)"
+expect screen contains "? c.txt"
+expect screen contains "Stage A"
+expect screen contains "▾ Commit  · (nothing staged)"

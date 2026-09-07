@@ -1,9 +1,9 @@
 # zig-only
-# The commit detail panel wraps a message body to its width. A body line
-# one or two cells wider than the panel used to slice past the text
-# (`clipStr` appends "…", so the clipped form is longer in bytes than
-# the remainder) and panic the process. Lines of every width from 20 to
-# 110 cells guarantee one of them lands on the panel's width + 1.
+# The commit detail column wraps a message body to its width. A body
+# line one or two cells wider than the column used to slice past the
+# text (`clipStr` appends "…", so the clipped form is longer in bytes
+# than the remainder) and panic the process. Lines of every width from
+# 20 to 110 cells guarantee one of them lands on the column's width + 1.
 shell git init -q -b main
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
@@ -13,10 +13,8 @@ shell printf 'wide body\n\n' > msg.txt; for n in $(seq 20 110); do printf "%${n}
 shell git commit -q -F msg.txt
 shell rm msg.txt
 command git.graph
-expect screen contains "1 commit"
+wait 500
 expect screen contains "wide body"
-key enter
-wait 300
-# The panel is open on the body; every row was cut at the panel's width.
+# The column is open on the body; every row was cut at its width.
 expect screen contains "xxxxxxxxxxxxxxxxxxxx"
 expect screen lacks "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

@@ -127,8 +127,10 @@ pub fn enter(app: *App) CommandError!void {
         git.requestStatus(app) catch {};
         git.requestRail(app) catch {};
     }
+    // Rust `open_git_graph` ends on `Focus::Pane`: the graph has the keys,
+    // the palette takes them on a click.
     if (app.activeBuffer()) |b| b.input.onBlur();
-    app.focus = .{ .panel = .git };
+    app.focus = if (app.active) |a| .{ .pane = a } else .{ .panel = .git };
     app.needs_render = true;
 }
 
@@ -311,6 +313,15 @@ fn worktreeShown(arena: Allocator, item: []const u8) Allocator.Error!struct { pa
     return .{ .path = path, .label = label, .shown = shown };
 }
 
+/// Whether two directory paths name the same place, through symlinks
+/// (`git worktree list` prints the real path; a workspace may not be).
+fn samePath(app: *App, arena: Allocator, a: []const u8, b: []const u8) bool {
+    if (std.mem.eql(u8, a, b)) return true;
+    const ra = std.Io.Dir.realPathFileAbsoluteAlloc(app.io, a, arena) catch return false;
+    const rb = std.Io.Dir.realPathFileAbsoluteAlloc(app.io, b, arena) catch return false;
+    return std.mem.eql(u8, ra, rb);
+}
+
 /// The palette's rows for this frame, on `arena`: the sections in
 /// Rust's order with the filter applied, a folded section keeping its
 /// header, a gap row after each.
@@ -328,7 +339,7 @@ pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
             for (gs.rail_worktrees, 0..) |item, i| {
                 const w = try worktreeShown(arena, item);
                 if (!matches(filter, w.label) and !matches(filter, std.fs.path.basename(w.path))) continue;
-                try out.append(arena, .{ .worktree = .{ .idx = @intCast(i), .shown = w.shown, .current = std.mem.eql(u8, w.path, repo_path) or (repo_path.len == 0 and i == 0) } });
+                try out.append(arena, .{ .worktree = .{ .idx = @intCast(i), .shown = w.shown, .current = (repo_path.len > 0 and samePath(app, arena, w.path, repo_path)) or (repo_path.len == 0 and i == 0) } });
             }
         }
         try out.append(arena, .gap);
@@ -496,7 +507,7 @@ fn jumpToRef(app: *App, name: []const u8) Allocator.Error!void {
                 git.syncWip(app, g);
                 g.cursor = g.rowOfCommit(ci);
                 g.view.center_next = true;
-                if (g.detail_open) git.requestDetail(app, g) catch {};
+                if (!g.wipSelected()) git.requestDetail(app, g) catch {};
                 const focus = app.focus;
                 app.setActive(@intCast(i));
                 app.focus = focus;

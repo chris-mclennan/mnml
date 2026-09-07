@@ -41,6 +41,7 @@ const status_view = @import("../ui/git_status_view.zig");
 const diff_view = @import("../ui/diff_view.zig");
 const git_toolbar = @import("../ui/git_toolbar.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
+const text_field = @import("../ui/text_field.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const git_palette = @import("git_palette.zig");
@@ -223,9 +224,15 @@ pub const GraphPane = struct {
     detail_arena: std.heap.ArenaAllocator,
     detail: ?Detail = null,
     detail_pending: bool = false,
-    detail_open: bool = false,
+    /// The detail column has the keys (tab), walking its file rows.
     detail_focus: bool = false,
     detail_cursor: usize = 0,
+    /// The commit box: its text (owned), caret, focus, and whether an
+    /// AI message is on its way into it.
+    wip_text: text_field.Buf = .empty,
+    wip_cursor: usize = 0,
+    wip_focused: bool = false,
+    wip_ai: bool = false,
     /// A drag override of the panel's width.
     detail_w: ?u16 = null,
     /// The working-tree row is shown (the status has changes).
@@ -238,6 +245,7 @@ pub const GraphPane = struct {
 
     pub fn deinit(self: *GraphPane) void {
         self.gpa.free(self.name);
+        self.wip_text.deinit(self.gpa);
         self.filter.deinit(self.gpa);
         self.detail_arena.deinit();
         self.arena.deinit();
@@ -844,7 +852,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                     g.order = try graph_view.sortOrder(g.arena.allocator(), l.commits, g.sort);
                     g.pending = false;
                     if (g.cursor >= g.totalRows()) g.cursor = g.totalRows() -| 1;
-                    if (g.detail_open) requestDetail(app, g) catch {};
+                    if (!g.wipSelected()) requestDetail(app, g) catch {};
                     return;
                 },
                 else => {},
@@ -1499,7 +1507,7 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             if (text.len == 0) return;
             const idx = graph_view.findByHashPrefix(g.commits, text) orelse return app.diag.fail(app.frame.allocator(), "no commit starts with {s}", .{text});
             g.cursor = g.rowOfCommit(idx);
-            if (g.detail_open) requestDetail(app, g) catch {};
+            if (!g.wipSelected()) requestDetail(app, g) catch {};
             app.needs_render = true;
         },
         .stash => try submitOp(app, try requireRepo(app), .{ .stash = if (text.len == 0) null else try gpa.dupe(u8, text) }),
@@ -2005,10 +2013,9 @@ pub fn requestDetail(app: *App, g: *GraphPane) CommandError!void {
     };
 }
 
-/// Open the detail panel on the selected row (the WIP row shows the
-/// working tree).
+/// The detail column follows the cursor: the selected commit's detail
+/// is asked for (the WIP row shows the working tree).
 pub fn openDetail(app: *App, g: *GraphPane) CommandError!void {
-    g.detail_open = true;
     g.detail_cursor = 0;
     if (!g.wipSelected()) try requestDetail(app, g);
     app.needs_render = true;
@@ -2034,21 +2041,24 @@ fn moveGraphCursor(app: *App, g: *GraphPane, to: usize) void {
     const total = g.totalRows();
     if (total == 0) return;
     g.cursor = @min(to, total - 1);
-    if (g.detail_open) {
-        g.detail_cursor = 0;
-        if (!g.wipSelected()) requestDetail(app, g) catch {};
-    }
+    g.detail_cursor = 0;
+    if (!g.wipSelected()) requestDetail(app, g) catch {};
 }
 
 /// The graph pane: motion over the virtual rows, enter opens the
-/// detail panel (the WIP row's shows the working tree), tab moves the
-/// focus into it, `d` opens the commit's diff, `s` cycles the sort,
-/// `/` jumps to a hash, `c` cherry-picks, `v` reverts, `f` filters by
-/// branch, `F` clears every filter. On the WIP row `a` / `A` / `c`
-/// stage everything, unstage everything, commit.
+/// selected commit's diff (the WIP row's: the worktree's), tab moves
+/// the focus into the detail column, `d` opens the diff, `s` cycles
+/// the sort, `/` jumps to a hash, `c` cherry-picks, `v` reverts, `f`
+/// filters by branch, `F` clears every filter. On the WIP row `a` /
+/// `A` stage and unstage everything, `c` commits what the commit box
+/// holds (the prompt when it is empty), `C` asks for an AI message.
 pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bool {
     syncWip(app, g);
-    if (g.detail_open and g.detail_focus) return detailKey(app, id, g, k);
+    if (g.wip_focused) {
+        if (g.wipSelected()) return textareaKey(app, g, k);
+        g.wip_focused = false;
+    }
+    if (g.detail_focus) return detailKey(app, id, g, k);
     const n = g.totalRows();
     switch (k.code) {
         .up => moveGraphCursor(app, g, g.cursor -| 1),
@@ -2057,16 +2067,9 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
         .page_down => moveGraphCursor(app, g, g.cursor + app.pane_rows),
         .home => moveGraphCursor(app, g, 0),
         .end => moveGraphCursor(app, g, n -| 1),
-        .enter => runToast(app, openDetail(app, g)),
-        .tab => if (g.detail_open) {
-            g.detail_focus = true;
-        } else return false,
-        .esc => {
-            if (g.detail_open) {
-                g.detail_open = false;
-                g.detail_focus = false;
-            } else try app.closePane(id, true);
-        },
+        .enter => runToast(app, showSelectedCommit(app, g)),
+        .tab => g.detail_focus = true,
+        .esc => try app.closePane(id, true),
         .char => |c| {
             if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
             switch (c) {
@@ -2079,7 +2082,8 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
                 '/' => openPrompt(app, .graph_hash, "Jump to commit (hash prefix)"),
                 'a' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.stage_all" })) else return false,
                 'A' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })) else return false,
-                'c' => runToast(app, command.run(app, .{ .static = if (g.wipSelected()) .@"git.commit" else .@"git.cherry_pick" })),
+                'c' => if (g.wipSelected()) runToast(app, commitFromTextarea(app, g)) else runToast(app, command.run(app, .{ .static = .@"git.cherry_pick" })),
+                'C' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.ai_commit" })) else return false,
                 'v' => runToast(app, command.run(app, .{ .static = .@"git.revert" })),
                 'f' => runToast(app, command.run(app, .{ .static = .@"git.graph_filter_branch" })),
                 'F' => runToast(app, command.run(app, .{ .static = .@"git.graph_filter_reset_all" })),
@@ -2094,9 +2098,56 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
     return true;
 }
 
-/// The detail panel has the keys: j/k over the files, enter opens the
-/// file's diff in this commit (the WIP row's file opens its worktree
-/// diff), tab / esc hand the focus back, `q` closes the pane.
+/// The commit box has the keys: text edits, Enter a newline, Esc
+/// blurs, Ctrl+Enter commits.
+fn textareaKey(app: *App, g: *GraphPane, k: Key) Allocator.Error!bool {
+    switch (k.code) {
+        .esc => g.wip_focused = false,
+        .enter => {
+            if (k.mods.ctrl) {
+                runToast(app, commitFromTextarea(app, g));
+            } else try text_field.insert(&g.wip_text, &g.wip_cursor, app.gpa, "\n");
+        },
+        .tab => g.wip_focused = false,
+        .up, .down => {
+            // A row up or down: the same column on the neighbouring row.
+            const rows = graph_view.textareaRows(app.frame.allocator(), g.wip_text.items, @max(g.body.w / 3, 8) -| 4) catch return true;
+            const at = graph_view.locateCursor(rows, g.wip_text.items, g.wip_cursor);
+            const target = if (k.code == .up) at.row -| 1 else @min(at.row + 1, rows.len - 1);
+            if (target == at.row) return true;
+            const r = rows[target];
+            var col: usize = 0;
+            var i = r[0];
+            while (i < r[1] and col < at.col) : (col += 1) i += std.unicode.utf8ByteSequenceLength(g.wip_text.items[i]) catch 1;
+            g.wip_cursor = i;
+        },
+        else => {
+            if (try text_field.handleKey(&g.wip_text, &g.wip_cursor, app.gpa, k) == .ignored) return false;
+        },
+    }
+    app.needs_render = true;
+    return true;
+}
+
+/// Commit what the box holds; an empty box opens the prompt instead
+/// (Rust `commit_from_active_wip_textarea_or_prompt`).
+pub fn commitFromTextarea(app: *App, g: *GraphPane) CommandError!void {
+    if (g.wip_ai) return app.diag.fail(app.frame.allocator(), "AI message still streaming — wait for it to finish", .{});
+    const text = std.mem.trim(u8, g.wip_text.items, " \t\r\n");
+    if (text.len == 0) {
+        openPrompt(app, .commit, "Commit message");
+        return;
+    }
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    try submitOp(app, repo, .{ .commit = try app.gpa.dupe(u8, text) });
+    g.wip_text.clearRetainingCapacity();
+    g.wip_cursor = 0;
+    g.wip_focused = false;
+}
+
+/// The detail column has the keys: j/k over the files, enter opens
+/// the file's diff in this commit (the WIP row's file opens its
+/// worktree diff), tab / esc hand the focus back, `q` closes the pane.
 fn detailKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bool {
     const n = detailRowCount(app, g);
     switch (k.code) {
@@ -2114,6 +2165,8 @@ fn detailKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bool 
                 'g' => g.detail_cursor = 0,
                 'G' => g.detail_cursor = n -| 1,
                 'd' => runToast(app, showSelectedCommit(app, g)),
+                's' => if (g.wipSelected()) runToast(app, stageDetailRow(app, g, true)) else return false,
+                'u' => if (g.wipSelected()) runToast(app, stageDetailRow(app, g, false)) else return false,
                 'q' => try app.closePane(id, true),
                 else => return false,
             }
@@ -2122,6 +2175,53 @@ fn detailKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bool 
     }
     app.needs_render = true;
     return true;
+}
+
+/// A working-tree file as the detail column lists it.
+pub const WipRef = struct { path: []const u8, letter: u8, staged: bool };
+
+/// The working tree's files in the detail column's order: unstaged
+/// (modified, untracked, conflicted) then staged, each A–Z by path.
+pub fn wipFiles(app: *App, arena: Allocator) Allocator.Error!struct { unstaged: []WipRef, staged: []WipRef } {
+    var un: std.ArrayListUnmanaged(WipRef) = .empty;
+    var st: std.ArrayListUnmanaged(WipRef) = .empty;
+    if (app.git.status) |status| for (status.entries) |e| {
+        switch (e.group) {
+            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true }),
+            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false }),
+            // An untracked directory's entry ends in `/`; Rust shows the name.
+            .untracked => try un.append(arena, .{ .path = std.mem.trimEnd(u8, e.path, "/"), .letter = '?', .staged = false }),
+            .conflicted => try un.append(arena, .{ .path = e.path, .letter = '!', .staged = false }),
+        }
+    };
+    const Ctx = struct {
+        fn lt(_: void, a: WipRef, b: WipRef) bool {
+            return std.mem.lessThan(u8, a.path, b.path);
+        }
+    };
+    std.mem.sort(WipRef, un.items, {}, Ctx.lt);
+    std.mem.sort(WipRef, st.items, {}, Ctx.lt);
+    return .{ .unstaged = un.items, .staged = st.items };
+}
+
+fn wipRow(app: *App, g: *GraphPane, idx: usize) Allocator.Error!?WipRef {
+    const files = try wipFiles(app, app.frame.allocator());
+    if (idx < files.unstaged.len) return files.unstaged[idx];
+    if (idx - files.unstaged.len < files.staged.len) return files.staged[idx - files.unstaged.len];
+    _ = g;
+    return null;
+}
+
+/// `s` / `u` on a working-tree row: stage or unstage that file.
+fn stageDetailRow(app: *App, g: *GraphPane, stage: bool) CommandError!void {
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    const row = (try wipRow(app, g, g.detail_cursor)) orelse return;
+    try stagePath(app, repo, row.path, stage);
+}
+
+fn stagePath(app: *App, repo: *client.Repo, path: []const u8, stage: bool) CommandError!void {
+    const copy = try app.gpa.dupe(u8, path);
+    try submitOp(app, repo, if (stage) .{ .stage = copy } else .{ .unstage = copy });
 }
 
 fn detailRowCount(app: *App, g: *GraphPane) usize {
@@ -2136,10 +2236,8 @@ fn detailRowCount(app: *App, g: *GraphPane) usize {
 fn openDetailRow(app: *App, g: *GraphPane) CommandError!void {
     const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
     if (g.wipSelected()) {
-        const st = app.git.status orelse return;
-        if (g.detail_cursor >= st.entries.len) return;
-        const e = st.entries[g.detail_cursor];
-        _ = try openDiff(app, repo, if (e.group == .staged) .staged else .file, e.path, null, null);
+        const row = (try wipRow(app, g, g.detail_cursor)) orelse return;
+        _ = try openDiff(app, repo, if (row.staged) .staged else .file, row.path, null, null);
         return;
     }
     const c = g.selected() orelse return;
@@ -2159,28 +2257,73 @@ pub fn showSelectedCommit(app: *App, g: *GraphPane) CommandError!void {
     _ = try openDiff(app, repo, .commit, null, c.hash, null);
 }
 
-/// A click in the graph pane (`.script_hit`): a column chip sorts, a
-/// WIP button acts, the divider starts a drag, a detail row selects
-/// (a second click opens it), a list row selects (a second click opens
-/// its detail; right opens the row menu).
+/// A click in the graph pane (`.script_hit`): a toolbar button runs
+/// its command, a column header sorts, the divider starts a drag, the
+/// detail column's buttons stage / unstage / commit / ask / clear, its
+/// textarea takes the keys, a file row opens its diff, a commit file
+/// row selects (a second click opens it), a list row selects (right
+/// opens the row menu). Any other press blurs the commit box.
 pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     syncWip(app, g);
+    app.needs_render = true;
+    if (git_toolbar.actionOf(hit_id)) |action| {
+        if (m.button != .left) return;
+        g.wip_focused = false;
+        const cmd: command.CommandId = switch (action) {
+            .undo => .@"git.undo",
+            .redo => .@"git.redo",
+            .pull => .@"git.pull",
+            .push => .@"git.push",
+            .fetch => .@"git.fetch",
+            .branch => .@"git.branch_menu",
+            .commit => .@"git.commit",
+            .stash => .@"git.stash",
+            .pop => .@"git.stash_pop",
+            .reflog => .@"git.reflog",
+            .refresh => return runToast(app, refreshGraph(app, g)),
+        };
+        return runToast(app, command.run(app, .{ .static = cmd }));
+    }
     if (graph_view.sortOf(hit_id)) |col| {
+        g.wip_focused = false;
         if (m.button == .left) try clickSort(app, g, col);
         return;
     }
     if (graph_view.wipButtonOf(hit_id)) |b| {
         if (m.button != .left) return;
-        runToast(app, command.run(app, .{ .static = switch (b) {
-            .stage_all => .@"git.stage_all",
-            .unstage_all => .@"git.unstage_all",
-            .commit => .@"git.commit",
-        } }));
+        switch (b) {
+            .textarea => {
+                g.wip_focused = true;
+                g.detail_focus = false;
+                return;
+            },
+            .stage_all => runToast(app, command.run(app, .{ .static = .@"git.stage_all" })),
+            .unstage_all => runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })),
+            .commit => runToast(app, commitFromTextarea(app, g)),
+            .ai_message => runToast(app, command.run(app, .{ .static = .@"git.ai_commit" })),
+            .clear => {
+                g.wip_text.clearRetainingCapacity();
+                g.wip_cursor = 0;
+            },
+        }
         return;
     }
+    g.wip_focused = false;
     if (hit_id == graph_view.divider_id) {
         if (m.button == .left) app.drag = .{ .graph_divider = id };
+        return;
+    }
+    if (graph_view.wipFileOf(hit_id)) |wf| {
+        if (m.button != .left) return;
+        const files = try wipFiles(app, app.frame.allocator());
+        const list = if (wf.staged) files.staged else files.unstaged;
+        if (wf.idx >= list.len) return;
+        const repo = app.git.repoById(g.repo) orelse return;
+        if (wf.button) return runToast(app, stagePath(app, repo, list[wf.idx].path, !wf.staged));
+        g.detail_focus = true;
+        g.detail_cursor = wf.idx + @as(usize, if (wf.staged) files.unstaged.len else 0);
+        runToast(app, voidOf(openDiff(app, repo, if (wf.staged) .staged else .file, list[wf.idx].path, null, null)));
         return;
     }
     if (graph_view.detailRowOf(hit_id)) |row| {
@@ -2188,16 +2331,12 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
         g.detail_focus = true;
         g.detail_cursor = row;
         if (was and m.button == .left) runToast(app, openDetailRow(app, g));
-        app.needs_render = true;
         return;
     }
     if (hit_id >= g.totalRows()) return;
-    const again = g.cursor == hit_id;
     g.detail_focus = false;
     moveGraphCursor(app, g, hit_id);
     if (m.button == .right) return openGraphMenu(app, m.x, m.y);
-    if (again and m.button == .left) runToast(app, openDetail(app, g));
-    app.needs_render = true;
 }
 
 fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
@@ -2221,9 +2360,14 @@ pub fn dragGraphDivider(app: *App, id: PaneId, x: u16) void {
         else => return,
     };
     if (g.body.w == 0) return;
+    // Rust's clamp: twenty cells at least, forty left for the list.
     const right = g.body.right();
-    g.detail_w = @intCast(std.math.clamp(@as(u32, right -| x) -| 1, 20, @max(@as(u32, g.body.w / 2), 20)));
+    g.detail_w = @intCast(std.math.clamp(@as(u32, right -| x) -| 1, 20, @max(@as(u32, g.body.w -| 40), 20)));
     app.needs_render = true;
+}
+
+fn voidOf(r: CommandError!PaneId) CommandError!void {
+    _ = try r;
 }
 
 /// A command reached outside `command.run`: toast the reason the same way.
@@ -2312,53 +2456,100 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
     if (app.active == id) app.pane_rows = @max(area.h -| 1, 1);
 }
 
+/// Rust `format_wip_summary`: `N change(s) · S staged · U new · ⚠ C
+/// conflict(s) · ↑a ↓b`, or `working tree clean`.
+pub fn wipSummary(arena: Allocator, st: parse.Status) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    const total = st.changeCount();
+    if (total == 0) try out.appendSlice(arena, "working tree clean") else {
+        try out.appendSlice(arena, try std.fmt.allocPrint(arena, "{d} change(s)", .{total}));
+        if (st.staged > 0) try out.appendSlice(arena, try std.fmt.allocPrint(arena, " \u{B7} {d} staged", .{st.staged}));
+        if (st.untracked > 0) try out.appendSlice(arena, try std.fmt.allocPrint(arena, " \u{B7} {d} new", .{st.untracked}));
+        if (st.conflicted > 0) try out.appendSlice(arena, try std.fmt.allocPrint(arena, " \u{B7} \u{26A0} {d} conflict(s)", .{st.conflicted}));
+    }
+    if (st.ahead > 0 or st.behind > 0) try out.appendSlice(arena, try std.fmt.allocPrint(arena, " \u{B7} \u{2191}{d} \u{2193}{d}", .{ st.ahead, st.behind }));
+    return out.items;
+}
+
+/// The filter chip over the subject column (Rust's `filter_label`).
+fn filterLabel(app: *App, g: *const GraphPane) Allocator.Error!?[]const u8 {
+    const f = g.filter;
+    if (f.branch == null and f.author == null and f.subject == null and f.since == null and f.until == null) return null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    const arena = app.frame.allocator();
+    var n: usize = 0;
+    const parts = [_]?[]const u8{
+        if (f.branch) |b| try std.fmt.allocPrint(arena, "\u{2387} {s}", .{b}) else null,
+        if (f.author) |a| try std.fmt.allocPrint(arena, "@{s}", .{a}) else null,
+        if (f.subject) |s| try std.fmt.allocPrint(arena, "~{s}", .{s}) else null,
+        if (f.since != null and f.until != null) try std.fmt.allocPrint(arena, "{s}..{s}", .{ f.since.?, f.until.? }) else if (f.since) |s| try std.fmt.allocPrint(arena, "since {s}", .{s}) else if (f.until) |u| try std.fmt.allocPrint(arena, "until {s}", .{u}) else null,
+    };
+    for (parts) |p| if (p) |text| {
+        if (n > 0) try out.appendSlice(arena, " \u{B7} ");
+        try out.appendSlice(arena, text);
+        n += 1;
+    };
+    try out.appendSlice(arena, " \u{B7} F clears");
+    return out.items;
+}
+
 /// `Pane.git_graph`.
 pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) void {
     const st = &app.git;
     syncWip(app, g);
+    if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
     const focused = app.active == id and app.focus == .pane;
-    const repo_name: []const u8 = if (st.repoById(g.repo)) |r| r.name else "";
-    const filtered = g.filter.branch != null or g.filter.author != null or g.filter.subject != null or g.filter.since != null or g.filter.until != null;
-    const header = if (g.pending and g.commits.len == 0)
-        ui.fmt(" {s} · graph · loading… ", .{repo_name})
-    else
-        ui.fmt(" {s} · {d} commit{s}{s}   ·   enter detail · tab focus · d diff · s sort · / hash · c cherry-pick · v revert · f branch · F clear ", .{ repo_name, g.commits.len, if (g.commits.len == 1) "" else "s", if (filtered) " (filtered)" else "" });
     const now = nowUnix(app);
-    const wip_label = if (g.has_wip) ui.fmt("WIP @ {s} · {d} change{s}", .{ st.branchLabel() orelse "…", st.badge(), if (st.badge() == 1) "" else "s" }) else "";
-    var detail: ?graph_view.DetailDoc = null;
-    if (g.detail_open) {
-        if (g.wipSelected()) {
-            detail = .{ .title = wip_label, .wip = true, .entries = if (st.status) |s| s.entries else &.{} };
-        } else if (g.selected()) |c| {
-            var age_buf: [16]u8 = undefined;
-            const age = parse.relativeAge(&age_buf, c.time, now);
-            const title = ui.fmt("{s} · {s} · {s}", .{ c.short(), c.author, age });
-            if (g.detail) |d| if (std.mem.eql(u8, d.sha, c.hash)) {
-                detail = .{ .title = title, .message = d.message, .files = d.files };
-            };
-            if (detail == null) detail = .{ .title = title, .pending = true };
-        }
+    const arena = ui.arena;
+    var wip: ?graph_view.WipDoc = null;
+    if (g.has_wip or st.status != null) {
+        const files = wipFiles(app, arena) catch return;
+        const un = arena.alloc(graph_view.WipFile, files.unstaged.len) catch return;
+        for (un, files.unstaged) |*o, f| o.* = .{ .path = f.path, .letter = f.letter };
+        const sd = arena.alloc(graph_view.WipFile, files.staged.len) catch return;
+        for (sd, files.staged) |*o, f| o.* = .{ .path = f.path, .letter = f.letter };
+        wip = .{
+            .branch = st.branchLabel(),
+            .summary = if (st.status) |s| (wipSummary(arena, s) catch "") else "",
+            .unstaged = un,
+            .staged = sd,
+            .commit = .{ .text = g.wip_text.items, .cursor = g.wip_cursor, .focused = g.wip_focused and focused, .ai_streaming = g.wip_ai },
+        };
     }
-    const detail_w: u16 = g.detail_w orelse (app.cfg.ui.git_graph_detail_col orelse 40);
+    var detail: ?graph_view.DetailDoc = null;
+    if (!g.wipSelected()) if (g.selected()) |c| {
+        var age_buf: [16]u8 = undefined;
+        const age = arena.dupe(u8, graph_view.humanizeAge(&age_buf, now - c.time)) catch "";
+        detail = .{ .short = c.hash[0..@min(9, c.hash.len)], .author = c.author, .age = age, .parents = c.parents, .pending = true };
+        if (g.detail) |d| if (std.mem.eql(u8, d.sha, c.hash)) {
+            detail.?.message = d.message;
+            detail.?.files = d.files;
+            detail.?.pending = false;
+        };
+    };
     const painted = graph_view.draw(ui, id, area, &g.view, .{
         .commits = g.commits,
         .lanes = g.lanes,
         .order = g.order,
         .cursor = g.cursor,
         .focused = focused,
-        .header = header,
         .lane_spacing = app.cfg.git_graph.lane_spacing,
         .now = now,
         .sort = g.sort,
+        .filter_label = filterLabel(app, g) catch null,
         .has_wip = g.has_wip,
-        .wip_label = wip_label,
+        .wip = wip,
         .detail = detail,
-        .detail_w = detail_w,
-        .detail_focus = g.detail_focus,
-        .detail_cursor = g.detail_cursor,
+        .detail_w = g.detail_w orelse app.cfg.ui.git_graph_detail_col,
+        .branch_col = app.cfg.ui.git_graph_branch_col,
+        .author_col = app.cfg.ui.git_graph_author_col,
     });
-    g.body = painted.body;
-    if (app.active == id) app.pane_rows = @max(area.h -| 2, 1);
+    // The drag measures against the whole body under the toolbar.
+    g.body = Rect.init(painted.list.x, painted.list.y, painted.list.w + painted.detail.w + @as(u16, if (painted.detail.w > 0) 1 else 0), painted.list.h);
+    if (painted.caret) |c| if (focused) {
+        app.cursor_pos = .{ .x = c.x, .y = c.y };
+    };
+    if (app.active == id) app.pane_rows = @max(painted.body.h, 1);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -2563,7 +2754,8 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     try testing.expectEqual(@as(u32, 1), st.badge());
     var txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "GIT") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "WIP @") != null);
+    // The WIP row: at this width the summary is all the list shows.
+    try testing.expect(std.mem.indexOf(u8, txt, "1 change(s) \u{B7} 1 new") != null);
     testing.allocator.free(txt);
 
     // Stage everything: the status says so.
@@ -2609,7 +2801,7 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
 }
 
 test "the graph pane lays out the log, and enter opens the commit's diff" {
-    var f = try Fixture.init(100, 24);
+    var f = try Fixture.init(140, 30);
     defer f.deinit();
     try f.sh(&.{ "init", "-q" });
     try f.write("a.txt", "one\n");
@@ -2625,21 +2817,17 @@ test "the graph pane lays out the log, and enter opens the commit's diff" {
     try testing.expectEqual(@as(usize, 2), g.commits.len);
     try testing.expectEqualStrings("second commit", g.commits[0].subject);
     try testing.expectEqual(@as(u16, 0), g.lanes[1].lane);
-    var txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "second commit") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "2 commits") != null);
-    testing.allocator.free(txt);
-    // Enter opens the detail panel: the message and the file list.
-    try f.app.handle(.{ .key = Key.named(.enter) });
-    try f.settle(2000);
-    try testing.expect(g.detail_open);
+    // The detail column follows the cursor: the newest commit's message
+    // and file list are there without a keystroke.
     try testing.expect(g.detail != null);
     try testing.expectEqualStrings("second commit", g.detail.?.message);
     try testing.expectEqual(@as(usize, 1), g.detail.?.files.len);
     try testing.expectEqualStrings("a.txt", g.detail.?.files[0].path);
-    txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "files (1)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "M a.txt") != null);
+    var txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "second commit") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "COMMIT MESSAGE") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "changed files (1):") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  M a.txt") != null);
     testing.allocator.free(txt);
     // Moving the cursor fetches the next commit's detail.
     try f.app.handle(.{ .key = Key.char('j') });
@@ -2661,7 +2849,7 @@ test "the graph pane lays out the log, and enter opens the commit's diff" {
 }
 
 test "the WIP row: a dirty tree puts it first, its buttons stage / unstage through the worker, and the cursor keeps its commit" {
-    var f = try Fixture.init(120, 24);
+    var f = try Fixture.init(140, 24);
     defer f.deinit();
     try f.sh(&.{ "init", "-q" });
     try f.write("a.txt", "one\n");
@@ -2679,7 +2867,10 @@ test "the WIP row: a dirty tree puts it first, its buttons stage / unstage throu
     try testing.expect(g.wipSelected());
     const txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "WIP @") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "[stage all]") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "1 change(s) \u{B7} 1 new") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Unstaged Files (1)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, " Stage All ") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "? b.txt") != null);
     testing.allocator.free(txt);
     // The stage-all button goes through the worker like the command.
     try graphClick(&f.app, f.app.active.?, g, graph_view.wipButtonId(.stage_all), .{ .x = 0, .y = 0, .kind = .press, .button = .left, .mods = .{} });
@@ -2723,7 +2914,7 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     const editor = try f.app.openPath(abs);
     try command.run(&f.app, .{ .static = .@"view.activity_git" });
     try testing.expect(f.app.git_palette.active);
-    try testing.expect(f.app.focus == .panel and f.app.focus.panel == .git);
+    try testing.expect(f.app.focus == .pane);
     try f.settle(2000);
     try testing.expect(st.rail_loaded);
     try testing.expectEqual(@as(usize, 2), st.rail_branches.len);
@@ -2749,7 +2940,7 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     };
     try git_palette.activate(&f.app, feature_row.?);
     try testing.expectEqualStrings("feature", f.app.git_palette.selected.?);
-    try testing.expect(f.app.focus == .panel);
+    try testing.expect(f.app.focus == .pane);
     // Leaving through another section restores the editor.
     try command.run(&f.app, .{ .static = .@"view.activity_explorer" });
     try testing.expect(!f.app.git_palette.active);

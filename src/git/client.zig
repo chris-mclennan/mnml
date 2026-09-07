@@ -432,7 +432,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
     const arena = r.arena.allocator();
     switch (job) {
         .status => {
-            const st = try git(repo, io, arena, &.{ "status", "--porcelain=v2", "-b", "--untracked-files=all" }, null);
+            // git's own untracked mode, as Rust reads it: a new directory is one
+            // `requests/` entry, not every file under it.
+            const st = try git(repo, io, arena, &.{ "status", "--porcelain=v2", "-b" }, null);
             if (!st.ok) {
                 r.payload = .{ .op = .{ .desc = "status", .ok = false, .msg = st.reason(), .refresh = false } };
                 events.post(io, .{ .git = r });
@@ -485,7 +487,8 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .log => |l| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
-            try args.appendSlice(arena, &.{ "log", "--topo-order", "--format=" ++ parse.log_format, try std.fmt.allocPrint(arena, "-n{d}", .{l.n}) });
+            // Rust's order: `--date-order` — children before parents, newest first.
+            try args.appendSlice(arena, &.{ "log", "--date-order", "--format=" ++ parse.log_format, try std.fmt.allocPrint(arena, "-n{d}", .{l.n}) });
             if (l.filter.branch) |b| try args.append(arena, b) else try args.append(arena, "--all");
             if (l.filter.author) |a| try args.append(arena, try std.fmt.allocPrint(arena, "--author={s}", .{a}));
             if (l.filter.subject) |s| try args.append(arena, try std.fmt.allocPrint(arena, "--grep={s}", .{s}));
