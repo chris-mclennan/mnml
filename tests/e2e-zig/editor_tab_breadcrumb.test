@@ -1,0 +1,23 @@
+# zig-only
+# The editor pane's chrome as the Rust editor paints it: the tab
+# ` main.rs 󰅖 ` on the strip (row 1), the breadcrumb ` src › main.rs `
+# on the row under it (src/ui/editor_view.zig). A breadcrumb segment
+# opens a Files pane at the directory it names; the tab's `󰅖` closes
+# the pane. The pane sits at column 31 (the tree is 30 wide).
+write src/main.rs "fn main() {}\ny\n"
+open src/main.rs
+command view.toggle_breadcrumb
+expect screen contains "breadcrumb on"
+expect screen contains "main.rs 󰅖"
+expect screen contains "│ src › main.rs"
+expect screen contains "  1 fn main() {}"
+# The `src` segment: a Files pane at src/.
+click 33 2
+expect pane "src"
+expect screen contains "main.rs"
+key q
+expect pane "main.rs"
+# The tab's `󰅖` closes it: nothing is open.
+click 42 1
+expect screen lacks "main.rs 󰅖"
+expect screen lacks "src › main.rs"

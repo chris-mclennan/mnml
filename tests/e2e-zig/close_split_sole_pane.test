@@ -1,10 +1,10 @@
 # zig-only
-# `view.close_split` with one window left: the window's buffer closes
-# instead of "only one split" — a pty that is the only pane goes with
-# its process, and the layout may be empty afterwards.
+# `view.close_split` on the sole pane closes it (Rust: the last leaf's
+# pane goes, no "only one split" complaint). The pty tab is painted as
+# every tab is — `  <label> 󰅖 ` — so the tab reads `sleep 30 󰅖`.
 ex term sleep 30
-expect screen contains "sleep 30$ ×"
+expect screen contains "sleep 30 󰅖"
 expect pane sleep 30
 command view.close_split
-expect screen lacks "sleep 30$"
+expect screen lacks "sleep 30 󰅖"
 expect screen lacks "only one split"

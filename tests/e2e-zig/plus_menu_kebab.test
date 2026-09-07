@@ -1,17 +1,15 @@
 # zig-only
-# The `+` menu's child rows: a click on the curation kebab `⋯` opens
-# Pin / Hide / Copy for that row. The row's hit used to be registered
-# over the glyph's cell, so clicking the glyph ran the row (only the
-# margin cell beside it reached the curation). This replays the
-# finding's drive: alpha.zig's tab puts the `+` at column 45; the child
-# menu's first row paints its kebab at column 87.
+# A right-click on the strip's `󰐕` (column 47 with ` alpha.zig 󰅖 `
+# before it — the tree is 30 wide) drops the New menu; `New ▸` opens
+# its submenu whose first row carries a `⋯` kebab; the kebab's menu
+# pins the row.
 write alpha.zig "const alpha = 1;\n"
 open alpha.zig
-rightclick 45 1
+rightclick 47 1
 expect screen contains "New"
 click 55 2
 expect screen contains "New file…"
 expect screen contains "⋯"
-click 87 2
+click 89 2
 expect screen contains "Pin to top"
 expect screen lacks "Rename…"

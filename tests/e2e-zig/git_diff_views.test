@@ -1,8 +1,11 @@
 # zig-only
-# The diff pane's three views (src/ui/diff_view.zig): `v` cycles
-# Hunk → Inline → Split and the header chips name the active one;
-# Inline shows the whole file (a line far from the change appears);
-# `/` narrows the pane to the hunks holding a string, esc clears it.
+# The diff pane's three views (src/ui/diff_view.zig), painted as the
+# Rust editor paints them: Inline is the default and shows the whole
+# file as one column (a line far from the change appears, no `@@`
+# header); `v` cycles Inline → Split → Hunk; Split shows old and new
+# side by side under a header that spans both; Hunk shows `@@` headers
+# and three lines of context only. `/` narrows the pane to the hunks
+# holding a string, esc clears it.
 shell git init -q
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
@@ -12,26 +15,35 @@ shell git commit -q -m "initial"
 shell printf "fn beta() {}\nfn two() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\nfn nine() {}\nfn omega() {}\n" > code.rs
 open code.rs
 command git.diff_file
-expect screen contains "[Hunk]"
-expect screen contains "alpha"
-expect screen contains "beta"
-# Three lines of context stop before `omega`.
-expect screen lacks "omega"
-key v
-expect screen contains "[Inline]"
+# Inline: the toolbars, the banner, the whole file, no hunk header.
+expect screen contains "Hunk   Inline   Split"
+expect screen contains "Hunk 1/1  code.rs"
+expect screen contains "Stage   Discard"
+expect screen contains "- fn alpha() {}"
+expect screen contains "+ fn beta() {}"
 expect screen contains "omega"
+expect screen lacks "@@ -1"
 key v
-expect screen contains "[Split]"
-expect screen contains "alpha"
-expect screen contains "beta"
+# Split: old on the left, new on the right, the header across both.
+expect screen contains "@@ -1"
+expect screen contains "- fn alpha() {}"
+expect screen contains "+ fn beta() {}"
+key v
+# Hunk: the `@@` header with its own chips; three lines of context
+# stop before `omega`.
+expect screen contains "@@ -1"
+expect screen contains "+1 -1"
+expect screen lacks "omega"
 command git.diff_toggle_view
-expect screen contains "[Hunk]"
-# The filter: no hunk holds `zzz`; one esc clears it (and leaves the
-# filter) and the hunk is back; a second esc would close the pane.
+expect screen contains "omega"
+expect screen lacks "@@ -1"
+# The filter: no hunk holds `zzz`, so no row shows; one esc clears it
+# (and leaves the filter) and the file is back; a second esc would
+# close the pane.
 key /
 type zzz
-expect screen contains "filter"
-expect screen contains "No hunk matches"
+expect screen contains "/ zzz_"
+expect screen lacks "alpha"
 key esc
 expect screen contains "alpha"
-expect screen lacks "No hunk matches"
+expect screen lacks "/ zzz"
