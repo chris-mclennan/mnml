@@ -63,6 +63,26 @@ pub fn openEditorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Editor", rows, x, y);
 }
 
+/// The gutter's right-click: the breakpoint on the cursor line (the
+/// press placed the cursor there) — add / remove, its condition, hit
+/// count, log message, enabled flag; then the session verbs.
+pub fn openGutterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const dap = @import("dap.zig");
+    const has, const enabled = dap.breakpointAtCursor(app);
+    const rows = try items(app, &.{
+        .{ .label = if (has) "Remove breakpoint" else "Add breakpoint", .action = .{ .command = .@"dap.toggle_breakpoint" } },
+        .{ .label = if (enabled) "Disable breakpoint" else "Enable breakpoint", .action = .{ .command = .@"dap.toggle_breakpoint_enabled" } },
+        .{ .label = "Edit condition\u{2026}", .action = .{ .command = .@"dap.toggle_breakpoint_conditional" }, .separator_before = true },
+        .{ .label = "Edit hit count\u{2026}", .action = .{ .command = .@"dap.set_breakpoint_hit_count" } },
+        .{ .label = "Add log message\u{2026}", .action = .{ .command = .@"dap.set_breakpoint_log_message" } },
+        .{ .label = "Start debugging", .action = .{ .command = .@"dap.run" }, .separator_before = true },
+        .{ .label = "Continue", .action = .{ .command = .@"dap.continue" } },
+        .{ .label = "Evaluate word under cursor", .action = .{ .command = .@"dap.evaluate_hover" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Breakpoint", rows, x, y);
+}
+
 /// The field a request-pane right-click landed on: the menu's title.
 pub const RequestField = enum {
     url,

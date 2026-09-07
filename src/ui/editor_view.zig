@@ -132,6 +132,9 @@ pub const Doc = struct {
     relative_numbers: bool = false,
     /// The cursor line's band (`ui.cursor_line`).
     cursor_line_band: bool = true,
+    /// The debugger's current line (0-based): its row wears the band
+    /// whatever `cursor_line_band` says, and the gutter's ▶.
+    stopped_line: ?u32 = null,
     /// Spaces paint `·`, a tab's first cell `→`, in `theme.whitespace`.
     show_whitespace: bool = false,
     /// Trailing spaces off the cursor line paint on the error colour.
@@ -725,7 +728,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             &.{.{ .start = 0, .end = @intCast(cells.len) }};
 
         const is_cursor_line = line == cursor_line;
-        const row_style: Style = if (is_cursor_line and doc.cursor_line_band) t.cursor_line else t.bg;
+        const is_stopped_line = doc.stopped_line != null and doc.stopped_line.? == line;
+        const row_style: Style = if ((is_cursor_line and doc.cursor_line_band) or is_stopped_line) t.cursor_line else t.bg;
         var spans = RangeCursor(Span).init(doc.spans, line_start);
         var var_spans = RangeCursor(VarSpan).init(doc.var_spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
@@ -787,6 +791,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     if (sign) |m| _ = ui.putStr(area.x, y, 1, m.glyph, Theme.onBg(m.style, row_style.bg));
                 }
                 ui.hit(gr, .{ .editor_cell = .{ .pane = pane, .line = line, .col = 0 } });
+                ui.hit(gr, .{ .gutter = .{ .pane = pane, .line = line } });
             }
 
             // Cells. `abs_x` is the display column within the line (what

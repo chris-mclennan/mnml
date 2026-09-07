@@ -49,6 +49,7 @@ const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const debug_panel = @import("debug_panel.zig");
 const debug_toolbar = @import("../ui/debug_toolbar.zig");
+const CellHit = @FieldType(@import("../ui/hit.zig").HitTarget, "editor_cell");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
@@ -1330,66 +1331,28 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => {},
             }
         },
-        .editor_cell => |cell| {
-            if (wheel) return wheelOnPane(app, cell.pane, m, count);
-            if (m.kind != .press) return;
-            // The outline and the preview reuse the cell hit: a row is a
-            // jump, a row is a scroll target.
-            if (app.panes.get(cell.pane)) |p| switch (p.*) {
-                .outline => {
-                    if (m.button == .left) {
+        .editor_cell => |cell| return editorCellMouse(app, cell, m, count, wheel),
+        // The gutter: the sign cell toggles a breakpoint on a left press,
+        // a right press opens the breakpoint menu on that line; anything
+        // else is the editor cell at column 0 (the cursor moves, a drag
+        // selects).
+        .gutter => |g| {
+            if (m.kind == .press and (m.button == .right or m.button == .left)) {
+                if (app.panes.editor(g.pane)) |e| {
+                    const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                    if (m.button == .right or m.x == r.x) {
                         if (app.overlay != .none) closeOverlay(app);
-                        outline.clickRow(app, cell.pane, cell.line, cell.col);
+                        if (app.active != g.pane) app.showPane(g.pane);
+                        const ed = e.buf.editor;
+                        const line = @min(g.line, ed.lineCount() -| 1);
+                        ed.anchor = null;
+                        ed.placeCursor(line, 0);
+                        if (m.button == .right) return context_menus.openGutterMenu(app, m.x, m.y);
+                        return dap.gutterToggle(app, g.pane, line);
                     }
-                    return;
-                },
-                .md_preview => {
-                    if (app.overlay != .none) closeOverlay(app);
-                    app.showPane(cell.pane);
-                    return;
-                },
-                else => {},
-            };
-            if (app.overlay != .none) closeOverlay(app);
-            if (app.active != cell.pane) app.showPane(cell.pane);
-            const e = app.panes.editor(cell.pane) orelse return;
-            const ed = e.buf.editor;
-            const line = @min(cell.line, ed.lineCount() - 1);
-            // The column under the pointer: the hit's first column plus the offset.
-            const hit_rect = hitRect(app, m.x, m.y) orelse return;
-            const col = cell.col + (m.x - hit_rect.x);
-            const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
-            // `ui.click_echo`: the word under a left press underlines
-            // for 120 ms — "did that click land?".
-            if (m.button == .left and app.cfg.ui.click_echo) {
-                const r = find_mod.wordAt(ed.bytes(), byte) orelse find_mod.Range{ .start = byte, .end = @min(byte + 1, ed.len()) };
-                app.click_echo = .{ .pane = cell.pane, .start = r.start, .end = r.end, .until_ms = app.now_ms + app_mod.click_echo_ms };
+                }
             }
-            switch (m.button) {
-                .right => {
-                    // Right-click inside a selection keeps it; elsewhere it moves the cursor.
-                    if (ed.selection()) |sel| {
-                        if (byte < sel[0] or byte > sel[1]) {
-                            ed.anchor = null;
-                            ed.setCursor(byte);
-                        }
-                    } else ed.setCursor(byte);
-                    try context_menus.openEditorMenu(app, m.x, m.y);
-                },
-                .middle => {
-                    ed.anchor = null;
-                    ed.setCursor(byte);
-                    // X11's middle click pastes the primary selection: `"*`.
-                    // Falls back to the unnamed register where the sink cannot read.
-                    app.clipboard.setPendingRegister('*');
-                    const text = app.clipboard.text();
-                    if (text.len > 0) {
-                        const copy = try app.frame.allocator().dupe(u8, text);
-                        _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
-                    }
-                },
-                else => try editorPress(app, cell.pane, e, byte, m),
-            }
+            return editorCellMouse(app, .{ .pane = g.pane, .line = g.line, .col = 0 }, m, count, wheel);
         },
         .tab => |tb| {
             if (wheel) return tabStripStep(app, tb.leaf, if (m.kind == .scroll_down) 1 else -1);
@@ -2169,6 +2132,72 @@ fn dropTreeFile(app: *App, idx: usize, x: u16, y: u16, copy: bool) Allocator.Err
         return;
     }
     _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+}
+
+/// The editor text under the pointer (`.editor_cell`): the wheel, a
+/// click that places the cursor (or opens the editor menu), a drag
+/// that selects. The gutter routes here too once its own presses
+/// (a breakpoint toggle, the breakpoint menu) are taken.
+fn editorCellMouse(app: *App, cell: CellHit, m: Mouse, count: u16, wheel: bool) Allocator.Error!void {
+    if (wheel) return wheelOnPane(app, cell.pane, m, count);
+    if (m.kind != .press) return;
+    // The outline and the preview reuse the cell hit: a row is a
+    // jump, a row is a scroll target.
+    if (app.panes.get(cell.pane)) |p| switch (p.*) {
+        .outline => {
+            if (m.button == .left) {
+                if (app.overlay != .none) closeOverlay(app);
+                outline.clickRow(app, cell.pane, cell.line, cell.col);
+            }
+            return;
+        },
+        .md_preview => {
+            if (app.overlay != .none) closeOverlay(app);
+            app.showPane(cell.pane);
+            return;
+        },
+        else => {},
+    };
+    if (app.overlay != .none) closeOverlay(app);
+    if (app.active != cell.pane) app.showPane(cell.pane);
+    const e = app.panes.editor(cell.pane) orelse return;
+    const ed = e.buf.editor;
+    const line = @min(cell.line, ed.lineCount() - 1);
+    // The column under the pointer: the hit's first column plus the offset.
+    const hit_rect = hitRect(app, m.x, m.y) orelse return;
+    const col = cell.col + (m.x - hit_rect.x);
+    const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+    // `ui.click_echo`: the word under a left press underlines
+    // for 120 ms — "did that click land?".
+    if (m.button == .left and app.cfg.ui.click_echo) {
+        const r = find_mod.wordAt(ed.bytes(), byte) orelse find_mod.Range{ .start = byte, .end = @min(byte + 1, ed.len()) };
+        app.click_echo = .{ .pane = cell.pane, .start = r.start, .end = r.end, .until_ms = app.now_ms + app_mod.click_echo_ms };
+    }
+    switch (m.button) {
+        .right => {
+            // Right-click inside a selection keeps it; elsewhere it moves the cursor.
+            if (ed.selection()) |sel| {
+                if (byte < sel[0] or byte > sel[1]) {
+                    ed.anchor = null;
+                    ed.setCursor(byte);
+                }
+            } else ed.setCursor(byte);
+            try context_menus.openEditorMenu(app, m.x, m.y);
+        },
+        .middle => {
+            ed.anchor = null;
+            ed.setCursor(byte);
+            // X11's middle click pastes the primary selection: `"*`.
+            // Falls back to the unnamed register where the sink cannot read.
+            app.clipboard.setPendingRegister('*');
+            const text = app.clipboard.text();
+            if (text.len > 0) {
+                const copy = try app.frame.allocator().dupe(u8, text);
+                _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
+            }
+        },
+        else => try editorPress(app, cell.pane, e, byte, m),
+    }
 }
 
 fn hitRect(app: *App, x: u16, y: u16) ?Rect {

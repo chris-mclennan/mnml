@@ -242,6 +242,30 @@ pub fn toggleBreakpointAt(app: *App, path: []const u8, line: u32) CommandError!v
     syncBreakpoints(app, path);
 }
 
+/// The gutter's sign cell: flip the breakpoint on `line` of the pane's file.
+pub fn gutterToggle(app: *App, pane: PaneId, line: u32) Allocator.Error!void {
+    const e = app.panes.editor(pane) orelse return;
+    const path = e.buf.doc.path orelse {
+        app.toast("breakpoints need a saved file", .{});
+        return;
+    };
+    const copy = try app.frame.allocator().dupe(u8, path);
+    toggleBreakpointAt(app, copy, line) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
+/// Whether the cursor line has a breakpoint, and whether it is enabled
+/// (the gutter menu's words).
+pub fn breakpointAtCursor(app: *App) struct { bool, bool } {
+    const e = app.activeEditor() orelse return .{ false, true };
+    const path = e.buf.doc.path orelse return .{ false, true };
+    const line: u32 = @intCast(e.buf.editor.currentLine());
+    for (app.dap.bpsFor(path)) |b| if (b.line == line) return .{ true, b.enabled };
+    return .{ false, true };
+}
+
 /// `dap.toggle_breakpoint_enabled`: a disabled breakpoint keeps its
 /// condition and leaves the adapter's list.
 pub fn toggleEnabled(app: *App) CommandError!void {
@@ -699,6 +723,101 @@ pub fn evaluateHover(app: *App) CommandError!void {
     if (try hoverAtCursor(app)) return;
     if (app.dap.session == null or app.dap.session.?.stopped == null) return app.diag.fail(app.frame.allocator(), "dap: not stopped", .{});
     return app.diag.fail(app.frame.allocator(), "dap: no word under the cursor", .{});
+}
+
+/// The stopped frame's variable named `word`, from the scopes the last
+/// stop fetched (no round trip): its scope, type and value.
+pub const KnownValue = struct { scope: []const u8, ty: ?[]const u8, value: []const u8 };
+
+pub fn valueOfWord(app: *App, word: []const u8) ?KnownValue {
+    const s = app.dap.session orelse return null;
+    if (s.stopped == null) return null;
+    for (s.scopes) |sc| {
+        const vars = s.variables.get(sc.variables_reference) orelse continue;
+        for (vars) |v| if (std.mem.eql(u8, v.name, word)) return .{ .scope = sc.name, .ty = v.ty, .value = v.value };
+    }
+    return null;
+}
+
+/// The hover tip for an editor cell while stopped: `x: int = 1` with
+/// the scope beneath; null when the word under the cell is not a
+/// variable of the stop (the caller paints its usual tip).
+pub fn hoverValue(app: *App, arena: Allocator, pane: PaneId, line: u32, col: u32) Allocator.Error!?@import("../ui/tooltip.zig").Tip {
+    const s = app.dap.session orelse return null;
+    if (s.stopped == null) return null;
+    const e = app.panes.editor(pane) orelse return null;
+    const ed = e.buf.editor;
+    if (line >= ed.lineCount()) return null;
+    const byte = @min(ed.lineStart(line) + col, ed.lineEnd(line));
+    const r = find_mod.wordAt(ed.bytes(), byte) orelse return null;
+    const word = ed.bytes()[r.start..r.end];
+    const known = valueOfWord(app, word) orelse return null;
+    return .{
+        .title = if (known.ty) |t| try std.fmt.allocPrint(arena, "{s}: {s} = {s}", .{ word, t, known.value }) else try std.fmt.allocPrint(arena, "{s} = {s}", .{ word, known.value }),
+        .detail = try std.fmt.allocPrint(arena, "{s} \u{B7} debugger value \u{B7} right-click the gutter: breakpoints", .{known.scope}),
+    };
+}
+
+/// The debugger's current line in `e`'s file, for the row band.
+pub fn stoppedLine(app: *App, e: *EditorPane) ?u32 {
+    const a = app.dap.arrow orelse return null;
+    const path = e.buf.doc.path orelse return null;
+    return if (std.mem.eql(u8, a.path, path)) a.line else null;
+}
+
+/// Inline values (`editor.inline_values`): while stopped in `e`'s file,
+/// every line from a screenful above the stop down to it gets
+/// `  name = value` after its text for each variable of the stop named
+/// on it (whole words, once each), dimmed. Sorted by byte. Frame arena.
+pub fn inlineValuesFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme) Allocator.Error![]editor_view.VirtualText {
+    if (!app.cfg.editor.inline_values) return &.{};
+    const s = app.dap.session orelse return &.{};
+    if (s.stopped == null) return &.{};
+    const stop = stoppedLine(app, e) orelse return &.{};
+    const ed = e.buf.editor;
+    if (stop >= ed.lineCount()) return &.{};
+    var names: std.ArrayListUnmanaged(struct { name: []const u8, value: []const u8 }) = .empty;
+    for (s.scopes) |sc| {
+        const vars = s.variables.get(sc.variables_reference) orelse continue;
+        for (vars) |v| {
+            var seen = false;
+            for (names.items) |n| if (std.mem.eql(u8, n.name, v.name)) {
+                seen = true;
+            };
+            if (!seen and v.name.len > 0) try names.append(arena, .{ .name = v.name, .value = v.value });
+        }
+    }
+    if (names.items.len == 0) return &.{};
+    var style = theme.muted;
+    style.italic = true;
+    var out: std.ArrayListUnmanaged(editor_view.VirtualText) = .empty;
+    const text = ed.bytes();
+    const first: u32 = stop -| 60;
+    var line = first;
+    while (line <= stop) : (line += 1) {
+        const ls = ed.lineStart(line);
+        const le = ed.lineEnd(line);
+        const lt = text[ls..le];
+        var parts: std.ArrayListUnmanaged(u8) = .empty;
+        for (names.items) |n| if (hasWord(lt, n.name)) {
+            try parts.appendSlice(arena, if (parts.items.len == 0) "  " else ", ");
+            try parts.print(arena, "{s} = {s}", .{ n.name, n.value });
+        };
+        if (parts.items.len > 0) try out.append(arena, .{ .byte = le, .text = parts.items, .style = style });
+    }
+    return out.items;
+}
+
+fn hasWord(text: []const u8, word: []const u8) bool {
+    var i: usize = 0;
+    while (i + word.len <= text.len) {
+        const at = std.mem.indexOfPos(u8, text, i, word) orelse return false;
+        const before_ok = at == 0 or !find_mod.isWord(text[at - 1]);
+        const after_ok = at + word.len >= text.len or !find_mod.isWord(text[at + word.len]);
+        if (before_ok and after_ok) return true;
+        i = at + 1;
+    }
+    return false;
 }
 
 /// `dap.toggle_section` on a composite variable: expand or collapse it.
@@ -1496,6 +1615,58 @@ test "conditional + hit-count prompts record on the line; empty input clears" {
     try testing.expectEqualStrings(">= 5", app.dap.bpsFor("/tmp/loop.py")[0].hit_condition.?);
 }
 
+test "gutter: the sign glyphs per breakpoint kind, a disabled or unverified one muted; the sign cell toggles on a left press, a right press opens the breakpoint menu" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/g.py");
+    try e.buf.editor.setText("a = 1\nb = 2\nc = 3\nd = 4\n");
+    try acceptCondition(&app, "/tmp/g.py", 0, "a > 0");
+    try acceptLogMessage(&app, "/tmp/g.py", 1, "b is {b}");
+    e.buf.editor.placeCursor(2, 0);
+    try command.run(&app, .{ .static = .@"dap.toggle_breakpoint" });
+    try command.run(&app, .{ .static = .@"dap.toggle_breakpoint_enabled" });
+    try testing.expectEqualStrings("breakpoint line 3: disabled", app.lastToast().?);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const marks = try marksFor(&app, arena.allocator(), "/tmp/g.py", &app.theme, false);
+    try testing.expectEqual(@as(usize, 3), marks.len);
+    try testing.expectEqualStrings("\u{25D0}", marks[0].glyph);
+    try testing.expectEqualStrings("\u{25C6}", marks[1].glyph);
+    try testing.expectEqualStrings("\u{25CB}", marks[2].glyph);
+    try testing.expect(std.meta.eql(marks[2].style, app.theme.muted));
+    try testing.expect(std.meta.eql(marks[0].style, app.theme.error_fg));
+    const ascii = try marksFor(&app, arena.allocator(), "/tmp/g.py", &app.theme, true);
+    try testing.expectEqualStrings("#", ascii[0].glyph);
+    try testing.expectEqualStrings("@", ascii[1].glyph);
+    try testing.expectEqualStrings("o", ascii[2].glyph);
+    // The gutter registers a hit per row; line 4's sign cell toggles.
+    try app.render();
+    var gutter: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .gutter and h.target.gutter.line == 3) {
+        gutter = h.rect;
+    };
+    const g = gutter.?;
+    try app.handle(.{ .mouse = .{ .x = g.x, .y = g.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = g.x, .y = g.y, .kind = .release, .button = .left } });
+    try testing.expectEqualStrings("breakpoint set: line 4", app.lastToast().?);
+    try testing.expectEqual(@as(usize, 4), app.dap.bpsFor("/tmp/g.py").len);
+    // A press on the number cell only moves the cursor.
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .release, .button = .left } });
+    try testing.expectEqual(@as(usize, 4), app.dap.bpsFor("/tmp/g.py").len);
+    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    // A right press opens the breakpoint menu for that line.
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Breakpoint", app.overlay.menu.title);
+    try testing.expectEqualStrings("Remove breakpoint", app.overlay.menu.items[0].label);
+    try testing.expectEqual(@as(usize, 3), e.buf.editor.currentLine());
+    for (app.overlay.menu.items) |it| try testing.expect(it.action == .command);
+}
+
 test "console without a session: entries land as no-session, ↑↓ walk the history, Ctrl+L clears, Esc leaves" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
     defer app.deinit();
@@ -1889,6 +2060,35 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
     try testing.expectEqualStrings("int", s.watch_results.get("x + 100").?.ty.?);
     try testing.expectEqualStrings("hello", s.output.items[0].text);
     try testing.expectEqualStrings("stdout", s.output.items[0].category);
+
+    // Editor integration at the stop: the band on line 4, `  x = 1`
+    // after every line naming x up to it, the hover tip for x, and
+    // `K` (dap.evaluate_hover) into the hover box.
+    try testing.expectEqual(@as(?u32, 3), stoppedLine(&app, ed_pane));
+    const inline_vals = try inlineValuesFor(&app, app.frame.allocator(), ed_pane, &app.theme);
+    try testing.expectEqual(@as(usize, 3), inline_vals.len);
+    try testing.expectEqualStrings("  x = 1", inline_vals[0].text);
+    try testing.expectEqual(ed_pane.buf.editor.lineEnd(0), inline_vals[0].byte);
+    try testing.expectEqualStrings("  p = {a=1, b=\"two\"}", inline_vals[1].text);
+    try testing.expectEqualStrings("  x = 1", inline_vals[2].text);
+    try testing.expectEqual(ed_pane.buf.editor.lineEnd(3), inline_vals[2].byte);
+    app.cfg.editor.inline_values = false;
+    try testing.expectEqual(@as(usize, 0), (try inlineValuesFor(&app, app.frame.allocator(), ed_pane, &app.theme)).len);
+    app.cfg.editor.inline_values = true;
+    const tip = (try hoverValue(&app, app.frame.allocator(), app.active.?, 3, 0)).?;
+    try testing.expectEqualStrings("x: int = 1", tip.title);
+    try testing.expect(std.mem.startsWith(u8, tip.detail.?, "Locals"));
+    try testing.expect((try hoverValue(&app, app.frame.allocator(), app.active.?, 2, 1)) == null);
+    ed_pane.buf.editor.placeCursor(3, 0);
+    try command.run(&app, .{ .static = .@"dap.evaluate_hover" });
+    const CondHover = struct {
+        fn shown(a: *App) bool {
+            return a.lsp.hover != null;
+        }
+    };
+    try pumpUntil(&app, &app, CondHover.shown, 10_000);
+    try testing.expectEqualStrings("x: int = 1", app.lsp.hover.?.pages[0][0]);
+    lsp.closeHover(&app);
 
     // Expanding the struct fetches its fields.
     try s.expanded.put(gpa, 1000, {});

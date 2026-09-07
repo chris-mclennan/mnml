@@ -91,6 +91,9 @@ pub const HitTarget = union(enum) {
     /// `col` the byte offset of the grapheme under the cell within that
     /// line (the line's length for cells past its end).
     editor_cell: struct { pane: PaneId, line: u32, col: u32 },
+    /// The gutter of an editor row (`editor_view.zig`), registered over
+    /// the row's `.editor_cell` so it wins: a breakpoint's home.
+    gutter: struct { pane: PaneId, line: u32 },
     overlay_item: u32,
     dock: struct { id: u32, part: DockPart },
     /// A row of the activity bar (`ui/activity_bar.zig`): a section's
@@ -130,6 +133,7 @@ pub const HitTarget = union(enum) {
             .menu_item => |v| try w.print(":{d}:{d}", .{ v.menu, v.idx }),
             .script_hit => |v| try w.print(":{d}:{d}", .{ v.pane, v.id }),
             .editor_cell => |v| try w.print(":{d}:{d}:{d}", .{ v.pane, v.line, v.col }),
+            .gutter => |v| try w.print(":{d}:{d}", .{ v.pane, v.line }),
             .dock => |v| try w.print(":{d}:{s}", .{ v.id, @tagName(v.part) }),
             .rail => |v| switch (v) {
                 .section => |s| try w.print(":{s}", .{@tagName(s)}),
@@ -277,6 +281,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("menu_item:1:5", .{ .menu_item = .{ .menu = 1, .idx = 5 } });
     try expectLabel("script_hit:3:9", .{ .script_hit = .{ .pane = 3, .id = 9 } });
     try expectLabel("editor_cell:0:12:4", .{ .editor_cell = .{ .pane = 0, .line = 12, .col = 4 } });
+    try expectLabel("gutter:0:12", .{ .gutter = .{ .pane = 0, .line = 12 } });
     try expectLabel("overlay_item:2", .{ .overlay_item = 2 });
     try expectLabel("statusline_seg:1", .{ .statusline_seg = 1 });
     try expectLabel("tree_node:8", .{ .tree_node = 8 });

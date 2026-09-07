@@ -72,6 +72,9 @@ pub const Editor = struct {
     format_on_type: bool = false,
     autosave_on_focus_loss: bool = false,
     inlay_hints: bool = true,
+    /// // changed (debug-ui): while the debugger is stopped, the values
+    /// of the scope's variables named on a line paint after its text.
+    inline_values: bool = true,
     cursor_blink: bool = false,
     semantic_tokens_viewport: bool = false,
     // changed: the Rust config had only the viewport switch; the layer

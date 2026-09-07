@@ -1123,6 +1123,27 @@ fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
     _ = ui.putStrRight(rect.right(), rect.bottom() - 1, rect.w, hint, ui.theme.current_match);
 }
 
+/// Two sorted virtual-text lists as one, by byte (the debugger's inline
+/// values after the language server's hints at the same byte).
+fn mergeVirtual(arena: Allocator, a: []const editor_view.VirtualText, b: []const editor_view.VirtualText) Allocator.Error![]const editor_view.VirtualText {
+    if (b.len == 0) return a;
+    if (a.len == 0) return b;
+    const out = try arena.alloc(editor_view.VirtualText, a.len + b.len);
+    var i: usize = 0;
+    var j: usize = 0;
+    var k: usize = 0;
+    while (i < a.len or j < b.len) : (k += 1) {
+        if (j >= b.len or (i < a.len and a[i].byte <= b[j].byte)) {
+            out[k] = a[i];
+            i += 1;
+        } else {
+            out[k] = b[j];
+            j += 1;
+        }
+    }
+    return out;
+}
+
 /// The gutter's marks, in priority order: the debugger's signs first (a
 /// breakpoint, the ▶ of a stop), then a diagnostic's dot on the lines
 /// they leave, then git's change bars — the view paints the first sign
@@ -1288,7 +1309,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
-        .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
+        .virtual_text = try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)),
+        .stopped_line = dap.stoppedLine(app, e),
         .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
         // ── ui toggles ──
         .relative_numbers = app.cfg.ui.relative_line_numbers,
@@ -1677,8 +1699,12 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     try t.expectEqual(@as(u32, 0), app.hits.at(3, 1).?.tab.leaf);
     try t.expectEqual(@as(u32, 1), app.hits.at(64, 1).?.tab.leaf);
     try t.expect(app.hits.at(60, 10).? == .divider);
-    try t.expect(app.hits.at(3, 2).? == .editor_cell);
-    try t.expectEqual(@as(u32, 0), app.hits.at(3, 2).?.editor_cell.line);
+    // The gutter is its own hit (a breakpoint's home); the text past it
+    // is the cell.
+    try t.expect(app.hits.at(3, 2).? == .gutter);
+    try t.expectEqual(@as(u32, 0), app.hits.at(3, 2).?.gutter.line);
+    try t.expect(app.hits.at(9, 2).? == .editor_cell);
+    try t.expectEqual(@as(u32, 0), app.hits.at(9, 2).?.editor_cell.line);
     try t.expectEqual(statusline.seg_mode, app.hits.at(2, 38).?.statusline_seg);
     try t.expect(app.hits.at(60, 38) == null);
 }
