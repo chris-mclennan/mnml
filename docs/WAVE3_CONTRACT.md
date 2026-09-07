@@ -3230,7 +3230,10 @@ never driven by anyone, so `docs/ui-spec/zig-debug-*.txt` are the spec
 - `// changed (keys):` the vim profile gets nvim-dap's chords as `.vim`
   keys (`<leader>d b B l c o i O p R t r w u h`) plus a `+debug`
   which-key group; the F-keys stay `.both`. Pinned in
-  `src/app/cmd_dap.zig`; the table is in `docs/KEYMAP_PROFILES.md`.
+  `src/app/cmd_dap.zig`; the table is in `docs/KEYMAP_PROFILES.md`. The
+  group is `vim_only` (`whichkey.Entry`): `lookupIn` / `continuations`
+  take the profile, so the standard `Ctrl+K` popup keeps Rust's rows
+  (`steps-whichkey` stays at 0) and `<leader>d` is a vim door only.
 - `// changed (config / settings):` `editor.inline_values` (Settings →
   Editor "Inline debugger values"), `ui.debug_toolbar` (Settings → UI
   "Debug toolbar strip"); `docs/CONFIG.md`.

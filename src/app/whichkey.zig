@@ -26,7 +26,8 @@ pub const Node = union(enum) {
     }
 };
 
-pub const Entry = struct { key: u8, node: Node };
+/// `vim_only`: shown and reachable in the vim profile only.
+pub const Entry = struct { key: u8, node: Node, vim_only: bool = false };
 
 fn cmd(key: u8, id: CommandId, label: []const u8) Entry {
     return .{ .key = key, .node = .{ .cmd = .{ .id = id, .label = label } } };
@@ -38,6 +39,12 @@ fn dead(key: u8, id: []const u8, label: []const u8) Entry {
 
 fn group(key: u8, label: []const u8, kids: []const Entry) Entry {
     return .{ .key = key, .node = .{ .group = .{ .label = label, .kids = kids } } };
+}
+
+/// A group the vim profile alone shows — nvim-dap's `<leader>d` is a
+/// Neovim door; the standard profile's `Ctrl+K` popup keeps Rust's rows.
+fn groupVim(key: u8, label: []const u8, kids: []const Entry) Entry {
+    return .{ .key = key, .vim_only = true, .node = .{ .group = .{ .label = label, .kids = kids } } };
 }
 
 pub const root: Node = .{
@@ -80,7 +87,7 @@ pub const root: Node = .{
                 cmd('L', .@"view.move_section_right", "section → right side"),
             }),
             // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
-            group('d', "+debug", &.{
+            groupVim('d', "+debug", &.{
                 cmd('b', .@"dap.toggle_breakpoint", "toggle breakpoint"),
                 cmd('B', .@"dap.toggle_breakpoint_conditional", "conditional breakpoint"),
                 cmd('l', .@"dap.set_breakpoint_log_message", "log point"),
@@ -259,13 +266,20 @@ pub const State = struct {
     }
 };
 
+/// The node at `path` in the vim profile's tree (every entry).
 pub fn lookup(path: []const u8) ?*const Node {
+    return lookupIn(path, true);
+}
+
+/// The node at `path`; under the standard profile (`vim = false`) a
+/// `vim_only` entry is not there.
+pub fn lookupIn(path: []const u8, vim: bool) ?*const Node {
     var node: *const Node = &root;
     for (path) |ch| {
         switch (node.*) {
             .group => |g| {
                 node = for (g.kids) |*k| {
-                    if (k.key == ch) break &k.node;
+                    if (k.key == ch and (vim or !k.vim_only)) break &k.node;
                 } else return null;
             },
             .cmd, .dead => return null,
@@ -274,13 +288,27 @@ pub fn lookup(path: []const u8) ?*const Node {
     return node;
 }
 
-/// The continuations at `path`; empty when it is not a group.
-pub fn continuations(path: []const u8) []const Entry {
-    const n = lookup(path) orelse return &.{};
-    return switch (n.*) {
+/// The continuations at `path` for the profile; empty when it is not
+/// a group. Frame-arena copy when a `vim_only` entry is dropped.
+pub fn continuations(arena: std.mem.Allocator, path: []const u8, vim: bool) []const Entry {
+    const n = lookupIn(path, vim) orelse return &.{};
+    const kids = switch (n.*) {
         .group => |g| g.kids,
-        .cmd, .dead => &.{},
+        .cmd, .dead => return &.{},
     };
+    if (vim) return kids;
+    var any = false;
+    for (kids) |k| if (k.vim_only) {
+        any = true;
+    };
+    if (!any) return kids;
+    var out = arena.alloc(Entry, kids.len) catch return kids;
+    var n_out: usize = 0;
+    for (kids) |k| if (!k.vim_only) {
+        out[n_out] = k;
+        n_out += 1;
+    };
+    return out[0..n_out];
 }
 
 test "leader tree: root groups, descend, leaves, dead ends" {
@@ -289,8 +317,17 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expectEqual(CommandId.@"view.split_right", lookup("sv").?.cmd.id);
     try std.testing.expect(lookup("zz") == null);
     try std.testing.expect(lookup("svx") == null);
-    try std.testing.expect(continuations("s").len == 11);
-    try std.testing.expect(continuations("sv").len == 0);
+    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 11);
+    try std.testing.expect(continuations(std.testing.allocator, "sv", true).len == 0);
+    // The +debug group is the vim profile's; the standard popup keeps Rust's rows.
+    try std.testing.expect(lookupIn("d", true) != null);
+    try std.testing.expect(lookupIn("d", false) == null);
+    try std.testing.expect(lookupIn("db", false) == null);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const std_root = continuations(arena_state.allocator(), "", false);
+    for (std_root) |e| try std.testing.expect(e.key != 'd');
+    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 1, std_root.len);
 }
 
 test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves ? B m p o, tr, iE and the t leaves" {

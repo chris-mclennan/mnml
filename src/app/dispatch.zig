@@ -522,7 +522,7 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             // entry of the which-key menu itself (`space n`, `space s v`):
             // the popup owns every key under an armed leader, however
             // fast it was typed.
-            const menu = if (!was_first and k.code != .esc) leaderLookup(app.chord.seq[0..app.chord.len]) else null;
+            const menu = if (!was_first and k.code != .esc) leaderLookup(app.chord.seq[0..app.chord.len], app.input_style == .vim) else null;
             app.chord.clear(app.gpa);
             if (menu) |hit| {
                 if (fallback) |fb| freeTarget(app, fb);
@@ -606,7 +606,7 @@ pub fn expireChords(app: *App) Allocator.Error!void {
     if (app.chord.deadline_ms == null) return;
     const fallback = app.chord.fallback;
     app.chord.fallback = null;
-    const menu = if (fallback == null) leaderLookup(app.chord.seq[0..app.chord.len]) else null;
+    const menu = if (fallback == null) leaderLookup(app.chord.seq[0..app.chord.len], app.input_style == .vim) else null;
     app.chord.clear(app.gpa);
     if (fallback) |fb| {
         defer freeTarget(app, fb);
@@ -620,7 +620,7 @@ const LeaderHit = struct { node: *const whichkey.Node, path: [whichkey.max_depth
 /// The which-key node a chord chain names: `seq[0]` the bare leader and
 /// every later chord a plain char (shifted letters are the uppercase
 /// entries — `space T`).
-fn leaderLookup(seq: []const Chord) ?LeaderHit {
+fn leaderLookup(seq: []const Chord, vim: bool) ?LeaderHit {
     if (seq.len < 2 or seq.len - 1 > whichkey.max_depth) return null;
     if (!seq[0].eql(Chord.of(Key.char(' ')))) return null;
     var hit: LeaderHit = .{ .node = undefined, .path = undefined, .len = seq.len - 1 };
@@ -632,7 +632,7 @@ fn leaderLookup(seq: []const Chord) ?LeaderHit {
         if (c.mods.ctrl or c.mods.alt or c.mods.super or ch >= 128) return null;
         hit.path[i] = if (c.mods.shift and ch >= 'a' and ch <= 'z') @intCast(ch - ('a' - 'A')) else @intCast(ch);
     }
-    hit.node = whichkey.lookup(hit.path[0..hit.len]) orelse return null;
+    hit.node = whichkey.lookupIn(hit.path[0..hit.len], vim) orelse return null;
     return hit;
 }
 
@@ -830,7 +830,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             if (c >= 128 or w.len >= whichkey.max_depth) return closeOverlay(app);
             w.path[w.len] = @intCast(c);
             w.len += 1;
-            const node = whichkey.lookup(w.slice()) orelse return closeOverlay(app);
+            const node = whichkey.lookupIn(w.slice(), app.input_style == .vim) orelse return closeOverlay(app);
             switch (node.*) {
                 .group => {},
                 .dead => |d| {
@@ -1419,7 +1419,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .picker => try cmd_picker.accept(app, i),
                 .help => try help_app.click(app, i),
                 .which_key => |*w| {
-                    const kids = whichkey.continuations(w.slice());
+                    const kids = whichkey.continuations(app.frame.allocator(), w.slice(), app.input_style == .vim);
                     if (i >= kids.len) return;
                     try overlayKey(app, Key.char(kids[i].key));
                 },

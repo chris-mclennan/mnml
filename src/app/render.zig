@@ -1437,7 +1437,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             // Rust's title is the leader and the keys typed so far.
             const path = w.slice();
             const title: []const u8 = if (path.len == 0) "<leader>" else ui.fmt("<leader> {s}", .{path});
-            const kids = whichkey.continuations(path);
+            const kids = whichkey.continuations(ui.arena, path, app.input_style == .vim);
             const entries = try ui.arena.alloc(which_key.Entry, kids.len);
             for (kids, 0..) |k, i| {
                 const key = try ui.arena.alloc(u8, 1);
