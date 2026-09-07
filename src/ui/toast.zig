@@ -1,14 +1,19 @@
 //! Toasts — the notification stack in the bottom-right corner, each a
-//! small bordered box, the newest closest to the statusline. The border
-//! carries the level: info and warn in the calm muted color, an error
-//! in red so a failure stands out. At most five paint; past that the
-//! oldest slot becomes `+K more…` so a burst never covers the pane.
+//! one-row bordered box, the newest against the statusline, as Rust's
+//! `toast_stack` paints them: a square frame with ` × ` set into its top
+//! edge (click anywhere on the box to dismiss), the text clipped to one
+//! row with an ellipsis rather than wrapped; a message that repeats
+//! while its box is up bumps that box instead of stacking a twin (the
+//! app coalesces). The border carries the level: info and warn in the calm
+//! muted color, an error in red so a failure stands out. At most five
+//! paint; past that the oldest slot becomes `+K more…` so a burst never
+//! covers the pane.
 //!
 //! Each box registers `.button(button_base + i)` — click to dismiss —
 //! in the same statement as its paint. The app passes the region above
-//! the statusline; the stack keeps one spacer row above it and one
-//! cell of margin on the right, and paints nothing at all on a screen
-//! too small to hold a box.
+//! the statusline; the stack sits on its last row and keeps one cell of
+//! margin on the right, and paints nothing at all on a screen too small
+//! to hold a box.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -24,11 +29,10 @@ pub const Level = enum { info, warn, err };
 pub const Toast = struct { text: []const u8, level: Level = .info };
 
 pub const max_width: u16 = 64;
-pub const min_width: u16 = 20;
 pub const max_visible: usize = 5;
-pub const max_text_rows: u16 = 4;
 pub const right_margin: u16 = 1;
-pub const bottom_margin: u16 = 1;
+/// The text cap: the box less its frame and the pad each side.
+pub const max_text: u16 = max_width - 4;
 /// `.button(button_base + i)` dismisses toast `i`.
 pub const button_base: u32 = 0x7000_0000;
 /// The Undo chip's hit: one below the toasts' range.
@@ -43,31 +47,65 @@ pub fn borderStyle(t: *const Theme, level: Level) Style {
     };
 }
 
+/// Rust's cap is in chars, not cells (`chars().count()` against
+/// `MAX_WIDTH - 4`): past it the first `max_text - 1` chars and an
+/// ellipsis. A newline inside the text — rust-analyzer's `Failed to
+/// discover workspace.\nConsider…` — costs a char and paints nothing,
+/// exactly as under Rust, so the two screens clip at the same letter.
+fn clipChars(ui: Ui, s: []const u8) []const u8 {
+    const n = std.unicode.utf8CountCodepoints(s) catch s.len;
+    if (n <= max_text) return s;
+    var it = std.unicode.Utf8View.initUnchecked(s).iterator();
+    var taken: usize = 0;
+    var end: usize = 0;
+    while (taken + 1 < max_text) : (taken += 1) {
+        const cp = it.nextCodepointSlice() orelse break;
+        end += cp.len;
+    }
+    return ui.fmt("{s}{s}", .{ s[0..end], if (ui.ascii) "..." else "…" });
+}
+
+/// `s` without its line breaks: the row is one line.
+fn oneRow(ui: Ui, s: []const u8) []const u8 {
+    if (std.mem.indexOfAny(u8, s, "\r\n") == null) return s;
+    const out = ui.arena.alloc(u8, s.len) catch return s;
+    var n: usize = 0;
+    for (s) |c| if (c != '\n' and c != '\r') {
+        out[n] = c;
+        n += 1;
+    };
+    return out[0..n];
+}
+
 /// Paints one box whose bottom edge is `bottom` (exclusive), returns
-/// its rect, or null when it does not fit above `top`.
-fn paintBox(ui: Ui, area: Rect, bottom: u16, text: []const u8, border: Style, hit_id: ?u32) ?Rect {
+/// its rect, or null when it does not fit above `top`. The text is one
+/// row, clipped at `max_text` chars; the box is as wide as the text
+/// and its pads, at most `max_width`, at most the area less two.
+fn paintBox(ui: Ui, area: Rect, bottom: u16, text_in: []const u8, border: Style, hit_id: ?u32) ?Rect {
     const t = ui.theme;
-    const w = @min(@max(ui.width(text) + 4, min_width), @min(max_width, area.w -| right_margin));
+    const text = clipChars(ui, text_in);
+    const chars: u16 = @intCast(@min(std.unicode.utf8CountCodepoints(text) catch text.len, max_text));
+    const w = @min(chars + 4, @min(max_width, area.w -| 2));
     if (w < 6) return null;
-    const inner_w = w - 4;
-    const segs = [_]Segment{.{ .text = text, .style = Theme.onBg(t.fg, t.overlay_bg.bg) }};
-    const rows = @min(@max(ui.canvas.measure(&segs, inner_w, .{ .wrap = .word, .trim = true }), 1), max_text_rows);
-    const h = rows + 2;
+    const h: u16 = 3;
     if (bottom < area.y + h) return null;
     const r = Rect.init(area.right() - right_margin - w, bottom - h, w, h);
     ui.fill(r, t.overlay_bg);
-    const kind: @import("border.zig").Kind = if (ui.ascii) .ascii else .rounded;
+    const kind: @import("border.zig").Kind = if (ui.ascii) .ascii else .single;
     const inner = ui.canvas.border(r, kind, border, null);
-    _ = ui.canvas.text(inner.inset(0).splitLeft(1).rest.splitRight(1).left, &segs, .{ .wrap = .word, .trim = true });
+    // The close mark sits in the top edge, three cells before the corner.
+    if (w >= 8) _ = ui.putStr(r.right() - 4, r.y, 3, if (ui.ascii) " x " else " × ", border);
+    const fg = Theme.onBg(t.fg, t.overlay_bg.bg);
+    _ = ui.putStr(inner.x + 1, inner.y, inner.w -| 1, oneRow(ui, text), fg);
     if (hit_id) |id| ui.hit(r, .{ .button = id });
     return r;
 }
 
 /// Newest first in `toasts`: index 0 lands closest to the bottom.
 pub fn draw(ui: Ui, area: Rect, toasts: []const Toast) void {
-    if (toasts.len == 0 or area.w < min_width or area.h < 3) return;
+    if (toasts.len == 0 or area.w < 20 or area.h < 3) return;
     const t = ui.theme;
-    var bottom = area.bottom() -| bottom_margin;
+    var bottom = area.bottom();
     const overflow = toasts.len > max_visible;
     const take = if (overflow) max_visible - 1 else @min(toasts.len, max_visible);
     for (toasts[0..take], 0..) |toast, i| {
@@ -130,35 +168,47 @@ test "toasts stack from the bottom right, newest lowest, with dismiss hits and l
     try f.expectContains("mark 'a set");
     try f.expectContains("no mark 'z");
     try f.expectContains("save failed: EACCES");
-    // Newest box: rows 8..10 (one spacer above row 11), 20 wide ending at col 58.
-    try f.expectRow(11, "");
+    // Newest box: rows 9..11 on the area's last row, as wide as its text
+    // and the pads, ending at col 58 — Rust's square frame with the
+    // close mark set into the top edge.
     var buf: [256]u8 = undefined;
-    try testing.expect(std.mem.endsWith(u8, f.row(10, &buf), "╯"));
-    try testing.expect(std.mem.indexOf(u8, f.row(9, &buf), "mark 'a set") != null);
-    try testing.expect(std.mem.indexOf(u8, f.row(6, &buf), "no mark 'z") != null);
-    try testing.expect(std.mem.indexOf(u8, f.row(3, &buf), "save failed") != null);
-    try testing.expectEqual(button_base + 0, f.hits.at(50, 9).?.button);
-    try testing.expectEqual(button_base + 1, f.hits.at(50, 6).?.button);
-    try testing.expectEqual(button_base + 2, f.hits.at(50, 3).?.button);
-    try testing.expect(f.hits.at(10, 9) == null);
-    try testing.expect(f.fgEql(58, 9, f.theme.muted));
-    try testing.expect(f.fgEql(58, 6, f.theme.warn_fg));
-    try testing.expect(f.fgEql(58, 3, f.theme.error_fg));
-    try testing.expect(f.bgEql(50, 9, f.theme.overlay_bg));
+    try testing.expect(std.mem.endsWith(u8, f.row(11, &buf), "┘"));
+    try testing.expect(std.mem.endsWith(u8, f.row(9, &buf), "─ × ┐"));
+    try testing.expect(std.mem.endsWith(u8, f.row(10, &buf), "│ mark 'a set │"));
+    try testing.expect(std.mem.indexOf(u8, f.row(7, &buf), "no mark 'z") != null);
+    try testing.expect(std.mem.indexOf(u8, f.row(4, &buf), "save failed") != null);
+    try testing.expectEqual(button_base + 0, f.hits.at(50, 10).?.button);
+    try testing.expectEqual(button_base + 1, f.hits.at(50, 7).?.button);
+    try testing.expectEqual(button_base + 2, f.hits.at(50, 4).?.button);
+    try testing.expect(f.hits.at(10, 10) == null);
+    try testing.expect(f.fgEql(58, 10, f.theme.muted));
+    try testing.expect(f.fgEql(58, 7, f.theme.warn_fg));
+    try testing.expect(f.fgEql(58, 4, f.theme.error_fg));
+    try testing.expect(f.bgEql(50, 10, f.theme.overlay_bg));
 }
 
-test "a long text wraps inside the box; a burst collapses into +K more" {
-    var f = try Fixture.init(50, 20);
+test "a long text is one row clipped with an ellipsis at Rust's cap; a burst collapses into +K more" {
+    var f = try Fixture.init(80, 20);
     defer f.deinit();
-    const long = [_]Toast{.{ .text = "unsaved changes in notes.txt — use :q! to discard them, or :w to keep them first" }};
+    // rust-analyzer's own text, newline included: 59 chars and the
+    // ellipsis, one pad each side, the frame — 64, and the newline
+    // paints as nothing, so the row reads `Car…  │` as Rust's does.
+    const long = [_]Toast{.{ .text = "LSP: Failed to discover workspace.\nConsider adding the `Cargo.toml` of the workspace" }};
     draw(f.ui(), f.full(), &long);
-    try f.expectContains("unsaved changes in");
-    try f.expectContains("to keep them first");
+    var buf: [512]u8 = undefined;
+    try testing.expectEqualStrings("┌─────────────────────────────────────────────────────────── × ┐", std.mem.trimStart(u8, f.row(17, &buf), " "));
+    try testing.expectEqualStrings("│ LSP: Failed to discover workspace.Consider adding the `Car…  │", std.mem.trimStart(u8, f.row(18, &buf), " "));
     const r = f.hits.items.items[0].rect;
-    try testing.expectEqual(@as(u16, 4), r.h);
-    // Capped at the screen width less the margin: 49 wide from column 0.
-    try testing.expectEqual(@as(u16, 49), r.w);
-    try testing.expectEqual(@as(u16, 0), r.x);
+    try testing.expectEqual(@as(u16, 3), r.h);
+    try testing.expectEqual(@as(u16, 64), r.w);
+    try testing.expectEqual(@as(u16, 15), r.x);
+    f.hits.reset();
+    // Narrow: the box is the area less two, the text clipped inside it.
+    var n = try Fixture.init(40, 6);
+    defer n.deinit();
+    draw(n.ui(), n.full(), &long);
+    try testing.expectEqual(@as(u16, 38), n.hits.items.items[0].rect.w);
+    try n.expectContains("LSP: Failed to discover workspace.");
     f.hits.reset();
     var burst: [8]Toast = undefined;
     for (&burst, 0..) |*b, i| b.* = .{ .text = if (i == 0) "eight" else "older" };
@@ -169,6 +219,7 @@ test "a long text wraps inside the box; a burst collapses into +K more" {
     ui.ascii = true;
     draw(ui, f.full(), &burst);
     try f.expectContains("+4 more...");
+    try f.expectContains(" x +");
 }
 
 test "no room, no paint" {
@@ -179,7 +230,7 @@ test "no room, no paint" {
     try testing.expectEqual(@as(usize, 0), f.hits.items.items.len);
     var g = try Fixture.init(40, 5);
     defer g.deinit();
-    // Two boxes need 7 rows; the second is dropped, the first stays.
+    // Two boxes need 6 rows; the second is dropped, the first stays.
     draw(g.ui(), g.full(), &.{ .{ .text = "one" }, .{ .text = "two" } });
     try g.expectContains("one");
     try g.expectLacks("two");

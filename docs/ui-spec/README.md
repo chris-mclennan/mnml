@@ -61,6 +61,27 @@ matching `steps-<name>.jsonl`, on the fixture workspace (which now has
 - `close` — `src/main.rs` open, type `x`, `ctrl+w`: the unsaved-changes
   prompt (the buffer is never saved; the quit discards it).
 
+Every dump with `src/main.rs` open (`goto`, `close`, `editor`, `diff`,
+`delete`, `rename`, `outline`) also shows rust-analyzer started on it:
+the `LSP 1` statusline chip and, bottom-right, the toast `LSP: Failed to
+discover workspace.Consider adding the \`Car…` — rust-analyzer's own
+complaint (the fixture has no `Cargo.toml`; the root is the file's
+directory, as Rust's `find_root` falls back). The toast is
+rust-analyzer's text verbatim, with Rust's `LSP: ` prefix, clipped by
+the toast painter at 60 chars; the newline in the message costs a char
+and paints nothing, hence `workspace.Consider`. rust-analyzer needs
+~1–2 s to say it; `steps-goto` / `steps-close` wait 800 ms after the
+open and the harness another ~1.4 s before the dump, which has been
+enough on this machine — a dump without the toast on a slow run is
+timing, not a regression (`tools/fake_lsp/` is the deterministic proof).
+
+**Run the harness on a private copy of the fixture.** `tools/ui-diff.sh`
+writes the IPC command file under `<ws>/.mnml/` and both data dirs'
+session files; two runs on the same paths cross-talk (another run's
+keystrokes land in your screen, and the number jumps). `cp -R
+mnml-zig-worktrees/chrome-fixture /tmp/fixture-<me>` once, then pass
+those `ws` / `rs-data` / `zig-data` paths.
+
 ## Sections and their sides (2026-09-07)
 
 Every activity section has a side (`src/app/side.zig`); these are the

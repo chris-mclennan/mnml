@@ -349,11 +349,15 @@ fn specFor(app: *App, path: []const u8) ?Spec {
 }
 
 /// Walk up from the file's directory to the first directory holding a
-/// marker; null when none does (or the spec has no markers → the
-/// workspace).
-fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
+/// marker. Without one the root is the file's own directory, as Rust's
+/// `find_root` falls back — the server still starts (rust-analyzer then
+/// says so itself: `Failed to discover workspace…`), so a lone `.rs`
+/// outside a crate gets the same server and the same toast as under
+/// Rust. A spec with no markers roots at the workspace.
+fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8) Allocator.Error![]const u8 {
     if (markers.len == 0) return app.workspace;
-    var dir: ?[]const u8 = std.fs.path.dirname(path);
+    const start = std.fs.path.dirname(path) orelse app.workspace;
+    var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
         for (markers) |m| {
             const p = try std.fs.path.join(arena, &.{ d, m });
@@ -361,7 +365,7 @@ fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []co
         }
         if (d.len <= 1) break;
     }
-    return null;
+    return start;
 }
 
 /// Is `cmd` runnable: an absolute path that exists, or a name on PATH.
@@ -412,7 +416,7 @@ pub fn serverFor(app: *App, path: []const u8) ?*Server {
 }
 
 /// The server for `path`, started if need be. Null when there is no
-/// spec, the binary is missing (toasted once), or no project root.
+/// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     if (serverFor(app, path)) |s| return s;
     const spec = specFor(app, path) orelse return null;
@@ -427,7 +431,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         }
         return null;
     }
-    const root = (try findRoot(app, arena, path, spec.root_markers)) orelse return null;
+    const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.append(arena, spec.cmd);
@@ -640,10 +644,15 @@ fn handleNotification(app: *App, s: *Server, method: []const u8, params: ?Value)
         const path = (try types.pathFromUri(arena, uri)) orelse return;
         try applyDiagnostics(app, path, jsonrpc.getArr(p, "diagnostics") orelse &.{});
     } else if (std.mem.eql(u8, method, "window/showMessage")) {
+        // Errors only (MessageType 1), as Rust's client gates them:
+        // typescript-language-server warns on every inlay-hint request,
+        // and that must not toast. The prefix is Rust's `LSP: `, the
+        // level its plain toast, the text the server's verbatim (the
+        // toast painter clips it to one row).
         const p = params orelse return;
         const text = jsonrpc.getStr(p, "message") orelse return;
-        const level = jsonrpc.getInt(p, "type") orelse 3;
-        if (level <= 2) try app.toastLevel(if (level == 1) .err else .warn, "{s}: {s}", .{ s.name, text });
+        const level = jsonrpc.getInt(p, "type") orelse 1;
+        if (level == 1) try app.toastLevel(.info, "LSP: {s}", .{text});
     } else if (std.mem.eql(u8, method, "$/progress")) {
         // Loading / indexing: a held command waits for the last end.
         const p = params orelse return;
