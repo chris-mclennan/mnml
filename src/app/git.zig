@@ -39,6 +39,7 @@ const list_panel = @import("../ui/list_panel.zig");
 const chip = @import("../ui/chip.zig");
 const status_view = @import("../ui/git_status_view.zig");
 const diff_view = @import("../ui/diff_view.zig");
+const git_toolbar = @import("../ui/git_toolbar.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
@@ -154,11 +155,11 @@ pub const DiffPane = struct {
     shown: []u32 = &.{},
     split_shown: []u32 = &.{},
     view: diff_view.State = .{},
-    mode: diff_view.Mode = .hunk,
+    mode: diff_view.Mode = .flat,
     /// The loaded diff carries every line (Inline / Split asked for it).
     full: bool = false,
-    /// The old side's share of the split body, in percent.
-    ratio: u16 = 50,
+    /// The toolbar's Wrap: long lines continue on the next row.
+    wrap: bool = false,
     /// Index into `rows` (Hunk / Inline) or `split_rows` (Split).
     cursor: usize = 0,
     pending: bool = true,
@@ -307,7 +308,7 @@ pub const State = struct {
     busy: u32 = 0,
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
     /// The view the last diff pane was switched to; new panes open in it.
-    diff_mode: diff_view.Mode = .hunk,
+    diff_mode: diff_view.Mode = .flat,
     /// `remote.origin.url` as the last status reported (borrows the
     /// snapshot) and the forge it names, for the badge.
     remote: []const u8 = "",
@@ -1329,17 +1330,12 @@ pub fn openStatusPane(app: *App, repo: *client.Repo) CommandError!PaneId {
 pub fn hunkAtCursor(dp: *const DiffPane) ?struct { file: u32, hunk: u32 } {
     if (dp.mode == .split) {
         if (dp.cursor >= dp.split_rows.len) return null;
-        return switch (dp.split_rows[dp.cursor]) {
-            .pair => |p| .{ .file = p.file, .hunk = p.hunk },
-            .file, .blank => null,
-        };
+        const h = diff_view.splitRowHunk(dp.split_rows[dp.cursor]) orelse return null;
+        return .{ .file = h.file, .hunk = h.hunk };
     }
     if (dp.cursor >= dp.rows.len) return null;
-    return switch (dp.rows[dp.cursor]) {
-        .hunk => |h| .{ .file = h.file, .hunk = h.hunk },
-        .line => |l| .{ .file = l.file, .hunk = l.hunk },
-        .file, .blank => null,
-    };
+    const h = diff_view.rowHunk(dp.rows[dp.cursor]) orelse return null;
+    return .{ .file = h.file, .hunk = h.hunk };
 }
 
 /// Stage / unstage / discard the hunk under the cursor with a
@@ -2015,6 +2011,7 @@ pub fn moveFile(dp: *DiffPane, forward: bool) void {
     const shown = dp.shownRows();
     if (shown.len == 0) return;
     var i = cursorPos(dp);
+    const from = fileOfShown(dp, i);
     while (true) {
         if (forward) {
             if (i + 1 >= shown.len) return;
@@ -2023,12 +2020,22 @@ pub fn moveFile(dp: *DiffPane, forward: bool) void {
             if (i == 0) return;
             i -= 1;
         }
-        const is_file = if (dp.mode == .split) dp.split_rows[shown[i]] == .file else dp.rows[shown[i]] == .file;
-        if (is_file) {
-            dp.cursor = shown[i];
-            return;
+        const fi = fileOfShown(dp, i) orelse continue;
+        if (from != null and fi == from.?) continue;
+        // Backwards: land on the file's first shown row.
+        if (!forward) {
+            while (i > 0 and fileOfShown(dp, i - 1) == fi) i -= 1;
         }
+        dp.cursor = shown[i];
+        return;
     }
+}
+
+/// The file the shown row at `pos` belongs to.
+fn fileOfShown(dp: *const DiffPane, pos: usize) ?u32 {
+    const ri = dp.shownRows()[pos];
+    const h = (if (dp.mode == .split) diff_view.splitRowHunk(dp.split_rows[ri]) else diff_view.rowHunk(dp.rows[ri])) orelse return null;
+    return h.file;
 }
 
 /// Enter on a diff row: the file at that line.
@@ -2037,7 +2044,7 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
     const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
     const arena = app.frame.allocator();
     const fi: u32, const line: ?u32 = if (dp.mode == .split) switch (dp.split_rows[dp.cursor]) {
-        .file => |f| .{ f, null },
+        .hunk => |h| .{ h.file, dp.files[h.file].hunks[h.hunk].new_start },
         .pair => |p| blk: {
             const lines = dp.files[p.file].hunks[p.hunk].lines;
             const no: ?u32 = if (p.right) |r| lines[r].new_no else if (p.left) |l| lines[l].old_no else null;
@@ -2045,7 +2052,6 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
         },
         .blank => return,
     } else switch (dp.rows[dp.cursor]) {
-        .file => |f| .{ f, null },
         .hunk => |h| .{ h.file, dp.files[h.file].hunks[h.hunk].new_start },
         .line => |l| blk: {
             const dl = dp.files[l.file].hunks[l.hunk].lines[l.line];
@@ -2072,13 +2078,41 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
 /// filter banner takes the keys, a row selects (a second click opens it).
 pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
-    if (diff_view.chipOf(hit_id)) |mode| {
-        if (m.button == .left) runToast(app, setDiffMode(app, dp, mode));
+    if (m.button != .left) return;
+    app.needs_render = true;
+    if (git_toolbar.actionOf(hit_id)) |action| {
+        // The git toolbar: each button is a `git.*` command; Refresh
+        // re-reads this diff.
+        const cmd: command.CommandId = switch (action) {
+            .undo => .@"git.undo",
+            .redo => .@"git.redo",
+            .pull => .@"git.pull",
+            .push => .@"git.push",
+            .fetch => .@"git.fetch",
+            .branch => .@"git.branch_menu",
+            .commit => .@"git.commit",
+            .stash => .@"git.stash",
+            .pop => .@"git.stash_pop",
+            .reflog => .@"git.reflog",
+            .refresh => return runToast(app, refreshDiff(app, dp)),
+        };
+        command.run(app, .{ .static = cmd }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+        };
         return;
     }
-    if (hit_id == diff_view.divider_id) {
-        if (m.button == .left) app.drag = .{ .git_divider = id };
+    if (diff_view.chipOf(hit_id)) |mode| return runToast(app, setDiffMode(app, dp, mode));
+    if (hit_id == diff_view.wrap_id) {
+        dp.wrap = !dp.wrap;
         return;
+    }
+    if (hit_id == diff_view.close_id) return app.closePane(id, true);
+    if (diff_view.actionOf(hit_id)) |a| return diffAction(app, id, dp, a);
+    if (diff_view.hunkChipOf(hit_id)) |hc| {
+        // A hunk header's own chip acts on that hunk.
+        if (hc.row < dp.rows.len) dp.cursor = hc.row;
+        return diffAction(app, id, dp, hc.action);
     }
     if (hit_id == diff_view.filter_id) {
         dp.filter_mode = true;
@@ -2093,21 +2127,20 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
         return;
     }
     if (hit_id >= dp.rowCount()) return;
-    if (dp.cursor == hit_id and m.button == .left) runToast(app, openDiffLine(app, dp)) else dp.cursor = hit_id;
-    app.needs_render = true;
+    if (dp.cursor == hit_id) runToast(app, openDiffLine(app, dp)) else dp.cursor = hit_id;
 }
 
-/// The split divider follows the pointer while it is held.
-pub fn dragDivider(app: *App, id: PaneId, x: u16) void {
-    const pane = app.panes.get(id) orelse return;
-    const dp = switch (pane.*) {
-        .diff => |*d| d,
-        else => return,
-    };
-    const w: u32 = @max(dp.body.w -| 1, 1);
-    const off: u32 = x -| dp.body.x;
-    dp.ratio = @intCast(std.math.clamp(off * 100 / w, 15, 85));
-    app.needs_render = true;
+/// A Stage / Discard / Unstage chip: Discard asks first, as `x` does.
+fn diffAction(app: *App, id: PaneId, dp: *DiffPane, a: diff_view.Action) Allocator.Error!void {
+    switch (a) {
+        .stage => runToast(app, applyHunk(app, dp, .stage)),
+        .unstage => runToast(app, applyHunk(app, dp, .unstage)),
+        .discard => {
+            if (hunkAtCursor(dp) == null) {
+                app.toast("diff: no hunk under the cursor", .{});
+            } else try openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, try app.gpa.dupe(u8, "  Discard this hunk from the worktree? This cannot be undone."));
+        },
+    }
 }
 
 /// The working-tree row is there when the status of this pane's repo
@@ -2557,12 +2590,13 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect
 /// `Pane.diff`.
 pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) void {
     const focused = app.active == id and app.focus == .pane;
-    var hunks: usize = 0;
-    for (dp.files) |f| hunks += f.hunks.len;
-    const header = if (dp.pending and dp.rows.len == 0)
-        ui.fmt(" {s} · loading… ", .{dp.title})
-    else
-        ui.fmt(" {s} · {d} file{s} · {d} hunk{s} ", .{ dp.title, dp.files.len, if (dp.files.len == 1) "" else "s", hunks, if (hunks == 1) "" else "s" });
+    // Rust's `chip_actions_for_scope`: a worktree / file / HEAD diff
+    // stages or discards, a staged one unstages, a commit's shows none.
+    const actions: diff_view.Actions = switch (dp.scope) {
+        .file, .worktree, .head => .unstaged,
+        .staged => .staged,
+        .commit, .orig => .none,
+    };
     const painted = diff_view.draw(ui, id, area, &dp.view, .{
         .files = dp.files,
         .rows = dp.rows,
@@ -2572,10 +2606,12 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
         .mode = dp.mode,
         .cursor = dp.cursor,
         .focused = focused,
-        .header = header,
         .filter = dp.filter.items,
         .filter_mode = dp.filter_mode,
-        .ratio = dp.ratio,
+        .wrap = dp.wrap,
+        .actions = actions,
+        .pending = dp.pending and dp.rows.len == 0,
+        .triangle = app.cfg.ui.expand_indicator == .triangle,
     });
     dp.body = painted.body;
     dp.strip_cells = painted.strip_cells;
@@ -2860,7 +2896,8 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     try testing.expectEqual(@as(usize, 1), dp.files.len);
     txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "diff: seed.txt") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "+more") != null);
+    // Rust's row: `<old> <new> ▏+ text`.
+    try testing.expect(std.mem.indexOf(u8, txt, "+ more") != null);
     testing.allocator.free(txt);
     try requestStatus(&f.app);
     try f.settle(2000);
@@ -2928,7 +2965,7 @@ test "the graph pane lays out the log, and enter opens the commit's diff" {
     const dp = activeDiff(&f.app).?;
     try testing.expectEqual(client.DiffScope.commit, dp.scope);
     txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "+two") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "+ two") != null);
     testing.allocator.free(txt);
 }
 
