@@ -48,6 +48,9 @@ const semantic_app = @import("lsp_semantic.zig");
 const format_app = @import("lsp_format.zig");
 const rename_app = @import("lsp_rename.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const config = @import("../config/root.zig");
+const dap_client = @import("../dap/client.zig");
+const build_options = @import("build_options");
 const cmd_view = @import("cmd_view.zig");
 const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
@@ -244,10 +247,16 @@ pub const State = struct {
     /// The external linters' workers.
     lint_group: Io.Group = .init,
     rename: rename_app.State = .{},
+    /// The config layers read again for a `.lsp` table written after
+    /// launch (`refreshServers`); `app.cfg.lsp` borrows from it then.
+    servers_loaded: ?config.Loaded = null,
+    /// One re-read per session: a miss stays a miss.
+    servers_refreshed: bool = false,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.lint_group.cancel(io);
         for (self.servers.items) |s| s.deinit();
+        if (self.servers_loaded) |*l| l.deinit();
         self.servers.deinit(gpa);
         var dk = self.dead.keyIterator();
         while (dk.next()) |k| gpa.free(k.*);
@@ -415,27 +424,54 @@ pub fn serverFor(app: *App, path: []const u8) ?*Server {
     return null;
 }
 
+/// No spec matched: read the config layers again and take their `.lsp`
+/// table, so a server written to `.mnml/config.zon` after launch (a
+/// `.test` seeds one) is found without a restart — `dap.refreshAdapters`
+/// for language servers. Exec-bearing, hence trusted workspaces only.
+fn refreshServers(app: *App) Allocator.Error!void {
+    if (app.lsp.servers_refreshed or !app.workspace_trusted) return;
+    app.lsp.servers_refreshed = true;
+    var env = try app.env.clone(app.gpa);
+    defer env.deinit();
+    if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
+    var fresh = try config.load.load(app.gpa, app.io, .{ .workspace = app.workspace, .trust = .trusted, .env = .{ .vars = &env } });
+    if (fresh.config.lsp.count() == 0) {
+        fresh.deinit();
+        return;
+    }
+    if (app.lsp.servers_loaded) |*old| old.deinit();
+    app.lsp.servers_loaded = fresh;
+    app.cfg.lsp = fresh.config.lsp;
+}
+
 /// The server for `path`, started if need be. Null when there is no
 /// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     if (serverFor(app, path)) |s| return s;
-    const spec = specFor(app, path) orelse return null;
+    const spec = specFor(app, path) orelse blk: {
+        try refreshServers(app);
+        break :blk specFor(app, path) orelse return null;
+    };
     if (app.lsp.dead.contains(spec.name)) return null;
     const arena = app.frame.allocator();
-    if (!try onPath(app, arena, spec.cmd)) {
+    // `$NAME` in the command or an argument comes from the environment,
+    // as for a debug adapter: `$MNML_FAKE_LSP` is how the tests name
+    // the fake server.
+    const cmd = try dap_client.expandEnv(arena, spec.cmd, &app.env);
+    if (!try onPath(app, arena, cmd)) {
         try markDead(app, spec.name);
-        if (client.installHint(spec.cmd)) |hint| {
-            try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ spec.cmd, hint });
+        if (client.installHint(cmd)) |hint| {
+            try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ cmd, hint });
         } else {
-            try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{spec.cmd});
+            try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{cmd});
         }
         return null;
     }
     const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, spec.cmd);
-    for (spec.args) |a| try argv.append(arena, a);
+    try argv.append(arena, cmd);
+    for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
     const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
         .name = spec.name,
@@ -2693,6 +2729,72 @@ test "diagnostics from a server and a linter merge sorted, and each source repla
     // The linter runs clean: nothing left.
     try applyLintDiagnostics(&app, path, &.{});
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, path).len);
+}
+
+test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on open (one live server), its Error toasts as `LSP: …`, didOpen/didClose go out, deinit says shutdown + exit" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.fk", .data = "fn foo() {}\n" });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .args = .{ \"--log\", \"lsp.log\" }, .extensions = .{ \"fk\" } } } }" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(file);
+    const log = try std.fs.path.join(gpa, &.{ ws, "lsp.log" });
+    defer gpa.free(log);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    // Trusted, as the `.test` runner runs: the exec-bearing `.lsp` applies.
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    var live = true;
+    defer if (live) app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    const Probe = struct { app: *App, log: []const u8 };
+    const ctx: Probe = .{ .app = &app, .log = log };
+    const Cond = struct {
+        fn logHas(c: Probe, needle: []const u8) bool {
+            const text = Io.Dir.cwd().readFileAlloc(c.app.io, c.log, c.app.gpa, .unlimited) catch return false;
+            defer c.app.gpa.free(text);
+            return std.mem.indexOf(u8, text, needle) != null;
+        }
+        fn started(c: Probe) bool {
+            const servers = c.app.lsp.servers.items;
+            if (servers.len != 1 or !servers[0].ready or servers[0].docs.count() != 1) return false;
+            const toast = c.app.lastToast() orelse return false;
+            return std.mem.startsWith(u8, toast, "LSP: Failed to discover workspace.");
+        }
+        fn closed(c: Probe) bool {
+            return logHas(c, "textDocument/didClose\n");
+        }
+    };
+    try pumpUntil(&app, ctx, Cond.started, 5000);
+    const s = app.lsp.servers.items[0];
+    try testing.expectEqualStrings("fake", s.name);
+    try testing.expectEqualStrings(ws, s.root);
+    try testing.expect(s.isOpen(file));
+    // What the statusline's `LSP N` counts: the live entries.
+    var n: usize = 0;
+    for (app.lsp.servers.items) |x| if (!x.transport.isDead()) {
+        n += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), n);
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "LSP: Failed to discover workspace.\nConsider adding the `Cargo.toml`"));
+    try testing.expect(Cond.logHas(ctx, "initialize\ninitialized\ntextDocument/didOpen\n"));
+
+    try command.run(&app, .{ .static = .@"buffer.close" });
+    try pumpUntil(&app, ctx, Cond.closed, 2000);
+    try testing.expect(!s.isOpen(file));
+
+    live = false;
+    app.deinit();
+    try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
 }
 
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {

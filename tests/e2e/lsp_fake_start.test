@@ -1,0 +1,14 @@
+# The fake language server (tools/fake_lsp/, reached through
+# `$MNML_FAKE_LSP`, which `mnml-zig test` exports) is the `.lsp.fake`
+# server for `.fk` files. It starts on the first open of one: the
+# statusline counts the live server, the server's Error message toasts
+# with Rust's `LSP: ` prefix — rust-analyzer's own words on a root with
+# no Cargo.toml, clipped to one row by the toast — and the log the server
+# keeps shows the handshake and the didOpen.
+write src/main.fk "fn foo() {\n  let x = 1;\n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect screen contains "LSP: Failed to discover workspace.Consider adding the `Car…"
+expect file lsp.log contains "initialize\ninitialized\ntextDocument/didOpen\n"

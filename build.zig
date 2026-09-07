@@ -516,6 +516,23 @@ pub fn build(b: *std.Build) void {
     corpus_run.step.dependOn(&fake_dap_install.step);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_dap_mod, .filters = test_filters })).step);
     gate_step.dependOn(&b.addInstallArtifact(fake_dap, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_dap_exe_name }).step);
+
+    // `mnml-fake-lsp` (tools/fake_lsp/) is the deterministic language
+    // server the `lsp_fake_*.test` scripts and `src/app/lsp.zig`'s
+    // integration test drive, reached the same two ways as the adapter:
+    // `build_options.fake_lsp_exe` and `$MNML_FAKE_LSP`.
+    const fake_lsp_mod = b.createModule(.{ .root_source_file = b.path("tools/fake_lsp/main.zig"), .target = target, .optimize = optimize });
+    const fake_lsp = b.addExecutable(.{ .name = "mnml-fake-lsp", .root_module = fake_lsp_mod });
+    const fake_lsp_install = b.addInstallArtifact(fake_lsp, .{});
+    b.getInstallStep().dependOn(&fake_lsp_install.step);
+    const fake_lsp_exe_name = b.fmt("mnml-fake-lsp{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    build_options.addOption([]const u8, "fake_lsp_exe", b.getInstallPath(.bin, fake_lsp_exe_name));
+    tests_run.step.dependOn(&fake_lsp_install.step);
+    e2e_run.step.dependOn(&fake_lsp_install.step);
+    gate_in_test.step.dependOn(&fake_lsp_install.step);
+    corpus_run.step.dependOn(&fake_lsp_install.step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_lsp_mod, .filters = test_filters })).step);
+    gate_step.dependOn(&b.addInstallArtifact(fake_lsp, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_lsp_exe_name }).step);
     // ── end sdk ──
 
 }

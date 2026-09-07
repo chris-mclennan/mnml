@@ -140,6 +140,10 @@ pub const Caps = struct {
     }
 };
 
+/// How long `deinit` waits for a server to leave on `exit` before the
+/// pipes close under it.
+pub const exit_grace_ms: u32 = 250;
+
 /// A builtin server: what mnml starts for an extension unless
 /// `.lsp.<name>` says otherwise.
 pub const Builtin = struct {
@@ -276,12 +280,19 @@ pub const Server = struct {
         return s;
     }
 
-    /// `shutdown` + `exit` (best effort), then the transport goes.
+    /// `shutdown` + `exit` (best effort), a moment for the server to
+    /// act on them, then the transport goes — Rust sends the same pair
+    /// and kills at once; the grace lets a well-behaved server (and the
+    /// fake one's `--log`) see its `exit` before the pipes close.
     pub fn deinit(self: *Server) void {
         const gpa = self.gpa;
         if (!self.transport.isDead()) {
             _ = self.request(.shutdown, "shutdown", null, .{}) catch 0;
             self.notify("exit", null) catch {};
+            var waited: u32 = 0;
+            while (!self.transport.isDead() and waited < exit_grace_ms) : (waited += 5) {
+                self.io.sleep(.fromMilliseconds(5), .awake) catch break;
+            }
         }
         self.transport.shutdown();
         var it = self.docs.keyIterator();

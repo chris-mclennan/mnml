@@ -217,13 +217,24 @@ fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: [
 /// `mnml-fake-dap` beside this executable, else the path `zig build`
 /// installs it at; null when neither exists. Owned.
 fn fakeDapPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
-    const name = if (@import("builtin").os.tag == .windows) "mnml-fake-dap.exe" else "mnml-fake-dap";
+    return fakeToolPath(gpa, io, "mnml-fake-dap", build_options.fake_dap_exe);
+}
+
+fn fakeLspPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-fake-lsp", build_options.fake_lsp_exe);
+}
+
+/// A fake tool built beside this binary (`zig build`), or at the
+/// build's install path when the runner is elsewhere.
+fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8) Allocator.Error!?[]u8 {
+    const ext = if (@import("builtin").os.tag == .windows) ".exe" else "";
     if (std.process.executableDirPathAlloc(io, gpa)) |dir| {
         defer gpa.free(dir);
+        const name = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base, ext });
+        defer gpa.free(name);
         const beside = try std.fs.path.join(gpa, &.{ dir, name });
         if (Io.Dir.cwd().access(io, beside, .{})) |_| return beside else |_| gpa.free(beside);
     } else |_| {}
-    const installed = build_options.fake_dap_exe;
     if (Io.Dir.cwd().access(io, installed, .{})) |_| return try gpa.dupe(u8, installed) else |_| return null;
 }
 
@@ -325,6 +336,13 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         if (try fakeDapPath(gpa, io)) |p| {
             defer gpa.free(p);
             try env.put("MNML_FAKE_DAP", p);
+        }
+    }
+    // `$MNML_FAKE_LSP` the same way, for the `lsp_fake_*` scripts.
+    if (env.get("MNML_FAKE_LSP") == null) {
+        if (try fakeLspPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_FAKE_LSP", p);
         }
     }
     const opts: e2e.Options = .{
