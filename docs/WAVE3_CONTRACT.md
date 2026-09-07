@@ -2683,6 +2683,20 @@ break-check.
   48-column frame on one machine and no other (`render.zig`, `lsp.zig`
   tests). The e2e driver already set the variable; the unit tests now
   match it.
+- `// changed (app, 2026-09-07):` the LSP chip's clicks are Rust's.
+  The left button is `:LspStatus` — one toast naming every live server
+  and its root relative to the workspace (`LSP: rust (.) · typescript
+  (web)`), `LSP: no servers running` without one — as the new
+  `lsp.status` command (`app/statusline.zig` `table`; the id is Rust's
+  ex verb as a palette command, since Zig's menus run command ids). The
+  right button is Rust's nine-row LSP menu (Status, symbols in file /
+  workspace, diagnostics, references, rename, format, code actions,
+  inlay hints), `openLspChipMenu`. The chip's text, colour and place
+  (after the now-playing cluster, before WRAP — `rust-goto-120x40.txt`)
+  were already Rust's; a test proves all of it on a fake server
+  (`lsp.TestRig`, read-only use of `app/lsp.zig`). Before, the left
+  click opened the symbols picker. `docs/commands.md` wants a `zig
+  build docs` for the new id — the docs track's file.
 - Cut, per the spec: the Sonos cluster. Not in this build: the Claude
   chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
   spend until the usage endpoint is called; the LSP progress (`⟳ …`),

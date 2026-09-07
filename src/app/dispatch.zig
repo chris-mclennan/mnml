@@ -1570,7 +1570,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .np_play => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .play),
                     .np_next => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .next),
                     .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
-                    .lsp => try runCmd(app, .@"lsp.symbols"),
+                    // The LSP chip, as Rust: the servers on the left button
+                    // (`:LspStatus`), the LSP menu on the right.
+                    .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.status"),
                     .wrap => try runCmd(app, .@"view.toggle_wrap"),
                     .autosave => app.toast("autosave: {d}s (`[editor] autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
                     .filesize => if (app.activeEditor()) |e| {

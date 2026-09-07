@@ -244,7 +244,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .np_track => .{ .title = "Now playing", .detail = "the track and its player · click opens the player · right-click: the player menu" },
         .coverage => .{ .title = "Coverage", .detail = "feature (F) and code (C) coverage from the trends files, with the move since last week / last commit · click toasts both · right-click picks the mode" },
         .transfer => .{ .title = "File transfers", .detail = "progress of the running copies · right-click: cancel all" },
-        .lsp => .{ .title = "Language servers running", .detail = "click: the symbols in this file" },
+        .lsp => .{ .title = "Language servers running", .detail = "click: which servers, on which roots · right-click: the LSP menu" },
         .wrap => .{ .title = "WRAP — long lines wrap", .detail = "click turns wrapping off" },
         .autosave => .{ .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}), .detail = "`[editor] autosave_secs` sets it" },
         .filesize => .{ .title = "File size", .detail = "the buffer's bytes in memory · click: bytes and lines" },

@@ -25,6 +25,7 @@
 //! script's segments. The overflow rule is Rust's (`ui/statusline.zig`).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
@@ -50,6 +51,8 @@ const clock_mod = @import("clock.zig");
 const tests_pane = @import("tests_pane.zig");
 const outline = @import("outline.zig");
 const ids = @import("../core/ids.zig");
+const command = @import("../core/command.zig");
+const CommandError = command.CommandError;
 
 pub const FocusId = ids.FocusId;
 
@@ -107,6 +110,48 @@ const claude_ink = Theme.rgb(0x1a1a1a);
 
 /// The largest buffer the symbol chip scans per frame without a server.
 pub const symbol_scan_max: usize = 64 * 1024;
+
+pub const table = .{
+    .@"lsp.status" = &lspStatusCmd,
+};
+
+/// Rust's `:LspStatus`, the chip's left click: one toast naming every
+/// live server and the root it runs on, relative to the workspace (`.`
+/// for the workspace itself); "no servers running" without one.
+fn lspStatusCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (app.lsp.servers.items) |s| {
+        if (s.transport.isDead()) continue;
+        if (out.items.len > 0) try out.appendSlice(arena, " · ");
+        var rel: []const u8 = s.root;
+        if (std.mem.startsWith(u8, s.root, app.workspace)) {
+            rel = std.mem.trimStart(u8, s.root[app.workspace.len..], "/\\");
+            if (rel.len == 0) rel = ".";
+        }
+        try out.print(arena, "{s} ({s})", .{ s.name, rel });
+    }
+    if (out.items.len == 0) return app.toast("LSP: no servers running", .{});
+    app.toast("LSP: {s}", .{out.items});
+}
+
+/// The LSP chip's right-click — Rust's rows: the status, then the verbs
+/// a user reaches for from the chip.
+pub fn openLspChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "Status", .action = .{ .command = .@"lsp.status" } },
+        .{ .label = "Symbols in file", .action = .{ .command = .@"lsp.symbols" } },
+        .{ .label = "Symbols in workspace", .action = .{ .command = .@"lsp.workspace_symbols" } },
+        .{ .label = "Diagnostics list", .action = .{ .command = .@"lsp.diagnostics" } },
+        .{ .label = "Find references", .action = .{ .command = .@"lsp.references" } },
+        .{ .label = "Rename symbol", .action = .{ .command = .@"lsp.rename" } },
+        .{ .label = "Format file", .action = .{ .command = .@"lsp.format" } },
+        .{ .label = "Code actions", .action = .{ .command = .@"lsp.code_action" } },
+        .{ .label = "Toggle inlay hints", .action = .{ .command = .@"lsp.inlay_hints_toggle" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("LSP", rows, x, y);
+}
 
 /// Rust's per-side cap on host segments: a third of the row, at least 20.
 pub fn dynamicLaneBudget(width: u16) usize {
@@ -561,7 +606,6 @@ test "SegId.of covers the app's ids and nothing else" {
 
 // ─── the row against the spec ────────────────────────────────────────────
 
-const command = @import("../core/command.zig");
 const git_app = @import("git.zig");
 const client = @import("../git/client.zig");
 const screen_mod = @import("../ipc/screen.zig");
@@ -974,6 +1018,60 @@ test "the narrow rule at 120 / 100 / 80 / 60 columns: the gap shrinks, then the 
         try testing.expect(b.colOf(22, sl.seg_language) == null);
         try testing.expectEqual(SegId.clock.raw(), b.app.hits.at(58, 22).?.statusline_seg);
     }
+}
+
+// ─── the LSP chip ────────────────────────────────────────────────────────
+
+test "the LSP chip: ` LSP 1 ` on blue between the cluster and WRAP while a server lives; click names it, right-click is the LSP menu; gone with the server" {
+    // A real Server over a fake language server (`lsp.TestRig`), the
+    // one the LSP tests use; the chip reads `app.lsp.servers` only.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.tree.visible = false;
+    // No server: no chip; the status command says so.
+    _ = try b.row(38);
+    try testing.expect(b.colOf(38, SegId.lsp.raw()) == null);
+    try command.run(&b.app, .{ .static = .@"lsp.status" });
+    try testing.expectEqualStrings("LSP: no servers running", b.app.lastToast().?);
+    var rig: lsp.TestRig = .{};
+    try rig.start(&b.app);
+    const row = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, row, idle_cluster ++ sl.pl_left_nerd ++ " LSP 1 " ++ sl.pl_left_nerd ++ " WRAP ") != null);
+    const x = b.colOf(38, SegId.lsp.raw()).?;
+    const p = &b.app.theme.palette;
+    try testing.expect(Color.eql(b.cell(x + 1, 38).bg, p.blue));
+    try testing.expect(Color.eql(b.cell(x + 1, 38).fg, p.bg_darker));
+    try testing.expectEqual(SegId.lsp.raw(), b.app.hits.at(x + 6, 38).?.statusline_seg);
+    // Left: the servers and their roots. The rig's root is `/tmp`, not
+    // under the workspace, so it reads as it is.
+    try b.click(38, SegId.lsp.raw(), .left);
+    try testing.expectEqualStrings("LSP: typescript (/tmp)", b.app.lastToast().?);
+    // Right: the LSP menu, Rust's nine rows, every id a real command.
+    try b.click(38, SegId.lsp.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try testing.expectEqualStrings("LSP", b.app.overlay.menu.title);
+    try testing.expectEqual(@as(usize, 9), b.app.overlay.menu.items.len);
+    try testing.expectEqualStrings("Status", b.app.overlay.menu.items[0].label);
+    for (b.app.overlay.menu.items) |item| try testing.expect(command.by_name.get(command.name(item.action.command)) != null);
+    try b.key(Key.named(.esc));
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = SegId.lsp.raw() })) != null);
+    // A root under the workspace reads relative to it (the server owns
+    // its root: swap a borrowed one in and back before it is retired).
+    const old_root = rig.server.root;
+    const under = try std.fmt.allocPrint(testing.allocator, "{s}/crates/core", .{b.ws});
+    defer testing.allocator.free(under);
+    rig.server.root = under;
+    try command.run(&b.app, .{ .static = .@"lsp.status" });
+    try testing.expectEqualStrings("LSP: typescript (crates/core)", b.app.lastToast().?);
+    rig.server.root = old_root;
+    // Retired: the chip goes.
+    try rig.stop(&b.app);
+    _ = try b.row(38);
+    try testing.expect(b.colOf(38, SegId.lsp.raw()) == null);
 }
 
 // ─── the coverage chip on fixed inputs ───────────────────────────────────
