@@ -4,9 +4,10 @@
 //! frame's hits, so the box can be laid out before this frame paints),
 //! else what the keyboard focus is on (the tree's cursor row, past the
 //! first), else the active pane, else the one-liner for the focused
-//! surface — `Sidebar` / `Editor` / `Right panel`. The curated entries
-//! (`treeRowCopy`, `chipCopy`) are the Rust dictionary's tree and chip
-//! sections.
+//! surface — `Sidebar` / `Editor` / `Right panel`. An overlay is not a
+//! surface: the ladder reads the one the keys go back to (`focusUnder`).
+//! The curated entries (`treeRowCopy`, `chipCopy`) are the Rust
+//! dictionary's tree and chip sections.
 //!
 //! The kebab's menu is the one row Rust has: turn the panel off. A
 //! `→ Run it` link runs the command the copy names; the app keeps the
@@ -93,11 +94,30 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
     }
 }
 
+/// The surface the keys go back to under an overlay: the prompt's, the
+/// confirm's or the menu's way back, else the active pane (the tree
+/// when there is none). Rust keeps `app.focus` on the surface while a
+/// picker or a confirm is up, so its ladder never sees the overlay —
+/// the delete box shows the row's doc and the picker the `Sidebar`
+/// line. The statusline's mode chip resolves the same way.
+fn focusUnder(app: *const App) app_mod.FocusId {
+    const fallback: app_mod.FocusId = if (app.active) |a| .{ .pane = a } else .tree;
+    return switch (app.focus) {
+        .overlay => switch (app.overlay) {
+            .prompt => |p| p.return_focus orelse fallback,
+            .confirm => |c| c.return_focus orelse fallback,
+            .menu => |m| m.return_focus,
+            else => fallback,
+        },
+        else => app.focus,
+    };
+}
+
 /// The tree's cursor row, flattened as Rust's focus ladder shows it.
 /// Nothing on a header, and nothing at rest on the first row — the
 /// `Sidebar` copy stays until the user walks.
 fn focusCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
-    if (app.focus != .tree) return null;
+    if (focusUnder(app) != .tree) return null;
     const rows = app.tree.rows.items;
     if (app.tree.cursor >= rows.len) return null;
     const row = rows[app.tree.cursor];
@@ -191,7 +211,7 @@ fn sectionTitle(p: app_mod.PanelId) []const u8 {
 
 /// The one-liner per focused surface.
 fn emptyCopy(app: *App) Copy {
-    return switch (app.focus) {
+    return switch (focusUnder(app)) {
         .tree => .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." },
         // The box is titled with the section (Rust's `Todos`), whichever
         // column it is in.
@@ -202,7 +222,8 @@ fn emptyCopy(app: *App) Copy {
             .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." }
         else
             .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
-        .overlay => .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
+        // `focusUnder` never says so: an overlay names its surface.
+        .overlay => unreachable,
     };
 }
 
@@ -450,6 +471,95 @@ test "the ladder: Sidebar at rest, the row past the first when the tree walks, t
     try t.expect(std.mem.indexOf(u8, scratch.title, "L1:1") != null);
     try t.expect(std.mem.indexOf(u8, scratch.title, "1 lines") != null);
     try t.expect(std.mem.indexOf(u8, scratch.body, "[gd] Definition") != null);
+}
+
+test "the ladder under an overlay: the surface beneath, as Rust's focus never leaves it — the picker over the tree says Sidebar, the delete box keeps the row, a menu from the tree too; the git palette says Sidebar; a hovered chip beats them all" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "src");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/main.rs", .data = "fn main() {}\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "README.md", .data = "# demo\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    const arena = app.frame.allocator();
+    const sidebar = "Sidebar";
+    // The picker (any overlay without a way back) over the tree with
+    // nothing open: the Sidebar line, not the Editor's.
+    app.overlay = .discovery;
+    app.focus = .overlay;
+    try t.expectEqualStrings(sidebar, (try pick(&app, arena)).title);
+    // The git palette with nothing open (its graph pane says nothing of
+    // its own): the sidebar's words from its panel, and from a prompt
+    // over it with no way back; the panel's own name once it is off.
+    app.overlay = .none;
+    app.git_palette.active = true;
+    app.focus = .{ .panel = .git };
+    try t.expectEqualStrings(sidebar, (try pick(&app, arena)).title);
+    app.overlay = .{ .prompt = .{ .state = .{ .title = "Commit" }, .purpose = .goto_line } };
+    app.focus = .overlay;
+    try t.expectEqualStrings(sidebar, (try pick(&app, arena)).title);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.git_palette.active = false;
+    app.focus = .{ .panel = .git };
+    try t.expectEqualStrings("Source control", (try pick(&app, arena)).title);
+    // The tree walked to main.rs, then its delete box (the confirm's way
+    // back is the tree): the row's doc stays under the box.
+    app.overlay = .none;
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rowOf("src/main.rs") orelse app.tree.rowOf("main.rs").?;
+    try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);
+    const msg = try app.gpa.dupe(u8, "Delete src/main.rs?");
+    app.overlay = .{ .confirm = .{ .state = .{ .title = "Delete", .message = msg, .choices = &App.close_choices }, .purpose = .quit, .message = msg, .return_focus = .tree } };
+    app.focus = .overlay;
+    try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);
+    // A confirm with no way back and nothing open falls to the tree too.
+    app.overlay.confirm.return_focus = null;
+    try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // The kebab's menu opened from the tree remembers the tree.
+    app.focus = .tree;
+    try openKebabMenu(&app, 5, 5);
+    try t.expect(app.focus == .overlay);
+    try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // A hovered chip beats the walked row.
+    app.focus = .tree;
+    try app.render();
+    var chip_at: ?struct { x: u16, y: u16 } = null;
+    for (app.hits.items.items) |e| if (e.target == .tree_chip and e.target.tree_chip == .refresh) {
+        chip_at = .{ .x = e.rect.x, .y = e.rect.y };
+    };
+    app.hover = .{ .x = chip_at.?.x, .y = chip_at.?.y };
+    app.hover_live = true;
+    try t.expectEqualStrings("Refresh tree", (try pick(&app, arena)).title);
+    app.hover_live = false;
+    // A file open with the tree focused at its first row: Rust's focus
+    // rung says nothing there and the active pane's summary shows —
+    // walked past it, the row's doc wins over the open file.
+    try app.tree.activate(&app, app.tree.cursor);
+    try t.expect(app.active != null);
+    app.focus = .tree;
+    app.tree.cursor = 0;
+    const at_rest = try pick(&app, arena);
+    try t.expect(std.mem.startsWith(u8, at_rest.title, "fn  ·  RS  ·  main.rs"));
+    try t.expectEqualStrings("[gd] Definition · [gr] References · [K] Hover · [F2] Rename", at_rest.body);
+    app.tree.cursor = app.tree.rowOf("src/main.rs") orelse app.tree.rowOf("main.rs").?;
+    try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);
+    // The picker over that: its way back is the pane, so the summary.
+    app.overlay = .discovery;
+    app.focus = .overlay;
+    try t.expect(std.mem.startsWith(u8, (try pick(&app, arena)).title, "fn  ·  RS  ·  main.rs"));
+    app.overlay = .none;
+    // The pane focused: the summary, whatever the tree's cursor.
+    app.focus = .{ .pane = app.active.? };
+    try t.expect(std.mem.startsWith(u8, (try pick(&app, arena)).title, "fn  ·  RS  ·  main.rs"));
 }
 
 test "the dictionary: five targets — a directory, package.json, a .d.ts, a plain .txt, and an unknown extension" {

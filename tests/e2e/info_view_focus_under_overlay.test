@@ -1,0 +1,28 @@
+# The info box under an overlay reads the surface the keys go back to,
+# as Rust's does (its focus never leaves the surface): the picker over
+# the tree says `Sidebar`; a file open with the tree focused at its
+# first row falls through to the editor's summary; walked past it the
+# row's doc wins, and the delete box over that row keeps it.
+write src/main.rs "fn main() {}\n"
+write README.md "# hi\n"
+command view.focus_tree
+key ctrl+p
+expect screen contains "Open file"
+expect screen contains "Arrows or j/k walk rows."
+expect screen lacks "Hover a chip, tab, or tree row"
+key esc
+open src/main.rs
+expect screen contains "fn  ·  RS  ·  main.rs"
+command view.focus_tree
+expect screen contains " TREE "
+expect screen contains "fn  ·  RS  ·  main.rs"
+key r
+key end
+expect screen contains "README.md — Project re"
+command file.delete
+expect screen contains "Delete README.md?"
+expect screen contains "README.md — Project re"
+expect screen lacks "fn  ·  RS  ·  main.rs"
+key esc
+expect screen lacks "README.md?"
+expect screen contains "README.md — Project re"
