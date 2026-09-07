@@ -1,4 +1,3 @@
-# zig-only
 # The toast's right-click menu opens where the user can see it: above
 # the pointer when there is no room below, on top of the toast, and
 # never over the statusline. At 120x40 the toast sits at rows 34-36,

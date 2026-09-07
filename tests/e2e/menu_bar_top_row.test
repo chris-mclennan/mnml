@@ -1,4 +1,3 @@
-# zig-only
 # width: 120
 # The chrome row (src/ui/menu_bar.zig) as the Rust editor paints it at
 # 120 columns: ` ❯_  mnml  File  Edit  » ` at the left, the search chip

@@ -236,7 +236,7 @@ returned table reaches the config.
 
 ## Testing a script
 
-`tests/e2e-zig/lua_init.test` shows the shape: `write .mnml/init.lua "…"`,
+`tests/e2e/lua_init.test` shows the shape: `write .mnml/init.lua "…"`,
 `command script.reload`, then `command user.<id>` and `expect screen
 contains …`. The `.test` runner's temp workspace is trusted, so the
 workspace file runs. Unit tests reach the state as `app.script()` and run

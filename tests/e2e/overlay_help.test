@@ -1,4 +1,3 @@
-# zig-only
 # The help overlay: sections with their counts, the filter, folding,
 # and the scroll keys — Rust's F1 box.
 key f1

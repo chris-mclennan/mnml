@@ -1,4 +1,3 @@
-# zig-only
 # One `:g` is one change (`:help :g`, `:help undo-blocks`): a single `u`
 # after `:g/pat/normal …` or `:g/pat/s//…/` puts every line back.
 write a.txt "alpha\nbravo\ncharlie\ndelta\n"

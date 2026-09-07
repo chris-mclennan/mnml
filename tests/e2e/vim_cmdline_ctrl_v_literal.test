@@ -1,4 +1,3 @@
-# zig-only
 # `c_CTRL-V` inserts the next key literally on the `:` line (`:help
 # c_CTRL-V`): `Ctrl-V Tab` is a real tab character, not completion, so
 # `:s/<Tab>/…/` can be typed by hand. `Ctrl-R "` pastes the register.

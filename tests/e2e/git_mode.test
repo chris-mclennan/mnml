@@ -1,4 +1,3 @@
-# zig-only
 # Git mode (src/app/git_palette.zig): the Git section swaps the sidebar
 # for the git palette and the editor area for one graph tab per repo;
 # the detail column's `[+]` stages a file through the worker; leaving

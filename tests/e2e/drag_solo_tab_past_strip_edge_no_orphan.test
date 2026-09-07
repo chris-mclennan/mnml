@@ -17,7 +17,7 @@ drag 5 1 100 1
 
 # Post-drop: nothing should have changed — b.txt still the only pane,
 # still visible, and its tab chip is still on the strip. The R3 dest_survivor
-# guard in `drop_tab_on_strip` (src/app/tab_drop.rs:153) covers this:
+# guard in `dropTab` (src/app/dispatch.zig) covers this:
 # when the src tab is the leaf's only tab (dest_survivor.is_none()),
 # bail before touching the layout so src stays visible.
 expect screen contains "BBBBBBBB"

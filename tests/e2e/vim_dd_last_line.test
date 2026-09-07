@@ -1,4 +1,3 @@
-# zig-only
 # Deleting the last line lands the cursor on the new last line (`Ln 8/8`,
 # never `Ln 9/8`), so a following `p` puts the line back as the last
 # line and never materialises an empty one. `3dd` reaching past EOF and

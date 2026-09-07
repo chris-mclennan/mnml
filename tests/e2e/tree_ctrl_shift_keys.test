@@ -1,4 +1,3 @@
-# zig-only
 # The tree's file-clipboard chords are Ctrl+X/C/V/D — plain ctrl only.
 # Ctrl+Shift+D is Activity: Debug in both profiles and must never
 # duplicate the row; the shifted forms of the other three go to the

@@ -1,4 +1,3 @@
-# zig-only
 # Esc leaving Insert (or Replace) steps one column left but never onto
 # the previous line (`:help i_<Esc>`): after `i<CR>` it stays at column
 # 0 of the new line, `i<Esc>` at column 0 stays put, `A<Esc>` lands on

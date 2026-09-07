@@ -1,4 +1,3 @@
-# zig-only
 # `editor.auto_indent` (on by default, NvChad's `autoindent` +
 # `smartindent`): `o` / `O` / Enter copy the line's indent, a line that
 # ends in `{` opens one level deeper, and a `}` typed first on a line

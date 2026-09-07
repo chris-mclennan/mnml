@@ -1,4 +1,3 @@
-# zig-only
 # `:bd` closes the buffer: every window on the document goes, and the
 # split collapses onto what is left.
 write a.txt "alpha\n"

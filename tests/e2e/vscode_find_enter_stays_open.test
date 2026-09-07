@@ -1,4 +1,3 @@
-# zig-only
 # VS Code's find widget: Enter = next match, Shift+Enter = previous, Esc
 # closes. The bar staying open is what keeps Shift+Enter out of the buffer.
 write alpha.zig "pub fn alpha() u32 {\n    return 1;\n    return 2;\n}\n"

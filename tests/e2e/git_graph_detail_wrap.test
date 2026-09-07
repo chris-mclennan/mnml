@@ -1,4 +1,3 @@
-# zig-only
 # The commit detail column wraps a message body to its width. A body
 # line one or two cells wider than the column used to slice past the
 # text (`clipStr` appends "…", so the clipped form is longer in bytes

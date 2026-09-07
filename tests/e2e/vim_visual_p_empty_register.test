@@ -1,4 +1,3 @@
-# zig-only
 # `p` over a Visual selection with nothing in the register deletes
 # nothing (Vim: E353) — a fresh-session `Vp` reflex must not silently
 # drop three lines. With something yanked it replaces the selection.

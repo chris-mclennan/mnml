@@ -1,4 +1,3 @@
-# zig-only
 # `gv` brings back the last Visual selection in the mode it was made
 # (`:help gv`): a V-LINE yank of two lines comes back as V-LINE over the
 # same two lines, a V-BLOCK yank as the same rectangle — so `gvd` deletes

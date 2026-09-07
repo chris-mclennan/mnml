@@ -1,4 +1,3 @@
-# zig-only
 # The finding `nvchad-vsplit-clones-buffer`: `:vsplit` opens a second
 # window on the SAME buffer, not a copy of the file. An insert in one
 # window shows in the other, both report dirty, `:w` from either

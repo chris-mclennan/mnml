@@ -1,4 +1,3 @@
-# zig-only
 # Location lists are per editor pane: `:lexpr` fills the active editor's
 # list, `:lopen` shows it in the Location pane, and `:lnext` opens the entry
 # — the file at its line, reported as `(i of n) text` — from that pane.

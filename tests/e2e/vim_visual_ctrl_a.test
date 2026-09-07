@@ -1,4 +1,3 @@
-# zig-only
 # `v_CTRL-A` adds to the first number on every selected line and returns
 # to Normal; `v_g_CTRL-A` makes a progression (`:help v_CTRL-A`). The
 # chord is never read as a pending `a` text object, so one Esc is never

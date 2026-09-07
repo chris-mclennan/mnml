@@ -1,4 +1,3 @@
-# zig-only
 # `[count]p` puts the register `count` times in a row (`:help p`): after
 # `2yy3p` the six lines alternate, the cursor on the first put line;
 # `yiw3p` puts the word three times back to back.

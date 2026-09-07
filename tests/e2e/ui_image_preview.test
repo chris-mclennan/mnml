@@ -1,4 +1,3 @@
-# zig-only
 # An image file opens as `Pane.image` from the tree / a path: a header
 # with the name, size, pixels and format, and — headless has no
 # transport — the text fallback that names the protocols.

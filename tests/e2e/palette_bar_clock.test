@@ -1,4 +1,3 @@
-# zig-only
 # The statusline carries a clock beside the bell: its menu offers Local
 # / UTC / Hide, and clock.utc / hide / local switch it. (The menu is
 # opened first: the switches' toasts stack over the corner it anchors

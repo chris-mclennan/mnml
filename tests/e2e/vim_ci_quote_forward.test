@@ -1,4 +1,3 @@
-# zig-only
 # `ci"` with the cursor before the first quote on the line uses the first
 # quoted string after it (`:help i"`); `di"` / `yi"` the same.
 write a.txt "name = \"world\";\nx = 'a' + 'b';\n"

@@ -1,4 +1,3 @@
-# zig-only
 # Flash-motion labels (src/app/flash.zig): in vim Normal, `s` + two chars
 # labels every `ab` on screen — nearest to the cursor first, from the
 # `fjdksl…` pool — and the cue on the pane's last row says what to press.

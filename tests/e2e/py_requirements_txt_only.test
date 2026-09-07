@@ -5,7 +5,7 @@
 # was toasting "no pyproject.toml / setup.py / test files" on a project
 # with requirements.txt (and pyright happily attaching) — contradictory
 # signals to the user. Fixed by adding requirements.txt to the detect
-# set in src/app/playwright.rs::run_pytest.
+# set of the pytest runner (src/app/runners.zig).
 #
 # This fixture locks the fix: with only requirements.txt + a test file,
 # pytest.run should NOT emit the "no manifest" toast.

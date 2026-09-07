@@ -1,4 +1,3 @@
-# zig-only
 # `view.close_split` on the sole pane closes it (Rust: the last leaf's
 # pane goes, no "only one split" complaint). The pty tab is painted as
 # every tab is — `  <label> 󰅖 ` — so the tab reads `sleep 30 󰅖`.

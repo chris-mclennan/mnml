@@ -1,4 +1,3 @@
-# zig-only
 # `file.save` on a file with no trailing newline appends one
 # (`editor.ensure_trailing_newline`) and the cursor stays where it was:
 # on the last line, on its last char. It used to ride the appended `\n`

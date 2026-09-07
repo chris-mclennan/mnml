@@ -201,7 +201,7 @@ from a cancelled scan is ignored rather than adopted.
   one toast, never a half-restored layout. In Rust: add `version` and
   `workspace` to `SavedSession`, check both first, and stop
   deserialising into the live `App` field by field.
-- **`defaults.test` + a break-check script** (`tests/e2e-zig/defaults.test`,
+- **`defaults.test` + a break-check script** (`tests/e2e/defaults.test`,
   `tools/break-check.sh`): the shipped defaults are asserted from the
   screen, and every behaviour test is shown to fail against a one-line
   break before it counts. Both are shell / `.test` files the Rust repo

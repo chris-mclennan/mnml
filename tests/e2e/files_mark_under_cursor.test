@@ -1,4 +1,3 @@
-# zig-only
 # A marked row under the cursor shows its tick: the cursor band is the
 # cursor, the marker column keeps the `✓`. It used to paint the bar over
 # the tick, so the row being decided on never looked marked.

@@ -1,4 +1,3 @@
-# zig-only
 # `file.move_to` on a tree row: Tab completes the workspace's folders in
 # order and cycles, Enter moves the file into the typed one; the open
 # buffer follows. End lands on zz.txt, the last row (the `.keep` files

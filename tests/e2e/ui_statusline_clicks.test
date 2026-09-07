@@ -1,4 +1,3 @@
-# zig-only
 # The statusline is clickable end to end: the position chip opens the
 # go-to-line prompt, the mode chip toggles the keymap (the vim chip grows
 # its glyph), the language chip says what the file is. At 120x40 the

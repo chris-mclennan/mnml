@@ -1,4 +1,3 @@
-# zig-only
 # F1 opens the help overlay (Rust's keymap reference) and closes it
 # again; view.discovery opens the click-discovery panel — the families
 # of click targets with their on-screen counts — and a click on a row

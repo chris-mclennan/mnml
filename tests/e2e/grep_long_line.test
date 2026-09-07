@@ -1,4 +1,3 @@
-# zig-only
 # A grep hit on a line wider than 65535 cells (data/nerd-glyphnames.json
 # in this repo is one 545k-char line) overflowed the u16 vaxis sums cells
 # into: the Search pane measured the whole prefix before clipping it and

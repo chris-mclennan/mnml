@@ -1,4 +1,3 @@
-# zig-only
 # The prompts and confirms as Rust paints them: go-to-line names the
 # current line, the tree's rename is `Rename <path>` seeded with the
 # name, the delete asks `Delete <path>?` with Cancel focused, and a

@@ -1,4 +1,3 @@
-# zig-only
 # The `⟳` chip's right-click on a list panel offers *Refresh now* and
 # the auto-refresh toggle; a SEARCH row's right-click opens the row
 # menu titled by the hit.

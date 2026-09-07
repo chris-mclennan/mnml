@@ -1,4 +1,3 @@
-# zig-only
 # width: 120
 # The activity bar (src/ui/activity_bar.zig): the icon rail down the
 # sidebar's left edge, columns 0..2, the `│` at column 3. Without pinned

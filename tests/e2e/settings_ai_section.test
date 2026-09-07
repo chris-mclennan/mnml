@@ -1,4 +1,3 @@
-# zig-only
 # Settings has an AI section — ghost text, its backend, the Claude and
 # Codex backends, the meter — below Editor; End scrolls the box there.
 write a.txt alpha

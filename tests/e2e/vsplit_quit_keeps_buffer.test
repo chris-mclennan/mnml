@@ -1,4 +1,3 @@
-# zig-only
 # `:q` closes the window, not the buffer: with another window on the
 # file, the text (edits included) stays; the last window refuses a
 # dirty buffer without `!`, and `:q!` discards it.

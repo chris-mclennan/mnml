@@ -1,4 +1,3 @@
-# zig-only
 # `Vc` changes the selected lines the way `cc` changes one: the lines go,
 # an empty line stays where they were and Insert opens on it
 # (`:help v_c`). The buffer used to lose the line's newline too.

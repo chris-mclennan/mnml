@@ -1,4 +1,3 @@
-# zig-only
 # A closed fold is one line to the line operators (`:help fold-behavior`):
 # `dd` deletes the whole fold, `yy` yanks all of it, and the fold does
 # not re-attach to whatever line follows.

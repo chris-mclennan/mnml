@@ -1,4 +1,3 @@
-# zig-only
 # Insert-mode Ctrl-O runs one normal-mode command and comes back to
 # INSERT (`:help i_CTRL-O`): after `A`, `Ctrl-O 0` puts the cursor on
 # column 1 and the mode chip still reads INSERT. In NORMAL, Ctrl-O is the

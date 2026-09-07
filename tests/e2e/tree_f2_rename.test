@@ -1,4 +1,3 @@
-# zig-only
 # F2 with the tree focused renames the selected row (VS Code's Explorer
 # chord); the global `lsp.rename` binding on F2 only applies to an
 # editor. The prompt is `Rename <path>`, seeded with the name.

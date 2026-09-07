@@ -1,4 +1,3 @@
-# zig-only
 # `:v/pat/d` with the pattern on every line has nothing to act on; Vim's
 # message says so ("Pattern found in every line") — `E486: pattern not
 # found` is the `:g` case and would claim the opposite.

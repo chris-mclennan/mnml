@@ -1,4 +1,3 @@
-# zig-only
 # A leader chord resolves on its second key however fast it is typed —
 # including the entries that exist only in the which-key menu, not in
 # the keymap: `space n` toggles line numbers (never runs `n` as

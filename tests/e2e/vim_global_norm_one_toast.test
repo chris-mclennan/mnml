@@ -1,4 +1,3 @@
-# zig-only
 # `:g/pat/normal …` reports once, for the whole `:g` — the per-line
 # sub-command output is suppressed inside `:g`, as Vim does, so the
 # summary is not buried under one `:norm — 1 line(s)` per line.

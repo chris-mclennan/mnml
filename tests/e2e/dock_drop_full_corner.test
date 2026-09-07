@@ -1,4 +1,3 @@
-# zig-only
 # Dropping a dock widget on a corner whose stack is full (two mediums
 # already take the half-body cap) used to park it off the paintable
 # area: no rect, no hit, only dock.close_all knew it existed. The drop

@@ -1,4 +1,3 @@
-# zig-only
 # A row whose choices overflow the box paints a window around the active
 # one and marks the hidden side with an arrow, so `→` never steps onto a
 # value the user cannot see. At 120x40 the box is centred vertically and

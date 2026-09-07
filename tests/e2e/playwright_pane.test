@@ -1,4 +1,3 @@
-# zig-only
 # `test.run_playwright` needs a package.json at or above the active
 # file; without one it says so and opens nothing. With one, the results
 # pane opens running (the worker's outcome depends on npx, which the

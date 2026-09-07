@@ -1,4 +1,3 @@
-# zig-only
 # `:!cmd` shows the command's output in a scratch pane; `:r file` and
 # `:r !cmd` insert below the cursor's line; `:>` / `:<` shift by the
 # tab width; `:&` repeats the last substitute.

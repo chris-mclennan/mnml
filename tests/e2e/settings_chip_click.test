@@ -1,4 +1,3 @@
-# zig-only
 # A settings row's choice chips are click targets in their own right: a
 # click on `on` sets the row to `on`, not merely focuses it. At 120x40
 # the box spans x=24..95 and is centred vertically: `Relative line

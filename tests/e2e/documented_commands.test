@@ -1,4 +1,3 @@
-# zig-only
 # Three documented, keybound ids that only toasted `not implemented
 # yet`: search.toggle_regex flips the Search pane's regex flag and
 # reruns; view.activity_integrations (ctrl+shift+x) is the Integrations

@@ -1,4 +1,3 @@
-# zig-only
 # `editor.fold_all_brackets` closes every multi-line pair in one go;
 # `snippet.pick` lists the file's snippets and Enter inserts one.
 snippet rs fnn "fn $1() {\n    $0\n}"

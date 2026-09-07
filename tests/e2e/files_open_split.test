@@ -1,4 +1,3 @@
-# zig-only
 # `files.open_split` opens a second Files pane in a new leaf: two
 # strips each with their own ` 󰝰 sub 󰅖 ` tab and `󰐕`, never two
 # Files tabs on one strip.

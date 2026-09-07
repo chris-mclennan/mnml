@@ -1,4 +1,3 @@
-# zig-only
 # Closing the other tabs arms the Undo chip beside the toast stack for
 # ten seconds; a click on it reopens what was closed.
 write a.txt alpha

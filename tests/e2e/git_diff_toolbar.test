@@ -1,4 +1,3 @@
-# zig-only
 # The diff pane's toolbars (src/ui/diff_view.zig, src/ui/git_toolbar.zig):
 # the banner's Stage chip stages the hunk, Discard asks first, the
 # toolbar's Wrap continues a long line on the next row, and its `×`

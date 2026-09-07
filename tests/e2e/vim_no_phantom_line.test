@@ -1,4 +1,3 @@
-# zig-only
 # A file ending in `\n` has as many lines as the editor counts: no
 # numbered empty line N+1 in the gutter. `G` lands on the last real line.
 write a.txt "alpha\nbravo\ncharlie\n"

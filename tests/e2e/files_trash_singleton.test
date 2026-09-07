@@ -1,4 +1,3 @@
-# zig-only
 # The trash view is a singleton titled for the workspace: a second
 # `files.trash` focuses the open one instead of stacking a twin, its
 # crumb is `Trash` rather than the data-root path, and `↑` / `files.up`

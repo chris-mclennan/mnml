@@ -1,4 +1,3 @@
-# zig-only
 # The find bar keeps a history: Enter remembers the query, ↑ on the
 # next bar recalls it (a miss too), ↓ past the newest is empty.
 write a.txt "alpha\nbeta\n"

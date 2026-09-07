@@ -1,4 +1,3 @@
-# zig-only
 # The HTTP panel header carries a green `+` chip before its ⟳: a click
 # opens a blank request pane. A right-click on a request field opens a
 # menu titled by that field.

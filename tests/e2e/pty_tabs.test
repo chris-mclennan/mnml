@@ -1,4 +1,3 @@
-# zig-only
 # Pty panes on the strip, painted as Rust paints them: `  <label> 󰅖 `
 # like any tab, no divider, no `$`. `:bn` skips pty tabs, `:bn!` does
 # not; `:rename` retitles; the scratch terminal toggles; a click on a

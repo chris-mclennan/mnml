@@ -1,4 +1,3 @@
-# zig-only
 # Sixteen tabs overflow the strip (Rust's chips: an icon, the name,
 # `󰅖`, three cells between). The strip ends on the active tab with
 # the `󰐕` after it and the `󰅁  󰅂` chevrons on the right; the

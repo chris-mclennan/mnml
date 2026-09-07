@@ -1,4 +1,3 @@
-# zig-only
 # A right-click on the strip's `󰐕` (column 47 with ` alpha.zig 󰅖 `
 # before it — the tree is 30 wide) drops the New menu; `New ▸` opens
 # its submenu whose first row carries a `⋯` kebab; the kebab's menu

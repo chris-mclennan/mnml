@@ -1,4 +1,3 @@
-# zig-only
 # A mark is a motion (`:help '`): `d'a` deletes linewise to the mark,
 # `` y`a `` yanks charwise up to it, and in V-LINE `'a` extends the
 # selection to the mark's line. The mark letter must never fall through

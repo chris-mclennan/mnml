@@ -1,4 +1,3 @@
-# zig-only
 # Marks move with the text (`:help mark-motions`): two lines opened
 # above `'a` push it two lines down; deleting a line above pulls it back
 # up; an edit on the mark's own line, before the mark, shifts its column.

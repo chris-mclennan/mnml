@@ -1,4 +1,3 @@
-# zig-only
 # `$` in V-BLOCK makes the block ragged-right (`:help v_$`): `A` then
 # appends at the end of every line, whatever its length.
 write a.txt "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel india\n"

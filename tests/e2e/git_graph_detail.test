@@ -1,4 +1,3 @@
-# zig-only
 # The commit graph pane (src/ui/git_graph_view.zig) in git mode: the
 # column header, the rows with their nine-char sha, the detail column
 # on the right following the cursor — a commit's message and files, or

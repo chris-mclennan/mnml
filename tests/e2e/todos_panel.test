@@ -1,4 +1,3 @@
-# zig-only
 # The TODOS panel (src/todos.zig, the reference module): a scan runs in a
 # worker and lands through the event queue; the panel lists every marker
 # as `<marker> <title>  <path>:<line>`, the header carries the sort chip,

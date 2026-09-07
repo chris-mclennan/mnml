@@ -1,4 +1,3 @@
-# zig-only
 # `/pat/e` is a search offset (`:help search-offset`), not part of the
 # pattern: `e` lands on the match's last char, `e+1` one past it, `s+2`
 # two into it, `+1` on the line below at column 1. `n` keeps the offset.

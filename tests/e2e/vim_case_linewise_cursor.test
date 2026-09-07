@@ -1,4 +1,3 @@
-# zig-only
 # A doubled case operator leaves the cursor on the line it changed
 # (`:help g~~`: vim's `3G3|g~~` ends at 3:1), so `gUU j .` reaches the
 # next line rather than the one after.

@@ -72,10 +72,9 @@ manifest version, the git short SHA and `-dirty` (`0.3.0-dev+g76ccf5b-dirty`).
 
 The end-to-end suite is a line-based script format — `write`, `open`, `key`,
 `type`, then `expect screen | file | dirty | pane` — run headlessly against the
-same `App` the terminal drives. The corpus is shared with the Rust repo
-(`tests/e2e` is a symlink to it until Rust freezes; `tests/e2e-zig` holds the
-files that only make sense here) and it is the definition of parity: 225 of
-226 green at 120x40.
+same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
+repo's suite, copied here when Rust froze, plus the scripts written for this
+codebase; it is the definition of parity: 365 of 365 green at 120x40.
 
 ```sh
 ./zig-out/bin/mnml-zig test                          # the whole corpus

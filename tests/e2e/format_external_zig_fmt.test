@@ -1,4 +1,3 @@
-# zig-only
 # `editor.format_external` with nothing in `.formatters` falls back to
 # the builtin table (`src/lsp/tools.zig`): a `.zig` buffer goes through
 # `zig fmt --stdin` — on PATH wherever this suite runs — and the tool's

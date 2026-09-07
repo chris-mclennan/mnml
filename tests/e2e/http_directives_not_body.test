@@ -1,4 +1,3 @@
-# zig-only
 # `# @assert` / `# @capture` lines after the body boundary are directives,
 # not body bytes. A GET carrying them used to abort the whole process at
 # std's `assert(r.method.requestHasBody())` (api-http-send-get-with-body-

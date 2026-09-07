@@ -1,4 +1,3 @@
-# zig-only
 # `{count}.` replaces the count of the last change (`:help .`): after
 # `cwPAPA<Esc>`, `3.` is `3cwPAPA<Esc>` — three words become PAPA — not
 # the change replayed three times from a moving cursor.

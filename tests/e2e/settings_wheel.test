@@ -1,4 +1,3 @@
-# zig-only
 # The mouse wheel scrolls the Settings list — the box is 35 rows tall for
 # a 60-row list. A notch down moves the top of the list away; the cursor
 # follows the window (the row it marks is always visible), and a notch

@@ -1,4 +1,3 @@
-# zig-only
 # Everyday ex verbs: `:t` / `:m` copy and move lines, `:update` writes
 # only when dirty, `:saveas` re-targets the buffer, `:bfirst` / `:blast`
 # reach the ends of the tab strip, `:new` / `:vnew` split a scratch,

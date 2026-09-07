@@ -1,4 +1,3 @@
-# zig-only
 # `{{VAR}}` in a request pane: the quick-fix menu names the token under
 # the caret, inline_var replaces it with the env's value, and the jump
 # lands in the env file — at the end, with a hint, when it is undefined.

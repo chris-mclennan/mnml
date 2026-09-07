@@ -1,4 +1,3 @@
-# zig-only
 # The workspace trash (src/app/trash.zig) and the file clipboard
 # (src/app/file_clipboard.zig): a delete from the Files pane goes to
 # the trash and `files.trash` / `files.restore_from_trash` bring it

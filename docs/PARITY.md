@@ -103,7 +103,7 @@ trust sink. Each row names its file and its test.
 | brotli response decoding | `std.compress` has gzip / deflate / zstd, not brotli; the HTTP client asks for the encodings it can decode | `Accept-Encoding` never lists `br` (`src/http/client.zig`); a forced `br` body is shown raw with a toast |
 | WebP images | no decoder in `zigimg` for this release; PNG / JPEG / GIF render over kitty / iTerm2 / sixel | `view.image_open` and the markdown preview show the `[image: alt]` placeholder for `.webp` |
 | Glyph-builder SVG preview and Nerd Font patching | SVG rasterising and font patching have no Zig path; the audit / bake half is `zig build glyph-audit` | `integrations.glyph_builder` / `patch_nerd_font_svg` toast the reason (`src/app/cmd_app.zig` `cutRunner`) |
-| TOML anywhere (config, themes, manifests, `trusted_workspaces.toml`) | E1 / E2: every persisted format is ZON; the final Rust release ships `mnml export-config-zon` | `docs/CONFIG.md`; the one corpus failure (`settings_persist_to_workspace.test`) asserts TOML by design; the Zig twin in `tests/e2e-zig/` passes |
+| TOML anywhere (config, themes, manifests, `trusted_workspaces.toml`) | E1 / E2: every persisted format is ZON; the final Rust release ships `mnml export-config-zon` | `docs/CONFIG.md`; the one corpus failure (`settings_persist_to_workspace.test`) asserts TOML by design; the Zig twin in `tests/e2e/` passes |
 | The Rust integration binaries and the crates.io marketplace of them (`mnml-forge-*`, `mnml-aws-*`, …) | E5: integrations are rewritten in Zig on a v2 bridge after the cutover; the 0.2.x crates stay published for 0.2.x users | `pr.picker` / `pr.refresh` toast the reason; `:term <binary>` still runs any installed binary as a pty pane; a `crates_keyword` marketplace source is accepted and lists nothing |
 | now-playing / Sonos / mixr transport | macOS-only AppleScript + a sibling-app IPC; not a terminal-IDE concern for the successor | every `sonos.*` / `mixr.*` / `audio.*` id toasts the reason (`cutRunner`); `sonos.*` config keys are accepted and ignored |
 | Playwright as the generic `test.*` runner | the generic `test.*` runners keep the project's own command (cargo / npm / go / pytest); Playwright has its own ids (`test.run_playwright*`, the Tests pane) — listed here because the spec titles still say "Playwright" | `test.run_*` run the project's own test command |
@@ -132,7 +132,7 @@ trust sink. Each row names its file and its test.
 | Abbreviations | done | `abbreviate` in `src/app/ex.zig`, expansion in `src/app/dispatch.zig` | |
 | Charwise VISUAL inclusive | done | `make_selection_inclusive` in `src/editor/edit_op.zig` | |
 | Folds `za` / `zo` / `zc`, idempotent | done | `src/editor/buffer.zig` folds, `editor.toggle_fold` / `open_fold` / `close_fold` | |
-| Fold navigation `zj` / `zk`, fold the selection | done | `editor.fold_next` / `fold_prev` / `fold_selection` in `src/app/cmd_app.zig`; `editor.fold_all_brackets` (`foldAllBrackets` in `cmd_editor.zig`) | one stack scan per bracket family, the first fold to claim a start line keeps it; `tests/e2e-zig/fold_snippet_pick.test` |
+| Fold navigation `zj` / `zk`, fold the selection | done | `editor.fold_next` / `fold_prev` / `fold_selection` in `src/app/cmd_app.zig`; `editor.fold_all_brackets` (`foldAllBrackets` in `cmd_editor.zig`) | one stack scan per bracket family, the first fold to claim a start line keeps it; `tests/e2e/fold_snippet_pick.test` |
 | Flash-motion `s` + two chars, labels | done | `src/app/flash.zig` (`start`, `interceptKey`), `drawFlashCue` in `render.zig`, `Doc.labels` in `src/ui/editor_view.zig` | labels nearest-to-cursor first; a single match jumps at once |
 | Ex `:w` `:q` `:e` `:wq` `:x` `:qa` `:bd` `:enew` | done | `src/app/ex.zig` | `:qa` refuses mid-transfer; `:qa!` overrides |
 | Ex `:%s/old/new/flags` | done | `substitute` / `compilePattern` in `ex.zig`, `substituteConfirm` / `substituteCount` / `ampersand` in `src/app/ex_verbs.zig`, `src/regex/` | vim patterns; `g` `i` `c` `n`; `:&` / `:&&`; `&`, `\0`–`\9`, `\u \l \U \L \E` in the replacement |
@@ -177,7 +177,7 @@ trust sink. Each row names its file and its test.
 | `Ctrl-W =` equalize | done | `'='` in the `.window` prong → `view.equalize_splits`; `ui.auto_equalize_splits` via `App.afterSplitChange` on every split and close, `view.toggle_auto_equalize_splits` in `cmd_view.zig` | the toggle persists to the workspace config and evens the splits at once |
 | Mouse click-to-focus | done | `src/app/dispatch.zig`, `src/ui/hit.zig` | |
 | Mouse drag-to-resize dividers | done | `dispatch.zig` `.divider` drag | |
-| Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e-zig/buffer_pin_reopen.test` |
+| Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e/buffer_pin_reopen.test` |
 | Bufferline tab strip | done | `src/ui/bufferline.zig`, per-leaf strips in `render.zig` | |
 | Tab pages session-persisted | done | `src/app/session.zig` `tabs` / `active_tab` | |
 | Tabline of open buffers | done | `src/ui/bufferline.zig`, `view.focus_tab_1–8` / `focus_tab_last` in `cmd_view.zig` | |
@@ -229,13 +229,13 @@ trust sink. Each row names its file and its test.
 | Which-key leader popup | done | `src/app/whichkey.zig`, `src/ui/which_key.zig` | every group row below is done |
 | Which-key `f` find | done | `whichkey.zig` | `f g` → `find.grep` |
 | Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` has the NvChad leaves — explorer, right panel (+ next / prev / close tab), keymap, theme, hidden files (focused / all) — plus wrap / numbers; `g` and `a` carry the Rust leaves (`a M` mixr is cut) |
-| Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e-zig/whichkey_groups.test` | `P` (+pr) is dropped — `pr.*` are cut with the Rust integration binaries; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
+| Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e/whichkey_groups.test` | `P` (+pr) is dropped — `pr.*` are cut with the Rust integration binaries; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
 | Which-key root leaves `/ n e w q` | done | `whichkey.zig` | `x` closes a buffer here |
 | Which-key root leaves `? B m p o` | done | `whichkey.zig` | cheatsheet / browser / markdown preview / palette / task |
 | In-buffer find — literal, smart-case, incremental | done | `src/app/find.zig`, `src/app/cmd_find.zig`, `src/ui/find_bar.zig` | |
 | In-buffer find — regex | done | `src/regex/regex.zig` (Oniguruma via ghostty's `pkg/oniguruma`), `src/regex/vim.zig`, `regex` / `bad_pattern` in `find.zig`, `find.toggle_regex` | vim patterns; `ctrl+r` / the `.*` chip; a bad pattern toasts why |
 | Replace | done | `cmd_find.zig` `replace`, `:%s` | groups expand in the replacement |
-| Find history | done | `src/app/find_history.zig` (`App.find_history`, `FindBarState.hist_cursor`), `history_prev` / `history_next` in `src/ui/find_bar.zig` | Enter remembers the query (de-duped against the newest, 50 deep, a miss too); `↑` / `↓` on the bar recall, past the newest is empty; `// changed:` persisted at `<data root>/find_history.zon` on every accept, not in the workspace session — a query is not a workspace concern; `tests/e2e-zig/find_history.test` |
+| Find history | done | `src/app/find_history.zig` (`App.find_history`, `FindBarState.hist_cursor`), `history_prev` / `history_next` in `src/ui/find_bar.zig` | Enter remembers the query (de-duped against the newest, 50 deep, a miss too); `↑` / `↓` on the bar recall, past the newest is empty; `// changed:` persisted at `<data root>/find_history.zon` on every accept, not in the workspace session — a query is not a workspace concern; `tests/e2e/find_history.test` |
 | Workspace grep → results pane | done | `src/app/grep.zig`, `src/ui/grep_view.zig`, `Pane.grep`, `find.grep` / `view.activity_search` | `rg --json` when on PATH, else a gitignore walk over `src/regex/`; batches of 64, cap 5000 |
 | Cross-file replace / per-hit toggle | done | `replaceAll` in `grep.zig`, `find.grep_replace` | Space disables a hit; clean open buffers through `EditOp`s, closed files on disk, dirty buffers refused |
 | Quickfix pane | done | `ListPane.Kind.quickfix` in `src/app/pane.zig`, `:cexpr` | |
@@ -350,7 +350,7 @@ trust sink. Each row names its file and its test.
 | Caps header with live count | done | `src/ui/header.zig`, `src/ui/list_panel.zig` | |
 | `/`-focus filter row | done | `src/ui/filter_input.zig` | |
 | Accent bar, scrollbar, wheel / drag scroll | done | `src/ui/list_panel.zig` | |
-| `⟳` chip right-click menu + auto-refresh | done | `src/app/auto_refresh.zig` (`openRefreshMenu`, `on`, `toggle`, `seed`); the `.refresh` prong of `chipMouse` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | *Refresh now* + a ✓ *Auto-refresh* row; off stops TODOS' save / watcher rescan, NOTES' / FINDINGS' path hooks and SESSIONS' cadence; `ui.auto_refresh_off` seeds the set and the toggle persists it to the workspace config; `tests/e2e-zig/refresh_chip_row_menus.test` |
+| `⟳` chip right-click menu + auto-refresh | done | `src/app/auto_refresh.zig` (`openRefreshMenu`, `on`, `toggle`, `seed`); the `.refresh` prong of `chipMouse` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | *Refresh now* + a ✓ *Auto-refresh* row; off stops TODOS' save / watcher rescan, NOTES' / FINDINGS' path hooks and SESSIONS' cadence; `ui.auto_refresh_off` seeds the set and the toggle persists it to the workspace config; `tests/e2e/refresh_chip_row_menus.test` |
 | Sort chip — click cycles, right-click lists | done | `openSortMenu` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | every list panel |
 | Narrow-panel icon-only chip | done | the ladder in `src/ui/header.zig` | full + count → icon + count → full → icon; tested at 26 / 30 / 34 / 40 / 50 |
 | Four sort modes persisted for the three panels | done | `todos.sort` / `notes.sort` / `findings.sort` | each persists `ui.<panel>_sort` |
@@ -377,7 +377,7 @@ trust sink. Each row names its file and its test.
 | Ghost text — local FIM model | cut | `ai.zig` header; `suggest_backend = local` toasts the migration note | |
 | Opt-in via the first-launch wizard | done | `src/app/first_launch.zig` | |
 | Opt-in via `ai.setup_suggestions` | done | `ai.zig` | |
-| Opt-in via Settings → AI | done | `Section.ai` in `src/app/settings.zig` — ghost text, ghost-text backend (a virtual row over `ai.extra` + the setup picker's override), Claude / Codex backend (`ai.routing.*.backend`, optional enums: `unset` first), Claude meter | the model stays `ai.model` in the config — free text, and v1 rows are discrete choices (the family idiom); `tests/e2e-zig/settings_ai_section.test` |
+| Opt-in via Settings → AI | done | `Section.ai` in `src/app/settings.zig` — ghost text, ghost-text backend (a virtual row over `ai.extra` + the setup picker's override), Claude / Codex backend (`ai.routing.*.backend`, optional enums: `unset` first), Claude meter | the model stays `ai.model` in the config — free text, and v1 rows are discrete choices (the family idiom); `tests/e2e/settings_ai_section.test` |
 | Secret-bearing files never sent | done | `isSecretBearing` in `suggest.zig` | |
 | Context-aware chat | done | `chatCmd` in `ai.zig` | |
 | Launch profiles | done | `src/app/launch_profiles.zig`, `Config.Ai.launch_profiles` / `default_profile` | the chip menu's *New session:* / *Default:* lanes; the `mnml-ai-<name>` shim (`writeShim`) |
@@ -444,7 +444,7 @@ trust sink. Each row names its file and its test.
 | HTTP activity-bar panel (7 sections) | done | `src/app/http_panel.zig`, `PanelId.http` | COLLECTIONS / ENVS / CHAINS / MOCKS / COOKIES / RECENT / CAPTURED |
 | HTTP panel `/` filter | done | `rebuild` in `http_panel.zig` | one filter across every section; honest header counts |
 | Blank request `http.new` | done | `openBlank` in `src/app/http.zig` | |
-| Green `+` chip in the INTEGRATIONS rail | done | `new_chip` in `src/ui/header.zig` (`chip.newStyle`, `ChipKind.new`), set by `draw` in `src/app/http_panel.zig`; `chipMouse` runs `http.new` | a green ` + ` before the HTTP panel's ⟳; a click opens the blank request pane; `tests/e2e-zig/http_plus_chip.test` |
+| Green `+` chip in the INTEGRATIONS rail | done | `new_chip` in `src/ui/header.zig` (`chip.newStyle`, `ChipKind.new`), set by `draw` in `src/app/http_panel.zig`; `chipMouse` runs `http.new` | a green ` + ` before the HTTP panel's ⟳; a click opens the blank request pane; `tests/e2e/http_plus_chip.test` |
 | Paste curl | done | `pasteCurlCmd`, `context_menus.zig` | |
 | Field-aware right-click menu | done | `openRequestFieldMenu(app, field, x, y)` + `RequestField` in `context_menus.zig` | titled `URL` / `Body` / `Headers` / `Response` by the field under the pointer (the URL row, the edit area by its tab, the response body — `request_pane.zig`) |
 | Cycle method | done | `cycleMethodCmd` | |
@@ -575,7 +575,7 @@ trust sink. Each row names its file and its test.
 | Inline images in the preview | done | `Placement` / `renderWith` in `md_view.zig`, `ui.md_image_rows` | a standalone `![alt](src)` reserves rows; text fallback headless |
 | `render_markdown` inline in the editor | done | the `// ── ui toggles ──` block in `editor_view.zig`, `view.toggle_render_markdown` | marks concealed off the cursor line |
 | `markdown_opens_rendered` | done | `src/app.zig` `openPath` | |
-| Preview tabs — markdown | done | `MdPreviewPane.is_preview`, `PaneStore.findMdGlance`, the in-place swap in `md_preview.open` | a `.here` open (a click, a jump, the session) is a glance the next glance replaces, like the image viewer; `markdown.preview` on an editor is permanent; `tests/e2e-zig/md_preview_glance.test` |
+| Preview tabs — markdown | done | `MdPreviewPane.is_preview`, `PaneStore.findMdGlance`, the in-place swap in `md_preview.open` | a `.here` open (a click, a jump, the session) is a glance the next glance replaces, like the image viewer; `markdown.preview` on an editor is permanent; `tests/e2e/md_preview_glance.test` |
 | Preview tabs — `.http` / `.curl` | done | `findPreview` in `src/app/http.zig` | |
 | Preview tabs — images | done | `src/app/image_pane.zig` (`open` replaces the preview tab in place), `PaneStore.findImagePreview`, `Pane.image`, `view.image_open` | |
 | Typing makes a preview permanent | done | `edited` in `request_pane.zig` (request panes); `swapToEditor` in `md_preview.zig` (a markdown preview becomes the raw editor, which is never a preview) | the rule as Rust's: a request preview is promoted by an edit; typing on a markdown preview swaps the editor in; editor and image tabs carry no promotion — pinned by the `preview tabs:` test in `md_preview.zig` |
@@ -598,7 +598,7 @@ trust sink. Each row names its file and its test.
 | Bell chip — three states | done | `bell_seg` in `render.drawStatusline` | idle `○`, yellow count, red count; the clock beside it |
 | Zen mode | done | `src/app/zen.zig` (`view.zen` / `view.fullscreen`) | |
 | Clickable statusline | done | `Seg.id` in `src/ui/statusline.zig`, `.statusline_seg` in `dispatch.zig` | branch / diagnostics / AI / bell / stress / indent / encoding / transfers / input style; host segments above `seg_dyn_base` |
-| Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e-zig/palette_bar_clock.test` |
+| Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e/palette_bar_clock.test` |
 | Settings overlay | done | `src/app/settings.zig`, `src/ui/settings.zig` | 39 discrete rows + 9 number rows (`‹ [32] ›`) |
 | `:set` for every discrete field | done | `src/app/ex.zig` | Zig-only |
 | The `ui.*` toggles | done | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`), `click_echo` (a 120 ms double underline under a left press — `App.click_echo`, `Doc.echo`), `coverage_chip_mode` (`coverage.zig`: the `F` / `C` chip from the two `trends.json` files, four modes), `menu_bar` (`menu_bar.zig`: File / Edit / View / Go / Help on the bar row — always / auto / hidden, `view.menu_bar_cycle` / `menu_bar_open`), `auto_equalize_splits` (`App.afterSplitChange`); each has a test that changes a cell |
@@ -646,7 +646,7 @@ trust sink. Each row names its file and its test.
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
 | Installed / Marketplace / In-Dev tabs | partial | `Pane.integrations` + `Pane.marketplace`, `integrations.toggle_tab` | `integrations.show_in_dev` toasts "not in this build" |
 | `integrations.icon_picker` | missing | spec only | |
-| Glyph baking / audit tooling | done | `tools/glyph_audit.zig` (`zig build glyph-audit`), and the same logic in-process — the tool is an import of the app — behind `integrations.audit_glyphs` / `bake_ai_glyphs` / `bake_all_glyphs` / `bake_integration_glyphs` in `src/app/glyph_audit.zig` | the audit lands in a scratch pane with a toast; the three `bake_*` ids do the one bake this build has (the catalog → `<data root>/nerd-glyphs.tsv`) — Rust baked SVGs into a font, which is cut; `tests/e2e-zig/glyph_audit.test` |
+| Glyph baking / audit tooling | done | `tools/glyph_audit.zig` (`zig build glyph-audit`), and the same logic in-process — the tool is an import of the app — behind `integrations.audit_glyphs` / `bake_ai_glyphs` / `bake_all_glyphs` / `bake_integration_glyphs` in `src/app/glyph_audit.zig` | the audit lands in a scratch pane with a toast; the three `bake_*` ids do the one bake this build has (the catalog → `<data root>/nerd-glyphs.tsv`) — Rust baked SVGs into a font, which is cut; `tests/e2e/glyph_audit.test` |
 | Glyph-builder SVG preview / font patching | cut | `cutRunner` toasts | |
 | Settings overlay `:settings` | done | `view.settings`, `src/app/settings.zig` | a row per manifest `settings[]` entry too |
 | Rows `▸ label: [active] / other *`, section headers | done | `src/ui/settings.zig` | |
@@ -661,7 +661,7 @@ trust sink. Each row names its file and its test.
 | `ui.check_updates = false` opt-out | done | `Config.zig`, `update.zig` | + `MNML_NO_UPDATE_CHECK=1` |
 | Skipped in headless | done | the `startup` hook is the terminal loop's | |
 | `zig build docs` → `docs/commands.md` | done | `tools/gen_commands.zig`, `build.zig` | Zig-only |
-| `zig build check` (E7 gates) | done | `build.zig`, `tools/break-check.sh`, `tests/e2e-zig/defaults.test` | Zig-only |
+| `zig build check` (E7 gates) | done | `build.zig`, `tools/break-check.sh`, `tests/e2e/defaults.test` | Zig-only |
 | Session file `.mnml/session.zon` | done | `src/app/session.zig` | ZON, never JSON |
 | Lua scripting — `.mnml/init.lua`, the `mnml` table | done | `src/scripting/lua.zig`, `src/scripting/api.zig`, `script.reload` / `script.edit_init`, the `init_lua` trust sink | beyond the Rust list (D10); a 20 ms budget per entry |
 | Bridge v2 — `Pane.mount` over a socket | done | `src/bridge/host.zig` / `wire.zig`, `src/app/mount_pane.zig`, `mount.open` | beyond the Rust list; the SDK is `sdk/mnml-sdk` |

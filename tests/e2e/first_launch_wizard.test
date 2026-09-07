@@ -3,8 +3,7 @@
 # Input → Claude+Codex install → AI billing → AI ghost-text → VSCode
 # shim). Interactive rows for sections 1-3 are exercised. Later sections
 # fall below the 40-row test viewport, so they aren't asserted (would
-# fail with `expect screen contains` even when focused — see comment in
-# src/ui/first_launch_overlay.rs).
+# fail with `expect screen contains` even when focused).
 #
 # NOTE this walks sections with `key down`, so it is positional: adding
 # a section shifts every assertion after it. #1208 inserting Keyboard at

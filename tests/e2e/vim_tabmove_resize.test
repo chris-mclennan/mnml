@@ -1,4 +1,3 @@
-# zig-only
 # `:tabmove N` reorders tab pages, `:resize N` / `:vertical resize N` set
 # a window's height / width in cells, and a count on `Ctrl-W >` is a
 # number of columns (`:help :tabmove`, `:help :resize`, `:help CTRL-W_>`).

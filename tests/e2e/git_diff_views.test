@@ -1,4 +1,3 @@
-# zig-only
 # The diff pane's three views (src/ui/diff_view.zig), painted as the
 # Rust editor paints them: Inline is the default and shows the whole
 # file as one column (a line far from the change appears, no `@@`

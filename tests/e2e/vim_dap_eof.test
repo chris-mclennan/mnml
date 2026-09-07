@@ -1,4 +1,3 @@
-# zig-only
 # `ip` / `ap` are linewise objects: `dip` on the last paragraph removes its
 # lines outright (no empty line left where they were) and `dap` at the
 # end of the file takes the blank line BEFORE the paragraph instead of a

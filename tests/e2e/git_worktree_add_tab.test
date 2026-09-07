@@ -1,4 +1,3 @@
-# zig-only
 # The worktree prompt's path completes on Tab like the add-workspace
 # prompt's: `projects/al` → `projects/alpha/`; the branch word after it
 # is left alone.

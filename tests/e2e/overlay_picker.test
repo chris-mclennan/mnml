@@ -1,4 +1,3 @@
-# zig-only
 # `Open file` (Ctrl+P) as Rust lists it: the workspace's files in the
 # tree's order with the directory as the detail, the query narrowing
 # them with `N of M`, Enter opening the pick.

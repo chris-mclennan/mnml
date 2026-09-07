@@ -1,4 +1,3 @@
-# zig-only
 # The shipped defaults (E7): what a first launch with no config looks
 # like. Every assertion here is a `Config{}` value made visible — the
 # test fails if a default changes, which is the point: a default changes

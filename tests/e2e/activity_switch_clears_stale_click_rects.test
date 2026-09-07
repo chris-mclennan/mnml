@@ -14,10 +14,9 @@
 #      (Whatever HTTP would have popped — "New collection name",
 #      "New request", etc. — must be absent.)
 #
-# The systematic fix in PaneRects::clear_activity_panel_rects (called
-# at the top of ui/mod.rs section-dispatch) wipes all 43 activity-
-# panel-scoped rects on every frame; only the currently-drawn panel
-# repopulates. This test exercises just one switch, but the whole
+# The hit map is rebuilt from scratch every frame (`HitMap`, D6): only
+# the panel actually painted registers its rects, so a stale panel's
+# targets cannot survive a section switch. This test exercises just one switch, but the whole
 # class collapses to the same code path — cover-once-cover-all.
 
 write dummy.txt hello

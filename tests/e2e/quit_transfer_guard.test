@@ -1,4 +1,3 @@
-# zig-only
 # `app.quit` (Ctrl+Q, the palette) asks the same transfer guard `:qa`
 # does (src/app/transfers.zig quitGuard): a copy in flight is refused
 # with the count, so the standard profile cannot leave a half-written

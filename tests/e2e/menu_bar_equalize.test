@@ -1,4 +1,3 @@
-# zig-only
 # `ui.menu_bar = always` (the default) paints the menu words on the
 # chrome row — at 120 columns the brand, File and Edit fit before the
 # » ; a click drops the menu. The Window menu's auto-equalize row flips

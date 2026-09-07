@@ -1,4 +1,3 @@
-# zig-only
 # In the vim profile Ctrl-B pages backward — the pair of Ctrl-F — and
 # never toggles the sidebar (that chord is VS Code's, standard only).
 # From the last line of a 200-line file one Ctrl-B moves the cursor up a

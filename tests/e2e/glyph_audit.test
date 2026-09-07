@@ -1,4 +1,3 @@
-# zig-only
 # `integrations.audit_glyphs` audits the workspace's src/ against its
 # data/nerd-glyphnames.json into a scratch pane; without the catalog it
 # says so.

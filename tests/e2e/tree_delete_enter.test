@@ -1,4 +1,3 @@
-# zig-only
 # The tree's delete confirm (Rust's): Cancel is the focused button, so
 # Enter is a silent way out; `d` trashes and toasts.
 write a.txt "aa"

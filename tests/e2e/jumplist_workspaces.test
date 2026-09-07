@@ -1,4 +1,3 @@
-# zig-only
 # The jumplist (src/app/jumplist.zig): a big jump and a file switch push,
 # nav.back / nav.forward walk them. Multi-root workspaces (src/app/tree.zig):
 # view.add_workspace's prompt completes a directory on Tab and the root

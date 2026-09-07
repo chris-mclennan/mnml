@@ -1,4 +1,3 @@
-# zig-only
 # Everything typed between entering Insert and Esc is one undo step
 # (`:help undo-blocks`): `O one two<CR>three<Esc>` comes back with a
 # single `u`, and `cw` + the typed text undo together.

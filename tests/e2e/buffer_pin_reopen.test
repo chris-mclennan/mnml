@@ -1,4 +1,3 @@
-# zig-only
 # `buffer.pin_toggle` fronts the tab with a pin glyph and keeps it
 # through close-others; `tab.reopen` brings a closed tab page's files
 # back as a new page.

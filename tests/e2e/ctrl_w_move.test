@@ -1,4 +1,3 @@
-# zig-only
 # `Ctrl-W H` / `Ctrl-W J` in the vim keymap move the focused split to the
 # far edge of the whole window. Two files sit side by side, a.txt left and
 # b.txt right; after `Ctrl-W H` b.txt is the left edge, so focusing right

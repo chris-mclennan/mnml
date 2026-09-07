@@ -1,4 +1,3 @@
-# zig-only
 # The tree's right-click menu carries Cut / Copy / Paste here /
 # Duplicate — the Files pane's menu had them, the tree only had the
 # chords. view.context_menu_at_focus opens the menu on the cursor row.

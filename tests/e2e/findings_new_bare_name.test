@@ -1,4 +1,3 @@
-# zig-only
 # `findings.new` with a bare name writes `<name>.md` with the frontmatter
 # template and opens THAT file — it used to also create an empty,
 # extension-less twin and open the twin (src/findings.zig acceptNew).

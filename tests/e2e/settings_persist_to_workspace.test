@@ -1,7 +1,5 @@
-# zig-only
-# The mnml-zig form of tests/e2e/settings_persist_to_workspace.test: the
-# same flow against the per-project file <workspace>/.mnml/config.zon
-# (mnml-zig's config is ZON; the shared file seeds and asserts TOML).
+# Settings persist to the per-project file <workspace>/.mnml/config.zon
+# (the config is ZON; the Rust corpus asserted a TOML file here).
 #
 # Changing a setting in the overlay writes it to the workspace file at
 # once, keystroke-driven end-to-end through the real key dispatcher. Esc

@@ -1,4 +1,3 @@
-# zig-only
 # `zf{motion}` creates a fold over the motion in Normal mode (`:help
 # zf`): `zfj` folds two lines, `zfap` a paragraph, `zf2j` three; the
 # cursor stays on the fold's first line and the motion keys are never

@@ -1,4 +1,3 @@
-# zig-only
 # `buffer.close_others` closes right to left so the Undo chip's reopen
 # lands the tabs back in strip order: ` 󰈙 a.txt 󰅖   󰈙 b.txt 󰅖    c.md 󰅖   󰈙 d.txt 󰅖 `.
 write a.txt alpha

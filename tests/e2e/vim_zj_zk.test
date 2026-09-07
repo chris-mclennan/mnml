@@ -1,4 +1,3 @@
-# zig-only
 # `zj` moves to the start of the next fold and `zk` to the end of the
 # previous one (`:help zj`); a closed fold is one line, so `zj` from a
 # closed fold's header lands on the fold after it, never on a line the

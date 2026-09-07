@@ -1,4 +1,3 @@
-# zig-only
 # Macros are registers (`:help q`): `qa…q` writes `"a`, `:reg a` shows
 # the keys, `"ap` pastes them, and a register yanked back with `"ay$`
 # replays as a macro.

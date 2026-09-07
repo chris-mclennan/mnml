@@ -1,4 +1,3 @@
-# zig-only
 # The NOTES panel (src/notes.zig): `<ws>/.mnml/notes/*.md`, one row per
 # note as `<name>  <title>  <age>`, the shared `sort:` chip, and `n`
 # seeding the next free `note-N.md`.

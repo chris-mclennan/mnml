@@ -1,4 +1,3 @@
-# zig-only
 # `:b N` switches to the N-th buffer of `:ls`, `:b name` to the one
 # whose name matches (a unique substring), `:b#` to the alternate.
 write a.txt "alpha\n"

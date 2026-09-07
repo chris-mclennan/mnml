@@ -1,4 +1,3 @@
-# zig-only
 # `:[range]norm keys` types `keys` at the start of each line in the
 # range through the vim handler, with an Esc between lines so an insert
 # never leaks into the next one. `<esc>` / `<lt>` notation is understood.

@@ -1,4 +1,3 @@
-# zig-only
 # The editor pane's chrome as the Rust editor paints it: the tab
 # ` main.rs 󰅖 ` on the strip (row 1), the breadcrumb ` src › main.rs `
 # on the row under it (src/ui/editor_view.zig). A breadcrumb segment

@@ -1,4 +1,3 @@
-# zig-only
 # `{count}gt` goes to tab page {count} (`:help gt`), past the last page it
 # lands on the last one; `{count}gT` goes {count} pages back. Each page
 # holds a different file so the active pane names the page.

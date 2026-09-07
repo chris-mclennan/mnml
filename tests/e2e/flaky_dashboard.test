@@ -1,4 +1,3 @@
-# zig-only
 # The flaky-test dashboard reads `.mnml/flaky.zon` — the last ten
 # Playwright outcomes per test — lists every test that went both ways,
 # most flips first, and Enter lands on the test's line in its spec.

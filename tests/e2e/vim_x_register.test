@@ -1,4 +1,3 @@
-# zig-only
 # `x` is `dl`: the deleted char lands in the unnamed register and in
 # `"-` (the small-delete register), so `xp` swaps two chars and `:reg`
 # shows what went. `X` is `dh`. A small delete does not shift `"1`–`"9`.

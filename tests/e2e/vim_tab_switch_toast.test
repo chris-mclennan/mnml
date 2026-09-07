@@ -1,4 +1,3 @@
-# zig-only
 # Switching tab pages says where you landed once: `gT` / `gt` / `:tabnew`
 # replace the previous `tab N/M` toast instead of stacking a new one, so
 # after four moves only the last is on screen and there is no `+N more`.

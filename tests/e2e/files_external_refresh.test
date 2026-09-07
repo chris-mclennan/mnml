@@ -1,4 +1,3 @@
-# zig-only
 # The Files pane and the tree notice a file created outside mnml: the
 # watcher (src/app/watch.zig, a 2 s pass) re-reads a listing whose
 # directory mtime moved. `files.refresh` / tree `r` used to be the only

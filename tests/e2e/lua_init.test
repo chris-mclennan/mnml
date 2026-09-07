@@ -1,4 +1,3 @@
-# zig-only
 # Lua (D10): a workspace init.lua — the runner's temp workspace is
 # trusted — registers a command, a hook, a statusline segment and a
 # script pane through the mnml table. `script.reload` re-runs the

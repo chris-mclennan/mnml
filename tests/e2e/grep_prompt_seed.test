@@ -1,4 +1,3 @@
-# zig-only
 # The find-in-files prompt prefills the last query as a SELECTION
 # (Prompt.seed): typing replaces it instead of appending, Enter reruns
 # it, and Ctrl+A selects the whole line the way VS Code's search box

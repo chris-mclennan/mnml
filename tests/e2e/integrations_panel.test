@@ -1,4 +1,3 @@
-# zig-only
 # Installed integrations (src/app/integrations.zig): a manifest under
 # <workspace>/.mnml/integrations/ becomes a dyn command with its key,
 # the INTEGRATIONS pane lists it, and the settings overlay grows a row

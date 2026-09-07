@@ -1,4 +1,3 @@
-# zig-only
 # The which-key popup as Rust paints it: `<leader>` on the top edge,
 # group labels with their `+`, the keys typed so far in the title of a
 # sub-popup, `esc to cancel` at the bottom.

@@ -7,7 +7,7 @@
 # picker (Ctrl+P) already hardcoded exclusions for the same dirs.
 # Inconsistent signals to the user; a Django dev with no .gitignore
 # would see __pycache__ in the tree rail. Fixed 2026-06-28 by adding
-# the same hardcoded exclusion list to src/tree.rs. This fixture
+# the same hardcoded exclusion list to the tree (src/app/tree.zig). This fixture
 # locks the fix.
 
 shell mkdir -p __pycache__

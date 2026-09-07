@@ -1,4 +1,3 @@
-# zig-only
 # `Ctrl-W o` is `:only`: every other split closes and the current window
 # stays; buffers are untouched. b.txt is dirty in the background when
 # a.txt is split, so the old behaviour (close the other *buffers*) would

@@ -1,4 +1,3 @@
-# zig-only
 # `q{A-Z}` appends to the lowercase register (`:help q`): after `qaI- <Esc>q`
 # and `qAA!<Esc>q`, `@a` prefixes AND suffixes a line; the pending `q`
 # never turns the next `:` into `q:`.

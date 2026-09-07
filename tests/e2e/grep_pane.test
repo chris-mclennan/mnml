@@ -1,4 +1,3 @@
-# zig-only
 # Workspace grep (src/app/grep.zig, src/ui/grep_view.zig): find.grep prompts
 # for a query, a worker streams the hits into a Search pane grouped by file
 # (.gitignore honoured), the `/` filter narrows, enter opens a hit at its

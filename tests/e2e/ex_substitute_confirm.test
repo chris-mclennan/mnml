@@ -1,4 +1,3 @@
-# zig-only
 # `:s///c` asks about every match: the match is selected, a box offers
 # [y]es [n]o [a]ll [q]uit [l]ast, and the final toast counts what changed.
 write doc.txt "x1 x2\nx3\nx4 x5"

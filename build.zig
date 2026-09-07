@@ -276,7 +276,7 @@ pub fn build(b: *std.Build) void {
     defaults_run.step.dependOn(&sweep_run.step);
     check_step.dependOn(&defaults_run.step);
     // ── e2e: the full corpus under `check` ──
-    const corpus_run = e2eRun(b, exe, "mnml-zig test --skip settings_persist_to_workspace (the full corpus)", &.{ "--skip", "settings_persist_to_workspace" }, null);
+    const corpus_run = e2eRun(b, exe, "mnml-zig test (the full corpus)", &.{}, null);
     corpus_run.step.dependOn(&defaults_run.step);
     check_step.dependOn(&corpus_run.step);
     // ── end e2e ──

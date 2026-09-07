@@ -1,4 +1,3 @@
-# zig-only
 # The request pane painted as the Rust editor paints it
 # (src/ui/request_view.zig): the Method / URL / Send boxes, the Request
 # box with its tab strip, the Response box with its own strip, the AI

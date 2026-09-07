@@ -1,4 +1,3 @@
-# zig-only
 # A glance at a markdown file takes over the last glanced-at markdown
 # tab instead of adding one; typing swaps the raw editor in, and that
 # editor stays when the next glance opens beside it.

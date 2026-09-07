@@ -33,7 +33,7 @@
 //!
 //! The leading comment block may carry runner directives:
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
-//! at that width only), `# zig-only` / `# rust-only` (which host runs it).
+//! at that width only).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -78,13 +78,10 @@ pub const Line = struct {
     stmt: Stmt,
 };
 
-pub const Host = enum { zig, rust };
-
 /// Directives from the leading comment block.
 pub const Header = struct {
     requires_network: bool = false,
     width: ?u16 = null,
-    only: ?Host = null,
 };
 
 /// A parsed script. Every slice lives in `arena`.
@@ -307,8 +304,6 @@ pub fn parseHeader(text: []const u8) Header {
         if (line[0] != '#') break;
         const after_hash = trim(std.mem.trimStart(u8, line, "#"));
         if (std.ascii.eqlIgnoreCase(after_hash, "requires: network")) h.requires_network = true;
-        if (std.ascii.eqlIgnoreCase(after_hash, "zig-only")) h.only = .zig;
-        if (std.ascii.eqlIgnoreCase(after_hash, "rust-only")) h.only = .rust;
         if (std.ascii.startsWithIgnoreCase(after_hash, "width:")) {
             h.width = std.fmt.parseInt(u16, trim(after_hash["width:".len..]), 10) catch null;
         }
@@ -489,9 +484,6 @@ test "header directives come only from the leading comment block" {
     try t.expect(!parseHeader("open x\n# requires: network\n").requires_network);
     try t.expectEqual(@as(?u16, 120), parseHeader("# width: 120\n").width);
     try t.expectEqual(@as(?u16, null), parseHeader("# width: wide\n").width);
-    try t.expectEqual(@as(?Host, .zig), parseHeader("# zig-only\n").only);
-    try t.expectEqual(@as(?Host, .rust), parseHeader("## rust-only\n").only);
-    try t.expectEqual(@as(?Host, null), parseHeader("# nothing\n").only);
 }
 
 test "CRLF and blank lines are tolerated" {

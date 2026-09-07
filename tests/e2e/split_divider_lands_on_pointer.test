@@ -1,4 +1,3 @@
-# zig-only
 # A split divider dragged to a column settles on that column, not one
 # short of it. With the tree at 30 the panes span x=31..119 (89 cells);
 # the fresh split's divider is at x=75 and the left pane's text starts

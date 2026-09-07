@@ -1,4 +1,3 @@
-# zig-only
 # The Files pane (src/app/files_pane.zig): a directory listing as a
 # Pane — the breadcrumb row with the sort / hidden chips, the columns,
 # dirs first; `.` toggles hidden files, `/` filters, `s` cycles the

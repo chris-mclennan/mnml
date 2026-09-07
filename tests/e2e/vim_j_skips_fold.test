@@ -1,4 +1,3 @@
-# zig-only
 # `j` / `k` treat a closed fold as one line: from the fold header `j`
 # lands on the first line after the fold, `k` from below lands on the
 # header, and the cursor never walks the hidden lines.

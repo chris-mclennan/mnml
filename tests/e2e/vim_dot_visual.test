@@ -1,4 +1,3 @@
-# zig-only
 # `.` after an operator on a visual selection re-applies it to the same
 # amount of text from the cursor (`:help visual-repeat`): `Vjd` then `.`
 # deletes two more lines; `vlld` then `.` deletes three more chars.

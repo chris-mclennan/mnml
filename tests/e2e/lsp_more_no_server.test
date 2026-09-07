@@ -1,4 +1,3 @@
-# zig-only
 # The lsp-more commands without a language server attached: each one
 # refuses with a reason instead of doing nothing, and the inlay-hint
 # toggle flips live (`src/app/lsp_decor.zig`, `src/app/lsp_format.zig`).

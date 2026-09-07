@@ -1,4 +1,3 @@
-# zig-only
 # `http.history` opens the picker over `.rqst/history.jsonl`, newest
 # first; `http.history_global` reads the data root's mirror. With no
 # history the command says so.

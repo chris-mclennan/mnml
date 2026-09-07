@@ -6,7 +6,7 @@
 #   Later: cycle restricted to `all → claude → codex → all` —
 #     ecs/managed are skipped in the `>` / `<` handlers because
 #     including them showed a misleading "0/N — no Claude sessions"
-#     empty state (see src/tui/handlers/pane.rs `Char('>')`).
+#     empty state (the `>` / `<` handlers of the agents pane).
 # So the current expectation is claude + codex only.
 
 write placeholder.txt x

@@ -1,4 +1,3 @@
-# zig-only
 # `:w !cmd` pipes the buffer to `cmd` and shows its output (`:help :w_c`)
 # — it never writes a file, and never one named `!cmd`.
 write b.zig "one\ntwo\nthree\n"

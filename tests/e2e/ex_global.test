@@ -1,4 +1,3 @@
-# zig-only
 # `:g/pat/cmd` runs `cmd` on every line matching `pat`; `:v` on every
 # line that does not. Line numbers stay right while `:d` removes lines
 # above later matches, and `:g/pat/p` prints the matches to :messages.

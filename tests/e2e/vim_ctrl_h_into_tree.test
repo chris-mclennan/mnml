@@ -1,4 +1,3 @@
-# zig-only
 # NvChad treats nvim-tree as a window: from the leftmost split, `Ctrl-H`
 # (and `Ctrl-W h`, and `Ctrl-W w` when there is only one split) moves
 # focus into the file tree, where `j` / `k` / `Enter` browse; `Ctrl-L`

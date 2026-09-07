@@ -1,4 +1,3 @@
-# zig-only
 # The FINDINGS panel (src/findings.zig): `<ws>/.mnml/findings/*.md` with
 # `severity:` / `status:` frontmatter, one row per report as
 # `<SEV> <name>  <title>  <age>`, the shared `sort:` chip, `d` marking

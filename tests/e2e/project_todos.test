@@ -1,4 +1,3 @@
-# zig-only
 # `project.todos` is the TODOS panel the palette promises, not a
 # "not implemented yet" stub — the same panel as view.activity_todos.
 write a.py "# TODO: wire the thing\n"

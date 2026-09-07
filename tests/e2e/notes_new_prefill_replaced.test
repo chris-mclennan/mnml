@@ -1,4 +1,3 @@
-# zig-only
 # NOTES `n` seeds the prompt with the next free `note-N.md` as a
 # selection: enter keeps it, typing replaces it. A typed name without
 # an extension gets `.md`, so the note lands where the panel lists it.

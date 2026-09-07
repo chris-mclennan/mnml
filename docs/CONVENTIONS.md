@@ -177,7 +177,7 @@ the function names are the stable handles.)
 | **Component draw + hit registration** (D6): a `Ui`, a rect, hits in the same statement as the paint | `draw` (`:706`) hands `ListPanel(Item)` its rows, `paintRow` (`:772`), the sort chip label and the empty state; the panel registers `.row` / `.kebab` / `.chip` / `.filter_input` / `.scrollbar` itself. `paintRow` receives a `Ui` clipped to its row and never reaches `*App`. |
 | **Mouse routing** (D6): one `switch (app.hits.at(x, y))`, one prong per hit kind, routed by `PanelId` | `dispatch.zig:512` onward — `.row` → `todos.rowMouse` (`:610`), `.kebab` → `kebabMouse`, `.chip` → `chipMouse` (`:641`), `.filter_input` → `filterMouse`, `.scrollbar` (owner `.panel`) → `scrollbarMouse`, `.menu_item` → `runMenuAction` (`dispatch.zig:299`). |
 | **Keys**: the component's `handleKey` first, then the panel's own letters, then the chord chain | `handleKey` (`:561`) — `Panel.handleKey` decides motion / filter / enter; `r` `s` `n` `esc` after; `false` lets `dispatch.zig:51` fall through to the chord chain. |
-| **Tests** on `std.testing.allocator`, one `.test` e2e | `:815`–`:1110`; `tests/e2e-zig/todos_panel.test`. |
+| **Tests** on `std.testing.allocator`, one `.test` e2e | `:815`–`:1110`; `tests/e2e/todos_panel.test`. |
 
 Things that did not hold as written, fixed in the same change:
 
@@ -193,9 +193,9 @@ Things that did not hold as written, fixed in the same change:
   `render`; `App.tick` calls `pumpEvents` itself (`app.zig:701`) so
   the `e2e.Driver` vtable did not change and a worker result lands
   through the same `tick` the headless loop already calls.
-- `// changed:` `tests/e2e` is a symlink into Rust mnml's suite, whose
-  runner recurses and knows no `# zig-only`. Zig-only scripts live in
-  `tests/e2e-zig/`, a second default root of `mnml-zig test`.
+- `// changed:` `tests/e2e` was a symlink into Rust mnml's suite with the
+  Zig-only scripts kept apart in `tests/e2e-zig`; since 2026-09-07 the
+  corpus is a real copy in one folder and the host headers are gone.
 - The right-panel slot did not exist: `App.right_panel: ?PanelId`
   (40 columns + a divider, `render.zig`), with
   `view.activity_todos` / `view.toggle_right_panel` /

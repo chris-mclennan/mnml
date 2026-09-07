@@ -762,7 +762,7 @@ that the oldest slot reads `+K more…`.
   inner edge and `right` ones after ai's meter.
 - `// changed (docs):` `docs/LUA.md` is the API reference;
   `docs/examples/init.lua` the reference script (run by a unit test);
-  `tests/e2e-zig/lua_init.test` the e2e. Corpus 226/227 — the one
+  `tests/e2e/lua_init.test` the e2e. Corpus 226/227 — the one
   failure is main's `settings_persist_to_workspace.test`.
 ## Bridge v2 (Phase 8) — `// changed:` notes (2026-09-04, branch `bridge`)
 
@@ -1953,7 +1953,7 @@ NvChad-exact; these are the places the editor was not, and what moved.
   taking dots and digits (command ids), so the copy / move verbs split at
   their first non-letter. `number` / `nu` are aliases of `ui.line_numbers`
   through the config table, so `:set number?` / `!` work like `wrap?`.
-- `// changed (tests):` `tests/e2e-zig/vim_*.test`, one per finding
+- `// changed (tests):` `tests/e2e/vim_*.test`, one per finding
   (fourteen files), each watched failing on the unfixed tree first; unit
   rows in `src/editor/buffer.zig`'s vim tables and in `block`, `line`,
   `insert`, `clipboard`, `editor_view`, `cmd_buffer`, `ex`. Break-checks
@@ -2006,7 +2006,7 @@ failing on the unfixed tree first.
   Enter does and toasts; Esc is the silent way out. The earlier Cancel
   default made right-click → Delete… → Enter a silent no-op. `Empty
   trash` keeps Cancel focused.
-- `// changed (tests):` `tests/e2e-zig/git_graph_detail_wrap.test`,
+- `// changed (tests):` `tests/e2e/git_graph_detail_wrap.test`,
   `tree_ctrl_shift_keys.test`, `tree_f2_rename.test`,
   `notes_new_prefill_replaced.test`, `tree_delete_enter.test`; unit
   rows in `clip`, `git_graph_view`, `channel`, `tree`, `prompt`,
@@ -2061,7 +2061,7 @@ failing on the unfixed tree first.
   division was inexact. The ratio stays a percent (session.zon carries
   it), so on a 200-column pane a drag can still settle a cell off; the
   unit test pins exactness to 100 cells and ±1 beyond.
-- `// changed (tests):` `tests/e2e-zig/settings_chip_click.test`,
+- `// changed (tests):` `tests/e2e/settings_chip_click.test`,
   `settings_wheel.test`, `settings_row_window.test`,
   `toast_menu_fits.test`, `split_divider_lands_on_pointer.test`. Unit
   rows in `src/ui/settings.zig` (chip walk, wheel, window),
@@ -2105,8 +2105,8 @@ failing on the unfixed tree first.
 - `// changed (findings):` `http.history` / `http.history_global` were
   reported silent with a populated log; replayed on the hunt's build in
   its own workspace and data root both pickers open — rejected, and
-  `tests/e2e-zig/http_history_picker.test` pins it.
-- `// changed (tests):` `tests/e2e-zig/{close_split_sole_pane,
+  `tests/e2e/http_history_picker.test` pins it.
+- `// changed (tests):` `tests/e2e/{close_split_sole_pane,
   project_todos,git_worktree_add_tab}.test`, each watched failing on the
   unfixed binary first; unit tests in `src/app/lsp.zig` (two, on the
   scripted server — which now answers `references` and both symbol
@@ -2168,7 +2168,7 @@ moved.
   on the closed list too (`forceClosePane`), and `buffer.reopen` drops
   the entry it used since a preview never passes through the editor
   load that does it for buffers.
-- `// changed (tests):` `tests/e2e-zig/vscode_ctrl_slash_selection.test`,
+- `// changed (tests):` `tests/e2e/vscode_ctrl_slash_selection.test`,
   `vscode_find_enter_stays_open.test`, `vscode_ctrl_s_in_widgets.test`,
   `vim_visual_line_change.test`, `ui_undo_close_others_order.test`, each
   watched failing on the unfixed tree first. Break-checks run (all fail
@@ -2304,15 +2304,15 @@ goal.
   the vim row `i<cr><esc>` "ab|c" → "ab|\nc" ("move_left crosses lines
   (Rust parity)") and the multi-cursor row `i` + below + `<cr><esc>`
   asserted the crossing. All four now assert the vim behaviour. New:
-  `tests/e2e-zig/save_keeps_cursor.test`,
-  `tests/e2e-zig/vim_esc_from_insert.test` (both watched failing on the
+  `tests/e2e/save_keeps_cursor.test`,
+  `tests/e2e/vim_esc_from_insert.test` (both watched failing on the
   unfixed tree), a save test for an Insert cursor at EOF and a
   standard-mode selection, vim rows for `A<esc>` / `i<esc>` / `o<esc>` /
   `O<esc>` / `A<cr><esc>` / `RX<esc>` / `R<cr><esc>`.
 - `// changed (put):` charwise `p` on an empty line (or with the cursor
   past the end) puts at the cursor, on that line; it stepped past the
   `\n` onto the next line. The Esc fix unmasked it:
-  `tests/e2e-zig/vim_macro_register.test`'s `o<Esc>"ap` had only landed
+  `tests/e2e/vim_macro_register.test`'s `o<Esc>"ap` had only landed
   on the opened line because Esc crossed back onto the line above and
   `p` then jumped forward over its `\n`. Vim's `p` on an empty line
   puts there; the test asserts that, the code was wrong. The
@@ -2376,7 +2376,7 @@ Three findings from the API-developer hunt (`.mnml/findings/api-*.md`).
 - `// changed (http.mock):` `Canned.next` chains answers so a test
   server can say 302 then 200; the last link answers every request
   after it.
-- `// changed (tests):` `tests/e2e-zig/http_directives_not_body.test`
+- `// changed (tests):` `tests/e2e/http_directives_not_body.test`
   — the GET with trailing directives opens with an empty Body tab and
   fails soft on a closed port (it took the runner down before); the
   POST shows its JSON alone. Break-checks in the commit bodies of
@@ -2387,7 +2387,7 @@ Three findings from the API-developer hunt (`.mnml/findings/api-*.md`).
 Twenty-three findings from the second NvChad hunt: 20 fixed, 1
 rejected against Vim (`vim -es` reproduces mnml-zig's V-BLOCK edge),
 2 parked (the doubled-case cursor sits on a Rust corpus line in the
-gate; see the finding). Each fix has a `tests/e2e-zig/vim_*.test`
+gate; see the finding). Each fix has a `tests/e2e/vim_*.test`
 repro and, for seven of them, a `vim()` case in the buffer harness.
 
 - `// changed (editor):` the buffer-local marks are byte offsets on
@@ -2428,7 +2428,7 @@ repro and, for seven of them, a `vim()` case in the buffer harness.
 
 ## Round two of the VS Code hunt (`fix-vscode2`)
 
-Fourteen findings, each with a `tests/e2e-zig/*.test` repro and, where a
+Fourteen findings, each with a `tests/e2e/*.test` repro and, where a
 painter or a pure function is the fix, a unit test with a landed
 break-check.
 
@@ -2679,7 +2679,7 @@ The spec is `docs/ui-spec/rust-120x40.txt`, columns 4–29 of rows 1–37;
   carries Rust's tree-row entries (directories, `.d.ts`, the filename
   rows, the extension rows) and the header chips' entries with a `Run it`
   link. `tooltip.drawHelpBox` and `discovery.drawHelpBox` are gone.
-- `// changed (tests):` `tests/e2e-zig/tree_click_open.test` (one click
+- `// changed (tests):` `tests/e2e/tree_click_open.test` (one click
   opens, the chevron folds), `tree_header_chip.test` (the chips prompt,
   the header folds); `tools/pty-mouse-check.py` clicks once. Corpus
   flips from the Rust look: `jumplist_workspaces` / `vim_ctrl_b_pages_back`
@@ -2763,7 +2763,7 @@ The spec is `docs/ui-spec/rust-120x40.txt`, columns 4–29 of rows 1–37;
   every hit; `render.zig` pins the whole row against both dumps including
   the globe and the cluster, the strip's `+` at 32 / 1 and the split
   buttons; `app/menu_bar.zig` walks every row of every menu for a
-  runner; `tests/e2e-zig/menu_bar_top_row.test` clicks the chip, the
+  runner; `tests/e2e/menu_bar_top_row.test` clicks the chip, the
   `+`, File, a row, the `»` and a hidden menu.
 
 ## Editor, diff and request panes to the Rust spec (2026-09-06, branch `editor-panes`) — `// changed:` notes
@@ -2849,7 +2849,7 @@ differs on purpose.
   worktree`, which is what Zig paints at once. The diff spec needs
   the fixture's `src/main.rs` dirty (`z` appended); the editor and
   request specs need it clean.
-- `// changed (tests):` `tests/e2e-zig/editor_tab_breadcrumb.test`,
+- `// changed (tests):` `tests/e2e/editor_tab_breadcrumb.test`,
   `git_diff_toolbar.test`, `git_diff_views.test`, `http_request_pane.test`
   (new), `http_edit_split.test`, `http_plus_chip.test` (updated) —
   each fails on main's binary. Unit tests: the spec snapshots with
@@ -2959,7 +2959,7 @@ right — painted cell for cell against `docs/ui-spec/rust-git-120x40.txt`
   lane table, the detail width precedence, the sort arrows, the
   helpers, the commit detail and the caret), `app/git_palette.zig`
   (rows, filter, folds, activate), `app/git.zig` (enter / leave /
-  reuse; the smoke, graph and WIP tests re-aimed); `tests/e2e-zig/
+  reuse; the smoke, graph and WIP tests re-aimed); `tests/e2e/
   git_mode.test` (enters, stages from the detail column, types in the
   box, leaves), `git_graph_detail.test` and `git_graph_detail_wrap.test`
   re-aimed. Corpus 360/361 (the designed skip); no `git_*.test` flipped.

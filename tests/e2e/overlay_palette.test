@@ -1,4 +1,3 @@
-# zig-only
 # The command palette as Rust paints it: the row is `group · title · id`
 # with the chord as the detail, the count is `N of M`, the exact id
 # pins its row, and Enter runs it.

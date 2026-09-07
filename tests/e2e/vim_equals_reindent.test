@@ -1,4 +1,3 @@
-# zig-only
 # `=` re-indents by the buffer's brace rules: `==` fixes one line,
 # `gg=G` the whole file, `=` in Visual the selection.
 write b.zig "const std = @import(\"std\");\n\npub fn add(a: i32, b: i32) i32 {\n    return a + b;\n}\n\npub fn main() void {\n    if (x > 2) {\n        big();\n    }\n}\n"

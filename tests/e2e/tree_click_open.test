@@ -1,4 +1,3 @@
-# zig-only
 # width: 120
 # The file tree (src/ui/tree_view.zig): one click on a file row opens
 # it, as Rust does; one click on a folder's chevron folds it and a

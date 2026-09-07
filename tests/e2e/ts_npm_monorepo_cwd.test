@@ -1,7 +1,7 @@
 # TypeScript monorepo: npm.test should spawn the pty at the sub-package
 # containing the active file, not at the workspace root. Fixed 2026-06-28
-# via `run_manifest_command` walking up from the active editor's directory
-# (`src/app/playwright.rs:396+`). This test freezes the fix so future
+# by the manifest runner walking up from the active editor's directory
+# (src/app/runners.zig). This test freezes the fix so future
 # tester rounds don't chase it as an open bug.
 #
 # The assertion below (`expect screen lacks "no package.json"`) confirms

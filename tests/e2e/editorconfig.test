@@ -1,4 +1,3 @@
-# zig-only
 # A `.editorconfig` beside the sources is read when a file opens: with
 # `indent_style = tab` Tab types a real tab and `>>` pads with one, with
 # `trim_trailing_whitespace` a save strips line ends, and

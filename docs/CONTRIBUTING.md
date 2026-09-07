@@ -56,9 +56,9 @@ wrote the change.
 
 ## The oracle
 
-`tests/e2e` is a symlink into the Rust repo's `.test` corpus (225 files
-at the time of writing); `tests/e2e-zig` holds Zig-only scripts. The
-corpus is a regression net, not a pixel oracle: `expect screen contains`
+`tests/e2e` is the `.test` corpus: the scripts inherited from the Rust
+repo and the ones written here, one folder (366 files at the time of
+writing). The corpus is a regression net, not a pixel oracle: `expect screen contains`
 is substring-tolerant, so a re-skin survives it, and a script that
 breaks on a deliberate cosmetic change is updated as normal maintenance
 — the commit says so.
@@ -67,7 +67,7 @@ breaks on a deliberate cosmetic change is updated as normal maintenance
 zig build                              # the binary
 ./zig-out/bin/mnml-zig test            # the whole corpus at 120x40 (~2.5 min)
 ./zig-out/bin/mnml-zig test --gate     # the 47-file Phase-0 gate
-./zig-out/bin/mnml-zig test tests/e2e-zig/defaults.test
+./zig-out/bin/mnml-zig test tests/e2e/defaults.test
 ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60   # the width sweep
 ```
 
@@ -79,7 +79,7 @@ that drops it is not finished.
 
 - Unit tests run on `std.testing.allocator` only; a leak is a failure.
   `page_allocator` is for pty ring buffers and nothing else.
-- Test the shipped default, not values around it. `tests/e2e-zig/defaults.test`
+- Test the shipped default, not values around it. `tests/e2e/defaults.test`
   and the `"defaults are the shipped values"` test in
   `src/config/Config.zig` pin `Config{}`; a default that changes on
   purpose changes there in the same commit.
@@ -120,7 +120,7 @@ commit body or the PR.
 4. the same gate swept at 80x24 / 120x40 / 200x60 — content assertions
    hold at 120x40, the other sizes assert no panic, no leak, no rect
    painted outside its parent;
-5. `tests/e2e-zig/defaults.test`.
+5. `tests/e2e/defaults.test`.
 
 Run the full corpus as well before offering a branch that touches the
 editor, the input layer or the frame.

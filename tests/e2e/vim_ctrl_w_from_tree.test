@@ -1,4 +1,3 @@
-# zig-only
 # The file tree is a window: once `Ctrl-W h` has put focus in it, `Ctrl-W
 # w` cycles on to the next window and `Ctrl-W l` moves right into the
 # editor — the same way `Ctrl-L` does, for hands that only know `Ctrl-W`.

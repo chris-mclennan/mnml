@@ -1,4 +1,3 @@
-# zig-only
 # The HTTP activity panel (src/app/http_panel.zig): seven collapsible
 # sections in the right slot, one `/` filter across them all, enter on
 # a header folds it and on an item opens / applies it.

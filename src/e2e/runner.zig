@@ -597,11 +597,6 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             try out.flush();
             continue;
         }
-        if (header.only == .rust) {
-            try out.print("⊘ e2e SKIP (rust-only): {s}\n", .{path});
-            try out.flush();
-            continue;
-        }
         var one: [1]Size = undefined;
         const sizes: []const Size = if (header.width) |w| blk: {
             one[0] = .{ .cols = w, .rows = content_size.rows };
@@ -965,7 +960,6 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/b_pass.test", .data = "expect screen contains ok\n" });
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/a_fail.test", .data = "expect screen contains nope\n" });
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/sub/c_net.test", .data = "# requires: network\nexpect screen contains x\n" });
-    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/sub/d_rust.test", .data = "# rust-only\nexpect screen contains x\n" });
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/sub/e_wide.test", .data = "# width: 80\nexpect screen contains nope\n" });
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/.hidden.test", .data = "expect screen contains nope\n" });
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/notes.txt", .data = "not a test\n" });
@@ -986,7 +980,6 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     const expected =
         "▶ e2e: a_fail.test\n▶ e2e: a_fail.test\n▶ e2e: b_pass.test\n▶ e2e: b_pass.test\n" ++
         "⊘ e2e SKIP (network opt-in): " ++ "SUITE/sub/c_net.test\n" ++
-        "⊘ e2e SKIP (rust-only): " ++ "SUITE/sub/d_rust.test\n" ++
         "▶ e2e: e_wide.test\n" ++
         "  FAIL a_fail.test — line 1: screen does not contain \"nope\"\n── rendered screen ──\n" ++ "SCREEN" ++
         "\n  ok   a_fail.test @80x24\n  ok   b_pass.test\n  ok   b_pass.test @80x24\n  ok   e_wide.test @80x40\n\n4/5 passed\n";
@@ -995,8 +988,6 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     try t.expectEqualStrings(expected[0..head], report[0..head]);
     try t.expect(std.mem.indexOf(u8, report, "⊘ e2e SKIP (network opt-in): ") != null);
     try t.expect(std.mem.indexOf(u8, report, "/suite/sub/c_net.test\n") != null);
-    try t.expect(std.mem.indexOf(u8, report, "⊘ e2e SKIP (rust-only): ") != null);
-    try t.expect(std.mem.indexOf(u8, report, "/suite/sub/d_rust.test\n") != null);
     try t.expect(std.mem.indexOf(u8, report, "▶ e2e: e_wide.test\n  FAIL a_fail.test — line 1: screen does not contain \"nope\"\n── rendered screen ──\nok") != null);
     try t.expect(std.mem.endsWith(u8, report, "\n  ok   a_fail.test @80x24\n  ok   b_pass.test\n  ok   b_pass.test @80x24\n  ok   e_wide.test @80x40\n\n4/5 passed\n"));
     try t.expectEqual(@as(usize, 5), sf.made);
