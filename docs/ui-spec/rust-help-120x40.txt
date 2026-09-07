@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │ 󰐕                                                                                   
+▌ │     requests           │
+ 󰍉 │     src                │
+ 󰊢 │     󱼅  main.┌ Help ────────────────────────────────────────────────────────────────────────────┐
+  │      .gitign│ / filter…                                                                        │
+ 󰐱 │      package│▾ ── modes ── (10)                                                               █│
+ 󰎒 │     󰂺 README.│  NORMAL                vim normal mode (red)                                    █│
+ 󰚩 │              │  INSERT                vim/standard editable (green)                            █│
+ 󰅣 │  mixr       │  VISUAL                vim visual — charwise (purple)                           █│
+  │              │  V-LINE                vim visual — linewise (purple)                           █│
+  │  acmeco-clau│  V-BLOCK               vim visual — block/column (purple)                       █│
+  │              │  REPLACE               vim replace mode (orange)                                █│
+ 󱘣 │  acmeco-mnml│  TREE                  file tree focused (blue)                                 █│
+   │              │  VIEW                  read-only pane focused (cyan)                            █│
+   │  adx        │  EDIT                  standard mode editing (green)                            █│
+   │              │  PANEL                 right side panel focused (cyan)                          █│
+   │  acmeco-clau│▾ ── stress meter ── (6)                                                         █│
+   │              │  0-20                  1 block, green — idle / smooth (hidden at exactly 0)     █│
+   │  acmeco-inbo│  20-40                 2 blocks, yellow — slight load                           █│
+   │              │  40-70                 3 blocks, orange — noticeable slowdown                   █│
+   │  acmeco-mobi│  70-100                4 blocks, red — mnml is stressed                         █│
+   │              │  chip location         top-right cluster + bottom-right statusline (twin bars)  █│
+   │  acmeco-play│  right-click           reset window · copy summary · toast the numbers          █│
+   │              │▾ ── app ── (4)                                                                  █│
+   │  acmeco-site│  ctrl+q                Quit mnml                                                █│
+   │              │  ·                     Restart mnml (rebuild + relaunch via run.sh)             █│
+   │──────────────│  ·                     Reset mnml to factory defaults (backup + relaunch)       █│
+   │ Sidebar      │  ·                     Choose data layout — Portable (mnml-data/) or Normal (~/.█│
+   │              │▾ ── view ── (168)                                                               █│
+   │ Arrows or j/k│  ctrl+b                Toggle left panel (file tree · Git · Integrations · Agent█│
+   │ Enter opens t│  ·                     Reset file tree width to the config default              █│
+   │ selection. Ct│  ·                     Click-discovery overlay (highlight what's clickable)     █│
+   │ opens the pal│  ·                     Welcome overlay (shortcuts cheatsheet)                   █│
+   │              │/ filter · j/k scroll · PageUp/Down faster · c/e collapse/expand · Esc close      │
+   │              └──────────────────────────────────────────────────────────────────────────────────┘
+  │                          │
+   │                          │
+ TREE   main  󰐙 2  [no file]                                         F 57% ▲1.0  󱼀 󰐎  WRAP    08:39  ws   —
+

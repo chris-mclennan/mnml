@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │ 󰐕                                                                                   
+▌ │     requests           │
+ 󰍉 │     src                │
+ 󰊢 │     󱼅  main.rs          │
+  │      .gitignore       ? │
+ 󰐱 │      package.json       │
+ 󰎒 │     󰂺 README.md          │
+ 󰚩 │                ┌ Click Discovery — F1 / Esc to close · click row to flash ────────────────────┐
+ 󰅣 │  mixr         │ [1]  Mode chip  click: toggle vim/standard · right-click: input menu         │
+  │                │ [1]  Branch chip  click: commit graph · right-click: git ops menu            │
+  │  acmeco-claude│ [1]  Workspace chip  click: switch repo · right-click: workspace menu        │
+  │                │ [1]  Clock chip  click: local↔UTC · right-click: clock menu                  │
+ 󱘣 │  acmeco-mnml-w│ [ ]  Bufferline tabs  click: focus · middle: close · right-click: tab menu   │
+   │                │ [ ]  > GIT rail header  Fetch / Pull / Push / Stage all / Commit / Graph     │
+   │  adx          │ [ ]  Editor gutter  right-click line: breakpoint / goto def / refs / blame…  │
+   │                │ [ ]  Diff toolbar  Hunk / Inline / Split / Wrap / Close chips                │
+   │  acmeco-claude│ [ ]  Fold chips (⋯)  click to expand the folded block                        │
+   │                │ [ ]  Code-lens chips (⚡ )  click to run the lens command                     │
+   │  acmeco-inbox │ [ ]  Split dividers  hover turns yellow · drag to resize                     │
+   │                │ green count = visible now · click row to flash rects                         │
+   │  acmeco-mobile│                                                                              │
+   │                └──────────────────────────────────────────────────────────────────────────────┘
+   │  acmeco-playwright      │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │  acmeco-site            │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │──────────────────────────│
+   │ Sidebar                ⋮ │                                 mnml 0.2.21 · 9d5049b52
+   │                          │
+   │ Arrows or j/k walk rows. │
+   │ Enter opens the          │
+   │ selection. Ctrl+Shift+P  │
+   │ opens the palette.       │
+   │                          │
+   │                          │
+  │                          │
+   │                          │
+ TREE   main  󰐙 2  [no file]                                         F 57% ▲1.0  󱼀 󰐎  WRAP    08:37  ws   —
+

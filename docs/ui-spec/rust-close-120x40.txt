@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │  main.rs 󰅖   󰐕                                                                    
+▌ │     requests           │ src › main.rs
+ 󰍉 │     src                │   1 xfn main() {}
+ 󰊢 │     󱼅  main.rs        ● │   2 y
+  │      .gitignore       ? │
+ 󰐱 │      package.json       │
+ 󰎒 │     󰂺 README.md          │
+ 󰚩 │                          │
+ 󰅣 │  mixr                   │
+  │                          │
+  │  acmeco-claude-workspa… │      ┌ Unsaved changes ──────────────────────────┐
+  │                          │      │  main.rs has unsaved changes.             │
+ 󱘣 │  acmeco-mnml-workspace  │      │                                           │
+   │                          │      │                                           │
+   │  adx                    │      │   [S]ave      [D]iscard      [C]ancel     │
+   │                          │      └───────────────────────────────────────────┘
+   │  acmeco-claude-plugins  │
+   │                          │
+   │  acmeco-inbox           │
+   │                          │
+   │  acmeco-mobile          │
+   │                          │
+   │  acmeco-playwright      │
+   │                          │
+   │  acmeco-site            │
+   │                          │
+   │──────────────────────────│
+   │ xfn  ·  RS  ·  main.rs ⋮ │
+   │                          │
+   │ [gd] Definition · [gr]   │
+   │ References · [K] Hover · │
+   │ [F2] Rename              │
+   │                          │
+   │                          │
+   │                          │                        ┌─────────────────────────────────────────────────────────── × ┐
+  │                          │                        │ LSP: Failed to discover workspace.Consider adding the `Car…  │
+   │                          │                        └──────────────────────────────────────────────────────────────┘
+ EDIT   main  󰐙 2   main.rs ●           F 57% ▲1.0  󱼀 󰐎  LSP 1  WRAP  16B  Ln 1/2 Col 2    08:39  ws   rs
+

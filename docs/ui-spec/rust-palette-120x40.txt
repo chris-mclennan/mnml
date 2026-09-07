@@ -1,30 +1,30 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
    │  ~/Pr…              │ 󰐕                                                                                   
-▌ │     src                │
- 󰍉 │     󱼅  main.rs          │
- 󰊢 │      .gitignore       ? │
-  │      package.json       │
- 󰐱 │     󰂺 README.md          │
- 󰎒 │                          │
- 󰚩 │  mixr                   │
- 󰅣 │           ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
-  │  acmeco-c│  git                                                                        321 of 796 │
-  │           │▌git  ·  Git: diff the worktree  ·  git.diff                                           █│
-  │  acmeco-m│ git  ·  Open branch menu  ·  git.branch_menu                                          █│
- 󱘣 │           │ git  ·  Git: diff this file (split)  ·  git.diff_file                                 █│
-   │  adx     │ git  ·  Git: toggle blame gutter  ·  git.blame_toggle                        ctrl+k b █│
-   │           │ git  ·  Git: commit staged changes  ·  git.commit                          ctrl+k g c █│
-   │  acmeco-c│ git  ·  Git: delete tag (picker)  ·  git.tag_delete                                   █│
-   │           │ git  ·  Git: redo the last undone commit  ·  git.redo                                 █│
-   │  acmeco-i│ git  ·  Git: commit graph (DAG browser)  ·  git.graph                                 █│
-   │           │ git  ·  Git: status / staging view  ·  git.status_pane                                █│
-   │  acmeco-m│ git  ·  Git: create a new branch  ·  git.new_branch                                   █│
-   │           │ git  ·  Git: stash (push -u, optional message)  ·  git.stash                          █│
-   │  acmeco-p│ git  ·  Git: reopen a closed repo tab  ·  git.reopen_repo                             █│
-   │           │ git  ·  Graph: filter by branch…  ·  git.graph_filter_branch                          █│
-   │  acmeco-s│ git  ·  Graph: filter by date range…  ·  git.graph_filter_date                        █│
-   │           │ git  ·  Graph: filter by author…  ·  git.graph_filter_author                          █│
-   │  example.n│ git  ·  Git: worktrees → open a shell in one  ·  git.worktrees                        █│
+▌ │     requests           │
+ 󰍉 │     src                │
+ 󰊢 │     󱼅  main.rs          │
+  │      .gitignore       ? │
+ 󰐱 │      package.json       │
+ 󰎒 │     󰂺 README.md          │
+ 󰚩 │                          │
+ 󰅣 │  mixr    ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
+  │           │  git                                                                        321 of 796 │
+  │  acmeco-c│▌git  ·  Git: diff the worktree  ·  git.diff                                           █│
+  │           │ git  ·  Open branch menu  ·  git.branch_menu                                          █│
+ 󱘣 │  acmeco-m│ git  ·  Git: diff this file (split)  ·  git.diff_file                                 █│
+   │           │ git  ·  Git: toggle blame gutter  ·  git.blame_toggle                        ctrl+k b █│
+   │  adx     │ git  ·  Git: commit staged changes  ·  git.commit                          ctrl+k g c █│
+   │           │ git  ·  Git: delete tag (picker)  ·  git.tag_delete                                   █│
+   │  acmeco-c│ git  ·  Git: redo the last undone commit  ·  git.redo                                 █│
+   │           │ git  ·  Git: commit graph (DAG browser)  ·  git.graph                                 █│
+   │  acmeco-i│ git  ·  Git: status / staging view  ·  git.status_pane                                █│
+   │           │ git  ·  Git: create a new branch  ·  git.new_branch                                   █│
+   │  acmeco-m│ git  ·  Git: stash (push -u, optional message)  ·  git.stash                          █│
+   │           │ git  ·  Git: reopen a closed repo tab  ·  git.reopen_repo                             █│
+   │  acmeco-p│ git  ·  Graph: filter by branch…  ·  git.graph_filter_branch                          █│
+   │           │ git  ·  Graph: filter by date range…  ·  git.graph_filter_date                        █│
+   │  acmeco-s│ git  ·  Graph: filter by author…  ·  git.graph_filter_author                          █│
+   │           │ git  ·  Git: worktrees → open a shell in one  ·  git.worktrees                        █│
    │───────────│ git  ·  Git: rediscover repos under workspace  ·  git.refresh_repos                   █│
    │ Sidebar   │ git  ·  Git: stash pop (apply + drop most recent)  ·  git.stash_pop                   █│
    │           │ git  ·  Git: fetch --all --prune (refresh remote refs)  ·  git.fetch                  █│
@@ -36,5 +36,5 @@
    │                          │
   │                          │
    │                          │
- TREE   main  󰐙 1  [no file]                                         F 57% ▲1.0  󱼀 󰐎  WRAP    16:02  ws   —
+ TREE   main  󰐙 2  [no file]                                         C 74% ±0.0  󱼀 󰐎  WRAP    08:45  ws   —
 

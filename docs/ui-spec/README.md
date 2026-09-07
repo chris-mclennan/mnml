@@ -35,3 +35,22 @@ statement that paints it, and add nothing the Rust screen does not show.
 the brand menu fits before the ` » `, the browser chip is dropped from
 the gap, the right cluster is the compact one. `src/ui/menu_bar.zig`
 pins row 0 of both dumps as `rust_row_120` / `rust_row_80`.
+
+## Overlays (2026-09-07)
+
+Each `rust-<name>-120x40.txt` below is the Rust screen after the
+matching `steps-<name>.jsonl`, on the fixture workspace (which now has
+`requests/demo.http`; `rust-palette` / `rust-picker` were re-cut on it):
+
+- `palette` — `ctrl+shift+p`, type `git`: the command palette.
+- `picker` — `ctrl+p`, type `ma`: the `Open file` picker.
+- `rename` / `delete` — three arrows down the tree (Rust previews the
+  row under the cursor, so `.gitignore` is open behind the box), then
+  `file.rename` / `file.delete`. The delete steps only OPEN the
+  confirm; nothing in the fixture is ever deleted.
+- `goto` — `src/main.rs` open, `ctrl+g`: the go-to-line prompt.
+- `whichkey` — `ctrl+k`: the leader popup (standard profile).
+- `help` — `f1`: the help overlay (the keymap reference).
+- `discovery` — `view.discovery`: the click-discovery panel.
+- `close` — `src/main.rs` open, type `x`, `ctrl+w`: the unsaved-changes
+  prompt (the buffer is never saved; the quit discards it).

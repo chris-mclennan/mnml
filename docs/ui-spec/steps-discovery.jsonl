@@ -1,0 +1,4 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"view.discovery"}
+{"cmd":"wait_ms","ms":600}

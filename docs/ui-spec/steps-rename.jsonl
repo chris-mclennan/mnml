@@ -1,0 +1,7 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"key","key":"down"}
+{"cmd":"run-command","id":"file.rename"}
+{"cmd":"wait_ms","ms":600}

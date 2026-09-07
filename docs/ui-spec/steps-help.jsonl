@@ -1,0 +1,4 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"f1"}
+{"cmd":"wait_ms","ms":600}
