@@ -1,0 +1,26 @@
+# A REMOTE row lists its branches without the remote's prefix; a second
+# click on one creates the local tracking branch of its short name.
+# Rows at 120x40: LOCAL 5, main 6, gap 7, REMOTE 8, origin 9, hotfix
+# 10, main 11.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git init -q --bare ../remote.git
+shell git remote add origin ../remote.git
+shell git push -q -u origin main main:hotfix
+command view.activity_git
+wait 1000
+expect screen contains "Viewing 4"
+expect screen contains "󰅀 󰅟 REMOTE"
+expect screen contains "󰖟 origin"
+expect screen contains "    󰘬 hotfix"
+click 6 10
+click 6 10
+wait 1500
+expect file .git/HEAD contains "refs/heads/hotfix"
+expect screen contains "󰄬 󰘬 hotfix"
+expect screen contains "Viewing 5"

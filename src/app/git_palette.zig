@@ -311,12 +311,13 @@ fn matches(filter: []const u8, s: []const u8) bool {
     return false;
 }
 
-/// A worktree's text: `branch (dir)`, or the label alone when it is the
-/// directory's name or `(detached)`.
+/// A worktree's text: `branch (dir)`, the branch alone when it is the
+/// directory's name, `dir (detached)` for a tree on no branch.
 fn worktreeShown(arena: Allocator, w: parse.Worktree) Allocator.Error![]const u8 {
     const label = w.label();
     const dir = std.fs.path.basename(w.path);
-    if (std.mem.eql(u8, label, dir) or (label.len > 0 and label[0] == '(')) return label;
+    if (std.mem.eql(u8, label, dir)) return label;
+    if (label.len > 0 and label[0] == '(') return try std.fmt.allocPrint(arena, "{s} {s}", .{ dir, label });
     return try std.fmt.allocPrint(arena, "{s} ({s})", .{ label, dir });
 }
 

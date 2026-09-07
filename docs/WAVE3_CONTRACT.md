@@ -3360,3 +3360,64 @@ the statusline chips. `docs/ui-spec/README.md` lists the hunks.
   (a click on a row leaves the pointer there; the kebab opens the row
   menu). `panel_new_row` was break-checked (the todos label removed →
   "screen does not contain `+ New todo`").
+---
+
+## The branches panel (2026-09-07, branch `git-palette`) — `// changed:` notes
+
+The git column is rebuilt as a branches panel — the second deliberate
+departure from same-look after the debugger. The spec is the Zig
+screen (`docs/ui-spec/zig-git-palette-*.txt`, `tools/zig-spec-git.sh`).
+
+- `// changed (worker):` `Result.rail` carries `worktrees:
+  []parse.Worktree` (path, branch, head, detached, bare, locked +
+  reason, main, dirty — the worker runs `status --porcelain` inside
+  each tree), `remotes: []parse.Remote` (name, url, `Provider`),
+  `stashes: []parse.Stash` (sha, `stash@{N}`, message) and `tags:
+  []parse.Tag` (name, the peeled sha, annotated; newest first, the
+  version as the tie-break). `parse.zig` gains the four parsers with
+  canned-output tests; the worktrees picker reads `parseWorktrees`.
+  `Job.stash_pop` takes `?[]u8` — the stash to pop, null for the
+  newest. `git.State` gains `rail_remotes` / `rail_stashes` /
+  `rail_tags`; `rail_prs` stays for the statusline's PR chip.
+- `// changed (ui):` `ui/git_palette.zig` is the panel: `Row` is
+  `section | branch | remote | remote_branch | worktree | stash | tag |
+  gap`; `Props{rows, repo, viewing, filter, filter_caret,
+  filter_focused, cursor, scroll}`; `draw` returns `Painted{scroll,
+  visible, caret}`. The pill row keeps the refresh chip (`.chip{.git,
+  .refresh}`) at its right edge; `Viewing N` is row 1; the filter row
+  is `filter_input.draw` with `.panel = .git`; the list is one
+  `list_panel.scrollWindow` over every row, the scrollbar in the last
+  column on overflow. Column 0 is the gutter (check / lock / the cursor
+  marker); the right edge holds the section count, the ahead / behind
+  (`trackText`) and the dirty dot, one cell in. `currentBg` is the
+  checked-out row's ground (the theme's green over the panel, as
+  `diff_view.addedRowBg`). `Part` is `repo` alone — the branch row is
+  gone, and `discovery.zig`'s hover for it with it.
+- `// changed (app):` `app/git_palette.zig` builds the five sections
+  in a fixed order (always all five, the count the filtered one), folds
+  through `State.collapsed` for the run, and keeps `filter` /
+  `filter_caret` / `filter_focused` / `cursor` / `scroll` / `visible` /
+  `total` flat (as before, so `context_menus.zig` reads the cursor
+  unchanged). `select` (a click) moves the cursor and jumps the graph to
+  the row's commit — a branch's sha, a worktree's HEAD, a stash's
+  commit, a tag's peeled sha; `activate` (Enter, or a click on the
+  cursor's row) acts: `checkout`, the tracking branch of a remote's
+  short name, `openWorktree` (the tree joins the workspace roots
+  through `tree.addRoot`, the repos are rediscovered, the graph tab
+  switches), `stash_apply`, the checkout confirm for a tag. The wheel
+  and the scrollbar keep the cursor inside the window so the paint's
+  clamp does not pull the scroll back.
+- `// changed (core):` `GitPaletteAct.what` gains `remote_fetch`,
+  `remote_copy_url`, `worktree_open`, `stash_apply`, `stash_pop`,
+  `stash_drop`, `tag_checkout`, `tag_delete`, `tag_copy` and loses
+  `pr_open` / `pr_copy`. `git.Confirm` gains `tag_delete`. A worktree's
+  shell opens a `pty_pane` with the tree as `cwd`.
+- `// changed (spec):` `steps-graph2.jsonl` now differs from
+  `rust-git-120x40.txt` on the sidebar rows only; the pane columns
+  still match line for line.
+- `// changed (tests):` five painter tests (the 26-cell spec column,
+  the cursor / caret, the one-list scroll, 16 / 20 / 24-cell clipping,
+  ascii), four state tests (rows, filter + folds, select / act / keys,
+  every row menu resolves), a worker integration test on a seeded repo,
+  seven `git_palette_*.test` scripts; `git_mode.test` and the git-mode
+  unit test re-aimed at the new rows.
