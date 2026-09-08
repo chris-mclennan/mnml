@@ -77,20 +77,29 @@ open and the harness another ~1.4 s before the dump, which has been
 enough on this machine — a dump without the toast on a slow run is
 timing, not a regression (`tools/fake_lsp/` is the deterministic proof).
 
-**Run the harness on a private copy of the fixture.** `tools/ui-diff.sh`
-writes the IPC command file under `<ws>/.mnml/` and both data dirs'
-session files; two runs on the same paths cross-talk (another run's
-keystrokes land in your screen, and the number jumps). Copy
-`mnml-zig-worktrees/chrome-fixture` to a sibling directory (not under
-`/tmp`: the Zig app resolves the workspace to its realpath and
-`session.zig` compares that string with the one the session file
-names, so `/tmp/x` never matches its own `/private/tmp/x` — a 4-row
-`session: … belongs to … — ignored` toast on every screen, and the
-tree no longer restored), then rewrite the original fixture path in
-BOTH `ws/.mnml/session.zon` (Zig) and `ws/.mnml/session.json` (Rust)
-to the copy's — each side ignores a session that names another
-workspace, and the two must agree on `src` being open. Pass the copy's
-`ws` / `rs-data` / `zig-data`.
+**The harness runs on a private copy of the fixture.** `tools/ui-diff.sh`
+writes the IPC command file under `<ws>/.mnml/` and both editors'
+session files, so two runs on the same paths would cross-talk (another
+run's keystrokes land in your screen, and the number jumps). Every run
+therefore copies `ws` / `rs-data` / `zig-data` under a fresh `mktemp
+-d` and drives both editors there; any number of runs — several agents
+on the shared `mnml-zig-worktrees/chrome-fixture` — can go at once, and
+the fixture itself is never written. Inside the copy every absolute
+path that names a source directory is rewritten to the copy's realpath
+(the Zig app resolves the workspace to its realpath and `session.zig`
+compares that string with the one `session.zon` names, so `/tmp/x`
+would never match its own `/private/tmp/x` — a 4-row `session: …
+belongs to … — ignored` toast on every screen, and the tree no longer
+restored); today that is `ws/.mnml/session.zon` (Zig),
+`ws/.mnml/session.json` (Rust) and `rs-data/history-global.jsonl`, and
+the script greps the copy afterwards so a new file carrying the path
+fails the run rather than toasting. The copy is deleted at exit;
+`KEEP=1` keeps it and prints its path. `--no-copy` (before the
+positionals) drives the given directories in place — the old behaviour,
+with the session files snapshotted before each editor and restored
+after — for a fixture you own alone. `tools/zig-spec.sh` and
+`tools/zig-spec-git.sh` seed their own throwaway workspace and data
+root under `mktemp -d` and read nothing shared.
 
 ## Sections and their sides (2026-09-07)
 
