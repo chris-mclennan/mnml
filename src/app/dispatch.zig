@@ -819,6 +819,12 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // The `{{VAR}}` a quick-fix menu was opened on rides through the
     // close to the row's command.
     const quick_fix = http_app.takeQuickFix(app);
+    // right-click: a string-carrying row's bytes belong to the menu's
+    // own arena, which the close frees — copy them out first.
+    const text: ?[]const u8 = switch (action) {
+        .copy_text, .open_url, .open_path, .set_theme => |s| try app.frame.allocator().dupe(u8, s),
+        else => null,
+    };
     closeOverlay(app);
     app.http.quick_fix_var = quick_fix;
     switch (action) {
@@ -853,8 +859,33 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .set_coverage_mode => |m| try coverage.setMode(app, m),
         .menu_bar => |i| try menu_bar.openIndex(app, i),
         .git_palette => |a| try git_palette.menuAction(app, a),
+        // right-click: the string-carrying rows, on the copy taken above.
+        .copy_text => {
+            try app.clipboard.set(text.?, false);
+            app.toast("copied {s}", .{text.?});
+        },
+        .open_url => git_app.openExternal(app, text.?),
+        .open_path => try openPathRow(app, text.?),
+        .set_theme => cmd_view.acceptTheme(app, text.?) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+        },
         .none => {},
     }
+}
+
+/// right-click: a menu row's path — a directory opens in a Files pane,
+/// anything else in a buffer.
+fn openPathRow(app: *App, path: []const u8) Allocator.Error!void {
+    const is_dir = if (std.Io.Dir.cwd().statFile(app.io, path, .{})) |st| st.kind == .directory else |_| false;
+    if (is_dir) {
+        _ = try files_pane.open(app, path);
+        return;
+    }
+    _ = app.openPath(path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => app.toast("cannot open {s}", .{path}),
+    };
 }
 
 fn overlayKey(app: *App, k: Key) Allocator.Error!void {

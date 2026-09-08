@@ -165,6 +165,11 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .menu_bar => if (ascii) "=" else "\u{f0c9}", // fa-bars: a menu-bar menu
         .git_palette => if (ascii) "g" else "\u{e702}", // dev-git: a palette row's action
         .move_section => |ms| if (ms.side == .right) (if (ascii) ">" else "\u{f061}") else (if (ascii) "<" else "\u{f060}"), // fa-arrow_right / _left
+        // right-click: the four string-carrying actions.
+        .copy_text => if (ascii) "y" else "\u{f0c5}", // fa-copy
+        .open_url => if (ascii) "w" else "\u{f0ac}", // fa-globe
+        .open_path => if (ascii) "o" else "\u{f07c}", // fa-folder_open
+        .set_theme => if (ascii) "t" else "\u{f1fc}", // fa-paint_brush
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }
