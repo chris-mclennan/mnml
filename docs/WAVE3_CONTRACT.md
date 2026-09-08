@@ -2668,10 +2668,100 @@ break-check.
   statusline tests compare the painted row with the spec's — clock
   normalised, the cut now-playing cluster removed (or put back at the
   component level, where the 80-column row is Rust's cell for cell).
-- Cut, per the spec: the now-playing / Sonos clusters. Not in this
-  build: the Claude chip's quota percent (`W 99% 18m …`) — Zig's meter
-  is the local 24h spend until the usage endpoint is called; the LSP
-  progress (`⟳ …`), background-task spinner and `AI` suggestion chips.
+- `// changed (app, 2026-09-07):` the now-playing cluster is back —
+  `app/now_playing.zig`. Rust always paints it: idle it is the preferred
+  player's mark (`ui.preferred_music_app`: mnml's baked Beatport B /
+  nf-fa-apple / nf-fa-spotify) and nf-md-play_box_outline on the
+  player's colour, the `󱼀 󰐎` every Rust dump carries; with a track it is
+  the transport (nf-md-pause or play, nf-md-skip_next, `artist - title`
+  cut at 28 with `…` or scrolled under `ui.now_playing_marquee`). The
+  poller is an `Io.Group` task the terminal loop alone starts
+  (`native_notify`): mixr's `~/.mixr/quick.txt` when fresh, `osascript`
+  for Music / Spotify on macOS, `auto` prefers whichever plays, the
+  ten-second mixr stickiness kept. Headless and the tests paint the idle
+  form, so the dumps compare; `MNML_NOW_PLAYING="<track>|playing|
+  <source>|<detail>"` puts a track on the row (Rust has no such
+  override — the name is Zig's), and a `.test` sets it with a `# env:
+  NAME=value` header line (`e2e/parser.zig` `Header.env`, applied per
+  file in `e2e/runner.zig`). Clicks are Rust's: the transport chips
+  drive a macOS player by `osascript`, the brand / title open it
+  (`mixr.show` / `activate`), the idle play chip starts it
+  (`mixr.play_now` / `playpause`), the right button is the player menu
+  with the preferred-app radio rows. `mixr.set_preferred_*` and
+  `mixr.copy_track` now run (they left `cmd_app.zig`'s cut table); the
+  mixr transport, `mixr.show*`, `play_now` and `show_auth_status` stay
+  cut, so on a machine preferring mixr the idle clicks toast the cut.
+  `SegId` gains `np_brand` / `np_play` / `np_next` / `np_track`;
+  `--ascii` paints `B` / `A` / `S`, `>`, `||`, `>|` and Rust's one-cell
+  breather. docs/PARITY.md's "now-playing cut" entry is the docs
+  track's to amend.
+- `// changed (ui, 2026-09-07):` the overflow rule is Rust's, whole.
+  The right lane is measured whole; the longest left chip clips to what
+  it leaves less four cells of air (floor three); and when the row is
+  still too narrow the right lane follows the left lane directly and
+  the screen edge cuts it — Rust's one `Line` of spans. The Rust editor
+  at 60×24 on the fixture reads ` TREE  … [no file]  F 57% ▲1.0  󱼀 󰐎
+  WRAP    18:00` and stops: the workspace and the language are past the
+  edge, and `ui/statusline.zig` / `app/statusline.zig` pin that row and
+  the 100- and 80-column ones (identical to Rust's — `tools/ui-diff.sh`
+  at 100×40 shows no difference) at four widths. The earlier drop rule
+  (right chips leftmost-first, a `sticky` cursor position) is gone with
+  the field; at the gate sizes the two rules never differed.
+- `// changed (app, 2026-09-07):` `coverage.artifactsHome` reads only
+  `MNML_ARTIFACTS_HOME` under the test runner (`builtin.is_test`), never
+  HOME: a unit test that builds an App on the process environment was
+  painting the developer's own trends file into its row — fifteen cells
+  that, with the cluster's six, cut the cursor position out of a
+  48-column frame on one machine and no other (`render.zig`, `lsp.zig`
+  tests). The e2e driver already set the variable; the unit tests now
+  match it.
+- `// changed (app, 2026-09-07):` the LSP chip's clicks are Rust's.
+  The left button is `:LspStatus` — one toast naming every live server
+  and its root relative to the workspace (`LSP: rust (.) · typescript
+  (web)`), `LSP: no servers running` without one — as the new
+  `lsp.status` command (`app/statusline.zig` `table`; the id is Rust's
+  ex verb as a palette command, since Zig's menus run command ids). The
+  right button is Rust's nine-row LSP menu (Status, symbols in file /
+  workspace, diagnostics, references, rename, format, code actions,
+  inlay hints), `openLspChipMenu`. The chip's text, colour and place
+  (after the now-playing cluster, before WRAP — `rust-goto-120x40.txt`)
+  were already Rust's; a test proves all of it on a fake server
+  (`lsp.TestRig`, read-only use of `app/lsp.zig`). Before, the left
+  click opened the symbols picker. `docs/commands.md` wants a `zig
+  build docs` for the new id — the docs track's file.
+- `// changed (tests, 2026-09-07):` the `.test` runner's workspace is
+  `mnml-e2e-` and six hex digits (fifteen characters), near the ten of
+  Rust's `tempfile::tempdir()` name. The 41-character one was 45 cells
+  of every 120-column row: with the now-playing cluster beside it the
+  row overflowed and Rust's rule clipped the mode chip (`vim_gv_mode`
+  read `V-LI…`) where Rust's runner never reaches that width.
+  `ui_statusline_clicks.test` and `statusline_now_playing.test` carry
+  the recomputed columns (the position chip is 70–83 now).
+- `// changed (app, 2026-09-07):` the coverage chip's `ticker` flips on
+  the wall clock, as Rust's does (`SystemTime` seconds / 4 % 2 —
+  `coverage.wallMs`): `app.now_ms` is monotonic since boot, so the two
+  editors on one machine showed opposite halves at the same moment and
+  every `ui-diff` on the fixture (whose config is the ticker) read `F
+  57% ▲1.0` against `C 74% ±0.0`. They now agree whenever both dumps
+  fall in one four-second window; the tool starts them about five
+  seconds apart, so a run can still straddle a flip — pinning the
+  fixture configs to `coverage_chip_mode = .feature` would make the
+  sweep deterministic (the fixture is the harness's, not this track's).
+  `State.ticker_clock_ms` pins the clock in tests.
+- `// changed (residue, 2026-09-07):` with the fixture's ticker pinned
+  to `feature`, `tools/ui-diff.sh` on every steps file loses its two
+  statusline lines (esc 4 → 2, http / graph2 2 → 0, palette 34 → 32,
+  picker 4 → 2, discovery 4 → 2, help 6 → 4, todos 24 → 22, notes 26 →
+  24, findings 26 → 24, whichkey 0); the seven that open `main.rs`
+  (editor, diff, goto, close, delete, rename, outline) keep exactly one
+  pair, Rust's ` LSP 1 ` — the lsp-fixture track's rust-analyzer. The
+  three `zig-debug-*` dumps (and the 80×24 one) are regenerated with the
+  cluster on row 38. Unpinned, the ticker straddles the dumps' start
+  times as it would for two Rust editors five seconds apart.
+- Cut, per the spec: the Sonos cluster. Not in this build: the Claude
+  chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
+  spend until the usage endpoint is called; the LSP progress (`⟳ …`),
+  background-task spinner and `AI` suggestion chips.
 ## The file tree sidebar (2026-09-06, branch `tree`) — `// changed:` notes
 
 The spec is `docs/ui-spec/rust-120x40.txt`, columns 4–29 of rows 1–37;

@@ -5,9 +5,10 @@
 //!
 //!   left   mode · host segments · branch · PR · file (glyph, name, `●`)
 //!          · diagnostics · enclosing symbol · macro · find
-//!   right  host segments · tests · Claude · Codex · coverage · transfer
-//!          · LSP · RESTRICTED · WRAP · autosave · size · Ln/Col · Sel ·
-//!          stress · bell · clock · workspace · language
+//!   right  host segments · tests · Claude · Codex · coverage ·
+//!          now-playing · transfer · LSP · RESTRICTED · WRAP · autosave ·
+//!          size · Ln/Col · Sel · stress · bell · clock · workspace ·
+//!          language
 //!
 //! Every chip registers a `.statusline_seg` hit with an id from here
 //! (`SegId`) or from the component's fixed set; `dispatch.mouse` routes
@@ -18,12 +19,13 @@
 //! `Ln 0/0 Col 0  standard  ○  23:58` the first pass painted. Gone with
 //! it: the indent (`⇥ 4`) and encoding (`utf-8`) chips and the
 //! input-style chip — the Rust screen has none; the keymap is what the
-//! mode chip cycles, and the far-right chip is the language. The
-//! now-playing and Sonos clusters are cut. What Zig has that Rust lacks
-//! stays: the transfer chip, a Lua script's segments, and the drop rule
-//! for a right lane that still does not fit after the left is clipped.
+//! mode chip cycles, and the far-right chip is the language. The Sonos
+//! cluster is cut; the now-playing cluster is `app/now_playing.zig`'s.
+//! What Zig has that Rust lacks stays: the transfer chip and a Lua
+//! script's segments. The overflow rule is Rust's (`ui/statusline.zig`).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
@@ -42,12 +44,15 @@ const parse = @import("../git/parse.zig");
 const lsp = @import("lsp.zig");
 const transcript = @import("../ai/transcript.zig");
 const coverage = @import("coverage.zig");
+const now_playing = @import("now_playing.zig");
 const transfers = @import("transfers.zig");
 const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
 const tests_pane = @import("tests_pane.zig");
 const outline = @import("outline.zig");
 const ids = @import("../core/ids.zig");
+const command = @import("../core/command.zig");
+const CommandError = command.CommandError;
 
 pub const FocusId = ids.FocusId;
 
@@ -69,6 +74,12 @@ pub const SegId = enum(u32) {
     ai_claude,
     ai_codex,
     coverage,
+    /// The now-playing cluster: the brand mark (idle), play / pause,
+    /// skip, and the title.
+    np_brand,
+    np_play,
+    np_next,
+    np_track,
     transfer,
     /// ` LSP 2 ` — running language servers.
     lsp,
@@ -99,6 +110,48 @@ const claude_ink = Theme.rgb(0x1a1a1a);
 
 /// The largest buffer the symbol chip scans per frame without a server.
 pub const symbol_scan_max: usize = 64 * 1024;
+
+pub const table = .{
+    .@"lsp.status" = &lspStatusCmd,
+};
+
+/// Rust's `:LspStatus`, the chip's left click: one toast naming every
+/// live server and the root it runs on, relative to the workspace (`.`
+/// for the workspace itself); "no servers running" without one.
+fn lspStatusCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (app.lsp.servers.items) |s| {
+        if (s.transport.isDead()) continue;
+        if (out.items.len > 0) try out.appendSlice(arena, " · ");
+        var rel: []const u8 = s.root;
+        if (std.mem.startsWith(u8, s.root, app.workspace)) {
+            rel = std.mem.trimStart(u8, s.root[app.workspace.len..], "/\\");
+            if (rel.len == 0) rel = ".";
+        }
+        try out.print(arena, "{s} ({s})", .{ s.name, rel });
+    }
+    if (out.items.len == 0) return app.toast("LSP: no servers running", .{});
+    app.toast("LSP: {s}", .{out.items});
+}
+
+/// The LSP chip's right-click — Rust's rows: the status, then the verbs
+/// a user reaches for from the chip.
+pub fn openLspChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "Status", .action = .{ .command = .@"lsp.status" } },
+        .{ .label = "Symbols in file", .action = .{ .command = .@"lsp.symbols" } },
+        .{ .label = "Symbols in workspace", .action = .{ .command = .@"lsp.workspace_symbols" } },
+        .{ .label = "Diagnostics list", .action = .{ .command = .@"lsp.diagnostics" } },
+        .{ .label = "Find references", .action = .{ .command = .@"lsp.references" } },
+        .{ .label = "Rename symbol", .action = .{ .command = .@"lsp.rename" } },
+        .{ .label = "Format file", .action = .{ .command = .@"lsp.format" } },
+        .{ .label = "Code actions", .action = .{ .command = .@"lsp.code_action" } },
+        .{ .label = "Toggle inlay hints", .action = .{ .command = .@"lsp.inlay_hints_toggle" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("LSP", rows, x, y);
+}
 
 /// Rust's per-side cap on host segments: a third of the row, at least 20.
 pub fn dynamicLaneBudget(width: u16) usize {
@@ -261,6 +314,48 @@ fn iconColor(ui: Ui, ic: anytype, fallback: Color) Color {
     return if (ic.color.len > 0) integrations_view.paletteColor(ui.theme, ic.color) else fallback;
 }
 
+/// A player's colours: black on Spotify green, white on Apple Music
+/// red, black on Beatport lime for mixr (and anything else).
+fn playerColors(source: now_playing.Source) struct { fg: Color, bg: Color } {
+    return switch (source) {
+        .spotify => .{ .fg = Theme.rgb(0x000000), .bg = Theme.rgb(0x1db954) },
+        .music => .{ .fg = Theme.rgb(0xffffff), .bg = Theme.rgb(0xfa243c) },
+        .mixr, .other => .{ .fg = Theme.rgb(0x000000), .bg = Theme.rgb(0xa6e22e) },
+    };
+}
+
+/// The now-playing cluster, after the coverage chip: the transport
+/// (`[pause] [next] [title]`) with a track loaded, else the idle pair
+/// (`[brand] [play]`) in the preferred player's colours. Under
+/// `--ascii` a one-cell breather follows, as Rust adds one where no
+/// arrow separates two coloured chips.
+fn pushNowPlaying(app: *App, ui: Ui, right: *Lane) Allocator.Error!void {
+    const arena = ui.arena;
+    const p = &ui.theme.palette;
+    const st = &app.now_playing;
+    const loaded: ?now_playing.Track = if (st.current) |t| (if (t.hasTrack()) t else null) else null;
+    if (loaded) |t| {
+        const c = playerColors(t.source);
+        const glyph = if (t.playing) (if (ui.ascii) sl.np_pause_ascii else sl.np_pause_glyph) else (if (ui.ascii) sl.np_play_ascii else sl.np_play_glyph);
+        try push(right, arena, Seg.init(ui.fmt(" {s} ", .{glyph}), c.fg, c.bg).withHit(SegId.np_play.raw()));
+        try push(right, arena, Seg.init(ui.fmt("{s} ", .{if (ui.ascii) sl.np_next_ascii else sl.np_next_glyph}), c.fg, c.bg).withHit(SegId.np_next.raw()));
+        const raw = try now_playing.rawLabel(arena, &t);
+        const shown = try now_playing.shownLabel(arena, raw, app.cfg.ui.now_playing_marquee, st.marquee_offset);
+        try push(right, arena, Seg.init(ui.fmt("{s} ", .{shown}), c.fg, c.bg).withHit(SegId.np_track.raw()));
+    } else {
+        const source = now_playing.Source.ofPreferred(app.cfg.ui.preferred_music_app);
+        const c = playerColors(source);
+        const brand = switch (source) {
+            .spotify => if (ui.ascii) sl.spotify_ascii else sl.spotify_glyph,
+            .music => if (ui.ascii) sl.apple_ascii else sl.apple_glyph,
+            .mixr, .other => if (ui.ascii) sl.cluster_brand_ascii else sl.cluster_brand_glyph,
+        };
+        try push(right, arena, Seg.init(ui.fmt(" {s} ", .{brand}), c.fg, c.bg).withHit(SegId.np_brand.raw()));
+        try push(right, arena, Seg.init(ui.fmt("{s} ", .{if (ui.ascii) sl.cluster_play_ascii else sl.cluster_play_glyph}), c.fg, c.bg).withHit(SegId.np_play.raw()));
+    }
+    if (ui.ascii) try push(right, arena, Seg.init(" ", p.fg, p.statusline));
+}
+
 /// Builds the frame's lanes on the frame arena.
 pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     const arena = ui.arena;
@@ -404,6 +499,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         seg.tail = tail.items;
         try push(&right, arena, seg);
     }
+    try pushNowPlaying(app, ui, &right);
     if (try transfers.chip(app, arena, ui.ascii)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.cyan).withHit(SegId.transfer.raw()));
     var servers: u32 = 0;
     for (app.lsp.servers.items) |s| if (!s.transport.isDead()) {
@@ -425,7 +521,6 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{sl.formatByteSize(&buf, e.buf.editor.bytes().len)}), p.comment, p.bg2).withHit(SegId.filesize.raw()));
         const pos = e.buf.editor.rowCol();
         try push(&right, arena, Seg.init(ui.fmt(" Ln {d}/{d} Col {d} ", .{ pos.row + 1, e.buf.editor.lineCount(), pos.col + 1 }), p.fg, p.bg2).withHit(sl.seg_position));
-        right.items[right.items.len - 1].sticky = true;
         if (e.buf.editor.selection()) |sel| if (sel[1] > sel[0]) {
             const n = std.unicode.utf8CountCodepoints(e.buf.editor.bytes()[sel[0]..sel[1]]) catch sel[1] - sel[0];
             try push(&right, arena, Seg.init(ui.fmt(" Sel {d} ", .{n}), p.bg_darker, p.yellow).withHit(SegId.sel.raw()));
@@ -511,7 +606,6 @@ test "SegId.of covers the app's ids and nothing else" {
 
 // ─── the row against the spec ────────────────────────────────────────────
 
-const command = @import("../core/command.zig");
 const git_app = @import("git.zig");
 const client = @import("../git/client.zig");
 const screen_mod = @import("../ipc/screen.zig");
@@ -521,9 +615,11 @@ const Key = app_mod.Key;
 
 /// The Rust editor's screen at 120×40 on the fixture (`docs/ui-spec/`).
 const spec_120x40 = @embedFile("ui_spec_rust_120x40");
-/// The cut now-playing cluster as the Rust row carries it: the arrow,
+/// The idle now-playing cluster as the Rust row carries it: the arrow,
 /// the mnml-baked Beatport mark, nf-md-play_box_outline — six cells.
-const cut_cluster = sl.pl_left_nerd ++ " " ++ sl.cluster_brand_glyph ++ " " ++ sl.cluster_play_glyph ++ " ";
+const idle_cluster = sl.pl_left_nerd ++ " " ++ sl.cluster_brand_glyph ++ " " ++ sl.cluster_play_glyph ++ " ";
+/// The Rust editor's screen at 80×24 on the fixture.
+const spec_80x24 = @embedFile("ui_spec_rust_80x24");
 /// nf-dev-npm — `package.json`'s glyph (`ui/file_glyph.zig`).
 const npm_glyph = "\u{e71e}";
 const npm_ascii = "n";
@@ -628,12 +724,13 @@ fn specRow(text: []const u8, y: usize) []const u8 {
     return "";
 }
 
-/// The Rust row less the cut cluster: its six cells join the gap
-/// between the lanes.
-fn lessCluster(arena: Allocator, row: []const u8) ![]const u8 {
-    const cut = std.mem.indexOf(u8, row, cut_cluster) orelse return error.NoClusterInSpec;
-    const first = std.mem.indexOf(u8, row, sl.pl_left_nerd).?;
-    return std.fmt.allocPrint(arena, "{s}{s}{s}{s}", .{ row[0..first], " " ** 6, row[first..cut], row[cut + cut_cluster.len ..] });
+/// The 80×24 spec's statusline with the fixture's coverage reading and
+/// the spec's clock: the Rust machine read `C 74% ±0.0` at 09:36 when
+/// that dump was taken.
+fn spec80Row(arena: Allocator) ![]const u8 {
+    const row = specRow(spec_80x24, 22);
+    const cov = try std.mem.replaceOwned(u8, arena, row, "C 74% ±0.0", "F 57% ▲1.0");
+    return std.mem.replaceOwned(u8, arena, cov, "09:36", spec_clock);
 }
 
 /// `actual` with its clock cells rewritten to the spec's, so the two
@@ -652,17 +749,25 @@ fn trimRight(s: []const u8) []const u8 {
     return std.mem.trimEnd(u8, s, " ");
 }
 
-test "row 38 at 120×40 is the Rust spec's, cell for cell, less the cut cluster and the clock" {
+test "row 38 at 120×40 is the Rust spec's, cell for cell, but the clock" {
     var b = try Bench.init(120, 40);
     defer b.deinit();
     try b.onMain("# branch.head main\n? stray.txt\n");
     b.app.focus = .tree;
-    const expected = try lessCluster(b.app.frame.allocator(), specRow(spec_120x40, 38));
+    const expected = specRow(spec_120x40, 38);
     const actual = try b.row(38);
     try testing.expectEqualStrings(trimRight(expected), trimRight(try normaliseClock(b.app.frame.allocator(), expected, actual)));
+    try testing.expect(std.mem.indexOf(u8, actual, idle_cluster) != null);
     // The colours the dump cannot carry: TREE dark on blue, the branch
-    // green on bg2, the delta green on teal, the workspace bold blue.
+    // green on bg2, the delta green on teal, the idle cluster black on
+    // Beatport lime, the workspace bold blue.
     const p = &b.app.theme.palette;
+    const brand = std.mem.indexOf(u8, expected, sl.cluster_brand_glyph).?;
+    const brand_col: u16 = @intCast(try std.unicode.utf8CountCodepoints(expected[0..brand]));
+    try testing.expect(Color.eql(b.cell(brand_col, 38).bg, Theme.rgb(0xa6e22e)));
+    try testing.expect(Color.eql(b.cell(brand_col, 38).fg, Theme.rgb(0)));
+    try testing.expectEqual(SegId.np_brand.raw(), b.app.hits.at(brand_col, 38).?.statusline_seg);
+    try testing.expectEqual(SegId.np_play.raw(), b.app.hits.at(brand_col + 2, 38).?.statusline_seg);
     try testing.expect(Color.eql(b.cell(1, 38).bg, p.blue));
     try testing.expect(Color.eql(b.cell(1, 38).fg, p.bg_darker));
     try testing.expect(b.cell(1, 38).bold);
@@ -691,9 +796,9 @@ test "with a file open the row gains the file chip, the size and Ln/Col, and the
     defer testing.allocator.free(path);
     _ = try b.app.openPath(path);
     // The Rust row on the same fixture with `package.json` open
-    // (`tools/ui-diff.sh`, 2026-09-06), less the cluster.
-    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ " " ** 19 ++
-        sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " 3B  Ln 1/1 Col 1  " ++ sl.bell_glyph ++ "  " ++ spec_clock ++ " " ++ sl.pl_left_nerd ++ sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  json";
+    // (`tools/ui-diff.sh`, 2026-09-06).
+    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ " " ** 13 ++
+        sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " 3B  Ln 1/1 Col 1  " ++ sl.bell_glyph ++ "  " ++ spec_clock ++ " " ++ sl.pl_left_nerd ++ sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  json";
     const actual = try b.row(38);
     try testing.expectEqualStrings(expected, trimRight(try normaliseClock(b.app.frame.allocator(), expected, actual)));
     // The glyph paints in the file type's colour; a dirty buffer shows ●.
@@ -712,15 +817,17 @@ test "with a file open the row gains the file chip, the size and Ln/Col, and the
     try testing.expect(std.mem.indexOf(u8, view, "Ln ") == null);
 }
 
-test "at 80 columns the row keeps every chip once the cluster is cut; a long name clips, and clips first" {
+test "at 80 columns the row is the Rust 80×24 spec's: the branch clips to `main …`; a long name clips instead, and first" {
     var b = try Bench.init(80, 24);
     defer b.deinit();
     try b.onMain("# branch.head main\n? stray.txt\n");
     b.app.focus = .tree;
     // Rust at 80×24 (`docs/ui-spec/rust-80x24.txt`) clips the branch to
-    // `main …` to fit the cluster; without it the counts fit.
+    // `main …` to fit the cluster: the row is that dump, cell for cell.
     const row = try b.row(22);
-    try testing.expect(std.mem.startsWith(u8, row, " TREE " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " [no file]"));
+    const expected = try spec80Row(b.app.frame.allocator());
+    try testing.expectEqualStrings(trimRight(expected), trimRight(try normaliseClock(b.app.frame.allocator(), expected, row)));
+    try testing.expect(std.mem.startsWith(u8, row, " TREE " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main …" ++ sl.pl_right_nerd ++ " [no file]"));
     try testing.expect(std.mem.endsWith(u8, trimRight(row), sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  —"));
     // A file whose name is longer than the room: the name gives way,
     // the branch keeps its counts, the right lane keeps every chip.
@@ -733,7 +840,13 @@ test "at 80 columns the row keeps every chip once the cluster is cut; a long nam
     try testing.expect(std.mem.indexOf(u8, long, "…") != null);
     try testing.expect(std.mem.indexOf(u8, long, "-indeed.txt") == null);
     try testing.expect(std.mem.indexOf(u8, long, " Ln 1/") != null);
-    try testing.expect(std.mem.endsWith(u8, trimRight(long), sl.pl_left_nerd ++ "  txt"));
+    // The right lane is wider than what three cells of name leave: it
+    // runs on from the name and the edge cuts it — the clock is the last
+    // chip to show, the workspace and the language are past the edge,
+    // as Rust's one line of spans would be cut.
+    try testing.expect(b.colOf(22, sl.seg_language) == null);
+    try testing.expect(b.colOf(22, SegId.workspace.raw()) == null);
+    try testing.expect(b.colOf(22, SegId.bell.raw()) != null);
 }
 
 // ─── every chip: a hit, a description, an action ─────────────────────────
@@ -752,7 +865,7 @@ test "every chip on the row registers its hit, has words, and its click does wha
     defer seen.deinit();
     var x: u16 = 0;
     while (x < 120) : (x += 1) if (b.app.hits.at(x, 38)) |h| if (h == .statusline_seg) try seen.put(h.statusline_seg, {});
-    const expected = [_]u32{ sl.seg_mode, sl.seg_file, sl.seg_position, sl.seg_language, SegId.branch.raw(), SegId.coverage.raw(), SegId.wrap.raw(), SegId.filesize.raw(), SegId.bell.raw(), SegId.clock.raw(), SegId.workspace.raw() };
+    const expected = [_]u32{ sl.seg_mode, sl.seg_file, sl.seg_position, sl.seg_language, SegId.branch.raw(), SegId.coverage.raw(), SegId.np_brand.raw(), SegId.np_play.raw(), SegId.wrap.raw(), SegId.filesize.raw(), SegId.bell.raw(), SegId.clock.raw(), SegId.workspace.raw() };
     try testing.expectEqual(expected.len, seen.count());
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
@@ -787,6 +900,17 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "coverage: features 57%"));
     try b.click(38, SegId.coverage.raw(), .right);
     try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // The idle cluster: the brand opens the preferred player (`mixr.show`,
+    // cut in this build — its toast says so), the play chip starts one
+    // (`mixr.play_now`, the same); the right button is the player menu.
+    try b.click(38, SegId.np_brand.raw(), .left);
+    try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, "cut") != null);
+    try b.click(38, SegId.np_play.raw(), .left);
+    try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, "cut") != null);
+    try b.click(38, SegId.np_play.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try testing.expectEqualStrings("mixr", b.app.overlay.menu.title);
     try b.key(Key.named(.esc));
     // The clock flips local ⇄ UTC; right-click is its menu.
     try b.click(38, SegId.clock.raw(), .left);
@@ -832,6 +956,229 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
     try testing.expect(b.colOf(38, sl.seg_dyn_base) != null);
     try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
+}
+
+// ─── the narrow rule, at four widths ─────────────────────────────────────
+
+test "the narrow rule at 120 / 100 / 80 / 60 columns: the gap shrinks, then the branch clips to `main …`, then to `…` and the edge cuts the right lane" {
+    const spec = specRow(spec_120x40, 38);
+    // The gap is the first run of four spaces: a chip holds at most two.
+    const gap = std.mem.indexOf(u8, spec, "    ").?;
+    var after_gap = gap;
+    while (after_gap < spec.len and spec[after_gap] == ' ') after_gap += 1;
+    const spec_left = spec[0..gap];
+    const spec_right = trimRight(spec[after_gap..]);
+    const porcelain = "# branch.head main\n? stray.txt\n";
+    // 120 is the spec (the row test above). 100: the same chips, twenty
+    // cells of gap fewer — the Rust row at 100×40 (`tools/ui-diff.sh`,
+    // 2026-09-07) on the fixture reads exactly so.
+    {
+        var b = try Bench.init(100, 40);
+        defer b.deinit();
+        try b.onMain(porcelain);
+        b.app.focus = .tree;
+        const row = try b.row(38);
+        const lw = try std.unicode.utf8CountCodepoints(spec_left);
+        // The dump is right-trimmed: the language chip's last cell is a
+        // space it does not carry.
+        const rw = 1 + try std.unicode.utf8CountCodepoints(spec_right);
+        const spaces = " " ** 100;
+        const expected_row = try std.fmt.allocPrint(b.app.frame.allocator(), "{s}{s}{s}", .{ spec_left, spaces[0 .. 100 - lw - rw], spec_right });
+        try testing.expectEqualStrings(expected_row, trimRight(try normaliseClock(b.app.frame.allocator(), expected_row, row)));
+        try testing.expect(std.mem.indexOf(u8, row, " main  " ++ sl.added_glyph ++ " 1 ") != null);
+        try testing.expectEqual(sl.seg_language, b.app.hits.at(98, 38).?.statusline_seg);
+    }
+    // 80: the Rust 80×24 dump — the branch gives up its counts, `main …`.
+    {
+        var b = try Bench.init(80, 24);
+        defer b.deinit();
+        try b.onMain(porcelain);
+        b.app.focus = .tree;
+        const row = try b.row(22);
+        const expected = try spec80Row(b.app.frame.allocator());
+        try testing.expectEqualStrings(trimRight(expected), trimRight(try normaliseClock(b.app.frame.allocator(), expected, row)));
+        const dots = std.mem.indexOf(u8, row, "…").?;
+        try testing.expectEqual(@as(usize, 15), try std.unicode.utf8CountCodepoints(row[0..dots]));
+        try testing.expectEqual(sl.seg_language, b.app.hits.at(78, 22).?.statusline_seg);
+    }
+    // 60: the Rust row at 60×24 (`tools/ui-diff.sh`, 2026-09-07): the
+    // branch is its glyph and `…`, the lanes touch, the row ends in the
+    // clock — the workspace and the language are past the edge.
+    {
+        var b = try Bench.init(60, 24);
+        defer b.deinit();
+        try b.onMain(porcelain);
+        b.app.focus = .tree;
+        const row = try b.row(22);
+        const expected = " TREE " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ "…" ++ sl.pl_right_nerd ++ " [no file] " ++ sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " " ++ sl.bell_glyph ++ "  " ++ spec_clock;
+        try testing.expectEqualStrings(expected, trimRight(try normaliseClock(b.app.frame.allocator(), expected, row)));
+        const dots = std.mem.indexOf(u8, row, "…").?;
+        try testing.expectEqual(@as(usize, 9), try std.unicode.utf8CountCodepoints(row[0..dots]));
+        try testing.expect(b.colOf(22, SegId.workspace.raw()) == null);
+        try testing.expect(b.colOf(22, sl.seg_language) == null);
+        try testing.expectEqual(SegId.clock.raw(), b.app.hits.at(58, 22).?.statusline_seg);
+    }
+}
+
+// ─── the LSP chip ────────────────────────────────────────────────────────
+
+test "the LSP chip: ` LSP 1 ` on blue between the cluster and WRAP while a server lives; click names it, right-click is the LSP menu; gone with the server" {
+    // A real Server over a fake language server (`lsp.TestRig`), the
+    // one the LSP tests use; the chip reads `app.lsp.servers` only.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.tree.visible = false;
+    // No server: no chip; the status command says so.
+    _ = try b.row(38);
+    try testing.expect(b.colOf(38, SegId.lsp.raw()) == null);
+    try command.run(&b.app, .{ .static = .@"lsp.status" });
+    try testing.expectEqualStrings("LSP: no servers running", b.app.lastToast().?);
+    var rig: lsp.TestRig = .{};
+    try rig.start(&b.app);
+    const row = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, row, idle_cluster ++ sl.pl_left_nerd ++ " LSP 1 " ++ sl.pl_left_nerd ++ " WRAP ") != null);
+    const x = b.colOf(38, SegId.lsp.raw()).?;
+    const p = &b.app.theme.palette;
+    try testing.expect(Color.eql(b.cell(x + 1, 38).bg, p.blue));
+    try testing.expect(Color.eql(b.cell(x + 1, 38).fg, p.bg_darker));
+    try testing.expectEqual(SegId.lsp.raw(), b.app.hits.at(x + 6, 38).?.statusline_seg);
+    // Left: the servers and their roots. The rig's root is `/tmp`, not
+    // under the workspace, so it reads as it is.
+    try b.click(38, SegId.lsp.raw(), .left);
+    try testing.expectEqualStrings("LSP: typescript (/tmp)", b.app.lastToast().?);
+    // Right: the LSP menu, Rust's nine rows, every id a real command.
+    try b.click(38, SegId.lsp.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try testing.expectEqualStrings("LSP", b.app.overlay.menu.title);
+    try testing.expectEqual(@as(usize, 9), b.app.overlay.menu.items.len);
+    try testing.expectEqualStrings("Status", b.app.overlay.menu.items[0].label);
+    for (b.app.overlay.menu.items) |item| try testing.expect(command.by_name.get(command.name(item.action.command)) != null);
+    try b.key(Key.named(.esc));
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = SegId.lsp.raw() })) != null);
+    // A root under the workspace reads relative to it (the server owns
+    // its root: swap a borrowed one in and back before it is retired).
+    const old_root = rig.server.root;
+    const under = try std.fmt.allocPrint(testing.allocator, "{s}/crates/core", .{b.ws});
+    defer testing.allocator.free(under);
+    rig.server.root = under;
+    try command.run(&b.app, .{ .static = .@"lsp.status" });
+    try testing.expectEqualStrings("LSP: typescript (crates/core)", b.app.lastToast().?);
+    rig.server.root = old_root;
+    // Retired: the chip goes.
+    try rig.stop(&b.app);
+    _ = try b.row(38);
+    try testing.expect(b.colOf(38, SegId.lsp.raw()) == null);
+}
+
+// ─── the coverage chip on fixed inputs ───────────────────────────────────
+
+test "the coverage chip's text and width on fixed inputs are Rust's: ` <glyph> F 57% ▲1.0 `, 14 cells; the code half after ` · `" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.focus = .tree;
+    // The fixture's file says F 57% ▲1.0; pin the numbers instead.
+    coverage.ensureLoaded(&b.app);
+    b.app.coverage.feature = 57.0;
+    b.app.coverage.feature_prev = 56.0;
+    b.app.coverage.code = 74.2;
+    b.app.coverage.code_prev = 74.21;
+    const ui = b.app.frameUi();
+    var info = try build(&b.app, ui, Rect.init(0, 38, 120, 1));
+    const chip = blk: {
+        for (info.right) |sg| if (sg.hit == SegId.coverage.raw()) break :blk sg;
+        return error.NoCoverageChip;
+    };
+    try testing.expectEqualStrings(" " ++ sl.coverage_glyph ++ " F 57%", chip.text);
+    try testing.expectEqualStrings(" ▲1.0", chip.accent.?.text);
+    try testing.expectEqualStrings(" ", chip.tail);
+    try testing.expectEqual(@as(u16, 14), ui.width(chip.text) + ui.width(chip.accent.?.text) + ui.width(chip.tail));
+    // `both`: the code reading after ` · `, its own delta — 27 cells.
+    b.app.cfg.ui.coverage_chip_mode = .both;
+    info = try build(&b.app, ui, Rect.init(0, 38, 120, 1));
+    for (info.right) |sg| if (sg.hit == SegId.coverage.raw()) {
+        try testing.expectEqualStrings(" · C 74% ±0.0 ", sg.tail);
+        try testing.expectEqual(@as(u16, 27), ui.width(sg.text) + ui.width(sg.accent.?.text) + ui.width(sg.tail));
+    };
+    // `code`: `C 74% ±0.0` in the chip's own ink (a flat delta is not tinted).
+    b.app.cfg.ui.coverage_chip_mode = .code;
+    info = try build(&b.app, ui, Rect.init(0, 38, 120, 1));
+    for (info.right) |sg| if (sg.hit == SegId.coverage.raw()) {
+        try testing.expectEqualStrings(" " ++ sl.coverage_glyph ++ " C 74%", sg.text);
+        try testing.expectEqualStrings(" ±0.0", sg.accent.?.text);
+        try testing.expect(Color.eql(sg.accent.?.fg, b.app.theme.palette.bg_darker));
+    };
+}
+
+// ─── the now-playing cluster ─────────────────────────────────────────────
+
+const now_playing_mod = @import("now_playing.zig");
+
+test "the now-playing cluster: the idle pair in the preferred player's colours; the transport with a track; the override and the marquee" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.focus = .tree;
+    _ = &b.app.theme.palette;
+    // Idle, mixr preferred: the Beatport mark and the play box on lime.
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " WRAP ") != null);
+    // Music preferred: the apple on Apple Music red, white on it.
+    try command.run(&b.app, .{ .static = .@"mixr.set_preferred_music" });
+    try testing.expectEqual(Config.MusicApp.music, b.app.cfg.ui.preferred_music_app);
+    const apple = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, apple, sl.pl_left_nerd ++ " " ++ sl.apple_glyph ++ " " ++ sl.cluster_play_glyph ++ " ") != null);
+    const ax = b.colOf(38, SegId.np_brand.raw()).?;
+    try testing.expect(Color.eql(b.cell(ax + 1, 38).bg, Theme.rgb(0xfa243c)));
+    try testing.expect(Color.eql(b.cell(ax + 1, 38).fg, Theme.rgb(0xffffff)));
+    // Spotify preferred: its mark on Spotify green.
+    try command.run(&b.app, .{ .static = .@"mixr.set_preferred_spotify" });
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " " ++ sl.spotify_glyph ++ " " ++ sl.cluster_play_glyph ++ " ") != null);
+    try testing.expect(Color.eql(b.cell(b.colOf(38, SegId.np_brand.raw()).? + 1, 38).bg, Theme.rgb(0x1db954)));
+    try command.run(&b.app, .{ .static = .@"mixr.set_preferred_mixr" });
+    // The override, read on the first tick: a Spotify track playing —
+    // pause, skip, `artist - title`, on the track's player's colours,
+    // each chip its own hit; the idle pair is gone.
+    try b.app.env.put("MNML_NOW_PLAYING", "Karma Police|playing|spotify|Radiohead");
+    now_playing_mod.tick(&b.app, 1000);
+    try testing.expect(b.app.now_playing.overridden);
+    const live = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, live, " F 57% ▲1.0 " ++ sl.pl_left_nerd ++ " " ++ sl.np_pause_glyph ++ " " ++ sl.np_next_glyph ++ " Radiohead - Karma Police " ++ sl.pl_left_nerd ++ " WRAP ") != null);
+    try testing.expect(b.colOf(38, SegId.np_brand.raw()) == null);
+    const px = b.colOf(38, SegId.np_play.raw()).?;
+    try testing.expect(Color.eql(b.cell(px + 1, 38).bg, Theme.rgb(0x1db954)));
+    try testing.expectEqual(SegId.np_next.raw(), b.app.hits.at(px + 3, 38).?.statusline_seg);
+    try testing.expectEqual(SegId.np_track.raw(), b.app.hits.at(px + 6, 38).?.statusline_seg);
+    // Paused: the play glyph. A long title is cut at 28 with an ellipsis.
+    b.app.now_playing.current = now_playing_mod.parseOverride("A Title Long Enough To Overflow The Chip|paused|music|An Artist With A Long Name");
+    const paused = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, paused, " " ++ sl.np_play_glyph ++ " " ++ sl.np_next_glyph ++ " An Artist With A Long Name -… ") != null);
+    try testing.expect(Color.eql(b.cell(b.colOf(38, SegId.np_track.raw()).?, 38).bg, Theme.rgb(0xfa243c)));
+    // The marquee: the window slides a cell per step and asks for the frame.
+    b.app.cfg.ui.now_playing_marquee = true;
+    b.app.now_playing.marquee_next_ms = 0;
+    now_playing_mod.tick(&b.app, 2000);
+    try testing.expectEqual(@as(?i64, 2300), now_playing_mod.nextDeadlineMs(&b.app));
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " n Artist With A Long Name - ") != null);
+    now_playing_mod.tick(&b.app, 2300);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " Artist With A Long Name - A") != null);
+    // Copy the title; an empty override is the idle form again.
+    try command.run(&b.app, .{ .static = .@"mixr.copy_track" });
+    try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "copied: An Artist With A Long Name - A Title"));
+    b.app.now_playing.current = now_playing_mod.parseOverride("");
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), idle_cluster) != null);
+    // `--ascii`: the twins, and a breather cell after the cluster.
+    b.app.cfg.ui.ascii_icons = true;
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " F 57% ▲1.0  B >   WRAP ") != null);
+    // The bell's hit test read the row: the cluster registers words too.
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    for ([_]u32{ SegId.np_brand.raw(), SegId.np_play.raw(), SegId.np_next.raw(), SegId.np_track.raw() }) |id| {
+        try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = id })) != null);
+    }
 }
 
 // ─── the mode chip, per profile ──────────────────────────────────────────

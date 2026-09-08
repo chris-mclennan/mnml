@@ -36,5 +36,5 @@
    │ gutter: breakpoints      │                                            │
   │                          │                                            │
    │                          │                                            │ > expression — Tab completes, ↑↓ history
- VIEW  [no file]                                                                    F 57% ▲1.0    16:19  ws   —
+ VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    19:53  ws   —
 

@@ -13,6 +13,8 @@
 //! mode. `shown` hands the app the readings; `segment` is the text.
 
 const std = @import("std");
+const Io = std.Io;
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -26,6 +28,8 @@ pub const ticker_ms: i64 = 4000;
 pub const artifacts_dir = ".tattle-claude-artifacts";
 
 pub const State = struct {
+    /// A test's wall clock for the ticker; null reads the real one.
+    ticker_clock_ms: ?i64 = null,
     feature: ?f64 = null,
     code: ?f64 = null,
     /// The feature number seven days before its latest point.
@@ -167,9 +171,14 @@ fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
 /// The directory holding `.tattle-claude-artifacts`: `MNML_ARTIFACTS_HOME`
 /// when set (the e2e driver points it at the test's own root, so a
 /// developer's real coverage never paints into a test's statusline),
-/// else the home directory.
+/// else the home directory — except under the test runner, where only
+/// the variable counts: a unit test that builds an App on the process
+/// environment must not read the developer's own trends files (they
+/// widened the row by a chip and cut the position out of a 48-column
+/// frame on the author's machine, and on no one else's).
 fn artifactsHome(app: *App) ?[]const u8 {
     if (app.env.get("MNML_ARTIFACTS_HOME")) |v| return if (v.len == 0) null else v;
+    if (builtin.is_test) return null;
     return app.homeDir() orelse app.env.get("HOME");
 }
 
@@ -214,8 +223,16 @@ pub fn shown(app: *App) ?Shown {
         .feature => .{ .feature = f, .code = if (f == null) c else null },
         .code => .{ .code = c, .feature = if (c == null) f else null },
         .both => .{ .feature = f, .code = c },
-        .ticker => if (f != null and c != null) (if (@mod(@divTrunc(app.now_ms, ticker_ms), 2) == 0) Shown{ .feature = f } else Shown{ .code = c }) else Shown{ .feature = f, .code = c },
+        .ticker => if (f != null and c != null) (if (@mod(@divTrunc(wallMs(app), ticker_ms), 2) == 0) Shown{ .feature = f } else Shown{ .code = c }) else Shown{ .feature = f, .code = c },
     };
+}
+
+/// The ticker's clock: the wall clock, as Rust's (`SystemTime` seconds
+/// / 4 % 2), so two editors on one machine show the same half at the
+/// same moment — `app.now_ms` is monotonic since boot and put them out
+/// of phase. Tests pin it through `State.ticker_clock_ms`.
+fn wallMs(app: *const App) i64 {
+    return app.coverage.ticker_clock_ms orelse Io.Timestamp.now(app.io, .real).toMilliseconds();
 }
 
 pub const Direction = enum { up, down, flat, none };
@@ -232,12 +249,40 @@ pub fn delta(arena: Allocator, r: Reading) Allocator.Error!Delta {
         .up => "▲",
         .down, .none => "▼",
     };
-    return .{ .text = try std.fmt.allocPrint(arena, " {s}{d:.1}", .{ arrow, @abs(d) }), .dir = dir };
+    const tenths = roundScaled(@abs(d), 10);
+    return .{ .text = try std.fmt.allocPrint(arena, " {s}{d}.{d}", .{ arrow, tenths / 10, tenths % 10 }), .dir = dir };
 }
 
 /// `F 83%` — the letter and the rounded percent.
 pub fn pct(arena: Allocator, letter: []const u8, v: f64) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(arena, "{s} {d}%", .{ letter, @as(u64, @intFromFloat(@round(std.math.clamp(v, 0, 100)))) });
+    return std.fmt.allocPrint(arena, "{s} {d}%", .{ letter, roundScaled(std.math.clamp(v, 0, 100), 1) });
+}
+
+/// Rust's `{:.0}` / `{:.1}` of a non-negative double: `v × scale`
+/// rounded to the nearest integer on the EXACT value, ties to even —
+/// `56.5` reads `56`, `0.15` (a hair under) reads `0.1`, `0.25` reads
+/// `0.2`. `std.fmt`'s `{d:.1}` rounds the shortest decimal half away
+/// from zero and reads `0.2`, `0.3` — a chip that disagrees with Rust's
+/// by a digit at every tie. The value is `m × 2^e`; the round is
+/// integer arithmetic on `m × scale` against the half at `2^(-e-1)`.
+pub fn roundScaled(v: f64, scale: u64) u64 {
+    if (!(v > 0) or v > 1.0e12) return 0;
+    const bits: u64 = @bitCast(v);
+    const exp_raw: u64 = (bits >> 52) & 0x7ff;
+    var mant: u128 = bits & ((@as(u64, 1) << 52) - 1);
+    const e: i32 = if (exp_raw == 0) -1074 else blk: {
+        mant |= @as(u128, 1) << 52;
+        break :blk @as(i32, @intCast(exp_raw)) - 1075;
+    };
+    const num: u128 = mant * scale;
+    if (e >= 0) return @intCast(num << @intCast(e));
+    const shift: u32 = @intCast(-e);
+    if (shift >= 127) return 0;
+    const q = num >> @intCast(shift);
+    const rem = num - (q << @intCast(shift));
+    const half = @as(u128, 1) << @intCast(shift - 1);
+    const up = rem > half or (rem == half and (q & 1) == 1);
+    return @intCast(if (up) q + 1 else q);
 }
 
 /// The chip's whole text for the mode (`F 79% ▲43.8 · C 75% ±0.0`),
@@ -262,7 +307,8 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.coverage;
     if (st.feature == null and st.code == null) return null;
     if (app.cfg.ui.coverage_chip_mode == .ticker and st.feature != null and st.code != null) {
-        return (@divTrunc(app.now_ms, ticker_ms) + 1) * ticker_ms;
+        // The next flip on the wall clock, as a moment on `now_ms`.
+        return app.now_ms + (ticker_ms - @mod(wallMs(app), ticker_ms));
     }
     return null;
 }
@@ -318,7 +364,7 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     const root = buf[0..n];
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 12 });
     defer app.deinit();
-    try app.env.put("HOME", root);
+    try app.env.put("MNML_ARTIFACTS_HOME", root);
     app.now_ms = 10_000;
     try t.expect((try segment(&app, app.frame.allocator())) == null);
     // Two apps: 80/90 (ui/api) over 3 features and 60/— over 1 → (85·3 + 60·1)/4 = 78.75.
@@ -349,11 +395,12 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     app.cfg.ui.coverage_chip_mode = .both;
     try t.expectEqualStrings("F 79% ▲43.8 · C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
     app.cfg.ui.coverage_chip_mode = .ticker;
-    app.now_ms = 400_000; // an even slot
+    app.coverage.ticker_clock_ms = 400_000; // an even slot on the wall clock
     try t.expectEqualStrings("F 79% ▲43.8", (try segment(&app, app.frame.allocator())).?);
-    app.now_ms += ticker_ms;
+    app.coverage.ticker_clock_ms.? += ticker_ms + 1000;
     try t.expectEqualStrings("C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
-    try t.expectEqual(@as(i64, 408_000), nextDeadlineMs(&app).?);
+    // 3 s into the odd slot: the flip is 1 s away on `now_ms`.
+    try t.expectEqual(app.now_ms + 3000, nextDeadlineMs(&app).?);
     // The chip is on the statusline, and the click toasts both.
     app.cfg.ui.coverage_chip_mode = .both;
     try app.render();
@@ -378,4 +425,38 @@ test "the seven-day lookback walks ISO dates across a month boundary; a falling 
     try t.expectEqualStrings(" ±0.0", (try delta(a, .{ .now = 74.2, .prev = 74.21 })).text);
     try t.expectEqualStrings("", (try delta(a, .{ .now = 74.2 })).text);
     try t.expectEqual(Direction.none, (try delta(a, .{ .now = 74.2 })).dir);
+}
+
+test "the chip's numbers round as Rust's `{:.0}` / `{:.1}` do: the exact value, ties to even" {
+    // `rustc`, 2026-09-07: 56.5→56 57.5→58 0.5→0 2.5→2; 0.05→0.1
+    // 0.15→0.1 0.25→0.2 1.05→1.1 56.49→56.5.
+    try t.expectEqual(@as(u64, 56), roundScaled(56.5, 1));
+    try t.expectEqual(@as(u64, 58), roundScaled(57.5, 1));
+    try t.expectEqual(@as(u64, 0), roundScaled(0.5, 1));
+    try t.expectEqual(@as(u64, 2), roundScaled(2.5, 1));
+    try t.expectEqual(@as(u64, 57), roundScaled(56.51, 1));
+    try t.expectEqual(@as(u64, 1), roundScaled(0.05, 10));
+    try t.expectEqual(@as(u64, 1), roundScaled(0.15, 10));
+    try t.expectEqual(@as(u64, 2), roundScaled(0.25, 10));
+    try t.expectEqual(@as(u64, 11), roundScaled(1.05, 10));
+    try t.expectEqual(@as(u64, 565), roundScaled(56.49, 10));
+    try t.expectEqual(@as(u64, 10), roundScaled(1.0, 10));
+    try t.expectEqual(@as(u64, 0), roundScaled(0.0, 10));
+    try t.expectEqual(@as(u64, 0), roundScaled(-0.3, 10));
+    try t.expectEqual(@as(u64, 0), roundScaled(1.0e-30, 10));
+    try t.expectEqual(@as(u64, 1000), roundScaled(100.0, 10));
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The chip's text on fixed inputs: the letter, a space, the percent,
+    // then the delta — an arrow or ± and one decimal — after one space.
+    try t.expectEqualStrings("F 57%", try pct(a, "F", 57.0));
+    try t.expectEqualStrings("F 56%", try pct(a, "F", 56.5));
+    try t.expectEqualStrings("C 74%", try pct(a, "C", 74.2));
+    try t.expectEqualStrings("C 100%", try pct(a, "C", 250.0));
+    try t.expectEqualStrings(" ▲1.0", (try delta(a, .{ .now = 57.0, .prev = 56.0 })).text);
+    try t.expectEqualStrings(" ±0.0", (try delta(a, .{ .now = 74.2, .prev = 74.21 })).text);
+    try t.expectEqualStrings(" ▲0.2", (try delta(a, .{ .now = 10.25, .prev = 10.0 })).text);
+    try t.expectEqualStrings(" ▼43.8", (try delta(a, .{ .now = 35.4, .prev = 79.2 })).text);
+    try t.expectEqualStrings(" ▲12.0", (try delta(a, .{ .now = 62.0, .prev = 50.0 })).text);
 }

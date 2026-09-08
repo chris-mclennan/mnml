@@ -33,7 +33,8 @@
 //!
 //! The leading comment block may carry runner directives:
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
-//! at that width only).
+//! at that width only), `# env: NAME=value` (set in the App's environment
+//! for this file — `MNML_NOW_PLAYING` for the statusline's cluster).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -82,6 +83,16 @@ pub const Line = struct {
 pub const Header = struct {
     requires_network: bool = false,
     width: ?u16 = null,
+    /// `# env: NAME=value` lines, in order; slices of the text parsed.
+    env: [max_env]EnvPair = undefined,
+    env_len: usize = 0,
+
+    pub const max_env = 8;
+    pub const EnvPair = struct { key: []const u8, value: []const u8 };
+
+    pub fn envPairs(h: *const Header) []const EnvPair {
+        return h.env[0..h.env_len];
+    }
 };
 
 /// A parsed script. Every slice lives in `arena`.
@@ -307,6 +318,14 @@ pub fn parseHeader(text: []const u8) Header {
         if (std.ascii.startsWithIgnoreCase(after_hash, "width:")) {
             h.width = std.fmt.parseInt(u16, trim(after_hash["width:".len..]), 10) catch null;
         }
+        if (std.ascii.startsWithIgnoreCase(after_hash, "env:")) {
+            const spec = trim(after_hash["env:".len..]);
+            const eq = std.mem.indexOfScalar(u8, spec, '=') orelse continue;
+            const name = trim(spec[0..eq]);
+            if (name.len == 0 or h.env_len == Header.max_env) continue;
+            h.env[h.env_len] = .{ .key = name, .value = spec[eq + 1 ..] };
+            h.env_len += 1;
+        }
     }
     return h;
 }
@@ -484,6 +503,12 @@ test "header directives come only from the leading comment block" {
     try t.expect(!parseHeader("open x\n# requires: network\n").requires_network);
     try t.expectEqual(@as(?u16, 120), parseHeader("# width: 120\n").width);
     try t.expectEqual(@as(?u16, null), parseHeader("# width: wide\n").width);
+    const env = parseHeader("# env: MNML_NOW_PLAYING=Song|playing|spotify\n# env: EMPTY=\n# env: nokey\n# env: =x\nopen x\n");
+    try t.expectEqual(@as(usize, 2), env.envPairs().len);
+    try t.expectEqualStrings("MNML_NOW_PLAYING", env.envPairs()[0].key);
+    try t.expectEqualStrings("Song|playing|spotify", env.envPairs()[0].value);
+    try t.expectEqualStrings("", env.envPairs()[1].value);
+    try t.expectEqual(@as(usize, 0), parseHeader("open x\n# env: A=b\n").envPairs().len);
 }
 
 test "CRLF and blank lines are tolerated" {

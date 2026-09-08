@@ -134,6 +134,7 @@ pub const specs = [_]Spec{
     .{ .id = "ai.dashboard", .title = "AI: open Claude Agents dashboard (also lists Codex sessions)", .group = "ai" },
     .{ .id = "lsp.inlay_hints_toggle", .title = "LSP: toggle inlay hints (type / parameter chips)", .group = "lsp" },
     .{ .id = "lsp.fold_all", .title = "LSP: fold all (server-suggested ranges)", .group = "lsp" },
+    .{ .id = "lsp.status", .title = "LSP: report the running servers (the statusline chip's click)", .group = "lsp" },
     .{ .id = "editor.fold_all_brackets", .title = "Fold every multi-line bracket pair (`zM` fallback)", .group = "editor" },
     .{ .id = "editor.fold_next", .title = "Jump to next fold (`zj`)", .group = "editor" },
     .{ .id = "editor.section_next_start", .title = "Jump to next section start (vim `]]`)", .group = "editor" },
@@ -995,7 +996,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "933 specs, unique ids" {
+test "934 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1007,6 +1008,6 @@ test "933 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 933), specs.len);
+    try std.testing.expectEqual(@as(usize, 934), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

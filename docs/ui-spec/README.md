@@ -13,7 +13,9 @@ ghostty is the final check.
 Regenerate and compare with `tools/ui-diff.sh WS RS_DATA ZIG_DATA
 STEPS` (see the script header). Out of scope until the Zig integrations
 exist: the pinned integration launcher icons in the rail and palette
-bar. Cut: now-playing / Sonos chips.
+bar. Cut: the Sonos chip. The now-playing cluster (`󱼀 󰐎` left of WRAP)
+is painted in its idle form headless, as every Rust dump shows it;
+`MNML_NOW_PLAYING` (see `src/app/now_playing.zig`) puts a track there.
 
 Glyphs are codepoints, not looks. The author's ghostty runs
 `font-family = JetBrainsMono Nerd Font` with `font-codepoint-map =

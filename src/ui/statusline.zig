@@ -10,16 +10,15 @@
 //! one pill. The component knows nothing about what a chip means: the
 //! app builds the two lists (`app/statusline.zig`) and routes the hits.
 //!
-//! Overflow, in this order: the right lane is measured whole; if the
-//! left lane would then not fit with four cells of air, its longest chip
-//! is clipped with an ellipsis (never below three cells) — a long file
-//! name, a long branch. If the row is still too narrow, right-lane
-//! chips are dropped leftmost-first: the far-right chips (the clock, the
-//! workspace, the language) are the ones the eye finds there, the inner
-//! ones are the first to give way — except a `sticky` chip (the cursor
-//! position), which outlives every neighbour that is not. Each drop
-//! re-clips the left lane against what remains, so a branch loses no
-//! more of its counts than the chips that stay demand.
+//! Overflow is Rust's: the right lane is measured whole; if the left
+//! lane would then not fit with four cells of air, its longest chip is
+//! clipped with an ellipsis (never below three cells) — a long file
+//! name, a long branch. If the row is still too narrow, the right lane
+//! follows the left lane directly and the screen edge cuts it: at 60
+//! columns the Rust row ends in the clock, the workspace and the
+//! language gone (a dump the statusline tests pin). An earlier pass
+//! dropped right chips leftmost-first instead and kept the cursor
+//! position sticky; that was Zig's rule, not the Rust look, and is gone.
 //!
 //! Every glyph is the codepoint the Rust statusline paints — the
 //! terminal maps U+F1B00–U+F20FF onto mnml's own baked symbols, so a
@@ -109,6 +108,24 @@ pub const claude_glyph = "\u{F1E00}";
 pub const claude_ascii = "\u{2733}";
 pub const codex_glyph = "\u{F1E01}";
 pub const codex_ascii = "\u{25c8}";
+/// The now-playing cluster's marks: mnml's baked Beatport B (mixr),
+/// nf-fa-apple (Music), nf-fa-spotify (Spotify) as the idle brand;
+/// nf-md-play_box_outline as the idle play chip; nf-md-pause /
+/// nf-md-play / nf-md-skip_next as the transport.
+pub const cluster_brand_glyph = "\u{f1f00}";
+pub const cluster_brand_ascii = "B";
+pub const apple_glyph = "\u{e711}";
+pub const apple_ascii = "A";
+pub const spotify_glyph = "\u{f1bc}";
+pub const spotify_ascii = "S";
+pub const cluster_play_glyph = "\u{f040e}";
+pub const cluster_play_ascii = ">";
+pub const np_pause_glyph = "\u{f03e4}";
+pub const np_pause_ascii = "||";
+pub const np_play_glyph = "\u{f040a}";
+pub const np_play_ascii = ">";
+pub const np_next_glyph = "\u{f04ad}";
+pub const np_next_ascii = ">|";
 
 /// Rust's floor for a clipped left chip.
 pub const min_left_chip: u16 = 3;
@@ -123,10 +140,6 @@ pub const Seg = struct {
     bold: bool = false,
     /// The `.statusline_seg` payload; null registers nothing.
     hit: ?u32 = null,
-    /// Dropped only after every non-sticky right-lane chip: the cursor
-    /// position, which the corpus reads and a user never wants to lose
-    /// to a clock.
-    sticky: bool = false,
     /// A run after `text` in its own foreground — the coverage delta's
     /// tier colour — then `tail` in `fg` again. The three paint as one
     /// pill on `bg`.
@@ -230,28 +243,11 @@ fn rightWidth(ui: Ui, segs: []const Seg, ground: Color) u16 {
 }
 
 /// The lanes after the overflow rule: the left chips (one perhaps
-/// clipped) and the right chips that survive.
+/// clipped); the right lane is always whole.
 const Fitted = struct { left: []const Seg, right: []const Seg };
 
 fn fit(ui: Ui, width: u16, info: Info, ground: Color) Fitted {
-    var right = info.right;
-    var kept: ?[]Seg = null;
-    while (true) {
-        const left = clipLeft(ui, width, info.left, rightWidth(ui, right, ground), ground);
-        if (right.len == 0 or leftWidth(ui, left, ground) + rightWidth(ui, right, ground) <= width) return .{ .left = left, .right = right };
-        // Drop the leftmost right-lane chip — a sticky one only once
-        // nothing else is left — and clip the left lane again against
-        // what remains: a branch that lost its counts to a coverage chip
-        // gets them back when that chip goes.
-        const k = kept orelse (ui.arena.dupe(Seg, info.right) catch return .{ .left = left, .right = right });
-        kept = k;
-        const n = right.len;
-        var drop: usize = 0;
-        while (drop < n and k[drop].sticky) drop += 1;
-        if (drop == n) drop = 0;
-        std.mem.copyForwards(Seg, k[drop .. n - 1], k[drop + 1 .. n]);
-        right = k[0 .. n - 1];
-    }
+    return .{ .left = clipLeft(ui, width, info.left, rightWidth(ui, info.right, ground), ground), .right = info.right };
 }
 
 /// Rust's rule: the longest left chip gives way to the right lane plus
@@ -319,9 +315,11 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     }
     const left_end = x;
 
-    // ── right, from where the lane starts, an arrow before a new ground ──
+    // ── right, from where the lane starts, an arrow before a new ground;
+    // a lane too wide for what the left leaves follows it and is cut at
+    // the edge, as Rust's one line of spans is ──
     const right_w = rightWidth(ui, lanes.right, ground);
-    var rx = right_edge -| right_w;
+    var rx = @max(left_end, right_edge -| right_w);
     var prev = ground;
     for (lanes.right) |s| {
         if (arrows and !Color.eql(prev, s.bg)) {
@@ -333,7 +331,7 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
 
     // ── middle: the pending chord, centred in what is left ──
     const mid_start = left_end;
-    const mid_end = right_edge -| right_w;
+    const mid_end = @max(left_end, right_edge -| right_w);
     if (info.middle) |m| if (m.len > 0 and mid_end > mid_start) {
         const avail = mid_end - mid_start;
         const text = ui.clipStr(ui.fmt(" {s} ", .{m}), avail);
@@ -370,11 +368,6 @@ const spec_right = [_]Seg{
 
 /// The cut now-playing cluster: the mnml-baked Beatport mark and
 /// nf-md-play_box_outline, as the Rust row had them.
-pub const cluster_brand_glyph = "\u{f1f00}";
-pub const cluster_brand_ascii = "B";
-pub const cluster_play_glyph = "\u{f040e}";
-pub const cluster_play_ascii = ">";
-
 fn withCluster(arena: std.mem.Allocator) ![]Seg {
     const out = try arena.alloc(Seg, spec_right.len + 2);
     out[0] = spec_right[0];
@@ -472,23 +465,26 @@ test "at 80 columns the longest left chip is clipped to make room, as Rust clipp
 // start and lets the screen's edge cut it — the dump on the same
 // fixture ends `WRAP    09:36`, the workspace and the language gone.
 // Zig drops inner chips instead, so the far-right ones always show.
-test "at 60 columns the right lane drops leftmost-first once the left lane is at its floor" {
+test "at 60 columns the left lane is at its floor and the screen edge cuts the right lane, as the Rust row is cut" {
     var f = try Fixture.init(60, 1);
     defer f.deinit();
     const ui = f.ui();
     draw(ui, f.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
-    // The right lane whole is 50: the left would clip to its floor and
-    // still not fit, so the coverage chip (15 with its arrow) goes; against
-    // the 35 that remain the branch keeps four cells. 23 + 35 fits.
-    try f.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ " …" ++ pl_right_nerd ++ " [no file]   " ++ row_cluster ++ row_tail);
+    // The Rust editor at 60×24 on the fixture (`tools/ui-diff.sh`,
+    // 2026-09-07): the branch is its glyph and `…`, the lanes touch, the
+    // clock is the last whole chip; the workspace and the language are
+    // past the edge.
+    try f.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file] " ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ pl_left_nerd ++ " WRAP " ++ pl_left_nerd ++ " " ++ bell_glyph ++ "  23:58");
     try testing.expectEqual(seg_app_base, f.hits.at(8, 0).?.statusline_seg);
-    try testing.expect(f.hits.at(23, 0) == null);
-    try testing.expect(f.hits.at(27, 0) == null);
-    // Narrower still: everything right goes, then the row itself clips.
+    try testing.expect(f.hits.at(10, 0) == null);
+    try testing.expectEqual(seg_app_base + 1, f.hits.at(24, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base + 4, f.hits.at(58, 0).?.statusline_seg);
+    // Narrower still: the right lane starts at the left lane's end and
+    // the edge takes the rest; then the row itself clips.
     var g = try Fixture.init(24, 1);
     defer g.deinit();
     draw(g.ui(), g.full(), .{ .left = &spec_left, .right = &spec_right });
-    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file]");
+    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file] " ++ pl_left_nerd);
     var h = try Fixture.init(10, 1);
     defer h.deinit();
     draw(h.ui(), h.full(), .{ .left = &spec_left, .right = &spec_right });
@@ -496,11 +492,11 @@ test "at 60 columns the right lane drops leftmost-first once the left lane is at
     draw(h.ui(), Rect.empty, .{ .left = &spec_left, .right = &spec_right });
 }
 
-test "a sticky chip outlives its neighbours: the position stays while the clock and the workspace go" {
+test "a right lane wider than the row follows the clipped left lane in order: the position stays, the far end goes" {
     var f = try Fixture.init(40, 1);
     defer f.deinit();
     const left = [_]Seg{ Seg.init(" EDIT ", P.bg_darker, P.green).strong(), Seg.init(" notes.txt ", P.fg, P.statusline) };
-    var right = [_]Seg{
+    const right = [_]Seg{
         Seg.init(" 11B ", P.comment, P.bg2),
         Seg.init(" Ln 2/2 Col 3 ", P.fg, P.bg2).withHit(seg_position),
         Seg.init(" " ++ bell_glyph ++ " ", P.comment, P.bg2),
@@ -509,16 +505,12 @@ test "a sticky chip outlives its neighbours: the position stays while the clock 
         Seg.init("  — ", P.bg_darker, P.blue).strong(),
     };
     draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
-    // The size chip (6) goes, then the position (15): against the 23 that
-    // remain the name clips to ` notes…` and the row is 14 + 3 + 23.
-    try f.expectRow(0, " EDIT " ++ pl_right_nerd ++ " notes…" ++ " " ** 3 ++ pl_left_nerd ++ " " ++ bell_glyph ++ "  23:58 " ++ pl_left_nerd ++ folder_glyph ++ " tmp " ++ pl_left_nerd ++ "  —");
-    try testing.expect(f.hits.at(20, 0) == null);
-    right[1].sticky = true;
-    draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
-    // Sticky: the size goes, then the bell and the clock — never the
-    // position; the name pays with its floor. 10 + 3 + 27.
-    try f.expectRow(0, " EDIT " ++ pl_right_nerd ++ " n…" ++ " " ** 3 ++ pl_left_nerd ++ " Ln 2/2 Col 3 " ++ pl_left_nerd ++ folder_glyph ++ " tmp " ++ pl_left_nerd ++ "  —");
+    // The name pays down to its floor; the right lane (37 with its
+    // arrows) then runs from column 10 and the edge takes the workspace
+    // and the language whole.
+    try f.expectRow(0, " EDIT " ++ pl_right_nerd ++ " n…" ++ pl_left_nerd ++ " 11B  Ln 2/2 Col 3  " ++ bell_glyph ++ "  23:58");
     try testing.expectEqual(seg_position, f.hits.at(20, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(39, 0) == null);
 }
 
 test "--ascii: no arrows, the chips meet edge to edge, the ellipsis is dots" {
