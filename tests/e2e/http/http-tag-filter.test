@@ -1,0 +1,39 @@
+# `# @tags` on a block: the COLLECTIONS filter matches a tag by name,
+# and a `tag:` prefix keeps only the tagged blocks and their files.
+# The request pane shows the description under the URL row.
+
+write api/r.http "### one\nGET https://x/one\n\n### two\n# @description Create a user, paged\n# @tags smoke users\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"
+write api/other.http "# @tags smoke\nGET https://x/other\n"
+write plain.http "GET https://x/plain\n"
+write anchor.txt anchor
+open anchor.txt
+
+command view.activity_http
+expect screen contains "COLLECTIONS (3)"
+# The 26-cell panel clips the tags after the first.
+expect screen contains "POST two  #smoke"
+expect screen contains "GET  one"
+
+# The filter row is the second panel row: click it, type the tag prefix.
+click 10 2
+type "tag:smoke"
+expect screen contains "COLLECTIONS (2)"
+# The 26-cell panel clips the tags after the first.
+expect screen contains "POST two  #smoke"
+expect screen contains "other.http"
+expect screen lacks "GET  one"
+expect screen lacks "plain.http"
+
+# `tag:users` leaves r.http's `two` alone; other.http goes.
+key ctrl+u
+type "tag:users"
+expect screen contains "COLLECTIONS (1)"
+expect screen lacks "other.http"
+
+# Opening the block: the description row under the URL, the tags at its end.
+key esc
+command http.find_request
+type "two"
+key enter
+expect screen contains "▸ Create a user, paged"
+expect screen contains "#smoke  #users"

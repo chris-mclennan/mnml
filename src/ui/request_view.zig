@@ -271,6 +271,10 @@ pub const Model = struct {
     source: []const u8,
     source_caret: usize,
     params: []const Pair,
+    /// `# @description …` and `# @tags a b`: a row under the URL row
+    /// when either is set (item 15).
+    description: ?[]const u8 = null,
+    tags: []const []const u8 = &.{},
     /// The Body tab's mode (`# @body-type`): the chip on the strip's
     /// right, painted when the tab has the keyboard or the mode is
     /// not `raw`.
@@ -414,18 +418,21 @@ pub fn tierFor(w: u16, h: u16) Tier {
     return .none;
 }
 
-/// The pane's zones: a blank row (from 8 rows), the top bar, the two
+/// The pane's zones: a blank row (from 8 rows), the top bar, the
+/// description row when the block has one (from 12 rows), the two
 /// blocks, the AI box — Rust's `draw` geometry.
-pub const Zones = struct { top: Rect, request: Rect, response: Rect, ai: Rect, tier: Tier };
+pub const Zones = struct { top: Rect, desc: ?Rect = null, request: Rect, response: Rect, ai: Rect, tier: Tier };
 
 pub fn zones(area: Rect, m: Model) Zones {
     const pad: u16 = if (area.h >= 8) 1 else 0;
     const top_h: u16 = @min(3, area.h -| pad);
-    const ai_h: u16 = @min(3, area.h -| pad -| top_h);
-    const middle: u16 = area.h -| pad -| top_h -| ai_h;
+    const desc_h: u16 = if ((m.description != null or m.tags.len > 0) and area.h >= 12) 1 else 0;
+    const ai_h: u16 = @min(3, area.h -| pad -| top_h -| desc_h);
+    const middle: u16 = area.h -| pad -| top_h -| desc_h -| ai_h;
     const top = Rect.init(area.x, area.y + pad, area.w, top_h);
-    const ai = Rect.init(area.x, area.y + pad + top_h + middle, area.w, ai_h);
-    const mid_y = area.y + pad + top_h;
+    const desc: ?Rect = if (desc_h > 0) Rect.init(area.x, area.y + pad + top_h, area.w, 1) else null;
+    const ai = Rect.init(area.x, area.y + pad + top_h + desc_h + middle, area.w, ai_h);
+    const mid_y = area.y + pad + top_h + desc_h;
     var request: Rect = undefined;
     var response: Rect = undefined;
     switch (m.orientation.resolve(area.w)) {
@@ -440,7 +447,27 @@ pub fn zones(area: Rect, m: Model) Zones {
             response = Rect.init(area.x, mid_y + req_h, area.w, middle - req_h);
         },
     }
-    return .{ .top = top, .request = request, .response = response, .ai = ai, .tier = tierFor(top.w, top.h) };
+    return .{ .top = top, .desc = desc, .request = request, .response = response, .ai = ai, .tier = tierFor(top.w, top.h) };
+}
+
+/// `  ▸ description text     #tag #tag`: the description dim and in
+/// italics, the tags in the accent at the row's end.
+fn drawDescRow(ui: Ui, r: Rect, m: Model) void {
+    const p = ui.theme.palette;
+    var x = r.x + 2;
+    var tag_w: u16 = 0;
+    for (m.tags) |t| tag_w += ui.width(t) + 2;
+    const text_end = if (tag_w > 0) r.right() -| (tag_w + 1) else r.right();
+    if (m.description) |d| {
+        x += ui.putStr(x, r.y, text_end -| x, if (ui.ascii) "> " else "\u{25B8} ", .{ .fg = p.comment, .bg = p.bg_dark });
+        _ = ui.putStr(x, r.y, text_end -| x, ui.clipStr(d, text_end -| x), .{ .fg = p.comment, .bg = p.bg_dark, .italic = true });
+    }
+    if (tag_w == 0) return;
+    var tx = r.right() -| tag_w;
+    for (m.tags) |t| {
+        tx += ui.putStr(tx, r.y, r.right() -| tx, ui.fmt("#{s} ", .{t}), .{ .fg = p.cyan, .bg = p.bg_dark });
+        tx += 1;
+    }
 }
 
 /// Where the Request box's edit content is (under its strip), for the
@@ -488,6 +515,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
     if (area.isEmpty()) return null;
     const z = zones(area, m);
     const url_caret = drawTopBar(ui, pane, z, m);
+    if (z.desc) |d| drawDescRow(ui, d, m);
     const edit_caret = drawRequestBox(ui, pane, z.request, m);
     drawResponseBox(ui, pane, z.response, m);
     drawAiBox(ui, pane, z.ai);
@@ -2172,4 +2200,32 @@ test "the body-type chip: absent on the default screen, on the strip once the ta
     _ = draw(ui, 3, ui.canvas.full(), m);
     const multi = try fx.text();
     try testing.expect(std.mem.indexOf(u8, multi, " raw  JSON  form [multipart]") != null);
+}
+
+test "the description row: under the top bar when the block has a description or tags, absent otherwise; the blocks move down a row" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    const ui = fx.ui();
+    const bare = zones(ui.canvas.full(), m);
+    try testing.expect(bare.desc == null);
+    m.description = "List the users, paged";
+    m.tags = &.{ "users", "smoke" };
+    const z = zones(ui.canvas.full(), m);
+    try testing.expectEqual(@as(u16, 4), z.desc.?.y);
+    try testing.expectEqual(bare.request.y + 1, z.request.y);
+    try testing.expectEqual(bare.ai.y, z.ai.y);
+    try testing.expectEqual(bare.request.h + bare.response.h - 1, z.request.h + z.response.h);
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(4, "  \u{25B8} List the users, paged" ++ " " ** 50 ++ "#users  #smoke");
+    try testing.expect(fx.fgEql(76, 4, .{ .fg = fx.theme.palette.cyan }));
+    // Tags alone still take the row; a short pane drops it.
+    m.description = null;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    const txt = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, txt, "#users  #smoke") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "List the users") == null);
+    try testing.expect(zones(Rect.init(0, 0, 89, 11), m).desc == null);
 }

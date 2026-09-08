@@ -249,6 +249,9 @@ pub const PromptPurpose = union(enum) {
     http_path_param: []u8,
     /// `http.rename_request`: the file or block to rename (owned).
     http_rename: @import("app/http_ops.zig").Target,
+    /// `# @description` / `# @tags` for the active request.
+    http_description,
+    http_tags,
     auth_preset_name,
     http_save_as,
     http_save_response,

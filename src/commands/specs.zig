@@ -780,6 +780,8 @@ pub const specs = [_]Spec{
     .{ .id = "http.delete_request", .title = "HTTP: delete the selected request (block or file)…", .group = "http" },
     .{ .id = "http.move_request", .title = "HTTP: move the selected request to another collection…", .group = "http" },
     .{ .id = "http.find_request", .title = "HTTP: find a request — every ### block of every collection file (fuzzy)", .group = "http", .keys = .{ .standard = &.{"ctrl+shift+r"}, .vim = &.{"space h r"} } },
+    .{ .id = "http.set_description", .title = "HTTP: set the active request's description (# @description …)…", .group = "http" },
+    .{ .id = "http.set_tags", .title = "HTTP: set the active request's tags (# @tags a b c)…", .group = "http" },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
     .{ .id = "term.shell_right", .title = "Terminal: new shell in right half", .group = "term", .keys = .{ .vim = &.{"space v"} } },
@@ -1072,7 +1074,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1006 specs, unique ids" {
+test "1008 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1088,6 +1090,6 @@ test "1006 specs, unique ids" {
     // + two ZON view commands.
     // + five dotnet runners.
     // + six dotnet commands.
-    try std.testing.expectEqual(@as(usize, 1006), specs.len);
+    try std.testing.expectEqual(@as(usize, 1008), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

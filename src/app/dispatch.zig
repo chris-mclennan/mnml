@@ -1118,6 +1118,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
         .http_env_add_key, .http_env_edit_value, .http_auth_value, .http_option, .auth_preset_name, .http_save_as, .http_save_response, .http_new_env, .http_new_chain, .http_new_collection, .http_new_request, .http_lookup_var, .http_path_param => try cmd_http.acceptPrompt(app, purpose, text),
         .http_rename => |t| try @import("http_ops.zig").acceptRename(app, t, text),
+        .http_description => try http_app.applyDescriptionPrompt(app, text),
+        .http_tags => try http_app.applyTagsPrompt(app, text),
     }
 }
 

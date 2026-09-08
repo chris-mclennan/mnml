@@ -1746,6 +1746,8 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .params = params_list.items,
         .path_params = path_list.items,
         .body_type = parse.bodyType(&rp.request),
+        .description = parse.description(&rp.request),
+        .tags = try parse.tags(arena, &rp.request),
         .headers = headers,
         .header_value_offs = header_offs,
         .header_tip = header_tip,

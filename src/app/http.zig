@@ -233,6 +233,8 @@ pub const table = .{
     .@"http.body_type_json" = &bodyTypeJsonCmd,
     .@"http.body_type_form" = &bodyTypeFormCmd,
     .@"http.body_type_multipart" = &bodyTypeMultipartCmd,
+    .@"http.set_description" = &setDescriptionCmd,
+    .@"http.set_tags" = &setTagsCmd,
 };
 
 // ─── the `{{` completion ────────────────────────────────────────────────
@@ -1708,6 +1710,54 @@ fn bodyTypeFormCmd(app: *App) CommandError!void {
 
 fn bodyTypeMultipartCmd(app: *App) CommandError!void {
     try setBodyType(app, try requireRequest(app), .multipart);
+}
+
+// ─── description + tags (item 15) ───────────────────────────────────────
+
+fn openMetaPrompt(app: *App, rp: *RequestPane, purpose: app_mod.PromptPurpose, title: []const u8, current: []const u8) Allocator.Error!void {
+    _ = rp;
+    const gpa = app.gpa;
+    var state = Prompt.init(gpa, title);
+    errdefer Prompt.deinit(&state, gpa);
+    try state.setText(gpa, current);
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = purpose } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// `http.set_description`: the `# @description` line, seeded; empty removes it.
+fn setDescriptionCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try openMetaPrompt(app, rp, .http_description, "Description (# @description \u{2026} \u{00b7} empty clears):", parse.description(&rp.request) orelse "");
+}
+
+/// `http.set_tags`: the `# @tags` line, seeded with the words; empty removes it.
+fn setTagsCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const words = try parse.tags(arena.allocator(), &rp.request);
+    try openMetaPrompt(app, rp, .http_tags, "Tags, space-separated (# @tags a b \u{00b7} empty clears):", try std.mem.join(arena.allocator(), " ", words));
+}
+
+pub fn applyDescriptionPrompt(app: *App, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse return;
+    try parse.setDescription(&rp.request, app.gpa, text);
+    rp.edited = true;
+    app.toast("description: {s}", .{if (parse.description(&rp.request)) |d| d else "cleared"});
+    app.needs_render = true;
+}
+
+pub fn applyTagsPrompt(app: *App, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse return;
+    try parse.setTags(&rp.request, app.gpa, text);
+    rp.edited = true;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const words = try parse.tags(arena.allocator(), &rp.request);
+    if (words.len == 0) app.toast("tags: cleared", .{}) else app.toast("tags: {s}", .{try @import("http_ops.zig").tagsText(arena.allocator(), words)});
+    app.needs_render = true;
 }
 
 // ─── path params ────────────────────────────────────────────────────────
@@ -3229,4 +3279,44 @@ test "env reload: the first tick is silent, an edit toasts once and rescans the 
     defer arena.deinit();
     const rows = try varRows(&app, rp, arena.allocator(), "dev");
     try testing.expectEqualStrings("two", rows[0].value.?);
+}
+
+test "description and tags: the prompts write the directives, the block keeps them, the pane's model carries them" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"http.new" });
+    const rp = activeRequest(&app).?;
+    try command.run(&app, .{ .static = .@"http.set_description" });
+    try testing.expect(app.overlay == .prompt);
+    try app.overlay.prompt.state.setText(testing.allocator, "List the users");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("description: List the users", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"http.set_tags" });
+    try app.overlay.prompt.state.setText(testing.allocator, "users, smoke");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("tags: #users #smoke", app.lastToast().?);
+    try testing.expectEqualStrings("# @description List the users\n# @tags users smoke", rp.request.script.?);
+    try rp.url.appendSlice(testing.allocator, "https://x/users");
+    try rp.commit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const block = try parse.toHttpBlock(arena.allocator(), &rp.request, "users");
+    try testing.expectEqualStrings("### users\n# @description List the users\n# @tags users smoke\nGET https://x/users\n", block);
+    // The pane paints the row.
+    try app.render();
+    const txt = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25B8} List the users") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "#users  #smoke") != null);
+    // The prompt seeded with the current tags; an empty answer clears.
+    try command.run(&app, .{ .static = .@"http.set_tags" });
+    try testing.expectEqualStrings("users smoke", app.overlay.prompt.state.text());
+    try app.overlay.prompt.state.setText(testing.allocator, "");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("tags: cleared", app.lastToast().?);
+    try testing.expectEqualStrings("# @description List the users", rp.request.script.?);
 }
