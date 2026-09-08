@@ -310,7 +310,14 @@ pub fn openBellMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 pub fn openToastMenu(app: *App, at: usize, x: u16, y: u16) Allocator.Error!void {
     if (at >= app.toasts.items.len) return;
     app.toast_ctx = at;
-    const rows = try items(app, &.{
+    // // changed (git-more2): a failed git op's toast leads with the command log.
+    const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, @import("git.zig").log_toast_id) else false;
+    const rows = if (is_git_log) try items(app, &.{
+        .{ .label = "Show in the command log", .action = .{ .command = .@"git.command_log" } },
+        .{ .label = "Dismiss", .action = .{ .command = .@"toast.dismiss_clicked" }, .separator_before = true },
+        .{ .label = "Copy text", .action = .{ .command = .@"toast.copy_clicked" } },
+        .{ .label = "Dismiss all", .action = .{ .command = .@"toast.dismiss_all" }, .separator_before = true },
+    }) else try items(app, &.{
         .{ .label = "Dismiss", .action = .{ .command = .@"toast.dismiss_clicked" } },
         .{ .label = "Copy text", .action = .{ .command = .@"toast.copy_clicked" } },
         .{ .label = "Dismiss all", .action = .{ .command = .@"toast.dismiss_all" }, .separator_before = true },

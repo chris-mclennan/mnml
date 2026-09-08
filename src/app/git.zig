@@ -142,6 +142,56 @@ pub const StashVariant = struct {
 /// The stash whose files the `stash_files` list pane shows. Owned.
 pub const StashView = struct { repo: u32, ref: []u8, message: []u8 };
 
+/// One child the worker ran (git-more2), as `client.LogLine` said,
+/// owned by the ring.
+pub const LogEntry = struct {
+    seq: u32,
+    repo: u32,
+    /// The whole line, for the row; `args` the part after `git`, for a re-run.
+    argv: []u8,
+    args: [][]u8,
+    cwd: []u8,
+    ok: bool,
+    exit: ?u8,
+    ms: u32,
+    stderr: []u8,
+
+    pub fn deinit(e: LogEntry, gpa: Allocator) void {
+        gpa.free(e.argv);
+        for (e.args) |a| gpa.free(a);
+        gpa.free(e.args);
+        gpa.free(e.cwd);
+        gpa.free(e.stderr);
+    }
+};
+
+/// The command log: the last `cap` children, oldest first; a push past
+/// the cap drops the oldest.
+pub const LogRing = struct {
+    pub const cap: usize = 200;
+    items: std.ArrayListUnmanaged(LogEntry) = .empty,
+
+    pub fn push(self: *LogRing, gpa: Allocator, e: LogEntry) Allocator.Error!void {
+        errdefer e.deinit(gpa);
+        try self.items.append(gpa, e);
+        while (self.items.items.len > cap) self.items.orderedRemove(0).deinit(gpa);
+    }
+
+    pub fn deinit(self: *LogRing, gpa: Allocator) void {
+        for (self.items.items) |e| e.deinit(gpa);
+        self.items.deinit(gpa);
+    }
+
+    pub fn find(self: *const LogRing, seq: u32) ?*const LogEntry {
+        for (self.items.items) |*e| if (e.seq == seq) return e;
+        return null;
+    }
+};
+
+/// The failed-op toast's id: a click on it opens the command log at
+/// the entry (`dispatch`'s toast arm; the toast menu's row).
+pub const log_toast_id = "git-log";
+
 /// A confirm box's payload; the path is owned.
 pub const Confirm = union(enum) {
     none,
@@ -485,6 +535,13 @@ pub const State = struct {
     /// The stash prompt's variant, and the stash the files pane shows.
     stash_variant: StashVariant = .{},
     stash_view: ?StashView = null,
+    /// The command log (git-more2): every child the workers ran, the
+    /// seq of the last one that failed, and the entry the failed-op
+    /// toast's `log` link opens at.
+    log: LogRing = .{},
+    log_next_seq: u32 = 1,
+    last_failed_seq: ?u32 = null,
+    log_link_seq: ?u32 = null,
     /// Conflicts (`app/conflicts.zig`): vim's `c` inside a block is
     /// waiting for `o` / `t` / `b`; and the editor pane + block an AI
     /// resolve was asked for, until the three stages land.
@@ -531,6 +588,7 @@ pub const State = struct {
             gpa.free(v.ref);
             gpa.free(v.message);
         }
+        self.log.deinit(gpa);
         var rit = self.rails.valueIterator();
         while (rit.next()) |r| r.snapshot.deinit();
         self.rails.deinit(gpa);
@@ -1122,11 +1180,42 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             if (op.ok) {
                 app.toast("{s}", .{op.desc});
             } else if (op.msg.len > 0) {
-                try app.toastLevel(.err, "{s}: {s}", .{ op.desc, op.msg });
+                // The `log` link: the toast carries the id a click opens
+                // the command log through, at the child that failed.
+                st.log_link_seq = st.last_failed_seq;
+                // The box clips at `toast.max_text` chars: the reason is
+                // cut so the link at the end stays visible.
+                const cut = clipReason(op.msg, @import("../ui/toast.zig").max_text -| (op.desc.len + 8));
+                app.toastReplace(log_toast_id, "{s}: {s}{s} \u{B7} log", .{ op.desc, cut, if (cut.len < op.msg.len) "\u{2026}" else "" });
+                if (app.toasts.items.len > 0) app.toasts.items[app.toasts.items.len - 1].level = .err;
             } else {
                 app.toast("{s}", .{op.desc});
             }
             if (op.refresh) try afterChange(app, repo);
+        },
+        .log_line => |l| {
+            const args = try gpa.alloc([]u8, l.args.len);
+            var filled: usize = 0;
+            errdefer {
+                for (args[0..filled]) |a| gpa.free(a);
+                gpa.free(args);
+            }
+            for (l.args) |a| {
+                args[filled] = try gpa.dupe(u8, a);
+                filled += 1;
+            }
+            const argv = try gpa.dupe(u8, l.argv);
+            errdefer gpa.free(argv);
+            const cwd = try gpa.dupe(u8, l.cwd);
+            errdefer gpa.free(cwd);
+            const stderr = try gpa.dupe(u8, l.stderr);
+            errdefer gpa.free(stderr);
+            // One sequence over every repo, in the order the lines land.
+            const seq = st.log_next_seq;
+            st.log_next_seq +%= 1;
+            try st.log.push(gpa, .{ .seq = seq, .repo = repo.id, .argv = argv, .args = args, .cwd = cwd, .ok = l.ok, .exit = l.exit, .ms = l.ms, .stderr = stderr });
+            if (!l.ok) st.last_failed_seq = seq;
+            try refillLogPane(app, null);
         },
         .url => |u| {
             openExternal(app, u);
@@ -2272,17 +2361,118 @@ pub fn openListRowMenu(app: *App, l: *app_mod.ListPane, x: u16, y: u16) Allocato
     errdefer items.deinit(app.gpa);
     switch (l.kind) {
         .stash_files => try items.append(app.gpa, .{ .label = "Diff this file (Enter)", .action = .{ .command = .@"git.stash_show_diff" } }),
-        .git_log => {},
+        .git_log => {
+            const can = if (logEntryOf(app, e.*)) |le| client.isReadOnly(le.args) else false;
+            try items.append(app.gpa, .{ .label = if (can) "Re-run (Enter)" else "Re-run (Enter) \u{2014} writes, not offered", .action = .{ .command = .@"git.command_log_rerun" } });
+            const cmd = logCommand(app, e.*) orelse text;
+            try items.append(app.gpa, .{ .label = "Copy the command", .action = .{ .copy_text = cmd } });
+            try app.openMenu(l.title(), try items.toOwnedSlice(app.gpa), x, y);
+            return;
+        },
         else => {},
     }
     try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy ({s})", .{text[0..@min(text.len, 40)]}), .action = .{ .copy_text = text } });
     try app.openMenu(l.title(), try items.toOwnedSlice(app.gpa), x, y);
 }
 
-/// Enter on a command-log row (item 10).
+// ─── the command log (git-more2) ────────────────────────────────────────
+
+/// `msg` cut to `max` characters with an ellipsis, on a UTF-8 edge.
+fn clipReason(msg: []const u8, max: usize) []const u8 {
+    if (max < 4 or msg.len <= max) return msg;
+    var end = max - 1;
+    while (end > 0 and (msg[end] & 0xC0) == 0x80) end -= 1;
+    return msg[0..end];
+}
+
+fn logEntryText(arena: Allocator, e: LogEntry) Allocator.Error![]u8 {
+    const mark: []const u8 = if (e.ok) "\u{2713}" else "\u{2717}";
+    if (e.stderr.len > 0 and !e.ok) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}  \u{2014} {s}", .{ mark, e.ms, e.argv, e.stderr });
+    if (e.exit != null and e.exit.? != 0) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}  \u{2014} exit {d}", .{ mark, e.ms, e.argv, e.exit.? });
+    return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}", .{ mark, e.ms, e.argv });
+}
+
+/// The log pane's rows, newest first; `line` carries the entry's seq.
+fn logEntries(app: *App) Allocator.Error![]app_mod.ListPane.Entry {
+    const gpa = app.gpa;
+    var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
+    errdefer {
+        app_mod.ListPane.freeEntries(gpa, entries.items);
+        entries.deinit(gpa);
+    }
+    const items = app.git.log.items.items;
+    var i = items.len;
+    while (i > 0) {
+        i -= 1;
+        try entries.append(gpa, .{ .text = try logEntryText(gpa, items[i]), .line = items[i].seq });
+    }
+    return entries.toOwnedSlice(gpa);
+}
+
+/// `git.command_log`: the pane, newest first, the cursor on `at`'s
+/// row (the failed-op toast's entry) or the newest.
+pub fn openCommandLog(app: *App, at: ?u32) CommandError!void {
+    try cmd_view.openListPane(app, .git_log, try logEntries(app));
+    try refillLogPane(app, at orelse app.git.log_link_seq);
+    app.git.log_link_seq = null;
+}
+
+/// An open log pane takes the ring as it is now; the cursor stays on
+/// its entry (or lands on `at`).
+fn refillLogPane(app: *App, at: ?u32) Allocator.Error!void {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .list => |*l| if (l.kind == .git_log) {
+            const arena = app.frame.allocator();
+            const keep: ?u32 = at orelse (if (try l.entryAt(arena, l.cursor)) |e| e.line else null);
+            const fresh = try logEntries(app);
+            app_mod.ListPane.freeEntries(l.gpa, l.entries.items);
+            l.entries.deinit(l.gpa);
+            l.entries = .fromOwnedSlice(fresh);
+            l.cursor = 0;
+            if (keep) |seq| {
+                for (try l.shown(arena), 0..) |ei, row| if (l.entries.items[ei].line == seq) {
+                    l.cursor = row;
+                    break;
+                };
+            }
+            app.needs_render = true;
+            return;
+        },
+        else => {},
+    };
+}
+
+/// The entry a log row names.
+pub fn logEntryOf(app: *App, e: app_mod.ListPane.Entry) ?*const LogEntry {
+    return app.git.log.find(e.line);
+}
+
+/// `y` on a log row: the command line, not the row's decoration.
+pub fn logCommand(app: *App, e: app_mod.ListPane.Entry) ?[]const u8 {
+    const le = logEntryOf(app, e) orelse return null;
+    return le.argv;
+}
+
+/// Enter on a command-log row: the read-only commands run again
+/// through the same worker; a writing one says why not.
 pub fn logEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
-    _ = e;
-    return app.diag.fail(app.frame.allocator(), "command log: not here yet", .{});
+    const arena = app.frame.allocator();
+    const le = logEntryOf(app, e) orelse return app.diag.fail(arena, "command log: that entry is gone", .{});
+    if (le.args.len == 0) return app.diag.fail(arena, "command log: not a git command \u{2014} nothing to re-run", .{});
+    if (!client.isReadOnly(le.args)) return app.diag.fail(arena, "command log: `git {s}` writes \u{2014} run it from the palette, not the log", .{le.args[0]});
+    const repo = app.git.repoById(le.repo) orelse return error.NoRepo;
+    const gpa = app.gpa;
+    const argv = try gpa.alloc([]u8, le.args.len);
+    var filled: usize = 0;
+    errdefer {
+        for (argv[0..filled]) |a| gpa.free(a);
+        gpa.free(argv);
+    }
+    for (le.args) |a| {
+        argv[filled] = try gpa.dupe(u8, a);
+        filled += 1;
+    }
+    try submitOp(app, repo, .{ .rerun = argv });
 }
 
 // ─── the branch verbs (git-more2) ───────────────────────────────────────
@@ -5226,4 +5416,98 @@ test "stash depth: staged only leaves the tree's change, a file alone, keep-inde
     const st5 = try f.out(&.{ "status", "--porcelain" });
     defer testing.allocator.free(st5);
     try testing.expectEqualStrings("M b.txt", st5);
+}
+
+test "the command log's ring keeps the last 200, oldest out first, and finds an entry by seq" {
+    var ring: LogRing = .{};
+    defer ring.deinit(testing.allocator);
+    var i: u32 = 1;
+    while (i <= 205) : (i += 1) {
+        try ring.push(testing.allocator, .{
+            .seq = i,
+            .repo = 1,
+            .argv = try testing.allocator.dupe(u8, "git status"),
+            .args = try testing.allocator.alloc([]u8, 0),
+            .cwd = try testing.allocator.dupe(u8, "/r"),
+            .ok = true,
+            .exit = 0,
+            .ms = 1,
+            .stderr = try testing.allocator.dupe(u8, ""),
+        });
+    }
+    try testing.expectEqual(@as(usize, 200), ring.items.items.len);
+    try testing.expectEqual(@as(u32, 6), ring.items.items[0].seq);
+    try testing.expectEqual(@as(u32, 205), ring.items.items[199].seq);
+    try testing.expect(ring.find(5) == null);
+    try testing.expectEqual(@as(u32, 100), ring.find(100).?.seq);
+}
+
+test "the command log: every child lands as a line; a failed op's toast carries the log link and the pane opens at that entry; Enter re-runs a read-only line and refuses a writing one" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    // The status job ran `status --porcelain=v2 -b` and more: all in the ring, timed.
+    try testing.expect(f.app.git.log.items.items.len >= 2);
+    const first = f.app.git.log.items.items[0];
+    try testing.expect(std.mem.indexOf(u8, first.argv, "git --no-pager -c color.ui=never status --porcelain=v2 -b") != null);
+    try testing.expectEqualStrings("status", first.args[0]);
+    try testing.expect(first.ok);
+    try testing.expectEqual(@as(?u8, 0), first.exit);
+    try testing.expectEqualStrings(f.root, first.cwd);
+
+    // A failing op: `pull` with no remote. Its line is the last failed
+    // one; the toast ends in the link; the pane opens on that row.
+    _ = try f.op(.pull);
+    const toast = f.app.lastToast().?;
+    try testing.expect(std.mem.startsWith(u8, toast, "pull"));
+    try testing.expect(std.mem.endsWith(u8, toast, "\u{B7} log"));
+    try testing.expectEqualStrings(log_toast_id, f.app.toasts.items[f.app.toasts.items.len - 1].id.?);
+    // The link names the pull's own line, not a later child's failure
+    // (the status refresh after it runs `config --get` on a repo with no
+    // remote, which fails on its own).
+    const failed_seq = f.app.git.log_link_seq.?;
+    try testing.expect(std.mem.indexOf(u8, f.app.git.log.find(failed_seq).?.argv, "pull") != null);
+    try openCommandLog(&f.app, null);
+    const lp = switch (f.app.panes.get(f.app.active.?).?.*) {
+        .list => |*l| l,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(app_mod.ListPane.Kind.git_log, lp.kind);
+    // Newest first: row 0 is the last child; the cursor is on the pull.
+    try testing.expectEqual(f.app.git.log.items.items[f.app.git.log.items.items.len - 1].seq, lp.entries.items[0].line);
+    const at = lp.entries.items[lp.cursor];
+    try testing.expectEqual(failed_seq, at.line);
+    try testing.expect(std.mem.startsWith(u8, at.text, "\u{2717}"));
+    try testing.expect(std.mem.indexOf(u8, at.text, "pull") != null);
+    try testing.expect(f.app.git.log_link_seq == null);
+    // Enter on the pull refuses; on a status line it re-runs, and the
+    // re-run's own line joins the ring — the pane refills.
+    try testing.expectError(error.Failed, logEnter(&f.app, at));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "writes") != null);
+    f.app.diag.clear();
+    const n_before = f.app.git.log.items.items.len;
+    var status_row: ?app_mod.ListPane.Entry = null;
+    for (lp.entries.items) |e| if (std.mem.indexOf(u8, e.text, "status --porcelain") != null) {
+        status_row = e;
+        break;
+    };
+    try logEnter(&f.app, status_row.?);
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "re-ran: git status"));
+    try testing.expect(f.app.git.log.items.items.len > n_before);
+    try testing.expectEqual(f.app.git.log.items.items.len, lp.entries.items.len);
+    // The `/` filter narrows the shown rows; `y` copies the command line.
+    try lp.filter.appendSlice(lp.gpa, "PULL");
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const shown = try lp.shown(arena_state.allocator());
+    try testing.expectEqual(@as(usize, 1), shown.len);
+    try testing.expectEqualStrings("git --no-pager -c color.ui=never pull --ff-only -q", logCommand(&f.app, lp.entries.items[shown[0]]).?);
 }

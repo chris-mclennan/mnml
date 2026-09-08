@@ -199,6 +199,9 @@ pub const Job = union(enum) {
     delete_remote: struct { remote: []u8, branch: []u8 },
     /// `push --force-with-lease` (behind a confirm that names the risk).
     push_force,
+    /// A command-log row's Enter: `git <argv>` again, for the read-only
+    /// commands (`isReadOnly`); the first output line is the toast.
+    rerun: [][]u8,
     head_sha,
     /// `commit --amend` with a new message (the AI recompose).
     amend: []u8,
@@ -287,6 +290,10 @@ pub const Job = union(enum) {
             },
             .checkout_force => |s| gpa.free(s),
             .push_force => {},
+            .rerun => |argv| {
+                for (argv) |a| gpa.free(a);
+                gpa.free(argv);
+            },
             .stash => |s| s.deinit(gpa),
             .stash_pop => |s| if (s) |m| gpa.free(m),
             .stash_show => |s| gpa.free(s),
@@ -351,6 +358,10 @@ pub const Result = struct {
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
         /// A stash's files (`stash show --name-status`) and its message.
         stash_show: struct { ref: []const u8, message: []const u8, files: []parse.DetailFile },
+        /// One line of the command log (git-more2): what the worker ran,
+        /// where, how it ended and how long it took. Posted from `gitIn`
+        /// and `run` for every child; the handler keeps the last 200.
+        log_line: LogLine,
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
@@ -379,6 +390,45 @@ pub const Result = struct {
         gpa.destroy(self);
     }
 };
+
+/// One child the worker ran. `argv` is the whole line (`git --no-pager
+/// … status`), `args` the part after `git` (what a re-run needs);
+/// `exit` is null when the child did not exit normally (a spawn
+/// failure, a signal); `stderr` is its first line.
+pub const LogLine = struct {
+    seq: u32,
+    argv: []const u8,
+    args: []const []const u8,
+    cwd: []const u8,
+    ok: bool,
+    exit: ?u8,
+    ms: u32,
+    stderr: []const u8,
+};
+
+/// The commands a log row's Enter may run again: they read the repo
+/// and change nothing. A verb with writing forms (`branch`, `stash`,
+/// `remote`, `worktree`, `config`) is read-only only in its listing
+/// form.
+pub fn isReadOnly(args: []const []const u8) bool {
+    if (args.len == 0) return false;
+    const verb = args[0];
+    const plain = [_][]const u8{ "status", "diff", "log", "show", "rev-parse", "for-each-ref", "ls-files", "ls-remote", "blame", "diff-tree", "symbolic-ref", "cat-file", "name-rev", "describe", "rev-list", "reflog", "shortlog", "ls-tree", "merge-base", "check-ignore", "var", "version" };
+    for (plain) |p| if (std.mem.eql(u8, verb, p)) return true;
+    const rest = args[1..];
+    if (std.mem.eql(u8, verb, "branch")) {
+        for (rest) |a| if (!std.mem.startsWith(u8, a, "-") or std.mem.eql(u8, a, "-d") or std.mem.eql(u8, a, "-D") or std.mem.eql(u8, a, "-m") or std.mem.eql(u8, a, "-M") or std.mem.eql(u8, a, "-u") or std.mem.eql(u8, a, "-f") or std.mem.eql(u8, a, "-c") or std.mem.eql(u8, a, "-C") or std.mem.startsWith(u8, a, "--set-upstream") or std.mem.eql(u8, a, "--unset-upstream") or std.mem.eql(u8, a, "--delete") or std.mem.eql(u8, a, "--move") or std.mem.eql(u8, a, "--copy") or std.mem.eql(u8, a, "--edit-description")) return false;
+        return true;
+    }
+    if (std.mem.eql(u8, verb, "stash")) return rest.len > 0 and (std.mem.eql(u8, rest[0], "list") or std.mem.eql(u8, rest[0], "show"));
+    if (std.mem.eql(u8, verb, "remote")) return rest.len == 0 or std.mem.eql(u8, rest[0], "-v") or std.mem.eql(u8, rest[0], "show") or std.mem.eql(u8, rest[0], "get-url");
+    if (std.mem.eql(u8, verb, "worktree")) return rest.len > 0 and std.mem.eql(u8, rest[0], "list");
+    if (std.mem.eql(u8, verb, "config")) {
+        for (rest) |a| if (std.mem.eql(u8, a, "--get") or std.mem.eql(u8, a, "--get-all") or std.mem.eql(u8, a, "--get-regexp") or std.mem.eql(u8, a, "-l") or std.mem.eql(u8, a, "--list")) return true;
+        return false;
+    }
+    return false;
+}
 
 /// An operation the worker can reverse. `reset_soft` moves HEAD and
 /// keeps the index (a commit undone stays staged); `checkout` flips
@@ -442,6 +492,11 @@ pub const Repo = struct {
     /// Worker-owned: `rev-parse --absolute-git-dir`, asked once (a
     /// linked worktree's `.git` is a file pointing elsewhere).
     git_dir: ?[]u8 = null,
+    /// The queue the worker posts into — kept from `start` so every
+    /// child it runs can post its command-log line (git-more2).
+    events: ?*event.EventQueue = null,
+    /// Worker-owned: the command log's sequence number.
+    log_seq: u32 = 0,
 
     pub fn create(gpa: Allocator, path: []const u8, name: []const u8, id: u32, is_workspace_root: bool) Allocator.Error!*Repo {
         const r = try gpa.create(Repo);
@@ -489,6 +544,7 @@ pub const Repo = struct {
             try m.put("GIT_TERMINAL_PROMPT", "0");
             self.env = m;
         }
+        self.events = events;
         try self.group.concurrent(io, worker, .{ self, events, io });
         self.started = true;
     }
@@ -536,6 +592,8 @@ const Out = struct {
     ok: bool,
     stdout: []const u8,
     stderr: []const u8,
+    /// The exit code; null when the child did not exit normally.
+    exit: ?u8 = null,
 
     /// git's explanation, one line, for a toast.
     fn reason(o: Out) []const u8 {
@@ -577,7 +635,12 @@ fn gitIn(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_
     const argv = try arena.alloc([]const u8, prefix.len + args.len);
     @memcpy(argv[0..prefix.len], &prefix);
     @memcpy(argv[prefix.len..], args);
-    if (stdin_text) |text| return gitWithStdin(repo, io, arena, argv, text, env);
+    const started = nowMs(io);
+    if (stdin_text) |text| {
+        const out = try gitWithStdin(repo, io, arena, argv, text, env);
+        try postLogLine(repo, io, argv, args, started, out.ok, out.exit, out.stderr);
+        return out;
+    }
     const res = std.process.run(repo.gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = repo.path },
@@ -587,18 +650,66 @@ fn gitIn(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_
     }) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
-        else => return .{ .ok = false, .stdout = "", .stderr = try std.fmt.allocPrint(arena, "cannot run git: {s}", .{@errorName(err)}) },
+        else => {
+            const reason = try std.fmt.allocPrint(arena, "cannot run git: {s}", .{@errorName(err)});
+            try postLogLine(repo, io, argv, args, started, false, null, reason);
+            return .{ .ok = false, .stdout = "", .stderr = reason };
+        },
     };
     defer repo.gpa.free(res.stdout);
     defer repo.gpa.free(res.stderr);
-    return .{
+    const out: Out = .{
         .ok = switch (res.term) {
             .exited => |c| c == 0,
             else => false,
         },
+        .exit = switch (res.term) {
+            .exited => |c| c,
+            else => null,
+        },
         .stdout = try arena.dupe(u8, res.stdout),
         .stderr = try arena.dupe(u8, res.stderr),
     };
+    try postLogLine(repo, io, argv, args, started, out.ok, out.exit, out.stderr);
+    return out;
+}
+
+fn nowMs(io: Io) i64 {
+    return Io.Timestamp.now(io, .awake).toMilliseconds();
+}
+
+/// The command log (git-more2): one `.log_line` result per child,
+/// posted as its own event so the log reads in order with the results
+/// — a job's line lands before the job's outcome. Nothing is posted
+/// before `start` (a test running the argv builders alone).
+fn postLogLine(repo: *Repo, io: Io, argv: []const []const u8, args: []const []const u8, started: i64, ok: bool, exit: ?u8, stderr: []const u8) Allocator.Error!void {
+    const events = repo.events orelse return;
+    const gpa = repo.gpa;
+    const r = try Result.create(gpa, repo.id);
+    errdefer r.destroy(gpa);
+    const arena = r.arena.allocator();
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    for (argv, 0..) |a, i| {
+        if (i > 0) try line.append(arena, ' ');
+        try line.appendSlice(arena, a);
+    }
+    const copy = try arena.alloc([]const u8, args.len);
+    for (copy, args) |*c, a| c.* = try arena.dupe(u8, a);
+    const e = std.mem.trim(u8, stderr, " \t\r\n");
+    const nl = std.mem.indexOfScalar(u8, e, '\n') orelse e.len;
+    repo.log_seq += 1;
+    const elapsed = nowMs(io) - started;
+    r.payload = .{ .log_line = .{
+        .seq = repo.log_seq,
+        .argv = line.items,
+        .args = copy,
+        .cwd = try arena.dupe(u8, repo.path),
+        .ok = ok,
+        .exit = exit,
+        .ms = @intCast(std.math.clamp(elapsed, 0, std.math.maxInt(u32))),
+        .stderr = try arena.dupe(u8, e[0..nl]),
+    } };
+    events.post(io, .{ .git = r });
 }
 
 /// `git apply` reads the patch from stdin: spawn by hand, write the
@@ -643,6 +754,10 @@ fn gitWithStdin(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8,
         .ok = switch (term) {
             .exited => |c| c == 0,
             else => false,
+        },
+        .exit = switch (term) {
+            .exited => |c| c,
+            else => null,
         },
         .stdout = stdout,
         .stderr = stderr,
@@ -914,6 +1029,22 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .delete_remote => |b| try simple(repo, io, r, &.{ "push", "-q", b.remote, "--delete", b.branch }, try std.fmt.allocPrint(arena, "deleted {s}/{s} on the remote", .{ b.remote, b.branch })),
         .push_force => try simple(repo, io, r, &.{ "push", "-q", "--force-with-lease" }, "pushed (--force-with-lease)"),
+        .rerun => |argv| {
+            const out = try git(repo, io, arena, argv, null);
+            var line: std.ArrayListUnmanaged(u8) = .empty;
+            try line.appendSlice(arena, "re-ran: git");
+            for (argv) |a| {
+                try line.append(arena, ' ');
+                try line.appendSlice(arena, a);
+            }
+            // The first output line rides in the toast.
+            const first = firstLine(out.stdout);
+            if (out.ok and first.len > 0) {
+                try line.appendSlice(arena, " \u{2192} ");
+                try line.appendSlice(arena, first[0..@min(first.len, 60)]);
+            }
+            r.payload = .{ .op = .{ .desc = line.items, .ok = out.ok, .msg = out.reason(), .refresh = false } };
+        },
         .delete_branch => |b| try simple(repo, io, r, &.{ "branch", "-D", b }, try std.fmt.allocPrint(arena, "deleted branch {s}", .{b})),
         .merge => |b| try simple(repo, io, r, &.{ "merge", "--no-edit", b }, try std.fmt.allocPrint(arena, "merged {s}", .{b})),
         .rebase => |b| try simple(repo, io, r, &.{ "rebase", b }, try std.fmt.allocPrint(arena, "rebased onto {s}", .{b})),
@@ -1288,7 +1419,9 @@ fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Worktree
 }
 
 /// Run a non-git binary (`gh`) in the repo, the same way `git` runs.
+/// Its line in the command log has no re-run (`args` is empty).
 fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError!Out {
+    const started = nowMs(io);
     const res = std.process.run(repo.gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = repo.path },
@@ -1298,18 +1431,28 @@ fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError
     }) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
-        else => return .{ .ok = false, .stdout = "", .stderr = try std.fmt.allocPrint(arena, "cannot run {s}: {s}", .{ argv[0], @errorName(err) }) },
+        else => {
+            const reason = try std.fmt.allocPrint(arena, "cannot run {s}: {s}", .{ argv[0], @errorName(err) });
+            try postLogLine(repo, io, argv, &.{}, started, false, null, reason);
+            return .{ .ok = false, .stdout = "", .stderr = reason };
+        },
     };
     defer repo.gpa.free(res.stdout);
     defer repo.gpa.free(res.stderr);
-    return .{
+    const out: Out = .{
         .ok = switch (res.term) {
             .exited => |c| c == 0,
             else => false,
         },
+        .exit = switch (res.term) {
+            .exited => |c| c,
+            else => null,
+        },
         .stdout = try arena.dupe(u8, res.stdout),
         .stderr = try arena.dupe(u8, res.stderr),
     };
+    try postLogLine(repo, io, argv, &.{}, started, out.ok, out.exit, out.stderr);
+    return out;
 }
 
 /// Run `args` and post `desc` as the toast on success, git's reason on
@@ -1573,6 +1716,28 @@ test "rangeRev joins two refs; rangeTitle shortens a full sha on either side and
     const plain = try rangeTitle(testing.allocator, "main");
     defer testing.allocator.free(plain);
     try testing.expectEqualStrings("main", plain);
+}
+
+test "isReadOnly: the listing verbs re-run; the writing ones and the writing forms of branch / stash / remote / config do not" {
+    try testing.expect(isReadOnly(&.{ "status", "--porcelain=v2", "-b" }));
+    try testing.expect(isReadOnly(&.{ "diff", "--no-ext-diff", "-U3", "HEAD", "--" }));
+    try testing.expect(isReadOnly(&.{ "log", "--date-order", "-n500", "--all" }));
+    try testing.expect(isReadOnly(&.{ "branch", "--list" }));
+    try testing.expect(isReadOnly(&.{"branch"}));
+    try testing.expect(isReadOnly(&.{ "stash", "list", "--format=%gs" }));
+    try testing.expect(isReadOnly(&.{ "remote", "-v" }));
+    try testing.expect(isReadOnly(&.{ "worktree", "list", "--porcelain" }));
+    try testing.expect(isReadOnly(&.{ "config", "--get", "remote.origin.url" }));
+    try testing.expect(!isReadOnly(&.{ "push", "-q" }));
+    try testing.expect(!isReadOnly(&.{ "commit", "-q", "-m", "x" }));
+    try testing.expect(!isReadOnly(&.{ "branch", "-m", "a", "b" }));
+    try testing.expect(!isReadOnly(&.{ "branch", "-D", "a" }));
+    try testing.expect(!isReadOnly(&.{ "branch", "feat" }));
+    try testing.expect(!isReadOnly(&.{ "stash", "push", "-q" }));
+    try testing.expect(!isReadOnly(&.{ "remote", "add", "x", "y" }));
+    try testing.expect(!isReadOnly(&.{ "worktree", "add", "p" }));
+    try testing.expect(!isReadOnly(&.{ "config", "user.name", "x" }));
+    try testing.expect(!isReadOnly(&.{}));
 }
 
 test "stashArgs: everything takes -u; staged only drops -u for --staged; keep-index and a message and paths ride along" {

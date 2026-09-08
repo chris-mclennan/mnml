@@ -1057,6 +1057,9 @@ pub const specs = [_]Spec{
     .{ .id = "git.stash_show_diff", .title = "Git: diff the selected stash file against the stash's parent", .group = "git" },
     .{ .id = "git.stash_branch", .title = "Git: branch from a stash\u{2026} (stash branch)", .group = "git" },
     .{ .id = "git.stash_rename", .title = "Git: rename a stash\u{2026} (drop + stash store -m)", .group = "git" },
+    // git-more2: the command log.
+    .{ .id = "git.command_log", .title = "Git: the command log — every git the worker ran, its cwd, exit, duration and first stderr line (newest first; y copies, Enter re-runs a read-only one)", .group = "git" },
+    .{ .id = "git.command_log_rerun", .title = "Git: re-run the selected command-log entry (read-only commands only)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1096,7 +1099,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1027 specs, unique ids" {
+test "1029 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1110,7 +1113,7 @@ test "1027 specs, unique ids" {
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
     // + four diff-any-two-refs commands + eight branch verbs + seven
-    // stash commands (git-more2).
-    try std.testing.expectEqual(@as(usize, 1027), specs.len);
+    // stash commands + two command-log commands (git-more2).
+    try std.testing.expectEqual(@as(usize, 1029), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

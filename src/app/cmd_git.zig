@@ -142,6 +142,8 @@ pub const table = .{
     .@"git.stash_show_diff" = &stashShowDiff,
     .@"git.stash_branch" = &stashBranch,
     .@"git.stash_rename" = &stashRename,
+    .@"git.command_log" = &commandLog,
+    .@"git.command_log_rerun" = &commandLogRerun,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -571,6 +573,26 @@ fn pushTags(app: *App) CommandError!void {
 fn stash(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     git.openPrompt(app, .stash, "Stash message (optional)");
+}
+
+// ─── the command log (git-more2) ────────────────────────────────────────
+
+/// The pane, newest first; at the failed-op toast's entry when one is
+/// waiting (`State.log_link_seq`).
+fn commandLog(app: *App) CommandError!void {
+    try git.openCommandLog(app, null);
+}
+
+/// Enter's twin for the log pane's row menu.
+fn commandLogRerun(app: *App) CommandError!void {
+    const id = app.active orelse return error.NoActivePane;
+    const p = app.panes.get(id) orelse return error.NoActivePane;
+    const l = switch (p.*) {
+        .list => |*l| if (l.kind == .git_log) l else return app.diag.fail(arena(app), "command log: not the log pane", .{}),
+        else => return app.diag.fail(arena(app), "command log: not the log pane", .{}),
+    };
+    const e = (try l.entryAt(arena(app), l.cursor)) orelse return;
+    try git.logEnter(app, e.*);
 }
 
 // ─── stash depth (git-more2) ────────────────────────────────────────────

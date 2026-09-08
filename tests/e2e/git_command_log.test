@@ -1,0 +1,39 @@
+# The command log (src/app/git.zig `LogRing`, `openCommandLog`): every
+# git the worker runs is a line; a failed op's toast ends in `· log`
+# and git.command_log opens the pane on that entry; Enter refuses a
+# writing command and re-runs a read-only one.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+command git.refresh
+wait 800
+command git.pull
+wait 300
+expect screen contains "· log"
+command git.command_log
+wait 300
+expect screen contains "git command log"
+expect screen contains "newest first"
+expect screen contains "✗"
+expect screen contains "pull --ff-only -q"
+expect screen contains "✓"
+expect screen contains "status --porcelain=v2 -b"
+# The cursor is on the pull: a writing command is not re-run.
+key enter
+expect screen contains "writes"
+# The newest line is a read-only one: it re-runs.
+key g
+key enter
+wait 300
+expect screen contains "re-ran: git"
+# The filter narrows the rows to the pull.
+type /pull
+key enter
+expect screen contains "/ pull"
+expect screen lacks "status --porcelain=v2 -b"
+key esc
+expect screen contains "status --porcelain=v2 -b"

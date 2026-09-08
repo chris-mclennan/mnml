@@ -413,7 +413,7 @@ fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Er
             } else return false,
             // The row's text (a command line, a path) to the clipboard.
             'y' => if (try l.entryAt(arena, l.cursor)) |e| {
-                const text: []const u8 = if (e.path) |p| p else e.text;
+                const text: []const u8 = if (l.kind == .git_log) (git_app.logCommand(app, e.*) orelse e.text) else if (e.path) |p| p else e.text;
                 try app.clipboard.setYank(text, false);
                 app.toast("copied {s}", .{text});
             },
@@ -1916,8 +1916,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     }
                     // A script error's toast: the click jumps to its line.
                     const is_script = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, script_diag.toast_id) else false;
+                    // // changed (git-more2): a failed git op's toast: the
+                    // click opens the command log at the child that failed.
+                    const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, git_app.log_toast_id) else false;
                     app.dismissToastAt(at);
                     if (is_script) try script_diag.jump(app);
+                    if (is_git_log) git_app.runToast(app, git_app.openCommandLog(app, null));
                 }
                 return;
             }
