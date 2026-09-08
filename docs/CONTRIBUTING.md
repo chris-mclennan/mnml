@@ -67,7 +67,7 @@ breaks on a deliberate cosmetic change is updated as normal maintenance
 — the commit says so.
 
 ```sh
-zig build                              # the binary
+zig build                              # the binary (`./run.sh build`)
 ./zig-out/bin/mnml-zig test            # the whole corpus at 120x40 (~2.5 min)
 ./zig-out/bin/mnml-zig test --gate     # the 47-file Phase-0 gate
 ./zig-out/bin/mnml-zig test tests/e2e/defaults.test
@@ -131,6 +131,35 @@ did not compile (a compile error is not the test failing); exit 4 means
 no test matched the name. Put the invocation, or its output, in the
 commit body or the PR.
 
+## Running it
+
+`./run.sh` is the launcher: it builds ReleaseSafe only when a file under
+`src/`, `sdk/`, `integrations/`, `tools/` or `build.zig*` is newer than
+`zig-out/bin/mnml-zig` (one line says which, or that the binary is
+current), runs the binary on the directory you invoked it from, and
+relaunches it on exit 75 — the restart handshake the `app.restart`
+command and `./run.sh restart` both use. Any other exit ends the loop.
+
+```sh
+./run.sh [WS] [--input vim|standard] [--ascii] [--config PATH]
+./run.sh restart | stop | status       # the running instance, through its marker + IPC
+./run.sh fresh [WS]                    # --no-session: skip the session restore
+./run.sh headless [WS]                 # the loop with --headless
+./run.sh shot [OUT.png]                # scripts/shot.sh — the real ghostty window
+./run.sh build | release | test | check | stale | clean [incremental|all] | menu
+```
+
+The app writes `${TMPDIR:-/tmp}/mnml-zig-running-$USER.workspace` when the
+terminal loop starts (the workspace's real path, no trailing newline) and
+removes it on a clean exit — not on a restart. `restart` and `stop` drop
+`{"cmd":"restart"}` / `{"cmd":"quit"}` in `<ws>/.mnml/ipc-zig/command`;
+the terminal loop tails that file for those two lines only (the headless
+loop takes the whole command set). `MNML_BIN`, `MNML_IPC_SUBDIR`,
+`MNML_IPC_DIR`, `MNML_ZIG` and `MNML_OPTIMIZE` parameterize the wrapper;
+`tools/run-sh-check.sh` exercises every non-interactive verb on a
+throwaway workspace with all of them pointed at a tempdir, and
+`tools/pty-lifecycle.py` proves the marker on a real pty.
+
 ## The gate — the verification sequence
 
 Before a branch is offered, in this order (each step runs on what the
@@ -155,12 +184,15 @@ step before it proved):
    row menu, a wheel notch reaches the app;
 9. `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when the
    change touches chrome (see *Spec dumps* below) — the diff counts must
-   not grow.
+   not grow;
+10. `tools/run-sh-check.sh` — the launcher's verbs on a throwaway
+    workspace, the marker and the IPC lifecycle included.
 
-`zig build check` runs 1, 2, the gate, the sweep, `tests/e2e/defaults.test`
-and the full corpus in one step on the exe of that invocation — so
-`zig build check -Doptimize=ReleaseSafe` is steps 1–5 in one line; 6–9
-are run by hand.
+`./run.sh check` runs 1–5, 7 and 10 in one line, on the ReleaseSafe binary
+it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus; 6, 8 and
+9 are run by hand. `zig build check` is the older one-step form (1, 2, the
+gate, the sweep, `tests/e2e/defaults.test` and the corpus on the exe of that
+invocation).
 
 ## Spec dumps
 
