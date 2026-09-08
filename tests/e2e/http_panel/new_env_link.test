@@ -1,0 +1,13 @@
+command view.activity_http
+expect screen contains "No env files yet"
+expect screen contains "+ New env"
+click 9 10
+expect screen contains "New env name"
+key esc
+expect screen lacks "New env name"
+click 10 2
+key esc
+key G
+key enter
+expect screen contains "Import from:"
+key esc
