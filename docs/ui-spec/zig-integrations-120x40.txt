@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                      󰐕  ●━  󰅖
+   │ INTEGRATIONS            │ 󰐕                                                                                   
+  │ Inst (1) Mkt (0)  (0)   │
+ 󰍉 │  󰍉 / filter        A-Z ▾ │
+ 󰊢 │                          │
+  │▌  Sample  0.1.0         │
+▌󰐱 │    sample.open           │
+ 󰎒 │                          │
+ 󰚩 │                          │
+ 󰅣 │                          │
+  │                          │                                                            _
+  │                          │                            _ __ ___    _ __    _ __ ___   | |
+  │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+ 󱘣 │                          │                           | | | | | | | | | | | | | | | | | |
+   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                          │
+   │                          │                                     workspace · ws
+   │                          │                                         on main
+   │                          │
+   │                          │                                        Shortcuts
+   │                          │                                     ──────────────
+   │                          │                                     ^P     find file
+   │                          │                                    ^R     recent files
+   │                          │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │                          │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │──────────────────────────│
+   │ Integrations           ⋮ │                              mnml 0.3.0-dev+gf1f3968-dirty
+   │                          │
+   │ Installed integrations.  │
+   │ Enter fires the command. │
+   │ Right-click for          │
+   │ Configure / Uninstall.   │
+   │                          │
+   │                          │
+  │                          │
+   │                          │
+ TREE   main  󰐙 2  [no file]                              S·sample   F 57% ▲1.0  󱼀 󰐎  WRAP    22:29  ws   —
+

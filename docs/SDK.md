@@ -3,8 +3,73 @@
 An integration is a program mnml opens in a pane. It draws into a cell
 grid, gets keys and clicks, and can ask mnml to run commands, toast, or
 put things on the statusline. `sdk/mnml-sdk` is the package; the wire it
-speaks is `docs/BRIDGE.md`. The sample, `sdk/examples/hello`, is ~160
-lines and is what mnml's own integration test spawns.
+speaks is `docs/BRIDGE.md`. `integrations/sample` is the official
+sample — a counter pane on the SDK, ~200 lines, what mnml's own tests
+install and mount; `sdk/examples/hello` is the smaller list that the
+host's mount test spawns.
+
+## Your first integration — the sample, end to end
+
+The official Zig integrations live in this repo under
+`integrations/<id>/`, each a package of its own on the SDK by path.
+`integrations/sample` is the shape to copy:
+
+```
+integrations/sample/
+  build.zig       an exe on the SDK (`b.dependency("mnml_sdk", …)`)
+  build.zig.zon   `.mnml_sdk = .{ .path = "../../sdk/mnml-sdk" }`
+  manifest.zon    the manifest — id, label, chip, commands, settings…
+  main.zig        `--install` / `--uninstall` / `--version`, then the pane
+```
+
+1. **Copy the folder** to `integrations/<id>/`, change `.name` and the
+   fingerprint in `build.zig.zon` (`zig build` prints the value to use).
+2. **Write `manifest.zon`** — one definition, two readers. `main.zig`
+   does `pub const spec: sdk.Manifest = @import("manifest.zon");` and
+   `--install` writes exactly that; mnml's INTEGRATIONS section reads
+   the same file from the folder on its Dev tab before anything is
+   built. The sample declares a chip (a Nerd Font glyph with an ASCII
+   twin and a theme colour), two commands — `sample.open`, first, is
+   what the chip, Enter and the statusline segment run; `sample.hello`
+   is an `ex` line that toasts — a `statusline` segment, a
+   `context_menu` row, and a `settings` row that reaches the binary as
+   `MNML_SETTING_MOOD`.
+3. **Paint** in `main.zig`: connect (`Mount.connectEnv`), size a
+   `Frame` to `mount.geometry`, `setTitle`, paint, `send`; then the
+   loop — `resize` resizes the frame, `input` is a key spec / a click /
+   a wheel notch, `focus` says whether the keys are yours, `goodbye`
+   (or `null` from `next`) ends the loop. The sample keeps a counter,
+   the theme name mnml sent in `hello`, and a row that counts on a
+   click; `h` toasts through the mount, `q` says `bye`.
+4. **Run it from mnml.** Open the INTEGRATIONS section
+   (`view.activity_integrations`, `ctrl+shift+x`); the **Dev** tab lists
+   every folder under `integrations.dev_roots` — and this repo's
+   `integrations/` by itself, since the workspace holds `sdk/mnml-sdk`.
+   `b` (or the row menu's *Build*) runs `zig build` in the folder as a
+   task pane; `i` (*Install*) builds when nothing is built yet, runs
+   `zig-out/bin/<binary> --install` in the task pane, links the binary
+   into `<data root>/bin/` and rescans; `B` (*Rebuild + reinstall*)
+   always builds first. The **Installed** tab then lists it (`Sample`
+   over `sample.open`), the chip is on the palette bar, the segment on
+   the statusline, `sample.open` in the palette and on `ctrl+k s`,
+   *Mood* in Settings → Integrations. The same folder stays on the Dev
+   tab, marked *installed from here* — a folder is a folder, and
+   Rebuild + reinstall is the edit loop.
+5. **Uninstall** is `x` on the Installed row (or the detail pane's
+   *Uninstall*): the manifest goes, and with it the commands, the
+   bindings, the chip and the segment. The binary stays.
+
+The corpus does all of this without building: `zig build` installs
+`zig-out/bin/mnml-sample`, `mnml-zig test` exports it as
+`$MNML_SAMPLE_INTEGRATION`, and a manifest whose `binary` is `$VAR`
+resolves through the environment — see
+`tests/e2e/integrations_sample_dev_install.test` and
+`integrations_sample_marketplace_local.test` (the private-folder path).
+
+A private or external integration is the same folder outside this
+repo: point `integrations.dev_roots` at its parent to develop it, or
+list its parent as a `local_folder` marketplace source to install it
+from the Marketplace tab (`docs/CONFIG.md`).
 
 ## Set up
 
@@ -137,13 +202,18 @@ What mnml does with each field:
 
 | field | effect |
 |---|---|
-| `id`, `label`, `description`, `version`, `category` | the INTEGRATIONS pane row and its detail block |
+| `id`, `label`, `description`, `version`, `category` | the INTEGRATIONS section's row (`label` over the first command's id) and the detail pane |
 | `binary`, `args`, `mode` | what a command opens: `mode = .mount` (default) hosts it over the socket; `.pty` opens it as a terminal pane |
 | `chip` | a button on the palette bar: `glyph` (Nerd Font), `fallback` (plain), `color` (a theme name — `red orange yellow green blue cyan teal purple pink comment fg` — or `#rrggbb`), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / manifest / remove |
 | `commands[]` | each is a palette command with `keys`; it opens the binary (with `args`) unless `ex` names an ex line to run instead. The first one is what the chip and Enter do |
 | `settings[]` | a row in mnml's settings overlay under *Integrations* (discrete choices); the chosen value reaches the binary as `MNML_SETTING_<KEY>` |
-| `requires[]` | environment variables the integration needs (shown in the detail block) |
-| `context_menu[]`, `menu_bar[]`, `statusline[]`, `auth[]`, `values_sources[]` | parsed and shown; wiring into mnml's menus / auth store is a later slice |
+| `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest |
+| `requires[]` | environment variables the integration needs (shown in the detail pane) |
+| `context_menu[]`, `menu_bar[]`, `auth[]`, `values_sources[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
+
+`binary` may be `$NAME` (or `$NAME/rest`): the variable's value is the
+path. `<data root>/bin/<binary>` is tried before PATH — that is where an
+install from the Dev tab or the marketplace links the built binary.
 
 `sdk.manifest.write` picks the data root the way mnml does
 (`MNML_DATA_ROOT`, `XDG_CONFIG_HOME/mnml`, `HOME/.config/mnml`) and
@@ -192,5 +262,6 @@ sdk/mnml-sdk/src/
   frame.zig      Frame: the cell grid + dirty-row tracking
   ipc.zig        Ipc: the tier-2 lines
   manifest.zig   Manifest + write/remove + the data-root rule
-sdk/examples/hello/   the sample (`zig build sdk-example` in mnml-zig, or its own build.zig)
+sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
+integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)
 ```

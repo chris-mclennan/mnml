@@ -838,6 +838,27 @@ that the oldest slot reads `+K more…`.
   mount registers one `.script_hit{ pane, id = row }` per row so a click
   is turned back into pane-relative cells from the hit's rect; the wheel
   and pointer motion are forwarded through the same prong.
+  *// changed 2026-09-07 (sample-integration):* `Pane.marketplace` and
+  `ui/marketplace_view.zig` are gone; `Pane.integrations` is the detail
+  pane for one entry (`IntegrationsPane{ target: installed | marketplace
+  | dev, cursor }`, an owned key, `title()` the id); the listing is the
+  INTEGRATIONS **section** — `PanelId.integrations`, a column surface
+  (`side.surface`), painted by `integrations_view.drawSection` with the
+  Rust chrome (header, `Inst / Mkt / ` tabs as `.button = tab_base + i`,
+  the filter pill, the sort chip `.chip{ .integrations, .sort }`, three
+  rows per entry as `.row{ .integrations, idx }`, a scrollbar). Dispatch
+  routes the panel's keys and the five mouse prongs to
+  `app/integrations.zig`; `set_panel_sort` maps `ListSort` onto the
+  tab's own order (`InstalledSort` / `MarketSort`). `App.tick` calls
+  `integrations.tick` for a Dev install's task pane. `Config.Integrations.dev_roots`
+  and `MarketplaceSource.local_folder` are the two config keys;
+  `MNML_MARKETPLACE_LOCAL` the environment's; `$VAR` manifest binaries
+  resolve through the environment; a manifest's `statusline[]` sets
+  `ipc_fx` segments keyed `<id>.<seg>`. `integrations/<id>/` beside
+  `sdk/mnml-sdk` is where the official Zig integrations live —
+  `integrations/sample` first, built as `zig-out/bin/mnml-sample`
+  (`build_options.sample_integration_exe`, `$MNML_SAMPLE_INTEGRATION`).
+  Three ids: `integrations.dev_build` / `dev_install` / `dev_rebuild`.
 - `// changed (app):` `App.integrations: integrations.State` (the manifest
   snapshot arena, the dyn slots, the `<id>.<key>` settings map read from
   `<data root>/integration-settings.zon`) and `App.marketplace:

@@ -273,3 +273,26 @@ none on CHAINS, `≡ ⟳ ✕` on MOCKS, `≡ ⟳` on RECENT, `≡ 🌐` on CAPTU
 `200 GET  host/path` recent rows with the status coloured, the words,
 the green links. `steps-http` (2), `steps-esc` (4) and `steps-todos`
 (24) did not move.
+
+## Integrations (2026-09-07, branch `sample-integration`)
+
+- `rust-integrations-120x40.txt` — `steps-integrations.jsonl`
+  (`view.activity_integrations` from the resting screen): the
+  INTEGRATIONS section in the sidebar — the caps header, the tab row
+  `Inst (3) Mkt (9)  (34)` (the Rust fixture's real data root has
+  three manifests and its marketplace is fetched; the third tab's label
+  is nf-fa-dev), the filter pill `󰍉 type to filter…▏` with the sort chip
+  ` A-Z ▾` at its right end, then three rows per entry — ` <glyph>
+  Label (hidden)`, the dim command id, a blank. The Zig side lists the
+  sample instead of the author's manifests; the chrome is what is
+  matched. `rust-integrations-mkt-120x40.txt` /
+  `rust-integrations-dev-120x40.txt` are the Marketplace and Dev tabs
+  (`integrations.show_marketplace` / `show_in_dev`): `  <glyph>
+  [launcher] btop  ✓ Official  (source)` over the description, the
+  scrollbar in the last column with a cell of air before it. The Rust
+  FONTS block on the Marketplace tab is not painted here.
+- `zig-integrations-120x40.txt` — the Zig screen after the same steps
+  on the fixture with the sample installed (`zig-data` holds its
+  manifest and the linked binary): `Inst (1) Mkt (0)  (0)`, the
+  `Sample` row over `sample.open`, the sample's chip on the palette bar
+  and its `S·sample` segment on the statusline.
