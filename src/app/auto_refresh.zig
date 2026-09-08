@@ -53,6 +53,7 @@ fn label(panel: PanelId) []const u8 {
         .http => "HTTP",
         .outline => "OUTLINE",
         .debug => "DEBUG",
+        .integrations => "INTEGRATIONS",
     };
 }
 
@@ -67,6 +68,7 @@ fn refreshId(panel: PanelId) command.CommandId {
         .http => .@"http.refresh",
         .outline => .@"outline.show",
         .debug => .@"dap.run",
+        .integrations => .@"integrations.refresh",
     };
 }
 

@@ -536,6 +536,12 @@ pub const Ci = struct {
 pub const Integrations = struct {
     auto_update_cargo: bool = false,
     auto_update_git: bool = false,
+    /// Folders the INTEGRATIONS section's Dev tab scans: every
+    /// subfolder holding a `build.zig` and a `manifest.zon` is an
+    /// integration in development. Relative to the workspace, `~`
+    /// expanded. A workspace with `sdk/mnml-sdk` adds its own
+    /// `integrations/` by itself.
+    dev_roots: []const []const u8 = &.{},
 };
 
 pub const Workspace = struct {
@@ -548,6 +554,12 @@ pub const MarketplaceSource = union(enum) {
     crates_keyword: struct { id: []const u8 = "", keyword: []const u8 = "" },
     github_launcher_folder: struct { id: []const u8 = "", repo: []const u8 = "", path: []const u8 = "" },
     github_monorepo_apps: struct { id: []const u8 = "", repo: []const u8 = "", apps_dir: []const u8 = "" },
+    /// A folder on this machine (or a mounted share — the private
+    /// path): every `*.zon` in it is a manifest to install as-is, every
+    /// subfolder with a `build.zig` and a `manifest.zon` a Zig
+    /// integration to build and install. Relative to the workspace,
+    /// `~` expanded.
+    local_folder: struct { id: []const u8 = "", path: []const u8 = "" },
 };
 
 pub const Marketplace = struct {
@@ -639,6 +651,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(ProfileMode.workspace, c.browser.profile_mode);
     try std.testing.expect(c.browser.autocapture_to_log);
     try std.testing.expect(!c.integrations.auto_update_cargo);
+    try std.testing.expectEqual(@as(usize, 0), c.integrations.dev_roots.len);
     try std.testing.expect(c.marketplace.enabled);
     try std.testing.expectEqual(@as(u32, 3600), c.marketplace.cache_ttl_secs);
     try std.testing.expect(c.marketplace.use_defaults);

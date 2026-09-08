@@ -206,6 +206,7 @@ fn sectionTitle(p: app_mod.PanelId) []const u8 {
         .http => "HTTP",
         .outline => "Outline",
         .debug => "Run and debug",
+        .integrations => "Integrations",
     };
 }
 

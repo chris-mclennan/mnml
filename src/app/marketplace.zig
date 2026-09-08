@@ -1,10 +1,12 @@
-//! `Pane.marketplace` — what can be installed, from the sources in
+//! The marketplace — what can be installed, from the sources in
 //! `cfg.marketplace.sources` (plus mnml's defaults when `use_defaults`).
-//! A fetch runs on a worker in the state's `Io.Group` and lands as one
-//! `.marketplace` event; an install runs the same way and refreshes the
-//! installed list when it is done.
+//! The INTEGRATIONS section's Marketplace tab (`integrations.zig`) lists
+//! `State.entries`; the detail pane's Install button and the row menu
+//! run `install`. A fetch runs on a worker in the state's `Io.Group`
+//! and lands as one `.marketplace` event; an install runs the same way
+//! and refreshes the installed list when it is done.
 //!
-//! Two source shapes do work in this build:
+//! Three source shapes do work in this build:
 //!
 //!   github_launcher_folder   every `*.zon` under `<repo>/<path>` is a
 //!                            manifest; install = write it under
@@ -16,23 +18,28 @@
 //!                            `<data root>/integrations/<name>/`, link the
 //!                            binary into `<data root>/bin/`, run
 //!                            `<binary> --install`.
+//!   local_folder             a folder on this machine — the private
+//!                            path: every `*.zon` in it is a manifest
+//!                            (installed as a launcher is), every
+//!                            subfolder with a `build.zig` and a
+//!                            `manifest.zon` a Zig integration (built
+//!                            in place, no clone).
 //!
 //! `crates_keyword` is kept in the config so a 0.2 file still loads,
 //! but integrations are no longer crates: it is reported and lists
 //! nothing.
 //!
 //! `MNML_MARKETPLACE_API` replaces `https://api.github.com` (the tests
-//! point it at a local server).
+//! point it at a local server). `MNML_MARKETPLACE_LOCAL=<folder>` makes
+//! that folder the only source — a `local_folder` named `local`,
+//! relative to the workspace — for an offline or private setup and for
+//! the corpus, which cannot write config.
 
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
-const PaneId = app_mod.PaneId;
-const Key = app_mod.Key;
-const key_mod = @import("../core/key.zig");
-const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
@@ -42,9 +49,6 @@ const http_client = @import("../http/client.zig");
 const http_parse = @import("../http/parse.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
 const integrations = @import("integrations.zig");
-const Rect = @import("../ui/rect.zig");
-const Ui = @import("../ui/context.zig");
-const view = @import("../ui/marketplace_view.zig");
 
 pub const default_api = "https://api.github.com";
 pub const max_body = 4 * 1024 * 1024;
@@ -59,18 +63,29 @@ pub const Entry = struct {
     label: []const u8,
     description: []const u8,
     version: []const u8 = "",
-    /// launcher: the manifest's download URL. app: the repo slug.
+    /// launcher: the manifest's download URL (or its path, for a local
+    /// folder). app: the repo slug (or the folder's path).
     url: []const u8,
-    /// app: the directory under the repo.
+    /// app: the directory under the repo; empty for a local folder.
     subpath: []const u8 = "",
+    /// From one of mnml's default sources.
+    official: bool = false,
+    /// From a `local_folder` source — the private path.
+    private: bool = false,
+    /// The manifest's chip, when the source had the manifest to read.
+    glyph: []const u8 = "",
+    fallback: []const u8 = "",
+    color: []const u8 = "",
 };
 
 /// A source as the worker sees it (gpa-owned copy of the config).
 pub const SourceSpec = struct {
     id: []u8,
-    kind: enum { launcher_folder, monorepo_apps, crates },
+    kind: enum { launcher_folder, monorepo_apps, crates, local_folder },
     repo: []u8,
+    /// The repo path, the keyword, or the local folder (absolute).
     path: []u8,
+    official: bool = false,
 
     fn deinit(s: SourceSpec, gpa: Allocator) void {
         gpa.free(s.id);
@@ -113,8 +128,6 @@ pub const State = struct {
     /// The id being installed, gpa-owned.
     installing: ?[]u8 = null,
     fetched_at_ms: ?i64 = null,
-    /// The row a context menu was opened on.
-    menu_row: ?usize = null,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
@@ -123,14 +136,7 @@ pub const State = struct {
     }
 };
 
-pub const MarketplacePane = struct {
-    cursor: usize = 0,
-    scroll: usize = 0,
-    detail: bool = false,
-};
-
 pub const table = .{
-    .@"integrations.show_marketplace" = &show,
     .@"marketplace.refresh" = &refreshCmd,
     .@"marketplace.install_focused" = &installFocused,
     .@"marketplace.open_detail_focused" = &detailFocused,
@@ -144,24 +150,45 @@ fn apiBase(app: *App) []const u8 {
     return default_api;
 }
 
-/// The sources to list: the defaults first when `use_defaults`, then the config's.
+/// The sources to list: the defaults first when `use_defaults`, then the
+/// config's — or only `$MNML_MARKETPLACE_LOCAL` when that is set.
 pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
     var out: std.ArrayListUnmanaged(SourceSpec) = .empty;
     errdefer {
         for (out.items) |s| s.deinit(gpa);
         out.deinit(gpa);
     }
-    if (app.cfg.marketplace.use_defaults) for (Config.default_marketplace_sources) |s| try out.append(gpa, try specOf(gpa, s));
-    for (app.cfg.marketplace.sources) |s| try out.append(gpa, try specOf(gpa, s));
+    if (app.env.get("MNML_MARKETPLACE_LOCAL")) |folder| if (folder.len > 0) {
+        try out.append(gpa, try specOf(app, gpa, .{ .local_folder = .{ .id = "local", .path = folder } }));
+        return out.toOwnedSlice(gpa);
+    };
+    if (app.cfg.marketplace.use_defaults) for (Config.default_marketplace_sources) |s| {
+        var spec = try specOf(app, gpa, s);
+        spec.official = true;
+        try out.append(gpa, spec);
+    };
+    for (app.cfg.marketplace.sources) |s| try out.append(gpa, try specOf(app, gpa, s));
     return out.toOwnedSlice(gpa);
 }
 
-fn specOf(gpa: Allocator, s: Config.MarketplaceSource) Allocator.Error!SourceSpec {
+fn specOf(app: *App, gpa: Allocator, s: Config.MarketplaceSource) Allocator.Error!SourceSpec {
     return switch (s) {
         .crates_keyword => |c| .{ .id = try gpa.dupe(u8, c.id), .kind = .crates, .repo = try gpa.dupe(u8, ""), .path = try gpa.dupe(u8, c.keyword) },
         .github_launcher_folder => |g| .{ .id = try gpa.dupe(u8, g.id), .kind = .launcher_folder, .repo = try gpa.dupe(u8, g.repo), .path = try gpa.dupe(u8, g.path) },
         .github_monorepo_apps => |g| .{ .id = try gpa.dupe(u8, g.id), .kind = .monorepo_apps, .repo = try gpa.dupe(u8, g.repo), .path = try gpa.dupe(u8, g.apps_dir) },
+        .local_folder => |l| blk: {
+            const expanded = try app.expandTilde(l.path);
+            const abs = if (std.fs.path.isAbsolute(expanded)) try gpa.dupe(u8, expanded) else try std.fs.path.join(gpa, &.{ app.workspace, expanded });
+            errdefer gpa.free(abs);
+            break :blk .{ .id = try gpa.dupe(u8, l.id), .kind = .local_folder, .repo = try gpa.dupe(u8, ""), .path = abs };
+        },
     };
+}
+
+/// The entry with `id`, if listed.
+pub fn find(app: *App, id: []const u8) ?usize {
+    for (app.marketplace.entries, 0..) |e, i| if (std.mem.eql(u8, e.id, id)) return i;
+    return null;
 }
 
 /// Start a fetch; the result lands through the event queue.
@@ -275,6 +302,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: crates.io sources are not searched — integrations are Zig packages now", .{s.id}));
             return;
         },
+        .local_folder => return listLocal(io, arena, s, entries, problems),
         .launcher_folder, .monorepo_apps => {},
     }
     const url = try std.fmt.allocPrint(arena, "{s}/repos/{s}/contents/{s}", .{ api, s.repo, s.path });
@@ -312,22 +340,88 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
                         continue;
                     },
                 };
-                try entries.append(arena, .{ .source = s.id, .kind = .launcher, .id = m.id, .label = m.label, .description = m.description, .version = m.version, .url = dl });
+                try entries.append(arena, .{
+                    .source = try arena.dupe(u8, s.id),
+                    .kind = .launcher,
+                    .id = m.id,
+                    .label = m.label,
+                    .description = m.description,
+                    .version = m.version,
+                    .url = dl,
+                    .official = s.official,
+                    .glyph = if (m.chip) |c| c.glyph else "",
+                    .fallback = if (m.chip) |c| c.fallback else "",
+                    .color = if (m.chip) |c| c.color else "",
+                });
             },
             .monorepo_apps => {
                 if (!std.mem.eql(u8, gh.type, "dir")) continue;
                 try entries.append(arena, .{
-                    .source = s.id,
+                    .source = try arena.dupe(u8, s.id),
                     .kind = .app,
                     .id = gh.name,
                     .label = gh.name,
                     .description = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ s.repo, s.path, gh.name }),
                     .url = s.repo,
                     .subpath = try std.fs.path.join(arena, &.{ s.path, gh.name }),
+                    .official = s.official,
                 });
             },
-            .crates => unreachable,
+            .crates, .local_folder => unreachable,
         }
+    }
+}
+
+/// A `local_folder` source: the folder's `*.zon` files are manifests
+/// (launchers), its subfolders with a `build.zig` + `manifest.zon` are
+/// apps to build in place.
+fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    var dir = Io.Dir.cwd().openDir(io, s.path, .{ .iterate = true }) catch {
+        try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s} is not a directory", .{ s.id, s.path }));
+        return;
+    };
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        io.checkCancel() catch return;
+        if (!safeName(entry.name)) continue;
+        const full = try std.fs.path.join(arena, &.{ s.path, entry.name });
+        var kind: Kind = undefined;
+        var text: [:0]const u8 = undefined;
+        if ((entry.kind == .file or entry.kind == .sym_link) and std.mem.endsWith(u8, entry.name, ".zon")) {
+            kind = .launcher;
+            text = dir.readFileAllocOptions(io, entry.name, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+                try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, entry.name, @errorName(err) }));
+                continue;
+            };
+        } else if (entry.kind == .directory or entry.kind == .sym_link) {
+            kind = .app;
+            var sub = dir.openDir(io, entry.name, .{}) catch continue;
+            defer sub.close(io);
+            _ = sub.statFile(io, "build.zig", .{}) catch continue;
+            text = sub.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch continue;
+        } else continue;
+        var why: []const u8 = "";
+        const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.BadManifest => {
+                try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, entry.name, why }));
+                continue;
+            },
+        };
+        try entries.append(arena, .{
+            .source = try arena.dupe(u8, s.id),
+            .kind = kind,
+            .id = m.id,
+            .label = m.label,
+            .description = m.description,
+            .version = m.version,
+            .url = full,
+            .private = true,
+            .glyph = if (m.chip) |c| c.glyph else "",
+            .fallback = if (m.chip) |c| c.fallback else "",
+            .color = if (m.chip) |c| c.color else "",
+        });
     }
 }
 
@@ -415,7 +509,13 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
     };
     switch (job.kind) {
         .launcher => {
-            const text = switch (try fetch(gpa, io, arena, job.url)) {
+            // A local folder's manifest is a file; a GitHub one a download.
+            const text = if (std.fs.path.isAbsolute(job.url))
+                Io.Dir.cwd().readFileAlloc(io, job.url, arena, .limited(1 << 20)) catch {
+                    why.* = "cannot read the manifest";
+                    return error.Failed;
+                }
+            else switch (try fetch(gpa, io, arena, job.url)) {
                 .body => |b| b,
                 .err => |e| {
                     why.* = e;
@@ -434,28 +534,31 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
             return try std.fmt.allocPrint(arena, "wrote {s}", .{path});
         },
         .app => {
-            // Clone (or reuse) the repo under <root>/marketplace/<owner>-<repo>.
-            const slug = try arena.dupe(u8, job.url);
-            for (slug) |*c| if (c.* == '/') {
-                c.* = '-';
+            // A local folder builds in place; a repo is cloned (or
+            // reused) under <root>/marketplace/<owner>-<repo>.
+            const app_dir = if (std.fs.path.isAbsolute(job.url)) job.url else blk: {
+                const slug = try arena.dupe(u8, job.url);
+                for (slug) |*c| if (c.* == '/') {
+                    c.* = '-';
+                };
+                if (!safeName(slug)) {
+                    why.* = "the repo slug is not a path component";
+                    return error.Failed;
+                }
+                const clone_dir = try std.fs.path.join(arena, &.{ job.root, "marketplace", slug });
+                const exists = e: {
+                    Io.Dir.cwd().access(io, clone_dir, .{}) catch break :e false;
+                    break :e true;
+                };
+                if (!exists) {
+                    Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(clone_dir).?) catch {};
+                    const git_url = try std.fmt.allocPrint(arena, "https://github.com/{s}.git", .{job.url});
+                    try run(io, gpa, arena, &.{ "git", "clone", "--depth", "1", git_url, clone_dir }, null, &job.env, "git clone", why);
+                } else {
+                    run(io, gpa, arena, &.{ "git", "-C", clone_dir, "pull", "--ff-only" }, null, &job.env, "git pull", why) catch {};
+                }
+                break :blk try std.fs.path.join(arena, &.{ clone_dir, job.subpath });
             };
-            if (!safeName(slug)) {
-                why.* = "the repo slug is not a path component";
-                return error.Failed;
-            }
-            const clone_dir = try std.fs.path.join(arena, &.{ job.root, "marketplace", slug });
-            const exists = blk: {
-                Io.Dir.cwd().access(io, clone_dir, .{}) catch break :blk false;
-                break :blk true;
-            };
-            if (!exists) {
-                Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(clone_dir).?) catch {};
-                const git_url = try std.fmt.allocPrint(arena, "https://github.com/{s}.git", .{job.url});
-                try run(io, gpa, arena, &.{ "git", "clone", "--depth", "1", git_url, clone_dir }, null, &job.env, "git clone", why);
-            } else {
-                run(io, gpa, arena, &.{ "git", "-C", clone_dir, "pull", "--ff-only" }, null, &job.env, "git pull", why) catch {};
-            }
-            const app_dir = try std.fs.path.join(arena, &.{ clone_dir, job.subpath });
             const prefix = try std.fs.path.join(arena, &.{ job.root, manifest_mod.subdir, job.id });
             try run(io, gpa, arena, &.{ "zig", "build", "-Doptimize=ReleaseSafe", "--prefix", prefix }, app_dir, &job.env, "zig build", why);
             // The binary: the one file under <prefix>/bin.
@@ -574,138 +677,21 @@ pub fn busy(app: *const App) bool {
     return app.marketplace.fetching or app.marketplace.installing != null;
 }
 
-// ─── the pane ───────────────────────────────────────────────────────────
-
-fn show(app: *App) CommandError!void {
-    if (app.panes.findKind(.marketplace)) |id| {
-        app.showPane(id);
-    } else {
-        const id = try app.panes.add(.{ .marketplace = .{} });
-        app.showPane(id);
-    }
-    if (app.marketplace.fetched_at_ms == null and !app.marketplace.fetching) refresh(app) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
-    };
-}
-
-fn activePane(app: *App) ?struct { id: PaneId, p: *MarketplacePane } {
-    const id = app.active orelse return null;
-    const pane = app.panes.get(id) orelse return null;
-    return switch (pane.*) {
-        .marketplace => |*p| .{ .id = id, .p = p },
-        else => null,
-    };
-}
-
-fn focusedRow(app: *App) CommandError!usize {
-    const st = &app.marketplace;
-    if (st.menu_row) |r| {
-        st.menu_row = null;
-        if (r < st.entries.len) return r;
-    }
-    const ap = activePane(app) orelse return app.diag.fail(app.frame.allocator(), "marketplace: open it first (integrations.show_marketplace)", .{});
-    if (ap.p.cursor >= st.entries.len) return app.diag.fail(app.frame.allocator(), "marketplace: nothing to act on", .{});
-    return ap.p.cursor;
-}
+// ─── the section's hooks ────────────────────────────────────────────────
 
 fn installFocused(app: *App) CommandError!void {
-    return install(app, try focusedRow(app));
+    return install(app, try integrations.marketRow(app));
 }
 
 fn detailFocused(app: *App) CommandError!void {
-    const i = try focusedRow(app);
-    const ap = activePane(app) orelse return;
-    ap.p.cursor = i;
-    ap.p.detail = !ap.p.detail;
+    const i = try integrations.marketRow(app);
+    return integrations.openDetail(app, .{ .marketplace = app.marketplace.entries[i].id });
 }
 
 fn copyIdFocused(app: *App) CommandError!void {
-    const i = try focusedRow(app);
+    const i = try integrations.marketRow(app);
     try app.clipboard.set(app.marketplace.entries[i].id, false);
     app.toast("copied {s}", .{app.marketplace.entries[i].id});
-}
-
-pub fn handleKey(app: *App, id: PaneId, p: *MarketplacePane, k: Key) Allocator.Error!bool {
-    const n = app.marketplace.entries.len;
-    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
-    switch (k.code) {
-        .down => p.cursor = @min(p.cursor + 1, n -| 1),
-        .up => p.cursor -|= 1,
-        .home => p.cursor = 0,
-        .end => p.cursor = n -| 1,
-        .enter => runToast(app, installFocused(app)),
-        .esc => try app.forceClosePane(id),
-        .char => |c| switch (c) {
-            'j' => p.cursor = @min(p.cursor + 1, n -| 1),
-            'k' => p.cursor -|= 1,
-            'g' => p.cursor = 0,
-            'G' => p.cursor = n -| 1,
-            'q' => try app.forceClosePane(id),
-            'i' => runToast(app, installFocused(app)),
-            'd' => p.detail = !p.detail,
-            'y' => runToast(app, copyIdFocused(app)),
-            'r' => runToast(app, refreshCmd(app)),
-            'I', 'M' => runToast(app, command.run(app, .{ .static = .@"integrations.show_installed" })),
-            else => return false,
-        },
-        else => return false,
-    }
-    app.needs_render = true;
-    return true;
-}
-
-fn runToast(app: *App, result: CommandError!void) void {
-    result catch |err| switch (err) {
-        error.Canceled => {},
-        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("marketplace: {s}", .{@errorName(err)}),
-    };
-}
-
-pub fn click(app: *App, p: *MarketplacePane, hit: u32, m: Mouse) Allocator.Error!void {
-    const st = &app.marketplace;
-    if (hit >= st.entries.len) return;
-    if (m.button == .right) return openRowMenu(app, hit, m.x, m.y);
-    if (p.cursor == hit) runToast(app, install(app, hit)) else p.cursor = hit;
-}
-
-pub fn scrollBy(app: *App, p: *MarketplacePane, delta: i64) void {
-    const n = app.marketplace.entries.len;
-    const cur: i64 = @intCast(p.cursor);
-    p.cursor = @intCast(std.math.clamp(cur + delta, 0, @as(i64, @intCast(n -| 1))));
-}
-
-fn openRowMenu(app: *App, row: usize, x: u16, y: u16) Allocator.Error!void {
-    const st = &app.marketplace;
-    if (row >= st.entries.len) return;
-    st.menu_row = row;
-    const items = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = "Install", .action = .{ .command = .@"marketplace.install_focused" } },
-        .{ .label = "Details", .action = .{ .command = .@"marketplace.open_detail_focused" } },
-        .{ .label = "Copy id", .action = .{ .command = .@"marketplace.copy_id_focused" } },
-    });
-    errdefer app.gpa.free(items);
-    try app.openMenu(st.entries[row].label, items, x, y);
-}
-
-pub fn draw(app: *App, ui: Ui, id: PaneId, p: *MarketplacePane, rect: Rect) Allocator.Error!void {
-    const is_focused = app.active == id and app.focus == .pane;
-    if (app.active == id) app.pane_rows = @max(rect.h, 1);
-    const st = &app.marketplace;
-    const rows = try ui.arena.alloc(view.Row, st.entries.len);
-    for (st.entries, 0..) |e, i| rows[i] = .{
-        .kind = @tagName(e.kind),
-        .id = e.id,
-        .label = e.label,
-        .description = e.description,
-        .version = e.version,
-        .source = e.source,
-        .installed = app.integrations.find(e.id) != null,
-        .installing = if (st.installing) |cur| std.mem.eql(u8, cur, e.id) else false,
-        .selected = i == p.cursor,
-        .detail = i == p.cursor and p.detail,
-    };
-    view.draw(ui, id, rect, .{ .rows = rows, .scroll = &p.scroll, .focused = is_focused, .fetching = st.fetching, .problems = st.problems, .enabled = app.cfg.marketplace.enabled });
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -866,12 +852,15 @@ test "a fetch lists launchers and apps from a local server; a launcher installs 
     try testing.expectEqualStrings("apps/mnml-jira", st.entries[1].subpath);
     // broken.zon and the crates source are problems, not rows.
     try testing.expectEqual(@as(usize, 2), st.problems.len);
+    // The section's Marketplace tab lists both, with their source.
+    app.tree.width = 60;
     try app.render();
     const txt = try @import("../ipc/screen.zig").toTestText(gpa, &app.screen);
     defer gpa.free(txt);
-    try testing.expect(std.mem.indexOf(u8, txt, "MARKETPLACE") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Hello") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "mnml-jira") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "INTEGRATIONS") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Marketplace (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[launcher] Hello  ~ Community  (acme-launchers)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[app] mnml-jira  ~ Community  (acme-apps)") != null);
 
     // Install the launcher: the manifest lands in the data root and the
     // installed list picks it up.

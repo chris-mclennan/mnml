@@ -108,7 +108,6 @@ const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
-const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
 const files_pane = @import("files_pane.zig");
@@ -611,8 +610,9 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .sessions => try sessions.draw(app, ui, area),
         .outline => try outline.drawPanel(app, ui, area),
         .debug => try debug_panel.draw(app, ui, area),
+        .integrations => try integrations.drawSection(app, ui, area),
         // Pane-backed sections never own a column (`side.surface`).
-        .search, .integrations, .agents, .cloud_agents => unreachable,
+        .search, .agents, .cloud_agents => unreachable,
     }
 }
 
@@ -647,7 +647,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
         .spend_report => kindIcon(ascii, "$", "\u{F01C2}", p.orange),
         .mount => kindIcon(ascii, "M", "\u{F0BD3}", p.cyan),
-        .integrations, .marketplace => kindIcon(ascii, "\u{25C8}", "\u{F0431}", p.cyan),
+        .integrations => kindIcon(ascii, "\u{25C8}", "\u{F0431}", p.cyan),
     };
 }
 
@@ -967,7 +967,6 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .script => |*s| try script_pane.draw(app, ui, pr.pane, s, rect),
             .mount => |*mp| try mount_pane.draw(app, ui, pr.pane, mp, rect),
             .integrations => |*ip| try integrations.draw(app, ui, pr.pane, ip, rect),
-            .marketplace => |*mk| try marketplace.draw(app, ui, pr.pane, mk, rect),
             .ai_apply => |*ap| drawAiApply(app, ui, pr.pane, ap, rect),
             .tests => |*tp| try drawTests(app, ui, pr.pane, tp, rect),
             .flaky => |*fp| {

@@ -1,19 +1,26 @@
-# Installed integrations (src/app/integrations.zig): a manifest under
+# The INTEGRATIONS section (src/app/integrations.zig): a manifest under
 # <workspace>/.mnml/integrations/ becomes a dyn command with its key,
-# the INTEGRATIONS pane lists it, and the settings overlay grows a row
-# for what the manifest's `settings[]` declares.
+# the Installed tab lists it in the Rust row shape (glyph + label, the
+# first command's id under it), the detail pane shows the manifest,
+# and the settings overlay grows a row for what `settings[]` declares.
 write .mnml/integrations/hello.zon ".{ .id = \"hello\", .label = \"Hello Sample\", .description = \"The sample\", .version = \"0.1.0\", .binary = \"/definitely/not/here/mnml-hello\", .category = \"sample\", .chip = .{ .glyph = \"H\", .fallback = \"H\", .color = \"cyan\" }, .commands = .{ .{ .id = \"hello.open\", .title = \"Hello: open\", .keys = .{ \"ctrl+k h\" } } }, .settings = .{ .{ .key = \"greeting\", .label = \"Greeting\", .options = .{ \"HELLO\", \"HOWDY\" }, .default = \"HELLO\" } } }\n"
 command integrations.refresh
 expect screen contains "1 installed"
 command integrations.show_installed
 expect screen contains INTEGRATIONS
-expect screen contains "Hello Sample"
-expect screen contains "hello  v0.1.0  sample"
-expect screen contains "binary missing"
-# The detail block names the command and its chord.
-key d
+expect screen contains "Inst (1)"
+# The column is 26 cells at the shipped width: the row clips; a drag on
+# the divider widens it and the whole row reads.
+expect screen contains "H Hello Sample"
+drag 30 5 60 5
+expect screen contains "H Hello Sample (mnml-hello not installed)"
 expect screen contains "hello.open"
-expect screen contains "ctrl+k h"
+# The detail pane: the buttons, the command with its chord, the missing binary.
+key d
+expect screen contains "[ Open ]  [ Disable ]  [ Edit manifest ]"
+expect screen contains "hello.open  Hello: open  ctrl+k h"
+expect screen contains "binary missing"
+key esc
 # The manifest's setting is a row of the settings overlay.
 command view.settings
 key end

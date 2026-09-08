@@ -1,0 +1,35 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# The sample integration installed from the marketplace through a
+# `local_folder` source — the external / private path: a folder of
+# manifests on this machine ($MNML_MARKETPLACE_LOCAL is that source and
+# no other; the corpus cannot write config). The Marketplace tab lists
+# the folder's sample.zon as a Private launcher; Install copies it into
+# the data root; the Installed tab and the pane follow. Nothing is built.
+write market/sample.zon ".{ .id = \"sample\", .label = \"Sample\", .version = \"0.1.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\", .description = \"The sample, from a private folder\", .commands = .{ .{ .id = \"sample.open\", .title = \"Sample: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+drag 30 5 60 5
+expect screen contains "[launcher] Sample  Private  (local)"
+expect screen contains "The sample, from a private folder"
+# i installs the focused entry; the row greys as installed.
+key i
+expect screen contains "installed sample"
+expect screen contains "[installed] Sample"
+command integrations.show_installed
+expect screen contains "Sample  0.1.0"
+expect screen contains "sample.open"
+command sample.open
+command view.focus_pane
+expect screen contains "counter: 0"
+# q says bye; the banner sits under the install toast for a moment, so
+# the next key closes the pane and the screen proves it went.
+key q
+wait 500
+key x
+expect screen lacks "SAMPLE ·"
+# Uninstall, so the size sweep (one data root for every size) starts clean.
+command integrations.show_installed
+key x
+expect screen contains "Remove Sample?"
+key r
+expect screen contains "removed sample"

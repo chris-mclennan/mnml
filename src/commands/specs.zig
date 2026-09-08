@@ -759,6 +759,9 @@ pub const specs = [_]Spec{
     .{ .id = "trusted.forget", .title = "Workspace: forget this workspace's trust decision (asks again next launch)", .group = "trusted" },
     .{ .id = "integrations.refresh", .title = "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/", .group = "integrations" },
     .{ .id = "integrations.cycle_sort", .title = "Integrations: cycle sort mode (active tab)", .group = "integrations" },
+    .{ .id = "integrations.dev_build", .title = "Integrations: build the focused Dev folder (zig build, in a task pane)", .group = "integrations" },
+    .{ .id = "integrations.dev_install", .title = "Integrations: install the focused Dev folder (build if needed, then --install)", .group = "integrations" },
+    .{ .id = "integrations.dev_rebuild", .title = "Integrations: rebuild + reinstall the focused Dev folder", .group = "integrations" },
     .{ .id = "marketplace.refresh", .title = "Marketplace: refresh (fetch published apps + community launchers)", .group = "integrations" },
     .{ .id = "integrations.check_updates_now", .title = "Integrations: check for updates now (bypass 6h auto-tick)", .group = "integrations" },
     .{ .id = "integrations.fire_auto_updates_now", .title = "Integrations: fire auto-updates now (opt-in per config)", .group = "integrations" },
@@ -995,7 +998,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "933 specs, unique ids" {
+test "936 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1007,6 +1010,6 @@ test "933 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 933), specs.len);
+    try std.testing.expectEqual(@as(usize, 936), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
