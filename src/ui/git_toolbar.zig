@@ -20,12 +20,13 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
+const parse = @import("../git/parse.zig");
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
 pub const PaneId = ids.PaneId;
 
-pub const Action = enum(u8) { undo, redo, pull, push, fetch, branch, commit, stash, pop, reflog, refresh };
+pub const Action = enum(u8) { undo, redo, pull, push, fetch, branch, commit, stash, pop, reflog, refresh, cont, abort, skip };
 
 /// Above the diff view's own controls (`diff_view.special_base` region).
 pub const hit_base: u32 = 0xF300_0000;
@@ -64,6 +65,14 @@ const specs = [_]Spec{
     .{ .label = "Refresh", .action = .refresh, .ascii = "\u{21BB}", .glyph = "\u{EB37}", .accent = .cyan },
 };
 const pop_spec: Spec = .{ .label = "Pop", .action = .pop, .ascii = "\u{21A5}", .glyph = "\u{EC28}", .accent = .purple };
+// While a rebase / merge / cherry-pick / revert / bisect waits on the
+// user the row is the three ways forward, then Refresh. `Skip` only
+// where git has a `--skip`.
+const progress_specs = [_]Spec{
+    .{ .label = "Continue", .action = .cont, .ascii = ">", .glyph = "\u{F040A}", .accent = .green },
+    .{ .label = "Abort", .action = .abort, .ascii = "x", .glyph = "\u{F0156}", .accent = .orange },
+};
+const skip_spec: Spec = .{ .label = "Skip", .action = .skip, .ascii = ">>", .glyph = "\u{F04AD}", .accent = .yellow };
 
 fn accentColor(p: Theme.Palette, a: Accent) Color {
     return switch (a) {
@@ -85,11 +94,20 @@ fn buttonWidth(ui: Ui, s: Spec) u16 {
 pub const Props = struct {
     pane: PaneId,
     has_stash: bool = false,
+    /// The operation the repo is in the middle of: the row swaps to
+    /// `Continue · Abort · Skip`.
+    in_progress: parse.InProgress = .none,
 };
 
 /// The buttons in row order for `props`, on the frame arena.
 fn buttons(ui: Ui, props: Props) []const Spec {
     var out: std.ArrayListUnmanaged(Spec) = .empty;
+    if (props.in_progress != .none) {
+        out.appendSlice(ui.arena, &progress_specs) catch return &.{};
+        if (props.in_progress.canSkip()) out.append(ui.arena, skip_spec) catch return &.{};
+        out.append(ui.arena, specs[specs.len - 1]) catch return &.{};
+        return out.items;
+    }
     for (specs) |s| {
         out.append(ui.arena, s) catch return &.{};
         if (s.action == .stash and props.has_stash) out.append(ui.arena, pop_spec) catch return &.{};
@@ -145,6 +163,8 @@ const Fixture = @import("test_fixture.zig");
 
 pub fn glyphOf(a: Action) []const u8 {
     if (a == .pop) return pop_spec.glyph;
+    if (a == .skip) return skip_spec.glyph;
+    for (progress_specs) |s| if (s.action == a) return s.glyph;
     for (specs) |s| if (s.action == a) return s.glyph;
     unreachable;
 }
@@ -203,4 +223,27 @@ test "a narrow row keeps what fits and centres it; Pop joins after Stash with a 
     draw(h.ui(), h.full(), .{ .pane = 1 });
     try h.expectRow(0, "");
     try testing.expectEqual(@as(usize, 0), h.hits.items.items.len);
+}
+
+test "mid-operation the row is Continue · Abort · Skip · Refresh; a merge has no Skip; every button is a hit" {
+    var f = try Fixture.init(89, 1);
+    defer f.deinit();
+    draw(f.ui(), f.full(), .{ .pane = 3, .has_stash = true, .in_progress = .rebase });
+    try f.expectRow(0, try std.fmt.allocPrint(f.arena_state.allocator(), "                        {s} Continue   {s} Abort   {s} Skip   {s} Refresh", .{ glyphOf(.cont), glyphOf(.abort), glyphOf(.skip), glyphOf(.refresh) }));
+    var seen_cont = false;
+    var seen_skip = false;
+    var seen_stash = false;
+    for (f.hits.items.items) |h| if (h.target == .script_hit) {
+        if (h.target.script_hit.id == hitId(.cont)) seen_cont = true;
+        if (h.target.script_hit.id == hitId(.skip)) seen_skip = true;
+        if (h.target.script_hit.id == hitId(.stash)) seen_stash = true;
+    };
+    try testing.expect(seen_cont and seen_skip and !seen_stash);
+    try testing.expectEqual(@as(?Action, .skip), actionOf(hitId(.skip)));
+    var g = try Fixture.init(89, 1);
+    defer g.deinit();
+    draw(g.ui(), g.full(), .{ .pane = 3, .in_progress = .merge });
+    try g.expectContains(" Continue ");
+    try g.expectContains(" Abort ");
+    try g.expectLacks(" Skip ");
 }

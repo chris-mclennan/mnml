@@ -10,6 +10,7 @@ const Term = @import("tui/term.zig").Term;
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const http_cli = @import("http/cli.zig");
+const sequence_editor = @import("git/sequence_editor.zig");
 
 /// What `--version` prints: `-Dversion=` at build time, or the derived
 /// dev string (see build.zig, the release block).
@@ -36,6 +37,17 @@ pub fn main(init: std.process.Init) !u8 {
     var out: Io.File.Writer = .init(.stdout(), io, &out_buf);
     const w = &out.interface;
 
+    // The git worker's editor child modes (`src/git/sequence_editor.zig`):
+    // git runs `mnml-zig --rebase-todo <plan> <todo>` / `--commit-msg
+    // <queue> <target>` and reads only the exit code.
+    if (args.len >= 2 and (std.mem.eql(u8, args[1], "--rebase-todo") or std.mem.eql(u8, args[1], "--commit-msg"))) {
+        var err_buf: [1024]u8 = undefined;
+        var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
+        const mode: sequence_editor.Mode = if (std.mem.eql(u8, args[1], "--rebase-todo")) .todo else .commit_msg;
+        const code = sequence_editor.childMain(io, gpa, mode, args[2..], &err_w.interface);
+        err_w.interface.flush() catch {};
+        return code;
+    }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {
@@ -44,7 +56,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;

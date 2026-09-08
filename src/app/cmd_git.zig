@@ -15,6 +15,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const git = @import("git.zig");
 const client = @import("../git/client.zig");
+const parse = @import("../git/parse.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 
@@ -108,6 +109,20 @@ pub const table = .{
     .@"git.worktree_list" = &worktreeList,
     .@"git.worktree_remove" = &worktreeRemove,
     .@"git.worktrees" = &worktrees,
+    .@"git.op_continue" = &opContinue,
+    .@"git.op_abort" = &opAbort,
+    .@"git.op_skip" = &opSkip,
+    .@"git.rebase_plan" = &rebasePlan,
+    .@"git.fixup" = &fixup,
+    .@"git.squash" = &squash,
+    .@"git.drop" = &drop,
+    .@"git.reword" = &reword,
+    .@"git.select_branch" = &selectBranch,
+    .@"git.amend" = &amend,
+    .@"git.amend_to" = &amendTo,
+    .@"git.reset_soft" = &resetSoft,
+    .@"git.reset_mixed" = &resetMixed,
+    .@"git.reset_hard" = &resetHard,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -577,6 +592,122 @@ fn undo(app: *App) CommandError!void {
 fn redo(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .redo);
+}
+
+// ─── an operation in progress ───────────────────────────────────────────
+
+/// The rebase / merge / cherry-pick / revert / bisect the last status
+/// found waiting, or the reason there is none.
+fn inProgress(app: *App) CommandError!parse.InProgress {
+    const repo = try git.requireRepo(app);
+    const op = git.inProgressOf(app, repo.id);
+    if (op == .none) return app.diag.fail(arena(app), "git: nothing in progress (no rebase, merge, cherry-pick, revert or bisect)", .{});
+    return op;
+}
+
+fn opContinue(app: *App) CommandError!void {
+    const op = try inProgress(app);
+    try git.submitOp(app, try git.requireRepo(app), .{ .op_continue = op });
+}
+
+fn opAbort(app: *App) CommandError!void {
+    const op = try inProgress(app);
+    try git.submitOp(app, try git.requireRepo(app), .{ .op_abort = op });
+}
+
+fn opSkip(app: *App) CommandError!void {
+    const op = try inProgress(app);
+    try git.submitOp(app, try git.requireRepo(app), .{ .op_skip = op });
+}
+
+// ─── the rebase plan, amend, reset ──────────────────────────────────────
+
+/// `r` on the graph: the plan modal over the selection.
+fn rebasePlan(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    try git.openPlan(app, g);
+}
+
+fn fixup(app: *App) CommandError!void {
+    try git.directVerb(app, try requireGraph(app), .fixup, null);
+}
+
+fn squash(app: *App) CommandError!void {
+    try git.directVerb(app, try requireGraph(app), .squash, null);
+}
+
+fn drop(app: *App) CommandError!void {
+    try git.directVerb(app, try requireGraph(app), .drop, null);
+}
+
+/// The message first; the one-line plan runs from the prompt's accept.
+fn reword(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    const c = g.selected() orelse return app.diag.fail(arena(app), "reword: select a commit first", .{});
+    // The prompt borrows its title for as long as it is open.
+    git.openPrompt(app, .reword, "Reword: the new commit message");
+    try app.overlay.prompt.state.setText(app.gpa, c.subject);
+}
+
+fn selectBranch(app: *App) CommandError!void {
+    try git.selectBranchCommits(app, try requireGraph(app));
+}
+
+fn requireStaged(app: *App, what: []const u8) CommandError!void {
+    const st = &app.git;
+    if (st.status) |s| if (s.staged > 0) return;
+    return app.diag.fail(arena(app), "{s}: nothing staged", .{what});
+}
+
+/// `A` on the WIP row: the staged changes into HEAD, message kept.
+fn amend(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    try requireStaged(app, "amend");
+    try git.submitOp(app, repo, .amend_noedit);
+}
+
+/// `A` on a commit: the staged changes into that commit (fixup + autosquash).
+fn amendTo(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    const c = g.selected() orelse return app.diag.fail(arena(app), "amend: select the commit to fold the staged changes into", .{});
+    const repo = try git.requireRepo(app);
+    try requireStaged(app, "amend");
+    try git.submitOp(app, repo, .{ .amend_to = try app.gpa.dupe(u8, c.hash) });
+}
+
+/// What `git.reset_*` resets to: the branches panel's row when it has
+/// the focus, the graph's selected commit when a graph pane does,
+/// else a prompt asks for a rev.
+fn resetTarget(app: *App) CommandError!?[]const u8 {
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return b;
+    }
+    if (app.focus == .pane) if (git.activeGraph(app)) |g| {
+        if (g.selected()) |c| return c.hash;
+    };
+    return null;
+}
+
+fn reset(app: *App, mode: client.ResetMode) CommandError!void {
+    _ = try git.requireRepo(app);
+    if (try resetTarget(app)) |rev| return git.resetTo(app, mode, rev);
+    switch (mode) {
+        .soft => git.openPrompt(app, .reset_soft, "reset --soft to (a branch, tag or sha)"),
+        .mixed => git.openPrompt(app, .reset_mixed, "reset --mixed to (a branch, tag or sha)"),
+        .hard => git.openPrompt(app, .reset_hard, "reset --hard to (a branch, tag or sha)"),
+    }
+}
+
+fn resetSoft(app: *App) CommandError!void {
+    try reset(app, .soft);
+}
+
+fn resetMixed(app: *App) CommandError!void {
+    try reset(app, .mixed);
+}
+
+fn resetHard(app: *App) CommandError!void {
+    try reset(app, .hard);
 }
 
 // ─── the graph ──────────────────────────────────────────────────────────

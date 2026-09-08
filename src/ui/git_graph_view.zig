@@ -31,6 +31,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const clip = @import("clip.zig");
 const git_toolbar = @import("git_toolbar.zig");
+const overlay = @import("overlay.zig");
 const text_field = @import("text_field.zig");
 const parse = @import("../git/parse.zig");
 const ids = @import("../core/ids.zig");
@@ -398,7 +399,43 @@ pub const Doc = struct {
     branch_col: ?u16 = null,
     author_col: ?u16 = null,
     has_stash: bool = false,
+    /// The operation the repo is in the middle of; the toolbar swaps.
+    in_progress: parse.InProgress = .none,
+    /// Multi-select, per commit index: a marked row shows `✓` beside
+    /// the cursor cell (the lane's `●` node sits further right).
+    marks: ?[]const bool = null,
+    /// A `v` range in progress: the virtual rows from the anchor to the
+    /// cursor, both ends in, painted as marked.
+    range: ?[2]usize = null,
+    /// While the plan is open, per commit index: 0 = not in the plan,
+    /// else `@intFromEnum(TodoAction) + 1` — the row shows the action's
+    /// letter and its colour.
+    plan_actions: ?[]const u8 = null,
 };
+
+/// The colour of a planned action: what the plan modal's action column
+/// and the tinted graph rows share.
+pub fn actionColor(pal: Theme.Palette, a: parse.TodoAction) Color {
+    return switch (a) {
+        .pick => pal.fg,
+        .reword => pal.blue,
+        .edit => pal.cyan,
+        .squash => pal.purple,
+        .fixup => pal.purple,
+        .drop => pal.red,
+    };
+}
+
+fn actionLetter(a: parse.TodoAction) []const u8 {
+    return switch (a) {
+        .pick => "p",
+        .reword => "r",
+        .edit => "e",
+        .squash => "s",
+        .fixup => "f",
+        .drop => "d",
+    };
+}
 
 /// What `draw` measured.
 pub const Painted = struct {
@@ -651,7 +688,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     // ── the toolbar ──
     var body_full = area;
     if (area.w >= 40 and area.h >= 6) {
-        git_toolbar.draw(ui, area.row(0), .{ .pane = pane, .has_stash = doc.has_stash });
+        git_toolbar.draw(ui, area.row(0), .{ .pane = pane, .has_stash = doc.has_stash, .in_progress = doc.in_progress });
         body_full = area.splitTop(1).rest;
     }
 
@@ -762,7 +799,23 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         const c = doc.commits[ci];
         const lane: Lane = if (ci < doc.lanes.len) doc.lanes[ci] else .{ .lane = 0, .cells = &.{} };
         pen.put("\u{258C}", Theme.withFg(base, laneColor(pal, @intCast(lane.lane))));
-        pen.put(if (selected) "\u{25B6} " else "  ", Theme.withFg(base, pal.yellow));
+        pen.put(if (selected) "\u{25B6}" else " ", Theme.withFg(base, pal.yellow));
+        // The mark cell: the planned action's letter while the plan is
+        // open, `●` for a selected row, else the space Rust paints.
+        var planned: ?parse.TodoAction = null;
+        if (doc.plan_actions) |pa| if (ci < pa.len and pa[ci] > 0) {
+            planned = @enumFromInt(pa[ci] - 1);
+        };
+        const in_range = if (doc.range) |rg| (v >= @min(rg[0], rg[1]) and v <= @max(rg[0], rg[1])) else false;
+        const marked = in_range or (if (doc.marks) |m| (ci < m.len and m[ci]) else false);
+        if (planned) |a| {
+            var ps = Theme.withFg(base, actionColor(pal, a));
+            ps.bold = true;
+            pen.put(actionLetter(a), ps);
+        } else if (marked) {
+            pen.put(if (ui.ascii) "*" else "\u{2713}", Theme.withFg(base, pal.yellow));
+        } else pen.put(" ", base);
+        const subject_fg: Color = if (planned) |a| actionColor(pal, a) else pal.fg;
         if (cols.branch > 0) {
             drawBranchChips(ui, &pen, refLabels(arena, c.refs) catch &.{}, cols.branch, base);
             pen.put(" \u{2502} ", sep);
@@ -780,7 +833,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
             }
         }
         pen.put(" \u{2502} ", sep);
-        pen.put(padOrTruncate(arena, c.subject, subject_w, ui.ascii) catch "", Theme.withFg(base, pal.fg));
+        var subj = Theme.withFg(base, subject_fg);
+        if (planned) |a| subj.strikethrough = a == .drop;
+        pen.put(padOrTruncate(arena, c.subject, subject_w, ui.ascii) catch "", subj);
         if (cols.author > 0) {
             pen.put(" \u{2502} ", sep);
             pen.put(rightAlign(arena, c.author, cols.author, ui.ascii) catch "", Theme.withFg(base, pal.comment));
@@ -827,6 +882,92 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         }
     }
     return painted;
+}
+
+// ─── the rebase plan ────────────────────────────────────────────────────
+
+pub const plan_row_base: u32 = 0xF000_2000;
+const plan_row_cap: u32 = 0x1000;
+
+pub fn planRowId(i: u32) u32 {
+    return plan_row_base + @min(i, plan_row_cap - 1);
+}
+
+pub fn planRowOf(id: u32) ?u32 {
+    if (id < plan_row_base or id >= plan_row_base + plan_row_cap) return null;
+    return id - plan_row_base;
+}
+
+pub const PlanRowDoc = struct {
+    action: parse.TodoAction,
+    sha: []const u8,
+    subject: []const u8,
+    /// One the user selected (the rest are the commits between).
+    marked: bool,
+    /// A reword whose message is typed.
+    has_message: bool = false,
+};
+
+pub const PlanDoc = struct {
+    rows: []const PlanRowDoc,
+    cursor: usize,
+    /// The parent the rebase starts from; null = `--root`.
+    base: ?[]const u8,
+    scroll: usize,
+};
+
+pub const plan_hint = "\u{2190}\u{2192} p r e s f d action \u{B7} J K move \u{B7} \u{23CE} run \u{B7} esc cancel";
+
+/// The plan modal over the graph: a boxed list of the todo, oldest
+/// first, the action column in its colour, a hint row under it. The
+/// caller keeps `scroll` level with the cursor through the returned
+/// value. Every row is a hit (`planRowId`).
+pub fn drawPlan(ui: Ui, pane: PaneId, area: Rect, doc: PlanDoc) usize {
+    const t = ui.theme;
+    const pal = t.palette;
+    const arena = ui.arena;
+    if (area.w < 30 or area.h < 6) return doc.scroll;
+    const w: u16 = @min(area.w -| 4, 96);
+    const want_h: u16 = @intCast(@min(doc.rows.len + 3, @as(usize, area.h -| 2)));
+    const h: u16 = @max(want_h, 5);
+    const title = if (doc.base) |b|
+        ui.fmt("Rebase plan \u{B7} {d} commit{s} onto {s}", .{ doc.rows.len, if (doc.rows.len == 1) "" else "s", b[0..@min(7, b.len)] })
+    else
+        ui.fmt("Rebase plan \u{B7} {d} commit{s} from the root", .{ doc.rows.len, if (doc.rows.len == 1) "" else "s" });
+    const inner = overlay.boxLook(ui, area, w, h, title, .center, .modal);
+    if (inner.isEmpty()) return doc.scroll;
+    const list_h: usize = inner.h -| 1;
+    const scroll = revealScroll(doc.cursor, doc.scroll, @max(list_h, 1), false);
+    const bg = t.overlay_bg.bg;
+    var i: usize = scroll;
+    var y: u16 = 0;
+    while (i < doc.rows.len and y < list_h) : ({
+        i += 1;
+        y += 1;
+    }) {
+        const row = doc.rows[i];
+        const r = inner.row(y);
+        const selected = i == doc.cursor;
+        const base: Style = .{ .bg = if (selected) pal.bg2 else bg };
+        ui.fill(r, base);
+        var pen: Pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
+        pen.put(if (selected) " \u{25B6} " else "   ", Theme.withFg(base, pal.yellow));
+        var act = Theme.withFg(base, actionColor(pal, row.action));
+        act.bold = true;
+        pen.put(padOrTruncate(arena, row.action.word(), 7, ui.ascii) catch "", act);
+        pen.put(row.sha[0..@min(7, row.sha.len)], Theme.withFg(base, pal.orange));
+        pen.put("  ", base);
+        var subj = Theme.withFg(base, if (row.marked) pal.fg else pal.comment);
+        subj.bold = row.marked;
+        subj.strikethrough = row.action == .drop;
+        const tail: []const u8 = if (row.has_message) (if (ui.ascii) "  [msg]" else "  \u{270E}") else "";
+        const avail: usize = @as(usize, r.right() -| pen.x) -| ui.width(tail);
+        pen.put(padOrTruncate(arena, row.subject, avail, ui.ascii) catch "", subj);
+        if (tail.len > 0) pen.put(tail, Theme.withFg(base, pal.blue));
+        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = planRowId(@intCast(i)) } });
+    }
+    if (inner.h > 0) overlay.hint(ui, inner.row(inner.h - 1), plan_hint);
+    return scroll;
 }
 
 /// The column header row: `BRANCH / TAG │ GRAPH │ COMMIT MESSAGE │ AUTHOR │ DATE / TIME │ SHA`.

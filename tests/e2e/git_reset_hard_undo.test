@@ -1,0 +1,34 @@
+# git.reset_hard from the graph: a confirm, then HEAD, the index and the
+# tree go to the selected commit; git.undo restores all three (the
+# worker recorded HEAD and a `stash create` before the reset).
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+write a.txt "one\nedited\n"
+command git.graph
+wait 600
+# Rows: WIP, second, first. Down twice lands on first.
+key j
+key j
+expect screen contains "first"
+command git.reset_hard
+expect screen contains "reset --hard"
+expect screen contains "[Y]es"
+key y
+wait 2000
+expect screen contains "reset --hard"
+shell test "$(git rev-list --count HEAD)" = 1
+shell test -z "$(git status --porcelain)"
+expect screen lacks "second"
+command git.undo
+wait 2000
+expect screen contains "undid: reset --hard"
+expect screen contains "second"
+shell test "$(git rev-list --count HEAD)" = 2
+shell git status --porcelain | grep -q "M a.txt"

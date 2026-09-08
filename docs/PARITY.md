@@ -27,7 +27,7 @@ line), not by hand.
 | File manager | 22 | 0 | 0 | 0 | 22 |
 | Navigation & search | 31 | 0 | 0 | 0 | 31 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
-| Git | 38 | 1 | 2 | 0 | 41 |
+| Git | 43 | 1 | 2 | 0 | 46 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
 | AI | 20 | 0 | 1 | 0 | 21 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
@@ -40,7 +40,7 @@ line), not by hand.
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **487** | **4** | **10** | **3** | **504** |
+| **total** | **492** | **4** | **10** | **3** | **509** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -365,6 +365,11 @@ trust sink. Each row names its file and its test.
 | Cross-host PR picker | cut | `pr.picker` toasts the reason (`cutRunner` in `cmd_app.zig`) | forge integrations are rewritten in Zig after the cutover |
 | `pr.refresh` cache | cut | same | |
 | File history, merge, rebase, multi-repo | done | `git.file_history` / `merge` / `rebase` / `switch_repo` … | beyond the Rust list |
+| Interactive rebase — the plan on the graph | done | `Plan` / `openPlan` / `runPlan` / `directVerb` in `src/app/git.zig`, `drawPlan` in `src/ui/git_graph_view.zig`, `Job.rebase_plan` in `src/git/client.zig`, `src/git/sequence_editor.zig`; `tests/e2e/git_rebase_plan_*.test` | beyond the Rust list (2026-09-07): space / `v` / `*` select rows, `r` opens the plan oldest-first, `←→` / `p r e s f d` set the action, `J` / `K` move a row, Enter runs `rebase -i` with mnml as the sequence editor (`mnml-zig --rebase-todo`, `--commit-msg`); `git.fixup` / `squash` / `drop` / `reword` are the one-line plans; the graph rows carry the action's letter and colour while the plan is open; undo restores |
+| Operation in progress — continue / abort / skip | done | `Status.in_progress` / `progressFrom` in `src/git/parse.zig` (read off the git dir in the status job), `git.op_continue` / `op_abort` / `op_skip`, the toolbar swap in `src/ui/git_toolbar.zig`, the `main \| REBASE 2/5` chip in `src/app/statusline.zig`; `tests/e2e/git_rebase_abort.test` | beyond the Rust list; conflicts are counted (`Status.conflicted`) — resolving them is the diff pane's later work |
+| Multi-select on the graph | done | `GraphPane.marks` / `anchor` in `src/app/git.zig`, the `✓` mark cell in `git_graph_view.zig` | beyond the Rust list: space toggles, `v` a range, `*` the branch's commits since its upstream, Esc clears |
+| Amend — HEAD with the staged changes, or an older commit | done | `Job.amend_noedit` / `amend_to` in `client.zig`, `git.amend` (`A` on the WIP row) / `git.amend_to` (`A` on a commit) | beyond the Rust list: `commit --amend --no-edit`; `commit --fixup` + `rebase -i --autosquash --autostash` with `true` as the editor; both undoable |
+| Reset — soft / mixed / hard to a commit or branch | done | `Job.reset` in `client.zig`, `git.reset_soft` / `_mixed` / `_hard` (the graph row menu, the branches row menu, else a rev prompt), `Confirm.reset_hard` | beyond the Rust list: HEAD and a `stash create` are recorded first, so `git.undo` restores the index and the tree (`Action.reset_hard`) |
 
 ## TODOs, notes & findings
 

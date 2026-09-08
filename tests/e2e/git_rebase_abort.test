@@ -1,0 +1,36 @@
+# An operation in progress (src/git/parse.zig `Status.in_progress`, read
+# off the git dir by the status job): a rebase that stopped on a
+# conflict shows in the statusline's branch chip as `topic | REBASE 1/1`,
+# the graph's toolbar swaps to Continue · Abort · Skip, and
+# git.op_abort puts the repo back where it was.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "base\n"
+shell git add a.txt
+shell git commit -q -m "base"
+shell git checkout -q -b topic
+write a.txt "topic\n"
+shell git commit -q -am "topic change"
+shell git checkout -q main
+write a.txt "main\n"
+shell git commit -q -am "main change"
+shell git checkout -q topic
+# The rebase stops on a.txt; the exit code is the conflict's, not ours.
+shell git rebase main >/dev/null 2>&1 || true
+command git.graph
+wait 500
+command git.refresh
+wait 800
+expect screen contains "REBASE 1/1"
+expect screen contains "Continue"
+expect screen contains "Abort"
+expect screen contains "Skip"
+expect screen lacks "Pull"
+# Abort: the chip and the three buttons go, the usual row is back.
+command git.op_abort
+wait 1200
+expect screen contains "rebase aborted"
+expect screen lacks "REBASE"
+expect screen contains "Pull"
+expect screen contains "topic change"

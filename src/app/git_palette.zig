@@ -688,6 +688,17 @@ fn rowAt(app: *App, idx: usize) Allocator.Error!?Row {
     return list[idx];
 }
 
+/// The branch the cursor's row names (local or remote), for
+/// `git.reset_*` from the row menu; null on any other row.
+pub fn cursorBranch(app: *App) Allocator.Error!?[]const u8 {
+    const row = (try rowAt(app, app.git_palette.cursor)) orelse return null;
+    return switch (row) {
+        .branch => |b| b.name,
+        .remote_branch => |m| m.name,
+        else => null,
+    };
+}
+
 fn setSelected(app: *App, name: ?[]const u8) Allocator.Error!void {
     const st = &app.git_palette;
     if (st.selected) |s| app.gpa.free(s);
@@ -874,6 +885,9 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = "New branch from here\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{name}), .action = .{ .git_palette = .{ .what = .delete_branch, .idx = b.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
+                .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{name}), .action = .{ .command = .@"git.reset_mixed" } },
+                .{ .label = try std.fmt.allocPrint(arena, "Reset --hard to {s}\u{2026}", .{name}), .action = .{ .command = .@"git.reset_hard" } },
             };
             try app.openMenu(if (b.current) try std.fmt.allocPrint(arena, "\u{25CF} {s}", .{name}) else name, try gpa.dupe(MenuItem, items), x, y);
         },
@@ -883,6 +897,9 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{m.name}), .action = .{ .git_palette = .{ .what = .merge, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Rebase current onto {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .rebase, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{m.name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = m.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{m.name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
+                .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{m.name}), .action = .{ .command = .@"git.reset_mixed" } },
+                .{ .label = try std.fmt.allocPrint(arena, "Reset --hard to {s}\u{2026}", .{m.name}), .action = .{ .command = .@"git.reset_hard" } },
             });
             try app.openMenu(m.name, items, x, y);
         },

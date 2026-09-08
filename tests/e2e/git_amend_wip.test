@@ -1,0 +1,26 @@
+# git.amend (`A` on the graph's WIP row): the staged file joins HEAD
+# with `commit --amend --no-edit`; git.undo puts HEAD back and leaves
+# the file staged.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write new.txt "hello\n"
+shell git add new.txt
+command git.graph
+wait 600
+expect screen contains "1 change(s) · 1 staged"
+key A
+wait 2000
+expect screen contains "amended HEAD with the staged changes"
+shell test "$(git rev-list --count HEAD)" = 1
+shell git show --format= --name-only HEAD | grep -q new.txt
+# A clean tree: the WIP row is gone.
+expect screen lacks "1 change(s)"
+command git.undo
+wait 2000
+expect screen contains "undid: amend"
+shell test "$(git diff --cached --name-only)" = new.txt
+expect screen contains "1 change(s) · 1 staged"

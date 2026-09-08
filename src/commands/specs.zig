@@ -987,6 +987,20 @@ pub const specs = [_]Spec{
     .{ .id = "git.palette_all", .title = "Git: list every repo in the branches panel (All repos), or one again", .group = "git" },
     .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
     .{ .id = "git.browse_commit", .title = "Git: open the selected commit (or HEAD) on the remote", .group = "git" },
+    .{ .id = "git.op_continue", .title = "Git: continue the rebase / merge / cherry-pick / revert in progress", .group = "git" },
+    .{ .id = "git.op_abort", .title = "Git: abort the operation in progress (rebase / merge / cherry-pick / revert / bisect)", .group = "git" },
+    .{ .id = "git.op_skip", .title = "Git: skip the current step of the rebase / cherry-pick / revert in progress", .group = "git" },
+    .{ .id = "git.rebase_plan", .title = "Graph: rebase plan for the selected commits (pick / reword / edit / squash / fixup / drop, reorder)", .group = "git" },
+    .{ .id = "git.fixup", .title = "Graph: fixup the selected commit(s) into the commit before", .group = "git" },
+    .{ .id = "git.squash", .title = "Graph: squash the selected commit(s) into the commit before", .group = "git" },
+    .{ .id = "git.drop", .title = "Graph: drop the selected commit(s)", .group = "git" },
+    .{ .id = "git.reword", .title = "Graph: reword the selected commit (prompt)", .group = "git" },
+    .{ .id = "git.select_branch", .title = "Graph: select the current branch's commits since its upstream (*)", .group = "git" },
+    .{ .id = "git.amend", .title = "Git: amend HEAD with the staged changes (commit --amend --no-edit)", .group = "git" },
+    .{ .id = "git.amend_to", .title = "Graph: amend the selected commit with the staged changes (fixup + autosquash)", .group = "git" },
+    .{ .id = "git.reset_soft", .title = "Git: reset --soft to the selected commit / branch (or a rev)", .group = "git" },
+    .{ .id = "git.reset_mixed", .title = "Git: reset --mixed to the selected commit / branch (or a rev)", .group = "git" },
+    .{ .id = "git.reset_hard", .title = "Git: reset --hard to the selected commit / branch (confirm; undo restores)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1023,7 +1037,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "959 specs, unique ids" {
+test "973 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1034,7 +1048,8 @@ test "959 specs, unique ids" {
     // + three browse commands (file / line / commit on the remote)
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
-    // chip commands.
-    try std.testing.expectEqual(@as(usize, 959), specs.len);
+    // chip commands + three in-progress operation commands + eleven
+    // rebase-plan / amend / reset commands.
+    try std.testing.expectEqual(@as(usize, 973), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

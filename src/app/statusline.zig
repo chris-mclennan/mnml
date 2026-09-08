@@ -286,6 +286,10 @@ fn branchSeg(app: *App, ui: Ui) Allocator.Error!?Seg {
     const nerd = !ui.ascii;
     var out: std.ArrayListUnmanaged(u8) = .empty;
     if (nerd) try out.print(ui.arena, " {s} {s}", .{ providerGlyph(st.provider), branch }) else try out.print(ui.arena, " {s}", .{branch});
+    // An operation waiting on the user: `main | REBASE 2/5`.
+    if (s.in_progress != .none) {
+        if (s.total > 0) try out.print(ui.arena, " | {s} {d}/{d}", .{ s.in_progress.label(), s.step, s.total }) else try out.print(ui.arena, " | {s}", .{s.in_progress.label()});
+    }
     if (s.ahead > 0) try out.print(ui.arena, "  {s}{d}", .{ if (ui.ascii) "^" else "⇡", s.ahead });
     if (s.behind > 0) try out.print(ui.arena, " {s}{d}", .{ if (ui.ascii) "v" else "⇣", s.behind });
     const c = fileCounts(s);
