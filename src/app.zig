@@ -79,7 +79,6 @@ const watch = @import("app/watch.zig");
 const git_app = @import("app/git.zig");
 const git_palette_app = @import("app/git_palette.zig");
 const ai_app = @import("app/ai.zig");
-const agents = @import("app/agents.zig");
 const spend = @import("app/spend.zig");
 const tests_pane = @import("app/tests_pane.zig");
 const flaky = @import("app/flaky.zig");
@@ -199,6 +198,11 @@ pub const PromptPurpose = union(enum) {
     new_finding: []u8,
     /// SESSIONS: the alias for this session id (owned).
     sessions_rename: []u8,
+    /// A cloud run's ticket; the wizard's first step; its second, the
+    /// model, carrying the ticket (owned).
+    cloud_run_ticket,
+    cloud_run_wizard_ticket,
+    cloud_run_model: []u8,
     /// Dock: a new note / tail lands in this corner; an edit / rename
     /// names the widget.
     dock_new_text: dock.Corner,
@@ -270,7 +274,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value => |s| gpa.free(s),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);
@@ -313,6 +317,8 @@ pub const ConfirmPurpose = union(enum) {
     ai_tool: u64,
     /// SIGTERM these sessions (owned).
     kill_pids: []u32,
+    /// Stop this cloud run's ECS task (the ARN, owned).
+    cloud_cancel: []u8,
     /// `integrations.remove`: the manifest id to delete (owned).
     remove_integration: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
@@ -330,6 +336,7 @@ pub const ConfirmPurpose = union(enum) {
                 gpa.free(d.paths);
             },
             .kill_pids => |p| gpa.free(p),
+            .cloud_cancel => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
                 gpa.free(m.into);
@@ -807,6 +814,9 @@ pub const App = struct {
     /// Rows / text columns of the active pane at the last render; they
     /// size page motions and the wrap width.
     pane_rows: usize = 20,
+    /// // changed (sessions-merge): a session needs input and
+    /// `ui.session_bell` is on — the loop rings the terminal once.
+    bell_pending: bool = false,
     pane_cols: usize = 80,
     /// Where the last render put the terminal cursor, if visible.
     cursor_pos: ?editor_view.Cursor = null,
@@ -1954,7 +1964,6 @@ pub const App = struct {
             .sessions => |result| try sessions.handle(self, result),
             .dock => |result| try dock.handle(self, result),
             .git => |result| try git_app.handle(self, result),
-            .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
             .grep => |result| try grep.handle(self, result),
@@ -2228,6 +2237,9 @@ test {
     _ = @import("ui/pty_view.zig");
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");
+    _ = @import("app/sessions_table.zig");
+    _ = @import("app/cloud_agents.zig");
+    _ = @import("ui/sessions_table_view.zig");
     _ = @import("app/spend.zig");
     _ = @import("app/grep.zig");
     _ = @import("app/jumplist.zig");
@@ -2237,7 +2249,6 @@ test {
     _ = @import("ai/api_client.zig");
     _ = @import("ai/cli.zig");
     _ = @import("ui/ai_view.zig");
-    _ = @import("ui/agents_view.zig");
     _ = @import("ui/spend_view.zig");
     _ = @import("app/ai_apply.zig");
     _ = @import("app/launch_profiles.zig");

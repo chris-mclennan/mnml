@@ -1,23 +1,24 @@
-# Verifies the "· paused (filter)" chip renders in filter mode.
+# Re-aimed (sessions-merge): `ai.dashboard` opens the sessions table.
+# The header carries the table's chips — the sort chip, `ended:` and
+# `? help` — and the filter pill narrows the rows; a filter that
+# matches nothing says so, and Esc clears it.
 #
-# Was a SEV-3 regression in 54301a9: pause_chip was computed but the
-# filter_mode format string didn't interpolate it. Fixed in ef66d8e —
-# the filter-mode title now includes {pause_chip} so the live-tail-
-# suspended signal is visible exactly when relevant.
+# History: verified the dashboard's "· paused (filter)" title chip
+# (54301a9 / ef66d8e). The table pauses its tail while the pill has
+# the keys too, but says nothing in the title — `p` is the pause.
 
 write placeholder.txt x
 open placeholder.txt
 
 command ai.dashboard
-
-# Without filter mode, normal title.
+expect screen contains "SESSIONS"
 expect screen contains "sort:"
+expect screen contains "ended: hidden"
+expect screen contains "? help"
 
-# Enter filter mode — title now shows the pause-(filter) chip.
+# The filter pill takes the keys; nothing matches; Esc clears.
 key /
-expect screen contains "enter applies"
-expect screen contains "paused (filter)"
-
-# Esc exits filter mode.
+type zzzz
+expect screen contains "󰍉 zzzz"
 key esc
-expect screen lacks "enter applies"
+expect screen lacks "󰍉 zzzz"

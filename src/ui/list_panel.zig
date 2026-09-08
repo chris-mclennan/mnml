@@ -186,7 +186,19 @@ pub fn ListPanel(comptime Row: type) type {
             /// card turns its accent cyan): no cursor-line ground, no
             /// marker, and `paintRow` gets the whole item rect from `x`.
             own_marker: bool = false,
+            /// // changed (sessions-merge): a pane hosts the panel. Every
+            /// target registers as the pane's `.script_hit` with a
+            /// `hit.ListHit` id (rows, kebabs, chips, the filter), the
+            /// scrollbar's owner is the pane, and `focused` says whether
+            /// the pane has the keys (the `.panel` focus never does).
+            pane: ?PaneId = null,
+            /// Extra header chips (`header.ExtraChip`); pane-hosted only.
+            extra_chips: []const header.ExtraChip = &.{},
+            /// Null reads `ui.isFocused(.{ .panel })`.
+            focused: ?bool = null,
         };
+
+        pub const PaneId = hit.PaneId;
 
         pub const Outcome = union(enum) {
             ignored,
@@ -218,7 +230,10 @@ pub fn ListPanel(comptime Row: type) type {
                 .show_refresh = p.show_refresh,
                 .new_chip = p.new_chip,
                 .bg = t.panel_bg,
+                .pane = p.pane,
+                .extra = p.extra_chips,
             });
+            const focused = p.focused orelse ui.isFocused(.{ .panel = p.panel });
 
             // Filter pill.
             var caret: ?Caret = null;
@@ -231,6 +246,7 @@ pub fn ListPanel(comptime Row: type) type {
                     .caret = st.filter_caret,
                     .focused = st.filter_focused,
                     .bg = t.panel_bg,
+                    .pane = p.pane,
                 });
                 rest = fr.rest;
             }
@@ -248,7 +264,7 @@ pub fn ListPanel(comptime Row: type) type {
                     ui.fill(row_rect, style);
                     if (st.on_new) {
                         const marker = if (ui.ascii) marker_ascii else marker_glyph;
-                        const mstyle = Theme.withFg(style, if (ui.isFocused(.{ .panel = p.panel })) t.accent.fg else t.muted.fg);
+                        const mstyle = Theme.withFg(style, if (focused) t.accent.fg else t.muted.fg);
                         _ = ui.putStr(row_rect.x, row_rect.y, marker_w, marker, mstyle);
                     }
                     const text = ui.fmt(" {s} ", .{label});
@@ -256,7 +272,7 @@ pub fn ListPanel(comptime Row: type) type {
                     if (cw > 0) {
                         const cr = Rect.init(row_rect.x + 1, row_rect.y, cw, 1);
                         _ = ui.putStr(cr.x, cr.y, cw, ui.clipStr(text, cw), chip.newRowStyle(t));
-                        ui.hit(cr, .{ .chip = .{ .panel = p.panel, .kind = .new } });
+                        ui.hit(cr, hit.chipTarget(p.panel, .new, p.pane));
                     }
                 }
                 if (rest.h > 0) rest = rest.splitTop(1).rest;
@@ -284,11 +300,11 @@ pub fn ListPanel(comptime Row: type) type {
             if (win.needs_bar and rest.w > marker_w + 1) {
                 const split = rest.splitRight(1);
                 list = split.left;
-                scrollbar.drawVertical(ui, split.rest, .{ .panel = p.panel }, p.rows.len, per_page, st.scroll);
+                const owner: hit.Owner = if (p.pane) |id| .{ .pane = id } else .{ .panel = p.panel };
+                scrollbar.drawVertical(ui, split.rest, owner, p.rows.len, per_page, st.scroll);
             }
             if (list.w <= marker_w) return caret;
 
-            const focused = ui.isFocused(.{ .panel = p.panel });
             var i: usize = 0;
             while (i < win.visible) : (i += 1) {
                 const idx = win.first + i;
@@ -313,13 +329,13 @@ pub fn ListPanel(comptime Row: type) type {
                 // chips, a link): last painted wins.
                 // // changed (http-panel): was registered after `paintRow`,
                 // so a painter's targets could never be clicked.
-                ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
+                if (p.pane) |id| ui.hit(row_rect, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.row(@intCast(idx)) } }) else ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
                 p.paintRow(ui.withClip(content), content, p.rows[idx], selected);
                 if (hovered and row_rect.w > marker_w + kebab_w) {
                     const kr = row_rect.row(0).rightCells(kebab_w);
                     const kstyle = Theme.withFg(style, t.accent.fg);
                     _ = ui.putStr(kr.x, kr.y, kr.w, if (ui.ascii) kebab_ascii else kebab_glyph, kstyle);
-                    ui.hit(kr, .{ .kebab = .{ .panel = p.panel, .idx = @intCast(idx) } });
+                    if (p.pane) |id| ui.hit(kr, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.kebab(@intCast(idx)) } }) else ui.hit(kr, .{ .kebab = .{ .panel = p.panel, .idx = @intCast(idx) } });
                 }
             }
             return caret;

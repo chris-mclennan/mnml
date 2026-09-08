@@ -84,10 +84,9 @@ const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
 const ai_app = @import("ai.zig");
-const agents = @import("agents.zig");
+const sessions_table = @import("sessions_table.zig");
 const spend = @import("spend.zig");
 const ai_view = @import("../ui/ai_view.zig");
-const agents_view = @import("../ui/agents_view.zig");
 const spend_view = @import("../ui/spend_view.zig");
 const ai_apply_view = @import("../ui/ai_apply_view.zig");
 const ai_apply = @import("ai_apply.zig");
@@ -647,7 +646,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .cheatsheet => kindIcon(ascii, "?", "\u{F128}", p.yellow),
         .debug => kindIcon(ascii, "\u{1F41B}", "\u{F188}", p.red),
         .image => kindIcon(ascii, "\u{25A4}", "\u{F021F}", p.purple),
-        .claude_agents => kindIcon(ascii, "\u{25C6}", "\u{F06A9}", p.purple),
+        .sessions_table => kindIcon(ascii, "\u{25C6}", "\u{F0392}", p.purple),
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
         .spend_report => kindIcon(ascii, "$", "\u{F01C2}", p.orange),
         .mount => kindIcon(ascii, "M", "\u{F0BD3}", p.cyan),
@@ -708,6 +707,15 @@ pub fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId
             const d = diagChip(app, ui, e);
             diag = d.severity;
             diag_text = d.text;
+        }
+        // A pty whose session needs input carries a warning badge until
+        // it is the active pane.
+        if (p.* == .pty) {
+            if (active) p.pty.attention = false;
+            if (p.pty.attention) {
+                diag = .warning;
+                diag_text = if (ui.ascii) "!" else "⚠";
+            }
         }
         const icon = paneIcon(app, p, ui.ascii);
         var title = p.title();
@@ -955,7 +963,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .diff => |*d| git_app.drawDiffPane(app, ui, pr.pane, d, rect),
             .git_graph => |*g| git_app.drawGraphPane(app, ui, pr.pane, g, rect),
             .ai => |*a| drawAi(app, ui, pr.pane, a, rect),
-            .claude_agents => |*a| try drawAgents(app, ui, pr.pane, a, rect),
+            .sessions_table => |*tp| try sessions_table.drawPane(app, ui, pr.pane, tp, rect),
             .spend_report => |*s| {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
                 spend_view.draw(ui, pr.pane, rect, s, app.active == pr.pane and app.focus == .pane);
@@ -1079,24 +1087,6 @@ fn drawTests(app: *App, ui: Ui, id: PaneId, p: *tests_pane.TestsPane, rect: Rect
         .wobbly = wobbly,
         .command = try tests_pane.cmdlineFor(ui.arena, p.last_args),
     });
-}
-
-/// The Claude Agents dashboard: rows in the pane's display order.
-fn drawAgents(app: *App, ui: Ui, id: PaneId, a: *agents.AgentsPane, rect: Rect) Allocator.Error!void {
-    if (app.active == id) app.pane_rows = @max(rect.h, 1);
-    const rows = try ui.arena.alloc(agents.Row, a.visible.items.len);
-    for (a.visible.items, 0..) |idx, i| rows[i] = a.rows[idx];
-    const focused = app.active == id and app.focus == .pane;
-    const caret = agents_view.draw(ui, id, rect, a, .{
-        .rows = rows,
-        .cursor = a.cursor,
-        .focused = focused,
-        .workspace = app.workspace,
-        .now_s = @divFloor(app.now_ms, 1000),
-    });
-    if (focused) if (caret) |c| {
-        app.cursor_pos = .{ .x = c.x, .y = c.y };
-    };
 }
 
 /// The ghost text: the suggestion's first line at the cursor, the

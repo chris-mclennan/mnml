@@ -28,6 +28,40 @@ pub const PanelId = panel.PanelId;
 
 pub const ChipKind = enum { sort, refresh, new, view };
 
+/// // changed (sessions-merge): the ids a pane-hosted `ListPanel`
+/// registers its parts under (`.script_hit{ pane, id }`): a row is
+/// `row_base + idx`, its kebab `kebab_base + idx`, a header chip
+/// `chip_base + @intFromEnum(kind)`, the filter pill `filter_id`; a
+/// panel's own extra header chips pick ids below `chip_base`.
+pub const ListHit = struct {
+    pub const chip_base: u32 = 0x100;
+    pub const filter_id: u32 = 0x1ff;
+    pub const row_base: u32 = 0x1000;
+    pub const kebab_base: u32 = 0x8000_0000;
+
+    pub fn chip(kind: ChipKind) u32 {
+        return chip_base + @intFromEnum(kind);
+    }
+    pub fn row(idx: u32) u32 {
+        return row_base + idx;
+    }
+    pub fn kebab(idx: u32) u32 {
+        return kebab_base + idx;
+    }
+    /// The chip an id names, if it is one.
+    pub fn chipOf(id: u32) ?ChipKind {
+        if (id < chip_base or id >= chip_base + @typeInfo(ChipKind).@"enum".fields.len) return null;
+        return @enumFromInt(id - chip_base);
+    }
+};
+
+/// A chip's target: the panel's own, or — hosted by a pane — the pane's
+/// `.script_hit` with the chip's `ListHit` id.
+pub fn chipTarget(panel_id: PanelId, kind: ChipKind, pane: ?PaneId) HitTarget {
+    if (pane) |id| return .{ .script_hit = .{ .pane = id, .id = ListHit.chip(kind) } };
+    return .{ .chip = .{ .panel = panel_id, .kind = kind } };
+}
+
 /// The parts of a dock widget (`app/dock.zig`).
 /// // changed (panels): `.dock` joins the target set — the widgets
 /// register their title / kebab / close / body here like any component.
@@ -303,7 +337,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("divider:0", .{ .divider = 0 });
     try expectLabel("button:6", .{ .button = 6 });
     try expectLabel("rail:explorer", .{ .rail = .{ .section = .explorer } });
-    try expectLabel("rail:cloud_agents", .{ .rail = .{ .section = .cloud_agents } });
+    try expectLabel("rail:sessions", .{ .rail = .{ .section = .sessions } });
     try expectLabel("rail:gear", .{ .rail = .gear });
     try expectLabel("git_palette:repo", .{ .git_palette = .repo });
     try expectLabel("git_palette:repo_next", .{ .git_palette = .repo_next });

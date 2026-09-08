@@ -94,9 +94,6 @@ pub const table = .{
     .@"ai.chip_show_all_off" = &chipAllOff,
     .@"ai.chip_show_all_compact" = &chipAllCompact,
     .@"ai.chip_show_all_ticker" = &chipAllTicker,
-    .@"cloud_agents.refresh" = &cloudNotInBuild,
-    .@"cloud_agents.new_run" = &cloudNotInBuild,
-    .@"cloud_agents.new_run_wizard" = &cloudNotInBuild,
     .@"cloud_agents.refresh_run_detail" = &cloudNotInBuild,
     .@"cloud_agents.focus_quick_input" = &cloudNotInBuild,
     .@"cloud_agents.spawn_worker" = &cloudNotInBuild,
@@ -324,12 +321,10 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
 /// Every tick: fire the request once the clock is due.
 pub fn tick(app: *App) Allocator.Error!void {
     if (app.ai.debounce.due(app.now_ms)) try fireSuggestion(app);
-    try agents.tickAll(app);
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     var next: ?i64 = app.ai.debounce.deadline();
-    if (agents.nextDeadlineMs(app)) |d| next = @min(next orelse std.math.maxInt(i64), d);
     if (spend.anyLoading(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 120);
     return next;
 }

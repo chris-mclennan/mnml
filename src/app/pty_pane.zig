@@ -95,6 +95,10 @@ pub const PtyPane = struct {
     cwd: ?[]u8,
     kind: Kind,
     exit: ?Exit = null,
+    /// // changed (sessions-merge): the session in this pane needs input
+    /// (`sessions.zig` sets it on the edge); the tab shows a badge until
+    /// the pane is looked at.
+    attention: bool = false,
     /// The grid size the session was last fitted to.
     cols: u16,
     rows: u16,

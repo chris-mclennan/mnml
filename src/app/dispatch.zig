@@ -102,7 +102,8 @@ const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
 const side = @import("side.zig");
 const ai_app = @import("ai.zig");
-const agents = @import("agents.zig");
+const sessions_table = @import("sessions_table.zig");
+const cloud_agents = @import("cloud_agents.zig");
 const spend = @import("spend.zig");
 const grep = @import("grep.zig");
 const jumplist = @import("jumplist.zig");
@@ -231,8 +232,8 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             _ = try chordChain(app, k);
             return;
         },
-        .claude_agents => |*a| {
-            if (try agents.handleKey(app, id, a, k)) return;
+        .sessions_table => |*tp| {
+            if (try sessions_table.handleKey(app, id, tp, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1074,6 +1075,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),
+        .cloud_run_ticket => try cloud_agents.acceptRun(app, text, null),
+        .cloud_run_wizard_ticket => try cloud_agents.acceptWizardTicket(app, text),
+        .cloud_run_model => |ticket| try cloud_agents.acceptRun(app, ticket, text),
         .dock_new_text => |c| try dock.acceptNewText(app, c, text),
         .dock_new_log => |c| try dock.acceptNewLog(app, c, text),
         .dock_edit => |id| try dock.acceptEdit(app, id, text),
@@ -1170,7 +1174,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
         .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
-        .kill_pids => |pids| if (choice == 0) try agents.killAccept(app, pids),
+        .kill_pids => |pids| if (choice == 0) try sessions.killAccept(app, pids),
+        .cloud_cancel => |arn| if (choice == 0) try cloud_agents.cancelAccept(app, arn),
         .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
     }
 }
@@ -1656,7 +1661,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git_status => |*s| try git_app.statusPaneClick(app, s, sh.id, m),
                 .diff => |*d| try git_app.diffClick(app, sh.pane, d, sh.id, m),
                 .git_graph => |*g| try git_app.graphClick(app, sh.pane, g, sh.id, m),
-                .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
+                .sessions_table => |*tp| try sessions_table.click(app, sh.pane, tp, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
@@ -2101,7 +2106,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .diff => |*d| git_app.stepDiff(d, if (down) @as(isize, @intCast(n)) else -@as(isize, @intCast(n))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.totalRows() -| 1) else g.cursor -| n,
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
-        .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .sessions_table => |*tp| sessions_table.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .grep => |*g| grep.scrollBy(g, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .debug => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),

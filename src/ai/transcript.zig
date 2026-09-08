@@ -29,6 +29,10 @@ pub const Stats = struct {
     last_was_tool_call: bool = false,
     last_tool_name: ?[]const u8 = null,
     pending_tool_uses: usize = 0,
+    /// The transcript ends on an error: Claude Code's `isApiErrorMessage`
+    /// assistant turn, or a `result` event with `is_error` — what makes
+    /// a session without a process `failed` rather than `done`.
+    last_error: bool = false,
 
     pub fn costUsd(s: Stats) f64 {
         return estimateCost(s.model orelse "", s.input_tokens, s.output_tokens, s.cache_create_tokens, s.cache_read_tokens);
@@ -58,8 +62,13 @@ pub fn parseClaude(arena: Allocator, text: []const u8) Allocator.Error!Stats {
         if (str(v, "gitBranch")) |b| st.git_branch = try arena.dupe(u8, b);
         const ty = str(v, "type") orelse "";
         const msg = v.object.get("message");
+        if (std.mem.eql(u8, ty, "result")) {
+            st.last_error = boolean(v, "is_error");
+            continue;
+        }
         if (std.mem.eql(u8, ty, "assistant")) {
             st.last_was_tool_call = false;
+            st.last_error = boolean(v, "isApiErrorMessage");
             const m = msg orelse continue;
             if (str(m, "model")) |model| st.model = try arena.dupe(u8, model);
             if (m == .object) if (m.object.get("usage")) |usage| {
@@ -193,6 +202,12 @@ fn str(v: std.json.Value, key: []const u8) ?[]const u8 {
     return if (f == .string) f.string else null;
 }
 
+fn boolean(v: std.json.Value, key: []const u8) bool {
+    if (v != .object) return false;
+    const b = v.object.get(key) orelse return false;
+    return b == .bool and b.bool;
+}
+
 fn int(v: std.json.Value, key: []const u8) u64 {
     if (v != .object) return 0;
     const f = v.object.get(key) orelse return 0;
@@ -305,6 +320,26 @@ pub const claude_fixture =
     \\{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}}
     \\{"type":"assistant","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":100,"output_tokens":20},"content":[{"type":"tool_use","id":"toolu_2","name":"Edit","input":{"file_path":"a.zig"}}]}}
 ;
+
+test "parseClaude: an API error turn or an is_error result marks the transcript failed; a later assistant text clears it" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const failed =
+        \\{"type":"user","message":{"role":"user","content":"go"}}
+        \\{"type":"assistant","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"API Error: 529 overloaded"}]}}
+    ;
+    try t.expect((try parseClaude(arena.allocator(), failed)).last_error);
+    const result_err =
+        \\{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}
+        \\{"type":"result","is_error":true,"subtype":"error_max_turns"}
+    ;
+    try t.expect((try parseClaude(arena.allocator(), result_err)).last_error);
+    const recovered = failed ++ "\n" ++
+        \\{"type":"assistant","message":{"content":[{"type":"text","text":"Back."}]}}
+    ;
+    try t.expect(!(try parseClaude(arena.allocator(), recovered)).last_error);
+    try t.expect(!(try parseClaude(arena.allocator(), claude_fixture)).last_error);
+}
 
 test "parseClaude: tokens sum across assistant events, the last messages and the pending tool are kept" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);

@@ -114,7 +114,7 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
     return switch (p.*) {
         .grep => .search,
         .debug => .debug,
-        .claude_agents => .agents,
+        .sessions_table => .sessions,
         .integrations => .integrations,
         // Rust keeps the rail marker on Files for the status pane; only
         // the graph (git mode) moves it to Git.
@@ -208,7 +208,7 @@ fn activityDebug(app: *App) CommandError!void {
 
 fn activityAgents(app: *App) CommandError!void {
     enter(app, .agents);
-    return command.run(app, .{ .static = .@"ai.dashboard" });
+    return command.run(app, .{ .static = .@"sessions.table" });
 }
 
 fn activityCloudAgents(app: *App) CommandError!void {

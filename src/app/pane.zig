@@ -22,7 +22,7 @@ const cheatsheet = @import("cheatsheet.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
-const agents = @import("agents.zig");
+const sessions_table = @import("sessions_table.zig");
 const spend = @import("spend.zig");
 const grep = @import("grep.zig");
 const dap = @import("dap.zig");
@@ -149,8 +149,8 @@ pub const Pane = union(enum) {
     git_graph: git_app.GraphPane,
     /// An AI answer: the prompt and what the job streamed back.
     ai: ai_app.AiPane,
-    /// The Claude Agents dashboard (one at a time).
-    claude_agents: agents.AgentsPane,
+    /// The sessions table (one at a time; `sessions.table`).
+    sessions_table: sessions_table.TablePane,
     /// The AI spend report (one at a time).
     spend_report: spend.SpendPane,
     /// Workspace grep results (`find.grep`).
@@ -202,7 +202,7 @@ pub const Pane = union(enum) {
             .diff => |*d| d.deinit(),
             .git_graph => |*g| g.deinit(),
             .ai => |*a| a.deinit(),
-            .claude_agents => |*a| a.deinit(io),
+            .sessions_table => |*tp| tp.deinit(),
             .spend_report => |*s| s.deinit(io),
             .grep => |*g| g.deinit(io),
             .debug => {},
@@ -225,7 +225,7 @@ pub const Pane = union(enum) {
             .diff => |*d| return d.title,
             .git_graph => |*g| return g.name,
             .ai => |*a| return a.title,
-            .claude_agents => return "Claude Agents",
+            .sessions_table => return "Sessions",
             .spend_report => return "AI spend (24h)",
             .grep => return "Search",
             .debug => return "Debug",
@@ -245,7 +245,7 @@ pub const Pane = union(enum) {
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 

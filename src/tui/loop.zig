@@ -120,6 +120,10 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
             }
         }
         try app.tick(App.nowMs(io));
+        if (app.bell_pending) {
+            app.bell_pending = false;
+            term.writeRaw("\x07") catch {};
+        }
         if (app.needs_render) {
             try app.renderInto(term.screen());
             term.render() catch {};

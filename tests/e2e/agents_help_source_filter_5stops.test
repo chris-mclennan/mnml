@@ -1,13 +1,13 @@
-# Verify the help overlay lists the source-filter stops.
+# Re-aimed (sessions-merge): the table's help lists the where cycle.
 #
 # History (file name kept for git history):
-#   Original: 5 stops — `all → claude → codex → ecs → managed → all`.
+#   Original: the dashboard's 5-stop source cycle
+#     (`all → claude → codex → ecs → managed → all`).
 #   2026-07-10: acmeco-qwe renamed to ecs.
-#   Later: cycle restricted to `all → claude → codex → all` —
-#     ecs/managed are skipped in the `>` / `<` handlers because
-#     including them showed a misleading "0/N — no Claude sessions"
-#     empty state (the `>` / `<` handlers of the agents pane).
-# So the current expectation is claude + codex only.
+#   Later: the cycle restricted to `all → claude → codex → all`.
+#   sessions-merge: the dashboard became the sessions table; a source
+#     filter is the text filter now (`/ codex`), and the cloud rows are
+#     a `where` (all → local → cloud) — the help says so.
 
 write placeholder.txt x
 open placeholder.txt
@@ -16,10 +16,10 @@ command ai.dashboard
 
 # Open help overlay.
 key ?
-# The help row is `> / < : cycle source filter (all → claude → codex → all)`.
-expect screen contains "claude"
-expect screen contains "codex"
+expect screen contains "Sessions table — help"
+expect screen contains "all → local → cloud"
+expect screen contains "waiting → live → tool → idle → failed → done"
 
 # Close help.
 key ?
-expect screen lacks "Claude Agents — help"
+expect screen lacks "Sessions table — help"
