@@ -112,6 +112,7 @@ otherwise. Copy what you need; leave the rest out.
         .plus_menu_hidden = .{},
         .auto_refresh_off = .{}, // panel ids whose auto-refresh is off
         .sessions_sort = .auto, // .auto | .manual
+        .session_bell = false, // ring the terminal bell when a session starts waiting for input (SESSIONS toasts once per edge either way)
         .todos_sort = .newest, // .newest | .oldest | .name | .name_desc
         .notes_sort = .newest,
         .findings_sort = .newest,

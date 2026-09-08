@@ -309,7 +309,7 @@ pub fn refilter(app: *App, tp: *TablePane) Allocator.Error!void {
     tp.visible.clearRetainingCapacity();
     tp.groups.clearRetainingCapacity();
     tp.built = true;
-    const now_s = @divFloor(app.now_ms, 1000);
+    const now_s = sessions.wallNowS(app);
     const q = tp.list.filterText();
     const items = app.sessions.items;
     // Pass 1: the groups and each row's membership.
@@ -359,7 +359,10 @@ pub fn refilter(app: *App, tp: *TablePane) Allocator.Error!void {
     defer idx.deinit(gpa);
     for (order) |gi| {
         const g = tp.groups.items[gi];
-        if (g.count == 0 and (g.hidden == 0 or tp.anyFilter())) continue;
+        // // changed: a group whose every session is hidden is not painted
+        // either — the summary counts them and, with nothing else listed,
+        // the empty state points at E.
+        if (g.count == 0) continue;
         try tp.visible.append(gpa, .{ .group = gi });
         if (tp.isCollapsed(g.key)) continue;
         idx.clearRetainingCapacity();
@@ -749,7 +752,7 @@ pub fn drawPane(app: *App, ui: Ui, id: PaneId, tp: *TablePane, rect: Rect) Alloc
         } },
         .item => |ii| .{ .item = try itemView(app, st.items[ii]) },
     };
-    const now_s = @divFloor(app.now_ms, 1000);
+    const now_s = sessions.wallNowS(app);
     const focused_pane = app.active == id and app.focus == .pane;
     const caret = view.draw(ui, id, rect, tp, .{
         .rows = rows,
@@ -795,6 +798,7 @@ fn seed(app: *App, items: []const Item) !void {
     const rows = try a.alloc(Item, items.len);
     for (items, 0..) |it, i| rows[i] = try sessions.dupeItem(a, it);
     r.items = rows;
+    r.at_s = @divFloor(app.now_ms, 1000); // the tests' rows sit on the awake clock
     try sessions.handle(app, r);
     app.sessions.scanned_once = true; // no rescan of the real home over these
 }

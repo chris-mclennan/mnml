@@ -185,6 +185,10 @@ pub const ScanResult = struct {
     arena: std.heap.ArenaAllocator,
     items: []Item = &.{},
     generation: u32,
+    /// Wall-clock seconds when the scan ran — the clock `last_activity_s`
+    /// is on. `App.now_ms` is the awake clock, so an age or the
+    /// hidden-ended rule must not read it (`wallNowS`).
+    at_s: i64 = 0,
 
     pub fn create(gpa: Allocator, generation: u32) Allocator.Error!*ScanResult {
         const r = try gpa.create(ScanResult);
@@ -267,6 +271,10 @@ pub const State = struct {
     cloud: ?cloud_agents.Opts = null,
     /// The first adoption has no edges to report.
     adopted_once: bool = false,
+    /// The snapshot's wall clock and the awake clock it was adopted at:
+    /// `wallNowS` extrapolates the wall clock from the two.
+    snapshot_at_s: i64 = 0,
+    snapshot_at_ms: i64 = 0,
 
     pub fn init(gpa: Allocator, sort: SessionsSort) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .sort = sort };
@@ -428,6 +436,7 @@ pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8,
     const now = Io.Timestamp.now(io, .real).toSeconds();
     try agents.dirtyScan(io, gpa, arena, rows.items, now);
     r.items = rows.items;
+    r.at_s = now;
 }
 
 // ─── the event handler (D1) ─────────────────────────────────────────────
@@ -444,6 +453,8 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
     const edges = try stateEdges(frame, st.items, result.items);
     st.snapshot.reset();
     st.items = &.{};
+    st.snapshot_at_s = result.at_s;
+    st.snapshot_at_ms = app.now_ms;
     const arena = st.snapshot.allocator();
     const items = try arena.alloc(Item, result.items.len);
     for (result.items, 0..) |it, i| items[i] = try dupeItem(arena, it);
@@ -491,6 +502,16 @@ fn announceEdges(app: *App, edges: []const Edge) Allocator.Error!void {
             else => {},
         }
     }
+}
+
+/// Wall-clock seconds now, the clock `Item.last_activity_s` is on: the
+/// snapshot's, moved on by the awake clock since. `App.now_ms` alone is
+/// the awake clock — seconds since boot — and reads every session as
+/// `now` (// changed: the table's age column and hidden-ended rule
+/// compared the two clocks and hid nothing).
+pub fn wallNowS(app: *App) i64 {
+    const st = &app.sessions;
+    return st.snapshot_at_s + @divFloor(app.now_ms - st.snapshot_at_ms, 1000);
 }
 
 pub fn findItem(app: *App, session_id: []const u8) ?Item {
@@ -1938,6 +1959,53 @@ test "Move to top / bottom lead or end the manual order under the pins; a cloud 
     };
     try testing.expect(saw_cw);
     try f.app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "state edges: the first listing is no edge; live → waiting toasts once (warn) and rings the bell only under ui.session_bell; the same listing again is quiet; failed toasts err" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    const ws = std.fs.path.basename(f.root);
+    const msgs = &f.app.messages.items;
+    const listing = struct {
+        fn post(fx: *Fixture, a: AgentState, b: AgentState) !void {
+            const r = try ScanResult.create(testing.allocator, 1);
+            const items = try r.arena.allocator().alloc(Item, 2);
+            items[0] = item("a", a, 30, std.fs.path.basename(fx.root), "approve?");
+            items[1] = item("b", b, 20, std.fs.path.basename(fx.root), "ship it");
+            r.items = items;
+            fx.app.sessions.generation = 1;
+            try handle(&fx.app, r);
+        }
+    };
+    _ = ws;
+    const before = msgs.items.len;
+    // A session that is already waiting when first listed is no edge.
+    try listing.post(&f, .waiting, .streaming);
+    try testing.expectEqual(before, msgs.items.len);
+    try testing.expect(!f.app.bell_pending);
+    // b goes waiting: one warn toast naming it; the bell is off by default.
+    try listing.post(&f, .waiting, .waiting);
+    try testing.expectEqual(before + 1, msgs.items.len);
+    try testing.expectEqualStrings("session needs input: ship it", msgs.items[msgs.items.len - 1].text);
+    try testing.expectEqual(app_mod.ToastLevel.warn, msgs.items[msgs.items.len - 1].level);
+    try testing.expect(!f.app.bell_pending);
+    // The same listing on the next tick: nothing new.
+    try listing.post(&f, .waiting, .waiting);
+    try listing.post(&f, .waiting, .waiting);
+    try testing.expectEqual(before + 1, msgs.items.len);
+    // Quiet edges say nothing; a → failed toasts err; b back to waiting
+    // rings the bell once the config asks.
+    try listing.post(&f, .streaming, .idle);
+    try testing.expectEqual(before + 1, msgs.items.len);
+    f.app.cfg.ui.session_bell = true;
+    try listing.post(&f, .failed, .waiting);
+    try testing.expectEqual(before + 3, msgs.items.len);
+    try testing.expectEqualStrings("session failed: approve?", msgs.items[msgs.items.len - 2].text);
+    try testing.expectEqual(app_mod.ToastLevel.err, msgs.items[msgs.items.len - 2].level);
+    try testing.expect(f.app.bell_pending);
+    // Sorted first in the section on either axis.
+    try testing.expectEqualStrings("b", st.items[st.filtered.items[0]].session_id);
 }
 
 test "a relative HOME is under the workspace: what a .test file seeds" {

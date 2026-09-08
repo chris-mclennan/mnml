@@ -93,6 +93,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, tp: *table.TablePane, props: Props
         return null;
     }
     setClock(props.now_ms);
+    ui_now_s = props.now_s;
     const sh = summaryRows(area.h);
     var list_area = area;
     var summary_area = Rect.empty;
@@ -248,7 +249,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
                 cx += ui.putStr(cx, r.y, col_tokens, ui.fmt("{s:>8}", .{transcript.fmtTokens(&tb, it.tokens)}), num_style);
             }
             if (cols.cost) cx += ui.putStr(cx, r.y, col_cost, ui.fmt("{s:>9}", .{ui.fmt("${d:.2}", .{it.cost_usd})}), num_style);
-            if (cols.age) cx += ui.putStr(cx, r.y, col_age, ui.fmt("{s:>6}", .{list_panel.ageText(ui, @divFloor(ui_now_ms, 1000), it.last_activity_s)}), num_style);
+            if (cols.age) cx += ui.putStr(cx, r.y, col_age, ui.fmt("{s:>6}", .{list_panel.ageText(ui, ui_now_s, it.last_activity_s)}), num_style);
             if (cols.dirty) {
                 const d = if (it.dirty) |n| (if (n > 0) ui.fmt("{s}{d}", .{ if (ui.ascii) "*" else "●", n }) else "") else "";
                 rightAligned(ui, cx, r.y, col_dirty, d, Theme.withFg(style, if (it.dirtyEnded()) th.palette.orange else th.muted.fg));
@@ -276,6 +277,8 @@ fn rightAligned(ui: Ui, x: u16, y: u16, w: u16, text: []const u8, style: vaxis.S
 /// `paintRow` has no props: the frame's clock is parked here by `draw`.
 /// One painter runs at a time, on the UI thread.
 var ui_now_ms: i64 = 0;
+/// The wall clock the ages are on (`sessions.wallNowS`).
+var ui_now_s: i64 = 0;
 
 fn drawSummary(ui: Ui, pane: PaneId, area: Rect, props: Props) void {
     const th = ui.theme;
@@ -401,6 +404,7 @@ test "a group row carries the captions over the numbers; a session row is the ba
     var f = try Fixture.init(90, 4);
     defer f.deinit();
     setClock(1_000_000 * 1000);
+    ui_now_s = 1_000_000;
     var it = sessions.testItem("aaaaaaaa-1111", .streaming, 1_000_000 - 120, "mnml", "fix the tests");
     it.last_assistant_msg = "Running them now.";
     it.tokens = 12_500;
