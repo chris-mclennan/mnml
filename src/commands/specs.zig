@@ -928,6 +928,7 @@ pub const specs = [_]Spec{
     .{ .id = "dotnet.test", .title = ".NET: run `dotnet test` at the nearest .sln / .csproj (results pane)", .group = "test" },
     .{ .id = "dotnet.restore", .title = ".NET: run `dotnet restore` at the nearest .sln / .csproj in a pty pane", .group = "test" },
     .{ .id = "dotnet.watch", .title = ".NET: run `dotnet watch run` at the nearest .csproj in a pty pane", .group = "test" },
+    .{ .id = "dotnet.debug", .title = ".NET: `dotnet build`, then debug the active .cs file's project (netcoredbg)", .group = "dap" },
     .{ .id = "test.run_all", .title = "Tests: run the whole Playwright suite", .group = "test" },
     .{ .id = "test.run_file", .title = "Tests: run this spec file", .group = "test" },
     .{ .id = "test.run_at_cursor", .title = "Tests: run the test at the cursor", .group = "test" },
@@ -1060,7 +1061,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "994 specs, unique ids" {
+test "995 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1075,6 +1076,7 @@ test "994 specs, unique ids" {
     // rebase-plan / amend / reset commands.
     // + two ZON view commands.
     // + five dotnet runners.
-    try std.testing.expectEqual(@as(usize, 994), specs.len);
+    // + six dotnet commands.
+    try std.testing.expectEqual(@as(usize, 995), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

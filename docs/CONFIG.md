@@ -377,6 +377,20 @@ otherwise. Copy what you need; leave the rest out.
         // `$NAME` / `${NAME}` in .cmd or an argument expands from the
         // environment when the adapter is spawned; dap.run re-reads
         // this table when the file has no adapter yet (trusted only).
+        //
+        // Built in, consulted after this table and the re-read, so an
+        // entry here for the same key wins (`dap.builtin_adapters`):
+        //   .cs = .{ .cmd = "netcoredbg", .args = .{ "--interpreter=vscode" } }
+        //     launch = { program: <csproj dir>/bin/Debug/<TargetFramework>/<AssemblyName>.dll, cwd: <csproj dir> }
+        //     — derived from the nearest .csproj at or above the file
+        //     (`<AssemblyName>` else the file's stem; `<TargetFramework>`,
+        //     else the first of `<TargetFrameworks>`, else net8.0). The
+        //     assembly must be built: `dotnet.debug` runs `dotnet build` in
+        //     a task pane first and starts the session when it exits 0;
+        //     `dap.run` (F5) on a .cs file launches what is already built.
+        //     netcoredbg is a release download (github.com/Samsung/netcoredbg);
+        //     its `all` / `user-unhandled` exception filters appear in
+        //     `dap.exceptions`, `user-unhandled` on by default.
     },
 
     // ── browser / ci / integrations ────────────────────────────────────
