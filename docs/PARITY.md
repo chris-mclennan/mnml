@@ -29,7 +29,7 @@ line), not by hand.
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
 | Git | 46 | 1 | 2 | 0 | 49 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
-| AI | 20 | 0 | 1 | 0 | 21 |
+| AI | 24 | 0 | 1 | 0 | 25 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
 | HTTP request client | 48 | 0 | 1 | 0 | 49 |
@@ -40,7 +40,7 @@ line), not by hand.
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **499** | **4** | **9** | **3** | **515** |
+| **total** | **503** | **4** | **9** | **3** | **519** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -422,7 +422,11 @@ trust sink. Each row names its file and its test.
 | Context-aware chat | done | `chatCmd` in `ai.zig` | |
 | Launch profiles | done | `src/app/launch_profiles.zig`, `Config.Ai.launch_profiles` / `default_profile` | the chip menu's *New session:* / *Default:* lanes; the `mnml-ai-<name>` shim (`writeShim`) |
 | Legacy "Set launcher script…" | done | the last row of the AI chip menu (`legacy_label` / `openProfilePicker` in `src/app/launch_profiles.zig`) | opens the launch-profile picker (Enter starts a session) and toasts that launcher scripts are profiles now |
-| Agents dashboard, spend report | done | `src/app/agents.zig`, `src/app/spend.zig` | beyond the Rust list |
+| Sessions table (was the Agents dashboard), spend report | done | `src/app/sessions_table.zig`, `src/ui/sessions_table_view.zig`, `src/app/spend.zig`; `sessions.table` / `ai.dashboard` | one row model (`sessions.Item`) behind the SESSIONS cards and the table: grouped by cwd, this workspace first; state / where / text filters; ended past a day hidden until the `ended:` chip; space ticks, K kills the batch; the summary block |
+| Cloud runs as SESSIONS rows | done | `src/app/cloud_agents.zig`, `Item.where` / `CloudInfo` in `src/sessions.zig` | scanned when `[cloud_agents]` is configured; Open run / Tail log / Cancel run… and the CloudWatch / PR links on the row menu; the two wizards under `+ New session` |
+| `waiting` / `done` / `failed` states, the edge toast, the bell | done | `AgentState` in `src/app/agents.zig`, `stateEdges` / `announceEdges` in `src/sessions.zig`, `ui.session_bell` | a dangling tool use gone quiet is `waiting`: first in both views, one warn toast per edge, the pty tab badged, the bell under the config; `failed` off the transcript's last error |
+| Done-but-dirty signal | done | `agents.dirtyScan`, the `dirty` column and the summary's `dirty, ended` | one `git status --porcelain` per distinct cwd on the refresh cadence |
+| AGENTS / CLOUD AGENTS rail rows folded into SESSIONS | done | `Section.rail` in `src/ui/activity_bar.zig`; `view.activity_agents` / `view.activity_cloud_agents` as aliases | scripts naming the rows keep passing |
 
 ## Terminal & process panes
 
