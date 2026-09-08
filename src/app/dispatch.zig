@@ -1594,6 +1594,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .rail => |part| try activity_bar.mouse(app, part, m),
         .git_palette => |part| try git_palette.partMouse(app, part, m),
+        .http => |part| try http_panel.partMouse(app, part, m),
         .welcome => |row| {
             // The welcome pane: a recent file opens, a shortcut row runs
             // its command.

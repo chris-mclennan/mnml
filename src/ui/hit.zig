@@ -19,6 +19,7 @@ const panel = @import("../core/panel.zig");
 const activity_bar = @import("activity_bar.zig");
 const tree_view = @import("tree_view.zig");
 const git_palette = @import("git_palette.zig");
+const http_panel = @import("http_panel.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -103,6 +104,10 @@ pub const HitTarget = union(enum) {
     /// The git palette's repo pill and branch row (`ui/git_palette.zig`);
     /// its list rows are `.row{ .git }`.
     git_palette: git_palette.Part,
+    /// The HTTP section's own targets (`ui/http_panel.zig`): a section
+    /// header's chip, a link row, the ` + ` on a collection folder row;
+    /// its list rows are `.row{ .http }`.
+    http: http_panel.Part,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -141,6 +146,11 @@ pub const HitTarget = union(enum) {
             },
             .welcome => |v| try w.print(":{s}:{d}", .{ @tagName(v.kind), v.idx }),
             .git_palette => |v| try w.print(":{s}", .{@tagName(v)}),
+            .http => |v| switch (v) {
+                .chip => |c| try w.print(":chip:{s}:{s}", .{ @tagName(c.section), @tagName(c.kind) }),
+                .link => |l| try w.print(":link:{s}", .{@tagName(l)}),
+                .folder_new => |i| try w.print(":folder_new:{d}", .{i}),
+            },
         }
     }
 };
@@ -291,6 +301,9 @@ test "labels are the tag plus the payload" {
     try expectLabel("rail:cloud_agents", .{ .rail = .{ .section = .cloud_agents } });
     try expectLabel("rail:gear", .{ .rail = .gear });
     try expectLabel("git_palette:repo", .{ .git_palette = .repo });
+    try expectLabel("http:chip:recent:clear", .{ .http = .{ .chip = .{ .section = .recent, .kind = .clear } } });
+    try expectLabel("http:link:paste_curl", .{ .http = .{ .link = .paste_curl } });
+    try expectLabel("http:folder_new:2", .{ .http = .{ .folder_new = 2 } });
     try expectLabel("tree_root:0", .{ .tree_root = 0 });
     try expectLabel("tree_chip:new_file", .{ .tree_chip = .new_file });
     try expectLabel("info_view:kebab", .{ .info_view = .kebab });

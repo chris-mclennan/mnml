@@ -6,6 +6,19 @@
 //! Enter opens a file, applies an env, runs a chain, copies a cookie or
 //! re-opens a recent / captured request as a scratch pane.
 //!
+//! This file is the state and the actions; the painter is
+//! `ui/http_panel.zig` (the rows, the header chip ladders, the folder
+//! tree, the empty words, the links). COLLECTIONS is a tree: every
+//! folder holding request files is a collection row (`▾ 󰉋 requests
+//! (3)`, a ` + ` at its edge for a new request inside it), the files
+//! under it; `.mnml/collections/<name>/` folders are the hidden kind;
+//! files at the workspace root stand alone. Under an empty section its
+//! words and, where a thing can be made, the green `+ New …` link;
+//! after the last section `+ New request` / `↓ Paste curl…` /
+//! `↓ Import…`. Entering the section opens a blank request pane in the
+//! centre when no request pane is active (Rust's `entering_http`);
+//! leaving does not close it.
+//!
 //! The data is a snapshot: `refresh` rescans everything synchronously
 //! (a workspace walk capped at `scan_cap` request files, plus the small
 //! `.mnml` / `.rqst` lists) onto one arena that the next refresh drops.
@@ -19,10 +32,9 @@ const command = @import("../core/command.zig");
 const panel = @import("../core/panel.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
-const Theme = @import("../ui/theme.zig");
 const hit = @import("../ui/hit.zig");
 const list_panel = @import("../ui/list_panel.zig");
-const chip = @import("../ui/chip.zig");
+const view = @import("../ui/http_panel.zig");
 const env_mod = @import("../http/env.zig");
 const history = @import("../http/history.zig");
 const captured = @import("../http/captured.zig");
@@ -37,47 +49,13 @@ const CommandError = command.CommandError;
 const Key = key_mod.Key;
 const Mouse = key_mod.Mouse;
 
-pub const Section = enum {
-    collections,
-    envs,
-    chains,
-    mocks,
-    cookies,
-    recent,
-    captured,
-
-    pub const all = [_]Section{ .collections, .envs, .chains, .mocks, .cookies, .recent, .captured };
-
-    pub fn label(s: Section) []const u8 {
-        return switch (s) {
-            .collections => "COLLECTIONS",
-            .envs => "ENVS",
-            .chains => "CHAINS",
-            .mocks => "MOCKS",
-            .cookies => "COOKIES",
-            .recent => "RECENT",
-            .captured => "CAPTURED",
-        };
-    }
-};
-
-/// One displayed row: a section header or an item of it. Strings
-/// borrow the snapshot arena.
-pub const Row = struct {
-    section: Section,
-    header: bool = false,
-    /// Header: how many items the filter left.
-    count: u32 = 0,
-    /// Item: the primary text and the dim detail after it.
-    label: []const u8 = "",
-    detail: []const u8 = "",
-    /// Item: its index in the section's data.
-    idx: u32 = 0,
-    /// Header: the section is folded (the chevron says so).
-    collapsed: bool = false,
-};
-
-pub const Panel = list_panel.ListPanel(Row);
+pub const Section = view.Section;
+pub const Row = view.Row;
+pub const Kind = view.Kind;
+pub const Link = view.Link;
+pub const ChipKind = view.ChipKind;
+pub const Part = view.Part;
+pub const Panel = view.Panel;
 
 /// Runners, merged into `command.runners` at comptime (D5).
 pub const table = .{
@@ -94,13 +72,31 @@ pub const recent_cap: usize = 50;
 const skip_dirs = [_][]const u8{ "node_modules", "target", "zig-out", "zig-cache", "dist", "build", "vendor" };
 /// A second click on the selected row within this window opens it.
 const double_click_ms: i64 = 500;
+/// Where `http.new_collection` puts a collection.
+pub const hidden_root = ".mnml/collections";
+
+/// A collection: a folder with request files in it.
+pub const Folder = struct {
+    /// Workspace-relative directory.
+    rel: []const u8,
+    /// What the row says: the relative directory, or the collection's
+    /// name for a hidden one.
+    name: []const u8,
+    hidden: bool,
+    /// Indices into `State.files`.
+    members: []const u32,
+};
 
 pub const State = struct {
     /// D1: the snapshot tier — every list below lives here until the
     /// next `refresh` drops them all at once.
     snapshot: alloc.SnapshotArena,
-    /// Request files, workspace-relative, sorted.
+    /// Request files, workspace-relative, sorted; the hidden
+    /// collections' files among them.
     files: []const []const u8 = &.{},
+    folders: []const Folder = &.{},
+    /// Indices into `files` of the files at the workspace root.
+    loose: []const u32 = &.{},
     envs: []const []const u8 = &.{},
     /// The active env at the last refresh, if any.
     active_env: ?[]const u8 = null,
@@ -117,6 +113,8 @@ pub const State = struct {
     rows: std.ArrayListUnmanaged(Row) = .empty,
     list: Panel.State = .{},
     collapsed: std.enums.EnumSet(Section) = .initEmpty(),
+    /// Folded collection folders, by relative directory (keys on the gpa).
+    collapsed_dirs: std.StringArrayHashMapUnmanaged(void) = .empty,
     scanned_once: bool = false,
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
 
@@ -127,6 +125,8 @@ pub const State = struct {
     pub fn deinit(self: *State, gpa: Allocator) void {
         self.rows.deinit(gpa);
         self.list.deinit(gpa);
+        for (self.collapsed_dirs.keys()) |k| gpa.free(k);
+        self.collapsed_dirs.deinit(gpa);
         self.snapshot.deinit();
     }
 
@@ -153,9 +153,18 @@ pub const State = struct {
         for (Section.all) |s| n += self.total(s);
         return n;
     }
+
+    /// The count a section's header shows this frame.
+    pub fn shown(self: *const State, s: Section) ?u32 {
+        for (self.rows.items) |r| if (r.kind == .header and r.section == s) return r.count;
+        return null;
+    }
 };
 
 pub const CookieRow = struct { host: []const u8, name: []const u8, value: []const u8 };
+
+/// A screen position a menu drops at.
+pub const Pos = struct { x: u16, y: u16 };
 
 // ─── the scan ───────────────────────────────────────────────────────────
 
@@ -172,8 +181,10 @@ pub fn refresh(app: *App) Allocator.Error!void {
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
     };
+    try walkHidden(app.io, app.gpa, a, app.workspace, &files);
     sortStrings(files.items);
     sortStrings(mocks.items);
+    const grouped = try groupFolders(a, files.items);
     const envs = try env_mod.listNames(a, app.io, app.workspace);
     const active_env: ?[]const u8 = if (try http.envName(app, a)) |n| try a.dupe(u8, n) else null;
     const chains = try listChains(app, a);
@@ -194,6 +205,8 @@ pub fn refresh(app: *App) Allocator.Error!void {
 
     st.snapshot.replace(&incoming);
     st.files = files.items;
+    st.folders = grouped.folders;
+    st.loose = grouped.loose;
     st.mocks = mocks.items;
     st.envs = envs;
     st.active_env = active_env;
@@ -237,10 +250,70 @@ fn walkWorkspace(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8
     }
 }
 
+/// `.mnml/collections/<name>/**`: the hidden collections, which the
+/// workspace walk skips with every dot-directory.
+fn walkHidden(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8, files: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    const path = try std.fs.path.join(arena, &.{ workspace, hidden_root });
+    var root = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch return;
+    defer root.close(io);
+    var walker = root.walkSelectively(gpa) catch return;
+    defer walker.deinit();
+    while (true) {
+        const entry = walker.next(io) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            continue;
+        } orelse break;
+        if (files.items.len >= scan_cap) break;
+        switch (entry.kind) {
+            .directory => walker.enter(io, entry) catch {},
+            .file => if (parse.isRequestPath(entry.basename)) {
+                try files.append(arena, try std.fs.path.join(arena, &.{ hidden_root, entry.path }));
+            },
+            else => {},
+        }
+    }
+}
+
 fn skipDir(name: []const u8) bool {
     if (name.len > 0 and name[0] == '.') return true;
     for (skip_dirs) |d| if (std.mem.eql(u8, d, name)) return true;
     return false;
+}
+
+const Grouped = struct { folders: []const Folder, loose: []const u32 };
+
+/// Every distinct directory among `files` (sorted) is a folder with
+/// the files directly in it; `.mnml/collections/<name>` is hidden and
+/// named by `<name>`; root files are loose.
+fn groupFolders(a: Allocator, files: []const []const u8) Allocator.Error!Grouped {
+    var dirs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var loose: std.ArrayListUnmanaged(u32) = .empty;
+    for (files, 0..) |f, i| {
+        const d = std.fs.path.dirname(f) orelse "";
+        if (d.len == 0) {
+            try loose.append(a, @intCast(i));
+            continue;
+        }
+        var seen = false;
+        for (dirs.items) |x| if (std.mem.eql(u8, x, d)) {
+            seen = true;
+            break;
+        };
+        if (!seen) try dirs.append(a, d);
+    }
+    sortStrings(dirs.items);
+    var out: std.ArrayListUnmanaged(Folder) = .empty;
+    for (dirs.items) |d| {
+        var members: std.ArrayListUnmanaged(u32) = .empty;
+        for (files, 0..) |f, i| {
+            const fd = std.fs.path.dirname(f) orelse "";
+            if (std.mem.eql(u8, fd, d)) try members.append(a, @intCast(i));
+        }
+        const hidden = std.mem.startsWith(u8, d, hidden_root ++ "/");
+        const name = if (hidden) d[hidden_root.len + 1 ..] else d;
+        try out.append(a, .{ .rel = d, .name = name, .hidden = hidden, .members = members.items });
+    }
+    return .{ .folders = out.items, .loose = loose.items };
 }
 
 fn listChains(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
@@ -271,30 +344,86 @@ fn sortStrings(items: [][]const u8) void {
 // ─── rows ───────────────────────────────────────────────────────────────
 
 /// The displayed rows: every section's header (with the count the
-/// filter left) and, unless collapsed, its matching items. Under a
-/// filter a section with no match is dropped.
+/// filter left) and, unless collapsed, its rows — the collection tree,
+/// the items, an empty section's words and its `+ New …` link — a gap
+/// after each, and the three action links last. Under a filter a
+/// section with no match is dropped, and so are the words and links.
 pub fn rebuild(app: *App) Allocator.Error!void {
     const st = &app.http_panel;
     const gpa = app.gpa;
     st.rows.clearRetainingCapacity();
     const q = st.list.filterText();
     const a = st.snapshot.allocator();
+    var any = false;
     for (Section.all) |s| {
         var items: std.ArrayListUnmanaged(Row) = .empty;
         defer items.deinit(gpa);
-        const n = st.total(s);
-        var i: usize = 0;
-        while (i < n) : (i += 1) {
-            const row = try itemRow(st, a, s, i);
-            if (matches(row, q)) try items.append(gpa, row);
+        var count: u32 = 0;
+        if (s == .collections) {
+            count = try collectionRows(st, gpa, &items, q);
+        } else {
+            const n = st.total(s);
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const row = try itemRow(st, a, s, i);
+                if (matches(row, q)) try items.append(gpa, row);
+            }
+            count = @intCast(items.items.len);
         }
-        if (q.len > 0 and items.items.len == 0) continue;
+        if (q.len > 0 and count == 0) continue;
+        any = true;
         const folded = st.collapsed.contains(s);
-        try st.rows.append(gpa, .{ .section = s, .header = true, .count = @intCast(items.items.len), .collapsed = folded });
-        if (folded) continue;
-        try st.rows.appendSlice(gpa, items.items);
+        try st.rows.append(gpa, .{ .section = s, .kind = .header, .count = count, .collapsed = folded });
+        if (!folded) {
+            try st.rows.appendSlice(gpa, items.items);
+            if (q.len == 0) {
+                if (count == 0) try st.rows.append(gpa, .{ .section = s, .kind = .empty, .label = s.emptyText(app.cfg.ui.ascii_icons) });
+                const link: ?Link = switch (s) {
+                    .collections => if (count == 0) .new_collection else null,
+                    .envs => .new_env,
+                    .chains => .new_chain,
+                    else => null,
+                };
+                if (link) |l| try st.rows.append(gpa, .{ .section = s, .kind = .link, .link = l });
+            }
+        }
+        try st.rows.append(gpa, .{ .section = s, .kind = .gap });
+    }
+    if (q.len == 0 or any) {
+        for ([_]Link{ .new_request, .paste_curl, .import }) |l| try st.rows.append(gpa, .{ .section = .captured, .kind = .link, .link = l });
     }
     if (st.list.cursor >= st.rows.items.len) st.list.cursor = st.rows.items.len -| 1;
+    settle(st, true);
+}
+
+/// The COLLECTIONS tree under `q`: a folder whose name matches shows
+/// every member, otherwise the members that match; a folder with
+/// nothing to show goes; the filter unfolds every folder (Rust).
+/// Returns the files shown.
+fn collectionRows(st: *State, gpa: Allocator, items: *std.ArrayListUnmanaged(Row), q: []const u8) Allocator.Error!u32 {
+    var count: u32 = 0;
+    for (st.folders, 0..) |f, fi| {
+        const name_hits = q.len == 0 or containsIgnoreCase(f.name, q);
+        var shown: std.ArrayListUnmanaged(Row) = .empty;
+        defer shown.deinit(gpa);
+        for (f.members) |mi| {
+            const base = std.fs.path.basename(st.files[mi]);
+            if (!name_hits and !containsIgnoreCase(base, q)) continue;
+            try shown.append(gpa, .{ .section = .collections, .idx = mi, .label = base, .in_folder = true });
+        }
+        if (q.len > 0 and !name_hits and shown.items.len == 0) continue;
+        const folded = q.len == 0 and st.collapsed_dirs.contains(f.rel);
+        try items.append(gpa, .{ .section = .collections, .kind = .folder, .idx = @intCast(fi), .label = f.name, .count = @intCast(shown.items.len), .collapsed = folded, .hidden = f.hidden });
+        count += @intCast(shown.items.len);
+        if (!folded) try items.appendSlice(gpa, shown.items);
+    }
+    for (st.loose) |i| {
+        const rel = st.files[i];
+        if (q.len > 0 and !containsIgnoreCase(rel, q)) continue;
+        try items.append(gpa, .{ .section = .collections, .idx = i, .label = rel });
+        count += 1;
+    }
+    return count;
 }
 
 /// Item `i` of section `s` as a row. The formatted texts land on the
@@ -303,29 +432,34 @@ fn itemRow(st: *const State, a: Allocator, s: Section, i: usize) Allocator.Error
     const idx: u32 = @intCast(i);
     return switch (s) {
         .collections => .{ .section = s, .idx = idx, .label = st.files[i] },
-        .envs => .{ .section = s, .idx = idx, .label = st.envs[i], .detail = if (st.active_env) |ae| (if (std.mem.eql(u8, ae, st.envs[i])) "active" else "") else "" },
+        .envs => .{ .section = s, .idx = idx, .label = st.envs[i], .active = if (st.active_env) |ae| std.mem.eql(u8, ae, st.envs[i]) else false },
         .chains => .{ .section = s, .idx = idx, .label = st.chains[i] },
-        .mocks => .{ .section = s, .idx = idx, .label = st.mocks[i] },
+        .mocks => .{ .section = s, .idx = idx, .label = mockLabel(st.mocks[i]) },
         .cookies => .{ .section = s, .idx = idx, .label = st.cookies[i].name, .detail = st.cookies[i].host },
         .recent => blk: {
             const r = st.recent[i];
-            const label = try std.fmt.allocPrint(a, "{s} {s}", .{ r.method, history.shortUrl(r.url) });
-            const detail = if (r.status) |code| try std.fmt.allocPrint(a, "{d}", .{code}) else if (r.err != null) "err" else "";
-            break :blk .{ .section = s, .idx = idx, .label = label, .detail = detail };
+            const status: u16 = r.status orelse 0;
+            break :blk .{ .section = s, .idx = idx, .label = history.shortUrl(r.url), .method = r.method, .status = status, .detail = try std.fmt.allocPrint(a, "{s} {d}", .{ r.url, status }) };
         },
         .captured => blk: {
             const r = st.captured[i];
-            const label = try std.fmt.allocPrint(a, "{s} {s}", .{ r.method, history.shortUrl(r.url) });
-            break :blk .{ .section = s, .idx = idx, .label = label };
+            break :blk .{ .section = s, .idx = idx, .label = history.shortUrl(r.url), .method = r.method, .detail = r.url };
         },
     };
 }
 
-/// The filter is a case-insensitive substring over the label and the
-/// detail (a recent row's URL, a cookie's host…).
+/// `api/orders.curl.mock.json` → `api/orders.curl` (Rust).
+fn mockLabel(rel: []const u8) []const u8 {
+    const suffix = ".mock.json";
+    if (std.mem.endsWith(u8, rel, suffix)) return rel[0 .. rel.len - suffix.len];
+    return rel;
+}
+
+/// The filter is a case-insensitive substring over the label, the
+/// method and the detail (a recent row's full URL, a cookie's host…).
 fn matches(row: Row, q: []const u8) bool {
     if (q.len == 0) return true;
-    return containsIgnoreCase(row.label, q) or containsIgnoreCase(row.detail, q);
+    return containsIgnoreCase(row.label, q) or containsIgnoreCase(row.detail, q) or containsIgnoreCase(row.method, q);
 }
 
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
@@ -338,31 +472,68 @@ fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
     return false;
 }
 
+/// The cursor never rests on a gap or an empty section's words: from
+/// wherever it landed it walks on in `down`'s direction to the next
+/// stop, or back when there is none.
+fn settle(st: *State, down: bool) void {
+    const rows = st.rows.items;
+    if (rows.len == 0) return;
+    var i = st.list.cursor;
+    if (i >= rows.len) i = rows.len - 1;
+    if (rows[i].isStop()) {
+        st.list.cursor = i;
+        return;
+    }
+    var j = i;
+    if (down) {
+        while (j + 1 < rows.len) : (j += 1) if (rows[j + 1].isStop()) {
+            st.list.cursor = j + 1;
+            return;
+        };
+        j = i;
+        while (j > 0) : (j -= 1) if (rows[j - 1].isStop()) {
+            st.list.cursor = j - 1;
+            return;
+        };
+    } else {
+        while (j > 0) : (j -= 1) if (rows[j - 1].isStop()) {
+            st.list.cursor = j - 1;
+            return;
+        };
+        j = i;
+        while (j + 1 < rows.len) : (j += 1) if (rows[j + 1].isStop()) {
+            st.list.cursor = j + 1;
+            return;
+        };
+    }
+    st.list.cursor = i;
+}
+
 // ─── actions ────────────────────────────────────────────────────────────
 
 fn requireRow(app: *App) CommandError!Row {
     return app.http_panel.selected() orelse app.diag.fail(app.frame.allocator(), "http panel: nothing selected", .{});
 }
 
-/// Enter on a row: a header toggles its section; an item opens, applies
-/// or runs what it names.
+/// Enter on a row: a header or a folder toggles, a link acts, an item
+/// opens, applies or runs what it names.
 pub fn activate(app: *App, row: Row) CommandError!void {
     const st = &app.http_panel;
     const arena = app.frame.allocator();
-    if (row.header) {
-        st.collapsed.toggle(row.section);
-        try rebuild(app);
-        return;
+    switch (row.kind) {
+        .header => {
+            st.collapsed.toggle(row.section);
+            try rebuild(app);
+            return;
+        },
+        .folder => return toggleFolder(app, row.idx),
+        .link => return linkAction(app, row.link, null),
+        .empty, .gap => return,
+        .item => {},
     }
     switch (row.section) {
-        .collections, .mocks => {
-            const rel = if (row.section == .collections) st.files[row.idx] else st.mocks[row.idx];
-            const abs = try std.fs.path.join(arena, &.{ app.workspace, rel });
-            _ = app.openPath(abs) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
-            };
-        },
+        .collections => try openRel(app, st.files[row.idx]),
+        .mocks => try openRel(app, st.mocks[row.idx]),
         .envs => {
             const name = st.envs[row.idx];
             if (app.http.env_override) |e| app.gpa.free(e);
@@ -389,12 +560,140 @@ pub fn activate(app: *App, row: Row) CommandError!void {
     }
 }
 
+fn openRel(app: *App, rel: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const abs = try std.fs.path.join(arena, &.{ app.workspace, rel });
+    _ = app.openPath(abs) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
+    };
+}
+
+/// Fold or unfold the `idx`-th collection folder.
+pub fn toggleFolder(app: *App, idx: u32) CommandError!void {
+    const st = &app.http_panel;
+    if (idx >= st.folders.len) return;
+    const rel = st.folders[idx].rel;
+    if (st.collapsed_dirs.fetchSwapRemove(rel)) |kv| {
+        app.gpa.free(kv.key);
+    } else {
+        const key = try app.gpa.dupe(u8, rel);
+        errdefer app.gpa.free(key);
+        try st.collapsed_dirs.put(app.gpa, key, {});
+    }
+    try rebuild(app);
+}
+
+/// What a link opens — the same thing the palette command does.
+/// `at` is where the Import menu drops; null puts it by the row.
+pub fn linkAction(app: *App, link: Link, at: ?Pos) CommandError!void {
+    switch (link) {
+        .new_request => try command.run(app, .{ .static = .@"http.new" }),
+        .paste_curl => try command.run(app, .{ .static = .@"http.paste_curl" }),
+        .import => try openImportMenu(app, at),
+        .new_env => try command.run(app, .{ .static = .@"http.new_env" }),
+        .new_chain => try command.run(app, .{ .static = .@"http.new_chain" }),
+        .new_collection => try command.run(app, .{ .static = .@"http.new_collection" }),
+    }
+}
+
+/// Rust's `Import from:` picker as a menu: a Postman collection or a
+/// HAR file, both read from the clipboard.
+fn openImportMenu(app: *App, at: ?Pos) CommandError!void {
+    const M = command.MenuItem;
+    const items: []const M = &.{
+        .{ .label = "Postman collection — from clipboard (JSON)", .action = .{ .command = .@"http.import_postman" } },
+        .{ .label = "HAR file — from clipboard (Chrome / Firefox export)", .action = .{ .command = .@"http.import_har" } },
+    };
+    const owned = try app.gpa.dupe(M, items);
+    errdefer app.gpa.free(owned);
+    const pos = at orelse rowPos(app);
+    try app.openMenu("Import from:", owned, pos.x, pos.y);
+}
+
+/// Where a keyboard-opened menu lands: the panel's column, the row.
+fn rowPos(app: *App) Pos {
+    _ = app;
+    return .{ .x = 4, .y = 4 };
+}
+
+/// A blank request pane whose source is `req-N.http` inside the
+/// `idx`-th collection folder — saved there on Ctrl+S (Rust's
+/// `http_new_request_in_collection`).
+pub fn newRequestInFolder(app: *App, idx: u32) CommandError!void {
+    const st = &app.http_panel;
+    const arena = app.frame.allocator();
+    if (idx >= st.folders.len) return app.diag.fail(arena, "http panel: no such collection", .{});
+    const f = st.folders[idx];
+    const dir = try std.fs.path.join(arena, &.{ app.workspace, f.rel });
+    var n: usize = 1;
+    const path = while (n < 1000) : (n += 1) {
+        const candidate = try std.fmt.allocPrint(arena, "{s}/req-{d}.http", .{ dir, n });
+        Io.Dir.cwd().access(app.io, candidate, .{}) catch break candidate;
+    } else return app.diag.fail(arena, "collection: too many req-N.http files (999+)", .{});
+    const id = try http.openBlank(app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    rp.source_path = try app.gpa.dupe(u8, path);
+    try rp.refreshTitle();
+    app.toast("new request in {s}: {s} (Ctrl+S saves it)", .{ f.name, std.fs.path.basename(path) });
+}
+
+/// A section header's chip (Rust's `HttpChipKind` routing): the filter
+/// takes the keys, refresh rescans, capture starts the browser capture,
+/// clear truncates the log (RECENT / CAPTURED), empties the jar
+/// (COOKIES) or just clears the filter, new makes an env or a collection.
+pub fn chipAction(app: *App, section: Section, kind: ChipKind) CommandError!void {
+    const st = &app.http_panel;
+    switch (kind) {
+        .filter => {
+            focusPanel(app);
+            st.list.filter_focused = true;
+        },
+        .refresh => try command.run(app, .{ .static = .@"http.refresh" }),
+        .capture => try command.run(app, .{ .static = .@"http.capture_start" }),
+        .clear => switch (section) {
+            .recent => {
+                try command.run(app, .{ .static = .@"http.clear_recent" });
+                try refresh(app);
+            },
+            .captured => {
+                try command.run(app, .{ .static = .@"http.clear_captured" });
+                try refresh(app);
+            },
+            .cookies => {
+                try command.run(app, .{ .static = .@"cookies.clear" });
+                try refresh(app);
+            },
+            else => {
+                st.list.filter.clearRetainingCapacity();
+                st.list.filter_caret = 0;
+                st.list.filter_focused = false;
+                try rebuild(app);
+            },
+        },
+        .new => switch (section) {
+            .envs => try command.run(app, .{ .static = .@"http.new_env" }),
+            .collections => try command.run(app, .{ .static = .@"http.new_collection" }),
+            else => app.toast("no `new` action for this section", .{}),
+        },
+    }
+}
+
+/// Entering the section (Rust's `entering_http`): a blank request pane
+/// in the centre when no request pane is active. Leaving does not
+/// close it.
+pub fn enter(app: *App) CommandError!void {
+    if (http.activeRequest(app) != null) return;
+    _ = try http.openBlank(app);
+}
+
 fn openCmd(app: *App) CommandError!void {
     try activate(app, try requireRow(app));
 }
 
 fn toggleSectionCmd(app: *App) CommandError!void {
     const row = try requireRow(app);
+    if (row.kind == .folder) return toggleFolder(app, row.idx);
     app.http_panel.collapsed.toggle(row.section);
     try rebuild(app);
 }
@@ -412,20 +711,27 @@ fn toggleCollapseAllCmd(app: *App) CommandError!void {
     app.toast("http panel: {s}", .{if (all_closed) "expanded" else "collapsed"});
 }
 
-/// Copy what identifies the row: a file's workspace path, an env / chain
-/// name, a cookie's `name=value`, a recent / captured request's URL.
+/// Copy what identifies the row: a file's workspace path, a folder's,
+/// an env / chain name, a cookie's `name=value`, a recent / captured
+/// request's URL.
 fn copyPathCmd(app: *App) CommandError!void {
     const st = &app.http_panel;
     const row = try requireRow(app);
     const arena = app.frame.allocator();
-    const text: []const u8 = if (row.header) row.section.label() else switch (row.section) {
-        .collections => st.files[row.idx],
-        .mocks => st.mocks[row.idx],
-        .envs => st.envs[row.idx],
-        .chains => st.chains[row.idx],
-        .cookies => try std.fmt.allocPrint(arena, "{s}={s}", .{ st.cookies[row.idx].name, st.cookies[row.idx].value }),
-        .recent => st.recent[row.idx].url,
-        .captured => st.captured[row.idx].url,
+    const text: []const u8 = switch (row.kind) {
+        .header => row.section.label(),
+        .folder => st.folders[row.idx].rel,
+        .link => row.link.text(app.cfg.ui.ascii_icons),
+        .empty, .gap => return,
+        .item => switch (row.section) {
+            .collections => st.files[row.idx],
+            .mocks => st.mocks[row.idx],
+            .envs => st.envs[row.idx],
+            .chains => st.chains[row.idx],
+            .cookies => try std.fmt.allocPrint(arena, "{s}={s}", .{ st.cookies[row.idx].name, st.cookies[row.idx].value }),
+            .recent => st.recent[row.idx].url,
+            .captured => st.captured[row.idx].url,
+        },
     };
     try app.clipboard.set(text, false);
     app.toast("copied {s}", .{text});
@@ -437,8 +743,12 @@ fn copyPathCmd(app: *App) CommandError!void {
 /// request; left / right (h / l) close and open the selected section.
 pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     const st = &app.http_panel;
+    const before = st.list.cursor;
     switch (try Panel.handleKey(&st.list, app.gpa, k)) {
-        .consumed => return true,
+        .consumed => {
+            settle(st, st.list.cursor >= before);
+            return true;
+        },
         .filter_changed => {
             try rebuild(app);
             return true;
@@ -464,7 +774,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             switch (c) {
                 'r' => runToast(app, refresh(app)),
                 'c' => runToast(app, toggleCollapseAllCmd(app)),
-                'n' => runToast(app, command.run(app, .{ .static = .@"http.new_request" })),
+                'n' => runToast(app, command.run(app, .{ .static = .@"http.new" })),
                 'h' => return try foldSelected(app, true),
                 'l' => return try foldSelected(app, false),
                 else => return false,
@@ -475,15 +785,20 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     }
 }
 
-/// Close (`fold`) or open the selected row's section; the cursor lands
-/// on its header when it closes.
+/// Close (`fold`) or open the selected row's section — or its folder,
+/// on a folder row; the cursor lands on the header when it closes.
 fn foldSelected(app: *App, fold: bool) Allocator.Error!bool {
     const st = &app.http_panel;
     const row = st.selected() orelse return false;
+    if (row.kind == .folder) {
+        if (fold == row.collapsed) return true;
+        runToast(app, toggleFolder(app, row.idx));
+        return true;
+    }
     if (fold == st.collapsed.contains(row.section)) return true;
     st.collapsed.toggle(row.section);
     try rebuild(app);
-    if (fold) for (st.rows.items, 0..) |r, i| if (r.header and r.section == row.section) {
+    if (fold) for (st.rows.items, 0..) |r, i| if (r.kind == .header and r.section == row.section) {
         st.list.cursor = i;
         break;
     };
@@ -501,23 +816,33 @@ fn runToast(app: *App, result: CommandError!void) void {
 
 // ─── mouse (D6) ─────────────────────────────────────────────────────────
 
-/// A row: a left press selects (a header toggles at once; an item opens
-/// on a second press within `double_click_ms`); a right press selects
-/// and opens the row menu; the wheel moves the cursor three rows.
+/// A row: a left press selects (a header or a folder toggles at once, a
+/// link acts, an item opens on a second press within `double_click_ms`);
+/// a right press selects and opens the row menu; the wheel moves the
+/// cursor three rows.
 pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     const st = &app.http_panel;
     switch (m.kind) {
         .press => {
             if (idx >= st.rows.items.len) return;
             focusPanel(app);
+            const row = st.rows.items[idx];
+            if (!row.isStop()) return;
             st.list.cursor = idx;
             if (m.button == .right) return openRowMenu(app, m.x, m.y);
             if (m.button != .left) return;
-            const row = st.rows.items[idx];
-            if (row.header) {
-                st.last_click = null;
-                runToast(app, activate(app, row));
-                return;
+            switch (row.kind) {
+                .header, .folder => {
+                    st.last_click = null;
+                    runToast(app, activate(app, row));
+                    return;
+                },
+                .link => {
+                    st.last_click = null;
+                    runToast(app, linkAction(app, row.link, .{ .x = m.x, .y = m.y }));
+                    return;
+                },
+                else => {},
             }
             const again = if (st.last_click) |lc| lc.idx == idx and app.now_ms - lc.at_ms <= double_click_ms else false;
             st.last_click = .{ .idx = idx, .at_ms = app.now_ms };
@@ -526,8 +851,14 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 runToast(app, activate(app, row));
             }
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, st.rows.items.len -| 1),
+        .scroll_up => {
+            st.list.cursor -|= 3;
+            settle(st, false);
+        },
+        .scroll_down => {
+            st.list.cursor = @min(st.list.cursor + 3, st.rows.items.len -| 1);
+            settle(st, true);
+        },
         else => {},
     }
 }
@@ -548,6 +879,16 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     }
 }
 
+/// The section's own targets: a header chip, a link, a folder's ` + `.
+pub fn partMouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
+    if (m.kind != .press or m.button != .left) return;
+    switch (part) {
+        .chip => |c| runToast(app, chipAction(app, c.section, c.kind)),
+        .link => |l| runToast(app, linkAction(app, l, .{ .x = m.x, .y = m.y })),
+        .folder_new => |i| runToast(app, newRequestInFolder(app, i)),
+    }
+}
+
 pub fn filterMouse(app: *App, m: Mouse) void {
     if (m.kind != .press) return;
     focusPanel(app);
@@ -564,9 +905,16 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
             focusPanel(app);
             const off: usize = m.y -| bar.y;
             st.list.cursor = @min(off * total / bar.h, total - 1);
+            settle(st, true);
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, total - 1),
+        .scroll_up => {
+            st.list.cursor -|= 3;
+            settle(st, false);
+        },
+        .scroll_down => {
+            st.list.cursor = @min(st.list.cursor + 3, total - 1);
+            settle(st, true);
+        },
         else => {},
     }
 }
@@ -583,56 +931,121 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const st = &app.http_panel;
     const row = st.selected() orelse return;
     const M = command.MenuItem;
-    const items: []const M = if (row.header) &.{
-        .{ .label = if (st.collapsed.contains(row.section)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
-        .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
-        .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
-    } else switch (row.section) {
-        .collections => &.{
-            .{ .label = "Open", .action = .{ .command = .@"http.panel_open" } },
+    const items: []const M = switch (row.kind) {
+        .header => switch (row.section) {
+            .collections => &.{
+                .{ .label = if (st.collapsed.contains(.collections)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "New collection…", .action = .{ .command = .@"http.new_collection" }, .separator_before = true },
+                .{ .label = "New request…", .action = .{ .command = .@"http.new_request" } },
+                .{ .label = "Sync sources", .action = .{ .command = .@"http.sync" } },
+            },
+            .envs => &.{
+                .{ .label = if (st.collapsed.contains(.envs)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "New env…", .action = .{ .command = .@"http.new_env" }, .separator_before = true },
+                .{ .label = "Pick env…", .action = .{ .command = .@"http.pick_env" } },
+                .{ .label = "Clear override", .action = .{ .command = .@"http.reset_env" } },
+            },
+            .chains => &.{
+                .{ .label = if (st.collapsed.contains(.chains)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "New chain…", .action = .{ .command = .@"http.new_chain" }, .separator_before = true },
+                .{ .label = "Run chain…", .action = .{ .command = .@"http.run_chain" } },
+            },
+            .mocks => &.{
+                .{ .label = if (st.collapsed.contains(.mocks)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "Save response as mock", .action = .{ .command = .@"http.save_mock" }, .separator_before = true },
+            },
+            .cookies => &.{
+                .{ .label = if (st.collapsed.contains(.cookies)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "Show jar", .action = .{ .command = .@"cookies.show" }, .separator_before = true },
+                .{ .label = "Clear jar", .action = .{ .command = .@"cookies.clear" } },
+            },
+            .recent => &.{
+                .{ .label = if (st.collapsed.contains(.recent)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "History picker…", .action = .{ .command = .@"http.history" }, .separator_before = true },
+                .{ .label = "Clear recent", .action = .{ .command = .@"http.clear_recent" } },
+            },
+            .captured => &.{
+                .{ .label = if (st.collapsed.contains(.captured)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
+                .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
+                .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "Start capture", .action = .{ .command = .@"http.capture_start" }, .separator_before = true },
+                .{ .label = "Captured picker…", .action = .{ .command = .@"http.view_captured" } },
+                .{ .label = "Clear captured", .action = .{ .command = .@"http.clear_captured" } },
+            },
+        },
+        .folder => &.{
+            .{ .label = if (row.collapsed) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
             .{ .label = "Copy path", .action = .{ .command = .@"http.panel_copy_path" } },
             .{ .label = "New request…", .action = .{ .command = .@"http.new_request" }, .separator_before = true },
             .{ .label = "New collection…", .action = .{ .command = .@"http.new_collection" } },
-            .{ .label = "Sync sources", .action = .{ .command = .@"http.sync" } },
         },
-        .envs => &.{
-            .{ .label = "Use this env", .action = .{ .command = .@"http.panel_open" } },
-            .{ .label = "Copy name", .action = .{ .command = .@"http.panel_copy_path" } },
-            .{ .label = "Edit active env…", .action = .{ .command = .@"http.edit_env" }, .separator_before = true },
-            .{ .label = "Clear override", .action = .{ .command = .@"http.reset_env" } },
-            .{ .label = "New env…", .action = .{ .command = .@"http.new_env" } },
+        .link => &.{
+            .{ .label = row.link.text(app.cfg.ui.ascii_icons), .action = .{ .command = .@"http.panel_open" } },
         },
-        .chains => &.{
-            .{ .label = "Run chain", .action = .{ .command = .@"http.panel_open" } },
-            .{ .label = "Copy name", .action = .{ .command = .@"http.panel_copy_path" } },
-            .{ .label = "New chain…", .action = .{ .command = .@"http.new_chain" }, .separator_before = true },
-        },
-        .mocks => &.{
-            .{ .label = "Open", .action = .{ .command = .@"http.panel_open" } },
-            .{ .label = "Copy path", .action = .{ .command = .@"http.panel_copy_path" } },
-            .{ .label = "Replay on active request", .action = .{ .command = .@"http.replay_mock" }, .separator_before = true },
-        },
-        .cookies => &.{
-            .{ .label = "Copy name=value", .action = .{ .command = .@"http.panel_open" } },
-            .{ .label = "Delete cookie…", .action = .{ .command = .@"cookies.delete" }, .separator_before = true },
-            .{ .label = "Clear jar", .action = .{ .command = .@"cookies.clear" } },
-        },
-        .recent => &.{
-            .{ .label = "Open as request", .action = .{ .command = .@"http.panel_open" } },
-            .{ .label = "Copy URL", .action = .{ .command = .@"http.panel_copy_path" } },
-            .{ .label = "History picker…", .action = .{ .command = .@"http.history" }, .separator_before = true },
-            .{ .label = "Clear recent", .action = .{ .command = .@"http.clear_recent" } },
-        },
-        .captured => &.{
-            .{ .label = "Open as request", .action = .{ .command = .@"http.panel_open" } },
-            .{ .label = "Copy URL", .action = .{ .command = .@"http.panel_copy_path" } },
-            .{ .label = "Captured picker…", .action = .{ .command = .@"http.view_captured" }, .separator_before = true },
-            .{ .label = "Clear captured", .action = .{ .command = .@"http.clear_captured" } },
+        .empty, .gap => return,
+        .item => switch (row.section) {
+            .collections => &.{
+                .{ .label = "Open", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Copy path", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "New request…", .action = .{ .command = .@"http.new_request" }, .separator_before = true },
+                .{ .label = "New collection…", .action = .{ .command = .@"http.new_collection" } },
+                .{ .label = "Sync sources", .action = .{ .command = .@"http.sync" } },
+            },
+            .envs => &.{
+                .{ .label = "Use this env", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Copy name", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "Edit active env…", .action = .{ .command = .@"http.edit_env" }, .separator_before = true },
+                .{ .label = "Clear override", .action = .{ .command = .@"http.reset_env" } },
+                .{ .label = "New env…", .action = .{ .command = .@"http.new_env" } },
+            },
+            .chains => &.{
+                .{ .label = "Run chain", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Copy name", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "New chain…", .action = .{ .command = .@"http.new_chain" }, .separator_before = true },
+            },
+            .mocks => &.{
+                .{ .label = "Open", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Copy path", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "Replay on active request", .action = .{ .command = .@"http.replay_mock" }, .separator_before = true },
+            },
+            .cookies => &.{
+                .{ .label = "Copy name=value", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Delete cookie…", .action = .{ .command = .@"cookies.delete" }, .separator_before = true },
+                .{ .label = "Clear jar", .action = .{ .command = .@"cookies.clear" } },
+            },
+            .recent => &.{
+                .{ .label = "Open as request", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Copy URL", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "History picker…", .action = .{ .command = .@"http.history" }, .separator_before = true },
+                .{ .label = "Clear recent", .action = .{ .command = .@"http.clear_recent" } },
+            },
+            .captured => &.{
+                .{ .label = "Open as request", .action = .{ .command = .@"http.panel_open" } },
+                .{ .label = "Copy URL", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "Captured picker…", .action = .{ .command = .@"http.view_captured" }, .separator_before = true },
+                .{ .label = "Clear captured", .action = .{ .command = .@"http.clear_captured" } },
+            },
         },
     };
     const owned = try app.gpa.dupe(M, items);
     errdefer app.gpa.free(owned);
-    const title = if (row.header) row.section.label() else row.label;
+    const title = switch (row.kind) {
+        .header => row.section.label(),
+        .link => row.link.text(app.cfg.ui.ascii_icons),
+        else => row.label,
+    };
     try app.openMenu(title, owned, x, y);
 }
 
@@ -645,62 +1058,19 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const total = st.totalItems();
     const cap: []const u8 = if (st.truncated) "+" else "";
     var shown: usize = 0;
-    for (st.rows.items) |r| if (r.header) {
+    for (st.rows.items) |r| if (r.kind == .header) {
         shown += r.count;
     };
     const subtitle = if (st.list.filterText().len == 0)
         ui.fmt(" ({d}{s})", .{ total, cap })
     else
         ui.fmt(" ({d} of {d}{s})", .{ shown, total, cap });
-    const empty: list_panel.EmptyState = if (total == 0)
-        .{ .message = "No .http / .curl files yet — save one to see it here." }
-    else
-        .{ .message = "No matches — Esc clears" };
-    const caret = Panel.draw(&st.list, ui, area, .{
-        .panel = .http,
-        .label = "HTTP",
+    const caret = view.draw(&st.list, ui, area, .{
         .subtitle = subtitle,
         .rows = st.rows.items,
-        .paintRow = paintRow,
-        .has_kebab = true,
-        .empty = empty,
-        // The green ` + `: a blank request (`http.new_request`).
-        .new_chip = true,
+        .empty = .{ .message = "No matches — Esc clears" },
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
-}
-
-/// A header is `▼ NAME (n)` (`▸` collapsed); an item is indented under
-/// it, its detail dim after two spaces.
-fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
-    const t = ui.theme;
-    const base = list_panel.rowStyle(t, selected);
-    var x = r.x;
-    const end = r.right();
-    if (row.header) {
-        const open = !row.collapsed;
-        const chevron: []const u8 = if (ui.ascii) (if (open) "v " else "> ") else (if (open) "▼ " else "▸ ");
-        x += ui.putStr(x, r.y, end -| x, chevron, Theme.onBg(t.muted, base.bg));
-        const label = ui.fmt("{s} ({d})", .{ row.section.label(), row.count });
-        _ = ui.putStr(x, r.y, end -| x, ui.clipStr(label, end -| x), Theme.onBg(t.accent, base.bg));
-        return;
-    }
-    x += ui.putStr(x, r.y, end -| x, "  ", base);
-    const avail: u16 = end -| x;
-    // Capped at the row: a 100k-char label must not sum past u16.
-    const label_w = ui.widthUpTo(row.label, avail);
-    const detail_w: u16 = if (row.detail.len > 0) ui.widthUpTo(row.detail, avail) + 2 else 0;
-    var label = row.label;
-    // The detail yields before the label does: a long detail is clipped
-    // at the paint, never squeezing the label to nothing.
-    const label_max = @max(avail -| detail_w, @min(label_w, avail / 2));
-    if (label_w > label_max) label = ui.clipStr(row.label, label_max);
-    x += ui.putStr(x, r.y, end -| x, label, Theme.onBg(t.fg, base.bg));
-    if (row.detail.len > 0 and end > x + 2) {
-        x += ui.putStr(x, r.y, end -| x, "  ", base);
-        const dstyle = if (std.mem.eql(u8, row.detail, "active")) Theme.onBg(t.accent, base.bg) else Theme.onBg(t.muted, base.bg);
-        _ = ui.putStr(x, r.y, end -| x, ui.clipStr(row.detail, end -| x), dstyle);
-    }
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -744,6 +1114,8 @@ const Fixture = struct {
         try f.write("api/users.http", "GET https://x/users\n");
         try f.write("api/orders.curl", "curl https://x/orders\n");
         try f.write("api/orders.curl.mock.json", "{\"status\":200,\"body\":\"[]\"}\n");
+        try f.write("loose.http", "GET https://x/loose\n");
+        try f.write(".mnml/collections/smoke/ping.http", "GET https://x/ping\n");
         try f.write(".mnml/env/dev.env", "HOST=https://dev\n");
         try f.write(".mnml/env/prod.env", "HOST=https://prod\n");
         try f.write(".mnml/chains/login.chain.json", "[{\"request\":\"api/users.http\"}]\n");
@@ -751,119 +1123,265 @@ const Fixture = struct {
         try f.write(".rqst/history.jsonl", "{\"ts\":1,\"method\":\"POST\",\"url\":\"https://x/login\",\"status\":201}\n{\"ts\":2,\"method\":\"GET\",\"url\":\"https://x/users\",\"status\":200}\n");
         try f.write(".rqst/captured/log.jsonl", "{\"at\":1,\"request_id\":\"r1\",\"method\":\"GET\",\"url\":\"https://cdn.test/app.js\"}\n");
     }
+
+    /// The index of the first row of `kind` in `section` (label
+    /// filtered when given).
+    fn rowOf(f: *Fixture, section: Section, kind: Kind, label: ?[]const u8) ?usize {
+        for (f.app.http_panel.rows.items, 0..) |r, i| {
+            if (r.section != section or r.kind != kind) continue;
+            if (label) |l| if (!std.mem.eql(u8, r.label, l)) continue;
+            return i;
+        }
+        return null;
+    }
+
+    /// Where the first `.http` hit matching `pred` painted last frame.
+    fn findHit(f: *Fixture, comptime pred: fn (Part) bool) ?struct { x: u16, y: u16 } {
+        for (f.app.hits.items.items) |e| switch (e.target) {
+            .http => |p| if (pred(p)) return .{ .x = e.rect.x, .y = e.rect.y },
+            else => {},
+        };
+        return null;
+    }
 };
 
-fn rowCount(st: *const State, s: Section) ?u32 {
-    for (st.rows.items) |r| if (r.header and r.section == s) return r.count;
-    return null;
+/// The kinds of `section`'s rows, the three action links at the end
+/// of the list left out.
+fn kinds(st: *const State, section: Section, out: *[64]Kind) []const Kind {
+    var n: usize = 0;
+    for (st.rows.items) |r| {
+        if (r.section != section or n >= out.len) continue;
+        if (r.kind == .link and (r.link == .new_request or r.link == .paste_curl or r.link == .import)) continue;
+        out[n] = r.kind;
+        n += 1;
+    }
+    return out[0..n];
 }
 
-test "refresh lists every section; the filter narrows across all seven and drops the sections it empties" {
+test "refresh lists every section; collections group by folder with the hidden one named; the filter narrows across all seven, unfolds the tree and drops the sections it empties" {
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     try f.seedAll();
     try refresh(&f.app);
     const st = &f.app.http_panel;
-    try testing.expectEqual(@as(usize, 2), st.files.len);
-    try testing.expectEqualStrings("api/orders.curl", st.files[0]);
+    var kb: [64]Kind = undefined;
+    try testing.expectEqual(@as(usize, 4), st.files.len);
+    try testing.expectEqualStrings(".mnml/collections/smoke/ping.http", st.files[0]);
+    try testing.expectEqual(@as(usize, 2), st.folders.len);
+    try testing.expectEqualStrings("smoke", st.folders[0].name);
+    try testing.expect(st.folders[0].hidden);
+    try testing.expectEqualStrings("api", st.folders[1].name);
+    try testing.expectEqual(@as(usize, 2), st.folders[1].members.len);
+    try testing.expectEqual(@as(usize, 1), st.loose.len);
+    try testing.expectEqualStrings("loose.http", st.files[st.loose[0]]);
     try testing.expectEqual(@as(usize, 2), st.envs.len);
     try testing.expectEqual(@as(usize, 1), st.chains.len);
-    try testing.expectEqualStrings("login", st.chains[0]);
     try testing.expectEqual(@as(usize, 1), st.mocks.len);
     try testing.expectEqual(@as(usize, 1), st.cookies.len);
     try testing.expectEqual(@as(usize, 2), st.recent.len);
-    // Newest first.
     try testing.expectEqualStrings("GET", st.recent[0].method);
     try testing.expectEqual(@as(usize, 1), st.captured.len);
-    // Seven headers + 10 items.
-    var headers: usize = 0;
-    for (st.rows.items) |r| if (r.header) {
-        headers += 1;
-    };
-    try testing.expectEqual(@as(usize, 7), headers);
-    try testing.expectEqual(@as(usize, 17), st.rows.items.len);
-    // `users` matches a file and a recent row: the other five sections go.
+    // COLLECTIONS: header, smoke + ping, api + two, loose, gap.
+    try testing.expectEqualSlices(Kind, &.{ .header, .folder, .item, .folder, .item, .item, .item, .gap }, kinds(st, .collections, &kb));
+    try testing.expectEqual(@as(u32, 4), st.shown(.collections).?);
+    // ENVS has its link after the items; CHAINS too; MOCKS none.
+    try testing.expectEqualSlices(Kind, &.{ .header, .item, .item, .link, .gap }, kinds(st, .envs, &kb));
+    try testing.expectEqualSlices(Kind, &.{ .header, .item, .link, .gap }, kinds(st, .chains, &kb));
+    try testing.expectEqualSlices(Kind, &.{ .header, .item, .gap }, kinds(st, .mocks, &kb));
+    try testing.expectEqualStrings("api/orders.curl", st.rows.items[f.rowOf(.mocks, .item, null).?].label);
+    // The three action links close the list.
+    const n = st.rows.items.len;
+    try testing.expectEqual(Link.new_request, st.rows.items[n - 3].link);
+    try testing.expectEqual(Link.import, st.rows.items[n - 1].link);
+    // `users` matches a file and a recent row: the other five sections go,
+    // and so do the words, the links and the gaps' neighbours.
     try st.list.filter.appendSlice(testing.allocator, "USERS");
     try rebuild(&f.app);
-    try testing.expectEqual(@as(u32, 1), rowCount(st, .collections).?);
-    try testing.expectEqual(@as(u32, 1), rowCount(st, .recent).?);
-    try testing.expect(rowCount(st, .envs) == null);
-    try testing.expect(rowCount(st, .cookies) == null);
-    try testing.expectEqual(@as(usize, 4), st.rows.items.len);
+    try testing.expectEqual(@as(u32, 1), st.shown(.collections).?);
+    try testing.expectEqualSlices(Kind, &.{ .header, .folder, .item, .gap }, kinds(st, .collections, &kb));
+    try testing.expectEqual(@as(u32, 1), st.shown(.recent).?);
+    try testing.expect(st.shown(.envs) == null);
+    try testing.expect(st.shown(.cookies) == null);
+    // A folder's name matches: every member shows.
+    st.list.filter.clearRetainingCapacity();
+    try st.list.filter.appendSlice(testing.allocator, "api");
+    try rebuild(&f.app);
+    try testing.expectEqual(@as(u32, 2), st.shown(.collections).?);
     // A cookie's host is searchable too.
     st.list.filter.clearRetainingCapacity();
     try st.list.filter.appendSlice(testing.allocator, "x.test");
     try rebuild(&f.app);
-    try testing.expectEqual(@as(u32, 1), rowCount(st, .cookies).?);
-    try testing.expectEqual(@as(usize, 2), st.rows.items.len);
+    try testing.expectEqual(@as(u32, 1), st.shown(.cookies).?);
+    // Nothing matches: no rows, so the panel says so.
+    st.list.filter.clearRetainingCapacity();
+    try st.list.filter.appendSlice(testing.allocator, "zzz");
+    try rebuild(&f.app);
+    try testing.expectEqual(@as(usize, 0), st.rows.items.len);
 }
 
-test "a collapsed section keeps its header; collapse-all folds every one and unfolds once all are closed" {
+test "an empty workspace: every section's words, the links under COLLECTIONS / ENVS / CHAINS, the cursor skips the words and gaps" {
+    var f = try Fixture.init(100, 40);
+    defer f.deinit();
+    try refresh(&f.app);
+    const st = &f.app.http_panel;
+    var kb: [64]Kind = undefined;
+    try testing.expectEqualSlices(Kind, &.{ .header, .empty, .link, .gap }, kinds(st, .collections, &kb));
+    try testing.expectEqual(Link.new_collection, st.rows.items[2].link);
+    try testing.expectEqualSlices(Kind, &.{ .header, .empty, .link, .gap }, kinds(st, .envs, &kb));
+    try testing.expectEqualSlices(Kind, &.{ .header, .empty, .gap }, kinds(st, .mocks, &kb));
+    try testing.expectEqualStrings("No mocks — `:http.save_mock` on a response.", st.rows.items[f.rowOf(.mocks, .empty, null).?].label);
+    try testing.expect(std.mem.startsWith(u8, st.rows.items[f.rowOf(.captured, .empty, null).?].label, "Nothing captured yet"));
+    // j from the header lands on the link, not the words; k back. The
+    // keys need a first draw (it sets the list's total): show the panel.
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    focusPanel(&f.app);
+    try f.app.render();
+    try f.app.handle(.{ .key = Key.char('j') });
+    try testing.expectEqual(@as(usize, 2), st.list.cursor);
+    try f.app.handle(.{ .key = Key.char('j') });
+    try testing.expectEqual(@as(usize, 4), st.list.cursor);
+    try f.app.handle(.{ .key = Key.char('k') });
+    try testing.expectEqual(@as(usize, 2), st.list.cursor);
+    // G reaches the last link.
+    try f.app.handle(.{ .key = Key.char('G') });
+    try testing.expectEqual(Link.import, st.selected().?.link);
+}
+
+test "a collapsed section keeps its header; a folder folds; collapse-all folds every one and unfolds once all are closed" {
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     try f.seedAll();
     try refresh(&f.app);
     const st = &f.app.http_panel;
+    var kb: [64]Kind = undefined;
     st.collapsed.insert(.recent);
     try rebuild(&f.app);
-    try testing.expectEqual(@as(usize, 15), st.rows.items.len);
-    try testing.expectEqual(@as(u32, 2), rowCount(st, .recent).?);
+    try testing.expectEqualSlices(Kind, &.{ .header, .gap }, kinds(st, .recent, &kb));
+    try testing.expectEqual(@as(u32, 2), st.shown(.recent).?);
+    try toggleFolder(&f.app, 1);
+    try testing.expectEqualSlices(Kind, &.{ .header, .folder, .item, .folder, .item, .gap }, kinds(st, .collections, &kb));
+    try testing.expect(st.rows.items[3].collapsed);
+    try testing.expectEqual(@as(u32, 4), st.shown(.collections).?);
+    try toggleFolder(&f.app, 1);
+    try testing.expect(!st.rows.items[3].collapsed);
     try command.run(&f.app, .{ .static = .@"http.toggle_collapse_all" });
-    try testing.expectEqual(@as(usize, 7), st.rows.items.len);
+    for (Section.all) |s| try testing.expectEqualSlices(Kind, &.{ .header, .gap }, kinds(st, s, &kb));
     try command.run(&f.app, .{ .static = .@"http.toggle_collapse_all" });
-    try testing.expectEqual(@as(usize, 17), st.rows.items.len);
+    try testing.expectEqualSlices(Kind, &.{ .header, .item, .item, .link, .gap }, kinds(st, .envs, &kb));
 }
 
-test "activate: an env row becomes the session override; a file row opens a request pane; a cookie row copies name=value" {
+test "activate: an env row becomes the session override; a file row opens a request pane; a cookie row copies name=value; a link opens its prompt" {
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     try f.seedAll();
     try command.run(&f.app, .{ .static = .@"view.activity_http" });
-    try testing.expect(f.app.focus == .panel and f.app.focus.panel == .http);
+    // Entering opened a blank request pane and gave it the keys.
+    try testing.expect(f.app.focus == .pane);
+    try testing.expectEqualStrings("GET  new request", f.app.panes.get(f.app.active.?).?.title());
     try refresh(&f.app);
     const st = &f.app.http_panel;
-    var env_row: ?usize = null;
-    var file_row: ?usize = null;
-    var cookie_row: ?usize = null;
-    for (st.rows.items, 0..) |r, i| {
-        if (r.header) continue;
-        if (r.section == .envs and std.mem.eql(u8, r.label, "prod")) env_row = i;
-        if (r.section == .collections and std.mem.endsWith(u8, r.label, "users.http")) file_row = i;
-        if (r.section == .cookies) cookie_row = i;
-    }
-    st.list.cursor = env_row.?;
+    st.list.cursor = f.rowOf(.envs, .item, "prod").?;
     try command.run(&f.app, .{ .static = .@"http.panel_open" });
     try testing.expectEqualStrings("prod", f.app.http.env_override.?);
-    try testing.expectEqualStrings("active", st.rows.items[env_row.?].detail);
-    st.list.cursor = cookie_row.?;
+    try testing.expect(st.rows.items[f.rowOf(.envs, .item, "prod").?].active);
+    st.list.cursor = f.rowOf(.cookies, .item, null).?;
     try command.run(&f.app, .{ .static = .@"http.panel_open" });
     try testing.expectEqualStrings("session=abc", f.app.clipboard.text());
-    st.list.cursor = file_row.?;
+    st.list.cursor = f.rowOf(.collections, .item, "users.http").?;
     try command.run(&f.app, .{ .static = .@"http.panel_open" });
     const rp = http.activeRequest(&f.app).?;
     try testing.expectEqualStrings("https://x/users", rp.url.items);
+    st.list.cursor = f.rowOf(.envs, .link, null).?;
+    try command.run(&f.app, .{ .static = .@"http.panel_open" });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.prompt.state.title, "New env name") != null);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // The Import link opens the two-row menu; both rows name registered ids.
+    st.list.cursor = st.rows.items.len - 1;
+    try command.run(&f.app, .{ .static = .@"http.panel_open" });
+    try testing.expect(f.app.overlay == .menu);
+    try testing.expectEqualStrings("Import from:", f.app.overlay.menu.title);
+    try testing.expectEqual(command.CommandId.@"http.import_postman", f.app.overlay.menu.items[0].action.command);
+    try testing.expectEqual(command.CommandId.@"http.import_har", f.app.overlay.menu.items[1].action.command);
+    try f.app.handle(.{ .key = Key.named(.esc) });
 }
 
-test "headless: the panel paints seven headers, the filter row narrows, enter on a header folds it" {
+test "entering twice opens one pane; with a request pane active none; leaving keeps it" {
+    var f = try Fixture.init(100, 40);
+    defer f.deinit();
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    try testing.expectEqual(@as(usize, 1), f.app.panes.count());
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    try testing.expectEqual(@as(usize, 1), f.app.panes.count());
+    try command.run(&f.app, .{ .static = .@"view.activity_todos" });
+    try testing.expectEqual(@as(usize, 1), f.app.panes.count());
+    try testing.expect(f.app.panes.get(f.app.active.?).?.* == .request);
+}
+
+test "headless: the panel paints the blank row under the filter, seven headers with their ladders, the tree, the words and the links; the filter row narrows; enter on a header folds it" {
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     try f.seedAll();
     f.app.tree.visible = false;
     try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    focusPanel(&f.app);
     const txt = try f.screen();
     defer testing.allocator.free(txt);
-    for (Section.all) |s| try testing.expect(std.mem.indexOf(u8, txt, s.label()) != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "api/users.http") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "POST x/login  201") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "session  x.test") != null);
-    // Row 0 is the COLLECTIONS header; enter folds it.
+    // The list is longer than the panel: the first screen holds the
+    // top sections, `G` scrolls the tail into view below.
+    for ([_]Section{ .collections, .envs, .chains, .mocks }) |s| try testing.expect(std.mem.indexOf(u8, txt, s.label()) != null);
+    // Under the menu bar: row 1 the header, row 2 the filter, row 3
+    // blank (the user's pattern), row 4 the COLLECTIONS header.
+    var lines = std.mem.splitScalar(u8, txt, '\n');
+    _ = lines.next();
+    try testing.expect(std.mem.indexOf(u8, lines.next().?, "HTTP (12)") != null);
+    try testing.expect(std.mem.indexOf(u8, lines.next().?, "/ filter") != null);
+    _ = lines.next();
+    var x: u16 = 4;
+    while (x < 30) : (x += 1) try testing.expectEqualStrings(" ", f.app.screen.readCell(x, 3).?.char.grapheme);
+    try testing.expect(std.mem.indexOf(u8, lines.next().?, "COLLECTIONS (4)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} \u{F07B} api (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F15C} users.http") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F1D8} loose.http") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F114} smoke (1)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "+ New env") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "+ New chain") != null);
+    // The ladders: ENVS' `+`, the folder `+`.
+    try testing.expect(f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .chip and part.chip.section == .envs and part.chip.kind == .new;
+        }
+    }.p) != null);
+    try testing.expect(f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .folder_new;
+        }
+    }.p) != null);
+    // The tail: COOKIES, RECENT, CAPTURED's words and chip, the three links.
+    try f.app.handle(.{ .key = Key.char('G') });
+    const tail = try f.screen();
+    defer testing.allocator.free(tail);
+    for ([_]Section{ .cookies, .recent, .captured }) |s| try testing.expect(std.mem.indexOf(u8, tail, s.label()) != null);
+    try testing.expect(std.mem.indexOf(u8, tail, "201 POST x/login") != null);
+    try testing.expect(std.mem.indexOf(u8, tail, "session  x.test") != null);
+    try testing.expect(std.mem.indexOf(u8, tail, "GET  cdn.test/app.js") != null);
+    try testing.expect(std.mem.indexOf(u8, tail, "+ New request") != null);
+    try testing.expect(std.mem.indexOf(u8, tail, "\u{2193} Paste curl…") != null);
+    try testing.expect(std.mem.indexOf(u8, tail, "\u{2193} Import…") != null);
+    try testing.expect(f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .chip and part.chip.section == .captured and part.chip.kind == .capture;
+        }
+    }.p) != null);
+    // Back to row 0, the COLLECTIONS header; enter folds it.
+    try f.app.handle(.{ .key = Key.char('g') });
     try f.app.handle(.{ .key = Key.named(.enter) });
     const st = &f.app.http_panel;
     try testing.expect(st.collapsed.contains(.collections));
     const txt2 = try f.screen();
     defer testing.allocator.free(txt2);
-    try testing.expect(std.mem.indexOf(u8, txt2, "api/users.http") == null);
-    try testing.expect(std.mem.indexOf(u8, txt2, "COLLECTIONS (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "users.http") == null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "COLLECTIONS (4)") != null);
     // `/` then typing narrows; the subtitle counts what survived.
     try f.app.handle(.{ .key = Key.char('/') });
     try f.app.handle(.{ .key = Key.char('l') });
@@ -871,27 +1389,106 @@ test "headless: the panel paints seven headers, the filter row narrows, enter on
     try f.app.handle(.{ .key = Key.char('g') });
     const txt3 = try f.screen();
     defer testing.allocator.free(txt3);
-    try testing.expect(std.mem.indexOf(u8, txt3, "(2 of 10)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt3, "(2 of 12)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "CHAINS (1)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "RECENT (1)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "ENVS") == null);
+    try testing.expect(std.mem.indexOf(u8, txt3, "+ New chain") == null);
 }
 
-test "paintRow: a 100k-char label and detail paint clipped without overflowing the cell sum" {
-    const UiFixture = @import("../ui/test_fixture.zig");
-    var f = try UiFixture.init(60, 2);
+test "clicks: a header chip acts (ENVS + opens the prompt, RECENT ✕ truncates the log), a link acts, the folder + opens req-1.http in the collection, a folder row folds" {
+    var f = try Fixture.init(100, 40);
     defer f.deinit();
-    const long = try testing.allocator.alloc(u8, 100_000);
-    defer testing.allocator.free(long);
-    @memset(long, 'h');
-    paintRow(f.ui(), f.full().row(0), .{ .section = .recent, .label = long, .detail = "200" }, false);
-    paintRow(f.ui(), f.full().row(1), .{ .section = .recent, .label = "GET x", .detail = long }, true);
-    var buf: [256]u8 = undefined;
-    try testing.expect(std.mem.startsWith(u8, f.row(0, &buf), "  hhhh"));
-    try testing.expect(std.mem.endsWith(u8, f.row(0, &buf), "…  200"));
-    // A long detail clips itself; the label keeps its cells.
-    try testing.expect(std.mem.startsWith(u8, f.row(1, &buf), "  GET x  hhhh"));
-    try testing.expect(std.mem.endsWith(u8, f.row(1, &buf), "…"));
+    try f.seedAll();
+    f.app.tree.visible = false;
+    // A 34-cell column: RECENT's ladder keeps its ✕ beside the scrollbar.
+    f.app.tree.width = 34;
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    try f.app.render();
+    const st = &f.app.http_panel;
+    const env_new = f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .chip and part.chip.section == .envs and part.chip.kind == .new;
+        }
+    }.p).?;
+    try f.app.handle(.{ .mouse = .{ .x = env_new.x + 1, .y = env_new.y, .kind = .press, .button = .left } });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.prompt.state.title, "New env name") != null);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    try f.app.render();
+    const folder_new = f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .folder_new and part.folder_new == 1;
+        }
+    }.p).?;
+    try f.app.handle(.{ .mouse = .{ .x = folder_new.x + 1, .y = folder_new.y, .kind = .press, .button = .left } });
+    const rp = http.activeRequest(&f.app).?;
+    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/api/req-1.http"));
+    try testing.expectEqualStrings("req-1.http", rp.title());
+    // RECENT is below the first screenful: G scrolls the tail in.
+    focusPanel(&f.app);
+    try f.app.handle(.{ .key = Key.char('G') });
+    try f.app.render();
+    // The RECENT clear chip fits at this width: the log is truncated.
+    const recent_clear = f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .chip and part.chip.section == .recent and part.chip.kind == .clear;
+        }
+    }.p).?;
+    try f.app.handle(.{ .mouse = .{ .x = recent_clear.x + 1, .y = recent_clear.y, .kind = .press, .button = .left } });
+    try testing.expectEqual(@as(usize, 0), st.recent.len);
+    try testing.expect(st.shown(.recent).? == 0);
+    try f.app.render();
+    // The `+ New chain` link.
+    const chain_link = f.findHit(struct {
+        fn p(part: Part) bool {
+            return part == .link and part.link == .new_chain;
+        }
+    }.p).?;
+    try f.app.handle(.{ .mouse = .{ .x = chain_link.x + 3, .y = chain_link.y, .kind = .press, .button = .left } });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.prompt.state.title, "New chain name") != null);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    focusPanel(&f.app);
+    try f.app.handle(.{ .key = Key.char('g') });
+    try f.app.render();
+    // A press on the api folder row (not its +) folds it.
+    const folder_idx = f.rowOf(.collections, .folder, "api").?;
+    var y: u16 = 0;
+    var found = false;
+    while (y < 40 and !found) : (y += 1) {
+        if (f.app.hits.at(8, y)) |t| if (t == .row and t.row.panel == .http and t.row.idx == folder_idx) {
+            found = true;
+            try f.app.handle(.{ .mouse = .{ .x = 8, .y = y, .kind = .press, .button = .left } });
+        };
+    }
+    try testing.expect(found);
+    try testing.expect(st.rows.items[folder_idx].collapsed);
+    try testing.expect(st.collapsed_dirs.contains("api"));
+}
+
+test "every row menu names registered ids only; the header menus carry the section's verbs" {
+    var f = try Fixture.init(100, 40);
+    defer f.deinit();
+    try f.seedAll();
+    try refresh(&f.app);
+    const st = &f.app.http_panel;
+    for (st.rows.items, 0..) |r, i| {
+        if (!r.isStop()) continue;
+        st.list.cursor = i;
+        try openRowMenu(&f.app, 3, 3);
+        try testing.expect(f.app.overlay == .menu);
+        try testing.expect(f.app.overlay.menu.items.len > 0);
+        for (f.app.overlay.menu.items) |it| switch (it.action) {
+            .command => |id| try testing.expect(command.by_name.get(command.name(id)) != null),
+            else => return error.TestUnexpectedResult,
+        };
+        try f.app.handle(.{ .key = Key.named(.esc) });
+    }
+    st.list.cursor = f.rowOf(.captured, .header, null).?;
+    try openRowMenu(&f.app, 3, 3);
+    try testing.expectEqualStrings("Start capture", f.app.overlay.menu.items[3].label);
+    try f.app.handle(.{ .key = Key.named(.esc) });
 }
 
 test "the green + chip on the header opens a blank request; its hit is the .new chip of the http panel" {
@@ -899,6 +1496,7 @@ test "the green + chip on the header opens a blank request; its hit is the .new 
     defer f.deinit();
     f.app.tree.visible = false;
     try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    const before = f.app.panes.count();
     const txt = try f.screen();
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, " + ") != null);
@@ -917,6 +1515,7 @@ test "the green + chip on the header opens a blank request; its hit is the .new 
     }
     try testing.expect(found != null);
     try f.app.handle(.{ .mouse = .{ .x = found.?.x, .y = found.?.y, .kind = .press, .button = .left } });
+    try testing.expectEqual(before + 1, f.app.panes.count());
     const pane = f.app.panes.get(f.app.active.?).?;
     try testing.expect(pane.* == .request);
     try testing.expectEqualStrings("GET  new request", pane.title());
