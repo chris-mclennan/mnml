@@ -208,6 +208,8 @@ fn upper(arena: Allocator, s: []const u8) []const u8 {
 fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
     if (id == md_preview.button_edit) return .{ .title = "Edit the markdown", .detail = "swaps the raw editor in (markdown.edit_raw)" };
     if (id == md_preview.button_preview) return .{ .title = "Preview the markdown", .detail = "opens the rendered preview (markdown.preview)" };
+    if (id == @import("zon_pane.zig").button_view) return .{ .title = "View the ZON as a tree", .detail = "opens the field tree beside the text (zon.view)" };
+    if (id == @import("zon_pane.zig").button_source) return .{ .title = "Back to the ZON source", .detail = "reveals the raw editor tab (zon.source)" };
     if (id == toast_mod.undo_button) return .{
         .title = if (app.undo_chip) |u| try std.fmt.allocPrint(arena, "Undo: {s}", .{u.label}) else "Undo",
         .detail = "click puts it back · right-click drops the offer",

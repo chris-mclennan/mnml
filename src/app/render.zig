@@ -75,6 +75,8 @@ const syntax = @import("syntax.zig");
 const sticky = @import("sticky.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
+const zon_pane = @import("zon_pane.zig");
+const zon_view = @import("../ui/zon_view.zig");
 const layout_mod = @import("layout.zig");
 const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
@@ -629,6 +631,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
     return switch (pane.*) {
         .editor => |*e| icons.forName(std.fs.path.basename(e.buf.doc.path orelse "untitled"), false, false, ascii),
         .md_preview => |*m| icons.forName(std.fs.path.basename(m.path), false, false, ascii),
+        .zon => |*z| icons.forName(std.fs.path.basename(z.path), false, false, ascii),
         .diff => kindIcon(ascii, "\u{B1}", "\u{F0E7E}", p.orange),
         .git_graph => kindIcon(ascii, "\u{2387}", "\u{F02A2}", p.orange),
         .git_status => kindIcon(ascii, "\u{B1}", "\u{F1D2}", p.green),
@@ -758,7 +761,9 @@ fn modeChip(app: *App, ui: Ui, active: PaneId) ?bufferline.ModeChip {
     const pane = app.panes.get(active) orelse return null;
     return switch (pane.*) {
         .md_preview => .{ .label = if (ui.ascii) " e Edit " else " \u{F044} Edit ", .button = md_preview.button_edit, .kind = .preview_md },
-        .editor => |*e| if (e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?)) .{ .label = if (ui.ascii) " p Preview " else " \u{F06E} Preview ", .button = md_preview.button_preview, .kind = .edit_md } else null,
+        .editor => |*e| if (e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?)) .{ .label = if (ui.ascii) " p Preview " else " \u{F06E} Preview ", .button = md_preview.button_preview, .kind = .edit_md } else if (e.buf.doc.path != null and zon_pane.isZonPath(e.buf.doc.path.?)) .{ .label = if (ui.ascii) " t View as tree " else " \u{F0E8} View as tree ", .button = zon_pane.button_view, .kind = .view_zon } else null,
+        // The ZON tree's way back to the raw text.
+        .zon => .{ .label = if (ui.ascii) " e Source " else " \u{F044} Source ", .button = zon_pane.button_source, .kind = .source_zon },
         else => null,
     };
 }
@@ -956,6 +961,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 try outline.draw(app, ui, pr.pane, o, rect, app.active == pr.pane);
             },
             .md_preview => |*m| try md_preview.draw(app, ui, pr.pane, m, rect),
+            .zon => |*z| try drawZon(app, ui, pr.pane, z, rect),
             .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
             .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
             .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
@@ -1039,6 +1045,18 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
 }
 
 /// The AI answer pane; the scroll is clamped to what overflowed.
+/// The ZON view: rows rebuilt when stale, the caret handed to the
+/// terminal while a field or the filter has it.
+fn drawZon(app: *App, ui: Ui, id: PaneId, z: *zon_pane.ZonPane, rect: Rect) Allocator.Error!void {
+    if (app.active == id) app.pane_rows = @max(rect.h, 1);
+    if (z.stale) try z.rebuildRows();
+    const focused = app.active == id and app.focus == .pane;
+    const caret = zon_view.draw(ui, id, rect, z, focused);
+    if (focused) if (caret) |c| {
+        app.cursor_pos = .{ .x = c.x, .y = c.y };
+    };
+}
+
 fn drawAi(app: *App, ui: Ui, id: PaneId, a: *ai_app.AiPane, rect: Rect) void {
     const focused = app.active == id and app.focus == .pane;
     if (app.active == id) app.pane_rows = @max(rect.h, 1);

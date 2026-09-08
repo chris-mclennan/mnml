@@ -212,11 +212,11 @@ fn appendKey(out: *std.ArrayList(u8), arena: Allocator, key: []const u8) Allocat
     try out.append(arena, '"');
 }
 
-fn lineStart(src: []const u8, pos: usize) usize {
+pub fn lineStart(src: []const u8, pos: usize) usize {
     return if (std.mem.lastIndexOfScalar(u8, src[0..pos], '\n')) |nl| nl + 1 else 0;
 }
 
-fn lineIndent(src: []const u8, pos: usize) []const u8 {
+pub fn lineIndent(src: []const u8, pos: usize) []const u8 {
     const start = lineStart(src, pos);
     var end = start;
     while (end < src.len and (src[end] == ' ' or src[end] == '\t')) end += 1;

@@ -2164,6 +2164,7 @@ test {
     _ = @import("app/pane.zig");
     _ = @import("app/outline.zig");
     _ = @import("app/md_preview.zig");
+    _ = @import("app/zon_pane.zig");
     _ = @import("app/image_pane.zig");
     _ = @import("app/discovery.zig");
     _ = @import("app/workspace_trust.zig");

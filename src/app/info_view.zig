@@ -150,6 +150,13 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
         .request => .{ .title = p.title(), .body = "Request pane — Enter to send, Ctrl+S saves as .http/.curl." },
         .pty => .{ .title = p.title(), .body = "Terminal pane — Ctrl+Alt+H to detach, Ctrl+Alt+K to kill." },
         .md_preview => .{ .title = p.title(), .body = "Rendered markdown preview — click header chip to jump back to source." },
+        // The ZON tree: the focused field's doc line (docs/CONFIG.md's
+        // comment for a config key, else its type).
+        .zon => |*z| blk: {
+            if (z.stale) try z.rebuildRows();
+            const row = z.current() orelse break :blk .{ .title = p.title(), .body = "ZON tree — Enter edits a field, ←→ adjust it, / filters by path, e opens the source." };
+            break :blk .{ .title = try std.fmt.allocPrint(arena, "{s}", .{row.path}), .body = try z.docLine(arena, row) };
+        },
         .ai => .{ .title = p.title(), .body = "Claude / Codex session — type at the bottom prompt." },
         // Rust's `describe_active_pane` says nothing for the graph: the
         // box keeps the sidebar's own words in git mode.

@@ -36,6 +36,7 @@ const ai_apply = @import("ai_apply.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const files_pane = @import("files_pane.zig");
+const zon_pane = @import("zon_pane.zig");
 const DocStore = @import("doc_store.zig").DocStore;
 
 pub const PaneId = ids.PaneId;
@@ -46,6 +47,7 @@ pub const WebsocketPane = ws_pane.WebsocketPane;
 pub const BrowserPane = browser_pane.BrowserPane;
 pub const MountPane = mount_pane.MountPane;
 pub const FilesPane = files_pane.FilesPane;
+pub const ZonPane = zon_pane.ZonPane;
 
 /// What the file watcher last saw on disk for an editor's file.
 pub const DiskStamp = buffer_mod.DiskStamp;
@@ -177,6 +179,8 @@ pub const Pane = union(enum) {
     flaky: flaky.FlakyPane,
     /// A directory listing (`files.open`); the trash is one too.
     files: FilesPane,
+    /// A `.zon` file as a tree of fields, edited in place (`zon.view`).
+    zon: ZonPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -191,6 +195,7 @@ pub const Pane = union(enum) {
             .tests => |*tp| tp.deinit(gpa, io),
             .flaky => |*fp| fp.deinit(),
             .files => |*f| f.deinit(),
+            .zon => |*z| z.deinit(),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -239,12 +244,14 @@ pub const Pane = union(enum) {
             .tests => |*tp| return tp.title(),
             .flaky => |*fp| return fp.title(),
             .files => |*f| return f.title(),
+            .zon => |*z| return z.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
+            .zon => |*z| z.changed,
             .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => false,
         };
     }
@@ -309,6 +316,13 @@ pub const Pane = union(enum) {
     pub fn asFiles(self: *Pane) ?*FilesPane {
         return switch (self.*) {
             .files => |*f| f,
+            else => null,
+        };
+    }
+
+    pub fn asZon(self: *Pane) ?*ZonPane {
+        return switch (self.*) {
+            .zon => |*z| z,
             else => null,
         };
     }

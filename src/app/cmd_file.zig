@@ -23,6 +23,8 @@ pub fn saveCurrent(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     // A request pane writes itself back into its source block.
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .request) return @import("http.zig").saveToSource(app);
+    // A ZON tree writes its working text.
+    if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .zon) return @import("zon_pane.zig").save(app, id);
     const e = try app.requireEditor();
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
     const rel = app.relPath(path);
