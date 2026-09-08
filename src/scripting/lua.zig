@@ -436,6 +436,47 @@ pub const Lua = struct {
         };
     }
 
+    /// Run `src` (a selection, the cursor line) as a chunk named
+    /// `=selection`, an expression first (`return <src>`) so `1 + 1`
+    /// answers `2`, a statement chunk when that does not parse. The
+    /// values it returns, `tostring`ed and tab-joined, on the frame
+    /// arena; null when it returned nothing. An error is `error.Failed`
+    /// with the message in `last_error` — the caller reports it (there
+    /// is no line of a file to land on).
+    pub fn eval(self: *Lua, src: []const u8) error{ Failed, OutOfMemory }!?[]const u8 {
+        const L = self.L;
+        const arena = self.app.frame.allocator();
+        const as_expr = try std.fmt.allocPrint(arena, "return {s}", .{src});
+        const base = L.getTop();
+        L.loadBuffer(as_expr, "=selection", .text) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LuaSyntax => {
+                L.pop(1);
+                L.loadBuffer(src, "=selection", .text) catch |err2| switch (err2) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.LuaSyntax => {
+                        const msg = L.toStringEx(-1);
+                        self.last_error = arena.dupe(u8, msg) catch "syntax error";
+                        L.pop(2);
+                        return error.Failed;
+                    },
+                };
+            },
+        };
+        try self.pcall(0, zlua.mult_return);
+        const n: usize = @intCast(L.getTop() - base);
+        defer L.setTop(base);
+        if (n == 0) return null;
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            if (i > 0) try out.append(arena, '\t');
+            try out.appendSlice(arena, L.toStringEx(base + 1 + @as(i32, @intCast(i))));
+            L.pop(1);
+        }
+        return out.items;
+    }
+
     // ── the seams ──
 
     /// A `DynRunner.lua` command. The reason lands in `app.diag`, so

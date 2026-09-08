@@ -991,6 +991,7 @@ pub const specs = [_]Spec{
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
     .{ .id = "script.edit_init", .title = "Lua: open the data root's init.lua", .group = "script" },
+    .{ .id = "script.run_selection", .title = "Lua: run the selected lines (or the cursor line) in the script state — the result is a toast", .group = "script", .keys = .{ .vim = &.{"space s r"}, .standard = &.{"ctrl+alt+enter"} } },
     // ─── Zig-only ids (cutover prep) ───
     .{ .id = "session.save", .title = "Session: save the open panes, layout and history to .mnml/session.zon now", .group = "session" },
     .{ .id = "session.restore", .title = "Session: restore .mnml/session.zon", .group = "session" },
@@ -1020,9 +1021,9 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "956 specs, unique ids" {
+test "957 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
-    // + two script commands + eight cutover-prep commands + four var
+    // + three script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
     // + eighteen file-manager commands + four TODOS row commands
     // + three NOTES row commands + four FINDINGS row commands + ten
@@ -1032,6 +1033,6 @@ test "956 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 956), specs.len);
+    try std.testing.expectEqual(@as(usize, 957), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

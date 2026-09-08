@@ -13,7 +13,37 @@ const script_diag = @import("../scripting/diag.zig");
 pub const table = .{
     .@"script.reload" = &reload,
     .@"script.edit_init" = &editInit,
+    .@"script.run_selection" = &runSelection,
 };
+
+/// `script.run_selection`: the selected lines — whole lines, however
+/// the selection sits in them — or the cursor line, run in the script
+/// state as they are; what they return is the toast (`2`, `hello`,
+/// `nil`), a run that returns nothing says how many lines ran.
+fn runSelection(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = app.activeEditor() orelse return app.diag.fail(arena, "no active editor", .{});
+    const ed = e.buf.editor;
+    const text = ed.bytes();
+    const range = ed.selection() orelse [2]usize{ ed.cursor, ed.cursor };
+    const first = ed.lineOfByte(range[0]);
+    // A selection ending at a line's first byte does not take that line.
+    const last_byte = if (range[1] > range[0] and range[1] > 0) range[1] - 1 else range[1];
+    const last = @max(first, ed.lineOfByte(last_byte));
+    const src = text[ed.lineStart(first)..ed.lineEnd(last)];
+    if (std.mem.trim(u8, src, " \t\r\n").len == 0) return app.diag.fail(arena, "lua: nothing to run", .{});
+    const lua = app.script();
+    const result = lua.eval(src) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Failed => return app.diag.fail(arena, "lua: {s}", .{lua.last_error orelse "error"}),
+    };
+    if (result) |r| {
+        app.toast("lua: {s}", .{r});
+    } else {
+        const n = last - first + 1;
+        app.toast("lua: ran {d} line{s}", .{ n, if (n == 1) "" else "s" });
+    }
+}
 
 /// `script.reload`: everything script-owned goes, the state reopens,
 /// every `init.lua` runs again. The toast counts what came back; a file
@@ -146,6 +176,34 @@ test "saving a workspace init.lua reloads it: a new command lands, an error is a
     try t.expectEqual(@as(usize, 1), lsp.diagnosticsFor(&app, path).len);
     try t.expectEqual(@as(u32, 1), lsp.diagnosticsFor(&app, path)[0].range.start.line);
     try t.expect(hasToast(&app, "hook: .mnml/init.lua:2:"));
+}
+
+test "script.run_selection: the cursor line, an expression's value, the selected lines, an error" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"script.run_selection" }));
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try app.splice(e, 0, 0, "x = 20\nmnml.toast('from ' .. x)\nx + 1\nerror('nope')\n");
+    // Line 1 sets a global; nothing comes back.
+    e.buf.editor.placeCursor(0, 0);
+    try command.run(&app, .{ .static = .@"script.run_selection" });
+    try t.expectEqualStrings("lua: ran 1 line", app.lastToast().?);
+    // Line 3 is an expression: its value.
+    e.buf.editor.placeCursor(2, 3);
+    try command.run(&app, .{ .static = .@"script.run_selection" });
+    try t.expectEqualStrings("lua: 21", app.lastToast().?);
+    // Lines 1–2 selected (the selection ends mid-line 2): the toast the script made, then the count.
+    e.buf.editor.setSelection(2, e.buf.editor.lineStart(1) + 4);
+    try command.run(&app, .{ .static = .@"script.run_selection" });
+    try t.expectEqualStrings("lua: ran 2 lines", app.lastToast().?);
+    try t.expect(hasToast(&app, "from 20"));
+    // Line 4 errors: the message names the chunk and the line.
+    e.buf.editor.anchor = null;
+    e.buf.editor.placeCursor(3, 0);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"script.run_selection" }));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "lua: selection:1: nope") != null);
+    try t.expectEqual(@as(i32, 0), app.script().L.getTop());
 }
 
 /// Whether a toast up right now starts with `prefix`.

@@ -85,6 +85,7 @@ pub const root: Node = .{
                 cmd('o', .@"view.close_others", "close others"),
                 cmd('H', .@"view.move_section_left", "section → left side"),
                 cmd('L', .@"view.move_section_right", "section → right side"),
+                cmd('r', .@"script.run_selection", "run Lua selection"),
             }),
             // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
             groupVim('d', "+debug", &.{

@@ -1,0 +1,16 @@
+# Lua (D10): `script.run_selection` runs the cursor line — or the
+# selected lines — in the script state; what comes back is the toast.
+# `ctrl+alt+enter` is the standard profile's chord.
+write scratch.lua "x = 20\nmnml.toast('from ' .. x)\nreturn x + 1\n"
+open scratch.lua
+command script.run_selection
+expect screen contains "lua: ran 1 line"
+key down
+key down
+key ctrl+alt+enter
+expect screen contains "lua: 21"
+# All three lines: the script's own toast, then the chunk's value.
+command editor.select_all
+command script.run_selection
+expect screen contains "from 20"
+expect screen contains "lua: 21"
