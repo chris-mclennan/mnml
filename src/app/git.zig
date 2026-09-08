@@ -80,6 +80,8 @@ pub const Pick = enum {
     worktree_shell,
     switch_repo,
     file_history,
+    /// `git.diff_against_current` off the branches panel: pick the branch.
+    diff_current,
     /// The palette's closed-repo picker.
     reopen_repo,
 };
@@ -271,9 +273,13 @@ pub const GraphPane = struct {
     anchor: ?usize = null,
     /// The rebase plan while its modal is open.
     plan: ?Plan = null,
+    /// `W`: the commit a `d` on another row diffs from (`base..row`).
+    /// Owned; a sha, so it survives a log reload.
+    compare_base: ?[]u8 = null,
 
     pub fn deinit(self: *GraphPane) void {
         self.gpa.free(self.name);
+        if (self.compare_base) |b| self.gpa.free(b);
         self.wip_text.deinit(self.gpa);
         self.filter.deinit(self.gpa);
         self.marks.deinit(self.gpa);
@@ -1344,6 +1350,12 @@ pub fn openDiff(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]
         },
         .orig => try std.fmt.allocPrint(gpa, "orig: {s}", .{std.fs.path.basename(rel orelse "")}),
         .conflict => try std.fmt.allocPrint(gpa, "conflict: {s}", .{std.fs.path.basename(rel orelse "")}),
+        .range => blk: {
+            const t = try client.rangeTitle(gpa, rev orelse "");
+            if (rel == null) break :blk t;
+            defer gpa.free(t);
+            break :blk try std.fmt.allocPrint(gpa, "{s} {s}", .{ t, std.fs.path.basename(rel.?) });
+        },
     };
     errdefer gpa.free(title);
     var dp: DiffPane = .{ .gpa = gpa, .repo = repo.id, .scope = scope, .title = title, .arena = .init(gpa), .mode = app.git.diff_mode };
@@ -1661,7 +1673,7 @@ pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error
             try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Commit {s}\u{2026}", .{what}), .action = .{ .command = .@"git.diff_commit_lines" } });
         },
         .staged => try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Unstage {s}", .{what}), .action = .{ .command = .@"git.diff_unstage_lines" } }),
-        .commit, .orig, .conflict => {},
+        .commit, .orig, .conflict, .range => {},
     }
     try items.append(app.gpa, .{ .label = if (has_sel) "Clear selection" else "Select lines from here", .action = .{ .command = .@"git.diff_select" }, .separator_before = items.items.len > 0 });
     try items.append(app.gpa, .{ .label = "Open file at line", .action = .{ .command = .@"git.diff_open_line" } });
@@ -1695,8 +1707,8 @@ fn openBranchPicker(app: *App, bs: []const parse.Branch, what: Pick) Allocator.E
     }
     const now = nowUnix(app);
     for (bs) |b| {
-        // A delete / merge / rebase picker never offers the current branch.
-        if (b.current and (what == .delete_branch or what == .merge or what == .rebase)) continue;
+        // A delete / merge / rebase / diff picker never offers the current branch.
+        if (b.current and (what == .delete_branch or what == .merge or what == .rebase or what == .diff_current)) continue;
         if (what == .delete_branch and b.remote) continue;
         var age_buf: [16]u8 = undefined;
         const age = parse.relativeAge(&age_buf, b.time, now);
@@ -1714,6 +1726,7 @@ fn openBranchPicker(app: *App, bs: []const parse.Branch, what: Pick) Allocator.E
         .rebase => "Rebase onto",
         .delete_branch => "Delete branch (force)",
         .graph_branch => "Graph: filter by branch",
+        .diff_current => "Diff a branch against the current one",
         else => "Branches",
     };
     app.git.pick = what;
@@ -1841,6 +1854,7 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         },
         .merge => try submitOp(app, try requireRepo(app), .{ .merge = try gpa.dupe(u8, label) }),
         .rebase => try submitOp(app, try requireRepo(app), .{ .rebase = try gpa.dupe(u8, label) }),
+        .diff_current => try diffAgainstCurrent(app, try requireRepo(app), label),
         .delete_branch => try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, label) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{label})),
         .graph_branch => {
             const g = activeGraph(app) orelse return;
@@ -2622,7 +2636,8 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
                 'k' => moveGraphCursor(app, g, g.cursor -| 1),
                 'g' => moveGraphCursor(app, g, 0),
                 'G' => moveGraphCursor(app, g, n -| 1),
-                'd' => runToast(app, showSelectedCommit(app, g)),
+                'd' => runToast(app, diffSelected(app, g)),
+                'W' => runToast(app, toggleCompareBase(app, g)),
                 's' => try setSort(app, g, .{ .col = g.sort.col.next(), .asc = false }),
                 '/' => openPrompt(app, .graph_hash, "Jump to commit (hash prefix)"),
                 'a' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.stage_all" })) else return false,
@@ -3106,6 +3121,95 @@ fn openDetailRow(app: *App, g: *GraphPane) CommandError!void {
     _ = try openDiff(app, repo, .commit, d.files[g.detail_cursor].path, c.hash, null);
 }
 
+// ─── the compare base (W) ───────────────────────────────────────────────
+
+/// `W`: the selected commit becomes the compare base — `d` on another
+/// row then diffs `base..row`; `W` on the base clears it.
+pub fn toggleCompareBase(app: *App, g: *GraphPane) CommandError!void {
+    const c = g.selected() orelse return app.diag.fail(app.frame.allocator(), "graph: select a commit to compare from", .{});
+    if (g.compare_base) |b| {
+        const was = std.mem.eql(u8, b, c.hash);
+        app.gpa.free(b);
+        g.compare_base = null;
+        if (was) {
+            app.toast("compare base cleared", .{});
+            app.needs_render = true;
+            return;
+        }
+    }
+    g.compare_base = try app.gpa.dupe(u8, c.hash);
+    app.toast("compare base: {s} \u{2014} `d` on another row diffs base..row", .{c.short()});
+    app.needs_render = true;
+}
+
+/// The base's index in `commits`, when the graph has it.
+pub fn compareBaseIndex(g: *const GraphPane) ?usize {
+    const b = g.compare_base orelse return null;
+    return indexOfSha(g, b);
+}
+
+/// `d`: the selected commit against the compare base when one is set
+/// (and is not this row), else the commit's own diff.
+pub fn diffSelected(app: *App, g: *GraphPane) CommandError!void {
+    if (g.compare_base != null and !g.wipSelected()) if (g.selected()) |c| {
+        if (!std.mem.eql(u8, c.hash, g.compare_base.?)) return diffAgainstBase(app, g);
+    };
+    return showSelectedCommit(app, g);
+}
+
+/// The diff pane on `base..selected`.
+pub fn diffAgainstBase(app: *App, g: *GraphPane) CommandError!void {
+    const arena = app.frame.allocator();
+    const base = g.compare_base orelse return app.diag.fail(arena, "graph: no compare base \u{2014} `W` marks one", .{});
+    const c = g.selected() orelse return app.diag.fail(arena, "graph: select the commit to diff against the base", .{});
+    if (std.mem.eql(u8, c.hash, base)) return app.diag.fail(arena, "graph: that is the base itself", .{});
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    const rev = try client.rangeRev(arena, base, c.hash);
+    _ = try openDiff(app, repo, .range, null, rev, null);
+}
+
+/// A branch against the checked-out one: `current..branch` (HEAD when
+/// detached) — what the branch has that the current one does not.
+pub fn diffAgainstCurrent(app: *App, repo: *client.Repo, branch: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const cur: []const u8 = app.git.branchLabel() orelse "HEAD";
+    const from: []const u8 = if (std.mem.eql(u8, cur, "(detached)")) "HEAD" else cur;
+    if (std.mem.eql(u8, from, branch)) return app.diag.fail(arena, "diff: {s} is the current branch", .{branch});
+    _ = try openDiff(app, repo, .range, null, try client.rangeRev(arena, from, branch), null);
+}
+
+/// The commits in `base..HEAD` — reachable from HEAD, not from the
+/// base — as a set over the commit indices (on the frame arena), the
+/// tint the graph paints while a base is set. Null without a base.
+pub fn rangeSet(app: *App, g: *GraphPane) Allocator.Error!?[]bool {
+    const bi = compareBaseIndex(g) orelse return null;
+    const arena = app.frame.allocator();
+    const head = headIndex(app, g) orelse return null;
+    const n = g.commits.len;
+    const from_base = try reachable(arena, g, bi);
+    const from_head = try reachable(arena, g, head);
+    const out = try arena.alloc(bool, n);
+    for (out, from_head, from_base) |*o, h, b| o.* = h and !b;
+    return out;
+}
+
+/// The commits reachable from `start` through the loaded parents,
+/// `start` included.
+fn reachable(arena: Allocator, g: *const GraphPane, start: usize) Allocator.Error![]bool {
+    const on = try arena.alloc(bool, g.commits.len);
+    @memset(on, false);
+    var stack: std.ArrayListUnmanaged(usize) = .empty;
+    try stack.append(arena, start);
+    while (stack.pop()) |at| {
+        if (on[at]) continue;
+        on[at] = true;
+        for (g.commits[at].parents) |p| if (indexOfSha(g, p)) |pi| {
+            if (!on[pi]) try stack.append(arena, pi);
+        };
+    }
+    return on;
+}
+
 pub fn showSelectedCommit(app: *App, g: *GraphPane) CommandError!void {
     if (g.wipSelected()) {
         const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
@@ -3213,8 +3317,14 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
 }
 
 fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const g = activeGraph(app);
+    const has_base = if (g) |gp| gp.compare_base != null else false;
+    const on_base = if (g) |gp| (if (compareBaseIndex(gp)) |bi| gp.selectedIndex() == bi else false) else false;
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Details", .action = .{ .command = .@"git.graph_detail" } },
+        .{ .label = "Diff this commit", .action = .{ .command = .@"git.graph_diff" } },
+        .{ .label = if (on_base) "Clear the compare base (W)" else "Mark as compare base (W)", .action = .{ .command = .@"git.compare_base" }, .separator_before = true },
+        .{ .label = if (has_base) "Diff against \u{2691}" else "Diff against \u{2691} (no base set)", .action = .{ .command = .@"git.diff_against_base" } },
         .{ .label = "Cherry-pick onto HEAD", .action = .{ .command = .@"git.cherry_pick" }, .separator_before = true },
         .{ .label = "Revert", .action = .{ .command = .@"git.revert" } },
         .{ .label = "Rebase plan\u{2026}", .action = .{ .command = .@"git.rebase_plan" }, .separator_before = true },
@@ -3320,7 +3430,7 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
     const actions: diff_view.Actions = switch (dp.scope) {
         .file, .worktree, .head => .unstaged,
         .staged => .staged,
-        .commit, .orig, .conflict => .none,
+        .commit, .orig, .conflict, .range => .none,
     };
     const painted = diff_view.draw(ui, id, area, &dp.view, .{
         .files = dp.files,
@@ -3433,6 +3543,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         };
         marks = m;
     }
+    const tinted: ?[]const bool = rangeSet(app, g) catch null;
     var plan_actions: ?[]const u8 = null;
     if (g.plan) |*plan| {
         const pa = arena.alloc(u8, g.commits.len) catch return;
@@ -3462,6 +3573,8 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         .marks = marks,
         .range = g.range(),
         .plan_actions = plan_actions,
+        .compare_base = compareBaseIndex(g),
+        .tinted = tinted,
     });
     if (g.plan) |*plan| {
         const rows = arena.alloc(graph_view.PlanRowDoc, plan.rows.items.len) catch return;
@@ -4455,4 +4568,85 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expect(refsName("HEAD -> main, origin/main, tag: v1", "origin/main"));
     try testing.expect(refsName("HEAD -> main", "main"));
     try testing.expect(!refsName("HEAD -> main, origin/main", "main2"));
+}
+
+test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "third" });
+    try f.sh(&.{ "branch", "-q", "other", "HEAD~1" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+    const id = f.app.active.?;
+    try testing.expectEqual(@as(usize, 3), g.commits.len);
+    try testing.expect(!g.has_wip);
+
+    // The base: `first`, the bottom row.
+    const first_ci = for (g.commits, 0..) |c, i| {
+        if (std.mem.eql(u8, c.subject, "first")) break i;
+    } else unreachable;
+    moveGraphCursor(&f.app, g, g.rowOfCommit(first_ci));
+    _ = try graphKey(&f.app, id, g, Key.char('W'));
+    try testing.expectEqualStrings(g.commits[first_ci].hash, g.compare_base.?);
+    try testing.expectEqual(first_ci, compareBaseIndex(g).?);
+    // base..HEAD is second + third: two tinted rows, the base not among them.
+    const tint = (try rangeSet(&f.app, g)).?;
+    var n_tint: usize = 0;
+    for (tint) |t| if (t) {
+        n_tint += 1;
+    };
+    try testing.expectEqual(@as(usize, 2), n_tint);
+    try testing.expect(!tint[first_ci]);
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{2691}") != null);
+
+    // `d` on HEAD (third): the range pane, titled base..row with short shas.
+    moveGraphCursor(&f.app, g, g.rowOfCommit(headIndex(&f.app, g).?));
+    _ = try graphKey(&f.app, id, g, Key.char('d'));
+    try f.settle(4000);
+    const dp = activeDiff(&f.app).?;
+    try testing.expectEqual(client.DiffScope.range, dp.scope);
+    const want = try std.fmt.allocPrint(testing.allocator, "{s}..{s}", .{ g.commits[first_ci].hash[0..7], g.commits[headIndex(&f.app, g).?].hash[0..7] });
+    defer testing.allocator.free(want);
+    try testing.expectEqualStrings(want, dp.title);
+    // b.txt and c.txt were added between the two.
+    try testing.expectEqual(@as(usize, 2), dp.files.len);
+
+    // Back on the graph: W on the base clears it; the tint goes with it.
+    f.app.showPane(id);
+    moveGraphCursor(&f.app, g, g.rowOfCommit(first_ci));
+    _ = try graphKey(&f.app, id, g, Key.char('W'));
+    try testing.expect(g.compare_base == null);
+    try testing.expect((try rangeSet(&f.app, g)) == null);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "compare base cleared"));
+    // Without a base `git.diff_against_base` says so.
+    try testing.expectError(error.Failed, command.run(&f.app, .{ .static = .@"git.diff_against_base" }));
+    f.app.diag.clear();
+
+    // A branch against the current one: `main..other` is the two trees'
+    // diff — other lacks c.txt, so one file, titled by name.
+    try diffAgainstCurrent(&f.app, f.app.git.activeRepo().?, "other");
+    try f.settle(4000);
+    const dp2 = activeDiff(&f.app).?;
+    try testing.expectEqualStrings("main..other", dp2.title);
+    try testing.expectEqual(@as(usize, 1), dp2.files.len);
+    try testing.expectEqualStrings("c.txt", dp2.files[0].path());
+    // The current branch against itself refuses.
+    try testing.expectError(error.Failed, diffAgainstCurrent(&f.app, f.app.git.activeRepo().?, "main"));
+    f.app.diag.clear();
 }

@@ -411,6 +411,11 @@ pub const Doc = struct {
     /// else `@intFromEnum(TodoAction) + 1` — the row shows the action's
     /// letter and its colour.
     plan_actions: ?[]const u8 = null,
+    /// The compare base (`W`), a commit index: its mark cell shows `⚑`.
+    compare_base: ?usize = null,
+    /// Per commit index: the row is in `base..HEAD` while a base is set
+    /// — painted on the raised ground so the range reads at a glance.
+    tinted: ?[]const bool = null,
 };
 
 /// The colour of a planned action: what the plan modal's action column
@@ -761,7 +766,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         const r = body.row(y);
         const selected = v == cursor;
         const row_bg: Color = if (selected) pal.bg2 else pal.bg_dark;
-        const base: Style = .{ .bg = row_bg };
+        var base: Style = .{ .bg = row_bg };
         ui.fill(r, base);
         var pen: Pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
         const sep = Theme.withFg(base, pal.line);
@@ -798,6 +803,12 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         const ci = doc.order[v - wip_off];
         const c = doc.commits[ci];
         const lane: Lane = if (ci < doc.lanes.len) doc.lanes[ci] else .{ .lane = 0, .cells = &.{} };
+        const in_tint = if (doc.tinted) |tn| (ci < tn.len and tn[ci]) else false;
+        if (in_tint and !selected) {
+            base = .{ .bg = pal.bg3 };
+            ui.fill(r, base);
+            pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
+        }
         pen.put("\u{258C}", Theme.withFg(base, laneColor(pal, @intCast(lane.lane))));
         pen.put(if (selected) "\u{25B6}" else " ", Theme.withFg(base, pal.yellow));
         // The mark cell: the planned action's letter while the plan is
@@ -812,6 +823,8 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
             var ps = Theme.withFg(base, actionColor(pal, a));
             ps.bold = true;
             pen.put(actionLetter(a), ps);
+        } else if (doc.compare_base != null and doc.compare_base.? == ci) {
+            pen.put(if (ui.ascii) "B" else "\u{2691}", Theme.withFg(base, pal.cyan));
         } else if (marked) {
             pen.put(if (ui.ascii) "*" else "\u{2713}", Theme.withFg(base, pal.yellow));
         } else pen.put(" ", base);

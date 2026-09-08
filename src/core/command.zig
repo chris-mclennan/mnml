@@ -622,6 +622,8 @@ pub const GitPaletteAct = struct {
         tag_checkout,
         tag_delete,
         tag_copy,
+        /// A branch row against the checked-out one: `current..branch`.
+        diff_current,
         switch_repo,
         reopen_repo,
         all_repos,
@@ -650,7 +652,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1008), count);
+    try std.testing.expectEqual(@as(usize, 1012), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

@@ -885,6 +885,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = "New branch from here\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{name}), .action = .{ .git_palette = .{ .what = .delete_branch, .idx = b.idx } } },
+                .{ .label = "Diff against current", .action = .{ .git_palette = .{ .what = .diff_current, .idx = b.idx } }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{name}), .action = .{ .command = .@"git.reset_mixed" } },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --hard to {s}\u{2026}", .{name}), .action = .{ .command = .@"git.reset_hard" } },
@@ -897,6 +898,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{m.name}), .action = .{ .git_palette = .{ .what = .merge, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Rebase current onto {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .rebase, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{m.name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = m.idx } } },
+                .{ .label = "Diff against current", .action = .{ .git_palette = .{ .what = .diff_current, .idx = m.idx } }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{m.name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{m.name}), .action = .{ .command = .@"git.reset_mixed" } },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --hard to {s}\u{2026}", .{m.name}), .action = .{ .command = .@"git.reset_hard" } },
@@ -1019,6 +1021,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .rebase => break :blk git.submitOp(app, repo, .{ .rebase = try gpa.dupe(u8, name) }),
             .new_branch => break :blk command.run(app, .{ .static = .@"git.new_branch" }),
             .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{name})),
+            .diff_current => break :blk git.diffAgainstCurrent(app, repo, name),
             .copy_name => {
                 try app.clipboard.setYank(name, false);
                 app.toast("copied {s}", .{name});

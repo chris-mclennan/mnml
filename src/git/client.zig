@@ -40,7 +40,28 @@ pub const ResetMode = enum {
 /// `worktree` is unstaged only; `staged` the index; `commit` a `show`.
 /// `conflict` is a conflicted file's ours (`:2:`) against theirs (`:3:`)
 /// — the diff pane's Split view beside the editor (`app/conflicts.zig`).
-pub const DiffScope = enum { file, worktree, head, staged, commit, orig, conflict };
+/// `range` is any two refs: `rev` holds `from..to` (`rangeRev`) and
+/// `path` narrows it to one file — the graph's compare base against a
+/// row, a branch against the current one, a stash against its parent.
+pub const DiffScope = enum { file, worktree, head, staged, commit, orig, conflict, range };
+
+/// `from..to` for a `.range` diff's `rev`.
+pub fn rangeRev(allocator: Allocator, from: []const u8, to: []const u8) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}..{s}", .{ from, to });
+}
+
+/// A range's two sides, each shortened to seven cells when it is a
+/// full sha (a branch name stays whole) — the diff pane's title.
+pub fn rangeTitle(allocator: Allocator, rev: []const u8) Allocator.Error![]u8 {
+    const dd = std.mem.indexOf(u8, rev, "..") orelse return allocator.dupe(u8, rev);
+    return std.fmt.allocPrint(allocator, "{s}..{s}", .{ shortRef(rev[0..dd]), shortRef(rev[dd + 2 ..]) });
+}
+
+fn shortRef(s: []const u8) []const u8 {
+    if (s.len < 20) return s;
+    for (s) |c| if (!std.ascii.isHex(c)) return s;
+    return s[0..7];
+}
 
 pub const LogFilter = struct {
     branch: ?[]u8 = null,
@@ -593,6 +614,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     // The buffer against the file on disk: `--no-index`
                     // with the buffer piped in as `-`.
                     try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", d.path orelse "", "-" });
+                },
+                .range => {
+                    try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, d.rev orelse "HEAD..HEAD", "--" });
+                    if (d.path) |p| try args.append(arena, p);
                 },
                 .conflict => unreachable,
             }
@@ -1335,6 +1360,18 @@ fn conflictDiff(repo: *Repo, io: Io, arena: Allocator, path: []const u8, ctx: []
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test "rangeRev joins two refs; rangeTitle shortens a full sha on either side and leaves a name whole" {
+    const rev = try rangeRev(testing.allocator, "0123456789abcdef0123456789abcdef01234567", "feature");
+    defer testing.allocator.free(rev);
+    try testing.expectEqualStrings("0123456789abcdef0123456789abcdef01234567..feature", rev);
+    const title = try rangeTitle(testing.allocator, rev);
+    defer testing.allocator.free(title);
+    try testing.expectEqualStrings("0123456..feature", title);
+    const plain = try rangeTitle(testing.allocator, "main");
+    defer testing.allocator.free(plain);
+    try testing.expectEqualStrings("main", plain);
+}
 
 test "a Repo's queue takes jobs, and destroy frees what was never run" {
     const io = testing.io;

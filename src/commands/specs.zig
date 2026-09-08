@@ -1035,6 +1035,11 @@ pub const specs = [_]Spec{
     .{ .id = "git.reset_soft", .title = "Git: reset --soft to the selected commit / branch (or a rev)", .group = "git" },
     .{ .id = "git.reset_mixed", .title = "Git: reset --mixed to the selected commit / branch (or a rev)", .group = "git" },
     .{ .id = "git.reset_hard", .title = "Git: reset --hard to the selected commit / branch (confirm; undo restores)", .group = "git" },
+    // git-more2: diff any two refs.
+    .{ .id = "git.compare_base", .title = "Graph: mark the selected commit as the compare base (W; again clears)", .group = "git" },
+    .{ .id = "git.diff_against_base", .title = "Graph: diff the selected commit against the compare base (base..row)", .group = "git" },
+    .{ .id = "git.graph_diff", .title = "Graph: the selected commit's own diff", .group = "git" },
+    .{ .id = "git.diff_against_current", .title = "Git: diff a branch against the current one (current..branch)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1074,7 +1079,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1008 specs, unique ids" {
+test "1012 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1087,9 +1092,7 @@ test "1008 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    // + two ZON view commands.
-    // + five dotnet runners.
-    // + six dotnet commands.
-    try std.testing.expectEqual(@as(usize, 1008), specs.len);
+    // + four diff-any-two-refs commands (git-more2).
+    try std.testing.expectEqual(@as(usize, 1012), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

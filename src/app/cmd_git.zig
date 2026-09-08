@@ -123,6 +123,10 @@ pub const table = .{
     .@"git.reset_soft" = &resetSoft,
     .@"git.reset_mixed" = &resetMixed,
     .@"git.reset_hard" = &resetHard,
+    .@"git.compare_base" = &compareBase,
+    .@"git.diff_against_base" = &diffAgainstBase,
+    .@"git.graph_diff" = &graphDiff,
+    .@"git.diff_against_current" = &diffAgainstCurrent,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -708,6 +712,33 @@ fn resetMixed(app: *App) CommandError!void {
 
 fn resetHard(app: *App) CommandError!void {
     try reset(app, .hard);
+}
+
+// ─── diff any two refs (git-more2) ──────────────────────────────────────
+
+/// `W` on the graph: the selected commit is the compare base (again clears).
+fn compareBase(app: *App) CommandError!void {
+    try git.toggleCompareBase(app, try requireGraph(app));
+}
+
+/// The diff pane on `base..selected`.
+fn diffAgainstBase(app: *App) CommandError!void {
+    try git.diffAgainstBase(app, try requireGraph(app));
+}
+
+/// The selected commit's own diff (Enter), whatever the base.
+fn graphDiff(app: *App) CommandError!void {
+    try git.showSelectedCommit(app, try requireGraph(app));
+}
+
+/// The branches panel's row when it has the focus, else a picker: that
+/// branch against the checked-out one.
+fn diffAgainstCurrent(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.diffAgainstCurrent(app, repo, b);
+    }
+    try git.askBranches(app, repo, .diff_current);
 }
 
 // ─── the graph ──────────────────────────────────────────────────────────
