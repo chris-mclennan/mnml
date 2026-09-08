@@ -1,0 +1,22 @@
+# Code actions through the fake server: on the TODO line the picker
+# offers the server's quickfix; Enter applies its edit, the didChange
+# republishes and the warning is gone.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+# Line 3, on `foo`.
+key down
+key down
+key right
+key right
+key right
+expect screen contains "main.fk ⚠1"
+command lsp.code_action
+expect screen contains "Code actions"
+expect screen contains "Resolve TODO"
+expect screen contains "quickfix"
+key enter
+expect screen contains "foo(x); // DONE later"
+expect screen lacks "main.fk ⚠1"

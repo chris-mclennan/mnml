@@ -48,6 +48,9 @@ const semantic_app = @import("lsp_semantic.zig");
 const format_app = @import("lsp_format.zig");
 const rename_app = @import("lsp_rename.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const config = @import("../config/root.zig");
+const dap_client = @import("../dap/client.zig");
+const build_options = @import("build_options");
 const cmd_view = @import("cmd_view.zig");
 const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
@@ -216,6 +219,10 @@ pub const State = struct {
     /// By absolute path (owned keys).
     diags: std.StringHashMapUnmanaged(*FileDiags) = .empty,
     symbols: std.StringHashMapUnmanaged(*SymbolSet) = .empty,
+    /// Files whose symbols are behind the buffer: the `didChange` went
+    /// out, `documentSymbol` follows once the typing pauses (owned keys,
+    /// the value the due time).
+    symbols_due: std.StringHashMapUnmanaged(i64) = .empty,
     completion: ?Completion = null,
     hover: ?Hover = null,
     peek: ?Peek = null,
@@ -244,10 +251,16 @@ pub const State = struct {
     /// The external linters' workers.
     lint_group: Io.Group = .init,
     rename: rename_app.State = .{},
+    /// The config layers read again for a `.lsp` table written after
+    /// launch (`refreshServers`); `app.cfg.lsp` borrows from it then.
+    servers_loaded: ?config.Loaded = null,
+    /// One re-read per session: a miss stays a miss.
+    servers_refreshed: bool = false,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.lint_group.cancel(io);
         for (self.servers.items) |s| s.deinit();
+        if (self.servers_loaded) |*l| l.deinit();
         self.servers.deinit(gpa);
         var dk = self.dead.keyIterator();
         while (dk.next()) |k| gpa.free(k.*);
@@ -264,6 +277,9 @@ pub const State = struct {
             e.value_ptr.*.destroy(gpa);
         }
         self.symbols.deinit(gpa);
+        var sd = self.symbols_due.keyIterator();
+        while (sd.next()) |k| gpa.free(k.*);
+        self.symbols_due.deinit(gpa);
         if (self.completion) |*c| c.destroy(gpa);
         if (self.hover) |*h| h.arena.deinit();
         if (self.peek) |*p| p.arena.deinit();
@@ -349,11 +365,15 @@ fn specFor(app: *App, path: []const u8) ?Spec {
 }
 
 /// Walk up from the file's directory to the first directory holding a
-/// marker; null when none does (or the spec has no markers → the
-/// workspace).
-fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
+/// marker. Without one the root is the file's own directory, as Rust's
+/// `find_root` falls back — the server still starts (rust-analyzer then
+/// says so itself: `Failed to discover workspace…`), so a lone `.rs`
+/// outside a crate gets the same server and the same toast as under
+/// Rust. A spec with no markers roots at the workspace.
+fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8) Allocator.Error![]const u8 {
     if (markers.len == 0) return app.workspace;
-    var dir: ?[]const u8 = std.fs.path.dirname(path);
+    const start = std.fs.path.dirname(path) orelse app.workspace;
+    var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
         for (markers) |m| {
             const p = try std.fs.path.join(arena, &.{ d, m });
@@ -361,7 +381,7 @@ fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []co
         }
         if (d.len <= 1) break;
     }
-    return null;
+    return start;
 }
 
 /// Is `cmd` runnable: an absolute path that exists, or a name on PATH.
@@ -411,27 +431,54 @@ pub fn serverFor(app: *App, path: []const u8) ?*Server {
     return null;
 }
 
+/// No spec matched: read the config layers again and take their `.lsp`
+/// table, so a server written to `.mnml/config.zon` after launch (a
+/// `.test` seeds one) is found without a restart — `dap.refreshAdapters`
+/// for language servers. Exec-bearing, hence trusted workspaces only.
+fn refreshServers(app: *App) Allocator.Error!void {
+    if (app.lsp.servers_refreshed or !app.workspace_trusted) return;
+    app.lsp.servers_refreshed = true;
+    var env = try app.env.clone(app.gpa);
+    defer env.deinit();
+    if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
+    var fresh = try config.load.load(app.gpa, app.io, .{ .workspace = app.workspace, .trust = .trusted, .env = .{ .vars = &env } });
+    if (fresh.config.lsp.count() == 0) {
+        fresh.deinit();
+        return;
+    }
+    if (app.lsp.servers_loaded) |*old| old.deinit();
+    app.lsp.servers_loaded = fresh;
+    app.cfg.lsp = fresh.config.lsp;
+}
+
 /// The server for `path`, started if need be. Null when there is no
-/// spec, the binary is missing (toasted once), or no project root.
+/// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     if (serverFor(app, path)) |s| return s;
-    const spec = specFor(app, path) orelse return null;
+    const spec = specFor(app, path) orelse blk: {
+        try refreshServers(app);
+        break :blk specFor(app, path) orelse return null;
+    };
     if (app.lsp.dead.contains(spec.name)) return null;
     const arena = app.frame.allocator();
-    if (!try onPath(app, arena, spec.cmd)) {
+    // `$NAME` in the command or an argument comes from the environment,
+    // as for a debug adapter: `$MNML_FAKE_LSP` is how the tests name
+    // the fake server.
+    const cmd = try dap_client.expandEnv(arena, spec.cmd, &app.env);
+    if (!try onPath(app, arena, cmd)) {
         try markDead(app, spec.name);
-        if (client.installHint(spec.cmd)) |hint| {
-            try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ spec.cmd, hint });
+        if (client.installHint(cmd)) |hint| {
+            try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ cmd, hint });
         } else {
-            try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{spec.cmd});
+            try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{cmd});
         }
         return null;
     }
-    const root = (try findRoot(app, arena, path, spec.root_markers)) orelse return null;
+    const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, spec.cmd);
-    for (spec.args) |a| try argv.append(arena, a);
+    try argv.append(arena, cmd);
+    for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
     const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
         .name = spec.name,
@@ -561,6 +608,7 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
             const new_text = text[@min(sp.start, text.len)..@min(sp.new_end, text.len)];
             s.didChange(path, &.{.{ .range = .{ .start = start, .end = end }, .text = new_text }}) catch {};
             ed.doc.lsp_seen = head;
+            markSymbolsDue(app, path);
             return;
         }
     } else if (!full and splices.len == 0) {
@@ -568,6 +616,40 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
     }
     s.didChange(path, &.{.{ .range = null, .text = text }}) catch {};
     ed.doc.lsp_seen = head;
+    markSymbolsDue(app, path);
+}
+
+/// After a `didChange`: the server's symbols for `path` (the outline,
+/// the statusline's `› name`) describe the old text. `documentSymbol`
+/// goes out again once the edits pause for `symbols_debounce_ms`
+/// (`tick`), so a burst of keystrokes costs one request, and a deleted
+/// function leaves the breadcrumb as it leaves the buffer — Rust's chip
+/// reads a live regex outline and never lags.
+fn markSymbolsDue(app: *App, path: []const u8) void {
+    if (!app.lsp.symbols.contains(path)) return;
+    const due = app.now_ms + symbols_debounce_ms;
+    if (app.lsp.symbols_due.getPtr(path)) |slot| {
+        slot.* = due;
+        return;
+    }
+    const key = app.gpa.dupe(u8, path) catch return;
+    app.lsp.symbols_due.put(app.gpa, key, due) catch app.gpa.free(key);
+}
+
+pub const symbols_debounce_ms: i64 = 150;
+
+/// The due symbol refreshes: one `documentSymbol` per quiet file.
+fn refreshDueSymbols(app: *App, now: i64) Allocator.Error!void {
+    if (app.lsp.symbols_due.count() == 0) return;
+    var ready: std.ArrayListUnmanaged([]const u8) = .empty;
+    const arena = app.frame.allocator();
+    var it = app.lsp.symbols_due.iterator();
+    while (it.next()) |e| if (now >= e.value_ptr.*) try ready.append(arena, e.key_ptr.*);
+    for (ready.items) |path| {
+        const kv = app.lsp.symbols_due.fetchRemove(path) orelse continue;
+        defer app.gpa.free(kv.key);
+        if (serverFor(app, kv.key)) |s| requestSymbols(app, s, kv.key);
+    }
 }
 
 // ─── events (D1: adopt or free, on every path) ──────────────────────────
@@ -640,10 +722,15 @@ fn handleNotification(app: *App, s: *Server, method: []const u8, params: ?Value)
         const path = (try types.pathFromUri(arena, uri)) orelse return;
         try applyDiagnostics(app, path, jsonrpc.getArr(p, "diagnostics") orelse &.{});
     } else if (std.mem.eql(u8, method, "window/showMessage")) {
+        // Errors only (MessageType 1), as Rust's client gates them:
+        // typescript-language-server warns on every inlay-hint request,
+        // and that must not toast. The prefix is Rust's `LSP: `, the
+        // level its plain toast, the text the server's verbatim (the
+        // toast painter clips it to one row).
         const p = params orelse return;
         const text = jsonrpc.getStr(p, "message") orelse return;
-        const level = jsonrpc.getInt(p, "type") orelse 3;
-        if (level <= 2) try app.toastLevel(if (level == 1) .err else .warn, "{s}: {s}", .{ s.name, text });
+        const level = jsonrpc.getInt(p, "type") orelse 1;
+        if (level == 1) try app.toastLevel(.info, "LSP: {s}", .{text});
     } else if (std.mem.eql(u8, method, "$/progress")) {
         // Loading / indexing: a held command waits for the last end.
         const p = params orelse return;
@@ -674,6 +761,7 @@ fn runDeferred(app: *App, s: *Server) Allocator.Error!void {
 /// Per tick: a held command goes out once its server is ready and quiet
 /// past the grace, or at its deadline regardless.
 pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    try refreshDueSymbols(app, now);
     const d = app.lsp.deferred orelse return;
     if (d.not_before_ms == 0) return; // `initialize` has not answered
     for (app.lsp.servers.items) |s| if (s.id == d.server) {
@@ -2532,7 +2620,8 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
                         .integer => |i| i,
                         else => -1,
                     } else -1;
-                    const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":2,\"message\":\"ran {s} #{d}\"}}}}", .{ cmd, first }) catch return;
+                    // Type 1 (Error): the only kind the client toasts, as Rust's.
+                    const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":1,\"message\":\"ran {s} #{d}\"}}}}", .{ cmd, first }) catch return;
                     defer gpa.free(note);
                     jsonrpc.writeFrame(io, out, note) catch return;
                 } else if (std.mem.eql(u8, m, "textDocument/documentColor")) {
@@ -2684,6 +2773,96 @@ test "diagnostics from a server and a linter merge sorted, and each source repla
     // The linter runs clean: nothing left.
     try applyLintDiagnostics(&app, path, &.{});
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, path).len);
+}
+
+test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on open (one live server), its Error toasts as `LSP: …`, didOpen/didClose go out, deinit says shutdown + exit" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.fk", .data = "fn foo() {}\n" });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .args = .{ \"--log\", \"lsp.log\" }, .extensions = .{ \"fk\" } } } }" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(file);
+    const log = try std.fs.path.join(gpa, &.{ ws, "lsp.log" });
+    defer gpa.free(log);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    // Trusted, as the `.test` runner runs: the exec-bearing `.lsp` applies.
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    var live = true;
+    defer if (live) app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    const Probe = struct { app: *App, log: []const u8 };
+    const ctx: Probe = .{ .app = &app, .log = log };
+    const Cond = struct {
+        fn logHas(c: Probe, needle: []const u8) bool {
+            const text = Io.Dir.cwd().readFileAlloc(c.app.io, c.log, c.app.gpa, .unlimited) catch return false;
+            defer c.app.gpa.free(text);
+            return std.mem.indexOf(u8, text, needle) != null;
+        }
+        fn started(c: Probe) bool {
+            const servers = c.app.lsp.servers.items;
+            if (servers.len != 1 or !servers[0].ready or servers[0].docs.count() != 1) return false;
+            const toast = c.app.lastToast() orelse return false;
+            return std.mem.startsWith(u8, toast, "LSP: Failed to discover workspace.");
+        }
+        fn closed(c: Probe) bool {
+            return logHas(c, "textDocument/didClose\n");
+        }
+        fn oneSymbol(c: Probe) bool {
+            var it = c.app.lsp.symbols.valueIterator();
+            const v = it.next() orelse return false;
+            return v.*.items.len == 1 and std.mem.eql(u8, v.*.items[0].name, "foo");
+        }
+        fn noSymbol(c: Probe) bool {
+            var it = c.app.lsp.symbols.valueIterator();
+            const v = it.next() orelse return false;
+            return v.*.items.len == 0;
+        }
+    };
+    try pumpUntil(&app, ctx, Cond.started, 5000);
+    const s = app.lsp.servers.items[0];
+    try testing.expectEqualStrings("fake", s.name);
+    try testing.expectEqualStrings(ws, s.root);
+    try testing.expect(s.isOpen(file));
+    // What the statusline's `LSP N` counts: the live entries.
+    var n: usize = 0;
+    for (app.lsp.servers.items) |x| if (!x.transport.isDead()) {
+        n += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), n);
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "LSP: Failed to discover workspace.\nConsider adding the `Cargo.toml`"));
+    try testing.expect(Cond.logHas(ctx, "initialize\ninitialized\ntextDocument/didOpen\n"));
+
+    // The symbols landed (`fn foo`); an edit that removes the function
+    // sends didChange from the frame and, after the debounce, asks
+    // again: the set empties, so the breadcrumb cannot name a deleted fn.
+    try pumpUntil(&app, ctx, Cond.oneSymbol, 5000);
+    try app.activeEditor().?.buf.editor.setText("let y = 2;\n");
+    var spent: u32 = 0;
+    while (!Cond.noSymbol(ctx)) : (spent += 10) {
+        if (spent > 5000) return error.Timeout;
+        try app.render();
+        try io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(io));
+    }
+    try testing.expect(Cond.logHas(ctx, "textDocument/didChange\ntextDocument/documentSymbol\n"));
+
+    try command.run(&app, .{ .static = .@"buffer.close" });
+    try pumpUntil(&app, ctx, Cond.closed, 2000);
+    try testing.expect(!s.isOpen(file));
+
+    live = false;
+    app.deinit();
+    try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
 }
 
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {

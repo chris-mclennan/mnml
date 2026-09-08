@@ -1,0 +1,23 @@
+# Completion through the fake server: the file's identifiers, filtered
+# by the typed prefix, with the server's kind and detail; Enter accepts
+# the row under the cursor.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+# Line 3, on `foo`.
+key down
+key down
+key right
+key right
+key right
+key end
+type " fo"
+command lsp.completion
+expect screen contains "fo   var  identifier"
+expect screen contains "foo  fn   fn"
+key down
+key enter
+expect screen contains "foo(x); // TODO later foo"
+expect screen lacks "fo   var  identifier"

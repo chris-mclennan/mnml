@@ -630,6 +630,9 @@ pub const Toast = struct {
     expires_ms: i64,
     /// Stays until dismissed by id (IPC `toast_persistent`).
     id: ?[]u8 = null,
+    /// The same text again while this one is up bumps this instead of
+    /// stacking a twin.
+    repeats: u32 = 1,
 };
 
 /// How long the Undo chip stays offered.
@@ -1275,6 +1278,21 @@ pub const App = struct {
         const s = try std.fmt.allocPrint(self.gpa, fmt, args);
         errdefer self.gpa.free(s);
         try self.messages.record(self.gpa, s, level, self.now_ms);
+        // An identical message still on screen coalesces, as Rust's
+        // stack does: rust-analyzer says `Failed to discover workspace`
+        // twice at startup and a retried failure says the same thing
+        // three times — one box with a count, not three.
+        for (self.toasts.items, 0..) |*t, i| if (t.id == null and t.expires_ms != std.math.maxInt(i64) and std.mem.eql(u8, t.text, s)) {
+            // Bumped to the newest slot, where a fresh one would land:
+            // `lastToast` and the box nearest the statusline are it.
+            var again = self.toasts.orderedRemove(i);
+            again.repeats +|= 1;
+            again.expires_ms = self.now_ms + toast_ttl_ms;
+            self.toasts.appendAssumeCapacity(again);
+            self.gpa.free(s);
+            self.needs_render = true;
+            return;
+        };
         if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms });
         self.needs_render = true;
@@ -2373,6 +2391,28 @@ test "persistent toasts survive tick; dismiss removes by id" {
     try std.testing.expectEqualStrings("stays", app.lastToast().?);
     app.dismissToast("ex:reg");
     try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+test "an identical toast while its twin is up coalesces into one box with a count and a fresh expiry" {
+    var app = try App.init(std.testing.allocator, std.testing.io);
+    defer app.deinit();
+    app.toast("LSP: Failed to discover workspace.", .{});
+    try app.tick(app.now_ms + 1000);
+    app.toast("LSP: Failed to discover workspace.", .{});
+    try std.testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    try std.testing.expectEqual(@as(u32, 2), app.toasts.items[0].repeats);
+    // The second sighting restarts the clock: still up past the first's TTL.
+    try app.tick(app.now_ms + toast_ttl_ms - 500);
+    try std.testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    // A different text stacks; a persistent one never coalesces.
+    app.toast("LSP: rust-analyzer exited", .{});
+    try app.toastPersistent("p", "LSP: rust-analyzer exited", .info);
+    try std.testing.expectEqual(@as(usize, 3), app.toasts.items.len);
+    // The repeat of an older text becomes the newest: `lastToast` is it.
+    app.toast("LSP: Failed to discover workspace.", .{});
+    try std.testing.expectEqual(@as(usize, 3), app.toasts.items.len);
+    try std.testing.expectEqualStrings("LSP: Failed to discover workspace.", app.lastToast().?);
+    try std.testing.expectEqual(@as(u32, 3), app.toasts.items[app.toasts.items.len - 1].repeats);
 }
 
 test "editorconfig reaches an opened buffer; a scratch takes the config's save prefs; the dead config fields are read" {

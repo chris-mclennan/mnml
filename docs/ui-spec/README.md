@@ -61,6 +61,35 @@ matching `steps-<name>.jsonl`, on the fixture workspace (which now has
 - `close` — `src/main.rs` open, type `x`, `ctrl+w`: the unsaved-changes
   prompt (the buffer is never saved; the quit discards it).
 
+Every dump with `src/main.rs` open (`goto`, `close`, `editor`, `diff`,
+`delete`, `rename`, `outline`) also shows rust-analyzer started on it:
+the `LSP 1` statusline chip and, bottom-right, the toast `LSP: Failed to
+discover workspace.Consider adding the \`Car…` — rust-analyzer's own
+complaint (the fixture has no `Cargo.toml`; the root is the file's
+directory, as Rust's `find_root` falls back). The toast is
+rust-analyzer's text verbatim, with Rust's `LSP: ` prefix, clipped by
+the toast painter at 60 chars; the newline in the message costs a char
+and paints nothing, hence `workspace.Consider`. rust-analyzer needs
+~1–2 s to say it; `steps-goto` / `steps-close` wait 800 ms after the
+open and the harness another ~1.4 s before the dump, which has been
+enough on this machine — a dump without the toast on a slow run is
+timing, not a regression (`tools/fake_lsp/` is the deterministic proof).
+
+**Run the harness on a private copy of the fixture.** `tools/ui-diff.sh`
+writes the IPC command file under `<ws>/.mnml/` and both data dirs'
+session files; two runs on the same paths cross-talk (another run's
+keystrokes land in your screen, and the number jumps). Copy
+`mnml-zig-worktrees/chrome-fixture` to a sibling directory (not under
+`/tmp`: the Zig app resolves the workspace to its realpath and
+`session.zig` compares that string with the one the session file
+names, so `/tmp/x` never matches its own `/private/tmp/x` — a 4-row
+`session: … belongs to … — ignored` toast on every screen, and the
+tree no longer restored), then rewrite the original fixture path in
+BOTH `ws/.mnml/session.zon` (Zig) and `ws/.mnml/session.json` (Rust)
+to the copy's — each side ignores a session that names another
+workspace, and the two must agree on `src` being open. Pass the copy's
+`ws` / `rs-data` / `zig-data`.
+
 ## Sections and their sides (2026-09-07)
 
 Every activity section has a side (`src/app/side.zig`); these are the

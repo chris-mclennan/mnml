@@ -1,0 +1,14 @@
+# Closing the tab sends didClose for the file (the server drops its
+# diagnostics); the server itself stays for the next open. Shutdown on
+# quit is the integration test's in src/app/lsp.zig (the log ends
+# `shutdown`, `exit`).
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect file lsp.log contains "textDocument/didOpen\n"
+command buffer.close
+expect file lsp.log contains "textDocument/didClose\n"
+expect screen lacks "main.fk ⚠1"
+expect screen contains "LSP 1"

@@ -1,0 +1,18 @@
+# Hover through the fake server (tools/fake_lsp/): the word under the
+# caret comes back as markdown `**word**` and paints in the hover box
+# anchored at the caret; Esc closes it.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+# Line 3, on `foo`.
+key down
+key down
+key right
+key right
+key right
+command lsp.hover
+expect screen contains "**foo**"
+key esc
+expect screen lacks "**foo**"

@@ -1,0 +1,25 @@
+# References through the fake server: every whole-word `foo` in the
+# file, in the References picker with its line text; Enter on the last
+# row jumps there.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+# Line 3, on `foo`.
+key down
+key down
+key right
+key right
+key right
+command lsp.references
+expect screen contains "References"
+expect screen contains "src/main.fk:1:4"
+expect screen contains "src/main.fk:3:3"
+expect screen contains "src/main.fk:5:12"
+expect screen contains "fn bar() { foo(); }"
+key down
+key down
+key enter
+expect screen lacks "References ─"
+expect screen contains "Ln 5/5 Col 12"

@@ -300,6 +300,14 @@ pub const Picker = struct {
 `toasts[0]` is the newest and lands lowest. Toast `i` registers
 `.button(toast.button_base + i)` — click to dismiss. At most five paint; past
 that the oldest slot reads `+K more…`.
+// changed (2026-09-07, lsp-fixture): the box is Rust's `toast_stack` shape —
+// a square `┌ … × ┐` frame with ` × ` set into the top edge, ONE text row
+// clipped at 60 chars with `…` (chars, not cells, as Rust counts; a newline
+// in a server's text costs a char and paints nothing), width = text + 4
+// capped at 64 and the area less 2, no spacer row: the newest box sits on
+// the statusline. `App.toastLevel` coalesces an identical non-persistent
+// text still on screen (`Toast.repeats`, expiry refreshed) instead of
+// stacking a twin — rust-analyzer says `Failed to discover workspace` twice.
 
 ## Also on the `ui` side
 - `src/ui/text_field.zig` — the editing core (`handleKey(buf, caret, gpa, key) !Edit`,
@@ -555,7 +563,31 @@ that the oldest slot reads `+K more…`.
   a range when it converts exactly (an insertion, or utf-8 positions),
   anything else as the full text. It runs from the frame (`drawEditor`),
   so every mutation path — ops, `setText`, undo — is covered.
-- `// changed (app):` a language server is spawned only when a root
+- `// changed (app, 2026-09-07 lsp-fixture):` the root falls back to the
+  file's own directory when no marker is found — Rust's `find_root` — so a
+  lone `.rs` outside a crate still starts rust-analyzer (which then says
+  `Failed to discover workspace…` itself, toasted as `LSP: …`). The
+  `initialize` capabilities are all objects (an empty `.{}` went out as
+  `[]`, rust-analyzer's serde refused it and the server exited before
+  answering). `window/showMessage` toasts only MessageType 1 (Error), with
+  Rust's `LSP: ` prefix, at the plain (info) level, the text verbatim.
+  The `LSP N` statusline count is the live (`!transport.isDead()`) entries
+  of `app.lsp.servers`, unchanged. After a `didChange` the file's
+  `documentSymbol` is asked again once edits pause 150 ms
+  (`symbols_due`, `lsp.tick`) — the set behind the outline and the
+  statusline's `› name` follows the buffer; Rust's chip reads a live
+  regex outline instead. `$NAME` in `.lsp.<x>.cmd` / `.args` expands
+  from the environment (as a debug adapter's); an `.lsp` table written
+  to `.mnml/config.zon` after launch is read on the first miss
+  (`refreshServers`, trusted workspaces). `Server.deinit` waits up to
+  250 ms for the child to leave on `exit` before the pipes close.
+  `tools/fake_lsp/` (`mnml-fake-lsp`, `$MNML_FAKE_LSP`,
+  `build_options.fake_lsp_exe`) is the deterministic server the
+  `lsp_fake_*.test` scripts and the app integration test drive.
+- `// changed (render, 2026-09-07 lsp-fixture):` the toast stack moves up
+  one row while the flash cue is armed, as it does for the Undo chip —
+  both take the panes' last row, which the stack now sits on.
+- `// changed (app):` [superseded above] a language server is spawned only when a root
   marker is found for it (or its spec has none); the missing-binary toast
   (`LSP: <cmd> not installed — \`<hint>\``, once per server per session)
   is decided by a PATH probe independent of the root, so a marker-less

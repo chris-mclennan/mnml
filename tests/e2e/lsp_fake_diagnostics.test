@@ -1,0 +1,15 @@
+# Diagnostics through the fake server: the TODO line is a warning —
+# the gutter dot on line 3, the strip's ⚠1, and the DIAGNOSTICS panel
+# in the right panel with the message and the location.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect screen contains "●  3   foo(x); // TODO later"
+expect screen contains "main.fk ⚠1"
+command view.toggle_right_panel
+command lsp.diagnostics
+expect screen contains "DIAGNOSTICS (1)"
+expect screen contains "⚠ unresolved TODO"
+expect screen contains "main.fk:3"

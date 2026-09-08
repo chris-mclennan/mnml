@@ -140,6 +140,10 @@ pub const Caps = struct {
     }
 };
 
+/// How long `deinit` waits for a server to leave on `exit` before the
+/// pipes close under it.
+pub const exit_grace_ms: u32 = 250;
+
 /// A builtin server: what mnml starts for an extension unless
 /// `.lsp.<name>` says otherwise.
 pub const Builtin = struct {
@@ -276,12 +280,19 @@ pub const Server = struct {
         return s;
     }
 
-    /// `shutdown` + `exit` (best effort), then the transport goes.
+    /// `shutdown` + `exit` (best effort), a moment for the server to
+    /// act on them, then the transport goes — Rust sends the same pair
+    /// and kills at once; the grace lets a well-behaved server (and the
+    /// fake one's `--log`) see its `exit` before the pipes close.
     pub fn deinit(self: *Server) void {
         const gpa = self.gpa;
         if (!self.transport.isDead()) {
             _ = self.request(.shutdown, "shutdown", null, .{}) catch 0;
             self.notify("exit", null) catch {};
+            var waited: u32 = 0;
+            while (!self.transport.isDead() and waited < exit_grace_ms) : (waited += 5) {
+                self.io.sleep(.fromMilliseconds(5), .awake) catch break;
+            }
         }
         self.transport.shutdown();
         var it = self.docs.keyIterator();
@@ -395,6 +406,11 @@ pub const Server = struct {
         try js.write(root_uri);
         try js.objectField("workspaceFolders");
         try js.write(&[_]struct { uri: []const u8, name: []const u8 }{.{ .uri = root_uri, .name = root_name }});
+        // Every capability is an object with at least one field: an
+        // empty `.{}` is a tuple to `std.json` and goes out as `[]`,
+        // which rust-analyzer's serde refuses (`expected struct
+        // DynamicRegistrationClientCapabilities`) — the server then
+        // exits before `initialize` answers.
         try js.objectField("capabilities");
         try js.write(.{
             .general = .{ .positionEncodings = &[_][]const u8{ "utf-8", "utf-16" } },
@@ -410,21 +426,21 @@ pub const Server = struct {
                 .declaration = .{ .linkSupport = true },
                 .typeDefinition = .{ .linkSupport = true },
                 .implementation = .{ .linkSupport = true },
-                .references = .{},
+                .references = .{ .dynamicRegistration = false },
                 .documentSymbol = .{ .hierarchicalDocumentSymbolSupport = true },
                 .codeAction = .{ .codeActionLiteralSupport = .{ .codeActionKind = .{ .valueSet = &[_][]const u8{ "quickfix", "refactor", "source", "source.organizeImports" } } }, .resolveSupport = .{ .properties = &[_][]const u8{"edit"} } },
                 .rename = .{ .prepareSupport = false },
-                .formatting = .{},
-                .rangeFormatting = .{},
+                .formatting = .{ .dynamicRegistration = false },
+                .rangeFormatting = .{ .dynamicRegistration = false },
                 .onTypeFormatting = .{ .dynamicRegistration = false },
-                .documentHighlight = .{},
-                .selectionRange = .{},
-                .foldingRange = .{},
-                .callHierarchy = .{},
-                .typeHierarchy = .{},
+                .documentHighlight = .{ .dynamicRegistration = false },
+                .selectionRange = .{ .dynamicRegistration = false },
+                .foldingRange = .{ .dynamicRegistration = false },
+                .callHierarchy = .{ .dynamicRegistration = false },
+                .typeHierarchy = .{ .dynamicRegistration = false },
                 .inlayHint = .{ .dynamicRegistration = false },
                 .codeLens = .{ .dynamicRegistration = false },
-                .colorProvider = .{},
+                .colorProvider = .{ .dynamicRegistration = false },
                 .documentLink = .{ .tooltipSupport = false },
                 .semanticTokens = .{
                     .requests = .{ .full = .{ .delta = true }, .range = true },
@@ -682,6 +698,19 @@ fn fakeServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File, seen: *std.Arra
             else => {},
         }
     }
+}
+
+test "initialize's capabilities are all objects: an empty struct would serialize as `[]` and rust-analyzer exits on it" {
+    const gpa = testing.allocator;
+    var aw: Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    var js: std.json.Stringify = .{ .writer = &aw.writer, .options = .{ .emit_null_optional_fields = false } };
+    try Server.initializeInto(&js, 1, "file:///ws/src", "src", "{}");
+    const body = aw.written();
+    try testing.expect(std.mem.indexOf(u8, body, ":[]") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "\"references\":{\"dynamicRegistration\":false}") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "\"formatting\":{") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "\"rootUri\":\"file:///ws/src\"") != null);
 }
 
 test "initialize reads caps and encoding; an early didOpen is queued and flushed; the server's notification arrives as an event" {

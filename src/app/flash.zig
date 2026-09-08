@@ -375,6 +375,7 @@ test "flash: a pane change disarms" {
 test "flash: the frame paints each label over its match and the cue on the last row; both go with the state" {
     var app = try vimApp("one ab two\nthree ab four\nab", 12);
     defer app.deinit();
+    // The `use_vim` toast is still up: the stack moves off the cue's row.
     try press(&app, Key.char('s'));
     try press(&app, Key.char('a'));
     try press(&app, Key.char('b'));
