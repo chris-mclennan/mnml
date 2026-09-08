@@ -12,6 +12,10 @@
 //! wait  <ms>                     # sleep while ticking (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry
 //! shell <cmd>                    # `$SHELL -c` in the workspace; non-zero exit fails
+//! serve <port> <status> [delay=<ms>] <text>  # an HTTP server on 127.0.0.1:<port> for this file:
+//!                                #   <text> is "Name: value\n…\n\n<body>" (headers, a blank
+//!                                #   line, the body) or just the body; delay= waits before
+//!                                #   the body goes out (a server that never finishes)
 //! ghost <text>                   # inject an AI ghost-text suggestion on the active editor
 //! click <x> <y>                  # left-click at screen cell (x,y) — 0-based
 //! rightclick <x> <y>             # right-click (context menus)
@@ -54,6 +58,7 @@ pub const Step = union(enum) {
     wait: u64,
     snippet: struct { scope: []const u8, trigger: []const u8, expansion: []const u8 },
     shell: []const u8,
+    serve: struct { port: u16, status: u16, delay_ms: u32, text: []const u8 },
     ghost: []const u8,
     mouse: struct { x: u16, y: u16, action: MouseAction },
     drag: struct { from_x: u16, from_y: u16, to_x: u16, to_y: u16 },
@@ -178,6 +183,19 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                 if (cmd.len == 0) return diag.set("line {d}: `shell` needs a command", .{ln});
                 break :blk .{ .step = .{ .shell = cmd } };
             },
+            .serve => blk: {
+                const port_s, const rest1 = split1(rest);
+                const status_s, var rest2 = split1(rest1);
+                const port = std.fmt.parseInt(u16, port_s, 10) catch return diag.set("line {d}: `serve` needs <port> <status> [delay=<ms>] <text>", .{ln});
+                const status = std.fmt.parseInt(u16, status_s, 10) catch return diag.set("line {d}: `serve` needs <port> <status> [delay=<ms>] <text>", .{ln});
+                var delay: u32 = 0;
+                if (std.mem.startsWith(u8, rest2, "delay=")) {
+                    const d, const rest3 = split1(rest2);
+                    delay = std.fmt.parseInt(u32, d["delay=".len..], 10) catch return diag.set("line {d}: `serve` delay=<ms>", .{ln});
+                    rest2 = rest3;
+                }
+                break :blk .{ .step = .{ .serve = .{ .port = port, .status = status, .delay_ms = delay, .text = try unescape(a, rest2) } } };
+            },
             .ghost => blk: {
                 const s = try unescape(a, rest);
                 if (s.len == 0) return diag.set("line {d}: `ghost` needs suggestion text", .{ln});
@@ -212,7 +230,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
     return .{ .arena = arena, .header = parseHeader(text), .lines = try lines.toOwnedSlice(a) };
 }
 
-const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, ghost, click, rightclick, doubleclick, hover, scroll, drag, expect };
+const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, expect };
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
@@ -466,6 +484,8 @@ test "errors name the line and the directive" {
     try expectErr("snippet rust\n", "line 1: `snippet` needs <scope> <trigger> <expansion>");
     try expectErr("shell   \n", "line 1: `shell` needs a command");
     try expectErr("ghost   \n", "line 1: `ghost` needs suggestion text");
+    try expectErr("serve x 200 hi\n", "line 1: `serve` needs <port> <status> [delay=<ms>] <text>");
+    try expectErr("serve 19877 200 delay=soon hi\n", "line 1: `serve` delay=<ms>");
     try expectErr("click x y\n", "line 1: `click` needs `X Y` cell coordinates");
     try expectErr("scroll 1 2 sideways\n", "line 1: `scroll X Y <up|down>`");
     try expectErr("drag 1 2 3\n", "line 1: `drag` needs `X Y` cell coordinates");
@@ -476,6 +496,19 @@ test "errors name the line and the directive" {
     try expectErr("expect highlights at_least many\n", "line 1: expect highlights at_least <usize>");
     try expectErr("expect file\n", "line 1: expect file needs a path");
     try expectErr("expect file a.txt has x\n", "line 1: expect file <path> <contains|lacks> …");
+}
+
+test "serve parses its port, status, delay and text" {
+    var s = try parseOk("serve 19877 302 \"location: /x\\n\\n\"\nserve 19878 200 delay=1500 late\n");
+    defer s.deinit();
+    const a = s.lines[0].stmt.step.serve;
+    try t.expectEqual(@as(u16, 19877), a.port);
+    try t.expectEqual(@as(u16, 302), a.status);
+    try t.expectEqual(@as(u32, 0), a.delay_ms);
+    try t.expectEqualStrings("location: /x\n\n", a.text);
+    const b = s.lines[1].stmt.step.serve;
+    try t.expectEqual(@as(u32, 1500), b.delay_ms);
+    try t.expectEqualStrings("late", b.text);
 }
 
 test "unescape strips one quote layer and the four escapes" {
