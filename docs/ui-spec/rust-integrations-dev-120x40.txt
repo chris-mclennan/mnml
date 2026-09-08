@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │ INTEGRATIONS            │ 󰐕                                                                                   
+  │ Inst (3) Mkt (9)  (34)  │
+ 󰍉 │ 󰍉 type to filter…▏ A-Z ▾ │
+ 󰊢 │                          │
+  │  [app] mnml-aws-cloudwa █│
+▌󰐱 │    AWS CloudWatch Logs  █│
+ 󰎒 │                         █│
+ 󰚩 │  󱰅  [app] mnml-aws-cogn █│
+ 󰅣 │    AWS Cognito user poo ││
+  │                         ││                                                            _
+  │  󱰇  [app] mnml-aws-ecr  ││                            _ __ ___    _ __    _ __ ___   | |
+  │    AWS ECR container re ││                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+ 󱘣 │                         ││                           | | | | | | | | | | | | | | | | | |
+   │  󱰈  [app] mnml-aws-ecs  ││                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │    AWS ECS container br ││
+   │                         ││                                     workspace · ws
+   │  󱰉  [app] mnml-aws-even ││                                         on main
+   │    AWS EventBridge buse ││
+   │                         ││                                        Shortcuts
+   │  󱰊  [app] mnml-aws-lamb ││                                     ──────────────
+   │    AWS Lambda function  ││                                     ^P     find file
+   │                         ││                                    ^R     recent files
+   │  󱰋  [app] mnml-aws-rds  ││                                   ^K     which-key menu
+   │    AWS RDS database bro ││                                      ^N     new file
+   │                         ││                                    ^B     toggle tree
+   │                         ││                                        ^Q     quit
+   │──────────────────────────│
+   │ Integrations           ⋮ │                                 mnml 0.2.21 · 9d5049b52
+   │                          │
+   │ Installed integrations.  │
+   │ Enter fires the command. │
+   │ Right-click for          │
+   │ Configure / Uninstall.   │
+   │                          │
+   │                          │
+  │                          │
+   │                          │
+ TREE   main  󰐙 2  [no file]                                         C 74% ±0.0  󱼀 󰐎  WRAP    21:32  ws   —
+

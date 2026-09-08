@@ -224,6 +224,10 @@ fn fakeLspPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
     return fakeToolPath(gpa, io, "mnml-fake-lsp", build_options.fake_lsp_exe);
 }
 
+fn sampleIntegrationPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-sample", build_options.sample_integration_exe);
+}
+
 /// A fake tool built beside this binary (`zig build`), or at the
 /// build's install path when the runner is elsewhere.
 fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8) Allocator.Error!?[]u8 {
@@ -343,6 +347,16 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         if (try fakeLspPath(gpa, io)) |p| {
             defer gpa.free(p);
             try env.put("MNML_FAKE_LSP", p);
+        }
+    }
+    // `$MNML_SAMPLE_INTEGRATION`: the prebuilt sample integration
+    // (`integrations/sample/`), for the `integrations_*` scripts — a
+    // manifest whose `binary` is that variable resolves to it, so the
+    // corpus installs and mounts the sample without building anything.
+    if (env.get("MNML_SAMPLE_INTEGRATION") == null) {
+        if (try sampleIntegrationPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_SAMPLE_INTEGRATION", p);
         }
     }
     const opts: e2e.Options = .{
