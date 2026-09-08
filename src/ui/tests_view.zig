@@ -1,6 +1,7 @@
-//! The Playwright results pane's paint (`Pane.tests`): the command on
-//! the first row, then — running — `⟳ running…`; failed — the error;
-//! done — a `✓ ✗ ≈ ⊘ ≋` tally, a width-aware key hint, a rule, and the
+//! The results pane's paint (`Pane.tests`, Playwright or `dotnet test`):
+//! the command on the first row, then — running — `⟳ running…`; failed
+//! — the error; done — a `✓ ✗ ≈ ⊘ ≋` tally, the tool's own tally line
+//! when it printed one, a width-aware key hint, a rule, and the
 //! rows: file headers, one line per spec (status glyph, `≋` when the
 //! history says it wobbles, `suite › title`, the duration, `file:line`
 //! when the headers are off), a failure's error lines beneath it and
@@ -48,7 +49,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, pr: Props) void {
         .failed => {
             var s = Theme.onBg(t.error_fg, t.bg.bg);
             s.bold = true;
-            _ = ui.putStr(area.x, area.y + y, area.w, ui.clipStr(if (ui.ascii) "  x playwright errored:" else "  ✗ playwright errored:", area.w), s);
+            _ = ui.putStr(area.x, area.y + y, area.w, ui.clipStr(ui.fmt("  {s} {s} errored:", .{ if (ui.ascii) "x" else "✗", p.runner.label() }), area.w), s);
             y += 1;
             var lines = std.mem.splitScalar(u8, p.err, '\n');
             while (lines.next()) |l| : (y += 1) {
@@ -60,6 +61,11 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, pr: Props) void {
             drawTally(ui, area.row(y), p, pr.wobbly);
             y += 1;
             if (y >= area.h) return;
+            if (p.run.summary.len > 0) {
+                _ = ui.putStr(area.x, area.y + y, area.w, ui.clipStr(ui.fmt("  {s}", .{p.run.summary}), area.w), Theme.onBg(t.muted, t.bg.bg));
+                y += 1;
+                if (y >= area.h) return;
+            }
             _ = ui.putStr(area.x, area.y + y, area.w, ui.clipStr(hint(area.w, p.sort, ui.ascii), area.w), Theme.onBg(t.muted, t.bg.bg));
             y += 1;
             if (y >= area.h) return;

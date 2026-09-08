@@ -23,6 +23,7 @@ const pty = @import("pty");
 const cmd_picker = @import("cmd_picker.zig");
 const lsp_client = @import("../lsp/client.zig");
 const dotnet = @import("dotnet.zig");
+const tests_pane = @import("tests_pane.zig");
 const Prompt = app_mod.Prompt;
 
 pub const table = .{
@@ -463,8 +464,9 @@ fn dotnetBuild(app: *App) CommandError!void {
 fn dotnetRun(app: *App) CommandError!void {
     return runDotnet(app, "run", "run", .run);
 }
+/// `dotnet.test`: the results pane (`tests_pane.zig`), not a pty.
 fn dotnetTest(app: *App) CommandError!void {
-    return runDotnet(app, "test", "test", .build);
+    return tests_pane.dotnetAll(app);
 }
 fn dotnetRestore(app: *App) CommandError!void {
     return runDotnet(app, "restore", "restore", .build);
@@ -526,7 +528,7 @@ fn testRunAll(app: *App) CommandError!void {
         .cargo => return runCargo(app, "test"),
         .npm => return runNpm(app, "test", "test"),
         .go => return runGo(app, "test ./..."),
-        .dotnet => return runDotnet(app, "test", "test", .build),
+        .dotnet => return tests_pane.dotnetAll(app),
         .pytest => return runPytest(app, ""),
     }
 }
@@ -545,10 +547,7 @@ fn testRunFile(app: *App) CommandError!void {
         .cargo => return runCargo(app, try std.fmt.allocPrint(arena, "test {s}", .{std.fs.path.stem(rel)})),
         .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- {s}", .{rel})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s}", .{std.fs.path.dirname(rel) orelse "."})),
-        .dotnet => {
-            const filter = (try dotnetFileFilter(app)) orelse return app.diag.fail(arena, "no test class in {s}", .{rel});
-            return runDotnet(app, "test", try std.fmt.allocPrint(arena, "test --filter \"{s}\"", .{filter}), .run);
-        },
+        .dotnet => return tests_pane.dotnetFile(app),
         .pytest => return runPytest(app, rel),
     }
 }
@@ -606,10 +605,7 @@ fn testRunAtCursor(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const rel = try activeRel(app);
     const project = try requireProject(app);
-    if (project == .dotnet) {
-        const id = (try dotnetTestAtCursor(app)) orelse return app.diag.fail(arena, "no test method around the cursor", .{});
-        return runDotnet(app, "test", try std.fmt.allocPrint(arena, "test --filter \"{s}\"", .{try dotnet.filterArg(arena, id)}), .run);
-    }
+    if (project == .dotnet) return tests_pane.dotnetAtCursor(app);
     const e = app.activeEditor().?;
     const name = testNameAt(e.buf.editor.bytes(), e.buf.editor.cursor) orelse
         return app.diag.fail(arena, "no test above the cursor", .{});
@@ -622,10 +618,13 @@ fn testRunAtCursor(app: *App) CommandError!void {
     }
 }
 
-/// pytest re-runs its last failures; the others re-run the last command.
+/// pytest re-runs its last failures, dotnet the results pane's failures
+/// by name; the others re-run the last command.
 fn testRerunFailed(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    if (detectProject(app) == .pytest) return runPytest(app, "--lf");
+    const project = detectProject(app);
+    if (project == .pytest) return runPytest(app, "--lf");
+    if (project == .dotnet) return tests_pane.dotnetRerunFailed(app);
     const cmdline = app.runners.last_cmdline orelse return app.diag.fail(arena, "nothing has run yet", .{});
     const cwd = app.runners.last_cwd orelse app.workspace;
     const c = try arena.dupe(u8, cmdline);
@@ -711,7 +710,7 @@ fn toolByName(name: []const u8) ?u16 {
 
 /// A runner's binary is missing: say so, and offer to run its install
 /// command in a pane. An unknown binary only gets the toast.
-fn offerInstall(app: *App, bin: []const u8) CommandError!void {
+pub fn offerInstall(app: *App, bin: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const idx = toolByBin(bin) orelse return app.diag.fail(arena, "{s} is not on PATH", .{bin});
     try openInstallConfirm(app, idx);
@@ -1007,9 +1006,18 @@ test "dotnet: the toast names the id when no project is found; the sln builds an
     try t.expect(std.mem.endsWith(u8, f.app.runners.last_cwd.?, "src/App"));
     f.run(.@"dotnet.watch");
     try t.expectEqualStrings("dotnet watch run", f.app.runners.last_cmdline.?);
+    // test.run_all and dotnet.test are the results pane, at the solution.
     f.run(.@"test.run_all");
-    try t.expectEqualStrings("dotnet test", f.app.runners.last_cmdline.?);
-    try t.expectEqualStrings(f.root, f.app.runners.last_cwd.?);
+    const tests_id = tests_pane.find(&f.app).?;
+    const tp = &f.app.panes.get(tests_id).?.tests;
+    try t.expectEqual(tests_pane.Runner.dotnet, tp.runner);
+    try t.expectEqualStrings(f.root, tp.cwd.?);
+    try t.expectEqual(@as(usize, 0), tp.last_args.len);
+    tp.group.cancel(t.io);
+    try f.open("src/App/Program.cs");
+    f.run(.@"dotnet.test");
+    try t.expectEqual(tests_id, tests_pane.find(&f.app).?);
+    tp.group.cancel(t.io);
 }
 
 test "dotnet test.run_at_cursor / run_file: the enclosing Class.Method and the file's classes become --filter arguments" {
@@ -1027,11 +1035,31 @@ test "dotnet test.run_at_cursor / run_file: the enclosing Class.Method and the f
     try t.expectEqualStrings("FullyQualifiedName~CalcTests|FullyQualifiedName~OtherTests", (try dotnetFileFilter(&f.app)).?);
     // Outside every method: the toast, no pane.
     e.buf.editor.cursor = 0;
-    if (pty_pane.supported and builtin.os.tag != .windows) {
-        f.run(.@"test.run_at_cursor");
-        try t.expectEqualStrings("no test method around the cursor", f.toast());
-        try t.expect(!f.activeIsPty());
-    }
+    f.run(.@"test.run_at_cursor");
+    try t.expectEqualStrings("no test method around the cursor", f.toast());
+    try t.expect(tests_pane.find(&f.app) == null);
+    if (builtin.os.tag == .windows) return;
+    // With a `dotnet` on PATH the pane opens at the project with the filter.
+    try f.file("bin/dotnet", "#!/bin/sh\necho fake dotnet \"$@\"\n");
+    const bin = try std.fs.path.join(t.allocator, &.{ f.root, "bin" });
+    defer t.allocator.free(bin);
+    const exe = try std.fs.path.join(t.allocator, &.{ bin, "dotnet" });
+    defer t.allocator.free(exe);
+    try Io.Dir.cwd().setFilePermissions(t.io, exe, .fromMode(0o755), .{});
+    const path = try std.fmt.allocPrint(t.allocator, "{s}:/usr/bin:/bin", .{bin});
+    defer t.allocator.free(path);
+    try f.app.env.put("PATH", path);
+    e.buf.editor.cursor = std.mem.indexOf(u8, e.buf.editor.bytes(), "Assert").?;
+    f.run(.@"test.run_at_cursor");
+    const tp = &f.app.panes.get(tests_pane.find(&f.app).?).?.tests;
+    try t.expect(std.mem.endsWith(u8, tp.cwd.?, "Tests"));
+    try t.expectEqualStrings("--filter", tp.last_args[0]);
+    try t.expectEqualStrings("FullyQualifiedName~CalcTests.Adds", tp.last_args[1]);
+    tp.group.cancel(t.io);
+    try f.open("Tests/CalcTests.cs");
+    f.run(.@"test.run_file");
+    try t.expectEqualStrings("FullyQualifiedName~CalcTests|FullyQualifiedName~OtherTests", tp.last_args[1]);
+    tp.group.cancel(t.io);
 }
 
 test "tools: the picker lists every known tool with a kind chip; a missing tool opens the install box" {

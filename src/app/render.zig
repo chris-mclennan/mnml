@@ -1103,7 +1103,7 @@ fn drawTests(app: *App, ui: Ui, id: PaneId, p: *tests_pane.TestsPane, rect: Rect
         .p = p,
         .focused = app.active == id and app.focus == .pane,
         .wobbly = wobbly,
-        .command = try tests_pane.cmdlineFor(ui.arena, p.last_args),
+        .command = try tests_pane.cmdlineFor(ui.arena, p.runner, p.last_args),
     });
 }
 

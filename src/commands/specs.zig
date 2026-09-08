@@ -925,7 +925,7 @@ pub const specs = [_]Spec{
     .{ .id = "go.run_path", .title = "go: prompt for a package path → run `go run <path>`", .group = "test" },
     .{ .id = "dotnet.build", .title = ".NET: run `dotnet build` at the nearest .sln / .csproj in a pty pane", .group = "test" },
     .{ .id = "dotnet.run", .title = ".NET: run `dotnet run` at the nearest .csproj in a pty pane", .group = "test" },
-    .{ .id = "dotnet.test", .title = ".NET: run `dotnet test` at the nearest .sln / .csproj", .group = "test" },
+    .{ .id = "dotnet.test", .title = ".NET: run `dotnet test` at the nearest .sln / .csproj (results pane)", .group = "test" },
     .{ .id = "dotnet.restore", .title = ".NET: run `dotnet restore` at the nearest .sln / .csproj in a pty pane", .group = "test" },
     .{ .id = "dotnet.watch", .title = ".NET: run `dotnet watch run` at the nearest .csproj in a pty pane", .group = "test" },
     .{ .id = "test.run_all", .title = "Tests: run the whole Playwright suite", .group = "test" },
