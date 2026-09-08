@@ -34,13 +34,13 @@ line), not by hand.
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
 | HTTP request client | 48 | 0 | 1 | 0 | 49 |
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
-| Debugging (DAP) | 24 | 0 | 0 | 0 | 24 |
-| Testing & quality | 15 | 0 | 0 | 0 | 15 |
+| Debugging (DAP) | 25 | 0 | 0 | 0 | 25 |
+| Testing & quality | 17 | 0 | 0 | 0 | 17 |
 | UI & theming | 75 | 1 | 3 | 1 | 80 |
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
-| Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **503** | **4** | **9** | **3** | **519** |
+| Languages | 6 | 0 | 0 | 0 | 6 |
+| **total** | **508** | **4** | **9** | **3** | **524** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -575,6 +575,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | nvim-dap chords + VS Code F-keys | done | `.vim` / `.both` keys in `specs.zig`, pinned by the `both key profiles` test in `cmd_dap.zig`; `docs/KEYMAP_PROFILES.md` → Debugger | `<leader>d b B l c o i O p R t r w u h`; the F-keys are `both`, so a vim user keeps them; no `dap.*` chord is standard-only |
 | Settings rows | done | `editor.inline_values` (Settings → Editor “Inline debugger values”), `ui.debug_toolbar` (Settings → UI “Debug toolbar strip”) in `src/app/settings.zig` | |
 | The fake adapter — `mnml-fake-dap` | done | `tools/fake_dap/{main,program}.zig` + `README.md`, installed by `zig build`; `MNML_FAKE_DAP` exported by `mnml-zig test` (`src/main.zig`) and the runner (`src/e2e/runner.zig`); the client's integration test in `src/app/dap.zig` spawns it | a deterministic DAP server over stdio that runs a tiny line-oriented language (breakpoints with conditions and hit counts, stepping, `call` frames, structs, exceptions, output, `sleep` / `pause`); a script writes `.dap.dbg.cmd = "$MNML_FAKE_DAP"` and a `prog.dbg`; the same works outside the corpus; beyond the Rust list |
+| netcoredbg, built in — `dotnet.debug` builds first | done | `builtin_adapters` / `builtinAdapterFor` / `resolveAdapter`, `dotnetDebug` / `pollPendingLaunch` in `src/app/dap.zig`; `dotnet.launchBody`; `tests/e2e/dotnet_debug_build_*.test`; `docs/CONFIG.md` → `.dap` | `.cs` → `netcoredbg --interpreter=vscode` with `{ program: <csproj dir>/bin/Debug/<TargetFramework>/<AssemblyName>.dll, cwd }` from the nearest csproj, after `.dap.cs` and the config re-read; `dotnet.debug` runs `dotnet build` in a task pane and launches on exit 0; netcoredbg's `initialized` arrives before its `initialize` reply, so the reply now sends the default exception filter (`user-unhandled`); beyond the Rust list |
 | The Zig-authored spec | done | `docs/ui-spec/zig-debug-{stopped,console,breakpoints}-120x40.txt`, `zig-debug-stopped-80x24.txt` (`tools/zig-spec.sh`); `tools/debug-demo.sh [vim|standard]` opens the same seed on a real screen | the dumps are the spec; nothing on the Rust side to diff against |
 
 ## Testing & quality
@@ -595,6 +596,8 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | `tools/debug-demo.sh` | done | `tools/debug-demo.sh [vim\|standard]` | the debugger on a real screen — the same seed as `zig-spec.sh`, the workspace deleted when mnml-zig exits; Zig-only |
 | `tools/break-check.sh` | done | `tools/break-check.sh <test> <file> <sed-expr>` | proves a unit test can fail on a scratch copy; exit 2 when the break did not land (a `zig fmt` reflow), 3 when the broken copy does not compile, 4 when no test matched; Zig-only |
 | `tools/pty-mouse-check.py` | done | `tools/pty-mouse-check.py [BIN] [WORKSPACE]` | the real binary in a pty answering the probes like ghostty: cell coordinates asked for (mode 1006, never 1016), one click opens a file, a right-click opens the row menu, a wheel notch reaches the app; Zig-only |
+| .NET runners — `dotnet.build` / `run` / `test` / `restore` / `watch`, the `test.*` arm | done | `runDotnet` in `src/app/runners.zig`, `src/app/dotnet.zig` (`find`, `Project.buildRoot` / `runRoot`, `testAt`, `filterArg`); `tests/e2e/dotnet_runner_*.test`, `dotnet_test_at_cursor_filter.test` | the nearest `*.csproj` and `*.sln` at or above the file: the solution builds / tests / restores, the project runs / watches; `test.run_at_cursor` is `--filter "FullyQualifiedName~Class.Method"` from the grammar's outline (the line patterns without a tree), `run_file` the file's classes; the missing-manifest toast names the id like the others; `dotnet` in `known_tools`; beyond the Rust list |
+| `dotnet test` in the results pane | done | `Runner.dotnet`, `parseDotnet`, `parseTrx`, `locateSources`, `failedFilter` in `src/app/tests_pane.zig`; `tools/shims/dotnet`; `tests/e2e/dotnet_test_results_pane.test` | the console logger's lines are the rows, the TRX fills in durations and the class; a failure's file:line from its first frame, a passed row found in the project's `.cs`; the tool's own tally under the glyph tally; `R` re-runs the failures as `--filter FullyQualifiedName=…`; the worker resolves the tool on the App's PATH (`runners.pathOf`); beyond the Rust list |
 | `zig build gate-build -Dtarget=…` | done | `build.zig` | the exe and every test binary compiled for a foreign target without running — the Windows / Linux gate; Zig-only |
 
 ## UI & theming
@@ -752,6 +755,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Repo-local queries (hcl / proto / vue) | done | `local_queries` in `build.zig` | |
 | Language injection | done | `src/highlight/engine.zig`, `predicate.zig` | markdown fences, `<script>` / `<style>` tested |
 | Extension / filename / injection-name mapping | done | `src/highlight/table.zig` aliases | comptime-validated |
+| C# — outline, `if` / `af` / `ic` / `ac`, folds, the line-pattern fallback | done | the c_sharp rows of `kinds` in `src/highlight/structure.zig` (a `property` kind), `cs_rules` + `csMethodName` in `src/app/outline.zig`; `tests/e2e/dotnet_highlight_outline.test` | properties, constructors, records, local functions, file-scoped namespaces, the two lambda shapes; beyond the Rust list (Rust had the grammar, not the structure) |
 
 ## Disputed
 
