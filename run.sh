@@ -138,7 +138,7 @@ ensure_built() {
   if [ "${1:-}" = force ]; then
     log "restart requested — rebuilding ($OPTIMIZE)…"
   elif needs_build; then
-    log "$STALE_REASON — building $OPTIMIZE…"
+    log "$STALE_REASON — building ${OPTIMIZE}…"
   else
     log "${BIN#"$REPO"/} is current (nothing under src/ sdk/ integrations/ tools/ build.zig* is newer) — skipping the build"
     return 0
