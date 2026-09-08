@@ -1,0 +1,21 @@
+# The request picker: one row per `###` block of every collection
+# file — `METHOD · name · file`, the tags dimmed beside — and Enter
+# opens that block in a request pane.
+
+write api/r.http "### one\nGET https://x/one\n\n### two\n# @tags smoke users\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"
+write solo.curl "# Solo one\ncurl https://x/solo\n"
+write anchor.txt anchor
+open anchor.txt
+
+command http.find_request
+expect screen contains "Find request"
+expect screen contains "GET · one · api/r.http"
+expect screen contains "POST · two · api/r.http"
+expect screen contains "#smoke #users"
+expect screen contains "GET · Solo one · solo.curl"
+
+type "three"
+expect screen lacks "solo.curl"
+key enter
+expect screen contains "https://x/three"
+expect pane "x/three"
