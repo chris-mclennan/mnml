@@ -15,6 +15,15 @@
 //! out with its length as curl and reqwest send it — std refuses that
 //! pairing with an assert, so the bytes are written past `sendBodiless`.
 //!
+//! Per-request transport (`Transport`): `insecure` (the `-k` shim in
+//! `insecure.zig` — the std client has no switch, so an https hop goes
+//! to a loopback TLS shim that skips the chain check), `timeout_ms` (a
+//! deadline over the whole send, redirects included — the send races an
+//! `Io.Select` timer and is cancelled when the timer wins),
+//! `follow_redirects` / `max_redirects`, and `proxy` (`host:port` for
+//! this send; an https origin is tunnelled with `CONNECT`). A request's
+//! `# @…` directives override the defaults the caller passes.
+//!
 //! `JobResult` is the `.http` event payload: built here on the gpa,
 //! owned by the event, adopted or destroyed by the handler.
 
@@ -23,6 +32,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
 const cookies_mod = @import("cookies.zig");
+const insecure_mod = @import("insecure.zig");
 
 pub const Header = parse.Header;
 pub const Request = parse.Request;
@@ -234,19 +244,93 @@ pub const Stream = struct {
 
 pub const StreamEnd = struct { timing: Timing, bytes: usize, truncated: bool };
 
+/// How a send goes out — the config's defaults, which a request's own
+/// `# @…` directives override (`fromRequest`).
+pub const Transport = struct {
+    /// Skip the certificate chain check (`-k` / `# @insecure`).
+    insecure: bool = false,
+    /// The whole send, redirects included; null waits forever.
+    timeout_ms: ?u64 = null,
+    follow_redirects: bool = true,
+    max_redirects: u8 = max_redirects,
+    /// `host:port` (`user:pass@host:port`, `http://host:port`); borrowed.
+    proxy: ?[]const u8 = null,
+
+    /// `defaults` with the request's directives over it.
+    pub fn fromRequest(req: *const Request, defaults: Transport) Transport {
+        const o = parse.options(req);
+        return .{
+            .insecure = defaults.insecure or o.insecure,
+            .timeout_ms = o.timeout_ms orelse defaults.timeout_ms,
+            .follow_redirects = o.follow_redirects orelse defaults.follow_redirects,
+            .max_redirects = o.max_redirects orelse defaults.max_redirects,
+            .proxy = o.proxy orelse defaults.proxy,
+        };
+    }
+};
+
 pub const SendOptions = struct {
     /// An extra `Cookie` header from the jar, unless the request has one.
     cookie: ?[]const u8 = null,
     stream: ?Stream = null,
+    /// The defaults; the request's directives win (`Transport.fromRequest`).
+    transport: Transport = .{},
 };
 
 /// Fire `req` and wait for the whole response. Never throws for a
 /// transport failure — that is the `.err` outcome. OOM is the one error.
 pub fn send(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Allocator.Error!Outcome {
-    return sendInner(gpa, io, req, opts) catch |err| switch (err) {
+    const t = Transport.fromRequest(req, opts.transport);
+    if (t.timeout_ms) |ms| if (ms > 0) return sendWithDeadline(gpa, io, req, opts, t, ms);
+    return sendGuarded(gpa, io, req, opts, t);
+}
+
+fn sendGuarded(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: Transport) Allocator.Error!Outcome {
+    return sendInner(gpa, io, req, opts, t) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => .{ .err = try describe(gpa, err, req.url) },
     };
+}
+
+/// The send races a timer; the loser is cancelled. A cancelled send
+/// drops its socket mid-read, which is what a timeout must do to a
+/// server that never finishes. Without a spare unit of concurrency the
+/// send runs inline, with no deadline.
+fn sendWithDeadline(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: Transport, ms: u64) Allocator.Error!Outcome {
+    const Result = union(enum) { send: Allocator.Error!Outcome, timer: void };
+    var buf: [2]Result = undefined;
+    var sel: Io.Select(Result) = .init(io, &buf);
+    sel.concurrent(.send, sendGuarded, .{ gpa, io, req, opts, t }) catch return sendGuarded(gpa, io, req, opts, t);
+    sel.async(.timer, sleepMs, .{ io, ms });
+    const first = sel.await() catch {
+        // We were cancelled ourselves: end both and report as a cancel.
+        drainSelect(&sel, gpa);
+        return .{ .err = try std.fmt.allocPrint(gpa, "canceled: {s}", .{req.url}) };
+    };
+    switch (first) {
+        .send => |r| {
+            drainSelect(&sel, gpa);
+            return r;
+        },
+        .timer => {
+            drainSelect(&sel, gpa);
+            return .{ .err = try std.fmt.allocPrint(gpa, "timeout: no response within {d} ms ({s})", .{ ms, req.url }) };
+        },
+    }
+}
+
+fn drainSelect(sel: anytype, gpa: Allocator) void {
+    while (sel.cancel()) |r| switch (r) {
+        .send => |res| {
+            var outcome = res catch continue;
+            outcome.deinit(gpa);
+        },
+        .timer => {},
+    };
+}
+
+fn sleepMs(io: Io, ms: u64) void {
+    Io.sleep(io, .fromMilliseconds(@intCast(@min(ms, std.math.maxInt(i64) / 2))), .awake) catch {};
 }
 
 /// The words for a transport failure. A connect-class error (refused,
@@ -264,12 +348,13 @@ fn describe(gpa: Allocator, err: anyerror, url: []const u8) Allocator.Error![]u8
         error.UnsupportedUriScheme, error.UriMissingHost, error.InvalidFormat, error.InvalidPort, error.UnexpectedCharacter, error.InvalidMethod => "bad request: ",
         error.Canceled => "canceled: ",
         error.TooManyHttpRedirects, error.HttpRedirectLocationMissing, error.HttpRedirectLocationOversize, error.HttpRedirectLocationInvalid => "redirect: ",
+        error.InvalidProxy, error.UnsupportedProxy, error.TunnelNotSupported => "proxy: ",
         else => "",
     };
     return std.fmt.allocPrint(gpa, "{s}{s}", .{ prefix, name });
 }
 
-const SendError = Allocator.Error || std.http.Client.RequestError || std.http.Client.Request.ReceiveHeadError || std.Uri.ParseError || std.Uri.ResolveInPlaceError || Io.Writer.Error || Io.Reader.StreamError || error{ InvalidMethod, UnsupportedCompressionMethod, WriteFailed };
+const SendError = Allocator.Error || std.http.Client.RequestError || std.http.Client.Request.ReceiveHeadError || std.Uri.ParseError || std.Uri.ResolveInPlaceError || std.Uri.GetHostError || Io.Writer.Error || Io.Reader.StreamError || insecure_mod.ProxyError || Io.net.HostName.ValidateError || error{ InvalidMethod, UnsupportedCompressionMethod, WriteFailed, TlsInitializationFailed };
 
 fn isRedirect(status: u16) bool {
     return switch (status) {
@@ -291,9 +376,49 @@ fn nowMs(io: Io) i64 {
     return Io.Timestamp.now(io, .awake).toMilliseconds();
 }
 
-fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) SendError!Outcome {
+/// The `tls (insecure): …` line for a send the shim failed.
+fn shimFailure(gpa: Allocator, shim: ?*insecure_mod.Shim) Allocator.Error!?Outcome {
+    const s = shim orelse return null;
+    const name = s.failure() orelse return null;
+    return .{ .err = try std.fmt.allocPrint(gpa, "tls (insecure): {s}", .{name}) };
+}
+
+fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: Transport) SendError!Outcome {
     var client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer client.deinit();
+    // The proxy for this send only: the client is ours for its life,
+    // and `Proxy` borrows its strings for the client's.
+    // Two `Proxy`s of one spec: a plain origin is asked for in absolute
+    // form (`GET http://host/path`, what curl does), an https origin is
+    // tunnelled with `CONNECT`.
+    var proxy_storage: std.http.Client.Proxy = undefined;
+    var tunnel_storage: std.http.Client.Proxy = undefined;
+    var proxy_host: ?[]u8 = null;
+    defer if (proxy_host) |h| gpa.free(h);
+    var proxy_auth: ?[]u8 = null;
+    defer if (proxy_auth) |a| gpa.free(a);
+    if (t.proxy) |ptext| {
+        var pa = std.heap.ArenaAllocator.init(gpa);
+        defer pa.deinit();
+        const p = try insecure_mod.parseProxy(pa.allocator(), ptext);
+        proxy_host = try gpa.dupe(u8, p.host);
+        if (p.authorization) |a| proxy_auth = try gpa.dupe(u8, a);
+        proxy_storage = .{
+            .protocol = if (p.tls) .tls else .plain,
+            .host = try Io.net.HostName.init(proxy_host.?),
+            .authorization = proxy_auth,
+            .port = p.port,
+            .supports_connect = false,
+        };
+        tunnel_storage = proxy_storage;
+        tunnel_storage.supports_connect = true;
+        client.http_proxy = &proxy_storage;
+        client.https_proxy = &tunnel_storage;
+    }
+    // `-k`: an https hop goes through a loopback shim that skips the
+    // chain check (`insecure.zig`); one shim per hop.
+    var shim: ?*insecure_mod.Shim = null;
+    defer if (shim) |s| s.stop();
     var method_buf: [16]u8 = undefined;
     if (req.method.len > method_buf.len) return error.InvalidMethod;
     const upper = std.ascii.upperString(&method_buf, req.method);
@@ -323,6 +448,23 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
     while (true) {
         const hop_host = cookies_mod.hostOf(url) orelse "";
         const same_host = std.ascii.eqlIgnoreCase(hop_host, origin_host);
+        if (shim) |s| {
+            s.stop();
+            shim = null;
+        }
+        var hop_uri = uri;
+        var shim_host: ?[]const u8 = null;
+        if (t.insecure and std.ascii.eqlIgnoreCase(uri.scheme, "https")) {
+            var hbuf: [Io.net.HostName.max_len]u8 = undefined;
+            const hn = try uri.getHost(&hbuf);
+            const port: u16 = uri.port orelse 443;
+            shim = insecure_mod.Shim.start(gpa, io, hn.bytes, port, t.proxy) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.TlsInitializationFailed,
+            };
+            hop_uri = .{ .scheme = "http", .host = .{ .raw = "127.0.0.1" }, .port = shim.?.port, .path = uri.path, .query = uri.query };
+            shim_host = if (port == 443) try ha.dupe(u8, hn.bytes) else try std.fmt.allocPrint(ha, "{s}:{d}", .{ hn.bytes, port });
+        }
 
         // The std client owns six headers with default behaviour; a
         // request header of that name overrides it instead of
@@ -356,6 +498,10 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
         }
         if (!has_cookie) if (cookie_now) |c| try extra.append(gpa, .{ .name = "cookie", .value = c });
         if (std_headers.user_agent == .default) std_headers.user_agent = .{ .override = "mnml-zig" };
+        // Through the shim the wire says `127.0.0.1`; the origin must not.
+        if (shim_host) |h| if (std_headers.host == .default) {
+            std_headers.host = .{ .override = h };
+        };
         const body_on_bodiless = body != null and !method.requestHasBody();
         if (body_on_bodiless) {
             // std will not frame it; the length goes out as a plain header.
@@ -363,7 +509,7 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
             try extra.append(gpa, .{ .name = "content-length", .value = len });
         }
 
-        var request = try client.request(method, uri, .{
+        var request = try client.request(method, hop_uri, .{
             .headers = std_headers,
             .extra_headers = extra.items,
             .keep_alive = false,
@@ -371,36 +517,46 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
         });
         defer request.deinit();
 
-        if (body) |b| {
-            if (method.requestHasBody()) {
-                request.transfer_encoding = .{ .content_length = b.len };
-                var bw = try request.sendBodyUnflushed(&.{});
-                try bw.writer.writeAll(b);
-                try bw.end();
-                try request.connection.?.flush();
+        const sent: SendError!void = blk: {
+            if (body) |b| {
+                if (method.requestHasBody()) {
+                    request.transfer_encoding = .{ .content_length = b.len };
+                    var bw = request.sendBodyUnflushed(&.{}) catch |e| break :blk e;
+                    bw.writer.writeAll(b) catch |e| break :blk e;
+                    bw.end() catch |e| break :blk e;
+                    request.connection.?.flush() catch |e| break :blk e;
+                } else {
+                    request.sendBodilessUnflushed() catch |e| break :blk e;
+                    request.connection.?.writer().writeAll(b) catch |e| break :blk e;
+                    request.connection.?.flush() catch |e| break :blk e;
+                }
+            } else if (method.requestHasBody()) {
+                // A POST with nothing to send: a zero length, not std's
+                // assert on `sendBodiless`.
+                request.transfer_encoding = .{ .content_length = 0 };
+                var bw = request.sendBodyUnflushed(&.{}) catch |e| break :blk e;
+                bw.end() catch |e| break :blk e;
+                request.connection.?.flush() catch |e| break :blk e;
             } else {
-                try request.sendBodilessUnflushed();
-                try request.connection.?.writer().writeAll(b);
-                try request.connection.?.flush();
+                request.sendBodiless() catch |e| break :blk e;
             }
-        } else if (method.requestHasBody()) {
-            // A POST with nothing to send: a zero length, not std's
-            // assert on `sendBodiless`.
-            request.transfer_encoding = .{ .content_length = 0 };
-            var bw = try request.sendBodyUnflushed(&.{});
-            try bw.end();
-            try request.connection.?.flush();
-        } else {
-            try request.sendBodiless();
-        }
+        };
+        sent catch |err| {
+            if (try shimFailure(gpa, shim)) |o| return o;
+            return err;
+        };
 
         var redirect_buffer: [8 * 1024]u8 = undefined;
-        var response = try request.receiveHead(&redirect_buffer);
+        var response = request.receiveHead(&redirect_buffer) catch |err| {
+            // The shim closed on us: its failure is the one to name.
+            if (try shimFailure(gpa, shim)) |o| return o;
+            return err;
+        };
         const head_at = nowMs(io);
         const status: u16 = @intFromEnum(response.head.status);
 
-        if (isRedirect(status) and response.head.location != null) {
-            if (hops >= max_redirects) return error.TooManyHttpRedirects;
+        if (isRedirect(status) and response.head.location != null and t.follow_redirects) {
+            if (hops >= t.max_redirects) return error.TooManyHttpRedirects;
             hops += 1;
             // This hop's cookies: onto the response for the jar, and
             // onto the next hop's `Cookie` line when it stays here.
@@ -452,7 +608,9 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
             errdefer gpa.free(v);
             try headers.append(gpa, .{ .name = n, .value = v });
         }
-        const final_url = try std.fmt.allocPrint(gpa, "{f}", .{request.uri});
+        // The hop's URL as resolved, not the wire's (a shim hop says
+        // `127.0.0.1`).
+        const final_url = try gpa.dupe(u8, url);
         errdefer gpa.free(final_url);
         const is_sse = blk: {
             for (headers.items) |h| if (std.ascii.eqlIgnoreCase(h.name, "content-type") and std.ascii.indexOfIgnoreCase(h.value, "text/event-stream") != null) break :blk true;
@@ -923,4 +1081,141 @@ test "send: thirty malformed blocks parse and go out (or fail soft); none aborts
         defer outcome.deinit(testing.allocator);
         try testing.expect(outcome == .ok or outcome == .err);
     }
+}
+
+test "send: @timeout trips on a body that never finishes; the outcome names the timeout and the deadline" {
+    const io = testing.io;
+    var server = try mock.Server.start(testing.allocator, io, .{ .chunks = &.{"late"}, .chunk_delay_ms = 1500 });
+    defer server.stop(io);
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/slow", .{server.port});
+    defer testing.allocator.free(url);
+    var req = try Request.init(testing.allocator);
+    defer req.deinit(testing.allocator);
+    try req.setUrl(testing.allocator, url);
+    try parse.setDirective(&req, testing.allocator, "@timeout", "300ms");
+    try testing.expectEqual(@as(?u64, 300), Transport.fromRequest(&req, .{}).timeout_ms);
+    const t0 = nowMs(io);
+    var outcome = try send(testing.allocator, io, &req, .{});
+    defer outcome.deinit(testing.allocator);
+    try testing.expect(outcome == .err);
+    try testing.expect(std.mem.startsWith(u8, outcome.err, "timeout: no response within 300 ms"));
+    try testing.expect(nowMs(io) - t0 < 1400);
+    // The config's default applies when the block says nothing.
+    var plain = try Request.init(testing.allocator);
+    defer plain.deinit(testing.allocator);
+    try plain.setUrl(testing.allocator, url);
+    var o2 = try send(testing.allocator, io, &plain, .{ .transport = .{ .timeout_ms = 200 } });
+    defer o2.deinit(testing.allocator);
+    try testing.expect(o2 == .err and std.mem.startsWith(u8, o2.err, "timeout"));
+}
+
+test "send: @no-redirect hands back the 302 itself; @max-redirects caps the chain; the config default follows" {
+    const io = testing.io;
+    const final: mock.Canned = .{ .status = 200, .body = "landed" };
+    var server = try mock.Server.start(testing.allocator, io, .{ .status = 302, .status_text = "Found", .headers = &.{.{ .name = "location", .value = "/there" }}, .next = &final });
+    defer server.stop(io);
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/here", .{server.port});
+    defer testing.allocator.free(url);
+    var req = try Request.init(testing.allocator);
+    defer req.deinit(testing.allocator);
+    try req.setUrl(testing.allocator, url);
+    try parse.setDirective(&req, testing.allocator, "@no-redirect", "");
+    var outcome = try send(testing.allocator, io, &req, .{});
+    defer outcome.deinit(testing.allocator);
+    try testing.expectEqual(@as(u16, 302), outcome.ok.status);
+    try testing.expectEqualStrings("/there", outcome.ok.header("location").?);
+    try testing.expectEqual(@as(u32, 1), server.served.load(.monotonic));
+    // The same block without the directive, under a config that does not
+    // follow (a fresh server: the mock's chain answers its final link
+    // from the second request on).
+    try parse.setDirective(&req, testing.allocator, "@no-redirect", null);
+    var server2 = try mock.Server.start(testing.allocator, io, .{ .status = 302, .status_text = "Found", .headers = &.{.{ .name = "location", .value = "/there" }}, .next = &final });
+    defer server2.stop(io);
+    const url2 = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/here", .{server2.port});
+    defer testing.allocator.free(url2);
+    try req.setUrl(testing.allocator, url2);
+    var o2 = try send(testing.allocator, io, &req, .{ .transport = .{ .follow_redirects = false } });
+    defer o2.deinit(testing.allocator);
+    try testing.expectEqual(@as(u16, 302), o2.ok.status);
+    // `@follow-redirects` overrides that config.
+    try parse.setDirective(&req, testing.allocator, "@follow-redirects", "");
+    var server3 = try mock.Server.start(testing.allocator, io, .{ .status = 302, .status_text = "Found", .headers = &.{.{ .name = "location", .value = "/there" }}, .next = &final });
+    defer server3.stop(io);
+    const url3 = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/here", .{server3.port});
+    defer testing.allocator.free(url3);
+    try req.setUrl(testing.allocator, url3);
+    var o3 = try send(testing.allocator, io, &req, .{ .transport = .{ .follow_redirects = false } });
+    defer o3.deinit(testing.allocator);
+    try testing.expectEqualStrings("landed", o3.ok.body);
+    // A loop capped at two hops: three requests served, then the error.
+    var loop = try mock.Server.start(testing.allocator, io, .{ .status = 302, .status_text = "Found", .headers = &.{.{ .name = "location", .value = "/again" }} });
+    defer loop.stop(io);
+    const loop_url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/start", .{loop.port});
+    defer testing.allocator.free(loop_url);
+    var capped = try Request.init(testing.allocator);
+    defer capped.deinit(testing.allocator);
+    try capped.setUrl(testing.allocator, loop_url);
+    try parse.setDirective(&capped, testing.allocator, "@max-redirects", "2");
+    var o4 = try send(testing.allocator, io, &capped, .{});
+    defer o4.deinit(testing.allocator);
+    try testing.expect(o4 == .err and std.mem.indexOf(u8, o4.err, "redirect") != null);
+    try testing.expectEqual(@as(u32, 3), loop.served.load(.monotonic));
+}
+
+test "send: @proxy sends a plain origin's request to the proxy in absolute form, with the proxy's credentials" {
+    const io = testing.io;
+    var proxy = try mock.Server.start(testing.allocator, io, .{ .body = "via proxy" });
+    defer proxy.stop(io);
+    var req = try Request.init(testing.allocator);
+    defer req.deinit(testing.allocator);
+    try req.setUrl(testing.allocator, "http://origin.invalid/path?q=1");
+    const spec = try std.fmt.allocPrint(testing.allocator, "me:pw@127.0.0.1:{d}", .{proxy.port});
+    defer testing.allocator.free(spec);
+    try parse.setDirective(&req, testing.allocator, "@proxy", spec);
+    var outcome = try send(testing.allocator, io, &req, .{});
+    defer outcome.deinit(testing.allocator);
+    try testing.expectEqualStrings("via proxy", outcome.ok.body);
+    const seen = proxy.lastRequest();
+    try testing.expect(std.mem.startsWith(u8, seen, "GET http://origin.invalid/path?q=1 HTTP/1.1\r\n"));
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "proxy-authorization: Basic bWU6cHc=\r\n") != null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "host: origin.invalid\r\n") != null);
+    // A proxy spec that does not parse is a named failure, not a hang.
+    var bad = try Request.init(testing.allocator);
+    defer bad.deinit(testing.allocator);
+    try bad.setUrl(testing.allocator, "http://origin.invalid/");
+    try parse.setDirective(&bad, testing.allocator, "@proxy", "socks5://nope:1");
+    var o2 = try send(testing.allocator, io, &bad, .{});
+    defer o2.deinit(testing.allocator);
+    try testing.expect(o2 == .err and std.mem.startsWith(u8, o2.err, "proxy: "));
+}
+
+test "send: -k routes an https hop through the shim (the origin sees a ClientHello, the failure is named); without it std's own TLS fails as before" {
+    const io = testing.io;
+    const origin = try insecure_mod.JunkOrigin.start(testing.allocator, io, "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nhi");
+    defer origin.stop();
+    const url = try std.fmt.allocPrint(testing.allocator, "https://127.0.0.1:{d}/secure", .{origin.port});
+    defer testing.allocator.free(url);
+    var req = try Request.init(testing.allocator);
+    defer req.deinit(testing.allocator);
+    try req.setUrl(testing.allocator, url);
+    req.insecure = true;
+    try testing.expect(Transport.fromRequest(&req, .{}).insecure);
+    var outcome = try send(testing.allocator, io, &req, .{});
+    defer outcome.deinit(testing.allocator);
+    try testing.expect(outcome == .err);
+    try testing.expect(std.mem.startsWith(u8, outcome.err, "tls (insecure): Tls"));
+    try testing.expectEqual(@as(u32, 1), origin.served.load(.monotonic));
+    const seen = origin.seen();
+    try testing.expect(seen.len > 2 and seen[0] == 0x16 and seen[1] == 0x03);
+    // The plain path: std's client, the bundle, the name — a different failure.
+    req.insecure = false;
+    var o2 = try send(testing.allocator, io, &req, .{});
+    defer o2.deinit(testing.allocator);
+    try testing.expect(o2 == .err);
+    try testing.expect(std.mem.startsWith(u8, o2.err, "tls: "));
+    try testing.expect(std.mem.indexOf(u8, o2.err, "insecure") == null);
+    // The config default reaches the transport the same way.
+    var o3 = try send(testing.allocator, io, &req, .{ .transport = .{ .insecure = true } });
+    defer o3.deinit(testing.allocator);
+    try testing.expect(o3 == .err and std.mem.startsWith(u8, o3.err, "tls (insecure): "));
 }
