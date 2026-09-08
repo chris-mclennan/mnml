@@ -878,7 +878,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const out = try git(repo, io, arena, &.{ "commit", "-q", "--amend", "--no-edit" }, null);
             if (out.ok) {
                 const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
-                if (before.ok and after.ok) try pushUndo(repo, "amend (staged changes into HEAD)", .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, trimmed(after.stdout)) });
+                if (before.ok and after.ok) {
+                    const pair = try dupe2(gpa, trimmed(before.stdout), trimmed(after.stdout));
+                    try pushUndo(repo, "amend (staged changes into HEAD)", .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
+                }
             }
             r.payload = .{ .op = .{ .desc = "amended HEAD with the staged changes", .ok = out.ok, .msg = out.reason() } };
         },
@@ -908,7 +911,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             if (out.ok) {
                 if (rs.mode == .soft) {
                     const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
-                    if (snap.head) |h| if (after.ok) try pushUndo(repo, desc, .{ .reset_soft = try gpa.dupe(u8, h) }, .{ .reset_soft = try gpa.dupe(u8, trimmed(after.stdout)) });
+                    if (snap.head) |h| if (after.ok) {
+                        const pair = try dupe2(gpa, h, trimmed(after.stdout));
+                        try pushUndo(repo, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
+                    };
                 } else try pushSnapshotUndo(repo, io, arena, desc, snap);
             }
             r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
@@ -1091,6 +1097,16 @@ fn simpleEnv(repo: *Repo, io: Io, r: *Result, args: []const []const u8, desc: []
 
 /// No editor ever opens: git takes the message it has.
 const no_editor = [_]EnvPair{ .{ .key = "GIT_EDITOR", .value = "true" }, .{ .key = "GIT_SEQUENCE_EDITOR", .value = "true" } };
+
+/// Both strings or neither: the first is freed when the second fails.
+/// The pair goes straight into `pushUndo`, which owns its actions from
+/// the call on, failure included — so nothing is outstanding at the
+/// call site and nothing is freed twice.
+fn dupe2(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error![2][]u8 {
+    const x = try gpa.dupe(u8, a);
+    errdefer gpa.free(x);
+    return .{ x, try gpa.dupe(u8, b) };
+}
 
 fn pushUndo(repo: *Repo, desc: []const u8, undo: Action, redo: Action) Allocator.Error!void {
     const gpa = repo.gpa;
