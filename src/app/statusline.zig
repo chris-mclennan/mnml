@@ -537,19 +537,21 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     for (app.lsp.servers.items) |s| if (!s.transport.isDead()) {
         servers += 1;
     };
-    // // changed (lsp-defaults): the servers met this session that are
-    // not installed ride the chip as ` ?N ` — a muted run after the
-    // live count, or the whole chip muted when nothing runs. The count
-    // form (not ` · 2 missing `): the right lane is cut at the edge on
-    // a narrow row (the 80-column rule), so a chip earns its cells.
-    const missing: u32 = @intCast(lsp.missingServers(app).len);
+    // // changed (lsp-defaults): a server met this session that is not
+    // installed marks the chip with a `?` — a muted run after the live
+    // count (` LSP 1? `), or the whole chip muted when nothing runs
+    // (` LSP? `). The count and the names are the click (`lsp.status`)
+    // and the menu: the width rule (`lane_gap`, four cells between the
+    // lanes) leaves ` LSP ?2 ` no room on the 120-column spec row once
+    // the file is dirty, and ` · 2 missing ` none at all.
+    const missing = lsp.missingServers(app).len > 0;
     if (servers > 0) {
         var seg = Seg.init(ui.fmt(" LSP {d}", .{servers}), p.bg_darker, p.blue).withHit(SegId.lsp.raw());
-        if (missing > 0) seg.accent = .{ .text = ui.fmt(" ?{d}", .{missing}), .fg = p.bg2 };
+        if (missing) seg.accent = .{ .text = "?", .fg = p.bg2 };
         seg.tail = " ";
         try push(&right, arena, seg);
-    } else if (missing > 0) {
-        try push(&right, arena, Seg.init(ui.fmt(" LSP ?{d} ", .{missing}), p.comment, p.bg2).withHit(SegId.lsp.raw()));
+    } else if (missing) {
+        try push(&right, arena, Seg.init(" LSP? ", p.comment, p.bg2).withHit(SegId.lsp.raw()));
     }
     if (app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null) {
         try push(&right, arena, Seg.init(if (nerd) " " ++ sl.restricted_glyph ++ " RESTRICTED " else " RESTRICTED ", p.bg_darker, p.yellow).withHit(sl.seg_restricted));
@@ -655,6 +657,7 @@ const git_app = @import("git.zig");
 const client = @import("../git/client.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const discovery = @import("discovery.zig");
+const dispatch = @import("dispatch.zig");
 const Config = @import("../config/Config.zig");
 const Key = app_mod.Key;
 
@@ -839,13 +842,22 @@ test "with a file open the row gains the file chip, the size and Ln/Col, and the
     try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/package.json", .data = "{}\n" });
     const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "package.json" });
     defer testing.allocator.free(path);
+    // // changed (lsp-defaults): `package.json` now has a default server
+    // (`json`); with nothing on PATH the miss is quiet — the bell stays
+    // idle (a toast here was what kept the row out of the table), and
+    // the chip says ` LSP? ` in the muted colours where Rust, with no
+    // json row, has no chip: seven cells out of the file chip's padding,
+    // which leaves the dirty ` ● ` its `lane_gap` below.
+    try b.app.env.put("PATH", "");
     _ = try b.app.openPath(path);
     // The Rust row on the same fixture with `package.json` open
-    // (`tools/ui-diff.sh`, 2026-09-06).
-    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ " " ** 13 ++
-        sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " 3B  Ln 1/1 Col 1  " ++ sl.bell_glyph ++ "  " ++ spec_clock ++ " " ++ sl.pl_left_nerd ++ sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  json";
+    // (`tools/ui-diff.sh`, 2026-09-06), plus the missing-server chip.
+    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ " " ** 6 ++
+        sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " LSP? " ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " 3B  Ln 1/1 Col 1  " ++ sl.bell_glyph ++ "  " ++ spec_clock ++ " " ++ sl.pl_left_nerd ++ sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  json";
     const actual = try b.row(38);
     try testing.expectEqualStrings(expected, trimRight(try normaliseClock(b.app.frame.allocator(), expected, actual)));
+    try testing.expectEqual(@as(u32, 0), b.app.messages.unread().warn);
+    try testing.expect(b.app.lastToast() == null or std.mem.indexOf(u8, b.app.lastToast().?, "not installed") == null);
     // The glyph paints in the file type's colour; a dirty buffer shows ●.
     try testing.expect(Color.eql(b.cell(22, 38).fg, Theme.rgb(0xe8274b)));
     try b.key(Key.char('x'));
@@ -1117,6 +1129,63 @@ test "the LSP chip: ` LSP 1 ` on blue between the cluster and WRAP while a serve
     try rig.stop(&b.app);
     _ = try b.row(38);
     try testing.expect(b.colOf(38, SegId.lsp.raw()) == null);
+}
+
+// // changed (lsp-defaults): the chip's missing form.
+test "the LSP chip with a missing default server: ` LSP? ` muted with none running, ` LSP 1? ` beside a live count; the status names the install; the menu lists it and Install… opens the tools box" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.tree.visible = false;
+    try b.app.env.put("PATH", "");
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/package.json", .data = "{}\n" });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "package.json" });
+    defer testing.allocator.free(path);
+    const bell_before = b.app.messages.unread();
+    _ = try b.app.openPath(path);
+    const row = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, row, idle_cluster ++ sl.pl_left_nerd ++ " LSP? " ++ sl.pl_left_nerd ++ " WRAP ") != null);
+    try testing.expectEqual(bell_before.warn, b.app.messages.unread().warn);
+    const x = b.colOf(38, SegId.lsp.raw()).?;
+    const p = &b.app.theme.palette;
+    // Muted: the idle bell's colours, not the live chip's blue.
+    try testing.expect(Color.eql(b.cell(x + 1, 38).bg, p.bg2));
+    try testing.expect(Color.eql(b.cell(x + 1, 38).fg, p.comment));
+    try testing.expectEqual(SegId.lsp.raw(), b.app.hits.at(x + 5, 38).?.statusline_seg);
+    // Left: the status toast names the binary and its install.
+    try b.click(38, SegId.lsp.raw(), .left);
+    try testing.expectEqualStrings("LSP: no servers running · missing: vscode-json-language-server (npm i -g vscode-langservers-extracted)", b.app.lastToast().?);
+    // Right: Status, the missing row (click copies the hint), Install…, then the eight verbs.
+    try b.click(38, SegId.lsp.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    const items = b.app.overlay.menu.items;
+    try testing.expectEqual(@as(usize, 11), items.len);
+    try testing.expectEqualStrings("Status", items[0].label);
+    try testing.expectEqualStrings("✗ vscode-json-language-server — npm i -g vscode-langservers-extracted", items[1].label);
+    try testing.expect(items[1].action == .copy_text);
+    try testing.expectEqualStrings("Install vscode-json-language-server…", items[2].label);
+    try testing.expect(items[2].action == .lsp_install);
+    try testing.expectEqualStrings("vscode-json-language-server", items[2].action.lsp_install);
+    try testing.expectEqualStrings("Symbols in file", items[3].label);
+    try testing.expect(items[3].separator_before);
+    // Install…: the tools installer's box, naming the binary and the line.
+    try dispatch.runMenuActionForTest(&b.app, items[2].action);
+    try testing.expect(b.app.overlay == .confirm);
+    try testing.expectEqualStrings("Missing tool", b.app.overlay.confirm.state.title);
+    try testing.expect(std.mem.indexOf(u8, b.app.overlay.confirm.message, "npm i -g vscode-langservers-extracted") != null);
+    try b.key(Key.named(.esc));
+    // A live server beside the miss: the blue chip carries the count as
+    // a muted run.
+    var rig: lsp.TestRig = .{};
+    try rig.start(&b.app);
+    const row2 = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, row2, sl.pl_left_nerd ++ " LSP 1? " ++ sl.pl_left_nerd ++ " WRAP ") != null);
+    const x2 = b.colOf(38, SegId.lsp.raw()).?;
+    try testing.expect(Color.eql(b.cell(x2 + 1, 38).bg, p.blue));
+    try testing.expect(Color.eql(b.cell(x2 + 1, 38).fg, p.bg_darker));
+    try testing.expect(Color.eql(b.cell(x2 + 6, 38).fg, p.bg2)); // the `?`, muted
+    try rig.stop(&b.app);
 }
 
 // ─── the coverage chip on fixed inputs ───────────────────────────────────
