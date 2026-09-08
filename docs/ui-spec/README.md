@@ -310,6 +310,16 @@ none on CHAINS, `≡ ⟳ ✕` on MOCKS, `≡ ⟳` on RECENT, `≡ 🌐` on CAPTU
 the green links. `steps-http` (2), `steps-esc` (4) and `steps-todos`
 (24) did not move.
 
+Rail residue (sessions-merge, 2026-09-08): every dump that shows the
+rail differs from Rust's on its rows — the AGENTS and CLOUD AGENTS rows
+folded into SESSIONS and lua-track's SCRIPTS row joined, so Rust's 󰚩 /
+󰅣 sit where Zig has nothing and Zig's 󰢱 where Rust has nothing.
+`steps-esc` reads 16 (its 4 plus the twelve rail lines);
+`steps-sessions` reads 74 on a private seeded copy — the rail, the
+top block one row lower, the info box's copy, the version line, the
+toast, and Rust's three pty panes across the right of every row — the
+SESSIONS column itself is unchanged, card for card.
+
 ## Integrations (2026-09-07, branch `sample-integration`)
 
 - `rust-integrations-120x40.txt` — `steps-integrations.jsonl`
