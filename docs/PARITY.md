@@ -23,24 +23,24 @@ line), not by hand.
 | section | done | partial | cut | missing | rows |
 |---|---|---|---|---|---|
 | Editing & input | 49 | 0 | 0 | 0 | 49 |
-| Panes, splits & tab pages | 20 | 0 | 0 | 0 | 20 |
+| Panes, splits & tab pages | 19 | 0 | 0 | 0 | 19 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
 | Navigation & search | 31 | 0 | 0 | 0 | 31 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
-| Git | 43 | 1 | 2 | 0 | 46 |
+| Git | 46 | 1 | 2 | 0 | 49 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
 | AI | 20 | 0 | 1 | 0 | 21 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
-| HTTP request client | 44 | 0 | 1 | 0 | 45 |
+| HTTP request client | 48 | 0 | 1 | 0 | 49 |
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 24 | 0 | 0 | 0 | 24 |
 | Testing & quality | 15 | 0 | 0 | 0 | 15 |
-| UI & theming | 74 | 1 | 4 | 1 | 80 |
+| UI & theming | 75 | 1 | 3 | 1 | 80 |
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **492** | **4** | **10** | **3** | **509** |
+| **total** | **499** | **4** | **9** | **3** | **515** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
