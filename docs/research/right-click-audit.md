@@ -171,3 +171,23 @@ command family (`notes.reveal`, `http.panel_reveal` …); a follow-up,
 not a right-click gap.
 
 Deferred: #70 (host segment reorder — no order model to move in).
+
+## After (this branch, rebased on `9c78dbf`)
+
+Of the 102 Rust arms: none 78 · partial 14 (all accepted, see above) ·
+missing 1 (#70, deferred) · n/a 9 — the 44 missing became 40 none, 3
+handed to their tracks' lists (#25–#31/#84 http-options, #100
+git-lines, #101 git-rebase, #1b/#15/#16/#18 sessions-merge, the
+diagnostics rows and chip lua-track) and 1 deferred. The 19 Zig-only
+surfaces: 13 now open a menu, 6 are `no_right_click` with a reason
+(`dispatch.right_click_of`).
+
+A caveat from git-lines, true of every `.right` arm here: the e2e
+driver swallows a command's failure unless the handler toasts. A menu
+opener can only fail with OutOfMemory, so an arm that opens one cannot
+fail silently; the rows it offers run through `runMenuAction`, which
+lets a command's own diag through the way the palette does. The one
+arm that runs a command directly — the palette search chip's
+`picker.recent` — swallows a non-OOM failure the same way the chip's
+left press does; a `.test` that right-clicks it must expect the picker,
+not the absence of a toast.
