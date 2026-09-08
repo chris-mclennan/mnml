@@ -19,8 +19,8 @@ expect screen lacks "toast  fn  mnml"
 # The hooks after `mnml.on("`.
 key enter
 type "mnml.on(\"s"
-expect screen contains "save_post    event  hook"
-expect screen contains "startup      event  hook"
+expect screen contains "save_post      event  hook"
+expect screen contains "startup        event  hook"
 key esc
 key esc
 # Hover on a command id: its title and chord.
