@@ -203,6 +203,8 @@ pub fn hookDoc(h: hooks.Hook) []const u8 {
         .pane_focus => "{ pane } — focus moved (pane is nil when nothing has it)",
         .lsp_attach => "{ server, pane } — a server took a buffer",
         .git_status => "{ branch, dirty } — the status refreshed",
+        .http_request => "{ pane, method, url, headers, body, env } — a request pane is about to send; return a table to rewrite it",
+        .http_response => "{ pane, status, headers, body, body_truncated, timing_ms } — a response landed on a request pane",
     };
 }
 
