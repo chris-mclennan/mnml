@@ -1,0 +1,28 @@
+# The ZON view's list rows: + adds an element after the row's (the
+# schema's default for the element type), Enter edits it, J moves it
+# down, x removes one; the whole list literal is rewritten.
+write .mnml/config.zon .{\n    .ui = .{\n        .todo_keywords = .{ "TODO", "FIXME" }, // scanned\n    },\n}\n
+open .mnml/config.zon
+command zon.view
+key j
+expect screen contains "config.zon › ui › todo_keywords"
+expect screen contains ".{ 2 items }"
+key j
+expect screen contains "[0]"
+key +
+expect screen contains ".{ 3 items }"
+expect screen contains "config.zon › ui › todo_keywords › [1]"
+key enter
+type "HACK"
+key enter
+expect screen contains "\"HACK\"   x  *"
+key ctrl+s
+expect file .mnml/config.zon contains ".todo_keywords = .{ \"TODO\", \"HACK\", \"FIXME\" }, // scanned"
+key J
+expect screen contains "config.zon › ui › todo_keywords › [2]"
+key ctrl+s
+expect file .mnml/config.zon contains ".todo_keywords = .{ \"TODO\", \"FIXME\", \"HACK\" }, // scanned"
+key x
+expect screen contains ".{ 2 items }"
+key ctrl+s
+expect file .mnml/config.zon contains ".todo_keywords = .{ \"TODO\", \"FIXME\" }, // scanned"

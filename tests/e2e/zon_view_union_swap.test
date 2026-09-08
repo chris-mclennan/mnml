@@ -1,0 +1,31 @@
+# The ZON view's tagged-union row: the picker lists the tags; a tag with
+# a payload swaps in `.{ .tag = <default> }` and the payload's own row
+# appears below with its type's widget; a bare tag swaps the payload out.
+write .mnml/config.zon .{\n    .ui = .{\n        .md_preview_engine = .builtin, // how markdown renders\n    },\n}\n
+open .mnml/config.zon
+command zon.view
+key j
+expect screen contains "config.zon › ui › md_preview_engine"
+expect screen contains "[builtin] / glow / pandoc / custom"
+key enter
+expect screen contains "✓ builtin"
+key G
+key j
+key j
+key j
+key enter
+expect screen contains "[custom]"
+expect screen contains "(payload below)"
+key j
+expect screen contains "config.zon › ui › md_preview_engine › custom"
+key enter
+type "glow -s dark"
+key enter
+key ctrl+s
+expect file .mnml/config.zon contains ".md_preview_engine = .{ .custom = \"glow -s dark\" }, // how markdown renders"
+key k
+key left
+expect screen contains "[pandoc]"
+expect screen lacks "(payload below)"
+key ctrl+s
+expect file .mnml/config.zon contains ".md_preview_engine = .pandoc, // how markdown renders"

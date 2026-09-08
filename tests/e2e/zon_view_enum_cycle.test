@@ -1,0 +1,24 @@
+# The ZON view's enum row: → cycles the tag in place, Enter opens the
+# picker of every tag, Esc reverts a changed row to the file's literal.
+write .mnml/config.zon .{\n    .editor = .{\n        .input_style = .standard, // the profile\n        .tab_width = 4,\n    },\n}\n
+open .mnml/config.zon
+command zon.view
+key j
+expect screen contains "config.zon › editor › input_style"
+expect screen contains "vim / [standard]"
+key right
+expect screen contains "[vim] / standard *"
+key enter
+expect screen contains "✓ vim"
+key j
+key enter
+expect screen contains "vim / [standard]"
+expect screen lacks "[standard] *"
+key right
+key ctrl+s
+expect file .mnml/config.zon contains ".input_style = .vim, // the profile"
+key right
+expect screen contains "[standard] *"
+key esc
+expect screen contains "[vim] / standard"
+expect screen lacks "*"
