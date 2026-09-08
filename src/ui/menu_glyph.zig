@@ -1,62 +1,148 @@
-//! The glyph a context-menu row draws before its label — one per
-//! command group, so every row of every menu carries an icon without
-//! any opener naming one (a `MenuItem.icon` overrides the group's).
-//! Nerd Font codepoints, each with its one-character ASCII twin —
-//! `--ascii` / `ui.ascii_icons` paints the twin, as every other glyph
-//! site in mnml does. The whole column is `width` cells wide, glyph
-//! plus one cell of air, and every row pays for it so labels line up
-//! whether or not a row has a glyph.
+//! The glyph a menu row draws before its label, Rust's rule
+//! (`ui/menu_glyph.rs`'s `command_glyph`): a verb in the command id's
+//! last segment names the action glyph, else its first segment names
+//! the domain's, else the play triangle — so every row of every menu
+//! carries an icon without any opener naming one (a `MenuItem.icon`
+//! overrides). Nerd Font codepoints, each with its one-character ASCII
+//! twin — `--ascii` / `ui.ascii_icons` paints the twin, as every other
+//! glyph site in mnml does (Rust paints no column there).
+//! The whole column is `width` cells wide, glyph plus two cells of
+//! air, and every row pays for it so labels line up whether or not a
+//! row has a glyph.
 
 const std = @import("std");
 const command = @import("../core/command.zig");
 
-/// Glyph column width in cells (a one-cell glyph and a space).
-pub const width: u16 = 2;
+/// Glyph column width in cells: the one-cell glyph and two cells of
+/// air before the label (Rust's `COLUMN_W`).
+pub const width: u16 = 3;
 
-pub const Entry = struct { group: []const u8, glyph: []const u8, fallback: []const u8 };
-
-/// By command-id prefix (the part before the dot); the first match wins.
-pub const by_group = [_]Entry{
-    .{ .group = "file", .glyph = "\u{f15b}", .fallback = "f" }, //  file
-    .{ .group = "files", .glyph = "\u{f15b}", .fallback = "f" },
-    .{ .group = "buffer", .glyph = "\u{f0c5}", .fallback = "b" }, //  copy / tab
-    .{ .group = "tab", .glyph = "\u{f24d}", .fallback = "t" }, //  clone
-    .{ .group = "editor", .glyph = "\u{f044}", .fallback = "e" }, //  pencil-square
-    .{ .group = "view", .glyph = "\u{f06e}", .fallback = "v" }, //  eye
-    .{ .group = "tree", .glyph = "\u{f07b}", .fallback = "/" }, //  folder
-    .{ .group = "picker", .glyph = "\u{f002}", .fallback = "?" }, //  search
-    .{ .group = "git", .glyph = "\u{e702}", .fallback = "g" }, //  git
-    .{ .group = "lsp", .glyph = "\u{f0e7}", .fallback = "!" }, //  bolt
-    .{ .group = "http", .glyph = "\u{f0ac}", .fallback = "@" }, //  globe
-    .{ .group = "ws", .glyph = "\u{f0ec}", .fallback = "~" }, //  exchange
-    .{ .group = "browser", .glyph = "\u{f268}", .fallback = "w" }, //  chrome
-    .{ .group = "term", .glyph = "\u{f120}", .fallback = "$" }, //  terminal
-    .{ .group = "ai", .glyph = "\u{2733}", .fallback = "*" }, // ✳ claude
-    .{ .group = "todos", .glyph = "\u{f0ae}", .fallback = "+" }, //  tasks
-    .{ .group = "notes", .glyph = "\u{f249}", .fallback = "n" }, //  sticky-note
-    .{ .group = "messages", .glyph = "\u{f0f3}", .fallback = "!" }, //  bell
-    .{ .group = "toast", .glyph = "\u{f0f3}", .fallback = "!" },
-    .{ .group = "perf", .glyph = "\u{f0e4}", .fallback = "%" }, //  dashboard
-    .{ .group = "workspace", .glyph = "\u{f023}", .fallback = "#" }, //  lock
-    .{ .group = "trusted", .glyph = "\u{f023}", .fallback = "#" },
-    .{ .group = "integrations", .glyph = "\u{f1e6}", .fallback = "&" }, //  plug
-    .{ .group = "marketplace", .glyph = "\u{f290}", .fallback = "&" }, //  shopping-bag
-    .{ .group = "harpoon", .glyph = "\u{f08d}", .fallback = "^" }, //  thumb-tack
-    .{ .group = "markdown", .glyph = "\u{f48a}", .fallback = "m" }, //  markdown
-    .{ .group = "menu", .glyph = "\u{f0c9}", .fallback = "=" }, //  bars
-    .{ .group = "clock", .glyph = "\u{f017}", .fallback = "o" }, //  clock
-    .{ .group = "session", .glyph = "\u{f0c7}", .fallback = "s" }, //  save
-    .{ .group = "dap", .glyph = "\u{f188}", .fallback = "d" }, //  bug
-    .{ .group = "image", .glyph = "\u{f03e}", .fallback = "i" }, //  image
+/// The action table: matched against the LAST dotted segment of a
+/// command id, as a substring, first match wins (Rust `command_glyph`'s
+/// `ACTION`). An action glyph outranks a domain one.
+pub const by_action = [_]Entry{
+    .{ .needle = "sort", .glyph = "\u{f0dc}", .fallback = "~" }, //  sort
+    .{ .needle = "undo", .glyph = "\u{f0e2}", .fallback = "u" }, //  undo
+    .{ .needle = "redo", .glyph = "\u{f01e}", .fallback = "r" }, //  repeat
+    .{ .needle = "paste", .glyph = "\u{f0ea}", .fallback = "p" }, //  paste
+    .{ .needle = "copy", .glyph = "\u{f0c5}", .fallback = "c" }, //  copy
+    .{ .needle = "yank", .glyph = "\u{f0c5}", .fallback = "c" },
+    .{ .needle = "cut", .glyph = "\u{f0c4}", .fallback = "x" }, //  scissors
+    .{ .needle = "clear", .glyph = "\u{f12d}", .fallback = "-" }, //  eraser
+    .{ .needle = "restart", .glyph = "\u{f021}", .fallback = "@" }, //  refresh
+    .{ .needle = "refresh", .glyph = "\u{f021}", .fallback = "@" },
+    .{ .needle = "reload", .glyph = "\u{f021}", .fallback = "@" },
+    .{ .needle = "reset", .glyph = "\u{f0e2}", .fallback = "u" },
+    .{ .needle = "close", .glyph = "\u{f00d}", .fallback = "x" }, //  close
+    .{ .needle = "quit", .glyph = "\u{f00d}", .fallback = "x" },
+    .{ .needle = "kill", .glyph = "\u{f00d}", .fallback = "x" },
+    .{ .needle = "stop", .glyph = "\u{f04d}", .fallback = "." }, //  stop
+    .{ .needle = "delete", .glyph = "\u{f1f8}", .fallback = "d" }, //  trash
+    .{ .needle = "remove", .glyph = "\u{f1f8}", .fallback = "d" },
+    .{ .needle = "trash", .glyph = "\u{f1f8}", .fallback = "d" },
+    .{ .needle = "save", .glyph = "\u{f0c7}", .fallback = "s" }, //  floppy
+    .{ .needle = "write", .glyph = "\u{f0c7}", .fallback = "s" },
+    .{ .needle = "definition", .glyph = "\u{eab5}", .fallback = ">" }, //  arrow-right (codicon)
+    .{ .needle = "references", .glyph = "\u{f0c1}", .fallback = "&" }, //  link
+    .{ .needle = "hover", .glyph = "\u{f05a}", .fallback = "i" }, //  info-circle
+    .{ .needle = "symbol", .glyph = "\u{f1b3}", .fallback = "#" }, //  cubes
+    .{ .needle = "rename", .glyph = "\u{f044}", .fallback = "e" }, //  pencil-square
+    .{ .needle = "format", .glyph = "\u{f036}", .fallback = "=" }, //  align-left
+    .{ .needle = "comment", .glyph = "\u{f075}", .fallback = "/" }, //  comment
+    .{ .needle = "indent", .glyph = "\u{f03c}", .fallback = ">" }, //  indent
+    .{ .needle = "fold", .glyph = "\u{f0d7}", .fallback = "v" }, //  caret-down
+    .{ .needle = "select", .glyph = "\u{f0c9}", .fallback = "=" }, //  bars
+    .{ .needle = "goto", .glyph = "\u{eab5}", .fallback = ">" },
+    .{ .needle = "jump", .glyph = "\u{eab5}", .fallback = ">" },
+    .{ .needle = "commit", .glyph = "\u{f1d3}", .fallback = "g" }, //  git
+    .{ .needle = "push", .glyph = "\u{f062}", .fallback = "^" }, //  arrow-up
+    .{ .needle = "pull", .glyph = "\u{f063}", .fallback = "v" }, //  arrow-down
+    .{ .needle = "fetch", .glyph = "\u{f063}", .fallback = "v" },
+    .{ .needle = "stash", .glyph = "\u{f187}", .fallback = "z" }, //  archive
+    .{ .needle = "branch", .glyph = "\u{f126}", .fallback = "y" }, //  code-fork
+    .{ .needle = "merge", .glyph = "\u{f126}", .fallback = "y" },
+    .{ .needle = "rebase", .glyph = "\u{f126}", .fallback = "y" },
+    .{ .needle = "diff", .glyph = "\u{f0db}", .fallback = "|" }, //  columns
+    .{ .needle = "stage", .glyph = "\u{f067}", .fallback = "+" }, //  plus
+    .{ .needle = "unstage", .glyph = "\u{f068}", .fallback = "-" }, //  minus
+    .{ .needle = "new", .glyph = "\u{f067}", .fallback = "+" },
+    .{ .needle = "open", .glyph = "\u{f07c}", .fallback = "o" }, //  folder-open
+    .{ .needle = "reveal", .glyph = "\u{f002}", .fallback = "?" }, //  search
+    .{ .needle = "find", .glyph = "\u{f002}", .fallback = "?" },
+    .{ .needle = "search", .glyph = "\u{f002}", .fallback = "?" },
+    .{ .needle = "grep", .glyph = "\u{f002}", .fallback = "?" },
+    .{ .needle = "theme", .glyph = "\u{f043}", .fallback = "t" }, //  tint
+    .{ .needle = "toggle", .glyph = "\u{f205}", .fallback = "~" }, //  toggle-on
+    .{ .needle = "dock", .glyph = "\u{f0db}", .fallback = "|" },
+    .{ .needle = "split", .glyph = "\u{f0db}", .fallback = "|" },
+    .{ .needle = "equalize", .glyph = "\u{f0db}", .fallback = "|" },
+    .{ .needle = "maximize", .glyph = "\u{f065}", .fallback = "^" }, //  expand
+    .{ .needle = "zoom", .glyph = "\u{f065}", .fallback = "^" },
+    .{ .needle = "settings", .glyph = "\u{f013}", .fallback = "*" }, //  gear
+    .{ .needle = "config", .glyph = "\u{f013}", .fallback = "*" },
+    .{ .needle = "help", .glyph = "\u{f059}", .fallback = "?" }, //  question-circle
+    .{ .needle = "about", .glyph = "\u{f05a}", .fallback = "i" },
+    .{ .needle = "pin", .glyph = "\u{f08d}", .fallback = "^" }, //  thumb-tack
+    .{ .needle = "hide", .glyph = "\u{f070}", .fallback = "-" }, //  eye-slash
+    .{ .needle = "show", .glyph = "\u{f06e}", .fallback = "o" }, //  eye
+    .{ .needle = "run", .glyph = "\u{f04b}", .fallback = ">" }, //  play
+    .{ .needle = "test", .glyph = "\u{f0c3}", .fallback = "t" }, //  flask
+    .{ .needle = "build", .glyph = "\u{f0ad}", .fallback = "%" }, //  wrench
+    .{ .needle = "install", .glyph = "\u{f019}", .fallback = "v" }, //  download
+    .{ .needle = "update", .glyph = "\u{f019}", .fallback = "v" },
+    .{ .needle = "next", .glyph = "\u{f061}", .fallback = ">" }, //  arrow-right
+    .{ .needle = "prev", .glyph = "\u{f060}", .fallback = "<" }, //  arrow-left
 };
 
-/// The glyph for a command id, by its group prefix (its ASCII twin
-/// under `ascii`); empty when the group has none.
+/// The domain table: the FIRST dotted segment, exact, only when the
+/// action table says nothing (Rust's `DOMAIN`).
+pub const by_domain = [_]Entry{
+    .{ .needle = "git", .glyph = "\u{f1d3}", .fallback = "g" }, //  git
+    .{ .needle = "ai", .glyph = "\u{F06A9}", .fallback = "*" }, // 󰚩 robot
+    .{ .needle = "browser", .glyph = "\u{f0ac}", .fallback = "w" }, //  globe
+    .{ .needle = "http", .glyph = "\u{f1d8}", .fallback = "@" }, //  paper-plane
+    .{ .needle = "term", .glyph = "\u{f120}", .fallback = "$" }, //  terminal
+    .{ .needle = "pty", .glyph = "\u{f120}", .fallback = "$" },
+    .{ .needle = "tools", .glyph = "\u{f120}", .fallback = "$" },
+    .{ .needle = "lsp", .glyph = "\u{f085}", .fallback = "!" }, //  cogs
+    .{ .needle = "dap", .glyph = "\u{f188}", .fallback = "d" }, //  bug
+    .{ .needle = "debug", .glyph = "\u{f188}", .fallback = "d" },
+    .{ .needle = "files", .glyph = "\u{f07b}", .fallback = "/" }, //  folder
+    .{ .needle = "tree", .glyph = "\u{f07b}", .fallback = "/" },
+    .{ .needle = "buffer", .glyph = "\u{f15b}", .fallback = "b" }, //  file
+    .{ .needle = "tab", .glyph = "\u{f15b}", .fallback = "t" },
+    .{ .needle = "editor", .glyph = "\u{f044}", .fallback = "e" }, //  pencil-square
+    .{ .needle = "view", .glyph = "\u{f06e}", .fallback = "v" }, //  eye
+    .{ .needle = "window", .glyph = "\u{f0db}", .fallback = "|" }, //  columns
+    .{ .needle = "picker", .glyph = "\u{f002}", .fallback = "?" }, //  search
+    .{ .needle = "notes", .glyph = "\u{f249}", .fallback = "n" }, //  sticky-note
+    .{ .needle = "todos", .glyph = "\u{f046}", .fallback = "+" }, //  check-square
+    .{ .needle = "findings", .glyph = "\u{F1623}", .fallback = "?" }, // 󱘣 magnify-scan
+    .{ .needle = "integrations", .glyph = "\u{f12e}", .fallback = "&" }, //  puzzle-piece
+    .{ .needle = "cloud", .glyph = "\u{f0c2}", .fallback = "c" }, //  cloud
+    .{ .needle = "mixr", .glyph = "\u{f001}", .fallback = "m" }, //  music
+};
+
+/// What a command with neither an action nor a domain match paints.
+pub const fallback_glyph = "\u{f04b}"; //  play
+pub const fallback_ascii = ">";
+
+pub const Entry = struct { needle: []const u8, glyph: []const u8, fallback: []const u8 };
+
+/// The glyph for a command id, Rust's rule: the action table against
+/// the last dotted segment (substring, first match), then the domain
+/// table against the first segment, then the play triangle — or the
+/// matched entry's one-character twin under `ascii`.
 pub fn forCommandName(id: []const u8, ascii: bool) []const u8 {
-    const dot = std.mem.indexOfScalar(u8, id, '.') orelse return "";
-    const group = id[0..dot];
-    for (by_group) |e| if (std.mem.eql(u8, e.group, group)) return if (ascii) e.fallback else e.glyph;
-    return "";
+    var lower_buf: [96]u8 = undefined;
+    const lower = std.ascii.lowerString(lower_buf[0..@min(id.len, lower_buf.len)], id[0..@min(id.len, lower_buf.len)]);
+    const dot = std.mem.indexOfScalar(u8, lower, '.');
+    const ns = if (dot) |d| lower[0..d] else "";
+    const rest = if (dot) |d| lower[d + 1 ..] else lower;
+    const action = if (std.mem.lastIndexOfScalar(u8, rest, '.')) |d| rest[d + 1 ..] else rest;
+    for (by_action) |e| if (std.mem.indexOf(u8, action, e.needle) != null) return if (ascii) e.fallback else e.glyph;
+    for (by_domain) |e| if (std.mem.eql(u8, e.needle, ns)) return if (ascii) e.fallback else e.glyph;
+    return if (ascii) fallback_ascii else fallback_glyph;
 }
 
 pub fn forCommand(id: command.CommandId, ascii: bool) []const u8 {
@@ -87,26 +173,39 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
 
 const testing = std.testing;
 
-test "every group prefix maps to one glyph and one ASCII twin; an unknown group is blank; an icon overrides" {
-    try testing.expectEqualStrings("\u{e702}", forCommandName("git.commit", false));
+test "Rust's rule: the action table by the last segment, the domain table by the first, the play triangle last; an icon overrides; a twin under ascii" {
+    try testing.expectEqualStrings("\u{f1d3}", forCommandName("git.commit", false));
     try testing.expectEqualStrings("g", forCommandName("git.commit", true));
-    try testing.expectEqualStrings("\u{f15b}", forCommand(.@"file.save", false));
-    try testing.expectEqualStrings("", forCommandName("nope.what", false));
-    try testing.expectEqualStrings("", forCommandName("nodot", true));
+    try testing.expectEqualStrings("s", forCommandName("file.save", true));
+    // `save` is an action match — not the `file` domain's glyph.
+    try testing.expectEqualStrings("\u{f0c7}", forCommand(.@"file.save", false));
+    try testing.expectEqualStrings("\u{f067}", forCommandName("scratch.new", false));
+    try testing.expectEqualStrings("\u{f07c}", forCommandName("buffer.reopen", false));
+    try testing.expectEqualStrings("\u{f07c}", forCommandName("files.open_split", false));
+    try testing.expectEqualStrings("\u{f120}", forCommandName("term.shell", false));
+    try testing.expectEqualStrings(fallback_glyph, forCommandName("scratch.from_clipboard", false));
+    try testing.expectEqualStrings(fallback_glyph, forCommandName("nope.what", false));
+    try testing.expectEqualStrings(fallback_ascii, forCommandName("nope.what", true));
+    // The last dotted segment is the action: `a.b.c` matches on `c`.
+    try testing.expectEqualStrings("\u{f00d}", forCommandName("ai.dashboard.kill", false));
     const it: command.MenuItem = .{ .label = "x", .action = .{ .command = .@"file.save" }, .icon = "Z" };
     try testing.expectEqualStrings("Z", forItem(it, false));
-    // An icon without a twin falls back to the group's twin under ascii.
-    try testing.expectEqualStrings("f", forItem(it, true));
+    // An icon without a twin falls back to the command's twin under ascii.
+    try testing.expectEqualStrings("s", forItem(it, true));
     const twin: command.MenuItem = .{ .label = "x", .action = .none, .icon = "Z", .icon_ascii = "z" };
     try testing.expectEqualStrings("z", forItem(twin, true));
     const parent: command.MenuItem = .{ .label = "More", .action = .none, .submenu = &.{it} };
     try testing.expectEqualStrings("\u{f0c9}", forItem(parent, false));
     try testing.expectEqualStrings("=", forItem(parent, true));
-    // Every glyph is one cell wide under wcwidth (a Nerd Font PUA or ✳);
+    // Every glyph is one cell wide under wcwidth (a Nerd Font PUA);
     // every twin is one printable ASCII byte.
-    for (by_group) |e| {
+    for (by_action) |e| {
         const cp = try std.unicode.utf8Decode(e.glyph);
-        try testing.expect((cp >= 0xe000 and cp <= 0xf8ff) or cp == 0x2733);
-        try testing.expect(e.fallback.len == 1 and std.ascii.isPrint(e.fallback[0]) and e.fallback[0] != ' ');
+        try testing.expect((cp >= 0xe000 and cp <= 0xf8ff) or (cp >= 0xf0000 and cp <= 0xfffff));
     }
+    for (by_domain) |e| {
+        const cp = try std.unicode.utf8Decode(e.glyph);
+        try testing.expect((cp >= 0xe000 and cp <= 0xf8ff) or (cp >= 0xf0000 and cp <= 0xfffff));
+    }
+    for (by_action ++ by_domain) |e| try testing.expect(e.fallback.len == 1 and std.ascii.isPrint(e.fallback[0]) and e.fallback[0] != ' ');
 }

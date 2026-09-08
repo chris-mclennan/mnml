@@ -7,11 +7,11 @@ open a.txt
 expect screen contains " File "
 expect screen contains " » "
 click 12 0
-expect screen contains "╭ File"
+expect screen contains "┌────"
 expect screen contains "New file"
 expect screen contains "Open recent file"
 key esc
-expect screen lacks "╭ File"
+expect screen lacks "┌────"
 command view.toggle_auto_equalize_splits
 expect screen contains "auto-equalize splits: on"
 # The pointer leaves the row first: an `auto` bar shows its words while it rests there.
@@ -21,6 +21,6 @@ expect screen contains "menu bar: auto"
 expect screen lacks " File "
 command view.menu_bar_open
 expect screen contains " File "
-expect screen contains "╭ File"
+expect screen contains "┌────"
 key esc
 expect screen lacks " File "

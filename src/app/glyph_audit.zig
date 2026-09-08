@@ -82,7 +82,7 @@ fn auditCmd(app: *App) CommandError!void {
     app.toast("glyph audit: {d} sites, {d} without a fallback, {d} unknown", .{ s.sites, s.no_fallback, s.unknown });
 }
 
-/// `menu.glyph_audit`: the menu glyph table first — group, glyph,
+/// `menu.glyph_audit`: the menu glyph tables first — needle, glyph,
 /// catalog name, ASCII twin, and whether the glyph is one cell wide —
 /// then the source audit.
 fn menuAuditCmd(app: *App) CommandError!void {
@@ -90,18 +90,22 @@ fn menuAuditCmd(app: *App) CommandError!void {
     const tbl = try tableOf(app, arena);
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
-    w.writeAll("# menu glyph audit — one glyph per command group (ui/menu_glyph.zig)\n\n") catch return error.OutOfMemory;
+    w.writeAll("# menu glyph audit — Rust's rule: the action table, then the domain table (ui/menu_glyph.zig)\n\n") catch return error.OutOfMemory;
     var wide: usize = 0;
-    for (menu_glyph.by_group) |e| {
-        const cp = std.unicode.utf8Decode(e.glyph) catch 0;
-        const cells = std.unicode.utf8CountCodepoints(e.glyph) catch 1;
-        if (cells != 1) wide += 1;
-        w.print("{s: <14} U+{X:0>5}  {s: <28} ascii: \"{s}\"{s}\n", .{ e.group, cp, tool.nameOf(tbl, cp), e.fallback, if (cells != 1) "  ← not one codepoint" else "" }) catch return error.OutOfMemory;
+    inline for (.{ .{ "action", &menu_glyph.by_action }, .{ "domain", &menu_glyph.by_domain } }) |tab| {
+        w.print("## by {s}\n", .{tab[0]}) catch return error.OutOfMemory;
+        for (tab[1]) |e| {
+            const cp = std.unicode.utf8Decode(e.glyph) catch 0;
+            const cells = std.unicode.utf8CountCodepoints(e.glyph) catch 1;
+            if (cells != 1) wide += 1;
+            w.print("{s: <14} U+{X:0>5}  {s: <28} ascii: \"{s}\"{s}\n", .{ e.needle, cp, tool.nameOf(tbl, cp), e.fallback, if (cells != 1) "  ← not one codepoint" else "" }) catch return error.OutOfMemory;
+        }
     }
-    w.print("\n{d} groups, {d} not a single codepoint\n\n# source audit\n\n", .{ menu_glyph.by_group.len, wide }) catch return error.OutOfMemory;
+    const n_entries = menu_glyph.by_action.len + menu_glyph.by_domain.len;
+    w.print("\n{d} entries, {d} not a single codepoint\n\n# source audit\n\n", .{ n_entries, wide }) catch return error.OutOfMemory;
     const s = try audit(app, arena, w);
     try show(app, out.written());
-    app.toast("menu glyph audit: {d} groups · {d} sites, {d} without a fallback", .{ menu_glyph.by_group.len, s.sites, s.no_fallback });
+    app.toast("menu glyph audit: {d} entries · {d} sites, {d} without a fallback", .{ n_entries, s.sites, s.no_fallback });
 }
 
 /// The catalog → `<data root>/nerd-glyphs.tsv`.
@@ -152,11 +156,11 @@ test "audit / menu audit report the workspace's glyph sites into a scratch pane;
     try t.expect(std.mem.indexOf(u8, text, "ascii: \"~\"") != null);
     try t.expect(std.mem.indexOf(u8, text, "2 sites, 0 tests, 1 without a fallback, 1 unknown") != null);
     try t.expectEqualStrings("glyph audit: 2 sites, 1 without a fallback, 1 unknown", app.lastToast().?);
-    // The menu audit leads with the group table; every group's glyph is one codepoint.
+    // The menu audit leads with the two tables; every glyph is one codepoint.
     try command.run(&app, .{ .static = .@"menu.glyph_audit" });
     const menu_text = app.activeEditor().?.buf.editor.bytes();
     try t.expect(std.mem.indexOf(u8, menu_text, "# menu glyph audit") != null);
-    try t.expect(std.mem.indexOf(u8, menu_text, "todos          U+0F0AE") != null);
+    try t.expect(std.mem.indexOf(u8, menu_text, "todos          U+0F046") != null);
     try t.expect(std.mem.indexOf(u8, menu_text, "0 not a single codepoint") != null);
     try t.expect(std.mem.indexOf(u8, menu_text, "# source audit") != null);
     // Bake: the sorted table lands in the data root.

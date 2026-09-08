@@ -6,11 +6,11 @@
 write a.txt alpha
 open a.txt
 command clock.menu
-expect screen contains "╭ Clock"
+expect screen contains "┌ Clock"
 expect screen contains "Local time"
 expect screen contains "Hide the clock"
 key esc
-expect screen lacks "╭ Clock"
+expect screen lacks "┌ Clock"
 command clock.utc
 expect screen contains "clock: UTC"
 expect screen contains "Z "

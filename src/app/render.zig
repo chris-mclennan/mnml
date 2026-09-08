@@ -1473,37 +1473,62 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     }
 }
 
-/// A context menu anchored at the click: below the pointer when it
-/// fits, else above it (the frame's bottom row on the pointer's row),
-/// and pulled inside `screen` either way. Every row registers `.menu_item{0, idx}`; a
-/// separator paints a rule and registers nothing. A row with a submenu
-/// ends in `▸`; the open child (`m.sub`) paints beside its parent row
-/// with `.menu_item{1, idx}` hits. In a curatable menu the focused leaf
-/// row ends in a kebab (`.menu_item{2, idx}` / `{3, idx}` in the child)
-/// that opens the pin / hide / copy-id submenu.
+/// A menu, in one of the two shapes the Rust editor paints
+/// (`ui/context_menu.rs`, `ui/menu_bar.rs`): both a square frame on
+/// `bg2`, the selected row `bg_dark` on cyan, a child beside its
+/// parent row, to the right when it fits, else to the left.
+///
+/// A context menu (`m.dropdown == false`) carries its title in the
+/// top border and one blank row above the bottom one (Rust reserves a
+/// title row the border already holds); a row is ` <glyph>  label `,
+/// padded, then `▸ ` on a parent row or `⋮ ` on the focused leaf of a
+/// curatable menu. A menu-bar dropdown has no title; its row is a
+/// two-cell marker (`▸ ` on the highlighted row), the icon column
+/// (three cells, when any row has an icon), the label, and ` ▸` at
+/// the end of a parent row. The highlight paints only once the menu
+/// was interacted with (`m.highlight`): a mouse-opened dropdown shows
+/// none until a row is hovered or an arrow pressed, as Rust's.
+///
+/// Every row registers `.menu_item{0, idx}` (the child's rows `{1,
+/// idx}`); a separator paints a rule and registers nothing; the kebab
+/// registers `{2, idx}` / `{3, idx}` over its own two cells.
 fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
-    const size = menuSize(ui, m.title, m.items);
+    const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, m.dropdown);
     const w: u16 = @min(size.w, screen.w);
     const h: u16 = @min(size.h, screen.h);
     const x = @min(m.x, (screen.x + screen.w) -| w);
     const y = menuTop(screen, m.y, h);
     const frame = Rect.init(x, y, w, h);
-    const inner = overlay_mod.frame(ui, frame, m.title);
+    const inner = overlay_mod.frameLook(ui, frame, if (m.dropdown) null else m.title, .menu);
     if (inner.isEmpty()) return;
-    const parent_row = paintMenuRows(ui, inner, m.items, m.cursor, 0, m.curatable and m.sub == null, m.sub != null);
+    const parent_row = paintMenuRows(ui, inner, .{
+        .items = m.items,
+        .cursor = if (m.highlight) m.cursor else null,
+        .menu_id = 0,
+        .kebab = m.curatable and m.sub == null,
+        .dropdown = m.dropdown,
+    });
     const sub = &(m.sub orelse return);
-    // The child: beside the parent row, to the right when it fits.
-    const child = menuSize(ui, null, sub.items);
+    // The child: a context menu's hangs from the parent row (its first
+    // row one below it), a dropdown's lines its first row up with it.
+    const child = menuSize(ui, null, sub.items, m.dropdown);
     const cw: u16 = @min(child.w, screen.w);
     const ch: u16 = @min(child.h, screen.h);
-    const anchor_y = inner.y + (parent_row.get(sub.parent) orelse 0);
+    const row_y = inner.y + (parent_row.get(sub.parent) orelse 0);
     const cx: u16 = if (frame.right() + cw <= screen.right()) frame.right() else frame.x -| cw;
-    const cy = @min(anchor_y -| 1, (screen.y + screen.h) -| ch);
+    const want_y = if (m.dropdown) row_y -| 1 else row_y;
+    const cy = @max(@min(want_y, (screen.y + screen.h) -| ch), screen.y);
     const crect = Rect.init(cx, cy, cw, ch);
-    const cinner = overlay_mod.frame(ui, crect, null);
+    const cinner = overlay_mod.frameLook(ui, crect, null, .menu);
     sub.rect = crect;
     if (cinner.isEmpty()) return;
-    _ = paintMenuRows(ui, cinner, sub.items, sub.cursor, 1, m.curatable, false);
+    _ = paintMenuRows(ui, cinner, .{
+        .items = sub.items,
+        .cursor = if (sub.highlight) sub.cursor else null,
+        .menu_id = 1,
+        .kebab = m.curatable,
+        .dropdown = m.dropdown,
+    });
 }
 
 /// The top row of an `h`-row menu anchored at `anchor_y`: the anchor
@@ -1517,69 +1542,131 @@ pub fn menuTop(screen: Rect, anchor_y: u16, h: u16) u16 {
 
 const MenuSize = struct { w: u16, h: u16 };
 
-/// Frame + ✓ column + glyph column + label + marker column.
-fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem) MenuSize {
-    var widest: u16 = if (title) |tt| ui.width(tt) + 2 else 4;
-    var rows: u16 = 0;
-    for (items) |it| {
-        // A chord hint sits two cells past the label.
-        widest = @max(widest, ui.width(it.label) + if (it.hint) |h| ui.width(h) + 2 else 0);
-        rows += 1;
-        if (it.separator_before) rows += 1;
-    }
-    return .{ .w = widest + 2 + 2 + menu_glyph.width + 2 + 2, .h = rows + 2 };
+/// The marker a dropdown row ends in (` ▸`) and a context row ends in
+/// (`▸ ` / `⋮ `): two cells either way.
+const marker_w: u16 = 2;
+/// The dropdown's left column: `▸ ` on the highlighted row.
+const dropdown_marker_w: u16 = 2;
+/// A dropdown is never narrower than this (Rust's `.max(20)`).
+const dropdown_min_w: u16 = 20;
+/// A context menu's inner width is never narrower than this
+/// (Rust's `.max(12)`).
+const context_min_inner: u16 = 12;
+
+/// The label as painted: a checked row carries its `✓ ` in the label,
+/// as Rust's do.
+fn rowLabel(ui: Ui, it: command.MenuItem) []const u8 {
+    if (!it.checked) return it.label;
+    return ui.fmt("{s} {s}", .{ if (ui.ascii) "*" else "\u{2713}", it.label });
 }
 
-/// Paints `items` into `inner`, registering `.menu_item{menu_id, i}`,
-/// and returns each item's row offset (for anchoring a child). `kebab`
-/// paints the curation kebab on the focused leaf row; `dim_cursor`
-/// paints the cursor row without the highlight (a child is open).
-fn paintMenuRows(ui: Ui, inner: Rect, items: []const command.MenuItem, cursor: usize, menu_id: u32, kebab: bool, dim_cursor: bool) std.AutoHashMapUnmanaged(usize, u16) {
+/// Frame + rows, in the shape Rust sizes them (`ContextMenu::
+/// content_width`; `menu_bar.rs`'s `w` / `sub_w`).
+fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, dropdown: bool) MenuSize {
+    var rows: u16 = 0;
+    var widest: u16 = 0;
+    var any_icon = false;
+    for (items) |it| {
+        rows += 1;
+        if (it.separator_before) rows += 1;
+        if (menu_glyph.forItem(it, ui.ascii).len > 0) any_icon = true;
+        const label_w = ui.width(rowLabel(ui, it)) + if (it.submenu.len > 0) marker_w else 0;
+        widest = @max(widest, label_w);
+    }
+    if (dropdown) {
+        const icon_col: u16 = if (any_icon) menu_glyph.width else 0;
+        return .{ .w = @max(widest + icon_col + 4, dropdown_min_w), .h = rows + 2 };
+    }
+    var longest: u16 = @max(widest + menu_glyph.width, 8);
+    if (title) |tt| longest = @max(longest, ui.width(tt));
+    const inner = @max(longest + 2, context_min_inner);
+    const title_rows: u16 = if (title != null) 1 else 0;
+    return .{ .w = inner + 2, .h = rows + title_rows + 2 };
+}
+
+const RowsProps = struct {
+    items: []const command.MenuItem,
+    /// The highlighted row; null paints every row plain.
+    cursor: ?usize,
+    menu_id: u32,
+    /// Paint the curation kebab on the highlighted leaf row.
+    kebab: bool,
+    dropdown: bool,
+};
+
+/// Paints the rows into `inner`, registering `.menu_item{menu_id, i}`,
+/// and returns each item's row offset (for anchoring a child).
+fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usize, u16) {
     const th = ui.theme;
+    const pal = th.palette;
     var offsets: std.AutoHashMapUnmanaged(usize, u16) = .empty;
+    const plain = th.overlay_bg;
+    const highlight: Style = .{ .fg = pal.bg_dark, .bg = pal.cyan, .bold = true };
+    const rule = Theme.onBg(th.muted, plain.bg);
+    // The dropdown's icon column is there only when a row has an icon.
+    var any_icon = false;
+    for (p.items) |it| if (menu_glyph.forItem(it, ui.ascii).len > 0) {
+        any_icon = true;
+    };
+    const icon_col: u16 = if (p.dropdown and !any_icon) 0 else menu_glyph.width;
     var row: u16 = 0;
-    for (items, 0..) |it, i| {
+    for (p.items, 0..) |it, i| {
         if (it.separator_before and row < inner.h) {
             const r = inner.row(row);
             var xx: u16 = r.x;
-            while (xx < r.right()) : (xx += 1) _ = ui.putStr(xx, r.y, 1, if (ui.ascii) "-" else "─", Theme.onBg(th.overlay_border, th.overlay_bg.bg));
+            while (xx < r.right()) : (xx += 1) _ = ui.putStr(xx, r.y, 1, if (ui.ascii) "-" else "\u{2500}", rule);
             row += 1;
         }
         if (row >= inner.h) break;
         const r = inner.row(row);
         offsets.put(ui.arena, i, row) catch {};
-        const selected = i == cursor;
-        const style = if (selected and !dim_cursor) Theme.onBg(th.overlay_bg, th.cursor_line.bg) else th.overlay_bg;
+        const selected = p.cursor != null and i == p.cursor.?;
+        const style = if (selected) highlight else plain;
         ui.fill(r, style);
-        var xx = r.x + 1;
-        xx += ui.putStr(xx, r.y, r.right() -| xx, if (it.checked) (if (ui.ascii) "* " else "✓ ") else "  ", Theme.withFg(style, th.accent.fg));
-        _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), Theme.withFg(style, th.muted.fg));
-        xx += menu_glyph.width;
-        const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else th.fg.fg;
-        // The chord hint, right-aligned before the marker column; the
-        // label gives way to it.
-        var label_max = r.right() -| (xx + 2);
-        if (it.hint) |h| {
-            const hw = ui.width(h);
-            if (hw + 1 < label_max) {
-                _ = ui.putStrRight(r.right() -| 2, r.y, hw, h, Theme.withFg(style, th.muted.fg));
-                label_max -= hw + 1;
+        var xx = r.x;
+        if (p.dropdown) {
+            // The marker column, then the icon in the muted colour.
+            xx += ui.putStr(xx, r.y, r.right() -| xx, if (selected) (if (ui.ascii) "> " else "\u{25b8} ") else "  ", style);
+            if (icon_col > 0) {
+                _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), Theme.withFg(style, if (selected) style.fg else th.muted.fg));
+                xx += icon_col;
             }
+        } else {
+            // One cell of air, then the glyph column in the row's colour.
+            xx += 1;
+            _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), style);
+            xx += icon_col;
         }
-        _ = ui.putStr(xx, r.y, label_max, ui.clipStr(it.label, label_max), Theme.withFg(style, label_fg));
+        const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else style.fg;
+        const label = rowLabel(ui, it);
+        // The trailing marker: ` ▸` on a dropdown parent, `▸ ` on a
+        // context parent, `⋮ ` on a curatable menu's focused leaf.
+        var marker: ?[]const u8 = null;
         var kebab_x: ?u16 = null;
+        const air: u16 = if (p.dropdown) 0 else 1;
         if (it.submenu.len > 0) {
-            _ = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ">" else "▸", Theme.withFg(style, th.accent.fg));
-        } else if (kebab and selected and it.action == .command) {
-            kebab_x = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
+            marker = if (p.dropdown) (if (ui.ascii) " >" else " \u{25b8}") else (if (ui.ascii) "> " else "\u{25b8} ");
+        } else if (p.kebab and selected and it.action == .command) {
+            // The kebab only where the label leaves it room: the width
+            // reserves nothing for it, and on Rust's screen the label
+            // wins (the marker runs off the row) — → and a right press
+            // reach the curation either way.
+            if (ui.width(label) + marker_w + air <= r.right() -| xx) marker = if (ui.ascii) ": " else "\u{22ee} ";
+        }
+        const marker_room: u16 = if (marker != null) marker_w else 0;
+        const label_max = r.right() -| xx -| marker_room -| air;
+        _ = ui.putStr(xx, r.y, label_max, ui.clipStr(label, label_max), Theme.withFg(style, label_fg));
+        if (marker) |mk| {
+            const mx = r.right() -| marker_w;
+            _ = ui.putStr(mx, r.y, marker_w, mk, style);
+            if (it.submenu.len == 0) kebab_x = mx;
         }
         // The row's hit stops where the kebab starts, and the kebab's
-        // cells (the glyph and its margin) are registered after it, so
-        // a click on the glyph opens the curation. Registering the
-        // glyph cell first let the row's hit cover it and run the row.
-        const row_w: u16 = if (kebab_x) |kx| kx -| r.x else r.w -| 1;
-        ui.hit(Rect.init(r.x, r.y, row_w, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
-        if (kebab_x) |kx| ui.hit(Rect.init(kx, r.y, r.right() -| kx, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+        // cells are registered after it, so a click on the glyph opens
+        // the curation rather than running the row.
+        const row_w: u16 = if (kebab_x) |kx| kx -| r.x else r.w;
+        ui.hit(Rect.init(r.x, r.y, row_w, 1), .{ .menu_item = .{ .menu = p.menu_id, .idx = @intCast(i) } });
+        if (kebab_x) |kx| ui.hit(Rect.init(kx, r.y, r.right() -| kx, 1), .{ .menu_item = .{ .menu = p.menu_id + 2, .idx = @intCast(i) } });
         row += 1;
     }
     return offsets;

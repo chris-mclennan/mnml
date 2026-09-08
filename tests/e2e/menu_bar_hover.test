@@ -1,0 +1,28 @@
+# width: 120
+# The pointer over an open menu (src/app/dispatch.zig `menuHover`):
+# a mouse-opened File menu (click 12 0 — the dropdown at x 10, its
+# rows from y 2) shows no highlight until a row is hovered; the
+# hovered row lights with Rust's `▸ ` marker; the pointer on another
+# word of the bar switches to that menu (Edit, the brand, the ») —
+# Rust's `MenuOpenState::new_mouse(hovered_idx)`; Esc closes.
+click 12 0
+expect screen contains "│  󰈤  New file                │"
+expect screen lacks "│▸ 󰈤  New file                │"
+hover 20 2
+expect screen contains "│▸ 󰈤  New file                │"
+hover 20 3
+expect screen contains "│▸   Open file…              │"
+expect screen lacks "│▸ 󰈤  New file                │"
+hover 18 0
+expect screen contains "Find in files…"
+expect screen lacks "New file"
+hover 3 0
+expect screen contains "About mnml…"
+expect screen lacks "Find in files…"
+hover 23 0
+expect screen contains "Selection"
+expect screen contains "Terminal"
+hover 60 20
+expect screen contains "Selection"
+key esc
+expect screen lacks "Selection"

@@ -296,3 +296,20 @@ the green links. `steps-http` (2), `steps-esc` (4) and `steps-todos`
   manifest and the linked binary): `Inst (1) Mkt (0)  (0)`, the
   `Sample` row over `sample.open`, the sample's chip on the palette bar
   and its `S·sample` segment on the statusline.
+## Menus (2026-09-07)
+
+- `rust-menu-file-120x40.txt` — `steps-menu-file.jsonl`: a click on the
+  `File` word (12, 0). The menu-bar dropdown shape (`ui/menu_bar.rs`):
+  no title, a two-cell marker column (`▸ ` on the highlighted row —
+  none on a mouse-open until a hover or an arrow), the icon, two cells
+  of air, the label; ` ▸` ends the recent-files row; a separator is a
+  full-width rule; no chord column. `app/render.zig`'s `drawMenu`
+  paints it for `MenuState.dropdown`.
+- `rust-menu-plus-120x40.txt` — `steps-menu-plus.jsonl`: a click on the
+  empty strip's `󰐕` (32, 1), then a hover on its `New ▸` row. The
+  context-menu shape (`ui/context_menu.rs`): the title in the top
+  border, ` <glyph>  label` with `▸ ` at the end of a parent row, the
+  blank row above the bottom edge, the child hung from its parent row
+  (its frame's top on the row). Every right-click menu paints the
+  same; the `+` menu's rows are Rust's `Create…` tree.
+

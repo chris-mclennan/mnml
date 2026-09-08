@@ -1,14 +1,34 @@
-# A right-click on the strip's `󰐕` (column 47 with ` alpha.zig 󰅖 `
-# before it — the tree is 30 wide) drops the New menu; `New ▸` opens
-# its submenu whose first row carries a `⋯` kebab; the kebab's menu
-# pins the row.
+# The strip's `󰐕` (its cell at column 47 with ` alpha.zig 󰅖 ` before
+# it — the tree is 30 wide) drops Rust's `Create…` menu (frame x 47)
+# on either button; a hover on
+# `New ▸` opens its child hung from the row (its first row one below);
+# the child paints no highlight until a row is hovered, then a row
+# whose label leaves room carries a `⋮` kebab in its last two cells
+# (the longest rows keep their label, as on Rust's screen); the kebab's menu offers
+# Pin / Hide / Copy; a right-click on a child row offers the same, and
+# Enter pins it — the pinned row then leads the menu.
 write alpha.zig "const alpha = 1;\n"
 open alpha.zig
 rightclick 47 1
-expect screen contains "New"
-click 55 2
-expect screen contains "New file…"
-expect screen contains "⋯"
-click 89 2
+expect screen contains "┌ Create…"
+hover 50 3
+expect screen contains "Scratch buffer"
+expect screen lacks "HTTP request ⋮"
+hover 72 4
+expect screen contains "Scratch buffer │"
+expect screen lacks "Scratch buffer ⋮"
+hover 72 6
+expect screen contains "HTTP request ⋮"
+click 86 6
 expect screen contains "Pin to top"
 expect screen lacks "Rename…"
+key esc
+click 47 1
+expect screen contains "┌ Create…"
+hover 50 3
+rightclick 72 5
+expect screen contains "Pin to top"
+key enter
+expect screen contains "pinned scratch.from_clipboard"
+click 47 1
+expect screen contains "From clipboard"

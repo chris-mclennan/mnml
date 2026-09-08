@@ -15,6 +15,7 @@
 //! ghost <text>                   # inject an AI ghost-text suggestion on the active editor
 //! click <x> <y>                  # left-click at screen cell (x,y) — 0-based
 //! rightclick <x> <y>             # right-click (context menus)
+//! hover <x> <y>                  # move the pointer to a cell, no button (menu rows, hover-switch)
 //! doubleclick <x> <y>            # double-click (row activation)
 //! scroll <x> <y> <up|down>       # mouse wheel at (x,y)
 //! drag <fx> <fy> <tx> <ty>       # left-button drag, one event per cell
@@ -41,7 +42,7 @@ const Allocator = std.mem.Allocator;
 const key = @import("../core/key.zig");
 const keymap = @import("../core/keymap.zig");
 
-pub const MouseAction = enum { click, right_click, double_click, scroll_up, scroll_down };
+pub const MouseAction = enum { click, right_click, double_click, hover, scroll_up, scroll_down };
 
 pub const Step = union(enum) {
     write: struct { rel: []const u8, content: []const u8 },
@@ -182,12 +183,13 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                 if (s.len == 0) return diag.set("line {d}: `ghost` needs suggestion text", .{ln});
                 break :blk .{ .step = .{ .ghost = s } };
             },
-            .click, .rightclick, .doubleclick, .scroll => blk: {
+            .click, .rightclick, .doubleclick, .hover, .scroll => blk: {
                 const xy = try parseXy(diag, ln, head, rest);
                 const action: MouseAction = switch (kw) {
                     .click => .click,
                     .rightclick => .right_click,
                     .doubleclick => .double_click,
+                    .hover => .hover,
                     else => if (std.mem.eql(u8, trim(xy.rest), "up"))
                         .scroll_up
                     else if (std.mem.eql(u8, trim(xy.rest), "down"))
@@ -210,7 +212,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
     return .{ .arena = arena, .header = parseHeader(text), .lines = try lines.toOwnedSlice(a) };
 }
 
-const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, ghost, click, rightclick, doubleclick, scroll, drag, expect };
+const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, ghost, click, rightclick, doubleclick, hover, scroll, drag, expect };
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
@@ -420,6 +422,15 @@ test "every step directive" {
     try t.expectEqual(@as(u16, 2), L[11].stmt.step.drag.from_y);
     try t.expectEqualStrings("dir/x.txt", L[12].stmt.step.write.rel);
     try t.expectEqualStrings("l1\nl2\ttab \"q\" \\ \\z", L[12].stmt.step.write.content);
+}
+
+test "hover is a mouse step with no button" {
+    var s = try parseOk("hover 4 9\n");
+    defer s.deinit();
+    try t.expectEqual(MouseAction.hover, s.lines[0].stmt.step.mouse.action);
+    try t.expectEqual(@as(u16, 4), s.lines[0].stmt.step.mouse.x);
+    try t.expectEqual(@as(u16, 9), s.lines[0].stmt.step.mouse.y);
+    try expectErr("hover 4\n", "line 1: `hover` needs `X Y` cell coordinates");
 }
 
 test "every expectation" {

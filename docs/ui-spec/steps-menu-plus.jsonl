@@ -1,0 +1,6 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"click","col":32,"row":1}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"hover","col":36,"row":3}
+{"cmd":"wait_ms","ms":600}

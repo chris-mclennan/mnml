@@ -2,19 +2,20 @@
 //! then File / Edit / Selection / View / Go / Run / Terminal / Window /
 //! Help) as words on the chrome row; `ui/menu_bar.zig` paints them. A
 //! click drops the menu below its word; every row is a registered
-//! command (an enum — a row cannot name an id that does not exist), its
-//! first chord under the active profile as the row's hint, Rust's glyph
-//! in the icon column. Words that do not fit before the centred
+//! command (an enum — a row cannot name an id that does not exist),
+//! Rust's glyph in the icon column. Words that do not fit before the centred
 //! workspace chip collapse behind a ` » ` chip whose menu lists them.
 //!
 //! `ui.menu_bar`: `always` paints the words, `hidden` does not, `auto`
 //! paints them while a menu is open or the pointer is on the row.
 //! Keyboard: F10 opens File, Alt+<letter> the menu with that initial,
 //! ← / → step between menus while one is open (`view.menu_bar_open`
-//! opens File from the palette; `view.menu_bar_cycle` steps the setting).
+//! opens File from the palette; `view.menu_bar_cycle` steps the
+//! setting). With a menu open the pointer resting on another word
+//! switches to it, on the ` » ` to its list (`hoverSwitch`).
 //!
 //! The rows are built per open — the File menu's recent-files submenu
-//! and the hints live on `State.mem` until the next open.
+//! lives on `State.mem` until the next open.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -22,12 +23,12 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Config = @import("../config/Config.zig");
 const command = @import("../core/command.zig");
-const keymap = @import("../core/keymap.zig");
 const key_mod = @import("../core/key.zig");
 const CommandError = command.CommandError;
 const MenuItem = command.MenuItem;
 const settings = @import("settings.zig");
 const render = @import("render.zig");
+const Rect = @import("../ui/rect.zig");
 const side = @import("side.zig");
 const search_glyph = @import("../ui/menu_bar.zig").search_glyph;
 
@@ -93,7 +94,12 @@ pub const State = struct {
     words_end: u16 = 0,
     /// The row the bar painted on (the dropdown goes under it).
     bar_y: u16 = 0,
-    /// Owns the rows built per open: the recent-files submenu, the hints.
+    /// How the open menu was summoned — a hover-switch to another word
+    /// keeps it (Rust preserves `keyboard_opened` across the switch).
+    keyboard: bool = false,
+    /// The ` » ` chip's list of hidden menus is the open overlay.
+    overflow_open: bool = false,
+    /// Owns the rows built per open: the recent-files submenu.
     mem: ?std.heap.ArenaAllocator = null,
 
     pub fn deinit(s: *State) void {
@@ -283,21 +289,9 @@ fn recentRows(app: *App, arena: Allocator) Allocator.Error![]MenuItem {
     return rows;
 }
 
-/// The first default chord of `keys` under the active profile, in its
-/// canonical spelling, on `arena`; null when the command has none.
-fn chordHint(app: *App, arena: Allocator, keys: command.Keys) Allocator.Error!?[]const u8 {
-    const own = switch (App.profileOf(app.input_style)) {
-        .vim => keys.vim,
-        .standard => keys.standard,
-    };
-    const spec: []const u8 = if (keys.both.len > 0) keys.both[0] else if (own.len > 0) own[0] else return null;
-    var buf: [64]u8 = undefined;
-    return try arena.dupe(u8, keymap.normalizeSpec(spec, &buf) orelse spec);
-}
-
-/// The menu's rows for this open: the static table with each row's
-/// chord hint, the recent-files submenu on the File menu. The slice is
-/// the overlay's (gpa); what the rows point at is `State.mem`'s.
+/// The menu's rows for this open: the static table, the recent-files
+/// submenu on the File menu. The slice is the overlay's (gpa); what
+/// the rows point at is `State.mem`'s.
 fn buildRows(app: *App, m: Menu) Allocator.Error![]MenuItem {
     const s = &app.menu_bar;
     if (s.mem) |*old| old.deinit();
@@ -305,32 +299,42 @@ fn buildRows(app: *App, m: Menu) Allocator.Error![]MenuItem {
     const arena = s.mem.?.allocator();
     const rows = try app.gpa.dupe(MenuItem, rowsOf(m));
     errdefer app.gpa.free(rows);
-    for (rows) |*r| switch (r.action) {
-        .command => |id| r.hint = try chordHint(app, arena, command.spec(id).keys),
-        else => {},
-    };
     if (m == .file) rows[file_recent_row].submenu = try recentRows(app, arena);
     return rows;
 }
 
 // ─── opening ────────────────────────────────────────────────────────────
 
-/// Drop `m`'s menu at `(x, y)` — the word's left edge, the row below it.
-pub fn open(app: *App, m: Menu, x: u16, y: u16) Allocator.Error!void {
+/// Drop `m`'s menu at `(x, y)` — the word's left edge, the row below
+/// it — in the dropdown shape. `keyboard` is how it was summoned: a
+/// keyboard-opened menu highlights its first row at once, a
+/// mouse-opened one waits for a hover or an arrow (Rust's
+/// `MenuOpenState::new_keyboard` / `new_mouse`).
+pub fn open(app: *App, m: Menu, x: u16, y: u16, keyboard: bool) Allocator.Error!void {
     const rows = try buildRows(app, m);
     errdefer app.gpa.free(rows);
     try app.openMenu(m.title(), rows, x, y);
+    app.overlay.menu.dropdown = true;
+    app.overlay.menu.highlight = keyboard;
     app.menu_bar.open = m;
+    app.menu_bar.keyboard = keyboard;
+    app.menu_bar.overflow_open = false;
 }
 
 /// Open menu `idx` under its word — or where the words ended when the
-/// word is hidden behind the ` » `.
-pub fn openIndex(app: *App, idx: usize) Allocator.Error!void {
+/// word is hidden behind the ` » ` — the way `keyboard` says.
+pub fn openIndexAs(app: *App, idx: usize, keyboard: bool) Allocator.Error!void {
     if (idx >= Menu.count) return;
     const s = &app.menu_bar;
     const m: Menu = @enumFromInt(idx);
     const x = s.word_x[idx] orelse s.words_end;
-    try open(app, m, x, s.bar_y + 1);
+    try open(app, m, x, s.bar_y + 1, keyboard);
+}
+
+/// `openIndexAs` from the keyboard (F10, Alt+<letter>, ← / →, the
+/// palette, a ` » ` row).
+pub fn openIndex(app: *App, idx: usize) Allocator.Error!void {
+    try openIndexAs(app, idx, true);
 }
 
 /// ← / → while a menu is open: the neighbour, wrapping.
@@ -338,7 +342,7 @@ pub fn step(app: *App, delta: i8) Allocator.Error!void {
     const cur = app.menu_bar.open orelse return;
     const n: i16 = Menu.count;
     const next: usize = @intCast(@mod(@as(i16, @intFromEnum(cur)) + delta, n));
-    try openIndex(app, next);
+    try openIndexAs(app, next, true);
 }
 
 /// The ` » ` chip's menu: the words that did not fit, each opening its menu.
@@ -349,14 +353,40 @@ pub fn openOverflow(app: *App, x: u16, y: u16) Allocator.Error!void {
     errdefer app.gpa.free(rows);
     for (rows, first..) |*r, i| r.* = .{ .label = labels[i], .action = .{ .menu_bar = @intCast(i) }, .icon = "\u{F0C9}", .icon_ascii = "=" };
     try app.openMenu("Menus", rows, x, y);
+    app.menu_bar.open = null;
+    app.menu_bar.overflow_open = true;
 }
 
 /// `closeOverlay` calls this: the words of an `auto` bar go with the menu.
 pub fn menuClosed(app: *App) void {
-    if (app.menu_bar.open != null) {
-        app.menu_bar.open = null;
+    const s = &app.menu_bar;
+    if (s.open != null or s.overflow_open) {
+        s.open = null;
+        s.overflow_open = false;
         app.needs_render = true;
     }
+}
+
+/// The pointer resting on chrome-row button `id` (its rect `r`) while
+/// a menu-bar menu — or the ` » ` list — is open: another word opens
+/// its menu in place of the current one, the ` » ` its list, the way
+/// it was summoned kept (Rust `mouse/mod.rs`: `new_mouse(hovered_idx)`
+/// / `new_keyboard`). Nothing while no bar menu is open, nothing on
+/// the word already open. True when a menu was switched.
+pub fn hoverSwitch(app: *App, id: u32, r: Rect) Allocator.Error!bool {
+    const s = &app.menu_bar;
+    if (s.open == null and !s.overflow_open) return false;
+    if (buttonOf(id)) |which| {
+        if (s.open != null and s.open.? == which) return false;
+        const keyboard = s.keyboard;
+        try open(app, which, r.x, r.y + 1, keyboard);
+        return true;
+    }
+    if (id == overflow_button and !s.overflow_open) {
+        try openOverflow(app, r.x, r.y + 1);
+        return true;
+    }
+    return false;
 }
 
 /// F10 opens File; Alt+<letter> the menu with that initial. Nothing
@@ -462,7 +492,7 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         .split_term => .{ .title = "New terminal", .detail = "click: open a shell in a split (term.shell)" },
         .split_right => .{ .title = "Split right", .detail = "click: side by side (view.split_right)" },
         .split_down => .{ .title = "Split down", .detail = "click: stacked (view.split_down)" },
-        .split_max => .{ .title = "Maximize", .detail = "click: this pane alone, zen (view.zen)" },
+        .split_max => .{ .title = "Maximize", .detail = "click: this pane alone, full screen (view.fullscreen)" },
         .hidden_tabs => .{ .title = "Hidden tabs", .detail = "click: the buffer picker lists every tab, shown or not (picker.buffers)" },
         .ai_claude => .{ .title = "Claude Code", .detail = "click opens the session (ai.claude_code)" },
         .ai_codex => .{ .title = "Codex", .detail = "click opens the session (ai.codex)" },
@@ -512,7 +542,7 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
     try t.expectEqualStrings("mnml", Menu.brand.title());
 }
 
-test "menu bar: a click drops the menu with chord hints and the recent submenu; » lists the hidden menus; F10 / Alt / arrows; auto follows the menu; cycle persists" {
+test "menu bar: a click drops the menu in Rust's dropdown shape with the recent submenu; hover lights and switches; » lists the hidden menus; F10 / Alt / arrows; auto follows the menu; cycle persists" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -530,21 +560,104 @@ test "menu bar: a click drops the menu with chord hints and the recent submenu; 
     try t.expect(std.mem.indexOf(u8, row0, " Selection ") == null);
     try t.expectEqual(@as(?u16, 10), app.menu_bar.word_x[1]);
     try t.expectEqual(@as(?u8, 3), app.menu_bar.first_hidden);
-    // A click on File drops it: hints from the standard profile, the
-    // recent submenu on its row.
+    // A click on File drops it in the dropdown shape — Rust's
+    // `rust-menu-file-120x40.txt` rows: no title, a two-cell marker
+    // column, the icon, two cells of air, the label; ` ▸` ends the
+    // recent-files row; no highlight until a hover or an arrow.
     try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .menu);
+    try t.expect(app.overlay.menu.dropdown);
+    try t.expect(!app.overlay.menu.highlight);
     try t.expectEqualStrings("File", app.overlay.menu.title);
     try t.expectEqualStrings("New file", app.overlay.menu.items[0].label);
     try t.expectEqual(command.CommandId.@"file.new", app.overlay.menu.items[0].action.command);
-    try t.expectEqualStrings("ctrl+s", app.overlay.menu.items[5].hint.?);
     try t.expectEqual(@as(usize, 1), app.overlay.menu.items[file_recent_row].submenu.len);
     try t.expectEqualStrings("(no recent files)", app.overlay.menu.items[file_recent_row].submenu[0].label);
     try app.render();
     const dropped = try screen.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(dropped);
-    try t.expect(std.mem.indexOf(u8, dropped, "╭ File") != null);
-    try t.expect(std.mem.indexOf(u8, dropped, "ctrl+s") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "╭ File") == null);
+    try t.expect(std.mem.indexOf(u8, dropped, "┌─────────────────────────────┐") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "│  \u{F0224}  New file                │") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "│  \u{F1DA}  Open recent file       ▸│") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "│─────────────────────────────│") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "ctrl+s") == null);
+    // The first ↓ only turns the highlight on (row 0); the marker
+    // column shows it; the next ↓ moves.
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try t.expect(app.overlay.menu.highlight);
+    try t.expectEqual(@as(usize, 0), app.overlay.menu.cursor);
+    try app.render();
+    const lit = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(lit);
+    try t.expect(std.mem.indexOf(u8, lit, "│▸ \u{F0224}  New file") != null);
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
+    // The pointer over a row moves the highlight there; the keyboard
+    // carries on from where the pointer left it; a hover on the
+    // recent-files row opens its child, a hover back on a leaf closes it.
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 6, .kind = .motion } });
+    try t.expectEqual(@as(usize, 4), app.overlay.menu.cursor);
+    try app.render();
+    const hovered = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(hovered);
+    try t.expect(std.mem.indexOf(u8, hovered, "│▸ \u{F443}  Switch workspace…") != null);
+    try t.expect(std.mem.indexOf(u8, hovered, "│▸ \u{F0224}  New file") == null);
+    try app.handle(.{ .key = app_mod.Key.named(.up) });
+    try t.expectEqual(@as(usize, 3), app.overlay.menu.cursor);
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 5, .kind = .motion } });
+    try t.expect(app.overlay.menu.sub != null);
+    try t.expectEqual(@as(usize, 3), app.overlay.menu.sub.?.parent);
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 2, .kind = .motion } });
+    try t.expect(app.overlay.menu.sub == null);
+    try t.expectEqual(@as(usize, 0), app.overlay.menu.cursor);
+    // A fresh mouse-open again shows no highlight until a hover.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .press, .button = .left } });
+    try t.expect(!app.overlay.menu.highlight);
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 3, .kind = .motion } });
+    try t.expect(app.overlay.menu.highlight);
+    try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
+    // With File open the pointer on Edit opens Edit (mouse-opened: no
+    // highlight), on the brand its menu, on the » its list, back on
+    // File its menu; off the bar the open menu stays; the word already
+    // open is left alone.
+    try app.handle(.{ .mouse = .{ .x = 18, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.edit, app.menu_bar.open.?);
+    try t.expectEqualStrings("Edit", app.overlay.menu.title);
+    try t.expect(!app.overlay.menu.highlight);
+    try t.expectEqual(@as(u16, 16), app.overlay.menu.x);
+    try app.handle(.{ .mouse = .{ .x = 3, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.brand, app.menu_bar.open.?);
+    try app.handle(.{ .mouse = .{ .x = 23, .y = 0, .kind = .motion } });
+    try t.expect(app.menu_bar.open == null);
+    try t.expect(app.menu_bar.overflow_open);
+    try t.expectEqualStrings("Menus", app.overlay.menu.title);
+    try app.handle(.{ .mouse = .{ .x = 23, .y = 0, .kind = .motion } });
+    try t.expect(app.menu_bar.overflow_open);
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.file, app.menu_bar.open.?);
+    try t.expect(!app.menu_bar.overflow_open);
+    try app.handle(.{ .mouse = .{ .x = 60, .y = 12, .kind = .motion } });
+    try t.expectEqual(Menu.file, app.menu_bar.open.?);
+    try t.expect(app.overlay == .menu);
+    app.overlay.menu.cursor = 2;
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .motion } });
+    try t.expectEqual(@as(usize, 2), app.overlay.menu.cursor);
+    // A keyboard-opened menu keeps its highlight across the switch.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.menu_bar.open == null);
+    try app.handle(.{ .key = app_mod.Key.named(.{ .f = 10 }) });
+    try t.expect(app.overlay.menu.highlight);
+    try app.handle(.{ .mouse = .{ .x = 18, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.edit, app.menu_bar.open.?);
+    try t.expect(app.overlay.menu.highlight);
+    // No menu open: the pointer on a word opens nothing.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .motion } });
+    try t.expect(app.overlay == .none);
+    try t.expect(app.menu_bar.open == null);
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .press, .button = .left } });
     // → steps to Edit, ← back to File, ← again wraps to the brand menu.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqual(Menu.edit, app.menu_bar.open.?);
