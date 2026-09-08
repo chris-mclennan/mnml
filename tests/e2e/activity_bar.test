@@ -1,10 +1,11 @@
 # width: 120
 # The activity bar (src/ui/activity_bar.zig): the icon rail down the
 # sidebar's left edge, columns 0..2, the `│` at column 3. Without pinned
-# launchers the twelve sections sit two rows apart from row 2 (TODOs on
-# 22, Notes on 20, Findings on 24) and the gear on the second-to-last
-# rail row (36). A left click shows the section; a right click opens its
-# menu, "Show X" first; the gear's right click is the mnml menu.
+# launchers the eleven sections sit two rows apart from row 2 (TODOs on
+# 18, Notes on 16, Findings on 20 — the AGENTS and CLOUD AGENTS rows
+# folded into SESSIONS) and the gear on the second-to-last rail row
+# (36). A left click shows the section; a right click opens its menu,
+# "Show X" first; the gear's right click is the mnml menu.
 write .mnml/notes/note-1.md "# Ship it\n"
 write .mnml/findings/f1.md "# A finding\n\nseverity: low\n"
 write a.py "# TODO: wire the thing\n"
@@ -12,19 +13,19 @@ expect screen contains "▌"
 # The sections take the sidebar's 26 cells; drag the divider out to 60 so
 # the rows below read in full (the header keeps its icons at 26).
 drag 30 5 60 5
-click 1 22
+click 1 18
 wait 400
 expect screen contains "TODOS"
 expect screen contains "wire the thing"
-click 1 20
+click 1 16
 wait 400
 expect screen contains "NOTES"
 expect screen contains "note-1  Ship it"
-click 1 24
+click 1 20
 wait 400
 expect screen contains "FINDINGS"
 expect screen contains "A finding"
-rightclick 1 22
+rightclick 1 18
 expect screen contains "Show TODOs"
 expect screen contains "Rescan"
 key esc

@@ -428,7 +428,7 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
         \\{"cmd":"mouse_up","col":2,"row":1}
         \\{"cmd":"toast","text":"hi","level":"warn"}
         \\{"cmd":"progress-end","id":"p","text":"fail"}
-        \\{"cmd":"set-activity-badge","section":"agents","count":3}
+        \\{"cmd":"set-activity-badge","section":"sessions","count":3}
         \\{"cmd":"open-pty","command":["ls","-la"]}
         \\{"cmd":"notify","text":"body"}
         \\{"cmd":"snapshot"}
@@ -470,7 +470,7 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
         \\{{"event":"mouse_up","col":"2","row":"1"}}
         \\{{"event":"toast","text":"hi","level":"warn"}}
         \\{{"event":"progress_end","id":"p","status":"failed"}}
-        \\{{"event":"set_activity_badge","section":"agents","count":"3"}}
+        \\{{"event":"set_activity_badge","section":"sessions","count":"3"}}
         \\{{"event":"open_pty","exe":"ls"}}
         \\{{"event":"notify","title":"mnml","body":"body"}}
         \\{{"event":"snapshot"}}
@@ -551,8 +551,8 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
     const app = &drv.app;
     try t.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
     try t.expectEqualStrings("jira", app.ipc_fx.segments.items[0].id);
-    try t.expectEqual(@as(u32, 3), app.ipc_fx.badge("agents"));
-    try t.expectEqual(@as(u32, 0), app.ipc_fx.badge("cloud_agents"));
+    try t.expectEqual(@as(u32, 3), app.ipc_fx.badge("sessions"));
+    try t.expectEqual(@as(u32, 0), app.ipc_fx.badge("todos"));
     try t.expect(!app.native_notify);
     var saw_pty = false;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {

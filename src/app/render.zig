@@ -615,7 +615,7 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         // // changed (lua-track): the SCRIPTS section.
         .scripts => try scripts_panel.draw(app, ui, area),
         // Pane-backed sections never own a column (`side.surface`).
-        .search, .agents, .cloud_agents => unreachable,
+        .search => unreachable,
     }
 }
 

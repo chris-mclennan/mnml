@@ -350,11 +350,8 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
         .sessions => &.{
             .{ .label = "+ New Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
             .{ .label = "+ New Codex session", .action = .{ .command = .@"ai.codex_new" } },
-        },
-        .agents => &.{.{ .label = "Open dashboard", .action = .{ .command = .@"ai.dashboard" } }},
-        .cloud_agents => &.{
-            .{ .label = "+ New cloud run", .action = .{ .command = .@"cloud_agents.new_run" } },
-            .{ .label = "+ New from wizard", .action = .{ .command = .@"cloud_agents.new_run_wizard" } },
+            .{ .label = "+ New cloud run…", .action = .{ .command = .@"cloud_agents.new_run" } },
+            .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" } },
         },
         .http => &.{
             .{ .label = "+ New request", .action = .{ .command = .@"http.new" } },

@@ -36,8 +36,6 @@ pub const Section = enum(u8) {
     debug,
     integrations,
     sessions,
-    agents,
-    cloud_agents,
     http,
     notes,
     todos,
@@ -49,7 +47,10 @@ pub const Section = enum(u8) {
 
     pub const all = std.enums.values(Section);
     /// The rows the rail paints, in order.
-    pub const rail = all[0..13];
+    /// // changed (sessions-merge): the AGENTS and CLOUD AGENTS rows are
+    /// gone — the sessions table (`sessions.table`) and the cloud rows
+    /// live in SESSIONS.
+    pub const rail = all[0..11];
 
     pub const Meta = struct {
         /// The Nerd Font glyph (Rust's codepoint).
@@ -68,8 +69,6 @@ pub const Section = enum(u8) {
             .debug => .{ .glyph = "\u{f188}", .fallback = "D", .label = "Run and debug" }, // nf-fa-bug
             .integrations => .{ .glyph = "\u{f0431}", .fallback = "I", .label = "Integrations" }, // nf-md-puzzle
             .sessions => .{ .glyph = "\u{f0392}", .fallback = "T", .label = "Sessions" }, // nf-md-tab
-            .agents => .{ .glyph = "\u{f06a9}", .fallback = "A", .label = "Agents" }, // nf-md-robot
-            .cloud_agents => .{ .glyph = "\u{f0163}", .fallback = "C", .label = "Cloud agents" }, // nf-md-cloud
             .http => .{ .glyph = "\u{f1d8}", .fallback = "H", .label = "HTTP" }, // nf-fa-paper_plane
             .notes => .{ .glyph = "\u{f249}", .fallback = "N", .label = "Notes" }, // nf-fa-sticky_note
             .todos => .{ .glyph = "\u{f046}", .fallback = "O", .label = "TODOs" }, // nf-fa-check_square
@@ -194,13 +193,13 @@ fn bold(s: Style) Style {
 const t = std.testing;
 const test_fixture = @import("test_fixture.zig");
 
-test "glyph table: twelve rail sections in Rust's order plus SCRIPTS (and the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
-    try t.expectEqual(@as(usize, 13), Section.rail.len);
-    try t.expectEqual(@as(usize, 15), Section.all.len);
+test "glyph table: eleven rail sections in Rust's order less the two that folded into SESSIONS, plus SCRIPTS (and the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
+    try t.expectEqual(@as(usize, 11), Section.rail.len);
+    try t.expectEqual(@as(usize, 13), Section.all.len);
     try t.expectEqual(Section.explorer, Section.rail[0]);
-    try t.expectEqual(Section.findings, Section.rail[11]);
-    try t.expectEqual(Section.scripts, Section.rail[12]);
-    try t.expectEqual(Section.outline, Section.all[14]);
+    try t.expectEqual(Section.findings, Section.rail[9]);
+    try t.expectEqual(Section.scripts, Section.rail[10]);
+    try t.expectEqual(Section.outline, Section.all[12]);
     var seen_glyphs: [Section.all.len]u21 = undefined;
     for (Section.all, 0..) |s, i| {
         const m = s.meta();
@@ -221,21 +220,29 @@ test "glyph table: twelve rail sections in Rust's order plus SCRIPTS (and the tw
     try t.expectEqual(@as(u21, 0xf013), try std.unicode.utf8Decode(gear_nerd));
 }
 
-test "layout: rows 1..37 of a 40-row screen — sections on 2..13 when six launcher slots pack the rail, on 2,4,..24 without them; the gear on row 36" {
+test "layout: rows 1..37 of a 40-row screen — eleven sections on 2..12 when six launcher slots pack the rail, on 2,4,..22 without them; the gear on row 36" {
     // The fixture: the rail spans rows 1..37 (the palette bar above, the
     // statusline and `:` line below) and the config pins six launchers.
+    // // changed (sessions-merge): two sections fewer, one more from
+    // lua-track (SCRIPTS): eleven, and six launchers still pack the rail.
     const dense = layout(Rect.init(0, 1, width, 37), 6);
+    try t.expectEqual(@as(u16, 1), dense.step);
     try t.expectEqual(@as(u16, 2), dense.sectionY(.explorer).?);
-    try t.expectEqual(@as(u16, 13), dense.sectionY(.findings).?);
+    try t.expectEqual(@as(u16, 11), dense.sectionY(.findings).?);
+    try t.expectEqual(@as(u16, 12), dense.sectionY(.scripts).?);
     try t.expectEqual(@as(u16, 36), dense.gear_y.?);
+    const crowded = layout(Rect.init(0, 1, width, 37), 8);
+    try t.expectEqual(@as(u16, 1), crowded.step);
+    try t.expectEqual(@as(u16, 11), crowded.sectionY(.findings).?);
     const roomy = layout(Rect.init(0, 1, width, 37), 0);
     try t.expectEqual(@as(u16, 2), roomy.step);
-    try t.expectEqual(@as(u16, 24), roomy.sectionY(.findings).?);
-    // 80x24: rows 1..21 — the twelve sections need the dense step and
+    try t.expectEqual(@as(u16, 20), roomy.sectionY(.findings).?);
+    try t.expectEqual(@as(u16, 22), roomy.sectionY(.scripts).?);
+    // 80x24: rows 1..21 — the eleven sections need the dense step and
     // still all fit above the gear on row 20.
     const short = layout(Rect.init(0, 1, width, 21), 0);
     try t.expectEqual(@as(u16, 1), short.step);
-    try t.expectEqual(@as(u16, 13), short.sectionY(.findings).?);
+    try t.expectEqual(@as(u16, 11), short.sectionY(.findings).?);
     try t.expectEqual(@as(u16, 20), short.gear_y.?);
     // Too short for everything: the last sections go, the gear stays.
     const tiny = layout(Rect.init(0, 1, width, 8), 0);

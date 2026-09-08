@@ -12,10 +12,13 @@
 //! same id the right-click menu's first row names, so the palette and
 //! the rail cannot drift apart.
 //!
-//! // changed: `view.activity_debug` / `view.activity_agents` /
-//! `view.activity_cloud_agents` had specs and no runners; they run here
-//! (the DAP pane, the agents dashboard, the honest "not in this build").
-//! `view.activity_bar_cycle` is Zig-only, the twin of `view.menu_bar_cycle`.
+//! // changed: `view.activity_debug` had a spec and no runner; it runs
+//! here (the DAP section). `view.activity_bar_cycle` is Zig-only, the
+//! twin of `view.menu_bar_cycle`.
+//! // changed (sessions-merge): the AGENTS and CLOUD AGENTS sections are
+//! gone; `view.activity_agents` opens the sessions table and
+//! `view.activity_cloud_agents` the SESSIONS section, so scripts naming
+//! them keep working.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -58,8 +61,6 @@ pub fn commandOf(s: Section) command.CommandId {
         .debug => .@"view.activity_debug",
         .integrations => .@"view.activity_integrations",
         .sessions => .@"view.activity_sessions",
-        .agents => .@"view.activity_agents",
-        .cloud_agents => .@"view.activity_cloud_agents",
         .http => .@"view.activity_http",
         .notes => .@"view.activity_notes",
         .todos => .@"view.activity_todos",
@@ -183,9 +184,7 @@ pub fn describe(part: Part) tooltip.Tip {
             .git => "click: Git rail · status · commits · branches · worktrees · stash · right-click: menu",
             .debug => "click: Debug rail · variables · watch · call stack · breakpoints · right-click: menu",
             .integrations => "click: Integrations rail · browser / mixr / integration tools · + to add · right-click: menu",
-            .sessions => "click: Sessions rail · Claude / Codex / shell sessions · right-click: menu",
-            .agents => "click: Agents rail · running Claude Code + Codex sessions · right-click: menu",
-            .cloud_agents => "click: Cloud Agents rail · ECS runner + Anthropic managed sessions · right-click: menu",
+            .sessions => "click: Sessions rail · Claude Code / Codex sessions, the cloud runs · t opens the table · right-click: menu",
             .http => "click: HTTP rail · requests · recent · captured · envs · collections · right-click: menu",
             .notes => "click: Notes rail · .mnml/notes/*.md persistent scratch · right-click: menu",
             .todos => "click: TODOs rail · TODO / FIXME / XXX / HACK / REVIEW hits · right-click: menu",
@@ -206,14 +205,17 @@ fn activityDebug(app: *App) CommandError!void {
     side.place(app, .debug, true);
 }
 
+/// `view.activity_agents`: an alias — the sessions table.
 fn activityAgents(app: *App) CommandError!void {
-    enter(app, .agents);
+    enter(app, .sessions);
     return command.run(app, .{ .static = .@"sessions.table" });
 }
 
+/// `view.activity_cloud_agents`: an alias — the SESSIONS section, where
+/// the cloud rows list.
 fn activityCloudAgents(app: *App) CommandError!void {
-    enter(app, .cloud_agents);
-    return app.diag.fail(app.frame.allocator(), "cloud agents (AWS ECS / Managed Agents) are not in this build yet", .{});
+    enter(app, .sessions);
+    return command.run(app, .{ .static = .@"view.activity_sessions" });
 }
 
 /// `view.activity_bar_cycle`: always → auto → hidden → always, persisted.
