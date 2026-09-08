@@ -3924,3 +3924,104 @@ own at the end of `scripting/api.zig`, one new file
   the draft caret, the tip); `tests/e2e/lua_http_hooks.test`,
   `tests/e2e/http/http-headers-complete-name.test`,
   `http-headers-complete-value.test`, `http-headers-describe.test`.
+
+---
+
+## HTTP options, response search, `{{` completion (2026-09-07, branch `http-options`) — `// changed:` notes
+
+- `// changed (http):` `parse.Request` keeps its transport options as
+  the block's own `# @…` lines — `@insecure`, `@timeout 5s` (`500ms`,
+  `2m`, a bare number is ms), `@no-redirect` / `@follow-redirects`,
+  `@max-redirects 3`, `@proxy host:port` — read by `parse.options`,
+  written by `parse.setDirective` (replace / add / remove one word's
+  line, `insecure` kept in step). `parseCurl` makes the same lines of
+  `-k`, `--max-time`, `--max-redirs`, `-L`, `-x`; `toCurl` writes the
+  flags back; `toHttpBlock` writes a line for a hand-set `insecure`.
+  `parse` merges the text's directive lines with the flag-made ones
+  (the text's word wins), so block ↔ curl ↔ block round-trips.
+- `// changed (http):` `client.Transport` (`insecure`, `timeout_ms`,
+  `follow_redirects`, `max_redirects`, `proxy`) with `fromRequest(req,
+  defaults)` — the request's directives over the config's defaults;
+  `SendOptions.transport` carries the defaults. `send` runs the whole
+  send (redirects included) under an `Io.Select` race with a timer when
+  a timeout is set; the loser is cancelled, the outcome reads
+  `timeout: no response within N ms`. A proxy is two `std.http.Client.Proxy`s
+  on the per-send client: absolute-form for a plain origin, `CONNECT`
+  for https. `follow_redirects` / `max_redirects` gate the hop loop;
+  `final_url` is the resolved hop's text, not the wire's.
+- `// added (http):` `src/http/insecure.zig` — `req.insecure` was parsed
+  and never read. `std.http.Client` builds its TLS with the system
+  bundle and the URL's host and has no switch, so an https hop under
+  `-k` goes to `Shim`: a loopback listener that opens the real host
+  (through the proxy's `CONNECT` when set), shakes hands with
+  `.ca = .no_verification` and pumps bytes both ways; the client speaks
+  plain HTTP to it with the real `Host`. The name is checked with SNI
+  first; a `CertificateHostMismatch` retries with no name check and no
+  SNI — as far as std's client goes toward curl's `-k`. A failed
+  handshake is named on the outcome: `tls (insecure): Tls…`. `JunkOrigin`
+  is the test origin (answers any bytes, keeps what it saw).
+- `// changed (config):` `Config.Http` gains `insecure`, `timeout_ms`,
+  `follow_redirects`, `max_redirects`, `proxy` (`docs/CONFIG.md`);
+  `http.transportDefaults` reads them; `spawnWith` resolves the
+  request's directives over them before the worker starts and owns the
+  proxy string (`Job.proxy_owned`).
+- `// changed (ui):` the Auth tab is a scrolled row list (`drawAuth`,
+  through `m.edit_scroll`): the current header, the four auth rows,
+  `── Options ──`, five rows in the settings idiom — `▸ Verify TLS:
+  [on] / off`, `Timeout: [5s]  Enter to set`, `Follow redirects`,
+  `Max redirects: ‹ [10] ›`, `Proxy: [none]` — the `*` after a row the
+  block sets. `Model.options: OptionsModel`; hits `hit_auth_row +
+  auth_rows.len + i`; `authRowCount()`.
+- `// changed (app):` `http.optionsModel`, `authRowAdjust` (`←` `→` /
+  `h` `l`: flip a toggle, step the cap or the timeout by a second),
+  `authRowReset` (`r`: the line goes, the config decides),
+  `openOptionPrompt` / `applyOptionPrompt` (`PromptPurpose.http_option`,
+  seeded with the block's value; empty removes the line). Verify TLS
+  cannot be turned on for one request when the config says `insecure =
+  true` — a toast says so. Five ids: `http.toggle_insecure`,
+  `set_timeout`, `toggle_follow_redirects`, `set_max_redirects`,
+  `set_proxy`.
+- `// changed (app):` `cmd_find` works on a `Target` — `.editor` (the
+  buffer, the offset landing) or `.request` (`RequestPane.resp_find`,
+  `resp_cursor`, `respFindText()`: the body as shown, or the Headers
+  tab's `name: value` lines) — so `openBar`, `liveUpdate`, the accepts,
+  `stepFind`, `toggleRegex`, the history and `App.closeFindBar`'s
+  restore are one path. `find.find` on a request pane focuses the
+  Response block; `/` `?` there (vim) open the bar, `n` / `N` walk in
+  both profiles, Esc drops the matches; a tab change re-targets
+  (`retargetFind`), a new response clears. `revealFind` scrolls the
+  hit's row into the response (`resp_rows` measured at draw). The bar
+  docks under the pane as under an editor, with the count.
+- `// changed (ui):` `ResponseModel.headers_text`, `matches`,
+  `current_match`; the Headers tab draws from the joined text when
+  given (the pairs otherwise), and `overlayMatches` splits every
+  segment that is a slice of the searched line at the matches —
+  `theme.match` / `theme.current_match` grounds over the syntax
+  spans, wrapped chunks included.
+- `// added (app):` the `{{` completion: `http.State.completion:
+  ?VarCompletion` (pane, `CompletionField` — url / body / headers /
+  source / a params draft cell —, `start`, an arena of `Item{ name,
+  kind, detail }`). `afterFieldEdit` runs after every field edit: a
+  `{{` just typed opens it (`buildVarItems`: the env file's names with
+  `env.masked` values, the seven `$` built-ins with a fresh sample,
+  the block's `@capture` names with what the env has or `(set by the
+  response)`), an open popup follows the word (`fuzzy.score`) or
+  closes on `}` / a space / the caret leaving. `varCompletionKey`
+  owns ↑ ↓ PgUp PgDn Tab Enter Esc and Ctrl+N/P/E ahead of the field;
+  `acceptVarCompletion` writes `name}}` over the word (a `}}` already
+  after the caret is not doubled; the braces too when summoned bare
+  by `http.complete_var`); `clickVarCompletion` from `dispatch`'s
+  `.overlay_item` arm; `drawVarCompletion` paints
+  `ui/completion_view.zig` at the field's caret — no second popup.
+- `// added (e2e):` `serve <port> <status> [delay=<ms>] <text>` in
+  `src/e2e/parser.zig` / `runner.zig`: `mock.Server` on the loopback
+  for the file (headers, a blank line, the body; a delay sends the
+  body late with no length), stopped after the script. Tests:
+  `tests/e2e/http/http-auth-options-rows.test`,
+  `http-response-search.test`, `http-var-completion.test`,
+  `http-timeout-trips.test`, `http-no-redirect-302.test`.
+- Coordination: the option directives live in `Request.script` beside
+  `@set-*` / `@assert` / `@capture`; a Script tab that keeps its own
+  text must write it through `request.script` (or re-derive from it)
+  so the Options rows and the tab agree.
+

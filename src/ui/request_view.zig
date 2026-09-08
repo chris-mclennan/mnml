@@ -41,6 +41,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const text_field = @import("text_field.zig");
 const editor_view = @import("editor_view.zig");
+const find_mod = @import("../app/find.zig");
 const border = @import("border.zig");
 const ids = @import("../core/ids.zig");
 
@@ -144,6 +145,40 @@ pub const auth_rows = [_]AuthRow{
     .{ .id = "clear", .label = "Clear Authorization", .glyph = "\u{00D7}" },
 };
 
+/// The `── Options ──` rows under the auth rows: the block's transport
+/// directives, in the settings overlay's row idiom (`▸ label:  [on] /
+/// off  *`, the `*` when the block sets it). Hits are `hit_auth_row +
+/// auth_rows.len + i`.
+pub const OptionRow = struct {
+    kind: Kind,
+    label: []const u8,
+    pub const Kind = enum { verify_tls, timeout, follow_redirects, max_redirects, proxy };
+};
+
+pub const option_rows = [_]OptionRow{
+    .{ .kind = .verify_tls, .label = "Verify TLS" },
+    .{ .kind = .timeout, .label = "Timeout" },
+    .{ .kind = .follow_redirects, .label = "Follow redirects" },
+    .{ .kind = .max_redirects, .label = "Max redirects" },
+    .{ .kind = .proxy, .label = "Proxy" },
+};
+
+/// Every row of the Auth tab the cursor can land on.
+pub fn authRowCount() usize {
+    return auth_rows.len + option_rows.len;
+}
+
+/// What a send would use, and which rows the block sets itself (the
+/// others show the config default).
+pub const OptionsModel = struct {
+    insecure: bool = false,
+    timeout_ms: ?u64 = null,
+    follow_redirects: bool = true,
+    max_redirects: u8 = 10,
+    proxy: ?[]const u8 = null,
+    set: [option_rows.len]bool = .{false} ** option_rows.len,
+};
+
 pub const VarRow = struct { name: []const u8, value: ?[]const u8 };
 
 pub const Timing = struct { wait_ms: u64, receive_ms: u64, total_ms: u64 };
@@ -212,6 +247,13 @@ pub const ResponseModel = struct {
     /// The request headers as they went out (directives, expansion and
     /// the `http_request` hook applied) — the Timeline tab lists them.
     sent_headers: []const Pair = &.{},
+    /// The Headers tab as `name: value` lines — what its search runs
+    /// over, drawn from this text so the match offsets line up.
+    headers_text: []const u8 = "",
+    /// The response search's matches over `body` (the Body tab) or
+    /// `headers_text` (Headers), sorted; painted as an editor's are.
+    matches: []const find_mod.Range = &.{},
+    current_match: ?usize = null,
 };
 
 pub const Model = struct {
@@ -239,6 +281,7 @@ pub const Model = struct {
     row_cursor: usize,
     /// The current Authorization header's value, if any.
     auth_current: ?[]const u8,
+    options: OptionsModel = .{},
     vars: []const VarRow,
     env_name: ?[]const u8,
     /// The env came from a session override (the Env box paints cyan).
@@ -988,6 +1031,10 @@ pub fn drawTip(ui: Ui, screen: Rect, anchor: Rect, text: []const u8) void {
     _ = ui.putStr(x, y, w, ui.clipStr(text, w), style);
 }
 
+/// The Auth tab as a list of rows — the current header, the four auth
+/// actions, `── Options ──` and its five rows, a hint — scrolled
+/// through `m.edit_scroll` so the cursor's row is always on screen (the
+/// request box is a handful of rows tall at the default size).
 fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
     const p = ui.theme.palette;
     if (r.isEmpty()) return;
@@ -996,21 +1043,91 @@ fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
         (if (std.mem.startsWith(u8, v, "Bearer ")) ui.fmt("Bearer \u{00B7} {s}", .{ui.clipStr(v[7..], 20)}) else if (std.mem.startsWith(u8, v, "Basic ")) "Basic \u{00B7} (base64 user:pass)" else if (v.len > 24) ui.fmt("{s}\u{2026}", .{v[0..22]}) else v)
     else
         "(no Authorization header \u{2014} request will be unauthenticated)";
-    var x = r.x;
-    x += ui.putStr(x, r.y, r.w, "    Current:  ", dim(p));
-    _ = ui.putStr(x, r.y, r.right() -| x, summary, .{ .fg = if (cur != null) p.cyan else p.comment, .bg = p.bg_dark, .bold = true });
-    var y: u16 = 2;
-    for (auth_rows, 0..) |row_def, i| {
-        if (y >= r.h) break;
-        const row = r.row(y);
-        const sel = focused and i == m.row_cursor;
-        const bg = if (sel) p.cyan else p.bg_dark;
-        const fg = if (sel) p.bg_dark else if (std.mem.eql(u8, row_def.id, "clear")) p.red else p.fg;
-        ui.fill(row, .{ .bg = bg });
-        _ = ui.putStr(row.x + 2, row.y, row.w -| 2, ui.fmt("{s} {s}", .{ row_def.glyph, row_def.label }), .{ .fg = fg, .bg = bg, .bold = true });
-        ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(i)) } });
-        y += 1;
+    // Virtual rows: 0 current, 1 blank, 2.. auth rows, blank, section,
+    // option rows, hint.
+    const auth_first: usize = 2;
+    const section_row: usize = auth_first + auth_rows.len + 1;
+    const opt_first: usize = section_row + 1;
+    const total: usize = opt_first + option_rows.len + 1;
+    const cursor_row: usize = if (m.row_cursor < auth_rows.len) auth_first + m.row_cursor else opt_first + @min(m.row_cursor - auth_rows.len, option_rows.len - 1);
+    const h: usize = r.h;
+    var scroll = m.edit_scroll.*;
+    if (cursor_row < scroll) scroll = cursor_row;
+    if (cursor_row >= scroll + h) scroll = cursor_row + 1 - h;
+    scroll = @min(scroll, total -| h);
+    m.edit_scroll.* = scroll;
+    var label_w: u16 = 0;
+    for (option_rows) |row_def| label_w = @max(label_w, ui.width(row_def.label));
+    const o = m.options;
+    var dbuf: [32]u8 = undefined;
+    var vi: usize = scroll;
+    while (vi < total and vi - scroll < h) : (vi += 1) {
+        const row = r.row(@intCast(vi - scroll));
+        if (vi == 0) {
+            var x = r.x;
+            x += ui.putStr(x, row.y, row.w, "    Current:  ", dim(p));
+            _ = ui.putStr(x, row.y, row.right() -| x, summary, .{ .fg = if (cur != null) p.cyan else p.comment, .bg = p.bg_dark, .bold = true });
+        } else if (vi >= auth_first and vi < auth_first + auth_rows.len) {
+            const i = vi - auth_first;
+            const row_def = auth_rows[i];
+            const sel = focused and i == m.row_cursor;
+            const bg = if (sel) p.cyan else p.bg_dark;
+            const fg = if (sel) p.bg_dark else if (std.mem.eql(u8, row_def.id, "clear")) p.red else p.fg;
+            ui.fill(row, .{ .bg = bg });
+            _ = ui.putStr(row.x + 2, row.y, row.w -| 2, ui.fmt("{s} {s}", .{ row_def.glyph, row_def.label }), .{ .fg = fg, .bg = bg, .bold = true });
+            ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(i)) } });
+        } else if (vi == section_row) {
+            const rule = if (ui.ascii) "--" else "\u{2500}\u{2500}";
+            _ = ui.putStr(r.x + 2, row.y, r.w -| 2, ui.fmt("{s} Options {s}", .{ rule, rule }), dim(p));
+        } else if (vi >= opt_first and vi < opt_first + option_rows.len) {
+            const i = vi - opt_first;
+            const row_def = option_rows[i];
+            const idx = auth_rows.len + i;
+            const sel = focused and idx == m.row_cursor;
+            const bg = if (sel) p.cyan else p.bg_dark;
+            const fg = if (sel) p.bg_dark else p.fg;
+            const muted: Style = .{ .fg = if (sel) p.bg_dark else p.comment, .bg = bg };
+            const active: Style = .{ .fg = if (sel) p.bg_dark else p.cyan, .bg = bg, .bold = true };
+            ui.fill(row, .{ .bg = bg });
+            var x = row.x + 2;
+            x += ui.putStr(x, row.y, row.right() -| x, if (sel) (if (ui.ascii) "> " else "\u{25B8} ") else "  ", .{ .fg = fg, .bg = bg, .bold = true });
+            const label = ui.fmt("{s}:", .{row_def.label});
+            x += ui.putStr(x, row.y, row.right() -| x, label, .{ .fg = fg, .bg = bg, .bold = true });
+            x += (label_w + 3) -| ui.width(label);
+            switch (row_def.kind) {
+                .verify_tls => x += drawToggle(ui, x, row, !o.insecure, active, muted),
+                .follow_redirects => x += drawToggle(ui, x, row, o.follow_redirects, active, muted),
+                .max_redirects => {
+                    x += ui.putStr(x, row.y, row.right() -| x, if (ui.ascii) "< " else "\u{2039} ", muted);
+                    x += ui.putStr(x, row.y, row.right() -| x, ui.fmt("[{d}]", .{o.max_redirects}), active);
+                    x += ui.putStr(x, row.y, row.right() -| x, if (ui.ascii) " >" else " \u{203A}", muted);
+                },
+                .timeout => {
+                    const text = if (o.timeout_ms) |ms| ui.fmt("[{s}]", .{@import("../http/parse.zig").formatDuration(&dbuf, ms)}) else "[none]";
+                    x += ui.putStr(x, row.y, row.right() -| x, text, active);
+                    x += ui.putStr(x, row.y, row.right() -| x, "  Enter to set", muted);
+                },
+                .proxy => {
+                    const text = if (o.proxy) |px| ui.fmt("[{s}]", .{ui.clipStr(px, 40)}) else "[none]";
+                    x += ui.putStr(x, row.y, row.right() -| x, text, active);
+                    x += ui.putStr(x, row.y, row.right() -| x, "  Enter to set", muted);
+                },
+            }
+            if (o.set[i]) _ = ui.putStr(x + 1, row.y, row.right() -| (x + 1), "*", .{ .fg = if (sel) p.bg_dark else p.yellow, .bg = bg, .bold = true });
+            ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(idx)) } });
+        } else if (vi == total - 1) {
+            _ = ui.putStr(r.x + 4, row.y, r.w -| 4, if (ui.ascii) "(<- -> toggle / step  -  Enter set  -  r config default  -  * set by this request)" else "(\u{2190}\u{2192} toggle / step \u{00B7} Enter set \u{00B7} r config default \u{00B7} * set by this request)", dim(p));
+        }
     }
+}
+
+/// `[on] / off` or `on / [off]`; returns the cells used.
+fn drawToggle(ui: Ui, x0: u16, row: Rect, on: bool, active: Style, muted: Style) u16 {
+    var x = x0;
+    x += ui.putStr(x, row.y, row.right() -| x, if (on) "[on]" else "on", if (on) active else muted);
+    x += ui.putStr(x, row.y, row.right() -| x, " / ", muted);
+    x += ui.putStr(x, row.y, row.right() -| x, if (on) "off" else "[off]", if (on) muted else active);
+    return x - x0;
 }
 
 fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
@@ -1333,13 +1450,29 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
         return out.items;
     };
     switch (m.response_tab) {
-        .headers => {
+        .headers => if (resp.headers_text.len == 0) {
             for (resp.headers) |h| push(&out, ui.arena, lineOf(ui, &.{
                 .{ .text = "  ", .style = body_style },
                 .{ .text = h.key, .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } },
                 .{ .text = ": ", .style = dim(p) },
                 .{ .text = h.value, .style = body_style },
             }));
+        } else {
+            // From the joined text, so a search match's offsets land on
+            // the right cells.
+            var it = std.mem.splitScalar(u8, resp.headers_text, '\n');
+            var off: usize = 0;
+            while (it.next()) |l| : (off += l.len + 1) {
+                if (l.len == 0) continue;
+                const colon = std.mem.indexOf(u8, l, ": ") orelse l.len;
+                const line = lineOf(ui, &.{
+                    .{ .text = "  ", .style = body_style },
+                    .{ .text = l[0..colon], .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } },
+                    .{ .text = l[colon..@min(colon + 2, l.len)], .style = dim(p) },
+                    .{ .text = l[@min(colon + 2, l.len)..], .style = body_style },
+                });
+                push(&out, ui.arena, overlayMatches(ui, line, l, off, resp.matches, resp.current_match));
+            }
         },
         .cookies => {
             if (resp.cookies.len == 0) {
@@ -1408,13 +1541,14 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
                     var first = true;
                     while (rest.len > 0) {
                         const cut = cutAt(ui, rest, @intCast(ww));
-                        push(&out, ui.arena, lineOf(ui, &.{ if (first) gutter else blank, .{ .text = rest[0..cut], .style = body_style } }));
+                        const piece = lineOf(ui, &.{ if (first) gutter else blank, .{ .text = rest[0..cut], .style = body_style } });
+                        push(&out, ui.arena, overlayMatches(ui, piece, l, off, resp.matches, resp.current_match));
                         rest = rest[cut..];
                         first = false;
                     }
                     continue;
                 };
-                push(&out, ui.arena, spanLine(ui, gutter, l, off, resp.spans, body_style));
+                push(&out, ui.arena, overlayMatches(ui, spanLine(ui, gutter, l, off, resp.spans, body_style), l, off, resp.matches, resp.current_match));
             }
             if (resp.tests.len > 0) {
                 push(&out, ui.arena, plain(ui, "", body_style));
@@ -1446,6 +1580,51 @@ fn timelineBar(ui: Ui, ms: u64, max: u64, bar_w: u64, color: Color) Line {
         .{ .text = rest.items, .style = .{ .fg = p.bg3, .bg = p.bg_dark } },
         .{ .text = ui.fmt("  {d} ms", .{ms}), .style = dim(p) },
     });
+}
+
+/// The search's matches over one drawn line: every segment whose text
+/// is a slice of `src` (the line at `src_off` in the searched text) is
+/// split where a match crosses it; the matched piece takes the theme's
+/// `match` ground, the current one `current_match` — what
+/// `editor_view` paints. Segments from elsewhere (the gutter) pass.
+fn overlayMatches(ui: Ui, line: Line, src: []const u8, src_off: usize, matches: []const find_mod.Range, current: ?usize) Line {
+    if (matches.len == 0) return line;
+    const t = ui.theme;
+    const line_end = src_off + src.len;
+    // Nothing of this line is matched: keep it as it is.
+    var any = false;
+    for (matches) |m| if (m.end > src_off and m.start < line_end + 1) {
+        any = true;
+        break;
+    };
+    if (!any) return line;
+    var segs: std.ArrayListUnmanaged(Seg) = .empty;
+    const base = @intFromPtr(src.ptr);
+    for (line.segs) |seg| {
+        const sp = @intFromPtr(seg.text.ptr);
+        if (seg.text.len == 0 or sp < base or sp + seg.text.len > base + src.len) {
+            segs.append(ui.arena, seg) catch return line;
+            continue;
+        }
+        const seg_off = src_off + (sp - base);
+        const seg_end = seg_off + seg.text.len;
+        var at = seg_off;
+        for (matches, 0..) |m, i| {
+            if (m.end <= at or m.start >= seg_end) continue;
+            const s = @max(m.start, at);
+            const e = @min(m.end, seg_end);
+            if (s > at) segs.append(ui.arena, .{ .text = seg.text[at - seg_off .. s - seg_off], .style = seg.style }) catch return line;
+            var st = seg.style;
+            if (current != null and current.? == i) {
+                st.bg = t.current_match.bg;
+                st.fg = t.current_match.fg;
+            } else st.bg = t.match.bg;
+            segs.append(ui.arena, .{ .text = seg.text[s - seg_off .. e - seg_off], .style = st }) catch return line;
+            at = e;
+        }
+        if (at < seg_end) segs.append(ui.arena, .{ .text = seg.text[at - seg_off ..], .style = seg.style }) catch return line;
+    }
+    return .{ .segs = segs.items };
 }
 
 /// One body line split at the syntax spans that cover it.
@@ -1677,6 +1856,71 @@ test "after a send: the status title on the Response border, the Headers count, 
     try fx.expectRow(9, "\u{2502}  \u{27F3}  sending\u{2026}" ++ " " ** 74 ++ "\u{2502}");
     m.sending = false;
     try testing.expectEqual(hit_ai_chip, fx.hits.at(64, 19).?.script_hit.id);
+}
+
+test "response search: matches paint the match ground on the body and the headers, the current one its own; a wrapped line keeps them" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    const headers = [_]Pair{ .{ .key = "Content-Type", .value = "application/json" }, .{ .key = "Content-Length", .value = "49" } };
+    const body = "{\n  \"ok\": true,\n  \"name\": \"ok ok\"\n}";
+    // `ok` at 5, 27 and 30.
+    const body_matches = [_]find_mod.Range{ .{ .start = 5, .end = 7 }, .{ .start = 27, .end = 29 }, .{ .start = 30, .end = 32 } };
+    m.response = .{
+        .status = 200,
+        .status_text = "OK",
+        .headers = &headers,
+        .body = body,
+        .body_bytes = body.len,
+        .truncated = false,
+        .timing = .{ .wait_ms = 1, .receive_ms = 1, .total_ms = 2 },
+        .cookies = &.{},
+        .headers_text = "Content-Type: application/json\nContent-Length: 49\n",
+        .matches = &body_matches,
+        .current_match = 1,
+    };
+    m.block = .response;
+    m.field = .content;
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ " " ** 71 ++ "\u{2502}");
+    // Row 23 is line 2: `│ 2   "ok": true,` — the `o` at x 7.
+    try testing.expect(!fx.bgEql(6, 23, fx.theme.match));
+    try testing.expect(fx.bgEql(7, 23, fx.theme.match));
+    try testing.expect(fx.bgEql(8, 23, fx.theme.match));
+    try testing.expect(!fx.bgEql(9, 23, fx.theme.match));
+    // Line 3 holds the current match (the first `ok`) and a plain one.
+    try fx.expectRow(24, "\u{2502} 3   \"name\": \"ok ok\"" ++ " " ** 67 ++ "\u{2502}");
+    try testing.expect(fx.bgEql(15, 24, fx.theme.current_match));
+    try testing.expect(fx.fgEql(15, 24, fx.theme.current_match));
+    try testing.expect(fx.bgEql(18, 24, fx.theme.match));
+    try testing.expect(!fx.bgEql(17, 24, fx.theme.match));
+    // The Headers tab, from the joined text: `json` at 26 in line 1.
+    m.response_tab = .headers;
+    const header_matches = [_]find_mod.Range{.{ .start = 26, .end = 30 }};
+    m.response.?.matches = &header_matches;
+    m.response.?.current_match = null;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ " " ** 55 ++ "\u{2502}");
+    try testing.expect(fx.bgEql(29, 21, fx.theme.match));
+    try testing.expect(fx.bgEql(32, 21, fx.theme.match));
+    try testing.expect(!fx.bgEql(28, 21, fx.theme.match));
+    try testing.expect(!fx.bgEql(33, 21, fx.theme.match));
+    // Wrapped: a long line's second chunk keeps a match that falls in it.
+    m.response_tab = .body;
+    m.body_wrap = true;
+    m.response.?.body = "a" ** 90 ++ "zz" ++ "a" ** 5;
+    const wrap_matches = [_]find_mod.Range{.{ .start = 90, .end = 92 }};
+    m.response.?.matches = &wrap_matches;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    // (The first chunk is 85 cells, clipped at the border, as Rust's.)
+    try fx.expectRow(23, "\u{2502}   " ++ "a" ** 5 ++ "zz" ++ "a" ** 5 ++ " " ** 72 ++ "\u{2502}");
+    try testing.expect(fx.bgEql(9, 23, fx.theme.match));
+    try testing.expect(fx.bgEql(10, 23, fx.theme.match));
+    try testing.expect(!fx.bgEql(8, 23, fx.theme.match));
+    try testing.expect(!fx.bgEql(11, 23, fx.theme.match));
 }
 
 test "the Params table, the draft row and Add row; the split halves; a wide pane goes side by side with the full top bar" {

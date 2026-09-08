@@ -264,6 +264,15 @@ otherwise. Copy what you need; leave the rest out.
         .collection_root = .hidden, // .hidden (.rqst/) | .workspace
         .auto_format_body = true,
         .sync_normalize = false,
+        // Transport defaults for every send; a block's own directive
+        // (`# @insecure`, `# @timeout 5s`, `# @no-redirect`,
+        // `# @max-redirects 3`, `# @proxy host:port`) overrides them for
+        // that request, and the Auth tab's Options rows write those lines.
+        .insecure = false, // skip the certificate chain check (curl -k)
+        .timeout_ms = null, // a deadline over the whole send; null waits
+        .follow_redirects = true,
+        .max_redirects = 10,
+        .proxy = null, // "host:port", "user:pass@host:port", "http://host:port"
     },
     .ws = .{
         .subprotocols = .{},

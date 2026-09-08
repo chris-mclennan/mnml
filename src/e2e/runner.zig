@@ -19,6 +19,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parser = @import("parser.zig");
+const mock = @import("../http/mock.zig");
 const driver_mod = @import("driver.zig");
 const key = @import("../core/key.zig");
 const screen_mod = @import("../ipc/screen.zig");
@@ -133,6 +134,10 @@ const Run = struct {
     name: []u8,
     workspace: []u8 = "",
     driver: ?Driver = null,
+    /// `serve` steps' servers, stopped after the script; their canned
+    /// answers live on `serve_arena`.
+    servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
+    serve_arena: ?std.heap.ArenaAllocator = null,
 
     fn fail(self: *Run, comptime fmt: []const u8, args: anytype) Outcome {
         const msg = std.fmt.allocPrint(self.gpa, fmt, args) catch null;
@@ -182,6 +187,7 @@ const Run = struct {
             self.driver = d;
             const result = self.runScript(&script);
             d.deinit();
+            self.stopServers();
             break :blk result;
         };
         const leaked = if (self.opts.quiet_leak_report) blk: {
@@ -312,6 +318,7 @@ const Run = struct {
             },
             .snippet => |s| d.snippet(s.scope, s.trigger, s.expansion) catch |e| return self.errMsg("snippet: {s}", e),
             .shell => |cmd| return self.runShell(cmd),
+            .serve => |sv| return self.serve(sv),
             .ghost => |text| d.ghost(text) catch |e| switch (e) {
                 error.NoActiveEditor => return gpa.dupe(u8, "ghost: no active editor pane") catch null,
                 else => return self.errMsg("ghost: {s}", e),
@@ -333,6 +340,64 @@ const Run = struct {
             .drag => |g| _ = d.drag(g.from_x, g.from_y, g.to_x, g.to_y) catch |e| return self.errMsg("drag: {s}", e),
         }
         return null;
+    }
+
+    /// `serve PORT STATUS [delay=MS] TEXT`: a mock server on the loopback
+    /// for the rest of the file. `TEXT` is `Name: value` lines, a blank
+    /// line, the body — or just the body. With a delay the body goes out
+    /// as one late chunk with no length (a server that never finishes,
+    /// for a timeout to trip on).
+    fn serve(self: *Run, sv: @FieldType(parser.Step, "serve")) ?[]u8 {
+        const gpa = self.gpa;
+        if (self.serve_arena == null) self.serve_arena = std.heap.ArenaAllocator.init(gpa);
+        const a = self.serve_arena.?.allocator();
+        const HeaderT = std.meta.Child(@FieldType(mock.Canned, "headers"));
+        var headers: std.ArrayListUnmanaged(HeaderT) = .empty;
+        var body: []const u8 = sv.text;
+        if (std.mem.indexOf(u8, sv.text, "\n\n")) |blank| {
+            body = sv.text[blank + 2 ..];
+            var lines = std.mem.splitScalar(u8, sv.text[0..blank], '\n');
+            while (lines.next()) |l| {
+                const colon = std.mem.indexOfScalar(u8, l, ':') orelse continue;
+                headers.append(a, .{ .name = std.mem.trim(u8, l[0..colon], " \t"), .value = std.mem.trim(u8, l[colon + 1 ..], " \t") }) catch return null;
+            }
+        }
+        const hs = a.dupe(HeaderT, headers.items) catch return null;
+        const chunks: ?[]const []const u8 = if (sv.delay_ms > 0) (a.dupe([]const u8, &.{body}) catch return null) else null;
+        const canned: mock.Canned = .{ .status = sv.status, .status_text = statusText(sv.status), .headers = hs, .body = body, .chunks = chunks, .chunk_delay_ms = sv.delay_ms };
+        const server = mock.Server.startOn(gpa, self.io, sv.port, canned) catch |e| return std.fmt.allocPrint(gpa, "serve 127.0.0.1:{d}: {s}", .{ sv.port, @errorName(e) }) catch null;
+        self.servers.append(gpa, server) catch {
+            server.stop(self.io);
+            return null;
+        };
+        return null;
+    }
+
+    fn statusText(status: u16) []const u8 {
+        return switch (status) {
+            200 => "OK",
+            201 => "Created",
+            204 => "No Content",
+            301 => "Moved Permanently",
+            302 => "Found",
+            303 => "See Other",
+            307 => "Temporary Redirect",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            418 => "I'm a teapot",
+            500 => "Internal Server Error",
+            else => "",
+        };
+    }
+
+    fn stopServers(self: *Run) void {
+        for (self.servers.items) |s| s.stop(self.io);
+        self.servers.deinit(self.gpa);
+        self.servers = .empty;
+        if (self.serve_arena) |*ar| ar.deinit();
+        self.serve_arena = null;
     }
 
     /// `shell <cmd>` runs unsandboxed in the user's account, so it is

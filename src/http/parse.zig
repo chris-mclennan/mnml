@@ -231,14 +231,162 @@ pub fn parse(alloc: Allocator, input: []const u8) ParseError!Request {
         else => parseHttp(alloc, trimmed) catch return err,
     };
     errdefer req.deinit(alloc);
-    // The `# @…` lines ride along whichever shape the block took.
-    if (script_mod.hasDirectives(trimmed)) {
+    // The `# @…` lines ride along whichever shape the block took. The
+    // option lines `parseCurl` made of its flags (`-k` → `@insecure`…)
+    // stay unless the text spells that word itself.
+    {
         var scratch = std.heap.ArenaAllocator.init(alloc);
         defer scratch.deinit();
-        const lines = try script_mod.directiveLines(scratch.allocator(), trimmed);
-        try req.setScript(alloc, try std.mem.join(scratch.allocator(), "\n", lines));
+        const sa = scratch.allocator();
+        var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (script_mod.hasDirectives(trimmed)) for (try script_mod.directiveLines(sa, trimmed)) |l| try lines.append(sa, l);
+        if (req.script) |sc| {
+            var it = std.mem.splitScalar(u8, sc, '\n');
+            while (it.next()) |l| {
+                const w = directiveWord(l) orelse continue;
+                if (!hasWord(lines.items, w)) try lines.append(sa, try sa.dupe(u8, l));
+            }
+        }
+        try req.setScript(alloc, if (lines.items.len > 0) try std.mem.join(sa, "\n", lines.items) else null);
     }
+    if (hasDirective(&req, "@insecure")) req.insecure = true;
     return req;
+}
+
+// ─── per-request options ────────────────────────────────────────────────
+
+/// The transport options a block carries as `# @…` directive lines —
+/// `@insecure`, `@timeout 5s` (`500ms`, `2m`, a bare number is ms),
+/// `@no-redirect` / `@follow-redirects`, `@max-redirects 3`, `@proxy
+/// host:port` — which `parseCurl` also makes of `-k`, `--max-time`,
+/// `--max-redirs`, `-L` and `-x`, so one store round-trips through
+/// `toHttpBlock` and `toCurl`. Unset means the config's default.
+pub const Options = struct {
+    insecure: bool = false,
+    timeout_ms: ?u64 = null,
+    follow_redirects: ?bool = null,
+    max_redirects: ?u8 = null,
+    /// Borrowed from `script`.
+    proxy: ?[]const u8 = null,
+};
+
+pub const option_words = [_][]const u8{ "@insecure", "@timeout", "@no-redirect", "@follow-redirects", "@max-redirects", "@proxy" };
+
+pub fn isOptionWord(word: []const u8) bool {
+    for (option_words) |w| if (std.mem.eql(u8, w, word)) return true;
+    return false;
+}
+
+/// The directive text of a `# @…` / `// @…` line (`@word rest`), else null.
+pub fn directiveText(raw: []const u8) ?[]const u8 {
+    var t = std.mem.trim(u8, raw, " \t\r");
+    if (std.mem.startsWith(u8, t, "//")) t = t[2..] else if (t.len > 0 and t[0] == '#') t = t[1..] else return null;
+    t = std.mem.trim(u8, t, " \t");
+    if (t.len < 2 or t[0] != '@') return null;
+    return t;
+}
+
+/// The `@word` of a directive line.
+pub fn directiveWord(raw: []const u8) ?[]const u8 {
+    const d = directiveText(raw) orelse return null;
+    const sp = std.mem.indexOfAny(u8, d, " \t") orelse d.len;
+    return d[0..sp];
+}
+
+fn hasWord(lines: []const []const u8, word: []const u8) bool {
+    for (lines) |l| if (directiveWord(l)) |w| if (std.mem.eql(u8, w, word)) return true;
+    return false;
+}
+
+pub fn hasDirective(req: *const Request, word: []const u8) bool {
+    const sc = req.script orelse return false;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |l| if (directiveWord(l)) |w| if (std.mem.eql(u8, w, word)) return true;
+    return false;
+}
+
+/// The options the block's directives (and `insecure`) spell.
+pub fn options(req: *const Request) Options {
+    var out: Options = .{ .insecure = req.insecure };
+    const sc = req.script orelse return out;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        const sp = std.mem.indexOfAny(u8, d, " \t") orelse d.len;
+        const word = d[0..sp];
+        const rest = std.mem.trim(u8, d[sp..], " \t");
+        if (std.mem.eql(u8, word, "@insecure")) {
+            out.insecure = true;
+        } else if (std.mem.eql(u8, word, "@timeout")) {
+            if (parseDuration(rest)) |ms| out.timeout_ms = ms;
+        } else if (std.mem.eql(u8, word, "@no-redirect")) {
+            out.follow_redirects = false;
+        } else if (std.mem.eql(u8, word, "@follow-redirects")) {
+            out.follow_redirects = true;
+        } else if (std.mem.eql(u8, word, "@max-redirects")) {
+            if (std.fmt.parseInt(u8, rest, 10)) |n| out.max_redirects = n else |_| {}
+        } else if (std.mem.eql(u8, word, "@proxy")) {
+            if (rest.len > 0) out.proxy = rest;
+        }
+    }
+    return out;
+}
+
+/// `5s`, `500ms`, `2m`, `1h`, `2.5s`; a bare number is milliseconds.
+pub fn parseDuration(text: []const u8) ?u64 {
+    const s = std.mem.trim(u8, text, " \t");
+    if (s.len == 0) return null;
+    var end: usize = 0;
+    while (end < s.len and (std.ascii.isDigit(s[end]) or s[end] == '.')) : (end += 1) {}
+    if (end == 0) return null;
+    const num = std.fmt.parseFloat(f64, s[0..end]) catch return null;
+    if (!(num >= 0) or num > 1e12) return null;
+    const unit = std.mem.trim(u8, s[end..], " \t");
+    const scale: f64 = if (unit.len == 0 or std.mem.eql(u8, unit, "ms")) 1 else if (std.mem.eql(u8, unit, "s")) 1000 else if (std.mem.eql(u8, unit, "m")) 60_000 else if (std.mem.eql(u8, unit, "h")) 3_600_000 else return null;
+    return @intFromFloat(@round(num * scale));
+}
+
+/// `5000` → `5s`, `2500` → `2.5s`, `300` → `300ms`, `120000` → `2m`.
+pub fn formatDuration(buf: []u8, ms: u64) []const u8 {
+    if (ms >= 60_000 and ms % 60_000 == 0) return std.fmt.bufPrint(buf, "{d}m", .{ms / 60_000}) catch buf[0..0];
+    if (ms >= 1000 and ms % 1000 == 0) return std.fmt.bufPrint(buf, "{d}s", .{ms / 1000}) catch buf[0..0];
+    if (ms >= 1000 and ms % 100 == 0) return std.fmt.bufPrint(buf, "{d}.{d}s", .{ ms / 1000, (ms % 1000) / 100 }) catch buf[0..0];
+    return std.fmt.bufPrint(buf, "{d}ms", .{ms}) catch buf[0..0];
+}
+
+/// Set (or with `value == null` remove) the `# @word …` line of the
+/// script; other lines keep their order. An empty value writes the bare
+/// word. Keeps `insecure` in step for `@insecure`.
+pub fn setDirective(req: *Request, gpa: Allocator, word: []const u8, value: ?[]const u8) Allocator.Error!void {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    var replaced = false;
+    if (req.script) |sc| {
+        var it = std.mem.splitScalar(u8, sc, '\n');
+        while (it.next()) |l| {
+            const w = directiveWord(l);
+            if (w != null and std.mem.eql(u8, w.?, word)) {
+                if (value != null and !replaced) {
+                    try lines.append(a, try directiveLine(a, word, value.?));
+                    replaced = true;
+                }
+                continue;
+            }
+            if (std.mem.trim(u8, l, " \t\r").len == 0) continue;
+            try lines.append(a, l);
+        }
+    }
+    if (value != null and !replaced) try lines.append(a, try directiveLine(a, word, value.?));
+    try req.setScript(gpa, if (lines.items.len > 0) try std.mem.join(a, "\n", lines.items) else null);
+    if (std.mem.eql(u8, word, "@insecure")) req.insecure = value != null;
+}
+
+fn directiveLine(a: Allocator, word: []const u8, value: []const u8) Allocator.Error![]const u8 {
+    const v = std.mem.trim(u8, value, " \t");
+    if (v.len == 0) return std.mem.concat(a, u8, &.{ "# ", word });
+    return std.mem.concat(a, u8, &.{ "# ", word, " ", v });
 }
 
 pub fn looksLikeHttpFile(text: []const u8) bool {
@@ -282,6 +430,10 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
     var cookies: std.ArrayListUnmanaged([]const u8) = .empty;
     var form: std.ArrayListUnmanaged([2][]const u8) = .empty;
     var get_flag = false;
+    var timeout_ms: ?u64 = null;
+    var follow: ?bool = null;
+    var max_redirs: ?u8 = null;
+    var proxy: ?[]const u8 = null;
 
     while (i < tokens.len) : (i += 1) {
         const t = tokens[i];
@@ -339,9 +491,31 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
             req.insecure = true;
         } else if (eqAny(t, &.{ "-G", "--get" })) {
             get_flag = true;
-        } else if (eqAny(t, &.{ "--compressed", "--location", "-L", "--silent", "-s", "--fail", "-f", "-i", "--include", "-#", "--progress-bar", "-v", "--verbose", "-S", "--show-error" })) {
+        } else if (eqAny(t, &.{ "-L", "--location" })) {
+            follow = true;
+        } else if (eqAny(t, &.{ "-m", "--max-time" })) {
+            if (next) |v| {
+                // curl's seconds, fractions allowed.
+                if (std.fmt.parseFloat(f64, v)) |secs| {
+                    if (secs >= 0 and secs < 1e9) timeout_ms = @intFromFloat(@round(secs * 1000));
+                } else |_| {}
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, t, "--max-redirs")) {
+            if (next) |v| {
+                if (std.fmt.parseInt(i32, v, 10)) |n| {
+                    if (n <= 0) follow = false else max_redirs = @intCast(@min(n, 255));
+                } else |_| {}
+                i += 1;
+            }
+        } else if (eqAny(t, &.{ "-x", "--proxy" })) {
+            if (next) |v| {
+                proxy = v;
+                i += 1;
+            }
+        } else if (eqAny(t, &.{ "--compressed", "--silent", "-s", "--fail", "-f", "-i", "--include", "-#", "--progress-bar", "-v", "--verbose", "-S", "--show-error" })) {
             // no-ops for the request itself
-        } else if (eqAny(t, &.{ "-o", "--output", "-m", "--max-time", "--connect-timeout", "-w", "--write-out", "--retry", "-x", "--proxy", "--cacert", "--cert", "--key", "-c", "--cookie-jar", "--resolve" })) {
+        } else if (eqAny(t, &.{ "-o", "--output", "--connect-timeout", "-w", "--write-out", "--retry", "--cacert", "--cert", "--key", "-c", "--cookie-jar", "--resolve" })) {
             // flags with a value that do not shape the request
             if (next != null) i += 1;
         } else if (t.len > 1 and t[0] == '-') {
@@ -352,6 +526,18 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
     }
     const u = url orelse return error.NoUrl;
     try req.setUrl(alloc, u);
+    // The transport flags become the block's directive lines.
+    if (req.insecure) try setDirective(&req, alloc, "@insecure", "");
+    if (timeout_ms) |ms| {
+        var dbuf: [32]u8 = undefined;
+        try setDirective(&req, alloc, "@timeout", formatDuration(&dbuf, ms));
+    }
+    if (follow) |f| try setDirective(&req, alloc, if (f) "@follow-redirects" else "@no-redirect", "");
+    if (max_redirs) |n| {
+        var nbuf: [8]u8 = undefined;
+        try setDirective(&req, alloc, "@max-redirects", std.fmt.bufPrint(&nbuf, "{d}", .{n}) catch "");
+    }
+    if (proxy) |p| try setDirective(&req, alloc, "@proxy", p);
     if (cookies.items.len > 0) {
         const joined_cookies = try std.mem.join(a, "; ", cookies.items);
         try req.addHeader(alloc, "cookie", joined_cookies);
@@ -808,6 +994,18 @@ pub fn toCurl(gpa: Allocator, req: *const Request) Allocator.Error![]u8 {
         try out.append(a, '\'');
     }
     if (req.insecure) try out.appendSlice(a, " -k");
+    const o = options(req);
+    if (o.timeout_ms) |ms| {
+        // curl's `--max-time` is seconds; keep the fraction when there is one.
+        if (ms % 1000 == 0) try out.print(a, " --max-time {d}", .{ms / 1000}) else try out.print(a, " --max-time {d}.{d:0>3}", .{ ms / 1000, ms % 1000 });
+    }
+    if (o.follow_redirects) |f| try out.appendSlice(a, if (f) " -L" else " --max-redirs 0");
+    if (o.max_redirects) |n| if (o.follow_redirects != false) try out.print(a, " --max-redirs {d}", .{n});
+    if (o.proxy) |p| {
+        try out.appendSlice(a, " -x '");
+        try out.appendSlice(a, try escapeSingle(a, p));
+        try out.append(a, '\'');
+    }
     return gpa.dupe(u8, out.items);
 }
 
@@ -825,6 +1023,8 @@ pub fn toHttpBlock(a: Allocator, req: *const Request, name: ?[]const u8) Allocat
         try out.appendSlice(a, sc);
         try out.append(a, '\n');
     }
+    // A `-k` that never became a line (a request built by hand).
+    if (req.insecure and !hasDirective(req, "@insecure")) try out.appendSlice(a, "# @insecure\n");
     try out.appendSlice(a, req.method);
     try out.append(a, ' ');
     try out.appendSlice(a, req.url);
@@ -1200,4 +1400,99 @@ fn fuzzParse(_: void, smith: *testing.Smith) anyerror!void {
 
 test "fuzz: any bytes through parse; no directive line survives into a body" {
     try testing.fuzz({}, fuzzParse, .{ .corpus = &.{ "GET https://x\n\n# @assert status == 200\n", "POST https://x\n\n{}\n# @capture A = body.a\n" } });
+}
+
+test "options: directive lines and curl flags are one store; block ↔ curl ↔ block round-trips every option" {
+    const gpa = testing.allocator;
+    var a = try parse(gpa, "# @insecure\n# @timeout 2.5s\n# @no-redirect\n# @proxy 10.0.0.1:3128\nGET https://x/a\n");
+    defer a.deinit(gpa);
+    const o = options(&a);
+    try testing.expect(o.insecure and a.insecure);
+    try testing.expectEqual(@as(?u64, 2500), o.timeout_ms);
+    try testing.expectEqual(@as(?bool, false), o.follow_redirects);
+    try testing.expectEqualStrings("10.0.0.1:3128", o.proxy.?);
+    const curl = try toCurl(gpa, &a);
+    defer gpa.free(curl);
+    try testing.expect(std.mem.indexOf(u8, curl, " -k") != null);
+    try testing.expect(std.mem.indexOf(u8, curl, " --max-time 2.500") != null);
+    try testing.expect(std.mem.indexOf(u8, curl, " --max-redirs 0") != null);
+    try testing.expect(std.mem.indexOf(u8, curl, " -x '10.0.0.1:3128'") != null);
+    // Back through the curl parser: the same options, each line once.
+    var b = try parse(gpa, curl);
+    defer b.deinit(gpa);
+    const ob = options(&b);
+    try testing.expect(ob.insecure);
+    try testing.expectEqual(@as(?u64, 2500), ob.timeout_ms);
+    try testing.expectEqual(@as(?bool, false), ob.follow_redirects);
+    try testing.expectEqualStrings("10.0.0.1:3128", ob.proxy.?);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, b.script.?, "@insecure"));
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, b.script.?, "@timeout"));
+    const block = try toHttpBlock(gpa, &b, null);
+    defer gpa.free(block);
+    try testing.expectEqualStrings("# @insecure\n# @timeout 2.5s\n# @no-redirect\n# @proxy 10.0.0.1:3128\nGET https://x/a\n", block);
+    // A pasted curl with the flags alone: the lines are made for it.
+    var c = try parse(gpa, "curl -L --max-time 5 --max-redirs 3 -x 'http://me:pw@p:1' 'http://y'");
+    defer c.deinit(gpa);
+    const oc = options(&c);
+    try testing.expectEqual(@as(?bool, true), oc.follow_redirects);
+    try testing.expectEqual(@as(?u8, 3), oc.max_redirects);
+    try testing.expectEqual(@as(?u64, 5000), oc.timeout_ms);
+    try testing.expectEqualStrings("http://me:pw@p:1", oc.proxy.?);
+    try testing.expect(!oc.insecure);
+    const c_curl = try toCurl(gpa, &c);
+    defer gpa.free(c_curl);
+    try testing.expect(std.mem.indexOf(u8, c_curl, " -L --max-redirs 3") != null);
+    try testing.expect(std.mem.indexOf(u8, c_curl, " --max-time 5 ") != null or std.mem.endsWith(u8, c_curl, "--max-time 5 -L --max-redirs 3 -x 'http://me:pw@p:1'"));
+    const c_block = try toHttpBlock(gpa, &c, "named");
+    defer gpa.free(c_block);
+    try testing.expect(std.mem.startsWith(u8, c_block, "### named\n# @timeout 5s\n# @follow-redirects\n# @max-redirects 3\n# @proxy http://me:pw@p:1\nGET http://y\n"));
+    // `--max-redirs 0` is `@no-redirect`; a request with nothing set writes no line and no flag.
+    var d = try parse(gpa, "curl --max-redirs 0 http://z");
+    defer d.deinit(gpa);
+    try testing.expectEqual(@as(?bool, false), options(&d).follow_redirects);
+    var e = try parse(gpa, "GET http://z\n");
+    defer e.deinit(gpa);
+    try testing.expect(e.script == null);
+    const e_curl = try toCurl(gpa, &e);
+    defer gpa.free(e_curl);
+    try testing.expectEqualStrings("curl 'http://z'", e_curl);
+    // The other directives stay untouched beside the option lines.
+    var f = try parse(gpa, "# @assert status == 200\n# @timeout 1s\nGET http://z\n");
+    defer f.deinit(gpa);
+    try testing.expectEqualStrings("# @assert status == 200\n# @timeout 1s", f.script.?);
+    try testing.expectEqual(@as(?u64, 1000), options(&f).timeout_ms);
+}
+
+test "options: setDirective replaces, adds, removes; durations parse and print both ways" {
+    const gpa = testing.allocator;
+    var req = try parse(gpa, "# @assert status == 200\nGET http://z\n");
+    defer req.deinit(gpa);
+    try setDirective(&req, gpa, "@timeout", "5s");
+    try testing.expectEqualStrings("# @assert status == 200\n# @timeout 5s", req.script.?);
+    try setDirective(&req, gpa, "@timeout", "250ms");
+    try testing.expectEqualStrings("# @assert status == 200\n# @timeout 250ms", req.script.?);
+    try setDirective(&req, gpa, "@insecure", "");
+    try testing.expect(req.insecure);
+    try testing.expectEqualStrings("# @assert status == 200\n# @timeout 250ms\n# @insecure", req.script.?);
+    try setDirective(&req, gpa, "@insecure", null);
+    try testing.expect(!req.insecure);
+    try setDirective(&req, gpa, "@timeout", null);
+    try testing.expectEqualStrings("# @assert status == 200", req.script.?);
+    try setDirective(&req, gpa, "@assert", null);
+    try testing.expect(req.script == null);
+    try setDirective(&req, gpa, "@proxy", "h:1");
+    try testing.expectEqualStrings("# @proxy h:1", req.script.?);
+    try testing.expectEqual(@as(?u64, 5000), parseDuration("5s"));
+    try testing.expectEqual(@as(?u64, 2500), parseDuration("2.5s"));
+    try testing.expectEqual(@as(?u64, 300), parseDuration("300ms"));
+    try testing.expectEqual(@as(?u64, 120_000), parseDuration("2m"));
+    try testing.expectEqual(@as(?u64, 750), parseDuration("750"));
+    try testing.expectEqual(@as(?u64, null), parseDuration("soon"));
+    try testing.expectEqual(@as(?u64, null), parseDuration("5 fortnights"));
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("5s", formatDuration(&buf, 5000));
+    try testing.expectEqualStrings("2.5s", formatDuration(&buf, 2500));
+    try testing.expectEqualStrings("300ms", formatDuration(&buf, 300));
+    try testing.expectEqualStrings("2m", formatDuration(&buf, 120_000));
+    try testing.expectEqualStrings("1234ms", formatDuration(&buf, 1234));
 }

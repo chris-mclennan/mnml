@@ -1,0 +1,10 @@
+# `# @timeout` trips on a server that sends its head and never finishes
+# the body: the Response block reads the timeout instead of hanging.
+
+serve 19881 200 delay=2000 "late"
+write slow.http "# @timeout 400ms\nGET http://127.0.0.1:19881/slow\n"
+open slow.http
+
+command http.send
+wait 1200
+expect screen contains "timeout: no response within 400 ms"

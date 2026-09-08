@@ -471,6 +471,17 @@ pub const Http = struct {
     collection_root: CollectionRoot = .hidden,
     auto_format_body: bool = true,
     sync_normalize: bool = false,
+    // The transport defaults; a block's `# @insecure` / `# @timeout` /
+    // `# @no-redirect` / `# @max-redirects` / `# @proxy` line overrides
+    // its own send (`docs/CONFIG.md`).
+    /// Skip the certificate chain check on every send (`-k`).
+    insecure: bool = false,
+    /// A deadline over the whole send in ms; null waits forever.
+    timeout_ms: ?u32 = null,
+    follow_redirects: bool = true,
+    max_redirects: u8 = 10,
+    /// `host:port`, `user:pass@host:port` or `http://host:port`.
+    proxy: ?[]const u8 = null,
 };
 
 pub const Ws = struct {
@@ -642,6 +653,10 @@ test "defaults are the shipped values" {
     try std.testing.expect(!c.ipc.write_screen);
     try std.testing.expectEqual(CollectionRoot.hidden, c.http.collection_root);
     try std.testing.expect(c.http.auto_format_body);
+    try std.testing.expect(!c.http.insecure and c.http.follow_redirects);
+    try std.testing.expectEqual(@as(?u32, null), c.http.timeout_ms);
+    try std.testing.expectEqual(@as(u8, 10), c.http.max_redirects);
+    try std.testing.expect(c.http.proxy == null);
     try std.testing.expectEqual(@as(u32, 30), c.ws.ping_interval_secs);
     try std.testing.expectEqual(@as(u32, 3), c.ws.reconnect_max_attempts);
     try std.testing.expect(c.sonos.enabled);

@@ -1,0 +1,19 @@
+# `# @no-redirect` hands the 302 itself to the pane, Location and all;
+# the same server without the directive is followed until the cap trips.
+
+serve 19882 302 "location: /landed\n\nmoved"
+write stay.http "# @no-redirect\nGET http://127.0.0.1:19882/start\n"
+open stay.http
+
+command http.send
+wait 800
+expect screen contains "302 Found"
+key right
+expect screen contains "location"
+expect screen contains "/landed"
+
+write follow.http "GET http://127.0.0.1:19882/start\n"
+open follow.http
+command http.send
+wait 800
+expect screen contains "redirect: TooManyHttpRedirects"

@@ -1,0 +1,43 @@
+# Response search: with a response up, Ctrl+F / `find.find` opens the
+# editor's find bar under the request pane, over the body; the count
+# reads `match N/M`, F3 steps, Esc closes, `n` in the Response block
+# walks on. On the Headers tab the same bar searches the headers.
+
+write users.curl "curl 'http://127.0.0.1:19876/users'"
+write users.curl.mock.json "{\"status\":200,\"status_text\":\"OK\",\"headers\":[[\"content-type\",\"application/json\"],[\"x-request-id\",\"abc-123\"]],\"body\":\"{\\\"name\\\":\\\"alpha\\\",\\\"twin\\\":\\\"alpha\\\",\\\"other\\\":\\\"beta\\\"}\",\"ts\":1}"
+
+open users.curl
+
+command http.send
+wait 600
+command http.replay_mock
+expect screen contains "alpha"
+# The replay's toast sits over the bar's count; let it go.
+wait 4100
+
+# The bar over the body: two matches, the first current.
+command find.find
+expect screen contains "Find"
+type alpha
+expect screen contains "match 1/2"
+key enter
+expect screen contains "match 1/2"
+key f3
+expect screen contains "match 2/2"
+key esc
+expect screen lacks "Find "
+
+# `n` walks the kept matches from the Response block.
+key n
+expect screen contains "match 1/2"
+key N
+expect screen contains "match 2/2"
+
+# The Headers tab: the same bar over `name: value` lines.
+key right
+expect screen contains "x-request-id"
+command find.find
+type abc-123
+key enter
+expect screen contains "match 1/1"
+key esc
