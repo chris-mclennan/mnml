@@ -210,15 +210,22 @@ pub fn openStressMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Stress meter", rows, x, y);
 }
 
-/// The branch chip: the status pane, the graph, the remote verbs.
+/// The branch chip (Rust `open_statusline_branch_context_menu`): the
+/// status pane, the graph, the branch verbs, the remote verbs, the
+/// stash pair, the commit pair.
 pub fn openBranchMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Status / staging", .action = .{ .command = .@"git.status_pane" } },
         .{ .label = "Commit graph", .action = .{ .command = .@"git.graph" } },
-        .{ .label = "Commit…", .action = .{ .command = .@"git.commit" }, .separator_before = true },
-        .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" } },
+        .{ .label = "Checkout branch…", .action = .{ .command = .@"git.checkout" }, .separator_before = true },
+        .{ .label = "New branch…", .action = .{ .command = .@"git.new_branch" } },
+        .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" }, .separator_before = true },
         .{ .label = "Pull", .action = .{ .command = .@"git.pull" } },
         .{ .label = "Push", .action = .{ .command = .@"git.push" } },
+        .{ .label = "Stash…", .action = .{ .command = .@"git.stash" }, .separator_before = true },
+        .{ .label = "Stash pop", .action = .{ .command = .@"git.stash_pop" } },
+        .{ .label = "Commit…", .action = .{ .command = .@"git.commit" }, .separator_before = true },
+        .{ .label = "AI commit message", .action = .{ .command = .@"git.ai_commit" } },
         .{ .label = "Refresh", .action = .{ .command = .@"git.refresh" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -237,23 +244,31 @@ pub fn openDiagnosticsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Diagnostics", rows, x, y);
 }
 
-/// The bell: the history picker and its clear.
-/// The statusline's file chip: Rust's "Buffer" menu, less the rows
-/// whose runners this build lacks (reveal in the tree / in the OS).
+/// The statusline's file chip: Rust's "Buffer" menu — the two reveals,
+/// the three copies, Close.
 pub fn openFileChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const e = app.activeEditor() orelse return;
-    if (e.buf.doc.path == null) {
+    const path = e.buf.doc.path orelse {
         app.toast("no saved file", .{});
         return;
-    }
+    };
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const abs = try arena.dupe(u8, path);
     const rows = try items(app, &.{
-        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" } },
+        .{ .label = "Reveal in tree", .action = .{ .command = .@"view.reveal_in_tree" } },
+        .{ .label = "Reveal in Finder", .action = .{ .command = .@"view.reveal_active" } },
+        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = true },
+        .{ .label = "Copy absolute path", .action = .{ .copy_text = abs } },
+        .{ .label = "Copy file name", .action = .{ .copy_text = std.fs.path.basename(abs) } },
         .{ .label = "Close buffer", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
-    try app.openMenu("Buffer", rows, x, y);
+    try openOwned(app, "Buffer", rows, x, y, mem);
 }
 
+/// The bell: the history picker and its clear.
 pub fn openBellMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Show messages", .action = .{ .command = .@"messages.show" } },
@@ -817,6 +832,203 @@ fn copyPath(app: *App) CommandError!void {
     };
     try app.clipboard.set(rel, false);
     app.toast("copied {s}", .{rel});
+}
+
+// ─── right-click: the statusline chips ──────────────────────────────────
+// Rust `right_click.rs` + `context_menus.rs`, one opener per chip. A
+// chip whose rows carry their own string (a URL, a position) builds
+// them on an arena the menu then owns.
+
+/// Opens `rows` (gpa) whose labels and strings live on `mem`; the menu
+/// owns both and frees them with the overlay.
+fn openOwned(app: *App, title: []const u8, rows: []MenuItem, x: u16, y: u16, mem: std.heap.ArenaAllocator) Allocator.Error!void {
+    try app.openMenu(title, rows, x, y);
+    app.overlay.menu.mem = mem;
+}
+
+/// The workspace chip (Rust `open_statusline_workspace_context_menu`):
+/// the repo verbs when the workspace holds more than one repo, the
+/// worktree picker, the workspace verbs, a repo rescan.
+pub fn openWorkspaceChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    const multi = app.git.repos.items.len > 1;
+    if (multi) try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Switch repo…", .action = .{ .command = .@"git.switch_repo" } },
+        .{ .label = "Next repo", .action = .{ .command = .@"git.next_repo" } },
+        .{ .label = "Previous repo", .action = .{ .command = .@"git.prev_repo" } },
+    });
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Worktrees…", .action = .{ .command = .@"git.worktrees" }, .separator_before = multi },
+        .{ .label = "Switch workspace…", .action = .{ .command = .@"view.switch_workspace" }, .separator_before = true },
+        .{ .label = "Add workspace…", .action = .{ .command = .@"view.add_workspace" } },
+        .{ .label = "Manage workspaces…", .action = .{ .command = .@"view.manage_workspaces" } },
+        .{ .label = "Rescan repos", .action = .{ .command = .@"git.refresh_repos" }, .separator_before = true },
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu(std.fs.path.basename(app.workspace), owned, x, y);
+}
+
+/// The PR chip (Rust `open_statusline_pr_context_menu`): open, the
+/// two copies, a refresh.
+pub fn openPrMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const statusline_app = @import("statusline.zig");
+    const pr = statusline_app.currentPr(app) orelse return;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const url = try arena.dupe(u8, pr.url);
+    const number = try std.fmt.allocPrint(arena, "{d}", .{pr.number});
+    const rows = try items(app, &.{
+        .{ .label = "Open in browser", .action = .{ .open_url = url } },
+        .{ .label = "Copy URL", .action = .{ .copy_text = url }, .separator_before = true },
+        .{ .label = try std.fmt.allocPrint(arena, "Copy number (#{s})", .{number}), .action = .{ .copy_text = number } },
+        .{ .label = "Refresh", .action = .{ .command = .@"pr.refresh" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, try std.fmt.allocPrint(arena, "PR #{s}", .{number}), rows, x, y, mem);
+}
+
+/// The language chip (Rust `open_statusline_language_context_menu`):
+/// the name to the clipboard, then the LSP's file-level verbs.
+pub fn openLanguageMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const lang: []const u8 = if (app.activeEditor()) |e| (e.buf.doc.language orelse "—") else "—";
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, lang);
+    const rows = try items(app, &.{
+        .{ .label = try std.fmt.allocPrint(arena, "Copy language name ({s})", .{copy}), .action = .{ .copy_text = copy } },
+        .{ .label = "Symbols in file", .action = .{ .command = .@"lsp.symbols" }, .separator_before = true },
+        .{ .label = "Format file", .action = .{ .command = .@"lsp.format" } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Language", rows, x, y, mem);
+}
+
+/// The Ln/Col chip (Rust `open_statusline_lncol_context_menu`): go to
+/// line, the position to the clipboard.
+pub fn openPositionMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const pos: []const u8 = if (app.activeEditor()) |e| blk: {
+        const rc = e.buf.editor.rowCol();
+        break :blk try std.fmt.allocPrint(arena, "{d}:{d}", .{ rc.row + 1, rc.col + 1 });
+    } else "";
+    const rows = try items(app, &.{
+        .{ .label = "Go to line…", .action = .{ .command = .@"editor.goto_line" } },
+        .{ .label = try std.fmt.allocPrint(arena, "Copy position ({s})", .{pos}), .action = .{ .copy_text = pos } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Cursor", rows, x, y, mem);
+}
+
+/// The find chip (Rust `open_statusline_find_context_menu`).
+pub fn openFindMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Next match", .action = .{ .command = .@"find.next" } },
+        .{ .label = "Previous match", .action = .{ .command = .@"find.prev" } },
+        .{ .label = "Clear highlight", .action = .{ .command = .@"find.clear" }, .separator_before = true },
+        .{ .label = "Find…", .action = .{ .command = .@"find.find" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Find", rows, x, y);
+}
+
+/// The Sel chip (Rust `open_statusline_sel_context_menu`).
+pub fn openSelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Copy selection", .action = .{ .command = .@"editor.copy" } },
+        .{ .label = "Cut selection", .action = .{ .command = .@"editor.cut" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Selection", rows, x, y);
+}
+
+/// The size chip (Rust `open_statusline_filesize_context_menu`): the
+/// byte count to the clipboard. Rust's "Open externally" row has no
+/// runner here.
+pub fn openSizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const e = app.activeEditor() orelse return;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const n = e.buf.editor.bytes().len;
+    const size = try std.fmt.allocPrint(arena, "{d}", .{n});
+    const rows = try items(app, &.{
+        .{ .label = try std.fmt.allocPrint(arena, "Copy size ({s} bytes, {d} lines)", .{ size, e.buf.editor.lineCount() }), .action = .{ .copy_text = size } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Size", rows, x, y, mem);
+}
+
+/// The WRAP chip (Rust `open_statusline_wrap_context_menu`): the title
+/// says the state, the row flips it, Settings holds the rest.
+pub fn openWrapMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const on = if (app.activeEditor()) |e| (e.wrap orelse app.cfg.ui.wrap) else app.cfg.ui.wrap;
+    const rows = try items(app, &.{
+        .{ .label = if (on) "Disable wrap" else "Enable wrap", .action = .{ .command = .@"view.toggle_wrap" } },
+        .{ .label = "Editor settings…", .action = .{ .command = .@"view.settings" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (on) "Wrap · on" else "Wrap · off", rows, x, y);
+}
+
+/// The test chip (Rust `statusline_test_chip`).
+pub fn openTestMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Run all", .action = .{ .command = .@"test.run_all" } },
+        .{ .label = "Run file", .action = .{ .command = .@"test.run_file" } },
+        .{ .label = "Run at cursor", .action = .{ .command = .@"test.run_at_cursor" } },
+        .{ .label = "Re-run failed", .action = .{ .command = .@"test.rerun_failed" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Tests", rows, x, y);
+}
+
+/// The AI usage chips (Rust `open_statusline_ai_context_menu`): the
+/// usage pane, a refresh, the last response; what the chip shows; the
+/// reset countdown; how every AI chip paints.
+pub fn openAiChipMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
+    const detail = app.ai.chip_detail;
+    const meter = app.cfg.ai.claude_meter_mode;
+    const rows = try items(app, &.{
+        .{ .label = "Open usage pane", .action = .{ .command = if (codex) .@"ai.codex_usage" else .@"ai.claude_usage" } },
+        .{ .label = "Refresh usage now", .action = .{ .command = .@"ai.refresh_usage" } },
+        .{ .label = "Show last response", .action = .{ .command = .@"ai.show_last_response" } },
+        .{ .label = "Session only", .action = .{ .command = .@"ai.chip_show_session" }, .checked = detail == .session, .separator_before = true },
+        .{ .label = "Weekly only", .action = .{ .command = .@"ai.chip_show_weekly" }, .checked = detail == .weekly },
+        .{ .label = "Both", .action = .{ .command = .@"ai.chip_show_both" }, .checked = detail == .both },
+        .{ .label = "Reset countdown", .action = .{ .command = .@"ai.chip_toggle_reset" }, .checked = app.ai.chip_reset_suffix, .separator_before = true },
+        .{ .label = "All AI chips: off", .action = .{ .command = .@"ai.chip_show_all_off" }, .checked = meter == .off, .separator_before = true },
+        .{ .label = "All AI chips: compact", .action = .{ .command = .@"ai.chip_show_all_compact" }, .checked = meter == .compact },
+        .{ .label = "All AI chips: ticker", .action = .{ .command = .@"ai.chip_show_all_ticker" }, .checked = meter == .ticker },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (codex) "Codex" else "Claude", rows, x, y);
+}
+
+/// The enclosing-symbol chip (Zig-only): the outline and the two
+/// symbol pickers.
+pub fn openSymbolMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Outline", .action = .{ .command = .@"outline.show" } },
+        .{ .label = "Symbols in file…", .action = .{ .command = .@"lsp.symbols" }, .separator_before = true },
+        .{ .label = "Symbols in workspace…", .action = .{ .command = .@"lsp.workspace_symbols" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Symbol", rows, x, y);
+}
+
+/// The transfer chip (Zig-only): the one verb, named before it runs.
+pub fn openTransferMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Cancel all transfers", .action = .{ .command = .@"transfer.cancel_all" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Transfers", rows, x, y);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

@@ -1667,48 +1667,50 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             const right = m.button == .right;
             switch (seg) {
                 statusline.seg_mode => if (right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
-                statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
+                // right-click: every chip Rust gives a menu has one here
+                // (`context_menus.zig`, "the statusline chips").
+                statusline.seg_position => if (right) try context_menus.openPositionMenu(app, m.x, m.y) else try runCmd(app, .@"editor.goto_line"),
                 // The file chip is words on hover and a menu on the right
                 // button; a left click does nothing, as in Rust.
                 statusline.seg_file => if (right) try context_menus.openFileChipMenu(app, m.x, m.y),
-                statusline.seg_language => {
+                statusline.seg_language => if (right) try context_menus.openLanguageMenu(app, m.x, m.y) else {
                     const lang: []const u8 = if (app.activeEditor()) |e| (e.buf.doc.language orelse "—") else "—";
                     app.toast("language: {s} (via file extension)", .{lang});
                 },
                 statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
                 else => if (statusline_app.SegId.of(seg)) |id| switch (id) {
                     .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y) else try runCmd(app, .@"git.status_pane"),
-                    .pr => if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
+                    .pr => if (right) try context_menus.openPrMenu(app, m.x, m.y) else if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
                     .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.diagnostics"),
-                    .symbol => try runCmd(app, .@"outline.show"),
+                    .symbol => if (right) try context_menus.openSymbolMenu(app, m.x, m.y) else try runCmd(app, .@"outline.show"),
                     .macro => try runCmd(app, .@"vim.macro_toggle"),
-                    .find => try runCmd(app, .@"find.find"),
-                    .test_run => if (tests_pane.find(app)) |id_pane| {
+                    .find => if (right) try context_menus.openFindMenu(app, m.x, m.y) else try runCmd(app, .@"find.find"),
+                    .test_run => if (right) try context_menus.openTestMenu(app, m.x, m.y) else if (tests_pane.find(app)) |id_pane| {
                         app.setActive(id_pane);
                         app.focus = .{ .pane = id_pane };
                     },
-                    .ai_claude, .ai_codex => try runCmd(app, .@"ai.spend_today"),
+                    .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y) else try runCmd(app, .@"ai.spend_today"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.
                     .np_brand, .np_track => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .label),
                     .np_play => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .play),
                     .np_next => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .next),
-                    .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
+                    .transfer => if (right) try context_menus.openTransferMenu(app, m.x, m.y),
                     // The LSP chip, as Rust: the servers on the left button
                     // (`:LspStatus`), the LSP menu on the right.
                     .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.status"),
-                    .wrap => try runCmd(app, .@"view.toggle_wrap"),
+                    .wrap => if (right) try context_menus.openWrapMenu(app, m.x, m.y) else try runCmd(app, .@"view.toggle_wrap"),
                     .autosave => app.toast("autosave: {d}s (`[editor] autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
-                    .filesize => if (app.activeEditor()) |e| {
+                    .filesize => if (right) try context_menus.openSizeMenu(app, m.x, m.y) else if (app.activeEditor()) |e| {
                         const n = e.buf.editor.bytes().len;
                         app.toast("{s}: {d} byte{s} · {d} line{s}", .{ if (e.buf.doc.path) |pth| std.fs.path.basename(pth) else "[scratch]", n, if (n == 1) "" else "s", e.buf.editor.lineCount(), if (e.buf.editor.lineCount() == 1) "" else "s" });
                     },
-                    .sel => {},
+                    .sel => if (right) try context_menus.openSelMenu(app, m.x, m.y),
                     .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
-                    .workspace => try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
+                    .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
                     _ => {},
                 } else if (seg >= statusline.seg_dyn_base and !right) {
                     // A host's segment: its `click_command`, on a left click.
