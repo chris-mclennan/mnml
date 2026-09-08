@@ -36,6 +36,7 @@ const editor_view = @import("../ui/editor_view.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const fuzzy = @import("../ui/fuzzy.zig");
 const completion_view = @import("../ui/completion_view.zig");
+const script_complete = @import("../scripting/complete.zig");
 const hover_view = @import("../ui/hover_view.zig");
 const peek_view = @import("../ui/peek_view.zig");
 const diagnostics_view = @import("../ui/diagnostics_view.zig");
@@ -120,12 +121,15 @@ const SymbolSet = struct {
 };
 
 /// The completion popup. The items borrow the reply (kept alive here).
+/// // changed (lua-track): `server` and `incoming` are null for a popup
+/// the app filled itself (`scripting/complete.zig`); the items then
+/// live on `arena` alone.
 pub const Completion = struct {
     pane: PaneId,
-    server: *Server,
+    server: ?*Server,
     /// Where the word being completed starts (byte).
     start: usize,
-    incoming: *jsonrpc.Incoming,
+    incoming: ?*jsonrpc.Incoming,
     arena: alloc.SnapshotArena,
     items: []types.CompletionItem,
     selected: usize = 0,
@@ -135,7 +139,7 @@ pub const Completion = struct {
 
     fn destroy(self: *Completion, gpa: Allocator) void {
         self.arena.deinit();
-        self.incoming.destroy(gpa);
+        if (self.incoming) |inc| inc.destroy(gpa);
     }
 };
 
@@ -1419,6 +1423,8 @@ pub fn hover(app: *App) CommandError!void {
     // While the debugger is stopped, `K` / the hover verb evaluates the
     // word under the cursor instead (`dap.hoverAtCursor`).
     if (try @import("dap.zig").hoverAtCursor(app)) return;
+    // // changed (lua-track): a command id, a hook, an API path in a script.
+    if (try script_complete.hover(app)) return;
     const t = try requireServer(app, "hover");
     try sendAt(app, t, .hover, "textDocument/hover", @intCast(@min(t.e.buf.editor.cursor, std.math.maxInt(u32))));
 }
@@ -1513,6 +1519,7 @@ pub fn closeHover(app: *App) void {
 /// `lsp.completion` (ctrl+space): a request at the cursor; the popup
 /// opens when the reply lands.
 pub fn completion(app: *App) CommandError!void {
+    if (try script_complete.manual(app)) return;
     const t = try requireServer(app, "completion");
     try requestCompletion(app, t, true, null);
 }
@@ -1538,6 +1545,9 @@ const manual_flag: u32 = 0x8000_0000;
 pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!void {
     const c = k.typed() orelse return;
     const path = e.buf.doc.path orelse return;
+    // // changed (lua-track): in a script the app completes its own API
+    // first; a server, when there is one, gets the rest of the file.
+    if (try script_complete.onTyped(app, pane, e, c)) return;
     const s = serverFor(app, path) orelse return;
     if (!s.ready) return;
     if (s.caps.on_type_triggers.len > 0) {
@@ -1585,6 +1595,33 @@ fn openCompletion(app: *App, s: *Server, ctx: Ctx, result: ?Value, msg: *jsonrpc
     app.lsp.completion = comp;
     app.needs_render = true;
     return true;
+}
+
+/// // changed (lua-track): a popup whose rows the app made itself
+/// (`scripting/complete.zig`) — no server, no reply; the items are
+/// copied onto the popup's arena.
+pub fn openLocalCompletion(app: *App, pane: PaneId, start: usize, items: []const types.CompletionItem, manual: bool) Allocator.Error!void {
+    closeCompletion(app);
+    if (items.len == 0) {
+        if (manual) app.toast("no completions", .{});
+        return;
+    }
+    var comp: Completion = .{ .pane = pane, .server = null, .start = start, .incoming = null, .arena = alloc.SnapshotArena.init(app.gpa), .items = &.{}, .manual = manual };
+    errdefer comp.arena.deinit();
+    const a = comp.arena.allocator();
+    const copy = try a.alloc(types.CompletionItem, items.len);
+    for (items, 0..) |it, i| {
+        copy[i] = it;
+        copy[i].label = try a.dupe(u8, it.label);
+        copy[i].insert_text = try a.dupe(u8, it.insert_text);
+        if (it.detail) |d| copy[i].detail = try a.dupe(u8, d);
+        if (it.documentation) |d| copy[i].documentation = try a.dupe(u8, d);
+        if (it.sort_text) |d| copy[i].sort_text = try a.dupe(u8, d);
+        if (it.filter_text) |d| copy[i].filter_text = try a.dupe(u8, d);
+    }
+    comp.items = copy;
+    app.lsp.completion = comp;
+    app.needs_render = true;
 }
 
 pub fn closeCompletion(app: *App) void {
@@ -1719,10 +1756,10 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     const text = ed.bytes();
     var start = comp.start;
     var end = ed.cursor;
-    if (item.edit_range) |r| {
-        start = types.byteOf(text, r.start, comp.server.encoding);
-        end = @max(types.byteOf(text, r.end, comp.server.encoding), ed.cursor);
-    }
+    if (item.edit_range) |r| if (comp.server) |srv| {
+        start = types.byteOf(text, r.start, srv.encoding);
+        end = @max(types.byteOf(text, r.end, srv.encoding), ed.cursor);
+    };
     start = @min(start, end);
     const gpa = app.gpa;
     const insert = try gpa.dupe(u8, item.insert_text);
@@ -1735,7 +1772,7 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     const arena = app.frame.allocator();
     const extra_edits = if (has_extra) try types.readTextEdits(arena, jsonrpc.getField(raw, "additionalTextEdits")) else &.{};
     const label = try arena.dupe(u8, item.label);
-    const wants_resolve = !has_extra and server.caps.completion_resolve;
+    const wants_resolve = if (server) |srv| (!has_extra and srv.caps.completion_resolve) else false;
     const raw_json: ?[]u8 = if (wants_resolve) jsonrpc.stringify(gpa, raw) catch null else null;
     defer if (raw_json) |j| gpa.free(j);
     closeCompletion(app);
@@ -1761,17 +1798,17 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     } else {
         try app.splice(e, start, end, insert);
     }
-    if (extra_edits.len > 0) try applyEditsToPane(app, e, extra_edits, server.encoding);
-    if (raw_json) |j| {
+    if (extra_edits.len > 0) if (server) |srv| try applyEditsToPane(app, e, extra_edits, srv.encoding);
+    if (raw_json) |j| if (server) |srv| {
         // Auto-imports ride on the resolved item; ask for it now.
-        const body = try std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"completionItem/resolve\",\"params\":{s}}}", .{ server.transport.allocId(), j });
+        const body = try std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"completionItem/resolve\",\"params\":{s}}}", .{ srv.transport.allocId(), j });
         defer gpa.free(body);
-        const id = server.transport.next_id - 1;
-        try server.transport.expect(id, .{ .kind = @intFromEnum(ReqKind.completion_resolve), .ctx = (Ctx{ .pane = pane }).pack() });
-        server.transport.send(body) catch {
-            _ = server.transport.forget(id);
+        const id = srv.transport.next_id - 1;
+        try srv.transport.expect(id, .{ .kind = @intFromEnum(ReqKind.completion_resolve), .ctx = (Ctx{ .pane = pane }).pack() });
+        srv.transport.send(body) catch {
+            _ = srv.transport.forget(id);
         };
-    }
+    };
     _ = label;
     app.needs_render = true;
 }

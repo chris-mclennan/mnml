@@ -161,6 +161,13 @@ pub const builtins = [_]Builtin{
     .{ .name = "go", .cmd = "gopls", .args = &.{}, .extensions = &.{"go"}, .root_markers = &.{"go.mod"} },
     .{ .name = "c", .cmd = "clangd", .args = &.{}, .extensions = &.{ "c", "h", "cpp", "hpp", "cc" }, .root_markers = &.{ "compile_commands.json", ".clangd" } },
     .{ .name = "zig", .cmd = "zls", .args = &.{}, .extensions = &.{"zig"}, .root_markers = &.{"build.zig"} },
+    // // changed (lua-track): the servers people expect for the files an
+    // editor config is written in — each the binary its package installs.
+    .{ .name = "lua", .cmd = "lua-language-server", .args = &.{}, .extensions = &.{"lua"}, .root_markers = &.{ ".luarc.json", ".git" } },
+    .{ .name = "json", .cmd = "vscode-json-language-server", .args = &.{"--stdio"}, .extensions = &.{ "json", "jsonc" }, .root_markers = &.{ "package.json", ".git" } },
+    .{ .name = "yaml", .cmd = "yaml-language-server", .args = &.{"--stdio"}, .extensions = &.{ "yaml", "yml" }, .root_markers = &.{ "package.json", ".git" } },
+    .{ .name = "html", .cmd = "vscode-html-language-server", .args = &.{"--stdio"}, .extensions = &.{ "html", "htm" }, .root_markers = &.{ "package.json", ".git" } },
+    .{ .name = "css", .cmd = "vscode-css-language-server", .args = &.{"--stdio"}, .extensions = &.{ "css", "scss", "less" }, .root_markers = &.{ "package.json", ".git" } },
 };
 
 /// The install hint for a well-known server, by the command's basename.
@@ -179,6 +186,9 @@ pub fn installHint(cmd: []const u8) ?[]const u8 {
         .{ "lua-language-server", "brew install lua-language-server" },
         .{ "bash-language-server", "npm i -g bash-language-server" },
         .{ "yaml-language-server", "npm i -g yaml-language-server" },
+        .{ "vscode-json-language-server", "npm i -g vscode-langservers-extracted" },
+        .{ "vscode-html-language-server", "npm i -g vscode-langservers-extracted" },
+        .{ "vscode-css-language-server", "npm i -g vscode-langservers-extracted" },
         .{ "marksman", "brew install marksman" },
     };
     for (hints) |h| if (std.mem.eql(u8, h[0], base)) return h[1];

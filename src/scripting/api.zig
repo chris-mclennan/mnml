@@ -40,54 +40,74 @@ const runners = @import("../app/runners.zig");
 /// is `user.hello` in the palette, `.keys`, `.test` and IPC.
 pub const id_prefix = "user.";
 
+/// One `mnml.*` function: its name in the table, the doc line the
+/// completion popup and the hover show, the Zig function behind it.
+pub const Fn = struct { name: [:0]const u8, doc: []const u8, func: fn (*State) anyerror!i32 };
+/// One sub-table (`mnml.buf`, …): its name, its doc line, its functions.
+pub const Table = struct { name: [:0]const u8, doc: []const u8, fns: []const Fn };
+
+fn fnOf(name: [:0]const u8, doc: []const u8, func: fn (*State) anyerror!i32) Fn {
+    return .{ .name = name, .doc = doc, .func = func };
+}
+
+/// The functions directly on `mnml`. `install` builds the table from
+/// this list and `complete.zig` reads it — the popup can never name a
+/// function that is not there.
+pub const root_fns = [_]Fn{
+    fnOf("command", "mnml.command{ id, title?, group?, keys?, run } → \"user.<id>\" — a palette command; keys is a chord spec or a list", cmdRegister),
+    fnOf("map", "mnml.map(spec, fn | command id) → \"user.map_N\" — a command bound to one chord", map),
+    fnOf("on", "mnml.on(hook, fn) — subscribe; fn gets a flat table of the hook's fields plus hook = \"<name>\"", on),
+    fnOf("toast", "mnml.toast(text, \"info\" | \"warn\" | \"error\") — a toast", toast),
+    fnOf("run", "mnml.run(id) → true | false, reason — run any command, built-in or script", run),
+    fnOf("ex", "mnml.ex(line) → true | false, reason — a \":\" line without the colon", ex),
+    fnOf("workspace", "mnml.workspace() → the absolute workspace path", workspace),
+    fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
+    fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
+};
+
+pub const tables = [_]Table{
+    .{ .name = "buf", .doc = "mnml.buf — the active (or a given) editor pane's text, cursor and path; apply is the one way to change it", .fns = &.{
+        fnOf("text", "mnml.buf.text(pane?) → the whole text", bufText),
+        fnOf("line", "mnml.buf.line(n, pane?) → line n (1-based), or nil past the end", bufLine),
+        fnOf("line_count", "mnml.buf.line_count(pane?) → how many lines", bufLineCount),
+        fnOf("cursor", "mnml.buf.cursor(pane?) → line, col (1-based), byte (0-based)", bufCursor),
+        fnOf("path", "mnml.buf.path(pane?) → the workspace-relative path, nil for a scratch buffer", bufPath),
+        fnOf("apply", "mnml.buf.apply({ op = \"…\", … }, pane?) → true when the text changed — an EditOp, so undo, dot-repeat and the LSP see it", bufApply),
+    } },
+    .{ .name = "statusline", .doc = "mnml.statusline — a segment of your own on the statusline", .fns = &.{
+        fnOf("segment", "mnml.statusline.segment{ id, side?, fn } — fn() is polled every 250 ms; nil hides it; side is \"left\" | \"right\"", statuslineSegment),
+    } },
+    .{ .name = "picker", .doc = "mnml.picker — a source of rows for the picker, and the picker over it", .fns = &.{
+        fnOf("source", "mnml.picker.source{ id, title?, items = fn(query) } — items returns strings or { label, detail?, on_accept? }", pickerSource),
+        fnOf("open", "mnml.picker.open(id, query?) — the picker over the source's items", pickerOpen),
+    } },
+    .{ .name = "pane", .doc = "mnml.pane — a pane the script renders itself", .fns = &.{
+        fnOf("open", "mnml.pane.open{ title, render = fn(w, h), on_hit?, on_key? } → the pane id; render returns rows of strings or { text=, fg=, bg=, bold=, hit= } segments", paneOpen),
+        fnOf("close", "mnml.pane.close(id) — close a script pane", paneClose),
+        fnOf("active", "mnml.pane.active() → the focused pane's id, or nil", paneActive),
+    } },
+    .{ .name = "task", .doc = "mnml.task — a shell command in a task pane (the one way to the shell)", .fns = &.{
+        fnOf("run", "mnml.task.run{ cmd, cwd?, label?, on_done? } → the pane id; on_done{ ok, code | signal } fires when it exits", taskRun),
+    } },
+    .{ .name = "config", .doc = "mnml.config — a read-only copy of the merged config", .fns = &.{
+        fnOf("get", "mnml.config.get(path?) → the value under the dotted path (\"editor.tab_width\", \"lsp.rust.cmd\"), or the whole config", configGet),
+    } },
+    .{ .name = "http", .doc = "mnml.http — the HTTP hooks' way back into the client", .fns = &.{
+        fnOf("set_var", "mnml.http.set_var(name, value) → true, or false and the reason; NAME=value into the active env file", httpSetVar),
+        fnOf("send", "mnml.http.send(pane?) → fire the request pane (the active one by default); not from inside http_request", httpSend),
+    } },
+};
+
 /// Build the `mnml` table and set it as a global.
 pub fn install(self: *Lua) void {
     const L = self.L;
     L.newTable();
-    put(L, "command", cmdRegister);
-    put(L, "map", map);
-    put(L, "on", on);
-    put(L, "toast", toast);
-    put(L, "run", run);
-    put(L, "ex", ex);
-    put(L, "workspace", workspace);
-    put(L, "data_root", dataRoot);
-    put(L, "redraw", redraw);
-
-    L.newTable();
-    put(L, "text", bufText);
-    put(L, "line", bufLine);
-    put(L, "line_count", bufLineCount);
-    put(L, "cursor", bufCursor);
-    put(L, "path", bufPath);
-    put(L, "apply", bufApply);
-    L.setField(-2, "buf");
-
-    L.newTable();
-    put(L, "segment", statuslineSegment);
-    L.setField(-2, "statusline");
-
-    L.newTable();
-    put(L, "source", pickerSource);
-    put(L, "open", pickerOpen);
-    L.setField(-2, "picker");
-
-    L.newTable();
-    put(L, "open", paneOpen);
-    put(L, "close", paneClose);
-    put(L, "active", paneActive);
-    L.setField(-2, "pane");
-
-    L.newTable();
-    put(L, "run", taskRun);
-    L.setField(-2, "task");
-
-    L.newTable();
-    put(L, "get", configGet);
-    L.setField(-2, "config");
-
-    installHttp(L);
-
+    inline for (root_fns) |e| put(L, e.name, e.func);
+    inline for (tables) |t| {
+        L.newTable();
+        inline for (t.fns) |e| put(L, e.name, e.func);
+        L.setField(-2, t.name);
+    }
     L.setGlobal("mnml");
 }
 
@@ -266,24 +286,48 @@ fn cmdRegister(L: *State) !i32 {
     return 1;
 }
 
-/// `mnml.map(spec, fn)` → an anonymous command bound to `spec`.
+/// `mnml.map(spec, fn)` → an anonymous command bound to `spec`. The
+/// second argument may be a command id instead (`mnml.map("ctrl+shift+s",
+/// "file.save")` — what *Bind in init.lua* writes): the chord then runs
+/// that command, built-in or script, through `mnml.run`.
 fn map(L: *State) !i32 {
     const c = ctx(L);
     const spec = L.checkString(1);
-    L.checkType(2, .function);
     const arena = c.app.frame.allocator();
+    var title: []const u8 = spec;
+    if (L.typeOf(2) == .string) {
+        // A closure over the id: `function() mnml.run(id) end`.
+        const id = L.toString(2) catch unreachable;
+        if (command.by_name.get(id) == null and c.app.dyn_commands.get(id) == null) L.raiseErrorStr("mnml.map: no command `%s`", .{id.ptr});
+        title = try std.fmt.allocPrint(arena, "{s} → {s}", .{ spec, id });
+        L.pushValue(2);
+        L.pushClosure(zlua.wrap(runBound), 1);
+    } else {
+        L.checkType(2, .function);
+        L.pushValue(2);
+    }
     c.self.map_seq += 1;
     const full = try std.fmt.allocPrint(arena, "{s}map_{d}", .{ id_prefix, c.self.map_seq });
-    L.pushValue(2);
     const run_ref = c.self.ref();
     const keys = [_][]const u8{spec};
-    _ = registerLuaCommand(c.self, full, spec, "user", &keys, run_ref) catch |err| switch (err) {
+    _ = registerLuaCommand(c.self, full, title, "user", &keys, run_ref) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ShadowsBuiltin => unreachable, // `user.map_N` is never a built-in
     };
     try c.self.noteOrigin(.command, full);
     _ = L.pushString(full);
     return 1;
+}
+
+/// The runner of a `mnml.map(spec, "<id>")`: the id is its upvalue.
+fn runBound(L: *State) !i32 {
+    const c = ctx(L);
+    const id = L.toString(zlua.Lua.upvalueIndex(1)) catch return 0;
+    command.runNamed(c.app, id) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => L.raiseErrorStr("%s", .{(try c.app.frame.allocator().dupeZ(u8, c.app.diag.msg orelse @errorName(err))).ptr}),
+    };
+    return 0;
 }
 
 /// `mnml.on(hook, fn)`.
@@ -858,13 +902,6 @@ fn pushDynamicPath(L: *State, d: Dynamic, path: []const u8) void {
 
 const cmd_http = @import("../app/cmd_http.zig");
 const http_app = @import("../app/http.zig");
-
-fn installHttp(L: *State) void {
-    L.newTable();
-    put(L, "set_var", httpSetVar);
-    put(L, "send", httpSend);
-    L.setField(-2, "http");
-}
 
 /// `mnml.http.set_var(name, value)` — `NAME=value` into the active env
 /// file (the one `@capture` writes), creating the file when it is new.

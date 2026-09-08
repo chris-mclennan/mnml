@@ -2277,6 +2277,7 @@ test {
     _ = @import("scripting/lua.zig");
     _ = @import("scripting/api.zig");
     _ = @import("scripting/diag.zig");
+    _ = @import("scripting/complete.zig");
     _ = @import("app/script_pane.zig");
     _ = @import("app/cmd_script.zig");
     _ = @import("ui/script_view.zig");
