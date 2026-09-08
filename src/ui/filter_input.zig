@@ -45,6 +45,9 @@ pub const Props = struct {
     focused: bool,
     /// The panel's ground, painted at the pill's edges.
     bg: Style,
+    /// // changed (sessions-merge): hosted by a pane, the pill's hit is
+    /// the pane's `.script_hit` with `hit.ListHit.filter_id`.
+    pane: ?hit.PaneId = null,
 };
 
 /// Paints the pill across `area` (one row, one cell of ground on each
@@ -61,7 +64,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) ?Caret {
     x += ui.putStr(x, pill.y, pill.right() - x, glyph(ui), Theme.withFg(style, t.accent.fg));
     x += ui.putStr(x, pill.y, pill.right() - x, " ", style);
     const field = Rect.init(x, pill.y, (pill.right() - 1) -| x, 1);
-    ui.hit(pill, .{ .filter_input = p.panel });
+    if (p.pane) |id| ui.hit(pill, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.filter_id } }) else ui.hit(pill, .{ .filter_input = p.panel });
     return text_field.draw(ui, field, p.text, p.caret, .{
         .style = style,
         .placeholder = placeholder(ui, p.focused),

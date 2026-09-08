@@ -131,7 +131,7 @@ pub const specs = [_]Spec{
     .{ .id = "ai.dashboard.kill", .title = "AI dashboard: kill the focused session (with confirm)", .group = "ai" },
     .{ .id = "ai.dashboard.resume_in_pty", .title = "AI dashboard: resume the focused session in a new mnml pty pane", .group = "ai" },
     .{ .id = "ai.canary", .title = "AI: open the ANTHROPIC_API_KEY canary log (per-callsite hit trail)", .group = "ai" },
-    .{ .id = "ai.dashboard", .title = "AI: open Claude Agents dashboard (also lists Codex sessions)", .group = "ai" },
+    .{ .id = "ai.dashboard", .title = "AI: open the sessions table (was the Claude Agents dashboard)", .group = "ai" },
     .{ .id = "lsp.inlay_hints_toggle", .title = "LSP: toggle inlay hints (type / parameter chips)", .group = "lsp" },
     .{ .id = "lsp.fold_all", .title = "LSP: fold all (server-suggested ranges)", .group = "lsp" },
     .{ .id = "lsp.status", .title = "LSP: report the running servers (the statusline chip's click)", .group = "lsp" },
@@ -438,8 +438,8 @@ pub const specs = [_]Spec{
     .{ .id = "view.activity_debug", .title = "Activity: show Debug", .group = "view", .keys = .{ .both = &.{"ctrl+shift+d"} } },
     .{ .id = "view.activity_integrations", .title = "Activity: show Integrations", .group = "view", .keys = .{ .both = &.{"ctrl+shift+x"} } },
     .{ .id = "view.activity_sessions", .title = "Activity: show Sessions (vertical session tabs)", .group = "view", .keys = .{ .standard = &.{"ctrl+k s"} } },
-    .{ .id = "view.activity_agents", .title = "Activity: show Agents (Claude / Codex dashboard)", .group = "view" },
-    .{ .id = "view.activity_cloud_agents", .title = "Activity: show Cloud agents (ECS runner)", .group = "view" },
+    .{ .id = "view.activity_agents", .title = "Activity: open the sessions table (was the Agents rail)", .group = "view" },
+    .{ .id = "view.activity_cloud_agents", .title = "Activity: show Sessions (was the Cloud agents rail)", .group = "view" },
     .{ .id = "view.activity_http", .title = "Activity: show HTTP (.http files + recent requests)", .group = "view" },
     .{ .id = "integrations.show_installed", .title = "Integrations: show Installed tab", .group = "view" },
     .{ .id = "integrations.show_marketplace", .title = "Integrations: show Marketplace tab", .group = "view" },
@@ -480,7 +480,7 @@ pub const specs = [_]Spec{
     .{ .id = "findings.resolve", .title = "Findings: mark the selected finding resolved (status: resolved)", .group = "findings" },
     .{ .id = "findings.delete", .title = "Findings: delete the selected finding (confirm)", .group = "findings" },
     .{ .id = "sessions.sort", .title = "Sessions: toggle the sort axis (State / Manual)", .group = "sessions" },
-    .{ .id = "sessions.cycle_state", .title = "Sessions: cycle the state filter (every / live / tool / idle / ended)", .group = "sessions" },
+    .{ .id = "sessions.cycle_state", .title = "Sessions: cycle the state filter (every / waiting / live / tool / idle / failed / done)", .group = "sessions" },
     .{ .id = "sessions.open", .title = "Sessions: resume the selected session in a terminal", .group = "sessions" },
     .{ .id = "sessions.open_transcript", .title = "Sessions: open the selected session's transcript", .group = "sessions" },
     .{ .id = "sessions.rename", .title = "Sessions: rename the selected session (empty = reset)", .group = "sessions" },
@@ -488,6 +488,8 @@ pub const specs = [_]Spec{
     .{ .id = "sessions.delete", .title = "Sessions: delete the selected session's transcript (confirm)", .group = "sessions" },
     .{ .id = "sessions.move_up", .title = "Sessions: move the selected session up (manual order)", .group = "sessions" },
     .{ .id = "sessions.move_down", .title = "Sessions: move the selected session down (manual order)", .group = "sessions" },
+    .{ .id = "sessions.move_top", .title = "Sessions: move the selected session to the top (manual order)", .group = "sessions" },
+    .{ .id = "sessions.move_bottom", .title = "Sessions: move the selected session to the bottom (manual order)", .group = "sessions" },
     .{ .id = "sessions.all_workspaces", .title = "Sessions: toggle every workspace's sessions / this one's", .group = "sessions" },
     .{ .id = "sessions.pin", .title = "Sessions: pin / unpin the selected session (pinned lead the list)", .group = "sessions" },
     // Zig-only: the context-menu rows on a tab, a tree row and the
@@ -502,6 +504,22 @@ pub const specs = [_]Spec{
     .{ .id = "findings.sort", .title = "Findings: cycle sort order", .group = "findings" },
     .{ .id = "sessions.sort_auto", .title = "Sessions: sort by state (approval → running → rest)", .group = "sessions" },
     .{ .id = "sessions.sort_manual", .title = "Sessions: sort by manual order", .group = "sessions" },
+    // // changed (sessions-merge): the table and the cloud rows.
+    .{ .id = "sessions.table", .title = "Sessions: open every session on this machine as a table (grouped by workspace)", .group = "sessions" },
+    .{ .id = "sessions.show_ended", .title = "Sessions table: show / hide ended sessions older than a day", .group = "sessions" },
+    .{ .id = "sessions.pause", .title = "Sessions table: pause / resume the live tail", .group = "sessions" },
+    .{ .id = "sessions.select", .title = "Sessions table: tick the row for a batch action", .group = "sessions" },
+    .{ .id = "sessions.select_clear", .title = "Sessions table: clear the ticks", .group = "sessions" },
+    .{ .id = "sessions.toggle_group", .title = "Sessions table: collapse / expand the workspace group", .group = "sessions" },
+    .{ .id = "sessions.where", .title = "Sessions table: cycle where (all / local / cloud)", .group = "sessions" },
+    .{ .id = "sessions.table_sort", .title = "Sessions table: cycle the sort within a group (state / tokens / cost / recent)", .group = "sessions" },
+    .{ .id = "sessions.kill", .title = "Sessions: SIGTERM the selected session (or every ticked one) after a confirm", .group = "sessions" },
+    .{ .id = "sessions.copy_cwd", .title = "Sessions: copy the selected session's working directory", .group = "sessions" },
+    .{ .id = "sessions.export", .title = "Sessions: export the selected transcript as markdown", .group = "sessions" },
+    .{ .id = "sessions.new_menu", .title = "Sessions: the + New session choices (local / cloud)", .group = "sessions" },
+    .{ .id = "sessions.cloud_open", .title = "Sessions: open the selected cloud run (its task, in a terminal)", .group = "sessions" },
+    .{ .id = "sessions.cloud_tail", .title = "Sessions: tail the selected cloud run's log", .group = "sessions" },
+    .{ .id = "sessions.cloud_cancel", .title = "Sessions: cancel the selected cloud run (confirm)", .group = "sessions" },
     .{ .id = "agents.refresh", .title = "Agents: rescan local Claude/Codex sessions", .group = "view" },
     .{ .id = "cloud_agents.refresh", .title = "Cloud agents: rescan ECS runner rows", .group = "view" },
     .{ .id = "cloud_agents.new_run", .title = "Cloud agents: fire a new ECS run for a Jira ticket", .group = "view" },
@@ -511,7 +529,6 @@ pub const specs = [_]Spec{
     .{ .id = "cloud_agents.focus_quick_input", .title = "Cloud agents: focus the quick-fire prompt input", .group = "view" },
     .{ .id = "cloud_agents.spawn_worker", .title = "Cloud agents: spawn ant beta:worker poll for a self-hosted sandbox", .group = "view" },
     .{ .id = "cloud_agents.webhook_docs", .title = "Cloud agents: open webhook-handler docs (alternative to ant poll)", .group = "view" },
-    .{ .id = "cloud_agents.toggle_view", .title = "Cloud agents: toggle row density (compact ↔ standard)", .group = "view" },
     .{ .id = "view.git_commit_focus", .title = "Activity: focus the Git section's commit textarea", .group = "view" },
     .{ .id = "git.blame_toggle", .title = "Git: toggle blame gutter", .group = "git", .keys = .{ .standard = &.{"ctrl+k b"} } },
     .{ .id = "git.commit", .title = "Git: commit staged changes", .group = "git", .keys = .{ .standard = &.{"ctrl+k g c"} } },
@@ -728,8 +745,6 @@ pub const specs = [_]Spec{
     .{ .id = "http.copy_response_cookies", .title = "HTTP: copy the response Set-Cookie headers", .group = "http" },
     .{ .id = "http.copy_response_timeline", .title = "HTTP: copy the response timeline (wait / receive / total)", .group = "http" },
     .{ .id = "http.copy_response_tests", .title = "HTTP: copy the response assertions summary", .group = "http" },
-    .{ .id = "cloud_agents.view_compact", .title = "Cloud Agents: compact row density", .group = "cloud_agents" },
-    .{ .id = "cloud_agents.view_standard", .title = "Cloud Agents: standard row density", .group = "cloud_agents" },
     .{ .id = "http.save", .title = "HTTP: save request (Save-As if new)", .group = "http" },
     .{ .id = "http.copy_as", .title = "HTTP: copy request as code (curl / Python / JS / Go / wget / HTTPie)", .group = "http" },
     .{ .id = "http.generate_code", .title = "HTTP: copy request as code (alias for http.copy_as)", .group = "http" },
@@ -1050,6 +1065,6 @@ test "973 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    try std.testing.expectEqual(@as(usize, 973), specs.len);
+    try std.testing.expectEqual(@as(usize, 987), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

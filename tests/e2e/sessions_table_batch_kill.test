@@ -1,0 +1,23 @@
+# env: HOME=home
+# Space ticks rows for a batch action; K asks once for every ticked
+# session and SIGTERMs each after the confirm. Two fake `claude
+# --resume <id>` processes stand in for the sessions (found through
+# `ps`); the toast counts the kills.
+
+write home/.claude/projects/-tmp-ws/e2e00003-0000-4000-8000-000000003001.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+write home/.claude/projects/-tmp-ws/e2e00003-0000-4000-8000-000000003002.jsonl {"type":"user","message":{"role":"user","content":"add a --json flag"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Added the flag."}]}}
+write fake-claude.sh #!/bin/bash\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$1"
+shell chmod +x fake-claude.sh && (nohup ./fake-claude.sh e2e00003-0000-4000-8000-000000003001 >/dev/null 2>&1 &) && (nohup ./fake-claude.sh e2e00003-0000-4000-8000-000000003002 >/dev/null 2>&1 &)
+wait 400
+command sessions.table
+wait 1000
+expect screen contains "2 live"
+# The cursor starts on the first session; space ticks it, j the next.
+key space
+key j
+key space
+key K
+expect screen contains "SIGTERM 2 sessions?"
+key enter
+wait 400
+expect screen contains "sent SIGTERM to 2 of 2"

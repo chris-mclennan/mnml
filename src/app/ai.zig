@@ -94,16 +94,10 @@ pub const table = .{
     .@"ai.chip_show_all_off" = &chipAllOff,
     .@"ai.chip_show_all_compact" = &chipAllCompact,
     .@"ai.chip_show_all_ticker" = &chipAllTicker,
-    .@"cloud_agents.refresh" = &cloudNotInBuild,
-    .@"cloud_agents.new_run" = &cloudNotInBuild,
-    .@"cloud_agents.new_run_wizard" = &cloudNotInBuild,
     .@"cloud_agents.refresh_run_detail" = &cloudNotInBuild,
     .@"cloud_agents.focus_quick_input" = &cloudNotInBuild,
     .@"cloud_agents.spawn_worker" = &cloudNotInBuild,
     .@"cloud_agents.webhook_docs" = &cloudNotInBuild,
-    .@"cloud_agents.toggle_view" = &cloudToggleView,
-    .@"cloud_agents.view_compact" = &cloudViewCompact,
-    .@"cloud_agents.view_standard" = &cloudViewStandard,
 };
 
 /// How many API turns an agentic job may take before it is stopped.
@@ -155,7 +149,6 @@ pub const State = struct {
     /// A default profile name set this session (`launch_profiles.setDefault`);
     /// the config borrows it until the next load.
     owned_default: ?[]u8 = null,
-    cloud_compact: bool = false,
     /// The workers posting `.spend` for the meter (no pane).
     spend_group: Io.Group = .init,
 
@@ -324,12 +317,10 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
 /// Every tick: fire the request once the clock is due.
 pub fn tick(app: *App) Allocator.Error!void {
     if (app.ai.debounce.due(app.now_ms)) try fireSuggestion(app);
-    try agents.tickAll(app);
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     var next: ?i64 = app.ai.debounce.deadline();
-    if (agents.nextDeadlineMs(app)) |d| next = @min(next orelse std.math.maxInt(i64), d);
     if (spend.anyLoading(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 120);
     return next;
 }
@@ -1571,19 +1562,6 @@ fn chipAllTicker(app: *App) CommandError!void {
 
 fn cloudNotInBuild(app: *App) CommandError!void {
     return app.diag.fail(app.frame.allocator(), "cloud agents (AWS ECS / Managed Agents) are not in this build yet", .{});
-}
-
-fn cloudToggleView(app: *App) CommandError!void {
-    app.ai.cloud_compact = !app.ai.cloud_compact;
-    app.toast("cloud agents: {s} rows", .{if (app.ai.cloud_compact) "compact" else "standard"});
-}
-fn cloudViewCompact(app: *App) CommandError!void {
-    app.ai.cloud_compact = true;
-    app.toast("cloud agents: compact rows", .{});
-}
-fn cloudViewStandard(app: *App) CommandError!void {
-    app.ai.cloud_compact = false;
-    app.toast("cloud agents: standard rows", .{});
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

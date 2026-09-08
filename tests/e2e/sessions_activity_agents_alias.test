@@ -1,0 +1,22 @@
+# env: HOME=home
+# The rail's AGENTS and CLOUD AGENTS rows folded into SESSIONS; the two
+# commands that showed them stay as aliases so scripts keep passing:
+# view.activity_agents opens the sessions table (as ai.dashboard does),
+# view.activity_cloud_agents shows the SESSIONS section.
+
+write home/.claude/projects/-tmp-ws/e2e00005-0000-4000-8000-000000005001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+command view.activity_agents
+wait 800
+expect screen contains " summary "
+expect screen contains "write the release notes"
+key q
+expect screen lacks " summary "
+command view.activity_cloud_agents
+key w
+wait 800
+expect screen contains "SESSIONS"
+expect screen contains "+ New session"
+expect screen contains "write the release notes"
+command ai.dashboard
+wait 800
+expect screen contains " summary "

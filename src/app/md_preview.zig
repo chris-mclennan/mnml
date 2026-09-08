@@ -176,7 +176,7 @@ fn previewCmd(app: *App) CommandError!void {
             const id = try open(app, path, .beside, active);
             app.showPane(id);
         },
-        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
     }
 }
 
@@ -186,7 +186,7 @@ fn editRawCmd(app: *App) CommandError!void {
     switch (pane.*) {
         .md_preview => _ = try swapToEditor(app, active),
         .editor => {},
-        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
     }
 }
 

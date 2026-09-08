@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # seed-sessions-home.sh — the fake home behind `rust-sessions-*.txt`.
 #
-#   seed-sessions-home.sh HOME_DIR WS       seed and start
-#   seed-sessions-home.sh stop HOME_DIR     end the fake processes
+#   seed-sessions-home.sh [--waiting] HOME_DIR WS   seed and start
+#   seed-sessions-home.sh stop HOME_DIR              end the fake processes
 #
 # Both editors list the Claude Code sessions of `$HOME/.claude/projects`
 # (Rust: `src/claude_agents.rs`; Zig: `src/app/agents.zig`), so the
@@ -13,6 +13,13 @@
 #                                           renamed "release train"
 #   …0003  ended  "write the release notes" no process, a day old,
 #                                           pinned by the steps file
+#   …0004  waiting "run the release build"  --waiting only: a process,
+#                                           the transcript ends on a tool
+#                                           use with no result, 2 min old
+#
+# `--waiting` adds the fourth session (the Zig table's dump, `zig-spec-
+# sessions.sh`); the Rust spec dumps (`rust-sessions-*.txt`) were cut
+# without it, so the default stays three.
 #
 # `HOME_DIR/bin/claude` is a fake `claude`: on `--resume <sid>` it titles
 # its window `✳ <the session's prompt>` (Claude Code titles its window
@@ -25,6 +32,8 @@
 # `PATH=HOME_DIR/bin:$PATH` and `--no-copy` (the transcripts name WS;
 # Rust finds none under a private copy's path); `stop` when done.
 set -eu
+WAITING=0
+if [ "${1:-}" = --waiting ]; then WAITING=1; shift; fi
 if [ "${1:-}" = stop ]; then
   H=$2
   [ -f "$H/pids" ] && while read -r p; do kill "$p" 2>/dev/null || true; done <"$H/pids"
@@ -40,6 +49,7 @@ mkdir -p "$P" "$H/bin" "$H/.fake-claude"
 S1=5e551011-0000-4000-8000-000000000001
 S2=5e551011-0000-4000-8000-000000000002
 S3=5e551011-0000-4000-8000-000000000003
+S4=5e551011-0000-4000-8000-000000000004
 line() { # sid prompt reply
   printf '{"type":"user","cwd":"%s","gitBranch":"main","sessionId":"%s","message":{"role":"user","content":"%s"}}\n' "$WS" "$1" "$2"
   printf '{"type":"assistant","cwd":"%s","sessionId":"%s","message":{"role":"assistant","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":900,"output_tokens":120},"content":[{"type":"text","text":"%s"}]}}\n' "$WS" "$1" "$3"
@@ -49,10 +59,18 @@ line $S2 "add a --json flag to the CLI" "Added the flag and a test for it. Anyth
 line $S3 "write the release notes for 0.3" "Drafted them in CHANGELOG.md." >"$P/$S3.jsonl"
 touch -t "$(date -v-2H +%Y%m%d%H%M.%S)" "$P/$S2.jsonl"
 touch -t "$(date -v-1d +%Y%m%d%H%M.%S)" "$P/$S3.jsonl"
+if [ $WAITING = 1 ]; then
+  # A tool use the transcript never answers, and the file gone quiet:
+  # Zig's `waiting` (`agents.deriveState`, `waiting_quiet_s`).
+  line $S4 "run the release build" "Building now." >"$P/$S4.jsonl"
+  printf '{"type":"assistant","cwd":"%s","sessionId":"%s","message":{"role":"assistant","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":300,"output_tokens":40},"content":[{"type":"text","text":"Running it."},{"type":"tool_use","id":"toolu_w1","name":"Bash","input":{"command":"zig build"}}]}}\n' "$WS" "$S4" >>"$P/$S4.jsonl"
+  touch -t "$(date -v-2M +%Y%m%d%H%M.%S)" "$P/$S4.jsonl"
+fi
 cat >"$H/.fake-claude/titles" <<EOF
 $S1 fix the failing tests in src/main.rs
 $S2 add a --json flag to the CLI
 $S3 write the release notes for 0.3
+$S4 run the release build
 EOF
 cat >"$H/bin/claude" <<'EOF'
 #!/bin/bash
@@ -70,7 +88,8 @@ esac
 EOF
 chmod +x "$H/bin/claude"
 # Rust resumes every `claude_sessions` entry at startup (`src/app/session.rs`).
-python3 - "$WS/.mnml/session.json" "$S1" "$S2" "$S3" <<'EOF'
+# A workspace without the Rust session file (the Zig-only dumps) skips it.
+[ -f "$WS/.mnml/session.json" ] && python3 - "$WS/.mnml/session.json" "$S1" "$S2" "$S3" <<'EOF'
 import json, sys
 p, s1, s2, s3 = sys.argv[1:]
 d = json.load(open(p))
@@ -83,10 +102,14 @@ json.dump(d, open(p, "w"), indent=2)
 EOF
 # Zig keeps the alias in the session file (`src/app/session.zig`).
 Z="$WS/.mnml/session.zon"
+mkdir -p "$WS/.mnml"
+[ -f "$Z" ] || printf '.{\n}\n' >"$Z"
 grep -q sessions_aliases "$Z" || sed -i '' "s|^}|    .sessions_aliases = .{ .{ .id = \"$S2\", .name = \"release train\" } },\n}|" "$Z"
-# The two processes Zig pairs with the live and the idle session.
+# The processes Zig pairs with the live and the idle session (and the
+# waiting one).
 : >"$H/pids"
-for s in $S1 $S2; do
+LIVE="$S1 $S2"; [ $WAITING = 1 ] && LIVE="$LIVE $S4"
+for s in $LIVE; do
   HOME=$H nohup "$H/bin/claude" --resume "$s" >/dev/null 2>&1 &
   echo $! >>"$H/pids"
 done

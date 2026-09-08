@@ -213,6 +213,9 @@ pub const Ui = struct {
     plus_menu_hidden: []const []const u8 = &.{},
     auto_refresh_off: []const []const u8 = &.{},
     sessions_sort: SessionsSort = .auto,
+    /// // changed (sessions-merge): ring the terminal bell when a session
+    /// starts waiting for input.
+    session_bell: bool = false,
     todos_sort: ListSort = .newest,
     notes_sort: ListSort = .newest,
     findings_sort: ListSort = .newest,

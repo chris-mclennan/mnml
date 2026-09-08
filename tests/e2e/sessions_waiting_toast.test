@@ -1,0 +1,21 @@
+# env: HOME=home
+# A session that starts waiting for input — its transcript ends on a
+# tool use with no result and the file has gone quiet — toasts once on
+# the edge (the first listing is no edge). A fake `claude --resume <id>`
+# process keeps the session alive.
+
+write home/.claude/projects/-tmp-ws/e2e00006-0000-4000-8000-000000006002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+write fake-claude.sh #!/bin/bash\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume e2e00006-0000-4000-8000-000000006002
+shell chmod +x fake-claude.sh && (nohup ./fake-claude.sh >/dev/null 2>&1 &)
+wait 400
+command view.activity_sessions
+key w
+wait 1000
+expect screen contains "fix the failing tests"
+expect screen lacks "needs input"
+# The next turn is a tool use nobody answers, five minutes ago (the
+# written transcript has no trailing newline; the append supplies it).
+shell printf '\n%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running it."},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"zig build"}}]}}' >> home/.claude/projects/-tmp-ws/e2e00006-0000-4000-8000-000000006002.jsonl && touch -t "$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M)" home/.claude/projects/-tmp-ws/e2e00006-0000-4000-8000-000000006002.jsonl
+command sessions.refresh
+wait 1000
+expect screen contains "session needs input: fix the failing tests"

@@ -67,7 +67,7 @@ pub fn surface(s: Section) ?Surface {
         .integrations => .{ .panel = .integrations },
         // // changed (lua-track): the SCRIPTS section is a column too.
         .scripts => .{ .panel = .scripts },
-        .search, .agents, .cloud_agents => null,
+        .search => null,
     };
 }
 

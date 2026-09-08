@@ -89,9 +89,15 @@ pub fn newRowStyle(t: *const Theme) Style {
 /// for exactly the cells it took. Returns the painted rect (empty when
 /// nothing fit) so a caller can lay out the next chip beside it.
 pub fn paint(ui: Ui, x: u16, y: u16, max_w: u16, text: []const u8, style: Style, panel: PanelId, kind: ChipKind) Rect {
+    return paintTarget(ui, x, y, max_w, text, style, .{ .chip = .{ .panel = panel, .kind = kind } });
+}
+
+/// `paint` with the target spelled out — a pane-hosted panel's chip is
+/// its `.script_hit` (`hit.chipTarget`).
+pub fn paintTarget(ui: Ui, x: u16, y: u16, max_w: u16, text: []const u8, style: Style, target: hit.HitTarget) Rect {
     const w = ui.putStr(x, y, max_w, text, style);
     const r = Rect.init(x, y, w, 1);
-    ui.hit(r, .{ .chip = .{ .panel = panel, .kind = kind } });
+    ui.hit(r, target);
     return r;
 }
 

@@ -205,6 +205,23 @@ so no dialog), feeds `steps-NAME.jsonl` over IPC and keeps the screen:
   disabled (○) breakpoint in the gutter, the BREAKPOINTS rows, and the
   row menu opened with `view.context_menu_at_focus`.
 
+## The sessions table (Zig-authored, 2026-09-08)
+
+`tools/zig-spec-sessions.sh sessions-table [COLSxROWS]` seeds a
+throwaway workspace and a HOME through `tools/seed-sessions-home.sh
+--waiting` (the three sessions of the SESSIONS spec plus `…0004`,
+whose transcript ends on a tool use nobody answered — `waiting`), feeds
+`steps-sessions-table.jsonl` (`sessions.table`) and keeps the screen.
+The Claude Agents dashboard the table replaced was never driven for a
+spec, so there is nothing to diff against:
+
+- `zig-sessions-table-120x40.txt` — the table pane: the header chips
+  (`state:` sort, `ended: hidden`, `⏸ pause`, `? help`), one group
+  row `▾ ws (3 · 1 hidden)` (the ended session is a day old), the
+  rows sorted by state — waiting, live, idle — with the id, tokens,
+  cost, age and dirty columns, and the summary block: the counts per
+  state, the hidden count, and the selected row's last exchange.
+
 ## Conflict resolution (Zig-authored, 2026-09-08)
 
 `tools/zig-spec-conflict.sh git-conflict [COLSxROWS]` seeds a throwaway
@@ -303,6 +320,16 @@ none on CHAINS, `≡ ⟳ ✕` on MOCKS, `≡ ⟳` on RECENT, `≡ 🌐` on CAPTU
 `200 GET  host/path` recent rows with the status coloured, the words,
 the green links. `steps-http` (2), `steps-esc` (4) and `steps-todos`
 (24) did not move.
+
+Rail residue (sessions-merge, 2026-09-08): every dump that shows the
+rail differs from Rust's on its rows — the AGENTS and CLOUD AGENTS rows
+folded into SESSIONS and lua-track's SCRIPTS row joined, so Rust's 󰚩 /
+󰅣 sit where Zig has nothing and Zig's 󰢱 where Rust has nothing.
+`steps-esc` reads 16 (its 4 plus the twelve rail lines);
+`steps-sessions` reads 74 on a private seeded copy — the rail, the
+top block one row lower, the info box's copy, the version line, the
+toast, and Rust's three pty panes across the right of every row — the
+SESSIONS column itself is unchanged, card for card.
 
 ## Integrations (2026-09-07, branch `sample-integration`)
 

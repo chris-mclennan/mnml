@@ -1,0 +1,17 @@
+# env: HOME=home
+# The table's `+ New session` chip (and `sessions.new_menu`) is the
+# choice menu: a local session, the ×2 / ×4 / ×8 batches, and the two
+# cloud wizards — which say so when the API is not configured rather
+# than hide.
+
+write home/.claude/projects/-tmp-ws/e2e00004-0000-4000-8000-000000004001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+command sessions.table
+wait 800
+command sessions.new_menu
+expect screen contains "New local session"
+expect screen contains "Open ×2"
+expect screen contains "Open ×8"
+expect screen contains "New cloud run… (not configured)"
+expect screen contains "New cloud run (wizard)… (not configured)"
+key esc
+expect screen lacks "New local session"

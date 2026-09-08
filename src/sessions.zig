@@ -1,9 +1,19 @@
 //! SESSIONS — the AI sessions of this workspace, on the `todos.zig`
-//! shape (D8). The rows are the Claude Code / Codex transcripts the
-//! AGENTS dashboard already reads (`agents.scanInto` over `~/.claude/
-//! projects` and `~/.codex/sessions`), narrowed to this workspace: a
-//! scan worker posts `.sessions = *ScanResult`, the snapshot arena keeps
-//! the rows, `handle` adopts the payload, a stale generation is dropped.
+//! shape (D8). One row model, `Item`, behind two views: this sidebar
+//! section (the cards, scoped to the workspace) and the sessions table
+//! (`app/sessions_table.zig`, every row on the machine, grouped by
+//! workspace). Three scanners feed it — the Claude Code / Codex
+//! transcripts (`app/agents.zig` over `~/.claude/projects` and
+//! `~/.codex/sessions`) and, when the API is configured, the cloud runs
+//! (`app/cloud_agents.zig`) — from one worker that posts `.sessions =
+//! *ScanResult`; the snapshot arena keeps the rows, `handle` adopts the
+//! payload (and notices state edges: a session that starts `waiting`
+//! toasts once, badges its tab, rings the bell when `ui.session_bell`),
+//! a stale generation is dropped.
+//!
+//! // changed (sessions-merge): the AGENTS dashboard and the CLOUD
+//! AGENTS section folded into this model; `waiting` / `done` / `failed`
+//! are states; `dirty` is the cwd's `git status` count.
 //!
 //! A row is Rust's card (`src/ui/sessions_panel.rs`), cell for cell:
 //! four rows and a blank one — the accent `▌` down its left, the name
@@ -45,6 +55,9 @@ const hit = @import("ui/hit.zig");
 const list_panel = @import("ui/list_panel.zig");
 const todos = @import("todos.zig");
 const agents = @import("app/agents.zig");
+const cloud_agents = @import("app/cloud_agents.zig");
+const sessions_table = @import("app/sessions_table.zig");
+const pty_pane_mod = @import("app/pty_pane.zig");
 const cli = @import("ai/cli.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const settings = @import("app/settings.zig");
@@ -54,25 +67,102 @@ pub const Source = agents.Source;
 pub const AgentState = agents.AgentState;
 pub const SessionsSort = Config.SessionsSort;
 
-/// One session. Slices borrow from `ScanResult.arena` in flight and
-/// from `State.snapshot` once adopted.
+/// Where a session runs.
+pub const Where = enum {
+    local,
+    cloud,
+
+    pub fn label(w: Where) []const u8 {
+        return @tagName(w);
+    }
+};
+
+/// What a cloud row carries beyond the common columns.
+pub const CloudInfo = struct {
+    ticket: []const u8 = "",
+    flow: []const u8 = "",
+    /// The runner's own word (`started`, `staged`, `shipped`, …).
+    raw_state: []const u8 = "",
+    task_arn: ?[]const u8 = null,
+    pr_url: ?[]const u8 = null,
+};
+
+/// One session — the one row model. Slices borrow from
+/// `ScanResult.arena` in flight and from `State.snapshot` once adopted.
 pub const Item = struct {
     source: Source,
+    where: Where = .local,
     session_id: []const u8,
     /// The workspace label the transcript carries (a basename).
     workspace: []const u8,
     cwd: ?[]const u8,
+    model: ?[]const u8 = null,
     transcript_path: []const u8,
     state: AgentState,
     pid: ?u32,
+    tokens: u64 = 0,
+    cost_usd: f64 = 0,
     /// Unix seconds of the last transcript change.
     last_activity_s: i64,
     last_user_msg: ?[]const u8,
     last_assistant_msg: ?[]const u8,
-    /// Claude Code's confirmation prompt is waiting: the transcript's
-    /// last tool use has no result yet and the file has gone quiet.
-    needs_approval: bool,
+    current_tool: ?[]const u8 = null,
+    pending_tool_uses: usize = 0,
+    git_branch: ?[]const u8 = null,
+    /// `git status --porcelain` entries in the cwd; null = not asked,
+    /// or the cwd is gone or no repository.
+    dirty: ?u32 = null,
+    cloud: ?CloudInfo = null,
+
+    /// The table groups on this: the cwd, else the workspace label;
+    /// every cloud row under the cloud label.
+    pub fn groupKey(it: Item) []const u8 {
+        if (it.where == .cloud) return it.workspace;
+        return it.cwd orelse it.workspace;
+    }
+
+    /// The group's row: the cwd's basename, else the label.
+    pub fn groupLabel(it: Item) []const u8 {
+        if (it.where == .cloud) return it.workspace;
+        if (it.cwd) |c| {
+            const base = std.fs.path.basename(c);
+            if (base.len > 0) return base;
+        }
+        return it.workspace;
+    }
+
+    /// Ended with uncommitted work in its cwd.
+    pub fn dirtyEnded(it: Item) bool {
+        return it.state.ended() and (it.dirty orelse 0) > 0;
+    }
 };
+
+/// Every slice of `it` copied onto `arena`.
+pub fn dupeItem(arena: Allocator, it: Item) Allocator.Error!Item {
+    var out = it;
+    out.session_id = try arena.dupe(u8, it.session_id);
+    out.workspace = try arena.dupe(u8, it.workspace);
+    out.cwd = if (it.cwd) |c| try arena.dupe(u8, c) else null;
+    out.model = if (it.model) |m| try arena.dupe(u8, m) else null;
+    out.transcript_path = try arena.dupe(u8, it.transcript_path);
+    out.last_user_msg = if (it.last_user_msg) |m| try arena.dupe(u8, m) else null;
+    out.last_assistant_msg = if (it.last_assistant_msg) |m| try arena.dupe(u8, m) else null;
+    out.current_tool = if (it.current_tool) |c| try arena.dupe(u8, c) else null;
+    out.git_branch = if (it.git_branch) |b| try arena.dupe(u8, b) else null;
+    if (it.cloud) |c| out.cloud = .{
+        .ticket = try arena.dupe(u8, c.ticket),
+        .flow = try arena.dupe(u8, c.flow),
+        .raw_state = try arena.dupe(u8, c.raw_state),
+        .task_arn = if (c.task_arn) |a| try arena.dupe(u8, a) else null,
+        .pr_url = if (c.pr_url) |u| try arena.dupe(u8, u) else null,
+    };
+    return out;
+}
+
+/// A bare local Claude row for tests (`transcript_path` `/t`).
+pub fn testItem(id: []const u8, state: AgentState, at: i64, ws: []const u8, msg: ?[]const u8) Item {
+    return .{ .source = .claude, .session_id = id, .workspace = ws, .cwd = null, .transcript_path = "/t", .state = state, .pid = null, .last_activity_s = at, .last_user_msg = msg, .last_assistant_msg = null };
+}
 
 /// What `paintRow` sees: the item and the card's view of it, resolved
 /// on the frame arena — the name (against the aliases), the pin,
@@ -95,6 +185,10 @@ pub const ScanResult = struct {
     arena: std.heap.ArenaAllocator,
     items: []Item = &.{},
     generation: u32,
+    /// Wall-clock seconds when the scan ran — the clock `last_activity_s`
+    /// is on. `App.now_ms` is the awake clock, so an age or the
+    /// hidden-ended rule must not read it (`wallNowS`).
+    at_s: i64 = 0,
 
     pub fn create(gpa: Allocator, generation: u32) Allocator.Error!*ScanResult {
         const r = try gpa.create(ScanResult);
@@ -123,8 +217,22 @@ pub const table = .{
     .@"sessions.delete" = &deleteCmd,
     .@"sessions.move_up" = &moveUpCmd,
     .@"sessions.move_down" = &moveDownCmd,
+    .@"sessions.move_top" = &moveTopCmd,
+    .@"sessions.move_bottom" = &moveBottomCmd,
     .@"sessions.all_workspaces" = &allWorkspacesCmd,
     .@"sessions.pin" = &pinCmd,
+    .@"sessions.copy_cwd" = &copyCwdCmd,
+    .@"sessions.export" = &exportCmd,
+    .@"sessions.kill" = &killCmd,
+    .@"sessions.new_menu" = &newMenuCmd,
+    // The dashboard's ids keep resolving (corpus scripts name them).
+    .@"agents.refresh" = &refreshCmd,
+    .@"ai.dashboard.open_transcript" = &openTranscriptCmd,
+    .@"ai.dashboard.yank_session_id" = &copyIdCmd,
+    .@"ai.dashboard.yank_cwd" = &copyCwdCmd,
+    .@"ai.dashboard.export_markdown" = &exportCmd,
+    .@"ai.dashboard.kill" = &killCmd,
+    .@"ai.dashboard.resume_in_pty" = &openCmd,
 };
 
 /// A shown panel rescans this often (the dashboard's cadence).
@@ -158,6 +266,15 @@ pub const State = struct {
     /// A home directory to scan instead of the loader's `$HOME` —
     /// what a test points at a fixture. Owned.
     home: ?[]u8 = null,
+    /// The cloud scanner's settings, duped from the config for the
+    /// worker in flight (`refresh` renews them). Owned.
+    cloud: ?cloud_agents.Opts = null,
+    /// The first adoption has no edges to report.
+    adopted_once: bool = false,
+    /// The snapshot's wall clock and the awake clock it was adopted at:
+    /// `wallNowS` extrapolates the wall clock from the two.
+    snapshot_at_s: i64 = 0,
+    snapshot_at_ms: i64 = 0,
 
     pub fn init(gpa: Allocator, sort: SessionsSort) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .sort = sort };
@@ -175,6 +292,7 @@ pub const State = struct {
         for (self.pinned.items) |id| gpa.free(id);
         self.pinned.deinit(gpa);
         if (self.home) |h| gpa.free(h);
+        if (self.cloud) |*c| c.deinit(gpa);
         self.filtered.deinit(gpa);
         self.list.deinit(gpa);
         self.snapshot.deinit();
@@ -255,7 +373,10 @@ pub fn refresh(app: *App) CommandError!void {
     st.generation +%= 1;
     st.scanning = true;
     app.needs_render = true;
-    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, home, app.workspace, st.generation }) catch |err| {
+    // The cloud settings the worker reads, renewed while no worker runs.
+    if (st.cloud) |*c| c.deinit(app.gpa);
+    st.cloud = try cloud_agents.Opts.fromConfig(app.gpa, &app.cfg.cloud_agents, &app.env);
+    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };
@@ -279,13 +400,13 @@ fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     return st.home.?;
 }
 
-fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, generation: u32) Io.Cancelable!void {
+fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, generation: u32) Io.Cancelable!void {
     const result = ScanResult.create(gpa, generation) catch {
         postErr(events, io, gpa, "out of memory starting the scan");
         return;
     };
     errdefer result.destroy(gpa);
-    scanInto(io, gpa, home, workspace, result) catch |err| switch (err) {
+    scanInto(io, gpa, home, workspace, cloud, result) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => {
             postErr(events, io, gpa, "out of memory during the scan");
@@ -302,29 +423,20 @@ fn postErr(events: *event.EventQueue, io: Io, gpa: Allocator, msg: []const u8) v
 
 const ScanError = Io.Cancelable || Allocator.Error;
 
-/// The dashboard's walk, its rows copied onto `r.arena` in this
-/// module's shape. Every session is kept; `refilter` narrows to the
+/// The three scanners into `r.items` on `r.arena`: the local
+/// transcripts, the cloud runs when configured, then one `git status`
+/// per distinct cwd. Every session is kept; `refilter` narrows to the
 /// workspace, so the toggle needs no rescan.
-pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, r: *ScanResult) ScanError!void {
+pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, r: *ScanResult) ScanError!void {
+    _ = workspace;
     const arena = r.arena.allocator();
-    const inner = try agents.ScanResult.create(gpa, r.generation, 0);
-    defer inner.destroy(gpa);
-    try agents.scanInto(io, gpa, home, workspace, inner);
-    const items = try arena.alloc(Item, inner.rows.len);
-    for (inner.rows, 0..) |row, i| items[i] = .{
-        .source = row.source,
-        .session_id = try arena.dupe(u8, row.session_id),
-        .workspace = try arena.dupe(u8, row.workspace),
-        .cwd = if (row.cwd) |c| try arena.dupe(u8, c) else null,
-        .transcript_path = try arena.dupe(u8, row.transcript_path),
-        .state = row.state,
-        .pid = row.pid,
-        .last_activity_s = row.last_activity_s,
-        .last_user_msg = if (row.last_user_msg) |m| try arena.dupe(u8, m) else null,
-        .last_assistant_msg = if (row.last_assistant_msg) |m| try arena.dupe(u8, m) else null,
-        .needs_approval = row.pid != null and row.pending_tool_uses > 0 and row.state != .streaming,
-    };
-    r.items = items;
+    var rows: std.ArrayListUnmanaged(Item) = .empty;
+    try agents.scanInto(io, gpa, arena, home, &rows);
+    if (cloud) |c| try cloud_agents.scanInto(io, gpa, arena, c, &rows);
+    const now = Io.Timestamp.now(io, .real).toSeconds();
+    try agents.dirtyScan(io, gpa, arena, rows.items, now);
+    r.items = rows.items;
+    r.at_s = now;
 }
 
 // ─── the event handler (D1) ─────────────────────────────────────────────
@@ -334,24 +446,18 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
     defer result.destroy(app.gpa);
     if (result.generation != st.generation) return;
     st.scanning = false;
-    const keep: ?[]const u8 = if (st.selected()) |it| try app.frame.allocator().dupe(u8, it.session_id) else null;
+    const frame = app.frame.allocator();
+    const keep: ?[]const u8 = if (st.selected()) |it| try frame.dupe(u8, it.session_id) else null;
+    try sessions_table.noteSelection(app);
+    // The edges: what each session was, before the old snapshot goes.
+    const edges = try stateEdges(frame, st.items, result.items);
     st.snapshot.reset();
     st.items = &.{};
+    st.snapshot_at_s = result.at_s;
+    st.snapshot_at_ms = app.now_ms;
     const arena = st.snapshot.allocator();
     const items = try arena.alloc(Item, result.items.len);
-    for (result.items, 0..) |it, i| items[i] = .{
-        .source = it.source,
-        .session_id = try arena.dupe(u8, it.session_id),
-        .workspace = try arena.dupe(u8, it.workspace),
-        .cwd = if (it.cwd) |c| try arena.dupe(u8, c) else null,
-        .transcript_path = try arena.dupe(u8, it.transcript_path),
-        .state = it.state,
-        .pid = it.pid,
-        .last_activity_s = it.last_activity_s,
-        .last_user_msg = if (it.last_user_msg) |m| try arena.dupe(u8, m) else null,
-        .last_assistant_msg = if (it.last_assistant_msg) |m| try arena.dupe(u8, m) else null,
-        .needs_approval = it.needs_approval,
-    };
+    for (result.items, 0..) |it, i| items[i] = try dupeItem(arena, it);
     st.items = items;
     try refilter(app);
     // The selection follows its session across a rescan.
@@ -359,14 +465,64 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
         st.list.cursor = vi;
         break;
     };
+    if (st.adopted_once) try announceEdges(app, edges);
+    st.adopted_once = true;
+    try sessions_table.onSnapshot(app);
     app.needs_render = true;
 }
 
-/// State order: a session waiting on an approval first, then live,
-/// tool, idle, ended; newest within a rank.
+pub const Edge = struct { session_id: []const u8, from: AgentState, to: AgentState };
+
+/// The sessions whose state changed between two listings (a session
+/// new to the listing is no edge). Slices borrow `new`.
+pub fn stateEdges(arena: Allocator, old: []const Item, new: []const Item) Allocator.Error![]Edge {
+    var out: std.ArrayListUnmanaged(Edge) = .empty;
+    for (new) |n| for (old) |o| if (std.mem.eql(u8, o.session_id, n.session_id)) {
+        if (o.state != n.state) try out.append(arena, .{ .session_id = n.session_id, .from = o.state, .to = n.state });
+        break;
+    };
+    return out.items;
+}
+
+/// Once per edge: a session that starts `waiting` toasts (warn), badges
+/// its pty tab and rings the bell under `ui.session_bell`; one that
+/// `failed` toasts (err). The other edges are quiet — the rows show them.
+fn announceEdges(app: *App, edges: []const Edge) Allocator.Error!void {
+    for (edges) |e| {
+        const it = findItem(app, e.session_id) orelse continue;
+        switch (e.to) {
+            .waiting => {
+                try app.toastLevel(.warn, "session needs input: {s}", .{displayName(app, it)});
+                if (ptyPaneOf(app, e.session_id)) |id| if (app.panes.get(id)) |pane| if (pane.* == .pty) {
+                    pane.pty.attention = true;
+                };
+                if (app.cfg.ui.session_bell) app.bell_pending = true;
+            },
+            .failed => try app.toastLevel(.err, "session failed: {s}", .{displayName(app, it)}),
+            else => {},
+        }
+    }
+}
+
+/// Wall-clock seconds now, the clock `Item.last_activity_s` is on: the
+/// snapshot's, moved on by the awake clock since. `App.now_ms` alone is
+/// the awake clock — seconds since boot — and reads every session as
+/// `now` (// changed: the table's age column and hidden-ended rule
+/// compared the two clocks and hid nothing).
+pub fn wallNowS(app: *App) i64 {
+    const st = &app.sessions;
+    return st.snapshot_at_s + @divFloor(app.now_ms - st.snapshot_at_ms, 1000);
+}
+
+pub fn findItem(app: *App, session_id: []const u8) ?Item {
+    for (app.sessions.items) |it| if (std.mem.eql(u8, it.session_id, session_id)) return it;
+    return null;
+}
+
+/// State order: the state's own rank (waiting first, then live, tool,
+/// idle, failed, done); newest within a rank.
 fn rank(it: Item) u8 {
-    if (it.needs_approval) return 0;
-    return 1 + it.state.rank();
+    return it.state.rank();
 }
 
 /// Workspace, state filter and the `/` text narrow; then pinned
@@ -422,7 +578,8 @@ fn matches(app: *App, it: Item, q: []const u8) bool {
     if (app.sessions.alias(it.session_id)) |a| if (todos.containsIgnoreCase(a, q)) return true;
     if (it.last_user_msg) |m| if (todos.containsIgnoreCase(m, q)) return true;
     return todos.containsIgnoreCase(it.session_id, q) or todos.containsIgnoreCase(it.workspace, q) or
-        todos.containsIgnoreCase(it.source.label(), q) or todos.containsIgnoreCase(@tagName(it.state), q);
+        todos.containsIgnoreCase(it.source.label(), q) or todos.containsIgnoreCase(it.state.label(), q) or
+        todos.containsIgnoreCase(it.where.label(), q);
 }
 
 /// The alias, else the last prompt, else the id's first eight characters.
@@ -441,17 +598,24 @@ pub fn setSort(app: *App, sort: SessionsSort) Allocator.Error!void {
     app.needs_render = true;
 }
 
-/// Every tick: a shown panel rescans on the dashboard's cadence.
+/// Whether a view of the rows is on screen and wants the cadence: the
+/// section shown with auto-refresh on, or a table pane not paused.
+pub fn wantsScan(app: *const App) bool {
+    if (side.isShown(app, .sessions) and auto_refresh.on(app, .sessions)) return true;
+    return sessions_table.wantsScan(app);
+}
+
+/// Every tick: a shown view rescans on the cadence.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
-    if (!side.isShown(app, .sessions) or st.scanning or !st.scanned_once or !auto_refresh.on(app, .sessions)) return;
+    if (st.scanning or !st.scanned_once or !wantsScan(app)) return;
     if (now - st.last_scan_ms < refresh_ms) return;
     refresh(app) catch {};
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.sessions;
-    if (!side.isShown(app, .sessions) or !st.scanned_once) return null;
+    if (!st.scanned_once or !wantsScan(app)) return null;
     if (st.scanning) return app.now_ms + 80;
     return st.last_scan_ms + refresh_ms;
 }
@@ -494,17 +658,25 @@ pub fn sortLabel(s: SessionsSort) []const u8 {
 
 pub const sort_widest: usize = 6;
 
-/// `f`: the state filter cycles every → live → tool → idle → ended.
+/// `f`: the state filter cycles every → waiting → live → tool → idle
+/// → failed → done → every. The table has its own filter.
 fn cycleStateCmd(app: *App) CommandError!void {
+    if (sessions_table.focused(app)) |tp| return sessions_table.cycleState(app, tp);
     const st = &app.sessions;
-    st.state_filter = if (st.state_filter) |s| switch (s) {
-        .streaming => .tool_call,
-        .tool_call => .idle,
-        .idle => .ended,
-        .ended => null,
-    } else .streaming;
+    st.state_filter = AgentState.next(st.state_filter);
     try refilter(app);
     app.needs_render = true;
+}
+
+/// The row a session command acts on: the table's cursor when the
+/// table pane has the keys, else the section's.
+pub fn current(app: *App) ?Item {
+    if (sessions_table.focused(app)) |tp| return tp.selectedItem(app);
+    return app.sessions.selected();
+}
+
+fn currentOrFail(app: *App) CommandError!Item {
+    return current(app) orelse app.diag.fail(app.frame.allocator(), "sessions: nothing selected", .{});
 }
 
 /// `w`: this workspace's sessions, or every workspace's.
@@ -520,7 +692,7 @@ fn allWorkspacesCmd(app: *App) CommandError!void {
 fn pinCmd(app: *App) CommandError!void {
     const st = &app.sessions;
     const arena = app.frame.allocator();
-    const it = st.selected() orelse return app.diag.fail(arena, "sessions: nothing selected", .{});
+    const it = try currentOrFail(app);
     const id = try arena.dupe(u8, it.session_id);
     const pinned = try st.togglePin(app.gpa, id);
     try refilter(app);
@@ -528,21 +700,43 @@ fn pinCmd(app: *App) CommandError!void {
         st.list.cursor = vi;
         break;
     };
+    try sessions_table.onSnapshot(app);
     app.needs_render = true;
-    app.toast("{s} {s}", .{ if (pinned) "pinned" else "unpinned", displayName(app, st.selected() orelse it) });
+    app.toast("{s} {s}", .{ if (pinned) "pinned" else "unpinned", displayName(app, it) });
 }
 
-/// The `+ New session` row and the chip's left click: a fresh Claude
-/// Code session, what Rust's chip runs.
+/// The `+ New session` row (Enter, a click) and `sessions.new_menu`:
+/// the choices — a local session, a batch of them, a cloud run — as a
+/// menu under the row.
+/// // changed (sessions-merge): was `ai.claude_code_new` outright; the
+/// cloud wizards are choices here now.
 fn newCmd(app: *App) CommandError!void {
-    return command.run(app, .{ .static = new_command });
+    const at = newRowAnchor(app);
+    return openNewMenu(app, at.x, at.y);
+}
+
+fn newMenuCmd(app: *App) CommandError!void {
+    return newCmd(app);
+}
+
+/// Where the New row painted last frame, else the top-left.
+fn newRowAnchor(app: *App) struct { x: u16, y: u16 } {
+    for (app.hits.items.items) |h| switch (h.target) {
+        .chip => |c| if (c.panel == .sessions and c.kind == .new) return .{ .x = h.rect.x, .y = h.rect.y + 1 },
+        .script_hit => |sh| if (sh.id == hit.ListHit.chip(.new)) {
+            if (app.panes.get(sh.pane)) |p| if (p.* == .sessions_table) return .{ .x = h.rect.x, .y = h.rect.y + 1 };
+        },
+        else => {},
+    };
+    return .{ .x = 0, .y = 1 };
 }
 
 /// Enter / double-click / the menu's Resume row: resume the session in
-/// a pty pane to the right, in its own cwd.
+/// a pty pane to the right, in its own cwd. A cloud row opens its run.
 fn openCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    const it = app.sessions.selected() orelse return app.diag.fail(arena, "sessions: nothing selected", .{});
+    const it = try currentOrFail(app);
+    if (it.where == .cloud) return cloud_agents.openRun(app, it);
     const argv: []const []const u8 = switch (it.source) {
         .claude => try cli.claudeResumeArgv(arena, try arena.dupe(u8, it.session_id)),
         .codex => &.{cli.codex_binary},
@@ -554,7 +748,8 @@ fn openCmd(app: *App) CommandError!void {
 /// The transcript itself, in an editor.
 fn openTranscriptCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    const it = app.sessions.selected() orelse return app.diag.fail(arena, "sessions: nothing selected", .{});
+    const it = try currentOrFail(app);
+    if (it.where == .cloud) return cloud_agents.tailLog(app, it);
     const path = try arena.dupe(u8, it.transcript_path);
     _ = app.openPath(path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -564,11 +759,10 @@ fn openTranscriptCmd(app: *App) CommandError!void {
 
 /// A prompt seeded with the current name; empty resets to the default.
 fn renameCmd(app: *App) CommandError!void {
-    const it = app.sessions.selected() orelse return app.diag.fail(app.frame.allocator(), "sessions: nothing selected", .{});
+    const it = try currentOrFail(app);
     const id = try app.gpa.dupe(u8, it.session_id);
     errdefer app.gpa.free(id);
-    const current = app.sessions.alias(it.session_id) orelse "";
-    const seed = try app.frame.allocator().dupe(u8, current);
+    const seed = try app.frame.allocator().dupe(u8, app.sessions.alias(it.session_id) orelse "");
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Rename session (empty = reset to default)"), .purpose = .{ .sessions_rename = id } } };
     app.overlay.prompt.state.setText(app.gpa, seed) catch return error.OutOfMemory;
@@ -580,22 +774,103 @@ fn renameCmd(app: *App) CommandError!void {
 pub fn acceptRename(app: *App, id: []const u8, text: []const u8) Allocator.Error!void {
     try app.sessions.setAlias(app.gpa, id, std.mem.trim(u8, text, " \t\r\n"));
     try refilter(app);
+    try sessions_table.onSnapshot(app);
     app.needs_render = true;
 }
 
 fn copyIdCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    const it = app.sessions.selected() orelse return app.diag.fail(arena, "sessions: nothing selected", .{});
+    const it = try currentOrFail(app);
     const text = try arena.dupe(u8, it.session_id);
     try app.clipboard.setYank(text, false);
     app.toast("copied {s}", .{text});
+}
+
+/// `c`: the session's working directory to the clipboard.
+fn copyCwdCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const it = try currentOrFail(app);
+    const cwd = it.cwd orelse return app.diag.fail(arena, "sessions: the session has no cwd", .{});
+    const text = try arena.dupe(u8, cwd);
+    try app.clipboard.setYank(text, false);
+    app.toast("copied {s}", .{text});
+}
+
+/// `e`: the transcript as markdown under `.mnml/claude-exports/`,
+/// opened in an editor.
+fn exportCmd(app: *App) CommandError!void {
+    const it = try currentOrFail(app);
+    if (it.where == .cloud) return app.diag.fail(app.frame.allocator(), "sessions: a cloud run has no transcript to export — tail its log", .{});
+    const gpa = app.gpa;
+    const arena = app.frame.allocator();
+    const text = Io.Dir.cwd().readFileAlloc(app.io, it.transcript_path, gpa, .limited(64 * 1024 * 1024)) catch |err| return app.diag.fail(arena, "read {s}: {s}", .{ it.transcript_path, @errorName(err) });
+    defer gpa.free(text);
+    const md = try agents.transcriptMarkdown(arena, it, text);
+    const dir = try std.fs.path.join(arena, &.{ app.workspace, ".mnml", "claude-exports" });
+    Io.Dir.cwd().createDirPath(app.io, dir) catch {};
+    const short = it.session_id[0..@min(8, it.session_id.len)];
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}-{d}.md", .{ dir, short, app.now_ms });
+    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = md }) catch |err| return app.diag.fail(arena, "write {s}: {s}", .{ path, @errorName(err) });
+    _ = app.openPath(path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+    app.toast("exported {s}", .{app.relPath(path)});
+}
+
+/// `K`: SIGTERM the current session — or, from the table, every ticked
+/// one — after a confirm. A cloud row cancels its run instead.
+fn killCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    var pids: std.ArrayListUnmanaged(u32) = .empty;
+    if (sessions_table.focused(app)) |tp| {
+        if (tp.multi.count() > 0) {
+            for (app.sessions.items) |r| if (r.pid) |pid| if (tp.multi.contains(r.session_id)) try pids.append(arena, pid);
+        }
+    }
+    if (pids.items.len == 0) {
+        const it = try currentOrFail(app);
+        if (it.where == .cloud) return cloud_agents.cancelRun(app, it);
+        if (it.pid) |pid| try pids.append(arena, pid);
+    }
+    if (pids.items.len == 0) return app.diag.fail(arena, "sessions: nothing to kill (no live process)", .{});
+    const owned = try app.gpa.dupe(u32, pids.items);
+    errdefer app.gpa.free(owned);
+    const msg = try std.fmt.allocPrint(app.gpa, "  SIGTERM {d} session{s}?", .{ owned.len, if (owned.len == 1) "" else "s" });
+    errdefer app.gpa.free(msg);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = "Kill sessions", .message = msg, .choices = &kill_choices },
+        .purpose = .{ .kill_pids = owned },
+        .message = msg,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+pub const kill_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'k', .label = "Kill" }, .{ .key = 'c', .label = "Cancel" } };
+
+/// The confirm's yes: `kill -TERM` each pid, the ticks cleared, a rescan.
+pub fn killAccept(app: *App, pids: []const u32) Allocator.Error!void {
+    var n: usize = 0;
+    for (pids) |pid| {
+        const arg = try std.fmt.allocPrint(app.frame.allocator(), "{d}", .{pid});
+        const result = std.process.run(app.gpa, app.io, .{ .argv = &.{ "kill", "-TERM", arg } }) catch continue;
+        app.gpa.free(result.stdout);
+        app.gpa.free(result.stderr);
+        if (result.term == .exited and result.term.exited == 0) n += 1;
+    }
+    app.toast("sent SIGTERM to {d} of {d}", .{ n, pids.len });
+    sessions_table.clearAllMulti(app);
+    refresh(app) catch {};
 }
 
 /// Delete the transcript after a confirm. A live session is refused:
 /// its process would keep writing to a file that is gone.
 fn deleteCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    const it = app.sessions.selected() orelse return app.diag.fail(arena, "sessions: nothing selected", .{});
+    const it = try currentOrFail(app);
+    if (it.where == .cloud) return app.diag.fail(arena, "sessions: a cloud run has no transcript here — cancel it instead", .{});
     if (it.pid != null) return app.diag.fail(arena, "sessions: {s} is running — end it first", .{displayName(app, it)});
     const path = try app.gpa.dupe(u8, it.transcript_path);
     errdefer app.gpa.free(path);
@@ -653,14 +928,50 @@ fn moveBy(app: *App, delta: i32) CommandError!void {
     const ia = st.orderIndex(a).?;
     const ib = st.orderIndex(b).?;
     std.mem.swap([]u8, &st.order.items[ia], &st.order.items[ib]);
-    if (st.sort != .manual) {
-        st.sort = .manual;
-        app.cfg.ui.sessions_sort = .manual;
-        _ = try settings.persist(app, .workspace, &.{ "ui", "sessions_sort" }, SessionsSort.manual);
-    }
+    try adoptManualAxis(app);
     try refilter(app);
     st.list.cursor = @intCast(target);
     app.needs_render = true;
+}
+
+/// The row menu's Move to top / Move to bottom (Rust's
+/// `SessionMoveToTop` / `SessionMoveToBottom`): the selected row leads,
+/// or ends, the manual order — pins still lead the list.
+fn moveTopCmd(app: *App) CommandError!void {
+    return moveTo(app, .top);
+}
+
+fn moveBottomCmd(app: *App) CommandError!void {
+    return moveTo(app, .bottom);
+}
+
+fn moveTo(app: *App, end: enum { top, bottom }) CommandError!void {
+    const st = &app.sessions;
+    if (st.filtered.items.len == 0) return app.diag.fail(app.frame.allocator(), "sessions: nothing selected", .{});
+    try adoptVisibleOrder(app);
+    const id = st.items[st.filtered.items[st.list.cursor]].session_id;
+    const owned = st.order.orderedRemove(st.orderIndex(id).?);
+    errdefer app.gpa.free(owned);
+    switch (end) {
+        .top => try st.order.insert(app.gpa, 0, owned),
+        .bottom => try st.order.append(app.gpa, owned),
+    }
+    try adoptManualAxis(app);
+    try refilter(app);
+    for (st.filtered.items, 0..) |idx, vi| if (std.mem.eql(u8, st.items[idx].session_id, owned)) {
+        st.list.cursor = vi;
+        break;
+    };
+    app.needs_render = true;
+}
+
+/// A move lands on the manual axis; the switch persists like the chip's.
+fn adoptManualAxis(app: *App) Allocator.Error!void {
+    const st = &app.sessions;
+    if (st.sort == .manual) return;
+    st.sort = .manual;
+    app.cfg.ui.sessions_sort = .manual;
+    _ = try settings.persist(app, .workspace, &.{ "ui", "sessions_sort" }, SessionsSort.manual);
 }
 
 /// Every visible id joins the manual list, in the order shown, after
@@ -714,6 +1025,10 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
                 'o' => runToast(app, openTranscriptCmd(app)),
                 'R' => runToast(app, renameCmd(app)),
                 'y' => runToast(app, copyIdCmd(app)),
+                'c' => runToast(app, copyCwdCmd(app)),
+                'e' => runToast(app, exportCmd(app)),
+                'S' => runToast(app, killCmd(app)),
+                't' => runToast(app, sessions_table.openCmd(app)),
                 'x' => runToast(app, deleteCmd(app)),
                 'J' => runToast(app, moveDownCmd(app)),
                 'K' => runToast(app, moveUpCmd(app)),
@@ -769,8 +1084,8 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, refresh(app)),
-        .new => if (m.button == .right) try openNewMenu(app, m.x, m.y) else runToast(app, newCmd(app)),
-        .view => {},
+        .new => try openNewMenu(app, m.x, m.y + 1),
+        .view => runToast(app, sessions_table.openCmd(app)),
     }
 }
 
@@ -802,34 +1117,88 @@ pub fn focusPanel(app: *App) void {
     app.needs_render = true;
 }
 
-/// Rust's row menu leads with Pin, Move up, Move down, Rename…; the
-/// transcript rows are this module's.
-fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const pinned = if (app.sessions.selected()) |it| app.sessions.isPinned(it.session_id) else false;
-    const items = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = if (pinned) "Unpin" else "Pin", .action = .{ .command = .@"sessions.pin" } },
-        .{ .label = "Move up", .action = .{ .command = .@"sessions.move_up" } },
-        .{ .label = "Move down", .action = .{ .command = .@"sessions.move_down" } },
-        .{ .label = "Rename…", .action = .{ .command = .@"sessions.rename" } },
-        .{ .label = "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true },
-        .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" } },
-        .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } },
-        .{ .label = "Delete transcript…", .action = .{ .command = .@"sessions.delete" }, .separator_before = true },
-    });
-    errdefer app.gpa.free(items);
-    try app.openMenu("Session", items, x, y);
+/// Rust's row menu leads with Pin, Move up / down / to top / to bottom,
+/// the Auto sort tick, Rename…; the transcript rows are this module's.
+/// The section's and the table's rows share it (`sessions_table` calls
+/// it with `.table`; the table has no manual order, so no move rows).
+/// A cloud row is titled by its run (Rust's `workspace · runId`) and
+/// offers the run's links: CloudWatch when the account, region and log
+/// group are configured, the PR when the record names one.
+/// // right-click (#11, #15): the to-top / to-bottom / Auto sort rows
+/// and the two links. Rust's colour rows tint a pty pane's card; these
+/// rows are transcripts with no colour model, so there are none.
+pub fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    return openRowMenuFor(app, .section, x, y);
 }
 
-/// The chip's right click, Rust's batch menu: one session, or a cluster.
-fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+pub const MenuHost = enum { section, table };
+
+pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error!void {
+    const it = current(app);
+    const pinned = if (it) |i| app.sessions.isPinned(i.session_id) else false;
+    const cloud = if (it) |i| i.where == .cloud else false;
+    const live = if (it) |i| i.pid != null else false;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    try items.append(app.gpa, .{ .label = if (pinned) "Unpin" else "Pin", .action = .{ .command = .@"sessions.pin" } });
+    if (host == .section) {
+        try items.append(app.gpa, .{ .label = "Move up", .action = .{ .command = .@"sessions.move_up" } });
+        try items.append(app.gpa, .{ .label = "Move down", .action = .{ .command = .@"sessions.move_down" } });
+        try items.append(app.gpa, .{ .label = "Move to top", .action = .{ .command = .@"sessions.move_top" } });
+        try items.append(app.gpa, .{ .label = "Move to bottom", .action = .{ .command = .@"sessions.move_bottom" } });
+        try items.append(app.gpa, .{ .label = "Auto sort", .action = .{ .command = .@"sessions.sort_auto" }, .checked = app.sessions.sort == .auto });
+    }
+    try items.append(app.gpa, .{ .label = "Rename…", .action = .{ .command = .@"sessions.rename" } });
+    var title: []const u8 = "Session";
+    if (cloud) {
+        const i = it.?;
+        title = try std.fmt.allocPrint(arena, "{s} · {s}", .{ i.workspace, i.session_id });
+        try items.append(app.gpa, .{ .label = "Open run", .action = .{ .command = .@"sessions.cloud_open" }, .separator_before = true });
+        try items.append(app.gpa, .{ .label = "Tail log", .action = .{ .command = .@"sessions.cloud_tail" } });
+        try items.append(app.gpa, .{ .label = "Copy run id", .action = .{ .command = .@"sessions.copy_id" } });
+        const cfg = &app.cfg.cloud_agents;
+        if (try cloud_agents.cloudwatchUrl(arena, cloud_agents.regionOf(cfg, &app.env), cfg.account_id, cfg.log_group, i.session_id)) |url| {
+            try items.append(app.gpa, .{ .label = "Open CloudWatch in browser", .action = .{ .open_url = url }, .separator_before = true });
+        }
+        if (i.cloud) |c| if (c.pr_url) |pr| {
+            try items.append(app.gpa, .{ .label = "Open PR", .action = .{ .open_url = try arena.dupe(u8, pr) } });
+        };
+        try items.append(app.gpa, .{ .label = "Cancel run…", .action = .{ .command = .@"sessions.cloud_cancel" }, .separator_before = true });
+    } else {
+        try items.append(app.gpa, .{ .label = "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true });
+        try items.append(app.gpa, .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" } });
+        try items.append(app.gpa, .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } });
+        try items.append(app.gpa, .{ .label = "Copy working directory", .action = .{ .command = .@"sessions.copy_cwd" } });
+        try items.append(app.gpa, .{ .label = "Export as markdown…", .action = .{ .command = .@"sessions.export" } });
+        if (live) try items.append(app.gpa, .{ .label = "Kill session…", .action = .{ .command = .@"sessions.kill" }, .separator_before = true });
+        try items.append(app.gpa, .{ .label = "Delete transcript…", .action = .{ .command = .@"sessions.delete" }, .separator_before = !live });
+    }
+    if (host == .section) try items.append(app.gpa, .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" }, .separator_before = true });
+    const owned = try items.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu(title, owned, x, y);
+    app.overlay.menu.mem = mem;
+}
+
+/// The `+ New session` menu: a local session, a batch (Rust's ×2 / ×4
+/// / ×8), and — the cloud wizards' new home — a cloud run by ticket or
+/// through the wizard. The cloud rows say when the API is not
+/// configured rather than hide.
+pub fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cloud_ok = cloud_agents.configured(&app.cfg.cloud_agents, &app.env);
     const items = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = "New session", .action = .{ .command = .@"ai.claude_code_new" } },
+        .{ .label = "New local session", .action = .{ .command = .@"ai.claude_code_new" } },
         .{ .label = "Open ×2", .action = .{ .command = .@"ai.claude_code_new_x2" } },
         .{ .label = "Open ×4", .action = .{ .command = .@"ai.claude_code_new_x4" } },
         .{ .label = "Open ×8", .action = .{ .command = .@"ai.claude_code_new_x8" } },
+        .{ .label = if (cloud_ok) "New cloud run…" else "New cloud run… (not configured)", .action = .{ .command = .@"cloud_agents.new_run" }, .separator_before = true },
+        .{ .label = if (cloud_ok) "New cloud run (wizard)…" else "New cloud run (wizard)… (not configured)", .action = .{ .command = .@"cloud_agents.new_run_wizard" } },
     });
     errdefer app.gpa.free(items);
-    try app.openMenu("New Claude sessions", items, x, y);
+    try app.openMenu("New session", items, x, y);
 }
 
 /// SESSIONS' own axis: the two modes name their commands directly.
@@ -848,7 +1217,7 @@ fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 pub const card_h: u16 = 4;
 pub const card_gap: u16 = 1;
 pub const new_label = "+ New session";
-/// What the `+ New session` row runs — Rust's chip runs the same.
+/// The menu's first row — what Rust's chip runs outright.
 pub const new_command: command.CommandId = .@"ai.claude_code_new";
 
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
@@ -865,7 +1234,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const subtitle = if (!narrowed)
         ui.fmt(" ({d})", .{in_ws})
     else if (st.state_filter) |s|
-        ui.fmt(" ({d} of {d} · {s})", .{ rows.len, in_ws, @tagName(s) })
+        ui.fmt(" ({d} of {d} · {s})", .{ rows.len, in_ws, s.label() })
     else
         ui.fmt(" ({d} of {d})", .{ rows.len, in_ws });
     const no_home = st.home == null and envHome(app) == null;
@@ -905,9 +1274,9 @@ pub fn rowView(app: *App, arena: Allocator, it: Item) Allocator.Error!RowView {
     const name = displayName(app, it);
     var lines: std.ArrayListUnmanaged([]const u8) = .empty;
     var kind: Summary = .text;
-    if (it.state == .ended) {
+    if (it.state.ended()) {
         kind = .exited;
-        try lines.append(arena, "exited");
+        try lines.append(arena, if (it.state == .failed) "failed" else "exited");
     } else {
         if (it.last_user_msg) |m| if (try collapseWs(arena, m)) |c| try lines.append(arena, try std.fmt.allocPrint(arena, "you: {s}", .{c}));
         if (it.last_assistant_msg) |m| if (try collapseWs(arena, m)) |c| try lines.append(arena, try std.fmt.allocPrint(arena, "claude: {s}", .{c}));
@@ -943,14 +1312,18 @@ fn collapseWs(arena: Allocator, s: []const u8) Allocator.Error!?[]const u8 {
 /// The session's resumed pty pane is the active pane: its argv names the id.
 fn isActive(app: *App, sid: []const u8) bool {
     const a = app.active orelse return false;
-    const pane = app.panes.get(a) orelse return false;
-    switch (pane.*) {
+    return ptyPaneOf(app, sid) == a;
+}
+
+/// The pty pane hosting this session — its argv names the id.
+pub fn ptyPaneOf(app: *App, sid: []const u8) ?app_mod.PaneId {
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
         .pty => |*p| for (p.argv) |arg| {
-            if (std.mem.eql(u8, arg, sid)) return true;
+            if (std.mem.eql(u8, arg, sid)) return @intCast(i);
         },
         else => {},
-    }
-    return false;
+    };
+    return null;
 }
 
 /// Rust's `detect_ticket`: the first `<prefix><digits>` in `candidates`
@@ -1067,11 +1440,9 @@ const Fixture = struct {
     }
 };
 
-fn item(id: []const u8, state: AgentState, at: i64, ws: []const u8, msg: ?[]const u8) Item {
-    return .{ .source = .claude, .session_id = id, .workspace = ws, .cwd = null, .transcript_path = "/t", .state = state, .pid = null, .last_activity_s = at, .last_user_msg = msg, .last_assistant_msg = null, .needs_approval = false };
-}
+const item = testItem;
 
-test "refilter: this workspace only unless toggled; State ranks approval, live, tool, idle, ended; Manual follows the order list then recency" {
+test "refilter: this workspace only unless toggled; State ranks waiting, live, tool, idle, ended; Manual follows the order list then recency" {
     var f = try Fixture.init(80, 20);
     defer f.deinit();
     const st = &f.app.sessions;
@@ -1079,11 +1450,10 @@ test "refilter: this workspace only unless toggled; State ranks approval, live, 
     const r = try ScanResult.create(testing.allocator, 1);
     const items = try r.arena.allocator().alloc(Item, 5);
     items[0] = item("idle-old", .idle, 10, ws, "fix the tests");
-    items[1] = item("ended", .ended, 50, ws, null);
+    items[1] = item("ended", .done, 50, ws, null);
     items[2] = item("live", .streaming, 20, ws, "ship it");
     items[3] = item("elsewhere", .streaming, 99, "other", null);
-    items[4] = item("waiting", .idle, 30, ws, "approve?");
-    items[4].needs_approval = true;
+    items[4] = item("waiting", .waiting, 30, ws, "approve?");
     r.items = items;
     st.generation = 1;
     try handle(&f.app, r);
@@ -1102,7 +1472,10 @@ test "refilter: this workspace only unless toggled; State ranks approval, live, 
     // The state filter.
     st.state_filter = .idle;
     try refilter(&f.app);
-    try testing.expectEqual(@as(usize, 2), st.filtered.items.len);
+    try testing.expectEqual(@as(usize, 1), st.filtered.items.len);
+    st.state_filter = .waiting;
+    try refilter(&f.app);
+    try testing.expectEqual(@as(usize, 1), st.filtered.items.len);
     st.state_filter = null;
     // Manual: the order list first, the rest by recency.
     try st.order.append(testing.allocator, try testing.allocator.dupe(u8, "ended"));
@@ -1140,7 +1513,7 @@ test "scanInto over a fixture home lists the dashboard's sessions in this module
     try f.seedHome();
     const r = try ScanResult.create(testing.allocator, 1);
     defer r.destroy(testing.allocator);
-    try scanInto(testing.io, testing.allocator, f.app.sessions.home.?, f.root, r);
+    try scanInto(testing.io, testing.allocator, f.app.sessions.home.?, f.root, null, r);
     try testing.expectEqual(@as(usize, 2), r.items.len);
     var claude_seen = false;
     for (r.items) |it| if (it.source == .claude) {
@@ -1148,7 +1521,9 @@ test "scanInto over a fixture home lists the dashboard's sessions in this module
         try testing.expectEqualStrings("aaaaaaaa-0000-4000-8000-000000000001", it.session_id);
         try testing.expectEqualStrings("mnml", it.workspace);
         try testing.expect(std.mem.endsWith(u8, it.transcript_path, ".jsonl"));
-        try testing.expectEqual(AgentState.ended, it.state);
+        try testing.expectEqual(AgentState.done, it.state);
+        try testing.expectEqualStrings("/Users/me/Projects/mnml", it.groupKey());
+        try testing.expectEqualStrings("mnml", it.groupLabel());
     };
     try testing.expect(claude_seen);
 }
@@ -1209,8 +1584,9 @@ test "headless: the panel lists every workspace's sessions after w, J adopts the
     try testing.expect(row0 != null and sort_chip != null);
     try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 8), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 14), f.app.overlay.menu.items.len);
     for (f.app.overlay.menu.items) |it| try testing.expect(it.action == .command);
+    try testing.expectEqualStrings("Open as a table", f.app.overlay.menu.items[13].label);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try f.app.handle(.{ .mouse = .{ .x = sort_chip.?.x + 1, .y = sort_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
@@ -1311,7 +1687,7 @@ fn cardProps(rows: []const RowView) Panel.Props {
 /// The three cards of `rust-sessions-120x40.txt`, as `rowView` builds them.
 fn specCards() [3]RowView {
     return .{
-        .{ .item = item("5e551011-0000-4000-8000-000000000003", .ended, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{"exited"}, .kind = .exited },
+        .{ .item = item("5e551011-0000-4000-8000-000000000003", .done, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{"exited"}, .kind = .exited },
         .{ .item = item("5e551011-0000-4000-8000-000000000001", .streaming, 3, "ws", "fix the failing tests in src/main.rs"), .name = "fix the failing tests in src/main.rs", .lines = &.{ "you: fix the failing tests in src/main.rs", "claude: Running the suite first to see which ones fail." }, .kind = .text },
         .{ .item = item("5e551011-0000-4000-8000-000000000002", .idle, 2, "ws", "add a --json flag to the CLI"), .name = "release train", .lines = &.{ "you: add a --json flag to the CLI", "claude: Added the flag and a test for it. Anything else?" }, .kind = .text },
     };
@@ -1391,9 +1767,12 @@ test "the summary rows: the last exchange collapsed, exited alone for an ended s
     try testing.expectEqualStrings("claude: On it. Running them now.", v.lines[1]);
     try testing.expectEqualStrings("fix  the   tests", v.name);
     try testing.expect(!v.pinned and !v.active and v.ticket == null);
-    const ended = try rowView(&f.app, arena, item("gone", .ended, 1, "ws", "anything"));
+    const ended = try rowView(&f.app, arena, item("gone", .done, 1, "ws", "anything"));
     try testing.expectEqual(Summary.exited, ended.kind);
     try testing.expectEqualStrings("exited", ended.lines[0]);
+    const failed = try rowView(&f.app, arena, item("bad", .failed, 1, "ws", "anything"));
+    try testing.expectEqual(Summary.exited, failed.kind);
+    try testing.expectEqualStrings("failed", failed.lines[0]);
     const bare = try rowView(&f.app, arena, item("bare", .idle, 1, "ws", "   "));
     try testing.expectEqual(Summary.none, bare.kind);
     try testing.expectEqualStrings("—", bare.lines[0]);
@@ -1424,7 +1803,7 @@ test "pins lead the list on either axis; p toggles and follows the session; the 
     const items = try r.arena.allocator().alloc(Item, 3);
     items[0] = item("live", .streaming, 30, ws, "ship it");
     items[1] = item("idle", .idle, 20, ws, "fix the tests");
-    items[2] = item("gone", .ended, 10, ws, "notes");
+    items[2] = item("gone", .done, 10, ws, "notes");
     r.items = items;
     st.generation = 1;
     try handle(&f.app, r);
@@ -1470,7 +1849,11 @@ test "pins lead the list on either axis; p toggles and follows the session; the 
     try testing.expectEqualStrings("Unpin", f.app.overlay.menu.items[0].label);
     try testing.expectEqual(command.CommandId.@"sessions.pin", f.app.overlay.menu.items[0].action.command);
     try testing.expectEqualStrings("Move up", f.app.overlay.menu.items[1].label);
-    try testing.expectEqualStrings("Rename…", f.app.overlay.menu.items[3].label);
+    try testing.expectEqualStrings("Move to bottom", f.app.overlay.menu.items[4].label);
+    try testing.expect(f.app.overlay.menu.items[5].checked);
+    try testing.expectEqualStrings("Rename…", f.app.overlay.menu.items[6].label);
+    // An ended session offers no Kill row; the separator sits on Delete.
+    for (f.app.overlay.menu.items) |mi| try testing.expect(!std.mem.eql(u8, mi.label, "Kill session…"));
     try f.app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(!st.isPinned("gone"));
     try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
@@ -1478,14 +1861,151 @@ test "pins lead the list on either axis; p toggles and follows the session; the 
     try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 3, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expectEqualStrings("Pin", f.app.overlay.menu.items[0].label);
     try f.app.handle(.{ .key = Key.named(.esc) });
-    // The New row runs Rust's command; its right click is the ×2 / ×4 / ×8 menu.
+    // The New row's click — either button — is the choice menu: Rust's
+    // command first, the batch rows, then the cloud wizards (naming
+    // their missing config here).
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new", new_command);
     try f.app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 4), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 6), f.app.overlay.menu.items.len);
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new", f.app.overlay.menu.items[0].action.command);
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x8", f.app.overlay.menu.items[3].action.command);
+    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run", f.app.overlay.menu.items[4].action.command);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.menu.items[4].label, "not configured") != null);
+    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run_wizard", f.app.overlay.menu.items[5].action.command);
     try f.app.handle(.{ .key = Key.named(.esc) });
+    try f.app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .left } });
+    try testing.expect(f.app.overlay == .menu);
+    try testing.expectEqual(@as(usize, 6), f.app.overlay.menu.items.len);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "Move to top / bottom lead or end the manual order under the pins; a cloud row's menu is titled by its run and links CloudWatch and the PR when configured" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    const ws = std.fs.path.basename(f.root);
+    const r = try ScanResult.create(testing.allocator, 1);
+    const items = try r.arena.allocator().alloc(Item, 4);
+    items[0] = item("live", .streaming, 30, ws, "ship it");
+    items[1] = item("idle", .idle, 20, ws, "fix the tests");
+    items[2] = item("gone", .done, 10, ws, "notes");
+    items[3] = item("run-1", .streaming, 40, "cloud", "TE-1");
+    items[3].where = .cloud;
+    items[3].cloud = .{ .ticket = "TE-1", .pr_url = "https://example.test/pr/1" };
+    r.items = items;
+    st.generation = 1;
+    try handle(&f.app, r);
+    st.scanned_once = true;
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[2]].session_id);
+    // The ended row to the top: the axis flips to Manual and the row
+    // stays selected; then to the bottom.
+    st.list.cursor = 2;
+    try command.run(&f.app, .{ .static = .@"sessions.move_top" });
+    try testing.expectEqual(SessionsSort.manual, st.sort);
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqual(@as(usize, 0), st.list.cursor);
+    try command.run(&f.app, .{ .static = .@"sessions.move_bottom" });
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[2]].session_id);
+    try testing.expectEqual(@as(usize, 2), st.list.cursor);
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
+    // A pin still leads: idle pinned, then live to the top sits under it.
+    _ = try st.togglePin(testing.allocator, "idle");
+    try refilter(&f.app);
+    st.list.cursor = 1;
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[1]].session_id);
+    try command.run(&f.app, .{ .static = .@"sessions.move_top" });
+    try testing.expectEqualStrings("idle", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[1]].session_id);
+    // The menu's Auto sort row is unticked on the manual axis.
+    try openRowMenuFor(&f.app, .section, 0, 0);
+    try testing.expectEqualStrings("Auto sort", f.app.overlay.menu.items[5].label);
+    try testing.expect(!f.app.overlay.menu.items[5].checked);
+    try testing.expectEqual(command.CommandId.@"sessions.sort_auto", f.app.overlay.menu.items[5].action.command);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // The cloud row shows under `w`; its menu is the run's, with the PR
+    // link and — unconfigured — no CloudWatch row.
+    st.all_workspaces = true;
+    try refilter(&f.app);
+    for (st.filtered.items, 0..) |idx, vi| if (st.items[idx].where == .cloud) {
+        st.list.cursor = vi;
+    };
+    try openRowMenuFor(&f.app, .section, 0, 0);
+    try testing.expectEqualStrings("cloud · run-1", f.app.overlay.menu.title);
+    var saw_pr = false;
+    var saw_cw = false;
+    for (f.app.overlay.menu.items) |mi| {
+        if (std.mem.eql(u8, mi.label, "Open PR")) {
+            saw_pr = true;
+            try testing.expectEqualStrings("https://example.test/pr/1", mi.action.open_url);
+        }
+        if (std.mem.eql(u8, mi.label, "Open CloudWatch in browser")) saw_cw = true;
+        try testing.expect(!std.mem.eql(u8, mi.label, "Resume in a terminal"));
+    }
+    try testing.expect(saw_pr and !saw_cw);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // Configured, the CloudWatch row names the run's query.
+    f.app.cfg.cloud_agents.region = "eu-west-1";
+    f.app.cfg.cloud_agents.account_id = "123456789012";
+    f.app.cfg.cloud_agents.log_group = "/ecs/runner";
+    try openRowMenuFor(&f.app, .section, 0, 0);
+    saw_cw = false;
+    for (f.app.overlay.menu.items) |mi| if (std.mem.eql(u8, mi.label, "Open CloudWatch in browser")) {
+        saw_cw = true;
+        try testing.expect(std.mem.startsWith(u8, mi.action.open_url, "https://eu-west-1.console.aws.amazon.com/cloudwatch/"));
+        try testing.expect(std.mem.indexOf(u8, mi.action.open_url, "run-1") != null);
+        try testing.expect(std.mem.endsWith(u8, mi.action.open_url, "?account=123456789012"));
+    };
+    try testing.expect(saw_cw);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "state edges: the first listing is no edge; live → waiting toasts once (warn) and rings the bell only under ui.session_bell; the same listing again is quiet; failed toasts err" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    const ws = std.fs.path.basename(f.root);
+    const msgs = &f.app.messages.items;
+    const listing = struct {
+        fn post(fx: *Fixture, a: AgentState, b: AgentState) !void {
+            const r = try ScanResult.create(testing.allocator, 1);
+            const items = try r.arena.allocator().alloc(Item, 2);
+            items[0] = item("a", a, 30, std.fs.path.basename(fx.root), "approve?");
+            items[1] = item("b", b, 20, std.fs.path.basename(fx.root), "ship it");
+            r.items = items;
+            fx.app.sessions.generation = 1;
+            try handle(&fx.app, r);
+        }
+    };
+    _ = ws;
+    const before = msgs.items.len;
+    // A session that is already waiting when first listed is no edge.
+    try listing.post(&f, .waiting, .streaming);
+    try testing.expectEqual(before, msgs.items.len);
+    try testing.expect(!f.app.bell_pending);
+    // b goes waiting: one warn toast naming it; the bell is off by default.
+    try listing.post(&f, .waiting, .waiting);
+    try testing.expectEqual(before + 1, msgs.items.len);
+    try testing.expectEqualStrings("session needs input: ship it", msgs.items[msgs.items.len - 1].text);
+    try testing.expectEqual(app_mod.ToastLevel.warn, msgs.items[msgs.items.len - 1].level);
+    try testing.expect(!f.app.bell_pending);
+    // The same listing on the next tick: nothing new.
+    try listing.post(&f, .waiting, .waiting);
+    try listing.post(&f, .waiting, .waiting);
+    try testing.expectEqual(before + 1, msgs.items.len);
+    // Quiet edges say nothing; a → failed toasts err; b back to waiting
+    // rings the bell once the config asks.
+    try listing.post(&f, .streaming, .idle);
+    try testing.expectEqual(before + 1, msgs.items.len);
+    f.app.cfg.ui.session_bell = true;
+    try listing.post(&f, .failed, .waiting);
+    try testing.expectEqual(before + 3, msgs.items.len);
+    try testing.expectEqualStrings("session failed: approve?", msgs.items[msgs.items.len - 2].text);
+    try testing.expectEqual(app_mod.ToastLevel.err, msgs.items[msgs.items.len - 2].level);
+    try testing.expect(f.app.bell_pending);
+    // Sorted first in the section on either axis.
+    try testing.expectEqualStrings("b", st.items[st.filtered.items[0]].session_id);
 }
 
 test "a relative HOME is under the workspace: what a .test file seeds" {

@@ -50,7 +50,8 @@ pub const Segment = struct {
 /// spells them. Any other section is stored too — an integration's
 /// mount id is its own section — but these are the ones the chrome
 /// paints somewhere.
-pub const known_sections = [_][]const u8{ "explorer", "search", "git", "debug", "integrations", "sessions", "agents", "cloud_agents", "http", "notes", "todos", "findings", "scripts" };
+// // changed (sessions-merge): `agents` / `cloud_agents` left with their rail rows.
+pub const known_sections = [_][]const u8{ "explorer", "search", "git", "debug", "integrations", "sessions", "http", "notes", "todos", "findings", "scripts" };
 
 pub const State = struct {
     segments: std.ArrayListUnmanaged(Segment) = .empty,
@@ -429,7 +430,7 @@ test "segments: set replaces in place, clear removes, badges drop at zero" {
 
     for (known_sections) |s| try st.setBadge(t.allocator, s, 3);
     try t.expectEqual(@as(usize, known_sections.len), st.badges.count());
-    try t.expectEqual(@as(u32, 3), st.badge("cloud_agents"));
+    try t.expectEqual(@as(u32, 3), st.badge("sessions"));
     try t.expectEqual(@as(u32, 3 * (known_sections.len - 1)), st.badgeTotal("git"));
     try st.setBadge(t.allocator, "git", 7);
     try t.expectEqual(@as(u32, 7), st.badge("git"));
@@ -511,7 +512,7 @@ test "apply: the five tier-2 commands land in App state; notify toasts, error pi
     const lines = [_][]const u8{
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira\",\"text\":\"JIRA 3\",\"side\":\"left\",\"color\":\"cyan\",\"click_command\":\"app.quit\",\"priority\":150,\"min_width\":3,\"max_width\":12}",
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"ci\",\"text\":\"CI green\"}",
-        "{\"cmd\":\"set-activity-badge\",\"section\":\"agents\",\"count\":3}",
+        "{\"cmd\":\"set-activity-badge\",\"section\":\"sessions\",\"count\":3}",
         "{\"cmd\":\"set-activity-badge\",\"section\":\"git\",\"count\":2}",
         "{\"cmd\":\"notify\",\"text\":\"done\",\"title\":\"build\"}",
         "{\"cmd\":\"notify\",\"text\":\"boom\",\"title\":\"build\",\"level\":\"error\",\"source\":\"ci\"}",
@@ -532,7 +533,7 @@ test "apply: the five tier-2 commands land in App state; notify toasts, error pi
     try t.expectEqual(@as(u8, 150), seg.priority);
     try t.expectEqual(@as(u16, 3), seg.min_width);
     try t.expectEqual(@as(u16, 12), seg.max_width);
-    try t.expectEqual(@as(u32, 3), app.ipc_fx.badge("agents"));
+    try t.expectEqual(@as(u32, 3), app.ipc_fx.badge("sessions"));
     try t.expectEqual(@as(u32, 0), app.ipc_fx.badge("git"));
     // Two toasts: the info one expires, the error one is pinned under `ci`.
     try t.expectEqual(@as(usize, 2), app.toasts.items.len);

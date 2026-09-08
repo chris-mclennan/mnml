@@ -22,7 +22,7 @@ Actions that are not commands in Rust (`CopyPath`, `RevealInTree`,
 | # | Rust surface (rect) | Rust rows | Zig today | gap | owner | after |
 |---|---|---|---|---|---|---|
 | 1 | panel `⟳` chip: todos/notes/findings/sessions | `<panel>.refresh`, TogglePanelAutoRefresh | `todos.zig:838` `notes.zig:508` `findings.zig:672` `sessions.zig:771` → `auto_refresh.openRefreshMenu` | none | — | — |
-| 1b | `⟳` chip: agents pane, cloud agents | same | `agents.zig:848` `hit_refresh` left only; cloud panel | missing | sessions-merge | listed |
+| 1b | `⟳` chip: agents pane, cloud agents | same | the sessions table's `⟳` (`sessions_table.zig` `click`, `.refresh`) → `auto_refresh.openRefreshMenu`; the two panels are gone | none | sessions-merge | none |
 | 1c | `⟳` chip: git palette | `git.refresh` + auto toggle | `git_palette.zig:1057` left only | missing | me | `openRefreshMenu(.git)` |
 | 1d | `⟳` chip: HTTP, INTEGRATIONS (Zig-only) | — | `http_panel.zig:873` left only; `integrations.zig:1317` ✓ | missing (http) | me | `openRefreshMenu(.http)` |
 | 2 | `sort:` chip todos/notes/findings | SetPanelSort × ListSort (✓ current) | `todos.zig:837` `notes.zig:507` `findings.zig:671` | none | — | — |
@@ -34,14 +34,14 @@ Actions that are not commands in Rust (`CopyPath`, `RevealInTree`,
 | 8 | activity-bar gear | `view.settings`, `palette`, `view.help`, `theme.pick`, `view.about` | `activity_bar.zig:157` `openGearMenu` | none | — | — |
 | 9 | right-panel tab chip | SetRightPanelTab, CloseTab, CloseOtherRightPanelTabs, CloseAllRightPanelTabs, `view.toggle_right_panel` | `Button.right_tab` left = `view.focus_right_panel` | missing | me | Focus / Next / Previous / Close tab / Hide column |
 | 10 | right-panel `×` | same as 9 | `Button.right_close` left = `view.right_panel_close_tab` | missing | me | same menu |
-| 11 | session card (SESSIONS row) | SessionTogglePin, MoveUp/Down/ToTop/ToBottom, SessionSortAuto, SessionRename, color rows | `sessions.zig:745` `openRowMenu` (Pin, Move up/down, Rename…, Resume, Open transcript, Copy id, Delete…) | partial (to top / to bottom / colour) | sessions-merge | listed |
+| 11 | session card (SESSIONS row) | SessionTogglePin, MoveUp/Down/ToTop/ToBottom, SessionSortAuto, SessionRename, color rows | `sessions.zig` `openRowMenuFor` (Pin, Move up/down, Rename…, Resume, Open transcript, Copy id, Delete…) | partial (to top / to bottom / colour) | sessions-merge | partial: Move to top / Move to bottom (`sessions.move_top` / `_bottom`) and a ✓ Auto sort row (`sessions.sort_auto`) added; the colour rows tint a pty pane's card in Rust — Zig's rows are transcripts with no colour model, accepted |
 | 12 | `+ New session` chip | `ai.claude_code_new`, `_x2`, `_x4`, `_x8` | `sessions.zig:772` `openNewMenu` | none | — | — |
 | 13 | dock widget body / title / kebab | the kebab menu | `dock.zig:877` | none | — | — |
 | 14 | Claude Agents dashboard row | `ai.dashboard.open_transcript`, `resume_in_pty`, `yank_session_id`, `yank_cwd`, `export_markdown`, `kill` | `agents.zig:828` `openRowMenu` | none | sessions-merge | — |
-| 15 | Cloud Agents row | CopyText(runId), OpenUrl(CloudWatch), OpenUrl(PR), OpenCloudAgentRunDetail | cloud panel (sessions-merge) | — | sessions-merge | listed |
-| 16 | dashboard Files drill-down row | OpenPath, RevealInTree, RevealInFinder, CopyPath, OpenExternally | — | — | sessions-merge | listed |
+| 15 | Cloud Agents row | CopyText(runId), OpenUrl(CloudWatch), OpenUrl(PR), OpenCloudAgentRunDetail | a SESSIONS cloud row → `openRowMenuFor` (Open run, Tail log, Copy run id, Cancel run…) | partial (the two links) | sessions-merge | none: titled `workspace · runId`, Open CloudWatch in browser (`cloud_agents.cloudwatchUrl`, when the account / region / log group are set) and Open PR (when the record names one) as `open_url` rows |
+| 16 | dashboard Files drill-down row | OpenPath, RevealInTree, RevealInFinder, CopyPath, OpenExternally | — | n/a | sessions-merge | n/a: the sessions table has no Files drill-down (the dashboard's drill-downs did not carry over) |
 | 17 | GIT rail section header | `git.fetch`, `git.pull`, `git.graph` | the rail's `.git` icon → `openRailMenu` (graph / fetch / commit) | none (equivalent) | — | — |
-| 18 | Cloud Agents `view:` chip | `cloud_agents.view_compact` / `_standard` | — | — | sessions-merge | listed |
+| 18 | Cloud Agents `view:` chip | `cloud_agents.view_compact` / `_standard` | — | n/a | sessions-merge | n/a: the table has one row density; the chip and the three `cloud_agents.*view*` ids (which toggled a flag nothing read) are gone |
 | 19 | NOTES row | OpenPath, OpenInSplit, RevealInTree, RevealInFinder, CopyPath, Rename, Delete | `notes.zig:481` (`notes.open`, `notes.copy_path`, `notes.delete`) | partial (split / reveal / rename: no Zig ids) | me | accepted |
 | 20 | top-right `+` | `plus_menu_items` (Create…), curatable | `dispatch.zig:1780` → `openNewTabMenu` | none | — | — |
 | 21 | AGENTS rail rows | Open transcript, Copy session id, reveal, Copy workspace path, `ai.dashboard` | Zig's AGENTS section opens the dashboard pane (#14) | n/a | — | — |
@@ -159,7 +159,9 @@ Rust arms enumerated: 102 (plus 19 Zig-only surfaces).
 Before this branch: none 38 · partial 15 · missing 44 · n/a 9 (of the
 102 Rust arms; 19 Zig-only surfaces all missing or undecided).
 
-Handed to other tracks: sessions-merge (#1b, #11, #15, #16, #18),
+Handed to other tracks: sessions-merge (#1b, #11, #15, #16, #18 —
+landed on that branch: #1b and #15 none, #11 an accepted partial for
+the colour rows, #16 and #18 n/a),
 http-options (#25–#31, #84), git-lines (#100), git-rebase (#101),
 lua-track (diagnostics rows and chip).
 
