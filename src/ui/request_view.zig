@@ -209,6 +209,9 @@ pub const ResponseModel = struct {
     spans: []const editor_view.Span = &.{},
     /// `✓ schema valid` / `✗ 2 schema error(s)` / assertion lines.
     tests: []const []const u8 = &.{},
+    /// The request headers as they went out (directives, expansion and
+    /// the `http_request` hook applied) — the Timeline tab lists them.
+    sent_headers: []const Pair = &.{},
 };
 
 pub const Model = struct {
@@ -225,6 +228,12 @@ pub const Model = struct {
     source: []const u8,
     source_caret: usize,
     params: []const Pair,
+    /// The Headers tab's rows, from its text; `header_value_offs` is each
+    /// value's byte offset in that text, so `headers_vars` land in the cell.
+    headers: []const Pair = &.{},
+    header_value_offs: []const usize = &.{},
+    /// `?` on a Headers row: the tip painted under the cursor row.
+    header_tip: ?[]const u8 = null,
     draft: ?Draft,
     /// Cursor over the Params / Auth / Vars rows.
     row_cursor: usize,
@@ -308,6 +317,9 @@ pub const hit_add_row: u32 = 405;
 pub const hit_draft_commit: u32 = 406;
 /// A Params row's `✕`.
 pub const hit_param_del: u32 = 500; // + row
+/// A Headers row, and its `✕`.
+pub const hit_header_row: u32 = 600; // + row
+pub const hit_header_del: u32 = 700; // + row
 pub const hit_var_base: u32 = 1000; // + VarSpan.id
 
 /// The status chip's colours by class (the HTTP panel's recent rows).
@@ -610,9 +622,21 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
             return c;
         },
         .headers => {
-            const c = drawTextLines(ui, pane, content, m.headers_text, m.headers_caret, focused, scroll, "(Name: value per line)", m.headers_vars, content_hit);
-            drawSendState(ui, content, m, if (m.headers_text.len == 0) 1 else linesOf(m.headers_text) -| scroll.*);
-            return c;
+            // The same table Params paints, over the tab's `Name: value`
+            // lines; the `{{VAR}}` spans land in the value cells.
+            const t = drawKvTable(ui, pane, content, m.headers, if (secondary) null else m.draft, .{
+                .kind = .headers,
+                .row_hit = hit_header_row,
+                .del_hit = hit_header_del,
+                .add = !secondary,
+                .cursor = m.row_cursor,
+                .focused = focused,
+                .value_offs = m.header_value_offs,
+                .vars = m.headers_vars,
+                .tip = if (secondary) null else m.header_tip,
+            });
+            drawSendState(ui, content, m, t.rows);
+            return if (focused) t.caret else null;
         },
         .source => {
             _ = ui.putStr(content.x, content.y, content.w, "    Source \u{2014} type / paste curl or .http here \u{00B7} :http.paste_source (Ctrl+Enter)", dim(p));
@@ -622,7 +646,7 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
             return c;
         },
         .params => {
-            _ = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .params, hit_param_row, hit_param_del, !secondary, m.row_cursor, focused);
+            _ = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor, .focused = focused });
             return null;
         },
         .auth => {
@@ -772,12 +796,38 @@ fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, f
 
 const KvKind = enum { params, headers, vars };
 
+const KvOpts = struct {
+    kind: KvKind,
+    row_hit: u32,
+    del_hit: ?u32,
+    add: bool,
+    cursor: usize,
+    focused: bool,
+    /// Headers: each row's value offset into the tab's text, so `vars`
+    /// (byte spans over that text) paint inside the value cells.
+    value_offs: []const usize = &.{},
+    vars: []const VarSpan = &.{},
+    /// A one-row tip under the cursor row (`?` on a header).
+    tip: ?[]const u8 = null,
+};
+
+/// What the table painted: its rows, and the draft cell's caret (the
+/// Headers table only — the completion popup anchors on it).
+const KvPainted = struct { rows: u16, caret: ?Caret = null };
+
 /// Rust's `render_kv_table`: `┌──┬──┬───┐`, a Name / Value header, one
 /// row per pair with a red `✕`, the draft row with a `✓`, `+ Add row`
-/// under it. Returns the rows painted.
-fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft, kind: KvKind, row_hit: u32, del_hit: ?u32, add: bool, cursor: usize, focused: bool) u16 {
+/// under it.
+fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft, o: KvOpts) KvPainted {
     const p = ui.theme.palette;
-    if (r.isEmpty()) return 0;
+    if (r.isEmpty()) return .{ .rows = 0 };
+    const kind = o.kind;
+    const row_hit = o.row_hit;
+    const del_hit = o.del_hit;
+    const add = o.add;
+    const cursor = o.cursor;
+    const focused = o.focused;
+    var out: KvPainted = .{ .rows = 0 };
     const table_w: u16 = std.math.clamp(r.w -| 2 -| 3, 20, 100);
     const x_col_w: u16 = 3;
     const inner_w: u16 = table_w -| x_col_w -| 4;
@@ -868,6 +918,12 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         const rr = r.row(ry);
         ui.hit(Rect.init(rr.x, rr.y, table_w + 2, 1), .{ .script_hit = .{ .pane = pane, .id = row_hit + @as(u32, @intCast(i)) } });
         if (del_hit) |d| ui.hit(Rect.init(cells.x_x, rr.y, x_col_w, 1), .{ .script_hit = .{ .pane = pane, .id = d + @as(u32, @intCast(i)) } });
+        // The value cell's `{{VAR}}`s: the spans are over the whole text,
+        // this cell starts at the row's value offset.
+        if (i < o.value_offs.len and o.vars.len > 0 and cells.value_x < r.right()) {
+            const vw: u16 = @min(value_w, r.right() - cells.value_x);
+            paintVarsOnLine(ui, pane, cells.value_x, rr.y, vw, pair.value, 0, o.value_offs[i], o.vars, p.bg_dark);
+        }
         ry += 1;
         if (i + 1 < data.len or draft != null) {
             c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}");
@@ -885,6 +941,11 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         ui.hit(Rect.init(cells.key_x, rr.y, name_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_key } });
         ui.hit(Rect.init(cells.value_x, rr.y, value_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_value } });
         ui.hit(Rect.init(cells.x_x, rr.y, x_col_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_commit } });
+        if (kind == .headers and focused) {
+            // The mark's cell: where the popup hangs from.
+            const cx = if (d.on_value) cells.value_x + @min(ui.width(d.value), value_w -| 1) else cells.key_x + @min(ui.width(d.key), name_w -| 1);
+            out.caret = .{ .x = @min(cx, r.right() -| 1), .y = rr.y };
+        }
         ry += 1;
     };
     c.rule(ry, "\u{2514}", "\u{2534}", "\u{2518}");
@@ -901,7 +962,30 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         }
         ry += 1;
     }
-    return ry;
+    if (o.tip) |tip| if (data.len > 0 and draft == null) {
+        // Under the cursor row: the header row, the rule, then two rows
+        // per pair (its cells and the rule after it).
+        const at: usize = @min(cursor, data.len - 1);
+        const row_y: usize = 3 + at * 2;
+        if (row_y + 1 < r.h) drawTip(ui, r, Rect.init(r.x + 2, r.y + @as(u16, @intCast(row_y)), 1, 1), tip);
+    };
+    out.rows = ry;
+    return out;
+}
+
+/// A one-row tip under `anchor` (above when there is no room), clipped
+/// to `screen` — the `?` description of a header, the hover copy.
+pub fn drawTip(ui: Ui, screen: Rect, anchor: Rect, text: []const u8) void {
+    const t = ui.theme;
+    const w: u16 = @min(ui.width(text), screen.w);
+    if (w == 0) return;
+    var x = anchor.x;
+    if (x + w > screen.right()) x = screen.right() -| w;
+    if (x < screen.x) x = screen.x;
+    const y: u16 = if (anchor.bottom() < screen.bottom()) anchor.bottom() else anchor.y -| 1;
+    const style = Theme.onBg(t.fg, t.chip.bg);
+    ui.fill(Rect.init(x, y, w, 1), style);
+    _ = ui.putStr(x, y, w, ui.clipStr(text, w), style);
 }
 
 fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
@@ -939,7 +1023,7 @@ fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
     if (r.h <= 2) return;
     const rows = ui.arena.alloc(Pair, m.vars.len) catch return;
     for (m.vars, 0..) |v, i| rows[i] = .{ .key = v.name, .value = v.value orelse "" };
-    _ = drawKvTable(ui, pane, Rect.init(r.x, r.y + 2, r.w, r.h - 2), rows, null, .vars, hit_var_row, null, false, m.row_cursor, focused);
+    _ = drawKvTable(ui, pane, Rect.init(r.x, r.y + 2, r.w, r.h - 2), rows, null, .{ .kind = .vars, .row_hit = hit_var_row, .del_hit = null, .add = false, .cursor = m.row_cursor, .focused = focused });
 }
 
 // ─── vars ───────────────────────────────────────────────────────────────
@@ -1287,6 +1371,12 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
             push(&out, ui.arena, timelineBar(ui, resp.timing.receive_ms, max, bar_w, p.green));
             push(&out, ui.arena, plain(ui, "", body_style));
             push(&out, ui.arena, plain(ui, ui.fmt("  Total    {d} ms", .{resp.timing.total_ms}), .{ .fg = p.fg, .bg = p.bg_dark, .bold = true }));
+            // What went out: the line as sent and the wire headers, after
+            // the directives, the expansion and the `http_request` hook.
+            push(&out, ui.arena, plain(ui, "", body_style));
+            push(&out, ui.arena, lineOf(ui, &.{ .{ .text = "  Sent     ", .style = label_style }, .{ .text = "(after directives, {{VAR}} expansion and hooks)", .style = dim(p) } }));
+            if (m.sent_line) |l| push(&out, ui.arena, plain(ui, ui.fmt("    {s}", .{l}), body_style));
+            for (resp.sent_headers) |h| push(&out, ui.arena, lineOf(ui, &.{ .{ .text = ui.fmt("    {s}: ", .{h.key}), .style = .{ .fg = p.cyan, .bg = p.bg_dark } }, .{ .text = h.value, .style = body_style } }));
         },
         .tests => {
             if (resp.tests.len == 0) {
@@ -1667,4 +1757,55 @@ test "the var tip lands under its anchor" {
     drawVarTip(ui, ui.canvas.full(), Rect.init(10, 1, 8, 1), "NOPE", null, "dev");
     const txt2 = try fx.text();
     try testing.expect(std.mem.indexOf(u8, txt2, "{{NOPE}} \u{2014} not defined in env dev") != null);
+}
+
+test "the Headers table: rows in cells with their `{{VAR}}` spans, the draft's caret for the popup, the `?` tip under the cursor row" {
+    var fx = try fixture.init(70, 14);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    m.field = .content;
+    m.edit_tab = .headers;
+    m.headers_text = "Accept: application/json\nAuthorization: Bearer {{TOKEN}}\n";
+    const rows = [_]Pair{ .{ .key = "Accept", .value = "application/json" }, .{ .key = "Authorization", .value = "Bearer {{TOKEN}}" } };
+    m.headers = &rows;
+    m.header_value_offs = &.{ 8, 40 };
+    m.headers_vars = &.{.{ .start = 47, .end = 56, .resolved = true, .id = 0 }};
+    m.row_cursor = 1;
+    m.header_tip = " Authorization \u{2014} Credentials for the resource ";
+    const r = Rect.init(0, 0, 70, 14);
+    const t = drawKvTable(fx.ui(), 0, r, &rows, null, .{ .kind = .headers, .row_hit = hit_header_row, .del_hit = hit_header_del, .add = true, .cursor = 1, .focused = true, .value_offs = m.header_value_offs, .vars = m.headers_vars, .tip = m.header_tip });
+    try testing.expect(t.caret == null);
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, fx.row(3, &buf), "\u{2502} Accept") != null);
+    try testing.expect(std.mem.indexOf(u8, fx.row(3, &buf), "\u{2502} application/json") != null);
+    try testing.expect(std.mem.indexOf(u8, fx.row(5, &buf), "Bearer {{TOKEN}}") != null);
+    // The span is a hit (`hit_var_base + id`) inside the value cell; the
+    // rows and their ✕ are hits too.
+    try testing.expect(fx.hits.at(45, 5) != null);
+    var var_hit = false;
+    for (fx.hits.items.items) |e| switch (e.target) {
+        .script_hit => |sh| if (sh.id == hit_var_base) {
+            var_hit = true;
+            try testing.expectEqual(@as(u16, 5), e.rect.y);
+        },
+        else => {},
+    };
+    try testing.expect(var_hit);
+    try testing.expectEqual(hit_header_row + 1, fx.hits.at(4, 5).?.script_hit.id);
+    // The tip hangs under the cursor row (row 5 → row 6).
+    try testing.expect(std.mem.indexOf(u8, fx.row(6, &buf), "Authorization \u{2014} Credentials") != null);
+    // A draft: the caret sits at the mark's cell, for the popup.
+    var fx2 = try fixture.init(70, 14);
+    defer fx2.deinit();
+    const d: Draft = .{ .key = "Conte", .value = "", .key_caret = 5, .value_caret = 0, .on_value = false };
+    const t2 = drawKvTable(fx2.ui(), 0, r, &rows, d, .{ .kind = .headers, .row_hit = hit_header_row, .del_hit = hit_header_del, .add = true, .cursor = 0, .focused = true });
+    try testing.expect(t2.caret != null);
+    try testing.expectEqual(@as(u16, 7), t2.caret.?.y);
+    try testing.expect(std.mem.indexOf(u8, fx2.row(7, &buf), "Conte\u{258F}") != null);
+    try testing.expectEqual(@as(u16, 4 + 5), t2.caret.?.x);
+    // Params never returns one.
+    const t3 = drawKvTable(fx2.ui(), 0, r, &rows, d, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = true, .cursor = 0, .focused = true });
+    try testing.expect(t3.caret == null);
 }

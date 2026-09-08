@@ -1,0 +1,26 @@
+# `?` on a Headers row shows the name's one-line description under it;
+# the pointer over the row shows the same words.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+type "https://example.com/api"
+key ctrl+3
+
+type "a"
+type "Cache-Control"
+key enter
+type "no-cache"
+key enter
+key enter
+expect screen contains "│ Cache-Control"
+expect screen contains "│ no-cache"
+
+type "?"
+expect screen contains "Cache-Control — Caching directives"
+type "?"
+expect screen lacks "Caching directives"
+
+hover 40 12
+expect screen contains "Cache-Control — Caching directives"

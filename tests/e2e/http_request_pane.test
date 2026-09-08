@@ -27,7 +27,9 @@ expect screen contains "│  ━━━━━━"
 expect screen contains "│ Name"
 expect screen contains "+ Add row"
 click 50 7
-expect screen contains "    Accept: application/json"
+# Headers is a table too: the name and value in their cells.
+expect screen contains "│ Accept"
+expect screen contains "│ application/json"
 click 58 7
 expect screen contains "Current:  (no Authorization header"
 expect screen contains "+ Set Bearer token…"

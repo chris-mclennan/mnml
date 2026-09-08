@@ -101,10 +101,63 @@ The payload `a` is a flat table with the hook's fields plus `hook = "<name>"`:
 | `pane_focus` | `pane` (nil when nothing is focused) | focus moved |
 | `lsp_attach` | `server`, `pane` | a server took a buffer |
 | `git_status` | `branch`, `dirty` | the status refreshed |
+| `http_request` | `pane`, `method`, `url`, `headers`, `body` (nil when there is none), `env` (the active env's name, or nil) | a request pane is about to send — see below |
+| `http_response` | `pane`, `status`, `headers`, `body`, `body_truncated`, `timing_ms` | a response landed on a request pane |
 
 `path` is workspace-relative. A hook that errors toasts; the other
 subscribers still run. Subscribers are Zig's and then the scripts', in
 subscription order.
+
+#### The HTTP hooks
+
+```lua
+mnml.on("http_request", function(a)
+  a.headers["X-Env"] = a.env or "none"                       -- add one
+  a.url = a.url:gsub("^http://", "https://")                 -- rewrite
+  return a                                                   -- what returns is what is sent
+end)
+mnml.on("http_response", function(a)
+  if a.status == 401 then mnml.http.set_var("TOKEN", "") end
+end)
+```
+
+`headers` is a table of name → value (a repeated name keeps the last).
+An `http_request` subscriber that **returns a table** replaces the
+request's `method`, `url`, `headers` and `body` with the fields the table
+has — `headers` replaces the whole set, so add to `a.headers` and return
+`a`; `body = false` sends no body. A subscriber that returns nothing
+changes nothing; a later subscriber's field wins over an earlier one's.
+
+The order, before a send: the block's `@set-*` directives, then the
+`{{VAR}}` expansion, then `http_request` — so a subscriber sees the
+request as it would go on the wire, and what it returns goes out as-is
+(a `{{VAR}}` in a returned field is not expanded; the cookie jar's
+`Cookie` header is added by the transport after the hook). After a
+response: the cookies into the jar, the schema sidecar, the block's
+`@assert` / `@capture` directives, then `http_response` — so
+`mnml.http.set_var` lands after the captures and never under them. The
+Timeline tab of the response lists the headers as they went out.
+
+Only a request pane's sends fire the hooks — `http.send`, `r` on the
+response, `mnml.http.send` — not chains, the env fan-out, bench or the
+`mnml run` CLI. A replayed mock (`http.replay_mock`) fires
+`http_response`. A response body past 1 MB reaches the subscriber cut
+there, with `body_truncated = true` (the 20 ms budget stays); the wire's
+own 16 MB cut sets the flag too.
+
+```lua
+mnml.http.set_var("TOKEN", value)   --> true | false, reason
+mnml.http.send(pane?)               --> true | false, reason
+```
+
+`set_var` writes `NAME=value` into the active env file — the one
+`@capture` writes: the file that already holds the name, else
+`.mnml/env/<env>.env`, created when new. The name is `[A-Za-z0-9_]`, the
+value one line. `send` fires the request pane (the active one without a
+pane id). Called from inside `http_response` the send waits until the
+hook returns — a retry after a refreshed token; the script guards the
+loop. From inside `http_request` it is an error: the send it would start
+is the one in flight.
 
 ### Buffers
 

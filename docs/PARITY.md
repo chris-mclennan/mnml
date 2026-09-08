@@ -32,7 +32,7 @@ line), not by hand.
 | AI | 20 | 0 | 1 | 0 | 21 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
-| HTTP request client | 42 | 0 | 1 | 0 | 43 |
+| HTTP request client | 44 | 0 | 1 | 0 | 45 |
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 24 | 0 | 0 | 0 | 24 |
 | Testing & quality | 15 | 0 | 0 | 0 | 15 |
@@ -40,7 +40,7 @@ line), not by hand.
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **485** | **4** | **10** | **3** | **502** |
+| **total** | **487** | **4** | **10** | **3** | **504** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -98,6 +98,7 @@ source on 2026-09-07; the rows they touched carry the new pointers.
 | `git-status` | 2026-09-07 | the staging pane is Rust's `git_status_view.rs` cell for cell; the provider badge and the grouped rail rows went with the old pane |
 | `section-side` | 2026-09-07 | every section has a side (`src/app/side.zig`); two columns replace the sidebar + right-panel slot; `view.move_section_left` / `_right`, `:sidebar`, `Ctrl-W H` / `L`; `ui.sidebar_side` / `ui.section_side`; `ui.right_panel_width` back to Rust's 32 |
 | `debug-ui` | 2026-09-07 | the DEBUG section, the step toolbar and its strip, the Debug Console (`Pane.dap_repl` and `ui/dap_repl_view.zig` are gone), gutter breakpoint editing, inline and hover values, nvim-dap chords |
+| `http-hooks` | 2026-09-07 | `docs/research/http-vs-posting.md` §3 rows 1–2: the `http_request` / `http_response` hooks with `mnml.http.set_var` / `send` (beyond the Rust list), and the Headers tab as a key / value table whose name and value cells complete — from the last response first, the workspace's `.http` files next, the bundled table last |
 
 ## Remaining — what is still `missing` or `partial`, with an estimate
 
@@ -499,6 +500,8 @@ trust sink. Each row names its file and its test.
 | `sse.parse_active_response` | done | `sse.zig` `parseAll` | |
 | CLI `run` / `chain run` / `discover` / `sync` / `proxy` | done | `src/main.zig` → `src/http/cli.zig`, `src/http/proxy.zig` | five rows |
 | WebSocket client | done | `src/app/ws_pane.zig`, `src/http/ws.zig` | beyond the Rust list |
+| Lua `http_request` / `http_response` hooks, `mnml.http.set_var` / `send` | done | `HttpRequestArgs` / `HttpResponseArgs` / `HttpRewrite` in `src/core/hooks.zig`; `beforeSend` / `emitResponseHook` / `responseHookArgs` in `cmd_http.zig`; the `mnml.http` block of `src/scripting/api.zig` | beyond the Rust list — `docs/research/http-vs-posting.md` §3 row 1. The order is directives → `{{VAR}}` expansion → `http_request` (a returned table rewrites the wire) and cookies → schema → `@assert` / `@capture` → `http_response`; a body past 1 MB reaches the hook cut with `body_truncated`; the Timeline tab lists the headers as sent; `docs/LUA.md`, `tests/e2e/lua_http_hooks.test` |
+| Headers tab as a key / value table with name + value completion | done | `headersKey` / `Completion` / `headerRows` in `request_pane.zig`; `headerNameCandidates` / `headerValueCandidates` / `headerScan` in `http.zig`; `src/http/header_table.zig`; the `.headers` prong of `drawEdit` + `drawTip` in `request_view.zig` | beyond the Rust list — §3 row 2 with §4-A: the last response's headers seed both columns (`ETag` → `If-None-Match` with the tag's value), the workspace's `.http` files next (frequency-ranked), the bundled ~70-name table with a description each last; the popup is `ui/completion_view.zig`; `?` / hover describe a row; `tests/e2e/http/http-headers-*.test` |
 | brotli | cut | `src/http/client.zig` never asks for `br` | see Cuts |
 
 ## Browser & CDP capture

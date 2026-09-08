@@ -1,0 +1,39 @@
+# Lua (D10): the http_request / http_response hooks. The workspace
+# init.lua adds a header to every send and reports every response that
+# lands. The send goes to a port nothing listens on; the mock sidecar
+# lands the response the hook reports (`http.replay_mock` fires
+# http_response like a wire response does). The Timeline tab lists the
+# request as it went out — the file's header beside the hook's.
+write .mnml/init.lua "mnml.on('http_request', function(a)\n  a.headers['X-Hook'] = 'from-lua'\n  return a\nend)\nmnml.on('http_response', function(a)\n  mnml.toast('hooked ' .. a.status .. ' ' .. (a.headers['Server'] or '?'))\nend)\n"
+write probe.http "GET http://127.0.0.1:19876/probe\nAccept: application/json\n"
+write probe.http.mock.json "{\"status\":418,\"status_text\":\"I'm a teapot\",\"headers\":[[\"Content-Type\",\"application/json\"],[\"Server\",\"mock\"]],\"body\":\"{\\\"teapot\\\": true}\",\"ts\":1}"
+command script.reload
+expect screen contains "1 file(s) loaded"
+open probe.http
+expect pane "GET  127.0.0.1:19876/probe"
+command http.send
+wait 600
+command http.replay_mock
+expect screen contains "hooked 418 mock"
+expect screen contains "418 I'm a teapot  ·"
+# The toasts sit over the response rows; they go after 4 s.
+wait 4200
+expect screen lacks "hooked 418 mock"
+# The Timeline tab: the wire headers, after the hook.
+click 60 21
+expect screen contains "Sent     (after directives"
+# The block scrolls: the header rows sit under the timing bars.
+key down
+key down
+key down
+key down
+key down
+key down
+expect screen contains "X-Hook: from-lua"
+expect screen contains "Accept: application/json"
+# The pane's own Headers tab is untouched by the hook (the response
+# block back on Body first, so the Timeline's copy is off the screen).
+click 34 21
+click 50 7
+expect screen contains "Headers"
+expect screen lacks "X-Hook"

@@ -1,0 +1,29 @@
+# The Headers completion is seeded from the wire: the last response's
+# headers come first — a server that answered `ETag` is offered
+# `If-None-Match` before anything else, and the value cell for it
+# offers the ETag the server sent.
+
+write probe.http "GET http://127.0.0.1:19876/probe\nAccept: application/json\n"
+write probe.http.mock.json "{\"status\":200,\"status_text\":\"OK\",\"headers\":[[\"Content-Type\",\"application/json\"],[\"ETag\",\"\\\"v7\\\"\"],[\"Server\",\"mock\"]],\"body\":\"{}\",\"ts\":1}"
+open probe.http
+command http.replay_mock
+expect screen contains "200 OK"
+
+# The Headers tab by click, then a draft row.
+click 50 7
+expect screen contains "│ Accept"
+type "a"
+type "i"
+expect screen contains "If-None-Match"
+expect screen contains "response ← ETag"
+type "f-no"
+key enter
+
+# The value column: the ETag the server sent, tagged with its source.
+expect screen contains "\"v7\""
+expect screen contains "response ← ETag"
+key enter
+key enter
+
+expect screen contains "│ If-None-Match"
+expect screen contains "│ \"v7\""
