@@ -92,7 +92,10 @@ pub const MdPreviewPane = md_preview.MdPreviewPane;
 /// quickfix list (`:cexpr`) and an editor's location list (`:lopen`).
 /// Enter acts on the row by `kind`.
 pub const ListPane = struct {
-    pub const Kind = enum { cmdline_history, quickfix, location };
+    /// // changed (git-more2): `stash_files` (a stash's files, Enter
+    /// diffs one) and `git_log` (the worker's command log, Enter
+    /// re-runs a read-only command) — both take a `/` filter.
+    pub const Kind = enum { cmdline_history, quickfix, location, stash_files, git_log };
     pub const Entry = struct {
         /// Owned display text.
         text: []u8,
@@ -105,12 +108,46 @@ pub const ListPane = struct {
     gpa: Allocator,
     kind: Kind,
     entries: std.ArrayListUnmanaged(Entry) = .empty,
+    /// Over the shown rows (`shown`): the entry index when no filter is set.
     cursor: usize = 0,
     scroll: usize = 0,
+    /// The `/` filter (`kind.filters()`): a case-insensitive needle over
+    /// the text; `filter_mode` while keys go to it.
+    filter: std.ArrayListUnmanaged(u8) = .empty,
+    filter_mode: bool = false,
 
     pub fn deinit(self: *ListPane) void {
         freeEntries(self.gpa, self.entries.items);
         self.entries.deinit(self.gpa);
+        self.filter.deinit(self.gpa);
+    }
+
+    /// The kinds with a `/` filter.
+    pub fn filters(kind: Kind) bool {
+        return kind == .stash_files or kind == .git_log;
+    }
+
+    /// The entries the filter lets through, as indices (all of them
+    /// while the filter is empty).
+    pub fn shown(self: *const ListPane, arena: Allocator) Allocator.Error![]u32 {
+        var out: std.ArrayListUnmanaged(u32) = .empty;
+        for (self.entries.items, 0..) |e, i| {
+            if (self.filter.items.len == 0 or std.ascii.indexOfIgnoreCase(e.text, self.filter.items) != null) try out.append(arena, @intCast(i));
+        }
+        return out.items;
+    }
+
+    /// The entry under shown row `row`.
+    pub fn entryAt(self: *const ListPane, arena: Allocator, row: usize) Allocator.Error!?*const Entry {
+        if (self.filter.items.len == 0) return if (row < self.entries.items.len) &self.entries.items[row] else null;
+        const rows = try self.shown(arena);
+        if (row >= rows.len) return null;
+        return &self.entries.items[rows[row]];
+    }
+
+    pub fn shownCount(self: *const ListPane, arena: Allocator) Allocator.Error!usize {
+        if (self.filter.items.len == 0) return self.entries.items.len;
+        return (try self.shown(arena)).len;
     }
 
     /// Free what `entries` own (text and path) — for a list held
@@ -127,6 +164,8 @@ pub const ListPane = struct {
             .cmdline_history => "cmdline history",
             .quickfix => "Quickfix",
             .location => "Location",
+            .stash_files => "stash files",
+            .git_log => "git log",
         };
     }
 };

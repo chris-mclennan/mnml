@@ -644,7 +644,11 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .flaky => kindIcon(ascii, "\u{224B}", "\u{F0668}", p.purple),
         .outline => kindIcon(ascii, "\u{2325}", "\u{F01BD}", p.purple),
         .files => kindIcon(ascii, "\u{25A4}", "\u{F0770}", p.blue),
-        .list => |*l| if (l.kind == .cmdline_history) kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment) else kindIcon(ascii, "\u{2315}", "\u{F0349}", p.teal),
+        .list => |*l| switch (l.kind) {
+            .cmdline_history => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
+            .stash_files, .git_log => kindIcon(ascii, "\u{2387}", "\u{F02A2}", p.orange),
+            else => kindIcon(ascii, "\u{2315}", "\u{F0349}", p.teal),
+        },
         .script => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
         .cheatsheet => kindIcon(ascii, "?", "\u{F128}", p.yellow),
         .debug => kindIcon(ascii, "\u{1F41B}", "\u{F188}", p.red),
@@ -1380,21 +1384,33 @@ fn drawListPane(app: *App, l: *app_mod.ListPane, ui: Ui, pane: PaneId, area: Rec
         .quickfix => ui.fmt(" {d} match{s}   ·   quickfix: enter opens · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "" else "es" }),
         // changed: a third list kind — the location list is the quickfix row layout under its own header.
         .location => ui.fmt(" {d} entr{s}   ·   location list: enter opens · :lnext / :lprev walk · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "y" else "ies" }),
+        // // changed (git-more2): the git list kinds.
+        .stash_files => ui.fmt(" {s}   ·   {d} file{s}   ·   enter diffs · y copies the path · / filters · esc closes ", .{ git_app.stashViewTitle(app), l.entries.items.len, if (l.entries.items.len == 1) "" else "s" }),
+        .git_log => ui.fmt(" git command log   ·   {d} entr{s}, newest first   ·   enter re-runs a read-only command · y copies · / filters · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "y" else "ies" }),
     };
     _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(header, area.w), Theme.onBg(th.accent, th.bg.bg));
     if (area.h < 2) return;
-    const list = area.splitTop(1).rest;
+    var list = area.splitTop(1).rest;
+    // The filter row, while one is typed or set.
+    if (l.filter_mode or l.filter.items.len > 0) {
+        const fr = list.splitTop(1);
+        list = fr.rest;
+        const text = ui.fmt(" / {s}{s}", .{ l.filter.items, if (l.filter_mode) "\u{2588}" else "" });
+        _ = ui.putStr(fr.top.x, fr.top.y, fr.top.w, ui.clipStr(text, fr.top.w), Theme.onBg(th.fg, th.bg.bg));
+    }
+    const shown = l.shown(ui.arena) catch return;
     const rows: usize = list.h;
+    if (l.cursor >= shown.len) l.cursor = shown.len -| 1;
     if (l.cursor < l.scroll) l.scroll = l.cursor;
-    if (l.cursor >= l.scroll + rows) l.scroll = l.cursor + 1 - rows;
+    if (rows > 0 and l.cursor >= l.scroll + rows) l.scroll = l.cursor + 1 - rows;
     var y: u16 = 0;
     var i = l.scroll;
-    while (i < l.entries.items.len and y < list.h) : ({
+    while (i < shown.len and y < list.h) : ({
         i += 1;
         y += 1;
     }) {
         const r = list.row(y);
-        const e = l.entries.items[i];
+        const e = l.entries.items[shown[i]];
         const sel = i == l.cursor and app.active == pane;
         if (sel) ui.fill(r, th.cursor_line);
         const bg = if (sel) th.cursor_line.bg else th.bg.bg;

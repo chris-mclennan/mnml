@@ -45,6 +45,7 @@ const graph_view = @import("../ui/git_graph_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const cmd_view = @import("cmd_view.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 
@@ -84,6 +85,10 @@ pub const Pick = enum {
     diff_current,
     /// `git.set_upstream`: pick the remote branch `State.verb_branch` tracks.
     set_upstream,
+    /// `git.stash_show` / `_branch` / `_rename` off the panel: pick the stash.
+    stash_show,
+    stash_branch,
+    stash_rename,
     /// `git.checkout_force` / `git.delete_remote_branch` off the panel: pick the branch.
     checkout_force,
     delete_remote,
@@ -119,7 +124,23 @@ pub const PromptKind = enum {
     reset_hard,
     /// `git.branch_rename`: the new name for `State.verb_branch`.
     branch_rename,
+    /// `stash branch <name> <State.verb_branch>`.
+    stash_branch,
+    /// A stash's new message (`State.verb_branch` is its ref).
+    stash_rename,
 };
+
+/// What the next stash prompt pushes (`git.stash_staged` / `_file` /
+/// `_keep_index` set one before opening it; a plain `git.stash` none).
+pub const StashVariant = struct {
+    staged_only: bool = false,
+    keep_index: bool = false,
+    /// Owned.
+    path: ?[]u8 = null,
+};
+
+/// The stash whose files the `stash_files` list pane shows. Owned.
+pub const StashView = struct { repo: u32, ref: []u8, message: []u8 };
 
 /// A confirm box's payload; the path is owned.
 pub const Confirm = union(enum) {
@@ -461,6 +482,9 @@ pub const State = struct {
     /// or worktree prompt starts from. Owned; replaced by the next verb.
     verb_branch: ?[]u8 = null,
     verb_start: ?[]u8 = null,
+    /// The stash prompt's variant, and the stash the files pane shows.
+    stash_variant: StashVariant = .{},
+    stash_view: ?StashView = null,
     /// Conflicts (`app/conflicts.zig`): vim's `c` inside a block is
     /// waiting for `o` / `t` / `b`; and the editor pane + block an AI
     /// resolve was asked for, until the three stages land.
@@ -502,6 +526,11 @@ pub const State = struct {
         if (self.line_patch) |b| gpa.free(b);
         if (self.verb_branch) |b| gpa.free(b);
         if (self.verb_start) |b| gpa.free(b);
+        if (self.stash_variant.path) |p| gpa.free(p);
+        if (self.stash_view) |v| {
+            gpa.free(v.ref);
+            gpa.free(v.message);
+        }
         var rit = self.rails.valueIterator();
         while (rit.next()) |r| r.snapshot.deinit();
         self.rails.deinit(gpa);
@@ -1114,6 +1143,39 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                     // The cursor moved on while this one was fetched.
                     if (g.selected()) |c| if (!std.mem.eql(u8, c.hash, d.sha)) requestDetail(app, g) catch {};
                     return;
+                },
+                else => {},
+            };
+        },
+        .stash_show => |s| {
+            // The files pane: `M  path` rows, the path on the entry for Enter.
+            var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
+            errdefer {
+                app_mod.ListPane.freeEntries(gpa, entries.items);
+                entries.deinit(gpa);
+            }
+            for (s.files) |fl| {
+                const text = try std.fmt.allocPrint(gpa, "{c}  {s}", .{ fl.status, fl.path });
+                errdefer gpa.free(text);
+                try entries.append(gpa, .{ .text = text, .path = try gpa.dupe(u8, fl.path) });
+            }
+            const ref = try gpa.dupe(u8, s.ref);
+            errdefer gpa.free(ref);
+            const message = try gpa.dupe(u8, s.message);
+            errdefer gpa.free(message);
+            if (st.stash_view) |v| {
+                gpa.free(v.ref);
+                gpa.free(v.message);
+            }
+            st.stash_view = .{ .repo = repo.id, .ref = ref, .message = message };
+            cmd_view.openListPane(app, .stash_files, try entries.toOwnedSlice(gpa)) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+            // A list pane opens on its last row; a stash's files read top-down.
+            for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+                .list => |*l| if (l.kind == .stash_files) {
+                    l.cursor = 0;
                 },
                 else => {},
             };
@@ -1796,6 +1858,9 @@ fn openListPicker(app: *App, kind: client.ListKind, items: []const []const u8, w
     const title: []const u8 = switch (what) {
         .stash_apply => "Stash list (Enter applies, keeps the stash)",
         .stash_drop => "Stash drop",
+        .stash_show => "Stash: show the files",
+        .stash_branch => "Stash: branch from",
+        .stash_rename => "Stash: rename",
         .tag_delete => "Delete tag",
         .reflog => "Reflog (Enter opens the commit's diff)",
         .worktree_open => "Worktrees",
@@ -1900,6 +1965,13 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         },
         .stash_apply => try submitOp(app, try requireRepo(app), .{ .stash_apply = try gpa.dupe(u8, detail) }),
         .stash_drop => try submitOp(app, try requireRepo(app), .{ .stash_drop = try gpa.dupe(u8, detail) }),
+        .stash_show => try stashShow(app, detail),
+        .stash_branch => try stashBranchPrompt(app, detail),
+        .stash_rename => {
+            // The picker's label is `<ref>  <message>`.
+            const note = if (std.mem.indexOf(u8, label, "  ")) |s| label[s + 2 ..] else "";
+            try stashRenamePrompt(app, detail, note);
+        },
         .tag_delete => try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, detail) }),
         .reflog, .file_history => {
             const repo = try requireRepo(app);
@@ -2005,7 +2077,32 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             if (!g.wipSelected()) requestDetail(app, g) catch {};
             app.needs_render = true;
         },
-        .stash => try submitOp(app, try requireRepo(app), .{ .stash = if (text.len == 0) null else try gpa.dupe(u8, text) }),
+        .stash => {
+            const v = st.stash_variant;
+            st.stash_variant = .{};
+            var push: client.StashPush = .{ .staged_only = v.staged_only, .keep_index = v.keep_index };
+            if (v.path) |p| {
+                const ps = gpa.alloc([]u8, 1) catch |err| {
+                    gpa.free(p);
+                    return err;
+                };
+                ps[0] = p;
+                push.paths = ps;
+            }
+            errdefer push.deinit(gpa);
+            if (text.len > 0) push.msg = try gpa.dupe(u8, text);
+            try submitOp(app, try requireRepo(app), .{ .stash = push });
+        },
+        .stash_branch => {
+            if (text.len == 0) return;
+            const ref = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "stash branch: the stash is gone", .{});
+            try submitOp(app, try requireRepo(app), .{ .stash_branch = .{ .ref = try gpa.dupe(u8, ref), .name = try gpa.dupe(u8, text) } });
+        },
+        .stash_rename => {
+            if (text.len == 0) return;
+            const ref = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "stash rename: the stash is gone", .{});
+            try submitOp(app, try requireRepo(app), .{ .stash_rename = .{ .ref = try gpa.dupe(u8, ref), .msg = try gpa.dupe(u8, text) } });
+        },
         .new_branch => {
             if (text.len == 0) return;
             const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
@@ -2113,6 +2210,79 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
             try submitOp(app, try requireRepo(app), .push_force);
         },
     }
+}
+
+// ─── stash depth (git-more2) ────────────────────────────────────────────
+
+/// The stash prompt with a variant: the index only, one file, or the
+/// tree with the index kept.
+pub fn stashWith(app: *App, v: StashVariant, title: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    if (app.git.stash_variant.path) |p| app.gpa.free(p);
+    app.git.stash_variant = v;
+    openPrompt(app, .stash, title);
+}
+
+/// Enter on a STASHES row: its files in a list pane.
+pub fn stashShow(app: *App, ref: []const u8) CommandError!void {
+    const repo = try requireRepo(app);
+    try submit(app, repo, .{ .stash_show = try app.gpa.dupe(u8, ref) });
+}
+
+/// The files pane's header: `stash@{0} · On main: note`.
+pub fn stashViewTitle(app: *App) []const u8 {
+    const v = app.git.stash_view orelse return "stash";
+    return std.fmt.allocPrint(app.frame.allocator(), "{s} \u{B7} {s}", .{ v.ref, v.message }) catch v.ref;
+}
+
+/// Enter on a stash file: the file's diff against the stash's parent
+/// (`ref^..ref`), the same range diff the graph's base uses.
+pub fn stashFileEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
+    const arena = app.frame.allocator();
+    const v = app.git.stash_view orelse return app.diag.fail(arena, "stash: no stash is shown", .{});
+    const repo = app.git.repoById(v.repo) orelse return error.NoRepo;
+    const path = e.path orelse return;
+    const rev = try std.fmt.allocPrint(arena, "{s}^..{s}", .{ v.ref, v.ref });
+    _ = try openDiff(app, repo, .range, path, rev, null);
+}
+
+/// `Branch from stash…`: the name, then `stash branch`.
+pub fn stashBranchPrompt(app: *App, ref: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbBranch(app, ref);
+    openPrompt(app, .stash_branch, "Branch from the stash: the new branch's name");
+}
+
+/// `Rename…`: the prompt opens with the stash's note (its message
+/// without the `On <branch>: ` half, which the rename keeps).
+pub fn stashRenamePrompt(app: *App, ref: []const u8, message: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbBranch(app, ref);
+    openPrompt(app, .stash_rename, "Rename the stash");
+    try app.overlay.prompt.state.setText(app.gpa, parse.stashNote(message));
+}
+
+/// The command log (item 10) fills this in; a stash file row has no
+/// second verb, so the menu offers the copy every list row has.
+pub fn openListRowMenu(app: *App, l: *app_mod.ListPane, x: u16, y: u16) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const e = (try l.entryAt(arena, l.cursor)) orelse return;
+    const text: []const u8 = if (e.path) |p| p else e.text;
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    switch (l.kind) {
+        .stash_files => try items.append(app.gpa, .{ .label = "Diff this file (Enter)", .action = .{ .command = .@"git.stash_show_diff" } }),
+        .git_log => {},
+        else => {},
+    }
+    try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy ({s})", .{text[0..@min(text.len, 40)]}), .action = .{ .copy_text = text } });
+    try app.openMenu(l.title(), try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// Enter on a command-log row (item 10).
+pub fn logEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
+    _ = e;
+    return app.diag.fail(app.frame.allocator(), "command log: not here yet", .{});
 }
 
 // ─── the branch verbs (git-more2) ───────────────────────────────────────
@@ -3572,6 +3742,10 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Stage all", .action = .{ .command = .@"git.stage_all" }, .separator_before = true },
         .{ .label = "Unstage all", .action = .{ .command = .@"git.unstage_all" } },
         .{ .label = "Commit…", .action = .{ .command = .@"git.commit" } },
+        .{ .label = "Stash this file\u{2026}", .action = .{ .command = .@"git.stash_file" }, .separator_before = true },
+        .{ .label = "Stash staged only\u{2026}", .action = .{ .command = .@"git.stash_staged" } },
+        .{ .label = "Stash keeping the index\u{2026}", .action = .{ .command = .@"git.stash_keep_index" } },
+        .{ .label = "Stash everything\u{2026}", .action = .{ .command = .@"git.stash" } },
     });
     errdefer app.gpa.free(items);
     try app.openMenu("Git", items, x, y);
@@ -4942,4 +5116,114 @@ test "the branch verbs on a seeded remote: fast-forward fetches ref:branch when 
     const remote = try f.out(&.{ "rev-parse", "origin/main" });
     defer testing.allocator.free(remote);
     try testing.expectEqualStrings(local, remote);
+}
+
+test "stash depth: staged only leaves the tree's change, a file alone, keep-index; the files pane lists a stash's files and Enter opens the range diff; rename keeps the branch half; branch from stash" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "a.txt", "b.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+
+    // Staged only: a.txt staged, b.txt changed in the tree — the stash
+    // takes the index, b.txt's change stays.
+    try f.write("a.txt", "one-staged\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.write("b.txt", "two-tree\n");
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.stash_staged" });
+    try testing.expectEqual(PromptKind.stash, f.app.git.prompt);
+    try testing.expect(f.app.git.stash_variant.staged_only);
+    try acceptPrompt(&f.app, "index bits");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "stashed the index: index bits"));
+    // (`out` trims the porcelain's leading column.)
+    const st1 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st1);
+    try testing.expectEqualStrings("M b.txt", st1);
+    const list1 = try f.out(&.{ "stash", "list", "--format=%gs" });
+    defer testing.allocator.free(list1);
+    try testing.expectEqualStrings("On main: index bits", list1);
+    // Pop brings a.txt's change back (into the tree: a plain pop does
+    // not restore the index).
+    _ = try f.op(.{ .stash_pop = null });
+    const st2 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st2);
+    try testing.expect(std.mem.indexOf(u8, st2, "M a.txt") != null);
+    try testing.expect(std.mem.indexOf(u8, st2, "M b.txt") != null);
+
+    // One file: the argv narrows the push to it.
+    try f.sh(&.{ "reset", "-q" });
+    const path = try testing.allocator.dupe(u8, "b.txt");
+    try stashWith(&f.app, .{ .path = path }, "x");
+    try acceptPrompt(&f.app, "");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "stashed b.txt"));
+    const st3 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st3);
+    try testing.expectEqualStrings("M a.txt", st3);
+    try testing.expect(f.app.git.stash_variant.path == null);
+
+    // The files pane: stash@{0} holds b.txt; Enter diffs it as a range.
+    try stashShow(&f.app, "stash@{0}");
+    var spins: usize = 0;
+    while (f.app.git.stash_view == null and spins < 800) : (spins += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(f.app.git.stash_view != null);
+    try testing.expectEqualStrings("stash@{0}", f.app.git.stash_view.?.ref);
+    const lp = switch (f.app.panes.get(f.app.active.?).?.*) {
+        .list => |*l| l,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(app_mod.ListPane.Kind.stash_files, lp.kind);
+    try testing.expectEqual(@as(usize, 1), lp.entries.items.len);
+    try testing.expectEqualStrings("M  b.txt", lp.entries.items[0].text);
+    try stashFileEnter(&f.app, lp.entries.items[0]);
+    try f.settle(4000);
+    const dp = activeDiff(&f.app).?;
+    try testing.expectEqual(client.DiffScope.range, dp.scope);
+    try testing.expectEqualStrings("b.txt", dp.path.?);
+    try testing.expectEqual(@as(usize, 1), dp.files.len);
+
+    // Rename: the prompt opens with the note; the branch half stays.
+    try stashRenamePrompt(&f.app, "stash@{0}", "WIP on main: abc first");
+    try testing.expectEqualStrings("abc first", f.app.overlay.prompt.state.text());
+    try acceptPrompt(&f.app, "b only");
+    try f.settle(4000);
+    // `%gs`: the reflog subject is what a rename changes (and what the panel lists).
+    const list2 = try f.out(&.{ "stash", "list", "--format=%gs" });
+    defer testing.allocator.free(list2);
+    try testing.expectEqualStrings("On main: b only", list2);
+
+    // Keep-index: a.txt staged again and the tree changed; the index survives.
+    try f.sh(&.{ "add", "a.txt" });
+    try f.write("b.txt", "two-again\n");
+    try stashWith(&f.app, .{ .keep_index = true }, "x");
+    try acceptPrompt(&f.app, "");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "stashed (index kept)"));
+    const st4 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st4);
+    try testing.expectEqualStrings("M  a.txt", st4);
+
+    // Branch from the b-only stash: the branch exists with the change applied.
+    try f.sh(&.{ "reset", "-q", "--hard" });
+    try stashBranchPrompt(&f.app, "stash@{1}");
+    try acceptPrompt(&f.app, "from-stash");
+    try f.settle(4000);
+    const on = try f.out(&.{ "symbolic-ref", "--short", "HEAD" });
+    defer testing.allocator.free(on);
+    try testing.expectEqualStrings("from-stash", on);
+    const st5 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st5);
+    try testing.expectEqualStrings("M b.txt", st5);
 }

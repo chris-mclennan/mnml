@@ -699,6 +699,24 @@ pub fn cursorBranch(app: *App) Allocator.Error!?[]const u8 {
     };
 }
 
+/// The stash the cursor's row names (`stash@{N}`), for the stash
+/// commands off the panel; null on any other row.
+pub fn cursorStash(app: *App) Allocator.Error!?[]const u8 {
+    const row = (try rowAt(app, app.git_palette.cursor)) orelse return null;
+    return switch (row) {
+        .stash => |s| if (s.idx < app.git.rail_stashes.len) app.git.rail_stashes[s.idx].ref else null,
+        else => null,
+    };
+}
+
+pub fn cursorStashMessage(app: *App) ?[]const u8 {
+    const row = (rowAt(app, app.git_palette.cursor) catch return null) orelse return null;
+    return switch (row) {
+        .stash => |s| s.message,
+        else => null,
+    };
+}
+
 fn setSelected(app: *App, name: ?[]const u8) Allocator.Error!void {
     const st = &app.git_palette;
     if (st.selected) |s| app.gpa.free(s);
@@ -807,11 +825,12 @@ pub fn activate(app: *App, idx: usize) Allocator.Error!void {
                 break :blk openWorktree(app, gs.rail_worktrees[w.idx]);
             },
             .stash => |s| {
+                // // changed (git-more2): Enter shows the stash's files;
+                // the row menu applies / pops.
                 if (s.idx >= gs.rail_stashes.len) break :blk;
                 const ref = gs.rail_stashes[s.idx].ref;
                 try setSelected(app, ref);
-                const repo = git.requireRepo(app) catch |err| break :blk err;
-                break :blk git.submitOp(app, repo, .{ .stash_apply = try gpa.dupe(u8, ref) });
+                break :blk git.stashShow(app, ref);
             },
             .tag => |t| {
                 try setSelected(app, t.name);
@@ -938,9 +957,12 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
         .stash => |s| {
             if (s.idx >= gs.rail_stashes.len) return;
             const items = try gpa.dupe(MenuItem, &.{
-                .{ .label = "Apply (keep)", .action = .{ .git_palette = .{ .what = .stash_apply, .idx = s.idx } } },
+                .{ .label = "Show files (Enter)", .action = .{ .git_palette = .{ .what = .stash_show, .idx = s.idx } } },
+                .{ .label = "Apply (keep)", .action = .{ .git_palette = .{ .what = .stash_apply, .idx = s.idx } }, .separator_before = true },
                 .{ .label = "Pop (apply + drop)", .action = .{ .git_palette = .{ .what = .stash_pop, .idx = s.idx } } },
                 .{ .label = "Drop\u{2026}", .action = .{ .git_palette = .{ .what = .stash_drop, .idx = s.idx } } },
+                .{ .label = "Branch from stash\u{2026}", .action = .{ .git_palette = .{ .what = .stash_branch, .idx = s.idx } }, .separator_before = true },
+                .{ .label = "Rename\u{2026}", .action = .{ .git_palette = .{ .what = .stash_rename, .idx = s.idx } } },
             });
             try app.openMenu(try std.fmt.allocPrint(arena, "{s} {s}", .{ gs.rail_stashes[s.idx].ref, s.message }), items, x, y);
         },
@@ -998,13 +1020,16 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 }
                 break :blk;
             },
-            .stash_apply, .stash_pop, .stash_drop => {
+            .stash_apply, .stash_pop, .stash_drop, .stash_show, .stash_branch, .stash_rename => {
                 if (a.idx >= gs.rail_stashes.len) break :blk;
                 const ref = gs.rail_stashes[a.idx].ref;
                 const repo = git.requireRepo(app) catch |err| break :blk err;
                 switch (a.what) {
                     .stash_apply => break :blk git.submitOp(app, repo, .{ .stash_apply = try gpa.dupe(u8, ref) }),
                     .stash_pop => break :blk git.submitOp(app, repo, .{ .stash_pop = try gpa.dupe(u8, ref) }),
+                    .stash_show => break :blk git.stashShow(app, ref),
+                    .stash_branch => break :blk git.stashBranchPrompt(app, ref),
+                    .stash_rename => break :blk git.stashRenamePrompt(app, ref, gs.rail_stashes[a.idx].message),
                     else => break :blk git.submitOp(app, repo, .{ .stash_drop = try gpa.dupe(u8, ref) }),
                 }
             },

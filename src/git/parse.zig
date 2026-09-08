@@ -1209,6 +1209,43 @@ pub fn parseRemotes(arena: Allocator, text: []const u8) Allocator.Error![]Remote
 /// (the new path of a rename).
 pub const DetailFile = struct { status: u8, path: []const u8 };
 
+/// A renamed stash's message: git's own `On <branch>: ` half from the
+/// old message (`WIP on main: abc subject` and `On main: note` both
+/// name `main`), the new text after it; the text alone when the old
+/// message has no branch.
+pub fn stashRenameMessage(arena: Allocator, old: []const u8, new: []const u8) Allocator.Error![]const u8 {
+    const branch = stashBranchOf(old) orelse return arena.dupe(u8, new);
+    return std.fmt.allocPrint(arena, "On {s}: {s}", .{ branch, new });
+}
+
+/// The branch a stash message names, or null.
+pub fn stashBranchOf(msg: []const u8) ?[]const u8 {
+    const rest = if (std.mem.startsWith(u8, msg, "WIP on ")) msg[7..] else if (std.mem.startsWith(u8, msg, "On ")) msg[3..] else return null;
+    const colon = std.mem.indexOf(u8, rest, ": ") orelse return null;
+    if (colon == 0) return null;
+    return rest[0..colon];
+}
+
+/// A stash message without its `On <branch>: ` half — what a rename
+/// prompt opens with.
+pub fn stashNote(msg: []const u8) []const u8 {
+    if (stashBranchOf(msg) == null) return msg;
+    const colon = std.mem.indexOf(u8, msg, ": ") orelse return msg;
+    return msg[colon + 2 ..];
+}
+
+test "stashRenameMessage keeps the branch half of a WIP or an On message and takes the text alone otherwise" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectEqualStrings("On main: keep", try stashRenameMessage(arena, "WIP on main: abc123 subject", "keep"));
+    try std.testing.expectEqualStrings("On feat/x: keep", try stashRenameMessage(arena, "On feat/x: old note", "keep"));
+    try std.testing.expectEqualStrings("keep", try stashRenameMessage(arena, "custom", "keep"));
+    try std.testing.expectEqualStrings("old note", stashNote("On feat/x: old note"));
+    try std.testing.expectEqualStrings("abc123 subject", stashNote("WIP on main: abc123 subject"));
+    try std.testing.expectEqualStrings("custom", stashNote("custom"));
+}
+
 pub fn parseNameStatus(arena: Allocator, text: []const u8) Allocator.Error![]DetailFile {
     var out: std.ArrayListUnmanaged(DetailFile) = .empty;
     var lines = std.mem.splitScalar(u8, text, '\n');

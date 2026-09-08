@@ -1049,6 +1049,14 @@ pub const specs = [_]Spec{
     .{ .id = "git.new_branch_from", .title = "Git: new branch from the selected commit / tag / branch\u{2026}", .group = "git" },
     .{ .id = "git.worktree_add_from", .title = "Git: new worktree from the selected commit / tag / branch\u{2026}", .group = "git" },
     .{ .id = "git.push_force", .title = "Git: push --force-with-lease (confirm names the risk)", .group = "git" },
+    // git-more2: stash depth.
+    .{ .id = "git.stash_staged", .title = "Git: stash the staged changes only (stash push --staged)", .group = "git" },
+    .{ .id = "git.stash_file", .title = "Git: stash the selected file (or the active buffer's) only", .group = "git" },
+    .{ .id = "git.stash_keep_index", .title = "Git: stash the tree but keep the index (stash push --keep-index)", .group = "git" },
+    .{ .id = "git.stash_show", .title = "Git: show a stash's files (the panel's row, or a picker); Enter diffs one", .group = "git" },
+    .{ .id = "git.stash_show_diff", .title = "Git: diff the selected stash file against the stash's parent", .group = "git" },
+    .{ .id = "git.stash_branch", .title = "Git: branch from a stash\u{2026} (stash branch)", .group = "git" },
+    .{ .id = "git.stash_rename", .title = "Git: rename a stash\u{2026} (drop + stash store -m)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1088,7 +1096,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1020 specs, unique ids" {
+test "1027 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1101,7 +1109,8 @@ test "1020 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    // + four diff-any-two-refs commands + eight branch verbs (git-more2).
-    try std.testing.expectEqual(@as(usize, 1020), specs.len);
+    // + four diff-any-two-refs commands + eight branch verbs + seven
+    // stash commands (git-more2).
+    try std.testing.expectEqual(@as(usize, 1027), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

@@ -619,6 +619,11 @@ pub const GitPaletteAct = struct {
         stash_apply,
         stash_pop,
         stash_drop,
+        /// // changed (git-more2): a STASHES row's files pane, a branch
+        /// from it, its rename.
+        stash_show,
+        stash_branch,
+        stash_rename,
         tag_checkout,
         tag_delete,
         tag_copy,
@@ -662,7 +667,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1020), count);
+    try std.testing.expectEqual(@as(usize, 1027), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

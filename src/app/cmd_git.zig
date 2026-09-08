@@ -135,6 +135,13 @@ pub const table = .{
     .@"git.new_branch_from" = &newBranchFrom,
     .@"git.worktree_add_from" = &worktreeAddFrom,
     .@"git.push_force" = &pushForce,
+    .@"git.stash_staged" = &stashStaged,
+    .@"git.stash_file" = &stashFile,
+    .@"git.stash_keep_index" = &stashKeepIndex,
+    .@"git.stash_show" = &stashShow,
+    .@"git.stash_show_diff" = &stashShowDiff,
+    .@"git.stash_branch" = &stashBranch,
+    .@"git.stash_rename" = &stashRename,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -564,6 +571,62 @@ fn pushTags(app: *App) CommandError!void {
 fn stash(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     git.openPrompt(app, .stash, "Stash message (optional)");
+}
+
+// ─── stash depth (git-more2) ────────────────────────────────────────────
+
+fn stashStaged(app: *App) CommandError!void {
+    try requireStaged(app, "stash staged");
+    try git.stashWith(app, .{ .staged_only = true }, "Stash the index only: message (optional)");
+}
+
+/// The status pane's row when it has the focus, else the active buffer's file.
+fn stashFile(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    const row = try rowOrActiveFile(app, repo);
+    const path = try app.gpa.dupe(u8, row.path);
+    errdefer app.gpa.free(path);
+    try git.stashWith(app, .{ .path = path }, "Stash this file: message (optional)");
+}
+
+fn stashKeepIndex(app: *App) CommandError!void {
+    try git.stashWith(app, .{ .keep_index = true }, "Stash keeping the index: message (optional)");
+}
+
+/// The STASHES row's files when the panel has one, else a picker.
+fn stashRow(app: *App) std.mem.Allocator.Error!?[]const u8 {
+    if (app.focus == .panel and app.focus.panel == .git) return git_palette.cursorStash(app);
+    return null;
+}
+
+fn stashShow(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (try stashRow(app)) |ref| return git.stashShow(app, ref);
+    try git.askList(app, repo, .stashes, .stash_show);
+}
+
+/// Enter's twin for the files pane's row menu.
+fn stashShowDiff(app: *App) CommandError!void {
+    const id = app.active orelse return error.NoActivePane;
+    const p = app.panes.get(id) orelse return error.NoActivePane;
+    const l = switch (p.*) {
+        .list => |*l| if (l.kind == .stash_files) l else return app.diag.fail(arena(app), "stash: not the files pane", .{}),
+        else => return app.diag.fail(arena(app), "stash: not the files pane", .{}),
+    };
+    const e = (try l.entryAt(arena(app), l.cursor)) orelse return;
+    try git.stashFileEnter(app, e.*);
+}
+
+fn stashBranch(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (try stashRow(app)) |ref| return git.stashBranchPrompt(app, ref);
+    try git.askList(app, repo, .stashes, .stash_branch);
+}
+
+fn stashRename(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (try stashRow(app)) |ref| return git.stashRenamePrompt(app, ref, git_palette.cursorStashMessage(app) orelse "");
+    try git.askList(app, repo, .stashes, .stash_rename);
 }
 
 fn stashPop(app: *App) CommandError!void {
