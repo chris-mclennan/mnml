@@ -401,6 +401,8 @@ pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
         .scroll_up => st.scroll -|= app.cfg.ui.wheel_lines,
         .scroll_down => st.scroll = @min(st.scroll + app.cfg.ui.wheel_lines, st.max_scroll),
         .press => {
+            // right-click: the kebab's menu on either button.
+            if (m.button == .right and part == .kebab) return openKebabMenu(app, m.x, m.y + 1);
             if (m.button != .left) return;
             switch (part) {
                 .kebab => try openKebabMenu(app, m.x, m.y + 1),

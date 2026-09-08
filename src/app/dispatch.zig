@@ -1517,21 +1517,26 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .tab_close => |tb| {
-            if (wheel or m.kind != .press or m.button != .left) return;
+            if (wheel or m.kind != .press or (m.button != .left and m.button != .right)) return;
             const layout = app.layouts.current();
             const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
             const leaf = layout.leaf(lid) orelse return;
             if (tb.idx >= leaf.tabs.items.len) return;
             if (app.overlay != .none) closeOverlay(app);
+            // right-click: the tab's menu — Rust's tab rect covered the
+            // badge, so a right press there was the tab's.
+            if (m.button == .right) return context_menus.openTabMenu(app, leaf.tabs.items[tb.idx], m.x, m.y);
             try app.closePane(leaf.tabs.items[tb.idx], false);
         },
         .breadcrumb => |bc| {
             // A segment opens a Files pane at the directory it names.
-            if (wheel or m.kind != .press or m.button != .left) return;
+            if (wheel or m.kind != .press or (m.button != .left and m.button != .right)) return;
             const e = app.panes.editor(bc.pane) orelse return;
             const path = e.buf.doc.path orelse return;
             const dir = (try render.breadcrumbDir(app, app.frame.allocator(), path, bc.idx)) orelse return;
             if (app.overlay != .none) closeOverlay(app);
+            // right-click: the directory's own rows (Zig-only).
+            if (m.button == .right) return context_menus.openBreadcrumbMenu(app, dir, m.x, m.y);
             _ = try files_pane.open(app, dir);
         },
         .overlay_item => |i| {
@@ -1585,6 +1590,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 }
                 if (p.encoding().mouse == .none) {
                     if (wheel) return wheelOnPane(app, id, m, count);
+                    // right-click: Rust's dock menu, when the child is
+                    // not tracking the mouse (a tracking child owns its
+                    // right button).
+                    if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
                     return;
                 }
                 const r = hitRect(app, m.x, m.y) orelse return;
@@ -1596,8 +1605,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
             if (app.active != id) app.showPane(id) else app.focus = .{ .pane = id };
+            // right-click: the editor's text menu; an AI pane's own
+            // rows (Rust `open_ai_pane_context_menu`); any other pane
+            // body gets its tab's menu (Zig-only — Rust fell through).
             if (m.button == .right) {
-                if (app.panes.editor(id) != null) try context_menus.openEditorMenu(app, m.x, m.y);
+                if (app.panes.editor(id) != null) return context_menus.openEditorMenu(app, m.x, m.y);
+                if (app.panes.get(id)) |pane| if (pane.* == .ai) return context_menus.openAiPaneMenu(app, m.x, m.y);
+                try context_menus.openTabMenu(app, id, m.x, m.y);
             }
         },
         .script_hit => |sh| {
@@ -1744,7 +1758,17 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .welcome => |row| {
             // The welcome pane: a recent file opens, a shortcut row runs
             // its command.
-            if (wheel or m.kind != .press or m.button != .left) return;
+            if (wheel or m.kind != .press) return;
+            // right-click: a recent row's own rows (Zig-only); a
+            // shortcut row is one verb and keeps none.
+            if (m.button == .right) {
+                if (row.kind == .recent) if (render.welcomeRecentPath(app, row.idx)) |path| {
+                    if (app.overlay != .none) closeOverlay(app);
+                    try context_menus.openWelcomeRecentMenu(app, path, m.x, m.y);
+                };
+                return;
+            }
+            if (m.button != .left) return;
             switch (row.kind) {
                 .recent => if (render.welcomeRecentPath(app, row.idx)) |path| {
                     const copy = try app.frame.allocator().dupe(u8, path);
@@ -1882,7 +1906,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => {},
             }
         },
-        .link => {},
+        // right-click: a link's open / copy rows (Rust copies the URL
+        // of a detail pane's link row).
+        .link => |l| if (m.kind == .press and m.button == .right) {
+            if (app.overlay != .none) closeOverlay(app);
+            try context_menus.openLinkMenu(app, l.url, m.x, m.y);
+        },
     }
 }
 

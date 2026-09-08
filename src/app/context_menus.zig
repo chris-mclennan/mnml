@@ -56,7 +56,11 @@ pub fn openEditorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Hover info", .action = .{ .command = .@"lsp.hover" } },
         .{ .label = "Rename symbol", .action = .{ .command = .@"lsp.rename" } },
         .{ .label = "Select all occurrences", .action = .{ .command = .@"editor.select_all_occurrences" }, .separator_before = true },
+        .{ .label = "Expand selection", .action = .{ .command = .@"lsp.selection_expand" } },
         .{ .label = "Toggle fold", .action = .{ .command = .@"editor.toggle_fold" } },
+        // right-click: Rust's two AI rows.
+        .{ .label = "Explain with Claude", .action = .{ .command = .@"ai.explain" }, .separator_before = true },
+        .{ .label = "Ask Claude…", .action = .{ .command = .@"ai.ask" } },
         .{ .label = "Save", .action = .{ .command = .@"file.save" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -78,6 +82,10 @@ pub fn openGutterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Start debugging", .action = .{ .command = .@"dap.run" }, .separator_before = true },
         .{ .label = "Continue", .action = .{ .command = .@"dap.continue" } },
         .{ .label = "Evaluate word under cursor", .action = .{ .command = .@"dap.evaluate_hover" } },
+        // right-click: Rust's git rows for the line.
+        .{ .label = "Peek change", .action = .{ .command = .@"git.peek_change" }, .separator_before = true },
+        .{ .label = "Toggle blame", .action = .{ .command = .@"git.blame_toggle" } },
+        .{ .label = "Open on remote", .action = .{ .command = .@"git.browse" } },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Breakpoint", rows, x, y);
@@ -118,8 +126,11 @@ pub fn openRequestFieldMenu(app: *App, field: RequestField, x: u16, y: u16) Allo
     try app.openMenu(field.title(), rows, x, y);
 }
 
-/// A strip tab: Save (when dirty) first, then the close family and the
-/// path. The tab is made active before the menu opens.
+/// A strip tab: Save (when dirty) first, then the close family, the
+/// splits, the file rows (a markdown preview, the two reveals, the
+/// path) and — for a pty — the session verbs (Rust
+/// `open_tab_context_menu`). The tab is made active before the menu
+/// opens, so the rows act on it.
 pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
     const p = app.panes.get(pane) orelse return;
     app.showPane(pane);
@@ -134,7 +145,23 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         .{ .label = if (p.pinned()) "Unpin tab" else "Pin tab", .action = .{ .command = .@"buffer.pin_toggle" }, .separator_before = true },
         .{ .label = "Split right", .action = .{ .command = .@"view.split_right" }, .separator_before = true },
         .{ .label = "Split down", .action = .{ .command = .@"view.split_down" } },
-        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = true },
+    });
+    // right-click: the file rows, for a tab that names a file on disk.
+    const file_path: ?[]const u8 = if (app.panes.editor(pane)) |e| e.buf.doc.path else null;
+    if (file_path) |path| {
+        if (@import("md_preview.zig").isMarkdownPath(path)) try rows.append(app.gpa, .{ .label = "Preview markdown", .action = .{ .command = .@"markdown.preview" }, .separator_before = true });
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Reveal in tree", .action = .{ .command = .@"view.reveal_in_tree" }, .separator_before = true },
+            .{ .label = "Reveal in Finder", .action = .{ .command = .@"view.reveal_active" } },
+        });
+    }
+    try rows.append(app.gpa, .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = file_path == null });
+    // right-click: a pty tab's session verbs (Rust's Rename / Restart /
+    // Clear rows on a Pty tab).
+    if (app.panes.pty(pane) != null) try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
+        .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
+        .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
     });
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
@@ -1074,6 +1101,91 @@ pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Er
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
     try openOwned(app, title, owned, x, y, mem);
+}
+
+// ─── right-click: the panes ─────────────────────────────────────────────
+
+/// A pty pane's body (Rust `open_pty_dock_context_menu`): the session
+/// verbs, where the pane docks, how big it gets, its name, close. The
+/// pane is made active first.
+pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
+    const p = app.panes.get(pane) orelse return;
+    app.showPane(pane);
+    const rows = try items(app, &.{
+        .{ .label = "Paste", .action = .{ .command = .@"term.paste" } },
+        .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
+        .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
+        .{ .label = "Dock left", .action = .{ .command = .@"view.move_split_left" }, .separator_before = true },
+        .{ .label = "Dock right", .action = .{ .command = .@"view.move_split_right" } },
+        .{ .label = "Dock top", .action = .{ .command = .@"view.move_split_up" } },
+        .{ .label = "Dock bottom", .action = .{ .command = .@"view.move_split_down" } },
+        .{ .label = "Maximize width", .action = .{ .command = .@"view.maximize_width" }, .separator_before = true },
+        .{ .label = "Maximize height", .action = .{ .command = .@"view.maximize_height" } },
+        .{ .label = "Full screen", .action = .{ .command = .@"view.fullscreen" } },
+        .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" } },
+        .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
+        .{ .label = "Close pane", .action = .{ .command = .@"buffer.close" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(p.title(), rows, x, y);
+}
+
+/// An AI pane's body (Rust `open_ai_pane_context_menu`): re-ask,
+/// cancel, promote, apply. Rust's transcript row has no runner here.
+pub fn openAiPaneMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Re-ask (fresh session)", .action = .{ .command = .@"ai.reask" } },
+        .{ .label = "Cancel running job", .action = .{ .command = .@"ai.cancel" } },
+        .{ .label = "Promote to interactive (claude --resume)", .action = .{ .command = .@"ai.promote" }, .separator_before = true },
+        .{ .label = "Apply suggested change", .action = .{ .command = .@"ai.apply" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("AI", rows, x, y);
+}
+
+/// A breadcrumb segment (Zig-only): the directory it names, to a Files
+/// pane or the clipboard.
+pub fn openBreadcrumbMenu(app: *App, dir: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, dir);
+    const rows = try items(app, &.{
+        .{ .label = "Open in file browser", .action = .{ .open_path = copy } },
+        .{ .label = "Copy path", .action = .{ .copy_text = copy } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, std.fs.path.basename(copy), rows, x, y, mem);
+}
+
+/// A welcome-screen recent row (Zig-only): open, copy, the picker.
+pub fn openWelcomeRecentMenu(app: *App, path: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, path);
+    const rows = try items(app, &.{
+        .{ .label = "Open", .action = .{ .open_path = copy } },
+        .{ .label = "Copy path", .action = .{ .copy_text = try arena.dupe(u8, app.relPath(copy)) } },
+        .{ .label = "Recent files…", .action = .{ .command = .@"picker.recent" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, std.fs.path.basename(copy), rows, x, y, mem);
+}
+
+/// A link (a preview's, a detail pane's — Rust `integration_detail_links`
+/// copies the URL): open it, copy it.
+pub fn openLinkMenu(app: *App, url: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, url);
+    const rows = try items(app, &.{
+        .{ .label = "Open in browser", .action = .{ .open_url = copy } },
+        .{ .label = "Copy URL", .action = .{ .copy_text = copy } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Link", rows, x, y, mem);
 }
 
 // ─── right-click: the chrome chips ──────────────────────────────────────
