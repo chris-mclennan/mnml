@@ -44,7 +44,7 @@ pub const table = .{
 };
 
 /// The link row's words.
-pub const link_label = "+ init.lua — create from a template";
+pub const link_label = "+ create init.lua";
 
 /// What `script.new_init` writes: every surface, commented out, so the
 /// file reads as its own reference and runs clean as it is.
@@ -291,7 +291,6 @@ test "SCRIPTS: the rows name what init.lua registered with file:line; Enter jump
     try t.expectEqual(side.Section.scripts, side.shown(&app, .left).?);
     try t.expect(app.focus == .panel and app.focus.panel == .scripts);
     var txt = try screenText(&app);
-    std.debug.print("{s}\n", .{txt});
     try t.expect(std.mem.indexOf(u8, txt, "SCRIPTS (0)") != null);
     try t.expect(std.mem.indexOf(u8, txt, link_label) != null);
     t.allocator.free(txt);

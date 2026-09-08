@@ -53,9 +53,9 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     const avail: u16 = end -| x;
     var name = row.name;
     var loc_shown = row.loc;
-    const min_loc: u16 = 10;
+    const min_loc: u16 = 6;
     if (row.loc.len > 0 and ui.widthUpTo(name, avail) + 2 + ui.widthUpTo(row.loc, avail) > avail) {
-        const loc_keep = @min(ui.widthUpTo(row.loc, avail), min_loc);
+        const loc_keep: u16 = @min(ui.widthUpTo(row.loc, avail), min_loc);
         name = ui.clipStr(row.name, avail -| (2 + loc_keep));
         const loc_max = avail -| (ui.widthUpTo(name, avail) + 2);
         if (ui.widthUpTo(row.loc, avail) > loc_max) {
@@ -82,11 +82,11 @@ test "row: the kind word, the name, the location at the right edge; a long name 
     defer f.deinit();
     paintRow(f.ui(), Rect.init(0, 0, 40, 1), .{ .kind = .command, .name = "user.hello", .loc = "init.lua:12" }, false);
     paintRow(f.ui(), Rect.init(0, 1, 40, 1), .{ .kind = .hook, .name = "a_very_long_hook_name_that_goes_on_and_on", .loc = ".mnml/init.lua:3" }, true);
-    paintRow(f.ui(), Rect.init(0, 2, 40, 1), .{ .name = "+ init.lua — create from a template", .link = true }, false);
+    paintRow(f.ui(), Rect.init(0, 2, 40, 1), .{ .name = "+ create init.lua", .link = true }, false);
     try f.expectContains("cmd  user.hello");
     try f.expectContains("init.lua:12");
     try f.expectContains("hook a_very_long");
-    try f.expectContains("…nit.lua:3");
-    try f.expectContains("+ init.lua — create from a template");
+    try f.expectContains("…lua:3");
+    try f.expectContains("+ create init.lua");
     try testing.expectEqualStrings("hook", kindWord(.hook));
 }
