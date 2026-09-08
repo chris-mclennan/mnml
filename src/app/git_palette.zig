@@ -878,6 +878,11 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             const items: []const MenuItem = if (b.current) &.{
                 .{ .label = "New branch from here\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = b.idx } } },
+                .{ .label = "Rename\u{2026}", .action = .{ .git_palette = .{ .what = .rename, .idx = b.idx } }, .separator_before = true },
+                .{ .label = "Fast-forward to upstream", .action = .{ .git_palette = .{ .what = .fast_forward, .idx = b.idx } } },
+                .{ .label = "Set upstream\u{2026}", .action = .{ .git_palette = .{ .what = .set_upstream, .idx = b.idx } } },
+                .{ .label = "Push --force-with-lease\u{2026}", .action = .{ .git_palette = .{ .what = .push_force, .idx = b.idx } }, .separator_before = true },
+                .{ .label = "Delete on the remote\u{2026}", .action = .{ .git_palette = .{ .what = .delete_remote, .idx = b.idx } } },
             } else &.{
                 .{ .label = try std.fmt.allocPrint(arena, "Checkout {s}", .{name}), .action = .{ .git_palette = .{ .what = .checkout, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{name}), .action = .{ .git_palette = .{ .what = .merge, .idx = b.idx } } },
@@ -885,6 +890,11 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = "New branch from here\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = b.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{name}), .action = .{ .git_palette = .{ .what = .delete_branch, .idx = b.idx } } },
+                .{ .label = "Rename\u{2026}", .action = .{ .git_palette = .{ .what = .rename, .idx = b.idx } }, .separator_before = true },
+                .{ .label = "Fast-forward to upstream", .action = .{ .git_palette = .{ .what = .fast_forward, .idx = b.idx } } },
+                .{ .label = "Set upstream\u{2026}", .action = .{ .git_palette = .{ .what = .set_upstream, .idx = b.idx } } },
+                .{ .label = try std.fmt.allocPrint(arena, "Force checkout {s}\u{2026}", .{name}), .action = .{ .git_palette = .{ .what = .checkout_force, .idx = b.idx } } },
+                .{ .label = "Delete on the remote\u{2026}", .action = .{ .git_palette = .{ .what = .delete_remote, .idx = b.idx } } },
                 .{ .label = "Diff against current", .action = .{ .git_palette = .{ .what = .diff_current, .idx = b.idx } }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{name}), .action = .{ .command = .@"git.reset_mixed" } },
@@ -898,6 +908,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{m.name}), .action = .{ .git_palette = .{ .what = .merge, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Rebase current onto {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .rebase, .idx = m.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{m.name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = m.idx } } },
+                .{ .label = "Delete on the remote\u{2026}", .action = .{ .git_palette = .{ .what = .delete_remote, .idx = m.idx } }, .separator_before = true },
                 .{ .label = "Diff against current", .action = .{ .git_palette = .{ .what = .diff_current, .idx = m.idx } }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{m.name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
                 .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{m.name}), .action = .{ .command = .@"git.reset_mixed" } },
@@ -938,6 +949,8 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = try std.fmt.allocPrint(arena, "Checkout {s} (detached)", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_checkout, .idx = t.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_copy, .idx = t.idx } } },
                 .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_delete, .idx = t.idx } } },
+                .{ .label = "New branch from tag\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch_from, .idx = t.idx } }, .separator_before = true },
+                .{ .label = "New worktree from tag\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_from, .idx = t.idx } } },
             });
             try app.openMenu(t.name, items, x, y);
         },
@@ -995,12 +1008,14 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                     else => break :blk git.submitOp(app, repo, .{ .stash_drop = try gpa.dupe(u8, ref) }),
                 }
             },
-            .tag_checkout, .tag_delete, .tag_copy => {
+            .tag_checkout, .tag_delete, .tag_copy, .new_branch_from, .worktree_from => {
                 if (a.idx >= gs.rail_tags.len) break :blk;
                 const name = gs.rail_tags[a.idx].name;
                 switch (a.what) {
                     .tag_checkout => break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Checkout tag {s}? (detached HEAD)", .{name})),
                     .tag_delete => break :blk git.openConfirm(app, .{ .tag_delete = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete tag {s}?", .{name})),
+                    .new_branch_from => break :blk git.newBranchFrom(app, name),
+                    .worktree_from => break :blk git.worktreeFrom(app, name),
                     else => {
                         try app.clipboard.setYank(name, false);
                         app.toast("copied {s}", .{name});
@@ -1019,9 +1034,16 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .checkout => break :blk if (b.remote) checkoutTracking(app, name) else git.submitOp(app, repo, .{ .checkout = try gpa.dupe(u8, name) }),
             .merge => break :blk git.submitOp(app, repo, .{ .merge = try gpa.dupe(u8, name) }),
             .rebase => break :blk git.submitOp(app, repo, .{ .rebase = try gpa.dupe(u8, name) }),
-            .new_branch => break :blk command.run(app, .{ .static = .@"git.new_branch" }),
+            // From the row's branch, not HEAD (the current row's is HEAD).
+            .new_branch => break :blk git.newBranchFrom(app, name),
             .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{name})),
             .diff_current => break :blk git.diffAgainstCurrent(app, repo, name),
+            .rename => break :blk git.branchRename(app, name),
+            .fast_forward => break :blk git.fastForward(app, name),
+            .set_upstream => break :blk git.setUpstream(app, name),
+            .checkout_force => break :blk git.checkoutForce(app, name),
+            .delete_remote => break :blk git.deleteRemote(app, name, null),
+            .push_force => break :blk git.pushForce(app),
             .copy_name => {
                 try app.clipboard.setYank(name, false);
                 app.toast("copied {s}", .{name});

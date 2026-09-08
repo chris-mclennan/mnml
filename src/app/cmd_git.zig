@@ -127,6 +127,14 @@ pub const table = .{
     .@"git.diff_against_base" = &diffAgainstBase,
     .@"git.graph_diff" = &graphDiff,
     .@"git.diff_against_current" = &diffAgainstCurrent,
+    .@"git.branch_rename" = &branchRename,
+    .@"git.fast_forward" = &fastForward,
+    .@"git.set_upstream" = &setUpstream,
+    .@"git.checkout_force" = &checkoutForce,
+    .@"git.delete_remote_branch" = &deleteRemoteBranch,
+    .@"git.new_branch_from" = &newBranchFrom,
+    .@"git.worktree_add_from" = &worktreeAddFrom,
+    .@"git.push_force" = &pushForce,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -739,6 +747,72 @@ fn diffAgainstCurrent(app: *App) CommandError!void {
         if (try git_palette.cursorBranch(app)) |b| return git.diffAgainstCurrent(app, repo, b);
     }
     try git.askBranches(app, repo, .diff_current);
+}
+
+// ─── branch verbs (git-more2) ───────────────────────────────────────────
+
+/// The branch a verb acts on: the branches panel's row when it has the
+/// focus, else the checked-out branch.
+fn verbBranch(app: *App, what: []const u8) CommandError![]const u8 {
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return b;
+    }
+    return app.git.branchLabel() orelse app.diag.fail(arena(app), "{s}: detached HEAD \u{2014} pick a branch in the branches panel", .{what});
+}
+
+fn branchRename(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.branchRename(app, try verbBranch(app, "rename"));
+}
+
+fn fastForward(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.fastForward(app, try verbBranch(app, "fast-forward"));
+}
+
+fn setUpstream(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.setUpstream(app, try verbBranch(app, "set upstream"));
+}
+
+/// The panel's row when it has the focus, else a picker of the local branches.
+fn checkoutForce(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.checkoutForce(app, b);
+    }
+    try git.askBranches(app, repo, .checkout_force);
+}
+
+fn deleteRemoteBranch(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.deleteRemote(app, b, null);
+    }
+    try git.askBranches(app, repo, .delete_remote);
+}
+
+/// The graph's selected commit, else the branches panel's row, else HEAD.
+fn verbStart(app: *App) CommandError![]const u8 {
+    if (app.focus == .pane) if (git.activeGraph(app)) |g| {
+        if (g.selected()) |c| return c.hash;
+    };
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return b;
+    }
+    return "HEAD";
+}
+
+fn newBranchFrom(app: *App) CommandError!void {
+    try git.newBranchFrom(app, try verbStart(app));
+}
+
+fn worktreeAddFrom(app: *App) CommandError!void {
+    try git.worktreeFrom(app, try verbStart(app));
+}
+
+fn pushForce(app: *App) CommandError!void {
+    try git.pushForce(app);
 }
 
 // ─── the graph ──────────────────────────────────────────────────────────

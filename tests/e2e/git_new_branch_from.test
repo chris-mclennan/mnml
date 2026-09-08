@@ -1,0 +1,25 @@
+# git.new_branch_from (src/app/git.zig `newBranchFrom`): the graph's
+# selected commit is the start — `checkout -b name <sha>`.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+command git.graph
+wait 600
+expect screen contains "second"
+# Rows: second, first.
+key j
+command git.new_branch_from
+expect screen contains "New branch from the selected commit"
+type fromfirst
+key enter
+wait 1500
+expect screen contains "created branch fromfirst from"
+shell test "$(git rev-parse fromfirst)" = "$(git rev-parse main~1)"
+shell test "$(git symbolic-ref --short HEAD)" = fromfirst

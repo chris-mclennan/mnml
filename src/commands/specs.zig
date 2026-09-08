@@ -1040,6 +1040,15 @@ pub const specs = [_]Spec{
     .{ .id = "git.diff_against_base", .title = "Graph: diff the selected commit against the compare base (base..row)", .group = "git" },
     .{ .id = "git.graph_diff", .title = "Graph: the selected commit's own diff", .group = "git" },
     .{ .id = "git.diff_against_current", .title = "Git: diff a branch against the current one (current..branch)", .group = "git" },
+    // git-more2: the branch verbs.
+    .{ .id = "git.branch_rename", .title = "Git: rename the selected / current branch\u{2026} (branch -m)", .group = "git" },
+    .{ .id = "git.fast_forward", .title = "Git: fast-forward the selected / current branch to its upstream (merge --ff-only, or fetch ref:branch when not checked out)", .group = "git" },
+    .{ .id = "git.set_upstream", .title = "Git: set the selected / current branch's upstream\u{2026} (branch -u)", .group = "git" },
+    .{ .id = "git.checkout_force", .title = "Git: force checkout a branch, discarding the tree's changes (checkout -f; confirm)", .group = "git" },
+    .{ .id = "git.delete_remote_branch", .title = "Git: delete a branch on the remote (push --delete; confirm)", .group = "git" },
+    .{ .id = "git.new_branch_from", .title = "Git: new branch from the selected commit / tag / branch\u{2026}", .group = "git" },
+    .{ .id = "git.worktree_add_from", .title = "Git: new worktree from the selected commit / tag / branch\u{2026}", .group = "git" },
+    .{ .id = "git.push_force", .title = "Git: push --force-with-lease (confirm names the risk)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1079,7 +1088,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1012 specs, unique ids" {
+test "1020 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1092,7 +1101,7 @@ test "1012 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    // + four diff-any-two-refs commands (git-more2).
-    try std.testing.expectEqual(@as(usize, 1012), specs.len);
+    // + four diff-any-two-refs commands + eight branch verbs (git-more2).
+    try std.testing.expectEqual(@as(usize, 1020), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

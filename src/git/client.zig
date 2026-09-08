@@ -117,7 +117,8 @@ pub const Job = union(enum) {
     apply_patch: struct { patch: []u8, cached: bool, reverse: bool, desc: []u8 },
     commit: []u8,
     checkout: []u8,
-    new_branch: []u8,
+    /// `checkout -b name [start]`: from HEAD, or from a commit / tag.
+    new_branch: struct { name: []u8, start: ?[]u8 = null },
     delete_branch: []u8,
     merge: []u8,
     rebase: []u8,
@@ -137,8 +138,23 @@ pub const Job = union(enum) {
     undo,
     redo,
     browse: struct { kind: BrowseKind, path: ?[]u8 = null, line: u32 = 0, rev: ?[]u8 = null },
-    worktree_add: struct { path: []u8, branch: ?[]u8 },
+    /// `worktree add path [-b branch] [start]`.
+    worktree_add: struct { path: []u8, branch: ?[]u8, start: ?[]u8 = null },
     worktree_remove: []u8,
+    // ── branch verbs (git-more2) ──
+    /// `branch -m from to`.
+    branch_rename: struct { from: []u8, to: []u8 },
+    /// The branch to its upstream: `merge --ff-only <upstream>` when it
+    /// is checked out (undoable), else `fetch <remote> <ref>:<branch>`.
+    fast_forward: struct { branch: []u8, upstream: []u8, checked_out: bool },
+    /// `branch -u upstream branch`.
+    set_upstream: struct { branch: []u8, upstream: []u8 },
+    /// `checkout -f`: the tree's changes are thrown away (behind a confirm).
+    checkout_force: []u8,
+    /// `push <remote> --delete <branch>` (behind a confirm).
+    delete_remote: struct { remote: []u8, branch: []u8 },
+    /// `push --force-with-lease` (behind a confirm that names the risk).
+    push_force,
     head_sha,
     /// `commit --amend` with a new message (the AI recompose).
     amend: []u8,
@@ -203,9 +219,32 @@ pub const Job = union(enum) {
             .worktree_add => |w| {
                 gpa.free(w.path);
                 if (w.branch) |b| gpa.free(b);
+                if (w.start) |s| gpa.free(s);
             },
+            .new_branch => |b| {
+                gpa.free(b.name);
+                if (b.start) |s| gpa.free(s);
+            },
+            .branch_rename => |b| {
+                gpa.free(b.from);
+                gpa.free(b.to);
+            },
+            .fast_forward => |b| {
+                gpa.free(b.branch);
+                gpa.free(b.upstream);
+            },
+            .set_upstream => |b| {
+                gpa.free(b.branch);
+                gpa.free(b.upstream);
+            },
+            .delete_remote => |b| {
+                gpa.free(b.remote);
+                gpa.free(b.branch);
+            },
+            .checkout_force => |s| gpa.free(s),
+            .push_force => {},
             .stash, .stash_pop => |s| if (s) |m| gpa.free(m),
-            .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
+            .blame, .stage, .unstage, .discard, .commit, .checkout, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
@@ -790,7 +829,33 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "checked out {s}", .{b}), .ok = out.ok, .msg = out.reason() } };
         },
-        .new_branch => |b| try simple(repo, io, r, &.{ "checkout", "-q", "-b", b }, try std.fmt.allocPrint(arena, "created branch {s}", .{b})),
+        .new_branch => |b| try simple(repo, io, r, try newBranchArgs(arena, b.name, b.start), if (b.start) |s| try std.fmt.allocPrint(arena, "created branch {s} from {s}", .{ b.name, shortRef(s) }) else try std.fmt.allocPrint(arena, "created branch {s}", .{b.name})),
+        .branch_rename => |b| try simple(repo, io, r, &.{ "branch", "-m", b.from, b.to }, try std.fmt.allocPrint(arena, "renamed {s} to {s}", .{ b.from, b.to })),
+        .fast_forward => |b| {
+            const args = try fastForwardArgs(arena, b.branch, b.upstream, b.checked_out) orelse {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "fast-forward {s}", .{b.branch}), .ok = false, .msg = try std.fmt.allocPrint(arena, "`{s}` is not a remote branch (remote/name)", .{b.upstream}), .refresh = false } };
+                events.post(io, .{ .git = r });
+                return;
+            };
+            const desc = try std.fmt.allocPrint(arena, "fast-forwarded {s} to {s}", .{ b.branch, b.upstream });
+            if (b.checked_out) {
+                // The tree moves with HEAD: undo puts both back.
+                const snap = try snapshot(repo, io, arena);
+                const out = try git(repo, io, arena, args, null);
+                if (out.ok) try pushSnapshotUndo(repo, io, arena, desc, snap);
+                r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
+            } else try simple(repo, io, r, args, desc);
+        },
+        .set_upstream => |b| try simple(repo, io, r, &.{ "branch", "-q", "-u", b.upstream, b.branch }, try std.fmt.allocPrint(arena, "{s} tracks {s}", .{ b.branch, b.upstream })),
+        .checkout_force => |b| {
+            const snap = try snapshot(repo, io, arena);
+            const out = try git(repo, io, arena, &.{ "checkout", "-q", "-f", b }, null);
+            const desc = try std.fmt.allocPrint(arena, "checked out {s} (forced)", .{b});
+            if (out.ok) try pushSnapshotUndo(repo, io, arena, desc, snap);
+            r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
+        },
+        .delete_remote => |b| try simple(repo, io, r, &.{ "push", "-q", b.remote, "--delete", b.branch }, try std.fmt.allocPrint(arena, "deleted {s}/{s} on the remote", .{ b.remote, b.branch })),
+        .push_force => try simple(repo, io, r, &.{ "push", "-q", "--force-with-lease" }, "pushed (--force-with-lease)"),
         .delete_branch => |b| try simple(repo, io, r, &.{ "branch", "-D", b }, try std.fmt.allocPrint(arena, "deleted branch {s}", .{b})),
         .merge => |b| try simple(repo, io, r, &.{ "merge", "--no-edit", b }, try std.fmt.allocPrint(arena, "merged {s}", .{b})),
         .rebase => |b| try simple(repo, io, r, &.{ "rebase", b }, try std.fmt.allocPrint(arena, "rebased onto {s}", .{b})),
@@ -879,9 +944,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
         },
         .worktree_add => |w| {
+            const args = try worktreeAddArgs(arena, w.path, w.branch, w.start);
             if (w.branch) |b| {
-                try simple(repo, io, r, &.{ "worktree", "add", w.path, "-b", b }, try std.fmt.allocPrint(arena, "worktree added at {s} on {s}", .{ w.path, b }));
-            } else try simple(repo, io, r, &.{ "worktree", "add", w.path }, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
+                try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s} on {s}", .{ w.path, b }));
+            } else try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
         },
         .worktree_remove => |p| try simple(repo, io, r, &.{ "worktree", "remove", "--force", p }, try std.fmt.allocPrint(arena, "worktree removed: {s}", .{p})),
         .op_continue => |op| switch (op) {
@@ -1008,6 +1074,39 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
     }
     events.post(io, .{ .git = r });
+}
+
+// ─── branch verbs (git-more2): the argv builders ────────────────────────
+
+/// `checkout -q -b name [start]`.
+pub fn newBranchArgs(arena: Allocator, name: []const u8, start: ?[]const u8) Allocator.Error![]const []const u8 {
+    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    try args.appendSlice(arena, &.{ "checkout", "-q", "-b", name });
+    if (start) |s| try args.append(arena, s);
+    return args.items;
+}
+
+/// `worktree add path [-b branch] [start]`: a detached tree at `start`
+/// when there is no branch to make.
+pub fn worktreeAddArgs(arena: Allocator, path: []const u8, branch: ?[]const u8, start: ?[]const u8) Allocator.Error![]const []const u8 {
+    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    try args.appendSlice(arena, &.{ "worktree", "add", path });
+    if (branch) |b| try args.appendSlice(arena, &.{ "-b", b });
+    if (start) |s| {
+        if (branch == null) try args.append(arena, "--detach");
+        try args.append(arena, s);
+    }
+    return args.items;
+}
+
+/// `merge --ff-only upstream` for the checked-out branch; for another,
+/// `fetch remote ref:branch` — git refuses a non-fast-forward there
+/// too. Null when `upstream` has no `remote/` half.
+pub fn fastForwardArgs(arena: Allocator, branch: []const u8, upstream: []const u8, checked_out: bool) Allocator.Error!?[]const []const u8 {
+    if (checked_out) return try arena.dupe([]const u8, &.{ "merge", "-q", "--ff-only", upstream });
+    const slash = std.mem.indexOfScalar(u8, upstream, '/') orelse return null;
+    if (slash == 0 or slash + 1 >= upstream.len) return null;
+    return try arena.dupe([]const u8, &.{ "fetch", "-q", upstream[0..slash], try std.fmt.allocPrint(arena, "{s}:{s}", .{ upstream[slash + 1 ..], branch }) });
 }
 
 /// The repo's git dir, asked of git once and kept on the repo.
@@ -1371,6 +1470,21 @@ test "rangeRev joins two refs; rangeTitle shortens a full sha on either side and
     const plain = try rangeTitle(testing.allocator, "main");
     defer testing.allocator.free(plain);
     try testing.expectEqualStrings("main", plain);
+}
+
+test "the branch verbs' argv: a new branch from a start, a detached worktree at one, ff-only when checked out, fetch ref:branch otherwise, null without a remote" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "checkout", "-q", "-b", "feat" }), try newBranchArgs(arena, "feat", null));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "checkout", "-q", "-b", "feat", "v1.0" }), try newBranchArgs(arena, "feat", "v1.0"));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "worktree", "add", "../wt", "-b", "feat", "abc" }), try worktreeAddArgs(arena, "../wt", "feat", "abc"));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "worktree", "add", "../wt", "--detach", "abc" }), try worktreeAddArgs(arena, "../wt", null, "abc"));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "worktree", "add", "../wt" }), try worktreeAddArgs(arena, "../wt", null, null));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "merge", "-q", "--ff-only", "origin/main" }), (try fastForwardArgs(arena, "main", "origin/main", true)).?);
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "fetch", "-q", "origin", "main:main" }), (try fastForwardArgs(arena, "main", "origin/main", false)).?);
+    try testing.expect((try fastForwardArgs(arena, "main", "main", false)) == null);
+    try testing.expect((try fastForwardArgs(arena, "main", "origin/", false)) == null);
 }
 
 test "a Repo's queue takes jobs, and destroy frees what was never run" {

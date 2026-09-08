@@ -82,6 +82,11 @@ pub const Pick = enum {
     file_history,
     /// `git.diff_against_current` off the branches panel: pick the branch.
     diff_current,
+    /// `git.set_upstream`: pick the remote branch `State.verb_branch` tracks.
+    set_upstream,
+    /// `git.checkout_force` / `git.delete_remote_branch` off the panel: pick the branch.
+    checkout_force,
+    delete_remote,
     /// The palette's closed-repo picker.
     reopen_repo,
 };
@@ -112,6 +117,8 @@ pub const PromptKind = enum {
     reset_soft,
     reset_mixed,
     reset_hard,
+    /// `git.branch_rename`: the new name for `State.verb_branch`.
+    branch_rename,
 };
 
 /// A confirm box's payload; the path is owned.
@@ -126,11 +133,21 @@ pub const Confirm = union(enum) {
     tag_delete: []u8,
     /// `reset --hard <rev>` after a yes.
     reset_hard: []u8,
+    /// `checkout -f <branch>` after a yes: the tree's changes go.
+    checkout_force: []u8,
+    /// `push <remote> --delete <branch>` after a yes.
+    delete_remote: struct { remote: []u8, branch: []u8 },
+    /// `push --force-with-lease` after a yes.
+    push_force,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard => |s| gpa.free(s),
-            .none, .discard_hunk => {},
+            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard, .checkout_force => |s| gpa.free(s),
+            .delete_remote => |d| {
+                gpa.free(d.remote);
+                gpa.free(d.branch);
+            },
+            .none, .discard_hunk, .push_force => {},
         }
     }
 };
@@ -439,6 +456,11 @@ pub const State = struct {
     /// Owned; taken by the accept, dropped by a cancel.
     line_patch: ?[]u8 = null,
     line_repo: u32 = 0,
+    /// The branch verbs (git-more2): the branch a rename prompt or the
+    /// set-upstream picker acts on, and the commit / tag a new branch
+    /// or worktree prompt starts from. Owned; replaced by the next verb.
+    verb_branch: ?[]u8 = null,
+    verb_start: ?[]u8 = null,
     /// Conflicts (`app/conflicts.zig`): vim's `c` inside a block is
     /// waiting for `o` / `t` / `b`; and the editor pane + block an AI
     /// resolve was asked for, until the three stages land.
@@ -478,6 +500,8 @@ pub const State = struct {
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
         if (self.line_patch) |b| gpa.free(b);
+        if (self.verb_branch) |b| gpa.free(b);
+        if (self.verb_start) |b| gpa.free(b);
         var rit = self.rails.valueIterator();
         while (rit.next()) |r| r.snapshot.deinit();
         self.rails.deinit(gpa);
@@ -1710,6 +1734,9 @@ fn openBranchPicker(app: *App, bs: []const parse.Branch, what: Pick) Allocator.E
         // A delete / merge / rebase / diff picker never offers the current branch.
         if (b.current and (what == .delete_branch or what == .merge or what == .rebase or what == .diff_current)) continue;
         if (what == .delete_branch and b.remote) continue;
+        // An upstream is a remote branch; a force checkout a local one.
+        if (what == .set_upstream and !b.remote) continue;
+        if (what == .checkout_force and (b.remote or b.current)) continue;
         var age_buf: [16]u8 = undefined;
         const age = parse.relativeAge(&age_buf, b.time, now);
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (b.current) "* " else "", b.name }));
@@ -1727,6 +1754,9 @@ fn openBranchPicker(app: *App, bs: []const parse.Branch, what: Pick) Allocator.E
         .delete_branch => "Delete branch (force)",
         .graph_branch => "Graph: filter by branch",
         .diff_current => "Diff a branch against the current one",
+        .set_upstream => "Set upstream: the remote branch to track",
+        .checkout_force => "Force checkout (the tree's changes go)",
+        .delete_remote => "Delete a branch on the remote",
         else => "Branches",
     };
     app.git.pick = what;
@@ -1855,6 +1885,12 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         .merge => try submitOp(app, try requireRepo(app), .{ .merge = try gpa.dupe(u8, label) }),
         .rebase => try submitOp(app, try requireRepo(app), .{ .rebase = try gpa.dupe(u8, label) }),
         .diff_current => try diffAgainstCurrent(app, try requireRepo(app), label),
+        .set_upstream => {
+            const branch = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "set upstream: the branch is gone", .{});
+            try submitOp(app, try requireRepo(app), .{ .set_upstream = .{ .branch = try gpa.dupe(u8, branch), .upstream = try gpa.dupe(u8, label) } });
+        },
+        .checkout_force => try checkoutForce(app, label),
+        .delete_remote => try deleteRemote(app, label, null),
         .delete_branch => try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, label) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{label})),
         .graph_branch => {
             const g = activeGraph(app) orelse return;
@@ -1972,7 +2008,15 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
         .stash => try submitOp(app, try requireRepo(app), .{ .stash = if (text.len == 0) null else try gpa.dupe(u8, text) }),
         .new_branch => {
             if (text.len == 0) return;
-            try submitOp(app, try requireRepo(app), .{ .new_branch = try gpa.dupe(u8, text) });
+            const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
+            errdefer if (start) |s| gpa.free(s);
+            try submitOp(app, try requireRepo(app), .{ .new_branch = .{ .name = try gpa.dupe(u8, text), .start = start } });
+        },
+        .branch_rename => {
+            if (text.len == 0) return;
+            const from = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "rename: the branch is gone", .{});
+            if (std.mem.eql(u8, from, text)) return;
+            try submitOp(app, try requireRepo(app), .{ .branch_rename = .{ .from = try gpa.dupe(u8, from), .to = try gpa.dupe(u8, text) } });
         },
         .tag => {
             if (text.len == 0) return;
@@ -1984,7 +2028,9 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             var it = std.mem.tokenizeScalar(u8, text, ' ');
             const path = it.next() orelse return;
             const branch = it.next();
-            try submitOp(app, try requireRepo(app), .{ .worktree_add = .{ .path = try gpa.dupe(u8, path), .branch = if (branch) |b| try gpa.dupe(u8, b) else null } });
+            const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
+            errdefer if (start) |s| gpa.free(s);
+            try submitOp(app, try requireRepo(app), .{ .worktree_add = .{ .path = try gpa.dupe(u8, path), .branch = if (branch) |b| try gpa.dupe(u8, b) else null, .start = start } });
         },
         .graph_author, .graph_subject, .graph_date => {
             const g = activeGraph(app) orelse return app.diag.fail(app.frame.allocator(), "graph: no graph pane is active", .{});
@@ -2056,7 +2102,132 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
         .tag_delete => |t| try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, t) }),
         .reset_hard => |rev| try submitOp(app, try requireRepo(app), .{ .reset = .{ .mode = .hard, .rev = try gpa.dupe(u8, rev) } }),
+        .checkout_force => |b| try submitOp(app, try requireRepo(app), .{ .checkout_force = try gpa.dupe(u8, b) }),
+        .delete_remote => |d| {
+            const remote = try gpa.dupe(u8, d.remote);
+            errdefer gpa.free(remote);
+            try submitOp(app, try requireRepo(app), .{ .delete_remote = .{ .remote = remote, .branch = try gpa.dupe(u8, d.branch) } });
+        },
+        .push_force => {
+            app.toast("pushing (--force-with-lease)\u{2026}", .{});
+            try submitOp(app, try requireRepo(app), .push_force);
+        },
     }
+}
+
+// ─── the branch verbs (git-more2) ───────────────────────────────────────
+
+fn setVerbBranch(app: *App, name: []const u8) Allocator.Error!void {
+    if (app.git.verb_branch) |b| app.gpa.free(b);
+    app.git.verb_branch = try app.gpa.dupe(u8, name);
+}
+
+fn setVerbStart(app: *App, rev: []const u8) Allocator.Error!void {
+    if (app.git.verb_start) |s| app.gpa.free(s);
+    app.git.verb_start = try app.gpa.dupe(u8, rev);
+}
+
+/// The start a new-branch / worktree prompt was opened with, taken
+/// (the prompt's accept owns it from here).
+fn takeVerbStart(app: *App) ?[]u8 {
+    const s = app.git.verb_start orelse return null;
+    app.git.verb_start = null;
+    return s;
+}
+
+/// The rail's entry for `name`, local or remote.
+fn railBranch(app: *App, name: []const u8) ?parse.Branch {
+    for (app.git.rail_branches) |b| if (std.mem.eql(u8, b.name, name)) return b;
+    return null;
+}
+
+/// `Rename…`: the prompt opens with the old name.
+pub fn branchRename(app: *App, name: []const u8) CommandError!void {
+    try setVerbBranch(app, name);
+    openPrompt(app, .branch_rename, "Rename branch");
+    try app.overlay.prompt.state.setText(app.gpa, name);
+}
+
+/// Fast-forward `name` to its upstream — `merge --ff-only` when it is
+/// checked out, `fetch remote ref:name` otherwise. The upstream comes
+/// off the rail (`for-each-ref`'s `%(upstream)`), so the rail must have
+/// loaded; a branch without one says so.
+pub fn fastForward(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = try requireRepo(app);
+    const b = railBranch(app, name) orelse return app.diag.fail(arena, "fast-forward: `{s}` is not in the branches panel (open it, or refresh)", .{name});
+    if (b.upstream.len == 0) return app.diag.fail(arena, "fast-forward: {s} has no upstream \u{2014} set one first", .{name});
+    const gpa = app.gpa;
+    const branch = try gpa.dupe(u8, name);
+    errdefer gpa.free(branch);
+    try submitOp(app, repo, .{ .fast_forward = .{ .branch = branch, .upstream = try gpa.dupe(u8, b.upstream), .checked_out = b.current } });
+}
+
+/// `Set upstream…`: a picker of the remote branches.
+pub fn setUpstream(app: *App, name: []const u8) CommandError!void {
+    const repo = try requireRepo(app);
+    try setVerbBranch(app, name);
+    try askBranches(app, repo, .set_upstream);
+}
+
+/// `Force checkout…`: a confirm that says what goes.
+pub fn checkoutForce(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    try openConfirm(app, .{ .checkout_force = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Force checkout {s}? Uncommitted changes in the tree are discarded (git checkout -f; undo restores them)", .{name}));
+}
+
+/// `Delete on the remote…`: `remote/name` splits into the two; a local
+/// branch deletes its upstream's ref (or `origin/<name>` without one).
+pub fn deleteRemote(app: *App, name: []const u8, remote_hint: ?[]const u8) CommandError!void {
+    const gpa = app.gpa;
+    var remote: []const u8 = remote_hint orelse "origin";
+    var branch: []const u8 = name;
+    if (railBranch(app, name)) |b| {
+        if (b.remote) {
+            if (std.mem.indexOfScalar(u8, name, '/')) |s| {
+                remote = name[0..s];
+                branch = name[s + 1 ..];
+            }
+        } else if (b.upstream.len > 0) {
+            if (std.mem.indexOfScalar(u8, b.upstream, '/')) |s| {
+                remote = b.upstream[0..s];
+                branch = b.upstream[s + 1 ..];
+            }
+        }
+    } else if (std.mem.indexOfScalar(u8, name, '/')) |s| {
+        remote = name[0..s];
+        branch = name[s + 1 ..];
+    }
+    const r = try gpa.dupe(u8, remote);
+    errdefer gpa.free(r);
+    const b = try gpa.dupe(u8, branch);
+    errdefer gpa.free(b);
+    try openConfirm(app, .{ .delete_remote = .{ .remote = r, .branch = b } }, try std.fmt.allocPrint(gpa, "  Delete {s}/{s} on the remote? (git push {s} --delete {s})", .{ remote, branch, remote, branch }));
+}
+
+/// `New branch from here…`: the prompt, the start kept for its accept.
+pub fn newBranchFrom(app: *App, start: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbStart(app, start);
+    // The prompt borrows its title for as long as it is open: a static one.
+    openPrompt(app, .new_branch, if (std.mem.eql(u8, start, "HEAD")) "New branch" else "New branch from the selected commit / ref");
+}
+
+/// `New worktree from here…`: as `git.worktree_add`, starting at `start`.
+pub fn worktreeFrom(app: *App, start: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbStart(app, start);
+    openPrompt(app, .worktree_add, if (std.mem.eql(u8, start, "HEAD")) "Worktree: <path> [new-branch]" else "Worktree from the selected commit / ref: <path> [new-branch]");
+}
+
+/// `Push --force-with-lease…`: the confirm names the risk. Rust refused
+/// a force push outright; this is the deliberate change — the lease
+/// refuses when the remote moved past the last fetch, and the text
+/// says what a yes rewrites.
+pub fn pushForce(app: *App) CommandError!void {
+    _ = try requireRepo(app);
+    const branch = app.git.branchLabel() orelse "HEAD";
+    try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "  Push {s} with --force-with-lease? The remote branch is rewritten to match this one; commits only the remote has since your last fetch would be lost (git refuses if it moved past that fetch)", .{branch}));
 }
 
 /// A prompt or confirm box closing by any route: an AI body waiting
@@ -3337,6 +3508,8 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Reset --mixed here", .action = .{ .command = .@"git.reset_mixed" } },
         .{ .label = "Reset --hard here\u{2026}", .action = .{ .command = .@"git.reset_hard" } },
         .{ .label = "Select the branch's commits (*)", .action = .{ .command = .@"git.select_branch" }, .separator_before = true },
+        .{ .label = "New branch from here\u{2026}", .action = .{ .command = .@"git.new_branch_from" }, .separator_before = true },
+        .{ .label = "New worktree from here\u{2026}", .action = .{ .command = .@"git.worktree_add_from" } },
         .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" }, .separator_before = true },
         .{ .label = "Sort by next column", .action = .{ .command = .@"git.graph_sort" }, .separator_before = true },
         .{ .label = "Jump to hash…", .action = .{ .command = .@"git.graph_jump_hash" } },
@@ -4649,4 +4822,124 @@ test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints b
     // The current branch against itself refuses.
     try testing.expectError(error.Failed, diffAgainstCurrent(&f.app, f.app.git.activeRepo().?, "main"));
     f.app.diag.clear();
+}
+
+test "the branch verbs on a seeded remote: fast-forward fetches ref:branch when not checked out, rename, set upstream, a new branch from a commit, force checkout (confirm), delete on the remote (confirm), push --force-with-lease (confirm)" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\norigin.git/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    const first = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(first);
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.sh(&.{ "init", "-q", "--bare", "origin.git" });
+    try f.sh(&.{ "remote", "add", "origin", "./origin.git" });
+    try f.sh(&.{ "push", "-q", "-u", "origin", "main" });
+    // feat: one commit past main on the remote, the local ref behind it.
+    try f.sh(&.{ "checkout", "-q", "-b", "feat" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "feat work" });
+    try f.sh(&.{ "push", "-q", "-u", "origin", "feat" });
+    try f.sh(&.{ "checkout", "-q", "main" });
+    try f.sh(&.{ "update-ref", "refs/heads/feat", first });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    try testing.expect(f.app.git.rail_loaded);
+
+    // Fast-forward feat (not checked out): fetch origin feat:feat.
+    try fastForward(&f.app, "feat");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "fast-forwarded feat to origin/feat"));
+    const feat_now = try f.out(&.{ "rev-parse", "feat" });
+    defer testing.allocator.free(feat_now);
+    const feat_remote = try f.out(&.{ "rev-parse", "origin/feat" });
+    defer testing.allocator.free(feat_remote);
+    try testing.expectEqualStrings(feat_remote, feat_now);
+    // A branch without an upstream says so instead of guessing one.
+    try f.sh(&.{ "branch", "-q", "lonely" });
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    try testing.expectError(error.Failed, fastForward(&f.app, "lonely"));
+    f.app.diag.clear();
+
+    // Rename: the prompt opens with the old name; the accept runs branch -m.
+    try branchRename(&f.app, "lonely");
+    try testing.expectEqual(PromptKind.branch_rename, f.app.git.prompt);
+    try testing.expectEqualStrings("lonely", f.app.overlay.prompt.state.text());
+    try acceptPrompt(&f.app, "renamed");
+    try f.settle(4000);
+    const renamed = try f.out(&.{ "branch", "--list", "renamed" });
+    defer testing.allocator.free(renamed);
+    try testing.expect(std.mem.indexOf(u8, renamed, "renamed") != null);
+
+    // Set upstream: the picker offers the remote branches; the pick runs branch -u.
+    try setUpstream(&f.app, "renamed");
+    // The picker waits on the `.branches` result, which no busy count covers.
+    var spins: usize = 0;
+    while (f.app.git.pick != .set_upstream and spins < 800) : (spins += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expectEqual(Pick.set_upstream, f.app.git.pick);
+    try acceptPick(&f.app, "origin/main", "remote");
+    try f.settle(4000);
+    const up = try f.out(&.{ "rev-parse", "--abbrev-ref", "renamed@{upstream}" });
+    defer testing.allocator.free(up);
+    try testing.expectEqualStrings("origin/main", up);
+
+    // A new branch from the first commit: checkout -b name <sha>.
+    try newBranchFrom(&f.app, first);
+    try acceptPrompt(&f.app, "fromfirst");
+    try f.settle(4000);
+    const ff = try f.out(&.{ "rev-parse", "fromfirst" });
+    defer testing.allocator.free(ff);
+    try testing.expectEqualStrings(first, ff);
+    try testing.expect(f.app.git.verb_start == null);
+
+    // Force checkout main with a dirty tree: the confirm, then the tree is clean on main.
+    try f.write("a.txt", "dirty\n");
+    try checkoutForce(&f.app, "main");
+    try testing.expectEqual(std.meta.Tag(Confirm).checkout_force, std.meta.activeTag(f.app.git.confirm));
+    try acceptConfirm(&f.app, 0);
+    try f.settle(4000);
+    const on = try f.out(&.{ "symbolic-ref", "--short", "HEAD" });
+    defer testing.allocator.free(on);
+    try testing.expectEqualStrings("main", on);
+    const clean = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(clean);
+    try testing.expectEqualStrings("", clean);
+
+    // Delete on the remote: origin/feat splits into the remote and the ref.
+    try deleteRemote(&f.app, "origin/feat", null);
+    try testing.expectEqualStrings("origin", f.app.git.confirm.delete_remote.remote);
+    try testing.expectEqualStrings("feat", f.app.git.confirm.delete_remote.branch);
+    try acceptConfirm(&f.app, 0);
+    try f.settle(4000);
+    const heads = try f.out(&.{ "ls-remote", "--heads", "origin", "feat" });
+    defer testing.allocator.free(heads);
+    try testing.expectEqualStrings("", heads);
+
+    // Push --force-with-lease after rewriting main: the confirm names the
+    // risk; origin/main then matches.
+    try f.sh(&.{ "commit", "-q", "--amend", "-m", "second, reworded" });
+    try pushForce(&f.app);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "force-with-lease") != null);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "would be lost") != null);
+    try acceptConfirm(&f.app, 0);
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "pushed (--force-with-lease)"));
+    const local = try f.out(&.{ "rev-parse", "main" });
+    defer testing.allocator.free(local);
+    const remote = try f.out(&.{ "rev-parse", "origin/main" });
+    defer testing.allocator.free(remote);
+    try testing.expectEqualStrings(local, remote);
 }
