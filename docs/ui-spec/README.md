@@ -44,6 +44,17 @@ the brand menu fits before the ` » `, the browser chip is dropped from
 the gap, the right cluster is the compact one. `src/ui/menu_bar.zig`
 pins row 0 of both dumps as `rust_row_120` / `rust_row_80`.
 
+## Current counts (main 1fda9ca, 2026-09-08)
+
+Every screen carries the SCRIPTS rail row (Zig-only, from the lua track)
+as two differing lines, on top of the version string and the coverage
+ticker's phase. A track's gate compares against these, not the numbers
+in the older sections below: esc 6 (4 when the ticker agrees), editor
+2–4, diff 26, http 2, http-panel 56, graph2 28, status 4, palette 34,
+picker 4, whichkey 0, goto 2, close 2, delete 2, rename 2, discovery 4,
+help 6, todos 26, notes 28, findings 28, outline 8, integrations 20.
+A count that grows by exactly 2 at the rail's row ~26 is that row.
+
 ## Overlays (2026-09-07)
 
 Each `rust-<name>-120x40.txt` below is the Rust screen after the
