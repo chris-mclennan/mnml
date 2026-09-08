@@ -40,8 +40,14 @@ pub fn main(init: std.process.Init) !u8 {
     // The git worker's editor child modes (`src/git/sequence_editor.zig`):
     // git runs `mnml-zig --rebase-todo <plan> <todo>` / `--commit-msg
     // <queue> <target>` and reads only the exit code.
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "--rebase-todo")) return sequence_editor.childMain(io, gpa, .todo, args[2..]);
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "--commit-msg")) return sequence_editor.childMain(io, gpa, .commit_msg, args[2..]);
+    if (args.len >= 2 and (std.mem.eql(u8, args[1], "--rebase-todo") or std.mem.eql(u8, args[1], "--commit-msg"))) {
+        var err_buf: [1024]u8 = undefined;
+        var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
+        const mode: sequence_editor.Mode = if (std.mem.eql(u8, args[1], "--rebase-todo")) .todo else .commit_msg;
+        const code = sequence_editor.childMain(io, gpa, mode, args[2..], &err_w.interface);
+        err_w.interface.flush() catch {};
+        return code;
+    }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {

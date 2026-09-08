@@ -432,6 +432,21 @@ const Out = struct {
     }
 };
 
+pub const EnvPair = struct { key: []const u8, value: []const u8 };
+
+/// `git` with `extra` set in the child's environment on top of the
+/// repo's. The editors are set this way — `GIT_EDITOR` /
+/// `GIT_SEQUENCE_EDITOR` — because the variables beat `core.editor`
+/// and `sequence.editor`, and the app's own environment may carry one
+/// (`GIT_EDITOR=true` under a test harness).
+fn gitEnv(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_text: ?[]const u8, extra: []const EnvPair) JobError!Out {
+    if (extra.len == 0) return git(repo, io, arena, args, stdin_text);
+    var m = if (repo.env) |*e| try e.clone(repo.gpa) else std.process.Environ.Map.init(repo.gpa);
+    defer m.deinit();
+    for (extra) |kv| try m.put(kv.key, kv.value);
+    return gitIn(repo, io, arena, args, stdin_text, &m);
+}
+
 /// Run `git --no-pager -c color.ui=never <args>` in the repo. Output
 /// lands on `arena`. A spawn failure (no `git` on PATH) is `ok = false`
 /// with the error name in `stderr`.
@@ -845,7 +860,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .op_continue => |op| switch (op) {
             .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
             .bisect => r.payload = .{ .op = .{ .desc = "bisect: mark a commit good or bad instead", .ok = false, .refresh = false } },
-            else => try simple(repo, io, r, &.{ "-c", "core.editor=true", op.verb(), "--continue" }, try std.fmt.allocPrint(arena, "{s} continued", .{op.verb()})),
+            else => try simpleEnv(repo, io, r, &.{ op.verb(), "--continue" }, try std.fmt.allocPrint(arena, "{s} continued", .{op.verb()}), &no_editor),
         },
         .op_abort => |op| switch (op) {
             .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
@@ -856,7 +871,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
             .bisect => try simple(repo, io, r, &.{ "bisect", "skip" }, "bisect: skipped"),
             .merge => r.payload = .{ .op = .{ .desc = "merge: nothing to skip (abort or continue)", .ok = false, .refresh = false } },
-            else => try simple(repo, io, r, &.{ "-c", "core.editor=true", op.verb(), "--skip" }, try std.fmt.allocPrint(arena, "{s}: step skipped", .{op.verb()})),
+            else => try simpleEnv(repo, io, r, &.{ op.verb(), "--skip" }, try std.fmt.allocPrint(arena, "{s}: step skipped", .{op.verb()}), &no_editor),
         },
         .amend_noedit => {
             const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
@@ -880,9 +895,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             // — from the root when it has none — with `true` as the editor.
             const parent = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", try std.fmt.allocPrint(arena, "{s}^", .{sha}) }, null);
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
-            try args.appendSlice(arena, &.{ "-c", "sequence.editor=true", "-c", "core.editor=true", "rebase", "-i", "--autosquash", "--autostash" });
+            try args.appendSlice(arena, &.{ "rebase", "-i", "--autosquash", "--autostash" });
             if (parent.ok and trimmed(parent.stdout).len > 0) try args.append(arena, trimmed(parent.stdout)) else try args.append(arena, "--root");
-            const out = try git(repo, io, arena, args.items, null);
+            const out = try gitEnv(repo, io, arena, args.items, null, &no_editor);
             if (out.ok) try pushSnapshotUndo(repo, io, arena, try std.fmt.allocPrint(arena, "amend to {s}", .{short}), snap);
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended {s} with the staged changes", .{short}), .ok = out.ok, .msg = out.reason() } };
         },
@@ -924,14 +939,13 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             cwd.writeFile(io, .{ .sub_path = queue_path, .data = try sequence_editor.queueText(arena, plan.ops) }) catch {};
             const snap = try snapshot(repo, io, arena);
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
-            try args.appendSlice(arena, &.{
-                "-c",          try std.fmt.allocPrint(arena, "sequence.editor={s}", .{try sequence_editor.editorCommand(arena, exe, "--rebase-todo", plan_path)}),
-                "-c",          try std.fmt.allocPrint(arena, "core.editor={s}", .{try sequence_editor.editorCommand(arena, exe, "--commit-msg", queue_path)}),
-                "rebase",      "-i",
-                "--autostash",
-            });
+            try args.appendSlice(arena, &.{ "rebase", "-i", "--autostash" });
             if (plan.base) |b| try args.append(arena, b) else try args.append(arena, "--root");
-            const out = try git(repo, io, arena, args.items, null);
+            const editors = [_]EnvPair{
+                .{ .key = "GIT_SEQUENCE_EDITOR", .value = try sequence_editor.editorCommand(arena, exe, "--rebase-todo", plan_path) },
+                .{ .key = "GIT_EDITOR", .value = try sequence_editor.editorCommand(arena, exe, "--commit-msg", queue_path) },
+            };
+            const out = try gitEnv(repo, io, arena, args.items, null, &editors);
             var n_changed: usize = 0;
             for (plan.ops) |op| if (op.action != .pick) {
                 n_changed += 1;
@@ -1066,10 +1080,17 @@ fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError
 /// Run `args` and post `desc` as the toast on success, git's reason on
 /// failure. The result is posted here.
 fn simple(repo: *Repo, io: Io, r: *Result, args: []const []const u8, desc: []const u8) JobError!void {
+    return simpleEnv(repo, io, r, args, desc, &.{});
+}
+
+fn simpleEnv(repo: *Repo, io: Io, r: *Result, args: []const []const u8, desc: []const u8, extra: []const EnvPair) JobError!void {
     const arena = r.arena.allocator();
-    const out = try git(repo, io, arena, args, null);
+    const out = try gitEnv(repo, io, arena, args, null, extra);
     r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
 }
+
+/// No editor ever opens: git takes the message it has.
+const no_editor = [_]EnvPair{ .{ .key = "GIT_EDITOR", .value = "true" }, .{ .key = "GIT_SEQUENCE_EDITOR", .value = "true" } };
 
 fn pushUndo(repo: *Repo, desc: []const u8, undo: Action, redo: Action) Allocator.Error!void {
     const gpa = repo.gpa;

@@ -1,7 +1,9 @@
 //! mnml as git's own sequence editor. An interactive rebase asks an
 //! editor to rewrite its todo and, for a `reword`, a commit's message;
 //! the worker (`client.zig`, `Job.rebase_plan`) points both at this
-//! executable and exits are the whole protocol:
+//! executable — `GIT_SEQUENCE_EDITOR` and `GIT_EDITOR` in the child's
+//! environment, which beat any `core.editor` — and exits are the
+//! whole protocol:
 //!
 //!   mnml-zig --rebase-todo <plan> <todo>     # overwrite git's todo with the plan
 //!   mnml-zig --commit-msg  <queue> <target>  # a reworded message from the queue
@@ -79,9 +81,9 @@ pub fn queueText(arena: Allocator, ops: []const Op) Allocator.Error![]u8 {
     return out.toOwnedSlice(arena);
 }
 
-/// A value for `-c sequence.editor=` / `-c core.editor=`: git hands it
-/// to `sh -c`, so the exe and the file are single-quoted (a quote
-/// inside becomes `'\''`).
+/// A value for `GIT_SEQUENCE_EDITOR` / `GIT_EDITOR`: git hands it to
+/// `sh -c`, so the exe and the file are single-quoted (a quote inside
+/// becomes `'\''`).
 pub fn editorCommand(arena: Allocator, exe: []const u8, flag: []const u8, file: []const u8) Allocator.Error![]u8 {
     return std.fmt.allocPrint(arena, "{s} {s} {s}", .{ try shQuote(arena, exe), flag, try shQuote(arena, file) });
 }
@@ -206,11 +208,8 @@ fn firstLine(s: []const u8) []const u8 {
 pub const Mode = enum { todo, commit_msg };
 
 /// The child's `main`: `args` are what follows the flag. Exit 0 is the
-/// only thing git reads; the reason goes to stderr.
-pub fn childMain(io: Io, gpa: Allocator, mode: Mode, args: []const [:0]const u8) u8 {
-    var err_buf: [1024]u8 = undefined;
-    var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
-    const e = &err_w.interface;
+/// only thing git reads; the reason goes to `e` (stderr in `main`).
+pub fn childMain(io: Io, gpa: Allocator, mode: Mode, args: []const [:0]const u8, e: *Io.Writer) u8 {
     if (args.len < 2) {
         e.print("mnml-zig {s}: expected <file> <target>\n", .{if (mode == .todo) "--rebase-todo" else "--commit-msg"}) catch {};
         e.flush() catch {};
@@ -284,20 +283,26 @@ test "the sequence editor on a real todo file: git's todo is replaced by the pla
     try testing.expectEqualStrings(plan, after);
     // The child mode itself, on the same files (idempotent).
     const argv = [_][:0]const u8{ try arena.dupeZ(u8, plan_path), try arena.dupeZ(u8, todo_path) };
-    try testing.expectEqual(@as(u8, 0), childMain(testing.io, testing.allocator, .todo, &argv));
+    var err_buf: [256]u8 = undefined;
+    var err_w: Io.Writer = .fixed(&err_buf);
+    try testing.expectEqual(@as(u8, 0), childMain(testing.io, testing.allocator, .todo, &argv, &err_w));
+    try testing.expectEqualStrings("", err_w.buffered());
     // A commit the plan leaves out.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "git-rebase-todo", .data = git_todo ++ "pick 4444444 fourth\n" });
     var reason: ?[]u8 = null;
     defer if (reason) |r| testing.allocator.free(r);
     try testing.expectError(error.PlanMismatch, writeTodo(testing.io, testing.allocator, plan_path, todo_path, &reason));
     try testing.expectEqualStrings("the rebase lists 4444444, which the plan leaves out", reason.?);
-    try testing.expectEqual(@as(u8, 1), childMain(testing.io, testing.allocator, .todo, &argv));
+    try testing.expectEqual(@as(u8, 1), childMain(testing.io, testing.allocator, .todo, &argv, &err_w));
+    try testing.expectEqualStrings("mnml-zig --rebase-todo: the rebase lists 4444444, which the plan leaves out\n", err_w.buffered());
+    err_w = .fixed(&err_buf);
     const untouched = try tmp.dir.readFileAlloc(testing.io, "git-rebase-todo", arena, .unlimited);
     try testing.expect(std.mem.endsWith(u8, untouched, "pick 4444444 fourth\n"));
     // A commit git did not list.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "git-rebase-todo", .data = "pick 1111111 first\npick 2222222 second one\n" });
     try testing.expect((try mismatch(arena, plan, "pick 1111111 first\npick 2222222 second one\n")) != null);
-    try testing.expectEqual(@as(u8, 2), childMain(testing.io, testing.allocator, .todo, argv[0..1]));
+    try testing.expectEqual(@as(u8, 2), childMain(testing.io, testing.allocator, .todo, argv[0..1], &err_w));
+    try testing.expectEqualStrings("mnml-zig --rebase-todo: expected <file> <target>\n", err_w.buffered());
 }
 
 test "the message editor: the record for the file's subject replaces it and leaves the queue; a squash's combined message and an unknown subject pass through" {
@@ -319,7 +324,9 @@ test "the message editor: the record for the file's subject replaces it and leav
     // The reword: the old message with git's comment block.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "COMMIT_EDITMSG", .data = "second one\n\n# Please enter the commit message for your changes.\n" });
     const argv = [_][:0]const u8{ try arena.dupeZ(u8, queue_path), try arena.dupeZ(u8, target_path) };
-    try testing.expectEqual(@as(u8, 0), childMain(testing.io, testing.allocator, .commit_msg, &argv));
+    var err_buf: [256]u8 = undefined;
+    var err_w: Io.Writer = .fixed(&err_buf);
+    try testing.expectEqual(@as(u8, 0), childMain(testing.io, testing.allocator, .commit_msg, &argv, &err_w));
     try testing.expectEqualStrings("second, better\n\nwith a body\n", try tmp.dir.readFileAlloc(testing.io, "COMMIT_EDITMSG", arena, .unlimited));
     try testing.expectEqualStrings("third\nthird, renamed", try tmp.dir.readFileAlloc(testing.io, "msgs", arena, .unlimited));
     // The second reword drains the queue; a third invocation finds nothing.
