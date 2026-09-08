@@ -959,6 +959,8 @@ pub const specs = [_]Spec{
     .{ .id = "git.diff_stage_lines", .title = "Diff: stage the selected lines (else the hunk) (s)", .group = "git" },
     .{ .id = "git.diff_unstage_lines", .title = "Diff: unstage the selected lines (else the hunk) (u)", .group = "git" },
     .{ .id = "git.diff_discard_lines", .title = "Diff: discard the selected lines (else the hunk) from the worktree (x, confirm)", .group = "git" },
+    .{ .id = "git.diff_stash_lines", .title = "Diff: stash the selected lines (else the hunk) — a stash of just those lines, dropped from the worktree", .group = "git" },
+    .{ .id = "git.diff_commit_lines", .title = "Diff: commit the selected lines (else the hunk) — the rest stays as it is", .group = "git" },
     .{ .id = "git.diff_open_line", .title = "Diff: open the file at the cursor's line (enter)", .group = "git" },
     // Zig-only: the graph's detail panel, sort and hash-jump; the branch
     // rail; browse a file / a line / a commit on the remote.
@@ -1004,7 +1006,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "941 specs, unique ids" {
+test "943 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1016,6 +1018,6 @@ test "941 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 941), specs.len);
+    try std.testing.expectEqual(@as(usize, 943), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

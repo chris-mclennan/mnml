@@ -30,6 +30,8 @@ pub const table = .{
     .@"git.diff_stage_lines" = &diffStageLines,
     .@"git.diff_unstage_lines" = &diffUnstageLines,
     .@"git.diff_discard_lines" = &diffDiscardLines,
+    .@"git.diff_stash_lines" = &diffStashLines,
+    .@"git.diff_commit_lines" = &diffCommitLines,
     .@"git.diff_open_line" = &diffOpenLine,
     .@"git.diff_next_file" = &diffNextFile,
     .@"git.diff_prev_file" = &diffPrevFile,
@@ -176,6 +178,14 @@ fn diffUnstageLines(app: *App) CommandError!void {
 
 fn diffDiscardLines(app: *App) CommandError!void {
     try git.askDiscard(app, app.active.?, try requireDiff(app));
+}
+
+fn diffStashLines(app: *App) CommandError!void {
+    try git.stashLines(app, try requireDiff(app));
+}
+
+fn diffCommitLines(app: *App) CommandError!void {
+    try git.commitLinesPrompt(app, try requireDiff(app));
 }
 
 fn diffOpenLine(app: *App) CommandError!void {

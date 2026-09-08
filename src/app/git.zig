@@ -96,6 +96,9 @@ pub const PromptKind = enum {
     graph_hash,
     /// `commit --amend` with the AI's rewrite.
     amend,
+    /// The diff pane's `Commit these lines`: the message for
+    /// `State.line_patch`.
+    commit_lines,
 };
 
 /// A confirm box's payload; the path is owned.
@@ -347,6 +350,10 @@ pub const State = struct {
     /// A message body the AI returned, appended to the prompt's subject
     /// line at accept. Owned.
     ai_body: ?[]u8 = null,
+    /// The patch a `commit_lines` prompt will commit, and its repo.
+    /// Owned; taken by the accept, dropped by a cancel.
+    line_patch: ?[]u8 = null,
+    line_repo: u32 = 0,
     /// The palette's data (`app/git_palette.zig`): its own snapshot.
     rail_pending: bool = false,
     rail_snapshot: alloc.SnapshotArena,
@@ -380,6 +387,7 @@ pub const State = struct {
         self.marks.deinit(gpa);
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
+        if (self.line_patch) |b| gpa.free(b);
         var rit = self.rails.valueIterator();
         while (rit.next()) |r| r.snapshot.deinit();
         self.rails.deinit(gpa);
@@ -1488,6 +1496,40 @@ pub fn applyHunk(app: *App, dp: *DiffPane, what: LineVerb) CommandError!void {
     try submitOp(app, repo, .{ .apply_patch = .{ .patch = owned, .cached = what != .discard, .reverse = what != .stage, .desc = desc } });
 }
 
+/// `Stash these lines`: the selection (else the hunk) becomes a stash
+/// of its own and leaves the worktree (`client.stashLines`).
+pub fn stashLines(app: *App, dp: *DiffPane) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
+    if (dp.scope == .staged or dp.scope == .commit or dp.scope == .orig) return app.diag.fail(arena, "stash lines: only worktree changes can be stashed", .{});
+    // Two forms of the same selection: forward for the stash's tree,
+    // reverse for taking the lines out of the worktree.
+    const fwd = try verbPatch(app, dp, .stage, arena);
+    const rev = try verbPatch(app, dp, .discard, arena);
+    const desc = try std.fmt.allocPrint(app.gpa, "stashed {s}", .{fwd.desc["staged ".len..]});
+    errdefer app.gpa.free(desc);
+    const patch = try app.gpa.dupe(u8, fwd.patch);
+    errdefer app.gpa.free(patch);
+    const reverse = try app.gpa.dupe(u8, rev.patch);
+    errdefer app.gpa.free(reverse);
+    dp.anchor = null;
+    try submitOp(app, repo, .{ .stash_lines = .{ .patch = patch, .reverse = reverse, .msg = null, .desc = desc } });
+}
+
+/// `Commit these lines`: the selection (else the hunk) is held while
+/// the message prompt is up; the accept commits it (`client.commitLines`).
+pub fn commitLinesPrompt(app: *App, dp: *DiffPane) CommandError!void {
+    const arena = app.frame.allocator();
+    const st = &app.git;
+    if (dp.scope == .commit or dp.scope == .orig) return app.diag.fail(arena, "commit lines: not a working-tree diff", .{});
+    const vp = try verbPatch(app, dp, .stage, arena);
+    if (st.line_patch) |b| app.gpa.free(b);
+    st.line_patch = try app.gpa.dupe(u8, vp.patch);
+    st.line_repo = dp.repo;
+    dp.anchor = null;
+    openPrompt(app, .commit_lines, try std.fmt.allocPrint(arena, "Commit message for the {s}", .{vp.desc["staged ".len..]}));
+}
+
 /// `v` / `git.diff_select`: anchor a selection at the cursor, or drop
 /// the one there is.
 pub fn toggleDiffSelect(dp: *DiffPane) void {
@@ -1525,6 +1567,8 @@ pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error
         .file, .worktree, .head => {
             try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Stage {s}", .{what}), .action = .{ .command = .@"git.diff_stage_lines" } });
             try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Discard {s}\u{2026}", .{what}), .action = .{ .command = .@"git.diff_discard_lines" } });
+            try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Stash {s}", .{what}), .action = .{ .command = .@"git.diff_stash_lines" }, .separator_before = true });
+            try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Commit {s}\u{2026}", .{what}), .action = .{ .command = .@"git.diff_commit_lines" } });
         },
         .staged => try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Unstage {s}", .{what}), .action = .{ .command = .@"git.diff_unstage_lines" } }),
         .commit, .orig => {},
@@ -1753,6 +1797,12 @@ pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
         app.gpa.free(b);
         app.git.ai_body = null;
     };
+    // The held line patch lives until its own accept or another prompt
+    // (the close runs before the accept, so it cannot go on close).
+    if (kind != .commit_lines) if (app.git.line_patch) |b| {
+        app.gpa.free(b);
+        app.git.line_patch = null;
+    };
     app.git.prompt = kind;
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, title), .purpose = .git } };
     app.focus = .overlay;
@@ -1774,6 +1824,14 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
         .amend => {
             if (text.len == 0) return app.diag.fail(app.frame.allocator(), "amend: empty message", .{});
             try submitOp(app, try requireRepo(app), .{ .amend = try takeMessage(app, text) });
+        },
+        .commit_lines => {
+            const patch = st.line_patch orelse return app.diag.fail(app.frame.allocator(), "commit lines: the selection is gone", .{});
+            if (text.len == 0) return app.diag.fail(app.frame.allocator(), "commit: empty message", .{});
+            const repo = st.repoById(st.line_repo) orelse return error.NoRepo;
+            st.line_patch = null;
+            errdefer gpa.free(patch);
+            try submitOp(app, repo, .{ .commit_lines = .{ .patch = patch, .msg = try gpa.dupe(u8, text) } });
         },
         .graph_hash => {
             const g = activeGraph(app) orelse return app.diag.fail(app.frame.allocator(), "graph: no graph pane is active", .{});
@@ -2972,7 +3030,133 @@ const Fixture = struct {
         try f.app.render();
         return @import("../ipc/screen.zig").toTestText(testing.allocator, &f.app.screen);
     }
+
+    /// `git <args>`'s stdout, on the test allocator.
+    fn out(f: *Fixture, args: []const []const u8) ![]u8 {
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer argv.deinit(testing.allocator);
+        try argv.appendSlice(testing.allocator, &.{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=tester" });
+        try argv.appendSlice(testing.allocator, args);
+        const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = f.root } });
+        defer testing.allocator.free(res.stderr);
+        return res.stdout;
+    }
+
+    /// A repo with `code.txt` committed as five lines and two of them
+    /// changed in the worktree, its diff pane open in the Inline view
+    /// with the cursor on the first `-` row.
+    fn seedTwoChanges(f: *Fixture) !*DiffPane {
+        try f.sh(&.{ "init", "-q", "-b", "main" });
+        try f.write("code.txt", "one\ntwo\nthree\nfour\nfive\n");
+        try f.sh(&.{ "add", "code.txt" });
+        try f.sh(&.{ "commit", "-q", "-m", "initial" });
+        try f.write("code.txt", "one\ntwo-x\nthree\nfour-x\nfive\n");
+        f.app.tree.visible = false;
+        const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "code.txt" });
+        defer testing.allocator.free(abs);
+        _ = try f.app.openPath(abs);
+        try command.run(&f.app, .{ .static = .@"git.diff_file" });
+        try f.settle(2000);
+        const dp = activeDiff(&f.app).?;
+        try testing.expectEqual(@as(usize, 1), dp.files.len);
+        // Inline rows: ` one` `-two` `+two-x` ` three` `-four` `+four-x` ` five`.
+        stepDiff(dp, 1);
+        return dp;
+    }
 };
+
+test "stage lines: the selection's two rows land in the index alone; the other change stays unstaged" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const dp = try f.seedTwoChanges();
+    toggleDiffSelect(dp);
+    stepDiff(dp, 1);
+    const sel = (try selectedLines(dp, f.app.frame.allocator())).?;
+    try testing.expectEqual(@as(usize, 2), sel.count);
+    try applyHunk(&f.app, dp, .stage);
+    try testing.expect(dp.anchor == null);
+    try f.settle(2000);
+    try testing.expectEqualStrings("staged 2 lines of code.txt", f.app.lastToast().?);
+    const staged = try f.out(&.{ "diff", "--cached" });
+    defer testing.allocator.free(staged);
+    try testing.expect(std.mem.indexOf(u8, staged, "-two\n+two-x\n") != null);
+    try testing.expect(std.mem.indexOf(u8, staged, "four-x") == null);
+    const unstaged = try f.out(&.{"diff"});
+    defer testing.allocator.free(unstaged);
+    try testing.expect(std.mem.indexOf(u8, unstaged, "+four-x") != null);
+    try testing.expect(std.mem.indexOf(u8, unstaged, "+two-x") == null);
+    // A selection of context only is refused before any git runs.
+    diffHome(dp, false);
+    toggleDiffSelect(dp);
+    try testing.expectError(error.Failed, applyHunk(&f.app, dp, .stage));
+}
+
+test "stash lines: the selection becomes its own stash, leaves the worktree, and pops back" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const dp = try f.seedTwoChanges();
+    toggleDiffSelect(dp);
+    stepDiff(dp, 1);
+    try stashLines(&f.app, dp);
+    try f.settle(2000);
+    try testing.expectEqualStrings("stashed 2 lines of code.txt", f.app.lastToast().?);
+    const file = try f.tmp.dir.readFileAlloc(testing.io, "code.txt", testing.allocator, .unlimited);
+    defer testing.allocator.free(file);
+    try testing.expectEqualStrings("one\ntwo\nthree\nfour-x\nfive\n", file);
+    const list = try f.out(&.{ "stash", "list" });
+    defer testing.allocator.free(list);
+    try testing.expect(std.mem.indexOf(u8, list, "WIP on main") != null);
+    const show = try f.out(&.{ "stash", "show", "-p" });
+    defer testing.allocator.free(show);
+    try testing.expect(std.mem.indexOf(u8, show, "+two-x") != null);
+    try testing.expect(std.mem.indexOf(u8, show, "four-x") == null);
+    const staged = try f.out(&.{ "diff", "--cached" });
+    defer testing.allocator.free(staged);
+    try testing.expectEqualStrings("", staged);
+    // The pop needs a clean file (git's rule, not ours): drop the other
+    // change first, then the stashed lines come back alone.
+    try f.sh(&.{ "checkout", "--", "code.txt" });
+    try f.sh(&.{ "stash", "pop", "-q" });
+    const back = try f.tmp.dir.readFileAlloc(testing.io, "code.txt", testing.allocator, .unlimited);
+    defer testing.allocator.free(back);
+    try testing.expectEqualStrings("one\ntwo-x\nthree\nfour\nfive\n", back);
+}
+
+test "commit lines: HEAD gains the selection only; the other change is still unstaged and a staged file stays staged; undo is a soft reset" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const dp = try f.seedTwoChanges();
+    try f.write("other.txt", "keep\n");
+    try f.sh(&.{ "add", "other.txt" });
+    toggleDiffSelect(dp);
+    stepDiff(dp, 1);
+    try commitLinesPrompt(&f.app, dp);
+    try testing.expect(f.app.git.prompt == .commit_lines);
+    try testing.expect(f.app.git.line_patch != null);
+    try acceptPrompt(&f.app, "just two");
+    try testing.expect(f.app.git.line_patch == null);
+    try f.settle(2000);
+    try testing.expectEqualStrings("committed lines: just two", f.app.lastToast().?);
+    const head = try f.out(&.{ "show", "--format=%s", "HEAD" });
+    defer testing.allocator.free(head);
+    try testing.expect(std.mem.startsWith(u8, head, "just two"));
+    try testing.expect(std.mem.indexOf(u8, head, "+two-x") != null);
+    try testing.expect(std.mem.indexOf(u8, head, "four-x") == null);
+    try testing.expect(std.mem.indexOf(u8, head, "other.txt") == null);
+    const st = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st);
+    try testing.expect(std.mem.indexOf(u8, st, " M code.txt") != null);
+    try testing.expect(std.mem.indexOf(u8, st, "A  other.txt") != null);
+    // Undo: the commit is unmade and its lines are back in the index.
+    try command.run(&f.app, .{ .static = .@"git.undo" });
+    try f.settle(2000);
+    const after = try f.out(&.{ "show", "--format=%s", "-s", "HEAD" });
+    defer testing.allocator.free(after);
+    try testing.expect(std.mem.startsWith(u8, after, "initial"));
+    const staged = try f.out(&.{ "diff", "--cached" });
+    defer testing.allocator.free(staged);
+    try testing.expect(std.mem.indexOf(u8, staged, "+two-x") != null);
+}
 
 test "discover: the workspace repo wins outright; otherwise sub-repos by name; a refresh keeps the Repo objects" {
     var f = try Fixture.init(80, 20);

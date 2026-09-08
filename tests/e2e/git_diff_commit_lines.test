@@ -1,0 +1,42 @@
+# Commit a line selection (src/git/client.zig `commitLines`): the
+# message prompt takes the selection's lines into a commit made from a
+# temporary index — HEAD gains only them, the other change of the hunk
+# is still unstaged afterwards, and nothing else that was staged moved.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.txt "one\ntwo\nthree\nfour\nfive\n"
+write other.txt "keep\n"
+shell git add code.txt other.txt
+shell git commit -q -m "initial"
+shell printf "one\ntwo-x\nthree\nfour-x\nfive\n" > code.txt
+shell printf "keep\nstaged-line\n" > other.txt
+shell git add other.txt
+open code.txt
+command git.diff_file
+wait 800
+expect screen contains "+ four-x"
+key j
+key v
+key J
+command git.diff_commit_lines
+expect screen contains "Commit message for the 2 lines of code.txt"
+type "just two"
+key enter
+wait 2000
+expect screen contains "committed lines: just two"
+shell git show --format=%s HEAD > head.out
+expect file head.out contains "just two"
+expect file head.out contains "+two-x"
+expect file head.out lacks "four-x"
+expect file head.out lacks "staged-line"
+# The other change is still unstaged; other.txt is still staged.
+shell git diff > unstaged.out
+expect file unstaged.out contains "+four-x"
+expect file unstaged.out lacks "+two-x"
+shell git diff --cached > staged.out
+expect file staged.out contains "+staged-line"
+expect file staged.out lacks "two-x"
+shell git status --porcelain > st.out
+expect file st.out contains " M code.txt"
+expect file st.out contains "M  other.txt"
