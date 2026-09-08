@@ -483,6 +483,18 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// mnml wrote an env file itself (a `@capture`, an env prompt, a new
+/// env): the watch takes the new stamp without a word, so only an
+/// edit from outside reads as a reload.
+pub fn restampEnvWatch(app: *App) void {
+    const w = &app.http.env_watch;
+    if (!w.seen) return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const name = (envName(app, arena.allocator()) catch return) orelse env_mod.fallback_name;
+    w.digest = env_mod.digest(app.io, app.workspace, name);
+}
+
 /// The active env's name (`dev` when nothing chose one).
 pub fn envName(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     const sel = try envSelection(app, arena);
@@ -633,6 +645,7 @@ pub fn jumpToVarDef(app: *App, name: []const u8) CommandError!void {
         const fresh = try env_mod.envPath(a, app.workspace, ".mnml", sel.name);
         if (std.fs.path.dirname(fresh)) |d| Io.Dir.cwd().createDirPath(app.io, d) catch {};
         Io.Dir.cwd().writeFile(app.io, .{ .sub_path = fresh, .data = "" }) catch return app.diag.fail(app.frame.allocator(), "env: cannot create {s}", .{app.relPath(fresh)});
+        restampEnvWatch(app);
         break :blk fresh;
     };
     const copy = try app.frame.allocator().dupe(u8, path);
@@ -3271,6 +3284,10 @@ test "env reload: the first tick is silent, an edit toasts once and rescans the 
     const n = app.toasts.items.len;
     try tick(&app, 4);
     try testing.expectEqual(n, app.toasts.items.len);
+    // mnml's own write (a @capture, the env prompts) is not a reload.
+    try @import("cmd_http.zig").setEnvVar(&app, "MINE", "1");
+    try tick(&app, 5);
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "env: wrote MINE=1"));
     // The pane's Vars rows read the new value.
     try command.run(&app, .{ .static = .@"http.new" });
     const rp = activeRequest(&app).?;

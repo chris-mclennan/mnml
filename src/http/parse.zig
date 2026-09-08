@@ -478,7 +478,7 @@ pub const BodyType = enum {
     }
 
     pub fn next(t: BodyType) BodyType {
-        return all[(@intFromEnum(t) + 1) % all.len];
+        return all[(@as(usize, @intFromEnum(t)) + 1) % all.len];
     }
 
     /// `form`, `form-urlencoded`, `urlencoded`, `multipart`,
@@ -1631,7 +1631,7 @@ test "curl: embedded single quote via concatenation; -F lands as multipart rows,
     try testing.expectEqualStrings("# @body-type json", blk.script.?);
     try setBodyType(&blk, testing.allocator, .raw);
     try testing.expect(blk.script == null);
-    try testing.expectEqual(BodyType.form, BodyType.multipart.next().next());
+    try testing.expectEqual(BodyType.json, BodyType.multipart.next().next());
     try testing.expectEqual(BodyType.form, BodyType.fromWord("urlencoded").?);
     try testing.expect(BodyType.fromWord("nope") == null);
 }

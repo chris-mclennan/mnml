@@ -594,7 +594,7 @@ test "a block row: the method in its colour two cells deeper than the file, the 
     paintRow(ui, f.full().row(0), .{ .section = .collections, .kind = .block, .label = "two", .method = "POST", .detail = "#smoke #users", .in_folder = true }, false);
     try f.expectRow(0, "      POST two  #smoke #users");
     try testing.expect(vaxis.Color.eql(f.style(6, 0).fg, f.theme.palette.orange));
-    try testing.expect(vaxis.Color.eql(f.style(16, 0).fg, f.theme.muted));
+    try testing.expect(vaxis.Color.eql(f.style(16, 0).fg, f.theme.muted.fg));
     paintRow(ui, f.full().row(1), .{ .section = .collections, .kind = .block, .label = "one", .method = "GET" }, true);
     try f.expectRow(1, "    GET  one");
     try testing.expect(Row.isStop(.{ .section = .collections, .kind = .block }));

@@ -483,6 +483,7 @@ pub fn setEnvVar(app: *App, key: []const u8, value: []const u8) EnvWriteError!vo
         },
     };
     defer app.gpa.free(up.path);
+    http.restampEnvWatch(app);
     app.toast("env: wrote {s}={s} → {s}", .{ key, value, app.relPath(up.path) });
     app.needs_render = true;
 }
@@ -1337,6 +1338,7 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             defer arena.deinit();
             const sel = try activeEnvName(app, arena.allocator());
             const gone = env_mod.deleteKey(app.gpa, app.io, app.workspace, sel.name, label) catch false;
+            http.restampEnvWatch(app);
             app.toast("env: {s} {s}", .{ label, if (gone) "deleted" else "not found" });
         },
         .http_env_pick => {
@@ -1531,6 +1533,7 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
             };
             if (app.http.env_override) |e| app.gpa.free(e);
             app.http.env_override = try app.gpa.dupe(u8, name);
+            http.restampEnvWatch(app);
             _ = app.openEditor(path) catch {};
             app.toast("env: created {s} (now active)", .{app.relPath(path)});
         },
