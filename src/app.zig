@@ -607,9 +607,11 @@ pub const Drag = union(enum) {
     scrollbar: struct { pane: PaneId, grab: u16 },
     /// A dock widget's title bar; `moved` once the pointer left the cell.
     dock: DockDrag,
-    /// A diff pane's split divider.
     /// A graph pane's detail divider.
     graph_divider: PaneId,
+    /// A diff pane's row press: the rows dragged over select
+    /// (`git.dragDiffSelect`); `anchor` is the pressed row.
+    diff_select: struct { pane: PaneId, anchor: usize },
 };
 pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };

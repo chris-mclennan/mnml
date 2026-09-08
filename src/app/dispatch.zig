@@ -84,6 +84,7 @@ const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
 const decor = @import("lsp_decor.zig");
+const conflicts = @import("conflicts.zig");
 const rename_app = @import("lsp_rename.zig");
 const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
@@ -303,6 +304,14 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // chain; any other key dismisses it and goes on as usual.
     if (pane_id) |id| if (app.panes.editor(id)) |e| if (e.buf.editor.ghost_suggestion != null) {
         if (try ai_app.interceptKey(app, e, k)) return;
+    };
+    // A conflict block under the cursor takes `co` / `ct` / `cb` (vim)
+    // or `alt+1..3` (standard) ahead of the handler; a `c` that was not
+    // a pick is fed as the operator first (`app/conflicts.zig`).
+    if (pane_id) |id| if (app.panes.editor(id)) |e| switch (try conflicts.interceptKey(app, id, e, k)) {
+        .consumed => return,
+        .replay_c => _ = try feedEditor(app, id, e, Key.char('c')),
+        .pass => {},
     };
     const ed: ?*EditorPane = if (pane_id) |id| app.panes.editor(id) else null;
     const mode: input.EditingMode = if (ed) |e| e.buf.input.mode() else .none;
@@ -1579,6 +1588,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // The debug toolbar strip's buttons sit above both.
                 .editor => |*e| if (debug_toolbar.actionOf(sh.id) != null) {
                     if (m.button == .left) try dap.click(app, sh.pane, sh.id);
+                } else if (conflicts.actionOf(sh.id) != null) {
+                    if (m.button == .left) try conflicts.click(app, sh.pane, sh.id);
                 } else if (sh.id >= decor.lens_hit_base) {
                     if (m.button == .left) try decor.scriptHit(app, sh.pane, sh.id);
                 } else try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
@@ -2082,6 +2093,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
+        .diff_select => |ds| git_app.dragDiffSelect(app, ds.pane, ds.anchor, m),
         .select => |sel| {
             extendSelection(app, sel, m.x, m.y);
             // A press-and-release on one cell is a click: no selection.

@@ -1044,6 +1044,7 @@ pub const Vim = struct {
                 const c = ch orelse return .consumed;
                 return switch (c) {
                     'c' => runCmd(.@"git.jump_prev_change"),
+                    'x' => runCmd(.@"git.conflict_prev"),
                     'd' => runCmd(.@"lsp.prev_diagnostic"),
                     'q' => runCmd(.@"qf.prev"),
                     't' => runCmd(.@"project.prev_todo"),
@@ -1058,6 +1059,7 @@ pub const Vim = struct {
                 const c = ch orelse return .consumed;
                 return switch (c) {
                     'c' => runCmd(.@"git.jump_next_change"),
+                    'x' => runCmd(.@"git.conflict_next"),
                     'd' => runCmd(.@"lsp.next_diagnostic"),
                     'q' => runCmd(.@"qf.next"),
                     't' => runCmd(.@"project.next_todo"),

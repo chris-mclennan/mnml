@@ -102,6 +102,7 @@ const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
 const decor = @import("lsp_decor.zig");
+const conflicts = @import("conflicts.zig");
 const semantic_app = @import("lsp_semantic.zig");
 const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
@@ -1275,7 +1276,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     const last_vis: u32 = @intCast(@min(e.view.scroll_line + rows, line_count) -| 1);
     try decor.onFrame(app, id, e, first_vis, last_vis);
     const base_spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
-    const spans = try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line);
+    const spans = try conflicts.tintSpans(app, arena, e, try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line), &app.theme);
     const folds = try arena.alloc(editor_view.Fold, e.buf.editor.folds.count());
     for (e.buf.editor.folds.keys(), e.buf.editor.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
@@ -1318,7 +1319,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
         .virtual_text = try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)),
         .stopped_line = dap.stoppedLine(app, e),
-        .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
+        .virtual_lines = try conflicts.mergeVirtualLines(arena, try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii), try conflicts.virtualLinesFor(app, arena, e, &app.theme, ui.ascii)),
         // ── ui toggles ──
         .relative_numbers = app.cfg.ui.relative_line_numbers,
         .cursor_line_band = app.cfg.ui.cursor_line,

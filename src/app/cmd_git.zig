@@ -16,6 +16,7 @@ const CommandError = command.CommandError;
 const git = @import("git.zig");
 const client = @import("../git/client.zig");
 const git_palette = @import("git_palette.zig");
+const conflicts = @import("conflicts.zig");
 
 pub const table = .{
     .@"git.status_pane" = &statusPane,
@@ -26,6 +27,20 @@ pub const table = .{
     .@"git.diff_orig" = &diffOrig,
     .@"git.diff_toggle_view" = &diffToggleView,
     .@"git.diff_filter" = &diffFilter,
+    .@"git.diff_select" = &diffSelect,
+    .@"git.diff_stage_lines" = &diffStageLines,
+    .@"git.diff_unstage_lines" = &diffUnstageLines,
+    .@"git.diff_discard_lines" = &diffDiscardLines,
+    .@"git.diff_stash_lines" = &diffStashLines,
+    .@"git.diff_commit_lines" = &diffCommitLines,
+    .@"git.diff_open_line" = &diffOpenLine,
+    .@"git.conflict_next" = &conflictNext,
+    .@"git.conflict_prev" = &conflictPrev,
+    .@"git.conflict_ours" = &conflictOurs,
+    .@"git.conflict_theirs" = &conflictTheirs,
+    .@"git.conflict_both" = &conflictBoth,
+    .@"git.conflict_split" = &conflictSplit,
+    .@"git.conflict_ai" = &conflictAi,
     .@"git.diff_next_file" = &diffNextFile,
     .@"git.diff_prev_file" = &diffPrevFile,
     .@"git.peek_change" = &peekChange,
@@ -151,6 +166,66 @@ fn diffOrig(app: *App) CommandError!void {
 fn diffToggleView(app: *App) CommandError!void {
     const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
     try git.setDiffMode(app, dp, dp.mode.next());
+}
+
+fn requireDiff(app: *App) CommandError!*git.DiffPane {
+    return git.activeDiff(app) orelse app.diag.fail(arena(app), "no diff pane is active", .{});
+}
+
+fn diffSelect(app: *App) CommandError!void {
+    git.toggleDiffSelect(try requireDiff(app));
+}
+
+fn diffStageLines(app: *App) CommandError!void {
+    try git.applyHunk(app, try requireDiff(app), .stage);
+}
+
+fn diffUnstageLines(app: *App) CommandError!void {
+    try git.applyHunk(app, try requireDiff(app), .unstage);
+}
+
+fn diffDiscardLines(app: *App) CommandError!void {
+    try git.askDiscard(app, app.active.?, try requireDiff(app));
+}
+
+fn diffStashLines(app: *App) CommandError!void {
+    try git.stashLines(app, try requireDiff(app));
+}
+
+fn diffCommitLines(app: *App) CommandError!void {
+    try git.commitLinesPrompt(app, try requireDiff(app));
+}
+
+fn conflictNext(app: *App) CommandError!void {
+    try conflicts.jump(app, true);
+}
+
+fn conflictPrev(app: *App) CommandError!void {
+    try conflicts.jump(app, false);
+}
+
+fn conflictOurs(app: *App) CommandError!void {
+    try conflicts.pick(app, .ours);
+}
+
+fn conflictTheirs(app: *App) CommandError!void {
+    try conflicts.pick(app, .theirs);
+}
+
+fn conflictBoth(app: *App) CommandError!void {
+    try conflicts.pick(app, .both);
+}
+
+fn conflictSplit(app: *App) CommandError!void {
+    try conflicts.openSplit(app, try app.requireEditor());
+}
+
+fn conflictAi(app: *App) CommandError!void {
+    try conflicts.pick(app, .ai);
+}
+
+fn diffOpenLine(app: *App) CommandError!void {
+    try git.openDiffLine(app, try requireDiff(app));
 }
 
 /// Start typing a `/` filter on the active diff pane.

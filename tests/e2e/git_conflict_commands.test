@@ -1,0 +1,38 @@
+# The conflict commands by id (the palette, either profile): `Both`
+# keeps ours then theirs, `git.conflict_split` opens the diff pane on
+# ours (`:2:`) against theirs (`:3:`) in the Split view under the
+# file's name, and the tab chords keep their meaning outside a block
+# (`alt+1` on line 1 is `tab.goto_1`, so nothing resolves).
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write c.txt "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
+shell git add c.txt
+shell git commit -q -m "initial"
+shell git checkout -q -b feature
+write c.txt "one\ntwo-theirs\nthree\nfour\nfive\nsix\nseven\neight\nnine-theirs\nten\n"
+shell git commit -q -am "theirs"
+shell git checkout -q main
+write c.txt "one\ntwo-ours\nthree\nfour\nfive\nsix\nseven\neight\nnine-ours\nten\n"
+shell git commit -q -am "ours"
+shell git merge -q feature || true
+open c.txt
+wait 800
+expect screen contains "conflict 1/2"
+# Line 1 is outside every block: alt+1 stays the tab chord.
+key alt+1
+expect screen lacks "resolved"
+command git.conflict_ours
+expect screen contains "the cursor is not inside a conflict block"
+command git.conflict_next
+expect screen contains "conflict 1/2"
+command git.conflict_both
+expect screen contains "conflict 1: Both — 1 left"
+expect screen contains "two-ours"
+expect screen contains "two-theirs"
+command git.conflict_split
+wait 1500
+expect pane "conflict: c.txt"
+expect screen contains "@@ -1,10 +1,10 @@  c.txt"
+expect screen contains "- two-ours"
+expect screen contains "+ two-theirs"

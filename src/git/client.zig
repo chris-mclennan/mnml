@@ -23,7 +23,9 @@ const event = @import("../core/event.zig");
 /// What a diff pane shows. `file` and `head` are against HEAD (staged
 /// and unstaged together — what the gate's `git diff HEAD` names);
 /// `worktree` is unstaged only; `staged` the index; `commit` a `show`.
-pub const DiffScope = enum { file, worktree, head, staged, commit, orig };
+/// `conflict` is a conflicted file's ours (`:2:`) against theirs (`:3:`)
+/// — the diff pane's Split view beside the editor (`app/conflicts.zig`).
+pub const DiffScope = enum { file, worktree, head, staged, commit, orig, conflict };
 
 pub const LogFilter = struct {
     branch: ?[]u8 = null,
@@ -113,6 +115,21 @@ pub const Job = union(enum) {
     /// their lock and dirty state, remotes with their forge, stashes,
     /// tags, and open PRs through `gh` when the UI found it on PATH.
     rail: struct { gh: bool },
+    // ── line verbs (git-lines) ── see the block at the end of the file.
+    /// A stash of just `patch` (the diff pane's selection): built in a
+    /// temporary index, stored, then reversed out of the worktree.
+    /// `patch` is the forward form (what stages the lines onto HEAD's
+    /// tree), `reverse` the form `apply -R` takes them out of the
+    /// worktree with — the two differ when only some of a hunk's
+    /// lines are selected (`parse.patchForLineMask`).
+    stash_lines: struct { patch: []u8, reverse: []u8, msg: ?[]u8, desc: []u8 },
+    /// A commit of just `patch`: HEAD's tree plus the patch, committed
+    /// from a temporary index; the real index takes the patch after so
+    /// the rest stays exactly as staged / unstaged.
+    commit_lines: struct { patch: []u8, msg: []u8 },
+    /// A conflicted file's three stages (`:1:` base, `:2:` ours, `:3:`
+    /// theirs) as text, for the AI resolve prompt.
+    conflict_text: []u8,
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -141,6 +158,17 @@ pub const Job = union(enum) {
             .ai_context => {},
             .rail => {},
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
+            .stash_lines => |l| {
+                gpa.free(l.patch);
+                gpa.free(l.reverse);
+                if (l.msg) |m| gpa.free(m);
+                gpa.free(l.desc);
+            },
+            .commit_lines => |l| {
+                gpa.free(l.patch);
+                gpa.free(l.msg);
+            },
+            .conflict_text => |s| gpa.free(s),
         }
     }
 };
@@ -169,6 +197,9 @@ pub const Result = struct {
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
+        /// A conflicted file's stages; a side git does not have (an
+        /// add/add conflict has no base) is empty.
+        conflict_text: struct { path: []const u8, base: []const u8, ours: []const u8, theirs: []const u8 },
         rail: struct {
             branches: []parse.Branch,
             worktrees: []parse.Worktree,
@@ -353,15 +384,21 @@ const Out = struct {
 /// lands on `arena`. A spawn failure (no `git` on PATH) is `ok = false`
 /// with the error name in `stderr`.
 fn git(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_text: ?[]const u8) JobError!Out {
+    return gitIn(repo, io, arena, args, stdin_text, if (repo.env) |*e| e else null);
+}
+
+/// `git` with an explicit environment (the line verbs point
+/// `GIT_INDEX_FILE` at a temporary index).
+fn gitIn(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_text: ?[]const u8, env: ?*const std.process.Environ.Map) JobError!Out {
     const prefix = [_][]const u8{ "git", "--no-pager", "-c", "color.ui=never" };
     const argv = try arena.alloc([]const u8, prefix.len + args.len);
     @memcpy(argv[0..prefix.len], &prefix);
     @memcpy(argv[prefix.len..], args);
-    if (stdin_text) |text| return gitWithStdin(repo, io, arena, argv, text);
+    if (stdin_text) |text| return gitWithStdin(repo, io, arena, argv, text, env);
     const res = std.process.run(repo.gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = repo.path },
-        .environ_map = if (repo.env) |*e| e else null,
+        .environ_map = env,
         .stdout_limit = .limited(64 * 1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
     }) catch |err| switch (err) {
@@ -384,12 +421,12 @@ fn git(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_te
 /// `git apply` reads the patch from stdin: spawn by hand, write the
 /// patch, close the pipe, then drain the output the way `process.run`
 /// does.
-fn gitWithStdin(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8, text: []const u8) JobError!Out {
+fn gitWithStdin(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8, text: []const u8, env: ?*const std.process.Environ.Map) JobError!Out {
     const gpa = repo.gpa;
     var child = std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .path = repo.path },
-        .environ_map = if (repo.env) |*e| e else null,
+        .environ_map = env,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -463,6 +500,12 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .diff => |d| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
             const ctx: []const u8 = if (d.full) "-U999999" else "-U3";
+            if (d.scope == .conflict) {
+                const files = try conflictDiff(repo, io, arena, d.path orelse "", ctx);
+                r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = null, .files = files, .full = d.full } };
+                events.post(io, .{ .git = r });
+                return;
+            }
             switch (d.scope) {
                 .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--", d.path orelse "" }),
                 .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--" }),
@@ -480,6 +523,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     // with the buffer piped in as `-`.
                     try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", d.path orelse "", "-" });
                 },
+                .conflict => unreachable,
             }
             var out = try git(repo, io, arena, args.items, if (d.scope == .orig) (d.text orelse "") else null);
             // `diff HEAD -- untracked` is empty; show the file as new so
@@ -746,6 +790,19 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const out = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
             if (out.ok) r.payload = .{ .head_sha = trimmed(out.stdout) } else r.payload = .{ .op = .{ .desc = "no HEAD (not a git repo?)", .ok = false, .refresh = false } };
         },
+        .stash_lines => |l| try stashLines(repo, io, r, l.patch, l.reverse, l.msg, l.desc),
+        .commit_lines => |l| try commitLines(repo, io, r, l.patch, l.msg),
+        .conflict_text => |path| {
+            const base = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":1:{s}", .{path}) }, null);
+            const ours = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":2:{s}", .{path}) }, null);
+            const theirs = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":3:{s}", .{path}) }, null);
+            r.payload = .{ .conflict_text = .{
+                .path = try arena.dupe(u8, path),
+                .base = if (base.ok) base.stdout else "",
+                .ours = if (ours.ok) ours.stdout else "",
+                .theirs = if (theirs.ok) theirs.stdout else "",
+            } };
+        },
     }
     events.post(io, .{ .git = r });
 }
@@ -836,6 +893,158 @@ fn firstLine(s: []const u8) []const u8 {
     const t = trimmed(s);
     const nl = std.mem.indexOfScalar(u8, t, '\n') orelse t.len;
     return t[0..nl];
+}
+
+// ─── line verbs (git-lines) ─────────────────────────────────────────────
+// The diff pane's selection verbs that need more than `apply`: a stash
+// or a commit of SOME lines. Both build the wanted tree in a temporary
+// index (`GIT_INDEX_FILE` under the git dir — a linked worktree has its
+// own) so the real index is never disturbed: `read-tree HEAD`, `apply
+// --cached` the patch, `write-tree`. Nothing here is undoable through
+// `git.undo` except the commit, which pushes the same `reset --soft`
+// entry a plain commit does.
+
+/// A temporary index, populated from HEAD's tree, and the environment
+/// that points git at it. Removed by `deinit`.
+const TempIndex = struct {
+    path: []const u8,
+    env: std.process.Environ.Map,
+
+    fn init(repo: *Repo, io: Io, arena: Allocator) JobError!?TempIndex {
+        const dir = try git(repo, io, arena, &.{ "rev-parse", "--absolute-git-dir" }, null);
+        if (!dir.ok) return null;
+        const path = try std.fmt.allocPrint(arena, "{s}/mnml-lines.index", .{trimmed(dir.stdout)});
+        var env = if (repo.env) |*e| try e.clone(repo.gpa) else std.process.Environ.Map.init(repo.gpa);
+        errdefer env.deinit();
+        try env.put("GIT_INDEX_FILE", path);
+        var t: TempIndex = .{ .path = path, .env = env };
+        const seed = try t.run(repo, io, arena, &.{ "read-tree", "HEAD" }, null);
+        if (!seed.ok) {
+            t.deinit(io);
+            return null;
+        }
+        return t;
+    }
+
+    fn run(t: *TempIndex, repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_text: ?[]const u8) JobError!Out {
+        return gitIn(repo, io, arena, args, stdin_text, &t.env);
+    }
+
+    fn deinit(t: *TempIndex, io: Io) void {
+        std.Io.Dir.cwd().deleteFile(io, t.path) catch {};
+        t.env.deinit();
+    }
+};
+
+fn fail(r: *Result, desc: []const u8, out: Out) void {
+    r.payload = .{ .op = .{ .desc = desc, .ok = false, .msg = out.reason() } };
+}
+
+/// The patch applied to HEAD's tree in a temporary index, written as a
+/// tree object. Null (the result already says why) when a step failed.
+fn treeWithPatch(repo: *Repo, io: Io, r: *Result, t: *TempIndex, patch: []const u8, desc: []const u8) JobError!?[]const u8 {
+    const arena = r.arena.allocator();
+    const applied = try t.run(repo, io, arena, &.{ "apply", "--cached", "--whitespace=nowarn", "-" }, patch);
+    if (!applied.ok) {
+        fail(r, desc, applied);
+        return null;
+    }
+    const tree = try t.run(repo, io, arena, &.{"write-tree"}, null);
+    if (!tree.ok) {
+        fail(r, desc, tree);
+        return null;
+    }
+    return trimmed(tree.stdout);
+}
+
+/// `stash_lines`: the stash commit is built by hand the way `stash
+/// push` builds one — a tree with the lines, an index commit at HEAD's
+/// tree — then the lines are reversed out of the worktree and the
+/// commit stored. The order means a worktree that will not take the
+/// reverse leaves nothing behind.
+fn stashLines(repo: *Repo, io: Io, r: *Result, patch: []const u8, reverse: []const u8, msg: ?[]const u8, desc_in: []const u8) JobError!void {
+    const arena = r.arena.allocator();
+    // The job's strings die with the job; the result outlives it.
+    const desc = try arena.dupe(u8, desc_in);
+    var t = (try TempIndex.init(repo, io, arena)) orelse {
+        r.payload = .{ .op = .{ .desc = desc, .ok = false, .msg = "no HEAD to stash against", .refresh = false } };
+        return;
+    };
+    defer t.deinit(io);
+    const tree = (try treeWithPatch(repo, io, r, &t, patch, desc)) orelse return;
+    const head_tree = try git(repo, io, arena, &.{ "rev-parse", "HEAD^{tree}" }, null);
+    const branch = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
+    const subject = try git(repo, io, arena, &.{ "log", "-1", "--format=%h %s" }, null);
+    const on: []const u8 = if (branch.ok and trimmed(branch.stdout).len > 0) trimmed(branch.stdout) else "(no branch)";
+    const index_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ on, trimmed(subject.stdout) });
+    const stash_msg = if (msg) |m| try std.fmt.allocPrint(arena, "On {s}: {s}", .{ on, m }) else try std.fmt.allocPrint(arena, "WIP on {s}: {s}", .{ on, trimmed(subject.stdout) });
+    const index_commit = try git(repo, io, arena, &.{ "commit-tree", trimmed(head_tree.stdout), "-p", "HEAD", "-m", index_msg }, null);
+    if (!index_commit.ok) return fail(r, desc, index_commit);
+    const stash_commit = try git(repo, io, arena, &.{ "commit-tree", tree, "-p", "HEAD", "-p", trimmed(index_commit.stdout), "-m", stash_msg }, null);
+    if (!stash_commit.ok) return fail(r, desc, stash_commit);
+    const dropped = try git(repo, io, arena, &.{ "apply", "--whitespace=nowarn", "-R", "-" }, reverse);
+    if (!dropped.ok) return fail(r, desc, dropped);
+    const stored = try git(repo, io, arena, &.{ "stash", "store", "-m", stash_msg, trimmed(stash_commit.stdout) }, null);
+    if (!stored.ok) return fail(r, desc, stored);
+    r.payload = .{ .op = .{ .desc = desc, .ok = true } };
+}
+
+/// `commit_lines`: HEAD's tree plus the patch becomes the new HEAD; the
+/// real index then takes the same patch so what was staged stays
+/// staged and what was not stays not. Undo is the plain commit's.
+fn commitLines(repo: *Repo, io: Io, r: *Result, patch: []const u8, msg: []const u8) JobError!void {
+    const arena = r.arena.allocator();
+    const gpa = repo.gpa;
+    const desc = try std.fmt.allocPrint(arena, "committed lines: {s}", .{firstLine(msg)});
+    var t = (try TempIndex.init(repo, io, arena)) orelse {
+        r.payload = .{ .op = .{ .desc = desc, .ok = false, .msg = "no HEAD to commit onto", .refresh = false } };
+        return;
+    };
+    defer t.deinit(io);
+    const tree = (try treeWithPatch(repo, io, r, &t, patch, desc)) orelse return;
+    const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+    const commit = try git(repo, io, arena, &.{ "commit-tree", tree, "-p", "HEAD", "-m", msg }, null);
+    if (!commit.ok) return fail(r, desc, commit);
+    const after = trimmed(commit.stdout);
+    const moved = try git(repo, io, arena, &.{ "update-ref", "-m", try std.fmt.allocPrint(arena, "commit: {s}", .{firstLine(msg)}), "HEAD", after }, null);
+    if (!moved.ok) return fail(r, desc, moved);
+    if (before.ok) try pushUndo(repo, try std.fmt.allocPrint(arena, "commit {s}", .{firstLine(msg)}), .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, after) });
+    // The real index catches up with HEAD for those lines only.
+    const caught = try git(repo, io, arena, &.{ "apply", "--cached", "--whitespace=nowarn", "-" }, patch);
+    if (!caught.ok) {
+        r.payload = .{ .op = .{ .desc = desc, .ok = false, .msg = try std.fmt.allocPrint(arena, "committed, but the index did not take the lines: {s}", .{caught.reason()}) } };
+        return;
+    }
+    r.payload = .{ .op = .{ .desc = desc, .ok = true } };
+}
+
+// ─── conflicts (git-lines) ──────────────────────────────────────────────
+
+/// Ours (`:2:`) against theirs (`:3:`) of a conflicted `path`: the two
+/// stages written under the git dir and diffed with `--no-index`, the
+/// files then named `path` on both sides so the pane's banner and
+/// headers read as the file. A stage git does not have (an add/add
+/// conflict, a file no longer conflicted) diffs as empty.
+fn conflictDiff(repo: *Repo, io: Io, arena: Allocator, path: []const u8, ctx: []const u8) JobError![]parse.FileDiff {
+    const dir = try git(repo, io, arena, &.{ "rev-parse", "--absolute-git-dir" }, null);
+    if (!dir.ok) return &.{};
+    const ours = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":2:{s}", .{path}) }, null);
+    const theirs = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":3:{s}", .{path}) }, null);
+    const a = try std.fmt.allocPrint(arena, "{s}/mnml-conflict-ours", .{trimmed(dir.stdout)});
+    const b = try std.fmt.allocPrint(arena, "{s}/mnml-conflict-theirs", .{trimmed(dir.stdout)});
+    const cwd = std.Io.Dir.cwd();
+    cwd.writeFile(io, .{ .sub_path = a, .data = if (ours.ok) ours.stdout else "" }) catch return &.{};
+    defer cwd.deleteFile(io, a) catch {};
+    cwd.writeFile(io, .{ .sub_path = b, .data = if (theirs.ok) theirs.stdout else "" }) catch return &.{};
+    defer cwd.deleteFile(io, b) catch {};
+    // `--no-index` exits 1 when the two differ: the output is the diff.
+    const out = try git(repo, io, arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", a, b }, null);
+    const files = try parse.parseDiff(arena, out.stdout);
+    for (files) |*f| {
+        f.old_path = try arena.dupe(u8, path);
+        f.new_path = try arena.dupe(u8, path);
+    }
+    return files;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

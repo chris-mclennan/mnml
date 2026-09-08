@@ -1,0 +1,38 @@
+# Stash a line selection (src/git/client.zig `stashLines`): the two
+# rows of one change go into a stash of their own — built in a
+# temporary index, stored with `stash store` — and leave the worktree;
+# the other change of the hunk stays. Popping the stash brings the
+# lines back.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.txt "one\ntwo\nthree\nfour\nfive\n"
+shell git add code.txt
+shell git commit -q -m "initial"
+shell printf "one\ntwo-x\nthree\nfour-x\nfive\n" > code.txt
+open code.txt
+command git.diff_file
+wait 800
+expect screen contains "+ four-x"
+key j
+key v
+key J
+command git.diff_stash_lines
+wait 1500
+expect screen contains "stashed 2 lines of code.txt"
+expect file code.txt lacks "two-x"
+expect file code.txt contains "four-x"
+shell git stash list > stashes.out
+expect file stashes.out contains "WIP on main"
+shell git stash show -p > stash.out
+expect file stash.out contains "+two-x"
+expect file stash.out lacks "four-x"
+# Nothing was staged by the way.
+shell git diff --cached > staged.out
+expect file staged.out lacks "two-x"
+# The pop wants a clean file (git's rule): drop the other change, then
+# the stashed lines come back alone.
+shell git checkout -- code.txt
+shell git stash pop -q
+expect file code.txt contains "two-x"
+expect file code.txt lacks "four-x"

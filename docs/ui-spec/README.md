@@ -193,6 +193,24 @@ so no dialog), feeds `steps-NAME.jsonl` over IPC and keeps the screen:
   disabled (○) breakpoint in the gutter, the BREAKPOINTS rows, and the
   row menu opened with `view.context_menu_at_focus`.
 
+## Conflict resolution (Zig-authored, 2026-09-08)
+
+`tools/zig-spec-conflict.sh git-conflict [COLSxROWS]` seeds a throwaway
+repo whose `c.txt` is left in a merge conflict — `main` and `feature`
+each changed lines 2 and 9 of a ten-line file — and feeds
+`steps-git-conflict.jsonl`: the status pane, enter on the `U` row, a
+split to the right, `git.conflict_split`, focus back left.
+
+- `zig-git-conflict-120x40.txt` — the editor on the left with both
+  blocks: a header row above each (`⚠ conflict N/2` and the chips
+  `Ours  Theirs  Both  Edit  Split  AI resolve`, clipped by the leaf's
+  width here), the marker lines muted and bold, ours on the green
+  ground and theirs on the blue (colours are not in the dump); the diff
+  pane on the right in the Split view, `conflict: c.txt`, ours (`:2:`)
+  left against theirs (`:3:`) right under one `@@` header. The status
+  pane's `⚠ Conflicts (1)  ⏎ resolve in the editor` section is in the
+  first tab; the statusline's branch chip carries `⚠1`.
+
 ## The branches panel (Zig-authored, 2026-09-07)
 
 The git column is the second deliberate departure from same-look: the

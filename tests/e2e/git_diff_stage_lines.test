@@ -1,0 +1,42 @@
+# Line-level staging in the diff pane (src/ui/diff_view.zig `anchor`,
+# src/app/git.zig `applyHunk` → parse.patchForLineMask): `v` anchors a
+# selection at the cursor, `J` grows it by a row, and `s` stages ONLY
+# the selected lines — `git diff --cached` holds exactly those, the
+# other change of the same hunk stays in the worktree. Esc drops a
+# selection before it closes anything.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.txt "one\ntwo\nthree\nfour\nfive\n"
+shell git add code.txt
+shell git commit -q -m "initial"
+shell printf "one\ntwo-x\nthree\nfour-x\nfive\n" > code.txt
+open code.txt
+command git.diff_file
+wait 800
+expect screen contains "- two"
+expect screen contains "+ four-x"
+# Inline: the cursor rests on ` one`; j lands on `- two`.
+key j
+key v
+key J
+key s
+wait 1500
+expect screen contains "staged 2 lines of code.txt"
+shell git diff --cached > staged.out
+expect file staged.out contains "-two"
+expect file staged.out contains "+two-x"
+expect file staged.out lacks "four-x"
+shell git diff > unstaged.out
+expect file unstaged.out contains "+four-x"
+expect file unstaged.out lacks "+two-x"
+# A selection with no changed line says so instead of staging the hunk.
+wait 800
+key g
+key v
+key s
+wait 300
+expect screen contains "the selection holds no changed line"
+key esc
+# Esc dropped the selection, not the pane.
+expect screen contains "Hunk 1/1  code.txt"

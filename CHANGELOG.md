@@ -68,6 +68,16 @@ architecture behind it is in `docs/DESIGN.md`.
 - Git: status, diff, blame, graph, staging — every call on a worker, results
   posted back as one event. Gutter marks and blame labels on the editor. One
   `Repo` per repository, a job queue, the one-hunk patch writer.
+- Git, line by line: select rows in the diff pane (`v`, shift+arrows, a drag)
+  and stage, unstage, discard, stash or commit just those lines — the same
+  selection for the keys, the chips, the row menu and the palette. `t`
+  cycles the diff view now that `v` selects.
+- Git, conflicts: a conflicted file resolves in the editor. The status pane
+  lists it under `⚠ Conflicts`, enter opens it with every block tinted and a
+  row of chips above it (`Ours · Theirs · Both · Edit · Split · AI resolve`);
+  vim `co` / `ct` / `cb` and `]x` / `[x`, standard `alt+1..3` and `f8`;
+  `Split` shows ours against theirs in the diff pane; saving with no marker
+  left stages the file.
 - LSP: one stdio JSON-RPC transport shared with DAP. Diagnostics, completion,
   hover, peek, navigation, rename, formatting, code actions, symbols.
 - DAP: breakpoints, watches, the debug and REPL panes, the `dap.*` commands. A
