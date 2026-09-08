@@ -133,7 +133,7 @@ trust sink. Each row names its file and its test.
 | Glyph-builder SVG preview and Nerd Font patching | SVG rasterising and font patching have no Zig path; the audit / bake half is `zig build glyph-audit` | `integrations.glyph_builder` / `patch_nerd_font_svg` toast the reason (`src/app/cmd_app.zig` `cutRunner`) |
 | TOML anywhere (config, themes, manifests, `trusted_workspaces.toml`) | E1 / E2: every persisted format is ZON; the final Rust release ships `mnml export-config-zon` | `docs/CONFIG.md`; `settings_persist_to_workspace.test` asserts the workspace `.mnml/config.zon` (the Rust corpus asserted a TOML file there — re-aimed 2026-09-07, so the corpus reads 393/393) |
 | The Rust integration binaries and the crates.io marketplace of them (`mnml-forge-*`, `mnml-aws-*`, …) | E5: integrations are rewritten in Zig on a v2 bridge after the cutover; the 0.2.x crates stay published for 0.2.x users | `pr.picker` / `pr.refresh` toast the reason; `:term <binary>` still runs any installed binary as a pty pane; a `crates_keyword` marketplace source is accepted and lists nothing |
-| now-playing / Sonos / mixr transport | macOS-only AppleScript + a sibling-app IPC; not a terminal-IDE concern for the successor | every `sonos.*` / `mixr.*` / `audio.*` id toasts the reason (`cutRunner`); `sonos.*` config keys are accepted and ignored |
+| Sonos transport | a sibling-app IPC; not a terminal-IDE concern for the successor | every `sonos.*` / `audio.*` id toasts the reason (`cutRunner`); `sonos.*` config keys are accepted and ignored. *// changed 2026-09-07:* the now-playing chip is DONE (`src/app/now_playing.zig`: idle pair, transport, the macOS/mixr poller, `MNML_NOW_PLAYING` for tests); `mixr.set_preferred_*` / `mixr.copy_track` run, the rest of `mixr.*` still toast |
 | Playwright as the generic `test.*` runner | the generic `test.*` runners keep the project's own command (cargo / npm / go / pytest); Playwright has its own ids (`test.run_playwright*`, the Tests pane) — listed here because the spec titles still say "Playwright" | `test.run_*` run the project's own test command |
 
 ## Editing & input
@@ -638,7 +638,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Preview tabs — images | done | `src/app/image_pane.zig` (`open` replaces the preview tab in place), `PaneStore.findImagePreview`, `Pane.image`, `view.image_open` | |
 | Typing makes a preview permanent | done | `edited` in `request_pane.zig` (request panes); `swapToEditor` in `md_preview.zig` (a markdown preview becomes the raw editor, which is never a preview) | the rule as Rust's: a request preview is promoted by an edit; typing on a markdown preview swaps the editor in; editor and image tabs carry no promotion — pinned by the `preview tabs:` test in `md_preview.zig` |
 | Image rendering (kitty / iTerm2) | done | `src/image/{root,kitty,iterm2,sixel,painter}.zig`, the attach in `tui/loop.zig` | kitty by probe, iTerm2 by `TERM_PROGRAM`, sixel for foot / mlterm; `MNML_IMAGE_PROTOCOL` overrides |
-| Now-playing transport chip | cut | `cutRunner` toasts | |
+| Now-playing transport chip | done | `src/app/now_playing.zig` (`ui.now_playing_source`, `ui.preferred_music_app`, `ui.now_playing_marquee`; `MNML_NOW_PLAYING` override); `tests/e2e/statusline_now_playing.test` | the poller runs only under the terminal loop; headless paints the idle pair as Rust does |
 | Source-aware dispatch (mixr / AppleScript) | cut | same | |
 | Idle `♪` chip, `preferred_music_app` | cut | same; config keys accepted and ignored | |
 | Mixr panel size chips | cut | same | |
