@@ -83,6 +83,11 @@ pub const HitTarget = union(enum) {
     /// A workspace section's header row (`ui/tree_view.zig`): 0 the
     /// primary, i + 1 the i-th extra root. A press folds the section.
     tree_root: u8,
+    /// right-click: the tree's empty rows below the last item
+    /// (`ui/tree_view.zig`), by the root they belong to. A press focuses
+    /// the tree; a right press opens that root's workspace menu (Rust:
+    /// the empty Explorer space opens the workspace header's menu).
+    tree_empty: u8,
     /// A chip on the primary header, or the `Add workspace` row.
     tree_chip: tree_view.Chip,
     /// The sidebar's info view.
@@ -115,7 +120,7 @@ pub const HitTarget = union(enum) {
         try w.writeAll(@tagName(t));
         switch (t) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
-            .tree_root => |n| try w.print(":{d}", .{n}),
+            .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
             .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
             .info_view => |p| switch (p) {
                 .try_it => |i| try w.print(":try_it:{d}", .{i}),

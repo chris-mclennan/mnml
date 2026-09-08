@@ -1031,6 +1031,51 @@ pub fn openTransferMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Transfers", rows, x, y);
 }
 
+// ─── right-click: the workspace headers ─────────────────────────────────
+
+/// A `> WORKSPACE` header, or the empty rows under a section (Rust
+/// `open_workspace_header_context_menu` for root 0,
+/// `open_extra_workspace_header_context_menu` for the rest): fold, the
+/// whole-tree folds, the workspace verbs, a rescan, the dots.
+pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Error!void {
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .tree;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const path: []const u8 = if (root == 0) app.workspace else if (root - 1 < app.tree.roots.items.len) app.tree.roots.items[root - 1].path else app.workspace;
+    const title = try arena.dupe(u8, std.fs.path.basename(path));
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    if (root == 0) {
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Collapse / expand section", .action = .{ .command = .@"view.toggle_tree_section" } },
+            .{ .label = "Expand all", .action = .{ .command = .@"tree.expand_all" }, .separator_before = true },
+            .{ .label = "Collapse all", .action = .{ .command = .@"tree.collapse_all" } },
+            .{ .label = "New file…", .action = .{ .command = .@"file.new" }, .separator_before = true },
+            .{ .label = "New folder…", .action = .{ .command = .@"file.new_folder" } },
+            .{ .label = "Paste here", .action = .{ .command = .@"file.paste" } },
+        });
+    } else {
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Switch to this workspace", .action = .{ .command = .@"view.switch_workspace" } },
+            .{ .label = "Open in file browser", .action = .{ .open_path = try arena.dupe(u8, path) } },
+            .{ .label = "Remove workspace…", .action = .{ .command = .@"view.remove_workspace" }, .separator_before = true },
+        });
+    }
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Switch workspace…", .action = .{ .command = .@"view.switch_workspace" }, .separator_before = true },
+        .{ .label = "Add workspace…", .action = .{ .command = .@"view.add_workspace" } },
+        .{ .label = "Manage workspaces…", .action = .{ .command = .@"view.manage_workspaces" } },
+        .{ .label = "Copy path", .action = .{ .copy_text = try arena.dupe(u8, path) }, .separator_before = true },
+        .{ .label = "Refresh tree", .action = .{ .command = .@"tree.refresh" } },
+        .{ .label = "Show workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" }, .checked = app.cfg.ui.show_workspace_dots, .separator_before = true },
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try openOwned(app, title, owned, x, y, mem);
+}
+
 // ─── right-click: the chrome chips ──────────────────────────────────────
 // The palette bar, the bufferline's right cluster, the split strip and
 // the right column's strip (Rust `right_click.rs`): one menu per chip,

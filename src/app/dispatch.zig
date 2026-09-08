@@ -1395,9 +1395,28 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // directory inside the primary with it (Rust `tree_toggle`).
         .tree_root => |root| {
             if (wheel) return treeWheel(app, m, count);
-            if (m.kind != .press or m.button != .left) return;
+            if (m.kind != .press) return;
+            // right-click: the root's workspace menu (Rust `tree_toggle`
+            // / `extra_workspace_toggles`).
+            if (m.button == .right) {
+                if (app.overlay != .none) closeOverlay(app);
+                return context_menus.openWorkspaceHeaderMenu(app, root, m.x, m.y);
+            }
+            if (m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
             try app.tree.toggleRoot(app, root, m.mods.alt);
+        },
+        // right-click: the empty rows under the last section — a press
+        // focuses the tree, a right press opens that root's workspace
+        // menu (Rust: the empty Explorer space).
+        .tree_empty => |root| {
+            if (wheel) return treeWheel(app, m, count);
+            if (m.kind != .press) return;
+            if (app.overlay != .none) closeOverlay(app);
+            if (m.button == .right) return context_menus.openWorkspaceHeaderMenu(app, root, m.x, m.y);
+            if (m.button != .left) return;
+            if (app.activeBuffer()) |b| b.input.onBlur();
+            app.focus = .tree;
         },
         .tree_chip => |c| {
             if (wheel) return treeWheel(app, m, count);
