@@ -4030,7 +4030,7 @@ own at the end of `scripting/api.zig`, one new file
 - `// changed (app):` a save of either `init.lua` reloads the scripts
   through `save_post` (`app/cmd_script.zig`); a script error that names
   a line of one of the files is a third `FileDiags` source beside a
-  server's (`lsp.applyScriptDiag` / `clearScriptDiag`) — the gutter
+  server's (`lsp.applyScriptDiagnostics`) — the gutter
   dot, the squiggle, the DIAGNOSTICS row — and one persistent toast
   whose click jumps to the line. Every `mnml.*` registration records
   its caller's `file:line` (`Lua.noteOrigin`, `OriginKind`).
