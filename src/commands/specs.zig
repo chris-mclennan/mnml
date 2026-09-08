@@ -959,6 +959,9 @@ pub const specs = [_]Spec{
     .{ .id = "git.graph_sort", .title = "Graph: sort by the next column (graph → date → author → subject)", .group = "git" },
     .{ .id = "git.graph_jump_hash", .title = "Graph: jump to a commit by hash prefix…", .group = "git" },
     .{ .id = "git.branch_rail_toggle", .title = "Git: show / hide the branch rail (branches · worktrees · open PRs)", .group = "git" },
+    .{ .id = "git.repo_prev", .title = "Git: the previous repo in the branches panel (its left chevron, `[`)", .group = "git" },
+    .{ .id = "git.repo_next", .title = "Git: the next repo in the branches panel (its right chevron, `]`)", .group = "git" },
+    .{ .id = "git.palette_all", .title = "Git: list every repo in the branches panel (All repos), or one again", .group = "git" },
     .{ .id = "git.browse_line", .title = "Git: open the current line on the remote", .group = "git" },
     .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
     .{ .id = "git.browse_commit", .title = "Git: open the selected commit (or HEAD) on the remote", .group = "git" },
@@ -996,7 +999,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "934 specs, unique ids" {
+test "937 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1008,6 +1011,6 @@ test "934 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 934), specs.len);
+    try std.testing.expectEqual(@as(usize, 937), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

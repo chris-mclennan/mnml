@@ -1,0 +1,39 @@
+# Two repos under a workspace that is none itself (src/app/git_palette.zig
+# `stepRepo`): with the panel focused, `]` / `[` step through them in
+# discovery order and wrap; the pill names the one the rows read. The
+# screen is 120x40: the sidebar snaps to 24, the pill is row 4, LOCAL
+# row 7 (a click on it folds the section and gives the panel the keys;
+# the second click unfolds it).
+shell mkdir -p alpha beta
+shell git -C alpha init -q -b main
+shell git -C alpha config user.email "test@mnml.dev"
+shell git -C alpha config user.name "mnml test"
+write alpha/a.txt "one\n"
+shell git -C alpha add a.txt
+shell git -C alpha commit -q -m "init"
+shell git -C beta init -q -b dev
+shell git -C beta config user.email "test@mnml.dev"
+shell git -C beta config user.name "mnml test"
+write beta/b.txt "two\n"
+shell git -C beta add b.txt
+shell git -C beta commit -q -m "init"
+command view.activity_git
+wait 1000
+expect screen contains " alpha 󰅀"
+expect screen contains "󰄬 󰘬 main"
+click 8 7
+click 8 7
+expect screen contains "󰅀 󰌢 LOCAL"
+key ]
+wait 800
+expect screen contains " beta 󰅀"
+expect screen contains "󰄬 󰘬 dev"
+expect screen lacks " alpha 󰅀"
+key ]
+wait 800
+expect screen contains " alpha 󰅀"
+expect screen contains "󰄬 󰘬 main"
+key [
+wait 800
+expect screen contains " beta 󰅀"
+command view.activity_explorer

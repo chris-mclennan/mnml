@@ -102,6 +102,8 @@ pub const Saved = struct {
     sides: Config.SectionSide = .{},
     zen: bool = false,
     theme: []const u8 = "",
+    /// The branches panel lists every repo (`git_palette.State.all`).
+    git_all: bool = false,
     /// Nine entries; `""` is an empty slot.
     harpoon: []const []const u8 = &.{},
     ex_history: []const []const u8 = &.{},
@@ -256,6 +258,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     }
     saved.zen = app.zen;
     saved.theme = app.theme.name;
+    saved.git_all = app.git_palette.all;
 
     // Lists.
     const pins = try arena.alloc([]const u8, app.harpoon.paths.len);
@@ -445,6 +448,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     if (saved.tree_visible and app.side.open.get(es) == null) app.side.open.set(es, .explorer);
     if (app.side.open.get(es) != .explorer) app.tree.visible = false;
     zen.set(app, saved.zen);
+    app.git_palette.all = saved.git_all;
     if (saved.theme.len > 0) if (theme_mod.byName(saved.theme)) |th| {
         if (!std.mem.eql(u8, th.name, app.theme.name)) app.setTheme(th);
     };

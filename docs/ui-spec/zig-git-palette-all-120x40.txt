@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ GIT               │ 󰊢 alpha 󰅖   󰊢 beta 󰅖   󰐕                                                     󰅁  󰅂        
+  │  󰍉 / filter        │    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
+   │                    │     G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA    │─ fa2107d76 · spec · 1d ───────
+ 󰍉 │  All repos 󰅀  󰅁  󰅂 │▌▶   ●─╮ │ On main: half done     │   09/06 20:00 │ fa2107d76  │  On main: half done
+   │ Viewing 15         │▌    │ ● │ index on main: 30ef8c… │   09/06 20:00 │ c320ee567  │  parents: 30ef8c750  c320ee567
+▌󰊢 │                    │▌    ●─╯ │ third                  │   09/06 20:00 │ 30ef8c750  │
+   │▌󰅀 󰌢 LOCAL       4 █│▌    ●   │ second                 │   09/06 20:00 │ a1cdabd8d  │  changed files (2):
+  │  alpha            █│▌    ●   │ init                   │   09/06 20:00 │ 13b130f2d  │  M a.txt
+   │    󰘬 feature      █│                                                               │  M a.txt
+ 󰐱 │󰄬   󰘬 main      1↑ █│                                                               │
+   │  beta             █│                                                               │
+ 󰎒 │󰄬   󰘬 dev          █│                                                               │
+   │    󰘬 main         █│                                                               │
+ 󰚩 │                   █│                                                               │
+   │ 󰅀 󰅟 REMOTE      3 █│                                                               │
+ 󰅣 │  alpha            █│                                                               │
+   │    󰊤 origin       █│                                                               │
+  │      󰘬 feature    █│                                                               │
+   │      󰘬 hotfix     █│                                                               │
+  │      󰘬 main       █│                                                               │
+   │  beta             █│                                                               │
+  │                   █│                                                               │
+   │ 󰅀 󰐅 WORKTREES   4 █│                                                               │
+ 󱘣 │  alpha            █│                                                               │
+   │󰄬   󰋜 main (al… 1↑ █│                                                               │
+   │    󰐅 wt-dirty … ● █│                                                               │
+   │󰌾   󰐅 feature (wt… █│                                                               │
+   │  beta             █│                                                               │
+   │󰄬   󰋜 dev (beta)   █│                                                               │
+   │────────────────────│                                                               │
+   │ Sidebar          ⋮ │                                                               │
+   │                   ┃│                                                               │
+   │ Arrows or j/k walk┃│                                                               │
+   │ rows. Enter opens ┃│                                                               │
+   │ the selection.    ┃│                                                               │
+  │ Ctrl+Shift+P opens││                                                               │
+   │                    │                                                               │
+ VIEW   main  ⇡1  [no file]                                              F 57% ▲1.0  󱼀 󰐎    20:50  alpha   —
+

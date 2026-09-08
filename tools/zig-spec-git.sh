@@ -11,10 +11,13 @@
 # hotfix) whose URL names github.com, two linked worktrees beside it —
 # `wt-locked` (on feature; locked, clean) and `wt-dirty` (detached at
 # v1.0; an untracked file) — one stash and two tags (v1.0 lightweight,
-# v2.0 annotated). The shared
-# fixture is never touched: everything lives under a mktemp directory.
-# The dump IS the spec: the panel is a deliberate departure from the
-# Rust sidebar, so there is nothing to diff against.
+# v2.0 annotated). A NAME ending in `-all` (the All repos dump) puts
+# that repo at `ws/alpha` beside a second, smaller one, `ws/beta` (on
+# `dev`, a `main` branch, one tag) — the workspace is then no repo
+# itself, so discovery lists both. The shared fixture is never touched:
+# everything lives under a mktemp directory. The dump IS the spec: the
+# panel is a deliberate departure from the Rust sidebar, so there is
+# nothing to diff against.
 set -u
 NAME=$1; SIZE=${2:-120x40}; OUT_DIR=${3:-$(cd "$(dirname "$0")/.." && pwd)/docs/ui-spec}
 COLS=${SIZE%x*}; ROWS=${SIZE#*x}
@@ -26,17 +29,18 @@ STEPS=$ROOT/docs/ui-spec/steps-$NAME.jsonl
 
 TMP=$(mktemp -d)
 WS=$TMP/ws; DATA=$TMP/data
-mkdir -p "$WS" "$DATA"
-g() { git -C "$WS" -c user.email=spec@mnml.dev -c user.name=spec -c commit.gpgsign=false "$@"; }
+case $NAME in *-all) REPO=$WS/alpha; ALL=1 ;; *) REPO=$WS; ALL= ;; esac
+mkdir -p "$REPO" "$DATA"
+g() { git -C "$REPO" -c user.email=spec@mnml.dev -c user.name=spec -c commit.gpgsign=false "$@"; }
 # Fixed dates so the graph's DATE / TIME column is the same every run.
 export GIT_AUTHOR_DATE="2026-09-06T20:00:00+0000" GIT_COMMITTER_DATE="2026-09-06T20:00:00+0000"
 g init -q -b main
-printf 'one\n' >"$WS/a.txt"
-printf '.mnml/\n' >"$WS/.gitignore"
+printf 'one\n' >"$REPO/a.txt"
+printf '.mnml/\n' >"$REPO/.gitignore"
 g add a.txt .gitignore
 g commit -q -m "init"
 g tag v1.0
-printf 'two\n' >>"$WS/a.txt"
+printf 'two\n' >>"$REPO/a.txt"
 g commit -q -am "second"
 g tag -a v2.0 -m "release two"
 g branch feature
@@ -46,14 +50,24 @@ g push -q -u origin main feature main:hotfix
 # The forge glyph reads the URL; the refs fetched above stay.
 g remote set-url origin git@github.com:me/thing.git
 # main: one commit ahead of origin/main.
-printf 'three\n' >>"$WS/a.txt"
+printf 'three\n' >>"$REPO/a.txt"
 g commit -q -am "third"
 g worktree add -q "$TMP/wt-locked" feature
 g worktree lock --reason keep "$TMP/wt-locked"
 g worktree add -q --detach "$TMP/wt-dirty" v1.0
 printf 'x\n' >"$TMP/wt-dirty/new.txt"
-printf 'four\n' >>"$WS/a.txt"
+printf 'four\n' >>"$REPO/a.txt"
 g stash push -q -m "half done"
+if [ -n "$ALL" ]; then
+  B=$WS/beta; mkdir -p "$B"
+  gb() { git -C "$B" -c user.email=spec@mnml.dev -c user.name=spec -c commit.gpgsign=false "$@"; }
+  gb init -q -b dev
+  printf 'b\n' >"$B/b.txt"
+  gb add b.txt
+  gb commit -q -m "beta init"
+  gb tag v0.1
+  gb branch main
+fi
 cat >"$DATA/config.zon" <<'EOF'
 .{
     .editor = .{ .input_style = .standard },

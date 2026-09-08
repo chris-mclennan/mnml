@@ -18,8 +18,8 @@ expect screen contains "Viewing 4"
 expect screen contains "󰅀 󰅟 REMOTE"
 expect screen contains "󰖟 origin"
 expect screen contains "    󰘬 hotfix"
-click 6 11
-click 6 11
+click 6 12
+click 6 12
 wait 1500
 expect file .git/HEAD contains "refs/heads/hotfix"
 expect screen contains "󰄬 󰘬 hotfix"

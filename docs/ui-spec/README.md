@@ -163,15 +163,29 @@ with an untracked file), one stash, two tags — feeds
 is never touched.
 
 - `zig-git-palette-120x40.txt` — `steps-git-palette.jsonl` (the
-  graph2 steps): the repo pill with the refresh chip at its edge,
-  `Viewing 11`, the list panels' filter row, a blank, then LOCAL (the
-  check, the green ground and `1↑` on main), REMOTE (`origin` with the
-  GitHub glyph, its three branches indented without the prefix),
-  WORKTREES (the house on the main tree with `1↑`, the lock in the
-  gutter of `wt-locked`, the blue dot at the edge of `wt-dirty`),
-  STASHES (`sha message`), TAGS newest first. The cursor rests on
-  LOCAL with the muted marker, as every list panel's does.
+  graph2 steps). The column starts as TODOS does: row 1 the caps `GIT`
+  header with the refresh chip at its right edge, row 2 the list
+  panels' filter row, a blank, row 4 the repo pill ` ws 󰅀 ` with the
+  tab strip's two chevrons after it (dim here: one repo), row 5
+  `Viewing 11`, a blank, then LOCAL (the check, the green ground and
+  `1↑` on main), REMOTE (`origin` with the GitHub glyph, its three
+  branches indented without the prefix), WORKTREES (the house on the
+  main tree with `1↑`, the lock in the gutter of `wt-locked`, the blue
+  dot at the edge of `wt-dirty`), STASHES (`sha message`), TAGS newest
+  first. The cursor rests on LOCAL with the muted marker, as every
+  list panel's does.
 - `zig-git-palette-80x24.txt` — the same at 80×24: the column is 12
-  cells, labels and names clip with `…` before the counts and the
-  right-edge cells, the list scrolls with the scrollbar in its last
-  column, nothing overflows.
+  cells, the pill paints alone (no room for the chevrons), labels and
+  names clip with `…` before the counts and the right-edge cells, the
+  list scrolls with the scrollbar in its last column, nothing
+  overflows.
+- `zig-git-palette-all-120x40.txt` — `steps-git-palette-all.jsonl`
+  (the graph2 steps, then `git.palette_all`) on the `-all` layout: the
+  seeded repo at `ws/alpha` beside `ws/beta` (on `dev`; a `main`, one
+  tag). Two graph tabs; the pill reads ` All repos 󰅀 ` with the
+  chevrons lit and closed up against it (the 20-cell column has no
+  room for the cell of air); `Viewing 15`; every section holds a muted
+  sub-header per repo (`alpha`, `beta`, indented like a remote's name)
+  with that repo's rows one level further in, its count the sum, the
+  check on each repo's own branch and main tree; a repo with nothing
+  under a section keeps its sub-header (`beta` under REMOTE).

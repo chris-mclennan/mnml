@@ -12,7 +12,7 @@ shell git tag feat-1
 command view.activity_git
 wait 1000
 expect screen contains "Viewing 4"
-click 8 4
+click 8 2
 expect screen contains "type to filter"
 type fea
 expect screen contains "Viewing 2"

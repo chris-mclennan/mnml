@@ -43,6 +43,9 @@ pub const table = .{
     .@"git.codex_commit" = &codexCommit,
     .@"git.ai_recompose" = &aiRecompose,
     .@"git.branch_rail_toggle" = &branchRailToggle,
+    .@"git.repo_prev" = &repoPrev,
+    .@"git.repo_next" = &repoNext,
+    .@"git.palette_all" = &paletteAll,
     .@"git.checkout" = &checkout,
     .@"git.recent_branches" = &recentBranches,
     .@"git.new_branch" = &newBranch,
@@ -333,6 +336,18 @@ fn aiRecompose(app: *App) CommandError!void {
 /// In and out of git mode (the Rust rail's toggle).
 fn branchRailToggle(app: *App) CommandError!void {
     try git_palette.toggle(app);
+}
+
+fn repoPrev(app: *App) CommandError!void {
+    try git_palette.stepRepo(app, false);
+}
+
+fn repoNext(app: *App) CommandError!void {
+    try git_palette.stepRepo(app, true);
+}
+
+fn paletteAll(app: *App) CommandError!void {
+    try git_palette.toggleAll(app);
 }
 
 // ─── branches ───────────────────────────────────────────────────────────

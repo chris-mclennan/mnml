@@ -16,8 +16,8 @@ wait 1000
 expect screen contains "󰅀 󰐅 WORKTREES"
 expect screen contains "󰄬 󰋜 main"
 expect screen contains "  󰐅 feat (wt)"
-click 6 14
-click 6 14
+click 6 15
+click 6 15
 wait 1500
 expect screen contains "󰊢 wt "
 expect screen contains " wt 󰅀"

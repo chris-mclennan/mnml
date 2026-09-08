@@ -3551,3 +3551,37 @@ screen (`docs/ui-spec/zig-git-palette-*.txt`, `tools/zig-spec-git.sh`).
   every row menu resolves), a worker integration test on a seeded repo,
   seven `git_palette_*.test` scripts; `git_mode.test` and the git-mode
   unit test re-aimed at the new rows.
+- `// changed (header):` the panel starts with the caps `GIT` header
+  every panel in the column has (`header.draw`, `.panel = .git`, the
+  refresh chip at the right edge — the header owns the chip and its
+  `.chip{.git, .refresh}` hit now, the pill row has only the pill).
+  The rows then follow TODOS' order: header, filter, blank, pill,
+  `Viewing N`, blank, the list — `head_rows` 4 → 6; every
+  `git_palette_*.test` click moved with them, and `git_mode.test`
+  asserts the header instead of its absence.
+- `// changed (repos):` the pill is followed by the tab strip's two
+  chevrons (`bufferline.arrow_*`, 3-cell slots, the same lit / dim
+  styles; `Part` gains `repo_prev` / `repo_next`): the previous / next
+  repo in discovery order, wrapping, dim and inert with one repo. `[`
+  / `]` on the focused panel and `git.repo_prev` / `git.repo_next` do
+  the same (`stepRepo`); a switch also brings the repo's graph tab to
+  the front (`selectRepo`), as the pill menu's rows now do.
+- `// changed (all repos):` the pill menu leads with `All repos`
+  (`GitPaletteAct.all_repos`, `git.palette_all` toggles it,
+  `State.all`, saved as `Saved.git_all` in `session.zig`): every open
+  repo's rail is listed at once — `rows` builds each section from a
+  `RailView` per repo and puts a `.repo` sub-header (muted, indented
+  like a remote's name; `Props.grouped` indents the item rows one
+  level further) above each repo's rows, the count the sum, `Viewing
+  N` over every row. `git.State` gains `rails: AutoHashMap(repo id,
+  RepoRail)` — the rails of the repos that are not the active one,
+  each on its own arena (`requestRailFor` asks, the `.rail` result for
+  a non-active repo lands there); `switchTo` MOVES the active rail into
+  `rails` and the target's out (`parkRail` / `unparkRail`), so a row's
+  slices stay valid across the switch. Under All repos a row's action
+  is its own repo's: `select` / `activate` / `openRowMenu` first make
+  that repo the active one (`switchToRowRepo`, the graph tab follows)
+  and then run as with one repo; the chevrons step to the first / last
+  repo and leave All repos. `afterChange` on a non-active repo refreshes
+  its parked rail. Spec: `zig-git-palette-all-120x40.txt`,
+  `tools/zig-spec-git.sh <name>-all` seeds `ws/alpha` + `ws/beta`.

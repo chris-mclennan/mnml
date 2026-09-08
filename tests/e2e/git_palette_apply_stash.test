@@ -16,8 +16,8 @@ command view.activity_git
 wait 1000
 expect screen contains "󰅀 󰏗 STASHES"
 expect screen contains "On main: keep this"
-click 6 15
-click 6 15
+click 6 16
+click 6 16
 wait 1500
 expect file a.txt contains "two"
 expect screen contains "On main: keep this"
