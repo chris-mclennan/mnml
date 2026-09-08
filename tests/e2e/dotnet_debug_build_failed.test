@@ -1,0 +1,12 @@
+# `dotnet.debug` when the build fails: the task pane shows the
+# compiler's line, the toast says no debugger is launched, and no
+# session exists. `MNML_SHIM_DOTNET_FAIL` makes the shim's `build` exit 1.
+# env: PATH=${MNML_SHIMS}:${PATH}
+# env: MNML_SHIM_DOTNET_FAIL=1
+write App.csproj "<Project Sdk=\"Microsoft.NET.Sdk\" />\n"
+write Program.cs "Console.WriteLine(\"hi\")\n"
+open Program.cs
+command dotnet.debug
+expect screen contains "error CS1002"
+expect screen contains "dotnet build failed — not launching the debugger"
+expect screen lacks "dap: spawned"

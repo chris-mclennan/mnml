@@ -20,6 +20,7 @@ pub const table = .{
     .@"dap.evaluate_hover" = &dap.evaluateHover,
     .@"dap.clear_console" = &dap.clearConsole,
     .@"dap.run" = &dap.run,
+    .@"dotnet.debug" = &dap.dotnetDebug,
     .@"dap.attach" = &attach,
     .@"dap.continue" = &cont,
     .@"dap.next" = &next,

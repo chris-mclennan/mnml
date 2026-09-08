@@ -1,0 +1,36 @@
+# `test.run_at_cursor` on a .NET project: the enclosing Class.Method
+# becomes `--filter "FullyQualifiedName~CalcTests.Adds"`, shown on the
+# results pane's first row. `test.run_file` filters by the file's
+# classes. The `dotnet` is the corpus shim.
+# width: 200
+# env: PATH=${MNML_SHIMS}:${PATH}
+write Tests/Tests.csproj "<Project Sdk=\"Microsoft.NET.Sdk\" />\n"
+write Tests/CalcTests.cs "using Xunit;\n\npublic class CalcTests\n{\n    [Fact]\n    public void Adds()\n    {\n        Assert.Equal(2, 1 + 1);\n    }\n\n    [Fact]\n    public void Divides()\n    {\n        Assert.Equal(3, 6 / 2);\n    }\n}\n\npublic class OtherTests\n{\n}\n"
+open Tests/CalcTests.cs
+command view.toggle_tree
+command editor.use_vim
+
+# Line 8 is inside Adds.
+ex 8
+command test.run_at_cursor
+expect pane tests
+expect screen contains "--filter \"FullyQualifiedName~CalcTests.Adds\""
+key esc
+expect pane CalcTests.cs
+
+# Line 14 is inside Divides.
+ex 14
+command test.run_at_cursor
+expect pane tests
+expect screen contains "--filter \"FullyQualifiedName~CalcTests.Divides\""
+key esc
+
+command test.run_file
+expect pane tests
+expect screen contains "FullyQualifiedName~CalcTests|FullyQualifiedName~OtherTests"
+key esc
+
+# Outside every method there is nothing to run.
+ex 1
+command test.run_at_cursor
+expect screen contains "no test method around the cursor"

@@ -4326,3 +4326,56 @@ place, beside the raw text.
   `tests/e2e/zon_view_{toggle_bool_save, enum_cycle, string_edit,
   list_add, union_swap, unknown_schema}.test` (break-checked).
   `docs/ui-spec/zig-zon-view-120x40.txt` is the dump.
+
+## C# / .NET — runners, the results pane, netcoredbg, the grammar (2026-09-08, branch `dotnet`) — `// changed:` notes
+
+- `// changed (app):` `src/app/dotnet.zig` is the shared .NET
+  knowledge, App-free: `find` (the nearest `*.csproj` and `*.sln` at or
+  above a directory, never above the workspace; `Project.buildRoot` is
+  the solution's directory, `runRoot` the project's), `parseCsproj` /
+  `launchBody`, `testAt` / `testAtText` / `filterArg` / `fileFilterArg`.
+- `// changed (app):` `runners.zig` gains `dotnet.build` / `run` /
+  `test` / `restore` / `watch` (`runDotnet`), `Project.dotnet` (a `.cs`
+  file asks for its project before the root's `package.json`), the
+  `test.*` dotnet arms, `dotnet` in `known_tools`, and `pathOf` — where
+  `findOnPath` found a binary, for a worker that spawns without a
+  shell. `offerInstall` is `pub`.
+- `// changed (app):` `tests_pane.zig` — `Runner` (`playwright` |
+  `dotnet`) on the pane with an owned `cwd`; `argvFor` / `cmdlineFor`
+  take the runner (`cmdlineFor` quotes an argument the shell would
+  split); the worker takes the runner + the workspace and resolves
+  `argv[0]` on the App's PATH; `parseDotnet` / `parseTrx` /
+  `trxPathIn` / `locateSources` / `failedFilter`; `TestRun.summary`;
+  `runDotnet` / `dotnetAll` / `dotnetFile` / `dotnetAtCursor` /
+  `dotnetRerunFailed`; the pane's `a` / `f` / `R` follow its runner;
+  the heal prompt names the tool. `ui/tests_view.zig` paints the
+  summary row and names the runner in the errored state;
+  `render.zig` passes the runner to `cmdlineFor`.
+- `// changed (app):` `dap.zig` — `Found` carries an optional derived
+  body; `builtin_adapters` / `BuiltinLaunch` / `builtinFor` /
+  `builtinAdapterFor` / `resolveAdapter`; `run` → `launchFile`;
+  `dotnetDebug` + `State.pending_launch` + `pollPendingLaunch` (called
+  from `App.tick` after `pty_pane.tickAll`); the `initialize` reply
+  sends the default exception filters when `initialized` already ran.
+  `cmd_dap.zig` registers `dotnet.debug`.
+- `// changed (highlight):` `structure.Kind.property` (`prop`, not a
+  scope); `kinds` gains the c_sharp declaration names; `isLambda`
+  knows `lambda_expression` / `anonymous_method_expression`.
+- `// changed (app):` `outline.zig` — `cs_rules`, `csMethodName`
+  (a signature, not a call), `new` among the modifiers.
+- `// changed (e2e):` a `# env:` value expands `$NAME` / `${NAME}`
+  from the run's environment (`runner.expandEnv`); `mnml-zig test`
+  exports `MNML_SHIMS` = `tools/shims/` (`build_options.shims_dir`);
+  `tools/shims/dotnet` is the corpus's `dotnet`.
+- `// added (spec):` `dotnet.build` `dotnet.run` `dotnet.test`
+  `dotnet.restore` `dotnet.watch` (group `test`), `dotnet.debug`
+  (group `dap`). Spec count 993.
+- Tests: `dotnet.zig` (the walk, the csproj, the launch body, the test
+  at the cursor both ways), `runners.zig` (toasts, roots, the filter
+  arguments), `tests_pane.zig` (the console parser with the older
+  signs / durations / build errors, the TRX, the source lookup, the
+  pane on a project and `R`), `dap.zig` (a netcoredbg-shaped adapter
+  in process, the built-in row and a config's precedence,
+  `dotnet.debug` both ways), `structure.zig` / `syntax.zig` /
+  `outline.zig` (the grammar), `runner.zig` (`expandEnv`), and the
+  seven `tests/e2e/dotnet_*.test` scripts.

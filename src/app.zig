@@ -2053,6 +2053,7 @@ pub const App = struct {
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
+        dap.pollPendingLaunch(self);
         ws_pane.tickAll(self);
         try watch.tick(self, now);
         todos.tick(self, now);
@@ -2233,6 +2234,7 @@ test {
     _ = @import("app/browser_pane.zig");
     _ = @import("app/cmd_browser.zig");
     _ = @import("app/runners.zig");
+    _ = @import("app/dotnet.zig");
     _ = @import("app/tasks.zig");
     _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");

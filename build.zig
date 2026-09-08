@@ -542,6 +542,10 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&fake_dap_install.step);
     const fake_dap_exe_name = b.fmt("mnml-fake-dap{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
     build_options.addOption([]const u8, "fake_dap_exe", b.getInstallPath(.bin, fake_dap_exe_name));
+    // `tools/shims/`: fake toolchains (`dotnet`) a `.test` puts first on
+    // PATH with `# env: PATH=${MNML_SHIMS}:${PATH}`; `mnml-zig test`
+    // exports the directory as `$MNML_SHIMS`.
+    build_options.addOption([]const u8, "shims_dir", b.pathFromRoot("tools/shims"));
     tests_run.step.dependOn(&fake_dap_install.step);
     e2e_run.step.dependOn(&fake_dap_install.step);
     gate_in_test.step.dependOn(&fake_dap_install.step);

@@ -167,13 +167,19 @@ const Run = struct {
         // in the App is this file's failure, not a note at process exit.
         var dbg: std.heap.DebugAllocator(.{ .safety = true, .thread_safe = true, .enable_memory_limit = true }) = .init;
         // `# env: NAME=value` lines: the App's environment is the run's
-        // (or the process's) plus those, for this file only.
+        // (or the process's) plus those, for this file only. `$NAME` /
+        // `${NAME}` in a value expands from the run's environment
+        // (`PATH=${MNML_SHIMS}:${PATH}`), an unset name to nothing.
         const header = parser.parseHeader(text);
         var file_env: ?std.process.Environ.Map = null;
         defer if (file_env) |*m| m.deinit();
         if (header.env_len > 0) {
             var m = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
-            for (header.envPairs()) |pair| m.put(pair.key, pair.value) catch return self.fail("out of memory", .{});
+            for (header.envPairs()) |pair| {
+                const value = expandEnv(gpa, pair.value, &m) catch return self.fail("out of memory", .{});
+                defer gpa.free(value);
+                m.put(pair.key, value) catch return self.fail("out of memory", .{});
+            }
             file_env = m;
         }
         const outcome = blk: {
@@ -727,6 +733,41 @@ pub fn runPaths(gpa: Allocator, io: Io, factory: Factory, roots: []const []const
     try out.print("\n{d}/{d} passed\n", .{ total.total - total.failed, total.total });
     try out.flush();
     return total;
+}
+
+/// `$NAME` / `${NAME}` in `text` from `env`; an unset name is empty. Owned.
+pub fn expandEnv(gpa: Allocator, text: []const u8, env: *const std.process.Environ.Map) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '$' and i + 1 < text.len) {
+            const braced = text[i + 1] == '{';
+            const start = if (braced) i + 2 else i + 1;
+            var end = start;
+            while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
+            const name = text[start..end];
+            const closed = !braced or (end < text.len and text[end] == '}');
+            if (name.len > 0 and closed) {
+                if (env.get(name)) |v| try out.appendSlice(gpa, v);
+                i = if (braced) end + 1 else end;
+                continue;
+            }
+        }
+        try out.append(gpa, text[i]);
+        i += 1;
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+test "expandEnv: a name and a braced name from the map, an unset name is empty, a lone dollar stays" {
+    var env: std.process.Environ.Map = .init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_SHIMS", "/s");
+    try env.put("PATH", "/usr/bin");
+    const v = try expandEnv(t.allocator, "${MNML_SHIMS}:$PATH:${NOPE}:$ 5", &env);
+    defer t.allocator.free(v);
+    try t.expectEqualStrings("/s:/usr/bin::$ 5", v);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

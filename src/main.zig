@@ -354,6 +354,13 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try env.put("MNML_FAKE_DAP", p);
         }
     }
+    // `$MNML_SHIMS`: `tools/shims/` — the fake `dotnet` the `dotnet_*`
+    // scripts put first on PATH (`# env: PATH=${MNML_SHIMS}:${PATH}`).
+    if (env.get("MNML_SHIMS") == null) {
+        if (Io.Dir.cwd().access(io, build_options.shims_dir, .{})) |_| {
+            try env.put("MNML_SHIMS", build_options.shims_dir);
+        } else |_| {}
+    }
     // `$MNML_FAKE_LSP` the same way, for the `lsp_fake_*` scripts.
     if (env.get("MNML_FAKE_LSP") == null) {
         if (try fakeLspPath(gpa, io)) |p| {

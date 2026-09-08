@@ -1,0 +1,21 @@
+# .NET runners on a .cs file with no *.csproj / *.sln at or above it:
+# every verb toasts its own id and opens nothing — the shape the other
+# runners' missing-manifest toasts have.
+write src/Lonely.cs "class Lonely { }\n"
+open src/Lonely.cs
+expect pane Lonely.cs
+
+command dotnet.build
+expect screen contains "dotnet.build: no *.csproj / *.sln found"
+expect pane Lonely.cs
+
+command dotnet.test
+expect screen contains "dotnet.test: no *.csproj / *.sln found"
+expect pane Lonely.cs
+
+command dotnet.watch
+expect screen contains "dotnet.watch: no *.csproj / *.sln found"
+
+# The umbrella ids see no project either.
+command test.run_all
+expect screen contains "test: no Cargo.toml / package.json / go.mod / *.csproj"

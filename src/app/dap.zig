@@ -37,6 +37,10 @@ const jsonrpc = @import("../rpc/jsonrpc.zig");
 const client = @import("../dap/client.zig");
 const types = @import("../dap/types.zig");
 const syntax = @import("syntax.zig");
+const Io = std.Io;
+const dotnet = @import("dotnet.zig");
+const runners = @import("runners.zig");
+const pty_pane = @import("pty_pane.zig");
 const layout_mod = @import("layout.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const debug_panel = @import("debug_panel.zig");
@@ -144,11 +148,16 @@ pub const State = struct {
     last_file: ?[]u8 = null,
     /// Where the pending `evaluate_hover` shows its answer.
     hover_at: ?struct { pane: PaneId, byte: usize } = null,
+    /// `dotnet.debug`: the build pane whose exit starts the session on
+    /// `file` (owned).
+    pending_launch: ?PendingLaunch = null,
     console: Console = .{},
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.session) |s| s.deinit();
         self.session = null;
+        if (self.pending_launch) |pl| gpa.free(pl.file);
+        self.pending_launch = null;
         if (self.adapters_loaded) |*l| l.deinit();
         var it = self.breakpoints.iterator();
         while (it.next()) |e| {
@@ -605,9 +614,17 @@ fn clearArrow(app: *App) void {
     app.dap.arrow = null;
 }
 
+/// An adapter resolved for a file: the config entry (or a built-in
+/// row), and the launch body a built-in row derived, when it did.
+const Found = struct {
+    name: []const u8,
+    cfg: app_mod.Config.DapAdapter,
+    body: ?[]const u8 = null,
+};
+
 /// The `.dap.<key>` adapter for a file: its extension first, then the
 /// grammar key (`py` / `rust`…), so both spellings of a config work.
-fn adapterFor(app: *App, path: []const u8) ?struct { name: []const u8, cfg: app_mod.Config.DapAdapter } {
+fn adapterFor(app: *App, path: []const u8) ?Found {
     const ext_full = std.fs.path.extension(path);
     if (ext_full.len > 1) {
         var lower: [32]u8 = undefined;
@@ -620,19 +637,133 @@ fn adapterFor(app: *App, path: []const u8) ?struct { name: []const u8, cfg: app_
     return null;
 }
 
+/// How a built-in adapter's launch body is derived.
+pub const BuiltinLaunch = enum {
+    /// The nearest csproj's debug assembly: `{ program:
+    /// <dir>/bin/Debug/<TargetFramework>/<AssemblyName>.dll, cwd: <dir> }`.
+    dotnet_project,
+};
+
+/// An adapter mnml knows without a config entry, by grammar key.
+pub const BuiltinAdapter = struct {
+    key: []const u8,
+    cmd: []const u8,
+    args: []const []const u8,
+    launch: BuiltinLaunch,
+};
+
+/// Consulted after `.dap.<key>` and the config re-read, so a
+/// workspace's own entry for the same key always wins. `CONFIG.md`
+/// lists them.
+pub const builtin_adapters = [_]BuiltinAdapter{
+    .{ .key = "cs", .cmd = "netcoredbg", .args = &.{"--interpreter=vscode"}, .launch = .dotnet_project },
+};
+
+pub fn builtinFor(key: []const u8) ?BuiltinAdapter {
+    for (builtin_adapters) |b| if (std.mem.eql(u8, b.key, key)) return b;
+    return null;
+}
+
+/// The built-in adapter for `path`, its launch body derived, on the
+/// frame arena. Null when no row matches the file's grammar; a row
+/// that cannot derive its body (a `.cs` with no project above it)
+/// fails with the reason.
+fn builtinAdapterFor(app: *App, path: []const u8) CommandError!?Found {
+    const arena = app.frame.allocator();
+    const key = syntax.keyForPath(path) orelse return null;
+    const b = builtinFor(key) orelse return null;
+    const body = switch (b.launch) {
+        .dotnet_project => blk: {
+            const start = std.fs.path.dirname(path) orelse app.workspace;
+            const proj = (try dotnet.find(app.io, arena, start, app.workspace)) orelse
+                return app.diag.fail(arena, "dap: no *.csproj found at or above {s} — the built-in netcoredbg adapter needs one", .{app.relPath(path)});
+            const csproj = proj.csproj orelse
+                return app.diag.fail(arena, "dap: only a .sln above {s} — the built-in netcoredbg adapter needs the project's .csproj", .{app.relPath(path)});
+            const text = Io.Dir.cwd().readFileAlloc(app.io, csproj, arena, .limited(1 << 20)) catch "";
+            break :blk try dotnet.launchBody(arena, csproj, text);
+        },
+    };
+    return .{ .name = b.key, .cfg = .{ .cmd = b.cmd, .args = b.args }, .body = body };
+}
+
+/// The adapter for `path`: the config's, the config re-read, then a
+/// built-in row.
+fn resolveAdapter(app: *App, path: []const u8) CommandError!Found {
+    const arena = app.frame.allocator();
+    if (adapterFor(app, path)) |f| return f;
+    try refreshAdapters(app);
+    if (adapterFor(app, path)) |f| return f;
+    if (try builtinAdapterFor(app, path)) |f| return f;
+    const ext = std.fs.path.extension(path);
+    return app.diag.fail(arena, "dap: no .dap.{s} adapter in config", .{if (ext.len > 1) ext[1..] else "<ext>"});
+}
+
 /// `dap.run`: spawn the adapter for the active file and start the
 /// handshake. One session at a time — a live one is dropped first.
 pub fn run(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const ep = try editorWithPath(app);
-    const path = try arena.dupe(u8, ep.path);
-    const ext = std.fs.path.extension(path);
-    const found = adapterFor(app, path) orelse blk: {
-        try refreshAdapters(app);
-        break :blk adapterFor(app, path) orelse return app.diag.fail(arena, "dap: no .dap.{s} adapter in config", .{if (ext.len > 1) ext[1..] else "<ext>"});
+    return launchFile(app, try arena.dupe(u8, ep.path));
+}
+
+fn launchFile(app: *App, path: []const u8) CommandError!void {
+    const found = try resolveAdapter(app, path);
+    if (found.cfg.cmd.len == 0) return app.diag.fail(app.frame.allocator(), "dap: .dap.{s} has no cmd", .{found.name});
+    return startSession(app, found.cfg, path, found.body);
+}
+
+// ─── dotnet.debug: build, then launch ───────────────────────────────────
+
+pub const PendingLaunch = struct { pane: PaneId, file: []u8 };
+
+/// `dotnet.debug`: `dotnet build` in a task pane at the project (or
+/// solution), then — once it exits 0 — the session on the active
+/// `.cs` file (`pollPendingLaunch`). A failed build says so and
+/// launches nothing; a second `dotnet.debug` replaces the wait.
+pub fn dotnetDebug(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const ep = try editorWithPath(app);
+    if (!std.ascii.eqlIgnoreCase(std.fs.path.extension(ep.path), ".cs")) return app.diag.fail(arena, "dotnet.debug: {s} is not a .cs file", .{app.relPath(ep.path)});
+    const start = std.fs.path.dirname(ep.path) orelse app.workspace;
+    const proj = (try dotnet.find(app.io, arena, start, app.workspace)) orelse
+        return app.diag.fail(arena, "dotnet.debug: no *.csproj / *.sln found in {s} or any parent", .{app.workspace});
+    if (!runners.onPath(app, "dotnet")) return runners.offerInstall(app, "dotnet");
+    const file = try app.gpa.dupe(u8, ep.path);
+    errdefer app.gpa.free(file);
+    const root = try arena.dupe(u8, proj.buildRoot());
+    const pane = try runners.spawn(app, "dotnet build", "dotnet build", root, .task);
+    clearPendingLaunch(app);
+    app.dap.pending_launch = .{ .pane = pane, .file = file };
+    app.toast("dotnet build — the debugger starts when it succeeds", .{});
+}
+
+fn clearPendingLaunch(app: *App) void {
+    if (app.dap.pending_launch) |pl| app.gpa.free(pl.file);
+    app.dap.pending_launch = null;
+}
+
+/// Every tick: the build pane `dotnet.debug` waits on has exited (or
+/// is gone). Exit 0 launches; anything else is a toast.
+pub fn pollPendingLaunch(app: *App) void {
+    const pl = app.dap.pending_launch orelse return;
+    const pane = app.panes.get(pl.pane) orelse return clearPendingLaunch(app);
+    const p = switch (pane.*) {
+        .pty => |*p| p,
+        else => return clearPendingLaunch(app),
     };
-    if (found.cfg.cmd.len == 0) return app.diag.fail(arena, "dap: .dap.{s} has no cmd", .{found.name});
-    return startSession(app, found.cfg, path, null);
+    const exit = p.exit orelse return;
+    const file = pl.file;
+    app.dap.pending_launch = null;
+    defer app.gpa.free(file);
+    if (!exit.ok()) {
+        app.toast("dotnet build failed — not launching the debugger", .{});
+        return;
+    }
+    const path = app.frame.allocator().dupe(u8, file) catch return;
+    launchFile(app, path) catch |err| {
+        if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("dap: {s}", .{@errorName(err)});
+        app.diag.clear();
+    };
 }
 
 /// No adapter matched: read the config layers again and take their
@@ -696,9 +827,9 @@ pub fn startSession(app: *App, cfg: app_mod.Config.DapAdapter, file: []const u8,
 pub fn restart(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const file = if (app.dap.last_file) |f| try arena.dupe(u8, f) else (try editorWithPath(app)).path;
-    const found = adapterFor(app, file) orelse return app.diag.fail(arena, "dap: no adapter for {s}", .{std.fs.path.basename(file)});
+    const found = adapterFor(app, file) orelse (try builtinAdapterFor(app, file)) orelse return app.diag.fail(arena, "dap: no adapter for {s}", .{std.fs.path.basename(file)});
     if (app.dap.session) |s| s.terminate() catch {};
-    try startSession(app, found.cfg, file, null);
+    try startSession(app, found.cfg, file, found.body);
     app.toast("dap: restarted", .{});
 }
 
@@ -987,7 +1118,13 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
         }
     }
     switch (kind) {
-        .initialize => try s.setCapabilities(body),
+        .initialize => {
+            try s.setCapabilities(body);
+            // netcoredbg sends `initialized` from inside `initialize`,
+            // before this reply: the filters were not known when the
+            // event's handler ran, so its defaults go on now.
+            if (s.initialized and s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
+        },
         .launch => if (success) {
             s.running = true;
         },
@@ -1955,6 +2092,215 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     try group.await(io);
     (F{ .handle = c2s[0], .flags = flags }).close(io);
     (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
+
+/// netcoredbg's handshake: `initialized` is sent from inside
+/// `initialize`, before that request's reply, and the reply carries
+/// its two filters (`user-unhandled` on by default). A breakpoint stop
+/// after `configurationDone`, one thread, one frame.
+fn fakeNetcoredbg(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, log: *FakeLog, file: []const u8) std.Io.Cancelable!void {
+    var buf: [8192]u8 = undefined;
+    var fr = in.readerStreaming(io, &buf);
+    var seq: i64 = 2000;
+    while (true) {
+        const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
+        defer gpa.free(body);
+        var parsed = std.json.parseFromSlice(jsonrpc.Value, gpa, body, .{}) catch return;
+        defer parsed.deinit();
+        const v = parsed.value;
+        const cmd = jsonrpc.getStr(v, "command") orelse continue;
+        const rseq = jsonrpc.getInt(v, "seq") orelse 0;
+        const args = jsonrpc.getField(v, "arguments") orelse jsonrpc.Value.null;
+        if (std.mem.eql(u8, cmd, "initialize")) {
+            fakeEvent(io, gpa, out, &seq, "initialized", "{}");
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"supportsConfigurationDoneRequest\":true,\"supportsFunctionBreakpoints\":true,\"supportsConditionalBreakpoints\":true,\"supportTerminateDebuggee\":true,\"supportsExceptionInfoRequest\":true,\"supportsSetVariable\":true,\"supportsEvaluateForHovers\":true,\"supportsExceptionFilterOptions\":true,\"exceptionBreakpointFilters\":[{\"filter\":\"all\",\"label\":\"All Exceptions\",\"default\":false},{\"filter\":\"user-unhandled\",\"label\":\"User-Unhandled Exceptions\",\"default\":true}]}");
+        } else if (std.mem.eql(u8, cmd, "setBreakpoints")) {
+            const lines: []const jsonrpc.Value = jsonrpc.getArr(args, "lines") orelse &.{};
+            log.lock.lockUncancelable(io);
+            log.bp_count = @min(lines.len, log.bp_lines.len);
+            for (lines[0..log.bp_count], 0..) |l, i| log.bp_lines[i] = @intCast(jsonrpc.asInt(l) orelse 0);
+            log.lock.unlock(io);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"breakpoints\":[{\"verified\":true,\"line\":3}]}");
+        } else if (std.mem.eql(u8, cmd, "setExceptionBreakpoints")) {
+            const filters: []const jsonrpc.Value = jsonrpc.getArr(args, "filters") orelse &.{};
+            log.note("filters_count", filters.len);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+        } else if (std.mem.eql(u8, cmd, "launch")) {
+            log.note("launched", true);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+        } else if (std.mem.eql(u8, cmd, "configurationDone")) {
+            log.note("configured", true);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            fakeEvent(io, gpa, out, &seq, "thread", "{\"reason\":\"started\",\"threadId\":4242}");
+            fakeEvent(io, gpa, out, &seq, "stopped", "{\"reason\":\"breakpoint\",\"threadId\":4242,\"allThreadsStopped\":true}");
+        } else if (std.mem.eql(u8, cmd, "threads")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"threads\":[{\"id\":4242,\"name\":\"Main Thread\"}]}");
+        } else if (std.mem.eql(u8, cmd, "stackTrace")) {
+            const b = std.fmt.allocPrint(gpa, "{{\"stackFrames\":[{{\"id\":1,\"name\":\"Program.Main()\",\"line\":3,\"column\":9,\"source\":{{\"name\":\"Program.cs\",\"path\":\"{s}\"}}}}],\"totalFrames\":1}}", .{file}) catch return;
+            defer gpa.free(b);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, b);
+        } else if (std.mem.eql(u8, cmd, "scopes")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"scopes\":[{\"name\":\"Locals\",\"variablesReference\":1001,\"expensive\":false}]}");
+        } else if (std.mem.eql(u8, cmd, "variables")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"variables\":[{\"name\":\"args\",\"value\":\"{string[0]}\",\"type\":\"string[]\",\"variablesReference\":0}]}");
+        } else if (std.mem.eql(u8, cmd, "evaluate")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"result\":\"0\",\"type\":\"int\",\"variablesReference\":0}");
+        } else if (std.mem.eql(u8, cmd, "disconnect") or std.mem.eql(u8, cmd, "terminate")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            if (std.mem.eql(u8, cmd, "disconnect")) return;
+        } else {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+        }
+    }
+}
+
+test "a netcoredbg-shaped adapter: initialized before the initialize reply still gets the default filter, then launch, configurationDone and a stop" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const file = "/tmp/mnml-zig-fake-netcoredbg/Program.cs";
+    _ = try app.openScratch();
+    const ed_pane = app.activeEditor().?;
+    try ed_pane.buf.setPath(file);
+    try ed_pane.buf.editor.setText("using System;\n\nConsole.WriteLine(\"hi\");\nConsole.WriteLine(\"bye\");\n");
+    ed_pane.buf.editor.placeCursor(2, 0);
+    try command.run(&app, .{ .static = .@"dap.toggle_breakpoint" });
+
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const c2s = try std.Io.Threaded.pipe2(.{});
+    const s2c = try std.Io.Threaded.pipe2(.{});
+    const F = std.Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    var log: FakeLog = .{};
+    var group: std.Io.Group = .init;
+    try group.concurrent(io, fakeNetcoredbg, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
+    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"program\":\"/tmp/x/bin/Debug/net8.0/x.dll\",\"cwd\":\"/tmp/x\"}");
+    app.dap.next_session += 1;
+    app.dap.session = s;
+    try s.initialize();
+    const Cond = struct {
+        fn stopped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.stopped != null and ss.frames.len > 0 and ss.variables.contains(1001) and ss.threads.len > 0;
+        }
+    };
+    try pumpUntil(&app, &app, Cond.stopped, 5000);
+    try testing.expect(s.initialized);
+    try testing.expect(log.launched and log.configured);
+    try testing.expectEqual(@as(usize, 1), log.bp_count);
+    try testing.expectEqual(@as(u32, 3), log.bp_lines[0]);
+    // The reply's filters landed after `initialized`: the default one was still sent.
+    try testing.expectEqual(@as(usize, 2), s.filters.items.len);
+    try testing.expect(s.enabled_filters.contains("user-unhandled"));
+    try testing.expect(!s.enabled_filters.contains("all"));
+    try testing.expectEqual(@as(usize, 1), log.filters_count);
+    try testing.expectEqualStrings("breakpoint", s.stopped.?.reason);
+    try testing.expectEqual(@as(i64, 4242), s.thread.?);
+    try testing.expectEqualStrings("Program.Main()", s.frames[0].name);
+    try testing.expectEqualStrings("Main Thread", s.threads[0].name);
+    try testing.expectEqual(@as(u32, 2), app.dap.arrow.?.line);
+    try command.run(&app, .{ .static = .@"dap.terminate" });
+    try testing.expect(app.dap.session == null);
+    try group.await(io);
+    (F{ .handle = c2s[0], .flags = flags }).close(io);
+    (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
+
+test "the built-in netcoredbg row: a .cs file derives its launch body from the csproj; a workspace .dap.cs wins; no project is a reason" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try tmp.dir.createDirPath(testing.io, "src/App");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/App/App.csproj", .data = "<Project Sdk=\"Microsoft.NET.Sdk\">\n<PropertyGroup>\n<OutputType>Exe</OutputType>\n<TargetFramework>net9.0</TargetFramework>\n<AssemblyName>Acme.App</AssemblyName>\n</PropertyGroup>\n</Project>\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/App/Program.cs", .data = "Console.WriteLine(1);\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "Lonely.cs", .data = "class L {}\n" });
+    const program = try std.fs.path.join(testing.allocator, &.{ root, "src", "App", "Program.cs" });
+    defer testing.allocator.free(program);
+    try testing.expect(builtinFor("cs") != null);
+    try testing.expect(builtinFor("py") == null);
+    const found = (try builtinAdapterFor(&app, program)).?;
+    try testing.expectEqualStrings("netcoredbg", found.cfg.cmd);
+    try testing.expectEqualStrings("--interpreter=vscode", found.cfg.args[0]);
+    const expected = try std.fmt.allocPrint(testing.allocator, "{{\"program\":\"{s}/src/App/bin/Debug/net9.0/Acme.App.dll\",\"cwd\":\"{s}/src/App\",\"stopAtEntry\":false}}", .{ root, root });
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, found.body.?);
+    // A .cs with no project: the reason names the file.
+    const lonely = try std.fs.path.join(testing.allocator, &.{ root, "Lonely.cs" });
+    defer testing.allocator.free(lonely);
+    try testing.expectError(error.Failed, builtinAdapterFor(&app, lonely));
+    try testing.expectEqualStrings("dap: no *.csproj found at or above Lonely.cs — the built-in netcoredbg adapter needs one", app.diag.msg.?);
+    app.diag.clear();
+    // Not a .cs: no row, no error.
+    try testing.expect((try builtinAdapterFor(&app, "/x/y.py")) == null);
+    // A config entry for the same key is what `resolveAdapter` returns.
+    var cfg_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer cfg_arena.deinit();
+    try app.cfg.dap.put(cfg_arena.allocator(), "cs", .{ .cmd = "my-own-dbg" });
+    const own = try resolveAdapter(&app, program);
+    try testing.expectEqualStrings("my-own-dbg", own.cfg.cmd);
+    try testing.expect(own.body == null);
+    // dap.run on the .cs spawns the config's adapter — which is not on PATH.
+    _ = try app.openPath(program);
+    try testing.expectError(error.Failed, run(&app));
+    try testing.expectEqualStrings("dap spawn failed: my-own-dbg not found on PATH", app.diag.msg.?);
+}
+
+test "dotnet.debug: dotnet build in a task pane, the launch on exit 0, a toast on a failed build" {
+    if (!pty_pane.supported or builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try tmp.dir.createDirPath(testing.io, "src/App");
+    try tmp.dir.createDirPath(testing.io, "bin");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "All.sln", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/App/App.csproj", .data = "<Project><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/App/Program.cs", .data = "Console.WriteLine(1);\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "notes.txt", .data = "x\n" });
+    const program = try std.fs.path.join(testing.allocator, &.{ root, "src", "App", "Program.cs" });
+    defer testing.allocator.free(program);
+    const notes = try std.fs.path.join(testing.allocator, &.{ root, "notes.txt" });
+    defer testing.allocator.free(notes);
+    _ = try app.openPath(notes);
+    try testing.expectError(error.Failed, dotnetDebug(&app));
+    try testing.expectEqualStrings("dotnet.debug: notes.txt is not a .cs file", app.diag.msg.?);
+    app.diag.clear();
+    // A `dotnet` that fails: the toast, no session.
+    const exe = try std.fs.path.join(testing.allocator, &.{ root, "bin", "dotnet" });
+    defer testing.allocator.free(exe);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "bin/dotnet", .data = "#!/bin/sh\necho build failed\nexit 1\n" });
+    try Io.Dir.cwd().setFilePermissions(testing.io, exe, .fromMode(0o755), .{});
+    const path = try std.fmt.allocPrint(testing.allocator, "{s}/bin:/usr/bin:/bin", .{root});
+    defer testing.allocator.free(path);
+    try app.env.put("PATH", path);
+    _ = try app.openPath(program);
+    try dotnetDebug(&app);
+    try testing.expect(app.dap.pending_launch != null);
+    const pane = app.panes.pty(app.dap.pending_launch.?.pane).?;
+    try testing.expectEqualStrings(root, pane.cwd.?);
+    try testing.expectEqualStrings("dotnet build", pane.label);
+    const Cond = struct {
+        fn settled(a: *App) bool {
+            return a.dap.pending_launch == null;
+        }
+    };
+    try pumpUntil(&app, &app, Cond.settled, 10_000);
+    try testing.expectEqualStrings("dotnet build failed — not launching the debugger", app.lastToast().?);
+    try testing.expect(app.dap.session == null);
+    // A build that succeeds hands over to the adapter — netcoredbg is not on this PATH, and the toast says so.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "bin/dotnet", .data = "#!/bin/sh\necho ok\nexit 0\n" });
+    _ = try app.openPath(program);
+    try dotnetDebug(&app);
+    try pumpUntil(&app, &app, Cond.settled, 10_000);
+    try testing.expectEqualStrings("dap spawn failed: netcoredbg not found on PATH", app.lastToast().?);
 }
 
 // ─── the real fake adapter (mnml-fake-dap), out of process ─────────────

@@ -1,0 +1,33 @@
+# .NET runners with a project: `dotnet build` / `run` / `restore` /
+# `watch run` each open a pty pane titled by the command line, at the
+# solution (build) or the project (run). The `dotnet` on PATH is the
+# corpus shim (tools/shims/dotnet), so the panes show canned lines.
+# env: PATH=${MNML_SHIMS}:${PATH}
+write All.sln ""
+write src/App/App.csproj "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n"
+write src/App/Program.cs "Console.WriteLine(\"hi\");\n"
+open src/App/Program.cs
+expect pane Program.cs
+
+command dotnet.build
+expect pane "dotnet build"
+expect screen contains "Build succeeded."
+expect screen lacks "no *.csproj"
+key esc
+key esc
+
+command dotnet.run
+expect pane "dotnet run"
+expect screen contains "Hello from the shim"
+key esc
+key esc
+
+command dotnet.restore
+expect pane "dotnet restore"
+expect screen contains "Restored"
+key esc
+key esc
+
+command dotnet.watch
+expect pane "dotnet watch run"
+expect screen contains "dotnet watch (shim)"

@@ -29,6 +29,8 @@ pub const Kind = enum {
     type,
     constant,
     field,
+    /// C#'s `int X { get; set; }` and indexers.
+    property,
 
     /// The outline's kind column.
     pub fn label(k: Kind) []const u8 {
@@ -46,13 +48,14 @@ pub const Kind = enum {
             .type => "type",
             .constant => "const",
             .field => "field",
+            .property => "prop",
         };
     }
 
     /// A scope: something with a body worth pinning as a header.
     pub fn isScope(k: Kind) bool {
         return switch (k) {
-            .type, .constant, .field => false,
+            .type, .constant, .field, .property => false,
             else => true,
         };
     }
@@ -93,6 +96,16 @@ const kinds = std.StaticStringMap(Kind).initComptime([_]KindEntry{
     .{ "method_declaration", .method },
     .{ "method", .method },
     .{ "singleton_method", .method },
+    .{ "constructor_declaration", .method },
+    .{ "destructor_declaration", .method },
+    .{ "operator_declaration", .method },
+    .{ "local_function_statement", .function },
+    .{ "record_declaration", .class },
+    .{ "file_scoped_namespace_declaration", .namespace },
+    .{ "delegate_declaration", .type },
+    .{ "property_declaration", .property },
+    .{ "indexer_declaration", .property },
+    .{ "event_declaration", .field },
     .{ "class_declaration", .class },
     .{ "class_definition", .class },
     .{ "class_specifier", .class },
@@ -139,7 +152,7 @@ pub fn kindOf(node: ts.Node) ?Kind {
 /// Anonymous function nodes `if` / `af` treat as functions too.
 fn isLambda(node: ts.Node) bool {
     const k = node.kind();
-    return std.mem.eql(u8, k, "arrow_function") or std.mem.eql(u8, k, "function_expression") or std.mem.eql(u8, k, "closure_expression") or std.mem.eql(u8, k, "lambda") or std.mem.eql(u8, k, "func_literal");
+    return std.mem.eql(u8, k, "arrow_function") or std.mem.eql(u8, k, "function_expression") or std.mem.eql(u8, k, "closure_expression") or std.mem.eql(u8, k, "lambda") or std.mem.eql(u8, k, "func_literal") or std.mem.eql(u8, k, "lambda_expression") or std.mem.eql(u8, k, "anonymous_method_expression");
 }
 
 /// The identifier a definition is named by. C's declarators nest
@@ -364,6 +377,78 @@ test "python and c: def / class and the declarator chain" {
     var q = try Parsed.init("c", c);
     defer q.deinit();
     try testing.expectEqualStrings("point x make", try names(arena.allocator(), try symbols(arena.allocator(), q.tree.rootNode(), c)));
+}
+
+const cs_text =
+    \\namespace Acme.Tests;
+    \\
+    \\public record Point(int X, int Y);
+    \\
+    \\public class Calc
+    \\{
+    \\    public int Count { get; set; }
+    \\
+    \\    public Calc() { }
+    \\
+    \\    public int Add(int a, int b)
+    \\    {
+    \\        int Twice(int v) => v * 2;
+    \\        return Twice(a) + b;
+    \\    }
+    \\
+    \\    public int Sub(int a, int b) => a - b;
+    \\}
+    \\
+    \\public struct P { public int Q() { return 1; } }
+    \\public interface IRun { void Run(); }
+    \\public enum Color { Red, Green }
+    \\
+;
+
+test "C#: namespace, record, class, property, constructor, methods (block and expression bodied), a local function, struct, interface, enum" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var p = try Parsed.init("cs", cs_text);
+    defer p.deinit();
+    const syms = try symbols(arena.allocator(), p.tree.rootNode(), cs_text);
+    try testing.expectEqualStrings("Acme.Tests Point Calc Count Calc Add Twice Sub P Q IRun Run Color", try names(arena.allocator(), syms));
+    try testing.expectEqual(Kind.namespace, syms[0].kind);
+    try testing.expectEqual(Kind.class, syms[1].kind);
+    try testing.expectEqual(Kind.class, syms[2].kind);
+    try testing.expectEqual(Kind.property, syms[3].kind);
+    try testing.expectEqual(Kind.method, syms[4].kind);
+    try testing.expectEqual(Kind.method, syms[5].kind);
+    try testing.expectEqual(Kind.function, syms[6].kind);
+    try testing.expectEqual(Kind.@"struct", syms[8].kind);
+    try testing.expectEqual(Kind.interface, syms[10].kind);
+    try testing.expectEqual(Kind.@"enum", syms[12].kind);
+    try testing.expectEqual(syms[2].depth + 1, syms[5].depth);
+    try testing.expectEqual(syms[5].depth + 1, syms[6].depth);
+    try testing.expectEqual(@as(u32, 10), syms[5].line);
+    // The text objects: `if` / `af` on the block-bodied method, its local function, the expression body; `ic` / `ac` on the class.
+    const root = p.tree.rootNode();
+    const at_return = std.mem.indexOf(u8, cs_text, "return Twice").?;
+    const inner = objectAt(root, cs_text, .function, at_return, false).?;
+    try testing.expectEqualStrings("\n        int Twice(int v) => v * 2;\n        return Twice(a) + b;\n    ", cs_text[inner[0]..inner[1]]);
+    const around = objectAt(root, cs_text, .function, at_return, true).?;
+    try testing.expect(std.mem.startsWith(u8, cs_text[around[0]..around[1]], "public int Add(int a, int b)"));
+    try testing.expect(std.mem.endsWith(u8, cs_text[around[0]..around[1]], "return Twice(a) + b;\n    }"));
+    const at_twice = std.mem.indexOf(u8, cs_text, "v * 2").?;
+    const local = objectAt(root, cs_text, .function, at_twice, true).?;
+    try testing.expectEqualStrings("int Twice(int v) => v * 2;", cs_text[local[0]..local[1]]);
+    const at_sub = std.mem.indexOf(u8, cs_text, "a - b").?;
+    const expr = objectAt(root, cs_text, .function, at_sub, true).?;
+    try testing.expectEqualStrings("public int Sub(int a, int b) => a - b;", cs_text[expr[0]..expr[1]]);
+    const cls = objectAt(root, cs_text, .class, at_return, false).?;
+    try testing.expect(std.mem.startsWith(u8, cs_text[cls[0]..cls[1]], "\n    public int Count"));
+    try testing.expect(std.mem.endsWith(u8, cs_text[cls[0]..cls[1]], "=> a - b;\n"));
+    const cls_around = objectAt(root, cs_text, .class, at_return, true).?;
+    try testing.expect(std.mem.startsWith(u8, cs_text[cls_around[0]..cls_around[1]], "public class Calc"));
+    // The scope chain over `return`: the class and the method start above it.
+    const chain = try scopeChain(arena.allocator(), root, @intCast(at_return), 13);
+    try testing.expect(chain.len >= 2);
+    try testing.expectEqual(@as(u32, 4), chain[chain.len - 2]);
+    try testing.expectEqual(@as(u32, 10), chain[chain.len - 1]);
 }
 
 test "scope chain: the enclosing definitions that start above a line, outermost first" {

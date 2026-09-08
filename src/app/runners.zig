@@ -1,5 +1,5 @@
-//! Project runners: `cargo.*`, `npm.*`, `pytest.*`, `go.*`, the
-//! project-agnostic `test.*`, and the tools picker. Each runs its command
+//! Project runners: `cargo.*`, `npm.*`, `pytest.*`, `go.*`, `dotnet.*`,
+//! the project-agnostic `test.*`, and the tools picker. Each runs its command
 //! in a pty pane below the active one.
 //!
 //! Detection walks UP from the active editor's directory — so a file in
@@ -22,6 +22,8 @@ const pty_pane = @import("pty_pane.zig");
 const pty = @import("pty");
 const cmd_picker = @import("cmd_picker.zig");
 const lsp_client = @import("../lsp/client.zig");
+const dotnet = @import("dotnet.zig");
+const tests_pane = @import("tests_pane.zig");
 const Prompt = app_mod.Prompt;
 
 pub const table = .{
@@ -44,6 +46,11 @@ pub const table = .{
     .@"go.vet" = &goVet,
     .@"go.run" = &goRun,
     .@"go.run_path" = &goRunPath,
+    .@"dotnet.build" = &dotnetBuild,
+    .@"dotnet.run" = &dotnetRun,
+    .@"dotnet.test" = &dotnetTest,
+    .@"dotnet.restore" = &dotnetRestore,
+    .@"dotnet.watch" = &dotnetWatch,
     .@"test.run_all" = &testRunAll,
     .@"test.run_file" = &testRunFile,
     .@"test.run_at_cursor" = &testRunAtCursor,
@@ -122,24 +129,32 @@ pub fn onPath(app: *App, bin: []const u8) bool {
 /// extensions, the way `CreateProcessW` and `cmd.exe` resolve `git`
 /// to `git.exe` and `npm` to `npm.cmd`.
 pub fn findOnPath(io: Io, env: *const std.process.Environ.Map, bin: []const u8) bool {
-    if (std.fs.path.dirname(bin) != null) {
-        _ = Io.Dir.cwd().statFile(io, bin, .{}) catch return false;
-        return true;
-    }
-    const path = env.get("PATH") orelse return false;
-    const pathext = env.get("PATHEXT") orelse "";
     var buf: [std.fs.max_path_bytes]u8 = undefined;
+    return pathOf(io, env, &buf, bin) != null;
+}
+
+/// Where `findOnPath` found `bin`: `<dir>/<bin><ext>` in `buf`, or the
+/// name itself when it carries a directory. A worker that spawns
+/// without a shell needs this — `std.process.run` resolves a bare
+/// argv[0] against the process's own PATH, not the map it is given.
+pub fn pathOf(io: Io, env: *const std.process.Environ.Map, buf: *[std.fs.max_path_bytes]u8, bin: []const u8) ?[]const u8 {
+    if (std.fs.path.dirname(bin) != null) {
+        _ = Io.Dir.cwd().statFile(io, bin, .{}) catch return null;
+        return bin;
+    }
+    const path = env.get("PATH") orelse return null;
+    const pathext = env.get("PATHEXT") orelse "";
     var it = std.mem.splitScalar(u8, path, std.fs.path.delimiter);
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
-        if (exists(io, dir, bin, &buf)) return true;
+        if (exists(io, dir, bin, buf)) return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, bin }) catch null;
         var exts = std.mem.splitScalar(u8, pathext, ';');
         while (exts.next()) |ext| {
             if (ext.len == 0) continue;
-            if (existsExt(io, dir, bin, ext, &buf)) return true;
+            if (existsExt(io, dir, bin, ext, buf)) return std.fmt.bufPrint(buf, "{s}{c}{s}{s}", .{ dir, std.fs.path.sep, bin, ext }) catch null;
         }
     }
-    return false;
+    return null;
 }
 
 // ─── running ────────────────────────────────────────────────────────────
@@ -431,24 +446,89 @@ pub fn goRunPathAccept(app: *App, text: []const u8) CommandError!void {
     return runManifestCommand(app, "go.mod", "go", "run", subcmd);
 }
 
+// ─── dotnet ─────────────────────────────────────────────────────────────
+
+/// Which directory a `dotnet` verb runs in (`dotnet.Project`).
+const DotnetRoot = enum { build, run };
+
+/// `dotnet <subcmd>` at the nearest project / solution. `slug` names
+/// the command in the toast (`dotnet.watch` runs `watch run`).
+fn runDotnet(app: *App, slug: []const u8, subcmd: []const u8, root_kind: DotnetRoot) CommandError!void {
+    const arena = app.frame.allocator();
+    const proj = (try dotnet.find(app.io, arena, startDir(app), app.workspace)) orelse
+        return app.diag.fail(arena, "dotnet.{s}: no *.csproj / *.sln found in {s} or any parent", .{ slug, app.workspace });
+    if (!onPath(app, "dotnet")) return offerInstall(app, "dotnet");
+    const root = switch (root_kind) {
+        .build => proj.buildRoot(),
+        .run => proj.runRoot(),
+    };
+    const cmdline = try std.fmt.allocPrint(arena, "dotnet {s}", .{subcmd});
+    _ = try spawn(app, cmdline, cmdline, root, .runner);
+}
+
+fn dotnetBuild(app: *App) CommandError!void {
+    return runDotnet(app, "build", "build", .build);
+}
+fn dotnetRun(app: *App) CommandError!void {
+    return runDotnet(app, "run", "run", .run);
+}
+/// `dotnet.test`: the results pane (`tests_pane.zig`), not a pty.
+fn dotnetTest(app: *App) CommandError!void {
+    return tests_pane.dotnetAll(app);
+}
+fn dotnetRestore(app: *App) CommandError!void {
+    return runDotnet(app, "restore", "restore", .build);
+}
+fn dotnetWatch(app: *App) CommandError!void {
+    return runDotnet(app, "watch", "watch run", .run);
+}
+
+/// The test the cursor is in: the grammar's outline when the file has
+/// one, the line patterns otherwise.
+pub fn dotnetTestAtCursor(app: *App) CommandError!?dotnet.TestId {
+    const arena = app.frame.allocator();
+    const e = app.activeEditor() orelse return null;
+    const ed = e.buf.editor;
+    if (try e.syntax.symbols(ed, arena)) |syms| return dotnet.testAt(syms, ed.cursor);
+    return dotnet.testAtText(arena, ed.bytes(), ed.cursor);
+}
+
+/// `--filter "FullyQualifiedName~A|FullyQualifiedName~B"` for the
+/// classes of the active file; null when it declares none.
+pub fn dotnetFileFilter(app: *App) CommandError!?[]const u8 {
+    const arena = app.frame.allocator();
+    const e = app.activeEditor() orelse return null;
+    const syms = (try e.syntax.symbols(e.buf.editor, arena)) orelse return null;
+    return dotnet.fileFilterArg(arena, syms);
+}
+
 // ─── test.* — whichever project this is ─────────────────────────────────
 
-pub const Project = enum { cargo, npm, go, pytest };
+pub const Project = enum { cargo, npm, go, dotnet, pytest };
 
 /// The project kind at or above the active file: the nearest manifest
 /// decides, a Python layout without one counts when it has test files.
+/// A `.cs` file asks for its project first, so a repo with a frontend's
+/// `package.json` at the root still tests with `dotnet`.
 pub fn detectProject(app: *App) ?Project {
     const start = startDir(app);
+    const is_cs = if (app.last_editor) |id| (if (app.panes.editor(id)) |e| (if (e.buf.doc.path) |p| std.ascii.eqlIgnoreCase(std.fs.path.extension(p), ".cs") else false) else false) else false;
+    if (is_cs and hasDotnetProject(app, start)) return .dotnet;
     if (findManifestDir(app.io, start, &.{"Cargo.toml"}, app.workspace) != null) return .cargo;
     if (findManifestDir(app.io, start, &.{"package.json"}, app.workspace) != null) return .npm;
     if (findManifestDir(app.io, start, &.{"go.mod"}, app.workspace) != null) return .go;
+    if (hasDotnetProject(app, start)) return .dotnet;
     if (findManifestDir(app.io, start, &py_manifests, app.workspace) != null) return .pytest;
     if (hasPytestFiles(app.io, app.workspace)) return .pytest;
     return null;
 }
 
+fn hasDotnetProject(app: *App, start: []const u8) bool {
+    return (dotnet.find(app.io, app.frame.allocator(), start, app.workspace) catch null) != null;
+}
+
 fn requireProject(app: *App) CommandError!Project {
-    return detectProject(app) orelse app.diag.fail(app.frame.allocator(), "test: no Cargo.toml / package.json / go.mod / Python project at {s}", .{app.workspace});
+    return detectProject(app) orelse app.diag.fail(app.frame.allocator(), "test: no Cargo.toml / package.json / go.mod / *.csproj / Python project at {s}", .{app.workspace});
 }
 
 fn testRunAll(app: *App) CommandError!void {
@@ -456,6 +536,7 @@ fn testRunAll(app: *App) CommandError!void {
         .cargo => return runCargo(app, "test"),
         .npm => return runNpm(app, "test", "test"),
         .go => return runGo(app, "test ./..."),
+        .dotnet => return tests_pane.dotnetAll(app),
         .pytest => return runPytest(app, ""),
     }
 }
@@ -474,6 +555,7 @@ fn testRunFile(app: *App) CommandError!void {
         .cargo => return runCargo(app, try std.fmt.allocPrint(arena, "test {s}", .{std.fs.path.stem(rel)})),
         .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- {s}", .{rel})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s}", .{std.fs.path.dirname(rel) orelse "."})),
+        .dotnet => return tests_pane.dotnetFile(app),
         .pytest => return runPytest(app, rel),
     }
 }
@@ -530,21 +612,27 @@ fn testNameIn(line: []const u8, above: []const u8) ?[]const u8 {
 fn testRunAtCursor(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const rel = try activeRel(app);
+    const project = try requireProject(app);
+    if (project == .dotnet) return tests_pane.dotnetAtCursor(app);
     const e = app.activeEditor().?;
     const name = testNameAt(e.buf.editor.bytes(), e.buf.editor.cursor) orelse
         return app.diag.fail(arena, "no test above the cursor", .{});
-    switch (try requireProject(app)) {
+    switch (project) {
         .cargo => return runCargo(app, try std.fmt.allocPrint(arena, "test {s}", .{name})),
         .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- -t '{s}'", .{name})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s} -run '^{s}$'", .{ std.fs.path.dirname(rel) orelse ".", name })),
         .pytest => return runPytest(app, try std.fmt.allocPrint(arena, "{s} -k '{s}'", .{ rel, name })),
+        .dotnet => unreachable,
     }
 }
 
-/// pytest re-runs its last failures; the others re-run the last command.
+/// pytest re-runs its last failures, dotnet the results pane's failures
+/// by name; the others re-run the last command.
 fn testRerunFailed(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    if (detectProject(app) == .pytest) return runPytest(app, "--lf");
+    const project = detectProject(app);
+    if (project == .pytest) return runPytest(app, "--lf");
+    if (project == .dotnet) return tests_pane.dotnetRerunFailed(app);
     const cmdline = app.runners.last_cmdline orelse return app.diag.fail(arena, "nothing has run yet", .{});
     const cwd = app.runners.last_cwd orelse app.workspace;
     const c = try arena.dupe(u8, cmdline);
@@ -615,6 +703,7 @@ pub const known_tools = [_]Tool{
     .{ .name = "npm", .kind = .runner, .bin = "npm", .description = "Node package manager", .brew = "brew install node", .apt = "sudo apt install -y nodejs npm" },
     .{ .name = "go", .kind = .runner, .bin = "go", .description = "Go toolchain", .brew = "brew install go", .apt = "sudo apt install -y golang-go" },
     .{ .name = "pytest", .kind = .runner, .bin = "pytest", .description = "Python test runner", .brew = "pip install pytest", .apt = "pip install pytest" },
+    .{ .name = "dotnet", .kind = .runner, .bin = "dotnet", .description = ".NET SDK (build / run / test)", .brew = "brew install --cask dotnet-sdk", .apt = "sudo apt install -y dotnet-sdk-8.0" },
 };
 
 pub fn toolByBin(bin: []const u8) ?u16 {
@@ -629,7 +718,7 @@ fn toolByName(name: []const u8) ?u16 {
 
 /// A runner's binary is missing: say so, and offer to run its install
 /// command in a pane. An unknown binary only gets the toast.
-fn offerInstall(app: *App, bin: []const u8) CommandError!void {
+pub fn offerInstall(app: *App, bin: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const idx = toolByBin(bin) orelse return app.diag.fail(arena, "{s} is not on PATH", .{bin});
     try openInstallConfirm(app, idx);
@@ -872,11 +961,113 @@ test "test.* picks the project; the test name above the cursor is found for four
     var f = try Fixture.init();
     defer f.deinit();
     f.run(.@"test.run_all");
-    try t.expect(std.mem.startsWith(u8, f.toast(), "test: no Cargo.toml / package.json / go.mod / Python project at "));
+    try t.expect(std.mem.startsWith(u8, f.toast(), "test: no Cargo.toml / package.json / go.mod / *.csproj / Python project at "));
     try f.file("Cargo.toml", "[package]\nname = \"x\"\n");
     try t.expectEqual(Project.cargo, detectProject(&f.app).?);
     f.run(.@"test.rerun_failed");
     try t.expectEqualStrings("nothing has run yet", f.toast());
+}
+
+test "dotnet: the toast names the id when no project is found; the sln builds and the csproj runs; a .cs file makes test.* a dotnet project" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    f.run(.@"dotnet.build");
+    try t.expect(std.mem.startsWith(u8, f.toast(), "dotnet.build: no *.csproj / *.sln found in "));
+    f.run(.@"dotnet.watch");
+    try t.expect(std.mem.startsWith(u8, f.toast(), "dotnet.watch: no *.csproj / *.sln found in "));
+    try t.expect(!f.activeIsPty());
+    // A .cs file with no project around it: the same toast, and test.* has no project.
+    try f.file("src/Lonely.cs", "class A {}\n");
+    try f.open("src/Lonely.cs");
+    f.run(.@"dotnet.test");
+    try t.expect(std.mem.startsWith(u8, f.toast(), "dotnet.test: no *.csproj / *.sln found in "));
+    try t.expect(detectProject(&f.app) == null);
+    // A solution at the root, a project below, a package.json at the root too.
+    try f.file("All.sln", "");
+    try f.file("package.json", "{}");
+    try f.file("src/App/App.csproj", "<Project/>");
+    try f.file("src/App/Program.cs", "class Program { static void Main() {} }\n");
+    try f.open("src/App/Program.cs");
+    try t.expectEqual(Project.dotnet, detectProject(&f.app).?);
+    try f.file("src/notes.txt", "x");
+    try f.open("src/notes.txt");
+    try t.expectEqual(Project.npm, detectProject(&f.app).?);
+    try f.open("src/App/Program.cs");
+    if (!pty_pane.supported or builtin.os.tag == .windows) return;
+    // A `dotnet` of our own on PATH: the pane opens with the verb as its
+    // title, the build at the solution, the run at the project.
+    try f.file("bin/dotnet", "#!/bin/sh\necho fake dotnet \"$@\"\n");
+    const bin = try std.fs.path.join(t.allocator, &.{ f.root, "bin" });
+    defer t.allocator.free(bin);
+    const exe = try std.fs.path.join(t.allocator, &.{ bin, "dotnet" });
+    defer t.allocator.free(exe);
+    try Io.Dir.cwd().setFilePermissions(t.io, exe, .fromMode(0o755), .{});
+    const path = try std.fmt.allocPrint(t.allocator, "{s}:/usr/bin:/bin", .{bin});
+    defer t.allocator.free(path);
+    try f.app.env.put("PATH", path);
+    f.run(.@"dotnet.build");
+    try t.expect(f.activeIsPty());
+    try t.expectEqualStrings("dotnet build", f.app.panes.get(f.app.active.?).?.title());
+    try t.expectEqualStrings(f.root, f.app.panes.pty(f.app.active.?).?.cwd.?);
+    f.run(.@"dotnet.run");
+    try t.expectEqualStrings("dotnet run", f.app.runners.last_cmdline.?);
+    try t.expect(std.mem.endsWith(u8, f.app.runners.last_cwd.?, "src/App"));
+    f.run(.@"dotnet.watch");
+    try t.expectEqualStrings("dotnet watch run", f.app.runners.last_cmdline.?);
+    // test.run_all and dotnet.test are the results pane, at the solution.
+    f.run(.@"test.run_all");
+    const tests_id = tests_pane.find(&f.app).?;
+    const tp = &f.app.panes.get(tests_id).?.tests;
+    try t.expectEqual(tests_pane.Runner.dotnet, tp.runner);
+    try t.expectEqualStrings(f.root, tp.cwd.?);
+    try t.expectEqual(@as(usize, 0), tp.last_args.len);
+    tp.group.cancel(t.io);
+    try f.open("src/App/Program.cs");
+    f.run(.@"dotnet.test");
+    try t.expectEqual(tests_id, tests_pane.find(&f.app).?);
+    tp.group.cancel(t.io);
+}
+
+test "dotnet test.run_at_cursor / run_file: the enclosing Class.Method and the file's classes become --filter arguments" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.file("Tests/Tests.csproj", "<Project/>");
+    try f.file("Tests/CalcTests.cs", "using Xunit;\n\npublic class CalcTests\n{\n    [Fact]\n    public void Adds()\n    {\n        Assert.Equal(2, 1 + 1);\n    }\n}\n\npublic class OtherTests\n{\n}\n");
+    try f.open("Tests/CalcTests.cs");
+    try t.expectEqual(Project.dotnet, detectProject(&f.app).?);
+    const e = f.app.activeEditor().?;
+    e.buf.editor.cursor = std.mem.indexOf(u8, e.buf.editor.bytes(), "Assert").?;
+    const id = (try dotnetTestAtCursor(&f.app)).?;
+    try t.expectEqualStrings("CalcTests", id.class);
+    try t.expectEqualStrings("Adds", id.method);
+    try t.expectEqualStrings("FullyQualifiedName~CalcTests|FullyQualifiedName~OtherTests", (try dotnetFileFilter(&f.app)).?);
+    // Outside every method: the toast, no pane.
+    e.buf.editor.cursor = 0;
+    f.run(.@"test.run_at_cursor");
+    try t.expectEqualStrings("no test method around the cursor", f.toast());
+    try t.expect(tests_pane.find(&f.app) == null);
+    if (builtin.os.tag == .windows) return;
+    // With a `dotnet` on PATH the pane opens at the project with the filter.
+    try f.file("bin/dotnet", "#!/bin/sh\necho fake dotnet \"$@\"\n");
+    const bin = try std.fs.path.join(t.allocator, &.{ f.root, "bin" });
+    defer t.allocator.free(bin);
+    const exe = try std.fs.path.join(t.allocator, &.{ bin, "dotnet" });
+    defer t.allocator.free(exe);
+    try Io.Dir.cwd().setFilePermissions(t.io, exe, .fromMode(0o755), .{});
+    const path = try std.fmt.allocPrint(t.allocator, "{s}:/usr/bin:/bin", .{bin});
+    defer t.allocator.free(path);
+    try f.app.env.put("PATH", path);
+    e.buf.editor.cursor = std.mem.indexOf(u8, e.buf.editor.bytes(), "Assert").?;
+    f.run(.@"test.run_at_cursor");
+    const tp = &f.app.panes.get(tests_pane.find(&f.app).?).?.tests;
+    try t.expect(std.mem.endsWith(u8, tp.cwd.?, "Tests"));
+    try t.expectEqualStrings("--filter", tp.last_args[0]);
+    try t.expectEqualStrings("FullyQualifiedName~CalcTests.Adds", tp.last_args[1]);
+    tp.group.cancel(t.io);
+    try f.open("Tests/CalcTests.cs");
+    f.run(.@"test.run_file");
+    try t.expectEqualStrings("FullyQualifiedName~CalcTests|FullyQualifiedName~OtherTests", tp.last_args[1]);
+    tp.group.cancel(t.io);
 }
 
 test "tools: the picker lists every known tool with a kind chip; a missing tool opens the install box" {
@@ -926,4 +1117,13 @@ test "findOnPath: the platform delimiter splits PATH; PATHEXT adds the Windows e
     const abs = try std.fs.path.join(t.allocator, &.{ root, "plain" });
     defer t.allocator.free(abs);
     try t.expect(findOnPath(t.io, &env, abs));
+    // `pathOf` says where: the directory it was found in, the extension it took.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    try t.expectEqualStrings(abs, pathOf(t.io, &env, &where, "plain").?);
+    // The PATHEXT spelling comes back (`tool.CMD`); a case-insensitive
+    // filesystem finds the lower-cased file under it.
+    const cmd = try std.fs.path.join(t.allocator, &.{ root, "tool.cmd" });
+    defer t.allocator.free(cmd);
+    try t.expect(std.ascii.eqlIgnoreCase(cmd, pathOf(t.io, &env, &where, "tool").?));
+    try t.expect(pathOf(t.io, &env, &where, "nope") == null);
 }

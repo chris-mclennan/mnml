@@ -10,6 +10,13 @@
 //! Every finished run is recorded in the workspace's flaky history
 //! (`flaky.zig`), which marks run-to-run wobbly tests with `≋`.
 //!
+//! The same pane runs `dotnet test` (`Runner.dotnet`: `dotnet.test`, the
+//! `test.*` ids on a .NET project): the console logger's lines are the
+//! rows, the TRX file it also writes fills in what the console omits, a
+//! failure's file:line comes from its first stack frame, and a passed
+//! test is found in the project's sources so Enter still jumps. `R`
+//! re-runs the failures by name (`--filter FullyQualifiedName=…`).
+//!
 //!   D1  the run lives on the pane's snapshot arena, replaced wholesale
 //!       when the next result lands; `last_args` is gpa-owned;
 //!   D3  one `Io.Group` per pane; a re-run bumps the generation and a
@@ -30,6 +37,7 @@ const event = @import("../core/event.zig");
 const alloc = @import("../core/alloc.zig");
 const pty_pane = @import("pty_pane.zig");
 const runners = @import("runners.zig");
+const dotnet = @import("dotnet.zig");
 const ai_app = @import("ai.zig");
 const flaky = @import("flaky.zig");
 
@@ -62,6 +70,20 @@ pub const Status = enum {
     }
 };
 
+/// Which tool the pane ran. The argv, the parser and the shape of a
+/// re-run follow it; the rows and the keys are the same.
+pub const Runner = enum {
+    playwright,
+    dotnet,
+
+    pub fn label(r: Runner) []const u8 {
+        return switch (r) {
+            .playwright => "playwright",
+            .dotnet => "dotnet test",
+        };
+    }
+};
+
 /// One spec: where it lives and how it went. Slices on the run's arena.
 pub const TestCase = struct {
     title: []const u8,
@@ -83,6 +105,8 @@ pub const TestRun = struct {
     tests: []const TestCase = &.{},
     /// Config errors and the like, one line each.
     global_errors: []const []const u8 = &.{},
+    /// The tool's own tally line, when it prints one (`Failed!  - Failed: 1, …`).
+    summary: []const u8 = "",
 
     pub fn count(r: TestRun, status: Status) usize {
         var n: usize = 0;
@@ -268,6 +292,429 @@ pub fn stripAnsi(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
     return out.toOwnedSlice(arena);
 }
 
+// ─── dotnet test ────────────────────────────────────────────────────────
+
+/// `dotnet test --logger "console;verbosity=normal"`: one `Passed` /
+/// `Failed` / `Skipped` line per test (`  Failed A.B.C.Divides [12 ms]`,
+/// or the older `X` / `√` / `!` signs), a failure's `Error Message:` and
+/// `Stack Trace:` blocks beneath it, `error CS…` lines when the build
+/// broke, and the `Passed!` / `Failed!` tally. Paths under `workspace`
+/// are made relative to it.
+pub fn parseDotnet(arena: Allocator, text: []const u8, workspace: []const u8) Allocator.Error!TestRun {
+    var tests: std.ArrayListUnmanaged(TestCase) = .empty;
+    var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+    var summary: []const u8 = "";
+    var cur: ?usize = null;
+    var section: enum { none, message, stack } = .none;
+    var msg: std.ArrayListUnmanaged(u8) = .empty;
+    var msg_lines: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const trimmed = std.mem.trim(u8, try stripAnsi(arena, raw), " \t\r");
+        if (dotnetStatusLine(trimmed)) |st| {
+            if (cur) |i| if (msg.items.len > 0) {
+                tests.items[i].err = try msg.toOwnedSlice(arena);
+            };
+            msg = .empty;
+            msg_lines = 0;
+            const name_dur = splitDuration(st.rest);
+            const split = splitQualified(name_dur.name);
+            try tests.append(arena, .{
+                .title = split.title,
+                .suite_path = split.suite,
+                .file = "",
+                .line = 0,
+                .status = st.status,
+                .duration_ms = name_dur.ms,
+                .err = null,
+                .trace_path = null,
+            });
+            cur = tests.items.len - 1;
+            section = .none;
+            continue;
+        }
+        if (std.mem.startsWith(u8, trimmed, "Passed!") or std.mem.startsWith(u8, trimmed, "Failed!") or std.mem.startsWith(u8, trimmed, "Total tests:")) {
+            if (summary.len == 0 or std.mem.startsWith(u8, trimmed, "Failed!")) summary = try arena.dupe(u8, trimmed);
+            cur = null;
+            section = .none;
+            continue;
+        }
+        if (std.mem.startsWith(u8, trimmed, "Results File:")) {
+            cur = null;
+            section = .none;
+            continue;
+        }
+        if (isBuildError(trimmed)) {
+            var dup = false;
+            for (errors.items) |e| if (std.mem.eql(u8, e, trimmed)) {
+                dup = true;
+            };
+            if (!dup and errors.items.len < 20) try errors.append(arena, try arena.dupe(u8, trimmed));
+            continue;
+        }
+        if (cur) |i| {
+            if (std.mem.eql(u8, trimmed, "Error Message:")) {
+                section = .message;
+                continue;
+            }
+            if (std.mem.eql(u8, trimmed, "Stack Trace:")) {
+                section = .stack;
+                continue;
+            }
+            switch (section) {
+                .message => if (trimmed.len > 0 and msg_lines < 6) {
+                    if (msg.items.len > 0) try msg.append(arena, '\n');
+                    try msg.appendSlice(arena, trimmed);
+                    msg_lines += 1;
+                },
+                .stack => if (tests.items[i].file.len == 0) {
+                    if (frameLocation(trimmed)) |loc| {
+                        tests.items[i].file = try relativeTo(arena, loc.path, workspace);
+                        tests.items[i].line = loc.line;
+                    }
+                },
+                .none => {},
+            }
+            continue;
+        }
+    }
+    if (cur) |i| if (msg.items.len > 0) {
+        tests.items[i].err = try msg.toOwnedSlice(arena);
+    };
+    return .{ .tests = try tests.toOwnedSlice(arena), .global_errors = try errors.toOwnedSlice(arena), .summary = summary };
+}
+
+const StatusLine = struct { status: Status, rest: []const u8 };
+
+/// `Passed <name>…` and the three signs the older test host printed.
+fn dotnetStatusLine(line: []const u8) ?StatusLine {
+    const heads = [_]struct { []const u8, Status }{
+        .{ "Passed ", .passed }, .{ "Failed ", .failed }, .{ "Skipped ", .skipped },
+        .{ "√ ", .passed },
+        .{ "X ", .failed },      .{ "! ", .skipped },
+        .{ "✓ ", .passed },
+        .{ "✗ ", .failed },
+    };
+    for (heads) |h| if (std.mem.startsWith(u8, line, h[0])) {
+        const rest = std.mem.trim(u8, line[h[0].len..], " \t");
+        if (rest.len == 0 or rest[0] == '-' or rest[0] == ':') return null;
+        return .{ .status = h[1], .rest = rest };
+    };
+    return null;
+}
+
+/// `Name [12 ms]` → the name and the milliseconds; `[< 1 ms]` is 0;
+/// `[1 m 2 s]` adds up. No bracket: the whole line, 0 ms.
+fn splitDuration(s: []const u8) struct { name: []const u8, ms: u64 } {
+    if (!std.mem.endsWith(u8, s, "]")) return .{ .name = s, .ms = 0 };
+    const bracket = std.mem.lastIndexOf(u8, s, " [") orelse return .{ .name = s, .ms = 0 };
+    const inner = s[bracket + 2 .. s.len - 1];
+    var ms: u64 = 0;
+    if (std.mem.startsWith(u8, inner, "<")) return .{ .name = std.mem.trimEnd(u8, s[0..bracket], " "), .ms = 0 };
+    var it = std.mem.tokenizeAny(u8, inner, " ");
+    var pending: ?u64 = null;
+    while (it.next()) |tok| {
+        if (std.fmt.parseFloat(f64, tok)) |v| {
+            pending = if (v > 0) @intFromFloat(v) else 0;
+        } else |_| if (pending) |n| {
+            if (std.mem.eql(u8, tok, "ms")) ms += n else if (std.mem.eql(u8, tok, "s")) ms += n * 1000 else if (std.mem.eql(u8, tok, "m")) ms += n * 60_000 else if (std.mem.eql(u8, tok, "h")) ms += n * 3_600_000;
+            pending = null;
+        }
+    }
+    return .{ .name = std.mem.trimEnd(u8, s[0..bracket], " "), .ms = ms };
+}
+
+/// `Acme.Tests.CalcTests.Adds(a: 1)` → suite `Acme.Tests.CalcTests`,
+/// title `Adds(a: 1)`. A name without a dot before its parameters is
+/// all title.
+fn splitQualified(name: []const u8) struct { suite: []const u8, title: []const u8 } {
+    const base = name[0 .. std.mem.indexOfScalar(u8, name, '(') orelse name.len];
+    const dot = std.mem.lastIndexOfScalar(u8, base, '.') orelse return .{ .suite = "", .title = name };
+    return .{ .suite = name[0..dot], .title = name[dot + 1 ..] };
+}
+
+const Location = struct { path: []const u8, line: u32 };
+
+/// `at A.B.C() in /ws/Tests/CalcTests.cs:line 21` → the path and line.
+fn frameLocation(frame: []const u8) ?Location {
+    const in_at = std.mem.lastIndexOf(u8, frame, " in ") orelse return null;
+    const rest = frame[in_at + 4 ..];
+    const mark = std.mem.lastIndexOf(u8, rest, ":line ") orelse return null;
+    const line = std.fmt.parseInt(u32, std.mem.trim(u8, rest[mark + 6 ..], " \t"), 10) catch return null;
+    const path = std.mem.trim(u8, rest[0..mark], " \t");
+    if (path.len == 0) return null;
+    return .{ .path = path, .line = line };
+}
+
+/// `error CS1002: …` from the compiler, `error MSB…` from the build,
+/// `error NU…` from restore — not a test's own `Error Message:`.
+fn isBuildError(line: []const u8) bool {
+    const at = std.mem.indexOf(u8, line, "error ") orelse return false;
+    if (at > 0 and !(line[at - 1] == ' ' or line[at - 1] == ':')) return false;
+    const code = line[at + 6 ..];
+    return code.len > 2 and std.ascii.isUpper(code[0]) and std.ascii.isUpper(code[1]);
+}
+
+fn relativeTo(arena: Allocator, path: []const u8, workspace: []const u8) Allocator.Error![]const u8 {
+    if (workspace.len > 0 and std.mem.startsWith(u8, path, workspace) and path.len > workspace.len and (path[workspace.len] == '/' or path[workspace.len] == '\\'))
+        return arena.dupe(u8, path[workspace.len + 1 ..]);
+    return arena.dupe(u8, path);
+}
+
+/// The `Results File: <path>.trx` line, when the trx logger ran.
+pub fn trxPathIn(text: []const u8) ?[]const u8 {
+    const at = std.mem.indexOf(u8, text, "Results File:") orelse return null;
+    const rest = text[at + "Results File:".len ..];
+    const end = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+    const path = std.mem.trim(u8, rest[0..end], " \t\r");
+    return if (std.mem.endsWith(u8, path, ".trx")) path else null;
+}
+
+/// The TRX the `trx` logger writes: every `<UnitTestResult>` with its
+/// outcome and duration, the `<Message>` / `<StackTrace>` of a failure,
+/// and the class + method from the `<UnitTest>` definitions (the
+/// console's `testName` is the display name, which NUnit shortens).
+pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Allocator.Error!TestRun {
+    var by_id: std.StringHashMapUnmanaged([]const u8) = .empty;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, xml, from, "<UnitTest ")) |at| {
+        const open_end = std.mem.indexOfScalarPos(u8, xml, at, '>') orelse break;
+        const opener = xml[at..open_end];
+        const close = std.mem.indexOfPos(u8, xml, open_end, "</UnitTest>") orelse break;
+        from = close;
+        const id = try attrValue(arena, opener, "id") orelse continue;
+        const body = xml[open_end..close];
+        const tm_at = std.mem.indexOf(u8, body, "<TestMethod ") orelse continue;
+        const tm_end = std.mem.indexOfScalarPos(u8, body, tm_at, '>') orelse continue;
+        const tm = body[tm_at..tm_end];
+        const method = try attrValue(arena, tm, "name") orelse continue;
+        var class = try attrValue(arena, tm, "className") orelse "";
+        class = class[0 .. std.mem.indexOfScalar(u8, class, ',') orelse class.len];
+        const fqn = if (class.len == 0) method else try std.fmt.allocPrint(arena, "{s}.{s}", .{ class, method });
+        try by_id.put(arena, id, fqn);
+    }
+    var tests: std.ArrayListUnmanaged(TestCase) = .empty;
+    from = 0;
+    while (std.mem.indexOfPos(u8, xml, from, "<UnitTestResult ")) |at| {
+        const open_end = std.mem.indexOfScalarPos(u8, xml, at, '>') orelse break;
+        const opener = xml[at..open_end];
+        const self_closing = opener.len > 0 and opener[opener.len - 1] == '/';
+        const close = if (self_closing) open_end else (std.mem.indexOfPos(u8, xml, open_end, "</UnitTestResult>") orelse xml.len);
+        from = close;
+        const test_id = try attrValue(arena, opener, "testId");
+        const name = (if (test_id) |id| by_id.get(id) else null) orelse (try attrValue(arena, opener, "testName")) orelse "(test)";
+        const outcome = (try attrValue(arena, opener, "outcome")) orelse "";
+        const status: Status = if (std.mem.eql(u8, outcome, "Passed")) .passed else if (std.mem.eql(u8, outcome, "Failed") or std.mem.eql(u8, outcome, "Error") or std.mem.eql(u8, outcome, "Timeout") or std.mem.eql(u8, outcome, "Aborted")) .failed else .skipped;
+        const body = xml[open_end..close];
+        const split = splitQualified(name);
+        var tc: TestCase = .{
+            .title = split.title,
+            .suite_path = split.suite,
+            .file = "",
+            .line = 0,
+            .status = status,
+            .duration_ms = trxDurationMs((try attrValue(arena, opener, "duration")) orelse ""),
+            .err = null,
+            .trace_path = null,
+        };
+        if (status == .failed) {
+            if (try elementText(arena, body, "Message")) |m| tc.err = firstLines(m, 6);
+            if (try elementText(arena, body, "StackTrace")) |st| {
+                var frames = std.mem.splitScalar(u8, st, '\n');
+                while (frames.next()) |f| if (frameLocation(std.mem.trim(u8, f, " \t\r"))) |loc| {
+                    tc.file = try relativeTo(arena, loc.path, workspace);
+                    tc.line = loc.line;
+                    break;
+                };
+            }
+        }
+        try tests.append(arena, tc);
+    }
+    return .{ .tests = try tests.toOwnedSlice(arena) };
+}
+
+/// `key="value"` in a tag's opener, unescaped. The key must follow
+/// whitespace (`testName=` is not `name=`).
+fn attrValue(arena: Allocator, opener: []const u8, key: []const u8) Allocator.Error!?[]const u8 {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, opener, from, key)) |at| {
+        from = at + 1;
+        if (at == 0 or !std.ascii.isWhitespace(opener[at - 1])) continue;
+        const after = opener[at + key.len ..];
+        if (!std.mem.startsWith(u8, after, "=\"")) continue;
+        const val = after[2..];
+        const end = std.mem.indexOfScalar(u8, val, '"') orelse return null;
+        return try xmlUnescape(arena, val[0..end]);
+    }
+    return null;
+}
+
+/// The unescaped, trimmed text of the first `<tag>…</tag>` in `body`.
+fn elementText(arena: Allocator, body: []const u8, tag: []const u8) Allocator.Error!?[]const u8 {
+    var open_buf: [32]u8 = undefined;
+    var close_buf: [32]u8 = undefined;
+    const opener = std.fmt.bufPrint(&open_buf, "<{s}>", .{tag}) catch return null;
+    const close = std.fmt.bufPrint(&close_buf, "</{s}>", .{tag}) catch return null;
+    const at = std.mem.indexOf(u8, body, opener) orelse return null;
+    const rest = body[at + opener.len ..];
+    const end = std.mem.indexOf(u8, rest, close) orelse rest.len;
+    const text = std.mem.trim(u8, try xmlUnescape(arena, rest[0..end]), " \t\r\n");
+    return if (text.len > 0) text else null;
+}
+
+fn xmlUnescape(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, s, '&') == null) return s;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == '&') {
+            const rest = s[i..];
+            const Ent = struct { []const u8, []const u8 };
+            const ents = [_]Ent{ .{ "&lt;", "<" }, .{ "&gt;", ">" }, .{ "&amp;", "&" }, .{ "&quot;", "\"" }, .{ "&apos;", "'" }, .{ "&#xD;", "" }, .{ "&#xA;", "\n" }, .{ "&#13;", "" }, .{ "&#10;", "\n" } };
+            var hit = false;
+            for (ents) |e| if (std.mem.startsWith(u8, rest, e[0])) {
+                try out.appendSlice(arena, e[1]);
+                i += e[0].len;
+                hit = true;
+                break;
+            };
+            if (hit) continue;
+        }
+        try out.append(arena, s[i]);
+        i += 1;
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// `00:00:01.2345678` → 1234 ms.
+fn trxDurationMs(s: []const u8) u64 {
+    var it = std.mem.splitScalar(u8, s, ':');
+    const h = std.fmt.parseInt(u64, it.next() orelse return 0, 10) catch return 0;
+    const m = std.fmt.parseInt(u64, it.next() orelse return 0, 10) catch return 0;
+    const sec_s = it.next() orelse return 0;
+    const sec = std.fmt.parseFloat(f64, sec_s) catch return 0;
+    return h * 3_600_000 + m * 60_000 + @as(u64, @intFromFloat(sec * 1000.0));
+}
+
+fn firstLines(s: []const u8, n: usize) []const u8 {
+    var end: usize = 0;
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, s, '\n');
+    while (it.next()) |l| : (lines += 1) {
+        if (lines == n) break;
+        end = @intFromPtr(l.ptr) - @intFromPtr(s.ptr) + l.len;
+    }
+    return s[0..end];
+}
+
+/// A row without a file — every passed test, since only a failure
+/// prints a stack — is looked for in the `.cs` sources under `root`: a
+/// file naming its class with a line calling out `Method(`. Bounded;
+/// a test that is not found keeps no file.
+pub fn locateSources(arena: Allocator, io: Io, root: []const u8, workspace: []const u8, tests: []TestCase) Allocator.Error!void {
+    var pending: usize = 0;
+    for (tests) |tc| pending += @intFromBool(tc.file.len == 0);
+    if (pending == 0) return;
+    var budget: usize = 3000;
+    try locateIn(arena, io, root, workspace, tests, &pending, &budget, 0);
+}
+
+const skip_dirs = [_][]const u8{ "bin", "obj", ".git", "node_modules", "TestResults", ".mnml" };
+
+fn locateIn(arena: Allocator, io: Io, dir: []const u8, workspace: []const u8, tests: []TestCase, pending: *usize, budget: *usize, depth: u8) Allocator.Error!void {
+    if (pending.* == 0 or budget.* == 0 or depth > 12) return;
+    var d = Io.Dir.cwd().openDir(io, dir, .{ .iterate = true }) catch return;
+    defer d.close(io);
+    var it = d.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (pending.* == 0 or budget.* == 0) return;
+        if (entry.kind == .directory) {
+            var skip = false;
+            for (skip_dirs) |sd| if (std.mem.eql(u8, sd, entry.name)) {
+                skip = true;
+            };
+            if (skip) continue;
+            const sub = try std.fs.path.join(arena, &.{ dir, entry.name });
+            try locateIn(arena, io, sub, workspace, tests, pending, budget, depth + 1);
+            continue;
+        }
+        if (!std.ascii.endsWithIgnoreCase(entry.name, ".cs")) continue;
+        budget.* -= 1;
+        const path = try std.fs.path.join(arena, &.{ dir, entry.name });
+        const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch continue;
+        for (tests) |*tc| {
+            if (tc.file.len > 0) continue;
+            if (methodLine(text, classOf(tc.suite_path), methodOf(tc.title))) |line| {
+                tc.file = try relativeTo(arena, path, workspace);
+                tc.line = line;
+                pending.* -= 1;
+            }
+        }
+    }
+}
+
+fn classOf(suite: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, suite, '.') orelse return suite;
+    return suite[dot + 1 ..];
+}
+
+fn methodOf(title: []const u8) []const u8 {
+    var end: usize = 0;
+    while (end < title.len and (std.ascii.isAlphanumeric(title[end]) or title[end] == '_')) end += 1;
+    return title[0..end];
+}
+
+/// The 1-based line of ` Method(` in a file that declares `class` (or
+/// `record` / `struct`) `Class`; the class check is skipped when the
+/// suite gave none.
+fn methodLine(text: []const u8, class: []const u8, method: []const u8) ?u32 {
+    if (method.len == 0) return null;
+    if (class.len > 0 and !declares(text, class)) return null;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, method)) |at| {
+        from = at + method.len;
+        if (at == 0 or !(text[at - 1] == ' ' or text[at - 1] == '\t')) continue;
+        if (from >= text.len or text[from] != '(') continue;
+        const line_end = std.mem.indexOfScalarPos(u8, text, from, '\n') orelse text.len;
+        const tail = std.mem.trimEnd(u8, text[from..line_end], " \t\r");
+        if (tail.len > 0 and tail[tail.len - 1] == ';' and std.mem.indexOf(u8, tail, "=>") == null) continue;
+        return @intCast(std.mem.count(u8, text[0..at], "\n") + 1);
+    }
+    return null;
+}
+
+fn declares(text: []const u8, class: []const u8) bool {
+    for ([_][]const u8{ "class ", "record ", "struct " }) |kw| {
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, text, from, kw)) |at| {
+            from = at + kw.len;
+            const rest = text[from..];
+            if (!std.mem.startsWith(u8, rest, class)) continue;
+            const after = rest[class.len..];
+            if (after.len == 0 or !(std.ascii.isAlphanumeric(after[0]) or after[0] == '_')) return true;
+        }
+    }
+    return false;
+}
+
+/// `--filter FullyQualifiedName=A|FullyQualifiedName=B` for a run's
+/// failures; null when nothing failed.
+pub fn failedFilter(arena: Allocator, tr: TestRun) Allocator.Error!?[]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (tr.tests) |tc| {
+        if (tc.status != .failed) continue;
+        if (out.items.len > 0) try out.append(arena, '|');
+        try out.appendSlice(arena, "FullyQualifiedName=");
+        if (tc.suite_path.len > 0) {
+            try out.appendSlice(arena, tc.suite_path);
+            try out.append(arena, '.');
+        }
+        try out.appendSlice(arena, methodOf(tc.title));
+    }
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(arena);
+}
+
 // ─── the worker ─────────────────────────────────────────────────────────
 
 /// A finished run — the report parsed, or why it could not be.
@@ -291,45 +738,73 @@ pub const Result = struct {
 };
 
 pub const base_argv = [_][]const u8{ "npx", "playwright", "test", "--reporter=json", "--trace=retain-on-failure" };
+pub const dotnet_argv = [_][]const u8{ "dotnet", "test", "--nologo", "--logger", "console;verbosity=normal", "--logger", "trx" };
 
-/// `npx playwright test --reporter=json --trace=retain-on-failure <extra>`.
-pub fn argvFor(arena: Allocator, extra: []const []const u8) Allocator.Error![]const []const u8 {
-    const out = try arena.alloc([]const u8, base_argv.len + extra.len);
-    @memcpy(out[0..base_argv.len], &base_argv);
-    @memcpy(out[base_argv.len..], extra);
+fn baseArgv(runner: Runner) []const []const u8 {
+    return switch (runner) {
+        .playwright => &base_argv,
+        .dotnet => &dotnet_argv,
+    };
+}
+
+/// The runner's fixed argv plus `extra`.
+pub fn argvFor(arena: Allocator, runner: Runner, extra: []const []const u8) Allocator.Error![]const []const u8 {
+    const base = baseArgv(runner);
+    const out = try arena.alloc([]const u8, base.len + extra.len);
+    @memcpy(out[0..base.len], base);
+    @memcpy(out[base.len..], extra);
     return out;
 }
 
-pub fn cmdlineFor(arena: Allocator, extra: []const []const u8) Allocator.Error![]const u8 {
+/// The argv as one line, an argument the shell would split quoted.
+pub fn cmdlineFor(arena: Allocator, runner: Runner, extra: []const []const u8) Allocator.Error![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    for (base_argv, 0..) |a, i| {
+    for (baseArgv(runner), 0..) |a, i| {
         if (i > 0) try out.append(arena, ' ');
-        try out.appendSlice(arena, a);
+        try appendArg(arena, &out, a);
     }
     for (extra) |a| {
         try out.append(arena, ' ');
-        try out.appendSlice(arena, a);
+        try appendArg(arena, &out, a);
     }
     return out.toOwnedSlice(arena);
+}
+
+fn appendArg(arena: Allocator, out: *std.ArrayListUnmanaged(u8), a: []const u8) Allocator.Error!void {
+    const quote = std.mem.indexOfAny(u8, a, " ;|&\"") != null;
+    if (quote) try out.append(arena, '"');
+    try out.appendSlice(arena, a);
+    if (quote) try out.append(arena, '"');
 }
 
 /// Run the suite and post the result. `env` is the worker's own copy
 /// (`PW_TEST_HTML_REPORT_OPEN=never` keeps the HTML report closed) and
 /// is freed here; `extra` is the pane's `last_args`, copied first.
-fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, cwd: []const u8, env: *std.process.Environ.Map, extra: []const []const u8, generation: u32, pane: PaneId) Io.Cancelable!void {
+fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, runner: Runner, cwd: []const u8, workspace: []const u8, env: *std.process.Environ.Map, extra: []const []const u8, generation: u32, pane: PaneId) Io.Cancelable!void {
     defer {
         env.deinit();
         gpa.destroy(env);
         for (extra) |a| gpa.free(a);
         gpa.free(extra);
         gpa.free(cwd);
+        gpa.free(workspace);
     }
     const result = Result.create(gpa, generation, pane) catch return;
     const arena = result.arena.allocator();
-    const argv = argvFor(arena, extra) catch {
+    const argv = argvFor(arena, runner, extra) catch {
         result.destroy(gpa);
         return;
     };
+    // The App's PATH, not this process's, decides which tool runs
+    // (`runners.pathOf`); a tool that is not on it fails as before.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(io, env, &where, argv[0])) |abs| {
+        const owned = arena.dupe(u8, abs) catch {
+            result.destroy(gpa);
+            return;
+        };
+        @constCast(argv)[0] = owned;
+    }
     const proc = std.process.run(gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = cwd },
@@ -342,16 +817,27 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, cwd: []const u8, en
             return error.Canceled;
         },
         else => {
-            result.err = std.fmt.allocPrint(arena, "running `npx playwright test`: {s} — is Playwright installed here?", .{@errorName(err)}) catch null;
+            result.err = switch (runner) {
+                .playwright => std.fmt.allocPrint(arena, "running `npx playwright test`: {s} — is Playwright installed here?", .{@errorName(err)}) catch null,
+                .dotnet => std.fmt.allocPrint(arena, "running `dotnet test`: {s} — is the .NET SDK on PATH?", .{@errorName(err)}) catch null,
+            };
             events.post(io, .{ .tests = result });
             return;
         },
     };
     defer gpa.free(proc.stdout);
     defer gpa.free(proc.stderr);
+    if (runner == .dotnet) {
+        dotnetResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
+            result.destroy(gpa);
+            return;
+        };
+        events.post(io, .{ .tests = result });
+        return;
+    }
     if (parseReport(arena, proc.stdout)) |parsed| {
         var r = parsed;
-        r.command = cmdlineFor(arena, extra) catch "";
+        r.command = cmdlineFor(arena, runner, extra) catch "";
         result.run = r;
     } else |err| switch (err) {
         error.OutOfMemory => {
@@ -374,6 +860,41 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, cwd: []const u8, en
         },
     }
     events.post(io, .{ .tests = result });
+}
+
+/// The console lines are the rows; the TRX (when the logger wrote one
+/// and it parses to at least one test) supplies the rows instead, with
+/// its durations and messages; the console's tally and build errors
+/// stay. Passed rows are then found in the sources. No rows and no
+/// build error is the tool's own words, four lines.
+fn dotnetResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, workspace: []const u8, stdout: []const u8, stderr: []const u8, extra: []const []const u8) Allocator.Error!void {
+    var r = try parseDotnet(arena, stdout, workspace);
+    if (trxPathIn(stdout)) |trx_path| {
+        const abs = if (std.fs.path.isAbsolute(trx_path)) trx_path else try std.fs.path.join(arena, &.{ cwd, trx_path });
+        if (Io.Dir.cwd().readFileAlloc(io, abs, arena, .limited(32 << 20))) |xml| {
+            const from_trx = try parseTrx(arena, xml, workspace);
+            if (from_trx.tests.len > 0) r.tests = from_trx.tests;
+        } else |_| {}
+    }
+    if (r.tests.len == 0 and r.global_errors.len == 0) {
+        const text = std.mem.trim(u8, if (stderr.len > 0) stderr else stdout, " \t\r\n");
+        const msg: []const u8 = if (text.len == 0) "dotnet test printed no test results" else text;
+        var lines = std.mem.splitScalar(u8, msg, '\n');
+        var kept: std.ArrayListUnmanaged(u8) = .empty;
+        var n: usize = 0;
+        while (lines.next()) |l| : (n += 1) {
+            if (n == 4) break;
+            if (n > 0) try kept.append(arena, '\n');
+            try kept.appendSlice(arena, try stripAnsi(arena, l));
+        }
+        result.err = kept.items;
+        return;
+    }
+    const tests = try arena.dupe(TestCase, r.tests);
+    try locateSources(arena, io, cwd, workspace, tests);
+    r.tests = tests;
+    r.command = try cmdlineFor(arena, .dotnet, extra);
+    result.run = r;
 }
 
 // ─── the pane ───────────────────────────────────────────────────────────
@@ -419,6 +940,9 @@ pub const TestsPane = struct {
     snapshot: alloc.SnapshotArena,
     group: Io.Group = .init,
     generation: u32 = 0,
+    runner: Runner = .playwright,
+    /// The project root the run happens in. Owned.
+    cwd: ?[]u8 = null,
     state: State = .running,
     run: TestRun = .{},
     err: []const u8 = "",
@@ -438,7 +962,14 @@ pub const TestsPane = struct {
         self.group.cancel(io);
         for (self.last_args) |a| gpa.free(a);
         gpa.free(self.last_args);
+        if (self.cwd) |c| gpa.free(c);
         self.snapshot.deinit();
+    }
+
+    pub fn setCwd(self: *TestsPane, gpa: Allocator, root: []const u8) Allocator.Error!void {
+        const copy = try gpa.dupe(u8, root);
+        if (self.cwd) |c| gpa.free(c);
+        self.cwd = copy;
     }
 
     pub fn setArgs(self: *TestsPane, gpa: Allocator, args: []const []const u8) Allocator.Error!void {
@@ -547,10 +1078,18 @@ fn projectRoot(app: *App) CommandError![]const u8 {
         app.diag.fail(app.frame.allocator(), "playwright: no package.json found in {s} or any parent", .{app.workspace});
 }
 
-/// Start (or restart) a run with `extra` args: the one tests pane,
-/// below the active pane the first time.
+/// Start (or restart) a Playwright run with `extra` args: the one
+/// tests pane, below the active pane the first time.
 pub fn run(app: *App, extra: []const []const u8) CommandError!PaneId {
-    const root = try projectRoot(app);
+    return openRun(app, .playwright, try projectRoot(app), extra);
+}
+
+/// `dotnet test <extra>` at `root` in the one tests pane.
+pub fn runDotnet(app: *App, root: []const u8, extra: []const []const u8) CommandError!PaneId {
+    return openRun(app, .dotnet, root, extra);
+}
+
+fn openRun(app: *App, runner: Runner, root: []const u8, extra: []const []const u8) CommandError!PaneId {
     const id = find(app) orelse blk: {
         const id = try app.panes.add(.{ .tests = TestsPane.init(app.gpa) });
         const layout = app.layouts.current();
@@ -561,12 +1100,15 @@ pub fn run(app: *App, extra: []const []const u8) CommandError!PaneId {
     };
     app.showPane(id);
     const p = &app.panes.get(id).?.tests;
+    p.runner = runner;
+    try p.setCwd(app.gpa, root);
     try p.setArgs(app.gpa, extra);
-    try start(app, id, p, root);
+    try start(app, id, p);
     return id;
 }
 
-fn start(app: *App, id: PaneId, p: *TestsPane, root: []const u8) CommandError!void {
+fn start(app: *App, id: PaneId, p: *TestsPane) CommandError!void {
+    const root = p.cwd orelse app.workspace;
     p.generation +%= 1;
     p.state = .running;
     p.cursor = 0;
@@ -590,10 +1132,12 @@ fn start(app: *App, id: PaneId, p: *TestsPane, root: []const u8) CommandError!vo
     }
     const cwd = try gpa.dupe(u8, root);
     errdefer gpa.free(cwd);
-    p.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, cwd, env, extra, p.generation, id }) catch |err| {
+    const workspace = try gpa.dupe(u8, app.workspace);
+    errdefer gpa.free(workspace);
+    p.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, p.runner, cwd, workspace, env, extra, p.generation, id }) catch |err| {
         p.state = .failed;
         p.err = "could not start the worker";
-        return app.diag.fail(app.frame.allocator(), "playwright: could not start the worker: {s}", .{@errorName(err)});
+        return app.diag.fail(app.frame.allocator(), "{s}: could not start the worker: {s}", .{ p.runner.label(), @errorName(err) });
     };
 }
 
@@ -635,8 +1179,8 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
     } else {
         p.state = .failed;
         p.run = .{};
-        p.err = try a.dupe(u8, result.err orelse "playwright: error");
-        app.toast("playwright: {s}", .{firstLine(p.err)});
+        p.err = try a.dupe(u8, result.err orelse "the run failed");
+        app.toast("{s}: {s}", .{ p.runner.label(), firstLine(p.err) });
     }
     app.needs_render = true;
 }
@@ -655,7 +1199,7 @@ fn copyRun(a: Allocator, src: TestRun) Allocator.Error!TestRun {
     };
     const errs = try a.alloc([]const u8, src.global_errors.len);
     for (src.global_errors, 0..) |e, i| errs[i] = try a.dupe(u8, e);
-    return .{ .command = try a.dupe(u8, src.command), .tests = tests, .global_errors = errs };
+    return .{ .command = try a.dupe(u8, src.command), .tests = tests, .global_errors = errs, .summary = try a.dupe(u8, src.summary) };
 }
 
 // ─── commands ───────────────────────────────────────────────────────────
@@ -688,9 +1232,86 @@ fn rerunFailed(app: *App) CommandError!void {
     _ = try run(app, &.{"--last-failed"});
 }
 
+/// The pane's `a` / `f` / `R`: the same three, for whichever tool the
+/// pane last ran.
+fn runAllFor(app: *App, runner: Runner) CommandError!void {
+    return switch (runner) {
+        .playwright => runAll(app),
+        .dotnet => dotnetAll(app),
+    };
+}
+
+fn runFileFor(app: *App, runner: Runner) CommandError!void {
+    return switch (runner) {
+        .playwright => runFile(app),
+        .dotnet => dotnetFile(app),
+    };
+}
+
+fn rerunFailedFor(app: *App, runner: Runner) CommandError!void {
+    return switch (runner) {
+        .playwright => rerunFailed(app),
+        .dotnet => dotnetRerunFailed(app),
+    };
+}
+
 fn rerunSame(app: *App, id: PaneId, p: *TestsPane) CommandError!void {
-    const root = try projectRoot(app);
-    try start(app, id, p, root);
+    try start(app, id, p);
+}
+
+// ─── dotnet test, the commands ──────────────────────────────────────────
+
+/// The nearest project / solution for the .NET runner, and the SDK on
+/// PATH; the toast names `dotnet.test`.
+fn dotnetRoot(app: *App, which: enum { build, run }) CommandError![]const u8 {
+    const arena = app.frame.allocator();
+    const proj = (try dotnet.find(app.io, arena, runners.startDir(app), app.workspace)) orelse
+        return app.diag.fail(arena, "dotnet.test: no *.csproj / *.sln found in {s} or any parent", .{app.workspace});
+    if (!runners.onPath(app, "dotnet")) {
+        try runners.offerInstall(app, "dotnet");
+        return error.Failed;
+    }
+    return switch (which) {
+        .build => proj.buildRoot(),
+        .run => proj.runRoot(),
+    };
+}
+
+/// `dotnet.test` / `test.run_all`: every test under the solution.
+pub fn dotnetAll(app: *App) CommandError!void {
+    const root = try dotnetRoot(app, .build);
+    _ = try runDotnet(app, root, &.{});
+}
+
+/// `test.run_file`: the classes the active file declares, at its project.
+pub fn dotnetFile(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = app.activeEditor() orelse return app.diag.fail(arena, "open a .cs test file first", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "open a saved .cs test file first", .{});
+    const filter = (try runners.dotnetFileFilter(app)) orelse return app.diag.fail(arena, "no test class in {s}", .{app.relPath(path)});
+    const root = try dotnetRoot(app, .run);
+    _ = try runDotnet(app, root, &.{ "--filter", filter });
+}
+
+/// `test.run_at_cursor`: the enclosing `Class.Method`.
+pub fn dotnetAtCursor(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    if (app.activeEditor() == null) return app.diag.fail(arena, "open a .cs test file first", .{});
+    const id = (try runners.dotnetTestAtCursor(app)) orelse return app.diag.fail(arena, "no test method around the cursor", .{});
+    const root = try dotnetRoot(app, .run);
+    _ = try runDotnet(app, root, &.{ "--filter", try dotnet.filterArg(arena, id) });
+}
+
+/// `test.rerun_failed` / `R`: the last run's failures by name. `dotnet
+/// test` keeps no "last failed" of its own.
+pub fn dotnetRerunFailed(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = find(app) orelse return app.diag.fail(arena, "no .NET test run to re-run yet", .{});
+    const p = &app.panes.get(id).?.tests;
+    if (p.runner != .dotnet or p.state != .done) return app.diag.fail(arena, "no .NET test run to re-run yet", .{});
+    const filter = (try failedFilter(arena, p.run)) orelse return app.diag.fail(arena, "no failed .NET test to re-run", .{});
+    const root = try arena.dupe(u8, p.cwd orelse app.workspace);
+    _ = try runDotnet(app, root, &.{ "--filter", filter });
 }
 
 fn sortCmd(app: *App) CommandError!void {
@@ -738,11 +1359,19 @@ fn healCmd(app: *App) CommandError!void {
     const at = activeTests(app) orelse return app.diag.fail(arena, "select a failing test in the results pane first", .{});
     const tc = at.p.selected() orelse return app.diag.fail(arena, "select a failing test first", .{});
     if (tc.status != .failed) return app.diag.fail(arena, "that test isn't failing — nothing to heal", .{});
-    const path = try std.fs.path.join(arena, &.{ app.workspace, tc.file });
+    const path = if (std.fs.path.isAbsolute(tc.file)) tc.file else try std.fs.path.join(arena, &.{ app.workspace, tc.file });
     const src = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(512 * 1024)) catch "";
     const where = if (tc.suite_path.len == 0) try std.fmt.allocPrint(arena, "{s}:{d}", .{ tc.file, tc.line }) else try std.fmt.allocPrint(arena, "{s} › {s}  ({s}:{d})", .{ tc.suite_path, tc.title, tc.file, tc.line });
+    const tool: []const u8 = switch (at.p.runner) {
+        .playwright => "Playwright",
+        .dotnet => ".NET",
+    };
+    const fence: []const u8 = switch (at.p.runner) {
+        .playwright => "ts",
+        .dotnet => "cs",
+    };
     const prompt = try std.fmt.allocPrint(arena,
-        \\This Playwright test is failing. Work out why and propose a fix — change the test or the code under test as appropriate. Be concise; reply with the patch in a fenced block plus a short note.
+        \\This {s} test is failing. Work out why and propose a fix — change the test or the code under test as appropriate. Be concise; reply with the patch in a fenced block plus a short note.
         \\
         \\## Failing test
         \\{s}
@@ -753,10 +1382,10 @@ fn healCmd(app: *App) CommandError!void {
         \\```
         \\
         \\## {s}
-        \\```ts
+        \\```{s}
         \\{s}
         \\```
-    , .{ where, tc.err orelse "", tc.file, src });
+    , .{ tool, where, tc.err orelse "", tc.file, fence, src });
     const title = try std.fmt.allocPrint(arena, "AI: heal {s}", .{tc.title});
     _ = try ai_app.ask(app, title, prompt, .ask, null);
 }
@@ -781,9 +1410,9 @@ pub fn handleKey(app: *App, id: PaneId, p: *TestsPane, k: Key) Allocator.Error!b
                 'g' => p.cursor = 0,
                 'G' => p.cursor = last,
                 'r' => runToast(app, rerunSame(app, id, p)),
-                'a' => runToast(app, runAll(app)),
-                'f' => runToast(app, runFile(app)),
-                'R' => runToast(app, rerunFailed(app)),
+                'a' => runToast(app, runAllFor(app, p.runner)),
+                'f' => runToast(app, runFileFor(app, p.runner)),
+                'R' => runToast(app, rerunFailedFor(app, p.runner)),
                 't' => runToast(app, openTraceCmd(app)),
                 'h' => runToast(app, healCmd(app)),
                 's' => runToast(app, sortCmd(app)),
@@ -866,8 +1495,10 @@ test "parseReport flattens suites, reads status / duration / error / trace, stri
     try t.expectEqualStrings("Error: config broke", r.global_errors[0]);
     try t.expectError(error.NotJson, parseReport(a, "not json at all"));
     try t.expectEqualStrings("Error: boom at x", try stripAnsi(a, "\x1b[31mError:\x1b[39m boom\x1b[2m at x\x1b[22m"));
-    try t.expectEqualStrings("npx playwright test --reporter=json --trace=retain-on-failure a.spec.ts:3", try cmdlineFor(a, &.{"a.spec.ts:3"}));
-    try t.expectEqual(@as(usize, 6), (try argvFor(a, &.{"--last-failed"})).len);
+    try t.expectEqualStrings("npx playwright test --reporter=json --trace=retain-on-failure a.spec.ts:3", try cmdlineFor(a, .playwright, &.{"a.spec.ts:3"}));
+    try t.expectEqual(@as(usize, 6), (try argvFor(a, .playwright, &.{"--last-failed"})).len);
+    try t.expectEqualStrings("dotnet test --nologo --logger \"console;verbosity=normal\" --logger trx --filter \"FullyQualifiedName~Calc.Adds|FullyQualifiedName~P.Q\"", try cmdlineFor(a, .dotnet, &.{ "--filter", "FullyQualifiedName~Calc.Adds|FullyQualifiedName~P.Q" }));
+    try t.expectEqual(@as(usize, 9), (try argvFor(a, .dotnet, &.{ "--filter", "x" })).len);
 }
 
 test "rows: grouped under file headers with error and trace rows; slowest-first drops the headers; the cursor follows its case" {
@@ -948,4 +1579,208 @@ test "test.run_playwright needs a package.json; a result lands in the pane and t
     try handle(&app, bad);
     try t.expectEqual(State.failed, p.state);
     try t.expectEqualStrings("tests ✗", p.title());
+}
+
+pub const fixture_dotnet_console =
+    \\  Determining projects to restore...
+    \\  Restored /ws/src/Tests/Tests.csproj (in 120 ms).
+    \\  Tests -> /ws/src/Tests/bin/Debug/net8.0/Tests.dll
+    \\Test run for /ws/src/Tests/bin/Debug/net8.0/Tests.dll (.NETCoreApp,Version=v8.0)
+    \\Starting test execution, please wait...
+    \\A total of 1 test files matched the specified pattern.
+    \\  Passed Acme.Tests.CalcTests.Adds [3 ms]
+    \\  Failed Acme.Tests.CalcTests.Divides [12 ms]
+    \\  Error Message:
+    \\   Assert.Equal() Failure: Values differ
+    \\Expected: 2
+    \\Actual:   3
+    \\  Stack Trace:
+    \\     at Acme.Tests.CalcTests.Divides() in /ws/src/Tests/CalcTests.cs:line 21
+    \\     at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+    \\  Skipped Acme.Tests.CalcTests.Later
+    \\  Passed Acme.Tests.CalcTests.Adds(a: 2, b: 3) [< 1 ms]
+    \\
+    \\Results File: /ws/src/Tests/TestResults/host_2026-09-08_10_00_00.trx
+    \\
+    \\Failed!  - Failed:     1, Passed:     2, Skipped:     1, Total:     4, Duration: 16 ms - Tests.dll (net8.0)
+    \\
+;
+
+test "parseDotnet: the status lines are rows, a failure carries its message and its first frame's file:line, the tally is kept" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const r = try parseDotnet(a, fixture_dotnet_console, "/ws");
+    try t.expectEqual(@as(usize, 4), r.tests.len);
+    try t.expectEqual(@as(usize, 2), r.count(.passed));
+    try t.expectEqual(@as(usize, 1), r.count(.failed));
+    try t.expectEqual(@as(usize, 1), r.count(.skipped));
+    const adds = r.tests[0];
+    try t.expectEqualStrings("Adds", adds.title);
+    try t.expectEqualStrings("Acme.Tests.CalcTests", adds.suite_path);
+    try t.expectEqual(@as(u64, 3), adds.duration_ms);
+    try t.expectEqualStrings("", adds.file);
+    const div = r.tests[1];
+    try t.expectEqual(Status.failed, div.status);
+    try t.expectEqual(@as(u64, 12), div.duration_ms);
+    try t.expectEqualStrings("Assert.Equal() Failure: Values differ\nExpected: 2\nActual:   3", div.err.?);
+    try t.expectEqualStrings("src/Tests/CalcTests.cs", div.file);
+    try t.expectEqual(@as(u32, 21), div.line);
+    try t.expectEqual(Status.skipped, r.tests[2].status);
+    try t.expectEqualStrings("Later", r.tests[2].title);
+    try t.expectEqualStrings("Adds(a: 2, b: 3)", r.tests[3].title);
+    try t.expectEqual(@as(u64, 0), r.tests[3].duration_ms);
+    try t.expectEqualStrings("Failed!  - Failed:     1, Passed:     2, Skipped:     1, Total:     4, Duration: 16 ms - Tests.dll (net8.0)", r.summary);
+    try t.expectEqual(@as(usize, 0), r.global_errors.len);
+    try t.expectEqualStrings("/ws/src/Tests/TestResults/host_2026-09-08_10_00_00.trx", trxPathIn(fixture_dotnet_console).?);
+    try t.expectEqualStrings("FullyQualifiedName=Acme.Tests.CalcTests.Divides", (try failedFilter(a, r)).?);
+    // The older host's signs, a duration in seconds and minutes, and the compiler's errors.
+    const old = "√ Acme.One [1 s]\nX Acme.Two [1 m 2 s]\n! Acme.Three\n/ws/A.cs(3,5): error CS1002: ; expected [/ws/A.csproj]\n/ws/A.cs(3,5): error CS1002: ; expected [/ws/A.csproj]\nBuild FAILED.\n";
+    const o = try parseDotnet(a, old, "/ws");
+    try t.expectEqual(@as(usize, 3), o.tests.len);
+    try t.expectEqual(@as(u64, 1000), o.tests[0].duration_ms);
+    try t.expectEqual(@as(u64, 62_000), o.tests[1].duration_ms);
+    try t.expectEqual(Status.skipped, o.tests[2].status);
+    try t.expectEqual(@as(usize, 1), o.global_errors.len);
+    try t.expectEqualStrings("/ws/A.cs(3,5): error CS1002: ; expected [/ws/A.csproj]", o.global_errors[0]);
+    try t.expectEqualStrings("", o.summary);
+    // A build with nothing else is errors only; a passing tally without failures is kept as is.
+    const ok = try parseDotnet(a, "Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1, Duration: 1 ms\n", "/ws");
+    try t.expectEqual(@as(usize, 0), ok.tests.len);
+    try t.expect(std.mem.startsWith(u8, ok.summary, "Passed!"));
+    try t.expect((try failedFilter(a, ok)) == null);
+}
+
+pub const fixture_trx =
+    \\<?xml version="1.0" encoding="utf-8"?>
+    \\<TestRun id="a1" name="host@box 2026-09-08" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+    \\  <Results>
+    \\    <UnitTestResult executionId="e1" testId="t1" testName="Adds" computerName="box" duration="00:00:00.0034567" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e1" />
+    \\    <UnitTestResult executionId="e2" testId="t2" testName="Divides" computerName="box" duration="00:00:01.5000000" outcome="Failed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e2">
+    \\      <Output>
+    \\        <ErrorInfo>
+    \\          <Message>Assert.Equal() Failure: Values differ&#xD;
+    \\Expected: 2&#xD;
+    \\Actual:   3</Message>
+    \\          <StackTrace>   at Acme.Tests.CalcTests.Divides() in C:\ws\src\Tests\CalcTests.cs:line 21&#xD;
+    \\   at System.RuntimeMethodHandle.InvokeMethod(Object target)</StackTrace>
+    \\        </ErrorInfo>
+    \\      </Output>
+    \\    </UnitTestResult>
+    \\    <UnitTestResult executionId="e3" testId="t3" testName="Later" computerName="box" duration="00:00:00.0000000" outcome="NotExecuted" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e3" />
+    \\  </Results>
+    \\  <TestDefinitions>
+    \\    <UnitTest name="Adds" storage="/ws/tests.dll" id="t1">
+    \\      <Execution id="e1" />
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="Adds" />
+    \\    </UnitTest>
+    \\    <UnitTest name="Divides" storage="/ws/tests.dll" id="t2">
+    \\      <Execution id="e2" />
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests, Tests, Version=1.0.0.0" name="Divides" />
+    \\    </UnitTest>
+    \\  </TestDefinitions>
+    \\</TestRun>
+;
+
+test "parseTrx: outcomes, durations to the ms, the class from the definitions, the message and the frame unescaped" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const r = try parseTrx(a, fixture_trx, "C:\\ws");
+    try t.expectEqual(@as(usize, 3), r.tests.len);
+    try t.expectEqualStrings("Acme.Tests.CalcTests", r.tests[0].suite_path);
+    try t.expectEqualStrings("Adds", r.tests[0].title);
+    try t.expectEqual(Status.passed, r.tests[0].status);
+    try t.expectEqual(@as(u64, 3), r.tests[0].duration_ms);
+    const div = r.tests[1];
+    try t.expectEqual(Status.failed, div.status);
+    try t.expectEqual(@as(u64, 1500), div.duration_ms);
+    try t.expectEqualStrings("Acme.Tests.CalcTests", div.suite_path);
+    try t.expectEqualStrings("Assert.Equal() Failure: Values differ\nExpected: 2\nActual:   3", div.err.?);
+    try t.expectEqualStrings("src\\Tests\\CalcTests.cs", div.file);
+    try t.expectEqual(@as(u32, 21), div.line);
+    // No definition for t3: the display name, no class; NotExecuted is skipped.
+    try t.expectEqualStrings("Later", r.tests[2].title);
+    try t.expectEqualStrings("", r.tests[2].suite_path);
+    try t.expectEqual(Status.skipped, r.tests[2].status);
+    try t.expectEqual(@as(usize, 0), (try parseTrx(a, "<TestRun/>", "/ws")).tests.len);
+}
+
+test "locateSources: a passed row is found by class and method in the project's .cs files, bin/ and obj/ skipped" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try tmp.dir.createDirPath(t.io, "Tests/bin/Debug");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Tests/bin/Debug/CalcTests.cs", .data = "public class CalcTests { public void Adds() {} }" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Tests/CalcTests.cs", .data = "using Xunit;\n\npublic class CalcTests\n{\n    [Fact]\n    public void Adds()\n    {\n        Adds2();\n    }\n\n    [Theory]\n    public void Divides(int a) => Assert.True(a > 0);\n}\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "Tests/Other.cs", .data = "public class Other { public void Adds() {} }\n" });
+    var tests = [_]TestCase{
+        .{ .title = "Adds", .suite_path = "Acme.CalcTests", .file = "", .line = 0, .status = .passed, .duration_ms = 1, .err = null, .trace_path = null },
+        .{ .title = "Divides(a: 1)", .suite_path = "Acme.CalcTests", .file = "", .line = 0, .status = .passed, .duration_ms = 1, .err = null, .trace_path = null },
+        .{ .title = "Gone", .suite_path = "Acme.CalcTests", .file = "", .line = 0, .status = .passed, .duration_ms = 1, .err = null, .trace_path = null },
+        .{ .title = "Kept", .suite_path = "", .file = "x.cs", .line = 3, .status = .failed, .duration_ms = 1, .err = null, .trace_path = null },
+    };
+    try locateSources(a, t.io, root, root, &tests);
+    try t.expectEqualStrings("Tests/CalcTests.cs", tests[0].file);
+    try t.expectEqual(@as(u32, 6), tests[0].line);
+    try t.expectEqualStrings("Tests/CalcTests.cs", tests[1].file);
+    try t.expectEqual(@as(u32, 12), tests[1].line);
+    try t.expectEqualStrings("", tests[2].file);
+    try t.expectEqualStrings("x.cs", tests[3].file);
+}
+
+test "dotnet.test opens the pane on a project; a dotnet result lands with its summary; R re-runs the failures by name" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try t.expectError(error.Failed, dotnetAll(&app));
+    try t.expect(std.mem.startsWith(u8, app.diag.msg.?, "dotnet.test: no *.csproj / *.sln found in "));
+    app.diag.clear();
+    try tmp.dir.createDirPath(t.io, "src/Tests");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "All.sln", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/Tests/Tests.csproj", .data = "<Project/>" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/Tests/CalcTests.cs", .data = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n" });
+    // The SDK is not on PATH here: the install box, no pane.
+    if (!runners.onPath(&app, "dotnet")) {
+        try t.expectError(error.Failed, dotnetAll(&app));
+        try t.expect(app.overlay == .confirm);
+        app.overlay.deinit(app.gpa);
+        app.overlay = .none;
+    }
+    const id = try runDotnet(&app, root, &.{});
+    const p = &app.panes.get(id).?.tests;
+    try t.expectEqual(Runner.dotnet, p.runner);
+    try t.expectEqualStrings(root, p.cwd.?);
+    try t.expectEqual(State.running, p.state);
+    p.group.cancel(t.io);
+    p.generation +%= 1;
+    const r = try Result.create(t.allocator, p.generation, id);
+    r.run = try parseDotnet(r.arena.allocator(), fixture_dotnet_console, "/ws");
+    try handle(&app, r);
+    try t.expectEqual(State.done, p.state);
+    try t.expectEqual(@as(usize, 4), p.run.tests.len);
+    try t.expect(std.mem.startsWith(u8, p.run.summary, "Failed!"));
+    try t.expectEqualStrings("Divides", p.selected().?.title);
+    try t.expectEqualStrings("tests ✗", p.title());
+    // Enter jumps to the failing test's line.
+    app.showPane(id);
+    _ = try handleKey(&app, id, p, .{ .code = .enter });
+    const e = app.activeEditor().?;
+    try t.expectEqualStrings("src/Tests/CalcTests.cs", app.relPath(e.buf.doc.path.?));
+    try t.expectEqual(@as(usize, 20), e.buf.editor.rowCol().row);
+    // R: the failures by name, at the pane's root.
+    if (runners.onPath(&app, "dotnet")) {
+        try dotnetRerunFailed(&app);
+        try t.expectEqualStrings("--filter", p.last_args[0]);
+        try t.expectEqualStrings("FullyQualifiedName=Acme.Tests.CalcTests.Divides", p.last_args[1]);
+        p.group.cancel(t.io);
+    }
 }

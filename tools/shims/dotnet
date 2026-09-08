@@ -1,0 +1,56 @@
+#!/bin/sh
+# tools/shims/dotnet — the `dotnet` the .test corpus sees.
+#
+# `mnml-zig test` exports `MNML_SHIMS` (this directory); a script that
+# needs the .NET SDK puts it first on PATH with
+#
+#   # env: PATH=${MNML_SHIMS}:${PATH}
+#
+# and gets canned output instead of a toolchain: `build` / `restore` /
+# `run` / `watch run` print one line and exit 0 (`MNML_SHIM_DOTNET_FAIL=1`
+# makes `build` exit 1), `test` prints the console logger's shape — one
+# passed, one failed with its message and a stack frame under $PWD,
+# one skipped, the tally — and echoes any `--filter` so a script can
+# see the argv that reached the tool. Nothing here reads the project.
+verb=$1
+shift
+case "$verb" in
+  --version) echo "8.0.0-mnml-shim"; exit 0 ;;
+  build)
+    if [ -n "${MNML_SHIM_DOTNET_FAIL:-}" ]; then
+      echo "/ws/Program.cs(1,1): error CS1002: ; expected [/ws/App.csproj]"
+      echo "Build FAILED."
+      exit 1
+    fi
+    echo "  App -> $PWD/bin/Debug/net8.0/App.dll"
+    echo "Build succeeded."
+    exit 0 ;;
+  restore) echo "  Restored $PWD (in 12 ms)."; exit 0 ;;
+  run) echo "Hello from the shim"; exit 0 ;;
+  watch) echo "dotnet watch (shim): $*"; exit 0 ;;
+  test)
+    filter=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --filter) filter=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    echo "Test run for $PWD/bin/Debug/net8.0/Tests.dll (.NETCoreApp,Version=v8.0)"
+    [ -n "$filter" ] && echo "filter: $filter"
+    echo "Starting test execution, please wait..."
+    echo "A total of 1 test files matched the specified pattern."
+    echo "  Passed Acme.Tests.CalcTests.Adds [3 ms]"
+    echo "  Failed Acme.Tests.CalcTests.Divides [12 ms]"
+    echo "  Error Message:"
+    echo "   Assert.Equal() Failure: Values differ"
+    echo "Expected: 2"
+    echo "Actual:   3"
+    echo "  Stack Trace:"
+    echo "     at Acme.Tests.CalcTests.Divides() in $PWD/CalcTests.cs:line 21"
+    echo "  Skipped Acme.Tests.CalcTests.Later [1 ms]"
+    echo ""
+    echo "Failed!  - Failed:     1, Passed:     1, Skipped:     1, Total:     3, Duration: 16 ms - Tests.dll (net8.0)"
+    exit 1 ;;
+  *) echo "dotnet (shim): unknown verb $verb" >&2; exit 2 ;;
+esac
