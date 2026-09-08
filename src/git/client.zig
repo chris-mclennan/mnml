@@ -694,11 +694,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             if (out.ok) {
                 const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
                 if (before.ok and after.ok) {
-                    const undo_sha = try gpa.dupe(u8, trimmed(before.stdout));
-                    errdefer gpa.free(undo_sha);
-                    const redo_sha = try gpa.dupe(u8, trimmed(after.stdout));
-                    errdefer gpa.free(redo_sha);
-                    try pushUndo(repo, try std.fmt.allocPrint(arena, "amend {s}", .{firstLine(msg)}), .{ .reset_soft = undo_sha }, .{ .reset_soft = redo_sha });
+                    const desc = try std.fmt.allocPrint(arena, "amend {s}", .{firstLine(msg)});
+                    const pair = try dupe2(gpa, trimmed(before.stdout), trimmed(after.stdout));
+                    try pushUndo(repo, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
@@ -747,14 +745,12 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             if (out.ok) {
                 const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
                 if (before.ok and after.ok) {
-                    // Own each string before the next fallible call: a
-                    // cancel landing between the two dupes leaked the
-                    // first one under load.
-                    const undo_sha = try gpa.dupe(u8, trimmed(before.stdout));
-                    errdefer gpa.free(undo_sha);
-                    const redo_sha = try gpa.dupe(u8, trimmed(after.stdout));
-                    errdefer gpa.free(redo_sha);
-                    try pushUndo(repo, try std.fmt.allocPrint(arena, "commit {s}", .{firstLine(msg)}), .{ .reset_soft = undo_sha }, .{ .reset_soft = redo_sha });
+                    // dupe2 covers the window between the two dupes (a
+                    // cancel there leaked the first under load); past
+                    // it, pushUndo owns both and frees them on failure.
+                    const desc = try std.fmt.allocPrint(arena, "commit {s}", .{firstLine(msg)});
+                    const pair = try dupe2(gpa, trimmed(before.stdout), trimmed(after.stdout));
+                    try pushUndo(repo, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "committed: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
@@ -763,11 +759,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const from = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
             const out = try git(repo, io, arena, &.{ "checkout", "-q", b }, null);
             if (out.ok and from.ok and trimmed(from.stdout).len > 0) {
-                const undo_ref = try gpa.dupe(u8, trimmed(from.stdout));
-                errdefer gpa.free(undo_ref);
-                const redo_ref = try gpa.dupe(u8, b);
-                errdefer gpa.free(redo_ref);
-                try pushUndo(repo, try std.fmt.allocPrint(arena, "checkout {s}", .{b}), .{ .checkout = undo_ref }, .{ .checkout = redo_ref });
+                const desc = try std.fmt.allocPrint(arena, "checkout {s}", .{b});
+                const pair = try dupe2(gpa, trimmed(from.stdout), b);
+                try pushUndo(repo, desc, .{ .checkout = pair[0] }, .{ .checkout = pair[1] });
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "checked out {s}", .{b}), .ok = out.ok, .msg = out.reason() } };
         },
