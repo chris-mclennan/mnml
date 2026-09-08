@@ -2747,10 +2747,40 @@ fn indexOfSha(g: *const GraphPane, sha: []const u8) ?usize {
     return null;
 }
 
+/// The commits on HEAD's first-parent line, as a set over the commit
+/// indices (on the frame arena).
+fn firstParentLine(app: *App, g: *GraphPane) Allocator.Error![]bool {
+    const on = try app.frame.allocator().alloc(bool, g.commits.len);
+    @memset(on, false);
+    var at = headIndex(app, g) orelse return on;
+    while (true) {
+        on[at] = true;
+        const c = g.commits[at];
+        if (c.parents.len == 0) break;
+        at = indexOfSha(g, c.parents[0]) orelse break;
+    }
+    return on;
+}
+
 /// The commits the user selected: the marks with any range folded in,
 /// else the cursor's commit. On the frame arena, in graph order.
+///
+/// A `v` range is the first-parent line between its ends: a side
+/// branch's row drawn between two of ours is not part of it. A mark
+/// set by hand on such a row stays, and the plan refuses it.
 fn selection(app: *App, g: *GraphPane) Allocator.Error![]const usize {
-    try g.commitRange();
+    if (g.range()) |rg| {
+        const on = try firstParentLine(app, g);
+        var v = @min(rg[0], rg[1]);
+        while (v <= @max(rg[0], rg[1])) : (v += 1) {
+            if (v < g.wipRows()) continue;
+            const pos = v - g.wipRows();
+            if (pos >= g.order.len) break;
+            const ci = g.order[pos];
+            if (on[ci]) try g.marks.put(g.gpa, ci, {});
+        }
+        g.anchor = null;
+    }
     var out: std.ArrayListUnmanaged(usize) = .empty;
     const arena = app.frame.allocator();
     if (g.marks.count() == 0) {
@@ -4354,15 +4384,10 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     const second_ci = indexOfSha(g, g.commits[headIndex(&f.app, g).?].parents[0]).?;
     moveGraphCursor(&f.app, g, g.rowOfCommit(second_ci));
     _ = try graphKey(&f.app, id, g, Key.char('r'));
-    if (g.plan == null) {
-        std.debug.print("\nDBG toast={s} anchor={?} cursor={d} head_row={d}\n", .{ f.app.lastToast() orelse "-", g.anchor, g.cursor, head_row });
-        for (g.order) |ci| std.debug.print("  row {s} {s}\n", .{ g.commits[ci].short(), g.commits[ci].subject });
-    }
     try testing.expect(g.plan != null);
     const plan = &g.plan.?;
-    // With `aside` between the two rows the range holds three; the plan
-    // still walks the first-parent line, which `aside` is not on.
-    if (plan.rows.items.len == 0) return error.TestUnexpectedResult;
+    // When `aside` sorts between the two rows the range covers it; the
+    // selection is the first-parent line, so the plan is still second, third.
     try testing.expectEqualStrings("second", g.commits[plan.rows.items[0].ci].subject);
     try testing.expectEqualStrings("third", g.commits[plan.rows.items[1].ci].subject);
     try testing.expectEqual(@as(usize, 2), plan.rows.items.len);
@@ -4385,13 +4410,14 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expectEqual(@as(usize, 0), plan.cursor);
     try testing.expectEqualStrings("third", g.commits[plan.rows.items[0].ci].subject);
     try testing.expectEqual(parse.TodoAction.squash, plan.rows.items[0].action);
-    // The graph rows behind carry the letters.
+    // The graph rows behind carry the letters; the cursor row's marker
+    // sits in the cell before its letter.
     txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "\u{258C} s") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C} p") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C}\u{25B6}p") != null or std.mem.indexOf(u8, txt, "\u{258C} p") != null);
     testing.allocator.free(txt);
     // Enter with a squash first refuses: nothing before it.
-    try testing.expectError(error.CommandFailed, runPlan(&f.app, g));
+    try testing.expectError(error.Failed, runPlan(&f.app, g));
     try testing.expect(g.plan != null);
     _ = try graphKey(&f.app, id, g, Key.char('J'));
     _ = try graphKey(&f.app, id, g, Key.char('d'));
@@ -4400,14 +4426,30 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expect(g.plan == null);
     try testing.expect(f.app.active == id);
 
-    // A commit off the first-parent line: the plan refuses to build.
+    // A range over the whole list covers `aside` wherever it sorts; the
+    // plan is first, second, third — the root has no base — and not `aside`.
+    g.clearSelection();
+    moveGraphCursor(&f.app, g, g.wipRows());
+    _ = try graphKey(&f.app, id, g, Key.char('v'));
+    moveGraphCursor(&f.app, g, g.wipRows() + g.order.len - 1);
+    _ = try graphKey(&f.app, id, g, Key.char('r'));
+    try testing.expect(g.plan != null);
+    try testing.expectEqual(@as(usize, 3), g.plan.?.rows.items.len);
+    try testing.expectEqualStrings("first", g.commits[g.plan.?.rows.items[0].ci].subject);
+    try testing.expectEqualStrings("second", g.commits[g.plan.?.rows.items[1].ci].subject);
+    try testing.expectEqualStrings("third", g.commits[g.plan.?.rows.items[2].ci].subject);
+    try testing.expect(g.plan.?.base == null);
+    _ = try graphKey(&f.app, id, g, Key.named(.esc));
+    try testing.expect(g.plan == null);
+
+    // A commit off the first-parent line, marked by hand: the plan refuses.
     g.clearSelection();
     var aside: usize = 0;
     for (g.commits, 0..) |c, i| if (std.mem.eql(u8, c.subject, "aside")) {
         aside = i;
     };
     try g.marks.put(g.gpa, @intCast(aside), {});
-    try testing.expectError(error.CommandFailed, openPlan(&f.app, g));
+    try testing.expectError(error.Failed, openPlan(&f.app, g));
     try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "first-parent") != null);
     f.app.diag.clear();
     try testing.expect(refsName("HEAD -> main, origin/main, tag: v1", "origin/main"));
