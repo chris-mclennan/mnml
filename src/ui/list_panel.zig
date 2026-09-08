@@ -5,7 +5,9 @@
 //! selection marker, a scrollbar when the list is longer
 //! than the panel, a kebab on the hovered row, and an empty state when
 //! there is nothing to list. TODOS, NOTES, FINDINGS and SESSIONS are
-//! all this type with a different `Row` and `paintRow`.
+//! all this type with a different `Row` and `paintRow`; an item may be
+//! taller than a row (`Props.row_h` / `row_gap` — SESSIONS' four-row
+//! card) and may paint its own selection signal (`own_marker`).
 //!
 //! The Rust mnml grew this shape four times and each copy missed
 //! something — three panels shipped without scrolling at all, drawing
@@ -174,6 +176,16 @@ pub fn ListPanel(comptime Row: type) type {
             /// and the list when there is no New row (which brings its
             /// own air) — the HTTP section's shape.
             filter_gap: bool = false,
+            /// Rows per item — SESSIONS' card is four — with `row_gap`
+            /// blank rows between items. The scroll window counts items;
+            /// an item's hit covers all its rows; the kebab sits on its
+            /// first row.
+            row_h: u16 = 1,
+            row_gap: u16 = 0,
+            /// The row paints its own selection signal (Rust's session
+            /// card turns its accent cyan): no cursor-line ground, no
+            /// marker, and `paintRow` gets the whole item rect from `x`.
+            own_marker: bool = false,
         };
 
         pub const Outcome = union(enum) {
@@ -262,13 +274,17 @@ pub fn ListPanel(comptime Row: type) type {
                 _ = empty_state.draw(ui, rest, p.empty, t.panel_bg);
                 return caret;
             }
-            const win = scrollWindow(&st.scroll, st.cursor, p.rows.len, rest.h);
-            st.visible = rest.h;
+            // Items per page: a trailing gap is not needed for the last
+            // item, so `h + gap` over the stride.
+            const stride: u16 = @max(1, p.row_h) + p.row_gap;
+            const per_page: usize = (rest.h + p.row_gap) / stride;
+            const win = scrollWindow(&st.scroll, st.cursor, p.rows.len, per_page);
+            st.visible = per_page;
             var list = rest;
             if (win.needs_bar and rest.w > marker_w + 1) {
                 const split = rest.splitRight(1);
                 list = split.left;
-                scrollbar.drawVertical(ui, split.rest, .{ .panel = p.panel }, p.rows.len, rest.h, st.scroll);
+                scrollbar.drawVertical(ui, split.rest, .{ .panel = p.panel }, p.rows.len, per_page, st.scroll);
             }
             if (list.w <= marker_w) return caret;
 
@@ -276,16 +292,19 @@ pub fn ListPanel(comptime Row: type) type {
             var i: usize = 0;
             while (i < win.visible) : (i += 1) {
                 const idx = win.first + i;
-                const row_rect = list.row(@intCast(i));
+                const row_rect = Rect.init(list.x, list.y + @as(u16, @intCast(i)) * stride, list.w, @max(1, p.row_h));
                 const selected = idx == st.cursor and !st.on_new;
-                const style = rowStyle(t, selected);
-                ui.fill(row_rect, style);
-                if (selected) {
-                    const marker = if (ui.ascii) marker_ascii else marker_glyph;
-                    const mstyle = Theme.withFg(style, if (focused) t.accent.fg else t.muted.fg);
-                    _ = ui.putStr(row_rect.x, row_rect.y, marker_w, marker, mstyle);
+                const style = if (p.own_marker) t.panel_bg else rowStyle(t, selected);
+                var content = row_rect;
+                if (!p.own_marker) {
+                    ui.fill(row_rect, style);
+                    if (selected) {
+                        const marker = if (ui.ascii) marker_ascii else marker_glyph;
+                        const mstyle = Theme.withFg(style, if (focused) t.accent.fg else t.muted.fg);
+                        _ = ui.putStr(row_rect.x, row_rect.y, marker_w, marker, mstyle);
+                    }
+                    content = row_rect.splitLeft(marker_w).rest;
                 }
-                var content = row_rect.splitLeft(marker_w).rest;
                 const hovered = p.has_kebab and ui.hovered(row_rect);
                 if (hovered and content.w > kebab_w) {
                     content = content.splitRight(kebab_w).left;
@@ -297,7 +316,7 @@ pub fn ListPanel(comptime Row: type) type {
                 ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
                 p.paintRow(ui.withClip(content), content, p.rows[idx], selected);
                 if (hovered and row_rect.w > marker_w + kebab_w) {
-                    const kr = row_rect.rightCells(kebab_w);
+                    const kr = row_rect.row(0).rightCells(kebab_w);
                     const kstyle = Theme.withFg(style, t.accent.fg);
                     _ = ui.putStr(kr.x, kr.y, kr.w, if (ui.ascii) kebab_ascii else kebab_glyph, kstyle);
                     ui.hit(kr, .{ .kebab = .{ .panel = p.panel, .idx = @intCast(idx) } });
@@ -747,5 +766,69 @@ test "the + New row: under the filter with a blank row after it, in the empty an
     defer g.deinit();
     _ = Todos.draw(&st, g.ui(), g.full(), p);
     try g.expectRow(3, "  + N…");
+    for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
+}
+
+/// A four-row card: the marker down `x + 1` (accent when selected), the
+/// title and a status line at `x + 3`.
+fn paintCard(ui: Ui, r: Rect, row: Todo, selected: bool) void {
+    const t = ui.theme;
+    const bar = Theme.withFg(t.panel_bg, if (selected) t.accent.fg else t.panel_bg.bg);
+    var y: u16 = 0;
+    while (y < r.h) : (y += 1) _ = ui.putStr(r.x + 1, r.y + y, 1, marker_glyph, bar);
+    _ = ui.putStr(r.x + 3, r.y, r.right() -| (r.x + 3), row.title, t.panel_bg);
+    _ = ui.putStr(r.x + 3, r.y + 1, r.right() -| (r.x + 3), if (row.done) "done" else "open", t.panel_bg);
+}
+
+test "cards: row_h items with a gap, the hit over every row of one, the window counted in items, the row's own marker" {
+    var f = try Fixture.init(30, 14);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = try forty(f.arena_state.allocator());
+    var p = props(rows);
+    p.row_h = 4;
+    p.row_gap = 1;
+    p.own_marker = true;
+    p.paintRow = paintCard;
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    // Twelve rows under the pill: (12 + 1) / 5 = two cards, a gap between.
+    try expectRowLike(&f, 2, " \u{258c} todo 1", "█");
+    try expectRowLike(&f, 3, " \u{258c} done", "█");
+    try expectRowLike(&f, 5, " \u{258c}", "█");
+    try expectRowLike(&f, 6, "", "█");
+    try expectRowLike(&f, 7, " \u{258c} todo 2", "█");
+    try expectRowLike(&f, 8, " \u{258c} open", "█");
+    try testing.expectEqual(@as(usize, 2), st.visible);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 2).?.row.idx);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
+    try testing.expect(f.hits.at(5, 6) == null);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(5, 7).?.row.idx);
+    // The selected card keeps the panel ground: the row paints its own signal.
+    try testing.expect(f.bgEql(10, 2, f.theme.panel_bg));
+    try testing.expectEqualStrings("\u{258c}", f.cell(1, 2).char.grapheme);
+    // The kebab on the hovered card's first row, its hit over the card's rows.
+    f.hits.reset();
+    f.hover = .{ .x = 10, .y = 8 };
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    try expectRowLike(&f, 7, " \u{258c} todo 2", "\u{22ef} █");
+    try expectRowLike(&f, 8, " \u{258c} open", "█");
+    try testing.expectEqual(@as(u32, 1), f.hits.at(27, 7).?.kebab.idx);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(27, 8).?.row.idx);
+    f.hover = null;
+    // The window follows the cursor in items: the last page is cards 39 and 40.
+    st.cursor = 39;
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    try testing.expectEqual(@as(usize, 38), st.scroll);
+    try expectRowLike(&f, 2, " \u{258c} todo 39", "█");
+    try expectRowLike(&f, 7, " \u{258c} todo 40", "█");
+    try testing.expectEqual(@as(u32, 39), f.hits.at(5, 9).?.row.idx);
+    // Four rows left under the pill: one card, no gap needed.
+    var g = try Fixture.init(30, 6);
+    defer g.deinit();
+    st.cursor = 0;
+    _ = Todos.draw(&st, g.ui(), g.full(), p);
+    try testing.expectEqual(@as(usize, 1), st.visible);
+    try expectRowLike(&g, 5, " \u{258c}", "█");
     for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
 }
