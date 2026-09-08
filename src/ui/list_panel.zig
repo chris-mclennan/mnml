@@ -170,6 +170,10 @@ pub fn ListPanel(comptime Row: type) type {
             /// Its hit is `.chip{panel, .new}`; the cursor reaches it from
             /// row 0 with `k` / `↑`, and `⏎` there is `Outcome.new_activate`.
             new_label: ?[]const u8 = null,
+            /// // changed (http-panel): one blank row between the filter
+            /// and the list when there is no New row (which brings its
+            /// own air) — the HTTP section's shape.
+            filter_gap: bool = false,
         };
 
         pub const Outcome = union(enum) {
@@ -244,7 +248,10 @@ pub fn ListPanel(comptime Row: type) type {
                     }
                 }
                 if (rest.h > 0) rest = rest.splitTop(1).rest;
-            } else st.on_new = false;
+            } else {
+                st.on_new = false;
+                if (p.filter_gap and rest.h > 0) rest = rest.splitTop(1).rest;
+            }
 
             // Rows.
             st.total = p.rows.len;
@@ -283,8 +290,12 @@ pub fn ListPanel(comptime Row: type) type {
                 if (hovered and content.w > kebab_w) {
                     content = content.splitRight(kebab_w).left;
                 }
-                p.paintRow(ui.withClip(content), content, p.rows[idx], selected);
+                // The row's hit goes under the painter's own (a header's
+                // chips, a link): last painted wins.
+                // // changed (http-panel): was registered after `paintRow`,
+                // so a painter's targets could never be clicked.
                 ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
+                p.paintRow(ui.withClip(content), content, p.rows[idx], selected);
                 if (hovered and row_rect.w > marker_w + kebab_w) {
                     const kr = row_rect.rightCells(kebab_w);
                     const kstyle = Theme.withFg(style, t.accent.fg);

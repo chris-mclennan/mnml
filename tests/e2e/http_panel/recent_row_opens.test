@@ -1,0 +1,8 @@
+write .rqst/history.jsonl "{\"ts\":1,\"method\":\"POST\",\"url\":\"https://x/login\",\"status\":201}\n"
+command view.activity_http
+expect screen contains "RECENT (1)"
+expect screen contains "201 POST x/login"
+click 12 23
+click 12 23
+expect screen contains "https://x/login"
+expect pane POST

@@ -1,0 +1,11 @@
+write a.txt alpha
+open a.txt
+command view.activity_http
+expect screen contains "HTTP (0)"
+expect screen contains "GET  new request"
+expect pane GET
+command view.activity_http
+expect screen contains "GET  new request"
+command view.activity_todos
+expect screen contains "new request"
+expect pane GET

@@ -15,6 +15,7 @@ const Layout = app_mod.Layout;
 const layout_mod = @import("layout.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
+const http_panel = @import("http_panel.zig");
 const git_palette = @import("git_palette.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
@@ -215,6 +216,9 @@ fn notInBuild(app: *App, what: []const u8) CommandError!void {
 fn activityHttp(app: *App) CommandError!void {
     activity_bar.enter(app, .http);
     side.place(app, .http, true);
+    // Rust's `entering_http`: a blank request pane in the centre when no
+    // request pane is active.
+    try http_panel.enter(app);
 }
 
 /// Git mode (`app/git_palette.zig`): the palette in the sidebar, one

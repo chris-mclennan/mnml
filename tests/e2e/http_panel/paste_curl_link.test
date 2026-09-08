@@ -1,0 +1,14 @@
+write sample.curl "curl -X POST 'https://httpbin.org/post' -H 'Content-Type: application/json'"
+open sample.curl
+command http.copy_curl
+command http.new
+expect pane GET
+command view.activity_http
+expect screen contains "Paste curl…"
+click 10 2
+key esc
+key G
+key k
+key enter
+expect screen contains "httpbin.org/post"
+expect pane POST

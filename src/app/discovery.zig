@@ -135,6 +135,33 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = c.label(app.tree.isFullyCollapsed()),
             .detail = try f.fmt(arena, "click runs {s}", .{command.name(tree_mod.chipCommand(c))}),
         },
+        .http => |part| switch (part) {
+            // Rust's `info_view_copy.rs` words for the HTTP section's chips.
+            .chip => |c| switch (c.kind) {
+                .filter => .{ .title = "HTTP section mini-button", .detail = "Filter for ONE section of the HTTP panel — click puts the keys in the filter. The header row beside it collapses the whole section." },
+                .refresh => .{ .title = "HTTP: refresh list", .detail = "Rescan collections / files / envs / captured / mocks and rebuild the HTTP panel. Same as the palette command http.refresh." },
+                .capture => .{ .title = "HTTP: start capture", .detail = "Launch the browser pane and start capturing its network log into CAPTURED (http.capture_start)." },
+                .clear => switch (c.section) {
+                    .recent => .{ .title = "HTTP: clear recent", .detail = "Truncate .rqst/history.jsonl — every RECENT row goes (http.clear_recent)." },
+                    .captured => .{ .title = "HTTP: clear captured", .detail = "Truncate the captured log — every CAPTURED row goes (http.clear_captured)." },
+                    .cookies => .{ .title = "Cookies: clear jar", .detail = "Empty the cookie jar (cookies.clear)." },
+                    else => .{ .title = "HTTP section mini-button", .detail = "Clear the panel filter for this section." },
+                },
+                .new => switch (c.section) {
+                    .envs => .{ .title = "HTTP: new env", .detail = "Create a new .env in .mnml/env/ (http.new_env)." },
+                    else => .{ .title = "HTTP: new collection", .detail = "Create a new request collection under .mnml/collections/ (http.new_collection)." },
+                },
+            },
+            .link => |l| switch (l) {
+                .new_request => .{ .title = "New HTTP request", .detail = "Opens a blank Request pane as a new tab (http.new)." },
+                .paste_curl => .{ .title = "Paste curl", .detail = "Paste a curl command from the clipboard into a Request pane (http.paste_curl)." },
+                .import => .{ .title = "Import", .detail = "Import a Postman collection or a HAR file from the clipboard." },
+                .new_env => .{ .title = "HTTP: new env", .detail = "Create a new .env in .mnml/env/ (http.new_env)." },
+                .new_chain => .{ .title = "HTTP: new chain", .detail = "Create a new .chain.json in .mnml/chains/ (http.new_chain)." },
+                .new_collection => .{ .title = "HTTP: new collection", .detail = "Create a new request collection under .mnml/collections/ (http.new_collection)." },
+            },
+            .folder_new => .{ .title = "New request in collection", .detail = "Opens a blank Request pane whose Ctrl+S lands as req-N.http inside this collection's folder — the fastest way to add a request without leaving the HTTP panel." },
+        },
         .git_palette => |part| switch (part) {
             .repo => .{ .title = "Repo", .detail = "click: switch repo · All repos · reopen a closed one · add a workspace" },
             .repo_prev => .{ .title = "Previous repo", .detail = "click: the previous repo in discovery order, wrapping ([)" },

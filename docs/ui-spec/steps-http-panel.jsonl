@@ -1,0 +1,4 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"view.activity_http"}
+{"cmd":"wait_ms","ms":1200}

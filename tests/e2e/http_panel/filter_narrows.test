@@ -1,0 +1,15 @@
+write api/users.http "GET https://x/users\n"
+write api/orders.curl "curl https://x/orders\n"
+write .mnml/env/dev.env "HOST=https://dev\n"
+command view.activity_http
+expect screen contains "HTTP (3)"
+click 10 2
+type users
+expect screen contains "(1 of 3)"
+expect screen contains "COLLECTIONS (1)"
+expect screen contains "users.http"
+expect screen lacks "orders.curl"
+expect screen lacks "ENVS"
+key esc
+expect screen contains "ENVS (1)"
+expect screen contains "orders.curl"
