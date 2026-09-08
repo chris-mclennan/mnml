@@ -41,6 +41,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const text_field = @import("text_field.zig");
 const editor_view = @import("editor_view.zig");
+const find_mod = @import("../app/find.zig");
 const border = @import("border.zig");
 const ids = @import("../core/ids.zig");
 
@@ -246,6 +247,13 @@ pub const ResponseModel = struct {
     /// The request headers as they went out (directives, expansion and
     /// the `http_request` hook applied) — the Timeline tab lists them.
     sent_headers: []const Pair = &.{},
+    /// The Headers tab as `name: value` lines — what its search runs
+    /// over, drawn from this text so the match offsets line up.
+    headers_text: []const u8 = "",
+    /// The response search's matches over `body` (the Body tab) or
+    /// `headers_text` (Headers), sorted; painted as an editor's are.
+    matches: []const find_mod.Range = &.{},
+    current_match: ?usize = null,
 };
 
 pub const Model = struct {
@@ -1442,13 +1450,29 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
         return out.items;
     };
     switch (m.response_tab) {
-        .headers => {
+        .headers => if (resp.headers_text.len == 0) {
             for (resp.headers) |h| push(&out, ui.arena, lineOf(ui, &.{
                 .{ .text = "  ", .style = body_style },
                 .{ .text = h.key, .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } },
                 .{ .text = ": ", .style = dim(p) },
                 .{ .text = h.value, .style = body_style },
             }));
+        } else {
+            // From the joined text, so a search match's offsets land on
+            // the right cells.
+            var it = std.mem.splitScalar(u8, resp.headers_text, '\n');
+            var off: usize = 0;
+            while (it.next()) |l| : (off += l.len + 1) {
+                if (l.len == 0) continue;
+                const colon = std.mem.indexOf(u8, l, ": ") orelse l.len;
+                const line = lineOf(ui, &.{
+                    .{ .text = "  ", .style = body_style },
+                    .{ .text = l[0..colon], .style = .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } },
+                    .{ .text = l[colon..@min(colon + 2, l.len)], .style = dim(p) },
+                    .{ .text = l[@min(colon + 2, l.len)..], .style = body_style },
+                });
+                push(&out, ui.arena, overlayMatches(ui, line, l, off, resp.matches, resp.current_match));
+            }
         },
         .cookies => {
             if (resp.cookies.len == 0) {
@@ -1517,13 +1541,14 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
                     var first = true;
                     while (rest.len > 0) {
                         const cut = cutAt(ui, rest, @intCast(ww));
-                        push(&out, ui.arena, lineOf(ui, &.{ if (first) gutter else blank, .{ .text = rest[0..cut], .style = body_style } }));
+                        const piece = lineOf(ui, &.{ if (first) gutter else blank, .{ .text = rest[0..cut], .style = body_style } });
+                        push(&out, ui.arena, overlayMatches(ui, piece, l, off, resp.matches, resp.current_match));
                         rest = rest[cut..];
                         first = false;
                     }
                     continue;
                 };
-                push(&out, ui.arena, spanLine(ui, gutter, l, off, resp.spans, body_style));
+                push(&out, ui.arena, overlayMatches(ui, spanLine(ui, gutter, l, off, resp.spans, body_style), l, off, resp.matches, resp.current_match));
             }
             if (resp.tests.len > 0) {
                 push(&out, ui.arena, plain(ui, "", body_style));
@@ -1555,6 +1580,51 @@ fn timelineBar(ui: Ui, ms: u64, max: u64, bar_w: u64, color: Color) Line {
         .{ .text = rest.items, .style = .{ .fg = p.bg3, .bg = p.bg_dark } },
         .{ .text = ui.fmt("  {d} ms", .{ms}), .style = dim(p) },
     });
+}
+
+/// The search's matches over one drawn line: every segment whose text
+/// is a slice of `src` (the line at `src_off` in the searched text) is
+/// split where a match crosses it; the matched piece takes the theme's
+/// `match` ground, the current one `current_match` — what
+/// `editor_view` paints. Segments from elsewhere (the gutter) pass.
+fn overlayMatches(ui: Ui, line: Line, src: []const u8, src_off: usize, matches: []const find_mod.Range, current: ?usize) Line {
+    if (matches.len == 0) return line;
+    const t = ui.theme;
+    const line_end = src_off + src.len;
+    // Nothing of this line is matched: keep it as it is.
+    var any = false;
+    for (matches) |m| if (m.end > src_off and m.start < line_end + 1) {
+        any = true;
+        break;
+    };
+    if (!any) return line;
+    var segs: std.ArrayListUnmanaged(Seg) = .empty;
+    const base = @intFromPtr(src.ptr);
+    for (line.segs) |seg| {
+        const sp = @intFromPtr(seg.text.ptr);
+        if (seg.text.len == 0 or sp < base or sp + seg.text.len > base + src.len) {
+            segs.append(ui.arena, seg) catch return line;
+            continue;
+        }
+        const seg_off = src_off + (sp - base);
+        const seg_end = seg_off + seg.text.len;
+        var at = seg_off;
+        for (matches, 0..) |m, i| {
+            if (m.end <= at or m.start >= seg_end) continue;
+            const s = @max(m.start, at);
+            const e = @min(m.end, seg_end);
+            if (s > at) segs.append(ui.arena, .{ .text = seg.text[at - seg_off .. s - seg_off], .style = seg.style }) catch return line;
+            var st = seg.style;
+            if (current != null and current.? == i) {
+                st.bg = t.current_match.bg;
+                st.fg = t.current_match.fg;
+            } else st.bg = t.match.bg;
+            segs.append(ui.arena, .{ .text = seg.text[s - seg_off .. e - seg_off], .style = st }) catch return line;
+            at = e;
+        }
+        if (at < seg_end) segs.append(ui.arena, .{ .text = seg.text[at - seg_off ..], .style = seg.style }) catch return line;
+    }
+    return .{ .segs = segs.items };
 }
 
 /// One body line split at the syntax spans that cover it.
@@ -1786,6 +1856,71 @@ test "after a send: the status title on the Response border, the Headers count, 
     try fx.expectRow(9, "\u{2502}  \u{27F3}  sending\u{2026}" ++ " " ** 74 ++ "\u{2502}");
     m.sending = false;
     try testing.expectEqual(hit_ai_chip, fx.hits.at(64, 19).?.script_hit.id);
+}
+
+test "response search: matches paint the match ground on the body and the headers, the current one its own; a wrapped line keeps them" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    const headers = [_]Pair{ .{ .key = "Content-Type", .value = "application/json" }, .{ .key = "Content-Length", .value = "49" } };
+    const body = "{\n  \"ok\": true,\n  \"name\": \"ok ok\"\n}";
+    // `ok` at 5, 27 and 30.
+    const body_matches = [_]find_mod.Range{ .{ .start = 5, .end = 7 }, .{ .start = 27, .end = 29 }, .{ .start = 30, .end = 32 } };
+    m.response = .{
+        .status = 200,
+        .status_text = "OK",
+        .headers = &headers,
+        .body = body,
+        .body_bytes = body.len,
+        .truncated = false,
+        .timing = .{ .wait_ms = 1, .receive_ms = 1, .total_ms = 2 },
+        .cookies = &.{},
+        .headers_text = "Content-Type: application/json\nContent-Length: 49\n",
+        .matches = &body_matches,
+        .current_match = 1,
+    };
+    m.block = .response;
+    m.field = .content;
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ " " ** 71 ++ "\u{2502}");
+    // Row 23 is line 2: `│ 2   "ok": true,` — the `o` at x 7.
+    try testing.expect(!fx.bgEql(6, 23, fx.theme.match));
+    try testing.expect(fx.bgEql(7, 23, fx.theme.match));
+    try testing.expect(fx.bgEql(8, 23, fx.theme.match));
+    try testing.expect(!fx.bgEql(9, 23, fx.theme.match));
+    // Line 3 holds the current match (the first `ok`) and a plain one.
+    try fx.expectRow(24, "\u{2502} 3   \"name\": \"ok ok\"" ++ " " ** 67 ++ "\u{2502}");
+    try testing.expect(fx.bgEql(15, 24, fx.theme.current_match));
+    try testing.expect(fx.fgEql(15, 24, fx.theme.current_match));
+    try testing.expect(fx.bgEql(18, 24, fx.theme.match));
+    try testing.expect(!fx.bgEql(17, 24, fx.theme.match));
+    // The Headers tab, from the joined text: `json` at 26 in line 1.
+    m.response_tab = .headers;
+    const header_matches = [_]find_mod.Range{.{ .start = 26, .end = 30 }};
+    m.response.?.matches = &header_matches;
+    m.response.?.current_match = null;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ " " ** 55 ++ "\u{2502}");
+    try testing.expect(fx.bgEql(29, 21, fx.theme.match));
+    try testing.expect(fx.bgEql(32, 21, fx.theme.match));
+    try testing.expect(!fx.bgEql(28, 21, fx.theme.match));
+    try testing.expect(!fx.bgEql(33, 21, fx.theme.match));
+    // Wrapped: a long line's second chunk keeps a match that falls in it.
+    m.response_tab = .body;
+    m.body_wrap = true;
+    m.response.?.body = "a" ** 90 ++ "zz" ++ "a" ** 5;
+    const wrap_matches = [_]find_mod.Range{.{ .start = 90, .end = 92 }};
+    m.response.?.matches = &wrap_matches;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    // (The first chunk is 85 cells, clipped at the border, as Rust's.)
+    try fx.expectRow(23, "\u{2502}   " ++ "a" ** 5 ++ "zz" ++ "a" ** 5 ++ " " ** 72 ++ "\u{2502}");
+    try testing.expect(fx.bgEql(9, 23, fx.theme.match));
+    try testing.expect(fx.bgEql(10, 23, fx.theme.match));
+    try testing.expect(!fx.bgEql(8, 23, fx.theme.match));
+    try testing.expect(!fx.bgEql(11, 23, fx.theme.match));
 }
 
 test "the Params table, the draft row and Add row; the split halves; a wide pane goes side by side with the full top bar" {

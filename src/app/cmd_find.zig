@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
+const RequestPane = @import("request_pane.zig").RequestPane;
 const PaneId = app_mod.PaneId;
 const Prompt = app_mod.Prompt;
 const FindBar = app_mod.FindBar;
@@ -36,6 +37,71 @@ pub const table = .{
     .@"find.toggle_regex" = &toggleRegex,
 };
 
+/// What a find bar searches: an editor's buffer, or a request pane's
+/// response — its body, or its headers when that tab is up. The bar,
+/// the steps and the count read the same `FindState` either way.
+pub const Target = union(enum) {
+    editor: *EditorPane,
+    request: *RequestPane,
+
+    pub fn of(app: *App, id: PaneId) ?Target {
+        if (app.panes.editor(id)) |e| return .{ .editor = e };
+        if (app.panes.get(id)) |p| if (p.asRequest()) |rp| return .{ .request = rp };
+        return null;
+    }
+
+    pub fn find(tg: Target) *find_mod.FindState {
+        return switch (tg) {
+            .editor => |e| &e.find,
+            .request => |rp| &rp.resp_find,
+        };
+    }
+
+    pub fn text(tg: Target) []const u8 {
+        return switch (tg) {
+            .editor => |e| e.buf.editor.bytes(),
+            .request => |rp| rp.respFindText(),
+        };
+    }
+
+    pub fn cursor(tg: Target) usize {
+        return switch (tg) {
+            .editor => |e| e.buf.editor.cursor,
+            .request => |rp| rp.resp_cursor,
+        };
+    }
+
+    pub fn setCursor(tg: Target, byte: usize) void {
+        switch (tg) {
+            .editor => |e| {
+                e.buf.editor.setCursor(byte);
+                e.buf.editor.goal_col = null;
+            },
+            .request => |rp| rp.revealFind(byte),
+        }
+    }
+
+    /// Where match `idx` puts the cursor: the query's offset applied in
+    /// an editor; the match's start in a response.
+    pub fn landing(tg: Target, idx: usize) usize {
+        const m = tg.find().matches.items[idx];
+        return switch (tg) {
+            .editor => |e| e.find.offset.landing(e.buf.editor, m.start, m.end),
+            .request => m.start,
+        };
+    }
+};
+
+/// The active pane's target, else the diagnostic the editor commands give.
+fn requireTarget(app: *App) CommandError!Target {
+    const id = app.active orelse return error.NoActivePane;
+    if (Target.of(app, id)) |tg| {
+        if (tg == .request and tg.request.response() == null) return app.diag.fail(app.frame.allocator(), "find: no response yet", .{});
+        return tg;
+    }
+    return app.diag.fail(app.frame.allocator(), "find only works in editor and request panes", .{});
+}
+
 fn open(app: *App) CommandError!void {
     return openBar(app, false);
 }
@@ -48,7 +114,9 @@ fn openBackward(app: *App) CommandError!void {
 /// Esc can put it back. A bar already open just refocuses.
 pub fn openBar(app: *App, reverse: bool) CommandError!void {
     const id = app.active orelse return error.NoActivePane;
-    const e = app.panes.editor(id) orelse return app.diag.fail(app.frame.allocator(), "find only works in editor panes", .{});
+    const tg = try requireTarget(app);
+    // A response search lands in the Response block, whatever was focused.
+    if (tg == .request) tg.request.block = .response;
     if (app.find_bar) |*fb| {
         if (fb.pane == id) {
             fb.reverse = reverse;
@@ -60,12 +128,12 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
         }
         app.closeFindBar(false);
     }
-    const snap = e.find.clone() catch return error.OutOfMemory;
-    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = e.buf.editor.cursor, .reverse = reverse, .hist_cursor = app.find_history.items.len };
+    const snap = tg.find().clone() catch return error.OutOfMemory;
+    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = tg.cursor(), .reverse = reverse, .hist_cursor = app.find_history.items.len };
     // The regex chip is sticky per pane (`find.toggle_regex`).
-    fb.state.regex = e.find.regex;
+    fb.state.regex = tg.find().regex;
     // The live preview starts from a blank slate; Esc restores the snapshot.
-    e.find.clear();
+    tg.find().clear();
     app.find_bar = fb;
     app.focus = .overlay;
     app.needs_render = true;
@@ -74,15 +142,18 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
 /// The query changed: recompute the pane's matches, keep the cursor.
 pub fn liveUpdate(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
-    const e = app.panes.editor(fb.pane) orelse return;
+    const tg = Target.of(app, fb.pane) orelse return;
+    const f = tg.find();
     const q = fb.state.query.items;
-    e.find.regex = fb.state.regex;
+    f.regex = fb.state.regex;
     fb.landed = false;
     if (q.len == 0) {
-        e.find.clear();
+        f.clear();
     } else {
-        try e.find.setQuery(q, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
-        e.find.current = if (fb.reverse) e.find.indexBefore(e.buf.editor.cursor) else e.find.indexAtOrAfter(e.buf.editor.cursor);
+        try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
+        f.current = if (fb.reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor());
+        // A response follows the live match as it is typed.
+        if (tg == .request) if (f.current) |c| tg.request.revealFind(f.matches.items[c].start);
     }
     app.needs_render = true;
 }
@@ -117,45 +188,46 @@ fn patternProblem(err: regex.Error) []const u8 {
 pub fn acceptFromBar(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
     if (app.input_style == .vim or fb.chain_to_replace) return acceptAndClose(app);
-    const e = app.panes.editor(fb.pane) orelse {
+    const tg = Target.of(app, fb.pane) orelse {
         app.closeFindBar(false);
         return;
     };
+    const f = tg.find();
     const q = fb.state.query.items;
     if (q.len == 0) return;
     // Enter remembers the query — a miss too — before the step decides.
     try @import("find_history.zig").push(app, q);
     // Already on the current match (a previous Enter put us there)?
     // Then this one steps; `setQuery` forgets `current`, so ask first.
-    const cursor = e.buf.editor.cursor;
-    const was_on: ?usize = if (fb.landed) (if (e.find.current) |c| (if (c < e.find.matches.items.len and cursor == e.find.matches.items[c].start) c else null) else null) else null;
-    e.find.regex = fb.state.regex;
-    try e.find.setQuery(q, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
-    const n = e.find.matches.items.len;
+    const cursor = tg.cursor();
+    const was_on: ?usize = if (fb.landed) (if (f.current) |c| (if (c < f.matches.items.len and cursor == f.matches.items[c].start) c else null) else null) else null;
+    f.regex = fb.state.regex;
+    try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
+    const n = f.matches.items.len;
     if (n == 0) {
-        if (e.find.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), q }) else app.toast("no matches for \"{s}\"", .{q});
+        if (f.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), q }) else app.toast("no matches for \"{s}\"", .{q});
         return;
     }
     if (was_on) |c| {
-        e.find.current = @min(c, n - 1);
-        _ = e.find.step(if (fb.reverse) -1 else 1);
+        f.current = @min(c, n - 1);
+        _ = f.step(if (fb.reverse) -1 else 1);
     } else {
-        e.find.current = (if (fb.reverse) e.find.indexBefore(cursor) else e.find.indexAtOrAfter(cursor)) orelse 0;
+        f.current = (if (fb.reverse) f.indexBefore(cursor) else f.indexAtOrAfter(cursor)) orelse 0;
     }
-    try landFromBar(app, fb, e);
+    try landFromBar(app, fb, tg);
 }
 
 /// The cursor goes to the current match and the bar's snapshot moves
 /// up to here: Esc from now on keeps the query and the jump.
-fn landFromBar(app: *App, fb: *app_mod.FindBarState, e: *EditorPane) Allocator.Error!void {
-    const idx = e.find.current orelse return;
-    e.buf.editor.setCursor(e.find.matches.items[idx].start);
-    e.buf.editor.goal_col = null;
-    app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
-    const snap = e.find.clone() catch return error.OutOfMemory;
+fn landFromBar(app: *App, fb: *app_mod.FindBarState, tg: Target) Allocator.Error!void {
+    const f = tg.find();
+    const idx = f.current orelse return;
+    tg.setCursor(f.matches.items[idx].start);
+    app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
+    const snap = f.clone() catch return error.OutOfMemory;
     if (fb.snapshot) |*old| old.deinit();
     fb.snapshot = snap;
-    fb.snapshot_cursor = e.buf.editor.cursor;
+    fb.snapshot_cursor = tg.cursor();
     fb.landed = true;
     app.needs_render = true;
 }
@@ -164,13 +236,13 @@ fn landFromBar(app: *App, fb: *app_mod.FindBarState, e: *EditorPane) Allocator.E
 /// Esc keeps the match it landed on.
 pub fn stepFromBar(app: *App, delta: i32) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
-    const e = app.panes.editor(fb.pane) orelse return;
+    const tg = Target.of(app, fb.pane) orelse return;
     try stepFind(app, delta);
-    if (app.input_style == .vim or e.find.current == null) return;
-    const snap = e.find.clone() catch return error.OutOfMemory;
+    if (app.input_style == .vim or tg.find().current == null) return;
+    const snap = tg.find().clone() catch return error.OutOfMemory;
     if (fb.snapshot) |*old| old.deinit();
     fb.snapshot = snap;
-    fb.snapshot_cursor = e.buf.editor.cursor;
+    fb.snapshot_cursor = tg.cursor();
     fb.landed = true;
 }
 
@@ -180,10 +252,11 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     const pane = fb.pane;
     const reverse = fb.reverse;
     const chain = fb.chain_to_replace;
-    const e = app.panes.editor(pane) orelse {
+    const tg = Target.of(app, pane) orelse {
         app.closeFindBar(false);
         return;
     };
+    const f = tg.find();
     const q = fb.state.query.items;
     if (q.len == 0) {
         app.closeFindBar(true);
@@ -199,52 +272,45 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
         pattern = sp.pattern;
         offset = sp.offset;
     };
-    e.find.regex = fb.state.regex;
-    try e.find.setQuery(pattern, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
-    e.find.offset = offset;
-    if (e.find.matches.items.len == 0) {
-        if (e.find.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), pattern }) else app.toast("no matches for \"{s}\"", .{pattern});
+    f.regex = fb.state.regex;
+    try f.setQuery(pattern, tg.text(), if (fb.state.match_case) true else app.search_case);
+    f.offset = offset;
+    if (f.matches.items.len == 0) {
+        if (f.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), pattern }) else app.toast("no matches for \"{s}\"", .{pattern});
         app.closeFindBar(false);
         return;
     }
-    const idx = (if (reverse) e.find.indexBefore(e.buf.editor.cursor) else e.find.indexAtOrAfter(e.buf.editor.cursor)) orelse 0;
-    e.find.current = idx;
-    e.buf.editor.setCursor(landing(e, idx));
-    e.buf.editor.goal_col = null;
-    app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
+    const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor())) orelse 0;
+    f.current = idx;
+    tg.setCursor(tg.landing(idx));
+    app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.closeFindBar(false);
-    if (chain) try openReplacePrompt(app);
+    if (chain and tg == .editor) try openReplacePrompt(app);
 }
 
 /// `find.next` / `find.prev` and the bar's ↓ / ↑.
 pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     const id = app.active orelse return;
-    const e = app.panes.editor(id) orelse return;
-    if (!e.find.isActive()) {
+    const tg = Target.of(app, id) orelse return;
+    const f = tg.find();
+    if (!f.isActive()) {
         app.toast("no active find — use / or Ctrl+F first", .{});
         return;
     }
-    if (e.find.matches.items.len == 0) {
-        app.toast("no matches for \"{s}\"", .{e.find.query.items});
+    if (f.matches.items.len == 0) {
+        app.toast("no matches for \"{s}\"", .{f.query.items});
         return;
     }
     // Without a current match (a cleared cursor jump), step from the cursor.
-    if (e.find.current == null) {
-        e.find.current = if (delta > 0) e.find.indexAtOrAfter(e.buf.editor.cursor) else e.find.indexBefore(e.buf.editor.cursor);
+    if (f.current == null) {
+        f.current = if (delta > 0) f.indexAtOrAfter(tg.cursor()) else f.indexBefore(tg.cursor());
     } else {
-        _ = e.find.step(delta);
+        _ = f.step(delta);
     }
-    const idx = e.find.current.?;
-    e.buf.editor.setCursor(landing(e, idx));
-    e.buf.editor.goal_col = null;
-    app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
+    const idx = f.current.?;
+    tg.setCursor(tg.landing(idx));
+    app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.needs_render = true;
-}
-
-/// Where match `idx` puts the cursor, the query's offset applied.
-fn landing(e: *const EditorPane, idx: usize) usize {
-    const m = e.find.matches.items[idx];
-    return e.find.offset.landing(e.buf.editor, m.start, m.end);
 }
 
 const SplitQuery = struct { pattern: []const u8, offset: find_mod.Offset };
@@ -268,12 +334,12 @@ fn splitOffset(q: []const u8, sep: u8) ?SplitQuery {
 }
 
 fn next(app: *App) CommandError!void {
-    _ = try app.requireEditor();
+    _ = try requireTarget(app);
     try stepFind(app, 1);
 }
 
 fn prev(app: *App) CommandError!void {
-    _ = try app.requireEditor();
+    _ = try requireTarget(app);
     try stepFind(app, -1);
 }
 
@@ -349,7 +415,10 @@ pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
 /// Enter on the replace field).
 pub fn replaceCurrent(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
-    const e = app.panes.editor(fb.pane) orelse return;
+    const e = app.panes.editor(fb.pane) orelse {
+        app.toast("a response is read-only", .{});
+        return;
+    };
     const idx = e.find.current orelse e.find.indexAtOrAfter(e.buf.editor.cursor) orelse {
         app.toast("no matches to replace", .{});
         return;
@@ -382,14 +451,15 @@ fn clearAndDeselect(app: *App) CommandError!void {
 }
 
 fn toggleRegex(app: *App) CommandError!void {
-    const e = try app.requireEditor();
-    e.find.regex = !e.find.regex;
+    const tg = try requireTarget(app);
+    const f = tg.find();
+    f.regex = !f.regex;
     if (app.find_bar) |*fb| if (fb.pane == app.active.?) {
-        fb.state.regex = e.find.regex;
+        fb.state.regex = f.regex;
         try liveUpdate(app);
     };
-    if (e.find.isActive()) try e.find.recompute(e.buf.editor.bytes());
-    app.toast("find: regex {s}", .{if (e.find.regex) "on (vim patterns)" else "off"});
+    if (f.isActive()) try f.recompute(tg.text());
+    app.toast("find: regex {s}", .{if (f.regex) "on (vim patterns)" else "off"});
     app.needs_render = true;
 }
 

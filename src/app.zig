@@ -1875,7 +1875,13 @@ pub const App = struct {
                     e.buf.editor.setCursor(@min(fb.snapshot_cursor, e.buf.editor.len()));
                     snap.* = undefined;
                     fb.snapshot = null;
-                }
+                } else if (self.panes.get(fb.pane)) |p| if (p.asRequest()) |rp| {
+                    rp.resp_find.deinit();
+                    rp.resp_find = snap.*;
+                    rp.resp_cursor = @min(fb.snapshot_cursor, rp.respFindText().len);
+                    snap.* = undefined;
+                    fb.snapshot = null;
+                };
             }
             if (fb.snapshot) |*s| s.deinit();
         }

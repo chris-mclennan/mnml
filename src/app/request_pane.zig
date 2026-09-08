@@ -33,6 +33,8 @@ const editor_mod = @import("../editor/editor.zig");
 const http = @import("http.zig");
 const fuzzy = @import("../ui/fuzzy.zig");
 const completion_view = @import("../ui/completion_view.zig");
+const find_mod = @import("find.zig");
+const find_bar_mod = @import("../ui/find_bar.zig");
 
 pub const Request = parse.Request;
 pub const Response = client.Response;
@@ -219,6 +221,16 @@ pub const RequestPane = struct {
     edit_scroll: usize = 0,
     response_tab: ResponseTab = .body,
     resp_view: editor_view.ViewState = .{},
+    /// The response search (`/`, Ctrl+F with the Response block
+    /// focused): the find bar's state over the body, or the headers when
+    /// that tab is up; `resp_cursor` is where the steps count from.
+    resp_find: find_mod.FindState,
+    resp_cursor: usize = 0,
+    /// The Headers tab as searchable text, `name: value` per line;
+    /// rebuilt with every response.
+    resp_headers_text: ?[]u8 = null,
+    /// Rows the response content had at the last draw, for `revealFind`.
+    resp_rows: u16 = 10,
     /// The response body as an editor, for the highlighter.
     resp_editor: ?*editor_mod.Editor = null,
     resp_syntax: syntax.Syntax,
@@ -253,7 +265,7 @@ pub const RequestPane = struct {
         var req = try Request.init(gpa);
         errdefer req.deinit(gpa);
         const title_buf = try gpa.dupe(u8, "GET  new request");
-        return .{ .gpa = gpa, .request = req, .title_buf = title_buf, .resp_syntax = syntax.Syntax.init(gpa) };
+        return .{ .gpa = gpa, .request = req, .title_buf = title_buf, .resp_syntax = syntax.Syntax.init(gpa), .resp_find = find_mod.FindState.init(gpa) };
     }
 
     pub fn deinit(self: *RequestPane) void {
@@ -278,6 +290,8 @@ pub const RequestPane = struct {
         if (self.completion) |*c| c.deinit();
         if (self.resp_editor) |e| e.deinit();
         if (self.resp_pretty) |b| gpa.free(b);
+        if (self.resp_headers_text) |t| gpa.free(t);
+        self.resp_find.deinit();
         self.resp_syntax.deinit();
     }
 
@@ -439,7 +453,51 @@ pub const RequestPane = struct {
         self.resp_view = .{};
         self.response_tab = .body;
         try self.highlightResponse();
+        // The headers as one searchable text; the search starts over.
+        if (self.resp_headers_text) |t| self.gpa.free(t);
+        self.resp_headers_text = null;
+        self.resp_headers_text = try parse.headersToText(self.gpa, resp.headers);
+        self.resp_find.clear();
+        self.resp_cursor = 0;
         if (!self.moved_since_send) self.block = .response;
+    }
+
+    /// What the response search runs over: the body as shown, or the
+    /// Headers tab's `name: value` lines when that tab is up.
+    pub fn respFindText(self: *RequestPane) []const u8 {
+        if (self.response_tab == .headers) return self.resp_headers_text orelse "";
+        if (self.response_tab != .body) return "";
+        return self.displayBody();
+    }
+
+    /// The row of `byte` in the drawn response (the body has a blank
+    /// row first), so a match can be scrolled into view.
+    fn respRowOf(self: *RequestPane, byte: usize) u32 {
+        const text = self.respFindText();
+        const at = @min(byte, text.len);
+        var line: u32 = 0;
+        for (text[0..at]) |c| if (c == '\n') {
+            line += 1;
+        };
+        return if (self.response_tab == .body) line + 1 else line;
+    }
+
+    /// Land the search cursor on `byte` and scroll so its row shows.
+    pub fn revealFind(self: *RequestPane, byte: usize) void {
+        self.resp_cursor = byte;
+        const row = self.respRowOf(byte);
+        const rows: u32 = @max(self.resp_rows, 1);
+        if (row < self.resp_view.scroll_line or row >= self.resp_view.scroll_line + rows) {
+            self.resp_view.scroll_line = row -| (rows / 3);
+        }
+    }
+
+    /// The Response tab changed: the search text with it.
+    fn retargetFind(self: *RequestPane) Allocator.Error!void {
+        if (!self.resp_find.isActive()) return;
+        try self.resp_find.recompute(self.respFindText());
+        self.resp_find.current = null;
+        self.resp_cursor = 0;
     }
 
     /// A Done response becomes `prev` (for the diff); any other state
@@ -448,6 +506,10 @@ pub const RequestPane = struct {
         const gpa = self.gpa;
         if (self.resp_pretty) |b| gpa.free(b);
         self.resp_pretty = null;
+        if (self.resp_headers_text) |t| gpa.free(t);
+        self.resp_headers_text = null;
+        self.resp_find.clear();
+        self.resp_cursor = 0;
         if (self.state == .done) {
             if (self.prev) |*p| p.deinit(gpa);
             self.prev = self.state.done;
@@ -1207,6 +1269,7 @@ fn acceptCompletion(app: *App, rp: *RequestPane, idx: u32) Allocator.Error!void 
 
 fn responseKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
     const rows = @max(app.pane_rows, 1);
+    const cmd_find = @import("cmd_find.zig");
     switch (k.code) {
         .up => rp.resp_view.scroll_line -|= 1,
         .down => rp.resp_view.scroll_line += 1,
@@ -1214,15 +1277,45 @@ fn responseKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
         .page_down => rp.resp_view.scroll_line += @intCast(rows),
         .home => rp.resp_view.scroll_line = 0,
         .end => rp.resp_view.scroll_line = std.math.maxInt(u32) / 2,
-        .left => rp.response_tab = rp.response_tab.prev(),
-        .right => rp.response_tab = rp.response_tab.next(),
+        .left => {
+            rp.response_tab = rp.response_tab.prev();
+            try rp.retargetFind();
+        },
+        .right => {
+            rp.response_tab = rp.response_tab.next();
+            try rp.retargetFind();
+        },
+        .esc => {
+            // Esc drops the search's matches, as it does in an editor.
+            if (!rp.resp_find.isActive()) return false;
+            rp.resp_find.clear();
+        },
         .char => |c| switch (c) {
             'k' => rp.resp_view.scroll_line -|= 1,
             'j' => rp.resp_view.scroll_line += 1,
             'g' => rp.resp_view.scroll_line = 0,
             'G' => rp.resp_view.scroll_line = std.math.maxInt(u32) / 2,
-            'h', '[' => rp.response_tab = rp.response_tab.prev(),
-            'l', ']' => rp.response_tab = rp.response_tab.next(),
+            'h', '[' => {
+                rp.response_tab = rp.response_tab.prev();
+                try rp.retargetFind();
+            },
+            'l', ']' => {
+                rp.response_tab = rp.response_tab.next();
+                try rp.retargetFind();
+            },
+            // The response search: vim's `/` and `?` open the bar (the
+            // standard profile's Ctrl+F reaches `find.find` through the
+            // keymap); `n` / `N` walk the matches in both.
+            '/', '?' => {
+                if (app.input_style != .vim) return false;
+                cmd_find.openBar(app, c == '?') catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
+                };
+                return true;
+            },
+            'n' => try cmd_find.stepFind(app, 1),
+            'N' => try cmd_find.stepFind(app, -1),
             'w' => rp.body_wrap = !rp.body_wrap,
             'r' => {
                 http.fire(app, app.active.?) catch |err| switch (err) {
@@ -1343,6 +1436,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
     if (hit_id >= view.hit_resp_tab_base and hit_id < view.hit_resp_tab_base + ResponseTab.all.len) {
         rp.response_tab = ResponseTab.all[hit_id - view.hit_resp_tab_base];
         rp.block = .response;
+        try rp.retargetFind();
         return;
     }
     if (hit_id >= view.hit_param_row and hit_id < view.hit_param_row + 100) {
@@ -1487,9 +1581,17 @@ fn byteAtCol(text: []const u8, col: usize) usize {
 // ─── the frame ──────────────────────────────────────────────────────────
 
 /// Assemble the view's model on the frame arena and paint.
-pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocator.Error!void {
+pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     const focused = app.active == id and app.focus == .pane;
+    // The find bar docks under the pane it searches, as under an editor.
+    var area = area_in;
+    var bar: ?Rect = null;
+    if (app.find_bar) |*fb| if (fb.pane == id and area.h >= 2) {
+        const s = area.splitBottom(1);
+        area = s.top;
+        bar = s.rest;
+    };
     var params_list: std.ArrayListUnmanaged(view.Pair) = .empty;
     {
         // Params read the URL buffer live, not the committed request.
@@ -1558,6 +1660,9 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
             .spans = try rp.responseSpans(arena, &app.theme),
             .tests = tests,
             .sent_headers = sent,
+            .headers_text = rp.resp_headers_text orelse "",
+            .matches = if (rp.resp_find.isActive() and (rp.response_tab == .body or rp.response_tab == .headers)) rp.resp_find.matches.items else &.{},
+            .current_match = rp.resp_find.current,
         };
     }
     const m: view.Model = .{
@@ -1603,6 +1708,10 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
     };
     const caret = view.draw(ui, id, area, m);
     rp.edit_area = view.editArea(area, m);
+    rp.resp_rows = view.zones(area, m).response.h -| 4;
+    if (bar) |b| if (app.find_bar) |*fb| {
+        if (find_bar_mod.draw(ui, b, &fb.state, .{ .current = rp.resp_find.current, .total = rp.resp_find.matches.items.len })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
+    };
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
         app.pane_cols = @max(area.w, 1);
@@ -1755,6 +1864,47 @@ test "varAtCaret finds the token under the URL caret; inlineVar replaces every o
     try testing.expectEqualStrings("1", rp.request.header("a").?);
     try testing.expectEqual(@as(usize, 0), try rp.inlineVar("NOPE", "z"));
     try testing.expect(rp.edited);
+}
+
+test "response search: the body's hits and count, the Headers tab re-targets the same state, a new response clears it, reveal scrolls" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    const gpa = testing.allocator;
+    const mk = struct {
+        fn f(a: Allocator, body: []const u8) Allocator.Error!Response {
+            const hs = try a.alloc(client.Header, 2);
+            hs[0] = .{ .name = try a.dupe(u8, "content-type"), .value = try a.dupe(u8, "application/json") };
+            hs[1] = .{ .name = try a.dupe(u8, "x-request-id"), .value = try a.dupe(u8, "abc-123") };
+            return .{ .status = 200, .status_text = try a.dupe(u8, "OK"), .final_url = try a.dupe(u8, "http://x/"), .headers = hs, .body = try a.dupe(u8, body) };
+        }
+    }.f;
+    try rp.setResponse(try mk(gpa, "{\"name\":\"alpha\",\"twin\":\"alpha\",\"other\":\"beta\"}"));
+    // The search text is the body as shown (re-indented JSON).
+    try testing.expect(std.mem.indexOf(u8, rp.respFindText(), "\n  \"twin\"") != null);
+    try rp.resp_find.setQuery("alpha", rp.respFindText(), true);
+    try testing.expectEqual(@as(usize, 2), rp.resp_find.matches.items.len);
+    rp.resp_find.current = rp.resp_find.indexAtOrAfter(0);
+    try testing.expectEqual(@as(?usize, 0), rp.resp_find.current);
+    _ = rp.resp_find.step(1);
+    try testing.expectEqual(@as(?usize, 1), rp.resp_find.current);
+    // Reveal: a match on row 3 of a two-row window scrolls to it.
+    rp.resp_rows = 2;
+    rp.revealFind(rp.resp_find.matches.items[1].start);
+    try testing.expect(rp.resp_view.scroll_line > 0);
+    try testing.expectEqual(rp.resp_find.matches.items[1].start, rp.resp_cursor);
+    // The Headers tab: `name: value` lines, the same state re-targeted.
+    rp.response_tab = .headers;
+    try rp.retargetFind();
+    try testing.expectEqualStrings("content-type: application/json\nx-request-id: abc-123\n", rp.respFindText());
+    try testing.expectEqual(@as(usize, 0), rp.resp_find.matches.items.len);
+    try rp.resp_find.setQuery("abc", rp.respFindText(), true);
+    try testing.expectEqual(@as(usize, 1), rp.resp_find.matches.items.len);
+    // Cookies has nothing to search; a new response starts over.
+    rp.response_tab = .cookies;
+    try testing.expectEqualStrings("", rp.respFindText());
+    try rp.setResponse(try mk(gpa, "plain"));
+    try testing.expect(!rp.resp_find.isActive());
+    try testing.expectEqual(@as(usize, 0), rp.resp_cursor);
 }
 
 test "a result jumps to the response unless the user moved into the request block during the send" {
