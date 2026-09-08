@@ -270,6 +270,10 @@ pub const Model = struct {
     source: []const u8,
     source_caret: usize,
     params: []const Pair,
+    /// The URL's `:name` path segments with their `# @path` values —
+    /// the `Path` group above `Query` on the Params tab; the row
+    /// cursor runs down both.
+    path_params: []const Pair = &.{},
     /// The Headers tab's rows, from its text; `header_value_offs` is each
     /// value's byte offset in that text, so `headers_vars` land in the cell.
     headers: []const Pair = &.{},
@@ -363,6 +367,7 @@ pub const hit_param_del: u32 = 500; // + row
 /// A Headers row, and its `✕`.
 pub const hit_header_row: u32 = 600; // + row
 pub const hit_header_del: u32 = 700; // + row
+pub const hit_path_row: u32 = 800; // + row
 pub const hit_var_base: u32 = 1000; // + VarSpan.id
 
 /// The status chip's colours by class (the HTTP panel's recent rows).
@@ -689,7 +694,23 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
             return c;
         },
         .params => {
-            _ = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor, .focused = focused });
+            if (m.path_params.len == 0) {
+                _ = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor, .focused = focused });
+                return null;
+            }
+            // Two groups: `Path` — the URL's `:name` segments, a value
+            // each from `# @path` — over `Query`; the cursor runs down
+            // both, the path rows first.
+            const n_path = m.path_params.len;
+            const group: Style = .{ .fg = p.comment, .bg = p.bg_dark, .bold = true };
+            var y = content.y;
+            if (y < content.bottom()) _ = ui.putStr(content.x + 2, y, content.w -| 2, "Path", group);
+            y += 1;
+            const pt = drawKvTable(ui, pane, Rect.init(content.x, y, content.w, content.bottom() -| y), m.path_params, null, .{ .kind = .path, .row_hit = hit_path_row, .del_hit = null, .add = false, .cursor = if (m.row_cursor < n_path) m.row_cursor else n_path + 1000, .focused = focused });
+            y += pt.rows;
+            if (y < content.bottom()) _ = ui.putStr(content.x + 2, y, content.w -| 2, "Query", group);
+            y += 1;
+            _ = drawKvTable(ui, pane, Rect.init(content.x, y, content.w, content.bottom() -| y), m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor -| n_path, .focused = focused and m.row_cursor >= n_path });
             return null;
         },
         .auth => {
@@ -837,7 +858,7 @@ fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, f
 
 // ─── the key / value table ──────────────────────────────────────────────
 
-const KvKind = enum { params, headers, vars };
+const KvKind = enum { params, headers, vars, path };
 
 const KvOpts = struct {
     kind: KvKind,
@@ -951,13 +972,16 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
     const key_color = switch (kind) {
         .params => p.fg,
         .headers, .vars => p.cyan,
+        .path => p.purple,
     };
     for (data, 0..) |pair, i| {
         if (ry >= r.h) break;
         const sel = focused and draft == null and i == cursor;
         const key_style: Style = .{ .fg = if (sel) p.cyan else key_color, .bg = p.bg_dark, .bold = true };
-        const value_style: Style = .{ .fg = if (pair.value.len == 0 and kind == .vars) p.comment else p.fg, .bg = p.bg_dark };
-        const cells = c.cells(ry, pair.key, key_style, pair.value, value_style, if (del_hit != null) " \u{2715} " else "   ", .{ .fg = p.red, .bg = p.bg_dark });
+        const unset = pair.value.len == 0 and (kind == .vars or kind == .path);
+        const value_style: Style = .{ .fg = if (unset) p.comment else p.fg, .bg = p.bg_dark };
+        const shown_value = if (pair.value.len == 0 and kind == .path) "(unset \u{2014} Enter sets it)" else pair.value;
+        const cells = c.cells(ry, pair.key, key_style, shown_value, value_style, if (del_hit != null) " \u{2715} " else "   ", .{ .fg = p.red, .bg = p.bg_dark });
         const rr = r.row(ry);
         ui.hit(Rect.init(rr.x, rr.y, table_w + 2, 1), .{ .script_hit = .{ .pane = pane, .id = row_hit + @as(u32, @intCast(i)) } });
         if (del_hit) |d| ui.hit(Rect.init(cells.x_x, rr.y, x_col_w, 1), .{ .script_hit = .{ .pane = pane, .id = d + @as(u32, @intCast(i)) } });
@@ -2052,4 +2076,42 @@ test "the Headers table: rows in cells with their `{{VAR}}` spans, the draft's c
     // Params never returns one.
     const t3 = drawKvTable(fx2.ui(), 0, r, &rows, d, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = true, .cursor = 0, .focused = true });
     try testing.expect(t3.caret == null);
+}
+
+test "the Params tab with path params: the Path group over Query, the unset value's words, the path rows' hits; without any the query table alone" {
+    // Tall enough for both groups: the Path group is eight rows.
+    var fx = try fixture.init(89, 50);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    m.edit_tab = .params;
+    m.field = .content;
+    m.url = "https://x/users/:id/posts/:post_id";
+    m.params = &.{.{ .key = "a", .value = "1" }};
+    m.path_params = &.{ .{ .key = "id", .value = "42" }, .{ .key = "post_id", .value = "" } };
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    const txt = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, txt, "  Path") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  Query") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{2502} id ") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{2502} 42 ") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "(unset \u{2014} Enter sets it)") != null);
+    // Row 7 is `Path`, 8 the top rule, 9 the header, 10 the rule, 11 `id`, 12 rule, 13 `post_id`.
+    try testing.expectEqual(hit_path_row, fx.hits.at(10, 11).?.script_hit.id);
+    try testing.expectEqual(hit_path_row + 1, fx.hits.at(10, 13).?.script_hit.id);
+    // The cursor rests on the first path row (cyan); the second is purple.
+    try testing.expect(fx.fgEql(6, 11, .{ .fg = fx.theme.palette.cyan }));
+    try testing.expect(fx.fgEql(6, 13, .{ .fg = fx.theme.palette.purple }));
+    // The query table follows; its first row is a hit of its own.
+    const q_row = std.mem.indexOf(u8, txt, "\u{2502} a ").?;
+    const q_y: u16 = @intCast(std.mem.count(u8, txt[0..q_row], "\n"));
+    try testing.expectEqual(hit_param_row, fx.hits.at(10, q_y).?.script_hit.id);
+    // The cursor on the second path row: it is the cyan one, the query row is not.
+    m.row_cursor = 1;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try testing.expect(fx.fgEql(6, 13, .{ .fg = fx.theme.palette.cyan }));
+    try testing.expect(fx.fgEql(6, 11, .{ .fg = fx.theme.palette.purple }));
+    try testing.expect(!fx.fgEql(6, q_y, .{ .fg = fx.theme.palette.cyan }));
 }

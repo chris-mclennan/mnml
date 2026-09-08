@@ -1490,6 +1490,7 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
         .http_env_edit_value => |key| try writeEnvVar(app, key, text),
         .http_auth_value => |kind| try applyAuth(app, kind, text),
         .http_option => |kind| try http.applyOptionPrompt(app, kind, text),
+        .http_path_param => |name| try http.applyPathParamPrompt(app, name, text),
         .auth_preset_name => try savePreset(app, text),
         .http_save_as => {
             const rel = std.mem.trim(u8, text, " \t");

@@ -221,6 +221,7 @@ pub const table = .{
     .@"http.set_max_redirects" = &setMaxRedirectsCmd,
     .@"http.set_proxy" = &setProxyCmd,
     .@"http.complete_var" = &completeVarCmd,
+    .@"http.set_path_param" = &setPathParamCmd,
 };
 
 // ─── the `{{` completion ────────────────────────────────────────────────
@@ -845,10 +846,16 @@ pub fn expand(app: *App, gpa: Allocator, req: *const Request) Allocator.Error!Re
     return expandWith(gpa, app.io, req, &set);
 }
 
+/// The `:name` path segments take their `# @path` values first (`::`
+/// becomes `:`); a value may hold a `{{VAR}}`, which the expansion
+/// resolves next.
 pub fn expandWith(gpa: Allocator, io: Io, req: *const Request, set: *const env_mod.EnvSet) Allocator.Error!Request {
     var out = try req.clone(gpa);
     errdefer out.deinit(gpa);
-    const url = try env_mod.expand(gpa, io, req.url, set);
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const with_path = try parse.substitutePath(scratch.allocator(), req.url, try parse.pathParams(scratch.allocator(), req));
+    const url = try env_mod.expand(gpa, io, with_path, set);
     gpa.free(out.url);
     out.url = url;
     for (out.headers.items) |*h| {
@@ -1569,6 +1576,50 @@ pub fn openOptionPrompt(app: *App, rp: *RequestPane, kind: OptionKind) Allocator
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .http_option = kind } } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+// ─── path params ────────────────────────────────────────────────────────
+
+/// The value prompt for the `:name` segment, seeded with the block's
+/// `# @path name=value` (item 10).
+pub fn openPathParamPrompt(app: *App, rp: *RequestPane, name: []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    const owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(owned);
+    const title = try std.fmt.allocPrint(gpa, "Value for :{s} (# @path {s}=\u{2026} \u{00b7} empty clears):", .{ name, name });
+    errdefer gpa.free(title);
+    var state = Prompt.init(gpa, title);
+    errdefer Prompt.deinit(&state, gpa);
+    try state.seed(gpa, parse.pathParamValue(&rp.request, name) orelse "");
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .http_path_param = owned }, .title_owned = title } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The prompt's answer: the line is set, or removed by an empty text.
+pub fn applyPathParamPrompt(app: *App, name: []const u8, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse {
+        app.toast("path: no active Request pane", .{});
+        return;
+    };
+    const value = std.mem.trim(u8, text, " \t");
+    try parse.setPathParam(&rp.request, app.gpa, name, if (value.len == 0) null else value);
+    rp.edited = true;
+    if (value.len == 0) app.toast("path: :{s} cleared", .{name}) else app.toast("path: :{s} = {s}", .{ name, value });
+    app.needs_render = true;
+}
+
+/// `http.set_path_param`: the prompt for the Params tab's path row, or
+/// the URL's first `:name`.
+fn setPathParamCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const names = try parse.pathParamNames(arena.allocator(), rp.url.items);
+    if (names.len == 0) return app.diag.fail(app.frame.allocator(), "path: the URL has no :name segments", .{});
+    const at = if (rp.edit_tab == .params and rp.row_cursor < names.len) rp.row_cursor else 0;
+    try openPathParamPrompt(app, rp, names[at]);
 }
 
 /// The prompt's answer: an empty text removes the line.

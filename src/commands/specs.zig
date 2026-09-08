@@ -769,6 +769,7 @@ pub const specs = [_]Spec{
     .{ .id = "http.set_max_redirects", .title = "HTTP: set the active request's redirect cap (# @max-redirects N)…", .group = "http" },
     .{ .id = "http.set_proxy", .title = "HTTP: set the active request's proxy (# @proxy host:port)…", .group = "http" },
     .{ .id = "http.complete_var", .title = "HTTP: complete a {{variable}} at the caret (env names, $ built-ins, @capture names)", .group = "http" },
+    .{ .id = "http.set_path_param", .title = "HTTP: set a :name path segment's value for the active request (# @path name=value)…", .group = "http" },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
     .{ .id = "term.shell_right", .title = "Terminal: new shell in right half", .group = "term", .keys = .{ .vim = &.{"space v"} } },
@@ -1061,7 +1062,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "995 specs, unique ids" {
+test "996 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1077,6 +1078,6 @@ test "995 specs, unique ids" {
     // + two ZON view commands.
     // + five dotnet runners.
     // + six dotnet commands.
-    try std.testing.expectEqual(@as(usize, 995), specs.len);
+    try std.testing.expectEqual(@as(usize, 996), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

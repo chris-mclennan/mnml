@@ -245,6 +245,8 @@ pub const PromptPurpose = union(enum) {
     http_auth_value: @import("app/cmd_http.zig").AuthKind,
     /// The Auth tab's Options rows: a timeout, a redirect cap, a proxy.
     http_option: @import("app/http.zig").OptionKind,
+    /// The value of the `:name` path segment (owned name).
+    http_path_param: []u8,
     auth_preset_name,
     http_save_as,
     http_save_response,
@@ -274,7 +276,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param => |s| gpa.free(s),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);

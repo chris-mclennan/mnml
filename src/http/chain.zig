@@ -207,7 +207,7 @@ fn parse_mod_parse(a: Allocator, src: []const u8) parse_mod.ParseError!parse_mod
 
 fn expandWith(a: Allocator, io: Io, req: *const parse_mod.Request, set: *const env_mod.EnvSet) Allocator.Error!parse_mod.Request {
     var out = try req.clone(a);
-    out.url = try env_mod.expand(a, io, req.url, set);
+    out.url = try env_mod.expand(a, io, try parse_mod.substitutePath(a, req.url, try parse_mod.pathParams(a, req)), set);
     for (out.headers.items) |*h| h.value = try env_mod.expand(a, io, h.value, set);
     if (out.body) |b| out.body = try env_mod.expand(a, io, b, set);
     return out;

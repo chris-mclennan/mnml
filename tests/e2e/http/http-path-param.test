@@ -1,0 +1,34 @@
+# A `:id` segment takes its `# @path id=…` value on the wire (the echo
+# server shows the request line); the URL keeps `:id`, `::` is a colon;
+# the Params tab lists the Path group and Enter sets a value.
+
+serve 19890 200 @echo
+write users.http "# @path id=42\nGET http://127.0.0.1:19890/users/:id/x::y\n"
+open users.http
+expect screen contains "/users/:id/x::y"
+
+key ctrl+1
+expect screen contains "Path"
+expect screen contains "│ id"
+expect screen contains "│ 42"
+expect screen contains "Query"
+
+command http.send
+wait 800
+expect screen contains "GET /users/42/x:y HTTP/1.1"
+
+# Back in the request block on the Params tab, Enter on the path row:
+# the prompt, seeded; a new value goes out next.
+key ctrl+1
+key enter
+expect screen contains "Value for :id"
+type "7"
+key enter
+expect screen contains "path: :id = 7"
+command http.send
+wait 800
+expect screen contains "GET /users/7/x:y HTTP/1.1"
+expect file users.http lacks "@path id=7"
+key ctrl+s
+expect file users.http contains "# @path id=7"
+expect file users.http contains "/users/:id/x::y"
