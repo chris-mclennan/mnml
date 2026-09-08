@@ -1,0 +1,54 @@
+# The Auth tab's `── Options ──` rows edit the block's own transport
+# directives: `→` on Verify TLS writes `# @insecure`, `→` on Max
+# redirects steps the cap, the saved file carries both lines, and `r`
+# puts a row back on the config default. The tab scrolls with the
+# cursor, so each row is asserted once the cursor is on it.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+type "https://example.com/api"
+key ctrl+4
+
+expect screen contains "Set Bearer token"
+
+# Four rows down from Set Bearer: Verify TLS. → flips it.
+key j
+key j
+key j
+key j
+expect screen contains "Options"
+expect screen contains "Verify TLS:"
+expect screen contains "[on] / off"
+key right
+expect screen contains "on / [off]"
+expect screen contains "verify TLS off for this request"
+
+# Timeout, Follow redirects, then Max redirects, which steps by one.
+key j
+expect screen contains "Timeout:"
+expect screen contains "[none]"
+key j
+expect screen contains "Follow redirects:"
+key j
+expect screen contains "Max redirects:"
+expect screen contains "[10]"
+key right
+expect screen contains "[11]"
+
+# The block's lines reach the file.
+command http.save
+type "opt.http"
+key enter
+expect file opt.http contains "# @insecure"
+expect file opt.http contains "# @max-redirects 11"
+
+# `r` on the row: back on the config default, the line gone.
+key r
+expect screen contains "[10]"
+key k
+key k
+key k
+key r
+expect screen contains "[on] / off"

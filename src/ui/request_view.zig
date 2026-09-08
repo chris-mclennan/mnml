@@ -144,6 +144,40 @@ pub const auth_rows = [_]AuthRow{
     .{ .id = "clear", .label = "Clear Authorization", .glyph = "\u{00D7}" },
 };
 
+/// The `── Options ──` rows under the auth rows: the block's transport
+/// directives, in the settings overlay's row idiom (`▸ label:  [on] /
+/// off  *`, the `*` when the block sets it). Hits are `hit_auth_row +
+/// auth_rows.len + i`.
+pub const OptionRow = struct {
+    kind: Kind,
+    label: []const u8,
+    pub const Kind = enum { verify_tls, timeout, follow_redirects, max_redirects, proxy };
+};
+
+pub const option_rows = [_]OptionRow{
+    .{ .kind = .verify_tls, .label = "Verify TLS" },
+    .{ .kind = .timeout, .label = "Timeout" },
+    .{ .kind = .follow_redirects, .label = "Follow redirects" },
+    .{ .kind = .max_redirects, .label = "Max redirects" },
+    .{ .kind = .proxy, .label = "Proxy" },
+};
+
+/// Every row of the Auth tab the cursor can land on.
+pub fn authRowCount() usize {
+    return auth_rows.len + option_rows.len;
+}
+
+/// What a send would use, and which rows the block sets itself (the
+/// others show the config default).
+pub const OptionsModel = struct {
+    insecure: bool = false,
+    timeout_ms: ?u64 = null,
+    follow_redirects: bool = true,
+    max_redirects: u8 = 10,
+    proxy: ?[]const u8 = null,
+    set: [option_rows.len]bool = .{false} ** option_rows.len,
+};
+
 pub const VarRow = struct { name: []const u8, value: ?[]const u8 };
 
 pub const Timing = struct { wait_ms: u64, receive_ms: u64, total_ms: u64 };
@@ -239,6 +273,7 @@ pub const Model = struct {
     row_cursor: usize,
     /// The current Authorization header's value, if any.
     auth_current: ?[]const u8,
+    options: OptionsModel = .{},
     vars: []const VarRow,
     env_name: ?[]const u8,
     /// The env came from a session override (the Env box paints cyan).
@@ -988,6 +1023,10 @@ pub fn drawTip(ui: Ui, screen: Rect, anchor: Rect, text: []const u8) void {
     _ = ui.putStr(x, y, w, ui.clipStr(text, w), style);
 }
 
+/// The Auth tab as a list of rows — the current header, the four auth
+/// actions, `── Options ──` and its five rows, a hint — scrolled
+/// through `m.edit_scroll` so the cursor's row is always on screen (the
+/// request box is a handful of rows tall at the default size).
 fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
     const p = ui.theme.palette;
     if (r.isEmpty()) return;
@@ -996,21 +1035,91 @@ fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
         (if (std.mem.startsWith(u8, v, "Bearer ")) ui.fmt("Bearer \u{00B7} {s}", .{ui.clipStr(v[7..], 20)}) else if (std.mem.startsWith(u8, v, "Basic ")) "Basic \u{00B7} (base64 user:pass)" else if (v.len > 24) ui.fmt("{s}\u{2026}", .{v[0..22]}) else v)
     else
         "(no Authorization header \u{2014} request will be unauthenticated)";
-    var x = r.x;
-    x += ui.putStr(x, r.y, r.w, "    Current:  ", dim(p));
-    _ = ui.putStr(x, r.y, r.right() -| x, summary, .{ .fg = if (cur != null) p.cyan else p.comment, .bg = p.bg_dark, .bold = true });
-    var y: u16 = 2;
-    for (auth_rows, 0..) |row_def, i| {
-        if (y >= r.h) break;
-        const row = r.row(y);
-        const sel = focused and i == m.row_cursor;
-        const bg = if (sel) p.cyan else p.bg_dark;
-        const fg = if (sel) p.bg_dark else if (std.mem.eql(u8, row_def.id, "clear")) p.red else p.fg;
-        ui.fill(row, .{ .bg = bg });
-        _ = ui.putStr(row.x + 2, row.y, row.w -| 2, ui.fmt("{s} {s}", .{ row_def.glyph, row_def.label }), .{ .fg = fg, .bg = bg, .bold = true });
-        ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(i)) } });
-        y += 1;
+    // Virtual rows: 0 current, 1 blank, 2.. auth rows, blank, section,
+    // option rows, hint.
+    const auth_first: usize = 2;
+    const section_row: usize = auth_first + auth_rows.len + 1;
+    const opt_first: usize = section_row + 1;
+    const total: usize = opt_first + option_rows.len + 1;
+    const cursor_row: usize = if (m.row_cursor < auth_rows.len) auth_first + m.row_cursor else opt_first + @min(m.row_cursor - auth_rows.len, option_rows.len - 1);
+    const h: usize = r.h;
+    var scroll = m.edit_scroll.*;
+    if (cursor_row < scroll) scroll = cursor_row;
+    if (cursor_row >= scroll + h) scroll = cursor_row + 1 - h;
+    scroll = @min(scroll, total -| h);
+    m.edit_scroll.* = scroll;
+    var label_w: u16 = 0;
+    for (option_rows) |row_def| label_w = @max(label_w, ui.width(row_def.label));
+    const o = m.options;
+    var dbuf: [32]u8 = undefined;
+    var vi: usize = scroll;
+    while (vi < total and vi - scroll < h) : (vi += 1) {
+        const row = r.row(@intCast(vi - scroll));
+        if (vi == 0) {
+            var x = r.x;
+            x += ui.putStr(x, row.y, row.w, "    Current:  ", dim(p));
+            _ = ui.putStr(x, row.y, row.right() -| x, summary, .{ .fg = if (cur != null) p.cyan else p.comment, .bg = p.bg_dark, .bold = true });
+        } else if (vi >= auth_first and vi < auth_first + auth_rows.len) {
+            const i = vi - auth_first;
+            const row_def = auth_rows[i];
+            const sel = focused and i == m.row_cursor;
+            const bg = if (sel) p.cyan else p.bg_dark;
+            const fg = if (sel) p.bg_dark else if (std.mem.eql(u8, row_def.id, "clear")) p.red else p.fg;
+            ui.fill(row, .{ .bg = bg });
+            _ = ui.putStr(row.x + 2, row.y, row.w -| 2, ui.fmt("{s} {s}", .{ row_def.glyph, row_def.label }), .{ .fg = fg, .bg = bg, .bold = true });
+            ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(i)) } });
+        } else if (vi == section_row) {
+            const rule = if (ui.ascii) "--" else "\u{2500}\u{2500}";
+            _ = ui.putStr(r.x + 2, row.y, r.w -| 2, ui.fmt("{s} Options {s}", .{ rule, rule }), dim(p));
+        } else if (vi >= opt_first and vi < opt_first + option_rows.len) {
+            const i = vi - opt_first;
+            const row_def = option_rows[i];
+            const idx = auth_rows.len + i;
+            const sel = focused and idx == m.row_cursor;
+            const bg = if (sel) p.cyan else p.bg_dark;
+            const fg = if (sel) p.bg_dark else p.fg;
+            const muted: Style = .{ .fg = if (sel) p.bg_dark else p.comment, .bg = bg };
+            const active: Style = .{ .fg = if (sel) p.bg_dark else p.cyan, .bg = bg, .bold = true };
+            ui.fill(row, .{ .bg = bg });
+            var x = row.x + 2;
+            x += ui.putStr(x, row.y, row.right() -| x, if (sel) (if (ui.ascii) "> " else "\u{25B8} ") else "  ", .{ .fg = fg, .bg = bg, .bold = true });
+            const label = ui.fmt("{s}:", .{row_def.label});
+            x += ui.putStr(x, row.y, row.right() -| x, label, .{ .fg = fg, .bg = bg, .bold = true });
+            x += (label_w + 3) -| ui.width(label);
+            switch (row_def.kind) {
+                .verify_tls => x += drawToggle(ui, x, row, !o.insecure, active, muted),
+                .follow_redirects => x += drawToggle(ui, x, row, o.follow_redirects, active, muted),
+                .max_redirects => {
+                    x += ui.putStr(x, row.y, row.right() -| x, if (ui.ascii) "< " else "\u{2039} ", muted);
+                    x += ui.putStr(x, row.y, row.right() -| x, ui.fmt("[{d}]", .{o.max_redirects}), active);
+                    x += ui.putStr(x, row.y, row.right() -| x, if (ui.ascii) " >" else " \u{203A}", muted);
+                },
+                .timeout => {
+                    const text = if (o.timeout_ms) |ms| ui.fmt("[{s}]", .{@import("../http/parse.zig").formatDuration(&dbuf, ms)}) else "[none]";
+                    x += ui.putStr(x, row.y, row.right() -| x, text, active);
+                    x += ui.putStr(x, row.y, row.right() -| x, "  Enter to set", muted);
+                },
+                .proxy => {
+                    const text = if (o.proxy) |px| ui.fmt("[{s}]", .{ui.clipStr(px, 40)}) else "[none]";
+                    x += ui.putStr(x, row.y, row.right() -| x, text, active);
+                    x += ui.putStr(x, row.y, row.right() -| x, "  Enter to set", muted);
+                },
+            }
+            if (o.set[i]) _ = ui.putStr(x + 1, row.y, row.right() -| (x + 1), "*", .{ .fg = if (sel) p.bg_dark else p.yellow, .bg = bg, .bold = true });
+            ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(idx)) } });
+        } else if (vi == total - 1) {
+            _ = ui.putStr(r.x + 4, row.y, r.w -| 4, if (ui.ascii) "(<- -> toggle / step  -  Enter set  -  r config default  -  * set by this request)" else "(\u{2190}\u{2192} toggle / step \u{00B7} Enter set \u{00B7} r config default \u{00B7} * set by this request)", dim(p));
+        }
     }
+}
+
+/// `[on] / off` or `on / [off]`; returns the cells used.
+fn drawToggle(ui: Ui, x0: u16, row: Rect, on: bool, active: Style, muted: Style) u16 {
+    var x = x0;
+    x += ui.putStr(x, row.y, row.right() -| x, if (on) "[on]" else "on", if (on) active else muted);
+    x += ui.putStr(x, row.y, row.right() -| x, " / ", muted);
+    x += ui.putStr(x, row.y, row.right() -| x, if (on) "off" else "[off]", if (on) muted else active);
+    return x - x0;
 }
 
 fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {

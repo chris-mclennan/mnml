@@ -748,6 +748,11 @@ pub const specs = [_]Spec{
     .{ .id = "http.panel_toggle_section", .title = "HTTP panel: collapse / expand the selected section", .group = "http" },
     .{ .id = "http.panel_copy_path", .title = "HTTP panel: copy the selected row's path / name / value", .group = "http" },
     .{ .id = "http.ai_debug", .title = "HTTP: ask Claude why this request is failing", .group = "http" },
+    .{ .id = "http.toggle_insecure", .title = "HTTP: toggle Verify TLS for the active request (# @insecure)", .group = "http" },
+    .{ .id = "http.set_timeout", .title = "HTTP: set the active request's timeout (# @timeout 5s)…", .group = "http" },
+    .{ .id = "http.toggle_follow_redirects", .title = "HTTP: toggle Follow redirects for the active request (# @no-redirect)", .group = "http" },
+    .{ .id = "http.set_max_redirects", .title = "HTTP: set the active request's redirect cap (# @max-redirects N)…", .group = "http" },
+    .{ .id = "http.set_proxy", .title = "HTTP: set the active request's proxy (# @proxy host:port)…", .group = "http" },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
     .{ .id = "term.shell_right", .title = "Terminal: new shell in right half", .group = "term", .keys = .{ .vim = &.{"space v"} } },
@@ -1014,7 +1019,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "950 specs, unique ids" {
+test "955 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1026,6 +1031,6 @@ test "950 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 950), specs.len);
+    try std.testing.expectEqual(@as(usize, 955), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

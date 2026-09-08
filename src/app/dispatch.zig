@@ -1094,7 +1094,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
         .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
         .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
-        .http_env_add_key, .http_env_edit_value, .http_auth_value, .auth_preset_name, .http_save_as, .http_save_response, .http_new_env, .http_new_chain, .http_new_collection, .http_new_request, .http_lookup_var => try cmd_http.acceptPrompt(app, purpose, text),
+        .http_env_add_key, .http_env_edit_value, .http_auth_value, .http_option, .auth_preset_name, .http_save_as, .http_save_response, .http_new_env, .http_new_chain, .http_new_collection, .http_new_request, .http_lookup_var => try cmd_http.acceptPrompt(app, purpose, text),
     }
 }
 

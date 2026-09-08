@@ -29,6 +29,7 @@ const bench_mod = @import("../http/bench.zig");
 const script_mod = @import("../http/script.zig");
 const request_pane = @import("request_pane.zig");
 const view = @import("../ui/request_view.zig");
+const Prompt = app_mod.Prompt;
 const editor_view = @import("../ui/editor_view.zig");
 const Ui = @import("../ui/context.zig");
 
@@ -205,6 +206,11 @@ pub const table = .{
     .@"http.copy_var_name" = &copyVarNameCmd,
     .@"http.refresh" = &refreshCmd,
     .@"http.save_response" = &saveResponseCmd,
+    .@"http.toggle_insecure" = &toggleInsecureCmd,
+    .@"http.set_timeout" = &setTimeoutCmd,
+    .@"http.toggle_follow_redirects" = &toggleFollowRedirectsCmd,
+    .@"http.set_max_redirects" = &setMaxRedirectsCmd,
+    .@"http.set_proxy" = &setProxyCmd,
 };
 
 // ─── env ────────────────────────────────────────────────────────────────
@@ -774,6 +780,10 @@ const Job = struct {
     stream: StreamMode = .never,
     /// Set once the head went out as `.sse`; the end goes the same way.
     streamed: bool = false,
+    /// The config's transport defaults with the request's directives
+    /// over them; `proxy` points at `proxy_owned`.
+    transport: client.Transport = .{},
+    proxy_owned: ?[]u8 = null,
     events: *event.EventQueue,
     io: Io,
     gpa: Allocator,
@@ -782,6 +792,7 @@ const Job = struct {
         self.req.deinit(gpa);
         if (self.label) |l| gpa.free(l);
         if (self.cookie) |c| gpa.free(c);
+        if (self.proxy_owned) |p| gpa.free(p);
         gpa.destroy(self);
     }
 };
@@ -790,7 +801,23 @@ pub const SpawnOptions = struct {
     label: ?[]const u8 = null,
     cookie: ?[]const u8 = null,
     stream: StreamMode = .never,
+    /// The transport defaults; null takes the config's (`transportDefaults`).
+    transport: ?client.Transport = null,
 };
+
+/// The config's transport defaults — what a send gets when its block
+/// says nothing (`.http.insecure` / `timeout_ms` / `follow_redirects` /
+/// `max_redirects` / `proxy` in `docs/CONFIG.md`).
+pub fn transportDefaults(app: *App) client.Transport {
+    const c = app.cfg.http;
+    return .{
+        .insecure = c.insecure,
+        .timeout_ms = if (c.timeout_ms) |ms| @as(u64, ms) else null,
+        .follow_redirects = c.follow_redirects,
+        .max_redirects = c.max_redirects,
+        .proxy = if (c.proxy) |p| (if (std.mem.trim(u8, p, " \t").len > 0) p else null) else null,
+    };
+}
 
 /// Start a worker for `req` (ownership moves). Returns the job id.
 pub fn spawn(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, label: ?[]const u8, cookie: ?[]const u8) CommandError!u64 {
@@ -809,6 +836,14 @@ pub fn spawnWith(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, o
     errdefer if (job.label) |l| gpa.free(l);
     if (opts.cookie) |c| job.cookie = try gpa.dupe(u8, c);
     errdefer if (job.cookie) |c| gpa.free(c);
+    // The request's directives over the defaults, resolved here so the
+    // worker never reads the config; the proxy string is the job's.
+    job.transport = client.Transport.fromRequest(&job.req, opts.transport orelse transportDefaults(app));
+    if (job.transport.proxy) |p| {
+        job.proxy_owned = try gpa.dupe(u8, p);
+        job.transport.proxy = job.proxy_owned;
+    }
+    errdefer if (job.proxy_owned) |p| gpa.free(p);
     const id = job.id;
     if (opts.stream == .never) {
         app.http.group.concurrent(app.io, worker, .{job}) catch |err| {
@@ -845,7 +880,7 @@ fn worker(job: *Job) Io.Cancelable!void {
     defer job.destroy(gpa);
     const started = App.nowMs(io);
     const sink: ?client.Stream = if (job.stream == .never) null else .{ .ctx = job, .onHead = onStreamHead, .onBytes = onStreamBytes, .onDone = onStreamDone };
-    var outcome = client.send(gpa, io, &job.req, .{ .cookie = job.cookie, .stream = sink }) catch {
+    var outcome = client.send(gpa, io, &job.req, .{ .cookie = job.cookie, .stream = sink, .transport = job.transport }) catch {
         postErr(events, io, gpa, "out of memory during the send");
         return;
     };
@@ -1156,8 +1191,221 @@ pub fn authRowAction(app: *App, id: PaneId, rp: *RequestPane, row: usize) Alloca
             rp.edited = true;
             app.toast("auth: cleared Authorization", .{});
         },
-        else => {},
+        else => if (row >= view.auth_rows.len and row < view.authRowCount()) switch (view.option_rows[row - view.auth_rows.len].kind) {
+            // Enter on a toggle flips it; on a value row it prompts.
+            .verify_tls, .follow_redirects => try authRowAdjust(app, rp, row, 1),
+            .timeout => try openOptionPrompt(app, rp, .timeout),
+            .max_redirects => try openOptionPrompt(app, rp, .max_redirects),
+            .proxy => try openOptionPrompt(app, rp, .proxy),
+        },
     }
+}
+
+// ─── the Options rows ───────────────────────────────────────────────────
+//
+// The Auth tab's `── Options ──` rows edit the block's own directive
+// lines (`# @insecure`, `# @timeout`, `# @no-redirect`, `# @max-redirects`,
+// `# @proxy`); a row the block does not set shows the config's default
+// and no `*`. `←` `→` / `h` `l` flip a toggle or step the cap and the
+// timeout; Enter prompts for a value; `r` puts the row back on the
+// config default (removes the line).
+
+pub const OptionKind = enum { timeout, max_redirects, proxy };
+
+/// The rows' model: what the send would use, and which rows the block
+/// sets itself.
+pub fn optionsModel(app: *App, rp: *RequestPane) view.OptionsModel {
+    const o = parse.options(&rp.request);
+    const t = client.Transport.fromRequest(&rp.request, transportDefaults(app));
+    return .{
+        .insecure = t.insecure,
+        .timeout_ms = t.timeout_ms,
+        .follow_redirects = t.follow_redirects,
+        .max_redirects = t.max_redirects,
+        .proxy = t.proxy,
+        .set = .{ o.insecure, o.timeout_ms != null, o.follow_redirects != null, o.max_redirects != null, o.proxy != null },
+    };
+}
+
+/// `←` / `→` on an Options row.
+pub fn authRowAdjust(app: *App, rp: *RequestPane, row: usize, delta: i32) Allocator.Error!void {
+    if (row < view.auth_rows.len or row >= view.authRowCount()) return;
+    const gpa = app.gpa;
+    const before = optionsModel(app, rp);
+    switch (view.option_rows[row - view.auth_rows.len].kind) {
+        .verify_tls => {
+            // Verify on means no `@insecure` line — unless the config
+            // skips verification, where the line cannot say "verify".
+            const want_insecure = !before.insecure;
+            if (!want_insecure and app.cfg.http.insecure) {
+                app.toast("options: .http.insecure = true in the config — verification is off for every send", .{});
+                return;
+            }
+            try parse.setDirective(&rp.request, gpa, "@insecure", if (want_insecure) "" else null);
+            app.toast("options: verify TLS {s} for this request", .{if (want_insecure) "off" else "on"});
+        },
+        .follow_redirects => {
+            const want = !before.follow_redirects;
+            // The line that differs from the config; none when it agrees.
+            const cfg = app.cfg.http.follow_redirects;
+            try parse.setDirective(&rp.request, gpa, "@no-redirect", if (!want and cfg) "" else null);
+            try parse.setDirective(&rp.request, gpa, "@follow-redirects", if (want and !cfg) "" else null);
+            app.toast("options: follow redirects {s}", .{if (want) "on" else "off"});
+        },
+        .max_redirects => {
+            const cur: i32 = before.max_redirects;
+            const next: u8 = @intCast(std.math.clamp(cur + delta, 0, 50));
+            var buf: [8]u8 = undefined;
+            try parse.setDirective(&rp.request, gpa, "@max-redirects", std.fmt.bufPrint(&buf, "{d}", .{next}) catch "");
+            app.toast("options: max redirects {d}", .{next});
+        },
+        .timeout => {
+            // A second per step; below one second the line goes.
+            const cur: i64 = @intCast(before.timeout_ms orelse 0);
+            const next: i64 = cur + @as(i64, delta) * 1000;
+            if (next <= 0) {
+                try parse.setDirective(&rp.request, gpa, "@timeout", null);
+                app.toast("options: timeout {s}", .{if (transportDefaults(app).timeout_ms) |_| "back to the config default" else "off"});
+            } else {
+                var buf: [32]u8 = undefined;
+                try parse.setDirective(&rp.request, gpa, "@timeout", parse.formatDuration(&buf, @intCast(next)));
+                app.toast("options: timeout {s}", .{parse.formatDuration(&buf, @intCast(next))});
+            }
+        },
+        .proxy => try openOptionPrompt(app, rp, .proxy),
+    }
+    rp.edited = true;
+    app.needs_render = true;
+}
+
+/// `r` on an Options row: the block's line goes, the config decides.
+pub fn authRowReset(app: *App, rp: *RequestPane, row: usize) Allocator.Error!void {
+    if (row < view.auth_rows.len or row >= view.authRowCount()) return;
+    const gpa = app.gpa;
+    const r = view.option_rows[row - view.auth_rows.len];
+    switch (r.kind) {
+        .verify_tls => try parse.setDirective(&rp.request, gpa, "@insecure", null),
+        .timeout => try parse.setDirective(&rp.request, gpa, "@timeout", null),
+        .follow_redirects => {
+            try parse.setDirective(&rp.request, gpa, "@no-redirect", null);
+            try parse.setDirective(&rp.request, gpa, "@follow-redirects", null);
+        },
+        .max_redirects => try parse.setDirective(&rp.request, gpa, "@max-redirects", null),
+        .proxy => try parse.setDirective(&rp.request, gpa, "@proxy", null),
+    }
+    rp.edited = true;
+    app.toast("options: {s} follows the config", .{r.label});
+    app.needs_render = true;
+}
+
+/// The value prompt of a row, seeded with what the block says.
+pub fn openOptionPrompt(app: *App, rp: *RequestPane, kind: OptionKind) Allocator.Error!void {
+    const gpa = app.gpa;
+    const o = parse.options(&rp.request);
+    var buf: [64]u8 = undefined;
+    const title: []const u8, const current: []const u8 = switch (kind) {
+        .timeout => .{ "Timeout (5s, 500ms, 2m \u{00b7} empty = config default):", if (o.timeout_ms) |ms| parse.formatDuration(&buf, ms) else "" },
+        .max_redirects => .{ "Max redirects (0\u{2013}50 \u{00b7} empty = config default):", if (o.max_redirects) |n| std.fmt.bufPrint(&buf, "{d}", .{n}) catch "" else "" },
+        .proxy => .{ "Proxy (host:port, user:pass@host:port \u{00b7} empty = config default):", o.proxy orelse "" },
+    };
+    var state = Prompt.init(gpa, title);
+    errdefer Prompt.deinit(&state, gpa);
+    try state.setText(gpa, current);
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .http_option = kind } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The prompt's answer: an empty text removes the line.
+pub fn applyOptionPrompt(app: *App, kind: OptionKind, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse {
+        app.toast("options: no active Request pane", .{});
+        return;
+    };
+    const gpa = app.gpa;
+    const value = std.mem.trim(u8, text, " \t\r\n");
+    switch (kind) {
+        .timeout => {
+            if (value.len == 0) {
+                try parse.setDirective(&rp.request, gpa, "@timeout", null);
+            } else if (parse.parseDuration(value)) |ms| {
+                var buf: [32]u8 = undefined;
+                try parse.setDirective(&rp.request, gpa, "@timeout", parse.formatDuration(&buf, ms));
+            } else {
+                app.toast("options: \"{s}\" is not a duration (5s, 500ms, 2m)", .{value});
+                return;
+            }
+        },
+        .max_redirects => {
+            if (value.len == 0) {
+                try parse.setDirective(&rp.request, gpa, "@max-redirects", null);
+            } else if (std.fmt.parseInt(u8, value, 10)) |n| {
+                var buf: [8]u8 = undefined;
+                try parse.setDirective(&rp.request, gpa, "@max-redirects", std.fmt.bufPrint(&buf, "{d}", .{@min(n, 50)}) catch "");
+            } else |_| {
+                app.toast("options: \"{s}\" is not a count (0\u{2013}50)", .{value});
+                return;
+            }
+        },
+        .proxy => {
+            if (value.len == 0) {
+                try parse.setDirective(&rp.request, gpa, "@proxy", null);
+            } else {
+                var scratch = std.heap.ArenaAllocator.init(gpa);
+                defer scratch.deinit();
+                _ = @import("../http/insecure.zig").parseProxy(scratch.allocator(), value) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.UnsupportedProxy => {
+                        app.toast("options: only http proxies (host:port) are supported", .{});
+                        return;
+                    },
+                    error.InvalidProxy => {
+                        app.toast("options: \"{s}\" is not host:port", .{value});
+                        return;
+                    },
+                };
+                try parse.setDirective(&rp.request, gpa, "@proxy", value);
+            }
+        },
+    }
+    rp.edited = true;
+    app.toast("options: {s} {s}", .{ switch (kind) {
+        .timeout => "timeout",
+        .max_redirects => "max redirects",
+        .proxy => "proxy",
+    }, if (value.len == 0) "follows the config" else value });
+    app.needs_render = true;
+}
+
+fn optionRowIndex(kind: view.OptionRow.Kind) usize {
+    for (view.option_rows, 0..) |r, i| if (r.kind == kind) return view.auth_rows.len + i;
+    unreachable;
+}
+
+fn toggleInsecureCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try authRowAdjust(app, rp, optionRowIndex(.verify_tls), 1);
+}
+
+fn setTimeoutCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try openOptionPrompt(app, rp, .timeout);
+}
+
+fn toggleFollowRedirectsCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try authRowAdjust(app, rp, optionRowIndex(.follow_redirects), 1);
+}
+
+fn setMaxRedirectsCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try openOptionPrompt(app, rp, .max_redirects);
+}
+
+fn setProxyCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try openOptionPrompt(app, rp, .proxy);
 }
 
 /// Pretty-print the body as JSON in place.

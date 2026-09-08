@@ -948,17 +948,25 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
         },
         .params => return paramsKey(app, rp, k),
         .auth => {
+            const last = view.authRowCount() - 1;
             switch (k.code) {
                 .up => rp.row_cursor -|= 1,
-                .down => rp.row_cursor = @min(rp.row_cursor + 1, view.auth_rows.len - 1),
+                .down => rp.row_cursor = @min(rp.row_cursor + 1, last),
                 .enter => try http.authRowAction(app, id, rp, rp.row_cursor),
+                .left => try http.authRowAdjust(app, rp, rp.row_cursor, -1),
+                .right => try http.authRowAdjust(app, rp, rp.row_cursor, 1),
                 .char => |c| switch (c) {
                     'k' => rp.row_cursor -|= 1,
-                    'j' => rp.row_cursor = @min(rp.row_cursor + 1, view.auth_rows.len - 1),
+                    'j' => rp.row_cursor = @min(rp.row_cursor + 1, last),
+                    'h' => try http.authRowAdjust(app, rp, rp.row_cursor, -1),
+                    'l' => try http.authRowAdjust(app, rp, rp.row_cursor, 1),
+                    ' ' => try http.authRowAction(app, id, rp, rp.row_cursor),
+                    'r' => try http.authRowReset(app, rp, rp.row_cursor),
                     else => return false,
                 },
                 else => return false,
             }
+            rp.row_cursor = @min(rp.row_cursor, last);
             return true;
         },
         .vars => {
@@ -1572,6 +1580,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .draft = draft,
         .row_cursor = rp.row_cursor,
         .auth_current = auth_current,
+        .options = http.optionsModel(app, rp),
         .vars = vars,
         .env_name = env_name,
         .env_override = app.http.env_override != null,
