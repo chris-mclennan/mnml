@@ -202,6 +202,9 @@ pub const Job = union(enum) {
     /// A command-log row's Enter: `git <argv>` again, for the read-only
     /// commands (`isReadOnly`); the first output line is the toast.
     rerun: [][]u8,
+    /// `show <rev>:<path>` — the file as that commit had it (a detail
+    /// row's "Open file at this revision").
+    show_file: struct { rev: []u8, path: []u8 },
     head_sha,
     /// `commit --amend` with a new message (the AI recompose).
     amend: []u8,
@@ -294,6 +297,10 @@ pub const Job = union(enum) {
                 for (argv) |a| gpa.free(a);
                 gpa.free(argv);
             },
+            .show_file => |s| {
+                gpa.free(s.rev);
+                gpa.free(s.path);
+            },
             .stash => |s| s.deinit(gpa),
             .stash_pop => |s| if (s) |m| gpa.free(m),
             .stash_show => |s| gpa.free(s),
@@ -358,6 +365,8 @@ pub const Result = struct {
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
         /// A stash's files (`stash show --name-status`) and its message.
         stash_show: struct { ref: []const u8, message: []const u8, files: []parse.DetailFile },
+        /// A file's text at a revision (`show rev:path`).
+        file_text: struct { rev: []const u8, path: []const u8, text: []const u8 },
         /// One line of the command log (git-more2): what the worker ran,
         /// where, how it ended and how long it took. Posted from `gitIn`
         /// and `run` for every child; the handler keeps the last 200.
@@ -1029,6 +1038,14 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .delete_remote => |b| try simple(repo, io, r, &.{ "push", "-q", b.remote, "--delete", b.branch }, try std.fmt.allocPrint(arena, "deleted {s}/{s} on the remote", .{ b.remote, b.branch })),
         .push_force => try simple(repo, io, r, &.{ "push", "-q", "--force-with-lease" }, "pushed (--force-with-lease)"),
+        .show_file => |s| {
+            const out = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, "{s}:{s}", .{ s.rev, s.path }) }, null);
+            if (!out.ok) {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "show {s} at {s}", .{ s.path, shortRef(s.rev) }), .ok = false, .msg = out.reason(), .refresh = false } };
+            } else {
+                r.payload = .{ .file_text = .{ .rev = try arena.dupe(u8, s.rev), .path = try arena.dupe(u8, s.path), .text = out.stdout } };
+            }
+        },
         .rerun => |argv| {
             const out = try git(repo, io, arena, argv, null);
             var line: std.ArrayListUnmanaged(u8) = .empty;

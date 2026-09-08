@@ -144,6 +144,8 @@ pub const table = .{
     .@"git.stash_rename" = &stashRename,
     .@"git.command_log" = &commandLog,
     .@"git.command_log_rerun" = &commandLogRerun,
+    .@"git.graph_detail_open" = &graphDetailOpen,
+    .@"git.graph_file_at_rev" = &graphFileAtRev,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -373,12 +375,14 @@ fn blameToggle(app: *App) CommandError!void {
 
 // ─── staging ────────────────────────────────────────────────────────────
 
-/// The status pane's cursor row when one has focus.
+/// The status pane's cursor row when one has focus; the graph's
+/// working-tree file row when its detail column has the keys.
 fn selectedRow(app: *App) CommandError!?git.Row {
     const id = app.active orelse return null;
     const p = app.panes.get(id) orelse return null;
     return switch (p.*) {
         .git_status => |*s| try git.statusPaneRow(app, s),
+        .git_graph => try git.wipDetailRow(app),
         else => null,
     };
 }
@@ -977,6 +981,16 @@ fn graphSort(app: *App) CommandError!void {
 fn graphJumpHash(app: *App) CommandError!void {
     _ = try requireGraph(app);
     git.openPrompt(app, .graph_hash, "Jump to commit (hash prefix)");
+}
+
+/// Enter on a detail row: the file's diff (in the commit, or the tree's).
+fn graphDetailOpen(app: *App) CommandError!void {
+    try git.openDetailRowCmd(app, try requireGraph(app));
+}
+
+/// A commit file row: the file as that commit had it, in a scratch buffer.
+fn graphFileAtRev(app: *App) CommandError!void {
+    try git.showDetailFileAtRev(app, try requireGraph(app));
 }
 
 fn graphDetail(app: *App) CommandError!void {

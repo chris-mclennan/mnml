@@ -46,6 +46,7 @@ const text_field = @import("../ui/text_field.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const cmd_view = @import("cmd_view.zig");
+const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 
@@ -1269,6 +1270,13 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 else => {},
             };
         },
+        .file_text => |ft| {
+            _ = app.openScratchWith(ft.text) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return,
+            };
+            app.toast("{s} at {s} (a scratch copy)", .{ ft.path, ft.rev[0..@min(7, ft.rev.len)] });
+        },
         .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
         .conflict_text => |c| try conflicts.aiContextReady(app, c.path, c.base, c.ours, c.theirs),
         .rail => |rail| {
@@ -2354,9 +2362,11 @@ pub fn stashRenamePrompt(app: *App, ref: []const u8, message: []const u8) Comman
 /// The command log (item 10) fills this in; a stash file row has no
 /// second verb, so the menu offers the copy every list row has.
 pub fn openListRowMenu(app: *App, l: *app_mod.ListPane, x: u16, y: u16) Allocator.Error!void {
-    const arena = app.frame.allocator();
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
     const e = (try l.entryAt(arena, l.cursor)) orelse return;
-    const text: []const u8 = if (e.path) |p| p else e.text;
+    const text: []const u8 = try arena.dupe(u8, if (e.path) |p| p else e.text);
     var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     errdefer items.deinit(app.gpa);
     switch (l.kind) {
@@ -2364,15 +2374,19 @@ pub fn openListRowMenu(app: *App, l: *app_mod.ListPane, x: u16, y: u16) Allocato
         .git_log => {
             const can = if (logEntryOf(app, e.*)) |le| client.isReadOnly(le.args) else false;
             try items.append(app.gpa, .{ .label = if (can) "Re-run (Enter)" else "Re-run (Enter) \u{2014} writes, not offered", .action = .{ .command = .@"git.command_log_rerun" } });
-            const cmd = logCommand(app, e.*) orelse text;
+            const cmd = try arena.dupe(u8, logCommand(app, e.*) orelse text);
             try items.append(app.gpa, .{ .label = "Copy the command", .action = .{ .copy_text = cmd } });
-            try app.openMenu(l.title(), try items.toOwnedSlice(app.gpa), x, y);
+            const rows = try items.toOwnedSlice(app.gpa);
+            errdefer app.gpa.free(rows);
+            try context_menus.openOwned(app, l.title(), rows, x, y, mem);
             return;
         },
         else => {},
     }
     try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy ({s})", .{text[0..@min(text.len, 40)]}), .action = .{ .copy_text = text } });
-    try app.openMenu(l.title(), try items.toOwnedSlice(app.gpa), x, y);
+    const rows = try items.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(rows);
+    try context_menus.openOwned(app, l.title(), rows, x, y, mem);
 }
 
 // ─── the command log (git-more2) ────────────────────────────────────────
@@ -3823,11 +3837,18 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
         return;
     }
     if (graph_view.wipFileOf(hit_id)) |wf| {
-        if (m.button != .left) return;
         const files = try wipFiles(app, app.frame.allocator());
         const list = if (wf.staged) files.staged else files.unstaged;
         if (wf.idx >= list.len) return;
         const repo = app.git.repoById(g.repo) orelse return;
+        // // right-click (git-more2, audit #101): the working tree's file
+        // rows — the graph's embedded diff rows — open the row's menu.
+        if (m.button == .right) {
+            g.detail_focus = true;
+            g.detail_cursor = wf.idx + @as(usize, if (wf.staged) files.unstaged.len else 0);
+            return openDetailRowMenu(app, g, m.x, m.y);
+        }
+        if (m.button != .left) return;
         if (wf.button) return runToast(app, stagePath(app, repo, list[wf.idx].path, !wf.staged));
         g.detail_focus = true;
         g.detail_cursor = wf.idx + @as(usize, if (wf.staged) files.unstaged.len else 0);
@@ -3838,6 +3859,7 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
         const was = g.detail_focus and g.detail_cursor == row;
         g.detail_focus = true;
         g.detail_cursor = row;
+        if (m.button == .right) return openDetailRowMenu(app, g, m.x, m.y);
         if (was and m.button == .left) runToast(app, openDetailRow(app, g));
         return;
     }
@@ -3845,6 +3867,79 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
     g.detail_focus = false;
     moveGraphCursor(app, g, hit_id);
     if (m.button == .right) return openGraphMenu(app, m.x, m.y);
+}
+
+/// The working-tree file the graph's detail column has the cursor on,
+/// for the `git.stage` family off the graph (the status pane's row
+/// otherwise); null when the graph is not on its WIP row.
+pub fn wipDetailRow(app: *App) Allocator.Error!?Row {
+    const g = activeGraph(app) orelse return null;
+    if (!g.wipSelected() or !g.detail_focus) return null;
+    return wipRow(app, g, g.detail_cursor);
+}
+
+/// Enter's twin for the detail rows' menu.
+pub fn openDetailRowCmd(app: *App, g: *GraphPane) CommandError!void {
+    return openDetailRow(app, g);
+}
+
+/// A commit file row's "Open file at this revision": the file's text
+/// as that commit had it, in a scratch buffer.
+pub fn showDetailFileAtRev(app: *App, g: *GraphPane) CommandError!void {
+    const arena = app.frame.allocator();
+    if (g.wipSelected()) return app.diag.fail(arena, "graph: the working tree's file is on disk already", .{});
+    const c = g.selected() orelse return app.diag.fail(arena, "graph: no commit selected", .{});
+    const d = g.detail orelse return app.diag.fail(arena, "graph: the detail has not loaded", .{});
+    if (g.detail_cursor >= d.files.len) return app.diag.fail(arena, "graph: no file row selected", .{});
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    const rev = try app.gpa.dupe(u8, c.hash);
+    errdefer app.gpa.free(rev);
+    try submit(app, repo, .{ .show_file = .{ .rev = rev, .path = try app.gpa.dupe(u8, d.files[g.detail_cursor].path) } });
+}
+
+/// The detail column's file rows' menu (audit #101 — Rust's embedded
+/// diff rows): a working-tree row offers the diff, the file, stage /
+/// unstage, discard and the path; a commit's row the diff in that
+/// commit, the file at that revision, the hash, the path and the
+/// remote.
+fn openDetailRowMenu(app: *App, g: *GraphPane, x: u16, y: u16) Allocator.Error!void {
+    // The labels and the copy_text rows live on the menu's own arena:
+    // the frame's is gone by the time the menu paints again.
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    if (g.wipSelected()) {
+        const row = (try wipRow(app, g, g.detail_cursor)) orelse return;
+        try items.append(app.gpa, .{ .label = "Open diff (Enter)", .action = .{ .command = .@"git.graph_detail_open" } });
+        try items.append(app.gpa, .{ .label = "Open file", .action = .{ .command = .@"git.open_file" } });
+        if (row.staged) {
+            try items.append(app.gpa, .{ .label = "Unstage", .action = .{ .command = .@"git.unstage" }, .separator_before = true });
+        } else {
+            try items.append(app.gpa, .{ .label = "Stage", .action = .{ .command = .@"git.stage" }, .separator_before = true });
+        }
+        try items.append(app.gpa, .{ .label = "Discard changes\u{2026}", .action = .{ .command = .@"git.discard" } });
+        try items.append(app.gpa, .{ .label = "Stash this file\u{2026}", .action = .{ .command = .@"git.stash_file" } });
+        const path = try arena.dupe(u8, row.path);
+        try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy path ({s})", .{path}), .action = .{ .copy_text = path }, .separator_before = true });
+        const rows = try items.toOwnedSlice(app.gpa);
+        errdefer app.gpa.free(rows);
+        try context_menus.openOwned(app, std.fs.path.basename(path), rows, x, y, mem);
+        return;
+    }
+    const c = g.selected() orelse return;
+    const d = g.detail orelse return;
+    if (g.detail_cursor >= d.files.len) return;
+    const path = d.files[g.detail_cursor].path;
+    try items.append(app.gpa, .{ .label = "Open the file's diff in this commit (Enter)", .action = .{ .command = .@"git.graph_detail_open" } });
+    try items.append(app.gpa, .{ .label = "Open file at this revision", .action = .{ .command = .@"git.graph_file_at_rev" } });
+    try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy commit hash ({s})", .{c.short()}), .action = .{ .copy_text = c.hash }, .separator_before = true });
+    try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy path ({s})", .{path}), .action = .{ .copy_text = path } });
+    try items.append(app.gpa, .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" }, .separator_before = true });
+    const rows = try items.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(rows);
+    try context_menus.openOwned(app, std.fs.path.basename(path), rows, x, y, mem);
 }
 
 fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
@@ -5510,4 +5605,67 @@ test "the command log: every child lands as a line; a failed op's toast carries 
     const shown = try lp.shown(arena_state.allocator());
     try testing.expectEqual(@as(usize, 1), shown.len);
     try testing.expectEqualStrings("git --no-pager -c color.ui=never pull --ff-only -q", logCommand(&f.app, lp.entries.items[shown[0]]).?);
+}
+
+test "the detail rows' menu (audit #101): a working-tree row offers stage / discard / the path and the git.stage family reads it; a commit's file row offers the file at that revision, which opens as a scratch copy, and the hash" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("a.txt", "one\ntwo\n");
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+    const id = f.app.active.?;
+    try testing.expect(g.has_wip);
+    try testing.expect(g.wipSelected());
+    // A right press on the WIP file row: the cursor, then the menu.
+    try graphClick(&f.app, id, g, graph_view.wipFileId(.{ .idx = 0, .staged = false, .button = false }), .{ .kind = .press, .button = .right, .x = 90, .y = 6 });
+    try testing.expect(f.app.overlay == .menu);
+    const rows = f.app.overlay.menu.items;
+    try testing.expectEqualStrings("Open diff (Enter)", rows[0].label);
+    try testing.expectEqualStrings("Stage", rows[2].label);
+    try testing.expectEqualStrings("Copy path (a.txt)", rows[rows.len - 1].label);
+    // The stage family reads the graph's row: git.stage stages a.txt.
+    f.app.overlay.deinit(f.app.gpa);
+    try testing.expectEqualStrings("a.txt", (try wipDetailRow(&f.app)).?.path);
+    try command.run(&f.app, .{ .static = .@"git.stage" });
+    try f.settle(4000);
+    const st = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st);
+    try testing.expectEqualStrings("M  a.txt", st);
+
+    // The commit's file row: the menu names the hash; the file at that
+    // revision opens as a scratch copy with the committed text.
+    moveGraphCursor(&f.app, g, g.rowOfCommit(headIndex(&f.app, g).?));
+    try f.settle(4000);
+    try testing.expect(g.detail != null);
+    // The files sort by path: .gitignore first, a.txt after it.
+    const a_row: u32 = for (g.detail.?.files, 0..) |fl, i| {
+        if (std.mem.eql(u8, fl.path, "a.txt")) break @intCast(i);
+    } else return error.TestUnexpectedResult;
+    try graphClick(&f.app, id, g, graph_view.detailRowId(a_row), .{ .kind = .press, .button = .right, .x = 90, .y = 8 });
+    try testing.expect(f.app.overlay == .menu);
+    const rows2 = f.app.overlay.menu.items;
+    try testing.expectEqualStrings("Open the file's diff in this commit (Enter)", rows2[0].label);
+    try testing.expectEqualStrings("Open file at this revision", rows2[1].label);
+    const want = try std.fmt.allocPrint(testing.allocator, "Copy commit hash ({s})", .{g.selected().?.short()});
+    defer testing.allocator.free(want);
+    try testing.expectEqualStrings(want, rows2[2].label);
+    f.app.overlay.deinit(f.app.gpa);
+    try command.run(&f.app, .{ .static = .@"git.graph_file_at_rev" });
+    var spins: usize = 0;
+    while (f.app.panes.editor(f.app.active.?) == null and spins < 800) : (spins += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    const e = f.app.panes.editor(f.app.active.?) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("one\n", e.buf.editor.bytes());
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "a.txt at"));
 }

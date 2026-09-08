@@ -1,0 +1,38 @@
+# Right-click on the graph's detail file rows (audit #101 — Rust's
+# embedded diff rows; src/app/git.zig `openDetailRowMenu`): a working
+# tree row offers the diff, stage and the path; a commit's file row the
+# diff in the commit, the file at that revision and the hash. At
+# 120x40 the WIP row's `? b.txt` sits at (95,6); on `first` the file
+# row `A a.txt` at (93,8).
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+write b.txt "two\n"
+command git.graph
+wait 600
+expect screen contains "? b.txt"
+rightclick 95 6
+expect screen contains "Open diff (Enter)"
+expect screen contains "Stage"
+expect screen contains "Copy path (b.txt)"
+key esc
+# The right press left the detail column with the keys: tab back, then down.
+key tab
+key j
+wait 300
+expect screen contains "A a.txt"
+rightclick 93 8
+expect screen contains "Open the file's diff in this commit (Enter)"
+expect screen contains "Open file at this revision"
+expect screen contains "Copy commit hash ("
+expect screen contains "Copy path (a.txt)"
+# The second row: the file as `first` had it, in a scratch buffer.
+key down
+key enter
+wait 300
+expect screen contains "a.txt at"
+expect screen contains "one"

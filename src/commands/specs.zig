@@ -1060,6 +1060,9 @@ pub const specs = [_]Spec{
     // git-more2: the command log.
     .{ .id = "git.command_log", .title = "Git: the command log — every git the worker ran, its cwd, exit, duration and first stderr line (newest first; y copies, Enter re-runs a read-only one)", .group = "git" },
     .{ .id = "git.command_log_rerun", .title = "Git: re-run the selected command-log entry (read-only commands only)", .group = "git" },
+    // git-more2: the graph's detail file rows (audit #101).
+    .{ .id = "git.graph_detail_open", .title = "Graph: open the detail column's file — its diff in the commit, or the working tree's (Enter)", .group = "git" },
+    .{ .id = "git.graph_file_at_rev", .title = "Graph: open the detail column's file as the selected commit had it (a scratch copy)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1099,7 +1102,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1029 specs, unique ids" {
+test "1031 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1113,7 +1116,8 @@ test "1029 specs, unique ids" {
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
     // + four diff-any-two-refs commands + eight branch verbs + seven
-    // stash commands + two command-log commands (git-more2).
-    try std.testing.expectEqual(@as(usize, 1029), specs.len);
+    // stash commands + two command-log commands + two detail-row
+    // commands (git-more2).
+    try std.testing.expectEqual(@as(usize, 1031), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
