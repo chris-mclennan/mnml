@@ -1,0 +1,21 @@
+# env: HOME=home
+# The row menu, as Rust's: Pin first, Move up / down, Rename…, then this
+# panel's transcript rows. Enter on Pin pins the card — the 󰐃 before its
+# name — and the menu then offers Unpin.
+
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+command view.activity_sessions
+key w
+wait 500
+rightclick 10 6
+expect screen contains "Pin"
+expect screen contains "Move up"
+expect screen contains "Rename…"
+expect screen contains "Resume in a terminal"
+expect screen contains "Delete transcript…"
+key enter
+expect screen contains "󰐃 "
+rightclick 10 6
+expect screen contains "Unpin"
+key esc

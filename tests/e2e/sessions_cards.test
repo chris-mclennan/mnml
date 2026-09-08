@@ -1,0 +1,23 @@
+# env: HOME=home
+# SESSIONS lists the Claude Code sessions of $HOME/.claude/projects as
+# Rust's cards: the name (the session's last prompt), then `exited` for
+# a session whose process is gone, or the transcript's last exchange —
+# `you: …` / `claude: …`, clipped to the card with an ellipsis — for
+# one that runs (a fake `claude --resume <id>` here, found through
+# `ps`). HOME is relative, so it is under this workspace.
+
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+write fake-claude.sh #!/bin/bash\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done' --resume e2e00000-0000-4000-8000-000000000002
+shell chmod +x fake-claude.sh && (nohup ./fake-claude.sh >/dev/null 2>&1 &)
+wait 300
+command view.activity_sessions
+# The sessions belong to no workspace of ours: w shows every one's.
+key w
+wait 800
+expect screen contains "+ New session"
+expect screen contains "fix the failing tests"
+expect screen contains "you: fix the failin…"
+expect screen contains "claude: Running the…"
+expect screen contains "write the release notes"
+expect screen contains "exited"

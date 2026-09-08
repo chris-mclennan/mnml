@@ -1,0 +1,16 @@
+# env: HOME=home
+# The green + New session row sits under the filter with a blank row on
+# either side; k from the first card climbs onto it and its marker
+# shows; j drops back. It runs ai.claude_code_new — not pressed here,
+# the real claude would start.
+
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+command view.activity_sessions
+key w
+wait 500
+expect screen contains "+ New session"
+expect screen contains "write the release notes"
+key k
+expect screen contains "▌ + New session"
+key j
+expect screen lacks "▌ + New session"

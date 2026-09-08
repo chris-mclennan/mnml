@@ -1,0 +1,17 @@
+# env: HOME=home
+# s flips SESSIONS' own axis — State / Manual — says so and persists it
+# (the sort chip's click does the same); J adopts the visible order as
+# the manual list and lands on Manual by itself.
+
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+command view.activity_sessions
+key w
+wait 500
+key s
+expect screen contains "sessions: Manual"
+key s
+expect screen contains "sessions: State"
+expect file .mnml/config.zon contains "auto"
+key J
+expect file .mnml/config.zon contains "manual"

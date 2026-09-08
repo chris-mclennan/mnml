@@ -1,0 +1,19 @@
+# env: HOME=home
+# The filter pill narrows the cards by name; Esc clears the text, then
+# blurs the pill. (The header's count gives way to the chips at the
+# sidebar's width, so the narrowing shows in the cards.)
+
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+command view.activity_sessions
+key w
+wait 500
+expect screen contains "SESSIONS (2)"
+key /
+type release
+expect screen contains "󰍉 release"
+expect screen contains "write the release notes"
+expect screen lacks "fix the failing tests"
+key esc
+expect screen contains "SESSIONS (2)"
+expect screen contains "fix the failing tests"

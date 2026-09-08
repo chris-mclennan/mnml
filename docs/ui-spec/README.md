@@ -152,7 +152,11 @@ workspace at 120×40:
   and that dump is unpinned. Accepted residue: the header's count
   spacing, the filter pill, the info box's copy, the version line, the
   statusline chips, the panes on the right, and — Zig's — the
-  scrollbar column when the cards overflow.
+  scrollbar column when the cards overflow. `src/sessions.zig`'s unit
+  test embeds the 120×40 dump and holds rows 3–18 to it cell for cell;
+  `tests/e2e/sessions_*.test` seed their own home (`# env: HOME=home`,
+  a relative HOME is under the workspace) and need no fake `claude`
+  beyond the one script that starts a sleeping process for a live card.
 - `outline` — `src/main.rs` open, `view.toggle_right_panel`,
   `outline.show`: the outline in the right panel at Rust's 32 cells (the
   divider at 87), a strip row above it (`main.rs ⌥1   󰐕 … ×`,
