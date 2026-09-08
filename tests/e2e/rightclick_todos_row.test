@@ -1,0 +1,12 @@
+# A TODOS row's right-click opens the row menu the kebab does — the
+# fast route beside the discoverable one. The row is at (10, 6) once
+# the section is up.
+write TODO.md "- TODO: one thing\n"
+command view.activity_todos
+wait 300
+expect screen contains "TODO one thing"
+rightclick 10 6
+expect screen contains "Open in Claude Code"
+expect screen contains "Mark done"
+key esc
+expect screen lacks "Mark done"

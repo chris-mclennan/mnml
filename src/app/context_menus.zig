@@ -1495,6 +1495,88 @@ fn openMenuBarMenu(app: *App, which: @import("menu_bar.zig").Menu, x: u16, y: u1
 
 const t = std.testing;
 
+fn closeMenu(app: *App) void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+}
+
+test "right-click: the workspace chip, the Ln/Col chip, the PR chip, the AI chips and the workspace headers open Rust's rows" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    // One repo: the repo rows stay out and the worktree picker leads.
+    try openWorkspaceChipMenu(&app, 3, 3);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("tmp", app.overlay.menu.title);
+    try t.expectEqualStrings("Worktrees…", app.overlay.menu.items[0].label);
+    try t.expect(!app.overlay.menu.items[0].separator_before);
+    closeMenu(&app);
+    // The position chip carries the cursor's own text.
+    _ = try app.openScratch();
+    try openPositionMenu(&app, 3, 3);
+    try t.expectEqualStrings("Cursor", app.overlay.menu.title);
+    try t.expectEqualStrings("Copy position (1:1)", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("1:1", app.overlay.menu.items[1].action.copy_text);
+    closeMenu(&app);
+    // No PR: no menu, nothing to act on.
+    try openPrMenu(&app, 3, 3);
+    try t.expect(app.overlay == .none);
+    // The Codex chip opens Codex's usage; the mode rows tick the state.
+    try openAiChipMenu(&app, true, 3, 3);
+    try t.expectEqualStrings("Codex", app.overlay.menu.title);
+    try t.expectEqual(command.CommandId.@"ai.codex_usage", app.overlay.menu.items[0].action.command);
+    try t.expect(app.overlay.menu.items[5].checked); // Both, the default
+    closeMenu(&app);
+    // The primary header leads with the fold; an extra root with switch-to.
+    try openWorkspaceHeaderMenu(&app, 0, 3, 3);
+    try t.expectEqualStrings("Collapse / expand section", app.overlay.menu.items[0].label);
+    try t.expectEqual(app_mod.FocusId.tree, app.overlay.menu.return_focus);
+    closeMenu(&app);
+    try openWorkspaceHeaderMenu(&app, 1, 3, 3);
+    try t.expectEqualStrings("Switch to this workspace", app.overlay.menu.items[0].label);
+    closeMenu(&app);
+}
+
+test "right-click: the chrome chips — a chip with a menu answers true, one without false; the theme pill ticks the painted theme" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const render = @import("render.zig");
+    try t.expect(!try openButtonMenu(&app, @intFromEnum(render.Button.hidden_tabs), 3, 3));
+    try t.expect(app.overlay == .none);
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.toggle_tree), 3, 3));
+    try t.expectEqualStrings("Sidebar", app.overlay.menu.title);
+    closeMenu(&app);
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.theme_toggle), 3, 3));
+    var ticked: usize = 0;
+    for (app.overlay.menu.items) |it| if (it.action == .set_theme) {
+        if (it.checked) {
+            ticked += 1;
+            try t.expectEqualStrings(app.theme.name, it.action.set_theme);
+        }
+    };
+    try t.expectEqual(@as(usize, 1), ticked);
+    closeMenu(&app);
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
+    try t.expectEqualStrings("Terminal", app.overlay.menu.title);
+    try t.expectEqual(command.CommandId.@"term.shell_left", app.overlay.menu.items[1].action.command);
+    closeMenu(&app);
+    // A page chip: the page is shown, its rows act on it.
+    try t.expect(try openButtonMenu(&app, render.Button.tabPage(0), 3, 3));
+    try t.expectEqualStrings("Tab page 1", app.overlay.menu.title);
+    closeMenu(&app);
+    try t.expect(!try openButtonMenu(&app, render.Button.tabPage(7), 3, 3));
+}
+
+test "right-click: a copy_text row lands on the clipboard after the menu's own arena is gone" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try openPositionMenu(&app, 3, 3);
+    const action = app.overlay.menu.items[1].action;
+    try @import("dispatch.zig").runMenuActionForTest(&app, action);
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("1:1", app.clipboard.text());
+}
+
 test "the request field menu is titled by the field under the pointer" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();

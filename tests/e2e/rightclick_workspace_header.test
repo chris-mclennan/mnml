@@ -1,0 +1,9 @@
+# The > WORKSPACE header's right-click is the same workspace menu as
+# the empty rows below the tree; a left press still folds.
+write a.txt "hello\n"
+open a.txt
+rightclick 8 1
+expect screen contains "Collapse / expand section"
+expect screen contains "Copy path"
+key esc
+expect screen lacks "Collapse / expand section"

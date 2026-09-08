@@ -1,0 +1,11 @@
+# The theme pill's right-click: the toggle (naming what it needs when
+# nothing is configured), the system follow, the reset, the picker,
+# then every theme. At 120x40 the pill is at column 114 of row 0.
+write a.txt "hello\n"
+open a.txt
+rightclick 114 0
+expect screen contains "┌ Theme"
+expect screen contains "Toggle (set ui.theme_toggle first)"
+expect screen contains "Pick theme…"
+key esc
+expect screen lacks "Pick theme…"

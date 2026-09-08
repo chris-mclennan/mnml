@@ -1,0 +1,11 @@
+# A tab's badge cells (the 󰅖) route a right press to the tab's menu,
+# as Rust's tab rect did — a left press there still closes. The menu
+# carries the file rows: the two reveals and the path.
+write a.txt "hello\n"
+open a.txt
+rightclick 39 1
+expect screen contains "┌ a.txt"
+expect screen contains "Close others"
+expect screen contains "Reveal in tree"
+key esc
+expect pane "a.txt"

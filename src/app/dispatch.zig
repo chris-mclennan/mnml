@@ -3219,3 +3219,94 @@ test "gestures: a divider drag resizes with the minimum kept, a tab drag reorder
     try std.testing.expect(app.overlay == .none);
     try std.testing.expectEqual(@as(usize, 3), leaf.tabs.items.len);
 }
+
+// ─── right-click: the structural test ───────────────────────────────────
+
+/// What each hit kind does with the right button. `EnumArray.init`
+/// wants every tag, so a new `HitTarget` variant does not compile until
+/// it is placed here — with a menu of its own, a delegate that opens
+/// one, or a one-word reason it has none. The test below then checks
+/// the claim against `mouse`'s own source.
+pub const RightClick = union(enum) {
+    /// The arm in `mouse` reads `.right` itself.
+    here,
+    /// The arm hands the press to this call, which reads `.right`.
+    delegated: []const u8,
+    /// No right-click, and the one-word reason.
+    none: []const u8,
+};
+
+const HitTag = std.meta.Tag(@import("../ui/hit.zig").HitTarget);
+
+pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
+    .pane = .here,
+    .divider = .{ .none = "drag" },
+    .tab = .here,
+    .tab_close = .here,
+    .breadcrumb = .here,
+    .row = .{ .delegated = "rowMouse" },
+    .kebab = .{ .delegated = "kebabMouse" },
+    .chip = .{ .delegated = "chipMouse" },
+    .filter_input = .{ .none = "focus" },
+    .scrollbar = .{ .none = "drag" },
+    .button = .here,
+    .link = .here,
+    .menu_item = .here,
+    .statusline_seg = .here,
+    .tree_node = .here,
+    .tree_root = .here,
+    .tree_empty = .here,
+    .tree_chip = .{ .none = "one-verb" },
+    .info_view = .{ .delegated = "info_view_app.mouse" },
+    .script_hit = .here,
+    .editor_cell = .{ .delegated = "editorCellMouse" },
+    .gutter = .here,
+    .overlay_item = .{ .none = "overlay" },
+    .dock = .{ .delegated = "dock.mouse" },
+    .rail = .{ .delegated = "activity_bar.mouse" },
+    .welcome = .here,
+    .git_palette = .{ .delegated = "git_palette.partMouse" },
+    .http = .{ .delegated = "http_panel.partMouse" },
+});
+
+/// The source of `mouse`'s arm for `tag`: from `        .tag => ` (the
+/// switch's own indent) to the next arm at that indent, or the switch's
+/// close.
+fn armSource(body: []const u8, tag: []const u8) ?[]const u8 {
+    var needle_buf: [64]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\n        .{s} => ", .{tag}) catch return null;
+    const start = std.mem.indexOf(u8, body, needle) orelse return null;
+    const rest = body[start + needle.len ..];
+    const next_arm = std.mem.indexOf(u8, rest, "\n        .") orelse rest.len;
+    const close = std.mem.indexOf(u8, rest, "\n    }") orelse rest.len;
+    return rest[0..@min(next_arm, close)];
+}
+
+test "right-click: every HitTarget's mouse arm reads the right button, hands it to a call that does, or is listed with a reason" {
+    const src = @embedFile("dispatch.zig");
+    const start = std.mem.indexOf(u8, src, "\npub fn mouse(").?;
+    const body = src[start..];
+    inline for (std.meta.fields(HitTag)) |f| {
+        const arm = armSource(body, f.name) orelse {
+            std.debug.print("no `.{s} =>` arm in dispatch.mouse\n", .{f.name});
+            return error.TestUnexpectedResult;
+        };
+        const claim = right_click_of.get(@field(HitTag, f.name));
+        const ok = switch (claim) {
+            .here => std.mem.indexOf(u8, arm, ".right") != null,
+            .delegated => |call| std.mem.indexOf(u8, arm, call) != null,
+            .none => std.mem.indexOf(u8, arm, ".right") == null,
+        };
+        if (!ok) {
+            std.debug.print("`.{s}` is listed as {s} but its arm says otherwise\n", .{ f.name, @tagName(claim) });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "right-click: armSource finds an arm by its exact tag and stops at the next" {
+    const body = "\npub fn mouse() {\n    switch (t) {\n        .tab => |tb| {\n            x\n        },\n        .tab_close => |tb| {\n            .right\n        },\n    }\n}\n";
+    try std.testing.expect(std.mem.indexOf(u8, armSource(body, "tab").?, ".right") == null);
+    try std.testing.expect(std.mem.indexOf(u8, armSource(body, "tab_close").?, ".right") != null);
+    try std.testing.expect(armSource(body, "nope") == null);
+}

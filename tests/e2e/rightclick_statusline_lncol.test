@@ -1,0 +1,11 @@
+# The Ln/Col chip's right-click: Go to line… and the position, which
+# carries the cursor's own text. At 120x40 with a.txt open the chip
+# sits around column 76 of the statusline (row 38).
+write a.txt "hello\n"
+open a.txt
+rightclick 76 38
+expect screen contains "┌ Cursor"
+expect screen contains "Go to line…"
+expect screen contains "Copy position (1:1)"
+key esc
+expect screen lacks "Copy position"
