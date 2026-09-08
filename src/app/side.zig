@@ -44,6 +44,12 @@ pub const table = .{
 /// pane (search, debug, …) and has no side.
 pub const Surface = union(enum) { tree, panel: PanelId };
 
+/// Whether the right column paints its strip row (title, `+`, `×`) over
+/// the section: only the pane-backed ones Rust's right panel tabbed.
+pub fn hasStrip(s: Section) bool {
+    return s == .outline or s == .diagnostics;
+}
+
 pub fn surface(s: Section) ?Surface {
     return switch (s) {
         .explorer => .tree,

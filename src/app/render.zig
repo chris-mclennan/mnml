@@ -402,12 +402,15 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     }
     // ── right column ──
     // Rust's right panel carries a strip row above its content — the
-    // pane's title and a `×` — so the section lands one row down.
+    // pane's title and a `×` — so a pane-backed section (the outline,
+    // diagnostics) lands one row down. A section moved to the right
+    // is still a section: it starts with its caps header, as on the
+    // left, and gets no strip.
     if (!fr.right.isEmpty()) {
         drawDivider(app, ui, fr.right_divider, right_divider_id);
         if (side_mod.shown(app, .right)) |s| {
             var area = fr.right;
-            if (area.h >= 2) {
+            if (area.h >= 2 and side_mod.hasStrip(s)) {
                 const parts = area.splitTop(1);
                 try drawRightStrip(app, ui, parts.top, s);
                 area = parts.rest;

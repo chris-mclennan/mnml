@@ -12,11 +12,13 @@ expect screen contains "Move to right side"
 key down
 key enter
 # TODOS was closed: it moved without opening, and the tree stayed.
-expect screen lacks "TODOs  "
+expect screen lacks "TODOS"
 expect screen contains "treemarker.txt"
 click 1 22
 command todos.refresh
-expect screen contains "TODOs  "
+# A moved section gets no strip: TODOS on the right shows its rows
+# beside the tree's file.
+expect screen contains "TODOS"
 expect screen contains "alpha marker"
 expect screen contains "treemarker.txt"
 rightclick 1 22
@@ -24,6 +26,5 @@ expect screen contains "Move to left side"
 expect screen lacks "Move to right side"
 key down
 key enter
-expect screen lacks "TODOs  "
 expect screen contains "alpha marker"
 expect screen lacks "treemarker.txt"

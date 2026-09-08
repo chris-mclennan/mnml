@@ -3418,6 +3418,14 @@ lines, all of them the LSP toast and the statusline's stock / now-playing
   cursor is an index into the filtered view (`visible`, `fuzzy.score`
   on the name); `jump` / `clickRow` resolve through it. `q` closes
   (Zig's; Rust has no key for it).
+- `// changed (2026-09-07, strip rule):` the strip row is painted only
+  over the pane-backed sections Rust's right panel tabbed — the outline
+  and diagnostics (`side.hasStrip`). A section MOVED to the right (TODOS,
+  NOTES, HTTP, the explorer …) is still a section: it starts with its
+  caps header on either side and gets no strip, so its title is not
+  painted twice. The scripts that used `TODOs  ` (the strip's chip) as
+  the right column's fingerprint now use "the tree's file and the
+  section's rows both on screen"; the header's ⟳ / `+` sit on row 1.
 - `// changed (section-side / strip):` `ui/side_strip.zig` paints the
   right column's strip row as Rust's tab strip: the chip ` title `
   (bold on `bg2`, the outline's live `tabTitle` — `main.rs ⌥1`, `main.rs

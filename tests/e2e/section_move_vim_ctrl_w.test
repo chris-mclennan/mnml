@@ -8,15 +8,17 @@ command editor.use_vim
 command view.activity_todos
 command todos.refresh
 expect screen contains "alpha marker"
-expect screen lacks "TODOs  "
+expect screen lacks "treemarker.txt"
 key ctrl+w
 key L
-expect screen contains "TODOs  "
+# A moved section gets no strip: the fingerprint of TODOS on the right
+# is the tree's file and the TODOS rows both on screen.
+expect screen contains "TODOS"
 expect screen contains "treemarker.txt"
 expect screen contains "alpha marker"
 key ctrl+w
 key H
-expect screen lacks "TODOs  "
+expect screen contains "alpha marker"
 expect screen lacks "treemarker.txt"
 expect screen contains "alpha marker"
 # The tree is a window too: Ctrl-W L from it moves the explorer.
@@ -24,9 +26,10 @@ command view.activity_explorer
 expect screen contains "treemarker.txt"
 key ctrl+w
 key L
-expect screen contains "Explorer  "
+# No strip on the right for the explorer either: the left column falls
+# back to the section it showed before (TODOS), so both are on screen.
 expect screen contains "treemarker.txt"
+expect screen contains "alpha marker"
 key ctrl+w
 key H
-expect screen lacks "Explorer  "
 expect screen contains "treemarker.txt"

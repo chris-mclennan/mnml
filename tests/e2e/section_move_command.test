@@ -2,10 +2,10 @@
 # section (Rust's placement): opening it takes the tree's column. The
 # `view.move_section_right` command moves the focused section to the
 # right column and the tree comes back on the left — both on screen —
-# and `view.move_section_left` brings it back. The right column carries
-# a strip row titled with the section (`TODOs` padded to the `×`); the
-# left has none, so that word plus two spaces is the right column's
-# fingerprint (the move's toast reads `TODOs → …`).
+# and `view.move_section_left` brings it back. A moved section gets no
+# strip row: it starts with its caps header on either side, so the
+# fingerprint of "TODOS on the right" is the tree's file and the TODOS
+# rows both on screen (on the left they are exclusive).
 write treemarker.txt "a file the tree lists\n"
 write src/a.zig "// TODO: alpha marker\n"
 open src/a.zig
@@ -15,10 +15,10 @@ command todos.refresh
 expect screen contains "TODOS"
 expect screen contains "alpha marker"
 expect screen lacks "treemarker.txt"
-expect screen lacks "TODOs  "
 
 command view.move_section_right
-expect screen contains "TODOs  "
+expect screen contains "TODOS"
+expect screen lacks "TODOs  "
 expect screen contains "alpha marker"
 expect screen contains "treemarker.txt"
 # The keys stayed with the section: / opens its filter.
@@ -29,7 +29,6 @@ key esc
 key esc
 
 command view.move_section_left
-expect screen lacks "TODOs  "
 expect screen contains "alpha marker"
 expect screen lacks "treemarker.txt"
 # A pane section has no side: the command says so and nothing moves.
