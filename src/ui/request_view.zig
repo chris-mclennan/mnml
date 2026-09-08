@@ -39,6 +39,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const parse_mod = @import("../http/parse.zig");
 const text_field = @import("text_field.zig");
 const editor_view = @import("editor_view.zig");
 const find_mod = @import("../app/find.zig");
@@ -270,6 +271,10 @@ pub const Model = struct {
     source: []const u8,
     source_caret: usize,
     params: []const Pair,
+    /// The Body tab's mode (`# @body-type`): the chip on the strip's
+    /// right, painted when the tab has the keyboard or the mode is
+    /// not `raw`.
+    body_type: parse_mod.BodyType = .raw,
     /// The URL's `:name` path segments with their `# @path` values —
     /// the `Path` group above `Query` on the Params tab; the row
     /// cursor runs down both.
@@ -349,6 +354,8 @@ pub const hit_type: u32 = 54;
 pub const hit_save: u32 = 55;
 pub const hit_clear: u32 = 56;
 pub const hit_code: u32 = 57;
+/// The Body tab's mode chip (`[raw] JSON form multipart`).
+pub const hit_body_type: u32 = 58;
 pub const hit_param_row: u32 = 100; // + row
 pub const hit_auth_row: u32 = 200; // + row
 pub const hit_var_row: u32 = 300; // + row
@@ -660,6 +667,10 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
         ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = (if (secondary) hit_split_tab_base else hit_tab_base) + @as(u32, @intCast(i)) } });
         x += w + 2;
     }
+    // The Body tab's mode chip at the strip's right edge — the settings
+    // idiom, the current mode bracketed — when the tab has the keyboard
+    // or the mode is anything but raw (so the default screen is Rust's).
+    if (tab == .body and !secondary and (focused or m.body_type != .raw)) drawBodyTypeChip(ui, pane, r, x, m.body_type);
     if (r.h <= 2) return null;
     const content = Rect.init(r.x, r.y + 2, r.w, r.h - 2);
     const content_hit = if (secondary) hit_split_content else hit_content;
@@ -722,6 +733,24 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
             return null;
         },
     }
+}
+
+/// `[raw] JSON form multipart` right-aligned on the strip row from
+/// `x_min`, one hit for the lot: a click cycles, a right-click lists.
+fn drawBodyTypeChip(ui: Ui, pane: PaneId, r: Rect, x_min: u16, cur: parse_mod.BodyType) void {
+    const p = ui.theme.palette;
+    var w: u16 = 0;
+    for (parse_mod.BodyType.all) |t| w += ui.width(t.label()) + 2;
+    if (r.right() < x_min + w + 1) return;
+    const x0 = r.right() - w - 1;
+    var x = x0;
+    for (parse_mod.BodyType.all) |t| {
+        const on = t == cur;
+        x += ui.putStr(x, r.y, r.right() -| x, if (on) "[" else " ", .{ .fg = p.bg3, .bg = p.bg_dark });
+        x += ui.putStr(x, r.y, r.right() -| x, t.label(), if (on) .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true } else dim(p));
+        x += ui.putStr(x, r.y, r.right() -| x, if (on) "]" else " ", .{ .fg = p.bg3, .bg = p.bg_dark });
+    }
+    ui.hit(Rect.init(x0, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_body_type } });
 }
 
 fn dim(p: Theme.Palette) Style {
@@ -2114,4 +2143,33 @@ test "the Params tab with path params: the Path group over Query, the unset valu
     try testing.expect(fx.fgEql(6, 13, .{ .fg = fx.theme.palette.cyan }));
     try testing.expect(fx.fgEql(6, 11, .{ .fg = fx.theme.palette.purple }));
     try testing.expect(!fx.fgEql(6, q_y, .{ .fg = fx.theme.palette.cyan }));
+}
+
+test "the body-type chip: absent on the default screen, on the strip once the tab has the keyboard, the mode bracketed, one hit" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    const before = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, before, "[raw]") == null);
+    m.field = .content;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    const focused = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, focused, "[raw] JSON  form  multipart") != null);
+    // The chip's hit spans the four words on the strip row (row 4).
+    const at = std.mem.indexOf(u8, focused, "[raw]").?;
+    const row_start = std.mem.lastIndexOfScalar(u8, focused[0..at], '\n').? + 1;
+    const y: u16 = @intCast(std.mem.count(u8, focused[0..at], "\n"));
+    const x: u16 = @intCast(try std.unicode.utf8CountCodepoints(focused[row_start..at]));
+    try testing.expectEqual(hit_body_type, fx.hits.at(x + 1, y).?.script_hit.id);
+    try testing.expectEqual(hit_body_type, fx.hits.at(x + 20, y).?.script_hit.id);
+    // A non-raw mode shows without the keyboard.
+    m.field = .url;
+    m.body_type = .multipart;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    const multi = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, multi, " raw  JSON  form [multipart]") != null);
 }

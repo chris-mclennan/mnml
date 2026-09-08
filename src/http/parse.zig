@@ -12,6 +12,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const script_mod = @import("script.zig");
+const multipart = @import("multipart.zig");
 
 pub const ParseError = error{ NoUrl, UnterminatedQuote, Empty } || Allocator.Error;
 
@@ -389,6 +390,74 @@ fn directiveLine(a: Allocator, word: []const u8, value: []const u8) Allocator.Er
     return std.mem.concat(a, u8, &.{ "# ", word, " ", v });
 }
 
+// ─── body type ──────────────────────────────────────────────────────────
+
+/// How the Body tab goes on the wire (item 11): as typed; JSON
+/// (formatted on send when `http.auto_format_body`, `Content-Type`
+/// added); the rows as `application/x-www-form-urlencoded`; the rows
+/// as `multipart/form-data`, a `name = @path` row a file part. Kept in
+/// the block as `# @body-type multipart`.
+pub const BodyType = enum {
+    raw,
+    json,
+    form,
+    multipart,
+
+    pub const all = [_]BodyType{ .raw, .json, .form, .multipart };
+
+    /// The directive's word.
+    pub fn word(t: BodyType) []const u8 {
+        return switch (t) {
+            .raw => "raw",
+            .json => "json",
+            .form => "form-urlencoded",
+            .multipart => "multipart",
+        };
+    }
+
+    /// The chip's text.
+    pub fn label(t: BodyType) []const u8 {
+        return switch (t) {
+            .raw => "raw",
+            .json => "JSON",
+            .form => "form",
+            .multipart => "multipart",
+        };
+    }
+
+    pub fn next(t: BodyType) BodyType {
+        return all[(@intFromEnum(t) + 1) % all.len];
+    }
+
+    /// `form`, `form-urlencoded`, `urlencoded`, `multipart`,
+    /// `multipart/form-data`, `json`, `raw` — else null.
+    pub fn fromWord(w: []const u8) ?BodyType {
+        const t = std.mem.trim(u8, w, " \t");
+        if (std.ascii.eqlIgnoreCase(t, "raw")) return .raw;
+        if (std.ascii.eqlIgnoreCase(t, "json")) return .json;
+        if (std.ascii.eqlIgnoreCase(t, "form") or std.ascii.eqlIgnoreCase(t, "form-urlencoded") or std.ascii.eqlIgnoreCase(t, "urlencoded")) return .form;
+        if (std.ascii.startsWithIgnoreCase(t, "multipart")) return .multipart;
+        return null;
+    }
+};
+
+/// The block's `# @body-type` (raw when it has none).
+pub fn bodyType(req: *const Request) BodyType {
+    const sc = req.script orelse return .raw;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@body-type")) continue;
+        return BodyType.fromWord(d["@body-type".len..]) orelse .raw;
+    }
+    return .raw;
+}
+
+/// Set the `# @body-type` line; `raw` removes it.
+pub fn setBodyType(req: *Request, gpa: Allocator, t: BodyType) Allocator.Error!void {
+    try setDirective(req, gpa, "@body-type", if (t == .raw) null else t.word());
+}
+
 // ─── path params ────────────────────────────────────────────────────────
 
 /// A `:name` segment of the URL's path with the value the block's
@@ -584,6 +653,7 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
     var body: ?[]const u8 = null;
     var cookies: std.ArrayListUnmanaged([]const u8) = .empty;
     var form: std.ArrayListUnmanaged([2][]const u8) = .empty;
+    var urlenc: std.ArrayListUnmanaged([]const u8) = .empty;
     var get_flag = false;
     var timeout_ms: ?u64 = null;
     var follow: ?bool = null;
@@ -603,9 +673,14 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
                 if (splitHeader(v)) |kv| try req.addHeader(alloc, kv[0], kv[1]);
                 i += 1;
             }
-        } else if (eqAny(t, &.{ "-d", "--data", "--data-raw", "--data-binary", "--data-ascii", "--data-urlencode" })) {
+        } else if (eqAny(t, &.{ "-d", "--data", "--data-raw", "--data-binary", "--data-ascii" })) {
             if (next) |v| {
                 body = v;
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, t, "--data-urlencode")) {
+            if (next) |v| {
+                try urlenc.append(a, v);
                 i += 1;
             }
         } else if (eqAny(t, &.{ "-b", "--cookie" })) {
@@ -697,24 +772,24 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
         const joined_cookies = try std.mem.join(a, "; ", cookies.items);
         try req.addHeader(alloc, "cookie", joined_cookies);
     }
+    // `-F` / `--data-urlencode`: the rows land on the Body tab as
+    // `name = value` lines (a `@file` kept as one) and the block says
+    // `# @body-type`; the bytes are made at send time.
     if (form.items.len > 0 and body == null) {
-        const boundary = "----mnmlBoundary7f3a9c1e";
-        var out: std.ArrayListUnmanaged(u8) = .empty;
-        for (form.items) |part| {
-            try out.appendSlice(a, "--");
-            try out.appendSlice(a, boundary);
-            try out.appendSlice(a, "\r\nContent-Disposition: form-data; name=\"");
-            try out.appendSlice(a, part[0]);
-            try out.appendSlice(a, "\"\r\n\r\n");
-            try out.appendSlice(a, part[1]);
-            try out.appendSlice(a, "\r\n");
+        var rows: std.ArrayListUnmanaged(multipart.Row) = .empty;
+        for (form.items) |part| try rows.append(a, if (part[1].len > 1 and part[1][0] == '@') .{ .name = part[0], .value = part[1][1..], .file = part[1][1..] } else .{ .name = part[0], .value = part[1] });
+        body = try multipart.renderRows(a, rows.items);
+        try setDirective(&req, alloc, "@body-type", BodyType.multipart.word());
+    } else if (urlenc.items.len > 0 and body == null and !get_flag) {
+        var rows: std.ArrayListUnmanaged(multipart.Row) = .empty;
+        for (urlenc.items) |kv| {
+            const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
+            try rows.append(a, .{ .name = kv[0..eq], .value = kv[eq + 1 ..] });
         }
-        try out.appendSlice(a, "--");
-        try out.appendSlice(a, boundary);
-        try out.appendSlice(a, "--\r\n");
-        body = out.items;
-        const ct = try std.mem.concat(a, u8, &.{ "multipart/form-data; boundary=", boundary });
-        if (req.header("content-type") == null) try req.addHeader(alloc, "content-type", ct);
+        body = try multipart.renderRows(a, rows.items);
+        try setDirective(&req, alloc, "@body-type", BodyType.form.word());
+    } else if (urlenc.items.len > 0 and get_flag) {
+        for (urlenc.items) |kv| try req.addParamRaw(alloc, kv);
     }
     if (body) |b| {
         if (get_flag) {
@@ -1143,11 +1218,28 @@ pub fn toCurl(gpa: Allocator, req: *const Request) Allocator.Error![]u8 {
         try out.appendSlice(a, try escapeSingle(a, h.value));
         try out.append(a, '\'');
     }
-    if (req.body) |b| {
-        try out.appendSlice(a, " \\\n  --data-raw '");
-        try out.appendSlice(a, try escapeSingle(a, b));
-        try out.append(a, '\'');
-    }
+    if (req.body) |b| switch (bodyType(req)) {
+        .multipart => for (try multipart.parseRows(a, b)) |row| {
+            try out.appendSlice(a, " \\\n  -F '");
+            try out.appendSlice(a, try escapeSingle(a, row.name));
+            try out.append(a, '=');
+            if (row.file != null) try out.append(a, '@');
+            try out.appendSlice(a, try escapeSingle(a, row.value));
+            try out.append(a, '\'');
+        },
+        .form => for (try multipart.parseRows(a, b)) |row| {
+            try out.appendSlice(a, " \\\n  --data-urlencode '");
+            try out.appendSlice(a, try escapeSingle(a, row.name));
+            try out.append(a, '=');
+            try out.appendSlice(a, try escapeSingle(a, row.value));
+            try out.append(a, '\'');
+        },
+        .raw, .json => {
+            try out.appendSlice(a, " \\\n  --data-raw '");
+            try out.appendSlice(a, try escapeSingle(a, b));
+            try out.append(a, '\'');
+        },
+    };
     if (req.insecure) try out.appendSlice(a, " -k");
     const o = options(req);
     if (o.timeout_ms) |ms| {
@@ -1319,12 +1411,43 @@ test "curl: a response appended after the command is dropped; no url errors; unt
     try testing.expectError(error.Empty, parse(testing.allocator, "   \n"));
 }
 
-test "curl: embedded single quote via concatenation; -F multipart" {
+test "curl: embedded single quote via concatenation; -F lands as multipart rows, --data-urlencode as form rows; both round-trip through toCurl" {
     var req = try parseCurl(testing.allocator, "curl 'https://x/it'\\''s' -F name=@nofile -F 'k=v w'");
     defer req.deinit(testing.allocator);
     try testing.expectEqualStrings("https://x/it's", req.url);
-    try testing.expect(std.mem.indexOf(u8, req.body.?, "name=\"k\"\r\n\r\nv w") != null);
-    try testing.expect(std.mem.startsWith(u8, req.header("content-type").?, "multipart/form-data; boundary="));
+    try testing.expectEqualStrings("name = @nofile\nk = v w\n", req.body.?);
+    try testing.expectEqual(BodyType.multipart, bodyType(&req));
+    try testing.expect(req.header("content-type") == null);
+    try testing.expectEqualStrings("POST", req.method);
+    const curl = try toCurl(testing.allocator, &req);
+    defer testing.allocator.free(curl);
+    try testing.expectEqualStrings("# @body-type multipart\ncurl 'https://x/it'\\''s' \\\n  -F 'name=@nofile' \\\n  -F 'k=v w'", curl);
+    var form = try parse(testing.allocator, "curl https://x/f --data-urlencode 'a=1 2' --data-urlencode b=x");
+    defer form.deinit(testing.allocator);
+    try testing.expectEqual(BodyType.form, bodyType(&form));
+    try testing.expectEqualStrings("a = 1 2\nb = x\n", form.body.?);
+    const fcurl = try toCurl(testing.allocator, &form);
+    defer testing.allocator.free(fcurl);
+    try testing.expect(std.mem.endsWith(u8, fcurl, "--data-urlencode 'a=1 2' \\\n  --data-urlencode 'b=x'"));
+    var back = try parse(testing.allocator, fcurl);
+    defer back.deinit(testing.allocator);
+    try testing.expectEqualStrings(form.body.?, back.body.?);
+    // `-G --data-urlencode` is the query string, as curl sends it.
+    var get = try parseCurl(testing.allocator, "curl -G https://x/g --data-urlencode q=1");
+    defer get.deinit(testing.allocator);
+    try testing.expectEqualStrings("https://x/g?q=1", get.url);
+    try testing.expect(get.body == null);
+    // The block form: the directive, the rows, the chip's cycle.
+    var blk = try parse(testing.allocator, "# @body-type multipart\nPOST https://x/up\n\nname = alice\nfile = @data.txt\n");
+    defer blk.deinit(testing.allocator);
+    try testing.expectEqual(BodyType.multipart, bodyType(&blk));
+    try setBodyType(&blk, testing.allocator, .json);
+    try testing.expectEqualStrings("# @body-type json", blk.script.?);
+    try setBodyType(&blk, testing.allocator, .raw);
+    try testing.expect(blk.script == null);
+    try testing.expectEqual(BodyType.form, BodyType.multipart.next().next());
+    try testing.expectEqual(BodyType.form, BodyType.fromWord("urlencoded").?);
+    try testing.expect(BodyType.fromWord("nope") == null);
 }
 
 test ".http: method line, headers, body; bare url is GET; comments skipped" {

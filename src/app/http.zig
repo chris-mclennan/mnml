@@ -20,6 +20,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const parse = @import("../http/parse.zig");
+const multipart = @import("../http/multipart.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const history = @import("../http/history.zig");
@@ -222,6 +223,11 @@ pub const table = .{
     .@"http.set_proxy" = &setProxyCmd,
     .@"http.complete_var" = &completeVarCmd,
     .@"http.set_path_param" = &setPathParamCmd,
+    .@"http.cycle_body_type" = &cycleBodyTypeCmd,
+    .@"http.body_type_raw" = &bodyTypeRawCmd,
+    .@"http.body_type_json" = &bodyTypeJsonCmd,
+    .@"http.body_type_form" = &bodyTypeFormCmd,
+    .@"http.body_type_multipart" = &bodyTypeMultipartCmd,
 };
 
 // ─── the `{{` completion ────────────────────────────────────────────────
@@ -1254,8 +1260,12 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var expanded = try expandWith(app.gpa, app.io, &staged, &set);
     var handed = false;
     errdefer if (!handed) expanded.deinit(app.gpa);
-    // Directives, expansion, then the `http_request` hook (its rewrite
-    // lands on `expanded`; `cmd_http.zig` documents the order).
+    // The Body tab's mode makes the wire body (JSON formatted, the
+    // rows encoded, the file parts read) after the expansion, so a
+    // `{{VAR}}` in a row resolves first; then the `http_request` hook
+    // (its rewrite lands on `expanded`; `cmd_http.zig` documents the
+    // order).
+    try applyBodyType(app, rp, &expanded);
     try @import("cmd_http.zig").beforeSend(app, id, rp, &expanded, set.name);
     try rp.setSentLine(expanded.method, expanded.url);
     const cookie = try @import("cmd_http.zig").cookieHeaderFor(app, a, expanded.url);
@@ -1576,6 +1586,97 @@ pub fn openOptionPrompt(app: *App, rp: *RequestPane, kind: OptionKind) Allocator
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .http_option = kind } } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+// ─── the body type ──────────────────────────────────────────────────────
+
+/// `req`'s body as the block's `# @body-type` says (item 11): JSON is
+/// pretty-printed when `http.auto_format_body` and typed
+/// `application/json`; `form-urlencoded` encodes the `name = value`
+/// rows; `multipart` encodes them with a fresh boundary, a `@path` row
+/// read relative to the source file's directory (the workspace for a
+/// scratch). A `Content-Type` the request already carries is kept.
+pub fn applyBodyType(app: *App, rp: *RequestPane, req: *Request) CommandError!void {
+    const gpa = app.gpa;
+    const kind = parse.bodyType(req);
+    if (kind == .raw) return;
+    const body = req.body orelse return;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    switch (kind) {
+        .raw => {},
+        .json => {
+            if (app.http.auto_format_body) {
+                if (std.json.parseFromSliceLeaky(std.json.Value, a, body, .{})) |v| {
+                    const pretty = std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
+                    try req.setBody(gpa, pretty);
+                } else |_| {}
+            }
+            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", "application/json");
+        },
+        .form => {
+            const rows = try multipart.parseRows(a, body);
+            try req.setBody(gpa, try multipart.urlencode(a, rows));
+            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", multipart.form_content_type);
+        },
+        .multipart => {
+            const rows = try multipart.parseRows(a, body);
+            const base = if (rp.source_path) |p| (std.fs.path.dirname(p) orelse app.workspace) else app.workspace;
+            var missing: ?[]const u8 = null;
+            const parts = multipart.resolve(a, app.io, rows, base, &missing) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.FileNotFound => return app.diag.fail(app.frame.allocator(), "multipart: no file at {s} (relative to {s})", .{ missing orelse "?", app.relPath(base) }),
+            };
+            var bbuf: [multipart.boundary_len]u8 = undefined;
+            const boundary = multipart.makeBoundary(&bbuf, app.io);
+            try req.setBody(gpa, try multipart.encode(a, parts, boundary));
+            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", try multipart.contentType(a, boundary));
+        },
+    }
+}
+
+/// The chip's pick: the block's line follows, and a toast names it.
+pub fn setBodyType(app: *App, rp: *RequestPane, t: parse.BodyType) Allocator.Error!void {
+    try parse.setBodyType(&rp.request, app.gpa, t);
+    rp.edited = true;
+    app.toast("body: {s}", .{t.label()});
+    app.needs_render = true;
+}
+
+/// right-click on the chip: the four modes, the current one checked.
+pub fn openBodyTypeMenu(app: *App, rp: *RequestPane, x: u16, y: u16) Allocator.Error!void {
+    const cur = parse.bodyType(&rp.request);
+    const M = command.MenuItem;
+    const items = try app.gpa.dupe(M, &.{
+        .{ .label = "raw \u{2014} as typed", .action = .{ .command = .@"http.body_type_raw" }, .checked = cur == .raw },
+        .{ .label = "JSON \u{2014} formatted on send, application/json", .action = .{ .command = .@"http.body_type_json" }, .checked = cur == .json },
+        .{ .label = "form \u{2014} name = value rows, x-www-form-urlencoded", .action = .{ .command = .@"http.body_type_form" }, .checked = cur == .form },
+        .{ .label = "multipart \u{2014} rows and name = @file parts, multipart/form-data", .action = .{ .command = .@"http.body_type_multipart" }, .checked = cur == .multipart },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("Body type", items, x, y);
+}
+
+fn cycleBodyTypeCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try setBodyType(app, rp, parse.bodyType(&rp.request).next());
+}
+
+fn bodyTypeRawCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .raw);
+}
+
+fn bodyTypeJsonCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .json);
+}
+
+fn bodyTypeFormCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .form);
+}
+
+fn bodyTypeMultipartCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .multipart);
 }
 
 // ─── path params ────────────────────────────────────────────────────────

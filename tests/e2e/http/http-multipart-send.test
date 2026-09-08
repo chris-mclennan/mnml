@@ -1,0 +1,30 @@
+# `# @body-type multipart` sends the Body tab's `name = value` rows as
+# multipart/form-data with a generated boundary, a `name = @file` row
+# read beside the source file (the echo server shows the wire); the
+# chip on the Body strip names the mode; form mode urlencodes the rows.
+
+serve 19891 200 @echo
+write data.txt "hello file\n"
+write up.http "# @body-type multipart\nPOST http://127.0.0.1:19891/up\n\nname = alice\nfile = @data.txt\n"
+open up.http
+expect screen contains "[multipart]"
+
+command http.send
+wait 800
+expect screen contains "content-type: multipart/form-data; boundary=----mnmlBoundary"
+# The file part sits past the box's first rows: page the response down.
+key pagedown
+expect screen contains "name=\"file\"; filename=\"data.txt\""
+expect screen contains "Content-Type: text/plain"
+expect screen contains "hello file"
+
+command http.body_type_form
+expect screen contains "body: form"
+expect screen contains "[form]"
+command http.send
+wait 800
+expect screen contains "content-type: application/x-www-form-urlencoded"
+expect screen contains "name=alice&file=data.txt"
+key ctrl+s
+expect file up.http contains "# @body-type form-urlencoded"
+expect file up.http contains "name = alice"

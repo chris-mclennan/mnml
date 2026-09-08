@@ -1537,6 +1537,12 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         view.hit_ai => return runCmd(app, .@"http.ai_debug"),
         view.hit_ai_chip => return runCmd(app, .@"http.copy_ai_prompt"),
         view.hit_save => return runCmd(app, .@"http.save"),
+        view.hit_body_type => {
+            rp.showTab(.body);
+            if (m.button == .right) return http.openBodyTypeMenu(app, rp, m.x, m.y);
+            if (m.button == .left) try http.setBodyType(app, rp, parse.bodyType(&rp.request).next());
+            return;
+        },
         view.hit_code => return @import("cmd_http.zig").copyAsPicker(app) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
@@ -1739,6 +1745,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .source_caret = rp.source_caret,
         .params = params_list.items,
         .path_params = path_list.items,
+        .body_type = parse.bodyType(&rp.request),
         .headers = headers,
         .header_value_offs = header_offs,
         .header_tip = header_tip,
