@@ -127,6 +127,9 @@ pub const State = struct {
     ws_queue: std.ArrayListUnmanaged(struct { pane: PaneId, text: []u8 }) = .empty,
     /// The `{{` completion popup over a request field, while it is open.
     completion: ?VarCompletion = null,
+    /// The env files' stamp at the last tick (`env_mod.digest`); a move
+    /// reloads the ENVS section and says so.
+    env_watch: EnvWatch = .{},
 
     pub fn init(gpa: Allocator) State {
         return .{ .picker_arena = .init(gpa) };
@@ -433,6 +436,38 @@ fn completeVarCmd(app: *App) CommandError!void {
 }
 
 // ─── env ────────────────────────────────────────────────────────────────
+
+/// The env file watch: the stamp the last tick saw, and whether one has
+/// looked yet (the first look sets the baseline without a word).
+pub const EnvWatch = struct {
+    digest: u64 = 0,
+    seen: bool = false,
+};
+
+/// The 80 ms tick's poll (item 7): the active env's files and the
+/// `.mnml/env/` listing are stamped by mtime + size; a change since
+/// the last tick rescans the HTTP panel (the ENVS `●`, the counts) and
+/// toasts `env: dev reloaded` once. The var tips and the Vars tab
+/// read the file at paint time, so they follow on their own.
+pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    _ = now;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const name = (try envName(app, a)) orelse env_mod.fallback_name;
+    const stamp = env_mod.digest(app.io, app.workspace, name);
+    const w = &app.http.env_watch;
+    if (!w.seen) {
+        w.seen = true;
+        w.digest = stamp;
+        return;
+    }
+    if (stamp == w.digest) return;
+    w.digest = stamp;
+    if (app.http_panel.scanned_once) try @import("http_panel.zig").refresh(app);
+    app.toast("env: {s} reloaded", .{name});
+    app.needs_render = true;
+}
 
 /// The active env's name (`dev` when nothing chose one).
 pub fn envName(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
@@ -2977,4 +3012,38 @@ test "Headers completion: names from the last response first (a paired header, t
     // The description the `?` tip and the hover copy show.
     try testing.expect(std.mem.startsWith(u8, headerDoc("content-type").?, "The media type"));
     try testing.expect(headerDoc("X-Team") == null);
+}
+
+test "env reload: the first tick is silent, an edit toasts once and rescans the panel, a quiet tick says nothing" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=one\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    try @import("http_panel.zig").refresh(&app);
+    try testing.expectEqual(@as(usize, 1), app.http_panel.envs.len);
+    try tick(&app, 1);
+    try testing.expect(app.lastToast() == null);
+    try tick(&app, 2);
+    try testing.expect(app.lastToast() == null);
+    // The edit lands: one toast, the panel rescanned (a new env shows up).
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=two\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/prod.env", .data = "HOST=p\n" });
+    try tick(&app, 3);
+    try testing.expectEqualStrings("env: dev reloaded", app.lastToast().?);
+    try testing.expectEqual(@as(usize, 2), app.http_panel.envs.len);
+    const n = app.toasts.items.len;
+    try tick(&app, 4);
+    try testing.expectEqual(n, app.toasts.items.len);
+    // The pane's Vars rows read the new value.
+    try command.run(&app, .{ .static = .@"http.new" });
+    const rp = activeRequest(&app).?;
+    try rp.url.appendSlice(testing.allocator, "https://{{HOST}}/");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const rows = try varRows(&app, rp, arena.allocator(), "dev");
+    try testing.expectEqualStrings("two", rows[0].value.?);
 }

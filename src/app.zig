@@ -2068,6 +2068,7 @@ pub const App = struct {
         try git_app.tick(self, now);
         try lsp.tick(self, now);
         try ai_app.tick(self);
+        try http_app.tick(self, now);
         try self.script().tick(now);
         try update.tick(self);
         session.tick(self, now);
