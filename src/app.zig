@@ -245,6 +245,13 @@ pub const PromptPurpose = union(enum) {
     http_auth_value: @import("app/cmd_http.zig").AuthKind,
     /// The Auth tab's Options rows: a timeout, a redirect cap, a proxy.
     http_option: @import("app/http.zig").OptionKind,
+    /// The value of the `:name` path segment (owned name).
+    http_path_param: []u8,
+    /// `http.rename_request`: the file or block to rename (owned).
+    http_rename: @import("app/http_ops.zig").Target,
+    /// `# @description` / `# @tags` for the active request.
+    http_description,
+    http_tags,
     auth_preset_name,
     http_save_as,
     http_save_response,
@@ -274,7 +281,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param => |s| gpa.free(s),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);
@@ -282,6 +289,7 @@ pub const PromptPurpose = union(enum) {
             .dap_bp_condition, .dap_hit_count, .dap_bp_log => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             .dap_edit_watch => |w| gpa.free(w),
+            .http_rename => |t| t.deinit(gpa),
             .lua_bind => |b| {
                 gpa.free(b.id);
                 gpa.free(b.title);
@@ -323,6 +331,8 @@ pub const ConfirmPurpose = union(enum) {
     remove_integration: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
+    /// `http.delete_request`: the file or block to delete (owned).
+    http_delete_request: @import("app/http_ops.zig").Target,
     /// `:s///c`: one match's yes / no / all / quit / last (`ex_verbs.zig`).
     replace_confirm,
 
@@ -331,6 +341,7 @@ pub const ConfirmPurpose = union(enum) {
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
             .delete_path, .remove_integration, .delete_session => |s| gpa.free(s),
+            .http_delete_request => |t| t.deinit(gpa),
             .delete_paths => |d| {
                 for (d.paths) |p| gpa.free(p);
                 gpa.free(d.paths);
@@ -384,6 +395,10 @@ pub const PickerKind = enum {
     http_copy_as,
     http_lookup_file,
     http_lookup_item,
+    /// `http.find_request`: every block of every request file.
+    http_find_request,
+    /// `http.move_request`: the collection folders.
+    http_move_target,
     ws_history,
     browser_device,
     browser_throttle,
@@ -2068,6 +2083,7 @@ pub const App = struct {
         try git_app.tick(self, now);
         try lsp.tick(self, now);
         try ai_app.tick(self);
+        try http_app.tick(self, now);
         try self.script().tick(now);
         try update.tick(self);
         session.tick(self, now);
@@ -2212,6 +2228,7 @@ test {
     _ = @import("app/http.zig");
     _ = @import("app/http_panel.zig");
     _ = @import("app/cmd_http.zig");
+    _ = @import("app/http_ops.zig");
     _ = @import("app/request_pane.zig");
     _ = @import("ui/request_view.zig");
     _ = @import("http/parse.zig");

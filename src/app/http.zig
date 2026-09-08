@@ -20,6 +20,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const parse = @import("../http/parse.zig");
+const multipart = @import("../http/multipart.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const history = @import("../http/history.zig");
@@ -127,6 +128,13 @@ pub const State = struct {
     ws_queue: std.ArrayListUnmanaged(struct { pane: PaneId, text: []u8 }) = .empty,
     /// The `{{` completion popup over a request field, while it is open.
     completion: ?VarCompletion = null,
+    /// The env files' stamp at the last tick (`env_mod.digest`); a move
+    /// reloads the ENVS section and says so.
+    env_watch: EnvWatch = .{},
+    /// The request picker's rows (`http_ops.findCmd`), on `picker_arena`.
+    find_rows: []const @import("http_ops.zig").FindRow = &.{},
+    /// What `http.move_request`'s folder picker moves. Owned.
+    move_target: ?@import("http_ops.zig").Target = null,
 
     pub fn init(gpa: Allocator) State {
         return .{ .picker_arena = .init(gpa) };
@@ -150,6 +158,7 @@ pub const State = struct {
         for (self.ws_queue.items) |q| gpa.free(q.text);
         self.ws_queue.deinit(gpa);
         if (self.completion) |*c| c.arena.deinit();
+        if (self.move_target) |t| t.deinit(gpa);
         self.picker_arena.deinit();
         if (self.header_scan) |hs| hs.destroy(gpa);
     }
@@ -218,6 +227,14 @@ pub const table = .{
     .@"http.set_max_redirects" = &setMaxRedirectsCmd,
     .@"http.set_proxy" = &setProxyCmd,
     .@"http.complete_var" = &completeVarCmd,
+    .@"http.set_path_param" = &setPathParamCmd,
+    .@"http.cycle_body_type" = &cycleBodyTypeCmd,
+    .@"http.body_type_raw" = &bodyTypeRawCmd,
+    .@"http.body_type_json" = &bodyTypeJsonCmd,
+    .@"http.body_type_form" = &bodyTypeFormCmd,
+    .@"http.body_type_multipart" = &bodyTypeMultipartCmd,
+    .@"http.set_description" = &setDescriptionCmd,
+    .@"http.set_tags" = &setTagsCmd,
 };
 
 // ─── the `{{` completion ────────────────────────────────────────────────
@@ -434,6 +451,50 @@ fn completeVarCmd(app: *App) CommandError!void {
 
 // ─── env ────────────────────────────────────────────────────────────────
 
+/// The env file watch: the stamp the last tick saw, and whether one has
+/// looked yet (the first look sets the baseline without a word).
+pub const EnvWatch = struct {
+    digest: u64 = 0,
+    seen: bool = false,
+};
+
+/// The 80 ms tick's poll (item 7): the active env's files and the
+/// `.mnml/env/` listing are stamped by mtime + size; a change since
+/// the last tick rescans the HTTP panel (the ENVS `●`, the counts) and
+/// toasts `env: dev reloaded` once. The var tips and the Vars tab
+/// read the file at paint time, so they follow on their own.
+pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    _ = now;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const name = (try envName(app, a)) orelse env_mod.fallback_name;
+    const stamp = env_mod.digest(app.io, app.workspace, name);
+    const w = &app.http.env_watch;
+    if (!w.seen) {
+        w.seen = true;
+        w.digest = stamp;
+        return;
+    }
+    if (stamp == w.digest) return;
+    w.digest = stamp;
+    if (app.http_panel.scanned_once) try @import("http_panel.zig").refresh(app);
+    app.toast("env: {s} reloaded", .{name});
+    app.needs_render = true;
+}
+
+/// mnml wrote an env file itself (a `@capture`, an env prompt, a new
+/// env): the watch takes the new stamp without a word, so only an
+/// edit from outside reads as a reload.
+pub fn restampEnvWatch(app: *App) void {
+    const w = &app.http.env_watch;
+    if (!w.seen) return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const name = (envName(app, arena.allocator()) catch return) orelse env_mod.fallback_name;
+    w.digest = env_mod.digest(app.io, app.workspace, name);
+}
+
 /// The active env's name (`dev` when nothing chose one).
 pub fn envName(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     const sel = try envSelection(app, arena);
@@ -584,6 +645,7 @@ pub fn jumpToVarDef(app: *App, name: []const u8) CommandError!void {
         const fresh = try env_mod.envPath(a, app.workspace, ".mnml", sel.name);
         if (std.fs.path.dirname(fresh)) |d| Io.Dir.cwd().createDirPath(app.io, d) catch {};
         Io.Dir.cwd().writeFile(app.io, .{ .sub_path = fresh, .data = "" }) catch return app.diag.fail(app.frame.allocator(), "env: cannot create {s}", .{app.relPath(fresh)});
+        restampEnvWatch(app);
         break :blk fresh;
     };
     const copy = try app.frame.allocator().dupe(u8, path);
@@ -810,10 +872,16 @@ pub fn expand(app: *App, gpa: Allocator, req: *const Request) Allocator.Error!Re
     return expandWith(gpa, app.io, req, &set);
 }
 
+/// The `:name` path segments take their `# @path` values first (`::`
+/// becomes `:`); a value may hold a `{{VAR}}`, which the expansion
+/// resolves next.
 pub fn expandWith(gpa: Allocator, io: Io, req: *const Request, set: *const env_mod.EnvSet) Allocator.Error!Request {
     var out = try req.clone(gpa);
     errdefer out.deinit(gpa);
-    const url = try env_mod.expand(gpa, io, req.url, set);
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const with_path = try parse.substitutePath(scratch.allocator(), req.url, try parse.pathParams(scratch.allocator(), req));
+    const url = try env_mod.expand(gpa, io, with_path, set);
     gpa.free(out.url);
     out.url = url;
     for (out.headers.items) |*h| {
@@ -938,6 +1006,32 @@ pub fn openFile(app: *App, path: []const u8, preview: bool) OpenFileError!PaneId
     // The leading block of a multi-block file is addressed as `null`;
     // a `### name` block by its name.
     const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = first.name, .summary = first.summary, .focus_response = false, .preview = preview });
+    req = undefined;
+    if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        rp.edited = false;
+    };
+    try app.noteRecent(path);
+    return id;
+}
+
+/// Open block `idx` (its index in `parse.blocks` of the file's text)
+/// of `path` as a request pane — the pane already on it when there is
+/// one. The error tells the caller what went wrong.
+pub fn openFileBlock(app: *App, path: []const u8, idx: u32) OpenFileError!PaneId {
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = Io.Dir.cwd().readFileAlloc(app.io, path, a, .limited(16 << 20)) catch return error.ReadFailed;
+    const list = try parse.blocks(a, text);
+    if (idx >= list.len) return error.EmptyFile;
+    const b = list[idx];
+    if (findSource(app, path, b.name)) |id| {
+        app.showPane(id);
+        return id;
+    }
+    var req = try parse.parse(app.gpa, b.text);
+    errdefer req.deinit(app.gpa);
+    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = b.name, .summary = b.summary });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -1212,8 +1306,12 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var expanded = try expandWith(app.gpa, app.io, &staged, &set);
     var handed = false;
     errdefer if (!handed) expanded.deinit(app.gpa);
-    // Directives, expansion, then the `http_request` hook (its rewrite
-    // lands on `expanded`; `cmd_http.zig` documents the order).
+    // The Body tab's mode makes the wire body (JSON formatted, the
+    // rows encoded, the file parts read) after the expansion, so a
+    // `{{VAR}}` in a row resolves first; then the `http_request` hook
+    // (its rewrite lands on `expanded`; `cmd_http.zig` documents the
+    // order).
+    try applyBodyType(app, rp, &expanded);
     try @import("cmd_http.zig").beforeSend(app, id, rp, &expanded, set.name);
     try rp.setSentLine(expanded.method, expanded.url);
     const cookie = try @import("cmd_http.zig").cookieHeaderFor(app, a, expanded.url);
@@ -1534,6 +1632,189 @@ pub fn openOptionPrompt(app: *App, rp: *RequestPane, kind: OptionKind) Allocator
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .http_option = kind } } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+// ─── the body type ──────────────────────────────────────────────────────
+
+/// `req`'s body as the block's `# @body-type` says (item 11): JSON is
+/// pretty-printed when `http.auto_format_body` and typed
+/// `application/json`; `form-urlencoded` encodes the `name = value`
+/// rows; `multipart` encodes them with a fresh boundary, a `@path` row
+/// read relative to the source file's directory (the workspace for a
+/// scratch). A `Content-Type` the request already carries is kept.
+pub fn applyBodyType(app: *App, rp: *RequestPane, req: *Request) CommandError!void {
+    const gpa = app.gpa;
+    const kind = parse.bodyType(req);
+    if (kind == .raw) return;
+    const body = req.body orelse return;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    switch (kind) {
+        .raw => {},
+        .json => {
+            if (app.http.auto_format_body) {
+                if (std.json.parseFromSliceLeaky(std.json.Value, a, body, .{})) |v| {
+                    const pretty = std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
+                    try req.setBody(gpa, pretty);
+                } else |_| {}
+            }
+            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", "application/json");
+        },
+        .form => {
+            const rows = try multipart.parseRows(a, body);
+            try req.setBody(gpa, try multipart.urlencode(a, rows));
+            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", multipart.form_content_type);
+        },
+        .multipart => {
+            const rows = try multipart.parseRows(a, body);
+            const base = if (rp.source_path) |p| (std.fs.path.dirname(p) orelse app.workspace) else app.workspace;
+            var missing: ?[]const u8 = null;
+            const parts = multipart.resolve(a, app.io, rows, base, &missing) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.FileNotFound => return app.diag.fail(app.frame.allocator(), "multipart: no file at {s} (relative to {s})", .{ missing orelse "?", app.relPath(base) }),
+            };
+            var bbuf: [multipart.boundary_len]u8 = undefined;
+            const boundary = multipart.makeBoundary(&bbuf, app.io);
+            try req.setBody(gpa, try multipart.encode(a, parts, boundary));
+            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", try multipart.contentType(a, boundary));
+        },
+    }
+}
+
+/// The chip's pick: the block's line follows, and a toast names it.
+pub fn setBodyType(app: *App, rp: *RequestPane, t: parse.BodyType) Allocator.Error!void {
+    try parse.setBodyType(&rp.request, app.gpa, t);
+    rp.edited = true;
+    app.toast("body: {s}", .{t.label()});
+    app.needs_render = true;
+}
+
+/// right-click on the chip: the four modes, the current one checked.
+pub fn openBodyTypeMenu(app: *App, rp: *RequestPane, x: u16, y: u16) Allocator.Error!void {
+    const cur = parse.bodyType(&rp.request);
+    const M = command.MenuItem;
+    const items = try app.gpa.dupe(M, &.{
+        .{ .label = "raw \u{2014} as typed", .action = .{ .command = .@"http.body_type_raw" }, .checked = cur == .raw },
+        .{ .label = "JSON \u{2014} formatted on send, application/json", .action = .{ .command = .@"http.body_type_json" }, .checked = cur == .json },
+        .{ .label = "form \u{2014} name = value rows, x-www-form-urlencoded", .action = .{ .command = .@"http.body_type_form" }, .checked = cur == .form },
+        .{ .label = "multipart \u{2014} rows and name = @file parts, multipart/form-data", .action = .{ .command = .@"http.body_type_multipart" }, .checked = cur == .multipart },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("Body type", items, x, y);
+}
+
+fn cycleBodyTypeCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try setBodyType(app, rp, parse.bodyType(&rp.request).next());
+}
+
+fn bodyTypeRawCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .raw);
+}
+
+fn bodyTypeJsonCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .json);
+}
+
+fn bodyTypeFormCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .form);
+}
+
+fn bodyTypeMultipartCmd(app: *App) CommandError!void {
+    try setBodyType(app, try requireRequest(app), .multipart);
+}
+
+// ─── description + tags (item 15) ───────────────────────────────────────
+
+fn openMetaPrompt(app: *App, rp: *RequestPane, purpose: app_mod.PromptPurpose, title: []const u8, current: []const u8) Allocator.Error!void {
+    _ = rp;
+    const gpa = app.gpa;
+    var state = Prompt.init(gpa, title);
+    errdefer Prompt.deinit(&state, gpa);
+    try state.setText(gpa, current);
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = purpose } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// `http.set_description`: the `# @description` line, seeded; empty removes it.
+fn setDescriptionCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    try openMetaPrompt(app, rp, .http_description, "Description (# @description \u{2026} \u{00b7} empty clears):", parse.description(&rp.request) orelse "");
+}
+
+/// `http.set_tags`: the `# @tags` line, seeded with the words; empty removes it.
+fn setTagsCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const words = try parse.tags(arena.allocator(), &rp.request);
+    try openMetaPrompt(app, rp, .http_tags, "Tags, space-separated (# @tags a b \u{00b7} empty clears):", try std.mem.join(arena.allocator(), " ", words));
+}
+
+pub fn applyDescriptionPrompt(app: *App, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse return;
+    try parse.setDescription(&rp.request, app.gpa, text);
+    rp.edited = true;
+    app.toast("description: {s}", .{if (parse.description(&rp.request)) |d| d else "cleared"});
+    app.needs_render = true;
+}
+
+pub fn applyTagsPrompt(app: *App, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse return;
+    try parse.setTags(&rp.request, app.gpa, text);
+    rp.edited = true;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const words = try parse.tags(arena.allocator(), &rp.request);
+    if (words.len == 0) app.toast("tags: cleared", .{}) else app.toast("tags: {s}", .{try @import("http_ops.zig").tagsText(arena.allocator(), words)});
+    app.needs_render = true;
+}
+
+// ─── path params ────────────────────────────────────────────────────────
+
+/// The value prompt for the `:name` segment, seeded with the block's
+/// `# @path name=value` (item 10).
+pub fn openPathParamPrompt(app: *App, rp: *RequestPane, name: []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    const owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(owned);
+    const title = try std.fmt.allocPrint(gpa, "Value for :{s} (# @path {s}=\u{2026} \u{00b7} empty clears):", .{ name, name });
+    errdefer gpa.free(title);
+    var state = Prompt.init(gpa, title);
+    errdefer Prompt.deinit(&state, gpa);
+    try state.seed(gpa, parse.pathParamValue(&rp.request, name) orelse "");
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .http_path_param = owned }, .title_owned = title } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The prompt's answer: the line is set, or removed by an empty text.
+pub fn applyPathParamPrompt(app: *App, name: []const u8, text: []const u8) Allocator.Error!void {
+    const rp = activeRequest(app) orelse {
+        app.toast("path: no active Request pane", .{});
+        return;
+    };
+    const value = std.mem.trim(u8, text, " \t");
+    try parse.setPathParam(&rp.request, app.gpa, name, if (value.len == 0) null else value);
+    rp.edited = true;
+    if (value.len == 0) app.toast("path: :{s} cleared", .{name}) else app.toast("path: :{s} = {s}", .{ name, value });
+    app.needs_render = true;
+}
+
+/// `http.set_path_param`: the prompt for the Params tab's path row, or
+/// the URL's first `:name`.
+fn setPathParamCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const names = try parse.pathParamNames(arena.allocator(), rp.url.items);
+    if (names.len == 0) return app.diag.fail(app.frame.allocator(), "path: the URL has no :name segments", .{});
+    const at = if (rp.edit_tab == .params and rp.row_cursor < names.len) rp.row_cursor else 0;
+    try openPathParamPrompt(app, rp, names[at]);
 }
 
 /// The prompt's answer: an empty text removes the line.
@@ -2977,4 +3258,82 @@ test "Headers completion: names from the last response first (a paired header, t
     // The description the `?` tip and the hover copy show.
     try testing.expect(std.mem.startsWith(u8, headerDoc("content-type").?, "The media type"));
     try testing.expect(headerDoc("X-Team") == null);
+}
+
+test "env reload: the first tick is silent, an edit toasts once and rescans the panel, a quiet tick says nothing" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=one\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    try @import("http_panel.zig").refresh(&app);
+    try testing.expectEqual(@as(usize, 1), app.http_panel.envs.len);
+    try tick(&app, 1);
+    try testing.expect(app.lastToast() == null);
+    try tick(&app, 2);
+    try testing.expect(app.lastToast() == null);
+    // The edit lands: one toast, the panel rescanned (a new env shows up).
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=two\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/prod.env", .data = "HOST=p\n" });
+    try tick(&app, 3);
+    try testing.expectEqualStrings("env: dev reloaded", app.lastToast().?);
+    try testing.expectEqual(@as(usize, 2), app.http_panel.envs.len);
+    const n = app.toasts.items.len;
+    try tick(&app, 4);
+    try testing.expectEqual(n, app.toasts.items.len);
+    // mnml's own write (a @capture, the env prompts) is not a reload.
+    try @import("cmd_http.zig").setEnvVar(&app, "MINE", "1");
+    try tick(&app, 5);
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "env: wrote MINE=1"));
+    // The pane's Vars rows read the new value.
+    try command.run(&app, .{ .static = .@"http.new" });
+    const rp = activeRequest(&app).?;
+    try rp.url.appendSlice(testing.allocator, "https://{{HOST}}/");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const rows = try varRows(&app, rp, arena.allocator(), "dev");
+    try testing.expectEqualStrings("two", rows[0].value.?);
+}
+
+test "description and tags: the prompts write the directives, the block keeps them, the pane's model carries them" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"http.new" });
+    const rp = activeRequest(&app).?;
+    try command.run(&app, .{ .static = .@"http.set_description" });
+    try testing.expect(app.overlay == .prompt);
+    try app.overlay.prompt.state.setText(testing.allocator, "List the users");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("description: List the users", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"http.set_tags" });
+    try app.overlay.prompt.state.setText(testing.allocator, "users, smoke");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("tags: #users #smoke", app.lastToast().?);
+    try testing.expectEqualStrings("# @description List the users\n# @tags users smoke", rp.request.script.?);
+    try rp.url.appendSlice(testing.allocator, "https://x/users");
+    try rp.commit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const block = try parse.toHttpBlock(arena.allocator(), &rp.request, "users");
+    try testing.expectEqualStrings("### users\n# @description List the users\n# @tags users smoke\nGET https://x/users\n", block);
+    // The pane paints the row.
+    try app.render();
+    const txt = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25B8} List the users") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "#users  #smoke") != null);
+    // The prompt seeded with the current tags; an empty answer clears.
+    try command.run(&app, .{ .static = .@"http.set_tags" });
+    try testing.expectEqualStrings("users smoke", app.overlay.prompt.state.text());
+    try app.overlay.prompt.state.setText(testing.allocator, "");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("tags: cleared", app.lastToast().?);
+    try testing.expectEqualStrings("# @description List the users", rp.request.script.?);
 }

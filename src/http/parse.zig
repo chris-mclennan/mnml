@@ -12,6 +12,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const script_mod = @import("script.zig");
+const multipart = @import("multipart.zig");
 
 pub const ParseError = error{ NoUrl, UnterminatedQuote, Empty } || Allocator.Error;
 
@@ -389,6 +390,281 @@ fn directiveLine(a: Allocator, word: []const u8, value: []const u8) Allocator.Er
     return std.mem.concat(a, u8, &.{ "# ", word, " ", v });
 }
 
+// ─── description + tags ─────────────────────────────────────────────────
+
+/// The block's `# @description …` text, if any (item 15).
+pub fn description(req: *const Request) ?[]const u8 {
+    const sc = req.script orelse return null;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@description")) continue;
+        const rest = std.mem.trim(u8, d["@description".len..], " \t");
+        return if (rest.len > 0) rest else null;
+    }
+    return null;
+}
+
+/// The block's `# @tags a b c` words (also comma-separated), in order.
+pub fn tags(arena: Allocator, req: *const Request) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    const sc = req.script orelse return out.items;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@tags") and !std.mem.startsWith(u8, d, "@tag ")) continue;
+        const rest = d[(if (std.mem.startsWith(u8, d, "@tags")) "@tags".len else "@tag".len)..];
+        var words = std.mem.tokenizeAny(u8, rest, " \t,");
+        while (words.next()) |w| {
+            const t = if (w.len > 0 and w[0] == '#') w[1..] else w;
+            if (t.len > 0 and !hasString(out.items, t)) try out.append(arena, t);
+        }
+    }
+    return out.items;
+}
+
+/// Set (or with null remove) the `# @description` line.
+pub fn setDescription(req: *Request, gpa: Allocator, text: ?[]const u8) Allocator.Error!void {
+    const t = if (text) |x| std.mem.trim(u8, x, " \t") else "";
+    try setDirective(req, gpa, "@description", if (t.len == 0) null else t);
+}
+
+/// Set (or with an empty text remove) the `# @tags` line.
+pub fn setTags(req: *Request, gpa: Allocator, text: []const u8) Allocator.Error!void {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    var words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.tokenizeAny(u8, text, " \t,");
+    while (it.next()) |w| {
+        const t = if (w.len > 0 and w[0] == '#') w[1..] else w;
+        if (t.len > 0) try words.append(scratch.allocator(), t);
+    }
+    try setDirective(req, gpa, "@tags", if (words.items.len == 0) null else try std.mem.join(scratch.allocator(), " ", words.items));
+}
+
+// ─── body type ──────────────────────────────────────────────────────────
+
+/// How the Body tab goes on the wire (item 11): as typed; JSON
+/// (formatted on send when `http.auto_format_body`, `Content-Type`
+/// added); the rows as `application/x-www-form-urlencoded`; the rows
+/// as `multipart/form-data`, a `name = @path` row a file part. Kept in
+/// the block as `# @body-type multipart`.
+pub const BodyType = enum {
+    raw,
+    json,
+    form,
+    multipart,
+
+    pub const all = [_]BodyType{ .raw, .json, .form, .multipart };
+
+    /// The directive's word.
+    pub fn word(t: BodyType) []const u8 {
+        return switch (t) {
+            .raw => "raw",
+            .json => "json",
+            .form => "form-urlencoded",
+            .multipart => "multipart",
+        };
+    }
+
+    /// The chip's text.
+    pub fn label(t: BodyType) []const u8 {
+        return switch (t) {
+            .raw => "raw",
+            .json => "JSON",
+            .form => "form",
+            .multipart => "multipart",
+        };
+    }
+
+    pub fn next(t: BodyType) BodyType {
+        return all[(@as(usize, @intFromEnum(t)) + 1) % all.len];
+    }
+
+    /// `form`, `form-urlencoded`, `urlencoded`, `multipart`,
+    /// `multipart/form-data`, `json`, `raw` — else null.
+    pub fn fromWord(w: []const u8) ?BodyType {
+        const t = std.mem.trim(u8, w, " \t");
+        if (std.ascii.eqlIgnoreCase(t, "raw")) return .raw;
+        if (std.ascii.eqlIgnoreCase(t, "json")) return .json;
+        if (std.ascii.eqlIgnoreCase(t, "form") or std.ascii.eqlIgnoreCase(t, "form-urlencoded") or std.ascii.eqlIgnoreCase(t, "urlencoded")) return .form;
+        if (std.ascii.startsWithIgnoreCase(t, "multipart")) return .multipart;
+        return null;
+    }
+};
+
+/// The block's `# @body-type` (raw when it has none).
+pub fn bodyType(req: *const Request) BodyType {
+    const sc = req.script orelse return .raw;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@body-type")) continue;
+        return BodyType.fromWord(d["@body-type".len..]) orelse .raw;
+    }
+    return .raw;
+}
+
+/// Set the `# @body-type` line; `raw` removes it.
+pub fn setBodyType(req: *Request, gpa: Allocator, t: BodyType) Allocator.Error!void {
+    try setDirective(req, gpa, "@body-type", if (t == .raw) null else t.word());
+}
+
+// ─── path params ────────────────────────────────────────────────────────
+
+/// A `:name` segment of the URL's path with the value the block's
+/// `# @path name=value` line gives it (empty when none does).
+pub const PathParam = struct { name: []const u8, value: []const u8 };
+
+/// The path of `url`: from the first `/` after the scheme's host (or
+/// the first `/` at all) up to the query or the fragment.
+pub fn pathPart(url: []const u8) []const u8 {
+    var start: usize = 0;
+    if (std.mem.indexOf(u8, url, "://")) |s| start = s + 3;
+    const slash = std.mem.indexOfScalarPos(u8, url, start, '/') orelse return "";
+    const rest = url[slash..];
+    const end = std.mem.indexOfAny(u8, rest, "?#") orelse rest.len;
+    return rest[0..end];
+}
+
+/// The `:name` segments of the path — `/users/:id/posts/:post_id` — in
+/// order, each once. A `:` right after a `/` starts one; `::` is a
+/// literal colon and starts none; the host's `:8080` follows no `/`.
+/// The names borrow `url`.
+pub fn pathParamNames(arena: Allocator, url: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    const path = pathPart(url);
+    var i: usize = 0;
+    while (i < path.len) : (i += 1) {
+        if (path[i] != ':') continue;
+        if (i + 1 < path.len and path[i + 1] == ':') {
+            i += 1;
+            continue;
+        }
+        if (i == 0 or path[i - 1] != '/') continue;
+        const start = i + 1;
+        var end = start;
+        while (end < path.len and (std.ascii.isAlphanumeric(path[end]) or path[end] == '_')) : (end += 1) {}
+        if (end == start) continue;
+        const name = path[start..end];
+        if (!hasString(out.items, name)) try out.append(arena, name);
+        i = end - 1;
+    }
+    return out.items;
+}
+
+fn hasString(list: []const []const u8, s: []const u8) bool {
+    for (list) |l| if (std.mem.eql(u8, l, s)) return true;
+    return false;
+}
+
+/// `url` with every `:name` of its path replaced by its value in
+/// `values` (a name with none stays as written) and every `::` made
+/// `:`. The query and the fragment pass through untouched. Owned.
+pub fn substitutePath(alloc: Allocator, url: []const u8, values: []const PathParam) Allocator.Error![]u8 {
+    const path = pathPart(url);
+    if (path.len == 0) return alloc.dupe(u8, url);
+    const path_off = @intFromPtr(path.ptr) - @intFromPtr(url.ptr);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, url[0..path_off]);
+    var i: usize = 0;
+    while (i < path.len) : (i += 1) {
+        const c = path[i];
+        if (c == ':') {
+            if (i + 1 < path.len and path[i + 1] == ':') {
+                try out.append(alloc, ':');
+                i += 1;
+                continue;
+            }
+            if (i > 0 and path[i - 1] == '/') {
+                var end = i + 1;
+                while (end < path.len and (std.ascii.isAlphanumeric(path[end]) or path[end] == '_')) : (end += 1) {}
+                if (end > i + 1) {
+                    const name = path[i + 1 .. end];
+                    var found: ?[]const u8 = null;
+                    for (values) |v| if (std.mem.eql(u8, v.name, name) and v.value.len > 0) {
+                        found = v.value;
+                        break;
+                    };
+                    try out.appendSlice(alloc, found orelse path[i..end]);
+                    i = end - 1;
+                    continue;
+                }
+            }
+        }
+        try out.append(alloc, c);
+    }
+    try out.appendSlice(alloc, url[path_off + path.len ..]);
+    return out.toOwnedSlice(alloc);
+}
+
+/// The block's `# @path name=value` lines, in order. Borrow `script`.
+pub fn pathParams(arena: Allocator, req: *const Request) Allocator.Error![]PathParam {
+    var out: std.ArrayListUnmanaged(PathParam) = .empty;
+    const sc = req.script orelse return out.items;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@path")) continue;
+        const rest = std.mem.trim(u8, d["@path".len..], " \t");
+        if (rest.len == d.len - "@path".len and rest.len > 0) continue; // `@pathological`
+        const eq = std.mem.indexOfScalar(u8, rest, '=') orelse continue;
+        const name = std.mem.trim(u8, rest[0..eq], " \t");
+        if (name.len == 0) continue;
+        try out.append(arena, .{ .name = name, .value = std.mem.trim(u8, rest[eq + 1 ..], " \t") });
+    }
+    return out.items;
+}
+
+/// The value of `:name` (from `@path`), if the block sets one.
+pub fn pathParamValue(req: *const Request, name: []const u8) ?[]const u8 {
+    const sc = req.script orelse return null;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@path ")) continue;
+        const rest = std.mem.trim(u8, d["@path ".len..], " \t");
+        const eq = std.mem.indexOfScalar(u8, rest, '=') orelse continue;
+        if (std.mem.eql(u8, std.mem.trim(u8, rest[0..eq], " \t"), name)) return std.mem.trim(u8, rest[eq + 1 ..], " \t");
+    }
+    return null;
+}
+
+/// Set (or with null remove) the `# @path name=value` line; the other
+/// names' lines stay where they are.
+pub fn setPathParam(req: *Request, gpa: Allocator, name: []const u8, value: ?[]const u8) Allocator.Error!void {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    var replaced = false;
+    const fresh: ?[]const u8 = if (value) |v| try std.fmt.allocPrint(a, "# @path {s}={s}", .{ name, std.mem.trim(u8, v, " \t") }) else null;
+    if (req.script) |sc| {
+        var it = std.mem.splitScalar(u8, sc, '\n');
+        while (it.next()) |l| {
+            if (std.mem.trim(u8, l, " \t\r").len == 0) continue;
+            const mine = blk: {
+                const d = directiveText(l) orelse break :blk false;
+                if (!std.mem.startsWith(u8, d, "@path ")) break :blk false;
+                const rest = std.mem.trim(u8, d["@path ".len..], " \t");
+                const eq = std.mem.indexOfScalar(u8, rest, '=') orelse break :blk false;
+                break :blk std.mem.eql(u8, std.mem.trim(u8, rest[0..eq], " \t"), name);
+            };
+            if (mine) {
+                if (fresh != null and !replaced) {
+                    try lines.append(a, fresh.?);
+                    replaced = true;
+                }
+                continue;
+            }
+            try lines.append(a, l);
+        }
+    }
+    if (fresh != null and !replaced) try lines.append(a, fresh.?);
+    try req.setScript(gpa, if (lines.items.len > 0) try std.mem.join(a, "\n", lines.items) else null);
+}
+
 pub fn looksLikeHttpFile(text: []const u8) bool {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
@@ -429,6 +705,7 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
     var body: ?[]const u8 = null;
     var cookies: std.ArrayListUnmanaged([]const u8) = .empty;
     var form: std.ArrayListUnmanaged([2][]const u8) = .empty;
+    var urlenc: std.ArrayListUnmanaged([]const u8) = .empty;
     var get_flag = false;
     var timeout_ms: ?u64 = null;
     var follow: ?bool = null;
@@ -448,9 +725,14 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
                 if (splitHeader(v)) |kv| try req.addHeader(alloc, kv[0], kv[1]);
                 i += 1;
             }
-        } else if (eqAny(t, &.{ "-d", "--data", "--data-raw", "--data-binary", "--data-ascii", "--data-urlencode" })) {
+        } else if (eqAny(t, &.{ "-d", "--data", "--data-raw", "--data-binary", "--data-ascii" })) {
             if (next) |v| {
                 body = v;
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, t, "--data-urlencode")) {
+            if (next) |v| {
+                try urlenc.append(a, v);
                 i += 1;
             }
         } else if (eqAny(t, &.{ "-b", "--cookie" })) {
@@ -542,24 +824,24 @@ pub fn parseCurl(alloc: Allocator, input: []const u8) ParseError!Request {
         const joined_cookies = try std.mem.join(a, "; ", cookies.items);
         try req.addHeader(alloc, "cookie", joined_cookies);
     }
+    // `-F` / `--data-urlencode`: the rows land on the Body tab as
+    // `name = value` lines (a `@file` kept as one) and the block says
+    // `# @body-type`; the bytes are made at send time.
     if (form.items.len > 0 and body == null) {
-        const boundary = "----mnmlBoundary7f3a9c1e";
-        var out: std.ArrayListUnmanaged(u8) = .empty;
-        for (form.items) |part| {
-            try out.appendSlice(a, "--");
-            try out.appendSlice(a, boundary);
-            try out.appendSlice(a, "\r\nContent-Disposition: form-data; name=\"");
-            try out.appendSlice(a, part[0]);
-            try out.appendSlice(a, "\"\r\n\r\n");
-            try out.appendSlice(a, part[1]);
-            try out.appendSlice(a, "\r\n");
+        var rows: std.ArrayListUnmanaged(multipart.Row) = .empty;
+        for (form.items) |part| try rows.append(a, if (part[1].len > 1 and part[1][0] == '@') .{ .name = part[0], .value = part[1][1..], .file = part[1][1..] } else .{ .name = part[0], .value = part[1] });
+        body = try multipart.renderRows(a, rows.items);
+        try setDirective(&req, alloc, "@body-type", BodyType.multipart.word());
+    } else if (urlenc.items.len > 0 and body == null and !get_flag) {
+        var rows: std.ArrayListUnmanaged(multipart.Row) = .empty;
+        for (urlenc.items) |kv| {
+            const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
+            try rows.append(a, .{ .name = kv[0..eq], .value = kv[eq + 1 ..] });
         }
-        try out.appendSlice(a, "--");
-        try out.appendSlice(a, boundary);
-        try out.appendSlice(a, "--\r\n");
-        body = out.items;
-        const ct = try std.mem.concat(a, u8, &.{ "multipart/form-data; boundary=", boundary });
-        if (req.header("content-type") == null) try req.addHeader(alloc, "content-type", ct);
+        body = try multipart.renderRows(a, rows.items);
+        try setDirective(&req, alloc, "@body-type", BodyType.form.word());
+    } else if (urlenc.items.len > 0 and get_flag) {
+        for (urlenc.items) |kv| try req.addParamRaw(alloc, kv);
     }
     if (body) |b| {
         if (get_flag) {
@@ -950,6 +1232,140 @@ pub fn blockAtLine(list: []const Block, line: usize) ?Block {
     return null;
 }
 
+// ─── block edits (item 8) ───────────────────────────────────────────────
+
+/// The lines of `text`, split on `\n`, on `a`.
+fn linesOf(a: Allocator, text: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| try out.append(a, l);
+    return out.items;
+}
+
+/// The name a duplicate takes: `name-copy`, `name-copy-2`, … — the
+/// first not already a block name in `list`.
+pub fn copyName(a: Allocator, list: []const Block, base: ?[]const u8) Allocator.Error![]const u8 {
+    const stem = if (base) |b| (if (b.len > 0) b else "copy") else "copy";
+    var n: usize = 0;
+    while (n < 1000) : (n += 1) {
+        const cand = if (n == 0) try std.mem.concat(a, u8, &.{ stem, "-copy" }) else try std.fmt.allocPrint(a, "{s}-copy-{d}", .{ stem, n + 1 });
+        var taken = false;
+        for (list) |b| if (b.name) |bn| if (std.mem.eql(u8, bn, cand)) {
+            taken = true;
+        };
+        if (!taken) return cand;
+    }
+    return try std.mem.concat(a, u8, &.{ stem, "-copy" });
+}
+
+/// `text` with block `idx`'s `###` line renamed — a leading block
+/// without one gets a `### name` line put before it. Null when there
+/// is no such block. Owned.
+pub fn renameBlock(alloc: Allocator, text: []const u8, idx: usize, new_name: []const u8) Allocator.Error!?[]u8 {
+    var scratch = std.heap.ArenaAllocator.init(alloc);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    const list = try blocks(a, text);
+    if (idx >= list.len) return null;
+    const b = list[idx];
+    const lines = try linesOf(a, text);
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    const sep = try std.mem.concat(a, u8, &.{ "### ", std.mem.trim(u8, new_name, " \t") });
+    if (b.name == null) {
+        try out.appendSlice(a, lines[0..b.start_line]);
+        try out.append(a, sep);
+        try out.appendSlice(a, lines[b.start_line..]);
+    } else {
+        try out.appendSlice(a, lines[0..b.start_line]);
+        try out.append(a, sep);
+        try out.appendSlice(a, lines[b.start_line + 1 ..]);
+    }
+    return try std.mem.join(alloc, "\n", out.items);
+}
+
+/// `text` with a copy of block `idx` put right after it as
+/// `### <name>-copy` (a blank line between). Null when there is no
+/// such block. Owned.
+pub fn duplicateBlock(alloc: Allocator, text: []const u8, idx: usize) Allocator.Error!?[]u8 {
+    var scratch = std.heap.ArenaAllocator.init(alloc);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    const list = try blocks(a, text);
+    if (idx >= list.len) return null;
+    const b = list[idx];
+    const lines = try linesOf(a, text);
+    const body_first = if (b.name != null) b.start_line + 1 else b.start_line;
+    const last = @min(b.end_line, lines.len - 1);
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    try out.appendSlice(a, lines[0 .. last + 1]);
+    if (std.mem.trim(u8, lines[last], " \t\r").len > 0) try out.append(a, "");
+    try out.append(a, try std.mem.concat(a, u8, &.{ "### ", try copyName(a, list, b.name) }));
+    // The block's own lines, less a trailing blank (one is put back).
+    var body_last = last;
+    while (body_last > body_first and std.mem.trim(u8, lines[body_last], " \t\r").len == 0) body_last -= 1;
+    try out.appendSlice(a, lines[body_first .. body_last + 1]);
+    if (last + 1 < lines.len) {
+        try out.append(a, "");
+        try out.appendSlice(a, lines[last + 1 ..]);
+    } else try out.append(a, "");
+    return try std.mem.join(alloc, "\n", out.items);
+}
+
+/// `text` without block `idx` (its `###` line included); the other
+/// blocks keep their bytes. Null when there is no such block. Owned.
+pub fn deleteBlock(alloc: Allocator, text: []const u8, idx: usize) Allocator.Error!?[]u8 {
+    var scratch = std.heap.ArenaAllocator.init(alloc);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    const list = try blocks(a, text);
+    if (idx >= list.len) return null;
+    const b = list[idx];
+    const lines = try linesOf(a, text);
+    const last = @min(b.end_line, lines.len - 1);
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    try out.appendSlice(a, lines[0..b.start_line]);
+    if (last + 1 < lines.len) try out.appendSlice(a, lines[last + 1 ..]);
+    // A file left with only blank lines is empty.
+    var any = false;
+    for (out.items) |l| if (std.mem.trim(u8, l, " \t\r").len > 0) {
+        any = true;
+    };
+    if (!any) return try alloc.dupe(u8, "");
+    return try std.mem.join(alloc, "\n", out.items);
+}
+
+/// Block `idx` as a block of its own: its `### name` line (one is
+/// made for a nameless leading block) and its lines, ending in one
+/// newline — what a move appends to the target file. Null when there
+/// is no such block. Owned.
+pub fn extractBlock(alloc: Allocator, text: []const u8, idx: usize) Allocator.Error!?[]u8 {
+    var scratch = std.heap.ArenaAllocator.init(alloc);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    const list = try blocks(a, text);
+    if (idx >= list.len) return null;
+    const b = list[idx];
+    const lines = try linesOf(a, text);
+    const body_first = if (b.name != null) b.start_line + 1 else b.start_line;
+    var last = @min(b.end_line, lines.len - 1);
+    while (last > body_first and std.mem.trim(u8, lines[last], " \t\r").len == 0) last -= 1;
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    try out.append(a, if (b.name) |n| (if (n.len > 0) try std.mem.concat(a, u8, &.{ "### ", n }) else "###") else "### moved");
+    try out.appendSlice(a, lines[body_first .. last + 1]);
+    try out.append(a, "");
+    return try std.mem.join(alloc, "\n", out.items);
+}
+
+/// The index in `blocks(text)` of the block named `name` (null = the
+/// leading nameless one).
+pub fn blockIndex(list: []const Block, name: ?[]const u8) ?usize {
+    for (list, 0..) |b, i| {
+        const hit = if (name) |want| (b.name != null and std.mem.eql(u8, b.name.?, want)) else b.name == null;
+        if (hit) return i;
+    }
+    return null;
+}
+
 // ─── serialisation ──────────────────────────────────────────────────────
 
 fn escapeSingle(a: Allocator, s: []const u8) Allocator.Error![]const u8 {
@@ -988,11 +1404,28 @@ pub fn toCurl(gpa: Allocator, req: *const Request) Allocator.Error![]u8 {
         try out.appendSlice(a, try escapeSingle(a, h.value));
         try out.append(a, '\'');
     }
-    if (req.body) |b| {
-        try out.appendSlice(a, " \\\n  --data-raw '");
-        try out.appendSlice(a, try escapeSingle(a, b));
-        try out.append(a, '\'');
-    }
+    if (req.body) |b| switch (bodyType(req)) {
+        .multipart => for (try multipart.parseRows(a, b)) |row| {
+            try out.appendSlice(a, " \\\n  -F '");
+            try out.appendSlice(a, try escapeSingle(a, row.name));
+            try out.append(a, '=');
+            if (row.file != null) try out.append(a, '@');
+            try out.appendSlice(a, try escapeSingle(a, row.value));
+            try out.append(a, '\'');
+        },
+        .form => for (try multipart.parseRows(a, b)) |row| {
+            try out.appendSlice(a, " \\\n  --data-urlencode '");
+            try out.appendSlice(a, try escapeSingle(a, row.name));
+            try out.append(a, '=');
+            try out.appendSlice(a, try escapeSingle(a, row.value));
+            try out.append(a, '\'');
+        },
+        .raw, .json => {
+            try out.appendSlice(a, " \\\n  --data-raw '");
+            try out.appendSlice(a, try escapeSingle(a, b));
+            try out.append(a, '\'');
+        },
+    };
     if (req.insecure) try out.appendSlice(a, " -k");
     const o = options(req);
     if (o.timeout_ms) |ms| {
@@ -1164,12 +1597,43 @@ test "curl: a response appended after the command is dropped; no url errors; unt
     try testing.expectError(error.Empty, parse(testing.allocator, "   \n"));
 }
 
-test "curl: embedded single quote via concatenation; -F multipart" {
+test "curl: embedded single quote via concatenation; -F lands as multipart rows, --data-urlencode as form rows; both round-trip through toCurl" {
     var req = try parseCurl(testing.allocator, "curl 'https://x/it'\\''s' -F name=@nofile -F 'k=v w'");
     defer req.deinit(testing.allocator);
     try testing.expectEqualStrings("https://x/it's", req.url);
-    try testing.expect(std.mem.indexOf(u8, req.body.?, "name=\"k\"\r\n\r\nv w") != null);
-    try testing.expect(std.mem.startsWith(u8, req.header("content-type").?, "multipart/form-data; boundary="));
+    try testing.expectEqualStrings("name = @nofile\nk = v w\n", req.body.?);
+    try testing.expectEqual(BodyType.multipart, bodyType(&req));
+    try testing.expect(req.header("content-type") == null);
+    try testing.expectEqualStrings("POST", req.method);
+    const curl = try toCurl(testing.allocator, &req);
+    defer testing.allocator.free(curl);
+    try testing.expectEqualStrings("# @body-type multipart\ncurl 'https://x/it'\\''s' \\\n  -F 'name=@nofile' \\\n  -F 'k=v w'", curl);
+    var form = try parse(testing.allocator, "curl https://x/f --data-urlencode 'a=1 2' --data-urlencode b=x");
+    defer form.deinit(testing.allocator);
+    try testing.expectEqual(BodyType.form, bodyType(&form));
+    try testing.expectEqualStrings("a = 1 2\nb = x\n", form.body.?);
+    const fcurl = try toCurl(testing.allocator, &form);
+    defer testing.allocator.free(fcurl);
+    try testing.expect(std.mem.endsWith(u8, fcurl, "--data-urlencode 'a=1 2' \\\n  --data-urlencode 'b=x'"));
+    var back = try parse(testing.allocator, fcurl);
+    defer back.deinit(testing.allocator);
+    try testing.expectEqualStrings(form.body.?, back.body.?);
+    // `-G --data-urlencode` is the query string, as curl sends it.
+    var get = try parseCurl(testing.allocator, "curl -G https://x/g --data-urlencode q=1");
+    defer get.deinit(testing.allocator);
+    try testing.expectEqualStrings("https://x/g?q=1", get.url);
+    try testing.expect(get.body == null);
+    // The block form: the directive, the rows, the chip's cycle.
+    var blk = try parse(testing.allocator, "# @body-type multipart\nPOST https://x/up\n\nname = alice\nfile = @data.txt\n");
+    defer blk.deinit(testing.allocator);
+    try testing.expectEqual(BodyType.multipart, bodyType(&blk));
+    try setBodyType(&blk, testing.allocator, .json);
+    try testing.expectEqualStrings("# @body-type json", blk.script.?);
+    try setBodyType(&blk, testing.allocator, .raw);
+    try testing.expect(blk.script == null);
+    try testing.expectEqual(BodyType.json, BodyType.multipart.next().next());
+    try testing.expectEqual(BodyType.form, BodyType.fromWord("urlencoded").?);
+    try testing.expect(BodyType.fromWord("nope") == null);
 }
 
 test ".http: method line, headers, body; bare url is GET; comments skipped" {
@@ -1495,4 +1959,110 @@ test "options: setDirective replaces, adds, removes; durations parse and print b
     try testing.expectEqualStrings("300ms", formatDuration(&buf, 300));
     try testing.expectEqualStrings("2m", formatDuration(&buf, 120_000));
     try testing.expectEqualStrings("1234ms", formatDuration(&buf, 1234));
+}
+
+test "path params: `:name` after a slash only, `::` escapes, the port and the query are not params; substitution and the @path lines round-trip" {
+    const gpa = testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const names = try pathParamNames(a, "http://h:8080/users/:id/posts/:post_id/::literal/:id?q=:x#:frag");
+    try testing.expectEqual(@as(usize, 2), names.len);
+    try testing.expectEqualStrings("id", names[0]);
+    try testing.expectEqualStrings("post_id", names[1]);
+    try testing.expectEqual(@as(usize, 0), (try pathParamNames(a, "http://h:8080")).len);
+    try testing.expectEqual(@as(usize, 1), (try pathParamNames(a, "{{BASE}}/a/:b")).len);
+    const out = try substitutePath(gpa, "http://h:8080/users/:id/posts/:post_id/::literal/:id?q=:x", &.{ .{ .name = "id", .value = "42" }, .{ .name = "post_id", .value = "" } });
+    defer gpa.free(out);
+    try testing.expectEqualStrings("http://h:8080/users/42/posts/:post_id/:literal/42?q=:x", out);
+    const untouched = try substitutePath(gpa, "http://h/plain", &.{});
+    defer gpa.free(untouched);
+    try testing.expectEqualStrings("http://h/plain", untouched);
+    // The directive lines: parse, set, replace, remove; the URL keeps `:id`.
+    var req = try parse(gpa, "# @path id=42\n# @assert status == 200\nGET https://x/users/:id\n");
+    defer req.deinit(gpa);
+    try testing.expectEqualStrings("https://x/users/:id", req.url);
+    const pp = try pathParams(a, &req);
+    try testing.expectEqual(@as(usize, 1), pp.len);
+    try testing.expectEqualStrings("42", pp[0].value);
+    try testing.expectEqualStrings("42", pathParamValue(&req, "id").?);
+    try setPathParam(&req, gpa, "id", "7");
+    try setPathParam(&req, gpa, "other", "x y");
+    try testing.expectEqualStrings("# @path id=7\n# @assert status == 200\n# @path other=x y", req.script.?);
+    try setPathParam(&req, gpa, "id", null);
+    try testing.expectEqualStrings("# @assert status == 200\n# @path other=x y", req.script.?);
+    try testing.expect(pathParamValue(&req, "id") == null);
+    const block = try toHttpBlock(gpa, &req, null);
+    defer gpa.free(block);
+    try testing.expectEqualStrings("# @assert status == 200\n# @path other=x y\nGET https://x/users/:id\n", block);
+    const curl = try toCurl(gpa, &req);
+    defer gpa.free(curl);
+    try testing.expect(std.mem.indexOf(u8, curl, "# @path other=x y\ncurl 'https://x/users/:id'") != null);
+    var back = try parse(gpa, curl);
+    defer back.deinit(gpa);
+    try testing.expectEqualStrings("x y", pathParamValue(&back, "other").?);
+}
+
+test "block edits: rename (a nameless leading block gains its line), duplicate as name-copy, delete keeps the rest byte for byte, extract makes a block of its own" {
+    const gpa = testing.allocator;
+    const src = "GET https://x/lead\n\n### one\n# @tags a\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n";
+    const renamed = (try renameBlock(gpa, src, 1, "uno")).?;
+    defer gpa.free(renamed);
+    try testing.expectEqualStrings("GET https://x/lead\n\n### uno\n# @tags a\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n", renamed);
+    const lead = (try renameBlock(gpa, src, 0, "lead")).?;
+    defer gpa.free(lead);
+    try testing.expect(std.mem.startsWith(u8, lead, "### lead\nGET https://x/lead\n\n### one\n"));
+    try testing.expect((try renameBlock(gpa, src, 9, "x")) == null);
+    const dup = (try duplicateBlock(gpa, src, 1)).?;
+    defer gpa.free(dup);
+    try testing.expectEqualStrings("GET https://x/lead\n\n### one\n# @tags a\nGET https://x/one\n\n### one-copy\n# @tags a\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n", dup);
+    // The copy of the last block lands at the end; a second copy counts up.
+    const dup_last = (try duplicateBlock(gpa, src, 2)).?;
+    defer gpa.free(dup_last);
+    try testing.expect(std.mem.endsWith(u8, dup_last, "### two\nPOST https://x/two\n\n{}\n\n### two-copy\nPOST https://x/two\n\n{}\n"));
+    const dup_again = (try duplicateBlock(gpa, dup, 1)).?;
+    defer gpa.free(dup_again);
+    try testing.expect(std.mem.indexOf(u8, dup_again, "### one-copy-2\n") != null);
+    const del = (try deleteBlock(gpa, src, 1)).?;
+    defer gpa.free(del);
+    try testing.expectEqualStrings("GET https://x/lead\n\n### two\nPOST https://x/two\n\n{}\n", del);
+    const del_lead = (try deleteBlock(gpa, src, 0)).?;
+    defer gpa.free(del_lead);
+    try testing.expectEqualStrings("### one\n# @tags a\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n", del_lead);
+    const gone = (try deleteBlock(gpa, "### only\nGET https://x\n", 0)).?;
+    defer gpa.free(gone);
+    try testing.expectEqualStrings("", gone);
+    const ext = (try extractBlock(gpa, src, 2)).?;
+    defer gpa.free(ext);
+    try testing.expectEqualStrings("### two\nPOST https://x/two\n\n{}\n", ext);
+    const ext_lead = (try extractBlock(gpa, src, 0)).?;
+    defer gpa.free(ext_lead);
+    try testing.expectEqualStrings("### moved\nGET https://x/lead\n", ext_lead);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const list = try blocks(arena.allocator(), src);
+    try testing.expectEqual(@as(?usize, 2), blockIndex(list, "two"));
+    try testing.expectEqual(@as(?usize, 0), blockIndex(list, null));
+    try testing.expect(blockIndex(list, "nope") == null);
+}
+
+test "description and tags: the directives read, set, replace and remove; the block keeps them" {
+    const gpa = testing.allocator;
+    var req = try parse(gpa, "# @description List the users, paged\n# @tags users, smoke #v2\nGET https://x/users\n");
+    defer req.deinit(gpa);
+    try testing.expectEqualStrings("List the users, paged", description(&req).?);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const t = try tags(arena.allocator(), &req);
+    try testing.expectEqual(@as(usize, 3), t.len);
+    try testing.expectEqualStrings("users", t[0]);
+    try testing.expectEqualStrings("v2", t[2]);
+    try setTags(&req, gpa, "a b");
+    try setDescription(&req, gpa, "  Changed ");
+    try testing.expectEqualStrings("# @description Changed\n# @tags a b", req.script.?);
+    try setTags(&req, gpa, "");
+    try setDescription(&req, gpa, null);
+    try testing.expect(req.script == null);
+    try testing.expect(description(&req) == null);
+    try testing.expectEqual(@as(usize, 0), (try tags(arena.allocator(), &req)).len);
 }

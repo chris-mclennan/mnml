@@ -170,6 +170,7 @@ pub const root: Node = .{
             }),
             group('h', "+http", &.{
                 cmd('s', .@"http.send", "send request"),
+                cmd('r', .@"http.find_request", "find request…"),
                 cmd('y', .@"http.copy_curl", "copy as curl"),
                 cmd('d', .@"http.ai_debug", "ask Claude (debug)"),
                 cmd(']', .@"http.next_block", "next ### block"),

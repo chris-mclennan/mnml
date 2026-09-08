@@ -1,0 +1,20 @@
+# Rename a `###` block: the request picker opens block `two`, the
+# verb's prompt is seeded with its name, the file's other blocks stay
+# byte for byte.
+
+write api/r.http "### one\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"
+write anchor.txt anchor
+open anchor.txt
+
+command http.find_request
+type "two"
+key enter
+expect screen contains "https://x/two"
+
+command http.rename_request
+expect screen contains "Rename block `two` of api/r.http"
+type "duo"
+key enter
+expect screen contains "renamed block `two` → `duo` in api/r.http"
+expect file api/r.http contains "### one\nGET https://x/one\n\n### duo\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"
+expect file api/r.http lacks "### two"

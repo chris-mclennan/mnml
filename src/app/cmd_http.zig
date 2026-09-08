@@ -483,6 +483,7 @@ pub fn setEnvVar(app: *App, key: []const u8, value: []const u8) EnvWriteError!vo
         },
     };
     defer app.gpa.free(up.path);
+    http.restampEnvWatch(app);
     app.toast("env: wrote {s}={s} → {s}", .{ key, value, app.relPath(up.path) });
     app.needs_render = true;
 }
@@ -1337,6 +1338,7 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             defer arena.deinit();
             const sel = try activeEnvName(app, arena.allocator());
             const gone = env_mod.deleteKey(app.gpa, app.io, app.workspace, sel.name, label) catch false;
+            http.restampEnvWatch(app);
             app.toast("env: {s} {s}", .{ label, if (gone) "deleted" else "not found" });
         },
         .http_env_pick => {
@@ -1405,6 +1407,8 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             rp.edited = true;
         },
         .http_copy_as => try copyAs(app, i),
+        .http_find_request => try @import("http_ops.zig").acceptFind(app, i),
+        .http_move_target => try @import("http_ops.zig").acceptMove(app, label),
         .http_lookup_file => {
             const arena = app.frame.allocator();
             const path = try std.fs.path.join(arena, &.{ app.workspace, ".rqst", "lookups", label });
@@ -1490,6 +1494,7 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
         .http_env_edit_value => |key| try writeEnvVar(app, key, text),
         .http_auth_value => |kind| try applyAuth(app, kind, text),
         .http_option => |kind| try http.applyOptionPrompt(app, kind, text),
+        .http_path_param => |name| try http.applyPathParamPrompt(app, name, text),
         .auth_preset_name => try savePreset(app, text),
         .http_save_as => {
             const rel = std.mem.trim(u8, text, " \t");
@@ -1528,6 +1533,7 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
             };
             if (app.http.env_override) |e| app.gpa.free(e);
             app.http.env_override = try app.gpa.dupe(u8, name);
+            http.restampEnvWatch(app);
             _ = app.openEditor(path) catch {};
             app.toast("env: created {s} (now active)", .{app.relPath(path)});
         },

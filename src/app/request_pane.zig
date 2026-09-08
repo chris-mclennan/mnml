@@ -860,6 +860,12 @@ pub const RequestPane = struct {
         return true;
     }
 
+    /// Drop the `# @path name=` line: the segment goes out as `:name`.
+    pub fn clearPathParam(self: *RequestPane, name: []const u8) Allocator.Error!void {
+        try parse.setPathParam(&self.request, self.gpa, name, null);
+        self.edited = true;
+    }
+
     /// Drop the query parameter at `idx`.
     pub fn removeParam(self: *RequestPane, idx: usize) Allocator.Error!void {
         try self.commit();
@@ -1148,24 +1154,30 @@ fn paramsKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bo
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const ps = try rp.request.params(arena.allocator());
+    // The path rows come first: Enter prompts for a value, Delete / `d`
+    // clears it; the query rows below keep their draft and delete.
+    const names = try parse.pathParamNames(arena.allocator(), rp.url.items);
+    const n_path = names.len;
+    const total = n_path + ps.len;
+    const on_path = rp.row_cursor < n_path;
     switch (k.code) {
         .up => {
             if (rp.row_cursor == 0) rp.field = .url else rp.row_cursor -= 1;
         },
-        .down => rp.row_cursor = @min(rp.row_cursor + 1, ps.len -| 1),
-        .enter => try rp.startDraft(),
-        .delete, .backspace => if (ps.len > 0) {
-            try rp.removeParam(@min(rp.row_cursor, ps.len - 1));
-            rp.row_cursor = @min(rp.row_cursor, ps.len -| 2);
+        .down => rp.row_cursor = @min(rp.row_cursor + 1, total -| 1),
+        .enter => if (on_path) try http.openPathParamPrompt(app, rp, names[rp.row_cursor]) else try rp.startDraft(),
+        .delete, .backspace => if (on_path) try rp.clearPathParam(names[rp.row_cursor]) else if (ps.len > 0) {
+            try rp.removeParam(@min(rp.row_cursor - n_path, ps.len - 1));
+            rp.row_cursor = @min(rp.row_cursor, total -| 2);
         },
         .char => |c| switch (c) {
             'a', '+' => try rp.startDraft(),
-            'd' => if (ps.len > 0) {
-                try rp.removeParam(@min(rp.row_cursor, ps.len - 1));
-                rp.row_cursor = @min(rp.row_cursor, ps.len -| 2);
+            'd' => if (on_path) try rp.clearPathParam(names[rp.row_cursor]) else if (ps.len > 0) {
+                try rp.removeParam(@min(rp.row_cursor - n_path, ps.len - 1));
+                rp.row_cursor = @min(rp.row_cursor, total -| 2);
             },
             'k' => rp.row_cursor -|= 1,
-            'j' => rp.row_cursor = @min(rp.row_cursor + 1, ps.len -| 1),
+            'j' => rp.row_cursor = @min(rp.row_cursor + 1, total -| 1),
             else => return false,
         },
         else => return false,
@@ -1478,6 +1490,17 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         rp.row_cursor = hit_id - view.hit_param_row;
         return;
     }
+    if (hit_id >= view.hit_path_row and hit_id < view.hit_path_row + 100) {
+        // A path row: the value prompt at once, as the Auth rows act.
+        const i = hit_id - view.hit_path_row;
+        rp.showTab(.params);
+        rp.row_cursor = i;
+        var arena = std.heap.ArenaAllocator.init(app.gpa);
+        defer arena.deinit();
+        const names = try parse.pathParamNames(arena.allocator(), rp.url.items);
+        if (i < names.len) try http.openPathParamPrompt(app, rp, names[i]);
+        return;
+    }
     if (hit_id >= view.hit_header_row and hit_id < view.hit_header_row + 100) {
         rp.showTab(.headers);
         rp.row_cursor = hit_id - view.hit_header_row;
@@ -1514,6 +1537,12 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         view.hit_ai => return runCmd(app, .@"http.ai_debug"),
         view.hit_ai_chip => return runCmd(app, .@"http.copy_ai_prompt"),
         view.hit_save => return runCmd(app, .@"http.save"),
+        view.hit_body_type => {
+            rp.showTab(.body);
+            if (m.button == .right) return http.openBodyTypeMenu(app, rp, m.x, m.y);
+            if (m.button == .left) try http.setBodyType(app, rp, parse.bodyType(&rp.request).next());
+            return;
+        },
         view.hit_code => return @import("cmd_http.zig").copyAsPicker(app) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
@@ -1633,6 +1662,8 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         try tmp.setUrl(arena, rp.url.items);
         for (try tmp.params(arena)) |p| try params_list.append(arena, .{ .key = p.key, .value = p.value });
     }
+    var path_list: std.ArrayListUnmanaged(view.Pair) = .empty;
+    for (try parse.pathParamNames(arena, rp.url.items)) |name| try path_list.append(arena, .{ .key = name, .value = parse.pathParamValue(&rp.request, name) orelse "" });
     const draft: ?view.Draft = if (rp.draft) |d| .{ .key = d.key.items, .value = d.value.items, .key_caret = d.key_caret, .value_caret = d.value_caret, .on_value = d.on_value } else null;
     // The Headers table reads the tab's text live, like Params reads the URL.
     const header_rows = try rp.headerRowsOn(arena);
@@ -1713,6 +1744,10 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .source = rp.source.items,
         .source_caret = rp.source_caret,
         .params = params_list.items,
+        .path_params = path_list.items,
+        .body_type = parse.bodyType(&rp.request),
+        .description = parse.description(&rp.request),
+        .tags = try parse.tags(arena, &rp.request),
         .headers = headers,
         .header_value_offs = header_offs,
         .header_tip = header_tip,
@@ -2076,4 +2111,54 @@ test "headerRows: blanks and comments skipped, a colon-less line is a name, valu
     try testing.expectEqualStrings("X-Bare", rows[1].key);
     try testing.expectEqualStrings("", rows[1].value);
     try testing.expectEqualStrings("B", rows[2].value);
+}
+
+test "Params tab with path params: the cursor walks path rows then query rows, Enter on a path row prompts, `d` clears its line, the prompt's answer writes # @path" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try keysTestRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    var req = try parse.parse(testing.allocator, "# @path id=42\nGET https://x/users/:id/p/:pid?q=1\n");
+    const id = try http.openFromRequest(&app, req, .{});
+    req = undefined;
+    const rp = app.panes.get(id).?.asRequest().?;
+    rp.showTab(.params);
+    // Two path rows, one query row: j walks all three and stops.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('j')));
+    try testing.expect(try handleKey(&app, id, rp, Key.char('j')));
+    try testing.expect(try handleKey(&app, id, rp, Key.char('j')));
+    try testing.expectEqual(@as(usize, 2), rp.row_cursor);
+    // Enter on the query row drafts; Esc cancels; k k back to the first path row.
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(rp.draft != null);
+    rp.cancelDraft();
+    try testing.expect(try handleKey(&app, id, rp, Key.char('k')));
+    try testing.expect(try handleKey(&app, id, rp, Key.char('k')));
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(std.mem.indexOf(u8, app.overlay.prompt.state.title, "Value for :id") != null);
+    try testing.expectEqualStrings("42", app.overlay.prompt.state.text());
+    try app.handle(.{ .key = Key.char('7') });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("7", parse.pathParamValue(&rp.request, "id").?);
+    try testing.expectEqualStrings("path: :id = 7", app.lastToast().?);
+    try testing.expect(rp.edited);
+    // `d` on the row clears the line; the URL keeps `:id`.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('d')));
+    try testing.expect(parse.pathParamValue(&rp.request, "id") == null);
+    try testing.expectEqualStrings("https://x/users/:id/p/:pid?q=1", rp.url.items);
+    // The expansion substitutes what is set and leaves the rest.
+    try parse.setPathParam(&rp.request, testing.allocator, "pid", "9");
+    var set = @import("../http/env.zig").EnvSet.empty(testing.allocator);
+    defer set.deinit();
+    var out = try http.expandWith(testing.allocator, testing.io, &rp.request, &set);
+    defer out.deinit(testing.allocator);
+    try testing.expectEqualStrings("https://x/users/:id/p/9?q=1", out.url);
+    // A click on a path row opens the prompt straight away.
+    try click(&app, id, rp, view.hit_path_row + 1, .{ .x = 5, .y = 5, .kind = .press, .button = .left }, null);
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(std.mem.indexOf(u8, app.overlay.prompt.state.title, "Value for :pid") != null);
+    try app.handle(.{ .key = Key.named(.esc) });
 }

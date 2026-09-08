@@ -92,6 +92,17 @@ architecture behind it is in `docs/DESIGN.md`.
   bench, mocks, history. `Pane.websocket` (a WebSocket client by hand) and
   `Pane.browser` (the CDP wire layer). The CLI: `run`, `chain run`,
   `discover` (JSON and a YAML subset), `sync`, `sync-check`, `proxy`.
+- HTTP, beyond 0.2.x: an env file edited on disk reloads on its own
+  (a toast says so); COLLECTIONS lists a multi-block file's `###`
+  blocks and renames, duplicates, deletes and moves a request or a
+  block from the row menu; `http.find_request` (`ctrl+shift+r`,
+  `<leader>hr`) is a fuzzy picker over every block of every file;
+  `:id` path segments take their `# @path id=…` value on send and get
+  a `Path` group on the Params tab; the Body tab has a mode chip —
+  raw, JSON (formatted on send), form-urlencoded, multipart with
+  `name = @file` parts — that round-trips through curl's `-F` and
+  `--data-urlencode`; `# @description` shows under the URL and
+  `# @tags` feed the filter (`tag:smoke`) and the picker.
 - The TODOS panel, and the reference module behind it — scan worker,
   snapshot, commands, panel, mouse — that every other panel is checked
   against.

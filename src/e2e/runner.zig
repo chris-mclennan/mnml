@@ -352,7 +352,8 @@ const Run = struct {
     /// for the rest of the file. `TEXT` is `Name: value` lines, a blank
     /// line, the body — or just the body. With a delay the body goes out
     /// as one late chunk with no length (a server that never finishes,
-    /// for a timeout to trip on).
+    /// for a timeout to trip on). The text `@echo` makes the body the
+    /// request as it arrived, so a test can read what went on the wire.
     fn serve(self: *Run, sv: @FieldType(parser.Step, "serve")) ?[]u8 {
         const gpa = self.gpa;
         if (self.serve_arena == null) self.serve_arena = std.heap.ArenaAllocator.init(gpa);
@@ -370,7 +371,8 @@ const Run = struct {
         }
         const hs = a.dupe(HeaderT, headers.items) catch return null;
         const chunks: ?[]const []const u8 = if (sv.delay_ms > 0) (a.dupe([]const u8, &.{body}) catch return null) else null;
-        const canned: mock.Canned = .{ .status = sv.status, .status_text = statusText(sv.status), .headers = hs, .body = body, .chunks = chunks, .chunk_delay_ms = sv.delay_ms };
+        const echo = std.mem.eql(u8, std.mem.trim(u8, sv.text, " \t\r\n"), "@echo");
+        const canned: mock.Canned = .{ .status = sv.status, .status_text = statusText(sv.status), .headers = hs, .body = body, .chunks = chunks, .chunk_delay_ms = sv.delay_ms, .echo = echo };
         const server = mock.Server.startOn(gpa, self.io, sv.port, canned) catch |e| return std.fmt.allocPrint(gpa, "serve 127.0.0.1:{d}: {s}", .{ sv.port, @errorName(e) }) catch null;
         self.servers.append(gpa, server) catch {
             server.stop(self.io);

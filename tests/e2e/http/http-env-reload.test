@@ -1,0 +1,18 @@
+# An env file edited on disk is picked up on the tick: the Vars tab
+# reads the new value and a toast says the env reloaded, once.
+
+write .mnml/env/dev.env "HOST=one.test\n"
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+type "https://{{HOST}}/x"
+key ctrl+5
+expect screen contains "one.test"
+wait 200
+
+write .mnml/env/dev.env "HOST=two.test\n"
+wait 400
+expect screen contains "env: dev reloaded"
+expect screen contains "two.test"
+expect screen lacks "one.test"

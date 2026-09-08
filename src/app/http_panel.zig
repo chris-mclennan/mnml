@@ -108,6 +108,8 @@ pub const State = struct {
     /// Newest first.
     recent: []const history.Row = &.{},
     captured: []const captured.Row = &.{},
+    /// Every block of every file, in file order.
+    blocks: []const BlockInfo = &.{},
     truncated: bool = false,
     /// Rows as displayed: the filter and the collapse state applied.
     rows: std.ArrayListUnmanaged(Row) = .empty,
@@ -163,6 +165,42 @@ pub const State = struct {
 
 pub const CookieRow = struct { host: []const u8, name: []const u8, value: []const u8 };
 
+/// One request block of a listed file (items 8 / 9 / 15): the tree's
+/// block rows under a multi-block file, the picker's rows, the tag
+/// filter's facts. Strings on the snapshot arena.
+pub const BlockInfo = struct {
+    /// Index into `State.files`.
+    file: u32,
+    /// Index into `parse.blocks` of that file's text.
+    idx: u32,
+    /// The `### name`; null for a leading nameless block.
+    name: ?[]const u8,
+    method: []const u8,
+    url: []const u8,
+    /// The name, else the first comment, else the URL's short form.
+    label: []const u8,
+    tags: []const []const u8,
+    description: ?[]const u8,
+    /// The file holds more than one block.
+    multi: bool,
+};
+
+/// The filter, read: `tag:x` narrows to the blocks (and their files)
+/// tagged `x`; anything else is the substring the rows match.
+pub const Query = struct {
+    text: []const u8 = "",
+    tag: ?[]const u8 = null,
+
+    pub fn parse(q: []const u8) Query {
+        if (std.ascii.startsWithIgnoreCase(q, "tag:")) return .{ .tag = std.mem.trim(u8, q["tag:".len..], " \t") };
+        return .{ .text = q };
+    }
+
+    pub fn isEmpty(self: Query) bool {
+        return self.text.len == 0 and self.tag == null;
+    }
+};
+
 /// A screen position a menu drops at.
 pub const Pos = struct { x: u16, y: u16 };
 
@@ -185,6 +223,7 @@ pub fn refresh(app: *App) Allocator.Error!void {
     sortStrings(files.items);
     sortStrings(mocks.items);
     const grouped = try groupFolders(a, files.items);
+    const blocks = try scanBlocks(app.io, a, app.workspace, files.items);
     const envs = try env_mod.listNames(a, app.io, app.workspace);
     const active_env: ?[]const u8 = if (try http.envName(app, a)) |n| try a.dupe(u8, n) else null;
     const chains = try listChains(app, a);
@@ -214,6 +253,7 @@ pub fn refresh(app: *App) Allocator.Error!void {
     st.cookies = cookie_rows.items;
     st.recent = recent;
     st.captured = cap_rows;
+    st.blocks = blocks;
     st.truncated = truncated;
     st.scanned_once = true;
     try rebuild(app);
@@ -272,6 +312,36 @@ fn walkHidden(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8, f
             else => {},
         }
     }
+}
+
+/// Every block of every listed file: read (up to 1 MB each), split on
+/// `###`, each block parsed for its method, URL, tags and description.
+/// A file that will not read or parse contributes nothing.
+fn scanBlocks(io: Io, arena: Allocator, workspace: []const u8, files: []const []const u8) Allocator.Error![]const BlockInfo {
+    var out: std.ArrayListUnmanaged(BlockInfo) = .empty;
+    for (files, 0..) |rel, fi| {
+        const path = try std.fs.path.join(arena, &.{ workspace, rel });
+        const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch continue;
+        const list = try parse.blocks(arena, text);
+        for (list, 0..) |b, bi| {
+            var method: []const u8 = "?";
+            var url: []const u8 = "";
+            var tags: []const []const u8 = &.{};
+            var desc: ?[]const u8 = null;
+            if (parse.parse(arena, b.text)) |req| {
+                method = req.method;
+                url = req.url;
+                tags = try parse.tags(arena, &req);
+                desc = parse.description(&req);
+            } else |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            }
+            const label: []const u8 = if (b.name != null and b.name.?.len > 0) b.name.? else if (b.summary) |s| s else if (url.len > 0) history.shortUrl(url) else std.fs.path.basename(rel);
+            try out.append(arena, .{ .file = @intCast(fi), .idx = @intCast(bi), .name = b.name, .method = method, .url = url, .label = label, .tags = tags, .description = desc, .multi = list.len > 1 });
+        }
+    }
+    return out.items;
 }
 
 fn skipDir(name: []const u8) bool {
@@ -353,6 +423,7 @@ pub fn rebuild(app: *App) Allocator.Error!void {
     const gpa = app.gpa;
     st.rows.clearRetainingCapacity();
     const q = st.list.filterText();
+    const query = Query.parse(q);
     const a = st.snapshot.allocator();
     var any = false;
     for (Section.all) |s| {
@@ -360,7 +431,7 @@ pub fn rebuild(app: *App) Allocator.Error!void {
         defer items.deinit(gpa);
         var count: u32 = 0;
         if (s == .collections) {
-            count = try collectionRows(st, gpa, &items, q);
+            count = try collectionRows(st, gpa, &items, query);
         } else {
             const n = st.total(s);
             var i: usize = 0;
@@ -398,32 +469,84 @@ pub fn rebuild(app: *App) Allocator.Error!void {
 
 /// The COLLECTIONS tree under `q`: a folder whose name matches shows
 /// every member, otherwise the members that match; a folder with
-/// nothing to show goes; the filter unfolds every folder (Rust).
-/// Returns the files shown.
-fn collectionRows(st: *State, gpa: Allocator, items: *std.ArrayListUnmanaged(Row), q: []const u8) Allocator.Error!u32 {
+/// nothing to show goes; the filter unfolds every folder (Rust). A
+/// multi-block file lists its blocks under it (`GET  name`), the ones
+/// that match under a filter; a file matches by its name or by any
+/// block's name / method / URL / tags / description; `tag:x` keeps
+/// only the blocks tagged `x` and their files. Returns the files shown.
+fn collectionRows(st: *State, gpa: Allocator, items: *std.ArrayListUnmanaged(Row), q: Query) Allocator.Error!u32 {
     var count: u32 = 0;
+    const filtering = !q.isEmpty();
     for (st.folders, 0..) |f, fi| {
-        const name_hits = q.len == 0 or containsIgnoreCase(f.name, q);
+        const name_hits = q.tag == null and (q.text.len == 0 or containsIgnoreCase(f.name, q.text));
         var shown: std.ArrayListUnmanaged(Row) = .empty;
         defer shown.deinit(gpa);
+        var files_shown: u32 = 0;
         for (f.members) |mi| {
-            const base = std.fs.path.basename(st.files[mi]);
-            if (!name_hits and !containsIgnoreCase(base, q)) continue;
-            try shown.append(gpa, .{ .section = .collections, .idx = mi, .label = base, .in_folder = true });
+            if (try appendFileRows(st, gpa, &shown, mi, std.fs.path.basename(st.files[mi]), true, q, name_hits)) files_shown += 1;
         }
-        if (q.len > 0 and !name_hits and shown.items.len == 0) continue;
-        const folded = q.len == 0 and st.collapsed_dirs.contains(f.rel);
-        try items.append(gpa, .{ .section = .collections, .kind = .folder, .idx = @intCast(fi), .label = f.name, .count = @intCast(shown.items.len), .collapsed = folded, .hidden = f.hidden });
-        count += @intCast(shown.items.len);
+        if (filtering and !name_hits and files_shown == 0) continue;
+        const folded = !filtering and st.collapsed_dirs.contains(f.rel);
+        try items.append(gpa, .{ .section = .collections, .kind = .folder, .idx = @intCast(fi), .label = f.name, .count = files_shown, .collapsed = folded, .hidden = f.hidden });
+        count += files_shown;
         if (!folded) try items.appendSlice(gpa, shown.items);
     }
     for (st.loose) |i| {
-        const rel = st.files[i];
-        if (q.len > 0 and !containsIgnoreCase(rel, q)) continue;
-        try items.append(gpa, .{ .section = .collections, .idx = i, .label = rel });
-        count += 1;
+        if (try appendFileRows(st, gpa, items, i, st.files[i], false, q, false)) count += 1;
     }
     return count;
+}
+
+/// The file's row and, for a multi-block file, its block rows — under
+/// `q` the ones that match (all of them when the file's own name did,
+/// or the folder's). True when the file was shown.
+fn appendFileRows(st: *State, gpa: Allocator, items: *std.ArrayListUnmanaged(Row), fi: u32, label: []const u8, in_folder: bool, q: Query, folder_hit: bool) Allocator.Error!bool {
+    const filtering = !q.isEmpty();
+    const file_hit = folder_hit or (q.tag == null and (q.text.len == 0 or containsIgnoreCase(label, q.text)));
+    var multi = false;
+    var any_block_hit = false;
+    var block_rows: std.ArrayListUnmanaged(Row) = .empty;
+    defer block_rows.deinit(gpa);
+    for (st.blocks, 0..) |b, bi| {
+        if (b.file != fi) continue;
+        const matched = blockMatches(b, q);
+        any_block_hit = any_block_hit or matched;
+        if (!b.multi) continue;
+        multi = true;
+        if (filtering and !file_hit and !matched) continue;
+        try block_rows.append(gpa, .{ .section = .collections, .kind = .block, .idx = @intCast(bi), .label = b.label, .method = b.method, .detail = try tagsDetail(st.snapshot.allocator(), b.tags), .in_folder = in_folder });
+    }
+    if (filtering and !file_hit and !any_block_hit) return false;
+    try items.append(gpa, .{ .section = .collections, .idx = fi, .label = label, .in_folder = in_folder });
+    if (multi) try items.appendSlice(gpa, block_rows.items);
+    return true;
+}
+
+/// A block against the query: the tag (a prefix, case-insensitive)
+/// when one is asked for, else the substring over its name, method,
+/// URL, description and tags.
+fn blockMatches(b: BlockInfo, q: Query) bool {
+    if (q.tag) |want| {
+        for (b.tags) |t| if (std.ascii.startsWithIgnoreCase(t, want)) return true;
+        return false;
+    }
+    if (q.text.len == 0) return true;
+    if (containsIgnoreCase(b.label, q.text) or containsIgnoreCase(b.method, q.text) or containsIgnoreCase(b.url, q.text)) return true;
+    if (b.description) |d| if (containsIgnoreCase(d, q.text)) return true;
+    for (b.tags) |t| if (containsIgnoreCase(t, q.text)) return true;
+    return false;
+}
+
+/// `#a #b` for a row's detail; empty for none.
+fn tagsDetail(a: Allocator, tags: []const []const u8) Allocator.Error![]const u8 {
+    if (tags.len == 0) return "";
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (tags, 0..) |t, i| {
+        if (i > 0) try out.append(a, ' ');
+        try out.append(a, '#');
+        try out.appendSlice(a, t);
+    }
+    return out.items;
 }
 
 /// Item `i` of section `s` as a row. The formatted texts land on the
@@ -529,6 +652,15 @@ pub fn activate(app: *App, row: Row) CommandError!void {
         .folder => return toggleFolder(app, row.idx),
         .link => return linkAction(app, row.link, null),
         .empty, .gap => return,
+        .block => {
+            const b = st.blocks[row.idx];
+            const abs = try std.fs.path.join(arena, &.{ app.workspace, st.files[b.file] });
+            _ = http.openFileBlock(app, abs, b.idx) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return app.diag.fail(arena, "open {s}: {s}", .{ st.files[b.file], @errorName(err) }),
+            };
+            return;
+        },
         .item => {},
     }
     switch (row.section) {
@@ -723,6 +855,7 @@ fn copyPathCmd(app: *App) CommandError!void {
         .folder => st.folders[row.idx].rel,
         .link => row.link.text(app.cfg.ui.ascii_icons),
         .empty, .gap => return,
+        .block => st.files[st.blocks[row.idx].file],
         .item => switch (row.section) {
             .collections => st.files[row.idx],
             .mocks => st.mocks[row.idx],
@@ -985,6 +1118,7 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
                 .{ .label = if (st.collapsed.contains(.collections)) "Expand" else "Collapse", .action = .{ .command = .@"http.panel_toggle_section" } },
                 .{ .label = "Collapse / expand all", .action = .{ .command = .@"http.toggle_collapse_all" } },
                 .{ .label = "Refresh", .action = .{ .command = .@"http.refresh" }, .separator_before = true },
+                .{ .label = "Find request…", .action = .{ .command = .@"http.find_request" }, .separator_before = true },
                 .{ .label = "New collection…", .action = .{ .command = .@"http.new_collection" }, .separator_before = true },
                 .{ .label = "New request…", .action = .{ .command = .@"http.new_request" } },
                 .{ .label = "Sync sources", .action = .{ .command = .@"http.sync" } },
@@ -1043,10 +1177,24 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
             .{ .label = row.link.text(app.cfg.ui.ascii_icons), .action = .{ .command = .@"http.panel_open" } },
         },
         .empty, .gap => return,
+        .block => &.{
+            .{ .label = "Open", .action = .{ .command = .@"http.panel_open" } },
+            .{ .label = "Copy file path", .action = .{ .command = .@"http.panel_copy_path" } },
+            .{ .label = "Rename block…", .action = .{ .command = .@"http.rename_request" }, .separator_before = true },
+            .{ .label = "Duplicate block", .action = .{ .command = .@"http.duplicate_request" } },
+            .{ .label = "Move block to…", .action = .{ .command = .@"http.move_request" } },
+            .{ .label = "Delete block…", .action = .{ .command = .@"http.delete_request" } },
+            .{ .label = "Find request…", .action = .{ .command = .@"http.find_request" }, .separator_before = true },
+        },
         .item => switch (row.section) {
             .collections => &.{
                 .{ .label = "Open", .action = .{ .command = .@"http.panel_open" } },
                 .{ .label = "Copy path", .action = .{ .command = .@"http.panel_copy_path" } },
+                .{ .label = "Rename…", .action = .{ .command = .@"http.rename_request" }, .separator_before = true },
+                .{ .label = "Duplicate", .action = .{ .command = .@"http.duplicate_request" } },
+                .{ .label = "Move to…", .action = .{ .command = .@"http.move_request" } },
+                .{ .label = "Delete…", .action = .{ .command = .@"http.delete_request" } },
+                .{ .label = "Find request…", .action = .{ .command = .@"http.find_request" }, .separator_before = true },
                 .{ .label = "New request…", .action = .{ .command = .@"http.new_request" }, .separator_before = true },
                 .{ .label = "New collection…", .action = .{ .command = .@"http.new_collection" } },
                 .{ .label = "Sync sources", .action = .{ .command = .@"http.sync" } },

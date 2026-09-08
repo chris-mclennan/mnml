@@ -229,6 +229,43 @@ pub fn listNames(arena: Allocator, io: Io, workspace: []const u8) Allocator.Erro
     return out.items;
 }
 
+// ─── live reload ────────────────────────────────────────────────────────
+
+/// A stamp of the env files as they sit on disk: the active name's two
+/// files and every `.mnml/env/*.env` (name, mtime, size), so a poll on
+/// the tick can tell an edit, a new file or a removed one from nothing
+/// at all. Missing files stamp as missing.
+pub fn digest(io: Io, workspace: []const u8, name: []const u8) u64 {
+    var h = std.hash.Wyhash.init(0);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    for (subdirs) |sub| {
+        const path = std.fmt.bufPrint(&buf, "{s}/{s}/env/{s}.env", .{ workspace, sub, name }) catch continue;
+        h.update(path);
+        stampInto(&h, Io.Dir.cwd(), io, path);
+    }
+    const dir_path = std.fmt.bufPrint(&buf, "{s}/.mnml/env", .{workspace}) catch return h.final();
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return h.final();
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".env")) continue;
+        h.update(entry.name);
+        stampInto(&h, dir, io, entry.name);
+    }
+    return h.final();
+}
+
+fn stampInto(h: *std.hash.Wyhash, dir: Io.Dir, io: Io, path: []const u8) void {
+    const st = dir.statFile(io, path, .{}) catch {
+        h.update("missing");
+        return;
+    };
+    const ns: i128 = st.mtime.toNanoseconds();
+    const size: u64 = st.size;
+    h.update(std.mem.asBytes(&ns));
+    h.update(std.mem.asBytes(&size));
+}
+
 // ─── writing ────────────────────────────────────────────────────────────
 
 pub const Upsert = struct {
@@ -584,4 +621,29 @@ test "@secret marks names, credential-shaped names mask on their own, lineOfKey 
     // The marker survives a second merge and does not duplicate.
     try set.mergeText("# @secret PIN\n");
     try testing.expectEqual(@as(usize, 2), set.secrets.count());
+}
+
+test "digest: an edit, a new file and a removed one each move the stamp; a missing name is a stable stamp" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const ws = pbuf[0..n];
+    const d0 = digest(testing.io, ws, "dev");
+    try testing.expectEqual(d0, digest(testing.io, ws, "dev"));
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "A=1\n" });
+    const d1 = digest(testing.io, ws, "dev");
+    try testing.expect(d1 != d0);
+    try testing.expectEqual(d1, digest(testing.io, ws, "dev"));
+    // The edit: the size moves whatever the mtime granularity.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "A=12\n" });
+    const d2 = digest(testing.io, ws, "dev");
+    try testing.expect(d2 != d1);
+    // Another env file appears: the ENVS list changes too.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/prod.env", .data = "A=9\n" });
+    const d3 = digest(testing.io, ws, "dev");
+    try testing.expect(d3 != d2);
+    try tmp.dir.deleteFile(testing.io, ".mnml/env/prod.env");
+    try testing.expectEqual(d2, digest(testing.io, ws, "dev"));
 }

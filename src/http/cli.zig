@@ -117,7 +117,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     for (req.headers.items) |h| for (try env_mod.unresolved(a, h.value, &set)) |m| try seen.put(a, m, {});
     if (req.body) |b| for (try env_mod.unresolved(a, b, &set)) |m| try seen.put(a, m, {});
     for (seen.keys()) |m| try std_.err.print("warn: {{{{{s}}}}} is not defined in env {s}\n", .{ m, sel.name });
-    req.url = try env_mod.expand(a, io, req.url, &set);
+    req.url = try env_mod.expand(a, io, try parse.substitutePath(a, req.url, try parse.pathParams(a, &req)), &set);
     for (req.headers.items) |*h| h.value = try env_mod.expand(a, io, h.value, &set);
     if (req.body) |b| req.body = try env_mod.expand(a, io, b, &set);
     try std_.err.print("{s} {s}\n", .{ req.method, req.url });

@@ -4024,6 +4024,114 @@ own at the end of `scripting/api.zig`, one new file
   text must write it through `request.script` (or re-derive from it)
   so the Options rows and the tab agree.
 
+## HTTP — env reload, request verbs, the request picker, path params, multipart, description + tags (2026-09-08, branch `http-more2`) — `// changed:` notes
+
+`docs/research/http-vs-posting.md` §3 rows 7, 8, 9, 10, 11 and 15.
+Additive throughout: one new app file (`src/app/http_ops.zig`), one
+new http file (`src/http/multipart.zig`), seven `# @…` directive
+readers / writers in `parse.zig`, a `.block` row kind on the panel, a
+`Path` group on the Params tab, a chip on the Body strip, a row under
+the URL, and thirteen ids (spec count 1000). Nothing renamed.
+
+- `// changed (http):` `env.digest(io, ws, name)` stamps the active
+  env's two files and every `.mnml/env/*.env` (name, mtime, size).
+  `http.State.env_watch` keeps the last stamp; `http.tick` (from
+  `App.tick`, every 80 ms) takes a new one, and on a move rescans the
+  HTTP panel (the ENVS `●`, the counts) and toasts `env: dev reloaded`
+  once. The first look sets the baseline in silence. The var tips and
+  the Vars tab read the file at paint time, so they follow on their own.
+- `// changed (http):` path params. `parse.pathParamNames(url)` — a
+  `:name` right after a `/` in the path, `::` a literal colon, the
+  host's port and the query never; `substitutePath(url, values)`
+  writes the values in and makes `::` a `:`; the values are the block's
+  `# @path name=value` lines (`pathParams`, `pathParamValue`,
+  `setPathParam` — one line per name, replaced in place). The URL
+  keeps `:id` through `.http` and curl. `http.expandWith` substitutes
+  before the `{{}}` expansion, so fire, fan-out, bench, the CLI `run`
+  and chains all see it, and a value may hold a `{{VAR}}`. The Params
+  tab paints a `Path` group (`KvKind.path`, `hit_path_row = 800 + row`,
+  an unset value reads `(unset — Enter sets it)`) above `Query` when
+  the URL has any; the row cursor runs down both; Enter or a click on a
+  path row opens the value prompt (`PromptPurpose.http_path_param`,
+  seeded), Delete / `d` clears the line; `http.set_path_param` from
+  the palette.
+- `// changed (http):` the body type. `parse.BodyType` (raw / json /
+  form / multipart; `word`, `label`, `next`, `fromWord`), read from
+  `# @body-type` (`bodyType`, `setBodyType`). `parseCurl` turns `-F`
+  into `name = value` rows (a `@file` kept as one) plus the multipart
+  directive and `--data-urlencode` into rows plus the form directive
+  (`-G --data-urlencode` stays the query string); `toCurl` writes `-F`
+  / `--data-urlencode` back. `src/http/multipart.zig`: `parseRows` /
+  `renderRows`, `resolve` (a file row read relative to the source
+  file's directory — the workspace for a scratch — `error.FileNotFound`
+  naming the file), `encode(parts, boundary)` (CRLF framing, a
+  `filename` and a guessed `Content-Type` on a file part; the tests
+  fix the boundary), `makeBoundary`, `urlencode`. `http.applyBodyType`
+  runs in `fire` after the expansion and before the `http_request`
+  hook: JSON pretty-printed under `http.auto_format_body` and typed
+  `application/json`, the rows encoded and typed; a `Content-Type` the
+  request carries is kept. The chip (`hit_body_type = 58`, `[raw] JSON
+  form multipart` at the strip's right) paints when the Body tab has
+  the keyboard or the mode is not raw — the default screen stays
+  Rust's; a click cycles, a right-click lists the four (`checked`).
+  Ids: `http.cycle_body_type`, `http.body_type_raw` / `_json` / `_form`
+  / `_multipart`.
+- `// changed (app):` the COLLECTIONS tree lists a multi-block file's
+  blocks under it (`Kind.block`, `Row.idx` into
+  `http_panel.State.blocks`, painted `GET  name  #tag #tag` with the
+  verb's colour two cells deeper than the file). `refresh` scans every
+  listed file (`scanBlocks`, 1 MB each) into `BlockInfo{ file, idx,
+  name, method, url, label, tags, description, multi }`. The filter is
+  a `Query` (`tag:x` → the tag, else the substring); a file matches by
+  name or by any block's name / method / URL / description / tags, a
+  multi-block file lists the matching blocks (all when its own name
+  or its folder's matched); `tag:x` keeps only the blocks tagged `x`
+  (a prefix, case-insensitive) and their files. Enter on a block row
+  opens that block (`http.openFileBlock(app, path, idx)` — the pane
+  already on it when there is one).
+- `// added (app):` `src/app/http_ops.zig` — `http.rename_request` /
+  `duplicate_request` / `delete_request` / `move_request` on a
+  `Target{ path, block }` resolved from the panel's selected row when
+  the panel has the keys, else the active pane's source (its block
+  when the file has several). Rename prompts (`PromptPurpose.http_rename`,
+  seeded with the `###` name or the file's basename; a `/` moves the
+  file, a missing extension keeps the old) and the open pane's
+  `block_name` / `source_path` follows; duplicate writes
+  `parse.duplicateBlock` (`### name-copy`, `-copy-2` …) or
+  `stem-copy.ext`; delete confirms (`ConfirmPurpose.http_delete_request`,
+  Delete / Cancel) then `parse.deleteBlock` — the file goes when it
+  held nothing else; move opens a picker of the collection folders and
+  `(workspace root)` (`PickerKind.http_move_target`,
+  `http.State.move_target`) and `parse.extractBlock` appends the block
+  to the file of the same name there (a whole file is renamed into the
+  folder). The panel refreshes after each. The row menus of a file and
+  a block carry the four verbs and *Find request…*.
+- `// added (app):` `http.find_request` (`ctrl+shift+r` standard,
+  `<leader>hr` vim — the `+http` which-key group): a picker over
+  `State.blocks`, `METHOD · name · file`, the tags as the dimmed
+  detail; Enter opens that block (`PickerKind.http_find_request`,
+  `http.State.find_rows` on `picker_arena`).
+- `// changed (http, ui):` `# @description …` / `# @tags a b c`
+  (`parse.description`, `tags`, `setDescription`, `setTags` — commas
+  and a leading `#` accepted). `request_view.zones` adds a one-row
+  `desc` zone under the top bar when the model carries either (from 12
+  rows): `▸ description` dim italic, the `#tags` in the accent at the
+  row's end. `http.set_description` / `http.set_tags` prompt, seeded.
+- `// added (e2e):` the `serve` step's text `@echo` answers with the
+  request as it arrived (`mock.Canned.echo`) so a `.test` reads the
+  wire: `http-path-param.test`, `http-multipart-send.test`. Also
+  `http-env-reload`, `http-rename-block`, `http-duplicate-block`,
+  `http-delete-block`, `http-find-request`, `http-tag-filter`.
+- Re-aims: `parse.zig`'s `-F multipart` unit test now expects rows +
+  the directive (the bytes are made at send time). No `.test` re-aimed.
+- Coordination: `App.tick` calls `http_app.tick` (one line); the
+  purposes / kinds (`http_path_param`, `http_rename`, `http_description`,
+  `http_tags`, `http_delete_request`, `http_find_request`,
+  `http_move_target`) and `command.zig`'s table list gained
+  `http_ops.zig`; both spec pins are 1000.
+
+---
+
 ## Lua — the editor's help, SCRIPTS, Bind in init.lua (2026-09-08, branch `lua-track`) — `// changed:` notes
 
 - `// changed (app):` a save of either `init.lua` reloads the scripts
