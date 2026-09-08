@@ -873,7 +873,7 @@ fn copyPath(app: *App) CommandError!void {
 
 /// Opens `rows` (gpa) whose labels and strings live on `mem`; the menu
 /// owns both and frees them with the overlay.
-fn openOwned(app: *App, title: []const u8, rows: []MenuItem, x: u16, y: u16, mem: std.heap.ArenaAllocator) Allocator.Error!void {
+pub fn openOwned(app: *App, title: []const u8, rows: []MenuItem, x: u16, y: u16, mem: std.heap.ArenaAllocator) Allocator.Error!void {
     try app.openMenu(title, rows, x, y);
     app.overlay.menu.mem = mem;
 }

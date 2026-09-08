@@ -825,7 +825,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // right-click: a string-carrying row's bytes belong to the menu's
     // own arena, which the close frees — copy them out first.
     const text: ?[]const u8 = switch (action) {
-        .copy_text, .open_url, .open_path, .set_theme => |s| try app.frame.allocator().dupe(u8, s),
+        .copy_text, .open_url, .open_path, .set_theme, .lua_bind => |s| try app.frame.allocator().dupe(u8, s),
         else => null,
     };
     closeOverlay(app);
@@ -873,6 +873,12 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
         },
+        // // changed (lua-track): the DIAGNOSTICS / SCRIPTS row menus,
+        // the severity chip's menu, Bind in init.lua….
+        .diag_row_open => |i| try lsp.openRowIndex(app, i),
+        .set_severity_filter => |f| lsp.setFilter(app, f),
+        .script_row_open => |i| try scripts_panel.openRowIndex(app, i),
+        .lua_bind => try scripts_panel.promptBind(app, text.?),
         .none => {},
     }
 }
@@ -1094,6 +1100,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_edit_watch => |old| try dap.acceptEditWatch(app, old, text),
         .dap_bp_log => |b| try dap.acceptLogMessage(app, b.path, b.line, text),
         .lsp_rename => try lsp.acceptRename(app, text),
+        .lua_bind => |b| try scripts_panel.acceptBind(app, b.id, text),
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
         .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
         .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
@@ -1565,6 +1572,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 return help_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
             }
             if (m.kind != .press) return;
+            // // changed (lua-track): right-click on a palette row — Run,
+            // Bind in init.lua…, Copy id.
+            if (m.button == .right and app.overlay == .picker and app.overlay.picker.kind == .commands) return cmd_picker.openRowMenu(app, i, m.x, m.y);
             switch (app.overlay) {
                 .confirm => |*c| {
                     const purpose = c.purpose;
@@ -3272,7 +3282,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .script_hit = .here,
     .editor_cell = .{ .delegated = "editorCellMouse" },
     .gutter = .here,
-    .overlay_item = .{ .none = "overlay" },
+    .overlay_item = .here,
     .dock = .{ .delegated = "dock.mouse" },
     .rail = .{ .delegated = "activity_bar.mouse" },
     .welcome = .here,

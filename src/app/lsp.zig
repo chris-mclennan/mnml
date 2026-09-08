@@ -56,6 +56,8 @@ const cmd_view = @import("cmd_view.zig");
 const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
 const find_mod = @import("find.zig");
+const context_menus = @import("context_menus.zig");
+const MenuItem = command.MenuItem;
 
 const Style = @import("vaxis").Style;
 
@@ -1136,6 +1138,8 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
             focusPanel(app);
             const was = st.panel.cursor;
             st.panel.cursor = idx;
+            // // changed (lua-track): right-click is the row's menu.
+            if (m.button == .right) return openRowMenu(app, idx, m.x, m.y);
             if (m.button == .left and was == idx) {
                 const rows = try panelRows(app, app.frame.allocator());
                 if (idx < rows.len) try openRow(app, rows[idx]);
@@ -1147,9 +1151,71 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     }
 }
 
+/// The severity chip: a click cycles the filter; a right-click lists
+/// the three with a ✓ on the current one.
 pub fn chipMouse(app: *App, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
+    if (m.button == .right) return openFilterMenu(app, m.x, m.y);
     cycleFilter(app) catch {};
+}
+
+/// // changed (lua-track): a DIAGNOSTICS row's menu — Open, the two
+/// copies (the message; `file:line:col`), next / previous, the filter.
+pub fn openRowMenu(app: *App, idx: u32, x: u16, y: u16) Allocator.Error!void {
+    const rows = try panelRows(app, app.frame.allocator());
+    if (idx >= rows.len) return;
+    const row = rows[idx];
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const loc = try std.fmt.allocPrint(arena, "{s}:{d}:{d}", .{ row.rel, row.line + 1, row.character + 1 });
+    const message = try arena.dupe(u8, row.message);
+    var out: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer out.deinit(app.gpa);
+    try out.appendSlice(app.gpa, &.{
+        .{ .label = "Open", .action = .{ .diag_row_open = idx } },
+        .{ .label = "Copy message", .action = .{ .copy_text = message }, .separator_before = true },
+        .{ .label = "Copy location", .action = .{ .copy_text = loc } },
+        .{ .label = "Next diagnostic", .action = .{ .command = .@"lsp.next_diagnostic" }, .separator_before = true },
+        .{ .label = "Previous diagnostic", .action = .{ .command = .@"lsp.prev_diagnostic" } },
+    });
+    try appendFilterRows(app, &out, true);
+    const owned = try out.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try context_menus.openOwned(app, loc, owned, x, y, mem);
+}
+
+/// The severity chip's menu: the three filters, ✓ on the current one.
+pub fn openFilterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var out: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer out.deinit(app.gpa);
+    try appendFilterRows(app, &out, false);
+    const owned = try out.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu("Severity", owned, x, y);
+}
+
+fn appendFilterRows(app: *App, out: *std.ArrayListUnmanaged(MenuItem), separator: bool) Allocator.Error!void {
+    inline for (std.meta.tags(SeverityFilter), 0..) |f, i| try out.append(app.gpa, .{
+        .label = f.label(),
+        .action = .{ .set_severity_filter = f },
+        .checked = app.lsp.severity_filter == f,
+        .separator_before = separator and i == 0,
+    });
+}
+
+/// The filter, set outright (the chip's menu; `cycleFilter` is the click).
+pub fn setFilter(app: *App, f: SeverityFilter) void {
+    app.lsp.severity_filter = f;
+    app.lsp.panel.cursor = 0;
+    app.toast("diagnostics filter: {s}", .{f.label()});
+    app.needs_render = true;
+}
+
+/// The row menu's Open: the row at `idx` in the panel's current order.
+pub fn openRowIndex(app: *App, idx: u32) Allocator.Error!void {
+    const rows = try panelRows(app, app.frame.allocator());
+    if (idx < rows.len) try openRow(app, rows[idx]);
 }
 
 pub fn filterMouse(app: *App, m: Mouse) void {
@@ -2571,6 +2637,25 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     const rows = try panelRows(&app, arena.allocator());
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("a unused", rows[0].message);
+    // // changed (lua-track): right-click on the row is its menu, titled
+    // with the location; the chip's is the three filters, ✓ on the
+    // current one, and a pick sets the filter outright.
+    try rowMouse(&app, 0, .{ .x = 100, .y = 5, .kind = .press, .button = .right });
+    try testing.expect(app.overlay == .menu);
+    try testing.expect(std.mem.endsWith(u8, app.overlay.menu.title, "api.ts:1:5"));
+    try testing.expectEqualStrings("Copy message", app.overlay.menu.items[1].label);
+    try testing.expectEqualStrings("a unused", app.overlay.menu.items[1].action.copy_text);
+    try testing.expect(app.overlay.menu.items[7].checked); // Errors
+    try app.handle(.{ .key = Key.named(.esc) });
+    try chipMouse(&app, .{ .x = 100, .y = 2, .kind = .press, .button = .right });
+    try testing.expectEqualStrings("Severity", app.overlay.menu.title);
+    try testing.expectEqual(@as(usize, 3), app.overlay.menu.items.len);
+    try testing.expect(app.overlay.menu.items[2].checked and !app.overlay.menu.items[0].checked);
+    try app.handle(.{ .key = Key.named(.esc) });
+    setFilter(&app, .all);
+    try testing.expectEqual(SeverityFilter.all, app.lsp.severity_filter);
+    try testing.expectEqual(@as(usize, 2), (try panelRows(&app, arena.allocator())).len);
+    setFilter(&app, .errors);
     // A republish with an empty list clears the file.
     try applyDiagnostics(&app, "/tmp/api.ts", &.{});
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, "/tmp/api.ts").len);

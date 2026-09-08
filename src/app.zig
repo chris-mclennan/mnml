@@ -229,6 +229,9 @@ pub const PromptPurpose = union(enum) {
     dap_bp_log: BpTarget,
     /// LSP: the new name for the symbol at the cursor.
     lsp_rename,
+    /// // changed (lua-track): *Bind in init.lua…* — the key spec for
+    /// `id`; the prompt's title is `title` (both owned).
+    lua_bind: LuaBind,
     /// LSP: a `workspace/symbol` query.
     lsp_workspace_symbol,
 
@@ -275,10 +278,15 @@ pub const PromptPurpose = union(enum) {
             .dap_bp_condition, .dap_hit_count, .dap_bp_log => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             .dap_edit_watch => |w| gpa.free(w),
+            .lua_bind => |b| {
+                gpa.free(b.id);
+                gpa.free(b.title);
+            },
             else => {},
         }
     }
 };
+pub const LuaBind = struct { id: []u8, title: []u8 };
 pub const ConfirmPurpose = union(enum) {
     close_pane: PaneId,
     quit,

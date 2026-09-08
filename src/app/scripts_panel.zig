@@ -26,6 +26,11 @@ const lua_mod = @import("../scripting/lua.zig");
 const auto_refresh = @import("auto_refresh.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
+const context_menus = @import("context_menus.zig");
+const watch = @import("watch.zig");
+const keymap = @import("../core/keymap.zig");
+const Chord = @import("../core/key.zig").Chord;
+const MenuItem = command.MenuItem;
 
 pub const Row = view.Row;
 pub const Panel = list_panel.ListPanel(Row);
@@ -220,6 +225,8 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
             focusPanel(app);
             const was = st.panel.cursor;
             st.panel.cursor = idx;
+            // right-click is the row's menu.
+            if (m.button == .right) return openRowMenu(app, idx, m.x, m.y);
             if (m.button == .left and was == idx) {
                 const list = try rows(app, app.frame.allocator());
                 if (idx < list.len) try openRow(app, list[idx]);
@@ -231,10 +238,113 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     }
 }
 
+/// The row's `⋮`: the same menu as a right-click.
 pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
-    _ = app;
-    _ = idx;
-    _ = m;
+    if (m.kind != .press) return;
+    focusPanel(app);
+    app.scripts_panel.panel.cursor = idx;
+    try openRowMenu(app, idx, m.x, m.y);
+}
+
+/// A row's menu: Run and *Bind in init.lua…* for a command, Open
+/// `file:line` when the row has one, the copy, Reload scripts. The link
+/// row's is Create init.lua.
+pub fn openRowMenu(app: *App, idx: u32, x: u16, y: u16) Allocator.Error!void {
+    const list = try rows(app, app.frame.allocator());
+    if (idx >= list.len) return;
+    const row = list[idx];
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var out: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer out.deinit(app.gpa);
+    if (row.link) {
+        try out.append(app.gpa, .{ .label = "Create init.lua", .action = .{ .command = .@"script.new_init" } });
+    } else {
+        const name = try arena.dupe(u8, row.name);
+        if (row.kind == .command) {
+            if (command.resolve(app, name)) |ref| try out.append(app.gpa, .{ .label = "Run", .action = switch (ref) {
+                .static => |s| .{ .command = s },
+                .dyn => |d| .{ .dyn = d },
+            } });
+            try out.append(app.gpa, .{ .label = "Bind in init.lua\u{2026}", .action = .{ .lua_bind = name } });
+        }
+        if (row.file.len > 0) try out.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Open {s}", .{row.loc}), .action = .{ .script_row_open = idx }, .separator_before = out.items.len > 0 });
+        try out.append(app.gpa, .{ .label = if (row.kind == .command) "Copy id" else "Copy name", .action = .{ .copy_text = name } });
+    }
+    try out.append(app.gpa, .{ .label = "Reload scripts", .action = .{ .command = .@"script.reload" }, .separator_before = true });
+    const owned = try out.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try context_menus.openOwned(app, if (row.link) lua_mod.init_file else row.name, owned, x, y, mem);
+}
+
+/// The row menu's Open: the row at `idx` in the panel's current order.
+pub fn openRowIndex(app: *App, idx: u32) Allocator.Error!void {
+    const list = try rows(app, app.frame.allocator());
+    if (idx < list.len) try openRow(app, list[idx]);
+}
+
+/// *Bind in init.lua…*: the prompt for the key that will run `id`.
+pub fn promptBind(app: *App, id: []const u8) Allocator.Error!void {
+    const owned_id = try app.gpa.dupe(u8, id);
+    errdefer app.gpa.free(owned_id);
+    const title = try std.fmt.allocPrint(app.gpa, "Bind {s} to key", .{id});
+    errdefer app.gpa.free(title);
+    var state = app_mod.Prompt.init(app.gpa, title);
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .lua_bind = .{ .id = owned_id, .title = title } } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The key typed into the prompt: parsed as a key spec, then
+/// `mnml.map("<spec>", "<id>")` on a new last line of the workspace
+/// `init.lua` (the template first when there is none), the file reloaded
+/// in its editor when it is open and clean — refused when it is dirty,
+/// the write would sit under the buffer — and the scripts reloaded, so
+/// the chord works at once.
+pub fn acceptBind(app: *App, id: []const u8, text: []const u8) Allocator.Error!void {
+    const spec = std.mem.trim(u8, text, " \t");
+    if (spec.len == 0) return;
+    var buf: [keymap.max_seq]Chord = undefined;
+    if (keymap.parseKeySeqBuf(spec, &buf) == null) {
+        app.toast("not a key: {s} (ctrl+shift+h, <leader>x, g d)", .{spec});
+        return;
+    }
+    const arena = app.frame.allocator();
+    const path = try workspaceInit(app);
+    const rel = app.relPath(path);
+    const open_pane = app.panes.findPath(path);
+    if (open_pane) |pid| if (app.panes.editor(pid)) |e| if (e.buf.doc.dirty) {
+        app.toast("{s} has unsaved changes — save it first", .{rel});
+        return;
+    };
+    const existing: []const u8 = if (exists(app, path))
+        Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(1 << 30)) catch |err| {
+            app.toast("cannot read {s}: {s}", .{ rel, @errorName(err) });
+            return;
+        }
+    else
+        template;
+    const needs_nl = existing.len > 0 and existing[existing.len - 1] != '\n';
+    const line_no = std.mem.count(u8, existing, "\n") + @as(usize, if (needs_nl) 1 else 0) + 1;
+    const joined = try std.fmt.allocPrint(arena, "{s}{s}mnml.map(\"{s}\", \"{s}\")\n", .{ existing, if (needs_nl) "\n" else "", spec, id });
+    const dir = std.fs.path.dirname(path) orelse app.workspace;
+    Io.Dir.cwd().createDirPath(app.io, dir) catch {};
+    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = joined }) catch |err| {
+        app.toast("cannot write {s}: {s}", .{ rel, @errorName(err) });
+        return;
+    };
+    if (open_pane) |pid| watch.reload(app, pid) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+    command.run(app, .{ .static = .@"script.reload" }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+    app.toast("bound {s} → {s}  ({s}:{d})", .{ spec, id, rel, line_no });
 }
 
 /// The header's refresh chip: a click reloads every `init.lua`; a
@@ -348,4 +458,57 @@ test "SCRIPTS: the rows name what init.lua registered with file:line; Enter jump
     // The section moves like any other.
     try command.run(&app, .{ .static = .@"view.move_section_right" });
     try t.expectEqual(side.Section.scripts, side.shown(&app, .right).?);
+}
+
+test "SCRIPTS: right-click on a command row — Run, Bind in init.lua…, Open, Copy id, Reload; the bind writes mnml.map on a new last line and the chord runs; a bad key and a dirty file are refused" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, ".mnml");
+    // No trailing newline: the map line still lands on a line of its own.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/init.lua", .data = "mnml.command{ id = 'hello', run = function() mnml.toast('hi from hello') end }" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .workspace_trusted = true, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.activity_scripts" });
+    try rowMouse(&app, 0, .{ .x = 5, .y = 5, .kind = .press, .button = .right });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("user.hello", app.overlay.menu.title);
+    const items = app.overlay.menu.items;
+    try t.expectEqual(@as(usize, 5), items.len);
+    try t.expectEqualStrings("Run", items[0].label);
+    try t.expectEqualStrings("Bind in init.lua…", items[1].label);
+    try t.expect(items[1].action == .lua_bind);
+    try t.expectEqualStrings("Open .mnml/init.lua:1", items[2].label);
+    try t.expectEqualStrings("Copy id", items[3].label);
+    try t.expectEqualStrings("user.hello", items[3].action.copy_text);
+    try t.expectEqualStrings("Reload scripts", items[4].label);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // The kebab opens the same menu.
+    try kebabMouse(&app, 0, .{ .x = 25, .y = 5, .kind = .press, .button = .left });
+    try t.expect(app.overlay == .menu);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // The bind: the prompt names the command; a bad key is refused; a
+    // good one lands on a new last line, and the chord runs the command.
+    try promptBind(&app, "user.hello");
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("Bind user.hello to key", app.overlay.prompt.state.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try acceptBind(&app, "user.hello", "not a key at all");
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "not a key"));
+    try acceptBind(&app, "user.hello", "ctrl+alt+u");
+    try t.expectEqualStrings("bound ctrl+alt+u → user.hello  (.mnml/init.lua:2)", app.lastToast().?);
+    const text = try tmp.dir.readFileAlloc(t.io, ".mnml/init.lua", t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.endsWith(u8, text, "}\nmnml.map(\"ctrl+alt+u\", \"user.hello\")\n"));
+    try app.handle(.{ .key = .{ .code = .{ .char = 'u' }, .mods = .{ .ctrl = true, .alt = true } } });
+    try t.expectEqualStrings("hi from hello", app.lastToast().?);
+    // The file open and dirty: refused, the write would sit under the buffer.
+    const path = try std.fs.path.join(t.allocator, &.{ root, ".mnml", "init.lua" });
+    defer t.allocator.free(path);
+    _ = try app.openPath(path);
+    _ = try app.applyOps(app.activeEditor().?, &.{.{ .insert_str = "-- x" }});
+    try acceptBind(&app, "user.hello", "ctrl+alt+v");
+    try t.expectEqualStrings(".mnml/init.lua has unsaved changes — save it first", app.lastToast().?);
 }

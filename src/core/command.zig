@@ -578,6 +578,17 @@ pub const MenuAction = union(enum) {
     /// // right-click: a theme by name — the theme pill's per-theme rows
     /// (Rust `SetTheme`).
     set_theme: []const u8,
+    /// // changed (lua-track): a DIAGNOSTICS row menu's Open — the row's
+    /// index (`app/lsp.zig`).
+    diag_row_open: u32,
+    /// // changed (lua-track): the severity chip's menu — one filter.
+    set_severity_filter: @import("../app/lsp.zig").SeverityFilter,
+    /// // changed (lua-track): a SCRIPTS row menu's "Open <file:line>" —
+    /// the row's index (`app/scripts_panel.zig`).
+    script_row_open: u32,
+    /// // changed (lua-track): *Bind in init.lua…* — the command id; the
+    /// menu's `mem` arena owns the bytes.
+    lua_bind: []const u8,
     none,
 };
 
