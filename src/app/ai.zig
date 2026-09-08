@@ -1745,6 +1745,8 @@ test "the setup picker lists the backends and Esc leaves the config alone; a pic
 }
 
 test "every ai / agents / cloud_agents id has a runner" {
+    // The walk over every id is a comptime loop; the default quota is the id count.
+    @setEvalBranchQuota(8_000);
     inline for (@typeInfo(command.CommandId).@"enum".fields) |f| {
         const name = f.name;
         if (std.mem.startsWith(u8, name, "ai.") or std.mem.startsWith(u8, name, "agents.") or std.mem.startsWith(u8, name, "cloud_agents.")) {
