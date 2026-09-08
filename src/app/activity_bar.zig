@@ -64,6 +64,7 @@ pub fn commandOf(s: Section) command.CommandId {
         .notes => .@"view.activity_notes",
         .todos => .@"view.activity_todos",
         .findings => .@"view.activity_findings",
+        .scripts => .@"view.activity_scripts",
         .diagnostics => .@"lsp.diagnostics",
         .outline => .@"outline.show",
     };
@@ -189,6 +190,7 @@ pub fn describe(part: Part) tooltip.Tip {
             .notes => "click: Notes rail · .mnml/notes/*.md persistent scratch · right-click: menu",
             .todos => "click: TODOs rail · TODO / FIXME / XXX / HACK / REVIEW hits · right-click: menu",
             .findings => "click: Findings rail · .mnml/findings/*.md tester / review reports · right-click: menu",
+            .scripts => "click: Scripts rail · what init.lua registered, with file:line · ⟳ reloads · right-click: menu",
             .diagnostics => "click: Diagnostics · the language servers' problems list",
             .outline => "click: Outline · the symbols of the active file",
         } },

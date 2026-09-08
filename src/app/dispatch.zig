@@ -39,6 +39,7 @@ const macros_store = @import("macros_store.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const script_diag = @import("../scripting/diag.zig");
+const scripts_panel = @import("scripts_panel.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
@@ -173,6 +174,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .http => try http_panel.handleKey(app, k),
             .sessions => try sessions.handleKey(app, k),
             .integrations => try integrations.handleKey(app, k),
+            .scripts => try scripts_panel.handleKey(app, k),
             .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
         };
         if (took) return;
@@ -846,7 +848,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline, .debug => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1307,6 +1309,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
             .integrations => try integrations.rowMouse(app, pr.idx, m),
+            .scripts => try scripts_panel.rowMouse(app, pr.idx, m),
             .outline => {},
         },
         .kebab => |pr| switch (pr.panel) {
@@ -1318,6 +1321,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
             .integrations => try integrations.kebabMouse(app, pr.idx, m),
+            .scripts => try scripts_panel.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline => {},
         },
         .chip => |c| switch (c.panel) {
@@ -1330,6 +1334,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
             .integrations => try integrations.chipMouse(app, c.kind, m),
+            .scripts => try scripts_panel.chipMouse(app, c.kind, m),
             .outline => {},
         },
         .filter_input => |p| switch (p) {
@@ -1342,6 +1347,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
             .integrations => integrations.filterMouse(app, m),
+            .scripts => scripts_panel.filterMouse(app, m),
             .outline => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
@@ -1355,6 +1361,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
                 .integrations => if (hitRect(app, m.x, m.y)) |r| integrations.scrollbarMouse(app, r, m),
+                .scripts => if (hitRect(app, m.x, m.y)) |r| scripts_panel.scrollbarMouse(app, r, m),
                 .outline => {},
             },
             .pane => |id| {

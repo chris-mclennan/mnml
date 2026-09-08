@@ -14,7 +14,9 @@ const ConfigSort = @import("../config/Config.zig").ListSort;
 /// column (`App.outline_panel` is its pane) when its column is open.
 /// // changed (debug-ui): `debug` — the DEBUG section (variables, watch,
 /// call stack, breakpoints) is a column surface like the rest.
-pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug, integrations };
+/// // changed (lua-track): `scripts` — the SCRIPTS section, a column
+/// surface listing what the Lua scripts registered.
+pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug, integrations, scripts };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

@@ -134,6 +134,7 @@ const runner_tables = .{
     @import("../app/ws_pane.zig"),
     @import("../app/cmd_browser.zig"),
     @import("../app/cmd_script.zig"),
+    @import("../app/scripts_panel.zig"),
     @import("../app/messages.zig"),
     @import("../app/zen.zig"),
     @import("../app/cmd_harpoon.zig"),

@@ -65,6 +65,8 @@ pub fn surface(s: Section) ?Surface {
         .debug => .{ .panel = .debug },
         // The INTEGRATIONS section is a column too (Rust's sidebar).
         .integrations => .{ .panel = .integrations },
+        // // changed (lua-track): the SCRIPTS section is a column too.
+        .scripts => .{ .panel = .scripts },
         .search, .agents, .cloud_agents => null,
     };
 }
@@ -81,6 +83,7 @@ pub fn sectionOfPanel(p: PanelId) Section {
         .outline => .outline,
         .debug => .debug,
         .integrations => .integrations,
+        .scripts => .scripts,
     };
 }
 
