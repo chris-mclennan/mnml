@@ -3823,7 +3823,6 @@ menu and the `+` menu are in `docs/ui-spec/` (`rust-menu-file-120x40.txt`,
   motion, no button — `Driver.mouse(.motion)`); the headless IPC
   `hover` already existed.
 
-
 ## HTTP hooks + Headers completion (2026-09-07, branch `http-hooks`) — `// changed:` notes
 
 `docs/research/http-vs-posting.md` §3 rows 1–2 and §4-A. Additive
@@ -4094,3 +4093,81 @@ own at the end of `scripting/api.zig`, one new file
   `ui/scripts_panel.zig` (the row's clipping at 40 cells),
   `tests/e2e/lua_run_selection.test`, `lua_error_diagnostic.test`,
   `lua_completion.test`.
+
+## Git — interactive rebase, the operation in progress, amend, reset (2026-09-07)
+
+- `// changed (git):` `parse.Status` gains `in_progress: InProgress`
+  (`none rebase merge cherry_pick revert bisect`), `step` and `total`.
+  The status job reads the git dir (`rev-parse --absolute-git-dir`,
+  cached on the `Repo`) for `rebase-merge` / `rebase-apply` /
+  `MERGE_HEAD` / `CHERRY_PICK_HEAD` / `REVERT_HEAD` / `BISECT_LOG` and
+  the rebase's `msgnum` / `end` (`next` / `last` for an am-rebase);
+  `parse.progressFrom` is the pure half. `parse.parseTodo` reads a
+  `rebase -i` todo (long and one-letter words, `exec` lines skipped).
+- `// added (git):` `src/git/sequence_editor.zig` — mnml as git's
+  editors. `mnml-zig --rebase-todo <plan> <todo>` replaces git's todo
+  with the plan after checking both name the same commits (a mismatch
+  exits 1: git aborts with the reason); `mnml-zig --commit-msg <queue>
+  <target>` hands a reword its new message, keyed by the commit's OLD
+  subject (git opens the editor once per reword and once per run of
+  squashes, so a positional queue would misfire). `main.zig` dispatches
+  the two flags before anything else. The worker sets
+  `GIT_SEQUENCE_EDITOR` / `GIT_EDITOR` in the child's environment
+  (`client.gitEnv`) — the variables beat `core.editor`, and the app's
+  own environment may carry one.
+- `// changed (git):` `client.Job` gains `op_continue` / `op_abort` /
+  `op_skip: InProgress` (`git <verb> --continue / --abort / --skip`, no
+  editor; bisect maps to `bisect reset` / `bisect skip`),
+  `rebase_plan{base: ?sha, ops: []sequence_editor.Op}` (`rebase -i
+  --autostash <base>` or `--root`), `amend_noedit`, `amend_to: sha`
+  (`commit --fixup` + `rebase -i --autosquash --autostash <sha>^` with
+  `true` as both editors) and `reset{mode, rev}`. `client.Action` gains
+  `reset_hard{sha, stash: ?sha}`: every tree-touching job records HEAD
+  and a `stash create` BEFORE it runs (`snapshot` / `pushSnapshotUndo`)
+  and `git.undo` is `reset --hard` + `stash apply --index` (plain
+  `apply` when the index will not go). `amend_noedit` and `reset --soft`
+  keep the `reset_soft` pair.
+- `// changed (ui):` `git_toolbar.Action` gains `cont abort skip`;
+  `Props.in_progress` swaps the row to `Continue · Abort · Skip ·
+  Refresh` (`Skip` only where git has `--skip`). `git_graph_view.Doc`
+  gains `in_progress`, `marks: ?[]const bool`, `range: ?[2]usize` and
+  `plan_actions: ?[]const u8`; the cursor column's second cell is the
+  mark cell (`✓` on a selected row, the action's letter while the plan
+  is open; at rest the space Rust paints). `drawPlan` paints the plan
+  modal over the list (`overlay.boxLook(.modal)`), rows `▶ pick
+  abc1234  subject`, the hint row, one `planRowId` hit per row.
+- `// changed (app):` `GraphPane` gains `marks` (commit indices),
+  `anchor` (the `v` range's start) and `plan: ?Plan` (rows oldest-first,
+  cursor, `base`), all dropped when the log reloads. Keys: space toggles
+  a mark, `v` starts / folds a range, `*` selects the branch's commits
+  since its upstream (`git.select_branch`), `r` opens the plan
+  (`git.rebase_plan`), Esc clears the selection before it closes the
+  pane; refresh moved to `R`, revert to `V`; on the WIP row `A` is
+  `git.amend` and `U` unstage-all, on a commit `A` is `git.amend_to`.
+  The plan modal (`planKey`): `↑↓` / `j k`, `←→` / `h l` cycle the
+  action, `p r e s f d` set it (`r` opens the `plan_reword` prompt),
+  `J` / `K` or alt+`↑↓` move the row, Enter runs, Esc cancels; a
+  squash / fixup first in the plan refuses. `git.fixup` / `squash` /
+  `drop` / `reword` build the one-line plan and run it (`directVerb`);
+  `reword`'s prompt opens with the old subject. `git.reset_soft` /
+  `_mixed` / `_hard` read the branches panel's row when it has the
+  focus, else the graph's selected commit, else a rev prompt; hard is
+  behind `Confirm.reset_hard`. `PromptKind` gains `plan_reword reword
+  reset_soft reset_mixed reset_hard`. The graph row menu gains Rebase
+  plan… / Fixup / Squash / Reword… / Drop / Amend with the staged
+  changes / Reset --soft / --mixed / --hard… / Select the branch's
+  commits; the branches panel's local and remote rows gain the three
+  Reset rows (`git_palette.cursorBranch`). Statusline: the branch chip
+  reads `main | REBASE 2/5` while an operation waits.
+- `// added (spec):` fourteen ids — `git.op_continue` `git.op_abort`
+  `git.op_skip` `git.rebase_plan` `git.fixup` `git.squash` `git.drop`
+  `git.reword` `git.select_branch` `git.amend` `git.amend_to`
+  `git.reset_soft` `git.reset_mixed` `git.reset_hard`. Spec count 950.
+- Tests: `parse.zig` (`progressFrom`, `parseTodo`),
+  `sequence_editor.zig` (the child modes on real files, the plan → todo
+  round-trip, the subject-keyed queue), `git_toolbar.zig` (the
+  mid-operation row), `app/git.zig` (undo of amend / reset --hard /
+  reset --soft / amend_to on a seeded repo; the plan modal's keys and a
+  row off the first-parent line), and `tests/e2e/git_rebase_plan_squash
+  / _reword / _drop`, `git_rebase_abort`, `git_amend_wip`,
+  `git_reset_hard_undo.test`.
