@@ -301,6 +301,7 @@ pub fn build(b: *std.Build) void {
     // statusline tests compare the painted row with the spec's row.
     root_module.addAnonymousImport("ui_spec_rust_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-120x40.txt") });
     root_module.addAnonymousImport("ui_spec_rust_80x24", .{ .root_source_file = b.path("docs/ui-spec/rust-80x24.txt") });
+    root_module.addAnonymousImport("ui_spec_rust_sessions_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-sessions-120x40.txt") });
     const glyph_exe = b.addExecutable(.{ .name = "glyph-audit", .root_module = glyph_mod });
     const glyph_bake = b.addRunArtifact(glyph_exe);
     glyph_bake.addArg("bake");
