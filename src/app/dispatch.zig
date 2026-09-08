@@ -58,6 +58,7 @@ const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
+const zon_pane = @import("zon_pane.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const cheatsheet = @import("cheatsheet.zig");
@@ -194,6 +195,11 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .md_preview => {
             if (try md_preview.handleKey(app, id, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .zon => {
+            if (try zon_pane.handleKey(app, id, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1131,6 +1137,18 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .review_trust => try @import("workspace_trust.zig").answerReview(app, choice),
         .close_pane => |id| switch (choice) {
             0 => {
+                // A ZON tree saves its working text.
+                if (app.panes.get(id)) |p| if (p.* == .zon) {
+                    zon_pane.save(app, id) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {
+                            if (app.diag.msg) |msg| app.toast("{s}", .{msg});
+                            return;
+                        },
+                    };
+                    try app.forceClosePane(id);
+                    return;
+                };
                 const e = app.panes.editor(id) orelse return;
                 if (e.buf.doc.path == null) {
                     app.toast("can't save a scratch buffer — pick Discard or Cancel", .{});
@@ -1242,6 +1260,9 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     };
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.asMount()) |mp| {
         if (app.focus == .pane) return mount_pane.paste(app, mp, text);
+    };
+    if (app.active) |id| if (app.panes.get(id)) |p| if (p.asZon()) |z| {
+        if (app.focus == .pane) return zon_pane.paste(app, z, text);
     };
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
@@ -1686,6 +1707,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .files => |*f| try files_pane.click(app, sh.pane, f, sh.id, m),
+                .zon => |*z| try zon_pane.click(app, sh.pane, z, sh.id, m),
                 .outline, .md_preview, .image, .pty, .ai => {},
             }
         },
@@ -1820,6 +1842,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // The strip's markdown chip (`render.drawMdChip`).
             if (id == md_preview.button_edit) return runCmd(app, .@"markdown.edit_raw");
             if (id == md_preview.button_preview) return runCmd(app, .@"markdown.preview");
+            // The strip's ZON chips (`render.modeChip`).
+            if (id == zon_pane.button_view) return runCmd(app, .@"zon.view");
+            if (id == zon_pane.button_source) return runCmd(app, .@"zon.source");
             if (id == toast_mod.undo_button) {
                 // The Undo chip: left commits the undo, right drops the offer.
                 if (m.button == .right) app.dropUndo() else try app.takeUndo();
@@ -2103,6 +2128,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
             o.cursor = if (down) @min(o.cursor + n, o.items.items.len -| 1) else o.cursor -| n;
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .zon => |*z| zon_pane.wheel(app, z, down, n),
         .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .git_status => |*s| git_app.statusPaneWheel(app, s, down, n),
         .diff => |*d| git_app.stepDiff(d, if (down) @as(isize, @intCast(n)) else -@as(isize, @intCast(n))),

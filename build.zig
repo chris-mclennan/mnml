@@ -299,6 +299,9 @@ pub fn build(b: *std.Build) void {
     // ── the UI spec ─────────────────────────────────────────────────────
     // The Rust editor's screen dumps (`docs/ui-spec/`), embedded so the
     // statusline tests compare the painted row with the spec's row.
+    // `docs/CONFIG.md`, embedded: its per-key comments are the ZON view
+    // pane's hover copy for a config file (`src/config/zon_schema.zig`).
+    root_module.addAnonymousImport("config_md", .{ .root_source_file = b.path("docs/CONFIG.md") });
     root_module.addAnonymousImport("ui_spec_rust_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-120x40.txt") });
     root_module.addAnonymousImport("ui_spec_rust_80x24", .{ .root_source_file = b.path("docs/ui-spec/rust-80x24.txt") });
     root_module.addAnonymousImport("ui_spec_rust_sessions_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-sessions-120x40.txt") });

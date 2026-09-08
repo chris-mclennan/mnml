@@ -1050,6 +1050,9 @@ pub const specs = [_]Spec{
     .{ .id = "files.new_folder", .title = "Files: new folder in this directory…", .group = "files" },
     .{ .id = "files.destinations", .title = "Files: go to… (home, workspace, trash, open browsers)", .group = "files" },
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
+    // ── ZON view: a .zon file as a tree of fields, edited in place ──
+    .{ .id = "zon.view", .title = "ZON: view the file as a tree of fields (edit in place)", .group = "zon" },
+    .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
 test "973 specs, unique ids" {
@@ -1065,6 +1068,7 @@ test "973 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    try std.testing.expectEqual(@as(usize, 987), specs.len);
+    // + two ZON view commands.
+    try std.testing.expectEqual(@as(usize, 989), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

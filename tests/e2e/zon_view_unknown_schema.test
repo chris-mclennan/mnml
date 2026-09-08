@@ -1,0 +1,32 @@
+# A .zon file with no schema infers every widget from its literal: a
+# bare .tag is a one-choice enum whose tag may be typed; a one-field
+# struct is union-shaped, so its field NAME is what Enter edits; the
+# filter narrows the rows by path.
+write thing.zon .{\n    .mode = .fast, // pace\n    .engine = .{ .custom = "glow" },\n    .deep = .{ .inner = .{ .flag = true } },\n}\n
+open thing.zon
+command zon.view
+expect screen contains "thing.zon › mode"
+expect screen contains "[fast]"
+key enter
+key ctrl+u
+type "slow"
+key enter
+expect screen contains "[slow] *"
+key j
+expect screen contains ".{ .custom }"
+key enter
+key ctrl+u
+type "glow"
+key enter
+expect screen contains ".{ .glow } *"
+key ctrl+s
+expect file thing.zon contains ".mode = .slow, // pace"
+expect file thing.zon contains ".engine = .{ .glow = \"glow\" },"
+key /
+type "flag"
+expect screen contains "deep"
+expect screen contains "flag"
+expect screen lacks "engine"
+key esc
+key esc
+expect screen contains "engine"

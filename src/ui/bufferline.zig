@@ -76,7 +76,7 @@ pub const Tab = struct {
 pub const ModeChip = struct {
     label: []const u8,
     button: u32,
-    kind: enum { edit_md, preview_md },
+    kind: enum { edit_md, preview_md, view_zon, source_zon },
 };
 
 pub const AiChip = struct { id: u32, glyph: []const u8, fallback: []const u8, live: bool };
@@ -376,7 +376,10 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
         const w = ui.width(m.label);
         if (g.mode_x + w <= area.right()) {
             const r = Rect.init(g.mode_x, y, w, 1);
-            const style: Style = .{ .fg = p.bg_darker, .bg = if (m.kind == .edit_md) p.purple else p.blue, .bold = true };
+            const style: Style = .{ .fg = p.bg_darker, .bg = switch (m.kind) {
+                .edit_md, .view_zon => p.purple,
+                .preview_md, .source_zon => p.blue,
+            }, .bold = true };
             _ = ui.putStr(g.mode_x, y, w, m.label, style);
             ui.hit(r, .{ .button = m.button });
         }

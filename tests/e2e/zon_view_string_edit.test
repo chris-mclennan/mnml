@@ -1,0 +1,32 @@
+# The ZON view's string row: Enter opens an inline field seeded with the
+# unescaped text (cursor at the end, Home / arrows move it), Enter commits
+# a quoted literal, Ctrl+S writes it; a number row types the same way.
+write .mnml/config.zon .{\n    .editor = .{ .tab_width = 4 },\n    .ui = .{\n        .theme = "onedark", // the look\n    },\n}\n
+open .mnml/config.zon
+command zon.view
+key j
+key j
+key j
+expect screen contains "config.zon › ui › theme"
+key enter
+key home
+type "x-"
+key end
+type "!"
+key enter
+expect screen contains "\"x-onedark!\" *"
+key ctrl+s
+expect file .mnml/config.zon contains ".theme = \"x-onedark!\", // the look"
+# a number: ← steps, Enter types
+key k
+key k
+expect screen contains "config.zon › editor › tab_width"
+key left
+expect screen contains "[3]"
+key enter
+key backspace
+type "12"
+key enter
+expect screen contains "[12] › *"
+key ctrl+s
+expect file .mnml/config.zon contains ".tab_width = 12"

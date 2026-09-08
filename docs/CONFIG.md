@@ -25,6 +25,18 @@ the toast log, never a failed start. Duplicate keys are an error.
 **Enums are enum literals.** `.input_style = .vim`, not `"vim"`. A value
 that is not in the set is a type error at its line.
 
+**Edit it as a tree.** Open any `.zon` file and click ` View as tree `
+on its tab (`zon.view`): every field becomes a row with the widget its
+type calls for — a bool toggles on Enter, an enum cycles on `←→` and
+picks on Enter, a number steps and types, a string edits inline, a
+list adds (`+`) / removes (`x`) / reorders (`J` `K`), an optional's
+`null` offers `set…`, a union picks its tag. The comments below are
+the rows' info lines. Each edit is the same splice the Settings
+overlay writes with, so your comments and order survive; `*` marks a
+changed row, Esc puts it back, `Ctrl+S` writes (a backup lands in
+`backups/` beside the file) and the raw editor tab reloads. `Source`
+on the tree's tab (`zon.source`, `e`) goes back to the text.
+
 ## The complete file
 
 Every section and every key, at its default unless the comment says

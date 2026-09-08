@@ -363,6 +363,7 @@ fn paneNamespaces(app: *App) []const []const u8 {
         .request => &.{ "http.", "chain." },
         .diff => &.{ "diff.", "git." },
         .md_preview => &.{ "md.", "editor." },
+        .zon => &.{ "zon.", "file." },
         else => &.{},
     };
 }

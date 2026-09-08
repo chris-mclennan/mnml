@@ -1,0 +1,36 @@
+# The ZON view: a .zon file opens in the raw editor with a `View as tree`
+# chip; zon.view opens the tree as a tab beside it. Enter on a bool
+# toggles it (the row and its section gain a `*`), Ctrl+S writes the
+# change through the settings splice — the comment above the key and
+# the one at the top of the file survive — and the raw editor tab reloads.
+write .mnml/config.zon // my config\n.{\n    .editor = .{\n        .input_style = .standard, // the profile\n        .tab_width = 4,\n        // crumbs above the editor\n        .breadcrumb = true,\n    },\n    .ui = .{\n        .theme = "onedark",\n    },\n}\n
+open .mnml/config.zon
+expect screen contains "View as tree"
+command zon.view
+expect pane "config.zon"
+expect screen contains "Source"
+expect screen contains "config.zon › editor"
+expect screen contains "[true] / false"
+
+# rows: editor, input_style, tab_width, breadcrumb
+key j
+key j
+key j
+expect screen contains "config.zon › editor › breadcrumb"
+key enter
+expect screen contains "true / [false] *"
+expect screen contains "unsaved"
+expect file .mnml/config.zon contains ".breadcrumb = true,"
+
+key ctrl+s
+expect screen lacks "unsaved"
+expect screen contains "true / [false]"
+expect screen lacks "[false] *"
+expect file .mnml/config.zon contains "// crumbs above the editor\n        .breadcrumb = false,"
+expect file .mnml/config.zon contains "// my config"
+expect file .mnml/config.zon contains ".input_style = .standard, // the profile"
+
+# the raw editor tab shows the written text, clean
+command zon.source
+expect screen contains ".breadcrumb = false,"
+expect dirty false
