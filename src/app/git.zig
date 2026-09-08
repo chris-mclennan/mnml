@@ -3056,8 +3056,20 @@ const Fixture = struct {
         return @import("../ipc/screen.zig").toTestText(testing.allocator, &f.app.screen);
     }
 
-    /// `git <args>`'s stdout, on the test allocator.
+    /// `git <args>` in the workspace, its trimmed stdout on `testing.allocator`.
     fn out(f: *Fixture, args: []const []const u8) ![]u8 {
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer argv.deinit(testing.allocator);
+        try argv.appendSlice(testing.allocator, &.{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=tester" });
+        try argv.appendSlice(testing.allocator, args);
+        const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = f.root } });
+        defer testing.allocator.free(res.stdout);
+        defer testing.allocator.free(res.stderr);
+        return testing.allocator.dupe(u8, std.mem.trim(u8, res.stdout, " \t\r\n"));
+    }
+
+    /// `git <args>`'s stdout as is, on the test allocator.
+    fn outRaw(f: *Fixture, args: []const []const u8) ![]u8 {
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         defer argv.deinit(testing.allocator);
         try argv.appendSlice(testing.allocator, &.{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=tester" });
@@ -3088,6 +3100,13 @@ const Fixture = struct {
         stepDiff(dp, 1);
         return dp;
     }
+
+    /// The job through the worker, settled; the last toast.
+    fn op(f: *Fixture, job: client.Job) ![]const u8 {
+        try submitOp(&f.app, f.app.git.activeRepo().?, job);
+        try f.settle(4000);
+        return f.app.lastToast() orelse "";
+    }
 };
 
 /// A repo whose `c.txt` is in a merge conflict with two blocks: `main`
@@ -3105,7 +3124,7 @@ fn seedConflict(f: *Fixture) !void {
     try f.write("c.txt", "one\ntwo-ours\nthree\nfour\nfive\nsix\nseven\neight\nnine-ours\nten\n");
     try f.sh(&.{ "commit", "-q", "-am", "ours" });
     // The merge fails on purpose: the conflict is the fixture.
-    testing.allocator.free(try f.out(&.{ "merge", "-q", "feature" }));
+    testing.allocator.free(try f.outRaw(&.{ "merge", "-q", "feature" }));
     f.app.tree.visible = false;
     try command.run(&f.app, .{ .static = .@"git.refresh" });
     try f.settle(2000);
@@ -3205,11 +3224,11 @@ test "stage lines: the selection's two rows land in the index alone; the other c
     try testing.expect(dp.anchor == null);
     try f.settle(2000);
     try testing.expectEqualStrings("staged 2 lines of code.txt", f.app.lastToast().?);
-    const staged = try f.out(&.{ "diff", "--cached" });
+    const staged = try f.outRaw(&.{ "diff", "--cached" });
     defer testing.allocator.free(staged);
     try testing.expect(std.mem.indexOf(u8, staged, "-two\n+two-x\n") != null);
     try testing.expect(std.mem.indexOf(u8, staged, "four-x") == null);
-    const unstaged = try f.out(&.{"diff"});
+    const unstaged = try f.outRaw(&.{"diff"});
     defer testing.allocator.free(unstaged);
     try testing.expect(std.mem.indexOf(u8, unstaged, "+four-x") != null);
     try testing.expect(std.mem.indexOf(u8, unstaged, "+two-x") == null);
@@ -3231,14 +3250,14 @@ test "stash lines: the selection becomes its own stash, leaves the worktree, and
     const file = try f.tmp.dir.readFileAlloc(testing.io, "code.txt", testing.allocator, .unlimited);
     defer testing.allocator.free(file);
     try testing.expectEqualStrings("one\ntwo\nthree\nfour-x\nfive\n", file);
-    const list = try f.out(&.{ "stash", "list" });
+    const list = try f.outRaw(&.{ "stash", "list" });
     defer testing.allocator.free(list);
     try testing.expect(std.mem.indexOf(u8, list, "WIP on main") != null);
-    const show = try f.out(&.{ "stash", "show", "-p" });
+    const show = try f.outRaw(&.{ "stash", "show", "-p" });
     defer testing.allocator.free(show);
     try testing.expect(std.mem.indexOf(u8, show, "+two-x") != null);
     try testing.expect(std.mem.indexOf(u8, show, "four-x") == null);
-    const staged = try f.out(&.{ "diff", "--cached" });
+    const staged = try f.outRaw(&.{ "diff", "--cached" });
     defer testing.allocator.free(staged);
     try testing.expectEqualStrings("", staged);
     // The pop needs a clean file (git's rule, not ours): drop the other
@@ -3265,23 +3284,23 @@ test "commit lines: HEAD gains the selection only; the other change is still uns
     try testing.expect(f.app.git.line_patch == null);
     try f.settle(2000);
     try testing.expectEqualStrings("committed lines: just two", f.app.lastToast().?);
-    const head = try f.out(&.{ "show", "--format=%s", "HEAD" });
+    const head = try f.outRaw(&.{ "show", "--format=%s", "HEAD" });
     defer testing.allocator.free(head);
     try testing.expect(std.mem.startsWith(u8, head, "just two"));
     try testing.expect(std.mem.indexOf(u8, head, "+two-x") != null);
     try testing.expect(std.mem.indexOf(u8, head, "four-x") == null);
     try testing.expect(std.mem.indexOf(u8, head, "other.txt") == null);
-    const st = try f.out(&.{ "status", "--porcelain" });
+    const st = try f.outRaw(&.{ "status", "--porcelain" });
     defer testing.allocator.free(st);
     try testing.expect(std.mem.indexOf(u8, st, " M code.txt") != null);
     try testing.expect(std.mem.indexOf(u8, st, "A  other.txt") != null);
     // Undo: the commit is unmade and its lines are back in the index.
     try command.run(&f.app, .{ .static = .@"git.undo" });
     try f.settle(2000);
-    const after = try f.out(&.{ "show", "--format=%s", "-s", "HEAD" });
+    const after = try f.outRaw(&.{ "show", "--format=%s", "-s", "HEAD" });
     defer testing.allocator.free(after);
     try testing.expect(std.mem.startsWith(u8, after, "initial"));
-    const staged = try f.out(&.{ "diff", "--cached" });
+    const staged = try f.outRaw(&.{ "diff", "--cached" });
     defer testing.allocator.free(staged);
     try testing.expect(std.mem.indexOf(u8, staged, "+two-x") != null);
 }
@@ -3720,4 +3739,91 @@ test "git.worktree_add: Tab completes the path — the first word — and leaves
     try testing.expectEqualStrings("projects/alpha/ fea", f.app.overlay.prompt.state.buf.items);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try testing.expect(f.app.overlay == .none);
+}
+
+test "undo restores each tree-touching op: amend --no-edit, reset --hard with a dirty tree, amend_to (fixup + autosquash)" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try discover(&f.app);
+    const first = try f.out(&.{ "rev-parse", "HEAD~1" });
+    defer testing.allocator.free(first);
+    const second = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(second);
+
+    // amend --no-edit: the staged file joins HEAD; undo leaves it staged again.
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try testing.expectEqualStrings("amended HEAD with the staged changes", try f.op(.amend_noedit));
+    const amended = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(amended);
+    try testing.expect(!std.mem.eql(u8, amended, second));
+    const files = try f.out(&.{ "show", "--format=", "--name-only", "HEAD" });
+    defer testing.allocator.free(files);
+    try testing.expect(std.mem.indexOf(u8, files, "c.txt") != null);
+    try testing.expectEqualStrings("undid: amend (staged changes into HEAD)", try f.op(.undo));
+    const back = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(back);
+    try testing.expectEqualStrings(second, back);
+    const staged = try f.out(&.{ "diff", "--cached", "--name-only" });
+    defer testing.allocator.free(staged);
+    try testing.expectEqualStrings("c.txt", staged);
+    try testing.expectEqualStrings("redid: amend (staged changes into HEAD)", try f.op(.redo));
+    try testing.expectEqualStrings("undid: amend (staged changes into HEAD)", try f.op(.undo));
+
+    // reset --hard to the first commit with c.txt staged and a.txt dirty:
+    // both go, and undo brings HEAD, the index and the tree back.
+    try f.write("a.txt", "one\nedited\n");
+    try testing.expectEqualStrings(try std.fmt.allocPrint(f.app.frame.allocator(), "reset --hard {s}", .{first[0..9]}), try f.op(.{ .reset = .{ .mode = .hard, .rev = try testing.allocator.dupe(u8, first) } }));
+    const at_first = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(at_first);
+    try testing.expectEqualStrings(first, at_first);
+    const clean = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(clean);
+    try testing.expectEqualStrings("", clean);
+    try testing.expect(std.mem.startsWith(u8, try f.op(.undo), "undid: reset --hard"));
+    const restored = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(restored);
+    try testing.expectEqualStrings(second, restored);
+    const porcelain = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(porcelain);
+    try testing.expect(std.mem.indexOf(u8, porcelain, "A  c.txt") != null);
+    try testing.expect(std.mem.indexOf(u8, porcelain, "M a.txt") != null);
+
+    // reset --soft: HEAD moves, the index keeps b.txt; undo puts HEAD back.
+    try testing.expect(std.mem.startsWith(u8, try f.op(.{ .reset = .{ .mode = .soft, .rev = try testing.allocator.dupe(u8, first) } }), "reset --soft"));
+    const soft_staged = try f.out(&.{ "diff", "--cached", "--name-only" });
+    defer testing.allocator.free(soft_staged);
+    try testing.expect(std.mem.indexOf(u8, soft_staged, "b.txt") != null);
+    try testing.expect(std.mem.startsWith(u8, try f.op(.undo), "undid: reset --soft"));
+    const soft_back = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(soft_back);
+    try testing.expectEqualStrings(second, soft_back);
+
+    // amend_to: c.txt (staged) folds into the FIRST commit; the dirty
+    // a.txt survives the autostash; undo puts every sha back.
+    try testing.expectEqualStrings(try std.fmt.allocPrint(f.app.frame.allocator(), "amended {s} with the staged changes", .{first[0..7]}), try f.op(.{ .amend_to = try testing.allocator.dupe(u8, first) }));
+    const first_files = try f.out(&.{ "show", "--format=", "--name-only", "HEAD~1" });
+    defer testing.allocator.free(first_files);
+    try testing.expect(std.mem.indexOf(u8, first_files, "c.txt") != null);
+    const count = try f.out(&.{ "rev-list", "--count", "HEAD" });
+    defer testing.allocator.free(count);
+    try testing.expectEqualStrings("2", count);
+    const dirty = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(dirty);
+    try testing.expectEqualStrings("M a.txt", dirty);
+    try testing.expect(std.mem.startsWith(u8, try f.op(.undo), "undid: amend to"));
+    const undone = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(undone);
+    try testing.expectEqualStrings(second, undone);
+    const again = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(again);
+    try testing.expect(std.mem.indexOf(u8, again, "A  c.txt") != null);
+    try testing.expect(std.mem.indexOf(u8, again, "M a.txt") != null);
 }

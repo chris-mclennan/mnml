@@ -18,7 +18,22 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
 const remote_mod = @import("remote.zig");
+const sequence_editor = @import("sequence_editor.zig");
 const event = @import("../core/event.zig");
+
+pub const ResetMode = enum {
+    soft,
+    mixed,
+    hard,
+
+    pub fn flag(m: ResetMode) []const u8 {
+        return switch (m) {
+            .soft => "--soft",
+            .mixed => "--mixed",
+            .hard => "--hard",
+        };
+    }
+};
 
 /// What a diff pane shows. `file` and `head` are against HEAD (staged
 /// and unstaged together — what the gate's `git diff HEAD` names);
@@ -135,6 +150,18 @@ pub const Job = union(enum) {
     op_continue: parse.InProgress,
     op_abort: parse.InProgress,
     op_skip: parse.InProgress,
+    /// `rebase -i <base>` (or `--root` when `base` is null) with this
+    /// executable as the sequence editor: `ops` is the todo, oldest
+    /// first, reordered as the slice is. Undoable.
+    rebase_plan: struct { base: ?[]u8, ops: []sequence_editor.Op },
+    /// `commit --amend --no-edit`: the staged changes into HEAD. Undoable.
+    amend_noedit,
+    /// The staged changes into an older commit: `commit --fixup=<sha>`
+    /// then `rebase -i --autosquash <sha>^` with the editor `true`. Undoable.
+    amend_to: []u8,
+    /// `reset --soft / --mixed / --hard <rev>`. Undoable: HEAD and, for
+    /// mixed / hard, a `stash create` of the tree are recorded first.
+    reset: struct { mode: ResetMode, rev: []u8 },
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -163,6 +190,14 @@ pub const Job = union(enum) {
             .ai_context => {},
             .rail => {},
             .op_continue, .op_abort, .op_skip => {},
+            .rebase_plan => |p| {
+                if (p.base) |b| gpa.free(b);
+                for (p.ops) |op| op.deinit(gpa);
+                gpa.free(p.ops);
+            },
+            .amend_noedit => {},
+            .amend_to => |s| gpa.free(s),
+            .reset => |r| gpa.free(r.rev),
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
             .stash_lines => |l| {
                 gpa.free(l.patch);
@@ -231,14 +266,21 @@ pub const Result = struct {
 
 /// An operation the worker can reverse. `reset_soft` moves HEAD and
 /// keeps the index (a commit undone stays staged); `checkout` flips
-/// the branch back.
-const Action = union(enum) {
+/// the branch back; `reset_hard` puts HEAD, the index and the tree
+/// back to `sha` and re-applies the `stash create` taken before the
+/// operation (a rebase, a fixup, a reset) touched the tree.
+pub const Action = union(enum) {
     reset_soft: []u8,
     checkout: []u8,
+    reset_hard: struct { sha: []u8, stash: ?[]u8 },
 
     fn deinit(a: Action, gpa: Allocator) void {
         switch (a) {
             .reset_soft, .checkout => |s| gpa.free(s),
+            .reset_hard => |h| {
+                gpa.free(h.sha);
+                if (h.stash) |st| gpa.free(st);
+            },
         }
     }
 };
@@ -816,6 +858,90 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             .merge => r.payload = .{ .op = .{ .desc = "merge: nothing to skip (abort or continue)", .ok = false, .refresh = false } },
             else => try simple(repo, io, r, &.{ "-c", "core.editor=true", op.verb(), "--skip" }, try std.fmt.allocPrint(arena, "{s}: step skipped", .{op.verb()})),
         },
+        .amend_noedit => {
+            const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+            const out = try git(repo, io, arena, &.{ "commit", "-q", "--amend", "--no-edit" }, null);
+            if (out.ok) {
+                const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+                if (before.ok and after.ok) try pushUndo(repo, "amend (staged changes into HEAD)", .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, trimmed(after.stdout)) });
+            }
+            r.payload = .{ .op = .{ .desc = "amended HEAD with the staged changes", .ok = out.ok, .msg = out.reason() } };
+        },
+        .amend_to => |sha| {
+            const short = sha[0..@min(7, sha.len)];
+            const snap = try snapshot(repo, io, arena);
+            const fix = try git(repo, io, arena, &.{ "commit", "-q", "--fixup", sha }, null);
+            if (!fix.ok) {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amend to {s}", .{short}), .ok = false, .msg = fix.reason() } };
+                events.post(io, .{ .git = r });
+                return;
+            }
+            // The fixup rides an autosquash rebase from the commit's parent
+            // — from the root when it has none — with `true` as the editor.
+            const parent = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", try std.fmt.allocPrint(arena, "{s}^", .{sha}) }, null);
+            var args: std.ArrayListUnmanaged([]const u8) = .empty;
+            try args.appendSlice(arena, &.{ "-c", "sequence.editor=true", "-c", "core.editor=true", "rebase", "-i", "--autosquash", "--autostash" });
+            if (parent.ok and trimmed(parent.stdout).len > 0) try args.append(arena, trimmed(parent.stdout)) else try args.append(arena, "--root");
+            const out = try git(repo, io, arena, args.items, null);
+            if (out.ok) try pushSnapshotUndo(repo, io, arena, try std.fmt.allocPrint(arena, "amend to {s}", .{short}), snap);
+            r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended {s} with the staged changes", .{short}), .ok = out.ok, .msg = out.reason() } };
+        },
+        .reset => |rs| {
+            const snap = try snapshot(repo, io, arena);
+            const out = try git(repo, io, arena, &.{ "reset", "-q", rs.mode.flag(), rs.rev }, null);
+            const desc = try std.fmt.allocPrint(arena, "reset {s} {s}", .{ rs.mode.flag(), rs.rev[0..@min(9, rs.rev.len)] });
+            if (out.ok) {
+                if (rs.mode == .soft) {
+                    const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+                    if (snap.head) |h| if (after.ok) try pushUndo(repo, desc, .{ .reset_soft = try gpa.dupe(u8, h) }, .{ .reset_soft = try gpa.dupe(u8, trimmed(after.stdout)) });
+                } else try pushSnapshotUndo(repo, io, arena, desc, snap);
+            }
+            r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
+        },
+        .rebase_plan => |plan| {
+            const dir = (try gitDir(repo, io, arena)) orelse {
+                r.payload = .{ .op = .{ .desc = "rebase", .ok = false, .msg = "not a git repository", .refresh = false } };
+                events.post(io, .{ .git = r });
+                return;
+            };
+            const exe = std.process.executablePathAlloc(io, arena) catch |err| switch (err) {
+                error.Canceled => return error.Canceled,
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    r.payload = .{ .op = .{ .desc = "rebase", .ok = false, .msg = try std.fmt.allocPrint(arena, "cannot find this executable: {s}", .{@errorName(err)}), .refresh = false } };
+                    events.post(io, .{ .git = r });
+                    return;
+                },
+            };
+            const plan_path = try std.fs.path.join(arena, &.{ dir, "mnml-rebase-plan" });
+            const queue_path = try std.fs.path.join(arena, &.{ dir, "mnml-rebase-msgs" });
+            const cwd = Io.Dir.cwd();
+            cwd.writeFile(io, .{ .sub_path = plan_path, .data = try sequence_editor.todoText(arena, plan.ops) }) catch {
+                r.payload = .{ .op = .{ .desc = "rebase", .ok = false, .msg = "cannot write the plan into the git dir", .refresh = false } };
+                events.post(io, .{ .git = r });
+                return;
+            };
+            cwd.writeFile(io, .{ .sub_path = queue_path, .data = try sequence_editor.queueText(arena, plan.ops) }) catch {};
+            const snap = try snapshot(repo, io, arena);
+            var args: std.ArrayListUnmanaged([]const u8) = .empty;
+            try args.appendSlice(arena, &.{
+                "-c",          try std.fmt.allocPrint(arena, "sequence.editor={s}", .{try sequence_editor.editorCommand(arena, exe, "--rebase-todo", plan_path)}),
+                "-c",          try std.fmt.allocPrint(arena, "core.editor={s}", .{try sequence_editor.editorCommand(arena, exe, "--commit-msg", queue_path)}),
+                "rebase",      "-i",
+                "--autostash",
+            });
+            if (plan.base) |b| try args.append(arena, b) else try args.append(arena, "--root");
+            const out = try git(repo, io, arena, args.items, null);
+            var n_changed: usize = 0;
+            for (plan.ops) |op| if (op.action != .pick) {
+                n_changed += 1;
+            };
+            const desc = try std.fmt.allocPrint(arena, "rebased: {d} commit(s), {d} changed", .{ plan.ops.len, n_changed });
+            if (out.ok) try pushSnapshotUndo(repo, io, arena, desc, snap);
+            cwd.deleteFile(io, plan_path) catch {};
+            cwd.deleteFile(io, queue_path) catch {};
+            r.payload = .{ .op = .{ .desc = if (out.ok) desc else "rebase", .ok = out.ok, .msg = out.reason() } };
+        },
         .head_sha => {
             const out = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
             if (out.ok) r.payload = .{ .head_sha = trimmed(out.stdout) } else r.payload = .{ .op = .{ .desc = "no HEAD (not a git repo?)", .ok = false, .refresh = false } };
@@ -961,7 +1087,52 @@ fn applyAction(repo: *Repo, io: Io, arena: Allocator, a: Action) JobError!Out {
     return switch (a) {
         .reset_soft => |rev| git(repo, io, arena, &.{ "reset", "-q", "--soft", rev }, null),
         .checkout => |b| git(repo, io, arena, &.{ "checkout", "-q", b }, null),
+        .reset_hard => |h| {
+            const out = try git(repo, io, arena, &.{ "reset", "-q", "--hard", h.sha }, null);
+            if (!out.ok) return out;
+            const st = h.stash orelse return out;
+            // The index as it was, when that applies cleanly; the tree at least.
+            const with_index = try git(repo, io, arena, &.{ "stash", "apply", "-q", "--index", st }, null);
+            if (with_index.ok) return with_index;
+            return git(repo, io, arena, &.{ "stash", "apply", "-q", st }, null);
+        },
     };
+}
+
+/// What a tree-touching operation records before it runs: HEAD (null
+/// before the first commit) and a `stash create` of the index and the
+/// tree (null when both are clean — `stash create` prints nothing).
+const Snapshot = struct { head: ?[]const u8, stash: ?[]const u8 };
+
+fn snapshot(repo: *Repo, io: Io, arena: Allocator) JobError!Snapshot {
+    const head = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+    const stash = try git(repo, io, arena, &.{ "stash", "create" }, null);
+    return .{
+        .head = if (head.ok and trimmed(head.stdout).len > 0) trimmed(head.stdout) else null,
+        .stash = if (stash.ok and trimmed(stash.stdout).len > 0) trimmed(stash.stdout) else null,
+    };
+}
+
+/// After a tree-touching operation succeeded: undo is `reset --hard`
+/// to the snapshot's HEAD plus its stash, redo `reset --hard` to the
+/// HEAD of now.
+fn pushSnapshotUndo(repo: *Repo, io: Io, arena: Allocator, desc: []const u8, snap: Snapshot) JobError!void {
+    const gpa = repo.gpa;
+    const before = snap.head orelse return;
+    const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+    if (!after.ok) return;
+    const undo_sha = try gpa.dupe(u8, before);
+    const undo_stash: ?[]u8 = if (snap.stash) |st| gpa.dupe(u8, st) catch |err| {
+        gpa.free(undo_sha);
+        return err;
+    } else null;
+    const redo_sha = gpa.dupe(u8, trimmed(after.stdout)) catch |err| {
+        gpa.free(undo_sha);
+        if (undo_stash) |st| gpa.free(st);
+        return err;
+    };
+    // `pushUndo` owns both actions from here, failure included.
+    try pushUndo(repo, desc, .{ .reset_hard = .{ .sha = undo_sha, .stash = undo_stash } }, .{ .reset_hard = .{ .sha = redo_sha, .stash = null } });
 }
 
 fn firstLine(s: []const u8) []const u8 {
