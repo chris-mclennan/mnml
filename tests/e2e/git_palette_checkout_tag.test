@@ -15,8 +15,8 @@ command view.activity_git
 wait 1000
 expect screen contains "󰅀 󰓻 TAGS"
 expect screen contains "  󰓹 v1"
-click 6 16
-click 6 16
+click 6 18
+click 6 18
 expect screen contains "Checkout tag v1? (detached HEAD)"
 key y
 wait 1500

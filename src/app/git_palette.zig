@@ -16,6 +16,15 @@
 //! for the whole run (they survive leaving and re-entering the mode
 //! and switching repos).
 //!
+//! The pill names the repo the rows read; its chevrons (`[` / `]`)
+//! step through the discovered repos in order, wrapping. The pill's
+//! menu also offers `All repos` (`State.all`, kept in the session
+//! file): every open repo's rail is listed at once, each section
+//! grouped under a muted sub-header per repo — a row's action is its
+//! own repo's, so acting on one first makes that repo the active one
+//! (`git.switchTo` moves the parked rail into `rail_*`, its graph tab
+//! comes to the front) and then runs as it does with one repo.
+//!
 //! A click on a row selects it — the cursor moves there and, for a
 //! ref, the graph tab jumps to its commit. Enter, or a click on the row
 //! the cursor is already on, ACTS: a local branch checks out, a remote
@@ -78,6 +87,9 @@ pub const State = struct {
     closed: std.ArrayListUnmanaged([]u8) = .empty,
     /// The folded sections, kept for the run.
     collapsed: std.enums.EnumSet(Section) = .initEmpty(),
+    /// All repos: every open repo's rows at once, grouped per repo.
+    /// Saved with the session.
+    all: bool = false,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
     filter_focused: bool = false,
@@ -285,9 +297,13 @@ pub fn openReposMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const gpa = app.gpa;
     var items: std.ArrayListUnmanaged(MenuItem) = .empty;
     errdefer items.deinit(gpa);
+    try items.append(gpa, .{
+        .label = if (st.all) "\u{25CF} All repos" else "  All repos",
+        .action = .{ .git_palette = .{ .what = .all_repos, .idx = 0 } },
+    });
     for (gs.repos.items, 0..) |r, i| {
         try items.append(gpa, .{
-            .label = try std.fmt.allocPrint(app.frame.allocator(), "{s}{s}", .{ if (gs.active != null and gs.active.? == i) "\u{25CF} " else "  ", r.name }),
+            .label = try std.fmt.allocPrint(app.frame.allocator(), "{s}{s}", .{ if (!st.all and gs.active != null and gs.active.? == i) "\u{25CF} " else "  ", r.name }),
             .action = .{ .git_palette = .{ .what = .switch_repo, .idx = @intCast(i) } },
         });
     }
@@ -299,6 +315,107 @@ pub fn openReposMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     }
     try items.append(gpa, .{ .label = "  Add workspace\u{2026}", .action = .{ .command = .@"view.add_workspace" } });
     try app.openMenu("Repos", try items.toOwnedSlice(gpa), x, y);
+}
+
+// ─── which repo ─────────────────────────────────────────────────────────
+
+/// `idx` becomes the active repo and its graph tab comes to the front;
+/// the palette keeps the focus.
+pub fn selectRepo(app: *App, idx: usize) CommandError!void {
+    const gs = &app.git;
+    if (idx >= gs.repos.items.len) return;
+    try git.switchTo(app, idx);
+    showRepoTab(app, idx);
+}
+
+/// The graph tab of repo `idx` comes to the front, when it is open.
+fn showRepoTab(app: *App, idx: usize) void {
+    const gs = &app.git;
+    if (idx >= gs.repos.items.len) return;
+    const id = gs.repos.items[idx].id;
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
+        .git_graph => |*g| if (g.repo == id and app.layouts.current().leafOf(@intCast(i)) != null) {
+            const focus = app.focus;
+            app.setActive(@intCast(i));
+            app.focus = focus;
+            app.needs_render = true;
+            return;
+        },
+        else => {},
+    };
+}
+
+/// `]` / `[` and the pill's chevrons: the next / previous repo in
+/// discovery order, wrapping; under All repos the first / last, which
+/// leaves it. Nothing to step through with one repo.
+pub fn stepRepo(app: *App, forward: bool) CommandError!void {
+    const st = &app.git_palette;
+    const gs = &app.git;
+    const n = gs.repos.items.len;
+    if (n < 2) return;
+    var idx: usize = undefined;
+    if (st.all) {
+        idx = if (forward) 0 else n - 1;
+        st.all = false;
+    } else {
+        const cur = gs.active orelse 0;
+        idx = if (forward) (cur + 1) % n else (cur + n - 1) % n;
+    }
+    st.cursor = 0;
+    st.scroll = 0;
+    try selectRepo(app, idx);
+}
+
+/// All repos on or off; on asks every open repo for its rail.
+pub fn setAll(app: *App, on: bool) CommandError!void {
+    const st = &app.git_palette;
+    if (st.all == on) return;
+    st.all = on;
+    st.cursor = 0;
+    st.scroll = 0;
+    if (on) try requestRailAll(app, false);
+    app.needs_render = true;
+}
+
+/// `git.palette_all`: All repos toggles (entering the mode first).
+pub fn toggleAll(app: *App) CommandError!void {
+    const st = &app.git_palette;
+    if (!st.active) try enter(app);
+    try setAll(app, !st.all);
+}
+
+/// Every open repo asked for its rail; `force` asks again for the
+/// ones that have landed.
+fn requestRailAll(app: *App, force: bool) CommandError!void {
+    const st = &app.git_palette;
+    const gs = &app.git;
+    for (gs.repos.items) |r| if (!st.isClosed(r.path)) try git.requestRailFor(app, r, force);
+}
+
+/// The repo a row belongs to under All repos: the sub-header above it
+/// (null on a section header, or with one repo).
+fn repoOfRow(list: []const Row, idx: usize) ?u32 {
+    var i = idx + 1;
+    while (i > 0) : (i -= 1) switch (list[i - 1]) {
+        .repo => |r| return r.idx,
+        .section, .gap => return null,
+        else => {},
+    };
+    return null;
+}
+
+/// Under All repos a row's action is its own repo's: that repo becomes
+/// the active one before the action reads the rail by the row's index.
+/// The rows' slices stay valid — `git.switchTo` moves the arenas.
+fn switchToRowRepo(app: *App, idx: usize) Allocator.Error!void {
+    const st = &app.git_palette;
+    const gs = &app.git;
+    if (!st.all) return;
+    const list = try rows(app, app.frame.allocator());
+    if (idx >= list.len) return;
+    const ri = repoOfRow(list, idx) orelse return;
+    if (gs.active != null and gs.active.? == ri) return;
+    git.runToast(app, selectRepo(app, ri));
 }
 
 // ─── the rows ───────────────────────────────────────────────────────────
@@ -331,8 +448,8 @@ fn samePath(app: *App, arena: Allocator, a: []const u8, b: []const u8) bool {
 }
 
 /// The rail branch of `name`, if listed.
-fn branchNamed(gs: *const git.State, name: []const u8) ?parse.Branch {
-    for (gs.rail_branches) |b| if (std.mem.eql(u8, b.name, name)) return b;
+fn branchNamed(branches: []const parse.Branch, name: []const u8) ?parse.Branch {
+    for (branches) |b| if (std.mem.eql(u8, b.name, name)) return b;
     return null;
 }
 
@@ -343,122 +460,178 @@ const SortCtx = struct {
     }
 };
 
-/// The palette's rows for this frame, on `arena`: the five sections in
-/// their order with the filter applied, a folded section keeping its
-/// header (its count is the filtered one), a gap row after each.
-pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
+/// One repo's rail as the rows read it: the active repo's from
+/// `git.State.rail_*`, another's from `rails` (All repos), a repo
+/// whose rail has not landed as empty lists.
+const RailView = struct {
+    repo_idx: u32 = 0,
+    name: []const u8 = "",
+    path: []const u8 = "",
+    branches: []const parse.Branch = &.{},
+    worktrees: []const parse.Worktree = &.{},
+    remotes: []const parse.Remote = &.{},
+    stashes: []const parse.Stash = &.{},
+    tags: []const parse.Tag = &.{},
+};
+
+fn railView(gs: *const git.State, idx: usize) RailView {
+    const r = gs.repos.items[idx];
+    var v: RailView = .{ .repo_idx = @intCast(idx), .name = r.name, .path = r.path };
+    if (gs.active != null and gs.active.? == idx) {
+        v.branches = gs.rail_branches;
+        v.worktrees = gs.rail_worktrees;
+        v.remotes = gs.rail_remotes;
+        v.stashes = gs.rail_stashes;
+        v.tags = gs.rail_tags;
+    } else if (gs.rails.get(r.id)) |e| {
+        v.branches = e.branches;
+        v.worktrees = e.worktrees;
+        v.remotes = e.remotes;
+        v.stashes = e.stashes;
+        v.tags = e.tags;
+    }
+    return v;
+}
+
+/// The repos the rows list: every open one under All repos, else the
+/// active one — an empty view outside any repo, so the sections still
+/// head the list.
+fn railViews(app: *App, arena: Allocator) Allocator.Error![]RailView {
     const st = &app.git_palette;
     const gs = &app.git;
-    const filter = st.filter.items;
-    var out: std.ArrayListUnmanaged(Row) = .empty;
-    const repo_path: []const u8 = if (gs.activeRepo()) |r| r.path else "";
+    var out: std.ArrayListUnmanaged(RailView) = .empty;
+    if (st.all) {
+        for (gs.repos.items, 0..) |r, i| if (!st.isClosed(r.path)) try out.append(arena, railView(gs, i));
+    } else if (gs.active) |i| {
+        if (i < gs.repos.items.len) try out.append(arena, railView(gs, i));
+    }
+    if (out.items.len == 0) try out.append(arena, .{});
+    return out.items;
+}
 
-    // LOCAL — A–Z.
-    {
-        var idxs: std.ArrayListUnmanaged(u32) = .empty;
-        for (gs.rail_branches, 0..) |b, i| if (!b.remote and matches(filter, b.name)) try idxs.append(arena, @intCast(i));
-        std.mem.sort(u32, idxs.items, SortCtx{ .bs = gs.rail_branches }, SortCtx.lt);
-        const collapsed = st.collapsed.contains(.local);
-        try out.append(arena, .{ .section = .{ .s = .local, .count = @intCast(idxs.items.len), .collapsed = collapsed } });
-        if (!collapsed) for (idxs.items) |i| {
-            const b = gs.rail_branches[i];
-            try out.append(arena, .{ .branch = .{ .idx = i, .name = b.name, .current = b.current, .ahead = b.ahead, .behind = b.behind } });
+// LOCAL — A–Z.
+fn localRows(arena: Allocator, v: RailView, filter: []const u8, out: *std.ArrayListUnmanaged(Row)) Allocator.Error!u32 {
+    var idxs: std.ArrayListUnmanaged(u32) = .empty;
+    for (v.branches, 0..) |b, i| if (!b.remote and matches(filter, b.name)) try idxs.append(arena, @intCast(i));
+    std.mem.sort(u32, idxs.items, SortCtx{ .bs = v.branches }, SortCtx.lt);
+    for (idxs.items) |i| {
+        const b = v.branches[i];
+        try out.append(arena, .{ .branch = .{ .idx = i, .name = b.name, .current = b.current, .ahead = b.ahead, .behind = b.behind } });
+    }
+    return @intCast(idxs.items.len);
+}
+
+// REMOTE — each remote, its branches under it without the prefix.
+fn remoteRows(arena: Allocator, v: RailView, filter: []const u8, out: *std.ArrayListUnmanaged(Row)) Allocator.Error!u32 {
+    var idxs: std.ArrayListUnmanaged(u32) = .empty;
+    for (v.branches, 0..) |b, i| if (b.remote and !std.mem.endsWith(u8, b.name, "/HEAD") and matches(filter, b.name)) try idxs.append(arena, @intCast(i));
+    std.mem.sort(u32, idxs.items, SortCtx{ .bs = v.branches }, SortCtx.lt);
+    // The remotes `git remote -v` lists, then any prefix a branch
+    // carries that none of them named.
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (v.remotes) |r| try names.append(arena, r.name);
+    for (idxs.items) |i| {
+        const full = v.branches[i].name;
+        const prefix = full[0 .. std.mem.indexOfScalar(u8, full, '/') orelse full.len];
+        var known = false;
+        for (names.items) |n| if (std.mem.eql(u8, n, prefix)) {
+            known = true;
         };
-        try out.append(arena, .gap);
+        if (!known) try names.append(arena, prefix);
     }
+    for (names.items, 0..) |name, ri| {
+        var any = false;
+        for (idxs.items) |i| if (std.mem.startsWith(u8, v.branches[i].name, name) and v.branches[i].name.len > name.len and v.branches[i].name[name.len] == '/') {
+            any = true;
+        };
+        if (!any and filter.len > 0) continue;
+        const github = if (ri < v.remotes.len) v.remotes[ri].provider == .github else false;
+        try out.append(arena, .{ .remote = .{ .idx = @intCast(ri), .name = name, .github = github } });
+        for (idxs.items) |i| {
+            const full = v.branches[i].name;
+            if (!(std.mem.startsWith(u8, full, name) and full.len > name.len and full[name.len] == '/')) continue;
+            try out.append(arena, .{ .remote_branch = .{ .idx = i, .name = full, .shown = full[name.len + 1 ..] } });
+        }
+    }
+    return @intCast(idxs.items.len);
+}
 
-    // REMOTE — each remote, its branches under it without the prefix.
-    {
-        var idxs: std.ArrayListUnmanaged(u32) = .empty;
-        for (gs.rail_branches, 0..) |b, i| if (b.remote and !std.mem.endsWith(u8, b.name, "/HEAD") and matches(filter, b.name)) try idxs.append(arena, @intCast(i));
-        std.mem.sort(u32, idxs.items, SortCtx{ .bs = gs.rail_branches }, SortCtx.lt);
-        const collapsed = st.collapsed.contains(.remote);
-        try out.append(arena, .{ .section = .{ .s = .remote, .count = @intCast(idxs.items.len), .collapsed = collapsed } });
-        if (!collapsed) {
-            // The remotes `git remote -v` lists, then any prefix a branch
-            // carries that none of them named.
-            var names: std.ArrayListUnmanaged([]const u8) = .empty;
-            for (gs.rail_remotes) |r| try names.append(arena, r.name);
-            for (idxs.items) |i| {
-                const full = gs.rail_branches[i].name;
-                const prefix = full[0 .. std.mem.indexOfScalar(u8, full, '/') orelse full.len];
-                var known = false;
-                for (names.items) |n| if (std.mem.eql(u8, n, prefix)) {
-                    known = true;
-                };
-                if (!known) try names.append(arena, prefix);
+// WORKTREES — git's order, the main tree first.
+fn worktreeRows(app: *App, arena: Allocator, v: RailView, filter: []const u8, out: *std.ArrayListUnmanaged(Row)) Allocator.Error!u32 {
+    var count: u32 = 0;
+    for (v.worktrees, 0..) |w, i| {
+        const shown = try worktreeShown(arena, w);
+        if (!matches(filter, w.label()) and !matches(filter, std.fs.path.basename(w.path))) continue;
+        count += 1;
+        const current = (v.path.len > 0 and samePath(app, arena, w.path, v.path)) or (v.path.len == 0 and i == 0);
+        const b = if (w.branch.len > 0) branchNamed(v.branches, w.branch) else null;
+        try out.append(arena, .{ .worktree = .{
+            .idx = @intCast(i),
+            .shown = shown,
+            .main = w.main,
+            .current = current,
+            .locked = w.locked,
+            .dirty = w.dirty,
+            .ahead = if (b) |x| x.ahead else 0,
+            .behind = if (b) |x| x.behind else 0,
+        } });
+    }
+    return count;
+}
+
+// STASHES — newest first, as `stash list` prints them.
+fn stashRows(arena: Allocator, v: RailView, filter: []const u8, out: *std.ArrayListUnmanaged(Row)) Allocator.Error!u32 {
+    var count: u32 = 0;
+    for (v.stashes, 0..) |st, i| {
+        if (!matches(filter, st.message) and !matches(filter, st.ref) and !matches(filter, st.sha)) continue;
+        count += 1;
+        try out.append(arena, .{ .stash = .{ .idx = @intCast(i), .sha = st.sha, .message = st.message } });
+    }
+    return count;
+}
+
+// TAGS — newest first, as the worker sorted them.
+fn tagRows(arena: Allocator, v: RailView, filter: []const u8, out: *std.ArrayListUnmanaged(Row)) Allocator.Error!u32 {
+    var count: u32 = 0;
+    for (v.tags, 0..) |t, i| {
+        if (!matches(filter, t.name)) continue;
+        count += 1;
+        try out.append(arena, .{ .tag = .{ .idx = @intCast(i), .name = t.name } });
+    }
+    return count;
+}
+
+/// The palette's rows for this frame, on `arena`: the five sections in
+/// their order with the filter applied, a folded section keeping its
+/// header (its count is the filtered one), a gap row after each. Under
+/// All repos every section holds a `.repo` sub-header per open repo
+/// with that repo's rows beneath it (a repo the filter leaves empty is
+/// skipped, as an empty remote is) and its count is the sum.
+pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
+    const st = &app.git_palette;
+    const filter = st.filter.items;
+    const views = try railViews(app, arena);
+    var out: std.ArrayListUnmanaged(Row) = .empty;
+    for (std.enums.values(Section)) |sec| {
+        var items: std.ArrayListUnmanaged(Row) = .empty;
+        var count: u32 = 0;
+        for (views) |v| {
+            var mine: std.ArrayListUnmanaged(Row) = .empty;
+            count += switch (sec) {
+                .local => try localRows(arena, v, filter, &mine),
+                .remote => try remoteRows(arena, v, filter, &mine),
+                .worktrees => try worktreeRows(app, arena, v, filter, &mine),
+                .stashes => try stashRows(arena, v, filter, &mine),
+                .tags => try tagRows(arena, v, filter, &mine),
+            };
+            if (st.all) {
+                if (mine.items.len == 0 and filter.len > 0) continue;
+                try items.append(arena, .{ .repo = .{ .idx = v.repo_idx, .name = v.name } });
             }
-            for (names.items, 0..) |name, ri| {
-                var any = false;
-                for (idxs.items) |i| if (std.mem.startsWith(u8, gs.rail_branches[i].name, name) and gs.rail_branches[i].name.len > name.len and gs.rail_branches[i].name[name.len] == '/') {
-                    any = true;
-                };
-                if (!any and filter.len > 0) continue;
-                const github = if (ri < gs.rail_remotes.len) gs.rail_remotes[ri].provider == .github else false;
-                try out.append(arena, .{ .remote = .{ .idx = @intCast(ri), .name = name, .github = github } });
-                for (idxs.items) |i| {
-                    const full = gs.rail_branches[i].name;
-                    if (!(std.mem.startsWith(u8, full, name) and full.len > name.len and full[name.len] == '/')) continue;
-                    try out.append(arena, .{ .remote_branch = .{ .idx = i, .name = full, .shown = full[name.len + 1 ..] } });
-                }
-            }
+            try items.appendSlice(arena, mine.items);
         }
-        try out.append(arena, .gap);
-    }
-
-    // WORKTREES — git's order, the main tree first.
-    {
-        var count: u32 = 0;
-        var items: std.ArrayListUnmanaged(Row) = .empty;
-        for (gs.rail_worktrees, 0..) |w, i| {
-            const shown = try worktreeShown(arena, w);
-            if (!matches(filter, w.label()) and !matches(filter, std.fs.path.basename(w.path))) continue;
-            count += 1;
-            const current = (repo_path.len > 0 and samePath(app, arena, w.path, repo_path)) or (repo_path.len == 0 and i == 0);
-            const b = if (w.branch.len > 0) branchNamed(gs, w.branch) else null;
-            try items.append(arena, .{ .worktree = .{
-                .idx = @intCast(i),
-                .shown = shown,
-                .main = w.main,
-                .current = current,
-                .locked = w.locked,
-                .dirty = w.dirty,
-                .ahead = if (b) |x| x.ahead else 0,
-                .behind = if (b) |x| x.behind else 0,
-            } });
-        }
-        const collapsed = st.collapsed.contains(.worktrees);
-        try out.append(arena, .{ .section = .{ .s = .worktrees, .count = count, .collapsed = collapsed } });
-        if (!collapsed) try out.appendSlice(arena, items.items);
-        try out.append(arena, .gap);
-    }
-
-    // STASHES — newest first, as `stash list` prints them.
-    {
-        var count: u32 = 0;
-        var items: std.ArrayListUnmanaged(Row) = .empty;
-        for (gs.rail_stashes, 0..) |s, i| {
-            if (!matches(filter, s.message) and !matches(filter, s.ref) and !matches(filter, s.sha)) continue;
-            count += 1;
-            try items.append(arena, .{ .stash = .{ .idx = @intCast(i), .sha = s.sha, .message = s.message } });
-        }
-        const collapsed = st.collapsed.contains(.stashes);
-        try out.append(arena, .{ .section = .{ .s = .stashes, .count = count, .collapsed = collapsed } });
-        if (!collapsed) try out.appendSlice(arena, items.items);
-        try out.append(arena, .gap);
-    }
-
-    // TAGS — newest first, as the worker sorted them.
-    {
-        var count: u32 = 0;
-        var items: std.ArrayListUnmanaged(Row) = .empty;
-        for (gs.rail_tags, 0..) |t, i| {
-            if (!matches(filter, t.name)) continue;
-            count += 1;
-            try items.append(arena, .{ .tag = .{ .idx = @intCast(i), .name = t.name } });
-        }
-        const collapsed = st.collapsed.contains(.tags);
-        try out.append(arena, .{ .section = .{ .s = .tags, .count = count, .collapsed = collapsed } });
+        const collapsed = st.collapsed.contains(sec);
+        try out.append(arena, .{ .section = .{ .s = sec, .count = count, .collapsed = collapsed } });
         if (!collapsed) try out.appendSlice(arena, items.items);
         try out.append(arena, .gap);
     }
@@ -482,9 +655,10 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     if (!gs.discovered) git.discover(app) catch {};
     if (gs.activeRepo() != null and gs.status == null and !gs.status_pending) git.requestStatus(app) catch {};
     if (gs.activeRepo() != null and !gs.rail_loaded and !gs.rail_pending) git.requestRail(app) catch {};
+    if (st.all) requestRailAll(app, false) catch {};
     const list = try rows(app, ui.arena);
     if (st.cursor >= list.len) st.cursor = list.len -| 1;
-    const repo_name: []const u8 = if (gs.activeRepo()) |r| r.name else std.fs.path.basename(app.workspace);
+    const repo_name: []const u8 = if (st.all) "All repos" else if (gs.activeRepo()) |r| r.name else std.fs.path.basename(app.workspace);
     const painted = view.draw(ui, area, .{
         .rows = list,
         .repo = repo_name,
@@ -494,6 +668,8 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .filter_focused = st.filter_focused,
         .cursor = st.cursor,
         .scroll = st.scroll,
+        .repo_count = gs.repos.items.len,
+        .grouped = st.all,
     });
     st.scroll = painted.scroll;
     st.visible = painted.visible;
@@ -501,7 +677,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     if (painted.caret) |c| if (st.filter_focused and app.focus == .panel and app.focus.panel == .git) {
         app.cursor_pos = .{ .x = c.x, .y = c.y };
     };
-    if (gs.busy > 0 or gs.rail_pending) list_panel.paintSpinner(ui, area, repo_name, app.now_ms);
+    if (gs.busy > 0 or gs.rail_pending or git.anyRailPending(gs)) list_panel.paintSpinner(ui, area, repo_name, app.now_ms);
 }
 
 // ─── acting on a row ────────────────────────────────────────────────────
@@ -574,8 +750,10 @@ pub fn select(app: *App, idx: usize) Allocator.Error!void {
     const st = &app.git_palette;
     const row = (try rowAt(app, idx)) orelse return;
     st.cursor = idx;
+    try switchToRowRepo(app, idx);
     switch (row) {
         .gap, .remote => {},
+        .repo => |r| git.runToast(app, selectRepo(app, r.idx)),
         .section => |s| st.collapsed.toggle(s.s),
         else => {
             const name = rowName(app, row) orelse return;
@@ -593,9 +771,11 @@ pub fn activate(app: *App, idx: usize) Allocator.Error!void {
     const gpa = app.gpa;
     const row = (try rowAt(app, idx)) orelse return;
     st.cursor = idx;
+    try switchToRowRepo(app, idx);
     const result: CommandError!void = blk: {
         switch (row) {
             .gap, .remote => {},
+            .repo => |r| break :blk selectRepo(app, r.idx),
             .section => |s| st.collapsed.toggle(s.s),
             .branch => |b| {
                 try setSelected(app, b.name);
@@ -680,6 +860,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
     const gs = &app.git;
     const arena = app.frame.allocator();
     const row = (try rowAt(app, idx)) orelse return;
+    try switchToRowRepo(app, idx);
     switch (row) {
         .branch => |b| {
             const name = b.name;
@@ -741,7 +922,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             });
             try app.openMenu(t.name, items, x, y);
         },
-        .section, .gap => {},
+        .section, .repo, .gap => {},
     }
 }
 
@@ -752,7 +933,13 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
     const arena = app.frame.allocator();
     const result: CommandError!void = blk: {
         switch (a.what) {
-            .switch_repo => break :blk git.switchTo(app, a.idx),
+            .switch_repo => {
+                app.git_palette.all = false;
+                app.git_palette.cursor = 0;
+                app.git_palette.scroll = 0;
+                break :blk selectRepo(app, a.idx);
+            },
+            .all_repos => break :blk setAll(app, true),
             .reopen_repo => break :blk reopen(app, a.idx),
             .remote_fetch => break :blk command.run(app, .{ .static = .@"git.fetch" }),
             .remote_copy_url => {
@@ -862,6 +1049,8 @@ pub fn partMouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
     focusPalette(app);
     switch (part) {
         .repo => try openReposMenu(app, m.x, m.y + 1),
+        .repo_prev => git.runToast(app, stepRepo(app, false)),
+        .repo_next => git.runToast(app, stepRepo(app, true)),
     }
 }
 
@@ -875,6 +1064,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
                 git.runToast(app, git.requestStatus(app));
                 git.runToast(app, git.requestRail(app));
             }
+            if (app.git_palette.all) git.runToast(app, requestRailAll(app, true));
             app.toast("git: refreshed", .{});
         },
         else => {},
@@ -951,8 +1141,8 @@ fn lastStop(list: []const Row) usize {
 /// clears then blurs, Enter blurs, the arrows still move; otherwise
 /// j/k and the arrows move, g/G and Home/End jump, the page keys page,
 /// Enter acts, `m` opens the row's menu, `/` focuses the filter, `r`
-/// refreshes, `c` commits, `n` makes a branch, Esc hands the focus to
-/// the graph.
+/// refreshes, `c` commits, `n` makes a branch, `[` / `]` step to the
+/// previous / next repo, Esc hands the focus to the graph.
 pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     const st = &app.git_palette;
     const list = try rows(app, app.frame.allocator());
@@ -1013,6 +1203,8 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
                 'r' => try chipMouse(app, .refresh, .{ .x = 0, .y = 0, .kind = .press, .button = .left }),
                 'c' => git.runToast(app, command.run(app, .{ .static = .@"git.commit" })),
                 'n' => git.runToast(app, command.run(app, .{ .static = .@"git.new_branch" })),
+                '[' => git.runToast(app, stepRepo(app, false)),
+                ']' => git.runToast(app, stepRepo(app, true)),
                 else => return false,
             }
         },
@@ -1036,17 +1228,35 @@ const TestApp = struct {
     app: App,
 
     fn init() !TestApp {
+        return initWith(&.{});
+    }
+
+    /// `repos` empty: the workspace is the repo. Otherwise the workspace
+    /// is none and holds one fresh repo per name (discovery lists them
+    /// A–Z).
+    fn initWith(repos: []const []const u8) !TestApp {
         var tmp = testing.tmpDir(.{});
         errdefer tmp.cleanup();
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const n = try tmp.dir.realPath(testing.io, &buf);
         const root = try testing.allocator.dupe(u8, buf[0..n]);
         errdefer testing.allocator.free(root);
-        const res = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "git", "init", "-q", "-b", "main" }, .cwd = .{ .path = root } });
-        testing.allocator.free(res.stdout);
-        testing.allocator.free(res.stderr);
+        if (repos.len == 0) {
+            try gitInit(root);
+        } else for (repos) |name| {
+            try tmp.dir.createDirPath(testing.io, name);
+            const dir = try std.fs.path.join(testing.allocator, &.{ root, name });
+            defer testing.allocator.free(dir);
+            try gitInit(dir);
+        }
         const app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
         return .{ .tmp = tmp, .root = root, .app = app };
+    }
+
+    fn gitInit(dir: []const u8) !void {
+        const res = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "git", "init", "-q", "-b", "main" }, .cwd = .{ .path = dir } });
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
     }
 
     fn deinit(t: *TestApp) void {
@@ -1076,6 +1286,8 @@ var seed_remotes = [_]parse.Remote{.{ .name = "origin", .url = "git@github.com:m
 var seed_stashes = [_]parse.Stash{.{ .sha = "ab12cd3", .ref = "stash@{0}", .message = "On main: half done" }};
 var seed_tags = [_]parse.Tag{ .{ .name = "v2.0", .sha = "aaaa111", .annotated = true }, .{ .name = "v1.0", .sha = "bbbb222", .annotated = false } };
 
+/// Seeds the ACTIVE repo's rail as landed. Entering the mode
+/// rediscovers and clears the rail, so a test that enters seeds after.
 fn seed(app: *App) void {
     seed_worktrees[0].path = app.workspace;
     app.git.rail_branches = &seed_branches;
@@ -1083,6 +1295,22 @@ fn seed(app: *App) void {
     app.git.rail_remotes = &seed_remotes;
     app.git.rail_stashes = &seed_stashes;
     app.git.rail_tags = &seed_tags;
+    app.git.rail_loaded = true;
+}
+
+/// A second repo's seed, parked as All repos keeps it: two locals (dev
+/// checked out), one tag, nothing else.
+var seed_beta_branches = [_]parse.Branch{
+    .{ .name = "dev", .time = 0, .current = true, .remote = false, .sha = "dddd444" },
+    .{ .name = "main", .time = 0, .current = false, .remote = false, .sha = "eeee555" },
+};
+var seed_beta_tags = [_]parse.Tag{.{ .name = "v0.1", .sha = "eeee555", .annotated = false }};
+
+fn seedBeta(app: *App) !void {
+    const e = try git.railEntry(app, app.git.repos.items[1].id);
+    e.branches = &seed_beta_branches;
+    e.tags = &seed_beta_tags;
+    e.loaded = true;
 }
 
 fn unseed(app: *App) void {
@@ -1091,6 +1319,148 @@ fn unseed(app: *App) void {
     app.git.rail_remotes = &.{};
     app.git.rail_stashes = &.{};
     app.git.rail_tags = &.{};
+    app.git.rail_loaded = false;
+    var it = app.git.rails.valueIterator();
+    while (it.next()) |r| {
+        r.branches = &.{};
+        r.worktrees = &.{};
+        r.remotes = &.{};
+        r.stashes = &.{};
+        r.tags = &.{};
+        r.prs = &.{};
+    }
+}
+
+test "the chevrons and `[` / `]` step through the repos in discovery order and wrap, the graph tab following; the rail moves with the switch; one repo leaves them inert" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try testing.expectEqual(@as(usize, 2), app.git.repos.items.len);
+    try testing.expectEqualStrings("alpha", app.git.repos.items[0].name);
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    try seedBeta(app);
+    const st = &app.git_palette;
+    const press: Mouse = .{ .x = 9, .y = 4, .kind = .press, .button = .left };
+    // `]` → beta: the active repo and the graph tab; the rows read its rail.
+    try testing.expect(try handleKey(app, .{ .code = .{ .char = ']' } }));
+    try testing.expectEqual(@as(usize, 1), app.git.active.?);
+    try testing.expectEqual(app.git.repos.items[1].id, git.activeGraph(app).?.repo);
+    var list = try rows(app, app.frame.allocator());
+    try testing.expectEqual(@as(u32, 2), list[0].section.count);
+    try testing.expectEqualStrings("dev", list[1].branch.name);
+    try testing.expect(list[1].branch.current);
+    // `]` wraps to alpha, `[` back to beta; the chevrons do the same.
+    _ = try handleKey(app, .{ .code = .{ .char = ']' } });
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    _ = try handleKey(app, .{ .code = .{ .char = '[' } });
+    try testing.expectEqual(@as(usize, 1), app.git.active.?);
+    try partMouse(app, .repo_prev, press);
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    try testing.expectEqual(app.git.repos.items[0].id, git.activeGraph(app).?.repo);
+    try partMouse(app, .repo_next, press);
+    try testing.expectEqual(@as(usize, 1), app.git.active.?);
+    try partMouse(app, .repo_prev, press);
+    // alpha's rail came back whole (parked, not dropped): main, current, 1↑ 3↓.
+    list = try rows(app, app.frame.allocator());
+    try testing.expectEqualStrings("main", list[2].branch.name);
+    try testing.expect(list[2].branch.current);
+    try testing.expectEqual(@as(u32, 3), list[2].branch.behind);
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
+}
+
+test "one repo: `]` is taken and does nothing" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    seed(app);
+    try testing.expect(try handleKey(app, .{ .code = .{ .char = ']' } }));
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    try testing.expect(app.lastToast() == null);
+}
+
+test "All repos: every section groups per repo under a sub-header with the count summed and Viewing N over every row; a row's action makes its repo the active one and the graph tab follows; the filter skips an empty repo; the pill menu leads with it; `]` leaves it at the first repo; the flag rides the session" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    try seedBeta(app);
+    const st = &app.git_palette;
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    try testing.expect(st.all);
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var list = try rows(app, arena);
+    // LOCAL 4: alpha (feature, main ✓), beta (dev ✓, main).
+    try testing.expectEqual(@as(u32, 4), list[0].section.count);
+    try testing.expectEqualStrings("alpha", list[1].repo.name);
+    try testing.expectEqual(@as(u32, 0), list[1].repo.idx);
+    try testing.expectEqualStrings("feature", list[2].branch.name);
+    try testing.expectEqualStrings("main", list[3].branch.name);
+    try testing.expect(list[3].branch.current);
+    try testing.expectEqualStrings("beta", list[4].repo.name);
+    try testing.expectEqualStrings("dev", list[5].branch.name);
+    try testing.expect(list[5].branch.current);
+    try testing.expectEqualStrings("main", list[6].branch.name);
+    try testing.expect(!list[6].branch.current);
+    try testing.expect(list[7] == .gap);
+    // REMOTE: alpha's origin and its three; beta's sub-header alone.
+    try testing.expectEqual(@as(u32, 3), list[8].section.count);
+    try testing.expectEqualStrings("alpha", list[9].repo.name);
+    try testing.expectEqualStrings("origin", list[10].remote.name);
+    try testing.expectEqualStrings("beta", list[14].repo.name);
+    try testing.expect(list[15] == .gap);
+    // alpha's 10 items + beta's 2 branches + 1 tag.
+    try testing.expectEqual(@as(usize, 13), viewing(list));
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    // Enter on beta's `main`: beta becomes the active repo, its graph
+    // tab comes to the front, and the checkout goes to its worker.
+    try activate(app, 6);
+    try testing.expectEqual(@as(usize, 1), app.git.active.?);
+    try testing.expectEqual(app.git.repos.items[1].id, git.activeGraph(app).?.repo);
+    try testing.expect(st.all);
+    // The rows keep their shape: alpha's rail is parked, beta's live.
+    list = try rows(app, arena);
+    try testing.expectEqualStrings("main", list[3].branch.name);
+    try testing.expect(list[3].branch.current);
+    try testing.expectEqualStrings("dev", list[5].branch.name);
+    try testing.expectEqual(@as(usize, 13), viewing(list));
+    // The filter: under TAGS only alpha has a `v1`; beta's sub-header goes.
+    try st.filter.appendSlice(testing.allocator, "v1");
+    list = try rows(app, arena);
+    const tags = list[list.len - 4];
+    try testing.expectEqual(Section.tags, tags.section.s);
+    try testing.expectEqual(@as(u32, 1), tags.section.count);
+    try testing.expectEqualStrings("alpha", list[list.len - 3].repo.name);
+    try testing.expectEqualStrings("v1.0", list[list.len - 2].tag.name);
+    try testing.expectEqual(@as(usize, 1), viewing(list));
+    st.filter.clearRetainingCapacity();
+    // The pill menu: All repos first and marked; the repos unmarked.
+    try openReposMenu(app, 2, 4);
+    try testing.expect(std.mem.startsWith(u8, app.overlay.menu.items[0].label, "\u{25CF} All repos"));
+    try testing.expect(std.mem.startsWith(u8, app.overlay.menu.items[1].label, "  alpha"));
+    try testing.expect(std.mem.startsWith(u8, app.overlay.menu.items[2].label, "  beta"));
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    // The session carries the flag.
+    try @import("session.zig").save(app);
+    st.all = false;
+    try @import("session.zig").restore(app);
+    try testing.expect(st.all);
+    // `]` under All repos: the first repo, All repos off.
+    _ = try handleKey(app, .{ .code = .{ .char = ']' } });
+    try testing.expect(!st.all);
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    list = try rows(app, arena);
+    try testing.expectEqual(@as(u32, 2), list[0].section.count);
+    try testing.expect(list[1] == .branch);
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
 }
 
 test "rows: the five sections in order with their counts; LOCAL A–Z with the current one and its ahead / behind; each remote with its branches stripped of the prefix; the worktrees' lock and dirty state; stashes and tags" {

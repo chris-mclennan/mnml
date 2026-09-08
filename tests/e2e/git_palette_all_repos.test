@@ -1,0 +1,36 @@
+# All repos (src/app/git_palette.zig `setAll`): `git.palette_all` lists
+# both repos at once — the pill reads `All repos`, each section holds a
+# sub-header per repo with that repo's rows one level further in, the
+# check marks each repo's own branch, and Viewing N counts every row
+# (two branches and the two main trees). The same command puts one
+# repo back.
+shell mkdir -p alpha beta
+shell git -C alpha init -q -b main
+shell git -C alpha config user.email "test@mnml.dev"
+shell git -C alpha config user.name "mnml test"
+write alpha/a.txt "one\n"
+shell git -C alpha add a.txt
+shell git -C alpha commit -q -m "init"
+shell git -C beta init -q -b dev
+shell git -C beta config user.email "test@mnml.dev"
+shell git -C beta config user.name "mnml test"
+write beta/b.txt "two\n"
+shell git -C beta add b.txt
+shell git -C beta commit -q -m "init"
+command view.activity_git
+wait 1000
+expect screen contains " alpha 󰅀"
+command git.palette_all
+wait 1200
+expect screen contains " All repos 󰅀"
+expect screen contains "󰅀 󰌢 LOCAL"
+expect screen contains "  alpha"
+expect screen contains "  beta"
+expect screen contains "󰄬   󰘬 main"
+expect screen contains "󰄬   󰘬 dev"
+expect screen contains "Viewing 4"
+command git.palette_all
+wait 500
+expect screen lacks "All repos"
+expect screen contains " alpha 󰅀"
+command view.activity_explorer

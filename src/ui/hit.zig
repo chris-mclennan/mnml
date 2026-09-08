@@ -291,6 +291,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("rail:cloud_agents", .{ .rail = .{ .section = .cloud_agents } });
     try expectLabel("rail:gear", .{ .rail = .gear });
     try expectLabel("git_palette:repo", .{ .git_palette = .repo });
+    try expectLabel("git_palette:repo_next", .{ .git_palette = .repo_next });
     try expectLabel("tree_root:0", .{ .tree_root = 0 });
     try expectLabel("tree_chip:new_file", .{ .tree_chip = .new_file });
     try expectLabel("info_view:kebab", .{ .info_view = .kebab });

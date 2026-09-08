@@ -136,7 +136,9 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .detail = try f.fmt(arena, "click runs {s}", .{command.name(tree_mod.chipCommand(c))}),
         },
         .git_palette => |part| switch (part) {
-            .repo => .{ .title = "Repo", .detail = "click: switch repo · reopen a closed one · add a workspace" },
+            .repo => .{ .title = "Repo", .detail = "click: switch repo · All repos · reopen a closed one · add a workspace" },
+            .repo_prev => .{ .title = "Previous repo", .detail = "click: the previous repo in discovery order, wrapping ([)" },
+            .repo_next => .{ .title = "Next repo", .detail = "click: the next repo in discovery order, wrapping (])" },
         },
         .info_view => |part| switch (part) {
             .kebab => .{ .title = "Sidebar menu", .detail = "click: turn the info panel off" },

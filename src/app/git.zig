@@ -289,6 +289,20 @@ pub const GraphPane = struct {
 
 // ─── state ──────────────────────────────────────────────────────────────
 
+/// A repo's rail as `State.rails` parks it: the worker's arena, adopted
+/// whole, and the lists into it.
+pub const RepoRail = struct {
+    snapshot: alloc.SnapshotArena,
+    branches: []parse.Branch = &.{},
+    worktrees: []parse.Worktree = &.{},
+    remotes: []parse.Remote = &.{},
+    stashes: []parse.Stash = &.{},
+    tags: []parse.Tag = &.{},
+    prs: []parse.Pr = &.{},
+    loaded: bool = false,
+    pending: bool = false,
+};
+
 pub const State = struct {
     repos: std.ArrayListUnmanaged(*client.Repo) = .empty,
     next_id: u32 = 1,
@@ -341,6 +355,12 @@ pub const State = struct {
     /// The rail was asked for without `gh`; said once.
     rail_gh_toasted: bool = false,
     rail_loaded: bool = false,
+    /// All repos (`app/git_palette.zig`): the rails of the repos that
+    /// are NOT the active one, by repo id, each on its own arena. The
+    /// active repo's stays in `rail_*` — every consumer reads it there
+    /// — and `switchTo` MOVES a rail between the two rather than
+    /// copying, so the palette's rows stay valid across the switch.
+    rails: std.AutoHashMapUnmanaged(u32, RepoRail) = .empty,
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .rail_snapshot = alloc.SnapshotArena.init(gpa) };
@@ -356,6 +376,9 @@ pub const State = struct {
         self.marks.deinit(gpa);
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
+        var rit = self.rails.valueIterator();
+        while (rit.next()) |r| r.snapshot.deinit();
+        self.rails.deinit(gpa);
         self.rail_snapshot.deinit();
         self.snapshot.deinit();
     }
@@ -442,6 +465,16 @@ pub fn discover(app: *App) Allocator.Error!void {
     st.repos.deinit(gpa);
     st.repos = fresh;
     st.discovered = true;
+    // The rails parked for repos that are gone go with them.
+    {
+        var gone_ids: std.ArrayListUnmanaged(u32) = .empty;
+        var it = st.rails.keyIterator();
+        while (it.next()) |k| if (st.repoById(k.*) == null) try gone_ids.append(arena, k.*);
+        for (gone_ids.items) |id| if (st.rails.fetchRemove(id)) |kv| {
+            var r = kv.value;
+            r.snapshot.deinit();
+        };
+    }
     st.active = null;
     if (active_path) |p| for (st.repos.items, 0..) |r, i| if (std.mem.eql(u8, r.path, p)) {
         st.active = i;
@@ -525,7 +558,9 @@ pub fn switchTo(app: *App, idx: usize) CommandError!void {
     st.active = idx;
     const r = st.repos.items[idx];
     if (was != idx) {
+        parkRail(app, was);
         clearStatus(app);
+        unparkRail(app, r.id);
         for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .git_status => |*s| s.repo = r.id,
             else => {},
@@ -534,6 +569,58 @@ pub fn switchTo(app: *App, idx: usize) CommandError!void {
         app.toast("active repo → {s}", .{r.name});
     }
     app.needs_render = true;
+}
+
+/// The `rails` entry for `id`, made empty when there is none.
+pub fn railEntry(app: *App, id: u32) Allocator.Error!*RepoRail {
+    const st = &app.git;
+    const gop = try st.rails.getOrPut(app.gpa, id);
+    if (!gop.found_existing) gop.value_ptr.* = .{ .snapshot = alloc.SnapshotArena.init(app.gpa) };
+    return gop.value_ptr;
+}
+
+/// The active repo's rail (index `was`) moves into `rails` — its arena
+/// with it, so nothing that borrows it is freed — ahead of the
+/// `clearStatus` that empties `rail_*`. Nothing to park before the
+/// first rail lands; a request in flight follows the repo.
+fn parkRail(app: *App, was: ?usize) void {
+    const st = &app.git;
+    const i = was orelse return;
+    if (i >= st.repos.items.len) return;
+    if (!st.rail_loaded) return;
+    const e = railEntry(app, st.repos.items[i].id) catch return;
+    e.snapshot.arena.deinit();
+    e.snapshot.arena = st.rail_snapshot.arena;
+    st.rail_snapshot.arena = std.heap.ArenaAllocator.init(app.gpa);
+    e.branches = st.rail_branches;
+    e.worktrees = st.rail_worktrees;
+    e.remotes = st.rail_remotes;
+    e.stashes = st.rail_stashes;
+    e.tags = st.rail_tags;
+    e.prs = st.rail_prs;
+    e.loaded = true;
+    e.pending = st.rail_pending;
+}
+
+/// A rail parked under `id` becomes the active one's, arena and all.
+fn unparkRail(app: *App, id: u32) void {
+    const st = &app.git;
+    const kv = st.rails.fetchRemove(id) orelse return;
+    var r = kv.value;
+    st.rail_pending = r.pending;
+    if (!r.loaded) {
+        r.snapshot.deinit();
+        return;
+    }
+    st.rail_snapshot.arena.deinit();
+    st.rail_snapshot.arena = r.snapshot.arena;
+    st.rail_branches = r.branches;
+    st.rail_worktrees = r.worktrees;
+    st.rail_remotes = r.remotes;
+    st.rail_stashes = r.stashes;
+    st.rail_tags = r.tags;
+    st.rail_prs = r.prs;
+    st.rail_loaded = true;
 }
 
 /// D10.2: the file just opened may live in another discovered repo.
@@ -902,9 +989,22 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
         },
         .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
         .rail => |rail| {
+            const active = st.activeRepo();
+            if (active == null or active.?.id != repo.id) {
+                // Another repo's, asked for by All repos: parked on its own arena.
+                const e = try railEntry(app, repo.id);
+                e.pending = false;
+                adoptArena(&e.snapshot.arena, &result.arena, gpa);
+                e.branches = rail.branches;
+                e.worktrees = rail.worktrees;
+                e.remotes = rail.remotes;
+                e.stashes = rail.stashes;
+                e.tags = rail.tags;
+                e.prs = rail.prs;
+                e.loaded = true;
+                return;
+            }
             st.rail_pending = false;
-            const active = st.activeRepo() orelse return;
-            if (active.id != repo.id) return;
             adoptArena(&st.rail_snapshot.arena, &result.arena, gpa);
             st.rail_branches = rail.branches;
             st.rail_worktrees = rail.worktrees;
@@ -944,11 +1044,13 @@ fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 /// pane on that repo asks again.
 pub fn afterChange(app: *App, repo: *client.Repo) Allocator.Error!void {
     const st = &app.git;
-    if (st.activeRepo()) |a| if (a.id == repo.id) {
-        st.status_pending = false;
-        requestStatus(app) catch {};
-        if (app.git_palette.active) requestRail(app) catch {};
-    };
+    if (st.activeRepo()) |a| {
+        if (a.id == repo.id) {
+            st.status_pending = false;
+            requestStatus(app) catch {};
+            if (app.git_palette.active) requestRail(app) catch {};
+        } else if (app.git_palette.active and app.git_palette.all) requestRailFor(app, repo, true) catch {};
+    }
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
         .diff => |*dp| if (dp.repo == repo.id and dp.scope != .commit) refreshDiff(app, dp) catch {},
         .git_graph => |*g| if (g.repo == repo.id) refreshGraph(app, g) catch {},
@@ -1047,6 +1149,31 @@ pub fn requestRail(app: *App) CommandError!void {
         st.rail_pending = false;
         return err;
     };
+}
+
+/// Ask `repo` for its rail: the active repo's lands in `rail_*`, any
+/// other's in `rails` (All repos). `force` asks again for one that has
+/// landed; without it a parked rail is kept.
+pub fn requestRailFor(app: *App, repo: *client.Repo, force: bool) CommandError!void {
+    const st = &app.git;
+    if (st.activeRepo()) |a| if (a.id == repo.id) {
+        if (!force and st.rail_loaded) return;
+        return requestRail(app);
+    };
+    const e = try railEntry(app, repo.id);
+    if (e.pending or (!force and e.loaded)) return;
+    e.pending = true;
+    submit(app, repo, .{ .rail = .{ .gh = cmd_app.onPath(app, "gh") } }) catch |err| {
+        e.pending = false;
+        return err;
+    };
+}
+
+/// A rail on the way for any repo but the active one (the spinner).
+pub fn anyRailPending(st: *const State) bool {
+    var it = st.rails.valueIterator();
+    while (it.next()) |r| if (r.pending) return true;
+    return false;
 }
 
 /// Marks for the editor gutter of `abs_path`, from the active repo's
@@ -2996,9 +3123,10 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expectEqual(@as(usize, 1), panes.len);
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
-    // The branches panel: the pill, Viewing N (2 locals + 1 worktree),
-    // the filter, LOCAL with the check on main, WORKTREES with the house.
-    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") == null);
+    // The branches panel: the caps header, the pill, Viewing N (2 locals
+    // + 1 worktree), the filter, LOCAL with the check on main, WORKTREES
+    // with the house.
+    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0322} LOCAL") != null);

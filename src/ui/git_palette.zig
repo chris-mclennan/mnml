@@ -3,9 +3,11 @@
 //! graph tab per repo; the repo pill on top picks which):
 //!
 //! ```text
-//!   ws 󰅀
-//!   Viewing 9
-//!    󰍉 / filter
+//!  GIT                    ⟳
+//!   󰍉 / filter
+//!
+//!   ws 󰅀   󰅁  󰅂
+//!  Viewing 9
 //!
 //!  󰅀 󰌢 LOCAL             2
 //!  󰄬 󰘬 main         1↑ 3↓     ← the checked-out branch: green ground,
@@ -27,12 +29,19 @@
 //!     󰓹 v2.0
 //! ```
 //!
-//! Top to bottom: the repo pill (a `.git_palette = .repo` hit) with the
-//! refresh chip at the row's right edge, `Viewing N` (N = the item rows
-//! listed after folding and filtering, in the accent colour), the
-//! filter row every list panel has (`filter_input.zig` — same glyph,
-//! same placeholder, same caret), a blank row, then ONE scrolling list
-//! of five sections in a fixed order. A section header is a chevron, a
+//! Top to bottom, TODOS' shape: the caps header every panel in the
+//! column starts with (`header.zig` — `GIT` at the left, the refresh
+//! chip at the right edge), the filter row every list panel has
+//! (`filter_input.zig` — same glyph, same placeholder, same caret), a
+//! blank, the repo pill (a `.git_palette = .repo` hit) with the tab
+//! strip's two chevrons after it (`.repo_prev` / `.repo_next`: the
+//! previous / next repo in discovery order, wrapping; dim and inert
+//! with one repo), `Viewing N` (N = the item rows listed after folding
+//! and filtering, in the accent colour), a blank, then ONE scrolling
+//! list of five sections in a fixed order. With every repo listed
+//! (`Props.grouped`, the pill reading `All repos`) each section holds
+//! a muted sub-header per repo — its name, indented like a remote's
+//! under REMOTE — and the repo's rows one level further in. A section header is a chevron, a
 //! glyph, the caps label and its count at the right edge; a click on
 //! any of it folds the section. Column 0 of every row is the gutter:
 //! the green check on the checked-out branch and the current worktree,
@@ -52,6 +61,8 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const chip = @import("chip.zig");
+const header = @import("header.zig");
+const bufferline = @import("bufferline.zig");
 const filter_input = @import("filter_input.zig");
 const list_panel = @import("list_panel.zig");
 const scrollbar = @import("scrollbar.zig");
@@ -63,8 +74,9 @@ const Color = vaxis.Color;
 
 pub const Caret = text_field.Caret;
 
-/// The palette's own click target beside its rows: the repo pill.
-pub const Part = enum { repo };
+/// The palette's own click targets beside its rows: the repo pill and
+/// the two chevrons after it.
+pub const Part = enum { repo, repo_prev, repo_next };
 
 /// The sections, in the order they are listed.
 pub const Section = enum {
@@ -101,13 +113,16 @@ pub const Row = union(enum) {
     worktree: struct { idx: u32, shown: []const u8, main: bool, current: bool, locked: bool, dirty: bool, ahead: u32 = 0, behind: u32 = 0 },
     stash: struct { idx: u32, sha: []const u8, message: []const u8 },
     tag: struct { idx: u32, name: []const u8 },
+    /// All repos: the sub-header a section holds per repo (`idx` is the
+    /// repo's index in discovery order); the rows under it are its.
+    repo: struct { idx: u32, name: []const u8 },
     gap,
 
     /// An item row — what `Viewing N` counts and Enter acts on.
     pub fn isItem(r: Row) bool {
         return switch (r) {
             .branch, .remote_branch, .worktree, .stash, .tag => true,
-            .section, .remote, .gap => false,
+            .section, .remote, .repo, .gap => false,
         };
     }
 
@@ -129,6 +144,11 @@ pub const Props = struct {
     cursor: usize = 0,
     /// The first row painted; clamped so the cursor is in view.
     scroll: usize = 0,
+    /// The repos the chevrons step through; one leaves them dim.
+    repo_count: usize = 1,
+    /// All repos: the item rows sit under `.repo` sub-headers, one
+    /// level further in.
+    grouped: bool = false,
 };
 
 pub const Painted = struct {
@@ -209,8 +229,12 @@ pub fn currentBg(t: *const Theme) Color {
     return diff_view.blendOver(t.palette.green, t.panel_bg.bg, 45, t.palette.bg2);
 }
 
-/// The rows above the list: the pill, `Viewing N`, the filter, a blank.
-pub const head_rows: u16 = 4;
+/// The rows above the list: the caps header, the filter, a blank, the
+/// pill with the chevrons, `Viewing N`, a blank.
+pub const head_rows: u16 = 6;
+
+/// ` 󰅁 ` — one chevron slot, the tab strip's (`bufferline.arrow_w`).
+pub const arrow_w: u16 = bufferline.arrow_w;
 
 /// Paints the palette into `area` and registers its hits.
 pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
@@ -223,39 +247,68 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
     const x0 = area.x;
     const w = area.w;
 
-    // ── the repo pill, the refresh chip at the edge ──
-    {
-        const y = area.y;
-        const refresh_text = chip.refreshIcon(ui.ascii);
-        const refresh_w = ui.width(refresh_text);
-        const text = ui.fmt(" {s} {s} ", .{ p.repo, g(ui, repo_chevron_nerd, repo_chevron_ascii) });
-        const room: u16 = w -| 1 -| (refresh_w + 1);
-        var style = Theme.onBg(t.fg, pal.bg2);
-        style.bold = true;
-        const pill_w = ui.putStr(x0 + 1, y, room, ui.clipStr(text, room), style);
-        ui.hit(Rect.init(x0 + 1, y, pill_w, 1), .{ .git_palette = .repo });
-        if (w >= pill_w + refresh_w + 2) {
-            _ = chip.paint(ui, area.right() - refresh_w, y, refresh_w, refresh_text, chip.refreshStyle(t, bg.bg), .git, .refresh);
-        }
-    }
-
-    // ── Viewing N ──
-    if (area.h > 1) {
-        const y = area.y + 1;
-        var x = x0 + 1;
-        x += ui.putStr(x, y, w -| 1, "Viewing ", bg);
-        _ = ui.putStr(x, y, area.right() -| x, ui.fmt("{d}", .{p.viewing}), Theme.withFg(bg, t.accent.fg));
-    }
+    // ── the caps header every panel in the column starts with ──
+    // `GIT` at the left, the refresh chip at the right edge; the
+    // header owns the chip and its `.git` / `.refresh` hit.
+    _ = header.draw(ui, area.row(0), .{
+        .panel = .git,
+        .label = "GIT",
+        .show_refresh = true,
+        .bg = bg,
+    });
 
     // ── the filter row every list panel has ──
-    if (area.h > 2) {
-        out.caret = filter_input.draw(ui, area.row(2), .{
+    if (area.h > 1) {
+        out.caret = filter_input.draw(ui, area.row(1), .{
             .panel = .git,
             .text = p.filter,
             .caret = p.filter_caret,
             .focused = p.filter_focused,
             .bg = bg,
         });
+    }
+
+    // ── the repo pill, the chevrons after it ──
+    if (area.h > 3) {
+        const y = area.y + 3;
+        const text = ui.fmt(" {s} {s} ", .{ p.repo, g(ui, repo_chevron_nerd, repo_chevron_ascii) });
+        const text_w = ui.width(text);
+        // The chevrons follow the pill after one cell of air — or, when
+        // that cell is the one too many (`All repos 󰅀` in the 20-cell
+        // column git mode snaps to), right against it: the pill's own
+        // trailing space and the slot's leading one keep the glyphs
+        // apart. A pill that leaves them no room even then paints
+        // alone, clipped.
+        const gap: u16 = if (text_w + 1 + 2 * arrow_w <= w -| 2) 1 else 0;
+        const arrows_fit = text_w + gap + 2 * arrow_w <= w -| 1;
+        const room: u16 = w -| 2;
+        var style = Theme.onBg(t.fg, pal.bg2);
+        style.bold = true;
+        const pill_w = ui.putStr(x0 + 1, y, room, ui.clipStr(text, room), style);
+        ui.hit(Rect.init(x0 + 1, y, pill_w, 1), .{ .git_palette = .repo });
+        if (arrows_fit) {
+            const on = p.repo_count > 1;
+            const pair = [_]struct { glyph: []const u8, ascii: []const u8, part: Part }{
+                .{ .glyph = bufferline.arrow_left_glyph, .ascii = bufferline.arrow_left_ascii, .part = .repo_prev },
+                .{ .glyph = bufferline.arrow_right_glyph, .ascii = bufferline.arrow_right_ascii, .part = .repo_next },
+            };
+            for (pair, 0..) |a, slot| {
+                const ax = x0 + 1 + pill_w + gap + @as(u16, @intCast(slot)) * arrow_w;
+                const r = Rect.init(ax, y, arrow_w, 1);
+                const astyle: Style = if (on) .{ .fg = pal.fg, .bg = pal.bg2 } else .{ .fg = pal.comment, .bg = pal.bg_darker, .dim = true };
+                ui.fill(r, astyle);
+                _ = ui.putStr(ax + 1, y, 1, if (ui.ascii) a.ascii else a.glyph, astyle);
+                if (on) ui.hit(r, .{ .git_palette = a.part });
+            }
+        }
+    }
+
+    // ── Viewing N ──
+    if (area.h > 4) {
+        const y = area.y + 4;
+        var x = x0 + 1;
+        x += ui.putStr(x, y, w -| 1, "Viewing ", bg);
+        _ = ui.putStr(x, y, area.right() -| x, ui.fmt("{d}", .{p.viewing}), Theme.withFg(bg, t.accent.fg));
     }
 
     // ── the list ──
@@ -333,10 +386,16 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         const right_w: u16 = ui.width(right_text) + dot_w;
         const right_x: u16 = if (right_w > 0) end -| (right_w + 1) else end;
 
-        // The row's text from its indent.
+        // The row's text from its indent; under a repo sub-header the
+        // item rows sit one level further in.
         var x: u16 = rr.x;
+        const nest: u16 = if (p.grouped) 2 else 0;
         switch (row) {
             .gap => {},
+            .repo => |rp| {
+                x += 2;
+                _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(rp.name, (right_x -| 1) -| x), muted);
+            },
             .section => |s| {
                 x += 1;
                 x += ui.putStr(x, y, right_x -| x, g(ui, if (s.collapsed) chevron_closed_nerd else chevron_open_nerd, if (s.collapsed) chevron_closed_ascii else chevron_open_ascii), muted);
@@ -348,7 +407,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(s.s.label(), (right_x -| 1) -| x), ls);
             },
             .branch => |b| {
-                x += 2;
+                x += 2 + nest;
                 x += ui.putStr(x, y, right_x -| x, g(ui, branch_nerd, branch_ascii), Theme.withFg(ground, pal.purple));
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 var ns = Theme.withFg(ground, if (b.current) pal.green else t.fg.fg);
@@ -356,19 +415,19 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(b.name, (right_x -| 1) -| x), ns);
             },
             .remote => |m| {
-                x += 2;
+                x += 2 + nest;
                 x += ui.putStr(x, y, right_x -| x, if (m.github) g(ui, github_nerd, github_ascii) else g(ui, forge_nerd, forge_ascii), accent);
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(m.name, (right_x -| 1) -| x), Theme.withFg(ground, t.fg.fg));
             },
             .remote_branch => |rb| {
-                x += 4;
+                x += 4 + nest;
                 x += ui.putStr(x, y, right_x -| x, g(ui, branch_nerd, branch_ascii), Theme.withFg(ground, pal.purple));
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(rb.shown, (right_x -| 1) -| x), Theme.withFg(ground, t.fg.fg));
             },
             .worktree => |wt| {
-                x += 2;
+                x += 2 + nest;
                 x += ui.putStr(x, y, right_x -| x, if (wt.main) g(ui, home_nerd, home_ascii) else g(ui, tree_nerd, tree_ascii), Theme.withFg(ground, if (wt.main) pal.yellow else pal.green));
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 var ns = Theme.withFg(ground, if (wt.current) pal.green else t.fg.fg);
@@ -376,13 +435,13 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(wt.shown, (right_x -| 1) -| x), ns);
             },
             .stash => |s| {
-                x += 2;
+                x += 2 + nest;
                 x += ui.putStr(x, y, right_x -| x, s.sha, muted);
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(s.message, (right_x -| 1) -| x), Theme.withFg(ground, t.fg.fg));
             },
             .tag => |tg| {
-                x += 2;
+                x += 2 + nest;
                 x += ui.putStr(x, y, right_x -| x, g(ui, tag_nerd, tag_ascii), Theme.withFg(ground, pal.orange));
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(tg.name, (right_x -| 1) -| x), Theme.withFg(ground, t.fg.fg));
@@ -453,104 +512,187 @@ fn viewing(rows: []const Row) usize {
     return n;
 }
 
-test "the spec's column at 26 cells: the pill and its refresh chip, Viewing N, the filter, then every section with its glyph, its count at the edge, the check, the lock, the dot and the ahead / behind; every stop a hit" {
-    var f = try Fixture.init(26, 24);
+test "the spec's column at 26 cells: the caps header with its refresh chip, the filter, the pill with the chevrons, Viewing N, then every section with its glyph, its count at the edge, the check, the lock, the dot and the ahead / behind; every stop a hit" {
+    var f = try Fixture.init(26, 26);
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = viewing(&spec_rows) });
-    try f.expectRow(0, "  ws \u{F0140}                  \u{eb37}");
-    try f.expectRow(1, " Viewing 8");
-    try f.expectRow(2, "  \u{F0349} / filter");
-    try f.expectRow(3, "");
+    try f.expectRow(0, " GIT                    \u{eb37}");
+    try f.expectRow(1, "  \u{F0349} / filter");
+    try f.expectRow(2, "");
+    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try f.expectRow(4, " Viewing 8");
+    try f.expectRow(5, "");
     // The cursor rests on the first row: its muted marker in the gutter.
-    try f.expectRow(4, "\u{258c}\u{F0140} \u{F0322} LOCAL              2");
-    try f.expectRow(5, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
-    try f.expectRow(6, "  \u{F062C} feature");
-    try f.expectRow(7, "");
-    try f.expectRow(8, " \u{F0140} \u{F015F} REMOTE             3");
-    try f.expectRow(9, "  \u{F02A4} origin");
-    try f.expectRow(10, "    \u{F062C} main");
-    try f.expectRow(11, "    \u{F062C} feature");
-    try f.expectRow(12, "    \u{F062C} hotfix");
-    try f.expectRow(13, "");
-    try f.expectRow(14, " \u{F0140} \u{F0405} WORKTREES          2");
-    try f.expectRow(15, "\u{F012C} \u{F02DC} ws              1\u{2191} 3\u{2193}");
-    try f.expectRow(16, "\u{F033E} \u{F0405} fix (wt-fix)        \u{25CF}");
-    try f.expectRow(17, "");
-    try f.expectRow(18, " \u{F0140} \u{F03D7} STASHES            1");
-    try f.expectRow(19, "  ab12cd3 On main: half \u{2026}");
-    try f.expectRow(20, "");
-    try f.expectRow(21, " \u{F0142} \u{F04FB} TAGS               2");
+    try f.expectRow(6, "\u{258c}\u{F0140} \u{F0322} LOCAL              2");
+    try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
+    try f.expectRow(8, "  \u{F062C} feature");
+    try f.expectRow(9, "");
+    try f.expectRow(10, " \u{F0140} \u{F015F} REMOTE             3");
+    try f.expectRow(11, "  \u{F02A4} origin");
+    try f.expectRow(12, "    \u{F062C} main");
+    try f.expectRow(13, "    \u{F062C} feature");
+    try f.expectRow(14, "    \u{F062C} hotfix");
+    try f.expectRow(15, "");
+    try f.expectRow(16, " \u{F0140} \u{F0405} WORKTREES          2");
+    try f.expectRow(17, "\u{F012C} \u{F02DC} ws              1\u{2191} 3\u{2193}");
+    try f.expectRow(18, "\u{F033E} \u{F0405} fix (wt-fix)        \u{25CF}");
+    try f.expectRow(19, "");
+    try f.expectRow(20, " \u{F0140} \u{F03D7} STASHES            1");
+    try f.expectRow(21, "  ab12cd3 On main: half \u{2026}");
     try f.expectRow(22, "");
-    // Hits: the pill over its cells, the chip, the filter, the rows; the gaps none.
-    try testing.expectEqual(Part.repo, f.hits.at(2, 0).?.git_palette);
-    try testing.expect(f.hits.at(0, 0) == null);
+    try f.expectRow(23, " \u{F0142} \u{F04FB} TAGS               2");
+    try f.expectRow(24, "");
+    // Hits: the header's chip is the `.git` refresh, the filter, the
+    // pill over its cells with the chevrons dim and inert at one repo
+    // (nothing else on that row), the rows; the gaps none.
+    const ChipKind = @import("hit.zig").ChipKind;
+    const PanelId = @import("hit.zig").PanelId;
+    try testing.expectEqual(ChipKind.refresh, f.hits.at(24, 0).?.chip.kind);
+    try testing.expectEqual(PanelId.git, f.hits.at(24, 0).?.chip.panel);
     try testing.expect(f.hits.at(10, 0) == null);
-    try testing.expectEqual(@import("hit.zig").ChipKind.refresh, f.hits.at(24, 0).?.chip.kind);
-    try testing.expectEqual(@import("hit.zig").PanelId.git, f.hits.at(10, 2).?.filter_input);
-    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 4).?.row.idx);
-    try testing.expectEqual(@as(u32, 1), f.hits.at(25, 5).?.row.idx);
-    try testing.expect(f.hits.at(5, 7) == null);
-    try testing.expectEqual(@as(u32, 5), f.hits.at(3, 9).?.row.idx);
-    try testing.expectEqual(@as(u32, 17), f.hits.at(3, 21).?.row.idx);
+    try testing.expectEqual(PanelId.git, f.hits.at(10, 1).?.filter_input);
+    try testing.expectEqual(Part.repo, f.hits.at(2, 3).?.git_palette);
+    try testing.expect(f.hits.at(0, 3) == null);
+    try testing.expect(f.hits.at(9, 3) == null);
+    try testing.expect(f.hits.at(12, 3) == null);
+    try testing.expect(f.hits.at(24, 3) == null);
+    try testing.expect(f.style(9, 3).dim);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 6).?.row.idx);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(25, 7).?.row.idx);
+    try testing.expect(f.hits.at(5, 9) == null);
+    try testing.expectEqual(@as(u32, 5), f.hits.at(3, 11).?.row.idx);
+    try testing.expectEqual(@as(u32, 17), f.hits.at(3, 23).?.row.idx);
     // Colours: N and the counts in the accent; the check and the ahead in
     // green, the behind in orange, the lock in yellow, the dot in the
     // accent; the checked-out rows on the green ground from column 0.
-    try testing.expect(f.fgEql(9, 1, f.theme.accent));
-    try testing.expect(f.fgEql(24, 4, f.theme.accent));
-    try testing.expect(f.fgEql(0, 5, .{ .fg = f.theme.palette.green }));
-    try testing.expect(f.fgEql(20, 5, .{ .fg = f.theme.palette.green }));
-    try testing.expect(f.fgEql(23, 5, .{ .fg = f.theme.palette.orange }));
-    try testing.expect(f.fgEql(0, 16, .{ .fg = f.theme.palette.yellow }));
-    try testing.expect(f.fgEql(24, 16, f.theme.accent));
-    try testing.expect(f.bgEql(0, 5, .{ .bg = currentBg(&f.theme) }));
-    try testing.expect(f.bgEql(25, 5, .{ .bg = currentBg(&f.theme) }));
-    try testing.expect(f.bgEql(0, 6, f.theme.panel_bg));
-    try testing.expect(f.bgEql(0, 15, .{ .bg = currentBg(&f.theme) }));
-    try testing.expect(f.style(4, 5).bold);
-    try testing.expect(!f.style(4, 6).bold);
+    try testing.expect(f.fgEql(9, 4, f.theme.accent));
+    try testing.expect(f.fgEql(24, 6, f.theme.accent));
+    try testing.expect(f.fgEql(0, 7, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(20, 7, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(23, 7, .{ .fg = f.theme.palette.orange }));
+    try testing.expect(f.fgEql(0, 18, .{ .fg = f.theme.palette.yellow }));
+    try testing.expect(f.fgEql(24, 18, f.theme.accent));
+    try testing.expect(f.bgEql(0, 7, .{ .bg = currentBg(&f.theme) }));
+    try testing.expect(f.bgEql(25, 7, .{ .bg = currentBg(&f.theme) }));
+    try testing.expect(f.bgEql(0, 8, f.theme.panel_bg));
+    try testing.expect(f.bgEql(0, 17, .{ .bg = currentBg(&f.theme) }));
+    try testing.expect(f.style(4, 7).bold);
+    try testing.expect(!f.style(4, 8).bold);
+}
+
+test "the chevrons: lit and clickable with two repos (prev, next), dim and inert with one; a pill too wide for them paints alone" {
+    var f = try Fixture.init(26, 8);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .repo_count = 2 });
+    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try testing.expectEqual(Part.repo_prev, f.hits.at(8, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_prev, f.hits.at(10, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_next, f.hits.at(11, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_next, f.hits.at(13, 3).?.git_palette);
+    try testing.expect(f.hits.at(7, 3) == null);
+    try testing.expect(f.hits.at(14, 3) == null);
+    try testing.expect(!f.style(9, 3).dim);
+    try testing.expect(f.bgEql(9, 3, .{ .bg = f.theme.palette.bg2 }));
+    // One repo: the glyphs stay, dim, and take no click.
+    var one = try Fixture.init(26, 8);
+    defer one.deinit();
+    _ = draw(one.ui(), one.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .repo_count = 1 });
+    try one.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try testing.expect(one.hits.at(9, 3) == null);
+    try testing.expect(one.hits.at(12, 3) == null);
+    try testing.expect(one.style(9, 3).dim);
+    // A name that leaves no room: the pill alone, clipped one cell in.
+    var long = try Fixture.init(26, 8);
+    defer long.deinit();
+    _ = draw(long.ui(), long.full(), .{ .rows = &spec_rows, .repo = "a-rather-long-repo", .viewing = 8, .repo_count = 2 });
+    var buf: [128]u8 = undefined;
+    const row = long.row(3, &buf);
+    try testing.expect(std.mem.indexOf(u8, row, "\u{F0141}") == null);
+    try testing.expect(std.unicode.utf8CountCodepoints(row) catch 0 <= 25);
+    try testing.expect(long.hits.at(2, 3).?.git_palette == .repo);
+    var x: u16 = 0;
+    while (x < 26) : (x += 1) if (long.hits.at(x, 3)) |h| try testing.expect(h.git_palette == .repo);
+}
+
+test "all repos: a muted sub-header per repo under each section, the rows one level further in, the current marks per repo" {
+    var f = try Fixture.init(26, 14);
+    defer f.deinit();
+    const grouped = [_]Row{
+        .{ .section = .{ .s = .local, .count = 3, .collapsed = false } },
+        .{ .repo = .{ .idx = 0, .name = "alpha" } },
+        .{ .branch = .{ .idx = 0, .name = "main", .current = true, .ahead = 1 } },
+        .{ .branch = .{ .idx = 1, .name = "feature", .current = false } },
+        .{ .repo = .{ .idx = 1, .name = "beta" } },
+        .{ .branch = .{ .idx = 0, .name = "dev", .current = true } },
+        .gap,
+    };
+    _ = draw(f.ui(), f.full(), .{ .rows = &grouped, .repo = "All repos", .viewing = 3, .repo_count = 2, .grouped = true, .cursor = 2 });
+    try f.expectRow(3, "  All repos \u{F0140}   \u{F0141}  \u{F0142}");
+    try f.expectRow(6, " \u{F0140} \u{F0322} LOCAL              3");
+    try f.expectRow(7, "  alpha");
+    try f.expectRow(8, "\u{F012C}   \u{F062C} main             1\u{2191}");
+    try f.expectRow(9, "    \u{F062C} feature");
+    try f.expectRow(10, "  beta");
+    try f.expectRow(11, "\u{F012C}   \u{F062C} dev");
+    try testing.expect(f.fgEql(2, 7, f.theme.muted));
+    try testing.expect(f.bgEql(0, 8, f.theme.cursor_line));
+    try testing.expect(f.bgEql(0, 11, .{ .bg = currentBg(&f.theme) }));
+    // The sub-header is a stop with a row hit; the section count is the sum.
+    try testing.expectEqual(@as(u32, 1), f.hits.at(4, 7).?.row.idx);
+    try testing.expectEqual(@as(u32, 4), f.hits.at(4, 10).?.row.idx);
+    // The 20-cell column git mode snaps to at 120x40: the chevrons
+    // close up against the pill rather than drop.
+    var narrow = try Fixture.init(20, 8);
+    defer narrow.deinit();
+    _ = draw(narrow.ui(), narrow.full(), .{ .rows = &grouped, .repo = "All repos", .viewing = 3, .repo_count = 2, .grouped = true });
+    try narrow.expectRow(3, "  All repos \u{F0140}  \u{F0141}  \u{F0142}");
+    try testing.expectEqual(Part.repo_prev, narrow.hits.at(15, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_next, narrow.hits.at(18, 3).?.git_palette);
+    try testing.expectEqual(Part.repo, narrow.hits.at(13, 3).?.git_palette);
 }
 
 test "the cursor row takes the list panels' ground and marker, or keeps its gutter mark; the focused filter shows its caret; a folded section keeps only its header" {
-    var f = try Fixture.init(26, 24);
+    var f = try Fixture.init(26, 26);
     defer f.deinit();
     var ui = f.ui();
     ui.focus = .{ .panel = .git };
     var p = draw(ui, f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .cursor = 2, .filter = "ma", .filter_caret = 2, .filter_focused = true });
-    try f.expectRow(2, "  \u{F0349} ma");
-    try testing.expectEqual(Caret{ .x = 6, .y = 2 }, p.caret.?);
-    try f.expectRow(6, "\u{258c} \u{F062C} feature");
-    try testing.expect(f.bgEql(0, 6, f.theme.cursor_line));
-    try testing.expect(f.bgEql(25, 6, f.theme.cursor_line));
-    try testing.expect(f.fgEql(0, 6, f.theme.accent));
+    try f.expectRow(1, "  \u{F0349} ma");
+    try testing.expectEqual(Caret{ .x = 6, .y = 1 }, p.caret.?);
+    try f.expectRow(8, "\u{258c} \u{F062C} feature");
+    try testing.expect(f.bgEql(0, 8, f.theme.cursor_line));
+    try testing.expect(f.bgEql(25, 8, f.theme.cursor_line));
+    try testing.expect(f.fgEql(0, 8, f.theme.accent));
     // On the checked-out branch the check stays and the cursor ground wins.
     p = draw(ui, f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .cursor = 1 });
-    try f.expectRow(5, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
-    try testing.expect(f.bgEql(3, 5, f.theme.cursor_line));
-    try testing.expect(f.bgEql(3, 6, f.theme.panel_bg));
+    try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
+    try testing.expect(f.bgEql(3, 7, f.theme.cursor_line));
+    try testing.expect(f.bgEql(3, 8, f.theme.panel_bg));
     // Unfocused, the marker is muted.
     p = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .cursor = 2 });
-    try testing.expect(f.fgEql(0, 6, f.theme.muted));
+    try testing.expect(f.fgEql(0, 8, f.theme.muted));
 }
 
-test "the list scrolls as one: the scroll follows the cursor, the scrollbar takes the last column only on overflow, and the pill row never scrolls" {
+test "the list scrolls as one: the scroll follows the cursor, the scrollbar takes the last column only on overflow, and the header and pill rows never scroll" {
     var f = try Fixture.init(26, 10);
     defer f.deinit();
-    // Six list rows of room (10 - 4); the spec has 19.
+    // Four list rows of room (10 - 6); the spec has 19.
     var p = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .cursor = 12 });
-    try testing.expectEqual(@as(usize, 6), p.visible);
-    try testing.expectEqual(@as(usize, 7), p.scroll);
-    try f.expectRow(0, "  ws \u{F0140}                  \u{eb37}");
+    try testing.expectEqual(@as(usize, 4), p.visible);
+    try testing.expectEqual(@as(usize, 9), p.scroll);
+    try f.expectRow(0, " GIT                    \u{eb37}");
+    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
     var buf: [128]u8 = undefined;
-    try testing.expect(std.mem.startsWith(u8, f.row(4, &buf), "    \u{F062C} feature"));
+    try testing.expect(std.mem.startsWith(u8, f.row(7, &buf), " \u{F0140} \u{F0405} WORKTREES"));
     try testing.expect(std.mem.startsWith(u8, f.row(9, &buf), "\u{F033E} \u{F0405} fix (wt-fix)"));
-    try testing.expect(f.hits.at(25, 5).?.scrollbar.owner.panel == .git);
-    try testing.expectEqual(@as(u32, 8), f.hits.at(24, 5).?.row.idx);
+    try testing.expect(f.hits.at(25, 7).?.scrollbar.owner.panel == .git);
+    try testing.expectEqual(@as(u32, 10), f.hits.at(24, 7).?.row.idx);
     // A short list: no bar, the last column is the row's.
     const few = spec_rows[0..3];
     p = draw(f.ui(), f.full(), .{ .rows = few, .repo = "ws", .viewing = 2 });
     try testing.expectEqual(@as(usize, 0), p.scroll);
-    try testing.expectEqual(@as(u32, 1), f.hits.at(25, 5).?.row.idx);
-    try f.expectRow(5, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
+    try testing.expectEqual(@as(u32, 1), f.hits.at(25, 7).?.row.idx);
+    try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
 }
 
 test "narrow columns: at 16, 20 and 24 cells nothing paints past the edge, the count wins over the label, names clip with an ellipsis" {
@@ -560,51 +702,57 @@ test "narrow columns: at 16, 20 and 24 cells nothing paints past the edge, the c
         .{ .stash = .{ .idx = 0, .sha = "ab12cd3", .message = "On main: a message that runs well past the column" } },
     };
     for ([_]u16{ 16, 20, 24 }) |w| {
-        var f = try Fixture.init(w, 8);
+        var f = try Fixture.init(w, 9);
         defer f.deinit();
         _ = draw(f.ui(), f.full(), .{ .rows = &long_rows, .repo = "a-long-repo-name", .viewing = 2 });
         var buf: [256]u8 = undefined;
         var y: u16 = 0;
-        while (y < 8) : (y += 1) {
+        while (y < 9) : (y += 1) {
             const row = f.row(y, &buf);
             try testing.expect(std.unicode.utf8CountCodepoints(row) catch 0 <= w);
         }
-        // The header: the count sits one cell in from the edge.
-        const hdr = f.row(4, &buf);
+        // The section header: the count sits one cell in from the edge.
+        const hdr = f.row(6, &buf);
         try testing.expect(std.mem.endsWith(u8, hdr, "12"));
-        try testing.expect(f.fgEql(w - 2, 4, f.theme.accent));
+        try testing.expect(f.fgEql(w - 2, 6, f.theme.accent));
         // The worktree row ends in `10↑ 2↓ ●`; the name before it is clipped.
-        const wt = f.row(5, &buf);
+        const wt = f.row(7, &buf);
         try testing.expect(std.mem.endsWith(u8, wt, "10\u{2191} 2\u{2193} \u{25CF}"));
         try testing.expect(std.mem.indexOf(u8, wt, "\u{2026}") != null);
         try testing.expect(std.mem.startsWith(u8, wt, "\u{F012C} \u{F0405} a"));
         // The stash row clips its message.
-        const st = f.row(6, &buf);
+        const st = f.row(8, &buf);
         try testing.expect(std.mem.endsWith(u8, st, "\u{2026}"));
         try testing.expect(std.mem.startsWith(u8, st, "  ab12cd3 "));
     }
-    // 16 cells: the pill still has its chip; WORKTREES gives way to the count.
-    var f = try Fixture.init(16, 8);
+    // 16 cells: the header keeps its chip, the pill and its chevrons
+    // still fit; WORKTREES gives way to the count.
+    var f = try Fixture.init(16, 9);
     defer f.deinit();
-    _ = draw(f.ui(), f.full(), .{ .rows = &long_rows, .repo = "ws", .viewing = 2 });
-    try f.expectRow(0, "  ws \u{F0140}        \u{eb37}");
-    try f.expectRow(4, "\u{258c}\u{F0140} \u{F0405} WORKTR\u{2026} 12");
+    _ = draw(f.ui(), f.full(), .{ .rows = &long_rows, .repo = "ws", .viewing = 2, .repo_count = 2 });
+    try f.expectRow(0, " GIT          \u{eb37}");
+    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try testing.expectEqual(@import("hit.zig").ChipKind.refresh, f.hits.at(14, 0).?.chip.kind);
+    try testing.expect(f.hits.at(14, 3) == null);
+    try testing.expectEqual(Part.repo_next, f.hits.at(12, 3).?.git_palette);
+    try f.expectRow(6, "\u{258c}\u{F0140} \u{F0405} WORKTR\u{2026} 12");
 }
 
 test "ascii: every glyph has a one-cell twin and the row shapes hold" {
-    var f = try Fixture.init(26, 24);
+    var f = try Fixture.init(26, 26);
     defer f.deinit();
     var ui = f.ui();
     ui.ascii = true;
     _ = draw(ui, f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8 });
-    try f.expectRow(0, "  ws v                  \u{21ba}");
-    try f.expectRow(2, "  / / filter");
-    try f.expectRow(4, ">v % LOCAL              2");
-    try f.expectRow(5, "* Y main            1^ 3v");
-    try f.expectRow(9, "  G origin");
-    try f.expectRow(15, "* @ ws              1^ 3v");
-    try f.expectRow(16, "! ^ fix (wt-fix)        o");
-    try f.expectRow(21, " > # TAGS               2");
+    try f.expectRow(0, " GIT                    \u{21ba}");
+    try f.expectRow(1, "  / / filter");
+    try f.expectRow(3, "  ws v   <  >");
+    try f.expectRow(6, ">v % LOCAL              2");
+    try f.expectRow(7, "* Y main            1^ 3v");
+    try f.expectRow(11, "  G origin");
+    try f.expectRow(17, "* @ ws              1^ 3v");
+    try f.expectRow(18, "! ^ fix (wt-fix)        o");
+    try f.expectRow(23, " > # TAGS               2");
     try testing.expectEqualStrings("", trackText(ui, 0, 0));
     try testing.expectEqualStrings("2v", trackText(ui, 0, 2));
 }
