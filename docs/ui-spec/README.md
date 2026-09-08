@@ -49,9 +49,9 @@ pins row 0 of both dumps as `rust_row_120` / `rust_row_80`.
 The rail diverges from Rust's by design: Rust's AGENTS and CLOUD AGENTS
 rows are gone (they folded into SESSIONS) and Zig has a SCRIPTS row, so
 every rail row below the fold reads differently — about 12 lines on a
-full-height screen, all in columns 0–3. A track's gate should classify
-a differing line by whether columns 4+ differ; the rail-only lines are
-the accepted baseline. Outside the rail: the version string, the
+full-height screen, all in columns 0–3. `tools/ui-diff.sh` prints
+`rows differing beyond the rail: N (rail-only rows: M)` under its line
+count; a gate judges N. The rail-only rows are the accepted baseline. Outside the rail: the version string, the
 coverage ticker's phase, and each screen's own accepted rows. Totals as
 run: esc 16, todos 36, editor ~14, status ~16, graph2 ~40 — the number
 to watch is the count of rows whose columns 4+ differ (esc 2, todos 12,

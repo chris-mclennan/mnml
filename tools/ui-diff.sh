@@ -123,3 +123,18 @@ run_one zig  "$ZIG"  "$ZG" ipc-zig
 echo "== rust: $OUT/rust.txt   zig: $OUT/zig.txt"
 diff --label rust --label zig "$OUT/rust.txt" "$OUT/zig.txt" >"$OUT/screen.diff"
 n=$(grep -c '^[<>]' "$OUT/screen.diff"); echo "== differing lines: $n  ($OUT/screen.diff)"
+# The rail (columns 0-3) diverges from Rust's by design (AGENTS / CLOUD
+# AGENTS folded into SESSIONS; a SCRIPTS row added), so a gate judges
+# the rows whose columns 4+ differ. Count both.
+python3 - "$OUT" <<'PY'
+import sys, itertools
+d = sys.argv[1]
+a = open(d + '/rust.txt', encoding='utf-8', errors='replace').read().split('\n')
+b = open(d + '/zig.txt', encoding='utf-8', errors='replace').read().split('\n')
+rail = body = 0
+for x, y in itertools.zip_longest(a, b, fillvalue=''):
+    if x == y: continue
+    if x[4:] == y[4:]: rail += 1
+    else: body += 1
+print(f"== rows differing beyond the rail: {body}  (rail-only rows: {rail})")
+PY
