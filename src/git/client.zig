@@ -14,6 +14,7 @@
 //! toast — a failure is an `op` result with `ok = false`, or `.err`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
@@ -249,6 +250,11 @@ pub const Job = union(enum) {
     /// `reset --soft / --mixed / --hard <rev>`. Undoable: HEAD and, for
     /// mixed / hard, a `stash create` of the tree are recorded first.
     reset: struct { mode: ResetMode, rev: []u8 },
+    /// Test only (`void` outside a test build): the worker stores 1 in
+    /// the gate on arrival, sleeps 2 s, and drops the sleep's error on the
+    /// floor — a job that swallows its cancellation, the shape `gitDirHas`
+    /// had (see `Repo.destroy`).
+    test_swallow: if (builtin.is_test) *std.atomic.Value(u32) else void,
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -327,6 +333,7 @@ pub const Job = union(enum) {
             .amend_to => |s| gpa.free(s),
             .reset => |r| gpa.free(r.rev),
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
+            .test_swallow => {},
             .stash_lines => |l| {
                 gpa.free(l.patch);
                 gpa.free(l.reverse);
@@ -522,10 +529,20 @@ pub const Repo = struct {
     /// Stops the worker (waiting for it), drops queued jobs, frees the
     /// stacks. The worker borrows `events`, so the caller runs this
     /// before the queue closes.
+    ///
+    /// The queue closes *before* the group is cancelled. A worker parked
+    /// on `get` leaves on the close (a plain futex wake, `error.Closed`)
+    /// whatever its cancel state; the cancel is for a job in flight. The
+    /// other order hung the suite: a cancel that lands while the worker
+    /// is between syscalls is only *requested*, the runtime marks the
+    /// task `canceled` at its next syscall — and if that syscall's
+    /// `error.Canceled` is dropped (`gitDirHas` did), every later wait
+    /// of the task is uninterruptible and `cancel` is not told, so the
+    /// worker parks on `get` for good and `cancel` waits on it for good.
     pub fn destroy(self: *Repo, io: Io) void {
         const gpa = self.gpa;
-        self.group.cancel(io);
         self.jobs.close(io);
+        self.group.cancel(io);
         var buf: [8]Job = undefined;
         while (true) {
             const n = self.jobs.getUncancelable(io, &buf, 0) catch 0;
@@ -740,7 +757,7 @@ fn gitWithStdin(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8,
     };
     defer child.kill(io);
     if (child.stdin) |stdin| {
-        stdin.writeStreamingAll(io, text) catch {};
+        stdin.writeStreamingAll(io, text) catch |err| keepCancel(io, err);
         stdin.close(io);
         child.stdin = null;
     }
@@ -1258,12 +1275,13 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const plan_path = try std.fs.path.join(arena, &.{ dir, "mnml-rebase-plan" });
             const queue_path = try std.fs.path.join(arena, &.{ dir, "mnml-rebase-msgs" });
             const cwd = Io.Dir.cwd();
-            cwd.writeFile(io, .{ .sub_path = plan_path, .data = try sequence_editor.todoText(arena, plan.ops) }) catch {
+            cwd.writeFile(io, .{ .sub_path = plan_path, .data = try sequence_editor.todoText(arena, plan.ops) }) catch |err| {
+                if (err == error.Canceled) return error.Canceled;
                 r.payload = .{ .op = .{ .desc = "rebase", .ok = false, .msg = "cannot write the plan into the git dir", .refresh = false } };
                 events.post(io, .{ .git = r });
                 return;
             };
-            cwd.writeFile(io, .{ .sub_path = queue_path, .data = try sequence_editor.queueText(arena, plan.ops) }) catch {};
+            cwd.writeFile(io, .{ .sub_path = queue_path, .data = try sequence_editor.queueText(arena, plan.ops) }) catch |err| keepCancel(io, err);
             const snap = try snapshot(repo, io, arena);
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
             try args.appendSlice(arena, &.{ "rebase", "-i", "--autostash" });
@@ -1279,10 +1297,18 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             };
             const desc = try std.fmt.allocPrint(arena, "rebased: {d} commit(s), {d} changed", .{ plan.ops.len, n_changed });
             if (out.ok) try pushSnapshotUndo(repo, io, arena, desc, snap);
-            cwd.deleteFile(io, plan_path) catch {};
-            cwd.deleteFile(io, queue_path) catch {};
+            cwd.deleteFile(io, plan_path) catch |err| keepCancel(io, err);
+            cwd.deleteFile(io, queue_path) catch |err| keepCancel(io, err);
             r.payload = .{ .op = .{ .desc = if (out.ok) desc else "rebase", .ok = out.ok, .msg = out.reason() } };
         },
+        .test_swallow => |gate| if (builtin.is_test) {
+            gate.store(1, .release);
+            // The cancel's signal interrupts the sleep: `error.Canceled`,
+            // acknowledged by the runtime — and dropped here.
+            io.sleep(.fromMilliseconds(2000), .awake) catch {};
+            r.destroy(gpa);
+            return;
+        } else unreachable,
         .head_sha => {
             const out = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
             if (out.ok) r.payload = .{ .head_sha = trimmed(out.stdout) } else r.payload = .{ .op = .{ .desc = "no HEAD (not a git repo?)", .ok = false, .refresh = false } };
@@ -1371,15 +1397,31 @@ fn gitDir(repo: *Repo, io: Io, arena: Allocator) JobError!?[]const u8 {
     return repo.git_dir;
 }
 
-fn gitDirHas(io: Io, arena: Allocator, dir: []const u8, name: []const u8) Allocator.Error!bool {
+// A missing state file is `false` / `null`; a cancellation is a
+// cancellation (dropping it here is what wedged `Repo.destroy`).
+fn gitDirHas(io: Io, arena: Allocator, dir: []const u8, name: []const u8) JobError!bool {
     const p = try std.fs.path.join(arena, &.{ dir, name });
-    Io.Dir.cwd().access(io, p, .{}) catch return false;
+    Io.Dir.cwd().access(io, p, .{}) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return false,
+    };
     return true;
 }
 
-fn gitDirRead(io: Io, arena: Allocator, dir: []const u8, name: []const u8) Allocator.Error!?[]const u8 {
+fn gitDirRead(io: Io, arena: Allocator, dir: []const u8, name: []const u8) JobError!?[]const u8 {
     const p = try std.fs.path.join(arena, &.{ dir, name });
-    return Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(64)) catch null;
+    return Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(64)) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return null,
+    };
+}
+
+/// For a job path that cannot propagate `error.Canceled` (a `defer`, a
+/// best-effort cleanup): re-arm it. The runtime marks a task `canceled`
+/// the moment a syscall reports it; a task that drops that error is
+/// never told again and its next wait cannot be interrupted.
+fn keepCancel(io: Io, err: anyerror) void {
+    if (err == error.Canceled) io.recancel();
 }
 
 /// The operation in progress, from the git dir's state files.
@@ -1603,7 +1645,7 @@ const TempIndex = struct {
     }
 
     fn deinit(t: *TempIndex, io: Io) void {
-        std.Io.Dir.cwd().deleteFile(io, t.path) catch {};
+        std.Io.Dir.cwd().deleteFile(io, t.path) catch |err| keepCancel(io, err);
         t.env.deinit();
     }
 };
@@ -1705,10 +1747,16 @@ fn conflictDiff(repo: *Repo, io: Io, arena: Allocator, path: []const u8, ctx: []
     const a = try std.fmt.allocPrint(arena, "{s}/mnml-conflict-ours", .{trimmed(dir.stdout)});
     const b = try std.fmt.allocPrint(arena, "{s}/mnml-conflict-theirs", .{trimmed(dir.stdout)});
     const cwd = std.Io.Dir.cwd();
-    cwd.writeFile(io, .{ .sub_path = a, .data = if (ours.ok) ours.stdout else "" }) catch return &.{};
-    defer cwd.deleteFile(io, a) catch {};
-    cwd.writeFile(io, .{ .sub_path = b, .data = if (theirs.ok) theirs.stdout else "" }) catch return &.{};
-    defer cwd.deleteFile(io, b) catch {};
+    cwd.writeFile(io, .{ .sub_path = a, .data = if (ours.ok) ours.stdout else "" }) catch |err| {
+        keepCancel(io, err);
+        return &.{};
+    };
+    defer cwd.deleteFile(io, a) catch |err| keepCancel(io, err);
+    cwd.writeFile(io, .{ .sub_path = b, .data = if (theirs.ok) theirs.stdout else "" }) catch |err| {
+        keepCancel(io, err);
+        return &.{};
+    };
+    defer cwd.deleteFile(io, b) catch |err| keepCancel(io, err);
     // `--no-index` exits 1 when the two differ: the output is the diff.
     const out = try git(repo, io, arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", a, b }, null);
     const files = try parse.parseDiff(arena, out.stdout);
@@ -1794,4 +1842,39 @@ test "a Repo's queue takes jobs, and destroy frees what was never run" {
     try testing.expect(repo.submit(io, .status));
     try testing.expectEqual(@as(u32, 2), repo.submitted);
     repo.destroy(io);
+}
+
+test "destroy returns when the worker swallowed its cancellation and parked on the queue (the suite hang)" {
+    // The interleaving that wedged `zig build test`: a job in flight when
+    // `destroy` runs consumes the cancel and drops it, then parks on
+    // `get` — an uninterruptible wait, and one `cancel` is never told
+    // about. `destroy` runs on its own thread so a wedge is a failure
+    // here, not a hung suite.
+    const io = testing.io;
+    var events = try event.EventQueue.init(testing.allocator, 8);
+    defer events.deinit(io);
+    const repo = try Repo.create(testing.allocator, "/tmp", ".", 1, true);
+    try repo.start(io, &events, null);
+    var gate: std.atomic.Value(u32) = .init(0);
+    try testing.expect(repo.submit(io, .{ .test_swallow = &gate }));
+    while (gate.load(.acquire) == 0) try io.sleep(.fromMilliseconds(1), .awake);
+    const Destroyer = struct {
+        repo: *Repo,
+        io: Io,
+        done: std.atomic.Value(bool) = .init(false),
+        fn run(self: *@This()) void {
+            self.repo.destroy(self.io);
+            self.done.store(true, .release);
+        }
+    };
+    var d: Destroyer = .{ .repo = repo, .io = io };
+    const th = try std.Thread.spawn(.{}, Destroyer.run, .{&d});
+    var waited: u32 = 0;
+    while (!d.done.load(.acquire) and waited < 5000) : (waited += 10) try io.sleep(.fromMilliseconds(10), .awake);
+    const returned = d.done.load(.acquire);
+    // Unwedge by hand — the close `destroy` owes the worker — so the
+    // thread can finish and the test can fail rather than hang.
+    if (!returned) repo.jobs.close(io);
+    th.join();
+    try testing.expect(returned);
 }
