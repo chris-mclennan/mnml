@@ -55,6 +55,50 @@ Scripts run on the UI thread only, between events. There are no threads,
 no timers and no coroutine scheduler; a statusline segment's function is
 polled, a task's completion arrives through `on_done`.
 
+## Writing the file in the editor
+
+**Save reloads.** A save of either `init.lua` runs `script.reload`
+through the `save_post` hook; the toast counts what came back
+(`scripts: reloaded — 2 commands, 1 hook`). A syntax or runtime error
+that names a line of one of the files lands in that file's diagnostics
+beside a language server's — the gutter dot, the squiggle, the
+DIAGNOSTICS row — and in one persistent toast whose click jumps to the
+line. A hook that fails later replaces it; a clean reload clears it.
+
+**The app completes its own API.** In an `init.lua` (or any `.lua` under
+`.mnml/`) the completion popup fills from the app itself: after `mnml.` /
+`mnml.buf.` the functions of the table, after `mnml.on("` the hooks,
+inside `mnml.run("` / `mnml.map("…", "` the command ids, inside
+`mnml.map("` and `keys = { "` the key specs one token at a time, inside
+`fg = "` / `bg = "` the theme roles. `K` (`lsp.hover`) on a command id
+shows its title and chords, on an API path its doc line, on a hook name
+its fields. `lua-language-server`, when installed, keeps the rest of the
+file — it is in the default server table.
+
+**Run a line.** `script.run_selection` (vim `<leader>sr`, standard
+`ctrl+alt+enter`) runs the selected lines — or the cursor line — in the
+script state: an expression first (`x + 1` answers its value), a
+statement chunk otherwise. What comes back is the toast.
+
+**The SCRIPTS section.** The rail's 󰢱 entry (`view.activity_scripts`)
+lists everything the scripts registered — `cmd user.hello`, `hook
+save_post`, `seg clock`, `pick recent` — with the `file:line` of the
+call. Enter (or a double-click) opens the file at that line; `r` reloads;
+`n` creates the workspace file from the commented template when there
+is none (the `+ create init.lua` row does the same on Enter); the filter
+narrows by name. A right-click on a row — or its `⋮` — is the row's
+menu: *Run* and *Bind in init.lua…* for a command, *Open file:line*,
+*Copy id*, *Reload scripts*. The header's `⟳` reloads; its right-click
+is the auto-refresh menu.
+
+**Bind in init.lua…** is also on a right-click over a command in the
+palette (`ctrl+shift+p`): it asks for a key spec, refuses one the keymap
+cannot parse, and appends `mnml.map("<spec>", "<id>")` on a new last
+line of the workspace `init.lua` — the template first when there is
+none — then reloads the file in its editor when it is open and clean
+(refused while it has unsaved changes: the write would sit under the
+buffer) and reloads the scripts, so the chord works at once.
+
 ## Reference
 
 Arguments are checked; a wrong shape raises a Lua error naming the field.
@@ -66,6 +110,7 @@ Arguments are checked; a wrong shape raises a Lua error naming the field.
 mnml.command{ id = "hello", title = "Say hello", group = "user",
               keys = { "ctrl+shift+h" }, run = function() … end }  --> "user.hello"
 mnml.map("ctrl+shift+n", function() … end)                          --> "user.map_1"
+mnml.map("ctrl+shift+s", "file.save")        --> the chord runs that command (what *Bind in init.lua…* writes)
 mnml.run("file.save")          --> true | false, reason   (any command id, built-in or script)
 mnml.ex("w")                   --> true | false, reason   (a `:` line without the colon)
 ```
@@ -79,7 +124,9 @@ input-style switch and a config reload. Registering the same id again
 replaces the runner and its keys. A script id can never shadow a built-in:
 the prefix sees to that.
 
-`mnml.map` is a command with a generated id bound to one chord.
+`mnml.map` is a command with a generated id bound to one chord. Its second
+argument may be a command id instead of a function — built-in or script —
+and the chord then runs it through `mnml.run`.
 
 ### Hooks
 
