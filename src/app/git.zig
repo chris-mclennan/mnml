@@ -2996,9 +2996,10 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expectEqual(@as(usize, 1), panes.len);
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
-    // The branches panel: the pill, Viewing N (2 locals + 1 worktree),
-    // the filter, LOCAL with the check on main, WORKTREES with the house.
-    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") == null);
+    // The branches panel: the caps header, the pill, Viewing N (2 locals
+    // + 1 worktree), the filter, LOCAL with the check on main, WORKTREES
+    // with the house.
+    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0322} LOCAL") != null);

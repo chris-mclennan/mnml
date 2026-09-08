@@ -14,7 +14,7 @@ write new.txt "hello\n"
 open seed.txt
 command view.activity_git
 wait 800
-expect screen lacks " GIT "
+expect screen contains " GIT "
 expect screen contains "Viewing 2"
 expect screen contains "/ filter"
 expect screen contains "󰅀 󰌢 LOCAL"

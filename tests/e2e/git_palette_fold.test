@@ -13,11 +13,11 @@ wait 1000
 expect screen contains "Viewing 3"
 expect screen contains "󰅀 󰌢 LOCAL"
 expect screen contains "  󰘬 feature"
-click 8 5
+click 8 6
 expect screen contains "󰅂 󰌢 LOCAL"
 expect screen lacks "󰘬 feature"
 expect screen contains "Viewing 1"
-click 8 5
+click 8 6
 expect screen contains "󰅀 󰌢 LOCAL"
 expect screen contains "  󰘬 feature"
 expect screen contains "Viewing 3"

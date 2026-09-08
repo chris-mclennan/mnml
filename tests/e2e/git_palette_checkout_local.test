@@ -1,7 +1,8 @@
 # The branches panel (src/app/git_palette.zig): a click on a LOCAL row
 # selects it; a second click on the same row checks the branch out
 # through the worker. The screen is 120x40: the sidebar snaps to 24,
-# the list starts on row 5 (LOCAL), feature on 6, main on 7.
+# the GIT header is row 1, the list starts on row 6 (LOCAL), feature
+# on 7, main on 8.
 shell git init -q -b main
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
@@ -16,8 +17,8 @@ expect screen contains "Viewing 3"
 expect screen contains "󰅀 󰌢 LOCAL"
 expect screen contains "󰄬 󰘬 main"
 expect screen contains "  󰘬 feature"
-click 6 6
-click 6 6
+click 6 7
+click 6 7
 wait 1500
 expect file .git/HEAD contains "refs/heads/feature"
 expect screen contains "󰄬 󰘬 feature"
