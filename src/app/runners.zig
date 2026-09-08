@@ -21,6 +21,7 @@ const CommandError = command.CommandError;
 const pty_pane = @import("pty_pane.zig");
 const pty = @import("pty");
 const cmd_picker = @import("cmd_picker.zig");
+const lsp_client = @import("../lsp/client.zig");
 const Prompt = app_mod.Prompt;
 
 pub const table = .{
@@ -596,6 +597,13 @@ pub const known_tools = [_]Tool{
     .{ .name = "clangd", .kind = .lsp, .bin = "clangd", .description = "C / C++ language server", .brew = "brew install llvm", .apt = "sudo apt install -y clangd" },
     .{ .name = "zls", .kind = .lsp, .bin = "zls", .description = "Zig language server", .brew = "brew install zls", .apt = "sudo apt install -y zls" },
     .{ .name = "lua-language-server", .kind = .lsp, .bin = "lua-language-server", .description = "Lua language server", .brew = "brew install lua-language-server", .apt = "sudo apt install -y lua-language-server" },
+    // // changed (lsp-defaults): the default rows `lsp/client.zig` gained;
+    // the install lines are `client.installHint`'s.
+    .{ .name = "vscode-json-language-server", .kind = .lsp, .bin = "vscode-json-language-server", .description = "JSON language server", .brew = "npm i -g vscode-langservers-extracted", .apt = "npm i -g vscode-langservers-extracted" },
+    .{ .name = "yaml-language-server", .kind = .lsp, .bin = "yaml-language-server", .description = "YAML language server", .brew = "npm i -g yaml-language-server", .apt = "npm i -g yaml-language-server" },
+    .{ .name = "vscode-html-language-server", .kind = .lsp, .bin = "vscode-html-language-server", .description = "HTML language server", .brew = "npm i -g vscode-langservers-extracted", .apt = "npm i -g vscode-langservers-extracted" },
+    .{ .name = "vscode-css-language-server", .kind = .lsp, .bin = "vscode-css-language-server", .description = "CSS / SCSS / Less language server", .brew = "npm i -g vscode-langservers-extracted", .apt = "npm i -g vscode-langservers-extracted" },
+    .{ .name = "csharp-ls", .kind = .lsp, .bin = "csharp-ls", .description = "C# language server (dotnet tool)", .brew = "dotnet tool install -g csharp-ls", .apt = "dotnet tool install -g csharp-ls" },
     .{ .name = "prettier", .kind = .formatter, .bin = "prettier", .description = "JS / TS / CSS / Markdown formatter", .brew = "npm i -g prettier", .apt = "npm i -g prettier" },
     .{ .name = "black", .kind = .formatter, .bin = "black", .description = "Python formatter", .brew = "pip install black", .apt = "pip install black" },
     .{ .name = "rustfmt", .kind = .formatter, .bin = "rustfmt", .description = "Rust formatter", .brew = "rustup component add rustfmt", .apt = "rustup component add rustfmt" },
@@ -625,6 +633,24 @@ fn offerInstall(app: *App, bin: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const idx = toolByBin(bin) orelse return app.diag.fail(arena, "{s} is not on PATH", .{bin});
     try openInstallConfirm(app, idx);
+}
+
+/// // changed (lsp-defaults): the LSP chip menu's *Install <binary>…* —
+/// a known tool gets the install box; a binary the tools table does
+/// not know but `client.installHint` does runs its line straight into
+/// a pane; one neither knows is a diag.
+pub fn installBin(app: *App, bin: []const u8) CommandError!void {
+    if (toolByBin(bin)) |idx| {
+        if (onPath(app, bin)) {
+            app.toast("{s} is installed", .{bin});
+            return;
+        }
+        return openInstallConfirm(app, idx);
+    }
+    const arena = app.frame.allocator();
+    const hint = lsp_client.installHint(bin) orelse return app.diag.fail(arena, "{s}: no install command known — put it on PATH", .{bin});
+    const label = try std.fmt.allocPrint(arena, "install {s}", .{bin});
+    _ = try spawn(app, label, hint, app.workspace, .command);
 }
 
 pub const install_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'i', .label = "Install" }, .{ .key = 'c', .label = "Copy command" }, .{ .key = 'n', .label = "Not now" } };

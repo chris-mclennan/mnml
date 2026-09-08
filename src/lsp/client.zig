@@ -162,11 +162,40 @@ pub const builtins = [_]Builtin{
     .{ .name = "c", .cmd = "clangd", .args = &.{}, .extensions = &.{ "c", "h", "cpp", "hpp", "cc" }, .root_markers = &.{ "compile_commands.json", ".clangd" } },
     .{ .name = "zig", .cmd = "zls", .args = &.{}, .extensions = &.{"zig"}, .root_markers = &.{"build.zig"} },
     // // changed (lua-track): `init.lua` gets a server; Rust's list has
-    // no lua row. json / yaml / html / css stay out — a default server
-    // that is not installed toasts, and package.json is in every
-    // workspace.
+    // no lua row.
     .{ .name = "lua", .cmd = "lua-language-server", .args = &.{}, .extensions = &.{"lua"}, .root_markers = &.{ ".luarc.json", ".git" } },
+    // // changed (lsp-defaults): the four the lua-track left out — a
+    // default server that is not installed no longer toasts (see
+    // `app/lsp.zig`'s missing-default path and
+    // `.editor.lsp_missing_defaults`), so `package.json` in every
+    // workspace is no longer a warning in every session. The binaries
+    // are the npm registry's `bin` names for `vscode-langservers-
+    // extracted` and `yaml-language-server`; both families speak LSP
+    // over stdio only with `--stdio`.
+    .{ .name = "json", .cmd = "vscode-json-language-server", .args = &.{"--stdio"}, .extensions = &.{ "json", "jsonc" }, .root_markers = &.{ "package.json", ".git" } },
+    .{ .name = "yaml", .cmd = "yaml-language-server", .args = &.{"--stdio"}, .extensions = &.{ "yml", "yaml" }, .root_markers = &.{".git"} },
+    .{ .name = "html", .cmd = "vscode-html-language-server", .args = &.{"--stdio"}, .extensions = &.{ "html", "htm" }, .root_markers = &.{ "package.json", ".git" } },
+    .{ .name = "css", .cmd = "vscode-css-language-server", .args = &.{"--stdio"}, .extensions = &.{ "css", "scss", "less" }, .root_markers = &.{ "package.json", ".git" } },
+    // C#: `csharp-ls` (a dotnet tool; stdio is its only transport, no
+    // flag) where Rust's table runs OmniSharp `-lsp`. The markers are
+    // Rust's — a solution first, then a project, then an SDK-style
+    // `global.json`; `*` is a glob (`markerMatches`).
+    .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.csproj", "global.json" } },
 };
+
+/// Does the entry `name` satisfy `marker`? A literal marker is the name
+/// itself; a leading `*` matches any name ending with the rest
+/// (`*.sln` → `Acme.sln`), as Rust's `marker_matches` does. The root
+/// walk (`app/lsp.zig`'s `findRoot`) stats a literal and scans the
+/// directory for a glob.
+pub fn markerMatches(name: []const u8, marker: []const u8) bool {
+    if (isGlobMarker(marker)) return std.mem.endsWith(u8, name, marker[1..]) and name.len > marker.len - 1;
+    return std.mem.eql(u8, name, marker);
+}
+
+pub fn isGlobMarker(marker: []const u8) bool {
+    return marker.len > 1 and marker[0] == '*';
+}
 
 /// The install hint for a well-known server, by the command's basename.
 pub fn installHint(cmd: []const u8) ?[]const u8 {
@@ -188,6 +217,7 @@ pub fn installHint(cmd: []const u8) ?[]const u8 {
         .{ "vscode-html-language-server", "npm i -g vscode-langservers-extracted" },
         .{ "vscode-css-language-server", "npm i -g vscode-langservers-extracted" },
         .{ "marksman", "brew install marksman" },
+        .{ "csharp-ls", "dotnet tool install -g csharp-ls" },
     };
     for (hints) |h| if (std.mem.eql(u8, h[0], base)) return h[1];
     return null;
@@ -208,6 +238,7 @@ pub fn languageIdFor(path: []const u8) []const u8 {
         .{ "html", "html" },      .{ "css", "css" },             .{ "scss", "scss" },     .{ "yaml", "yaml" },           .{ "yml", "yaml" },      .{ "toml", "toml" },
         .{ "sh", "shellscript" }, .{ "bash", "shellscript" },    .{ "lua", "lua" },       .{ "rb", "ruby" },             .{ "java", "java" },     .{ "kt", "kotlin" },
         .{ "swift", "swift" },    .{ "cs", "csharp" },           .{ "php", "php" },       .{ "vue", "vue" },             .{ "svelte", "svelte" }, .{ "sql", "sql" },
+        .{ "jsonc", "jsonc" },    .{ "htm", "html" },            .{ "less", "less" },     .{ "csx", "csharp" },
     };
     for (table) |kv| if (std.mem.eql(u8, kv[0], ext)) return kv[1];
     return ext;
@@ -662,6 +693,30 @@ test "languageIdFor and the builtin table" {
     try testing.expectEqualStrings("plaintext", languageIdFor("README"));
     try testing.expectEqualStrings("npm i -g pyright", installHint("/usr/local/bin/pyright-langserver").?);
     try testing.expect(installHint("mystery-ls") == null);
+    // // changed (lsp-defaults): the five rows, each with a hint, so a
+    // missing one can offer its install.
+    for ([_][]const u8{ "json", "yaml", "html", "css", "csharp" }) |name| {
+        var found = false;
+        for (builtins) |b| if (std.mem.eql(u8, b.name, name)) {
+            found = true;
+            try testing.expect(installHint(b.cmd) != null);
+        };
+        try testing.expect(found);
+    }
+    try testing.expectEqualStrings("dotnet tool install -g csharp-ls", installHint("csharp-ls").?);
+    try testing.expectEqualStrings("npm i -g vscode-langservers-extracted", installHint("vscode-json-language-server").?);
+}
+
+test "markerMatches: a literal is the name, a leading `*` a suffix" {
+    try testing.expect(markerMatches("Cargo.toml", "Cargo.toml"));
+    try testing.expect(!markerMatches("Cargo.toml.bak", "Cargo.toml"));
+    try testing.expect(markerMatches("Acme.sln", "*.sln"));
+    try testing.expect(markerMatches("Acme.Web.csproj", "*.csproj"));
+    try testing.expect(!markerMatches(".sln", "*.sln"));
+    try testing.expect(!markerMatches("Acme.slnx", "*.sln"));
+    try testing.expect(isGlobMarker("*.sln"));
+    try testing.expect(!isGlobMarker("*"));
+    try testing.expect(!isGlobMarker("global.json"));
 }
 
 /// A fake server: replies to `initialize` with utf-8 + a trigger char +

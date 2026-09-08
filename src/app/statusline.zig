@@ -131,16 +131,42 @@ fn lspStatusCmd(app: *App) CommandError!void {
         }
         try out.print(arena, "{s} ({s})", .{ s.name, rel });
     }
-    if (out.items.len == 0) return app.toast("LSP: no servers running", .{});
+    if (out.items.len == 0) try out.appendSlice(arena, "no servers running");
+    // // changed (lsp-defaults): the missing ones, each with its install.
+    for (lsp.missingServers(app), 0..) |m, i| {
+        try out.appendSlice(arena, if (i == 0) " · missing: " else ", ");
+        try out.print(arena, "{s} ({s})", .{ m.cmd, m.hint orelse "not on PATH" });
+    }
     app.toast("LSP: {s}", .{out.items});
 }
 
 /// The LSP chip's right-click — Rust's rows: the status, then the verbs
 /// a user reaches for from the chip.
 pub fn openLspChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const rows = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = "Status", .action = .{ .command = .@"lsp.status" } },
-        .{ .label = "Symbols in file", .action = .{ .command = .@"lsp.symbols" } },
+    // // changed (lsp-defaults): after Status, one row per missing
+    // server naming it and its install hint (click copies the hint), and
+    // an `Install <binary>…` row that runs the hint the way the tools
+    // installer does (`runners.installBin`). The menu's arena owns the
+    // labels.
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var list: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    try list.append(arena, .{ .label = "Status", .action = .{ .command = .@"lsp.status" } });
+    for (lsp.missingServers(app)) |m| {
+        const hint = m.hint orelse "not on PATH";
+        try list.append(arena, .{
+            .label = try std.fmt.allocPrint(arena, "{s} {s} — {s}", .{ if (app.cfg.ui.ascii_icons) "x" else "✗", m.cmd, hint }),
+            .action = .{ .copy_text = hint },
+            .separator_before = true,
+        });
+        try list.append(arena, .{
+            .label = try std.fmt.allocPrint(arena, "Install {s}\u{2026}", .{m.cmd}),
+            .action = .{ .lsp_install = try arena.dupe(u8, m.cmd) },
+        });
+    }
+    try list.appendSlice(arena, &.{
+        .{ .label = "Symbols in file", .action = .{ .command = .@"lsp.symbols" }, .separator_before = lsp.missingServers(app).len > 0 },
         .{ .label = "Symbols in workspace", .action = .{ .command = .@"lsp.workspace_symbols" } },
         .{ .label = "Diagnostics list", .action = .{ .command = .@"lsp.diagnostics" } },
         .{ .label = "Find references", .action = .{ .command = .@"lsp.references" } },
@@ -149,8 +175,10 @@ pub fn openLspChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Code actions", .action = .{ .command = .@"lsp.code_action" } },
         .{ .label = "Toggle inlay hints", .action = .{ .command = .@"lsp.inlay_hints_toggle" } },
     });
+    const rows = try app.gpa.dupe(command.MenuItem, list.items);
     errdefer app.gpa.free(rows);
     try app.openMenu("LSP", rows, x, y);
+    app.overlay.menu.mem = mem;
 }
 
 /// Rust's per-side cap on host segments: a third of the row, at least 20.
@@ -509,7 +537,20 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     for (app.lsp.servers.items) |s| if (!s.transport.isDead()) {
         servers += 1;
     };
-    if (servers > 0) try push(&right, arena, Seg.init(ui.fmt(" LSP {d} ", .{servers}), p.bg_darker, p.blue).withHit(SegId.lsp.raw()));
+    // // changed (lsp-defaults): the servers met this session that are
+    // not installed ride the chip as ` ?N ` — a muted run after the
+    // live count, or the whole chip muted when nothing runs. The count
+    // form (not ` · 2 missing `): the right lane is cut at the edge on
+    // a narrow row (the 80-column rule), so a chip earns its cells.
+    const missing: u32 = @intCast(lsp.missingServers(app).len);
+    if (servers > 0) {
+        var seg = Seg.init(ui.fmt(" LSP {d}", .{servers}), p.bg_darker, p.blue).withHit(SegId.lsp.raw());
+        if (missing > 0) seg.accent = .{ .text = ui.fmt(" ?{d}", .{missing}), .fg = p.bg2 };
+        seg.tail = " ";
+        try push(&right, arena, seg);
+    } else if (missing > 0) {
+        try push(&right, arena, Seg.init(ui.fmt(" LSP ?{d} ", .{missing}), p.comment, p.bg2).withHit(SegId.lsp.raw()));
+    }
     if (app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null) {
         try push(&right, arena, Seg.init(if (nerd) " " ++ sl.restricted_glyph ++ " RESTRICTED " else " RESTRICTED ", p.bg_darker, p.yellow).withHit(sl.seg_restricted));
     }
