@@ -802,6 +802,41 @@ test "tab menu: Save leads when dirty; close_others / close_right keep dirty tab
     try t.expect(app.overlay.menu.items[1].checked);
 }
 
+test "a context menu: the pointer over a row moves the highlight there, the keyboard carries on from it, a hover past the last row changes nothing" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try openEditorMenu(&app, 10, 5);
+    const m = &app.overlay.menu;
+    try t.expect(m.highlight);
+    try app.render();
+    // The frame: `┌ Editor ┐` at (10, 5); the rows start at y = 6.
+    const before = try screenOf(&app);
+    defer t.allocator.free(before);
+    try t.expect(std.mem.indexOf(u8, before, "┌ Editor ") != null);
+    var paste_y: ?u16 = null;
+    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.idx == 2) {
+        paste_y = h.rect.y;
+    };
+    try t.expectEqual(@as(?u16, 8), paste_y);
+    try app.handle(.{ .mouse = .{ .x = 14, .y = 8, .kind = .motion } });
+    try t.expectEqual(@as(usize, 2), m.cursor);
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try t.expectEqual(@as(usize, 3), m.cursor);
+    // The frame's border and the world outside are not rows.
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 8, .kind = .motion } });
+    try t.expectEqual(@as(usize, 3), m.cursor);
+    try app.handle(.{ .mouse = .{ .x = 80, .y = 25, .kind = .motion } });
+    try t.expectEqual(@as(usize, 3), m.cursor);
+    try t.expect(app.overlay == .menu);
+    // A click still runs the hovered row: Select all selects the buffer.
+    try app.handle(.{ .mouse = .{ .x = 14, .y = 11, .kind = .motion } });
+    try t.expectEqual(@as(usize, 5), m.cursor);
+    try app.handle(.{ .mouse = .{ .x = 14, .y = 11, .kind = .press, .button = .left } });
+    try t.expect(app.overlay == .none);
+}
+
 fn screenOf(app: *App) ![]u8 {
     try app.render();
     return @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);

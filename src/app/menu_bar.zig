@@ -561,6 +561,31 @@ test "menu bar: a click drops the menu with chord hints and the recent submenu; 
     try t.expect(std.mem.indexOf(u8, lit, "│▸ \u{F0224}  New file") != null);
     try app.handle(.{ .key = app_mod.Key.named(.down) });
     try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
+    // The pointer over a row moves the highlight there; the keyboard
+    // carries on from where the pointer left it; a hover on the
+    // recent-files row opens its child, a hover back on a leaf closes it.
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 6, .kind = .motion } });
+    try t.expectEqual(@as(usize, 4), app.overlay.menu.cursor);
+    try app.render();
+    const hovered = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(hovered);
+    try t.expect(std.mem.indexOf(u8, hovered, "│▸ \u{F443}  Switch workspace…") != null);
+    try t.expect(std.mem.indexOf(u8, hovered, "│▸ \u{F0224}  New file") == null);
+    try app.handle(.{ .key = app_mod.Key.named(.up) });
+    try t.expectEqual(@as(usize, 3), app.overlay.menu.cursor);
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 5, .kind = .motion } });
+    try t.expect(app.overlay.menu.sub != null);
+    try t.expectEqual(@as(usize, 3), app.overlay.menu.sub.?.parent);
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 2, .kind = .motion } });
+    try t.expect(app.overlay.menu.sub == null);
+    try t.expectEqual(@as(usize, 0), app.overlay.menu.cursor);
+    // A fresh mouse-open again shows no highlight until a hover.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .press, .button = .left } });
+    try t.expect(!app.overlay.menu.highlight);
+    try app.handle(.{ .mouse = .{ .x = 20, .y = 3, .kind = .motion } });
+    try t.expect(app.overlay.menu.highlight);
+    try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
     // → steps to Edit, ← back to File, ← again wraps to the brand menu.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqual(Menu.edit, app.menu_bar.open.?);

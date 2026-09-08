@@ -699,6 +699,39 @@ fn tabStripStepLid(app: *App, lid: layout_mod.NodeId, delta: i8) Allocator.Error
     app.needs_render = true;
 }
 
+/// The pointer moving over an open menu (Rust `tui/mouse/mod.rs`'s
+/// Moved arm): a row under it becomes the cursor row and the highlight
+/// comes on; a parent row opens its child and closes the one before,
+/// a leaf closes an open child (a curation child stays while the
+/// pointer is on its own row); a child's row moves the child's cursor.
+/// The keyboard and the pointer both move the same cursor, so the
+/// last input wins.
+fn menuHover(app: *App, m: Mouse) Allocator.Error!void {
+    const target = app.hits.at(m.x, m.y) orelse return;
+    const menu = &app.overlay.menu;
+    switch (target) {
+        .menu_item => |mi| switch (mi.menu) {
+            // A top-level row, or the kebab on one.
+            0, 2 => {
+                if (mi.idx >= menu.items.len) return;
+                menu.cursor = mi.idx;
+                menu.highlight = true;
+                if (menu.items[mi.idx].submenu.len > 0) {
+                    if (menu.sub == null or menu.sub.?.parent != mi.idx) try context_menus.openSubmenu(app, mi.idx);
+                } else if (menu.sub) |sub| {
+                    if (sub.parent != mi.idx) menu.closeSub(app.gpa);
+                }
+            },
+            // A child's row, or the kebab on one.
+            1, 3 => if (menu.sub) |*sub| {
+                if (mi.idx < sub.items.len) sub.cursor = mi.idx;
+            },
+            else => {},
+        },
+        else => {},
+    }
+}
+
 /// An arrow / j / k / Home / End on a menu: the cursor moves by
 /// `delta` (saturating), and the highlight comes on — a mouse-opened
 /// dropdown shows none until then, and its first arrow only lights
@@ -1155,7 +1188,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     if (m.kind == .drag or m.kind == .release) {
         if (app.drag != null) return continueDrag(app, m);
     }
-    if (m.kind == .motion) return;
+    if (m.kind == .motion) {
+        if (app.overlay == .menu) try menuHover(app, m);
+        return;
+    }
     // A press anywhere puts flash's labels away.
     if (m.kind == .press) flash.cancel(app);
     // The click-discovery panel: a press on one of its rows flashes the
