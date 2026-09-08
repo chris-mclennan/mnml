@@ -3551,3 +3551,89 @@ screen (`docs/ui-spec/zig-git-palette-*.txt`, `tools/zig-spec-git.sh`).
   every row menu resolves), a worker integration test on a seeded repo,
   seven `git_palette_*.test` scripts; `git_mode.test` and the git-mode
   unit test re-aimed at the new rows.
+
+## The HTTP section (2026-09-07, branch `http-panel`) — `// changed:` notes
+
+The left column's HTTP section rebuilt to Rust's element list
+(`src/ui/http_panel.rs`, `rust-http-panel-120x40.txt`): the user's
+ask was Rust's helpfulness — the blank row under the filter, a chip
+ladder on every section header, the words and the green `+ New …`
+link under an empty section, the collections as a folder tree with a
+`+` per folder, `+ New request` / `↓ Paste curl…` / `↓ Import…` at the
+bottom, and a blank request pane opened in the centre on entry.
+
+- `// changed (ui):` `src/ui/http_panel.zig` is the painter, split out
+  of `app/http_panel.zig` (state + actions stay there, D6). It owns
+  `Section`, `Row{ kind: header | folder | item | empty | link | gap, … }`,
+  `Panel = ListPanel(Row)`, `Link`, `ChipKind`, `Part` and `draw` /
+  `paintRow`. The header ladder (`ladder`) is Rust's
+  `draw_section_header` rule verbatim — `need = 1 + chevron + label +
+  " (n)" + gaps + 2 + 3·chips ≤ the row's content width`, dropping
+  clear → refresh → filter → new → capture — with Rust's per-section
+  sets: COLLECTIONS ≡ ⟳ ✕ +, ENVS ≡ +, CHAINS none (Rust's gate never
+  draws a lone filter chip; mirrored as the drawn set), MOCKS /
+  RECENT ≡ ⟳ ✕, CAPTURED ≡ ⟳ 🌐 ✕, COOKIES (Zig's) RECENT's set.
+  Tested at 26 / 30 / 34 (content 25 / 29 / 33) and at the shipped
+  width with a scrollbar (24: RECENT loses its ✕ — the drop rule, not
+  a bug). Glyphs are Rust's codepoints: EB83 / EB37 / EB01 / EA76 /
+  EA60 chips, F07B / F114 folders, F15C members, F1D8 loose files,
+  F085 chains, F0C0 mocks, ▼ / ▶ headers, ▾ / ▸ folders, ● / ○ envs,
+  ↓ on the two action rows; every one has its `--ascii` twin.
+- `// changed (ui):` `hit.HitTarget` gains `http: http_panel.Part` —
+  `chip{ section, kind }`, `link: Link`, `folder_new: idx` — labelled
+  `http:chip:envs:new` / `http:link:paste_curl` / `http:folder_new:2`;
+  `dispatch.mouse` routes it to `http_panel.partMouse`,
+  `discovery.describe` gives each Rust's `info_view_copy.rs` words.
+- `// changed (list-panel):` `Props.filter_gap` — one blank row between
+  the filter and the list when there is no `+ New` row (the user's
+  pattern, which TODOS gets from its New row). And the `.row` hit is
+  now registered BEFORE `paintRow`: it was after, so a painter's own
+  targets (a header's chips, a link) could never win a click.
+- `// changed (app):` `State.folders: []Folder{ rel, name, hidden,
+  members }` + `loose` — every directory holding request files is a
+  collection (Rust's rule is ≥ 2 files; one is enough here, so the
+  fixture's `requests/demo.http` is `▾ 󰉋 requests (1)` and Rust's
+  FILES-stragglers section is only the root-level files, listed under
+  COLLECTIONS with the F1D8 glyph); `.mnml/collections/<name>/**` is
+  walked too (the workspace walk skips dot-dirs) and shows as the
+  hidden kind. `collapsed_dirs` folds a folder (`←` / `→` / a press on
+  its row); the filter unfolds every folder and shows a folder's
+  members when its name matches. Under no filter an empty section
+  gets its words (`Section.emptyText`, Rust's; COOKIES Zig's) and
+  COLLECTIONS (when empty) / ENVS / CHAINS their link; a gap row
+  follows every section; the three action links close the list. The
+  cursor never rests on a gap or the words (`settle`, after every
+  `ListPanel` motion, wheel and scrollbar jump). `chipAction` is
+  Rust's routing (filter focuses the pill, refresh `http.refresh`,
+  capture `http.capture_start`, clear truncates RECENT / CAPTURED or
+  empties the jar and otherwise clears the filter, new `http.new_env`
+  / `http.new_collection`); `linkAction` opens what the palette
+  command opens (`http.new`, `http.paste_curl`, the `Import from:`
+  menu → `http.import_postman` / `http.import_har`, `http.new_env`,
+  `http.new_chain`, `http.new_collection`); `newRequestInFolder`
+  opens a blank pane whose `source_path` is the first free
+  `req-N.http` in the folder (Ctrl+S lands it there). The header row
+  menus carry the section's verbs (start capture, clear, pick env…);
+  every menu id resolves (tested). The kebab is off for this panel:
+  its hover glyph would sit where the ladder paints.
+- `// changed (app):` `http_panel.enter` — `view.activity_http`
+  (`cmd_view.activityHttp`) opens a blank request pane when no request
+  pane is active (Rust's `entering_http`), so the keys land in the
+  pane and the info box says `Request pane — Enter to send, Ctrl+S
+  saves as .http/.curl.`; a re-entry with one active opens nothing;
+  leaving does not close it (Rust closes an untouched preview — not
+  mirrored, by the brief).
+- `// changed (tests):` `tests/e2e/http_panel.test` re-aimed — the
+  files sit under `▾ 󰉋 api (2)` as `users.http`, `dev` is `●` (the
+  resolved default), the keys go to the pane so the script clicks the
+  pill first, and the walk to `prod` counts the folder row and skips
+  the gap. `tests/e2e/http_panel/` (no headers): entering opens `new
+  request`, `+ New env` opens its prompt and `G ⏎` the Import menu,
+  the folder `+` opens `req-1.http` and a folder press folds, the
+  `Paste curl…` link fills the blank pane, a RECENT double-click opens
+  the request, the filter narrows. Break-checked: `enter` disabled →
+  `entering_opens_request.test` fails on `GET  new request`.
+- Not mirrored: Rust's `HTTP` header (no count, a collapse-all chip)
+  — Zig keeps `HTTP (n)  +  ⟳`; Rust's blank between the two action
+  rows and the bottom-pinned rows (the list scrolls instead); the
+  ≥ 2-files collection rule.

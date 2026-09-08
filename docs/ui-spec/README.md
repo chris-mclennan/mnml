@@ -175,3 +175,38 @@ is never touched.
   cells, labels and names clip with `…` before the counts and the
   right-edge cells, the list scrolls with the scrollbar in its last
   column, nothing overflows.
+
+## The HTTP section (2026-09-07)
+
+`rust-http-panel-120x40.txt` is the Rust screen after
+`steps-http-panel.jsonl` (`esc`, `esc`, `view.activity_http`): the
+section in the left column, the request pane it opens in the centre,
+the info box on that pane. The fixture has one request file and
+nothing else, so the empty sections show their words and links. Zig
+is at 58 differing lines, every hunk deliberate:
+
+- the header — Rust `HTTP` with collapse-all + refresh, Zig
+  `HTTP (3)  +  ⟳`; the filter pill's one cell of pad;
+- COLLECTIONS — Rust needs two files in a folder to call it a
+  collection, so its `requests/demo.http` is a FILES straggler under
+  an empty COLLECTIONS with `+ New collection`; Zig groups every folder
+  (`▾ 󰉋 requests (1)` with the `+` at its edge, `demo.http` under it);
+- COOKIES — Zig's section, with its words (`No cookies yet — …`) and
+  the RECENT ladder; Rust has none;
+- the scrollbar in the column's last cell — the list is longer than
+  the column, Rust simply stops painting (its `+ New request` /
+  `↓ Paste curl…` / `↓ Import…` are below the cut on both, and reach
+  with `G` here);
+- the empty words at Zig's two-cell pad and the `…` clip (Rust pads
+  three on MOCKS / RECENT / CAPTURED and clips hard);
+- the AI row's extra box and the statusline's stock / now-playing
+  chips (pre-existing residue, in every dump).
+
+Element for element the Zig column has what the Rust one has: the
+blank row under the filter, `▼ NAME (n)` with the ladder at the edge
+(`+` alone on COLLECTIONS at 26 cells with the bar, `≡ +` on ENVS,
+none on CHAINS, `≡ ⟳ ✕` on MOCKS, `≡ ⟳` on RECENT, `≡ 🌐` on CAPTURED
+— Rust's drop rule at this width), the folder tree, `● / ○` envs,
+`200 GET  host/path` recent rows with the status coloured, the words,
+the green links. `steps-http` (2), `steps-esc` (4) and `steps-todos`
+(24) did not move.
