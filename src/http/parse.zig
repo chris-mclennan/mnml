@@ -389,6 +389,161 @@ fn directiveLine(a: Allocator, word: []const u8, value: []const u8) Allocator.Er
     return std.mem.concat(a, u8, &.{ "# ", word, " ", v });
 }
 
+// ─── path params ────────────────────────────────────────────────────────
+
+/// A `:name` segment of the URL's path with the value the block's
+/// `# @path name=value` line gives it (empty when none does).
+pub const PathParam = struct { name: []const u8, value: []const u8 };
+
+/// The path of `url`: from the first `/` after the scheme's host (or
+/// the first `/` at all) up to the query or the fragment.
+pub fn pathPart(url: []const u8) []const u8 {
+    var start: usize = 0;
+    if (std.mem.indexOf(u8, url, "://")) |s| start = s + 3;
+    const slash = std.mem.indexOfScalarPos(u8, url, start, '/') orelse return "";
+    const rest = url[slash..];
+    const end = std.mem.indexOfAny(u8, rest, "?#") orelse rest.len;
+    return rest[0..end];
+}
+
+/// The `:name` segments of the path — `/users/:id/posts/:post_id` — in
+/// order, each once. A `:` right after a `/` starts one; `::` is a
+/// literal colon and starts none; the host's `:8080` follows no `/`.
+/// The names borrow `url`.
+pub fn pathParamNames(arena: Allocator, url: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    const path = pathPart(url);
+    var i: usize = 0;
+    while (i < path.len) : (i += 1) {
+        if (path[i] != ':') continue;
+        if (i + 1 < path.len and path[i + 1] == ':') {
+            i += 1;
+            continue;
+        }
+        if (i == 0 or path[i - 1] != '/') continue;
+        const start = i + 1;
+        var end = start;
+        while (end < path.len and (std.ascii.isAlphanumeric(path[end]) or path[end] == '_')) : (end += 1) {}
+        if (end == start) continue;
+        const name = path[start..end];
+        if (!hasString(out.items, name)) try out.append(arena, name);
+        i = end - 1;
+    }
+    return out.items;
+}
+
+fn hasString(list: []const []const u8, s: []const u8) bool {
+    for (list) |l| if (std.mem.eql(u8, l, s)) return true;
+    return false;
+}
+
+/// `url` with every `:name` of its path replaced by its value in
+/// `values` (a name with none stays as written) and every `::` made
+/// `:`. The query and the fragment pass through untouched. Owned.
+pub fn substitutePath(alloc: Allocator, url: []const u8, values: []const PathParam) Allocator.Error![]u8 {
+    const path = pathPart(url);
+    if (path.len == 0) return alloc.dupe(u8, url);
+    const path_off = @intFromPtr(path.ptr) - @intFromPtr(url.ptr);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, url[0..path_off]);
+    var i: usize = 0;
+    while (i < path.len) : (i += 1) {
+        const c = path[i];
+        if (c == ':') {
+            if (i + 1 < path.len and path[i + 1] == ':') {
+                try out.append(alloc, ':');
+                i += 1;
+                continue;
+            }
+            if (i > 0 and path[i - 1] == '/') {
+                var end = i + 1;
+                while (end < path.len and (std.ascii.isAlphanumeric(path[end]) or path[end] == '_')) : (end += 1) {}
+                if (end > i + 1) {
+                    const name = path[i + 1 .. end];
+                    var found: ?[]const u8 = null;
+                    for (values) |v| if (std.mem.eql(u8, v.name, name) and v.value.len > 0) {
+                        found = v.value;
+                        break;
+                    };
+                    try out.appendSlice(alloc, found orelse path[i..end]);
+                    i = end - 1;
+                    continue;
+                }
+            }
+        }
+        try out.append(alloc, c);
+    }
+    try out.appendSlice(alloc, url[path_off + path.len ..]);
+    return out.toOwnedSlice(alloc);
+}
+
+/// The block's `# @path name=value` lines, in order. Borrow `script`.
+pub fn pathParams(arena: Allocator, req: *const Request) Allocator.Error![]PathParam {
+    var out: std.ArrayListUnmanaged(PathParam) = .empty;
+    const sc = req.script orelse return out.items;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@path")) continue;
+        const rest = std.mem.trim(u8, d["@path".len..], " \t");
+        if (rest.len == d.len - "@path".len and rest.len > 0) continue; // `@pathological`
+        const eq = std.mem.indexOfScalar(u8, rest, '=') orelse continue;
+        const name = std.mem.trim(u8, rest[0..eq], " \t");
+        if (name.len == 0) continue;
+        try out.append(arena, .{ .name = name, .value = std.mem.trim(u8, rest[eq + 1 ..], " \t") });
+    }
+    return out.items;
+}
+
+/// The value of `:name` (from `@path`), if the block sets one.
+pub fn pathParamValue(req: *const Request, name: []const u8) ?[]const u8 {
+    const sc = req.script orelse return null;
+    var it = std.mem.splitScalar(u8, sc, '\n');
+    while (it.next()) |raw| {
+        const d = directiveText(raw) orelse continue;
+        if (!std.mem.startsWith(u8, d, "@path ")) continue;
+        const rest = std.mem.trim(u8, d["@path ".len..], " \t");
+        const eq = std.mem.indexOfScalar(u8, rest, '=') orelse continue;
+        if (std.mem.eql(u8, std.mem.trim(u8, rest[0..eq], " \t"), name)) return std.mem.trim(u8, rest[eq + 1 ..], " \t");
+    }
+    return null;
+}
+
+/// Set (or with null remove) the `# @path name=value` line; the other
+/// names' lines stay where they are.
+pub fn setPathParam(req: *Request, gpa: Allocator, name: []const u8, value: ?[]const u8) Allocator.Error!void {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    var replaced = false;
+    const fresh: ?[]const u8 = if (value) |v| try std.fmt.allocPrint(a, "# @path {s}={s}", .{ name, std.mem.trim(u8, v, " \t") }) else null;
+    if (req.script) |sc| {
+        var it = std.mem.splitScalar(u8, sc, '\n');
+        while (it.next()) |l| {
+            if (std.mem.trim(u8, l, " \t\r").len == 0) continue;
+            const mine = blk: {
+                const d = directiveText(l) orelse break :blk false;
+                if (!std.mem.startsWith(u8, d, "@path ")) break :blk false;
+                const rest = std.mem.trim(u8, d["@path ".len..], " \t");
+                const eq = std.mem.indexOfScalar(u8, rest, '=') orelse break :blk false;
+                break :blk std.mem.eql(u8, std.mem.trim(u8, rest[0..eq], " \t"), name);
+            };
+            if (mine) {
+                if (fresh != null and !replaced) {
+                    try lines.append(a, fresh.?);
+                    replaced = true;
+                }
+                continue;
+            }
+            try lines.append(a, l);
+        }
+    }
+    if (fresh != null and !replaced) try lines.append(a, fresh.?);
+    try req.setScript(gpa, if (lines.items.len > 0) try std.mem.join(a, "\n", lines.items) else null);
+}
+
 pub fn looksLikeHttpFile(text: []const u8) bool {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
@@ -1495,4 +1650,46 @@ test "options: setDirective replaces, adds, removes; durations parse and print b
     try testing.expectEqualStrings("300ms", formatDuration(&buf, 300));
     try testing.expectEqualStrings("2m", formatDuration(&buf, 120_000));
     try testing.expectEqualStrings("1234ms", formatDuration(&buf, 1234));
+}
+
+test "path params: `:name` after a slash only, `::` escapes, the port and the query are not params; substitution and the @path lines round-trip" {
+    const gpa = testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const names = try pathParamNames(a, "http://h:8080/users/:id/posts/:post_id/::literal/:id?q=:x#:frag");
+    try testing.expectEqual(@as(usize, 2), names.len);
+    try testing.expectEqualStrings("id", names[0]);
+    try testing.expectEqualStrings("post_id", names[1]);
+    try testing.expectEqual(@as(usize, 0), (try pathParamNames(a, "http://h:8080")).len);
+    try testing.expectEqual(@as(usize, 1), (try pathParamNames(a, "{{BASE}}/a/:b")).len);
+    const out = try substitutePath(gpa, "http://h:8080/users/:id/posts/:post_id/::literal/:id?q=:x", &.{ .{ .name = "id", .value = "42" }, .{ .name = "post_id", .value = "" } });
+    defer gpa.free(out);
+    try testing.expectEqualStrings("http://h:8080/users/42/posts/:post_id/:literal/42?q=:x", out);
+    const untouched = try substitutePath(gpa, "http://h/plain", &.{});
+    defer gpa.free(untouched);
+    try testing.expectEqualStrings("http://h/plain", untouched);
+    // The directive lines: parse, set, replace, remove; the URL keeps `:id`.
+    var req = try parse(gpa, "# @path id=42\n# @assert status == 200\nGET https://x/users/:id\n");
+    defer req.deinit(gpa);
+    try testing.expectEqualStrings("https://x/users/:id", req.url);
+    const pp = try pathParams(a, &req);
+    try testing.expectEqual(@as(usize, 1), pp.len);
+    try testing.expectEqualStrings("42", pp[0].value);
+    try testing.expectEqualStrings("42", pathParamValue(&req, "id").?);
+    try setPathParam(&req, gpa, "id", "7");
+    try setPathParam(&req, gpa, "other", "x y");
+    try testing.expectEqualStrings("# @path id=7\n# @assert status == 200\n# @path other=x y", req.script.?);
+    try setPathParam(&req, gpa, "id", null);
+    try testing.expectEqualStrings("# @assert status == 200\n# @path other=x y", req.script.?);
+    try testing.expect(pathParamValue(&req, "id") == null);
+    const block = try toHttpBlock(gpa, &req, null);
+    defer gpa.free(block);
+    try testing.expectEqualStrings("# @assert status == 200\n# @path other=x y\nGET https://x/users/:id\n", block);
+    const curl = try toCurl(gpa, &req);
+    defer gpa.free(curl);
+    try testing.expect(std.mem.indexOf(u8, curl, "# @path other=x y\ncurl 'https://x/users/:id'") != null);
+    var back = try parse(gpa, curl);
+    defer back.deinit(gpa);
+    try testing.expectEqualStrings("x y", pathParamValue(&back, "other").?);
 }

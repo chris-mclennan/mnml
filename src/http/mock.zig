@@ -164,6 +164,10 @@ pub const Canned = struct {
     /// its target). The last link of the chain answers every request
     /// from then on.
     next: ?*const Canned = null,
+    /// The body is the request as it arrived — the request line, the
+    /// headers, a blank line, the body — as `text/plain`; `body` and
+    /// `chunks` are ignored. What a test reads to see what went out.
+    echo: bool = false,
 };
 
 /// One accept loop on its own thread. Every connection gets the canned
@@ -269,6 +273,12 @@ pub const Server = struct {
         const w = &writer.interface;
         try w.print("HTTP/1.1 {d} {s}\r\n", .{ canned.status, canned.status_text });
         for (canned.headers) |h| try w.print("{s}: {s}\r\n", .{ h.name, h.value });
+        if (canned.echo) {
+            try w.print("content-type: text/plain\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n", .{req.items.len});
+            try w.writeAll(req.items);
+            try w.flush();
+            return;
+        }
         if (canned.chunks) |chunks| {
             if (canned.chunked) try w.writeAll("transfer-encoding: chunked\r\n");
             try w.writeAll("connection: close\r\n\r\n");

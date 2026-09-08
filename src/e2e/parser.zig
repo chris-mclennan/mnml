@@ -15,7 +15,9 @@
 //! serve <port> <status> [delay=<ms>] <text>  # an HTTP server on 127.0.0.1:<port> for this file:
 //!                                #   <text> is "Name: value\n…\n\n<body>" (headers, a blank
 //!                                #   line, the body) or just the body; delay= waits before
-//!                                #   the body goes out (a server that never finishes)
+//!                                #   the body goes out (a server that never finishes);
+//!                                #   the text `@echo` answers with the request as it
+//!                                #   arrived (request line, headers, body) as text/plain
 //! ghost <text>                   # inject an AI ghost-text suggestion on the active editor
 //! click <x> <y>                  # left-click at screen cell (x,y) — 0-based
 //! rightclick <x> <y>             # right-click (context menus)
