@@ -372,3 +372,11 @@ SESSIONS column itself is unchanged, card for card.
   (its frame's top on the row). Every right-click menu paints the
   same; the `+` menu's rows are Rust's `Create…` tree.
 
+
+`zig-zon-view-120x40.txt` is the ZON view pane (`steps-zon-view.jsonl`
+on `seed-zon-view/`, a workspace config with comments): `zon.view` on
+the `.mnml/config.zon` editor tab, `breadcrumb` toggled (its `*` and
+the section's, `unsaved` in the crumb row), and the tag picker open on
+`md_preview_engine`. Zig-authored — the Rust side has no such pane, so
+the dump is the spec. A `seed-<NAME>/` beside a steps file is copied
+into the spec's workspace by `tools/zig-spec.sh`.

@@ -1,0 +1,13 @@
+{"cmd":"open","path":".mnml/config.zon"}
+{"cmd":"run-command","id":"zon.view"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"right"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"j"}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":300}

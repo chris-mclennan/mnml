@@ -1,0 +1,24 @@
+// this workspace's mnml config — comments and order survive the tree's edits
+.{
+    .editor = .{
+        .input_style = .standard, // the keymap profile
+        .tab_width = 4,
+        .breadcrumb = true,
+        .format_on_save = false,
+    },
+    .ui = .{
+        .theme = "onedark",
+        .line_numbers = true,
+        .md_preview_engine = .glow,
+        .todo_keywords = .{ "TODO", "FIXME", "HACK" },
+        .sidebar_side = .left,
+    },
+    .startup = .{
+        .default_workspace = null,
+        .layout = .{},
+    },
+    .workspaces = .{
+        .{ .name = "mnml", .path = "~/Projects/mnml", .group = "personal" },
+        .{ .name = "mnml-zig", .path = "~/Projects/mnml-zig" },
+    },
+}
