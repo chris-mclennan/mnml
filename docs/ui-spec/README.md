@@ -113,7 +113,8 @@ workspace at 120×40:
   and the `+ New todo` / `+ New note` / `+ New finding` row is Rust's
   (`ListPanel.Props.new_label`). The rest of the rows are Zig's by the
   user's decision (2026-09-07), so these three stay at residue —
-  todos 24, notes 26, findings 26 differing lines — and the hunks are
+  todos 26, notes 28, findings 28 differing lines (each +2 since the
+  SCRIPTS rail row, a Zig-only entry, landed 2026-09-08) — and the hunks are
   the accepted ones: a blank row directly under the filter (the user's
   ask; Rust has none, so every row below sits one lower), the filter
   pill (`󰍉 / filter` vs `󰍉 type to filter…▏`), the header's count
