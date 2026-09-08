@@ -45,6 +45,9 @@ pub const Field = view.Field;
 pub const Orientation = view.Orientation;
 const Buf = std.ArrayListUnmanaged(u8);
 
+/// Which buffer a `{{` completion was opened in.
+pub const CompletionField = enum { url, body, headers, source, draft_key, draft_value };
+
 /// A send whose body is still arriving: the head has landed, `body`
 /// grows with every `.sse` chunk, and the Response block paints it as
 /// it comes. `finish` turns it into the Done response.
@@ -604,6 +607,27 @@ pub const RequestPane = struct {
         return self.resp_syntax.styledSpans(arena, theme, 0, ed.len());
     }
 
+    /// The field the `{{` completion edits: the focused text field, or
+    /// the Params / Headers draft's cell.
+    pub fn completionBuf(self: *RequestPane) ?struct { buf: *Buf, caret: *usize, field: CompletionField } {
+        if (self.block != .request) return null;
+        if (self.draft) |*d| if (self.field == .content and (self.edit_tab == .params or self.edit_tab == .headers)) {
+            return if (d.on_value) .{ .buf = &d.value, .caret = &d.value_caret, .field = .draft_value } else .{ .buf = &d.key, .caret = &d.key_caret, .field = .draft_key };
+        };
+        const f = self.activeBuf() orelse return null;
+        const field: CompletionField = switch (self.field) {
+            .url => .url,
+            .method => return null,
+            .content => switch (self.edit_tab) {
+                .body => .body,
+                .headers => .headers,
+                .source => .source,
+                else => return null,
+            },
+        };
+        return .{ .buf = f.buf, .caret = f.caret, .field = field };
+    }
+
     /// The buffer of the focused text field, for editing keys.
     fn activeBuf(self: *RequestPane) ?struct { buf: *Buf, caret: *usize } {
         return switch (self.field) {
@@ -875,6 +899,11 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
     };
     app.needs_render = true;
     const gpa = app.gpa;
+    // An open `{{` popup owns its navigation and accept keys; every
+    // other key edits the field and re-filters it.
+    if (app.http.completion) |*c| if (c.pane == id) {
+        if (try http.varCompletionKey(app, rp, k)) return true;
+    };
     // Pane-wide chords.
     if (k.mods.ctrl and !k.mods.alt) switch (k.code) {
         .enter => {
@@ -918,7 +947,7 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
     // A draft row owns Tab (key → value) and Enter (commit) — the Params
     // tab's or the Headers tab's.
-    if (rp.draft != null and rp.block == .request and (k.code == .tab or k.code == .backtab or k.code == .enter)) return if (rp.edit_tab == .headers) headersKey(app, rp, k) else paramsKey(app, rp, k);
+    if (rp.draft != null and rp.block == .request and (k.code == .tab or k.code == .backtab or k.code == .enter)) return if (rp.edit_tab == .headers) headersKey(app, id, rp, k) else paramsKey(app, id, rp, k);
     switch (k.code) {
         .tab => {
             if (rp.block == .response) rp.focusUrl() else rp.block = .response;
@@ -983,12 +1012,13 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
                 rp.edited = true;
                 try rp.commit();
             }
+            if (edit != .ignored) try http.afterFieldEdit(app, id, rp);
             return edit != .ignored;
         },
         .content => {},
     }
     switch (rp.edit_tab) {
-        .headers => return headersKey(app, rp, k),
+        .headers => return headersKey(app, id, rp, k),
         .body, .source => {
             const f = rp.activeBuf().?;
             if (k.code == .enter) {
@@ -1006,9 +1036,10 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
             }
             const edit = try text_field.handleKey(f.buf, f.caret, gpa, k);
             if (edit == .changed) rp.edited = true;
+            if (edit != .ignored) try http.afterFieldEdit(app, id, rp);
             return edit != .ignored;
         },
-        .params => return paramsKey(app, rp, k),
+        .params => return paramsKey(app, id, rp, k),
         .auth => {
             const last = view.authRowCount() - 1;
             switch (k.code) {
@@ -1090,7 +1121,7 @@ fn moveLine(text: []const u8, caret: *usize, down: bool) void {
     }
 }
 
-fn paramsKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
+fn paramsKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bool {
     const gpa = app.gpa;
     if (rp.draft) |*d| {
         switch (k.code) {
@@ -1111,6 +1142,7 @@ fn paramsKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
         const buf = if (d.on_value) &d.value else &d.key;
         const caret = if (d.on_value) &d.value_caret else &d.key_caret;
         const edit = try text_field.handleKey(buf, caret, gpa, k);
+        if (edit != .ignored) try http.afterFieldEdit(app, id, rp);
         return edit != .ignored;
     }
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1145,7 +1177,7 @@ fn paramsKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
 /// browsed (`j` / `k`, Enter edits, `a` / `+` adds, `d` / Delete drops,
 /// `?` shows the name's description). With one, the cell's keys — and
 /// the completion popup over it takes Up / Down / Tab / Enter first.
-fn headersKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
+fn headersKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bool {
     const gpa = app.gpa;
     if (rp.draft) |*d| {
         if (rp.completion) |*c| {
@@ -1189,6 +1221,8 @@ fn headersKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
         const caret = if (d.on_value) &d.value_caret else &d.key_caret;
         const edit = try text_field.handleKey(buf, caret, gpa, k);
         if (edit == .changed) try refreshCompletion(app, rp);
+        // A `{{` in a value: the variable popup, over the value table's.
+        if (edit != .ignored) try http.afterFieldEdit(app, id, rp);
         return edit != .ignored;
     }
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1709,6 +1743,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
     const caret = view.draw(ui, id, area, m);
     rp.edit_area = view.editArea(area, m);
     rp.resp_rows = view.zones(area, m).response.h -| 4;
+    try http.drawVarCompletion(app, ui, id, rp, area, caret);
     if (bar) |b| if (app.find_bar) |*fb| {
         if (find_bar_mod.draw(ui, b, &fb.state, .{ .current = rp.resp_find.current, .total = rp.resp_find.matches.items.len })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
     };

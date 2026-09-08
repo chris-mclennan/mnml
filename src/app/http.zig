@@ -30,6 +30,9 @@ const script_mod = @import("../http/script.zig");
 const request_pane = @import("request_pane.zig");
 const view = @import("../ui/request_view.zig");
 const Prompt = app_mod.Prompt;
+const fuzzy = @import("../ui/fuzzy.zig");
+const completion_view = @import("../ui/completion_view.zig");
+const Key = @import("../core/key.zig").Key;
 const editor_view = @import("../ui/editor_view.zig");
 const Ui = @import("../ui/context.zig");
 
@@ -122,6 +125,8 @@ pub const State = struct {
     quick_fix_var: ?[]u8 = null,
     /// Lines a `.ws` file queued for a pane that is still connecting.
     ws_queue: std.ArrayListUnmanaged(struct { pane: PaneId, text: []u8 }) = .empty,
+    /// The `{{` completion popup over a request field, while it is open.
+    completion: ?VarCompletion = null,
 
     pub fn init(gpa: Allocator) State {
         return .{ .picker_arena = .init(gpa) };
@@ -144,6 +149,7 @@ pub const State = struct {
         if (self.picker_title) |t| gpa.free(t);
         for (self.ws_queue.items) |q| gpa.free(q.text);
         self.ws_queue.deinit(gpa);
+        if (self.completion) |*c| c.arena.deinit();
         self.picker_arena.deinit();
         if (self.header_scan) |hs| hs.destroy(gpa);
     }
@@ -211,7 +217,220 @@ pub const table = .{
     .@"http.toggle_follow_redirects" = &toggleFollowRedirectsCmd,
     .@"http.set_max_redirects" = &setMaxRedirectsCmd,
     .@"http.set_proxy" = &setProxyCmd,
+    .@"http.complete_var" = &completeVarCmd,
 };
+
+// ─── the `{{` completion ────────────────────────────────────────────────
+//
+// Typing `{{` in the URL, a header value, a param cell or the body
+// opens the LSP completion popup (`ui/completion_view.zig`) with the
+// active env's names, the `$` built-ins and the block's `@capture`
+// names; each row shows the resolved value dimmed (a secret masked, a
+// built-in as a fresh sample). What is typed after `{{` filters;
+// Enter / Tab insert `name}}`; Esc, a `}` or a space closes it.
+
+pub const VarCompletion = struct {
+    pane: PaneId,
+    field: request_pane.CompletionField,
+    /// The byte after `{{`; the word typed since is `text[start..caret]`.
+    start: usize,
+    arena: std.heap.ArenaAllocator,
+    items: []const Item,
+    selected: usize = 0,
+    scroll: usize = 0,
+    /// Opened by `http.complete_var` with no `{{` before the caret: the
+    /// accept writes the braces too.
+    bare: bool = false,
+
+    pub const Item = struct { name: []const u8, kind: []const u8, detail: []const u8 };
+};
+
+const dynamic_names = [_][]const u8{ "uuid", "guid", "timestamp", "epochMs", "randomInt", "isoTimestamp", "date" };
+
+/// The rows: the env file's names, the built-ins, the block's captures.
+fn buildVarItems(app: *App, rp: *RequestPane, arena: Allocator) Allocator.Error![]const VarCompletion.Item {
+    var out: std.ArrayListUnmanaged(VarCompletion.Item) = .empty;
+    var set = try loadEnv(app, arena);
+    for (set.vars.keys()) |name| {
+        const value = set.vars.get(name) orelse continue;
+        try out.append(arena, .{ .name = try arena.dupe(u8, name), .kind = "env", .detail = try arena.dupe(u8, env_mod.masked(name, value, &set)) });
+    }
+    for (dynamic_names) |name| {
+        const sample = (try env_mod.dynamicVar(arena, app.io, name)) orelse "";
+        try out.append(arena, .{ .name = try std.fmt.allocPrint(arena, "${s}", .{name}), .kind = "built-in", .detail = sample });
+    }
+    const script = try script_mod.parse(arena, rp.request.script orelse "");
+    for (script.captures) |c| {
+        var seen = false;
+        for (out.items) |it| if (std.mem.eql(u8, it.name, c.name)) {
+            seen = true;
+            break;
+        };
+        if (seen) continue;
+        try out.append(arena, .{ .name = try arena.dupe(u8, c.name), .kind = "capture", .detail = if (set.get(c.name)) |v| try arena.dupe(u8, env_mod.masked(c.name, v, &set)) else "(set by the response)" });
+    }
+    return out.items;
+}
+
+pub fn closeVarCompletion(app: *App) void {
+    if (app.http.completion) |*c| c.arena.deinit();
+    app.http.completion = null;
+    app.needs_render = true;
+}
+
+fn openVarCompletion(app: *App, id: PaneId, rp: *RequestPane, field: request_pane.CompletionField, start: usize, bare: bool) Allocator.Error!void {
+    closeVarCompletion(app);
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer arena.deinit();
+    const items = try buildVarItems(app, rp, arena.allocator());
+    if (items.len == 0) {
+        arena.deinit();
+        app.toast("no variables in the env — {{{{ }}}} completes env names, $ built-ins and @capture names", .{});
+        return;
+    }
+    // The Headers table's own name / value popup yields to this one.
+    rp.closeCompletion();
+    app.http.completion = .{ .pane = id, .field = field, .start = start, .arena = arena, .items = items, .bare = bare };
+    app.needs_render = true;
+}
+
+/// After an edit in a request field: a `{{` just typed opens the
+/// popup; an open popup follows the word or closes when the caret left it.
+pub fn afterFieldEdit(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!void {
+    const f = rp.completionBuf() orelse return closeVarCompletion(app);
+    const text = f.buf.items;
+    const caret = @min(f.caret.*, text.len);
+    if (app.http.completion) |*c| if (c.pane == id) {
+        if (c.field != f.field or caret < c.start) return closeVarCompletion(app);
+        const word = text[c.start..caret];
+        if (std.mem.indexOfAny(u8, word, "}{ \t\n") != null) return closeVarCompletion(app);
+        c.selected = 0;
+        return;
+    };
+    if (caret >= 2 and std.mem.eql(u8, text[caret - 2 .. caret], "{{")) try openVarCompletion(app, id, rp, f.field, caret, false);
+}
+
+/// The rows that match the word typed so far, best first (indices).
+pub fn visibleVarCompletions(app: *App, rp: *RequestPane, arena: Allocator) Allocator.Error![]u32 {
+    const c = &(app.http.completion orelse return &.{});
+    const f = rp.completionBuf() orelse return &.{};
+    const text = f.buf.items;
+    const caret = @min(f.caret.*, text.len);
+    const word = if (caret >= c.start) text[c.start..caret] else "";
+    const Scored = struct { idx: u32, score: u32 };
+    var scored: std.ArrayListUnmanaged(Scored) = .empty;
+    for (c.items, 0..) |it, i| {
+        const score: u32 = if (word.len == 0) fuzzy.base else (fuzzy.score(word, it.name) orelse continue);
+        try scored.append(arena, .{ .idx = @intCast(i), .score = score });
+    }
+    std.mem.sort(Scored, scored.items, {}, struct {
+        fn lt(_: void, a: Scored, b: Scored) bool {
+            return a.score > b.score;
+        }
+    }.lt);
+    const out = try arena.alloc(u32, scored.items.len);
+    for (scored.items, 0..) |sc, i| out[i] = sc.idx;
+    return out;
+}
+
+/// A popup key: navigation, accept, dismiss. False lets the field
+/// edit the key, after which `afterFieldEdit` re-filters.
+pub fn varCompletionKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
+    const c = &(app.http.completion orelse return false);
+    const vis = try visibleVarCompletions(app, rp, app.frame.allocator());
+    const n = vis.len;
+    const ctrl = k.mods.ctrl and !k.mods.alt;
+    switch (k.code) {
+        .down => c.selected = @min(c.selected + 1, n -| 1),
+        .up => c.selected -|= 1,
+        .page_down => c.selected = @min(c.selected + completion_view.max_rows, n -| 1),
+        .page_up => c.selected -|= completion_view.max_rows,
+        .esc => closeVarCompletion(app),
+        .tab, .enter => {
+            if (n == 0) {
+                closeVarCompletion(app);
+                return false;
+            }
+            try acceptVarCompletion(app, rp, vis[@min(c.selected, n - 1)]);
+        },
+        .char => |ch| if (ctrl and (ch == 'n' or ch == 'j')) {
+            c.selected = @min(c.selected + 1, n -| 1);
+        } else if (ctrl and (ch == 'p' or ch == 'k')) {
+            c.selected -|= 1;
+        } else if (ctrl and ch == 'e') {
+            closeVarCompletion(app);
+        } else return false,
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
+}
+
+/// Insert item `idx` as `name}}` over the word typed so far (the
+/// braces too when the popup was summoned bare); a `}}` already after
+/// the caret is not doubled.
+pub fn acceptVarCompletion(app: *App, rp: *RequestPane, idx: u32) Allocator.Error!void {
+    const c = &(app.http.completion orelse return);
+    defer closeVarCompletion(app);
+    if (idx >= c.items.len) return;
+    const f = rp.completionBuf() orelse return;
+    const gpa = app.gpa;
+    const text = f.buf.items;
+    const caret = @min(f.caret.*, text.len);
+    if (caret < c.start) return;
+    const name = c.items[idx].name;
+    const closes = !std.mem.startsWith(u8, text[caret..], "}}");
+    const insert = try std.fmt.allocPrint(app.frame.allocator(), "{s}{s}{s}", .{ if (c.bare) "{{" else "", name, if (closes) "}}" else "" });
+    try f.buf.replaceRange(gpa, c.start, caret - c.start, insert);
+    f.caret.* = c.start + insert.len;
+    if (!closes) f.caret.* += 2;
+    rp.edited = true;
+    if (f.field == .url) try rp.commit();
+    app.needs_render = true;
+}
+
+/// A click on popup row `i` (index into the visible list).
+pub fn clickVarCompletion(app: *App, i: usize) Allocator.Error!void {
+    const c = &(app.http.completion orelse return);
+    const rp = (app.panes.get(c.pane) orelse return).asRequest() orelse return closeVarCompletion(app);
+    const vis = try visibleVarCompletions(app, rp, app.frame.allocator());
+    if (i >= vis.len) return;
+    try acceptVarCompletion(app, rp, vis[i]);
+}
+
+/// The popup, drawn after the pane at the field's caret.
+pub fn drawVarCompletion(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: @import("../ui/rect.zig"), caret: ?@import("../ui/text_field.zig").Caret) Allocator.Error!void {
+    const c = &(app.http.completion orelse return);
+    if (c.pane != id) return;
+    if (app.active != id or app.focus != .pane or rp.block != .request) return closeVarCompletion(app);
+    const vis = try visibleVarCompletions(app, rp, ui.arena);
+    if (vis.len == 0) return closeVarCompletion(app);
+    if (c.selected >= vis.len) c.selected = vis.len - 1;
+    const rows = try ui.arena.alloc(completion_view.Row, vis.len);
+    for (vis, 0..) |idx, i| {
+        const it = c.items[idx];
+        rows[i] = .{ .label = it.name, .kind = it.kind, .detail = it.detail };
+    }
+    const anchor: ?editor_view.Cursor = if (caret) |cc| .{ .x = cc.x, .y = cc.y } else null;
+    completion_view.draw(ui, area, anchor, &c.scroll, .{ .rows = rows, .selected = c.selected, .doc = null });
+}
+
+/// `http.complete_var`: the popup at the caret of the focused field —
+/// after a `{{` as the typing would open it, else bare (the accept
+/// writes the braces).
+fn completeVarCmd(app: *App) CommandError!void {
+    const id = app.active orelse return error.NoActivePane;
+    const rp = try requireRequest(app);
+    const f = rp.completionBuf() orelse return app.diag.fail(app.frame.allocator(), "http: put the caret in the URL, a header, a param or the body first", .{});
+    const text = f.buf.items;
+    const caret = @min(f.caret.*, text.len);
+    // Inside a `{{word` already: complete that word.
+    if (std.mem.lastIndexOf(u8, text[0..caret], "{{")) |open| {
+        const word = text[open + 2 .. caret];
+        if (std.mem.indexOfAny(u8, word, "}{ \t\n") == null) return openVarCompletion(app, id, rp, f.field, open + 2, false);
+    }
+    try openVarCompletion(app, id, rp, f.field, caret, true);
+}
 
 // ─── env ────────────────────────────────────────────────────────────────
 
@@ -2162,7 +2381,6 @@ test "send: a failure landing while the user tabbed back into the request leaves
     // is forced: send → Tab twice during the send (request → response →
     // request) → the failure is pumped by tick → the block must still be
     // the request. Without a user move, the failure shows itself.
-    const Key = @import("../core/key.zig").Key;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const root = try realRoot(&tmp, testing.allocator);
@@ -2554,6 +2772,91 @@ test "vars: tokens classify against the env, a secret masks in the tip, the jump
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "not defined") != null);
     // `gd` in that editor is not on a request file: it does nothing here.
     try testing.expect(!try jumpVarAtCursor(&app));
+}
+
+test "completion: `{{` lists the env's names (a secret masked), the built-ins and the block's captures; typing filters; Enter inserts name}}; bare summon writes the braces" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.createDirPath(testing.io, ".rqst");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".rqst/config", .data = "default_env=dev\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=https://dev.example\n# @secret TOKEN\nTOKEN=abc123\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "api.http", .data = "GET https://x/\n\n# @capture ID = body.id\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "api.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openPath(path);
+    const id = app.active.?;
+    const rp = activeRequest(&app).?;
+    rp.focusUrl();
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('{'));
+    try testing.expect(app.http.completion == null);
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('{'));
+    const c = &(app.http.completion orelse return error.TestExpectedPopup);
+    try testing.expect(c.field == .url and c.start == "https://x/{{".len and !c.bare);
+    const find = struct {
+        fn f(items: []const VarCompletion.Item, name: []const u8) ?VarCompletion.Item {
+            for (items) |it| if (std.mem.eql(u8, it.name, name)) return it;
+            return null;
+        }
+    }.f;
+    const host = find(c.items, "HOST") orelse return error.TestExpectedRow;
+    try testing.expectEqualStrings("env", host.kind);
+    try testing.expectEqualStrings("https://dev.example", host.detail);
+    const token = find(c.items, "TOKEN") orelse return error.TestExpectedRow;
+    try testing.expectEqualStrings("\u{2022}" ** 8, token.detail);
+    const uuid = find(c.items, "$uuid") orelse return error.TestExpectedRow;
+    try testing.expectEqualStrings("built-in", uuid.kind);
+    try testing.expectEqual(@as(usize, 36), uuid.detail.len);
+    const cap = find(c.items, "ID") orelse return error.TestExpectedRow;
+    try testing.expectEqualStrings("capture", cap.kind);
+    try testing.expectEqualStrings("(set by the response)", cap.detail);
+    // Typing filters the rows; Enter inserts the name and the braces.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqual(c.items.len, (try visibleVarCompletions(&app, rp, a)).len);
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('H'));
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('O'));
+    const vis = try visibleVarCompletions(&app, rp, a);
+    try testing.expectEqual(@as(usize, 1), vis.len);
+    try testing.expectEqualStrings("HOST", c.items[vis[0]].name);
+    try testing.expect(try request_pane.handleKey(&app, id, rp, .{ .code = .enter }));
+    try testing.expect(app.http.completion == null);
+    try testing.expectEqualStrings("https://x/{{HOST}}", rp.url.items);
+    try testing.expectEqual(rp.url.items.len, rp.url_caret);
+    try testing.expectEqualStrings("https://x/{{HOST}}", rp.request.url);
+    // A `}` typed after the word closes the popup; Esc does too.
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('{'));
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('{'));
+    try testing.expect(app.http.completion != null);
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('}'));
+    try testing.expect(app.http.completion == null);
+    _ = try request_pane.handleKey(&app, id, rp, .{ .code = .backspace });
+    _ = try request_pane.handleKey(&app, id, rp, .{ .code = .backspace });
+    _ = try request_pane.handleKey(&app, id, rp, .{ .code = .backspace });
+    try testing.expectEqualStrings("https://x/{{HOST}}", rp.url.items);
+    // Summoned bare, the accept writes `{{name}}` whole.
+    try command.run(&app, .{ .static = .@"http.complete_var" });
+    const bare = &(app.http.completion orelse return error.TestExpectedPopup);
+    try testing.expect(bare.bare);
+    var host_idx: u32 = 0;
+    for (bare.items, 0..) |it, i| if (std.mem.eql(u8, it.name, "HOST")) {
+        host_idx = @intCast(i);
+    };
+    try acceptVarCompletion(&app, rp, host_idx);
+    try testing.expectEqualStrings("https://x/{{HOST}}{{HOST}}", rp.url.items);
+    // The params draft completes too.
+    try rp.startDraft();
+    rp.draft.?.on_value = true;
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('{'));
+    _ = try request_pane.handleKey(&app, id, rp, Key.char('{'));
+    try testing.expect(app.http.completion != null and app.http.completion.?.field == .draft_value);
+    try testing.expect(try request_pane.handleKey(&app, id, rp, .{ .code = .esc }));
+    try testing.expect(app.http.completion == null and rp.draft != null);
 }
 
 test "vars: the editor hook paints a request buffer's tokens and gd on one jumps to the env file" {

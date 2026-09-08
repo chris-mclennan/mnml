@@ -1,0 +1,31 @@
+# `{{` in the URL opens the completion popup with the active env's
+# names (the value dimmed beside each), the `$` built-ins and the
+# block's `@capture` names; typing filters, Enter inserts `name}}`.
+
+write .mnml/env/dev.env "HOST=api.test\nTOKEN=secret-one\n"
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+type "https://{{"
+expect screen contains "HOST"
+expect screen contains "api.test"
+expect screen contains "$uuid"
+expect screen contains "built-in"
+# A secret's value is masked in the row.
+expect screen lacks "secret-one"
+
+# Typing filters; Enter inserts the name and the closing braces.
+type "HO"
+key enter
+expect screen contains "https://{{HOST}}"
+expect screen lacks "built-in"
+
+# A header value completes the same way; Esc closes the popup.
+key ctrl+2
+type "Authorization: Bearer {{"
+expect screen contains "TOKEN"
+key esc
+expect screen lacks "built-in"
+type "TOKEN}}"
+expect screen contains "Bearer {{TOKEN}}"
