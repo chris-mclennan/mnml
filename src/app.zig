@@ -457,6 +457,7 @@ pub const Overlay = union(enum) {
                 m.closeSub(gpa);
                 gpa.free(m.items);
                 gpa.free(m.title);
+                if (m.mem) |*arena| arena.deinit();
             },
             .prompt => |*p| {
                 Prompt.deinit(&p.state, gpa);
@@ -504,6 +505,17 @@ pub const MenuState = struct {
     curatable: bool = false,
     /// The open child menu, if any — its rows are a gpa copy.
     sub: ?SubMenu = null,
+    /// A menu-bar dropdown: Rust's `menu_bar.rs` row shape (a marker
+    /// column, the icon column, no title) rather than the context
+    /// menu's (`app/render.zig`'s `drawMenu`).
+    dropdown: bool = false,
+    /// Whether the cursor row paints highlighted. A mouse-opened
+    /// dropdown starts without one, as Rust's; a hover or an arrow
+    /// turns it on. Enter still runs the cursor row either way.
+    highlight: bool = true,
+    /// Owns labels built for this open (a count in a label, an
+    /// integration's name); freed with the menu.
+    mem: ?std.heap.ArenaAllocator = null,
 
     pub const SubMenu = struct {
         /// The parent row it hangs off.

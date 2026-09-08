@@ -699,6 +699,21 @@ fn tabStripStepLid(app: *App, lid: layout_mod.NodeId, delta: i8) Allocator.Error
     app.needs_render = true;
 }
 
+/// An arrow / j / k / Home / End on a menu: the cursor moves by
+/// `delta` (saturating), and the highlight comes on — a mouse-opened
+/// dropdown shows none until then, and its first arrow only lights
+/// the cursor row, as Rust's does from "nothing highlighted".
+fn menuMove(m: *app_mod.MenuState, delta: i32) void {
+    const last: i64 = @as(i64, @intCast(m.items.len)) - 1;
+    if (last < 0) return;
+    if (!m.highlight) {
+        m.highlight = true;
+        return;
+    }
+    const want = @as(i64, @intCast(m.cursor)) + delta;
+    m.cursor = @intCast(@max(0, @min(want, last)));
+}
+
 /// Enter on a menu row: a parent opens its child, a leaf runs.
 fn menuEnter(app: *App, idx: usize) Allocator.Error!void {
     const m = &app.overlay.menu;
@@ -890,20 +905,19 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
                 }
                 return;
             }
-            const last = m.items.len -| 1;
             switch (k.code) {
                 .esc => closeOverlay(app),
                 // Enter on a parent row opens it rather than firing —
                 // the row has no action of its own.
                 .enter => try menuEnter(app, m.cursor),
                 .right => try menuOpenRight(app, m.cursor),
-                .up => m.cursor -|= 1,
-                .down => m.cursor = @min(m.cursor + 1, last),
-                .home => m.cursor = 0,
-                .end => m.cursor = last,
+                .up => menuMove(m, -1),
+                .down => menuMove(m, 1),
+                .home => menuMove(m, std.math.minInt(i32)),
+                .end => menuMove(m, std.math.maxInt(i32)),
                 .char => |c| switch (c) {
-                    'k' => m.cursor -|= 1,
-                    'j' => m.cursor = @min(m.cursor + 1, last),
+                    'k' => menuMove(m, -1),
+                    'j' => menuMove(m, 1),
                     'l' => try menuOpenRight(app, m.cursor),
                     'q' => closeOverlay(app),
                     else => {},
@@ -1654,7 +1668,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
             if (menu_bar.buttonOf(id)) |which| {
                 const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
-                return menu_bar.open(app, which, r.x, m.y + 1);
+                return menu_bar.open(app, which, r.x, m.y + 1, false);
             }
             if (id == menu_bar.overflow_button) {
                 const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);

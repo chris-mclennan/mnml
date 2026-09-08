@@ -16,10 +16,12 @@ expect screen contains "Send"
 # The Body content is row 9 (the Request box's strip is rows 7 / 8);
 # the URL box's text row is 4, from column 45 on this half-width pane.
 rightclick 40 9
-expect screen contains "╭ Body"
+expect screen contains "┌ Body"
 expect screen contains "Paste curl from clipboard"
 key esc
+# The menu is titled `┌ URL`, as the pane's own URL box is — a row of
+# the menu is what proves it opened and closed.
 rightclick 50 4
-expect screen contains "╭ URL"
+expect screen contains "Cycle method"
 key esc
-expect screen lacks "╭ URL"
+expect screen lacks "Cycle method"

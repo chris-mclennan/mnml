@@ -821,7 +821,7 @@ test "the + menu: five ▸ sections, → opens a child beside its parent, ← st
     const closed = try screenOf(&app);
     defer t.allocator.free(closed);
     // The glyph column and the ▸ marker paint; no child yet.
-    try t.expect(std.mem.indexOf(u8, closed, "\u{f067} New") != null);
+    try t.expect(std.mem.indexOf(u8, closed, "\u{f067}  New") != null);
     try t.expect(std.mem.indexOf(u8, closed, "Panels") != null);
     try t.expect(std.mem.indexOf(u8, closed, "▸") != null);
     try t.expect(std.mem.indexOf(u8, closed, "New tab page") == null);
@@ -859,8 +859,8 @@ test "the + menu: five ▸ sections, → opens a child beside its parent, ← st
     const ascii = try screenOf(&app);
     defer t.allocator.free(ascii);
     try t.expect(std.mem.indexOf(u8, ascii, "\u{f067}") == null);
-    try t.expect(std.mem.indexOf(u8, ascii, "+ New") != null);
-    try t.expect(std.mem.indexOf(u8, ascii, "# Panels") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "+  New") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "#  Panels") != null);
     try t.expect(std.mem.indexOf(u8, ascii, ">") != null);
 }
 
@@ -876,7 +876,7 @@ test "a click on the child row's kebab glyph opens the curation, not the row" {
     try openNewTabMenu(&app, 45, 1);
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸
     try app.render();
-    // The glyph: the cell on the child's row 0 painting `⋯`.
+    // The glyph: the cell on the child's row 0 painting `⋮`.
     var kebab_row: ?u16 = null;
     for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 3 and h.target.menu_item.idx == 0) {
         kebab_row = h.rect.y;
@@ -887,7 +887,7 @@ test "a click on the child row's kebab glyph opens the curation, not the row" {
     var x: u16 = 0;
     while (x < app.screen.width) : (x += 1) {
         const cell = app.screen.readCell(x, y) orelse continue;
-        if (std.mem.eql(u8, cell.char.grapheme, "⋯")) glyph_x = x;
+        if (std.mem.eql(u8, cell.char.grapheme, "⋮")) glyph_x = x;
     }
     try t.expect(glyph_x != null);
     // The glyph's cell resolves to the kebab, not the row under it.
