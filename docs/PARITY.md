@@ -40,7 +40,7 @@ line), not by hand.
 | Workspace trust | 10 | 0 | 0 | 0 | 10 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **508** | **4** | **9** | **3** | **524** |
+| **total** | **507** | **4** | **9** | **3** | **523** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
