@@ -152,7 +152,12 @@ pub fn build(b: *std.Build) void {
     // `tools/break-check.sh` uses to run one test against a broken copy.
     const test_filter = b.option([]const u8, "test-filter", "Run only the unit tests whose name contains this");
     const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
-    const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters });
+    // `-Dtest-trace` swaps in `tools/test_runner.zig`: every test's name is
+    // printed before it runs (a wedged suite names its test), and
+    // `MNML_TEST_FILTER=<substring>` filters at run time on the built binary.
+    const test_trace = b.option(bool, "test-trace", "Print each unit test's name as it runs; MNML_TEST_FILTER filters at run time") orelse false;
+    const test_runner: ?std.Build.Step.Compile.TestRunner = if (test_trace) .{ .path = b.path("tools/test_runner.zig"), .mode = .simple } else null;
+    const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters, .test_runner = test_runner });
     const tests_run = b.addRunArtifact(tests);
     test_step.dependOn(&tests_run.step);
     // ── e2e: the .test corpus under `zig build` ──
@@ -201,6 +206,7 @@ pub fn build(b: *std.Build) void {
     // (`error.SkipZigTest`). The two demos are POSIX-only executables.
     const tui_tests = b.addTest(.{
         .filters = test_filters,
+        .test_runner = test_runner,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tui/tui.zig"),
             .target = target,
@@ -212,15 +218,15 @@ pub fn build(b: *std.Build) void {
         }),
     });
     test_step.dependOn(&b.addRunArtifact(tui_tests).step);
-    const pty_tests = b.addTest(.{ .root_module = pty_mod, .filters = test_filters });
+    const pty_tests = b.addTest(.{ .root_module = pty_mod, .filters = test_filters, .test_runner = test_runner });
     const pty_test_run = b.addRunArtifact(pty_tests);
     const pty_test_step = b.step("pty-test", "Run the pty module tests");
     pty_test_step.dependOn(&pty_test_run.step);
     test_step.dependOn(&pty_test_run.step);
     const demos_supported = target.result.os.tag != .windows;
 
-    const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime, .filters = test_filters });
-    const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight, .filters = test_filters });
+    const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime, .filters = test_filters, .test_runner = test_runner });
+    const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight, .filters = test_filters, .test_runner = test_runner });
     test_step.dependOn(&b.addRunArtifact(ts_tests).step);
     test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
 
@@ -242,7 +248,7 @@ pub fn build(b: *std.Build) void {
     gen_run.has_side_effects = true;
     const docs_step = b.step("docs", "Regenerate docs/commands.md from the command spec table");
     docs_step.dependOn(&gen_run.step);
-    const gen_tests = b.addTest(.{ .root_module = gen_mod, .filters = test_filters });
+    const gen_tests = b.addTest(.{ .root_module = gen_mod, .filters = test_filters, .test_runner = test_runner });
     test_step.dependOn(&b.addRunArtifact(gen_tests).step);
 
     const check_step = b.step("check", "The safety gates: fmt, Debug + ReleaseSafe unit tests, the e2e gate, the width sweep, defaults.test");
@@ -319,7 +325,7 @@ pub fn build(b: *std.Build) void {
     glyph_audit.stdio = .inherit;
     const glyph_step = b.step("glyph-audit", "Every Nerd Font glyph literal in src/ against data/nerd-glyphnames.json, with its --ascii twin");
     glyph_step.dependOn(&glyph_audit.step);
-    const glyph_tests = b.addTest(.{ .root_module = glyph_mod, .filters = test_filters });
+    const glyph_tests = b.addTest(.{ .root_module = glyph_mod, .filters = test_filters, .test_runner = test_runner });
     test_step.dependOn(&b.addRunArtifact(glyph_tests).step);
     // ── end glyph audit ─────────────────────────────────────────────────
 
@@ -528,7 +534,7 @@ pub fn build(b: *std.Build) void {
     e2e_run.step.dependOn(&sample_install.step);
     gate_in_test.step.dependOn(&sample_install.step);
     corpus_run.step.dependOn(&sample_install.step);
-    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = sample_mod, .filters = test_filters })).step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = sample_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(sample, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = sample_exe_name }).step);
 
     // ── fake DAP adapter ──
@@ -550,7 +556,7 @@ pub fn build(b: *std.Build) void {
     e2e_run.step.dependOn(&fake_dap_install.step);
     gate_in_test.step.dependOn(&fake_dap_install.step);
     corpus_run.step.dependOn(&fake_dap_install.step);
-    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_dap_mod, .filters = test_filters })).step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_dap_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(fake_dap, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_dap_exe_name }).step);
 
     // `mnml-fake-lsp` (tools/fake_lsp/) is the deterministic language
@@ -567,7 +573,7 @@ pub fn build(b: *std.Build) void {
     e2e_run.step.dependOn(&fake_lsp_install.step);
     gate_in_test.step.dependOn(&fake_lsp_install.step);
     corpus_run.step.dependOn(&fake_lsp_install.step);
-    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_lsp_mod, .filters = test_filters })).step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_lsp_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(fake_lsp, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_lsp_exe_name }).step);
     // ── end sdk ──
 
