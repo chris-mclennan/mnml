@@ -2233,6 +2233,7 @@ test {
     _ = @import("app/browser_pane.zig");
     _ = @import("app/cmd_browser.zig");
     _ = @import("app/runners.zig");
+    _ = @import("app/dotnet.zig");
     _ = @import("app/tasks.zig");
     _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");

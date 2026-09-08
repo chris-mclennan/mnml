@@ -404,6 +404,7 @@ const go_rules = [_]Rule{ .{ .keyword = "func", .kind = .function }, .{ .keyword
 const rb_rules = [_]Rule{ .{ .keyword = "def", .kind = .method }, .{ .keyword = "class", .kind = .class }, .{ .keyword = "module", .kind = .module } };
 const c_rules = [_]Rule{ .{ .keyword = "struct", .kind = .@"struct" }, .{ .keyword = "enum", .kind = .@"enum" }, .{ .keyword = "union", .kind = .@"struct" }, .{ .keyword = "class", .kind = .class }, .{ .keyword = "namespace", .kind = .namespace }, .{ .keyword = "typedef", .kind = .type } };
 const java_rules = [_]Rule{ .{ .keyword = "class", .kind = .class }, .{ .keyword = "interface", .kind = .interface }, .{ .keyword = "enum", .kind = .@"enum" }, .{ .keyword = "record", .kind = .@"struct" } };
+const cs_rules = [_]Rule{ .{ .keyword = "class", .kind = .class }, .{ .keyword = "interface", .kind = .interface }, .{ .keyword = "enum", .kind = .@"enum" }, .{ .keyword = "record", .kind = .class }, .{ .keyword = "struct", .kind = .@"struct" }, .{ .keyword = "namespace", .kind = .namespace }, .{ .keyword = "delegate", .kind = .type } };
 const kt_rules = [_]Rule{ .{ .keyword = "fun", .kind = .function }, .{ .keyword = "class", .kind = .class }, .{ .keyword = "interface", .kind = .interface }, .{ .keyword = "object", .kind = .module } };
 const swift_rules = [_]Rule{ .{ .keyword = "func", .kind = .function }, .{ .keyword = "class", .kind = .class }, .{ .keyword = "struct", .kind = .@"struct" }, .{ .keyword = "enum", .kind = .@"enum" }, .{ .keyword = "protocol", .kind = .interface }, .{ .keyword = "extension", .kind = .impl } };
 const zig_rules = [_]Rule{ .{ .keyword = "fn", .kind = .function }, .{ .keyword = "const", .kind = .constant } };
@@ -412,16 +413,18 @@ const php_rules = [_]Rule{ .{ .keyword = "function", .kind = .function }, .{ .ke
 const ex_rules = [_]Rule{ .{ .keyword = "def", .kind = .function }, .{ .keyword = "defp", .kind = .function }, .{ .keyword = "defmodule", .kind = .module } };
 const scala_rules = [_]Rule{ .{ .keyword = "def", .kind = .function }, .{ .keyword = "class", .kind = .class }, .{ .keyword = "object", .kind = .module }, .{ .keyword = "trait", .kind = .trait } };
 
-const modifiers = [_][]const u8{ "pub", "export", "default", "async", "static", "final", "abstract", "public", "private", "protected", "unsafe", "extern", "override", "inline", "virtual", "declare", "internal", "open", "sealed", "data", "readonly", "partial" };
+const modifiers = [_][]const u8{ "pub", "export", "default", "async", "static", "final", "abstract", "public", "private", "protected", "unsafe", "extern", "override", "inline", "virtual", "declare", "internal", "open", "sealed", "data", "readonly", "partial", "new" };
 const c_control = [_][]const u8{ "if", "while", "for", "switch", "return", "else", "do", "sizeof", "case" };
+/// A C# line that begins with one of these is a statement, not a method.
+const cs_statement_heads = [_][]const u8{ "return", "await", "throw", "yield", "if", "while", "for", "foreach", "using", "else", "case", "switch", "lock", "var", "do", "try", "catch", "base", "this" };
 
 fn rulesFor(key: []const u8) ?[]const Rule {
     const KV = struct { []const u8, []const Rule };
     const map = [_]KV{
-        .{ "rs", &rust_rules },     .{ "py", &py_rules },   .{ "js", &js_rules },   .{ "jsx", &js_rules },    .{ "ts", &js_rules },   .{ "tsx", &js_rules },
-        .{ "mjs", &js_rules },      .{ "cjs", &js_rules },  .{ "go", &go_rules },   .{ "rb", &rb_rules },     .{ "c", &c_rules },     .{ "h", &c_rules },
-        .{ "cpp", &c_rules },       .{ "cc", &c_rules },    .{ "hpp", &c_rules },   .{ "java", &java_rules }, .{ "cs", &java_rules }, .{ "kt", &kt_rules },
-        .{ "swift", &swift_rules }, .{ "zig", &zig_rules }, .{ "lua", &lua_rules }, .{ "php", &php_rules },   .{ "ex", &ex_rules },   .{ "exs", &ex_rules },
+        .{ "rs", &rust_rules },     .{ "py", &py_rules },   .{ "js", &js_rules },   .{ "jsx", &js_rules },    .{ "ts", &js_rules }, .{ "tsx", &js_rules },
+        .{ "mjs", &js_rules },      .{ "cjs", &js_rules },  .{ "go", &go_rules },   .{ "rb", &rb_rules },     .{ "c", &c_rules },   .{ "h", &c_rules },
+        .{ "cpp", &c_rules },       .{ "cc", &c_rules },    .{ "hpp", &c_rules },   .{ "java", &java_rules }, .{ "cs", &cs_rules }, .{ "kt", &kt_rules },
+        .{ "swift", &swift_rules }, .{ "zig", &zig_rules }, .{ "lua", &lua_rules }, .{ "php", &php_rules },   .{ "ex", &ex_rules }, .{ "exs", &ex_rules },
         .{ "scala", &scala_rules },
     };
     for (map) |kv| if (std.mem.eql(u8, kv[0], key)) return kv[1];
@@ -486,6 +489,7 @@ pub fn fallback(arena: Allocator, text: []const u8, key: []const u8) Allocator.E
     const rules = rulesFor(key) orelse return out.items;
     const is_js = rules.ptr == @as([]const Rule, &js_rules).ptr;
     const is_c = rules.ptr == @as([]const Rule, &c_rules).ptr;
+    const is_cs = rules.ptr == @as([]const Rule, &cs_rules).ptr;
     var lines = std.mem.splitScalar(u8, text, '\n');
     var ln: u32 = 0;
     while (lines.next()) |raw| : (ln += 1) {
@@ -506,6 +510,9 @@ pub fn fallback(arena: Allocator, text: []const u8, key: []const u8) Allocator.E
         }
         if (is_c and line.len > 0 and isIdentStart(line[0])) {
             if (cFunctionName(body)) |name| try out.append(arena, .{ .name = name, .kind = .function, .line = ln, .col = colOf(line, name), .depth = depth });
+        }
+        if (is_cs) {
+            if (csMethodName(body)) |name| try out.append(arena, .{ .name = name, .kind = .method, .line = ln, .col = colOf(line, name), .depth = depth });
         }
     }
     return out.items;
@@ -600,6 +607,21 @@ fn cFunctionName(body: []const u8) ?[]const u8 {
     // A return type must precede the name.
     if (std.mem.trim(u8, body[0..start], " \t*&").len == 0) return null;
     if (std.mem.indexOfScalar(u8, body[0..start], '=') != null) return null;
+    return name;
+}
+
+/// `public async Task<int> Load(int id)` with the modifiers stripped:
+/// a return type, then the name, then `(` — on a line that is a
+/// signature, not a call (`Assert.Equal(…);`, `return Foo();`, `await
+/// x.Run()`; an expression-bodied `int F() => 1;` still counts).
+fn csMethodName(body: []const u8) ?[]const u8 {
+    const name = cFunctionName(body) orelse return null;
+    const before = std.mem.trimEnd(u8, body[0 .. @intFromPtr(name.ptr) - @intFromPtr(body.ptr)], " \t");
+    if (before.len == 0 or before[before.len - 1] == '.') return null;
+    const head = before[0 .. std.mem.indexOfAny(u8, before, " \t<([") orelse before.len];
+    for (cs_statement_heads) |kw| if (std.mem.eql(u8, kw, head)) return null;
+    const trimmed = std.mem.trimEnd(u8, body, " \t");
+    if (trimmed.len > 0 and trimmed[trimmed.len - 1] == ';' and std.mem.indexOf(u8, trimmed, "=>") == null) return null;
     return name;
 }
 
