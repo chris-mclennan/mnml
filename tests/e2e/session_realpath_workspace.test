@@ -1,0 +1,17 @@
+# The session's workspace check compares realpaths (src/app/session.zig
+# `sameWorkspace`). The runner's workspace is `$TMPDIR/mnml-e2e-…`, which
+# on macOS resolves to `/private/var/…`, so the canonical spelling and a
+# symlinked one (`link -> .`) must both restore without the "belongs to"
+# toast; a different directory under the same root must still toast.
+shell mkdir -p .mnml other && ln -s . link
+shell printf '.{ .workspace = "%s" }' "$(pwd -P)" > .mnml/session.zon
+command session.restore
+expect screen lacks "belongs to"
+expect screen contains "session restored"
+shell printf '.{ .workspace = "%s/link" }' "$(pwd -P)" > .mnml/session.zon
+command session.restore
+expect screen lacks "belongs to"
+expect screen contains "session restored"
+shell printf '.{ .workspace = "%s/other" }' "$(pwd -P)" > .mnml/session.zon
+command session.restore
+expect screen contains "belongs to"
