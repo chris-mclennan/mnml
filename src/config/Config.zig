@@ -52,6 +52,7 @@ marketplace: Marketplace = .{},
 // ─── editor ──────────────────────────────────────────────────────────────
 
 pub const InputStyle = enum { vim, standard };
+pub const LspMissingDefaults = enum { quiet, toast, ignore };
 pub const WheelMovesCursor = enum { auto, always, never };
 pub const ScrollAccel = enum { off, gentle, normal, fast };
 
@@ -72,6 +73,13 @@ pub const Editor = struct {
     format_on_type: bool = false,
     autosave_on_focus_loss: bool = false,
     inlay_hints: bool = true,
+    /// // changed (lsp-defaults): a built-in default server (`lsp/client.zig`'s
+    /// table, not a `.lsp.<name>` of your own) that is not on PATH.
+    /// `.quiet` records it once per session — the LSP chip counts it and
+    /// its menu offers the install — with no toast; `.toast` warns as a
+    /// configured server does; `.ignore` says nothing anywhere. A server
+    /// you named in `.lsp` always toasts: you asked for it.
+    lsp_missing_defaults: LspMissingDefaults = .quiet,
     /// // changed (debug-ui): while the debugger is stopped, the values
     /// of the scope's variables named on a line paint after its text.
     inline_values: bool = true,

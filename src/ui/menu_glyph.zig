@@ -174,6 +174,8 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .diag_row_open, .script_row_open => if (ascii) "o" else "\u{f07c}", // fa-folder_open
         .set_severity_filter => if (ascii) "~" else "\u{f0b0}", // fa-filter
         .lua_bind => if (ascii) "k" else "\u{f11c}", // fa-keyboard_o
+        // // changed (lsp-defaults): the LSP chip menu's Install row.
+        .lsp_install => if (ascii) "v" else "\u{f019}", // fa-download, the tools table's install row
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }

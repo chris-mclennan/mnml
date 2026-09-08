@@ -2283,6 +2283,10 @@ test {
     _ = @import("app/debug_panel.zig");
     _ = @import("ui/debug_panel.zig");
     _ = @import("app/lsp.zig");
+    // // changed (lsp-defaults): the statusline's own tests (the spec
+    // row, the chips) were never reachable from a test block — a file
+    // only container-imported contributes no tests.
+    _ = @import("app/statusline.zig");
     _ = @import("app/cmd_lsp.zig");
     _ = @import("ui/completion_view.zig");
     _ = @import("ui/hover_view.zig");

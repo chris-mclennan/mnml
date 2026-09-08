@@ -46,6 +46,12 @@ otherwise. Copy what you need; leave the rest out.
         .format_on_type = false,
         .autosave_on_focus_loss = false,
         .inlay_hints = true,
+        // A built-in default server (json / yaml / html / css / csharp / …)
+        // that is not on PATH: .quiet records it once per session — the LSP
+        // chip reads ` LSP? `, its menu lists the server with its install
+        // line and an Install… row — with no toast; .toast warns as a
+        // server you named in .lsp does; .ignore says nothing anywhere.
+        .lsp_missing_defaults = .quiet, // .quiet | .toast | .ignore
         .inline_values = true, // while the debugger is stopped: `  x = 1` after a line that names x
         .cursor_blink = false,
         .semantic_tokens_viewport = false,
@@ -214,6 +220,17 @@ otherwise. Copy what you need; leave the rest out.
     // One entry per server. .cmd/.args are exec-bearing (stripped from an
     // untrusted workspace; .extensions etc. still apply). .settings and
     // .initialization_options are forwarded verbatim as JSON.
+    // Built-in defaults (`src/lsp/client.zig`), each overridable field by
+    // field under its name: rust (rust-analyzer), python (pyright),
+    // typescript, go (gopls), c (clangd), zig (zls), lua, json
+    // (vscode-json-language-server --stdio, .json/.jsonc), yaml
+    // (yaml-language-server --stdio), html, css (.css/.scss/.less; the
+    // vscode-*-language-server pair from `npm i -g
+    // vscode-langservers-extracted`) and csharp (csharp-ls, `dotnet tool
+    // install -g csharp-ls`; roots at the nearest `*.sln` / `*.csproj` /
+    // global.json — a `*` marker is a glob). A default that is not
+    // installed is `.editor.lsp_missing_defaults`' business (quiet); a
+    // server named here that is missing always toasts.
     .lsp = .{
         .rust = .{
             .cmd = "rust-analyzer", // null = mnml's built-in default

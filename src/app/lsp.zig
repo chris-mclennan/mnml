@@ -220,6 +220,24 @@ pub const SeverityFilter = enum {
     }
 };
 
+/// // changed (lsp-defaults): a server that was wanted and is not
+/// installed — what the LSP chip's menu lists and offers to install.
+pub const Missing = struct {
+    /// The table row's / config entry's name (`json`); owned.
+    name: []u8,
+    /// The binary looked for (`vscode-json-language-server`); owned.
+    cmd: []u8,
+    /// `client.installHint` for it (a static); null for an unknown one.
+    hint: ?[]const u8,
+    /// From the default table, not the user's `.lsp`.
+    from_default: bool,
+
+    pub fn deinit(m: Missing, gpa: Allocator) void {
+        gpa.free(m.name);
+        gpa.free(m.cmd);
+    }
+};
+
 pub const DiagRow = diagnostics_view.Row;
 pub const DiagPanel = list_panel.ListPanel(DiagRow);
 
@@ -228,6 +246,12 @@ pub const State = struct {
     next_id: u32 = 1,
     /// Servers that could not start, by name (owned); toasted once.
     dead: std.StringHashMapUnmanaged(void) = .empty,
+    /// // changed (lsp-defaults): servers whose binary is not on PATH,
+    /// one record per server per session, in the order they were met.
+    /// The statusline's LSP chip counts them and its menu offers each
+    /// install; a default-table row lands here silently
+    /// (`.editor.lsp_missing_defaults`), a configured one with the toast.
+    missing: std.ArrayListUnmanaged(Missing) = .empty,
     /// By absolute path (owned keys).
     diags: std.StringHashMapUnmanaged(*FileDiags) = .empty,
     symbols: std.StringHashMapUnmanaged(*SymbolSet) = .empty,
@@ -277,6 +301,8 @@ pub const State = struct {
         var dk = self.dead.keyIterator();
         while (dk.next()) |k| gpa.free(k.*);
         self.dead.deinit(gpa);
+        for (self.missing.items) |m| m.deinit(gpa);
+        self.missing.deinit(gpa);
         var di = self.diags.iterator();
         while (di.next()) |e| {
             gpa.free(e.key_ptr.*);
@@ -388,12 +414,28 @@ fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []co
     var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
         for (markers) |m| {
+            // // changed (lsp-defaults): `*.sln` scans the directory, as
+            // Rust's `marker_matches`; a literal is one stat.
+            if (client.isGlobMarker(m)) {
+                if (dirHasMarker(app.io, d, m)) return d;
+                continue;
+            }
             const p = try std.fs.path.join(arena, &.{ d, m });
             if (Io.Dir.cwd().statFile(app.io, p, .{})) |_| return d else |_| {}
         }
         if (d.len <= 1) break;
     }
     return start;
+}
+
+/// Any entry of `dir_path` matching the glob `marker`. An unreadable
+/// directory is a miss, as a missing literal is.
+fn dirHasMarker(io: Io, dir_path: []const u8, marker: []const u8) bool {
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return false;
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |e| if (client.markerMatches(e.name, marker)) return true;
+    return false;
 }
 
 /// Is `cmd` runnable: an absolute path that exists, or a name on PATH.
@@ -418,6 +460,24 @@ fn markDead(app: *App, name: []const u8) Allocator.Error!void {
     const key = try app.gpa.dupe(u8, name);
     errdefer app.gpa.free(key);
     try app.lsp.dead.put(app.gpa, key, {});
+}
+
+/// One `Missing` per name per session (`dead` already stops a second
+/// visit; this keeps the list honest if it did not).
+fn recordMissing(app: *App, name: []const u8, cmd: []const u8, hint: ?[]const u8, from_default: bool) Allocator.Error!void {
+    for (app.lsp.missing.items) |m| if (std.mem.eql(u8, m.name, name)) return;
+    const owned_name = try app.gpa.dupe(u8, name);
+    errdefer app.gpa.free(owned_name);
+    const owned_cmd = try app.gpa.dupe(u8, cmd);
+    errdefer app.gpa.free(owned_cmd);
+    try app.lsp.missing.append(app.gpa, .{ .name = owned_name, .cmd = owned_cmd, .hint = hint, .from_default = from_default });
+    app.needs_render = true;
+}
+
+/// The servers met this session whose binary is not on PATH, oldest
+/// first — the LSP chip's count and its menu's rows.
+pub fn missingServers(app: *const App) []const Missing {
+    return app.lsp.missing.items;
 }
 
 fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]const u8 {
@@ -479,10 +539,21 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     const cmd = try dap_client.expandEnv(arena, spec.cmd, &app.env);
     if (!try onPath(app, arena, cmd)) {
         try markDead(app, spec.name);
-        if (client.installHint(cmd)) |hint| {
-            try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ cmd, hint });
-        } else {
-            try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{cmd});
+        // // changed (lsp-defaults): a row from the default table the
+        // user never named is `.editor.lsp_missing_defaults`' business —
+        // quiet by default (recorded for the chip, no toast), since
+        // `package.json` is in every workspace and the json server in
+        // few. A server named in `.lsp` was asked for: it toasts.
+        const from_default = app.cfg.lsp.get(spec.name) == null;
+        const mode: config.Config.LspMissingDefaults = if (from_default) app.cfg.editor.lsp_missing_defaults else .toast;
+        const hint = client.installHint(cmd);
+        if (mode != .ignore) try recordMissing(app, spec.name, cmd, hint, from_default);
+        if (mode == .toast) {
+            if (hint) |h| {
+                try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ cmd, h });
+            } else {
+                try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{cmd});
+            }
         }
         return null;
     }
@@ -2583,6 +2654,95 @@ test "a missing binary toasts once with its install hint, and never again this s
     try testing.expect((try ensureServer(&app, "/tmp/b.py")) == null);
     try testing.expectEqual(n, app.toasts.items.len);
     try testing.expect(app.lsp.dead.contains("python"));
+    // // changed (lsp-defaults): a configured server is recorded for the
+    // chip too, and marked as the user's own.
+    try testing.expectEqual(@as(usize, 1), missingServers(&app).len);
+    try testing.expectEqualStrings("python", missingServers(&app)[0].name);
+    try testing.expect(!missingServers(&app)[0].from_default);
+}
+
+// // changed (lsp-defaults): the quiet missing-default path.
+test "a missing DEFAULT server is recorded once per session with no toast and no bell; .toast and .ignore do as they say; the record carries the hint" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    // Hermetic: whatever this machine has installed, the walk finds nothing.
+    try app.env.put("PATH", "");
+    try testing.expectEqual(config.Config.LspMissingDefaults.quiet, app.cfg.editor.lsp_missing_defaults);
+    const toasts_before = app.toasts.items.len;
+    try testing.expect((try ensureServer(&app, "/tmp/package.json")) == null);
+    try testing.expectEqual(toasts_before, app.toasts.items.len);
+    try testing.expectEqual(@as(u32, 0), app.messages.unread().warn);
+    try testing.expectEqual(@as(usize, 1), missingServers(&app).len);
+    const m = missingServers(&app)[0];
+    try testing.expectEqualStrings("json", m.name);
+    try testing.expectEqualStrings("vscode-json-language-server", m.cmd);
+    try testing.expectEqualStrings("npm i -g vscode-langservers-extracted", m.hint.?);
+    try testing.expect(m.from_default);
+    try testing.expect(app.lsp.dead.contains("json"));
+    // A second json file, a jsonc one: the same record, still no toast.
+    try testing.expect((try ensureServer(&app, "/tmp/tsconfig.jsonc")) == null);
+    try testing.expect((try ensureServer(&app, "/tmp/other.json")) == null);
+    try testing.expectEqual(@as(usize, 1), missingServers(&app).len);
+    try testing.expectEqual(toasts_before, app.toasts.items.len);
+    // Another default row is its own record, in order of meeting.
+    try testing.expect((try ensureServer(&app, "/tmp/a.yml")) == null);
+    try testing.expectEqual(@as(usize, 2), missingServers(&app).len);
+    try testing.expectEqualStrings("yaml-language-server", missingServers(&app)[1].cmd);
+    try testing.expectEqual(toasts_before, app.toasts.items.len);
+    // `.toast`: the warning a configured server gets, and the record.
+    {
+        var app2 = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+        defer app2.deinit();
+        try app2.env.put("PATH", "");
+        app2.cfg.editor.lsp_missing_defaults = .toast;
+        try testing.expect((try ensureServer(&app2, "/tmp/style.css")) == null);
+        try testing.expectEqualStrings("LSP: vscode-css-language-server not installed — `npm i -g vscode-langservers-extracted`", app2.lastToast().?);
+        try testing.expectEqual(@as(u32, 1), app2.messages.unread().warn);
+        try testing.expectEqual(@as(usize, 1), missingServers(&app2).len);
+    }
+    // `.ignore`: nothing anywhere — but the miss is still a miss.
+    {
+        var app3 = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+        defer app3.deinit();
+        try app3.env.put("PATH", "");
+        app3.cfg.editor.lsp_missing_defaults = .ignore;
+        const n = app3.toasts.items.len;
+        try testing.expect((try ensureServer(&app3, "/tmp/index.html")) == null);
+        try testing.expectEqual(n, app3.toasts.items.len);
+        try testing.expectEqual(@as(usize, 0), missingServers(&app3).len);
+        try testing.expect(app3.lsp.dead.contains("html"));
+    }
+}
+
+test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file, the nearest directory wins" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(testing.io, "src/Web");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "Acme.sln", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/Web/Web.csproj", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/Web/Foo.cs", .data = "class Foo {}\n" });
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const file = try std.fs.path.join(arena, &.{ root, "src", "Web", "Foo.cs" });
+    const web = try std.fs.path.join(arena, &.{ root, "src", "Web" });
+    // Rust's `find_root`: the first directory up the walk holding ANY
+    // marker — the project's own, here.
+    try testing.expectEqualStrings(web, try findRoot(&app, arena, file, &.{ "*.sln", "*.csproj", "global.json" }));
+    // Asked for the solution alone, the walk climbs past the project.
+    try testing.expectEqualStrings(root, try findRoot(&app, arena, file, &.{"*.sln"}));
+    // No `.slnx` matches `*.sln`; nothing matches → the file's own directory.
+    try testing.expectEqualStrings(web, try findRoot(&app, arena, file, &.{"*.slnx"}));
+    // The csharp row's spec resolves to these markers and its binary.
+    const spec = specFor(&app, file).?;
+    try testing.expectEqualStrings("csharp", spec.name);
+    try testing.expectEqualStrings("csharp-ls", spec.cmd);
+    try testing.expectEqual(@as(usize, 3), spec.root_markers.len);
 }
 
 test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the statusline chip, next/prev" {

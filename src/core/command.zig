@@ -590,6 +590,10 @@ pub const MenuAction = union(enum) {
     /// // changed (lua-track): *Bind in init.lua…* — the command id; the
     /// menu's `mem` arena owns the bytes.
     lua_bind: []const u8,
+    /// // changed (lsp-defaults): the LSP chip menu's *Install <binary>…*
+    /// — the binary's name; the menu's `mem` arena owns the bytes
+    /// (`app/runners.zig`'s `installBin`).
+    lsp_install: []const u8,
     none,
 };
 

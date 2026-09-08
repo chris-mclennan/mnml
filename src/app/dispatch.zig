@@ -826,7 +826,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // right-click: a string-carrying row's bytes belong to the menu's
     // own arena, which the close frees — copy them out first.
     const text: ?[]const u8 = switch (action) {
-        .copy_text, .open_url, .open_path, .set_theme, .lua_bind => |s| try app.frame.allocator().dupe(u8, s),
+        .copy_text, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install => |s| try app.frame.allocator().dupe(u8, s),
         else => null,
     };
     closeOverlay(app);
@@ -880,6 +880,8 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .set_severity_filter => |f| lsp.setFilter(app, f),
         .script_row_open => |i| try scripts_panel.openRowIndex(app, i),
         .lua_bind => try scripts_panel.promptBind(app, text.?),
+        // // changed (lsp-defaults): the LSP chip menu's Install row.
+        .lsp_install => try toastOnFail(app, runners.installBin(app, text.?)),
         .none => {},
     }
 }

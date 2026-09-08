@@ -1,0 +1,16 @@
+# A default-table server that is not installed (`json` for package.json,
+# vscode-json-language-server) is quiet: no toast, no bell — the LSP
+# chip reads ` LSP? ` in the muted colours and its menu offers the
+# install. PATH is emptied so the machine's own installs do not matter.
+# env: PATH=
+
+write package.json "{\n  \"name\": \"x\"\n}\n"
+open package.json
+wait 300
+expect screen contains "\"name\""
+expect screen lacks "not installed"
+expect screen lacks "npm i -g"
+expect screen contains "LSP?"
+command lsp.status
+# The toast box clips its one row; the head is what the screen shows.
+expect screen contains "LSP: no servers running · missing: vscode-json-language-ser"

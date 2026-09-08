@@ -4171,3 +4171,70 @@ own at the end of `scripting/api.zig`, one new file
   row off the first-parent line), and `tests/e2e/git_rebase_plan_squash
   / _reword / _drop`, `git_rebase_abort`, `git_amend_wip`,
   `git_reset_hard_undo.test`.
+
+## LSP — the default rows and the quiet missing-default path (2026-09-08, branch `lsp-defaults`) — `// changed:` notes
+
+- `// changed (lsp):` the four rows the lua-track took out are in the
+  default table (`lsp/client.zig`) with a fifth: `json`
+  (`vscode-json-language-server --stdio`, `.json` `.jsonc`, roots
+  `package.json` / `.git`), `yaml` (`yaml-language-server --stdio`,
+  `.yml` `.yaml`), `html` (`vscode-html-language-server --stdio`,
+  `.html` `.htm`), `css` (`vscode-css-language-server --stdio`, `.css`
+  `.scss` `.less`) and `csharp` (`csharp-ls`, `.cs` `.csx`, roots
+  `*.sln` → `*.csproj` → `global.json`). The binary names are the npm
+  registry's `bin` entries for `vscode-langservers-extracted` and
+  `yaml-language-server`; `--stdio` is documented for yaml and is the
+  vscode family's only LSP transport; `csharp-ls` is a dotnet tool
+  whose README shows it run bare (stdio, no flag — unverified against
+  a running install). Rust runs OmniSharp `-lsp` for C#; the markers
+  are Rust's. `languageIdFor` gains `jsonc` / `htm` → html / `less` /
+  `csx` → csharp. Install hints: `csharp-ls` joins `installHint`; the
+  five join `runners.known_tools` so the tools picker lists them.
+- `// changed (app):` a root marker starting with `*` is a glob —
+  Rust's `marker_matches` — `client.markerMatches` / `isGlobMarker`;
+  `findRoot` scans the directory for one (`dirHasMarker`). Nearest
+  directory holding ANY marker still wins, as under Rust.
+- `// changed (app):` the missing-default path. `ensureServer` on a
+  binary not on PATH asks whether the spec came from the default table
+  (`app.cfg.lsp` has no entry of that name). A default row follows
+  `.editor.lsp_missing_defaults` — `.quiet` (the default) records a
+  `lsp.Missing` (`name`, `cmd`, `installHint`, `from_default`) in
+  `lsp.State.missing`, once per server per session, and says nothing;
+  `.toast` warns as before; `.ignore` records nothing. A server the
+  user named in `.lsp` always toasts and is recorded too. `dead` still
+  stops the second visit. Why: `package.json` is in every workspace,
+  the json server in few — a warning every session for every user.
+  The key lives under `.editor` (beside `inlay_hints`) because `.lsp`
+  is a name → server `Map`; `.lsp.missing_defaults` would read as a
+  server named `missing_defaults`. Settings row *Missing default LSP
+  servers* (home scope).
+- `// changed (ui):` the LSP chip (`app/statusline.zig`): a recorded
+  miss paints `?` — a muted run after the live count (` LSP 1? `, the
+  `?` in `bg2` on the blue) or the whole chip muted (` LSP? `,
+  `comment` on `bg2`) when nothing runs. The `?` form, not a count:
+  `lane_gap` is four cells, and ` LSP ?1 ` (nine with its separator)
+  left the 120×40 spec row's dirty `package.json ●` two — the file
+  chip clipped to `package.json …`; ` LSP? ` leaves exactly four. The
+  count and the names are the click — `lsp.status` appends
+  ` · missing: <cmd> (<hint>)` per server — and the right-click menu:
+  after *Status*, per missing server a `✗ <cmd> — <hint>` row (click
+  copies the hint) and *Install <cmd>…*, then the eight verbs.
+  `MenuAction.lsp_install` (the binary; the menu's `mem` arena owns
+  it) → `runners.installBin`: a `known_tools` binary gets the tools
+  installer's *Missing tool* box (Install / Copy command / Not now,
+  `installAccept` spawns the line in a pane); one only `installHint`
+  knows runs its line straight into a pane; one neither knows is a
+  diag. `menu_glyph`: the download glyph, ascii `v`.
+- `// changed (test):` `src/app/statusline.zig`'s tests were never
+  reachable — the file was only container-imported, and a file
+  reached that way contributes no tests. `app.zig`'s test block now
+  names it; the spec-row test (`package.json` open at 120×40) runs
+  under `zig build test` and asserts the idle bell and the muted chip
+  (a `PATH=` scrub makes it hermetic). Tests: `client.zig`
+  (`markerMatches`, the five rows' hints), `app/lsp.zig` (quiet /
+  toast / ignore, one record per session, the configured server's
+  toast + record, the glob root walk on a `*.sln` / `*.csproj`
+  layout), `app/statusline.zig` (both chip forms, the status toast,
+  the menu rows, Install… → the tools box), and
+  `tests/e2e/lsp_missing_default_quiet.test` (`# env: PATH=`, a
+  `.json` open → no toast, ` LSP? `, the status names the install).
