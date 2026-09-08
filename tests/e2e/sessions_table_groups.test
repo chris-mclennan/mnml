@@ -1,0 +1,34 @@
+# env: HOME=home
+# The sessions table (`sessions.table`) lists every session on this
+# machine grouped by working directory, this workspace's group first;
+# the summary block under the rows counts the states and — for a
+# session that ended with uncommitted work in its cwd — `dirty, ended`
+# (a `git status --porcelain` per cwd on the refresh). z folds the
+# group under the cursor and unfolds it.
+
+write home/.claude/projects/-tmp-ws/e2e00001-0000-4000-8000-000000001001.jsonl {"type":"user","cwd":"WSDIR","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","cwd":"WSDIR","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+write home/.claude/projects/-tmp-ws/e2e00001-0000-4000-8000-000000001002.jsonl {"type":"user","cwd":"WSDIR","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","cwd":"WSDIR","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+write home/.claude/projects/-tmp-other-proj/e2e00001-0000-4000-8000-000000001003.jsonl {"type":"user","cwd":"/tmp/other-proj","message":{"role":"user","content":"ship the other thing"}}\n{"type":"assistant","cwd":"/tmp/other-proj","message":{"role":"assistant","content":[{"type":"text","text":"Shipped."}]}}
+# The two transcripts name this workspace as their cwd; it is a repo
+# with untracked files, so the ended sessions in it are dirty.
+shell perl -pi -e 's|WSDIR|$ENV{PWD}|g' home/.claude/projects/-tmp-ws/*.jsonl && git init -q
+# The tree closed, the summary line has room for every count.
+command view.toggle_tree
+command sessions.table
+wait 800
+expect screen contains " summary "
+expect screen contains "▾ "
+expect screen contains " (2)"
+expect screen contains "other-proj (1)"
+expect screen contains "write the release notes"
+expect screen contains "ship the other thing"
+expect screen contains "3 done"
+expect screen contains "2 dirty, ended"
+# z on the workspace's group (the first row) folds it: its rows go, the
+# other group's stay; z again brings them back.
+key z
+expect screen contains "▸ "
+expect screen lacks "write the release notes"
+expect screen contains "ship the other thing"
+key z
+expect screen contains "write the release notes"

@@ -1,0 +1,20 @@
+# env: HOME=home
+# Ended sessions older than a day are hidden by default: the header's
+# `ended:` chip says so, the summary counts them, and — when nothing
+# else is listed — the empty state points at E. E shows them, and the
+# chip flips; E again hides them.
+
+write home/.claude/projects/-tmp-ws/e2e00002-0000-4000-8000-000000002001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+shell touch -t "$(date -v-2d +%Y%m%d%H%M 2>/dev/null || date -d '2 days ago' +%Y%m%d%H%M)" home/.claude/projects/-tmp-ws/e2e00002-0000-4000-8000-000000002001.jsonl
+command sessions.table
+wait 800
+expect screen contains " ended: hidden "
+expect screen contains "1 hidden"
+expect screen contains "Every session ended over a day ago — E shows them."
+expect screen lacks "write the release notes"
+key E
+expect screen contains " ended: shown "
+expect screen contains "write the release notes"
+key E
+expect screen contains " ended: hidden "
+expect screen lacks "write the release notes"
