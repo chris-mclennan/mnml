@@ -962,6 +962,14 @@ pub const specs = [_]Spec{
     .{ .id = "git.diff_stash_lines", .title = "Diff: stash the selected lines (else the hunk) — a stash of just those lines, dropped from the worktree", .group = "git" },
     .{ .id = "git.diff_commit_lines", .title = "Diff: commit the selected lines (else the hunk) — the rest stays as it is", .group = "git" },
     .{ .id = "git.diff_open_line", .title = "Diff: open the file at the cursor's line (enter)", .group = "git" },
+    // Zig-only: conflict resolution in the editor (app/conflicts.zig).
+    .{ .id = "git.conflict_next", .title = "Git: jump to the next conflict block in this buffer (vim `]x`)", .group = "git", .keys = .{ .both = &.{"f8"} } },
+    .{ .id = "git.conflict_prev", .title = "Git: jump to the previous conflict block in this buffer (vim `[x`)", .group = "git", .keys = .{ .both = &.{"shift+f8"} } },
+    .{ .id = "git.conflict_ours", .title = "Git: resolve the conflict block at the cursor with ours (vim `co`, standard alt+1 inside the block)", .group = "git" },
+    .{ .id = "git.conflict_theirs", .title = "Git: resolve the conflict block at the cursor with theirs (vim `ct`, standard alt+2 inside the block)", .group = "git" },
+    .{ .id = "git.conflict_both", .title = "Git: resolve the conflict block at the cursor with both sides, ours first (vim `cb`, standard alt+3 inside the block)", .group = "git" },
+    .{ .id = "git.conflict_split", .title = "Git: show ours against theirs for this conflicted file in the diff pane's Split view", .group = "git" },
+    .{ .id = "git.conflict_ai", .title = "Git: resolve the conflict block at the cursor with AI (base, ours and theirs; the answer previews before it applies)", .group = "git" },
     // Zig-only: the graph's detail panel, sort and hash-jump; the branch
     // rail; browse a file / a line / a commit on the remote.
     .{ .id = "git.graph_detail", .title = "Graph: open the detail panel for the selected commit (tab focuses it)", .group = "git" },
@@ -1006,7 +1014,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "943 specs, unique ids" {
+test "950 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1018,6 +1026,6 @@ test "943 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 943), specs.len);
+    try std.testing.expectEqual(@as(usize, 950), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

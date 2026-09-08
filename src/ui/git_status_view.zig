@@ -12,7 +12,8 @@
 //!     (none)                                                                 █
 //! ```
 //!
-//! Two sections, the cursor row's text on the `bg2` band with a `▶`,
+//! Two sections — a third, `⚠ Conflicts (N)`, leads while the status
+//! lists `U` entries — the cursor row's text on the `bg2` band with a `▶`,
 //! and a one-cell scrollbar on the right whenever the pane is at
 //! least eight cells wide and lists something. The hint row is clipped
 //! at the pane's edge, never dropped word by word (`rust-git-status-80x24`).
@@ -71,7 +72,7 @@ pub const Line = union(enum) {
     hint,
     blank,
     clean,
-    section: struct { staged: bool, count: usize },
+    section: struct { staged: bool, count: usize, conflicts: bool = false },
     none,
     entry: struct { flat: usize, e: Entry },
 };
@@ -87,9 +88,20 @@ pub fn lines(arena: Allocator, doc: Doc) Allocator.Error![]const Line {
         try out.append(arena, .clean);
         return out.items;
     }
-    try out.append(arena, .{ .section = .{ .staged = false, .count = doc.unstaged.len } });
-    if (doc.unstaged.len == 0) try out.append(arena, .none);
-    for (doc.unstaged, 0..) |e, i| try out.append(arena, .{ .entry = .{ .flat = i, .e = e } });
+    // Conflicted entries (`U`) lead in a section of their own — enter
+    // opens the editor on them, not a diff — keeping their flat index.
+    var conflicts: usize = 0;
+    for (doc.unstaged) |e| if (e.letter == 'U') {
+        conflicts += 1;
+    };
+    if (conflicts > 0) {
+        try out.append(arena, .{ .section = .{ .staged = false, .count = conflicts, .conflicts = true } });
+        for (doc.unstaged, 0..) |e, i| if (e.letter == 'U') try out.append(arena, .{ .entry = .{ .flat = i, .e = e } });
+        try out.append(arena, .blank);
+    }
+    try out.append(arena, .{ .section = .{ .staged = false, .count = doc.unstaged.len - conflicts } });
+    if (doc.unstaged.len == conflicts) try out.append(arena, .none);
+    for (doc.unstaged, 0..) |e, i| if (e.letter != 'U') try out.append(arena, .{ .entry = .{ .flat = i, .e = e } });
     try out.append(arena, .blank);
     try out.append(arena, .{ .section = .{ .staged = true, .count = doc.staged.len } });
     if (doc.staged.len == 0) try out.append(arena, .none);
@@ -233,6 +245,11 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
         .blank => {},
         .clean => _ = ui.putStr(x, r.y, end -| x, if (ui.ascii) clean_note_ascii else clean_note, .{ .fg = p.green, .bg = p.bg_dark }),
         .section => |s| {
+            if (s.conflicts) {
+                const label = ui.fmt("  {s} Conflicts ({d})  \u{23CE} resolve in the editor", .{ if (ui.ascii) "!" else "\u{26A0}", s.count });
+                _ = ui.putStr(x, r.y, end -| x, label, .{ .fg = p.red, .bg = p.bg_dark, .bold = true });
+                return;
+            }
             const label = ui.fmt("  {s} changes ({d})", .{ if (s.staged) "Staged" else "Unstaged", s.count });
             _ = ui.putStr(x, r.y, end -| x, label, .{ .fg = if (s.staged) p.green else p.yellow, .bg = p.bg_dark, .bold = true });
         },
@@ -357,6 +374,37 @@ test "draw: the spec's rows cell for cell at 89 wide, every entry and hint word 
     try testing.expect(f.fgEql(2, 6, .{ .fg = f.theme.palette.green }));
     try testing.expect(f.fgEql(4, 3, .{ .fg = f.theme.palette.comment }));
     try testing.expect(f.fgEql(2, 3, .{ .fg = f.theme.palette.yellow }));
+}
+
+test "conflicted entries lead in their own section and keep their flat index; the rest of the sections are as before" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const mixed = [_]Entry{
+        .{ .path = "m.zig", .letter = 'M', .staged = false },
+        .{ .path = "c.zig", .letter = 'U', .staged = false },
+    };
+    const ls = try lines(arena, .{ .branch = "main", .unstaged = &mixed, .staged = &.{}, .cursor = 1 });
+    // header, hint, Conflicts, c.zig, blank, Unstaged, m.zig, blank, Staged, (none)
+    try testing.expectEqual(@as(usize, 10), ls.len);
+    try testing.expect(ls[2].section.conflicts);
+    try testing.expectEqual(@as(usize, 1), ls[2].section.count);
+    try testing.expectEqual(@as(usize, 1), ls[3].entry.flat);
+    try testing.expect(!ls[5].section.conflicts);
+    try testing.expectEqual(@as(usize, 1), ls[5].section.count);
+    try testing.expectEqual(@as(usize, 0), ls[6].entry.flat);
+    try testing.expectEqual(@as(usize, 3), cursorLine(ls, 1));
+    var f = try Fixture.init(60, 10);
+    defer f.deinit();
+    var scroll: usize = 0;
+    draw(f.ui(), 1, f.full(), .{ .branch = "main", .unstaged = &mixed, .staged = &.{}, .cursor = 1 }, &scroll);
+    try f.expectRow(2, try withBar(arena, "  \u{26A0} Conflicts (1)  \u{23CE} resolve in the editor", 60));
+    try f.expectRow(3, try withBar(arena, "  \u{25B6} U c.zig", 60));
+    try f.expectRow(5, try withBar(arena, "  Unstaged changes (1)", 60));
+    try f.expectRow(6, try withBar(arena, "    M m.zig", 60));
+    try testing.expect(f.fgEql(2, 2, .{ .fg = f.theme.palette.red }));
+    try testing.expectEqual(@as(u32, 1), f.hits.at(6, 3).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(6, 6).?.script_hit.id);
 }
 
 test "draw at 49 wide (rust-git-status-80x24) clips the hint row at the edge and keeps the scrollbar" {

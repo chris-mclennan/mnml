@@ -16,6 +16,7 @@ const CommandError = command.CommandError;
 const git = @import("git.zig");
 const client = @import("../git/client.zig");
 const git_palette = @import("git_palette.zig");
+const conflicts = @import("conflicts.zig");
 
 pub const table = .{
     .@"git.status_pane" = &statusPane,
@@ -33,6 +34,13 @@ pub const table = .{
     .@"git.diff_stash_lines" = &diffStashLines,
     .@"git.diff_commit_lines" = &diffCommitLines,
     .@"git.diff_open_line" = &diffOpenLine,
+    .@"git.conflict_next" = &conflictNext,
+    .@"git.conflict_prev" = &conflictPrev,
+    .@"git.conflict_ours" = &conflictOurs,
+    .@"git.conflict_theirs" = &conflictTheirs,
+    .@"git.conflict_both" = &conflictBoth,
+    .@"git.conflict_split" = &conflictSplit,
+    .@"git.conflict_ai" = &conflictAi,
     .@"git.diff_next_file" = &diffNextFile,
     .@"git.diff_prev_file" = &diffPrevFile,
     .@"git.peek_change" = &peekChange,
@@ -186,6 +194,34 @@ fn diffStashLines(app: *App) CommandError!void {
 
 fn diffCommitLines(app: *App) CommandError!void {
     try git.commitLinesPrompt(app, try requireDiff(app));
+}
+
+fn conflictNext(app: *App) CommandError!void {
+    try conflicts.jump(app, true);
+}
+
+fn conflictPrev(app: *App) CommandError!void {
+    try conflicts.jump(app, false);
+}
+
+fn conflictOurs(app: *App) CommandError!void {
+    try conflicts.pick(app, .ours);
+}
+
+fn conflictTheirs(app: *App) CommandError!void {
+    try conflicts.pick(app, .theirs);
+}
+
+fn conflictBoth(app: *App) CommandError!void {
+    try conflicts.pick(app, .both);
+}
+
+fn conflictSplit(app: *App) CommandError!void {
+    try conflicts.openSplit(app, try app.requireEditor());
+}
+
+fn conflictAi(app: *App) CommandError!void {
+    try conflicts.pick(app, .ai);
 }
 
 fn diffOpenLine(app: *App) CommandError!void {

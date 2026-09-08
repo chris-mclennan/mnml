@@ -23,7 +23,9 @@ const event = @import("../core/event.zig");
 /// What a diff pane shows. `file` and `head` are against HEAD (staged
 /// and unstaged together — what the gate's `git diff HEAD` names);
 /// `worktree` is unstaged only; `staged` the index; `commit` a `show`.
-pub const DiffScope = enum { file, worktree, head, staged, commit, orig };
+/// `conflict` is a conflicted file's ours (`:2:`) against theirs (`:3:`)
+/// — the diff pane's Split view beside the editor (`app/conflicts.zig`).
+pub const DiffScope = enum { file, worktree, head, staged, commit, orig, conflict };
 
 pub const LogFilter = struct {
     branch: ?[]u8 = null,
@@ -125,6 +127,9 @@ pub const Job = union(enum) {
     /// from a temporary index; the real index takes the patch after so
     /// the rest stays exactly as staged / unstaged.
     commit_lines: struct { patch: []u8, msg: []u8 },
+    /// A conflicted file's three stages (`:1:` base, `:2:` ours, `:3:`
+    /// theirs) as text, for the AI resolve prompt.
+    conflict_text: []u8,
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -163,6 +168,7 @@ pub const Job = union(enum) {
                 gpa.free(l.patch);
                 gpa.free(l.msg);
             },
+            .conflict_text => |s| gpa.free(s),
         }
     }
 };
@@ -191,6 +197,9 @@ pub const Result = struct {
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
+        /// A conflicted file's stages; a side git does not have (an
+        /// add/add conflict has no base) is empty.
+        conflict_text: struct { path: []const u8, base: []const u8, ours: []const u8, theirs: []const u8 },
         rail: struct {
             branches: []parse.Branch,
             worktrees: []parse.Worktree,
@@ -491,6 +500,12 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .diff => |d| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
             const ctx: []const u8 = if (d.full) "-U999999" else "-U3";
+            if (d.scope == .conflict) {
+                const files = try conflictDiff(repo, io, arena, d.path orelse "", ctx);
+                r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = null, .files = files, .full = d.full } };
+                events.post(io, .{ .git = r });
+                return;
+            }
             switch (d.scope) {
                 .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--", d.path orelse "" }),
                 .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--" }),
@@ -508,6 +523,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     // with the buffer piped in as `-`.
                     try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", d.path orelse "", "-" });
                 },
+                .conflict => unreachable,
             }
             var out = try git(repo, io, arena, args.items, if (d.scope == .orig) (d.text orelse "") else null);
             // `diff HEAD -- untracked` is empty; show the file as new so
@@ -776,6 +792,17 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .stash_lines => |l| try stashLines(repo, io, r, l.patch, l.reverse, l.msg, l.desc),
         .commit_lines => |l| try commitLines(repo, io, r, l.patch, l.msg),
+        .conflict_text => |path| {
+            const base = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":1:{s}", .{path}) }, null);
+            const ours = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":2:{s}", .{path}) }, null);
+            const theirs = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":3:{s}", .{path}) }, null);
+            r.payload = .{ .conflict_text = .{
+                .path = try arena.dupe(u8, path),
+                .base = if (base.ok) base.stdout else "",
+                .ours = if (ours.ok) ours.stdout else "",
+                .theirs = if (theirs.ok) theirs.stdout else "",
+            } };
+        },
     }
     events.post(io, .{ .git = r });
 }
@@ -989,6 +1016,35 @@ fn commitLines(repo: *Repo, io: Io, r: *Result, patch: []const u8, msg: []const 
         return;
     }
     r.payload = .{ .op = .{ .desc = desc, .ok = true } };
+}
+
+// ─── conflicts (git-lines) ──────────────────────────────────────────────
+
+/// Ours (`:2:`) against theirs (`:3:`) of a conflicted `path`: the two
+/// stages written under the git dir and diffed with `--no-index`, the
+/// files then named `path` on both sides so the pane's banner and
+/// headers read as the file. A stage git does not have (an add/add
+/// conflict, a file no longer conflicted) diffs as empty.
+fn conflictDiff(repo: *Repo, io: Io, arena: Allocator, path: []const u8, ctx: []const u8) JobError![]parse.FileDiff {
+    const dir = try git(repo, io, arena, &.{ "rev-parse", "--absolute-git-dir" }, null);
+    if (!dir.ok) return &.{};
+    const ours = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":2:{s}", .{path}) }, null);
+    const theirs = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, ":3:{s}", .{path}) }, null);
+    const a = try std.fmt.allocPrint(arena, "{s}/mnml-conflict-ours", .{trimmed(dir.stdout)});
+    const b = try std.fmt.allocPrint(arena, "{s}/mnml-conflict-theirs", .{trimmed(dir.stdout)});
+    const cwd = std.Io.Dir.cwd();
+    cwd.writeFile(io, .{ .sub_path = a, .data = if (ours.ok) ours.stdout else "" }) catch return &.{};
+    defer cwd.deleteFile(io, a) catch {};
+    cwd.writeFile(io, .{ .sub_path = b, .data = if (theirs.ok) theirs.stdout else "" }) catch return &.{};
+    defer cwd.deleteFile(io, b) catch {};
+    // `--no-index` exits 1 when the two differ: the output is the diff.
+    const out = try git(repo, io, arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", a, b }, null);
+    const files = try parse.parseDiff(arena, out.stdout);
+    for (files) |*f| {
+        f.old_path = try arena.dupe(u8, path);
+        f.new_path = try arena.dupe(u8, path);
+    }
+    return files;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

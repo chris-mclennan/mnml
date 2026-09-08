@@ -1,0 +1,53 @@
+# Conflict resolution in the editor (src/app/conflicts.zig): a merge
+# conflict is seeded with two blocks; the status pane lists the file
+# under `⚠ Conflicts`, enter opens the EDITOR on it (not a diff) with a
+# header row of chips above each block; `alt+1` inside the first block
+# takes ours, `f8` jumps to the next block, `alt+2` takes theirs, and
+# the save `git add`s the file — the status row leaves the Conflicts
+# section and the file is staged.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write c.txt "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
+shell git add c.txt
+shell git commit -q -m "initial"
+shell git checkout -q -b feature
+write c.txt "one\ntwo-theirs\nthree\nfour\nfive\nsix\nseven\neight\nnine-theirs\nten\n"
+shell git commit -q -am "theirs"
+shell git checkout -q main
+write c.txt "one\ntwo-ours\nthree\nfour\nfive\nsix\nseven\neight\nnine-ours\nten\n"
+shell git commit -q -am "ours"
+shell git merge -q feature || true
+command git.status_pane
+wait 1000
+expect screen contains "Conflicts (1)  ⏎ resolve in the editor"
+expect screen contains "▶ U c.txt"
+key enter
+expect screen contains "c.txt: 2 conflict blocks"
+expect screen contains "conflict 1/2"
+expect screen contains "Ours  Theirs  Both  Edit  Split  AI resolve"
+expect screen contains "<<<<<<< HEAD"
+key alt+1
+expect screen contains "conflict 1: Ours — 1 left"
+expect screen lacks "conflict 2/2"
+expect screen contains "conflict 1/1"
+key f8
+expect screen contains "conflict 1/1"
+key alt+2
+expect screen contains "conflict 1: Theirs — none left, save stages c.txt"
+expect screen lacks "<<<<<<<"
+key ctrl+s
+wait 1500
+expect screen contains "resolved c.txt: marked with git add"
+expect file c.txt contains "two-ours"
+expect file c.txt contains "nine-theirs"
+expect file c.txt lacks "two-theirs"
+expect file c.txt lacks "======="
+shell git status --porcelain > st.out
+expect file st.out contains "M  c.txt"
+expect file st.out lacks "UU"
+# Back in the status pane the file sits under Staged, not Conflicts.
+command git.status_pane
+wait 1000
+expect screen lacks "Conflicts (1)"
+expect screen contains "Staged changes (1)"

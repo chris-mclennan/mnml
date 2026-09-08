@@ -30,6 +30,11 @@ pub fn saveCurrent(app: *App) CommandError!void {
     e.buf.save(app.io) catch |err| return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
     app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = app.active.?, .bytes = e.buf.editor.len() } });
     app.toast("saved {s}", .{rel});
+    // A conflicted file saved with no marker left is resolved: git add.
+    @import("conflicts.zig").afterSave(app, e) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
+    };
     app.needs_render = true;
 }
 

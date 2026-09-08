@@ -45,6 +45,7 @@ const text_field = @import("../ui/text_field.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const git_palette = @import("git_palette.zig");
+const conflicts = @import("conflicts.zig");
 
 /// A file the status pane lists (`ui/git_status_view.zig`): its
 /// porcelain letter and which section it sits in.
@@ -354,6 +355,11 @@ pub const State = struct {
     /// Owned; taken by the accept, dropped by a cancel.
     line_patch: ?[]u8 = null,
     line_repo: u32 = 0,
+    /// Conflicts (`app/conflicts.zig`): vim's `c` inside a block is
+    /// waiting for `o` / `t` / `b`; and the editor pane + block an AI
+    /// resolve was asked for, until the three stages land.
+    conflict_c_pending: bool = false,
+    conflict_ai: ?struct { pane: PaneId, region: u32 } = null,
     /// The palette's data (`app/git_palette.zig`): its own snapshot.
     rail_pending: bool = false,
     rail_snapshot: alloc.SnapshotArena,
@@ -1001,6 +1007,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             };
         },
         .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
+        .conflict_text => |c| try conflicts.aiContextReady(app, c.path, c.base, c.ours, c.theirs),
         .rail => |rail| {
             const active = st.activeRepo();
             if (active == null or active.?.id != repo.id) {
@@ -1254,6 +1261,7 @@ pub fn openDiff(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]
             break :blk try std.fmt.allocPrint(gpa, "commit {s}", .{r[0..@min(7, r.len)]});
         },
         .orig => try std.fmt.allocPrint(gpa, "orig: {s}", .{std.fs.path.basename(rel orelse "")}),
+        .conflict => try std.fmt.allocPrint(gpa, "conflict: {s}", .{std.fs.path.basename(rel orelse "")}),
     };
     errdefer gpa.free(title);
     var dp: DiffPane = .{ .gpa = gpa, .repo = repo.id, .scope = scope, .title = title, .arena = .init(gpa), .mode = app.git.diff_mode };
@@ -1501,7 +1509,7 @@ pub fn applyHunk(app: *App, dp: *DiffPane, what: LineVerb) CommandError!void {
 pub fn stashLines(app: *App, dp: *DiffPane) CommandError!void {
     const arena = app.frame.allocator();
     const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
-    if (dp.scope == .staged or dp.scope == .commit or dp.scope == .orig) return app.diag.fail(arena, "stash lines: only worktree changes can be stashed", .{});
+    if (dp.scope == .staged or dp.scope == .commit or dp.scope == .orig or dp.scope == .conflict) return app.diag.fail(arena, "stash lines: only worktree changes can be stashed", .{});
     // Two forms of the same selection: forward for the stash's tree,
     // reverse for taking the lines out of the worktree.
     const fwd = try verbPatch(app, dp, .stage, arena);
@@ -1521,7 +1529,7 @@ pub fn stashLines(app: *App, dp: *DiffPane) CommandError!void {
 pub fn commitLinesPrompt(app: *App, dp: *DiffPane) CommandError!void {
     const arena = app.frame.allocator();
     const st = &app.git;
-    if (dp.scope == .commit or dp.scope == .orig) return app.diag.fail(arena, "commit lines: not a working-tree diff", .{});
+    if (dp.scope == .commit or dp.scope == .orig or dp.scope == .conflict) return app.diag.fail(arena, "commit lines: not a working-tree diff", .{});
     const vp = try verbPatch(app, dp, .stage, arena);
     if (st.line_patch) |b| app.gpa.free(b);
     st.line_patch = try app.gpa.dupe(u8, vp.patch);
@@ -1571,7 +1579,7 @@ pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error
             try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Commit {s}\u{2026}", .{what}), .action = .{ .command = .@"git.diff_commit_lines" } });
         },
         .staged => try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Unstage {s}", .{what}), .action = .{ .command = .@"git.diff_unstage_lines" } }),
-        .commit, .orig => {},
+        .commit, .orig, .conflict => {},
     }
     try items.append(app.gpa, .{ .label = if (has_sel) "Clear selection" else "Select lines from here", .action = .{ .command = .@"git.diff_select" }, .separator_before = items.items.len > 0 });
     try items.append(app.gpa, .{ .label = "Open file at line", .action = .{ .command = .@"git.diff_open_line" } });
@@ -1993,6 +2001,8 @@ pub fn statusAct(app: *App, sp: *StatusPane, a: StatusAction) CommandError!void 
         .unstage_all => try command.run(app, .{ .static = .@"git.unstage_all" }),
         .diff => if (row) |r| {
             if (r.letter == '?') return app.toast("no diff for that file (untracked? \u{2014} stage it to see it)", .{});
+            // A conflicted file resolves in the editor (`app/conflicts.zig`).
+            if (r.letter == 'U') return conflicts.openConflicted(app, r.path);
             try actOnRow(app, r, .open);
         },
         .commit => try command.run(app, .{ .static = .@"git.commit" }),
@@ -2840,7 +2850,7 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
     const actions: diff_view.Actions = switch (dp.scope) {
         .file, .worktree, .head => .unstaged,
         .staged => .staged,
-        .commit, .orig => .none,
+        .commit, .orig, .conflict => .none,
     };
     const painted = diff_view.draw(ui, id, area, &dp.view, .{
         .files = dp.files,
@@ -3064,6 +3074,109 @@ const Fixture = struct {
         return dp;
     }
 };
+
+/// A repo whose `c.txt` is in a merge conflict with two blocks: `main`
+/// and `feature` each changed lines 2 and 9 of a ten-line file (git
+/// folds closer changes into one block).
+fn seedConflict(f: *Fixture) !void {
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("c.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "initial" });
+    try f.sh(&.{ "checkout", "-q", "-b", "feature" });
+    try f.write("c.txt", "one\ntwo-theirs\nthree\nfour\nfive\nsix\nseven\neight\nnine-theirs\nten\n");
+    try f.sh(&.{ "commit", "-q", "-am", "theirs" });
+    try f.sh(&.{ "checkout", "-q", "main" });
+    try f.write("c.txt", "one\ntwo-ours\nthree\nfour\nfive\nsix\nseven\neight\nnine-ours\nten\n");
+    try f.sh(&.{ "commit", "-q", "-am", "ours" });
+    // The merge fails on purpose: the conflict is the fixture.
+    testing.allocator.free(try f.out(&.{ "merge", "-q", "feature" }));
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(2000);
+}
+
+test "conflicts: the status pane lists the file under Conflicts; its row opens the editor with a header of chips per block, each chip a hit; the picks rewrite the blocks; the save stages the file" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try seedConflict(&f);
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    try f.settle(2000);
+    try testing.expectEqual(@as(u32, 1), f.app.git.status.?.conflicted);
+    var txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "Conflicts (1)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "U c.txt") != null);
+    testing.allocator.free(txt);
+    // Enter on the row: the editor, not a diff.
+    const sp = &f.app.panes.get(f.app.active.?).?.git_status;
+    try statusAct(&f.app, sp, .diff);
+    const e = f.app.activeEditor().?;
+    const id = f.app.active.?;
+    const regions = try conflicts.regionsOf(f.app.frame.allocator(), e);
+    try testing.expectEqual(@as(usize, 2), regions.len);
+    try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+    txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "conflict 1/2") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Ours  Theirs  Both  Edit  Split  AI resolve") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "<<<<<<< HEAD") != null);
+    testing.allocator.free(txt);
+    // The chips are hits that decode to their block and action.
+    var found: [2]bool = .{ false, false };
+    for (f.app.hits.items.items) |h| if (h.target == .script_hit and h.target.script_hit.pane == id) {
+        if (conflicts.actionOf(h.target.script_hit.id)) |a| {
+            if (a.region == 0 and a.action == .ours) found[0] = true;
+            if (a.region == 1 and a.action == .theirs) found[1] = true;
+        }
+    };
+    try testing.expect(found[0] and found[1]);
+    // Block 1 → ours, block 2 → theirs (through the chip route).
+    try conflicts.click(&f.app, id, conflicts.hitId(0, .ours));
+    try conflicts.click(&f.app, id, conflicts.hitId(0, .theirs));
+    try testing.expectEqualStrings("one\ntwo-ours\nthree\nfour\nfive\nsix\nseven\neight\nnine-theirs\nten\n", e.buf.editor.bytes());
+    try testing.expect((try conflicts.regionsOf(f.app.frame.allocator(), e)).len == 0);
+    // The save stages it: the status's conflicted count drops to zero.
+    try command.run(&f.app, .{ .static = .@"file.save" });
+    try f.settle(2000);
+    try testing.expect(std.mem.indexOf(u8, f.app.lastToast().?, "staged c.txt") != null);
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    try testing.expectEqual(@as(u32, 0), f.app.git.status.?.conflicted);
+    try testing.expectEqual(@as(u32, 1), f.app.git.status.?.staged);
+}
+
+test "conflicts: both keeps ours then theirs; the split job diffs :2: against :3: under the file's name" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try seedConflict(&f);
+    try conflicts.openConflicted(&f.app, "c.txt");
+    const e = f.app.activeEditor().?;
+    const id = f.app.active.?;
+    try conflicts.resolve(&f.app, id, e, 1, .both);
+    try testing.expect(std.mem.indexOf(u8, e.buf.editor.bytes(), "eight\nnine-ours\nnine-theirs\nten\n") != null);
+    // `]x` from the top lands on the remaining block.
+    e.buf.editor.placeCursor(0, 0);
+    try conflicts.jump(&f.app, true);
+    try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+    // Split: a diff pane on ours vs theirs, in the Split view.
+    try conflicts.openSplit(&f.app, e);
+    try f.settle(2000);
+    const dp = activeDiff(&f.app).?;
+    try testing.expectEqual(client.DiffScope.conflict, dp.scope);
+    try testing.expectEqual(diff_view.Mode.split, dp.mode);
+    try testing.expectEqual(@as(usize, 1), dp.files.len);
+    try testing.expectEqualStrings("c.txt", dp.files[0].path());
+    const lines = dp.files[0].hunks[0].lines;
+    var del: usize = 0;
+    var add: usize = 0;
+    for (lines) |l| switch (l.kind) {
+        .del => del += 1,
+        .add => add += 1,
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 2), del);
+    try testing.expectEqual(@as(usize, 2), add);
+    try testing.expect(std.mem.indexOf(u8, dp.title, "conflict: c.txt") != null);
+}
 
 test "stage lines: the selection's two rows land in the index alone; the other change stays unstaged" {
     var f = try Fixture.init(100, 24);

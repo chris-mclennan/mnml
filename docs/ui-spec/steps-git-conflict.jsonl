@@ -1,0 +1,12 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"git.status_pane"}
+{"cmd":"wait_ms","ms":1200}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"run-command","id":"view.split_right"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"run-command","id":"git.conflict_split"}
+{"cmd":"wait_ms","ms":1500}
+{"cmd":"run-command","id":"view.focus_left"}
+{"cmd":"wait_ms","ms":300}

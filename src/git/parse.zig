@@ -15,6 +15,7 @@
 //!   unstage or discard one hunk on its own.
 //!   `patchForLines` / `patchForLineMask` — the same for a subset of a
 //!   hunk's lines (the diff pane's selection).
+//!   `parseConflicts` — a conflicted file's `<<<<<<<` blocks by line.
 
 const std = @import("std");
 const remote_mod = @import("remote.zig");
@@ -555,6 +556,60 @@ pub fn patchForLines(arena: Allocator, f: FileDiff, hunk_idx: usize, lo: usize, 
     const mask = try arena.alloc(bool, n);
     for (mask, 0..) |*m, i| m.* = i >= lo and i <= hi;
     return patchForLineMask(arena, f, hunk_idx, mask, reverse);
+}
+
+// ─── conflict regions ───────────────────────────────────────────────────
+
+/// One `<<<<<<<` … `=======` … `>>>>>>>` block of a conflicted file, as
+/// 0-based line indices of its marker lines. `base` is the `|||||||`
+/// line of a diff3-style block, null otherwise. Ours is the lines after
+/// `start` up to `base` (else `mid`); theirs the lines after `mid` up
+/// to `end`.
+pub const ConflictRegion = struct {
+    start: u32,
+    base: ?u32 = null,
+    mid: u32,
+    end: u32,
+
+    pub fn holds(r: ConflictRegion, line: u32) bool {
+        return line >= r.start and line <= r.end;
+    }
+};
+
+/// A quick "does this text have a conflict marker at all" — the gate
+/// before `parseConflicts` runs every frame.
+pub fn hasConflictMarker(text: []const u8) bool {
+    if (std.mem.startsWith(u8, text, "<<<<<<< ")) return true;
+    return std.mem.indexOf(u8, text, "\n<<<<<<< ") != null;
+}
+
+/// The regions of `text`, in order. A block is only a region once all
+/// three markers are seen in order; an unterminated one is dropped, a
+/// stray `=======` outside a block is text.
+pub fn parseConflicts(arena: Allocator, text: []const u8) Allocator.Error![]ConflictRegion {
+    var out: std.ArrayListUnmanaged(ConflictRegion) = .empty;
+    var start: ?u32 = null;
+    var base: ?u32 = null;
+    var mid: ?u32 = null;
+    var line: u32 = 0;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| : (line += 1) {
+        if (std.mem.startsWith(u8, l, "<<<<<<< ") or std.mem.eql(u8, l, "<<<<<<<")) {
+            start = line;
+            base = null;
+            mid = null;
+        } else if (start != null and (std.mem.startsWith(u8, l, "||||||| ") or std.mem.eql(u8, l, "|||||||"))) {
+            if (mid == null) base = line;
+        } else if (start != null and mid == null and std.mem.eql(u8, std.mem.trimEnd(u8, l, " \t\r"), "=======")) {
+            mid = line;
+        } else if (start != null and mid != null and (std.mem.startsWith(u8, l, ">>>>>>> ") or std.mem.eql(u8, l, ">>>>>>>"))) {
+            try out.append(arena, .{ .start = start.?, .base = base, .mid = mid.?, .end = line });
+            start = null;
+            base = null;
+            mid = null;
+        }
+    }
+    return out.items;
 }
 
 // ─── gutter marks ───────────────────────────────────────────────────────
@@ -1257,6 +1312,42 @@ test "patchForLines reverse (unstage / discard): unselected additions stay as co
     const nf = try parseDiff(arena, sample_diff);
     const q = (try patchForLines(arena, nf[1], 0, 0, 0, false)).?;
     try testing.expect(std.mem.indexOf(u8, q, "new file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,1 @@\n+hello\n") != null);
+}
+
+test "parseConflicts: two-way and diff3 blocks by line, an unterminated block dropped, a lone ======= is text" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = arenaOf(&a);
+    const text =
+        "head\n" ++
+        "<<<<<<< HEAD\n" ++
+        "ours 1\n" ++
+        "ours 2\n" ++
+        "=======\n" ++
+        "theirs 1\n" ++
+        ">>>>>>> feature\n" ++
+        "between\n" ++
+        "=======\n" ++
+        "<<<<<<< HEAD\n" ++
+        "o\n" ++
+        "||||||| base\n" ++
+        "b\n" ++
+        "=======\n" ++
+        "t\n" ++
+        ">>>>>>> feature\n" ++
+        "<<<<<<< HEAD\n" ++
+        "dangling\n" ++
+        "=======\n";
+    try testing.expect(hasConflictMarker(text));
+    try testing.expect(!hasConflictMarker("plain\n=======\n"));
+    const regions = try parseConflicts(arena, text);
+    try testing.expectEqual(@as(usize, 2), regions.len);
+    try testing.expectEqual(ConflictRegion{ .start = 1, .mid = 4, .end = 6 }, regions[0]);
+    try testing.expectEqual(ConflictRegion{ .start = 9, .base = 11, .mid = 13, .end = 15 }, regions[1]);
+    try testing.expect(regions[0].holds(1));
+    try testing.expect(regions[0].holds(6));
+    try testing.expect(!regions[0].holds(7));
+    try testing.expectEqual(@as(usize, 0), (try parseConflicts(arena, "nothing\n")).len);
 }
 
 test "gutterMarks: added, modified (del then add) and deleted (del with nothing added)" {
