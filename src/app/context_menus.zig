@@ -1031,6 +1031,309 @@ pub fn openTransferMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Transfers", rows, x, y);
 }
 
+// ─── right-click: the chrome chips ──────────────────────────────────────
+// The palette bar, the bufferline's right cluster, the split strip and
+// the right column's strip (Rust `right_click.rs`): one menu per chip,
+// keyed by `render.Button`. `openButtonMenu` answers false for a chip
+// with no menu so the press falls through to its left action.
+
+pub fn openButtonMenu(app: *App, id: u32, x: u16, y: u16) Allocator.Error!bool {
+    const render = @import("render.zig");
+    const menu_bar = @import("menu_bar.zig");
+    const integrations_view = @import("../ui/integrations_view.zig");
+    if (render.Button.tabPageOf(id)) |page| return openTabPageMenu(app, page, x, y);
+    if (render.Button.tabPageCloseOf(id)) |page| return openTabPageMenu(app, page, x, y);
+    if (id >= integrations_view.tab_base and id < integrations_view.tab_base + integrations_view.Tab.all.len) {
+        try openIntegrationsTabsMenu(app, x, y);
+        return true;
+    }
+    if (menu_bar.buttonOf(id)) |which| {
+        try openMenuBarMenu(app, which, x, y);
+        return true;
+    }
+    switch (@as(render.Button, @enumFromInt(id))) {
+        // The search chip mirrors the chevron: recents, as Rust.
+        .palette => {
+            command.run(app, .{ .static = .@"picker.recent" }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+            return true;
+        },
+        .toggle_tree => try openSidebarMenu(app, x, y),
+        .toggle_right_panel => try openRightPanelMenu(app, x, y),
+        .right_tab, .right_close => try openRightColumnMenu(app, x, y),
+        .right_new => try openAddPanelMenu(app, x, y),
+        .back => try openNavMenu(app, false, x, y),
+        .forward => try openNavMenu(app, true, x, y),
+        .dropdown => try openOpenMenu(app, x, y),
+        .tabs_label => try openClusterMenu(app, x, y),
+        .theme_toggle => try openThemeMenu(app, x, y),
+        .window_close => try openWindowMenu(app, x, y),
+        .split_term => try openTerminalChipMenu(app, x, y),
+        .split_right => try openSplitChipMenu(app, .horizontal, x, y),
+        .split_down => try openSplitChipMenu(app, .vertical, x, y),
+        .split_max => try openMaximizeMenu(app, x, y),
+        .ai_claude => try openAiLauncherMenu(app, false, x, y),
+        .ai_codex => try openAiLauncherMenu(app, true, x, y),
+        else => return false,
+    }
+    return true;
+}
+
+/// The sidebar toggle (Rust `palette_sidebar_button`).
+fn openSidebarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const visible = side.shown(app, .left) != null;
+    const rows = try items(app, &.{
+        .{ .label = if (visible) "Hide sidebar" else "Show sidebar", .action = .{ .command = .@"view.toggle_tree" } },
+        .{ .label = "Reset sidebar width", .action = .{ .command = .@"view.reset_tree_width" } },
+        .{ .label = "Focus sidebar", .action = .{ .command = .@"view.focus_tree" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Sidebar", rows, x, y);
+}
+
+/// The right-column toggle (Rust `palette_right_panel_button`).
+fn openRightPanelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const visible = side.shown(app, .right) != null;
+    const rows = try items(app, &.{
+        .{ .label = if (visible) "Hide right column" else "Show right column", .action = .{ .command = .@"view.toggle_right_panel" } },
+        .{ .label = "Focus right column", .action = .{ .command = .@"view.focus_right_panel" } },
+        .{ .label = "Add Outline", .action = .{ .command = .@"outline.show" }, .separator_before = true },
+        .{ .label = "Add Problems", .action = .{ .command = .@"lsp.diagnostics" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Right panel", rows, x, y);
+}
+
+/// The right column's strip — its chip and its `×` (Rust
+/// `open_right_panel_tab_context_menu`): focus, the neighbours, close,
+/// hide the column.
+fn openRightColumnMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Focus", .action = .{ .command = .@"view.focus_right_panel" } },
+        .{ .label = "Next section", .action = .{ .command = .@"view.right_panel_next_tab" }, .separator_before = true },
+        .{ .label = "Previous section", .action = .{ .command = .@"view.right_panel_prev_tab" } },
+        .{ .label = "Close section", .action = .{ .command = .@"view.right_panel_close_tab" }, .separator_before = true },
+        .{ .label = "Hide right column", .action = .{ .command = .@"view.toggle_right_panel" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (side.shown(app, .right)) |s| side.label(s) else "Right panel", rows, x, y);
+}
+
+/// The palette bar's ` ← ` / ` → ` (Rust `open_palette_nav_context_menu`):
+/// the two steps, the picker, the history's clear.
+fn openNavMenu(app: *App, forward: bool, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Previous buffer", .action = .{ .command = .@"buffer.prev" } },
+        .{ .label = "Next buffer", .action = .{ .command = .@"buffer.next" } },
+        .{ .label = "Buffers…", .action = .{ .command = .@"picker.buffers" }, .separator_before = true },
+        .{ .label = "Clear history", .action = .{ .command = .@"buffer.clear_mru" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (forward) "Forward" else "Back", rows, x, y);
+}
+
+/// The palette bar's ` ▾ ` (Rust `palette_dropdown_button`).
+fn openOpenMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Recent files", .action = .{ .command = .@"picker.recent" } },
+        .{ .label = "Recent commands", .action = .{ .command = .@"picker.recent_commands" } },
+        .{ .label = "All files", .action = .{ .command = .@"picker.files" } },
+        .{ .label = "Command palette", .action = .{ .command = .palette }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Open…", rows, x, y);
+}
+
+/// The ` TABS ` label (Rust `open_top_bar_cluster_context_menu`): the
+/// cluster mode, ticked; then the page picker.
+fn openClusterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cur = app.cfg.ui.top_bar_cluster_mode;
+    const rows = try items(app, &.{
+        .{ .label = "Expanded", .action = .{ .command = .@"view.cluster_mode_expanded" }, .checked = cur == .expanded },
+        .{ .label = "Compact", .action = .{ .command = .@"view.cluster_mode_compact" }, .checked = cur == .compact },
+        .{ .label = "Auto", .action = .{ .command = .@"view.cluster_mode_auto" }, .checked = cur == .auto },
+        .{ .label = "Tab pages…", .action = .{ .command = .@"tab.picker" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Tab cluster", rows, x, y);
+}
+
+/// The theme pill (Rust `bufferline_theme_toggle`): the toggle, the
+/// system follow, the reset, the picker, then every theme with the
+/// painted one ticked.
+pub fn openThemeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const Theme = @import("../ui/theme.zig");
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    const cur = app.theme.name;
+    const toggle_label: []const u8 = if (app.cfg.ui.theme_toggle) |alt|
+        (if (!std.ascii.eqlIgnoreCase(alt, cur)) try std.fmt.allocPrint(arena, "Toggle → {s}", .{alt}) else "Toggle (primary ⇄ alt)")
+    else
+        "Toggle (set ui.theme_toggle first)";
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = toggle_label, .action = .{ .command = .@"theme.toggle" } },
+        .{ .label = "Auto: match system (light / dark)", .action = .{ .command = if (app.cfg.ui.theme_auto_system) .@"theme.auto_system_off" else .@"theme.auto_system" }, .checked = app.cfg.ui.theme_auto_system },
+        .{ .label = "Reset to config default", .action = .{ .command = .@"theme.reset" } },
+        .{ .label = "Pick theme…  (fuzzy)", .action = .{ .command = .@"theme.pick" } },
+    });
+    for (&Theme.all, 0..) |*th, i| try rows.append(app.gpa, .{
+        .label = th.name,
+        .action = .{ .set_theme = th.name },
+        .checked = std.ascii.eqlIgnoreCase(th.name, cur),
+        .separator_before = i == 0,
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try openOwned(app, "Theme", owned, x, y, mem);
+}
+
+/// The window `×` (Rust `bufferline_window_close`).
+fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Quit (with confirm)", .action = .{ .command = .@"app.quit" } },
+        .{ .label = "Save all", .action = .{ .command = .@"file.save_all" }, .separator_before = true },
+        .{ .label = "Restart", .action = .{ .command = .@"app.restart" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("mnml", rows, x, y);
+}
+
+/// The strip's terminal chip (Rust `split_strip_term_buttons`): where
+/// the shell goes.
+fn openTerminalChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Open shell (beside)", .action = .{ .command = .@"term.shell" } },
+        .{ .label = "Open shell in left half", .action = .{ .command = .@"term.shell_left" }, .separator_before = true },
+        .{ .label = "Open shell in right half", .action = .{ .command = .@"term.shell_right" } },
+        .{ .label = "Open shell in top half", .action = .{ .command = .@"term.shell_top" } },
+        .{ .label = "Open shell in bottom half", .action = .{ .command = .@"term.shell_bottom" } },
+        .{ .label = "Scratch terminal", .action = .{ .command = .@"term.scratch_toggle" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Terminal", rows, x, y);
+}
+
+/// The strip's split chips (Rust `split_strip_buttons`): the split, the
+/// equalize, the grow / shrink pair, close.
+fn openSplitChipMenu(app: *App, dir: enum { horizontal, vertical }, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, switch (dir) {
+        .horizontal => &.{
+            .{ .label = "Split right", .action = .{ .command = .@"view.split_right" } },
+            .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
+            .{ .label = "Grow width", .action = .{ .command = .@"view.split_grow_width" } },
+            .{ .label = "Shrink width", .action = .{ .command = .@"view.split_shrink_width" } },
+            .{ .label = "Close active pane", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
+        },
+        .vertical => &.{
+            .{ .label = "Split down", .action = .{ .command = .@"view.split_down" } },
+            .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
+            .{ .label = "Grow height", .action = .{ .command = .@"view.split_grow_height" } },
+            .{ .label = "Shrink height", .action = .{ .command = .@"view.split_shrink_height" } },
+            .{ .label = "Close active pane", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
+        },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (dir == .horizontal) "Split horizontal" else "Split vertical", rows, x, y);
+}
+
+/// The strip's maximize chip (Rust `split_strip_maximize_buttons`).
+fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Zoom this leaf / restore", .action = .{ .command = .@"view.toggle_zoom" } },
+        .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" } },
+        .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Maximize", rows, x, y);
+}
+
+/// The strip's AI chips (Rust `split_strip_ai_buttons`): toggle the
+/// existing pane, a new session in each half, the layout mode, the
+/// glyph pair.
+fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
+    const grid = app.cfg.ui.ai_layout_mode == .grid;
+    const rows = try items(app, if (codex) &.{
+        .{ .label = "Toggle existing Codex pane", .action = .{ .command = .@"ai.codex" } },
+        .{ .label = "New Codex session in left half", .action = .{ .command = .@"ai.codex_new_left" }, .separator_before = true },
+        .{ .label = "New Codex session in right half", .action = .{ .command = .@"ai.codex_new_right" } },
+        .{ .label = "New Codex session in top half", .action = .{ .command = .@"ai.codex_new_top" } },
+        .{ .label = "New Codex session in bottom half", .action = .{ .command = .@"ai.codex_new_bottom" } },
+        .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
+        .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
+        .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
+        .{ .label = "Edit Codex glyph…", .action = .{ .command = .@"integrations.edit_codex_glyph" } },
+    } else &.{
+        .{ .label = "Toggle existing Claude Code pane", .action = .{ .command = .@"ai.claude_code" } },
+        .{ .label = "New Claude Code session in left half", .action = .{ .command = .@"ai.claude_code_new_left" }, .separator_before = true },
+        .{ .label = "New Claude Code session in right half", .action = .{ .command = .@"ai.claude_code_new_right" } },
+        .{ .label = "New Claude Code session in top half", .action = .{ .command = .@"ai.claude_code_new_top" } },
+        .{ .label = "New Claude Code session in bottom half", .action = .{ .command = .@"ai.claude_code_new_bottom" } },
+        .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
+        .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
+        .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
+        .{ .label = "Edit Claude Code glyph…", .action = .{ .command = .@"integrations.edit_claude_glyph" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (codex) "Codex launcher" else "Claude Code launcher", rows, x, y);
+}
+
+/// A tab-page chip or its `×` (Zig-only — Rust's cluster had no menu):
+/// the page is shown first, as a tab is made active, so the rows act
+/// on it.
+fn openTabPageMenu(app: *App, page: usize, x: u16, y: u16) Allocator.Error!bool {
+    const cmd_tab = @import("cmd_tab.zig");
+    if (page >= app.layouts.layouts.items.len) return false;
+    cmd_tab.switchTab(app, page);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const rows = try items(app, &.{
+        .{ .label = "Close page", .action = .{ .command = .@"tab.close" } },
+        .{ .label = "Close other pages", .action = .{ .command = .@"tab.only" } },
+        .{ .label = "New tab page", .action = .{ .command = .@"tab.new" }, .separator_before = true },
+        .{ .label = "Move left", .action = .{ .command = .@"tab.move_left" }, .separator_before = true },
+        .{ .label = "Move right", .action = .{ .command = .@"tab.move_right" } },
+        .{ .label = "Tab pages…", .action = .{ .command = .@"tab.picker" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, try std.fmt.allocPrint(arena, "Tab page {d}", .{page + 1}), rows, x, y, mem);
+    return true;
+}
+
+/// The INTEGRATIONS section's tab strip (Zig-only): the tabs, ticked,
+/// and a refresh.
+fn openIntegrationsTabsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cur = app.integrations.tab;
+    const rows = try items(app, &.{
+        .{ .label = "Installed", .action = .{ .command = .@"integrations.show_installed" }, .checked = cur == .installed },
+        .{ .label = "Marketplace", .action = .{ .command = .@"integrations.show_marketplace" }, .checked = cur == .marketplace },
+        .{ .label = "Dev", .action = .{ .command = .@"integrations.show_in_dev" }, .checked = cur == .dev },
+        .{ .label = "Refresh", .action = .{ .command = .@"integrations.refresh" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Integrations", rows, x, y);
+}
+
+/// A menu-bar word (Rust `menu_bar_words`): open it, then the bar's
+/// own mode.
+fn openMenuBarMenu(app: *App, which: @import("menu_bar.zig").Menu, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Open", .action = .{ .menu_bar = @intFromEnum(which) } },
+        .{ .label = switch (app.cfg.ui.menu_bar) {
+            .always => "Menu bar: always → auto",
+            .auto => "Menu bar: auto → hidden",
+            .hidden => "Menu bar: hidden → always",
+        }, .action = .{ .command = .@"view.menu_bar_cycle" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Menu bar", rows, x, y);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;

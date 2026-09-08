@@ -1775,6 +1775,16 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
                 return integrations.chipClick(app, id - integrations_view.chip_base, m);
             }
+            // right-click: the chrome chips' menus (Rust `right_click.rs`;
+            // `context_menus.openButtonMenu`). A strip chip's rows act on
+            // the leaf it sits on. A chip with no menu falls through.
+            if (m.button == .right) {
+                switch (@as(render.Button, @enumFromInt(id))) {
+                    .split_term, .split_right, .split_down, .split_max, .ai_claude, .ai_codex => focusLeafAt(app, m.x, m.y),
+                    else => {},
+                }
+                if (try context_menus.openButtonMenu(app, id, m.x, m.y)) return;
+            }
             // The INTEGRATIONS section's tabs.
             if (id >= integrations_view.tab_base and id < integrations_view.tab_base + integrations_view.Tab.all.len) {
                 return integrations.tabClick(app, id - integrations_view.tab_base, m);
