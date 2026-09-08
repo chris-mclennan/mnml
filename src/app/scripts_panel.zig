@@ -142,6 +142,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .paintRow = view.paintRow,
         .empty = empty,
         .show_refresh = true,
+        .filter_gap = true,
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
 }
