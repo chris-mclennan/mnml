@@ -1,0 +1,32 @@
+# git.reword on the graph's selected commit: the prompt opens with the
+# old subject, the typed message rides a one-line plan through
+# `mnml-zig --commit-msg` (src/git/sequence_editor.zig), and an older
+# commit's message changes without touching the ones above it.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+write c.txt "three\n"
+shell git add c.txt
+shell git commit -q -m "third"
+command git.graph
+wait 600
+key j
+expect screen contains "second"
+command git.reword
+expect screen contains "Reword: the new commit message"
+expect screen contains "│ second"
+type " reworded"
+key enter
+wait 2500
+expect screen contains "rebased: 2 commit(s), 1 changed"
+expect screen contains "second reworded"
+expect screen contains "third"
+shell test "$(git log -1 --format=%s HEAD~1)" = "second reworded"
+shell test "$(git log -1 --format=%s HEAD)" = "third"
+shell test "$(git rev-list --count HEAD)" = 3

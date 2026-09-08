@@ -1,0 +1,26 @@
+# git.drop on the graph's selected commit: a one-line plan with `drop`
+# runs through mnml's sequence editor and the commit is gone from the
+# graph and from git.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+write c.txt "three\n"
+shell git add c.txt
+shell git commit -q -m "third"
+command git.graph
+wait 600
+key j
+expect screen contains "second"
+command git.drop
+wait 2500
+expect screen contains "rebased: 2 commit(s), 1 changed"
+expect screen lacks "second"
+expect screen contains "third"
+shell test "$(git rev-list --count HEAD)" = 2
+shell test ! -f b.txt

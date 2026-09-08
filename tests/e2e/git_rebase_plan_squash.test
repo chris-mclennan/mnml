@@ -1,0 +1,45 @@
+# The rebase plan (src/app/git.zig `Plan`, src/ui/git_graph_view.zig
+# `drawPlan`): space marks rows in the graph, `r` opens the plan over
+# the selection oldest-first, `s` sets squash on the cursor's row, Enter
+# runs the rebase with mnml as git's sequence editor
+# (src/git/sequence_editor.zig): two commits become one.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+write c.txt "three\n"
+shell git add c.txt
+shell git commit -q -m "third"
+command git.graph
+wait 600
+expect screen contains "third"
+# Mark third (the cursor) and second; the mark cell shows ✓.
+key space
+key j
+key space
+expect screen contains "▌▶✓"
+expect screen contains "▌ ✓"
+key r
+wait 200
+expect screen contains "Rebase plan · 2 commits onto"
+expect screen contains "▶ pick   "
+expect screen contains "  pick   "
+expect screen contains "run · esc cancel"
+# The cursor opens on the oldest marked row (second); third is below it.
+key j
+key s
+expect screen contains "▶ squash "
+# The graph row behind carries the action's letter in the mark cell.
+expect screen contains "▌ s"
+key enter
+wait 2500
+expect screen contains "rebased: 2 commit(s), 1 changed"
+expect screen lacks "Rebase plan"
+shell test "$(git rev-list --count HEAD)" = 2
+shell git log -1 --format=%B | grep -q "third"
+shell git show --format= --name-only HEAD | grep -q c.txt

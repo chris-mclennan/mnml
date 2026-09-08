@@ -27,6 +27,7 @@ const CommandError = command.CommandError;
 const hooks = @import("../core/hooks.zig");
 const client = @import("../git/client.zig");
 const parse = @import("../git/parse.zig");
+const sequence_editor = @import("../git/sequence_editor.zig");
 const remote_mod = @import("../git/remote.zig");
 const ai_app = @import("ai.zig");
 const cmd_app = @import("cmd_app.zig");
@@ -100,6 +101,15 @@ pub const PromptKind = enum {
     /// The diff pane's `Commit these lines`: the message for
     /// `State.line_patch`.
     commit_lines,
+    /// The plan modal's `r`: the new message for the row at its cursor.
+    plan_reword,
+    /// `git.reword` on the graph's selected commit: the message, then
+    /// a one-line plan runs.
+    reword,
+    /// `git.reset_*` outside the graph and the branches panel: a rev.
+    reset_soft,
+    reset_mixed,
+    reset_hard,
 };
 
 /// A confirm box's payload; the path is owned.
@@ -112,10 +122,12 @@ pub const Confirm = union(enum) {
     /// A palette row: checkout after a yes (a tag lands detached).
     checkout: []u8,
     tag_delete: []u8,
+    /// `reset --hard <rev>` after a yes.
+    reset_hard: []u8,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete => |s| gpa.free(s),
+            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard => |s| gpa.free(s),
             .none, .discard_hunk => {},
         }
     }
@@ -253,13 +265,54 @@ pub const GraphPane = struct {
     wip_known: bool = false,
     /// What the last frame measured, for the divider drag.
     body: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
+    /// Multi-select: indices into `commits`. Dropped with the log.
+    marks: std.AutoHashMapUnmanaged(u32, void) = .empty,
+    /// A `v` range in progress: the virtual row it started on.
+    anchor: ?usize = null,
+    /// The rebase plan while its modal is open.
+    plan: ?Plan = null,
 
     pub fn deinit(self: *GraphPane) void {
         self.gpa.free(self.name);
         self.wip_text.deinit(self.gpa);
         self.filter.deinit(self.gpa);
+        self.marks.deinit(self.gpa);
+        if (self.plan) |*p| p.deinit(self.gpa);
         self.detail_arena.deinit();
         self.arena.deinit();
+    }
+
+    pub fn isMarked(self: *const GraphPane, ci: usize) bool {
+        return self.marks.contains(@intCast(ci));
+    }
+
+    /// The virtual rows of the `v` range, both ends in.
+    pub fn range(self: *const GraphPane) ?[2]usize {
+        const a = self.anchor orelse return null;
+        return .{ a, self.cursor };
+    }
+
+    /// Fold the range into the marks and drop the anchor.
+    pub fn commitRange(self: *GraphPane) Allocator.Error!void {
+        const rg = self.range() orelse return;
+        var v = @min(rg[0], rg[1]);
+        while (v <= @max(rg[0], rg[1])) : (v += 1) {
+            if (v < self.wipRows()) continue;
+            const pos = v - self.wipRows();
+            if (pos >= self.order.len) break;
+            try self.marks.put(self.gpa, self.order[pos], {});
+        }
+        self.anchor = null;
+    }
+
+    pub fn clearSelection(self: *GraphPane) void {
+        self.marks.clearRetainingCapacity();
+        self.anchor = null;
+    }
+
+    pub fn closePlan(self: *GraphPane) void {
+        if (self.plan) |*p| p.deinit(self.gpa);
+        self.plan = null;
     }
 
     fn wipRows(self: *const GraphPane) usize {
@@ -292,6 +345,31 @@ pub const GraphPane = struct {
     pub fn rowOfCommit(self: *const GraphPane, ci: usize) usize {
         for (self.order, 0..) |o, pos| if (o == ci) return pos + self.wipRows();
         return self.wipRows();
+    }
+};
+
+/// One line of the rebase plan: a commit of the graph and what the
+/// rebase does with it. `message` (owned) is a reword's new text.
+pub const PlanRow = struct {
+    ci: u32,
+    action: parse.TodoAction = .pick,
+    /// One the user selected; the others are the commits in between.
+    marked: bool = false,
+    message: ?[]u8 = null,
+};
+
+/// The plan modal's state: the todo, oldest first, and the parent the
+/// rebase starts from (null = `--root`).
+pub const Plan = struct {
+    rows: std.ArrayListUnmanaged(PlanRow) = .empty,
+    cursor: usize = 0,
+    scroll: usize = 0,
+    base: ?[]u8 = null,
+
+    pub fn deinit(self: *Plan, gpa: Allocator) void {
+        for (self.rows.items) |r| if (r.message) |m| gpa.free(m);
+        self.rows.deinit(gpa);
+        if (self.base) |b| gpa.free(b);
     }
 };
 
@@ -952,6 +1030,10 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             }
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .git_graph => |*g| if (g.repo == repo.id and g.pending) {
+                    // The indices the selection and the plan name are the
+                    // old log's.
+                    g.clearSelection();
+                    g.closePlan();
                     adoptArena(&g.arena, &result.arena, gpa);
                     g.commits = l.commits;
                     g.lanes = try graph_view.layout(g.arena.allocator(), l.commits);
@@ -1841,6 +1923,30 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             errdefer gpa.free(patch);
             try submitOp(app, repo, .{ .commit_lines = .{ .patch = patch, .msg = try gpa.dupe(u8, text) } });
         },
+        .plan_reword => {
+            const g = activeGraph(app) orelse return;
+            const plan = if (g.plan) |*p| p else return;
+            if (plan.cursor >= plan.rows.items.len) return;
+            const row = &plan.rows.items[plan.cursor];
+            if (row.message) |m| gpa.free(m);
+            row.message = if (text.len == 0) null else try gpa.dupe(u8, text_in);
+            row.action = if (row.message != null) .reword else .pick;
+            app.needs_render = true;
+        },
+        .reword => {
+            if (text.len == 0) return app.diag.fail(app.frame.allocator(), "reword: empty message", .{});
+            const g = activeGraph(app) orelse return app.diag.fail(app.frame.allocator(), "graph: no graph pane is active", .{});
+            try directVerb(app, g, .reword, text_in);
+        },
+        .reset_soft, .reset_mixed, .reset_hard => {
+            if (text.len == 0) return;
+            const mode: client.ResetMode = switch (kind) {
+                .reset_soft => .soft,
+                .reset_mixed => .mixed,
+                else => .hard,
+            };
+            try resetTo(app, mode, text);
+        },
         .graph_hash => {
             const g = activeGraph(app) orelse return app.diag.fail(app.frame.allocator(), "graph: no graph pane is active", .{});
             if (text.len == 0) return;
@@ -1935,6 +2041,7 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         .worktree_remove => |p| try submitOp(app, try requireRepo(app), .{ .worktree_remove = try gpa.dupe(u8, p) }),
         .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
         .tag_delete => |t| try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, t) }),
+        .reset_hard => |rev| try submitOp(app, try requireRepo(app), .{ .reset = .{ .mode = .hard, .rev = try gpa.dupe(u8, rev) } }),
     }
 }
 
@@ -2493,6 +2600,7 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
         g.wip_focused = false;
     }
     if (g.detail_focus) return detailKey(app, id, g, k);
+    if (g.plan != null) return planKey(app, g, k);
     const n = g.totalRows();
     switch (k.code) {
         .up => moveGraphCursor(app, g, g.cursor -| 1),
@@ -2503,7 +2611,10 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
         .end => moveGraphCursor(app, g, n -| 1),
         .enter => runToast(app, showSelectedCommit(app, g)),
         .tab => g.detail_focus = true,
-        .esc => try app.closePane(id, true),
+        .esc => {
+            // A selection in progress goes first; the pane after.
+            if (g.anchor != null or g.marks.count() > 0) g.clearSelection() else try app.closePane(id, true);
+        },
         .char => |c| {
             if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
             switch (c) {
@@ -2515,14 +2626,23 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
                 's' => try setSort(app, g, .{ .col = g.sort.col.next(), .asc = false }),
                 '/' => openPrompt(app, .graph_hash, "Jump to commit (hash prefix)"),
                 'a' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.stage_all" })) else return false,
-                'A' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })) else return false,
+                'A' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.amend" })) else runToast(app, command.run(app, .{ .static = .@"git.amend_to" })),
+                'U' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })) else return false,
                 'c' => if (g.wipSelected()) runToast(app, commitFromTextarea(app, g)) else runToast(app, command.run(app, .{ .static = .@"git.cherry_pick" })),
                 'C' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.ai_commit" })) else return false,
-                'v' => runToast(app, command.run(app, .{ .static = .@"git.revert" })),
+                'V' => runToast(app, command.run(app, .{ .static = .@"git.revert" })),
                 'f' => runToast(app, command.run(app, .{ .static = .@"git.graph_filter_branch" })),
                 'F' => runToast(app, command.run(app, .{ .static = .@"git.graph_filter_reset_all" })),
-                'r' => runToast(app, refreshGraph(app, g)),
+                'R' => runToast(app, refreshGraph(app, g)),
                 'q' => try app.closePane(id, true),
+                // Multi-select and the plan.
+                ' ' => try toggleMark(app, g),
+                'v' => {
+                    if (g.wipSelected()) return false;
+                    if (g.anchor != null) try g.commitRange() else g.anchor = g.cursor;
+                },
+                '*' => runToast(app, command.run(app, .{ .static = .@"git.select_branch" })),
+                'r' => runToast(app, command.run(app, .{ .static = .@"git.rebase_plan" })),
                 else => return false,
             }
         },
@@ -2530,6 +2650,300 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
     }
     app.needs_render = true;
     return true;
+}
+
+/// Space: the cursor's commit in or out of the selection (a range in
+/// progress is folded in first).
+fn toggleMark(app: *App, g: *GraphPane) Allocator.Error!void {
+    _ = app;
+    if (g.anchor != null) return g.commitRange();
+    const ci: u32 = @intCast(g.selectedIndex() orelse return);
+    if (g.marks.remove(ci)) return;
+    try g.marks.put(g.gpa, ci, {});
+}
+
+/// The plan modal has the keys: `↑↓` / `j k` walk the rows, `←→` /
+/// `h l` cycle the action, `p r e s f d` set it (`r` asks for the
+/// message), `J` / `K` (or alt+`↑↓`) move the row, Enter runs, Esc
+/// cancels.
+fn planKey(app: *App, g: *GraphPane, k: Key) Allocator.Error!bool {
+    const plan = &g.plan.?;
+    const n = plan.rows.items.len;
+    app.needs_render = true;
+    switch (k.code) {
+        .esc => g.closePlan(),
+        .enter => runToast(app, runPlan(app, g)),
+        .up => if (k.mods.alt) movePlanRow(plan, false) else {
+            plan.cursor -|= 1;
+        },
+        .down => if (k.mods.alt) movePlanRow(plan, true) else {
+            plan.cursor = @min(plan.cursor + 1, n -| 1);
+        },
+        .left => cyclePlanAction(plan, false),
+        .right => cyclePlanAction(plan, true),
+        .home => plan.cursor = 0,
+        .end => plan.cursor = n -| 1,
+        .char => |c| {
+            if (k.mods.ctrl or k.mods.super) return true;
+            switch (c) {
+                'j' => plan.cursor = @min(plan.cursor + 1, n -| 1),
+                'k' => plan.cursor -|= 1,
+                'h' => cyclePlanAction(plan, false),
+                'l' => cyclePlanAction(plan, true),
+                'J' => movePlanRow(plan, true),
+                'K' => movePlanRow(plan, false),
+                'r' => {
+                    if (plan.cursor < n) openPrompt(app, .plan_reword, "Reword: the new commit message");
+                },
+                'p', 'e', 's', 'f', 'd' => if (plan.cursor < n) {
+                    const row = &plan.rows.items[plan.cursor];
+                    row.action = parse.TodoAction.fromLetter(@intCast(c)).?;
+                    if (row.message) |m| app.gpa.free(m);
+                    row.message = null;
+                },
+                'q' => g.closePlan(),
+                else => {},
+            }
+        },
+        else => {},
+    }
+    return true;
+}
+
+fn cyclePlanAction(plan: *Plan, forward: bool) void {
+    if (plan.cursor >= plan.rows.items.len) return;
+    const row = &plan.rows.items[plan.cursor];
+    row.action = if (forward) row.action.next() else row.action.prev();
+}
+
+/// Swap the cursor's row with its neighbour, the cursor following.
+fn movePlanRow(plan: *Plan, down: bool) void {
+    const n = plan.rows.items.len;
+    if (n < 2 or plan.cursor >= n) return;
+    const to = if (down) plan.cursor + 1 else plan.cursor -| 1;
+    if (to == plan.cursor or to >= n) return;
+    std.mem.swap(PlanRow, &plan.rows.items[plan.cursor], &plan.rows.items[to]);
+    plan.cursor = to;
+}
+
+// ─── the rebase plan ────────────────────────────────────────────────────
+
+/// The commit HEAD points at, by the last status's oid, else the row
+/// whose refs carry `HEAD`.
+fn headIndex(app: *App, g: *const GraphPane) ?usize {
+    const st = &app.git;
+    if (st.status_repo == g.repo) if (st.status) |s| if (s.oid) |oid| {
+        for (g.commits, 0..) |c, i| if (std.mem.eql(u8, c.hash, oid)) return i;
+    };
+    for (g.commits, 0..) |c, i| {
+        if (std.mem.startsWith(u8, c.refs, "HEAD") and (c.refs.len == 4 or c.refs[4] == ' ' or c.refs[4] == ',')) return i;
+    }
+    return null;
+}
+
+/// The index of the commit `sha` names, when the graph has it.
+fn indexOfSha(g: *const GraphPane, sha: []const u8) ?usize {
+    for (g.commits, 0..) |c, i| if (std.mem.eql(u8, c.hash, sha)) return i;
+    return null;
+}
+
+/// The commits the user selected: the marks with any range folded in,
+/// else the cursor's commit. On the frame arena, in graph order.
+fn selection(app: *App, g: *GraphPane) Allocator.Error![]const usize {
+    try g.commitRange();
+    var out: std.ArrayListUnmanaged(usize) = .empty;
+    const arena = app.frame.allocator();
+    if (g.marks.count() == 0) {
+        if (g.selectedIndex()) |ci| try out.append(arena, ci);
+        return out.items;
+    }
+    for (g.order) |ci| if (g.isMarked(ci)) try out.append(arena, ci);
+    return out.items;
+}
+
+/// `*`: the current branch's commits since its upstream — HEAD down the
+/// first-parent line to the upstream's commit (or `ahead` steps); the
+/// whole line when there is no upstream.
+pub fn selectBranchCommits(app: *App, g: *GraphPane) CommandError!void {
+    const arena = app.frame.allocator();
+    const st = &app.git;
+    var head = headIndex(app, g) orelse return app.diag.fail(arena, "graph: HEAD is not in the list", .{});
+    const upstream: ?[]const u8 = if (st.status_repo == g.repo) (if (st.status) |s| s.upstream else null) else null;
+    const ahead: u32 = if (st.status_repo == g.repo) (if (st.status) |s| s.ahead else 0) else 0;
+    g.clearSelection();
+    var steps: u32 = 0;
+    while (true) {
+        const c = g.commits[head];
+        if (upstream) |u| if (refsName(c.refs, u)) break;
+        if (upstream != null and ahead > 0 and steps >= ahead) break;
+        try g.marks.put(g.gpa, @intCast(head), {});
+        steps += 1;
+        if (c.parents.len == 0) break;
+        head = indexOfSha(g, c.parents[0]) orelse break;
+    }
+    if (upstream == null) app.toast("no upstream: selected the whole first-parent line ({d})", .{steps}) else app.toast("selected {d} commit(s) since {s}", .{ steps, upstream.? });
+    app.needs_render = true;
+}
+
+/// Whether `HEAD -> main, origin/main, tag: v1` names `name`.
+fn refsName(refs: []const u8, name: []const u8) bool {
+    var it = std.mem.splitSequence(u8, refs, ", ");
+    while (it.next()) |tok_raw| {
+        var tok = tok_raw;
+        if (std.mem.startsWith(u8, tok, "HEAD -> ")) tok = tok["HEAD -> ".len..];
+        if (std.mem.eql(u8, tok, name)) return true;
+    }
+    return false;
+}
+
+/// A fresh plan for `sel` (indices into the commits): the first-parent
+/// line from HEAD down to the oldest selected commit, oldest first,
+/// every row `pick`, the selected ones marked. Every selected commit
+/// must lie on that line.
+fn buildPlan(app: *App, g: *GraphPane, sel: []const usize) CommandError!Plan {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    if (sel.len == 0) return app.diag.fail(arena, "rebase: select a commit first (space, v, *)", .{});
+    const head = headIndex(app, g) orelse return app.diag.fail(arena, "rebase: HEAD is not in the list", .{});
+    // Walk down from HEAD until every selected commit has been passed.
+    var chain: std.ArrayListUnmanaged(usize) = .empty;
+    var remaining: usize = sel.len;
+    var at = head;
+    while (true) {
+        try chain.append(arena, at);
+        for (sel) |ci| if (ci == at) {
+            remaining -= 1;
+        };
+        if (remaining == 0) break;
+        const c = g.commits[at];
+        if (c.parents.len == 0) break;
+        at = indexOfSha(g, c.parents[0]) orelse break;
+    }
+    if (remaining != 0) return app.diag.fail(arena, "rebase: a selected commit is not on the current branch's first-parent line from HEAD", .{});
+    var plan: Plan = .{};
+    errdefer plan.deinit(gpa);
+    const oldest = g.commits[chain.items[chain.items.len - 1]];
+    if (oldest.parents.len > 0) plan.base = try gpa.dupe(u8, oldest.parents[0]);
+    var i = chain.items.len;
+    while (i > 0) {
+        i -= 1;
+        const ci = chain.items[i];
+        var marked = false;
+        for (sel) |s| if (s == ci) {
+            marked = true;
+        };
+        try plan.rows.append(gpa, .{ .ci = @intCast(ci), .marked = marked });
+    }
+    for (plan.rows.items, 0..) |r, idx| if (r.marked) {
+        plan.cursor = idx;
+        break;
+    };
+    return plan;
+}
+
+/// `git.rebase_plan`: the modal over the selection.
+pub fn openPlan(app: *App, g: *GraphPane) CommandError!void {
+    if (g.wipSelected() and g.marks.count() == 0) return app.diag.fail(app.frame.allocator(), "rebase: the working tree is not a commit — select commits first", .{});
+    const sel = try selection(app, g);
+    const plan = try buildPlan(app, g, sel);
+    g.closePlan();
+    g.plan = plan;
+    g.detail_focus = false;
+    g.wip_focused = false;
+    app.needs_render = true;
+}
+
+/// A direct verb on the selection — no modal. `fixup` / `squash` fold
+/// each selected commit into the commit before it (the plan reaches
+/// one commit further down for that); `drop` drops; `reword` takes
+/// `message` for the one selected commit.
+pub fn directVerb(app: *App, g: *GraphPane, action: parse.TodoAction, message: ?[]const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (g.wipSelected() and g.marks.count() == 0) return app.diag.fail(arena, "{s}: the working tree is not a commit", .{action.word()});
+    const sel = try selection(app, g);
+    if (sel.len == 0) return app.diag.fail(arena, "{s}: select a commit first", .{action.word()});
+    if (action == .reword and sel.len != 1) return app.diag.fail(arena, "reword: one commit at a time", .{});
+    var want: std.ArrayListUnmanaged(usize) = .empty;
+    try want.appendSlice(arena, sel);
+    if (action == .fixup or action == .squash) {
+        // The parent of the oldest selected must be in the plan too.
+        for (sel) |ci| {
+            const c = g.commits[ci];
+            if (c.parents.len == 0) return app.diag.fail(arena, "{s}: {s} has no parent to fold into", .{ action.word(), c.short() });
+            const pi = indexOfSha(g, c.parents[0]) orelse return app.diag.fail(arena, "{s}: the parent of {s} is not in the list", .{ action.word(), c.short() });
+            var seen = false;
+            for (want.items) |w| if (w == pi) {
+                seen = true;
+            };
+            if (!seen) try want.append(arena, pi);
+        }
+    }
+    var plan = try buildPlan(app, g, want.items);
+    errdefer plan.deinit(app.gpa);
+    for (plan.rows.items) |*row| {
+        var selected = false;
+        for (sel) |ci| if (ci == row.ci) {
+            selected = true;
+        };
+        if (!selected) continue;
+        row.action = action;
+        if (action == .reword) if (message) |m| {
+            row.message = try app.gpa.dupe(u8, m);
+        };
+    }
+    g.closePlan();
+    g.plan = plan;
+    try runPlan(app, g);
+}
+
+/// Enter on the plan: the todo goes to the worker as `Job.rebase_plan`.
+pub fn runPlan(app: *App, g: *GraphPane) CommandError!void {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    const plan = if (g.plan) |*p| p else return;
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    if (plan.rows.items.len == 0) return app.diag.fail(arena, "rebase: an empty plan", .{});
+    const first = plan.rows.items[0].action;
+    if (first == .squash or first == .fixup) return app.diag.fail(arena, "rebase: the first commit has nothing before it to {s} into", .{first.word()});
+    var n_changed: usize = 0;
+    for (plan.rows.items) |r| if (r.action != .pick) {
+        n_changed += 1;
+    };
+    var ops = try gpa.alloc(sequence_editor.Op, plan.rows.items.len);
+    var built: usize = 0;
+    errdefer {
+        for (ops[0..built]) |op| op.deinit(gpa);
+        gpa.free(ops);
+    }
+    for (plan.rows.items, 0..) |r, i| {
+        const c = g.commits[r.ci];
+        ops[i] = .{
+            .sha = try gpa.dupe(u8, c.hash),
+            .action = r.action,
+            .subject = try gpa.dupe(u8, c.subject),
+            .new_message = if (r.message) |m| try gpa.dupe(u8, m) else null,
+        };
+        built += 1;
+    }
+    const base: ?[]u8 = if (plan.base) |b| try gpa.dupe(u8, b) else null;
+    errdefer if (base) |b| gpa.free(b);
+    const job: client.Job = .{ .rebase_plan = .{ .base = base, .ops = ops } };
+    g.closePlan();
+    g.clearSelection();
+    app.toast("rebasing {d} commit(s), {d} to change\u{2026}", .{ ops.len, n_changed });
+    // `submitOp` owns the job from here, failure included.
+    try submitOp(app, repo, job);
+}
+
+/// `git.reset_*`: `rev` through the worker, the hard one behind a
+/// confirm.
+pub fn resetTo(app: *App, mode: client.ResetMode, rev: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    const repo = try requireRepo(app);
+    if (mode == .hard) {
+        return openConfirm(app, .{ .reset_hard = try gpa.dupe(u8, rev) }, try std.fmt.allocPrint(gpa, "  reset --hard {s}? The index and the working tree follow (undo restores them).", .{rev[0..@min(12, rev.len)]}));
+    }
+    try submitOp(app, repo, .{ .reset = .{ .mode = mode, .rev = try gpa.dupe(u8, rev) } });
 }
 
 /// The commit box has the keys: text edits, Enter a newline, Esc
@@ -2729,6 +3143,16 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
         return;
     }
     g.wip_focused = false;
+    if (graph_view.planRowOf(hit_id)) |row| {
+        const plan = if (g.plan) |*p| p else return;
+        if (row >= plan.rows.items.len) return;
+        // A click takes the cursor; one on the cursor's row cycles the action.
+        if (m.button == .left and plan.cursor == row) cyclePlanAction(plan, true);
+        if (m.button == .right and plan.cursor == row) cyclePlanAction(plan, false);
+        plan.cursor = row;
+        return;
+    }
+    if (g.plan != null) return;
     if (hit_id == graph_view.divider_id) {
         if (m.button == .left) app.drag = .{ .graph_divider = id };
         return;
@@ -2763,6 +3187,16 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Details", .action = .{ .command = .@"git.graph_detail" } },
         .{ .label = "Cherry-pick onto HEAD", .action = .{ .command = .@"git.cherry_pick" }, .separator_before = true },
         .{ .label = "Revert", .action = .{ .command = .@"git.revert" } },
+        .{ .label = "Rebase plan\u{2026}", .action = .{ .command = .@"git.rebase_plan" }, .separator_before = true },
+        .{ .label = "Fixup into the commit before", .action = .{ .command = .@"git.fixup" } },
+        .{ .label = "Squash into the commit before", .action = .{ .command = .@"git.squash" } },
+        .{ .label = "Reword\u{2026}", .action = .{ .command = .@"git.reword" } },
+        .{ .label = "Drop", .action = .{ .command = .@"git.drop" } },
+        .{ .label = "Amend with the staged changes", .action = .{ .command = .@"git.amend_to" }, .separator_before = true },
+        .{ .label = "Reset --soft here", .action = .{ .command = .@"git.reset_soft" } },
+        .{ .label = "Reset --mixed here", .action = .{ .command = .@"git.reset_mixed" } },
+        .{ .label = "Reset --hard here\u{2026}", .action = .{ .command = .@"git.reset_hard" } },
+        .{ .label = "Select the branch's commits (*)", .action = .{ .command = .@"git.select_branch" }, .separator_before = true },
         .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" }, .separator_before = true },
         .{ .label = "Sort by next column", .action = .{ .command = .@"git.graph_sort" }, .separator_before = true },
         .{ .label = "Jump to hash…", .action = .{ .command = .@"git.graph_jump_hash" } },
@@ -2959,6 +3393,25 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
             detail.?.pending = false;
         };
     };
+    var marks: ?[]const bool = null;
+    if (g.marks.count() > 0) {
+        const m = arena.alloc(bool, g.commits.len) catch return;
+        @memset(m, false);
+        var it = g.marks.keyIterator();
+        while (it.next()) |ci| if (ci.* < m.len) {
+            m[ci.*] = true;
+        };
+        marks = m;
+    }
+    var plan_actions: ?[]const u8 = null;
+    if (g.plan) |*plan| {
+        const pa = arena.alloc(u8, g.commits.len) catch return;
+        @memset(pa, 0);
+        for (plan.rows.items) |r| if (r.ci < pa.len) {
+            pa[r.ci] = @intFromEnum(r.action) + 1;
+        };
+        plan_actions = pa;
+    }
     const painted = graph_view.draw(ui, id, area, &g.view, .{
         .commits = g.commits,
         .lanes = g.lanes,
@@ -2976,7 +3429,18 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         .branch_col = app.cfg.ui.git_graph_branch_col,
         .author_col = app.cfg.ui.git_graph_author_col,
         .in_progress = inProgressOf(app, g.repo),
+        .marks = marks,
+        .range = g.range(),
+        .plan_actions = plan_actions,
     });
+    if (g.plan) |*plan| {
+        const rows = arena.alloc(graph_view.PlanRowDoc, plan.rows.items.len) catch return;
+        for (rows, plan.rows.items) |*o, r| {
+            const c = g.commits[r.ci];
+            o.* = .{ .action = r.action, .sha = c.hash, .subject = c.subject, .marked = r.marked, .has_message = r.message != null };
+        }
+        plan.scroll = graph_view.drawPlan(ui, id, painted.list, .{ .rows = rows, .cursor = plan.cursor, .base = plan.base, .scroll = plan.scroll });
+    }
     // The drag measures against the whole body under the toolbar.
     g.body = Rect.init(painted.list.x, painted.list.y, painted.list.w + painted.detail.w + @as(u16, if (painted.detail.w > 0) 1 else 0), painted.list.h);
     if (painted.caret) |c| if (focused) {
@@ -2988,6 +3452,13 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test {
+    // The painters and the editor child this module drives; neither is
+    // on the root's list, so their tests ride with this file's.
+    _ = @import("../ui/git_toolbar.zig");
+    _ = @import("../git/sequence_editor.zig");
+}
 
 const Fixture = struct {
     tmp: testing.TmpDir,
@@ -3826,4 +4297,120 @@ test "undo restores each tree-touching op: amend --no-edit, reset --hard with a 
     defer testing.allocator.free(again);
     try testing.expect(std.mem.indexOf(u8, again, "A  c.txt") != null);
     try testing.expect(std.mem.indexOf(u8, again, "M a.txt") != null);
+}
+
+test "the plan modal: space and v select rows, * takes the branch, r opens the plan oldest-first, keys set / cycle / move the actions, esc closes; a row off the first-parent line refuses" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    // The app's own files under `.mnml/` must not dirty the tree.
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "third" });
+    // A side branch: not on main's first-parent line.
+    try f.sh(&.{ "checkout", "-q", "-b", "side", "HEAD~1" });
+    try f.write("d.txt", "four\n");
+    try f.sh(&.{ "add", "d.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "aside" });
+    try f.sh(&.{ "checkout", "-q", "main" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+    const id = f.app.active.?;
+    try testing.expectEqual(@as(usize, 4), g.commits.len);
+    try testing.expect(!g.has_wip);
+
+    // Space marks the cursor's commit; a second space unmarks it.
+    _ = try graphKey(&f.app, id, g, Key.char(' '));
+    try testing.expectEqual(@as(usize, 1), g.marks.count());
+    _ = try graphKey(&f.app, id, g, Key.char(' '));
+    try testing.expectEqual(@as(usize, 0), g.marks.count());
+    // `*`: the branch's first-parent line (no upstream → the whole line).
+    _ = try graphKey(&f.app, id, g, Key.char('*'));
+    try testing.expectEqual(@as(usize, 3), g.marks.count());
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "no upstream"));
+    // Esc clears the selection before it closes the pane.
+    _ = try graphKey(&f.app, id, g, Key.named(.esc));
+    try testing.expectEqual(@as(usize, 0), g.marks.count());
+    try testing.expect(f.app.active == id);
+
+    // `v` from HEAD down one row, then `r`: the plan is second, third —
+    // oldest first — with the cursor on the oldest marked row.
+    const head_row = g.rowOfCommit(headIndex(&f.app, g).?);
+    moveGraphCursor(&f.app, g, head_row);
+    _ = try graphKey(&f.app, id, g, Key.char('v'));
+    try testing.expect(g.anchor != null);
+    // The next first-parent commit down the list (the side branch may sit between).
+    const second_ci = indexOfSha(g, g.commits[headIndex(&f.app, g).?].parents[0]).?;
+    moveGraphCursor(&f.app, g, g.rowOfCommit(second_ci));
+    _ = try graphKey(&f.app, id, g, Key.char('r'));
+    if (g.plan == null) {
+        std.debug.print("\nDBG toast={s} anchor={?} cursor={d} head_row={d}\n", .{ f.app.lastToast() orelse "-", g.anchor, g.cursor, head_row });
+        for (g.order) |ci| std.debug.print("  row {s} {s}\n", .{ g.commits[ci].short(), g.commits[ci].subject });
+    }
+    try testing.expect(g.plan != null);
+    const plan = &g.plan.?;
+    // With `aside` between the two rows the range holds three; the plan
+    // still walks the first-parent line, which `aside` is not on.
+    if (plan.rows.items.len == 0) return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("second", g.commits[plan.rows.items[0].ci].subject);
+    try testing.expectEqualStrings("third", g.commits[plan.rows.items[1].ci].subject);
+    try testing.expectEqual(@as(usize, 2), plan.rows.items.len);
+    try testing.expectEqualStrings(g.commits[plan.rows.items[0].ci].parents[0], plan.base.?);
+    try testing.expectEqual(@as(usize, 0), plan.cursor);
+    var txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "Rebase plan \u{B7} 2 commits onto") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25B6} pick   ") != null);
+    testing.allocator.free(txt);
+    // Keys: j down, s squash, ← back to fixup, → to squash again, K moves it up.
+    _ = try graphKey(&f.app, id, g, Key.char('j'));
+    try testing.expectEqual(@as(usize, 1), plan.cursor);
+    _ = try graphKey(&f.app, id, g, Key.char('s'));
+    try testing.expectEqual(parse.TodoAction.squash, plan.rows.items[1].action);
+    _ = try graphKey(&f.app, id, g, Key.named(.right));
+    try testing.expectEqual(parse.TodoAction.fixup, plan.rows.items[1].action);
+    _ = try graphKey(&f.app, id, g, Key.named(.left));
+    try testing.expectEqual(parse.TodoAction.squash, plan.rows.items[1].action);
+    _ = try graphKey(&f.app, id, g, Key.char('K'));
+    try testing.expectEqual(@as(usize, 0), plan.cursor);
+    try testing.expectEqualStrings("third", g.commits[plan.rows.items[0].ci].subject);
+    try testing.expectEqual(parse.TodoAction.squash, plan.rows.items[0].action);
+    // The graph rows behind carry the letters.
+    txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C} s") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C} p") != null);
+    testing.allocator.free(txt);
+    // Enter with a squash first refuses: nothing before it.
+    try testing.expectError(error.CommandFailed, runPlan(&f.app, g));
+    try testing.expect(g.plan != null);
+    _ = try graphKey(&f.app, id, g, Key.char('J'));
+    _ = try graphKey(&f.app, id, g, Key.char('d'));
+    try testing.expectEqual(parse.TodoAction.drop, plan.rows.items[1].action);
+    _ = try graphKey(&f.app, id, g, Key.named(.esc));
+    try testing.expect(g.plan == null);
+    try testing.expect(f.app.active == id);
+
+    // A commit off the first-parent line: the plan refuses to build.
+    g.clearSelection();
+    var aside: usize = 0;
+    for (g.commits, 0..) |c, i| if (std.mem.eql(u8, c.subject, "aside")) {
+        aside = i;
+    };
+    try g.marks.put(g.gpa, @intCast(aside), {});
+    try testing.expectError(error.CommandFailed, openPlan(&f.app, g));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "first-parent") != null);
+    f.app.diag.clear();
+    try testing.expect(refsName("HEAD -> main, origin/main, tag: v1", "origin/main"));
+    try testing.expect(refsName("HEAD -> main", "main"));
+    try testing.expect(!refsName("HEAD -> main, origin/main", "main2"));
 }
