@@ -11,6 +11,12 @@
 //! `splice` is the pure core (text in, text out); `persistScalar` wraps
 //! it with the read, the backup to `<root>/backups/config.<ts>.zon`
 //! (pruned to `max_backups`), and the write.
+//!
+//! // changed (zon-view): a key of the form `[i]` steps into the i-th
+//! element of a list literal (`.workspaces`, `[1]`, `group`), so the
+//! ZON view pane can edit a field inside a list element or swap a
+//! union's payload in place. `persistText` is the same backup + write
+//! for a whole file the pane has already spliced.
 
 const std = @import("std");
 const Io = std.Io;
@@ -27,6 +33,10 @@ pub const SpliceError = error{
     ParseFailed,
     /// A key on the path names something that is not a `.{ … }`.
     NotAStruct,
+    /// A `[i]` key on something that is not a list literal.
+    NotAList,
+    /// A `[i]` key past the list's end.
+    NoSuchElement,
     /// The top level is not a struct literal.
     NoRoot,
     EmptyKeyPath,
@@ -72,23 +82,40 @@ fn applyEdits(gpa: Allocator, text: []const u8, edits: []Edit) Allocator.Error![
 
 /// Returns whether anything needs to change.
 fn walk(gpa: Allocator, arena: Allocator, ast: Ast, node: Ast.Node.Index, keys: []const []const u8, literal: []const u8, edits: *std.ArrayList(Edit)) SpliceError!bool {
-    var buf: [2]Ast.Node.Index = undefined;
-    const init = ast.fullStructInit(&buf, node) orelse return if (node == ast.rootDecls()[0]) error.NoRoot else error.NotAStruct;
     const key = keys[0];
+    var buf: [2]Ast.Node.Index = undefined;
+    if (isIndexKey(key)) {
+        // `[i]`: the i-th element of a list literal.
+        const list = ast.fullArrayInit(&buf, node) orelse return error.NotAList;
+        const i = std.fmt.parseInt(usize, key[1 .. key.len - 1], 10) catch return error.NoSuchElement;
+        if (i >= list.ast.elements.len) return error.NoSuchElement;
+        const elem = list.ast.elements[i];
+        if (keys.len == 1) return replaceNode(gpa, ast, elem, literal, edits);
+        return walk(gpa, arena, ast, elem, keys[1..], literal, edits);
+    }
+    const init = ast.fullStructInit(&buf, node) orelse return if (node == ast.rootDecls()[0]) error.NoRoot else error.NotAStruct;
     for (init.ast.fields) |field| {
         if (!fieldNameIs(ast, field, key)) continue;
-        if (keys.len == 1) {
-            const start = ast.tokenStart(ast.firstToken(field));
-            const last = ast.lastToken(field);
-            const end = ast.tokenStart(last) + ast.tokenSlice(last).len;
-            if (std.mem.eql(u8, ast.source[start..end], literal)) return false;
-            try edits.append(gpa, .{ .start = start, .end = end, .text = literal });
-            return true;
-        }
+        if (keys.len == 1) return replaceNode(gpa, ast, field, literal, edits);
         return walk(gpa, arena, ast, field, keys[1..], literal, edits);
     }
     try insert(gpa, arena, ast, node, init, keys, literal, edits);
     return true;
+}
+
+/// Replace `node`'s bytes with `literal`; false when they already match.
+fn replaceNode(gpa: Allocator, ast: Ast, node: Ast.Node.Index, literal: []const u8, edits: *std.ArrayList(Edit)) SpliceError!bool {
+    const start = ast.tokenStart(ast.firstToken(node));
+    const last = ast.lastToken(node);
+    const end = ast.tokenStart(last) + ast.tokenSlice(last).len;
+    if (std.mem.eql(u8, ast.source[start..end], literal)) return false;
+    try edits.append(gpa, .{ .start = start, .end = end, .text = literal });
+    return true;
+}
+
+/// `[i]` — a list element's key. A struct key can never start with `[`.
+pub fn isIndexKey(key: []const u8) bool {
+    return key.len >= 3 and key[0] == '[' and key[key.len - 1] == ']';
 }
 
 /// `.name` or `.@"name"` — the token two back from the field's value.
@@ -223,6 +250,38 @@ pub fn serializeLiteral(arena: Allocator, value: anytype) Allocator.Error![]u8 {
     return folded.toOwnedSlice(arena);
 }
 
+/// A list literal from its elements' bytes — what a reorder, an add or
+/// a remove writes over the whole list. `multiline` lays one element
+/// per line at `indent` (the closing brace one indent unit out), else
+/// `.{ a, b }`. Comments that sat between the old elements do not
+/// come along: the elements are the only bytes kept.
+pub fn listLiteral(arena: Allocator, elements: []const []const u8, multiline: bool, indent: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    if (elements.len == 0) {
+        try out.appendSlice(arena, ".{}");
+        return out.toOwnedSlice(arena);
+    }
+    if (!multiline) {
+        try out.appendSlice(arena, ".{ ");
+        for (elements, 0..) |e, i| {
+            if (i > 0) try out.appendSlice(arena, ", ");
+            try out.appendSlice(arena, e);
+        }
+        try out.appendSlice(arena, " }");
+        return out.toOwnedSlice(arena);
+    }
+    const outer = if (indent.len >= indent_unit.len) indent[0 .. indent.len - indent_unit.len] else "";
+    try out.appendSlice(arena, ".{\n");
+    for (elements) |e| {
+        try out.appendSlice(arena, indent);
+        try out.appendSlice(arena, e);
+        try out.appendSlice(arena, ",\n");
+    }
+    try out.appendSlice(arena, outer);
+    try out.append(arena, '}');
+    return out.toOwnedSlice(arena);
+}
+
 // ─── the file ────────────────────────────────────────────────────────────
 
 pub const Outcome = enum { unchanged, written };
@@ -245,12 +304,33 @@ pub fn persistScalar(gpa: Allocator, io: Io, path: []const u8, key_path: []const
 
     const new_text = (try splice(gpa, text, key_path, literal)) orelse return .unchanged;
     defer gpa.free(new_text);
+    try writeBacked(gpa, io, path, if (existed) text else null, new_text);
+    return .written;
+}
 
+/// Write `new_text` over `path` with the same backup `persistScalar`
+/// makes — for a caller that spliced the text itself (the ZON view
+/// pane's save). Unchanged bytes are a no-op.
+pub fn persistText(gpa: Allocator, io: Io, path: []const u8, new_text: []const u8) PersistError!Outcome {
+    const cwd = Io.Dir.cwd();
+    const old: ?[]u8 = cwd.readFileAlloc(io, path, gpa, .limited(16 * 1024 * 1024)) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound => null,
+        else => return error.ReadFailed,
+    };
+    defer if (old) |o| gpa.free(o);
+    if (old) |o| if (std.mem.eql(u8, o, new_text)) return .unchanged;
+    try writeBacked(gpa, io, path, old, new_text);
+    return .written;
+}
+
+/// The backup (of `prev`, when the file existed) and the write.
+fn writeBacked(gpa: Allocator, io: Io, path: []const u8, prev: ?[]const u8, new_text: []const u8) PersistError!void {
+    const cwd = Io.Dir.cwd();
     const dir = std.fs.path.dirname(path) orelse ".";
-    if (existed) backup(gpa, io, dir, text) catch {}; // best effort: a lost backup must not block a save
+    if (prev) |p| backup(gpa, io, dir, p) catch {}; // best effort: a lost backup must not block a save
     cwd.createDirPath(io, dir) catch return error.WriteFailed;
     cwd.writeFile(io, .{ .sub_path = path, .data = new_text }) catch return error.WriteFailed;
-    return .written;
 }
 
 fn backup(gpa: Allocator, io: Io, root: []const u8, text: []const u8) !void {
@@ -473,6 +553,78 @@ test "a fresh file grows from .{} and deep paths nest" {
         \\}
         \\
     , got);
+}
+
+const list_fixture: [:0]const u8 =
+    \\.{
+    \\    // where I work
+    \\    .workspaces = .{
+    \\        .{ .name = "a", .path = "/a" },
+    \\        .{ .name = "b", .path = "/b", .group = "g" }, // b
+    \\    },
+    \\    .ui = .{ .todo_keywords = .{ "TODO", "FIXME" }, .md_preview_engine = .{ .custom = "glow" } },
+    \\}
+    \\
+;
+
+test "a [i] key steps into a list element; a field inside it splices in place" {
+    const got = (try splice(t.allocator, list_fixture, &.{ "workspaces", "[1]", "group" }, "\"work\"")).?;
+    defer t.allocator.free(got);
+    try t.expectEqualStrings(
+        \\.{
+        \\    // where I work
+        \\    .workspaces = .{
+        \\        .{ .name = "a", .path = "/a" },
+        \\        .{ .name = "b", .path = "/b", .group = "work" }, // b
+        \\    },
+        \\    .ui = .{ .todo_keywords = .{ "TODO", "FIXME" }, .md_preview_engine = .{ .custom = "glow" } },
+        \\}
+        \\
+    , got);
+    // a missing field inside an element is inserted there
+    const added = (try splice(t.allocator, list_fixture, &.{ "workspaces", "[0]", "group" }, "\"g\"")).?;
+    defer t.allocator.free(added);
+    try t.expect(std.mem.indexOf(u8, added, ".{ .name = \"a\", .path = \"/a\", .group = \"g\" },") != null);
+    // a whole element, and a whole string element
+    const elem = (try splice(t.allocator, list_fixture, &.{ "ui", "todo_keywords", "[0]" }, "\"XXX\"")).?;
+    defer t.allocator.free(elem);
+    try t.expect(std.mem.indexOf(u8, elem, ".todo_keywords = .{ \"XXX\", \"FIXME\" }") != null);
+    try t.expect((try splice(t.allocator, list_fixture, &.{ "ui", "todo_keywords", "[1]" }, "\"FIXME\"")) == null);
+    // a union's payload swaps in place: the whole union literal is the value
+    const swapped = (try splice(t.allocator, list_fixture, &.{ "ui", "md_preview_engine" }, ".glow")).?;
+    defer t.allocator.free(swapped);
+    try t.expect(std.mem.indexOf(u8, swapped, ".md_preview_engine = .glow }") != null);
+    try t.expect(std.mem.indexOf(u8, swapped, "// where I work") != null);
+    // the errors
+    try t.expectError(error.NoSuchElement, splice(t.allocator, list_fixture, &.{ "workspaces", "[2]", "group" }, "1"));
+    try t.expectError(error.NotAList, splice(t.allocator, list_fixture, &.{ "ui", "[0]" }, "1"));
+    try t.expectError(error.NotAStruct, splice(t.allocator, list_fixture, &.{ "workspaces", "name" }, "1"));
+}
+
+test "listLiteral renders the two layouts" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try t.expectEqualStrings(".{}", try listLiteral(a, &.{}, true, "    "));
+    try t.expectEqualStrings(".{ \"a\", \"b\" }", try listLiteral(a, &.{ "\"a\"", "\"b\"" }, false, ""));
+    try t.expectEqualStrings(".{\n        1,\n        .{ .x = 2 },\n    }", try listLiteral(a, &.{ "1", ".{ .x = 2 }" }, true, "        "));
+}
+
+test "persistText writes with a backup and no-ops on the same bytes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const path = try std.fs.path.join(t.allocator, &.{ buf[0..n], "x.zon" });
+    defer t.allocator.free(path);
+    try t.expectEqual(Outcome.written, try persistText(t.allocator, t.io, path, ".{ .a = 1 }\n"));
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "backups", .{}));
+    try t.expectEqual(Outcome.unchanged, try persistText(t.allocator, t.io, path, ".{ .a = 1 }\n"));
+    try t.expectEqual(Outcome.written, try persistText(t.allocator, t.io, path, ".{ .a = 2 }\n"));
+    try tmp.dir.access(t.io, "backups", .{});
+    const now = try tmp.dir.readFileAlloc(t.io, "x.zon", t.allocator, .unlimited);
+    defer t.allocator.free(now);
+    try t.expectEqualStrings(".{ .a = 2 }\n", now);
 }
 
 test "refuses to write into a file it cannot parse or a non-struct" {
