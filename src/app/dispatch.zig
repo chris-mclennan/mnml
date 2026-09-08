@@ -38,6 +38,7 @@ const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const script_diag = @import("../scripting/diag.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
@@ -1809,7 +1810,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         if (app.overlay != .none) closeOverlay(app);
                         return context_menus.openToastMenu(app, at, m.x, m.y);
                     }
+                    // A script error's toast: the click jumps to its line.
+                    const is_script = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, script_diag.toast_id) else false;
                     app.dismissToastAt(at);
+                    if (is_script) try script_diag.jump(app);
                 }
                 return;
             }

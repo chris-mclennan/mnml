@@ -261,6 +261,7 @@ fn cmdRegister(L: *State) !i32 {
         error.OutOfMemory => return error.OutOfMemory,
         error.ShadowsBuiltin => L.raiseErrorStr("mnml.command: `%s` shadows a built-in command", .{full.ptr}),
     };
+    try c.self.noteOrigin(.command, full);
     _ = L.pushString(full);
     return 1;
 }
@@ -280,6 +281,7 @@ fn map(L: *State) !i32 {
         error.OutOfMemory => return error.OutOfMemory,
         error.ShadowsBuiltin => unreachable, // `user.map_N` is never a built-in
     };
+    try c.self.noteOrigin(.command, full);
     _ = L.pushString(full);
     return 1;
 }
@@ -296,6 +298,9 @@ fn on(L: *State) !i32 {
         c.self.unref(r);
         return err;
     };
+    // One row per hook name: a second subscriber to the same hook is
+    // the same row, at the later line.
+    try c.self.noteOrigin(.hook, name);
     return 0;
 }
 
@@ -553,6 +558,7 @@ fn statuslineSegment(L: *State) !i32 {
     const side: lua_mod.Side = if (strField(L, 1, "side")) |s| (std.meta.stringToEnum(lua_mod.Side, s) orelse L.raiseErrorStr("mnml.statusline.segment: side is `left` or `right`", .{})) else .right;
     const func = needFn(c.self, 1, "fn");
     const gpa = c.self.gpa;
+    try c.self.noteOrigin(.segment, id);
     for (c.self.segments.items) |*seg| if (std.mem.eql(u8, seg.id, id)) {
         c.self.unref(seg.func);
         seg.func = func;
@@ -582,6 +588,7 @@ fn pickerSource(L: *State) !i32 {
     const title = strField(L, 1, "title") orelse id;
     const items = needFn(c.self, 1, "items");
     const gpa = c.self.gpa;
+    try c.self.noteOrigin(.source, id);
     if (c.self.findSource(id)) |src| {
         c.self.unref(src.items);
         src.items = items;

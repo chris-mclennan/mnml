@@ -99,6 +99,7 @@ const marketplace = @import("app/marketplace.zig");
 const http_parse = @import("http/parse.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
+const cmd_script = @import("app/cmd_script.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
@@ -993,6 +994,8 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        // A saved `init.lua` reloads the scripts (`cmd_script.zig`).
+        try app.hooks.subscribe(.save_post, .{ .zig = &cmd_script.onSavePost });
         // The session comes back before anything else the startup hook
         // does, so the update toast and the picker land on the restored frame.
         try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
@@ -2273,6 +2276,7 @@ test {
     _ = @import("ui/editor_view.zig");
     _ = @import("scripting/lua.zig");
     _ = @import("scripting/api.zig");
+    _ = @import("scripting/diag.zig");
     _ = @import("app/script_pane.zig");
     _ = @import("app/cmd_script.zig");
     _ = @import("ui/script_view.zig");

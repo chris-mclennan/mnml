@@ -69,28 +69,34 @@ const Value = jsonrpc.Value;
 const FileDiags = struct {
     arena: alloc.SnapshotArena,
     lint_arena: alloc.SnapshotArena,
+    /// // changed (lua-track): a third source — the script layer's own
+    /// error for an `init.lua` (`scripting/diag.zig`), not a server.
+    script_arena: alloc.SnapshotArena,
     server_items: []types.Diagnostic = &.{},
     lint_items: []types.Diagnostic = &.{},
+    script_items: []types.Diagnostic = &.{},
     items: []types.Diagnostic = &.{},
 
     fn create(gpa: Allocator) Allocator.Error!*FileDiags {
         const fd = try gpa.create(FileDiags);
-        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa) };
+        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa), .script_arena = alloc.SnapshotArena.init(gpa) };
         return fd;
     }
 
     fn destroy(self: *FileDiags, gpa: Allocator) void {
         self.arena.deinit();
         self.lint_arena.deinit();
+        self.script_arena.deinit();
         gpa.free(self.items);
         gpa.destroy(self);
     }
 
-    /// Rebuild `items` from both sources.
+    /// Rebuild `items` from every source.
     fn merge(self: *FileDiags, gpa: Allocator) Allocator.Error!void {
-        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len);
+        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len + self.script_items.len);
         @memcpy(merged[0..self.server_items.len], self.server_items);
-        @memcpy(merged[self.server_items.len..], self.lint_items);
+        @memcpy(merged[self.server_items.len .. self.server_items.len + self.lint_items.len], self.lint_items);
+        @memcpy(merged[self.server_items.len + self.lint_items.len ..], self.script_items);
         std.mem.sort(types.Diagnostic, merged, {}, struct {
             fn lt(_: void, a: types.Diagnostic, b: types.Diagnostic) bool {
                 if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
@@ -918,6 +924,17 @@ pub fn applyLintDiagnostics(app: *App, path: []const u8, list: []const types.Dia
     fd.lint_arena.reset();
     fd.lint_items = &.{};
     fd.lint_items = try copyDiagnostics(fd.lint_arena.allocator(), list);
+    try finishDiagnostics(app, path, fd);
+}
+
+/// // changed (lua-track): the script layer's error for `path` (an
+/// `init.lua`, `scripting/diag.zig`): its list replaced wholesale; the
+/// server's and the linter's stay.
+pub fn applyScriptDiagnostics(app: *App, path: []const u8, list: []const types.Diagnostic) Allocator.Error!void {
+    const fd = try fileDiags(app, path);
+    fd.script_arena.reset();
+    fd.script_items = &.{};
+    fd.script_items = try copyDiagnostics(fd.script_arena.allocator(), list);
     try finishDiagnostics(app, path, fd);
 }
 

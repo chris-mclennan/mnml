@@ -1,0 +1,32 @@
+# Lua (D10): saving an init.lua reloads it on the spot, and a script
+# error is a diagnostic on its line — the gutter dot, the DIAGNOSTICS
+# row with the message and the location — cleared by the save that
+# fixes it. The runner's temp workspace is trusted, so the workspace
+# file runs.
+write .mnml/init.lua "mnml.command{ id = 'one', run = function() end }\n"
+command script.reload
+expect screen contains "scripts: reloaded — 1 command, 0 hooks"
+open .mnml/init.lua
+command editor.select_all
+type "mnml.command{ id = 'two', run = function() end }"
+key enter
+type "mnml.nope()"
+key ctrl+s
+expect screen contains "init.lua: .mnml/init.lua:2: attempt to call a nil value"
+expect screen contains "●  2 mnml.nope()"
+command lsp.diagnostics
+expect screen contains "DIAGNOSTICS (1)"
+expect screen contains "init.lua ✗1"
+expect screen contains "✗ attempt to call"
+expect screen contains "nit.lua:2"
+# The new command registered before the line that failed is live.
+command user.two
+# The fix (Esc puts the keys back in the editor): the diagnostic and
+# the DIAGNOSTICS row go.
+key esc
+command editor.select_all
+type "mnml.command{ id = 'two', run = function() end }"
+key ctrl+s
+expect screen contains "scripts: reloaded — 1 command, 0 hooks"
+expect screen lacks "attempt to call a nil value"
+expect screen contains "DIAGNOSTICS (0)"
