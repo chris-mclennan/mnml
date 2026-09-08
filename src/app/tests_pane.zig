@@ -795,6 +795,16 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, runner: Runner, cwd
         result.destroy(gpa);
         return;
     };
+    // The App's PATH, not this process's, decides which tool runs
+    // (`runners.pathOf`); a tool that is not on it fails as before.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(io, env, &where, argv[0])) |abs| {
+        const owned = arena.dupe(u8, abs) catch {
+            result.destroy(gpa);
+            return;
+        };
+        @constCast(argv)[0] = owned;
+    }
     const proc = std.process.run(gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = cwd },

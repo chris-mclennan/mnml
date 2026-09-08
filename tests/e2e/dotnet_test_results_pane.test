@@ -1,0 +1,24 @@
+# `dotnet.test` runs the shim's `dotnet test` (tools/shims/dotnet) in
+# the results pane: one passed, one failed with its message, one
+# skipped, the tool's own tally line, the failing test's file from its
+# stack frame. Enter on the failure opens the file at that line.
+# env: PATH=${MNML_SHIMS}:${PATH}
+write Tests/Tests.csproj "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n"
+write Tests/CalcTests.cs "using Xunit;\n\nnamespace Acme.Tests;\n\npublic class CalcTests\n{\n    [Fact]\n    public void Adds()\n    {\n        Assert.Equal(2, 1 + 1);\n    }\n\n    [Fact(Skip = \"later\")]\n    public void Later()\n    {\n    }\n\n    [Fact]\n    public void Divides()\n    {\n        Assert.Equal(2, 6 / 2);\n    }\n}\n"
+open Tests/CalcTests.cs
+command view.toggle_tree
+
+command dotnet.test
+expect pane tests
+expect screen contains "dotnet test --nologo"
+expect screen contains "Failed!  - Failed:     1, Passed:     1, Skipped:     1"
+expect screen contains "Divides"
+expect screen contains "Adds"
+expect screen contains "Later"
+expect screen contains "Assert.Equal() Failure: Values differ"
+expect screen contains "CalcTests.cs"
+expect screen contains "tests: 1 failed, 1 passed, 1 skipped"
+
+# The cursor lands on the failure; Enter opens its file at the frame's line.
+key enter
+expect pane CalcTests.cs

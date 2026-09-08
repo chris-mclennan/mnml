@@ -1,0 +1,16 @@
+# A .cs file: the c_sharp grammar highlights it, and the outline lists
+# the class, its property and its methods with their kinds.
+write Calc.cs "using System;\n\nnamespace Acme;\n\npublic class Calc\n{\n    public int Count { get; set; }\n\n    public int Add(int a, int b)\n    {\n        var label = \"sum\";\n        return a + b;\n    }\n\n    public int Sub(int a, int b) => a - b;\n}\n"
+open Calc.cs
+expect pane Calc.cs
+expect screen contains "public class Calc"
+expect highlights at_least 12
+
+command outline.show
+wait 100
+expect screen contains "Calc"
+expect screen contains "Count"
+expect screen contains "prop"
+expect screen contains "Add"
+expect screen contains "Sub"
+expect screen contains "method"

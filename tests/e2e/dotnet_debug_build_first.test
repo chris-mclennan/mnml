@@ -1,0 +1,18 @@
+# `dotnet.debug` builds first: `dotnet build` (the corpus shim) runs in
+# a task pane, and only its exit 0 starts the session — on the
+# built-in netcoredbg row, which is not on this PATH, so the launch
+# ends in the spawn toast. A .cs with no project is a reason, not a
+# build.
+# env: PATH=${MNML_SHIMS}:${PATH}
+write src/App/App.csproj "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n"
+write src/App/Program.cs "Console.WriteLine(\"hi\");\n"
+write notes.txt "not a program\n"
+open notes.txt
+command dotnet.debug
+expect screen contains "dotnet.debug: notes.txt is not a .cs file"
+
+open src/App/Program.cs
+command dotnet.debug
+expect screen contains "the debugger starts when it succeeds"
+expect screen contains "Build succeeded."
+expect screen contains "dap spawn failed: netcoredbg not found on PATH"

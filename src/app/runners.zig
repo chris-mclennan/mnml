@@ -129,24 +129,32 @@ pub fn onPath(app: *App, bin: []const u8) bool {
 /// extensions, the way `CreateProcessW` and `cmd.exe` resolve `git`
 /// to `git.exe` and `npm` to `npm.cmd`.
 pub fn findOnPath(io: Io, env: *const std.process.Environ.Map, bin: []const u8) bool {
-    if (std.fs.path.dirname(bin) != null) {
-        _ = Io.Dir.cwd().statFile(io, bin, .{}) catch return false;
-        return true;
-    }
-    const path = env.get("PATH") orelse return false;
-    const pathext = env.get("PATHEXT") orelse "";
     var buf: [std.fs.max_path_bytes]u8 = undefined;
+    return pathOf(io, env, &buf, bin) != null;
+}
+
+/// Where `findOnPath` found `bin`: `<dir>/<bin><ext>` in `buf`, or the
+/// name itself when it carries a directory. A worker that spawns
+/// without a shell needs this — `std.process.run` resolves a bare
+/// argv[0] against the process's own PATH, not the map it is given.
+pub fn pathOf(io: Io, env: *const std.process.Environ.Map, buf: *[std.fs.max_path_bytes]u8, bin: []const u8) ?[]const u8 {
+    if (std.fs.path.dirname(bin) != null) {
+        _ = Io.Dir.cwd().statFile(io, bin, .{}) catch return null;
+        return bin;
+    }
+    const path = env.get("PATH") orelse return null;
+    const pathext = env.get("PATHEXT") orelse "";
     var it = std.mem.splitScalar(u8, path, std.fs.path.delimiter);
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
-        if (exists(io, dir, bin, &buf)) return true;
+        if (exists(io, dir, bin, buf)) return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, bin }) catch null;
         var exts = std.mem.splitScalar(u8, pathext, ';');
         while (exts.next()) |ext| {
             if (ext.len == 0) continue;
-            if (existsExt(io, dir, bin, ext, &buf)) return true;
+            if (existsExt(io, dir, bin, ext, buf)) return std.fmt.bufPrint(buf, "{s}{c}{s}{s}", .{ dir, std.fs.path.sep, bin, ext }) catch null;
         }
     }
-    return false;
+    return null;
 }
 
 // ─── running ────────────────────────────────────────────────────────────
@@ -1109,4 +1117,13 @@ test "findOnPath: the platform delimiter splits PATH; PATHEXT adds the Windows e
     const abs = try std.fs.path.join(t.allocator, &.{ root, "plain" });
     defer t.allocator.free(abs);
     try t.expect(findOnPath(t.io, &env, abs));
+    // `pathOf` says where: the directory it was found in, the extension it took.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    try t.expectEqualStrings(abs, pathOf(t.io, &env, &where, "plain").?);
+    // The PATHEXT spelling comes back (`tool.CMD`); a case-insensitive
+    // filesystem finds the lower-cased file under it.
+    const cmd = try std.fs.path.join(t.allocator, &.{ root, "tool.cmd" });
+    defer t.allocator.free(cmd);
+    try t.expect(std.ascii.eqlIgnoreCase(cmd, pathOf(t.io, &env, &where, "tool").?));
+    try t.expect(pathOf(t.io, &env, &where, "nope") == null);
 }
