@@ -181,6 +181,18 @@ Ordered by value to an IDE user. Surfaces: **graph** (graph tab + detail column)
 | 14 | **Remotes + submodules management** | branches REMOTE rows (add / remove / set URL), a SUBMODULES section | `remote add/remove/set-url`, `submodule status/update --init/add/deinit` | M | `parse.parseRemotes` exists; add `parseSubmodules` from `submodule status`; entering a submodule = `git.switch_repo` on its path |
 | 15 | **Small knobs**: diff context size, whitespace toggle, rename threshold, `commit --no-verify`, commit via editor buffer, ignore / exclude file, external difftool, per-tag push with message | diff toolbar chips; commit box; status row menu; TAGS menu | `-U<n>`, `-w`, `-M<n>%`, `--no-verify`, `GIT_EDITOR`, append to `.gitignore`, `difftool`, `tag -a -m`, `push origin <tag>` | S each | `DiffPane` gains `context: u8`, `whitespace: bool` and the worker reads them; the commit box gets a `--no-verify` chip |
 
+**Landed (2026-09-08, branch `git-more2`):** #6 (`DiffScope.range`, the
+graph's `W` compare base and its tint, *Diff against current* on the
+branches panel), #7 (rename, fast-forward, set upstream, force
+checkout, delete on the remote, new branch / worktree from a commit or
+tag, `push --force-with-lease` behind a confirm that names the risk —
+the deliberate change from the Rust refusal), #9 (`StashPush` —
+staged only / one file / keep-index; a stash's files pane with a range
+diff on Enter; branch from stash; rename through `stash store -m`),
+#10 (the command log: every child, its cwd, exit, duration and first
+stderr line, newest first; a failed op's toast links to its entry;
+Enter re-runs a read-only command). See `docs/WAVE3_CONTRACT.md`.
+
 ## 4. Three things to do better than lazygit — not just match
 
 ### 4.1 Resolve conflicts in the real editor, three-way, with the diff pane's Split view

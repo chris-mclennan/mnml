@@ -123,6 +123,29 @@ pub const table = .{
     .@"git.reset_soft" = &resetSoft,
     .@"git.reset_mixed" = &resetMixed,
     .@"git.reset_hard" = &resetHard,
+    .@"git.compare_base" = &compareBase,
+    .@"git.diff_against_base" = &diffAgainstBase,
+    .@"git.graph_diff" = &graphDiff,
+    .@"git.diff_against_current" = &diffAgainstCurrent,
+    .@"git.branch_rename" = &branchRename,
+    .@"git.fast_forward" = &fastForward,
+    .@"git.set_upstream" = &setUpstream,
+    .@"git.checkout_force" = &checkoutForce,
+    .@"git.delete_remote_branch" = &deleteRemoteBranch,
+    .@"git.new_branch_from" = &newBranchFrom,
+    .@"git.worktree_add_from" = &worktreeAddFrom,
+    .@"git.push_force" = &pushForce,
+    .@"git.stash_staged" = &stashStaged,
+    .@"git.stash_file" = &stashFile,
+    .@"git.stash_keep_index" = &stashKeepIndex,
+    .@"git.stash_show" = &stashShow,
+    .@"git.stash_show_diff" = &stashShowDiff,
+    .@"git.stash_branch" = &stashBranch,
+    .@"git.stash_rename" = &stashRename,
+    .@"git.command_log" = &commandLog,
+    .@"git.command_log_rerun" = &commandLogRerun,
+    .@"git.graph_detail_open" = &graphDetailOpen,
+    .@"git.graph_file_at_rev" = &graphFileAtRev,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -352,12 +375,14 @@ fn blameToggle(app: *App) CommandError!void {
 
 // ─── staging ────────────────────────────────────────────────────────────
 
-/// The status pane's cursor row when one has focus.
+/// The status pane's cursor row when one has focus; the graph's
+/// working-tree file row when its detail column has the keys.
 fn selectedRow(app: *App) CommandError!?git.Row {
     const id = app.active orelse return null;
     const p = app.panes.get(id) orelse return null;
     return switch (p.*) {
         .git_status => |*s| try git.statusPaneRow(app, s),
+        .git_graph => try git.wipDetailRow(app),
         else => null,
     };
 }
@@ -554,6 +579,82 @@ fn stash(app: *App) CommandError!void {
     git.openPrompt(app, .stash, "Stash message (optional)");
 }
 
+// ─── the command log (git-more2) ────────────────────────────────────────
+
+/// The pane, newest first; at the failed-op toast's entry when one is
+/// waiting (`State.log_link_seq`).
+fn commandLog(app: *App) CommandError!void {
+    try git.openCommandLog(app, null);
+}
+
+/// Enter's twin for the log pane's row menu.
+fn commandLogRerun(app: *App) CommandError!void {
+    const id = app.active orelse return error.NoActivePane;
+    const p = app.panes.get(id) orelse return error.NoActivePane;
+    const l = switch (p.*) {
+        .list => |*l| if (l.kind == .git_log) l else return app.diag.fail(arena(app), "command log: not the log pane", .{}),
+        else => return app.diag.fail(arena(app), "command log: not the log pane", .{}),
+    };
+    const e = (try l.entryAt(arena(app), l.cursor)) orelse return;
+    try git.logEnter(app, e.*);
+}
+
+// ─── stash depth (git-more2) ────────────────────────────────────────────
+
+fn stashStaged(app: *App) CommandError!void {
+    try requireStaged(app, "stash staged");
+    try git.stashWith(app, .{ .staged_only = true }, "Stash the index only: message (optional)");
+}
+
+/// The status pane's row when it has the focus, else the active buffer's file.
+fn stashFile(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    const row = try rowOrActiveFile(app, repo);
+    const path = try app.gpa.dupe(u8, row.path);
+    errdefer app.gpa.free(path);
+    try git.stashWith(app, .{ .path = path }, "Stash this file: message (optional)");
+}
+
+fn stashKeepIndex(app: *App) CommandError!void {
+    try git.stashWith(app, .{ .keep_index = true }, "Stash keeping the index: message (optional)");
+}
+
+/// The STASHES row's files when the panel has one, else a picker.
+fn stashRow(app: *App) std.mem.Allocator.Error!?[]const u8 {
+    if (app.focus == .panel and app.focus.panel == .git) return git_palette.cursorStash(app);
+    return null;
+}
+
+fn stashShow(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (try stashRow(app)) |ref| return git.stashShow(app, ref);
+    try git.askList(app, repo, .stashes, .stash_show);
+}
+
+/// Enter's twin for the files pane's row menu.
+fn stashShowDiff(app: *App) CommandError!void {
+    const id = app.active orelse return error.NoActivePane;
+    const p = app.panes.get(id) orelse return error.NoActivePane;
+    const l = switch (p.*) {
+        .list => |*l| if (l.kind == .stash_files) l else return app.diag.fail(arena(app), "stash: not the files pane", .{}),
+        else => return app.diag.fail(arena(app), "stash: not the files pane", .{}),
+    };
+    const e = (try l.entryAt(arena(app), l.cursor)) orelse return;
+    try git.stashFileEnter(app, e.*);
+}
+
+fn stashBranch(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (try stashRow(app)) |ref| return git.stashBranchPrompt(app, ref);
+    try git.askList(app, repo, .stashes, .stash_branch);
+}
+
+fn stashRename(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (try stashRow(app)) |ref| return git.stashRenamePrompt(app, ref, git_palette.cursorStashMessage(app) orelse "");
+    try git.askList(app, repo, .stashes, .stash_rename);
+}
+
 fn stashPop(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .{ .stash_pop = null });
@@ -710,6 +811,99 @@ fn resetHard(app: *App) CommandError!void {
     try reset(app, .hard);
 }
 
+// ─── diff any two refs (git-more2) ──────────────────────────────────────
+
+/// `W` on the graph: the selected commit is the compare base (again clears).
+fn compareBase(app: *App) CommandError!void {
+    try git.toggleCompareBase(app, try requireGraph(app));
+}
+
+/// The diff pane on `base..selected`.
+fn diffAgainstBase(app: *App) CommandError!void {
+    try git.diffAgainstBase(app, try requireGraph(app));
+}
+
+/// The selected commit's own diff (Enter), whatever the base.
+fn graphDiff(app: *App) CommandError!void {
+    try git.showSelectedCommit(app, try requireGraph(app));
+}
+
+/// The branches panel's row when it has the focus, else a picker: that
+/// branch against the checked-out one.
+fn diffAgainstCurrent(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.diffAgainstCurrent(app, repo, b);
+    }
+    try git.askBranches(app, repo, .diff_current);
+}
+
+// ─── branch verbs (git-more2) ───────────────────────────────────────────
+
+/// The branch a verb acts on: the branches panel's row when it has the
+/// focus, else the checked-out branch.
+fn verbBranch(app: *App, what: []const u8) CommandError![]const u8 {
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return b;
+    }
+    return app.git.branchLabel() orelse app.diag.fail(arena(app), "{s}: detached HEAD \u{2014} pick a branch in the branches panel", .{what});
+}
+
+fn branchRename(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.branchRename(app, try verbBranch(app, "rename"));
+}
+
+fn fastForward(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.fastForward(app, try verbBranch(app, "fast-forward"));
+}
+
+fn setUpstream(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.setUpstream(app, try verbBranch(app, "set upstream"));
+}
+
+/// The panel's row when it has the focus, else a picker of the local branches.
+fn checkoutForce(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.checkoutForce(app, b);
+    }
+    try git.askBranches(app, repo, .checkout_force);
+}
+
+fn deleteRemoteBranch(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.deleteRemote(app, b, null);
+    }
+    try git.askBranches(app, repo, .delete_remote);
+}
+
+/// The graph's selected commit, else the branches panel's row, else HEAD.
+fn verbStart(app: *App) CommandError![]const u8 {
+    if (app.focus == .pane) if (git.activeGraph(app)) |g| {
+        if (g.selected()) |c| return c.hash;
+    };
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return b;
+    }
+    return "HEAD";
+}
+
+fn newBranchFrom(app: *App) CommandError!void {
+    try git.newBranchFrom(app, try verbStart(app));
+}
+
+fn worktreeAddFrom(app: *App) CommandError!void {
+    try git.worktreeFrom(app, try verbStart(app));
+}
+
+fn pushForce(app: *App) CommandError!void {
+    try git.pushForce(app);
+}
+
 // ─── the graph ──────────────────────────────────────────────────────────
 
 /// Git mode: the palette in the sidebar, one graph tab per repo.
@@ -787,6 +981,16 @@ fn graphSort(app: *App) CommandError!void {
 fn graphJumpHash(app: *App) CommandError!void {
     _ = try requireGraph(app);
     git.openPrompt(app, .graph_hash, "Jump to commit (hash prefix)");
+}
+
+/// Enter on a detail row: the file's diff (in the commit, or the tree's).
+fn graphDetailOpen(app: *App) CommandError!void {
+    try git.openDetailRowCmd(app, try requireGraph(app));
+}
+
+/// A commit file row: the file as that commit had it, in a scratch buffer.
+fn graphFileAtRev(app: *App) CommandError!void {
+    try git.showDetailFileAtRev(app, try requireGraph(app));
 }
 
 fn graphDetail(app: *App) CommandError!void {

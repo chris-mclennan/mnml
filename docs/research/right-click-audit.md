@@ -125,7 +125,7 @@ Actions that are not commands in Rust (`CopyPath`, `RevealInTree`,
 | 98 | TODO row | TodoAction fix-with-agent / Claude / Codex, OpenPath, OpenInSplit, RevealInTree, RevealInFinder, CopyPath(rel:line) | `todos.zig:809` | partial (split / reveal) | me | accepted |
 | 99 | git palette rows | as #96 | as #96 | none | — | — |
 | 100 | Diff rows | `open_diff_context_menu` | `git.zig:2124` `diffClick` left only | missing | git-lines | listed |
-| 101 | GitGraph embedded diff rows | same | `git.zig:2529` graph rows ✓; embedded diff — | partial | git-rebase | listed |
+| 101 | GitGraph embedded diff rows | same | `git.zig` `graphClick` → `openDetailRowMenu` (git-more2): the detail column's file rows — a WIP row's diff / file / stage / discard / stash / path, a commit row's diff / file at this revision / hash / path / remote | none | git-more2 | done |
 | 102 | GitStatus rows | stage / unstage / discard / … | `git.zig:2585` `openRowMenu` | none | — | — |
 
 ## Zig surfaces Rust never had

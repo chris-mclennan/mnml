@@ -1,0 +1,27 @@
+# A STASHES row's Enter (src/app/git_palette.zig `activate`,
+# src/app/git.zig `stashShow`): the stash's files in a list pane, one
+# `M  path` row each; Enter on a row opens the file's diff against the
+# stash's parent. Rows at 120x40: LOCAL 7, main 8, gap 9, REMOTE 10,
+# gap 11, WORKTREES 12, main 13, gap 14, STASHES 15, the stash 16.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+write a.txt "two\n"
+shell git stash push -q -m "keep this"
+command view.activity_git
+wait 1000
+expect screen contains "On main: keep this"
+click 6 16
+click 6 16
+wait 1500
+expect screen contains "stash@{0} · On main: keep this"
+expect screen contains "M  a.txt"
+key enter
+wait 1500
+expect screen contains "stash@{0}^..stash"
+expect screen contains "- one"
+expect screen contains "+ two"

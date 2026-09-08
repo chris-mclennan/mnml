@@ -1651,8 +1651,14 @@ pub const App = struct {
 
     /// A fresh unnamed buffer, shown and focused.
     pub fn openScratch(self: *App) !PaneId {
+        return self.openScratchWith("");
+    }
+
+    /// // changed (git-more2): a scratch buffer holding `text` — a file
+    /// as a commit had it.
+    pub fn openScratchWith(self: *App, text: []const u8) !PaneId {
         const gpa = self.gpa;
-        var buf = try Buffer.init(gpa, "", self.input_style, self.editorConfig());
+        var buf = try Buffer.init(gpa, text, self.input_style, self.editorConfig());
         errdefer buf.deinit();
         try self.applyBufferPrefs(&buf);
         const entry = try self.docs.adopt(buf.doc);

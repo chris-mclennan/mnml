@@ -357,20 +357,66 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
 
 /// The list panes: j/k move, enter acts, esc closes the pane.
 fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Error!bool {
-    const n = l.entries.items.len;
+    const arena = app.frame.allocator();
+    // // changed (git-more2): the `/` filter takes the keys while it is
+    // typed — esc clears it, enter keeps it; the cursor stays inside
+    // the shown rows.
+    if (l.filter_mode) {
+        switch (k.code) {
+            .esc => {
+                l.filter.clearRetainingCapacity();
+                l.filter_mode = false;
+            },
+            .enter => l.filter_mode = false,
+            .backspace => {
+                if (l.filter.items.len > 0) {
+                    var n: usize = 1;
+                    while (n < l.filter.items.len and (l.filter.items[l.filter.items.len - n] & 0xC0) == 0x80) n += 1;
+                    l.filter.items.len -= n;
+                }
+            },
+            .char => |c| {
+                if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+                var buf: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(c, &buf) catch return false;
+                try l.filter.appendSlice(l.gpa, buf[0..len]);
+            },
+            else => return false,
+        }
+        l.cursor = 0;
+        l.scroll = 0;
+        app.needs_render = true;
+        return true;
+    }
+    const n = try l.shownCount(arena);
     switch (k.code) {
         .down => l.cursor = @min(l.cursor + 1, n -| 1),
         .up => l.cursor -|= 1,
         .home => l.cursor = 0,
         .end => l.cursor = n -| 1,
         .enter => try listPaneEnter(app, id, l),
-        .esc => try app.forceClosePane(id),
+        .esc => {
+            // A set filter goes first; the pane after.
+            if (l.filter.items.len > 0) {
+                l.filter.clearRetainingCapacity();
+                l.cursor = 0;
+            } else try app.forceClosePane(id);
+        },
         .char => |c| switch (c) {
             'j' => l.cursor = @min(l.cursor + 1, n -| 1),
             'k' => l.cursor -|= 1,
             'g' => l.cursor = 0,
             'G' => l.cursor = n -| 1,
             'q' => try app.forceClosePane(id),
+            '/' => if (app_mod.ListPane.filters(l.kind)) {
+                l.filter_mode = true;
+            } else return false,
+            // The row's text (a command line, a path) to the clipboard.
+            'y' => if (try l.entryAt(arena, l.cursor)) |e| {
+                const text: []const u8 = if (l.kind == .git_log) (git_app.logCommand(app, e.*) orelse e.text) else if (e.path) |p| p else e.text;
+                try app.clipboard.setYank(text, false);
+                app.toast("copied {s}", .{text});
+            },
             else => return false,
         },
         else => return false,
@@ -1680,10 +1726,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             switch (pane.*) {
                 .cheatsheet => |*c| if (m.button == .left) try cheatsheet.click(app, c, sh.id),
                 .script => |*s| script_pane.click(app, s, sh.id, m),
-                .list => |*l| if (m.button == .left) {
-                    if (sh.id < l.entries.items.len) {
-                        if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
+                .list => |*l| {
+                    if (sh.id >= try l.shownCount(app.frame.allocator())) return;
+                    // // changed (git-more2): a right press opens the row's menu on the git kinds.
+                    if (m.button == .right) {
+                        l.cursor = sh.id;
+                        if (app_mod.ListPane.filters(l.kind)) try git_app.openListRowMenu(app, l, m.x, m.y);
+                        return;
                     }
+                    if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
                 },
                 .git_status => |*s| try git_app.statusPaneClick(app, s, sh.id, m),
                 .diff => |*d| try git_app.diffClick(app, sh.pane, d, sh.id, m),
@@ -1865,8 +1916,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     }
                     // A script error's toast: the click jumps to its line.
                     const is_script = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, script_diag.toast_id) else false;
+                    // // changed (git-more2): a failed git op's toast: the
+                    // click opens the command log at the child that failed.
+                    const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, git_app.log_toast_id) else false;
                     app.dismissToastAt(at);
                     if (is_script) try script_diag.jump(app);
+                    if (is_git_log) git_app.runToast(app, git_app.openCommandLog(app, null));
                 }
                 return;
             }
@@ -2126,7 +2181,8 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         },
         .script => |*s| script_pane.wheel(app, s, down, n),
         .list => |*l| {
-            l.cursor = if (down) @min(l.cursor + n, l.entries.items.len -| 1) else l.cursor -| n;
+            const total = l.shownCount(app.frame.allocator()) catch l.entries.items.len;
+            l.cursor = if (down) @min(l.cursor + n, total -| 1) else l.cursor -| n;
         },
         .outline => |*o| {
             o.cursor = if (down) @min(o.cursor + n, o.items.items.len -| 1) else o.cursor -| n;
@@ -2474,9 +2530,11 @@ fn hitRect(app: *App, x: u16, y: u16) ?Rect {
 /// Enter on a list pane row: the cmdline history re-runs the line, the
 /// quickfix and location lists open the file at the row.
 pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Error!void {
-    if (l.cursor >= l.entries.items.len) return;
-    const e = l.entries.items[l.cursor];
+    const e = ((try l.entryAt(app.frame.allocator(), l.cursor)) orelse return).*;
     switch (l.kind) {
+        // // changed (git-more2): the git list kinds act through the git state.
+        .stash_files => git_app.runToast(app, git_app.stashFileEnter(app, e)),
+        .git_log => git_app.runToast(app, git_app.logEnter(app, e)),
         .cmdline_history => {
             const line = try app.frame.allocator().dupe(u8, e.text);
             try app.forceClosePane(pane);

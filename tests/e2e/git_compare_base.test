@@ -1,0 +1,45 @@
+# Diff any two refs (src/app/git.zig `toggleCompareBase`, `diffSelected`):
+# `W` on a graph row marks it as the compare base — a ⚑ in the mark
+# cell — and `d` on another row opens the diff pane on base..row, its
+# title the two short shas; `W` on the base clears it.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+write c.txt "three\n"
+shell git add c.txt
+shell git commit -q -m "third"
+command git.graph
+wait 600
+expect screen contains "third"
+expect screen lacks "⚑"
+# Rows: third, second, first. The base is first.
+key j
+key j
+key W
+expect screen contains "compare base:"
+expect screen contains "▌▶⚑"
+# `d` on third: the range diff — b.txt and c.txt were added in between.
+key k
+key k
+expect screen contains "▌ ⚑"
+key d
+wait 1500
+# The tab reads base..row (short shas); the two added lines are the diff.
+expect screen contains ".."
+expect screen contains "+ two"
+expect screen contains "+ three"
+# Back to the graph: W on the base clears it.
+command git.graph
+wait 300
+key j
+key j
+key W
+expect screen contains "compare base cleared"
+expect screen lacks "⚑"

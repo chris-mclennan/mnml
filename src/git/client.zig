@@ -40,7 +40,28 @@ pub const ResetMode = enum {
 /// `worktree` is unstaged only; `staged` the index; `commit` a `show`.
 /// `conflict` is a conflicted file's ours (`:2:`) against theirs (`:3:`)
 /// — the diff pane's Split view beside the editor (`app/conflicts.zig`).
-pub const DiffScope = enum { file, worktree, head, staged, commit, orig, conflict };
+/// `range` is any two refs: `rev` holds `from..to` (`rangeRev`) and
+/// `path` narrows it to one file — the graph's compare base against a
+/// row, a branch against the current one, a stash against its parent.
+pub const DiffScope = enum { file, worktree, head, staged, commit, orig, conflict, range };
+
+/// `from..to` for a `.range` diff's `rev`.
+pub fn rangeRev(allocator: Allocator, from: []const u8, to: []const u8) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}..{s}", .{ from, to });
+}
+
+/// A range's two sides, each shortened to seven cells when it is a
+/// full sha (a branch name stays whole) — the diff pane's title.
+pub fn rangeTitle(allocator: Allocator, rev: []const u8) Allocator.Error![]u8 {
+    const dd = std.mem.indexOf(u8, rev, "..") orelse return allocator.dupe(u8, rev);
+    return std.fmt.allocPrint(allocator, "{s}..{s}", .{ shortRef(rev[0..dd]), shortRef(rev[dd + 2 ..]) });
+}
+
+fn shortRef(s: []const u8) []const u8 {
+    if (s.len < 20) return s;
+    for (s) |c| if (!std.ascii.isHex(c)) return s;
+    return s[0..7];
+}
 
 pub const LogFilter = struct {
     branch: ?[]u8 = null,
@@ -77,6 +98,39 @@ pub const BrowseKind = enum { file, line, commit };
 /// and message.
 pub const AiContext = enum { staged, head };
 
+/// What `Job.stash` pushes. `paths` narrows it to those files; a
+/// `staged_only` push has no untracked files to take (git refuses
+/// `--staged` with `-u`).
+pub const StashPush = struct {
+    msg: ?[]u8 = null,
+    paths: ?[][]u8 = null,
+    staged_only: bool = false,
+    keep_index: bool = false,
+
+    pub fn deinit(s: StashPush, gpa: Allocator) void {
+        if (s.msg) |m| gpa.free(m);
+        if (s.paths) |ps| {
+            for (ps) |p| gpa.free(p);
+            gpa.free(ps);
+        }
+    }
+};
+
+/// `stash push -q [-u] [--staged] [--keep-index] [-m msg] [-- paths]`.
+pub fn stashArgs(arena: Allocator, s: StashPush) Allocator.Error![]const []const u8 {
+    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    try args.appendSlice(arena, &.{ "stash", "push", "-q" });
+    if (!s.staged_only) try args.append(arena, "-u");
+    if (s.staged_only) try args.append(arena, "--staged");
+    if (s.keep_index) try args.append(arena, "--keep-index");
+    if (s.msg) |m| try args.appendSlice(arena, &.{ "-m", m });
+    if (s.paths) |ps| {
+        try args.append(arena, "--");
+        for (ps) |p| try args.append(arena, p);
+    }
+    return args.items;
+}
+
 /// One unit of work. Strings are gpa-owned by the job (`deinit`).
 pub const Job = union(enum) {
     /// `status --porcelain=v2 -b` plus `diff -U0 HEAD` for the gutter.
@@ -96,7 +150,8 @@ pub const Job = union(enum) {
     apply_patch: struct { patch: []u8, cached: bool, reverse: bool, desc: []u8 },
     commit: []u8,
     checkout: []u8,
-    new_branch: []u8,
+    /// `checkout -b name [start]`: from HEAD, or from a commit / tag.
+    new_branch: struct { name: []u8, start: ?[]u8 = null },
     delete_branch: []u8,
     merge: []u8,
     rebase: []u8,
@@ -104,9 +159,20 @@ pub const Job = union(enum) {
     pull,
     push,
     push_tags,
-    stash: ?[]u8,
+    /// `stash push`: everything (with untracked files), the index only,
+    /// some paths, or the tree with the index kept (`stashArgs`).
+    stash: StashPush,
     /// The stash to pop; null pops the most recent.
     stash_pop: ?[]u8,
+    /// `stash show --name-status <ref>`: the files a stash touched.
+    stash_show: []u8,
+    /// `stash branch <name> <ref>`: a branch from the stash's parent
+    /// with the stash applied and dropped.
+    stash_branch: struct { ref: []u8, name: []u8 },
+    /// A stash renamed: dropped, then `stash store -m` of the same
+    /// commit under the new message (`parse.stashRenameMessage` keeps
+    /// the `On <branch>: ` half).
+    stash_rename: struct { ref: []u8, msg: []u8 },
     stash_apply: []u8,
     stash_drop: []u8,
     tag: []u8,
@@ -116,8 +182,29 @@ pub const Job = union(enum) {
     undo,
     redo,
     browse: struct { kind: BrowseKind, path: ?[]u8 = null, line: u32 = 0, rev: ?[]u8 = null },
-    worktree_add: struct { path: []u8, branch: ?[]u8 },
+    /// `worktree add path [-b branch] [start]`.
+    worktree_add: struct { path: []u8, branch: ?[]u8, start: ?[]u8 = null },
     worktree_remove: []u8,
+    // ── branch verbs (git-more2) ──
+    /// `branch -m from to`.
+    branch_rename: struct { from: []u8, to: []u8 },
+    /// The branch to its upstream: `merge --ff-only <upstream>` when it
+    /// is checked out (undoable), else `fetch <remote> <ref>:<branch>`.
+    fast_forward: struct { branch: []u8, upstream: []u8, checked_out: bool },
+    /// `branch -u upstream branch`.
+    set_upstream: struct { branch: []u8, upstream: []u8 },
+    /// `checkout -f`: the tree's changes are thrown away (behind a confirm).
+    checkout_force: []u8,
+    /// `push <remote> --delete <branch>` (behind a confirm).
+    delete_remote: struct { remote: []u8, branch: []u8 },
+    /// `push --force-with-lease` (behind a confirm that names the risk).
+    push_force,
+    /// A command-log row's Enter: `git <argv>` again, for the read-only
+    /// commands (`isReadOnly`); the first output line is the toast.
+    rerun: [][]u8,
+    /// `show <rev>:<path>` — the file as that commit had it (a detail
+    /// row's "Open file at this revision").
+    show_file: struct { rev: []u8, path: []u8 },
     head_sha,
     /// `commit --amend` with a new message (the AI recompose).
     amend: []u8,
@@ -182,9 +269,50 @@ pub const Job = union(enum) {
             .worktree_add => |w| {
                 gpa.free(w.path);
                 if (w.branch) |b| gpa.free(b);
+                if (w.start) |s| gpa.free(s);
             },
-            .stash, .stash_pop => |s| if (s) |m| gpa.free(m),
-            .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
+            .new_branch => |b| {
+                gpa.free(b.name);
+                if (b.start) |s| gpa.free(s);
+            },
+            .branch_rename => |b| {
+                gpa.free(b.from);
+                gpa.free(b.to);
+            },
+            .fast_forward => |b| {
+                gpa.free(b.branch);
+                gpa.free(b.upstream);
+            },
+            .set_upstream => |b| {
+                gpa.free(b.branch);
+                gpa.free(b.upstream);
+            },
+            .delete_remote => |b| {
+                gpa.free(b.remote);
+                gpa.free(b.branch);
+            },
+            .checkout_force => |s| gpa.free(s),
+            .push_force => {},
+            .rerun => |argv| {
+                for (argv) |a| gpa.free(a);
+                gpa.free(argv);
+            },
+            .show_file => |s| {
+                gpa.free(s.rev);
+                gpa.free(s.path);
+            },
+            .stash => |s| s.deinit(gpa),
+            .stash_pop => |s| if (s) |m| gpa.free(m),
+            .stash_show => |s| gpa.free(s),
+            .stash_branch => |s| {
+                gpa.free(s.ref);
+                gpa.free(s.name);
+            },
+            .stash_rename => |s| {
+                gpa.free(s.ref);
+                gpa.free(s.msg);
+            },
+            .blame, .stage, .unstage, .discard, .commit, .checkout, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
@@ -235,6 +363,14 @@ pub const Result = struct {
         url: []const u8,
         head_sha: []const u8,
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
+        /// A stash's files (`stash show --name-status`) and its message.
+        stash_show: struct { ref: []const u8, message: []const u8, files: []parse.DetailFile },
+        /// A file's text at a revision (`show rev:path`).
+        file_text: struct { rev: []const u8, path: []const u8, text: []const u8 },
+        /// One line of the command log (git-more2): what the worker ran,
+        /// where, how it ended and how long it took. Posted from `gitIn`
+        /// and `run` for every child; the handler keeps the last 200.
+        log_line: LogLine,
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
@@ -263,6 +399,45 @@ pub const Result = struct {
         gpa.destroy(self);
     }
 };
+
+/// One child the worker ran. `argv` is the whole line (`git --no-pager
+/// … status`), `args` the part after `git` (what a re-run needs);
+/// `exit` is null when the child did not exit normally (a spawn
+/// failure, a signal); `stderr` is its first line.
+pub const LogLine = struct {
+    seq: u32,
+    argv: []const u8,
+    args: []const []const u8,
+    cwd: []const u8,
+    ok: bool,
+    exit: ?u8,
+    ms: u32,
+    stderr: []const u8,
+};
+
+/// The commands a log row's Enter may run again: they read the repo
+/// and change nothing. A verb with writing forms (`branch`, `stash`,
+/// `remote`, `worktree`, `config`) is read-only only in its listing
+/// form.
+pub fn isReadOnly(args: []const []const u8) bool {
+    if (args.len == 0) return false;
+    const verb = args[0];
+    const plain = [_][]const u8{ "status", "diff", "log", "show", "rev-parse", "for-each-ref", "ls-files", "ls-remote", "blame", "diff-tree", "symbolic-ref", "cat-file", "name-rev", "describe", "rev-list", "reflog", "shortlog", "ls-tree", "merge-base", "check-ignore", "var", "version" };
+    for (plain) |p| if (std.mem.eql(u8, verb, p)) return true;
+    const rest = args[1..];
+    if (std.mem.eql(u8, verb, "branch")) {
+        for (rest) |a| if (!std.mem.startsWith(u8, a, "-") or std.mem.eql(u8, a, "-d") or std.mem.eql(u8, a, "-D") or std.mem.eql(u8, a, "-m") or std.mem.eql(u8, a, "-M") or std.mem.eql(u8, a, "-u") or std.mem.eql(u8, a, "-f") or std.mem.eql(u8, a, "-c") or std.mem.eql(u8, a, "-C") or std.mem.startsWith(u8, a, "--set-upstream") or std.mem.eql(u8, a, "--unset-upstream") or std.mem.eql(u8, a, "--delete") or std.mem.eql(u8, a, "--move") or std.mem.eql(u8, a, "--copy") or std.mem.eql(u8, a, "--edit-description")) return false;
+        return true;
+    }
+    if (std.mem.eql(u8, verb, "stash")) return rest.len > 0 and (std.mem.eql(u8, rest[0], "list") or std.mem.eql(u8, rest[0], "show"));
+    if (std.mem.eql(u8, verb, "remote")) return rest.len == 0 or std.mem.eql(u8, rest[0], "-v") or std.mem.eql(u8, rest[0], "show") or std.mem.eql(u8, rest[0], "get-url");
+    if (std.mem.eql(u8, verb, "worktree")) return rest.len > 0 and std.mem.eql(u8, rest[0], "list");
+    if (std.mem.eql(u8, verb, "config")) {
+        for (rest) |a| if (std.mem.eql(u8, a, "--get") or std.mem.eql(u8, a, "--get-all") or std.mem.eql(u8, a, "--get-regexp") or std.mem.eql(u8, a, "-l") or std.mem.eql(u8, a, "--list")) return true;
+        return false;
+    }
+    return false;
+}
 
 /// An operation the worker can reverse. `reset_soft` moves HEAD and
 /// keeps the index (a commit undone stays staged); `checkout` flips
@@ -326,6 +501,11 @@ pub const Repo = struct {
     /// Worker-owned: `rev-parse --absolute-git-dir`, asked once (a
     /// linked worktree's `.git` is a file pointing elsewhere).
     git_dir: ?[]u8 = null,
+    /// The queue the worker posts into — kept from `start` so every
+    /// child it runs can post its command-log line (git-more2).
+    events: ?*event.EventQueue = null,
+    /// Worker-owned: the command log's sequence number.
+    log_seq: u32 = 0,
 
     pub fn create(gpa: Allocator, path: []const u8, name: []const u8, id: u32, is_workspace_root: bool) Allocator.Error!*Repo {
         const r = try gpa.create(Repo);
@@ -373,6 +553,7 @@ pub const Repo = struct {
             try m.put("GIT_TERMINAL_PROMPT", "0");
             self.env = m;
         }
+        self.events = events;
         try self.group.concurrent(io, worker, .{ self, events, io });
         self.started = true;
     }
@@ -420,6 +601,8 @@ const Out = struct {
     ok: bool,
     stdout: []const u8,
     stderr: []const u8,
+    /// The exit code; null when the child did not exit normally.
+    exit: ?u8 = null,
 
     /// git's explanation, one line, for a toast.
     fn reason(o: Out) []const u8 {
@@ -461,7 +644,12 @@ fn gitIn(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_
     const argv = try arena.alloc([]const u8, prefix.len + args.len);
     @memcpy(argv[0..prefix.len], &prefix);
     @memcpy(argv[prefix.len..], args);
-    if (stdin_text) |text| return gitWithStdin(repo, io, arena, argv, text, env);
+    const started = nowMs(io);
+    if (stdin_text) |text| {
+        const out = try gitWithStdin(repo, io, arena, argv, text, env);
+        try postLogLine(repo, io, argv, args, started, out.ok, out.exit, out.stderr);
+        return out;
+    }
     const res = std.process.run(repo.gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = repo.path },
@@ -471,18 +659,66 @@ fn gitIn(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_
     }) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
-        else => return .{ .ok = false, .stdout = "", .stderr = try std.fmt.allocPrint(arena, "cannot run git: {s}", .{@errorName(err)}) },
+        else => {
+            const reason = try std.fmt.allocPrint(arena, "cannot run git: {s}", .{@errorName(err)});
+            try postLogLine(repo, io, argv, args, started, false, null, reason);
+            return .{ .ok = false, .stdout = "", .stderr = reason };
+        },
     };
     defer repo.gpa.free(res.stdout);
     defer repo.gpa.free(res.stderr);
-    return .{
+    const out: Out = .{
         .ok = switch (res.term) {
             .exited => |c| c == 0,
             else => false,
         },
+        .exit = switch (res.term) {
+            .exited => |c| c,
+            else => null,
+        },
         .stdout = try arena.dupe(u8, res.stdout),
         .stderr = try arena.dupe(u8, res.stderr),
     };
+    try postLogLine(repo, io, argv, args, started, out.ok, out.exit, out.stderr);
+    return out;
+}
+
+fn nowMs(io: Io) i64 {
+    return Io.Timestamp.now(io, .awake).toMilliseconds();
+}
+
+/// The command log (git-more2): one `.log_line` result per child,
+/// posted as its own event so the log reads in order with the results
+/// — a job's line lands before the job's outcome. Nothing is posted
+/// before `start` (a test running the argv builders alone).
+fn postLogLine(repo: *Repo, io: Io, argv: []const []const u8, args: []const []const u8, started: i64, ok: bool, exit: ?u8, stderr: []const u8) Allocator.Error!void {
+    const events = repo.events orelse return;
+    const gpa = repo.gpa;
+    const r = try Result.create(gpa, repo.id);
+    errdefer r.destroy(gpa);
+    const arena = r.arena.allocator();
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    for (argv, 0..) |a, i| {
+        if (i > 0) try line.append(arena, ' ');
+        try line.appendSlice(arena, a);
+    }
+    const copy = try arena.alloc([]const u8, args.len);
+    for (copy, args) |*c, a| c.* = try arena.dupe(u8, a);
+    const e = std.mem.trim(u8, stderr, " \t\r\n");
+    const nl = std.mem.indexOfScalar(u8, e, '\n') orelse e.len;
+    repo.log_seq += 1;
+    const elapsed = nowMs(io) - started;
+    r.payload = .{ .log_line = .{
+        .seq = repo.log_seq,
+        .argv = line.items,
+        .args = copy,
+        .cwd = try arena.dupe(u8, repo.path),
+        .ok = ok,
+        .exit = exit,
+        .ms = @intCast(std.math.clamp(elapsed, 0, std.math.maxInt(u32))),
+        .stderr = try arena.dupe(u8, e[0..nl]),
+    } };
+    events.post(io, .{ .git = r });
 }
 
 /// `git apply` reads the patch from stdin: spawn by hand, write the
@@ -527,6 +763,10 @@ fn gitWithStdin(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8,
         .ok = switch (term) {
             .exited => |c| c == 0,
             else => false,
+        },
+        .exit = switch (term) {
+            .exited => |c| c,
+            else => null,
         },
         .stdout = stdout,
         .stderr = stderr,
@@ -594,6 +834,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     // with the buffer piped in as `-`.
                     try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", d.path orelse "", "-" });
                 },
+                .range => {
+                    try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, d.rev orelse "HEAD..HEAD", "--" });
+                    if (d.path) |p| try args.append(arena, p);
+                },
                 .conflict => unreachable,
             }
             var out = try git(repo, io, arena, args.items, if (d.scope == .orig) (d.text orelse "") else null);
@@ -630,7 +874,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const worktrees = try worktreeList(repo, io, arena);
             const remotes_out = try git(repo, io, arena, &.{ "remote", "-v" }, null);
             const remotes = try parse.parseRemotes(arena, if (remotes_out.ok) remotes_out.stdout else "");
-            const stash_out = try git(repo, io, arena, &.{ "stash", "list", "--format=%h%x1f%gd%x1f%s" }, null);
+            // `%gs`, the reflog subject: a renamed stash (`stash store -m`)
+            // changes that, not its commit's `%s`.
+            const stash_out = try git(repo, io, arena, &.{ "stash", "list", "--format=%h%x1f%gd%x1f%gs" }, null);
             const stashes = try parse.parseStashes(arena, if (stash_out.ok) stash_out.stdout else "");
             const tag_out = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-version:refname", "--sort=-creatordate", "--format=" ++ parse.tag_format, "refs/tags" }, null);
             const tags = try parse.parseTags(arena, if (tag_out.ok) tag_out.stdout else "");
@@ -646,7 +892,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .list => |kind| {
             const out = switch (kind) {
-                .stashes => try git(repo, io, arena, &.{ "stash", "list", "--format=%gd%x1f%s" }, null),
+                .stashes => try git(repo, io, arena, &.{ "stash", "list", "--format=%gd%x1f%gs" }, null),
                 .tags => try git(repo, io, arena, &.{ "tag", "--list", "--sort=-creatordate" }, null),
                 .reflog => try git(repo, io, arena, &.{ "reflog", "--format=%h%x1f%gs", "-n", "200" }, null),
                 .worktrees => try git(repo, io, arena, &.{ "worktree", "list", "--porcelain" }, null),
@@ -765,7 +1011,57 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "checked out {s}", .{b}), .ok = out.ok, .msg = out.reason() } };
         },
-        .new_branch => |b| try simple(repo, io, r, &.{ "checkout", "-q", "-b", b }, try std.fmt.allocPrint(arena, "created branch {s}", .{b})),
+        .new_branch => |b| try simple(repo, io, r, try newBranchArgs(arena, b.name, b.start), if (b.start) |s| try std.fmt.allocPrint(arena, "created branch {s} from {s}", .{ b.name, shortRef(s) }) else try std.fmt.allocPrint(arena, "created branch {s}", .{b.name})),
+        .branch_rename => |b| try simple(repo, io, r, &.{ "branch", "-m", b.from, b.to }, try std.fmt.allocPrint(arena, "renamed {s} to {s}", .{ b.from, b.to })),
+        .fast_forward => |b| {
+            const args = try fastForwardArgs(arena, b.branch, b.upstream, b.checked_out) orelse {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "fast-forward {s}", .{b.branch}), .ok = false, .msg = try std.fmt.allocPrint(arena, "`{s}` is not a remote branch (remote/name)", .{b.upstream}), .refresh = false } };
+                events.post(io, .{ .git = r });
+                return;
+            };
+            const desc = try std.fmt.allocPrint(arena, "fast-forwarded {s} to {s}", .{ b.branch, b.upstream });
+            if (b.checked_out) {
+                // The tree moves with HEAD: undo puts both back.
+                const snap = try snapshot(repo, io, arena);
+                const out = try git(repo, io, arena, args, null);
+                if (out.ok) try pushSnapshotUndo(repo, io, arena, desc, snap);
+                r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
+            } else try simple(repo, io, r, args, desc);
+        },
+        .set_upstream => |b| try simple(repo, io, r, &.{ "branch", "-q", "-u", b.upstream, b.branch }, try std.fmt.allocPrint(arena, "{s} tracks {s}", .{ b.branch, b.upstream })),
+        .checkout_force => |b| {
+            const snap = try snapshot(repo, io, arena);
+            const out = try git(repo, io, arena, &.{ "checkout", "-q", "-f", b }, null);
+            const desc = try std.fmt.allocPrint(arena, "checked out {s} (forced)", .{b});
+            if (out.ok) try pushSnapshotUndo(repo, io, arena, desc, snap);
+            r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
+        },
+        .delete_remote => |b| try simple(repo, io, r, &.{ "push", "-q", b.remote, "--delete", b.branch }, try std.fmt.allocPrint(arena, "deleted {s}/{s} on the remote", .{ b.remote, b.branch })),
+        .push_force => try simple(repo, io, r, &.{ "push", "-q", "--force-with-lease" }, "pushed (--force-with-lease)"),
+        .show_file => |s| {
+            const out = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, "{s}:{s}", .{ s.rev, s.path }) }, null);
+            if (!out.ok) {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "show {s} at {s}", .{ s.path, shortRef(s.rev) }), .ok = false, .msg = out.reason(), .refresh = false } };
+            } else {
+                r.payload = .{ .file_text = .{ .rev = try arena.dupe(u8, s.rev), .path = try arena.dupe(u8, s.path), .text = out.stdout } };
+            }
+        },
+        .rerun => |argv| {
+            const out = try git(repo, io, arena, argv, null);
+            var line: std.ArrayListUnmanaged(u8) = .empty;
+            try line.appendSlice(arena, "re-ran: git");
+            for (argv) |a| {
+                try line.append(arena, ' ');
+                try line.appendSlice(arena, a);
+            }
+            // The first output line rides in the toast.
+            const first = firstLine(out.stdout);
+            if (out.ok and first.len > 0) {
+                try line.appendSlice(arena, " \u{2192} ");
+                try line.appendSlice(arena, first[0..@min(first.len, 60)]);
+            }
+            r.payload = .{ .op = .{ .desc = line.items, .ok = out.ok, .msg = out.reason(), .refresh = false } };
+        },
         .delete_branch => |b| try simple(repo, io, r, &.{ "branch", "-D", b }, try std.fmt.allocPrint(arena, "deleted branch {s}", .{b})),
         .merge => |b| try simple(repo, io, r, &.{ "merge", "--no-edit", b }, try std.fmt.allocPrint(arena, "merged {s}", .{b})),
         .rebase => |b| try simple(repo, io, r, &.{ "rebase", b }, try std.fmt.allocPrint(arena, "rebased onto {s}", .{b})),
@@ -784,10 +1080,32 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
         },
         .push_tags => try simple(repo, io, r, &.{ "push", "-q", "--tags" }, "pushed tags"),
-        .stash => |m| {
-            if (m) |msg| {
-                try simple(repo, io, r, &.{ "stash", "push", "-u", "-q", "-m", msg }, try std.fmt.allocPrint(arena, "stashed: {s}", .{msg}));
-            } else try simple(repo, io, r, &.{ "stash", "push", "-u", "-q" }, "stashed");
+        .stash => |s| {
+            const what: []const u8 = if (s.staged_only) "stashed the index" else if (s.paths != null) (if (s.paths.?.len == 1) try std.fmt.allocPrint(arena, "stashed {s}", .{s.paths.?[0]}) else try std.fmt.allocPrint(arena, "stashed {d} files", .{s.paths.?.len})) else if (s.keep_index) "stashed (index kept)" else "stashed";
+            const desc = if (s.msg) |m| try std.fmt.allocPrint(arena, "{s}: {s}", .{ what, m }) else what;
+            try simple(repo, io, r, try stashArgs(arena, s), desc);
+        },
+        .stash_show => |ref| {
+            // `--include-untracked` lists the third parent's files (git
+            // 2.32+); an older git refuses the flag, so ask without it then.
+            var out = try git(repo, io, arena, &.{ "stash", "show", "--name-status", "--include-untracked", ref }, null);
+            if (!out.ok) out = try git(repo, io, arena, &.{ "stash", "show", "--name-status", ref }, null);
+            if (!out.ok) {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "show {s}", .{ref}), .ok = false, .msg = out.reason(), .refresh = false } };
+            } else {
+                r.payload = .{ .stash_show = .{ .ref = try arena.dupe(u8, ref), .message = try stashMessage(repo, io, arena, ref), .files = try parse.parseNameStatus(arena, out.stdout) } };
+            }
+        },
+        .stash_branch => |s| try simple(repo, io, r, &.{ "stash", "branch", s.name, s.ref }, try std.fmt.allocPrint(arena, "branch {s} from {s}", .{ s.name, s.ref })),
+        .stash_rename => |s| {
+            const desc = try std.fmt.allocPrint(arena, "renamed {s}", .{s.ref});
+            const sha = try git(repo, io, arena, &.{ "rev-parse", s.ref }, null);
+            if (!sha.ok) return fail(r, desc, sha);
+            const msg = try parse.stashRenameMessage(arena, try stashMessage(repo, io, arena, s.ref), s.msg);
+            const dropped = try git(repo, io, arena, &.{ "stash", "drop", "-q", s.ref }, null);
+            if (!dropped.ok) return fail(r, desc, dropped);
+            const stored = try git(repo, io, arena, &.{ "stash", "store", "-m", msg, trimmed(sha.stdout) }, null);
+            r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "renamed {s}: {s}", .{ s.ref, msg }), .ok = stored.ok, .msg = stored.reason() } };
         },
         .stash_pop => |ref| if (ref) |x| try simple(repo, io, r, &.{ "stash", "pop", "-q", x }, "stash popped") else try simple(repo, io, r, &.{ "stash", "pop", "-q" }, "stash popped"),
         .stash_apply => |ref| try simple(repo, io, r, &.{ "stash", "apply", "-q", ref }, try std.fmt.allocPrint(arena, "applied {s}", .{ref})),
@@ -854,9 +1172,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
         },
         .worktree_add => |w| {
+            const args = try worktreeAddArgs(arena, w.path, w.branch, w.start);
             if (w.branch) |b| {
-                try simple(repo, io, r, &.{ "worktree", "add", w.path, "-b", b }, try std.fmt.allocPrint(arena, "worktree added at {s} on {s}", .{ w.path, b }));
-            } else try simple(repo, io, r, &.{ "worktree", "add", w.path }, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
+                try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s} on {s}", .{ w.path, b }));
+            } else try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
         },
         .worktree_remove => |p| try simple(repo, io, r, &.{ "worktree", "remove", "--force", p }, try std.fmt.allocPrint(arena, "worktree removed: {s}", .{p})),
         .op_continue => |op| switch (op) {
@@ -985,6 +1304,62 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
     events.post(io, .{ .git = r });
 }
 
+/// A stash's message as the list shows it — the reflog subject, which
+/// a rename changes; empty when `ref` is not in the list.
+fn stashMessage(repo: *Repo, io: Io, arena: Allocator, ref: []const u8) JobError![]const u8 {
+    const out = try git(repo, io, arena, &.{ "stash", "list", "--format=%gd%x1f%gs" }, null);
+    if (!out.ok) return "";
+    for (try parse.parseStashes(arena, try prefixShas(arena, out.stdout))) |s| if (std.mem.eql(u8, s.ref, ref)) return s.message;
+    return "";
+}
+
+/// `parseStashes` reads three fields; the two-field list gets an empty
+/// sha column in front.
+fn prefixShas(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try out.appendSlice(arena, "-\x1f");
+        try out.appendSlice(arena, line);
+        try out.append(arena, '\n');
+    }
+    return out.items;
+}
+
+// ─── branch verbs (git-more2): the argv builders ────────────────────────
+
+/// `checkout -q -b name [start]`.
+pub fn newBranchArgs(arena: Allocator, name: []const u8, start: ?[]const u8) Allocator.Error![]const []const u8 {
+    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    try args.appendSlice(arena, &.{ "checkout", "-q", "-b", name });
+    if (start) |s| try args.append(arena, s);
+    return args.items;
+}
+
+/// `worktree add path [-b branch] [start]`: a detached tree at `start`
+/// when there is no branch to make.
+pub fn worktreeAddArgs(arena: Allocator, path: []const u8, branch: ?[]const u8, start: ?[]const u8) Allocator.Error![]const []const u8 {
+    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    try args.appendSlice(arena, &.{ "worktree", "add", path });
+    if (branch) |b| try args.appendSlice(arena, &.{ "-b", b });
+    if (start) |s| {
+        if (branch == null) try args.append(arena, "--detach");
+        try args.append(arena, s);
+    }
+    return args.items;
+}
+
+/// `merge --ff-only upstream` for the checked-out branch; for another,
+/// `fetch remote ref:branch` — git refuses a non-fast-forward there
+/// too. Null when `upstream` has no `remote/` half.
+pub fn fastForwardArgs(arena: Allocator, branch: []const u8, upstream: []const u8, checked_out: bool) Allocator.Error!?[]const []const u8 {
+    if (checked_out) return try arena.dupe([]const u8, &.{ "merge", "-q", "--ff-only", upstream });
+    const slash = std.mem.indexOfScalar(u8, upstream, '/') orelse return null;
+    if (slash == 0 or slash + 1 >= upstream.len) return null;
+    return try arena.dupe([]const u8, &.{ "fetch", "-q", upstream[0..slash], try std.fmt.allocPrint(arena, "{s}:{s}", .{ upstream[slash + 1 ..], branch }) });
+}
+
 /// The repo's git dir, asked of git once and kept on the repo.
 fn gitDir(repo: *Repo, io: Io, arena: Allocator) JobError!?[]const u8 {
     if (repo.git_dir) |d| return d;
@@ -1061,7 +1436,9 @@ fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Worktree
 }
 
 /// Run a non-git binary (`gh`) in the repo, the same way `git` runs.
+/// Its line in the command log has no re-run (`args` is empty).
 fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError!Out {
+    const started = nowMs(io);
     const res = std.process.run(repo.gpa, io, .{
         .argv = argv,
         .cwd = .{ .path = repo.path },
@@ -1071,18 +1448,28 @@ fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError
     }) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
-        else => return .{ .ok = false, .stdout = "", .stderr = try std.fmt.allocPrint(arena, "cannot run {s}: {s}", .{ argv[0], @errorName(err) }) },
+        else => {
+            const reason = try std.fmt.allocPrint(arena, "cannot run {s}: {s}", .{ argv[0], @errorName(err) });
+            try postLogLine(repo, io, argv, &.{}, started, false, null, reason);
+            return .{ .ok = false, .stdout = "", .stderr = reason };
+        },
     };
     defer repo.gpa.free(res.stdout);
     defer repo.gpa.free(res.stderr);
-    return .{
+    const out: Out = .{
         .ok = switch (res.term) {
             .exited => |c| c == 0,
             else => false,
         },
+        .exit = switch (res.term) {
+            .exited => |c| c,
+            else => null,
+        },
         .stdout = try arena.dupe(u8, res.stdout),
         .stderr = try arena.dupe(u8, res.stderr),
     };
+    try postLogLine(repo, io, argv, &.{}, started, out.ok, out.exit, out.stderr);
+    return out;
 }
 
 /// Run `args` and post `desc` as the toast on success, git's reason on
@@ -1335,6 +1722,69 @@ fn conflictDiff(repo: *Repo, io: Io, arena: Allocator, path: []const u8, ctx: []
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test "rangeRev joins two refs; rangeTitle shortens a full sha on either side and leaves a name whole" {
+    const rev = try rangeRev(testing.allocator, "0123456789abcdef0123456789abcdef01234567", "feature");
+    defer testing.allocator.free(rev);
+    try testing.expectEqualStrings("0123456789abcdef0123456789abcdef01234567..feature", rev);
+    const title = try rangeTitle(testing.allocator, rev);
+    defer testing.allocator.free(title);
+    try testing.expectEqualStrings("0123456..feature", title);
+    const plain = try rangeTitle(testing.allocator, "main");
+    defer testing.allocator.free(plain);
+    try testing.expectEqualStrings("main", plain);
+}
+
+test "isReadOnly: the listing verbs re-run; the writing ones and the writing forms of branch / stash / remote / config do not" {
+    try testing.expect(isReadOnly(&.{ "status", "--porcelain=v2", "-b" }));
+    try testing.expect(isReadOnly(&.{ "diff", "--no-ext-diff", "-U3", "HEAD", "--" }));
+    try testing.expect(isReadOnly(&.{ "log", "--date-order", "-n500", "--all" }));
+    try testing.expect(isReadOnly(&.{ "branch", "--list" }));
+    try testing.expect(isReadOnly(&.{"branch"}));
+    try testing.expect(isReadOnly(&.{ "stash", "list", "--format=%gs" }));
+    try testing.expect(isReadOnly(&.{ "remote", "-v" }));
+    try testing.expect(isReadOnly(&.{ "worktree", "list", "--porcelain" }));
+    try testing.expect(isReadOnly(&.{ "config", "--get", "remote.origin.url" }));
+    try testing.expect(!isReadOnly(&.{ "push", "-q" }));
+    try testing.expect(!isReadOnly(&.{ "commit", "-q", "-m", "x" }));
+    try testing.expect(!isReadOnly(&.{ "branch", "-m", "a", "b" }));
+    try testing.expect(!isReadOnly(&.{ "branch", "-D", "a" }));
+    try testing.expect(!isReadOnly(&.{ "branch", "feat" }));
+    try testing.expect(!isReadOnly(&.{ "stash", "push", "-q" }));
+    try testing.expect(!isReadOnly(&.{ "remote", "add", "x", "y" }));
+    try testing.expect(!isReadOnly(&.{ "worktree", "add", "p" }));
+    try testing.expect(!isReadOnly(&.{ "config", "user.name", "x" }));
+    try testing.expect(!isReadOnly(&.{}));
+}
+
+test "stashArgs: everything takes -u; staged only drops -u for --staged; keep-index and a message and paths ride along" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "stash", "push", "-q", "-u" }), try stashArgs(arena, .{}));
+    const msg = try arena.dupe(u8, "wip");
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "stash", "push", "-q", "--staged", "-m", "wip" }), try stashArgs(arena, .{ .msg = msg, .staged_only = true }));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "stash", "push", "-q", "-u", "--keep-index" }), try stashArgs(arena, .{ .keep_index = true }));
+    const paths = try arena.alloc([]u8, 2);
+    paths[0] = try arena.dupe(u8, "a.txt");
+    paths[1] = try arena.dupe(u8, "dir/b.txt");
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "stash", "push", "-q", "-u", "-m", "wip", "--", "a.txt", "dir/b.txt" }), try stashArgs(arena, .{ .msg = msg, .paths = paths }));
+}
+
+test "the branch verbs' argv: a new branch from a start, a detached worktree at one, ff-only when checked out, fetch ref:branch otherwise, null without a remote" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "checkout", "-q", "-b", "feat" }), try newBranchArgs(arena, "feat", null));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "checkout", "-q", "-b", "feat", "v1.0" }), try newBranchArgs(arena, "feat", "v1.0"));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "worktree", "add", "../wt", "-b", "feat", "abc" }), try worktreeAddArgs(arena, "../wt", "feat", "abc"));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "worktree", "add", "../wt", "--detach", "abc" }), try worktreeAddArgs(arena, "../wt", null, "abc"));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "worktree", "add", "../wt" }), try worktreeAddArgs(arena, "../wt", null, null));
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "merge", "-q", "--ff-only", "origin/main" }), (try fastForwardArgs(arena, "main", "origin/main", true)).?);
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "fetch", "-q", "origin", "main:main" }), (try fastForwardArgs(arena, "main", "origin/main", false)).?);
+    try testing.expect((try fastForwardArgs(arena, "main", "main", false)) == null);
+    try testing.expect((try fastForwardArgs(arena, "main", "origin/", false)) == null);
+}
 
 test "a Repo's queue takes jobs, and destroy frees what was never run" {
     const io = testing.io;

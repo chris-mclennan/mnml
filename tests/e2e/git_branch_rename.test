@@ -1,0 +1,21 @@
+# git.branch_rename (src/app/git.zig `branchRename`): the prompt opens
+# with the current branch's name; the accept runs `branch -m`.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+command git.refresh
+wait 800
+command git.branch_rename
+expect screen contains "Rename branch"
+expect screen contains "main"
+# Ctrl+A selects the old name: typing replaces it.
+key ctrl+a
+type trunk
+key enter
+wait 400
+expect screen contains "renamed main to trunk"
+wait 800
+shell test "$(git symbolic-ref --short HEAD)" = trunk

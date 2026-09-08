@@ -1,0 +1,29 @@
+# Stash depth (src/app/git.zig `stashWith`, src/git/client.zig
+# `stashArgs`): git.stash_staged pushes the index only — the tree's
+# other change stays — and git.stash_pop brings it back.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+write b.txt "two\n"
+shell git add a.txt b.txt .gitignore
+shell git commit -q -m "first"
+write a.txt "one-staged\n"
+shell git add a.txt
+write b.txt "two-tree\n"
+command git.refresh
+wait 800
+command git.stash_staged
+expect screen contains "Stash the index only"
+type index bits
+key enter
+wait 1500
+expect screen contains "stashed the index: index bits"
+shell test "$(git status --porcelain)" = " M b.txt"
+shell test "$(git stash list --format=%s)" = "On main: index bits"
+command git.stash_pop
+wait 1500
+expect screen contains "stash popped"
+shell git status --porcelain | grep -q "M a.txt"
+shell git status --porcelain | grep -q "M b.txt"

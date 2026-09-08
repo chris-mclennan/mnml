@@ -45,6 +45,8 @@ const graph_view = @import("../ui/git_graph_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const cmd_view = @import("cmd_view.zig");
+const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 
@@ -80,6 +82,17 @@ pub const Pick = enum {
     worktree_shell,
     switch_repo,
     file_history,
+    /// `git.diff_against_current` off the branches panel: pick the branch.
+    diff_current,
+    /// `git.set_upstream`: pick the remote branch `State.verb_branch` tracks.
+    set_upstream,
+    /// `git.stash_show` / `_branch` / `_rename` off the panel: pick the stash.
+    stash_show,
+    stash_branch,
+    stash_rename,
+    /// `git.checkout_force` / `git.delete_remote_branch` off the panel: pick the branch.
+    checkout_force,
+    delete_remote,
     /// The palette's closed-repo picker.
     reopen_repo,
 };
@@ -110,7 +123,75 @@ pub const PromptKind = enum {
     reset_soft,
     reset_mixed,
     reset_hard,
+    /// `git.branch_rename`: the new name for `State.verb_branch`.
+    branch_rename,
+    /// `stash branch <name> <State.verb_branch>`.
+    stash_branch,
+    /// A stash's new message (`State.verb_branch` is its ref).
+    stash_rename,
 };
+
+/// What the next stash prompt pushes (`git.stash_staged` / `_file` /
+/// `_keep_index` set one before opening it; a plain `git.stash` none).
+pub const StashVariant = struct {
+    staged_only: bool = false,
+    keep_index: bool = false,
+    /// Owned.
+    path: ?[]u8 = null,
+};
+
+/// The stash whose files the `stash_files` list pane shows. Owned.
+pub const StashView = struct { repo: u32, ref: []u8, message: []u8 };
+
+/// One child the worker ran (git-more2), as `client.LogLine` said,
+/// owned by the ring.
+pub const LogEntry = struct {
+    seq: u32,
+    repo: u32,
+    /// The whole line, for the row; `args` the part after `git`, for a re-run.
+    argv: []u8,
+    args: [][]u8,
+    cwd: []u8,
+    ok: bool,
+    exit: ?u8,
+    ms: u32,
+    stderr: []u8,
+
+    pub fn deinit(e: LogEntry, gpa: Allocator) void {
+        gpa.free(e.argv);
+        for (e.args) |a| gpa.free(a);
+        gpa.free(e.args);
+        gpa.free(e.cwd);
+        gpa.free(e.stderr);
+    }
+};
+
+/// The command log: the last `cap` children, oldest first; a push past
+/// the cap drops the oldest.
+pub const LogRing = struct {
+    pub const cap: usize = 200;
+    items: std.ArrayListUnmanaged(LogEntry) = .empty,
+
+    pub fn push(self: *LogRing, gpa: Allocator, e: LogEntry) Allocator.Error!void {
+        errdefer e.deinit(gpa);
+        try self.items.append(gpa, e);
+        while (self.items.items.len > cap) self.items.orderedRemove(0).deinit(gpa);
+    }
+
+    pub fn deinit(self: *LogRing, gpa: Allocator) void {
+        for (self.items.items) |e| e.deinit(gpa);
+        self.items.deinit(gpa);
+    }
+
+    pub fn find(self: *const LogRing, seq: u32) ?*const LogEntry {
+        for (self.items.items) |*e| if (e.seq == seq) return e;
+        return null;
+    }
+};
+
+/// The failed-op toast's id: a click on it opens the command log at
+/// the entry (`dispatch`'s toast arm; the toast menu's row).
+pub const log_toast_id = "git-log";
 
 /// A confirm box's payload; the path is owned.
 pub const Confirm = union(enum) {
@@ -124,11 +205,21 @@ pub const Confirm = union(enum) {
     tag_delete: []u8,
     /// `reset --hard <rev>` after a yes.
     reset_hard: []u8,
+    /// `checkout -f <branch>` after a yes: the tree's changes go.
+    checkout_force: []u8,
+    /// `push <remote> --delete <branch>` after a yes.
+    delete_remote: struct { remote: []u8, branch: []u8 },
+    /// `push --force-with-lease` after a yes.
+    push_force,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard => |s| gpa.free(s),
-            .none, .discard_hunk => {},
+            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard, .checkout_force => |s| gpa.free(s),
+            .delete_remote => |d| {
+                gpa.free(d.remote);
+                gpa.free(d.branch);
+            },
+            .none, .discard_hunk, .push_force => {},
         }
     }
 };
@@ -271,9 +362,13 @@ pub const GraphPane = struct {
     anchor: ?usize = null,
     /// The rebase plan while its modal is open.
     plan: ?Plan = null,
+    /// `W`: the commit a `d` on another row diffs from (`base..row`).
+    /// Owned; a sha, so it survives a log reload.
+    compare_base: ?[]u8 = null,
 
     pub fn deinit(self: *GraphPane) void {
         self.gpa.free(self.name);
+        if (self.compare_base) |b| self.gpa.free(b);
         self.wip_text.deinit(self.gpa);
         self.filter.deinit(self.gpa);
         self.marks.deinit(self.gpa);
@@ -433,6 +528,21 @@ pub const State = struct {
     /// Owned; taken by the accept, dropped by a cancel.
     line_patch: ?[]u8 = null,
     line_repo: u32 = 0,
+    /// The branch verbs (git-more2): the branch a rename prompt or the
+    /// set-upstream picker acts on, and the commit / tag a new branch
+    /// or worktree prompt starts from. Owned; replaced by the next verb.
+    verb_branch: ?[]u8 = null,
+    verb_start: ?[]u8 = null,
+    /// The stash prompt's variant, and the stash the files pane shows.
+    stash_variant: StashVariant = .{},
+    stash_view: ?StashView = null,
+    /// The command log (git-more2): every child the workers ran, the
+    /// seq of the last one that failed, and the entry the failed-op
+    /// toast's `log` link opens at.
+    log: LogRing = .{},
+    log_next_seq: u32 = 1,
+    last_failed_seq: ?u32 = null,
+    log_link_seq: ?u32 = null,
     /// Conflicts (`app/conflicts.zig`): vim's `c` inside a block is
     /// waiting for `o` / `t` / `b`; and the editor pane + block an AI
     /// resolve was asked for, until the three stages land.
@@ -472,6 +582,14 @@ pub const State = struct {
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
         if (self.line_patch) |b| gpa.free(b);
+        if (self.verb_branch) |b| gpa.free(b);
+        if (self.verb_start) |b| gpa.free(b);
+        if (self.stash_variant.path) |p| gpa.free(p);
+        if (self.stash_view) |v| {
+            gpa.free(v.ref);
+            gpa.free(v.message);
+        }
+        self.log.deinit(gpa);
         var rit = self.rails.valueIterator();
         while (rit.next()) |r| r.snapshot.deinit();
         self.rails.deinit(gpa);
@@ -1063,11 +1181,42 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             if (op.ok) {
                 app.toast("{s}", .{op.desc});
             } else if (op.msg.len > 0) {
-                try app.toastLevel(.err, "{s}: {s}", .{ op.desc, op.msg });
+                // The `log` link: the toast carries the id a click opens
+                // the command log through, at the child that failed.
+                st.log_link_seq = st.last_failed_seq;
+                // The box clips at `toast.max_text` chars: the reason is
+                // cut so the link at the end stays visible.
+                const cut = clipReason(op.msg, @import("../ui/toast.zig").max_text -| (op.desc.len + 8));
+                app.toastReplace(log_toast_id, "{s}: {s}{s} \u{B7} log", .{ op.desc, cut, if (cut.len < op.msg.len) "\u{2026}" else "" });
+                if (app.toasts.items.len > 0) app.toasts.items[app.toasts.items.len - 1].level = .err;
             } else {
                 app.toast("{s}", .{op.desc});
             }
             if (op.refresh) try afterChange(app, repo);
+        },
+        .log_line => |l| {
+            const args = try gpa.alloc([]u8, l.args.len);
+            var filled: usize = 0;
+            errdefer {
+                for (args[0..filled]) |a| gpa.free(a);
+                gpa.free(args);
+            }
+            for (l.args) |a| {
+                args[filled] = try gpa.dupe(u8, a);
+                filled += 1;
+            }
+            const argv = try gpa.dupe(u8, l.argv);
+            errdefer gpa.free(argv);
+            const cwd = try gpa.dupe(u8, l.cwd);
+            errdefer gpa.free(cwd);
+            const stderr = try gpa.dupe(u8, l.stderr);
+            errdefer gpa.free(stderr);
+            // One sequence over every repo, in the order the lines land.
+            const seq = st.log_next_seq;
+            st.log_next_seq +%= 1;
+            try st.log.push(gpa, .{ .seq = seq, .repo = repo.id, .argv = argv, .args = args, .cwd = cwd, .ok = l.ok, .exit = l.exit, .ms = l.ms, .stderr = stderr });
+            if (!l.ok) st.last_failed_seq = seq;
+            try refillLogPane(app, null);
         },
         .url => |u| {
             openExternal(app, u);
@@ -1087,6 +1236,46 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 },
                 else => {},
             };
+        },
+        .stash_show => |s| {
+            // The files pane: `M  path` rows, the path on the entry for Enter.
+            var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
+            errdefer {
+                app_mod.ListPane.freeEntries(gpa, entries.items);
+                entries.deinit(gpa);
+            }
+            for (s.files) |fl| {
+                const text = try std.fmt.allocPrint(gpa, "{c}  {s}", .{ fl.status, fl.path });
+                errdefer gpa.free(text);
+                try entries.append(gpa, .{ .text = text, .path = try gpa.dupe(u8, fl.path) });
+            }
+            const ref = try gpa.dupe(u8, s.ref);
+            errdefer gpa.free(ref);
+            const message = try gpa.dupe(u8, s.message);
+            errdefer gpa.free(message);
+            if (st.stash_view) |v| {
+                gpa.free(v.ref);
+                gpa.free(v.message);
+            }
+            st.stash_view = .{ .repo = repo.id, .ref = ref, .message = message };
+            cmd_view.openListPane(app, .stash_files, try entries.toOwnedSlice(gpa)) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+            // A list pane opens on its last row; a stash's files read top-down.
+            for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+                .list => |*l| if (l.kind == .stash_files) {
+                    l.cursor = 0;
+                },
+                else => {},
+            };
+        },
+        .file_text => |ft| {
+            _ = app.openScratchWith(ft.text) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return,
+            };
+            app.toast("{s} at {s} (a scratch copy)", .{ ft.path, ft.rev[0..@min(7, ft.rev.len)] });
         },
         .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
         .conflict_text => |c| try conflicts.aiContextReady(app, c.path, c.base, c.ours, c.theirs),
@@ -1344,6 +1533,12 @@ pub fn openDiff(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]
         },
         .orig => try std.fmt.allocPrint(gpa, "orig: {s}", .{std.fs.path.basename(rel orelse "")}),
         .conflict => try std.fmt.allocPrint(gpa, "conflict: {s}", .{std.fs.path.basename(rel orelse "")}),
+        .range => blk: {
+            const t = try client.rangeTitle(gpa, rev orelse "");
+            if (rel == null) break :blk t;
+            defer gpa.free(t);
+            break :blk try std.fmt.allocPrint(gpa, "{s} {s}", .{ t, std.fs.path.basename(rel.?) });
+        },
     };
     errdefer gpa.free(title);
     var dp: DiffPane = .{ .gpa = gpa, .repo = repo.id, .scope = scope, .title = title, .arena = .init(gpa), .mode = app.git.diff_mode };
@@ -1661,7 +1856,7 @@ pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error
             try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Commit {s}\u{2026}", .{what}), .action = .{ .command = .@"git.diff_commit_lines" } });
         },
         .staged => try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Unstage {s}", .{what}), .action = .{ .command = .@"git.diff_unstage_lines" } }),
-        .commit, .orig, .conflict => {},
+        .commit, .orig, .conflict, .range => {},
     }
     try items.append(app.gpa, .{ .label = if (has_sel) "Clear selection" else "Select lines from here", .action = .{ .command = .@"git.diff_select" }, .separator_before = items.items.len > 0 });
     try items.append(app.gpa, .{ .label = "Open file at line", .action = .{ .command = .@"git.diff_open_line" } });
@@ -1695,9 +1890,12 @@ fn openBranchPicker(app: *App, bs: []const parse.Branch, what: Pick) Allocator.E
     }
     const now = nowUnix(app);
     for (bs) |b| {
-        // A delete / merge / rebase picker never offers the current branch.
-        if (b.current and (what == .delete_branch or what == .merge or what == .rebase)) continue;
+        // A delete / merge / rebase / diff picker never offers the current branch.
+        if (b.current and (what == .delete_branch or what == .merge or what == .rebase or what == .diff_current)) continue;
         if (what == .delete_branch and b.remote) continue;
+        // An upstream is a remote branch; a force checkout a local one.
+        if (what == .set_upstream and !b.remote) continue;
+        if (what == .checkout_force and (b.remote or b.current)) continue;
         var age_buf: [16]u8 = undefined;
         const age = parse.relativeAge(&age_buf, b.time, now);
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (b.current) "* " else "", b.name }));
@@ -1714,6 +1912,10 @@ fn openBranchPicker(app: *App, bs: []const parse.Branch, what: Pick) Allocator.E
         .rebase => "Rebase onto",
         .delete_branch => "Delete branch (force)",
         .graph_branch => "Graph: filter by branch",
+        .diff_current => "Diff a branch against the current one",
+        .set_upstream => "Set upstream: the remote branch to track",
+        .checkout_force => "Force checkout (the tree's changes go)",
+        .delete_remote => "Delete a branch on the remote",
         else => "Branches",
     };
     app.git.pick = what;
@@ -1753,6 +1955,9 @@ fn openListPicker(app: *App, kind: client.ListKind, items: []const []const u8, w
     const title: []const u8 = switch (what) {
         .stash_apply => "Stash list (Enter applies, keeps the stash)",
         .stash_drop => "Stash drop",
+        .stash_show => "Stash: show the files",
+        .stash_branch => "Stash: branch from",
+        .stash_rename => "Stash: rename",
         .tag_delete => "Delete tag",
         .reflog => "Reflog (Enter opens the commit's diff)",
         .worktree_open => "Worktrees",
@@ -1841,6 +2046,13 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         },
         .merge => try submitOp(app, try requireRepo(app), .{ .merge = try gpa.dupe(u8, label) }),
         .rebase => try submitOp(app, try requireRepo(app), .{ .rebase = try gpa.dupe(u8, label) }),
+        .diff_current => try diffAgainstCurrent(app, try requireRepo(app), label),
+        .set_upstream => {
+            const branch = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "set upstream: the branch is gone", .{});
+            try submitOp(app, try requireRepo(app), .{ .set_upstream = .{ .branch = try gpa.dupe(u8, branch), .upstream = try gpa.dupe(u8, label) } });
+        },
+        .checkout_force => try checkoutForce(app, label),
+        .delete_remote => try deleteRemote(app, label, null),
         .delete_branch => try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, label) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{label})),
         .graph_branch => {
             const g = activeGraph(app) orelse return;
@@ -1850,6 +2062,13 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         },
         .stash_apply => try submitOp(app, try requireRepo(app), .{ .stash_apply = try gpa.dupe(u8, detail) }),
         .stash_drop => try submitOp(app, try requireRepo(app), .{ .stash_drop = try gpa.dupe(u8, detail) }),
+        .stash_show => try stashShow(app, detail),
+        .stash_branch => try stashBranchPrompt(app, detail),
+        .stash_rename => {
+            // The picker's label is `<ref>  <message>`.
+            const note = if (std.mem.indexOf(u8, label, "  ")) |s| label[s + 2 ..] else "";
+            try stashRenamePrompt(app, detail, note);
+        },
         .tag_delete => try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, detail) }),
         .reflog, .file_history => {
             const repo = try requireRepo(app);
@@ -1955,10 +2174,43 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             if (!g.wipSelected()) requestDetail(app, g) catch {};
             app.needs_render = true;
         },
-        .stash => try submitOp(app, try requireRepo(app), .{ .stash = if (text.len == 0) null else try gpa.dupe(u8, text) }),
+        .stash => {
+            const v = st.stash_variant;
+            st.stash_variant = .{};
+            var push: client.StashPush = .{ .staged_only = v.staged_only, .keep_index = v.keep_index };
+            if (v.path) |p| {
+                const ps = gpa.alloc([]u8, 1) catch |err| {
+                    gpa.free(p);
+                    return err;
+                };
+                ps[0] = p;
+                push.paths = ps;
+            }
+            errdefer push.deinit(gpa);
+            if (text.len > 0) push.msg = try gpa.dupe(u8, text);
+            try submitOp(app, try requireRepo(app), .{ .stash = push });
+        },
+        .stash_branch => {
+            if (text.len == 0) return;
+            const ref = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "stash branch: the stash is gone", .{});
+            try submitOp(app, try requireRepo(app), .{ .stash_branch = .{ .ref = try gpa.dupe(u8, ref), .name = try gpa.dupe(u8, text) } });
+        },
+        .stash_rename => {
+            if (text.len == 0) return;
+            const ref = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "stash rename: the stash is gone", .{});
+            try submitOp(app, try requireRepo(app), .{ .stash_rename = .{ .ref = try gpa.dupe(u8, ref), .msg = try gpa.dupe(u8, text) } });
+        },
         .new_branch => {
             if (text.len == 0) return;
-            try submitOp(app, try requireRepo(app), .{ .new_branch = try gpa.dupe(u8, text) });
+            const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
+            errdefer if (start) |s| gpa.free(s);
+            try submitOp(app, try requireRepo(app), .{ .new_branch = .{ .name = try gpa.dupe(u8, text), .start = start } });
+        },
+        .branch_rename => {
+            if (text.len == 0) return;
+            const from = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "rename: the branch is gone", .{});
+            if (std.mem.eql(u8, from, text)) return;
+            try submitOp(app, try requireRepo(app), .{ .branch_rename = .{ .from = try gpa.dupe(u8, from), .to = try gpa.dupe(u8, text) } });
         },
         .tag => {
             if (text.len == 0) return;
@@ -1970,7 +2222,9 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             var it = std.mem.tokenizeScalar(u8, text, ' ');
             const path = it.next() orelse return;
             const branch = it.next();
-            try submitOp(app, try requireRepo(app), .{ .worktree_add = .{ .path = try gpa.dupe(u8, path), .branch = if (branch) |b| try gpa.dupe(u8, b) else null } });
+            const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
+            errdefer if (start) |s| gpa.free(s);
+            try submitOp(app, try requireRepo(app), .{ .worktree_add = .{ .path = try gpa.dupe(u8, path), .branch = if (branch) |b| try gpa.dupe(u8, b) else null, .start = start } });
         },
         .graph_author, .graph_subject, .graph_date => {
             const g = activeGraph(app) orelse return app.diag.fail(app.frame.allocator(), "graph: no graph pane is active", .{});
@@ -2042,7 +2296,312 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
         .tag_delete => |t| try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, t) }),
         .reset_hard => |rev| try submitOp(app, try requireRepo(app), .{ .reset = .{ .mode = .hard, .rev = try gpa.dupe(u8, rev) } }),
+        .checkout_force => |b| try submitOp(app, try requireRepo(app), .{ .checkout_force = try gpa.dupe(u8, b) }),
+        .delete_remote => |d| {
+            const remote = try gpa.dupe(u8, d.remote);
+            errdefer gpa.free(remote);
+            try submitOp(app, try requireRepo(app), .{ .delete_remote = .{ .remote = remote, .branch = try gpa.dupe(u8, d.branch) } });
+        },
+        .push_force => {
+            app.toast("pushing (--force-with-lease)\u{2026}", .{});
+            try submitOp(app, try requireRepo(app), .push_force);
+        },
     }
+}
+
+// ─── stash depth (git-more2) ────────────────────────────────────────────
+
+/// The stash prompt with a variant: the index only, one file, or the
+/// tree with the index kept.
+pub fn stashWith(app: *App, v: StashVariant, title: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    if (app.git.stash_variant.path) |p| app.gpa.free(p);
+    app.git.stash_variant = v;
+    openPrompt(app, .stash, title);
+}
+
+/// Enter on a STASHES row: its files in a list pane.
+pub fn stashShow(app: *App, ref: []const u8) CommandError!void {
+    const repo = try requireRepo(app);
+    try submit(app, repo, .{ .stash_show = try app.gpa.dupe(u8, ref) });
+}
+
+/// The files pane's header: `stash@{0} · On main: note`.
+pub fn stashViewTitle(app: *App) []const u8 {
+    const v = app.git.stash_view orelse return "stash";
+    return std.fmt.allocPrint(app.frame.allocator(), "{s} \u{B7} {s}", .{ v.ref, v.message }) catch v.ref;
+}
+
+/// Enter on a stash file: the file's diff against the stash's parent
+/// (`ref^..ref`), the same range diff the graph's base uses.
+pub fn stashFileEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
+    const arena = app.frame.allocator();
+    const v = app.git.stash_view orelse return app.diag.fail(arena, "stash: no stash is shown", .{});
+    const repo = app.git.repoById(v.repo) orelse return error.NoRepo;
+    const path = e.path orelse return;
+    const rev = try std.fmt.allocPrint(arena, "{s}^..{s}", .{ v.ref, v.ref });
+    _ = try openDiff(app, repo, .range, path, rev, null);
+}
+
+/// `Branch from stash…`: the name, then `stash branch`.
+pub fn stashBranchPrompt(app: *App, ref: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbBranch(app, ref);
+    openPrompt(app, .stash_branch, "Branch from the stash: the new branch's name");
+}
+
+/// `Rename…`: the prompt opens with the stash's note (its message
+/// without the `On <branch>: ` half, which the rename keeps).
+pub fn stashRenamePrompt(app: *App, ref: []const u8, message: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbBranch(app, ref);
+    openPrompt(app, .stash_rename, "Rename the stash");
+    try app.overlay.prompt.state.setText(app.gpa, parse.stashNote(message));
+}
+
+/// The command log (item 10) fills this in; a stash file row has no
+/// second verb, so the menu offers the copy every list row has.
+pub fn openListRowMenu(app: *App, l: *app_mod.ListPane, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const e = (try l.entryAt(arena, l.cursor)) orelse return;
+    const text: []const u8 = try arena.dupe(u8, if (e.path) |p| p else e.text);
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    switch (l.kind) {
+        .stash_files => try items.append(app.gpa, .{ .label = "Diff this file (Enter)", .action = .{ .command = .@"git.stash_show_diff" } }),
+        .git_log => {
+            const can = if (logEntryOf(app, e.*)) |le| client.isReadOnly(le.args) else false;
+            try items.append(app.gpa, .{ .label = if (can) "Re-run (Enter)" else "Re-run (Enter) \u{2014} writes, not offered", .action = .{ .command = .@"git.command_log_rerun" } });
+            const cmd = try arena.dupe(u8, logCommand(app, e.*) orelse text);
+            try items.append(app.gpa, .{ .label = "Copy the command", .action = .{ .copy_text = cmd } });
+            const rows = try items.toOwnedSlice(app.gpa);
+            errdefer app.gpa.free(rows);
+            try context_menus.openOwned(app, l.title(), rows, x, y, mem);
+            return;
+        },
+        else => {},
+    }
+    try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy ({s})", .{text[0..@min(text.len, 40)]}), .action = .{ .copy_text = text } });
+    const rows = try items.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(rows);
+    try context_menus.openOwned(app, l.title(), rows, x, y, mem);
+}
+
+// ─── the command log (git-more2) ────────────────────────────────────────
+
+/// `msg` cut to `max` characters with an ellipsis, on a UTF-8 edge.
+fn clipReason(msg: []const u8, max: usize) []const u8 {
+    if (max < 4 or msg.len <= max) return msg;
+    var end = max - 1;
+    while (end > 0 and (msg[end] & 0xC0) == 0x80) end -= 1;
+    return msg[0..end];
+}
+
+fn logEntryText(arena: Allocator, e: LogEntry) Allocator.Error![]u8 {
+    const mark: []const u8 = if (e.ok) "\u{2713}" else "\u{2717}";
+    if (e.stderr.len > 0 and !e.ok) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}  \u{2014} {s}", .{ mark, e.ms, e.argv, e.stderr });
+    if (e.exit != null and e.exit.? != 0) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}  \u{2014} exit {d}", .{ mark, e.ms, e.argv, e.exit.? });
+    return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}", .{ mark, e.ms, e.argv });
+}
+
+/// The log pane's rows, newest first; `line` carries the entry's seq.
+fn logEntries(app: *App) Allocator.Error![]app_mod.ListPane.Entry {
+    const gpa = app.gpa;
+    var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
+    errdefer {
+        app_mod.ListPane.freeEntries(gpa, entries.items);
+        entries.deinit(gpa);
+    }
+    const items = app.git.log.items.items;
+    var i = items.len;
+    while (i > 0) {
+        i -= 1;
+        try entries.append(gpa, .{ .text = try logEntryText(gpa, items[i]), .line = items[i].seq });
+    }
+    return entries.toOwnedSlice(gpa);
+}
+
+/// `git.command_log`: the pane, newest first, the cursor on `at`'s
+/// row (the failed-op toast's entry) or the newest.
+pub fn openCommandLog(app: *App, at: ?u32) CommandError!void {
+    try cmd_view.openListPane(app, .git_log, try logEntries(app));
+    try refillLogPane(app, at orelse app.git.log_link_seq);
+    app.git.log_link_seq = null;
+}
+
+/// An open log pane takes the ring as it is now; the cursor stays on
+/// its entry (or lands on `at`).
+fn refillLogPane(app: *App, at: ?u32) Allocator.Error!void {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .list => |*l| if (l.kind == .git_log) {
+            const arena = app.frame.allocator();
+            const keep: ?u32 = at orelse (if (try l.entryAt(arena, l.cursor)) |e| e.line else null);
+            const fresh = try logEntries(app);
+            app_mod.ListPane.freeEntries(l.gpa, l.entries.items);
+            l.entries.deinit(l.gpa);
+            l.entries = .fromOwnedSlice(fresh);
+            l.cursor = 0;
+            if (keep) |seq| {
+                for (try l.shown(arena), 0..) |ei, row| if (l.entries.items[ei].line == seq) {
+                    l.cursor = row;
+                    break;
+                };
+            }
+            app.needs_render = true;
+            return;
+        },
+        else => {},
+    };
+}
+
+/// The entry a log row names.
+pub fn logEntryOf(app: *App, e: app_mod.ListPane.Entry) ?*const LogEntry {
+    return app.git.log.find(e.line);
+}
+
+/// `y` on a log row: the command line, not the row's decoration.
+pub fn logCommand(app: *App, e: app_mod.ListPane.Entry) ?[]const u8 {
+    const le = logEntryOf(app, e) orelse return null;
+    return le.argv;
+}
+
+/// Enter on a command-log row: the read-only commands run again
+/// through the same worker; a writing one says why not.
+pub fn logEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
+    const arena = app.frame.allocator();
+    const le = logEntryOf(app, e) orelse return app.diag.fail(arena, "command log: that entry is gone", .{});
+    if (le.args.len == 0) return app.diag.fail(arena, "command log: not a git command \u{2014} nothing to re-run", .{});
+    if (!client.isReadOnly(le.args)) return app.diag.fail(arena, "command log: `git {s}` writes \u{2014} run it from the palette, not the log", .{le.args[0]});
+    const repo = app.git.repoById(le.repo) orelse return error.NoRepo;
+    const gpa = app.gpa;
+    const argv = try gpa.alloc([]u8, le.args.len);
+    var filled: usize = 0;
+    errdefer {
+        for (argv[0..filled]) |a| gpa.free(a);
+        gpa.free(argv);
+    }
+    for (le.args) |a| {
+        argv[filled] = try gpa.dupe(u8, a);
+        filled += 1;
+    }
+    try submitOp(app, repo, .{ .rerun = argv });
+}
+
+// ─── the branch verbs (git-more2) ───────────────────────────────────────
+
+fn setVerbBranch(app: *App, name: []const u8) Allocator.Error!void {
+    if (app.git.verb_branch) |b| app.gpa.free(b);
+    app.git.verb_branch = try app.gpa.dupe(u8, name);
+}
+
+fn setVerbStart(app: *App, rev: []const u8) Allocator.Error!void {
+    if (app.git.verb_start) |s| app.gpa.free(s);
+    app.git.verb_start = try app.gpa.dupe(u8, rev);
+}
+
+/// The start a new-branch / worktree prompt was opened with, taken
+/// (the prompt's accept owns it from here).
+fn takeVerbStart(app: *App) ?[]u8 {
+    const s = app.git.verb_start orelse return null;
+    app.git.verb_start = null;
+    return s;
+}
+
+/// The rail's entry for `name`, local or remote.
+fn railBranch(app: *App, name: []const u8) ?parse.Branch {
+    for (app.git.rail_branches) |b| if (std.mem.eql(u8, b.name, name)) return b;
+    return null;
+}
+
+/// `Rename…`: the prompt opens with the old name.
+pub fn branchRename(app: *App, name: []const u8) CommandError!void {
+    try setVerbBranch(app, name);
+    openPrompt(app, .branch_rename, "Rename branch");
+    try app.overlay.prompt.state.setText(app.gpa, name);
+}
+
+/// Fast-forward `name` to its upstream — `merge --ff-only` when it is
+/// checked out, `fetch remote ref:name` otherwise. The upstream comes
+/// off the rail (`for-each-ref`'s `%(upstream)`), so the rail must have
+/// loaded; a branch without one says so.
+pub fn fastForward(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = try requireRepo(app);
+    const b = railBranch(app, name) orelse return app.diag.fail(arena, "fast-forward: `{s}` is not in the branches panel (open it, or refresh)", .{name});
+    if (b.upstream.len == 0) return app.diag.fail(arena, "fast-forward: {s} has no upstream \u{2014} set one first", .{name});
+    const gpa = app.gpa;
+    const branch = try gpa.dupe(u8, name);
+    errdefer gpa.free(branch);
+    try submitOp(app, repo, .{ .fast_forward = .{ .branch = branch, .upstream = try gpa.dupe(u8, b.upstream), .checked_out = b.current } });
+}
+
+/// `Set upstream…`: a picker of the remote branches.
+pub fn setUpstream(app: *App, name: []const u8) CommandError!void {
+    const repo = try requireRepo(app);
+    try setVerbBranch(app, name);
+    try askBranches(app, repo, .set_upstream);
+}
+
+/// `Force checkout…`: a confirm that says what goes.
+pub fn checkoutForce(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    try openConfirm(app, .{ .checkout_force = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Force checkout {s}? Uncommitted changes in the tree are discarded (git checkout -f; undo restores them)", .{name}));
+}
+
+/// `Delete on the remote…`: `remote/name` splits into the two; a local
+/// branch deletes its upstream's ref (or `origin/<name>` without one).
+pub fn deleteRemote(app: *App, name: []const u8, remote_hint: ?[]const u8) CommandError!void {
+    const gpa = app.gpa;
+    var remote: []const u8 = remote_hint orelse "origin";
+    var branch: []const u8 = name;
+    if (railBranch(app, name)) |b| {
+        if (b.remote) {
+            if (std.mem.indexOfScalar(u8, name, '/')) |s| {
+                remote = name[0..s];
+                branch = name[s + 1 ..];
+            }
+        } else if (b.upstream.len > 0) {
+            if (std.mem.indexOfScalar(u8, b.upstream, '/')) |s| {
+                remote = b.upstream[0..s];
+                branch = b.upstream[s + 1 ..];
+            }
+        }
+    } else if (std.mem.indexOfScalar(u8, name, '/')) |s| {
+        remote = name[0..s];
+        branch = name[s + 1 ..];
+    }
+    const r = try gpa.dupe(u8, remote);
+    errdefer gpa.free(r);
+    const b = try gpa.dupe(u8, branch);
+    errdefer gpa.free(b);
+    try openConfirm(app, .{ .delete_remote = .{ .remote = r, .branch = b } }, try std.fmt.allocPrint(gpa, "  Delete {s}/{s} on the remote? (git push {s} --delete {s})", .{ remote, branch, remote, branch }));
+}
+
+/// `New branch from here…`: the prompt, the start kept for its accept.
+pub fn newBranchFrom(app: *App, start: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbStart(app, start);
+    // The prompt borrows its title for as long as it is open: a static one.
+    openPrompt(app, .new_branch, if (std.mem.eql(u8, start, "HEAD")) "New branch" else "New branch from the selected commit / ref");
+}
+
+/// `New worktree from here…`: as `git.worktree_add`, starting at `start`.
+pub fn worktreeFrom(app: *App, start: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbStart(app, start);
+    openPrompt(app, .worktree_add, if (std.mem.eql(u8, start, "HEAD")) "Worktree: <path> [new-branch]" else "Worktree from the selected commit / ref: <path> [new-branch]");
+}
+
+/// `Push --force-with-lease…`: the confirm names the risk. Rust refused
+/// a force push outright; this is the deliberate change — the lease
+/// refuses when the remote moved past the last fetch, and the text
+/// says what a yes rewrites.
+pub fn pushForce(app: *App) CommandError!void {
+    _ = try requireRepo(app);
+    const branch = app.git.branchLabel() orelse "HEAD";
+    try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "  Push {s} with --force-with-lease? The remote branch is rewritten to match this one; commits only the remote has since your last fetch would be lost (git refuses if it moved past that fetch)", .{branch}));
 }
 
 /// A prompt or confirm box closing by any route: an AI body waiting
@@ -2622,7 +3181,8 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
                 'k' => moveGraphCursor(app, g, g.cursor -| 1),
                 'g' => moveGraphCursor(app, g, 0),
                 'G' => moveGraphCursor(app, g, n -| 1),
-                'd' => runToast(app, showSelectedCommit(app, g)),
+                'd' => runToast(app, diffSelected(app, g)),
+                'W' => runToast(app, toggleCompareBase(app, g)),
                 's' => try setSort(app, g, .{ .col = g.sort.col.next(), .asc = false }),
                 '/' => openPrompt(app, .graph_hash, "Jump to commit (hash prefix)"),
                 'a' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.stage_all" })) else return false,
@@ -3106,6 +3666,95 @@ fn openDetailRow(app: *App, g: *GraphPane) CommandError!void {
     _ = try openDiff(app, repo, .commit, d.files[g.detail_cursor].path, c.hash, null);
 }
 
+// ─── the compare base (W) ───────────────────────────────────────────────
+
+/// `W`: the selected commit becomes the compare base — `d` on another
+/// row then diffs `base..row`; `W` on the base clears it.
+pub fn toggleCompareBase(app: *App, g: *GraphPane) CommandError!void {
+    const c = g.selected() orelse return app.diag.fail(app.frame.allocator(), "graph: select a commit to compare from", .{});
+    if (g.compare_base) |b| {
+        const was = std.mem.eql(u8, b, c.hash);
+        app.gpa.free(b);
+        g.compare_base = null;
+        if (was) {
+            app.toast("compare base cleared", .{});
+            app.needs_render = true;
+            return;
+        }
+    }
+    g.compare_base = try app.gpa.dupe(u8, c.hash);
+    app.toast("compare base: {s} \u{2014} `d` on another row diffs base..row", .{c.short()});
+    app.needs_render = true;
+}
+
+/// The base's index in `commits`, when the graph has it.
+pub fn compareBaseIndex(g: *const GraphPane) ?usize {
+    const b = g.compare_base orelse return null;
+    return indexOfSha(g, b);
+}
+
+/// `d`: the selected commit against the compare base when one is set
+/// (and is not this row), else the commit's own diff.
+pub fn diffSelected(app: *App, g: *GraphPane) CommandError!void {
+    if (g.compare_base != null and !g.wipSelected()) if (g.selected()) |c| {
+        if (!std.mem.eql(u8, c.hash, g.compare_base.?)) return diffAgainstBase(app, g);
+    };
+    return showSelectedCommit(app, g);
+}
+
+/// The diff pane on `base..selected`.
+pub fn diffAgainstBase(app: *App, g: *GraphPane) CommandError!void {
+    const arena = app.frame.allocator();
+    const base = g.compare_base orelse return app.diag.fail(arena, "graph: no compare base \u{2014} `W` marks one", .{});
+    const c = g.selected() orelse return app.diag.fail(arena, "graph: select the commit to diff against the base", .{});
+    if (std.mem.eql(u8, c.hash, base)) return app.diag.fail(arena, "graph: that is the base itself", .{});
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    const rev = try client.rangeRev(arena, base, c.hash);
+    _ = try openDiff(app, repo, .range, null, rev, null);
+}
+
+/// A branch against the checked-out one: `current..branch` (HEAD when
+/// detached) — what the branch has that the current one does not.
+pub fn diffAgainstCurrent(app: *App, repo: *client.Repo, branch: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const cur: []const u8 = app.git.branchLabel() orelse "HEAD";
+    const from: []const u8 = if (std.mem.eql(u8, cur, "(detached)")) "HEAD" else cur;
+    if (std.mem.eql(u8, from, branch)) return app.diag.fail(arena, "diff: {s} is the current branch", .{branch});
+    _ = try openDiff(app, repo, .range, null, try client.rangeRev(arena, from, branch), null);
+}
+
+/// The commits in `base..HEAD` — reachable from HEAD, not from the
+/// base — as a set over the commit indices (on the frame arena), the
+/// tint the graph paints while a base is set. Null without a base.
+pub fn rangeSet(app: *App, g: *GraphPane) Allocator.Error!?[]bool {
+    const bi = compareBaseIndex(g) orelse return null;
+    const arena = app.frame.allocator();
+    const head = headIndex(app, g) orelse return null;
+    const n = g.commits.len;
+    const from_base = try reachable(arena, g, bi);
+    const from_head = try reachable(arena, g, head);
+    const out = try arena.alloc(bool, n);
+    for (out, from_head, from_base) |*o, h, b| o.* = h and !b;
+    return out;
+}
+
+/// The commits reachable from `start` through the loaded parents,
+/// `start` included.
+fn reachable(arena: Allocator, g: *const GraphPane, start: usize) Allocator.Error![]bool {
+    const on = try arena.alloc(bool, g.commits.len);
+    @memset(on, false);
+    var stack: std.ArrayListUnmanaged(usize) = .empty;
+    try stack.append(arena, start);
+    while (stack.pop()) |at| {
+        if (on[at]) continue;
+        on[at] = true;
+        for (g.commits[at].parents) |p| if (indexOfSha(g, p)) |pi| {
+            if (!on[pi]) try stack.append(arena, pi);
+        };
+    }
+    return on;
+}
+
 pub fn showSelectedCommit(app: *App, g: *GraphPane) CommandError!void {
     if (g.wipSelected()) {
         const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
@@ -3188,11 +3837,18 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
         return;
     }
     if (graph_view.wipFileOf(hit_id)) |wf| {
-        if (m.button != .left) return;
         const files = try wipFiles(app, app.frame.allocator());
         const list = if (wf.staged) files.staged else files.unstaged;
         if (wf.idx >= list.len) return;
         const repo = app.git.repoById(g.repo) orelse return;
+        // // right-click (git-more2, audit #101): the working tree's file
+        // rows — the graph's embedded diff rows — open the row's menu.
+        if (m.button == .right) {
+            g.detail_focus = true;
+            g.detail_cursor = wf.idx + @as(usize, if (wf.staged) files.unstaged.len else 0);
+            return openDetailRowMenu(app, g, m.x, m.y);
+        }
+        if (m.button != .left) return;
         if (wf.button) return runToast(app, stagePath(app, repo, list[wf.idx].path, !wf.staged));
         g.detail_focus = true;
         g.detail_cursor = wf.idx + @as(usize, if (wf.staged) files.unstaged.len else 0);
@@ -3203,6 +3859,7 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
         const was = g.detail_focus and g.detail_cursor == row;
         g.detail_focus = true;
         g.detail_cursor = row;
+        if (m.button == .right) return openDetailRowMenu(app, g, m.x, m.y);
         if (was and m.button == .left) runToast(app, openDetailRow(app, g));
         return;
     }
@@ -3212,9 +3869,88 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
     if (m.button == .right) return openGraphMenu(app, m.x, m.y);
 }
 
+/// The working-tree file the graph's detail column has the cursor on,
+/// for the `git.stage` family off the graph (the status pane's row
+/// otherwise); null when the graph is not on its WIP row.
+pub fn wipDetailRow(app: *App) Allocator.Error!?Row {
+    const g = activeGraph(app) orelse return null;
+    if (!g.wipSelected() or !g.detail_focus) return null;
+    return wipRow(app, g, g.detail_cursor);
+}
+
+/// Enter's twin for the detail rows' menu.
+pub fn openDetailRowCmd(app: *App, g: *GraphPane) CommandError!void {
+    return openDetailRow(app, g);
+}
+
+/// A commit file row's "Open file at this revision": the file's text
+/// as that commit had it, in a scratch buffer.
+pub fn showDetailFileAtRev(app: *App, g: *GraphPane) CommandError!void {
+    const arena = app.frame.allocator();
+    if (g.wipSelected()) return app.diag.fail(arena, "graph: the working tree's file is on disk already", .{});
+    const c = g.selected() orelse return app.diag.fail(arena, "graph: no commit selected", .{});
+    const d = g.detail orelse return app.diag.fail(arena, "graph: the detail has not loaded", .{});
+    if (g.detail_cursor >= d.files.len) return app.diag.fail(arena, "graph: no file row selected", .{});
+    const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
+    const rev = try app.gpa.dupe(u8, c.hash);
+    errdefer app.gpa.free(rev);
+    try submit(app, repo, .{ .show_file = .{ .rev = rev, .path = try app.gpa.dupe(u8, d.files[g.detail_cursor].path) } });
+}
+
+/// The detail column's file rows' menu (audit #101 — Rust's embedded
+/// diff rows): a working-tree row offers the diff, the file, stage /
+/// unstage, discard and the path; a commit's row the diff in that
+/// commit, the file at that revision, the hash, the path and the
+/// remote.
+fn openDetailRowMenu(app: *App, g: *GraphPane, x: u16, y: u16) Allocator.Error!void {
+    // The labels and the copy_text rows live on the menu's own arena:
+    // the frame's is gone by the time the menu paints again.
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    if (g.wipSelected()) {
+        const row = (try wipRow(app, g, g.detail_cursor)) orelse return;
+        try items.append(app.gpa, .{ .label = "Open diff (Enter)", .action = .{ .command = .@"git.graph_detail_open" } });
+        try items.append(app.gpa, .{ .label = "Open file", .action = .{ .command = .@"git.open_file" } });
+        if (row.staged) {
+            try items.append(app.gpa, .{ .label = "Unstage", .action = .{ .command = .@"git.unstage" }, .separator_before = true });
+        } else {
+            try items.append(app.gpa, .{ .label = "Stage", .action = .{ .command = .@"git.stage" }, .separator_before = true });
+        }
+        try items.append(app.gpa, .{ .label = "Discard changes\u{2026}", .action = .{ .command = .@"git.discard" } });
+        try items.append(app.gpa, .{ .label = "Stash this file\u{2026}", .action = .{ .command = .@"git.stash_file" } });
+        const path = try arena.dupe(u8, row.path);
+        try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy path ({s})", .{path}), .action = .{ .copy_text = path }, .separator_before = true });
+        const rows = try items.toOwnedSlice(app.gpa);
+        errdefer app.gpa.free(rows);
+        try context_menus.openOwned(app, std.fs.path.basename(path), rows, x, y, mem);
+        return;
+    }
+    const c = g.selected() orelse return;
+    const d = g.detail orelse return;
+    if (g.detail_cursor >= d.files.len) return;
+    const path = d.files[g.detail_cursor].path;
+    try items.append(app.gpa, .{ .label = "Open the file's diff in this commit (Enter)", .action = .{ .command = .@"git.graph_detail_open" } });
+    try items.append(app.gpa, .{ .label = "Open file at this revision", .action = .{ .command = .@"git.graph_file_at_rev" } });
+    try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy commit hash ({s})", .{c.short()}), .action = .{ .copy_text = c.hash }, .separator_before = true });
+    try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Copy path ({s})", .{path}), .action = .{ .copy_text = path } });
+    try items.append(app.gpa, .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" }, .separator_before = true });
+    const rows = try items.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(rows);
+    try context_menus.openOwned(app, std.fs.path.basename(path), rows, x, y, mem);
+}
+
 fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const g = activeGraph(app);
+    const has_base = if (g) |gp| gp.compare_base != null else false;
+    const on_base = if (g) |gp| (if (compareBaseIndex(gp)) |bi| gp.selectedIndex() == bi else false) else false;
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Details", .action = .{ .command = .@"git.graph_detail" } },
+        .{ .label = "Diff this commit", .action = .{ .command = .@"git.graph_diff" } },
+        .{ .label = if (on_base) "Clear the compare base (W)" else "Mark as compare base (W)", .action = .{ .command = .@"git.compare_base" }, .separator_before = true },
+        .{ .label = if (has_base) "Diff against \u{2691}" else "Diff against \u{2691} (no base set)", .action = .{ .command = .@"git.diff_against_base" } },
         .{ .label = "Cherry-pick onto HEAD", .action = .{ .command = .@"git.cherry_pick" }, .separator_before = true },
         .{ .label = "Revert", .action = .{ .command = .@"git.revert" } },
         .{ .label = "Rebase plan\u{2026}", .action = .{ .command = .@"git.rebase_plan" }, .separator_before = true },
@@ -3227,6 +3963,8 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Reset --mixed here", .action = .{ .command = .@"git.reset_mixed" } },
         .{ .label = "Reset --hard here\u{2026}", .action = .{ .command = .@"git.reset_hard" } },
         .{ .label = "Select the branch's commits (*)", .action = .{ .command = .@"git.select_branch" }, .separator_before = true },
+        .{ .label = "New branch from here\u{2026}", .action = .{ .command = .@"git.new_branch_from" }, .separator_before = true },
+        .{ .label = "New worktree from here\u{2026}", .action = .{ .command = .@"git.worktree_add_from" } },
         .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" }, .separator_before = true },
         .{ .label = "Sort by next column", .action = .{ .command = .@"git.graph_sort" }, .separator_before = true },
         .{ .label = "Jump to hash…", .action = .{ .command = .@"git.graph_jump_hash" } },
@@ -3289,6 +4027,10 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Stage all", .action = .{ .command = .@"git.stage_all" }, .separator_before = true },
         .{ .label = "Unstage all", .action = .{ .command = .@"git.unstage_all" } },
         .{ .label = "Commit…", .action = .{ .command = .@"git.commit" } },
+        .{ .label = "Stash this file\u{2026}", .action = .{ .command = .@"git.stash_file" }, .separator_before = true },
+        .{ .label = "Stash staged only\u{2026}", .action = .{ .command = .@"git.stash_staged" } },
+        .{ .label = "Stash keeping the index\u{2026}", .action = .{ .command = .@"git.stash_keep_index" } },
+        .{ .label = "Stash everything\u{2026}", .action = .{ .command = .@"git.stash" } },
     });
     errdefer app.gpa.free(items);
     try app.openMenu("Git", items, x, y);
@@ -3320,7 +4062,7 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
     const actions: diff_view.Actions = switch (dp.scope) {
         .file, .worktree, .head => .unstaged,
         .staged => .staged,
-        .commit, .orig, .conflict => .none,
+        .commit, .orig, .conflict, .range => .none,
     };
     const painted = diff_view.draw(ui, id, area, &dp.view, .{
         .files = dp.files,
@@ -3433,6 +4175,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         };
         marks = m;
     }
+    const tinted: ?[]const bool = rangeSet(app, g) catch null;
     var plan_actions: ?[]const u8 = null;
     if (g.plan) |*plan| {
         const pa = arena.alloc(u8, g.commits.len) catch return;
@@ -3462,6 +4205,8 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         .marks = marks,
         .range = g.range(),
         .plan_actions = plan_actions,
+        .compare_base = compareBaseIndex(g),
+        .tinted = tinted,
     });
     if (g.plan) |*plan| {
         const rows = arena.alloc(graph_view.PlanRowDoc, plan.rows.items.len) catch return;
@@ -4455,4 +5200,472 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expect(refsName("HEAD -> main, origin/main, tag: v1", "origin/main"));
     try testing.expect(refsName("HEAD -> main", "main"));
     try testing.expect(!refsName("HEAD -> main, origin/main", "main2"));
+}
+
+test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "third" });
+    try f.sh(&.{ "branch", "-q", "other", "HEAD~1" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+    const id = f.app.active.?;
+    try testing.expectEqual(@as(usize, 3), g.commits.len);
+    try testing.expect(!g.has_wip);
+
+    // The base: `first`, the bottom row.
+    const first_ci = for (g.commits, 0..) |c, i| {
+        if (std.mem.eql(u8, c.subject, "first")) break i;
+    } else unreachable;
+    moveGraphCursor(&f.app, g, g.rowOfCommit(first_ci));
+    _ = try graphKey(&f.app, id, g, Key.char('W'));
+    try testing.expectEqualStrings(g.commits[first_ci].hash, g.compare_base.?);
+    try testing.expectEqual(first_ci, compareBaseIndex(g).?);
+    // base..HEAD is second + third: two tinted rows, the base not among them.
+    const tint = (try rangeSet(&f.app, g)).?;
+    var n_tint: usize = 0;
+    for (tint) |t| if (t) {
+        n_tint += 1;
+    };
+    try testing.expectEqual(@as(usize, 2), n_tint);
+    try testing.expect(!tint[first_ci]);
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{2691}") != null);
+
+    // `d` on HEAD (third): the range pane, titled base..row with short shas.
+    moveGraphCursor(&f.app, g, g.rowOfCommit(headIndex(&f.app, g).?));
+    _ = try graphKey(&f.app, id, g, Key.char('d'));
+    try f.settle(4000);
+    const dp = activeDiff(&f.app).?;
+    try testing.expectEqual(client.DiffScope.range, dp.scope);
+    const want = try std.fmt.allocPrint(testing.allocator, "{s}..{s}", .{ g.commits[first_ci].hash[0..7], g.commits[headIndex(&f.app, g).?].hash[0..7] });
+    defer testing.allocator.free(want);
+    try testing.expectEqualStrings(want, dp.title);
+    // b.txt and c.txt were added between the two.
+    try testing.expectEqual(@as(usize, 2), dp.files.len);
+
+    // Back on the graph: W on the base clears it; the tint goes with it.
+    f.app.showPane(id);
+    moveGraphCursor(&f.app, g, g.rowOfCommit(first_ci));
+    _ = try graphKey(&f.app, id, g, Key.char('W'));
+    try testing.expect(g.compare_base == null);
+    try testing.expect((try rangeSet(&f.app, g)) == null);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "compare base cleared"));
+    // Without a base `git.diff_against_base` says so.
+    try testing.expectError(error.Failed, command.run(&f.app, .{ .static = .@"git.diff_against_base" }));
+    f.app.diag.clear();
+
+    // A branch against the current one: `main..other` is the two trees'
+    // diff — other lacks c.txt, so one file, titled by name.
+    try diffAgainstCurrent(&f.app, f.app.git.activeRepo().?, "other");
+    try f.settle(4000);
+    const dp2 = activeDiff(&f.app).?;
+    try testing.expectEqualStrings("main..other", dp2.title);
+    try testing.expectEqual(@as(usize, 1), dp2.files.len);
+    try testing.expectEqualStrings("c.txt", dp2.files[0].path());
+    // The current branch against itself refuses.
+    try testing.expectError(error.Failed, diffAgainstCurrent(&f.app, f.app.git.activeRepo().?, "main"));
+    f.app.diag.clear();
+}
+
+test "the branch verbs on a seeded remote: fast-forward fetches ref:branch when not checked out, rename, set upstream, a new branch from a commit, force checkout (confirm), delete on the remote (confirm), push --force-with-lease (confirm)" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\norigin.git/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    const first = try f.out(&.{ "rev-parse", "HEAD" });
+    defer testing.allocator.free(first);
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.sh(&.{ "init", "-q", "--bare", "origin.git" });
+    try f.sh(&.{ "remote", "add", "origin", "./origin.git" });
+    try f.sh(&.{ "push", "-q", "-u", "origin", "main" });
+    // feat: one commit past main on the remote, the local ref behind it.
+    try f.sh(&.{ "checkout", "-q", "-b", "feat" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "feat work" });
+    try f.sh(&.{ "push", "-q", "-u", "origin", "feat" });
+    try f.sh(&.{ "checkout", "-q", "main" });
+    try f.sh(&.{ "update-ref", "refs/heads/feat", first });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    try testing.expect(f.app.git.rail_loaded);
+
+    // Fast-forward feat (not checked out): fetch origin feat:feat.
+    try fastForward(&f.app, "feat");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "fast-forwarded feat to origin/feat"));
+    const feat_now = try f.out(&.{ "rev-parse", "feat" });
+    defer testing.allocator.free(feat_now);
+    const feat_remote = try f.out(&.{ "rev-parse", "origin/feat" });
+    defer testing.allocator.free(feat_remote);
+    try testing.expectEqualStrings(feat_remote, feat_now);
+    // A branch without an upstream says so instead of guessing one.
+    try f.sh(&.{ "branch", "-q", "lonely" });
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    try testing.expectError(error.Failed, fastForward(&f.app, "lonely"));
+    f.app.diag.clear();
+
+    // Rename: the prompt opens with the old name; the accept runs branch -m.
+    try branchRename(&f.app, "lonely");
+    try testing.expectEqual(PromptKind.branch_rename, f.app.git.prompt);
+    try testing.expectEqualStrings("lonely", f.app.overlay.prompt.state.text());
+    try acceptPrompt(&f.app, "renamed");
+    try f.settle(4000);
+    const renamed = try f.out(&.{ "branch", "--list", "renamed" });
+    defer testing.allocator.free(renamed);
+    try testing.expect(std.mem.indexOf(u8, renamed, "renamed") != null);
+
+    // Set upstream: the picker offers the remote branches; the pick runs branch -u.
+    try setUpstream(&f.app, "renamed");
+    // The picker waits on the `.branches` result, which no busy count covers.
+    var spins: usize = 0;
+    while (f.app.git.pick != .set_upstream and spins < 800) : (spins += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expectEqual(Pick.set_upstream, f.app.git.pick);
+    try acceptPick(&f.app, "origin/main", "remote");
+    try f.settle(4000);
+    const up = try f.out(&.{ "rev-parse", "--abbrev-ref", "renamed@{upstream}" });
+    defer testing.allocator.free(up);
+    try testing.expectEqualStrings("origin/main", up);
+
+    // A new branch from the first commit: checkout -b name <sha>.
+    try newBranchFrom(&f.app, first);
+    try acceptPrompt(&f.app, "fromfirst");
+    try f.settle(4000);
+    const ff = try f.out(&.{ "rev-parse", "fromfirst" });
+    defer testing.allocator.free(ff);
+    try testing.expectEqualStrings(first, ff);
+    try testing.expect(f.app.git.verb_start == null);
+
+    // Force checkout main with a dirty tree: the confirm, then the tree is clean on main.
+    try f.write("a.txt", "dirty\n");
+    try checkoutForce(&f.app, "main");
+    try testing.expectEqual(std.meta.Tag(Confirm).checkout_force, std.meta.activeTag(f.app.git.confirm));
+    try acceptConfirm(&f.app, 0);
+    try f.settle(4000);
+    const on = try f.out(&.{ "symbolic-ref", "--short", "HEAD" });
+    defer testing.allocator.free(on);
+    try testing.expectEqualStrings("main", on);
+    const clean = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(clean);
+    try testing.expectEqualStrings("", clean);
+
+    // Delete on the remote: origin/feat splits into the remote and the ref.
+    try deleteRemote(&f.app, "origin/feat", null);
+    try testing.expectEqualStrings("origin", f.app.git.confirm.delete_remote.remote);
+    try testing.expectEqualStrings("feat", f.app.git.confirm.delete_remote.branch);
+    try acceptConfirm(&f.app, 0);
+    try f.settle(4000);
+    const heads = try f.out(&.{ "ls-remote", "--heads", "origin", "feat" });
+    defer testing.allocator.free(heads);
+    try testing.expectEqualStrings("", heads);
+
+    // Push --force-with-lease after rewriting main: the confirm names the
+    // risk; origin/main then matches.
+    try f.sh(&.{ "commit", "-q", "--amend", "-m", "second, reworded" });
+    try pushForce(&f.app);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "force-with-lease") != null);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "would be lost") != null);
+    try acceptConfirm(&f.app, 0);
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "pushed (--force-with-lease)"));
+    const local = try f.out(&.{ "rev-parse", "main" });
+    defer testing.allocator.free(local);
+    const remote = try f.out(&.{ "rev-parse", "origin/main" });
+    defer testing.allocator.free(remote);
+    try testing.expectEqualStrings(local, remote);
+}
+
+test "stash depth: staged only leaves the tree's change, a file alone, keep-index; the files pane lists a stash's files and Enter opens the range diff; rename keeps the branch half; branch from stash" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "a.txt", "b.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+
+    // Staged only: a.txt staged, b.txt changed in the tree — the stash
+    // takes the index, b.txt's change stays.
+    try f.write("a.txt", "one-staged\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.write("b.txt", "two-tree\n");
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.stash_staged" });
+    try testing.expectEqual(PromptKind.stash, f.app.git.prompt);
+    try testing.expect(f.app.git.stash_variant.staged_only);
+    try acceptPrompt(&f.app, "index bits");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "stashed the index: index bits"));
+    // (`out` trims the porcelain's leading column.)
+    const st1 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st1);
+    try testing.expectEqualStrings("M b.txt", st1);
+    const list1 = try f.out(&.{ "stash", "list", "--format=%gs" });
+    defer testing.allocator.free(list1);
+    try testing.expectEqualStrings("On main: index bits", list1);
+    // Pop brings a.txt's change back (into the tree: a plain pop does
+    // not restore the index).
+    _ = try f.op(.{ .stash_pop = null });
+    const st2 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st2);
+    try testing.expect(std.mem.indexOf(u8, st2, "M a.txt") != null);
+    try testing.expect(std.mem.indexOf(u8, st2, "M b.txt") != null);
+
+    // One file: the argv narrows the push to it.
+    try f.sh(&.{ "reset", "-q" });
+    const path = try testing.allocator.dupe(u8, "b.txt");
+    try stashWith(&f.app, .{ .path = path }, "x");
+    try acceptPrompt(&f.app, "");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "stashed b.txt"));
+    const st3 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st3);
+    try testing.expectEqualStrings("M a.txt", st3);
+    try testing.expect(f.app.git.stash_variant.path == null);
+
+    // The files pane: stash@{0} holds b.txt; Enter diffs it as a range.
+    try stashShow(&f.app, "stash@{0}");
+    var spins: usize = 0;
+    while (f.app.git.stash_view == null and spins < 800) : (spins += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(f.app.git.stash_view != null);
+    try testing.expectEqualStrings("stash@{0}", f.app.git.stash_view.?.ref);
+    const lp = switch (f.app.panes.get(f.app.active.?).?.*) {
+        .list => |*l| l,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(app_mod.ListPane.Kind.stash_files, lp.kind);
+    try testing.expectEqual(@as(usize, 1), lp.entries.items.len);
+    try testing.expectEqualStrings("M  b.txt", lp.entries.items[0].text);
+    try stashFileEnter(&f.app, lp.entries.items[0]);
+    try f.settle(4000);
+    const dp = activeDiff(&f.app).?;
+    try testing.expectEqual(client.DiffScope.range, dp.scope);
+    try testing.expectEqualStrings("b.txt", dp.path.?);
+    try testing.expectEqual(@as(usize, 1), dp.files.len);
+
+    // Rename: the prompt opens with the note; the branch half stays.
+    try stashRenamePrompt(&f.app, "stash@{0}", "WIP on main: abc first");
+    try testing.expectEqualStrings("abc first", f.app.overlay.prompt.state.text());
+    try acceptPrompt(&f.app, "b only");
+    try f.settle(4000);
+    // `%gs`: the reflog subject is what a rename changes (and what the panel lists).
+    const list2 = try f.out(&.{ "stash", "list", "--format=%gs" });
+    defer testing.allocator.free(list2);
+    try testing.expectEqualStrings("On main: b only", list2);
+
+    // Keep-index: a.txt staged again and the tree changed; the index survives.
+    try f.sh(&.{ "add", "a.txt" });
+    try f.write("b.txt", "two-again\n");
+    try stashWith(&f.app, .{ .keep_index = true }, "x");
+    try acceptPrompt(&f.app, "");
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "stashed (index kept)"));
+    const st4 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st4);
+    try testing.expectEqualStrings("M  a.txt", st4);
+
+    // Branch from the b-only stash: the branch exists with the change applied.
+    try f.sh(&.{ "reset", "-q", "--hard" });
+    try stashBranchPrompt(&f.app, "stash@{1}");
+    try acceptPrompt(&f.app, "from-stash");
+    try f.settle(4000);
+    const on = try f.out(&.{ "symbolic-ref", "--short", "HEAD" });
+    defer testing.allocator.free(on);
+    try testing.expectEqualStrings("from-stash", on);
+    const st5 = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st5);
+    try testing.expectEqualStrings("M b.txt", st5);
+}
+
+test "the command log's ring keeps the last 200, oldest out first, and finds an entry by seq" {
+    var ring: LogRing = .{};
+    defer ring.deinit(testing.allocator);
+    var i: u32 = 1;
+    while (i <= 205) : (i += 1) {
+        try ring.push(testing.allocator, .{
+            .seq = i,
+            .repo = 1,
+            .argv = try testing.allocator.dupe(u8, "git status"),
+            .args = try testing.allocator.alloc([]u8, 0),
+            .cwd = try testing.allocator.dupe(u8, "/r"),
+            .ok = true,
+            .exit = 0,
+            .ms = 1,
+            .stderr = try testing.allocator.dupe(u8, ""),
+        });
+    }
+    try testing.expectEqual(@as(usize, 200), ring.items.items.len);
+    try testing.expectEqual(@as(u32, 6), ring.items.items[0].seq);
+    try testing.expectEqual(@as(u32, 205), ring.items.items[199].seq);
+    try testing.expect(ring.find(5) == null);
+    try testing.expectEqual(@as(u32, 100), ring.find(100).?.seq);
+}
+
+test "the command log: every child lands as a line; a failed op's toast carries the log link and the pane opens at that entry; Enter re-runs a read-only line and refuses a writing one" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    // The status job ran `status --porcelain=v2 -b` and more: all in the ring, timed.
+    try testing.expect(f.app.git.log.items.items.len >= 2);
+    const first = f.app.git.log.items.items[0];
+    try testing.expect(std.mem.indexOf(u8, first.argv, "git --no-pager -c color.ui=never status --porcelain=v2 -b") != null);
+    try testing.expectEqualStrings("status", first.args[0]);
+    try testing.expect(first.ok);
+    try testing.expectEqual(@as(?u8, 0), first.exit);
+    try testing.expectEqualStrings(f.root, first.cwd);
+
+    // A failing op: `pull` with no remote. Its line is the last failed
+    // one; the toast ends in the link; the pane opens on that row.
+    _ = try f.op(.pull);
+    const toast = f.app.lastToast().?;
+    try testing.expect(std.mem.startsWith(u8, toast, "pull"));
+    try testing.expect(std.mem.endsWith(u8, toast, "\u{B7} log"));
+    try testing.expectEqualStrings(log_toast_id, f.app.toasts.items[f.app.toasts.items.len - 1].id.?);
+    // The link names the pull's own line, not a later child's failure
+    // (the status refresh after it runs `config --get` on a repo with no
+    // remote, which fails on its own).
+    const failed_seq = f.app.git.log_link_seq.?;
+    try testing.expect(std.mem.indexOf(u8, f.app.git.log.find(failed_seq).?.argv, "pull") != null);
+    try openCommandLog(&f.app, null);
+    const lp = switch (f.app.panes.get(f.app.active.?).?.*) {
+        .list => |*l| l,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(app_mod.ListPane.Kind.git_log, lp.kind);
+    // Newest first: row 0 is the last child; the cursor is on the pull.
+    try testing.expectEqual(f.app.git.log.items.items[f.app.git.log.items.items.len - 1].seq, lp.entries.items[0].line);
+    const at = lp.entries.items[lp.cursor];
+    try testing.expectEqual(failed_seq, at.line);
+    try testing.expect(std.mem.startsWith(u8, at.text, "\u{2717}"));
+    try testing.expect(std.mem.indexOf(u8, at.text, "pull") != null);
+    try testing.expect(f.app.git.log_link_seq == null);
+    // Enter on the pull refuses; on a status line it re-runs, and the
+    // re-run's own line joins the ring — the pane refills.
+    try testing.expectError(error.Failed, logEnter(&f.app, at));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "writes") != null);
+    f.app.diag.clear();
+    const n_before = f.app.git.log.items.items.len;
+    var status_row: ?app_mod.ListPane.Entry = null;
+    for (lp.entries.items) |e| if (std.mem.indexOf(u8, e.text, "status --porcelain") != null) {
+        status_row = e;
+        break;
+    };
+    try logEnter(&f.app, status_row.?);
+    try f.settle(4000);
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "re-ran: git status"));
+    try testing.expect(f.app.git.log.items.items.len > n_before);
+    try testing.expectEqual(f.app.git.log.items.items.len, lp.entries.items.len);
+    // The `/` filter narrows the shown rows; `y` copies the command line.
+    try lp.filter.appendSlice(lp.gpa, "PULL");
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const shown = try lp.shown(arena_state.allocator());
+    try testing.expectEqual(@as(usize, 1), shown.len);
+    try testing.expectEqualStrings("git --no-pager -c color.ui=never pull --ff-only -q", logCommand(&f.app, lp.entries.items[shown[0]]).?);
+}
+
+test "the detail rows' menu (audit #101): a working-tree row offers stage / discard / the path and the git.stage family reads it; a commit's file row offers the file at that revision, which opens as a scratch copy, and the hash" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("a.txt", "one\ntwo\n");
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+    const id = f.app.active.?;
+    try testing.expect(g.has_wip);
+    try testing.expect(g.wipSelected());
+    // A right press on the WIP file row: the cursor, then the menu.
+    try graphClick(&f.app, id, g, graph_view.wipFileId(.{ .idx = 0, .staged = false, .button = false }), .{ .kind = .press, .button = .right, .x = 90, .y = 6 });
+    try testing.expect(f.app.overlay == .menu);
+    const rows = f.app.overlay.menu.items;
+    try testing.expectEqualStrings("Open diff (Enter)", rows[0].label);
+    try testing.expectEqualStrings("Stage", rows[2].label);
+    try testing.expectEqualStrings("Copy path (a.txt)", rows[rows.len - 1].label);
+    // The stage family reads the graph's row: git.stage stages a.txt.
+    f.app.overlay.deinit(f.app.gpa);
+    try testing.expectEqualStrings("a.txt", (try wipDetailRow(&f.app)).?.path);
+    try command.run(&f.app, .{ .static = .@"git.stage" });
+    try f.settle(4000);
+    const st = try f.out(&.{ "status", "--porcelain" });
+    defer testing.allocator.free(st);
+    try testing.expectEqualStrings("M  a.txt", st);
+
+    // The commit's file row: the menu names the hash; the file at that
+    // revision opens as a scratch copy with the committed text.
+    moveGraphCursor(&f.app, g, g.rowOfCommit(headIndex(&f.app, g).?));
+    try f.settle(4000);
+    try testing.expect(g.detail != null);
+    // The files sort by path: .gitignore first, a.txt after it.
+    const a_row: u32 = for (g.detail.?.files, 0..) |fl, i| {
+        if (std.mem.eql(u8, fl.path, "a.txt")) break @intCast(i);
+    } else return error.TestUnexpectedResult;
+    try graphClick(&f.app, id, g, graph_view.detailRowId(a_row), .{ .kind = .press, .button = .right, .x = 90, .y = 8 });
+    try testing.expect(f.app.overlay == .menu);
+    const rows2 = f.app.overlay.menu.items;
+    try testing.expectEqualStrings("Open the file's diff in this commit (Enter)", rows2[0].label);
+    try testing.expectEqualStrings("Open file at this revision", rows2[1].label);
+    const want = try std.fmt.allocPrint(testing.allocator, "Copy commit hash ({s})", .{g.selected().?.short()});
+    defer testing.allocator.free(want);
+    try testing.expectEqualStrings(want, rows2[2].label);
+    f.app.overlay.deinit(f.app.gpa);
+    try command.run(&f.app, .{ .static = .@"git.graph_file_at_rev" });
+    var spins: usize = 0;
+    while (f.app.panes.editor(f.app.active.?) == null and spins < 800) : (spins += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    const e = f.app.panes.editor(f.app.active.?) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("one\n", e.buf.editor.bytes());
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "a.txt at"));
 }

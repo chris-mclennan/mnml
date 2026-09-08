@@ -1035,6 +1035,34 @@ pub const specs = [_]Spec{
     .{ .id = "git.reset_soft", .title = "Git: reset --soft to the selected commit / branch (or a rev)", .group = "git" },
     .{ .id = "git.reset_mixed", .title = "Git: reset --mixed to the selected commit / branch (or a rev)", .group = "git" },
     .{ .id = "git.reset_hard", .title = "Git: reset --hard to the selected commit / branch (confirm; undo restores)", .group = "git" },
+    // git-more2: diff any two refs.
+    .{ .id = "git.compare_base", .title = "Graph: mark the selected commit as the compare base (W; again clears)", .group = "git" },
+    .{ .id = "git.diff_against_base", .title = "Graph: diff the selected commit against the compare base (base..row)", .group = "git" },
+    .{ .id = "git.graph_diff", .title = "Graph: the selected commit's own diff", .group = "git" },
+    .{ .id = "git.diff_against_current", .title = "Git: diff a branch against the current one (current..branch)", .group = "git" },
+    // git-more2: the branch verbs.
+    .{ .id = "git.branch_rename", .title = "Git: rename the selected / current branch\u{2026} (branch -m)", .group = "git" },
+    .{ .id = "git.fast_forward", .title = "Git: fast-forward the selected / current branch to its upstream (merge --ff-only, or fetch ref:branch when not checked out)", .group = "git" },
+    .{ .id = "git.set_upstream", .title = "Git: set the selected / current branch's upstream\u{2026} (branch -u)", .group = "git" },
+    .{ .id = "git.checkout_force", .title = "Git: force checkout a branch, discarding the tree's changes (checkout -f; confirm)", .group = "git" },
+    .{ .id = "git.delete_remote_branch", .title = "Git: delete a branch on the remote (push --delete; confirm)", .group = "git" },
+    .{ .id = "git.new_branch_from", .title = "Git: new branch from the selected commit / tag / branch\u{2026}", .group = "git" },
+    .{ .id = "git.worktree_add_from", .title = "Git: new worktree from the selected commit / tag / branch\u{2026}", .group = "git" },
+    .{ .id = "git.push_force", .title = "Git: push --force-with-lease (confirm names the risk)", .group = "git" },
+    // git-more2: stash depth.
+    .{ .id = "git.stash_staged", .title = "Git: stash the staged changes only (stash push --staged)", .group = "git" },
+    .{ .id = "git.stash_file", .title = "Git: stash the selected file (or the active buffer's) only", .group = "git" },
+    .{ .id = "git.stash_keep_index", .title = "Git: stash the tree but keep the index (stash push --keep-index)", .group = "git" },
+    .{ .id = "git.stash_show", .title = "Git: show a stash's files (the panel's row, or a picker); Enter diffs one", .group = "git" },
+    .{ .id = "git.stash_show_diff", .title = "Git: diff the selected stash file against the stash's parent", .group = "git" },
+    .{ .id = "git.stash_branch", .title = "Git: branch from a stash\u{2026} (stash branch)", .group = "git" },
+    .{ .id = "git.stash_rename", .title = "Git: rename a stash\u{2026} (drop + stash store -m)", .group = "git" },
+    // git-more2: the command log.
+    .{ .id = "git.command_log", .title = "Git: the command log — every git the worker ran, its cwd, exit, duration and first stderr line (newest first; y copies, Enter re-runs a read-only one)", .group = "git" },
+    .{ .id = "git.command_log_rerun", .title = "Git: re-run the selected command-log entry (read-only commands only)", .group = "git" },
+    // git-more2: the graph's detail file rows (audit #101).
+    .{ .id = "git.graph_detail_open", .title = "Graph: open the detail column's file — its diff in the commit, or the working tree's (Enter)", .group = "git" },
+    .{ .id = "git.graph_file_at_rev", .title = "Graph: open the detail column's file as the selected commit had it (a scratch copy)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1074,7 +1102,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1008 specs, unique ids" {
+test "1031 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1087,9 +1115,9 @@ test "1008 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    // + two ZON view commands.
-    // + five dotnet runners.
-    // + six dotnet commands.
-    try std.testing.expectEqual(@as(usize, 1008), specs.len);
+    // + four diff-any-two-refs commands + eight branch verbs + seven
+    // stash commands + two command-log commands + two detail-row
+    // commands (git-more2).
+    try std.testing.expectEqual(@as(usize, 1031), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

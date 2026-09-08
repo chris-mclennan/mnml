@@ -1,0 +1,33 @@
+# git.fast_forward (src/app/git.zig `fastForward`): a branch that is
+# not checked out fast-forwards to its upstream through
+# `fetch origin feat:feat` — the tree is untouched. The branches panel's
+# row names the branch. Rows at 120x40: LOCAL 7, feat 8 (newest first),
+# main 9.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\norigin.git/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+shell git init -q --bare origin.git
+shell git remote add origin ./origin.git
+shell git push -q -u origin main
+shell git checkout -q -b feat
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "feat work"
+shell git push -q -u origin feat
+shell git checkout -q main
+shell git update-ref refs/heads/feat main
+shell test "$(git rev-parse feat)" = "$(git rev-parse main)"
+command view.activity_git
+wait 1000
+expect screen contains "feat"
+click 6 8
+wait 200
+command git.fast_forward
+wait 2000
+expect screen contains "fast-forwarded feat to origin/feat"
+shell test "$(git rev-parse feat)" = "$(git rev-parse origin/feat)"
+shell test "$(git symbolic-ref --short HEAD)" = main
