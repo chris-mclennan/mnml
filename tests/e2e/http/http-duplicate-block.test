@@ -1,0 +1,15 @@
+# Duplicate a `###` block: a copy named `two-copy` lands right after
+# it; the rest of the file is untouched.
+
+write api/r.http "### one\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"
+write anchor.txt anchor
+open anchor.txt
+
+command http.find_request
+type "two"
+key enter
+expect screen contains "https://x/two"
+
+command http.duplicate_request
+expect screen contains "duplicated block `two` of api/r.http"
+expect file api/r.http contains "### two\nPOST https://x/two\n\n{}\n\n### two-copy\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"

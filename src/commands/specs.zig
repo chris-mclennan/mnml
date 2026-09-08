@@ -775,6 +775,11 @@ pub const specs = [_]Spec{
     .{ .id = "http.body_type_json", .title = "HTTP: body mode = JSON (formatted on send, application/json)", .group = "http" },
     .{ .id = "http.body_type_form", .title = "HTTP: body mode = form-urlencoded (name = value rows)", .group = "http" },
     .{ .id = "http.body_type_multipart", .title = "HTTP: body mode = multipart/form-data (name = value rows, name = @file parts)", .group = "http" },
+    .{ .id = "http.rename_request", .title = "HTTP: rename the selected request — its ### line, or the file…", .group = "http" },
+    .{ .id = "http.duplicate_request", .title = "HTTP: duplicate the selected request as name-copy (block or file)", .group = "http" },
+    .{ .id = "http.delete_request", .title = "HTTP: delete the selected request (block or file)…", .group = "http" },
+    .{ .id = "http.move_request", .title = "HTTP: move the selected request to another collection…", .group = "http" },
+    .{ .id = "http.find_request", .title = "HTTP: find a request — every ### block of every collection file (fuzzy)", .group = "http", .keys = .{ .standard = &.{"ctrl+shift+r"}, .vim = &.{"space h r"} } },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
     .{ .id = "term.shell_right", .title = "Terminal: new shell in right half", .group = "term", .keys = .{ .vim = &.{"space v"} } },
@@ -1067,7 +1072,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1001 specs, unique ids" {
+test "1006 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1083,6 +1088,6 @@ test "1001 specs, unique ids" {
     // + two ZON view commands.
     // + five dotnet runners.
     // + six dotnet commands.
-    try std.testing.expectEqual(@as(usize, 1001), specs.len);
+    try std.testing.expectEqual(@as(usize, 1006), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

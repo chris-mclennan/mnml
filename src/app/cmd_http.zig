@@ -1405,6 +1405,8 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             rp.edited = true;
         },
         .http_copy_as => try copyAs(app, i),
+        .http_find_request => try @import("http_ops.zig").acceptFind(app, i),
+        .http_move_target => try @import("http_ops.zig").acceptMove(app, label),
         .http_lookup_file => {
             const arena = app.frame.allocator();
             const path = try std.fs.path.join(arena, &.{ app.workspace, ".rqst", "lookups", label });

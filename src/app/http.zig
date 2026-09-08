@@ -131,6 +131,10 @@ pub const State = struct {
     /// The env files' stamp at the last tick (`env_mod.digest`); a move
     /// reloads the ENVS section and says so.
     env_watch: EnvWatch = .{},
+    /// The request picker's rows (`http_ops.findCmd`), on `picker_arena`.
+    find_rows: []const @import("http_ops.zig").FindRow = &.{},
+    /// What `http.move_request`'s folder picker moves. Owned.
+    move_target: ?@import("http_ops.zig").Target = null,
 
     pub fn init(gpa: Allocator) State {
         return .{ .picker_arena = .init(gpa) };
@@ -154,6 +158,7 @@ pub const State = struct {
         for (self.ws_queue.items) |q| gpa.free(q.text);
         self.ws_queue.deinit(gpa);
         if (self.completion) |*c| c.arena.deinit();
+        if (self.move_target) |t| t.deinit(gpa);
         self.picker_arena.deinit();
         if (self.header_scan) |hs| hs.destroy(gpa);
     }
@@ -986,6 +991,32 @@ pub fn openFile(app: *App, path: []const u8, preview: bool) OpenFileError!PaneId
     // The leading block of a multi-block file is addressed as `null`;
     // a `### name` block by its name.
     const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = first.name, .summary = first.summary, .focus_response = false, .preview = preview });
+    req = undefined;
+    if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        rp.edited = false;
+    };
+    try app.noteRecent(path);
+    return id;
+}
+
+/// Open block `idx` (its index in `parse.blocks` of the file's text)
+/// of `path` as a request pane — the pane already on it when there is
+/// one. The error tells the caller what went wrong.
+pub fn openFileBlock(app: *App, path: []const u8, idx: u32) OpenFileError!PaneId {
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = Io.Dir.cwd().readFileAlloc(app.io, path, a, .limited(16 << 20)) catch return error.ReadFailed;
+    const list = try parse.blocks(a, text);
+    if (idx >= list.len) return error.EmptyFile;
+    const b = list[idx];
+    if (findSource(app, path, b.name)) |id| {
+        app.showPane(id);
+        return id;
+    }
+    var req = try parse.parse(app.gpa, b.text);
+    errdefer req.deinit(app.gpa);
+    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = b.name, .summary = b.summary });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;

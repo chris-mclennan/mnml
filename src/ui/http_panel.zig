@@ -27,6 +27,7 @@ const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
 const chip = @import("chip.zig");
 const icons = @import("icons.zig");
+const request_view = @import("request_view.zig");
 
 const Style = vaxis.Style;
 
@@ -120,7 +121,7 @@ pub const Part = union(enum) {
     folder_new: u32,
 };
 
-pub const Kind = enum { header, folder, item, empty, link, gap };
+pub const Kind = enum { header, folder, item, block, empty, link, gap };
 
 /// One displayed row. Strings borrow the app's snapshot arena.
 pub const Row = struct {
@@ -132,7 +133,7 @@ pub const Row = struct {
     label: []const u8 = "",
     detail: []const u8 = "",
     /// Item: its index in the section's data. Folder: its index in
-    /// the folder list.
+    /// the folder list. Block: its index in the block list.
     idx: u32 = 0,
     /// Header / folder: folded.
     collapsed: bool = false,
@@ -320,6 +321,7 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
         .header => paintHeader(ui, r, row, base),
         .folder => paintFolder(ui, r, row, base),
         .item => paintItem(ui, r, row, base),
+        .block => paintBlock(ui, r, row, base),
         .empty => _ = ui.putStr(r.x + 2, r.y, r.w -| 2, ui.clipStr(row.label, r.w -| 2), Theme.onBg(t.muted, base.bg)),
         .link => paintLink(ui, r, row, base),
         .gap => {},
@@ -406,6 +408,16 @@ fn paintItem(ui: Ui, r: Rect, row: Row, base: Style) void {
         },
         .captured => paintMethodUrl(ui, x, r, row, base),
     }
+}
+
+/// A `###` block under its file: `GET  name  #tag #tag`, the method
+/// in its verb's colour, two cells deeper than the file's row.
+fn paintBlock(ui: Ui, r: Rect, row: Row, base: Style) void {
+    const t = ui.theme;
+    const end = r.right();
+    var x = r.x + @as(u16, if (row.in_folder) 6 else 4);
+    x += ui.putStr(x, r.y, end -| x, ui.fmt("{s:<4} ", .{row.method}), .{ .fg = request_view.methodColor(t.palette, row.method), .bg = base.bg, .bold = true });
+    paintLabelDetail(ui, x, r, row, base);
 }
 
 /// `GET  host/path`: the method bold in the accent, padded to four.
@@ -573,6 +585,19 @@ test "folder, member, loose file, env, chain, mock, recent and captured rows; th
     paintRow(g.ui(), g.full().row(1), .{ .section = .captured, .kind = .empty, .label = Section.captured.emptyText(false) }, false);
     try g.expectRow(1, "  Nothing c…");
     try testing.expect(g.hits.at(3, 1) == null);
+}
+
+test "a block row: the method in its colour two cells deeper than the file, the name, the tags dimmed" {
+    var f = try Fixture.init(40, 2);
+    defer f.deinit();
+    const ui = f.ui();
+    paintRow(ui, f.full().row(0), .{ .section = .collections, .kind = .block, .label = "two", .method = "POST", .detail = "#smoke #users", .in_folder = true }, false);
+    try f.expectRow(0, "      POST two  #smoke #users");
+    try testing.expect(vaxis.Color.eql(f.style(6, 0).fg, f.theme.palette.orange));
+    try testing.expect(vaxis.Color.eql(f.style(16, 0).fg, f.theme.muted));
+    paintRow(ui, f.full().row(1), .{ .section = .collections, .kind = .block, .label = "one", .method = "GET" }, true);
+    try f.expectRow(1, "    GET  one");
+    try testing.expect(Row.isStop(.{ .section = .collections, .kind = .block }));
 }
 
 test "status colours and the empty words" {

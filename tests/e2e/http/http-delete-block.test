@@ -1,0 +1,22 @@
+# Delete a `###` block: the confirm names it, Cancel keeps it, Delete
+# removes just that block.
+
+write api/r.http "### one\nGET https://x/one\n\n### two\nPOST https://x/two\n\n{}\n\n### three\nGET https://x/three\n"
+write anchor.txt anchor
+open anchor.txt
+
+command http.find_request
+type "two"
+key enter
+expect screen contains "https://x/two"
+
+command http.delete_request
+expect screen contains "Delete block `two` of api/r.http? The file's other blocks stay."
+key c
+expect file api/r.http contains "### two"
+
+command http.delete_request
+key d
+expect screen contains "deleted block `two` of api/r.http"
+expect file api/r.http lacks "### two"
+expect file api/r.http contains "### one\nGET https://x/one\n\n### three\nGET https://x/three\n"
