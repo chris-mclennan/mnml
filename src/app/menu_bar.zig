@@ -542,7 +542,7 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
     try t.expectEqualStrings("mnml", Menu.brand.title());
 }
 
-test "menu bar: a click drops the menu with chord hints and the recent submenu; » lists the hidden menus; F10 / Alt / arrows; auto follows the menu; cycle persists" {
+test "menu bar: a click drops the menu in Rust's dropdown shape with the recent submenu; hover lights and switches; » lists the hidden menus; F10 / Alt / arrows; auto follows the menu; cycle persists" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;

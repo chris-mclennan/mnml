@@ -1256,9 +1256,9 @@ that the oldest slot reads `+K more…`.
   widget's centre → its corner, inserted beside it (above / below by
   the pointer, which for a bottom corner means after / before in the
   list); else the quadrant. `session.Saved.dock` / `dock_hidden`.
-  The `+` menu has "New dock note". Six ids beyond the Rust seven:
-  `dock.toggle` / `add` / `add_preset` (a `.custom` picker) / `remove` /
-  `edit` / `rename`. Pin 857.
+  The `+` menu's Dock ▸ group is Rust's (Note / Log tail). Six ids
+  beyond the Rust seven: `dock.toggle` / `add` / `add_preset` (a
+  `.custom` picker) / `remove` / `edit` / `rename`. Pin 857.
 - Not done, by design: the `⟳` chip's right-click menu and
   `ui.auto_refresh_off` (every panel's chip is a left-click rescan);
   the Rust SESSIONS strip's per-row transcript summary lines, bells
@@ -1737,9 +1737,11 @@ is the contract-level list of what moved.
   `icon_ascii` twin and `submenu: []const MenuItem` (additive,
   defaulted). `MenuState` gains `curatable` and `sub: ?SubMenu{ parent,
   items (gpa copy), cursor, rect }`; `Overlay.deinit` frees the copy.
-  `render.drawMenu` paints the glyph column (`ui/menu_glyph.zig` — one
-  glyph and one ASCII twin per command group, the twin under
-  `ui.ascii_icons`; the glyph audit holds every site to it), `▸` on a
+  `render.drawMenu` paints the glyph column (`ui/menu_glyph.zig` —
+  since the menus pass, Rust's `command_glyph` rule: an action glyph by
+  the id's last segment, a domain glyph by its first, the play triangle
+  last, each with an ASCII twin under `ui.ascii_icons`; the glyph audit
+  holds every site to it), `▸` on a
   parent row, the child beside its parent (`.menu_item{1, i}`), and the
   ⋯ kebab on the focused leaf of a curatable menu (`.menu_item{2, i}` /
   `{3, i}`). Keys: → / l / Enter open a parent, ← / h close the child,
@@ -3751,3 +3753,73 @@ bottom, and a blank request pane opened in the centre on entry.
   `/ filter` pill, the scrollbar column when the cards overflow (Rust
   clips), the kebab on the hovered card, `w` for every workspace, `f`
   for the state filter, the rename / delete flows.
+## Menus — the four user reports (2026-09-07, menus)
+
+The user compared the Zig menus with Rust's on a real screen: the
+icons sat against the labels, a hovered row did not light, hovering
+another title did not switch the open menu, and the `+` was a bare
+list. Every glyph is Rust's codepoint; Rust dumps of the open File
+menu and the `+` menu are in `docs/ui-spec/` (`rust-menu-file-120x40.txt`,
+`rust-menu-plus-120x40.txt`) and both diff clean.
+
+- `// changed (menus):` `app/render.zig`'s `drawMenu` paints Rust's
+  two row shapes. A context menu (`ui/context_menu.rs`): a square
+  frame with the title in the top border and Rust's blank row above
+  the bottom edge (Rust reserves a title row the border holds), the
+  inner width `max(label + 3 (+ 2 on a parent), title) + 2`, floor 12;
+  each row ` <glyph>  label ` padded, `▸ ` ending a parent row, `⋮ `
+  ending the focused leaf of a curatable menu — only where the label
+  leaves it room (Rust's marker runs off the row; the label wins
+  there too). A menu-bar dropdown (`MenuState.dropdown`, `ui/menu_bar.rs`):
+  no title, a two-cell marker column (`▸ ` on the highlighted row),
+  the three-cell icon column in the muted colour when any row has an
+  icon, the label, ` ▸` ending a parent row, width
+  `max(label (+ 2) + icon column + 4, 20)`; a separator is a
+  full-width rule in the muted colour. Both: `bg2` ground, the
+  highlight `bg_dark` on cyan, bold. Zig keeps its separators (Rust's
+  context menus have none) and its ASCII twins in the glyph column
+  (Rust paints no column under `ascii_icons`).
+- `// changed (menus):` `MenuItem.hint` is gone — the dropdown's chord
+  column was a Zig addition; Rust's rows carry none.
+- `// changed (menus):` `ui/menu_glyph.zig` is Rust's `command_glyph`:
+  `by_action` (a substring of the id's last dotted segment, first
+  match) then `by_domain` (the first segment, exact) then
+  `fallback_glyph` (the play triangle), `width` 3; each entry carries
+  its one-character ASCII twin.
+- `// changed (menus):` `MenuState` gains `dropdown`, `highlight` (the
+  cursor row paints highlighted only once the menu was interacted with
+  — a mouse-opened dropdown starts without; Enter still runs the
+  cursor row) and `mem: ?ArenaAllocator` (labels built per open, freed
+  with the menu); `SubMenu` gains `highlight` (a fresh child paints
+  none until hovered or arrowed — Rust's un-`interacted` child). The
+  first arrow on an un-highlighted menu lights the cursor row rather
+  than moving it (`dispatch.menuMove` / `subMove`).
+- `// changed (menus):` `dispatch.mouse` no longer returns on `.motion`
+  before the overlay: `menuHover` moves the cursor to the row under
+  the pointer, opens a hovered parent's child and closes it on a
+  hovered leaf (a curation child stays while the pointer is on its
+  own row); the keyboard and the pointer share the cursor, the last
+  input wins. A right press on a leaf of a curatable menu opens its
+  curation (`openCuration`), as the kebab and `→` do.
+- `// changed (menu-bar):` `menu_bar.open(app, m, x, y, keyboard)`;
+  `openIndexAs`; `State.keyboard` / `overflow_open`; `hoverSwitch(app,
+  id, rect)` — with a dropdown or the ` » ` list open, the pointer on
+  another word (the brand included) or the ` » ` opens that instead,
+  keeping how the menu was summoned (Rust `new_mouse` / `new_keyboard`).
+- `// changed (plus-menu):` `context_menus.plus_tree` is Rust's
+  `Create…` tree (New / Open / AI / Dock ▸, the leaves under them);
+  `openNewTabMenu` prepends "Reopen last closed (N)" (`buffer.reopen`)
+  while `app.closed` has entries, appends Integrations ▸ from the
+  enabled `integrations.chips` (the chip's glyph; a chip whose command
+  resolves to neither a static nor a dynamic id is left out — a
+  dynamic row is not curatable, `rowId` names static ids only), and
+  applies Rust's `apply_plus_menu_curation` over the whole tree
+  (`curate`). It opens titled `Create…`, curatable, highlighted, from
+  the strip's `+` on either button and from the top-right `+`'s right
+  click (its left click stays `tab.new`). The old Panels / Tools /
+  Integrations-panel sections and the rule under pinned rows are gone
+  — Rust has neither.
+- `// changed (e2e):` `.test` scripts gain `hover X Y` (a pointer
+  motion, no button — `Driver.mouse(.motion)`); the headless IPC
+  `hover` already existed.
+
