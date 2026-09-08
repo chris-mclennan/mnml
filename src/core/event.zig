@@ -93,7 +93,12 @@ pub fn freeAiMsg(gpa: Allocator, msg: AiMsg) void {
 pub const SonosUpdate = struct { _todo: u8 = 0 }; // TODO(sonos)
 pub const NowPlaying = struct { _todo: u8 = 0 }; // TODO(now_playing)
 pub const StatuslineSegment = struct { _todo: u8 = 0 }; // TODO(statusline)
-pub const IpcCommand = struct { _todo: u8 = 0 }; // TODO(ipc)
+/// What the terminal loop's IPC tail posts (`tui/loop.zig`): the two
+/// lifecycle lines a wrapper drops in `<ws>/.mnml/<ipc>/command` —
+/// `{"cmd":"quit"}` and `{"cmd":"restart"}` (`run.sh stop` / `restart`).
+/// The rest of the command set is the headless loop's; the tail
+/// acknowledges it as `unsupported` and drops it.
+pub const IpcCommand = enum { quit, restart };
 
 pub const AppEvent = union(enum) {
     key: key.Key,

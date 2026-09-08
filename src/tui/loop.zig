@@ -22,6 +22,11 @@ const build_options = @import("build_options");
 const tasks = @import("../app/tasks.zig");
 const clipboard_os = @import("../core/clipboard_os.zig");
 const image = @import("../image/root.zig");
+const marker = @import("marker.zig");
+
+/// How often the IPC tail looks at `command`. A wrapper's `stop` /
+/// `restart` lands within this; the UI thread's one wait is untouched.
+const ipc_poll_ms = 200;
 
 pub const Options = struct {
     /// The merged config; the App takes ownership.
@@ -69,17 +74,24 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // clipboard tool `$PATH` has. `editor.clipboard` picks between them;
     // `App.initWith` alone leaves the sink `.none` (headless, `.test`).
     app.clipboard.attach(io, term.writer(), clipboard_os.probe(io, env), app.cfg.editor.clipboard);
-    // `ipc.write_screen`: mirror every frame into `<ws>/.mnml/<ipc>/screen.txt`,
-    // the file the headless loop writes, so a script can watch the real
+    // The IPC channel at `<ws>/.mnml/<ipc>/`: `command` is tailed for the
+    // lifecycle lines `run.sh stop` / `restart` drop (`ipcTask`), and with
+    // `ipc.write_screen` every frame is mirrored into `screen.txt` — the
+    // file the headless loop writes — so a script can watch the real
     // terminal session too.
-    var screen_dump: ?ipc.Channel = null;
-    if (app.cfg.ipc.write_screen) {
-        screen_dump = ipc.Channel.init(gpa, io, opts.workspace, .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = build_options.ipc_subdir }) catch |err| blk: {
-            app.toast("ipc.write_screen: cannot open the channel: {s}", .{@errorName(err)});
-            break :blk null;
-        };
-    }
-    defer if (screen_dump) |*c| c.deinit();
+    var channel: ?ipc.Channel = null;
+    channel = ipc.Channel.init(gpa, io, opts.workspace, .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = build_options.ipc_subdir }) catch |err| blk: {
+        app.toast("ipc: cannot open the channel: {s}", .{@errorName(err)});
+        break :blk null;
+    };
+    defer if (channel) |*c| c.deinit();
+    const screen_dump: ?*ipc.Channel = if (app.cfg.ipc.write_screen and channel != null) &channel.? else null;
+    // The running-instance marker `run.sh` and `scripts/shot.sh` find
+    // this instance by. Removed on a clean exit below — not on a restart,
+    // where the wrapper relaunches straight away.
+    const marker_path = try marker.path(gpa, env);
+    defer gpa.free(marker_path);
+    marker.write(io, marker_path, opts.workspace) catch |err| app.toast("marker: {s}: {s}", .{ marker_path, @errorName(err) });
     // Images: the probe (kitty graphics) and the environment decide the
     // transport once; `.none` leaves the text fallback.
     app.image_transport = image.detect(env, term.caps.kitty_graphics);
@@ -98,6 +110,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
 
     var bridge: Io.Group = .init;
     try bridge.concurrent(io, bridgeTask, .{ term, &app });
+    if (channel) |*c| try bridge.concurrent(io, ipcTask, .{ c, &app });
     defer bridge.cancel(io);
 
     var buf: [64]event.AppEvent = undefined;
@@ -135,11 +148,45 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
                 .cell_w_px = if (term.vx.screen.width > 0) @as(u32, term.vx.screen.width_pix) / term.vx.screen.width else 0,
                 .cell_h_px = if (term.vx.screen.height > 0) @as(u32, term.vx.screen.height_pix) / term.vx.screen.height else 0,
             }) catch {};
-            if (screen_dump) |*c| c.writeScreen(try screen_mod.toScreenTxt(app.frame.allocator(), term.screen()));
+            if (screen_dump) |c| c.writeScreen(try screen_mod.toScreenTxt(app.frame.allocator(), term.screen()));
         }
     }
     app.hooks.emit(&app, .exit);
+    // The tail stops before the channel's exit line so the two never
+    // interleave; the marker outlives a restart for the relaunch.
+    bridge.cancel(io);
+    if (channel) |*c| c.appendEvent(if (app.restart) "{\"event\":\"exit\",\"restart\":true}" else "{\"event\":\"exit\"}");
+    if (!app.restart) marker.removeIfOurs(gpa, io, marker_path, opts.workspace);
     return if (app.restart) 75 else app.exit_code;
+}
+
+/// Tail `<ipc>/command` for the lifecycle lines and post them; every
+/// other command is acknowledged as unsupported here (the headless loop
+/// is the full driver). Runs until the group is cancelled.
+fn ipcTask(ch: *ipc.Channel, app: *App) Io.Cancelable!void {
+    const io = app.io;
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena_state.deinit();
+    while (true) {
+        try io.sleep(.fromMilliseconds(ipc_poll_ms), .awake);
+        _ = arena_state.reset(.retain_capacity);
+        const arena = arena_state.allocator();
+        const cmds = ch.poll(arena) catch continue;
+        for (cmds) |*cmd| switch (cmd.*) {
+            .quit => {
+                ch.appendEvent("{\"event\":\"quit\"}");
+                app.events.post(io, .{ .ipc = .quit });
+            },
+            .restart => {
+                ch.appendEvent("{\"event\":\"restart\"}");
+                app.events.post(io, .{ .ipc = .restart });
+            },
+            else => {
+                const line = screen_mod.jsonEvent(arena, &.{ .{ "event", "unsupported" }, .{ "cmd", @tagName(cmd.*) }, .{ "note", "the terminal loop takes quit and restart only; drive the rest headless" } }) catch continue;
+                ch.appendEvent(line);
+            },
+        };
+    }
 }
 
 /// `Term` events → `AppEvent`s, until the group is cancelled.

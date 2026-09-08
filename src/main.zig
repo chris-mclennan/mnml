@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -129,8 +129,24 @@ fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: 
         .env = cfg_env,
     });
     if (ascii) loaded.config.ui.ascii_icons = true;
+    if (hasNoSessionFlag(argv)) loaded.config.session.restore = false;
     if (app_driver.default_factory.input_style) |s| loaded.config.editor.input_style = @import("app.zig").App.configStyleOf(s);
     return .{ .loaded = loaded, .data_root = data_root };
+}
+
+/// `--no-session`: launch without restoring the session (`run.sh
+/// fresh`) — the escape hatch when a restored pane wedges the app and a
+/// restart would only reopen it. `session.zon` is left alone, so the
+/// next plain launch restores as usual.
+fn hasNoSessionFlag(argv: []const [:0]const u8) bool {
+    for (argv) |a| if (std.mem.eql(u8, a, "--no-session")) return true;
+    return false;
+}
+
+/// `argv[i]` is a flag whose value is the next argument — the value must
+/// not be read as a workspace or a file.
+fn takesValue(a: []const u8) bool {
+    return std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config");
 }
 
 /// `--startup-picker` is the flag spelling of `MNML_STARTUP_PICKER=1`:
@@ -156,7 +172,7 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
-        if (std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config")) {
+        if (takesValue(a)) {
             i += 1;
             continue;
         }
@@ -469,8 +485,12 @@ fn parseOnly(gpa: Allocator, io: Io, roots: []const []const u8, w: *Io.Writer) !
 fn headlessSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
     var use_stub = false;
     var workspace: ?[]const u8 = null;
-    for (argv) |a| {
-        if (std.mem.eql(u8, a, "--stub")) {
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        const a = argv[i];
+        if (takesValue(a)) {
+            i += 1; // `--input vim`: the value is not a workspace
+        } else if (std.mem.eql(u8, a, "--stub")) {
             use_stub = true;
         } else if (a.len > 0 and a[0] != '-') workspace = a;
     }
@@ -516,6 +536,7 @@ test {
     _ = @import("ipc/root.zig");
     _ = @import("e2e/root.zig");
     _ = @import("headless.zig");
+    _ = @import("tui/marker.zig");
     _ = @import("editor/edit_op.zig");
     _ = @import("editor/clipboard.zig");
     _ = @import("editor/editor.zig");
@@ -563,4 +584,11 @@ test "--startup-picker is MNML_STARTUP_PICKER=1 for this process" {
     try std.testing.expect(env.get("MNML_STARTUP_PICKER") == null);
     try std.testing.expect(try applyStartupPickerFlag(&env, &.{ "--startup-picker", "ws" }));
     try std.testing.expectEqualStrings("1", env.get("MNML_STARTUP_PICKER").?);
+}
+
+test "--no-session is the flag run.sh fresh passes; --input's value is never a workspace" {
+    try std.testing.expect(hasNoSessionFlag(&.{ "ws", "--no-session" }));
+    try std.testing.expect(!hasNoSessionFlag(&.{ "ws", "--ascii" }));
+    try std.testing.expect(takesValue("--input") and takesValue("--config"));
+    try std.testing.expect(!takesValue("--no-session") and !takesValue("--ascii"));
 }

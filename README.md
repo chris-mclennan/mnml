@@ -67,16 +67,37 @@ zig build release                           # all five targets → zig-out/relea
 zig build dist -Dversion=0.3.0              # + archives, sha256s, installers, manifest → zig-out/dist/
 ```
 
+`./run.sh` is the way to run a dev build — it builds only when a source is
+newer than the binary, launches on the directory you ran it from, and
+relaunches on exit 75 (the restart handshake):
+
+```sh
+./run.sh                    # build if stale, open the cwd, relaunch on restart
+./run.sh ~/some/proj --input vim --ascii --config PATH   # a workspace; flags pass through
+./run.sh restart            # rebuild + relaunch the running instance (IPC {"cmd":"restart"})
+./run.sh stop               # quit it ({"cmd":"quit"})
+./run.sh status             # its workspace, IPC dir, whether the process is alive
+./run.sh fresh              # launch without restoring the session (--no-session)
+./run.sh headless [WS]      # the same loop with --headless (virtual screen + file IPC)
+./run.sh shot [OUT.png]     # screenshot the real ghostty window (macOS; scripts/shot.sh)
+./run.sh check              # the verification sequence below, in one line
+./run.sh build | release | test | stale | clean [incremental|all] | menu | help
+```
+
 `-Dversion=` is what `--version` prints; without it a dev build prints the
 manifest version, the git short SHA and `-dirty` (`0.3.0-dev+g76ccf5b-dirty`).
 `-Dipc-subdir=` and the marker name keep a dev build's IPC beside a running
-0.2.x (`ipc-zig`, `mnml-zig-running-$USER.workspace`).
+0.2.x (`ipc-zig`, and `${TMPDIR:-/tmp}/mnml-zig-running-$USER.workspace`, which the
+app writes on start and removes on a clean exit — `run.sh` finds the instance
+through it).
 
 Before offering a change, the sequence in `docs/CONTRIBUTING.md` → *The
 gate*: fmt, the unit tests in Debug and ReleaseSafe, a ReleaseSafe build,
 the width sweep and the corpus on that build, the Windows gate-build, the
-glyph audit, `tools/pty-mouse-check.py`, and `tools/ui-diff.sh` on every
-`docs/ui-spec/steps-*.jsonl` when chrome changed.
+glyph audit, `tools/run-sh-check.sh`, `tools/pty-mouse-check.py`, and
+`tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when chrome
+changed. `./run.sh check` runs all of it but the Windows gate-build and the
+two pty scripts.
 
 ## The `.test` oracle
 

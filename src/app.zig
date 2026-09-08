@@ -2012,6 +2012,12 @@ pub const App = struct {
                 try self.toastLevel(.err, "{s}: {s}", .{ @tagName(e.source), e.msg });
             },
             .timer => {},
+            // `run.sh stop` / `restart` through the IPC command file: the
+            // same exits `app.quit` / `app.restart` reach from the palette.
+            .ipc => |cmd| {
+                self.restart = cmd == .restart;
+                self.quit = true;
+            },
             else => event.freeEvent(self.gpa, ev),
         }
         self.needs_render = true;
