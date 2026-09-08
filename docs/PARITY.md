@@ -475,6 +475,10 @@ trust sink. Each row names its file and its test.
 | `{{VAR}}` click → definition | done | `jumpToVarDef` in `src/app/http.zig`, `lineOfKey` in `env.zig` | lands on the `KEY=` line; a toast when undefined |
 | `{{VAR}}` right-click quick-fix | done | `openQuickFixMenu` in `http.zig`, `http.quick_fix` | Define in env… / Jump to definition / Pick env… / Inline value / Copy variable name |
 | `{{VAR}}` hover | done | `drawVarTip` in `request_view.zig`, `drawEditorVarTip` in `http.zig` | masked for `# @secret` and credential-shaped names |
+| `-k` / `# @insecure` honoured | done | `src/http/insecure.zig`, `Transport` in `src/http/client.zig` | a loopback TLS shim skips the chain check (std has no switch); the name is checked with SNI, retried without on a mismatch; a failure reads `tls (insecure): …` |
+| Per-request timeout / redirects / proxy | done | `parse.options` / `setDirective`, `client.Transport`, the Auth tab's Options rows in `request_view.zig` | `# @timeout 5s`, `# @no-redirect` / `@follow-redirects`, `# @max-redirects 3`, `# @proxy host:port`; curl `--max-time` / `--max-redirs` / `-L` / `-x` round-trip; `.http` config defaults |
+| Response search | done | `cmd_find.Target`, `RequestPane.resp_find`, `overlayMatches` in `request_view.zig` | `/` (vim) or Ctrl+F over the body, or the Headers tab; `n` / `N`, F3; the count in the bar |
+| `{{` completion | done | `VarCompletion` in `src/app/http.zig`, `ui/completion_view.zig` | env names, `$` built-ins, `@capture` names, each with its value dimmed; `http.complete_var` |
 | Dynamic vars `{{$uuid}}` etc. | done | `env.zig` | |
 | HTTP activity-bar panel (7 sections) | done | `src/app/http_panel.zig`, `PanelId.http` | COLLECTIONS / ENVS / CHAINS / MOCKS / COOKIES / RECENT / CAPTURED |
 | HTTP panel `/` filter | done | `rebuild` in `http_panel.zig` | one filter across every section; honest header counts |
