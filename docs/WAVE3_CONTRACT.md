@@ -3585,3 +3585,13 @@ screen (`docs/ui-spec/zig-git-palette-*.txt`, `tools/zig-spec-git.sh`).
   repo and leave All repos. `afterChange` on a non-active repo refreshes
   its parked rail. Spec: `zig-git-palette-all-120x40.txt`,
   `tools/zig-spec-git.sh <name>-all` seeds `ws/alpha` + `ws/beta`.
+
+## Session workspace compare (2026-09-07, branch `session-realpath`) — `// changed:` notes
+
+- `// changed (session):` `session.restore` compares `saved.workspace` to
+  `app.workspace` by realpath (`sameWorkspace`: literal first, then both
+  sides through `realPathFile`, a side that no longer resolves falls back
+  to the literal), so a workspace opened through a symlinked or
+  unresolved spelling (`/tmp/x` vs `/private/tmp/x`) keeps its session;
+  `capture` stores the resolved workspace so new files are canonical.
+  A genuinely different directory still gets the "belongs to" toast.

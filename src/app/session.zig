@@ -184,7 +184,7 @@ pub fn render(arena: Allocator, saved: Saved) Allocator.Error![]u8 {
 
 /// The app as a `Saved`, every slice on `arena`.
 pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
-    var saved: Saved = .{ .workspace = app.workspace };
+    var saved: Saved = .{ .workspace = try canonicalWorkspace(app, arena) };
 
     // Panes: every slot that can come back, remembering which index it got.
     const slot_count = app.panes.slots.items.len;
@@ -360,12 +360,36 @@ pub fn restore(app: *App) RestoreError!void {
         app.toast("session: {s} is format v{d}, this build writes v{d} — ignored", .{ rel_path, saved.version, format_version });
         return;
     }
-    if (!std.mem.eql(u8, saved.workspace, app.workspace)) {
+    if (!sameWorkspace(app.io, saved.workspace, app.workspace)) {
         app.toast("session: {s} belongs to {s} — ignored", .{ rel_path, saved.workspace });
         return;
     }
     try apply(app, arena, saved);
     app.session.restored = true;
+}
+
+/// Whether `saved` names the workspace `actual`. `main.zig` resolves
+/// the workspace with realpath (`/tmp/x` is `/private/tmp/x` on
+/// macOS), but a session file can hold the path as typed — by hand, by
+/// a tool, or by a launch through a symlink — so both sides go through
+/// the same resolution before the compare. When either side no longer
+/// resolves (a deleted path) the literal compare is all there is.
+pub fn sameWorkspace(io: Io, saved: []const u8, actual: []const u8) bool {
+    if (std.mem.eql(u8, saved, actual)) return true;
+    var sbuf: [std.fs.max_path_bytes]u8 = undefined;
+    var abuf: [std.fs.max_path_bytes]u8 = undefined;
+    const s = Io.Dir.cwd().realPathFile(io, saved, &sbuf) catch return false;
+    const a = Io.Dir.cwd().realPathFile(io, actual, &abuf) catch return false;
+    return std.mem.eql(u8, sbuf[0..s], abuf[0..a]);
+}
+
+/// `app.workspace` as the file stores it: resolved, so a session written
+/// from an unresolved spelling is canonical the next time it is read.
+/// Falls back to the spelling in hand when the path does not resolve.
+fn canonicalWorkspace(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = Io.Dir.cwd().realPathFile(app.io, app.workspace, &buf) catch return app.workspace;
+    return arena.dupe(u8, buf[0..n]);
 }
 
 pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }!Saved {
@@ -765,6 +789,61 @@ test "session: a foreign workspace, a future version and a broken file are one t
     // A pool that is not a tree is an empty layout, not a hang.
     try t.expect(!wellFormed(.{ .nodes = &.{ .{ .split = .{ .first = 0, .second = 1 } }, .{ .leaf = .{} } }, .root = 0 }));
     try t.expect(wellFormed(.{ .nodes = &.{ .{ .split = .{ .first = 1, .second = 2 } }, .{ .leaf = .{} }, .{ .leaf = .{} } }, .root = 0 }));
+}
+
+test "session: the workspace compare is by realpath — a symlinked spelling on either side restores, a different directory is still rejected" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    // `<root>/ws` is the workspace; `<root>/link` is another spelling of it;
+    // `<root>/other` is a real directory that is not it.
+    try f.tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try f.tmp.dir.createDirPath(t.io, "other");
+    try f.tmp.dir.symLink(t.io, "ws", "link", .{ .is_directory = true });
+    const ws = try f.abs("ws");
+    defer t.allocator.free(ws);
+    const link = try f.abs("link");
+    defer t.allocator.free(link);
+    const other = try f.abs("other");
+    defer t.allocator.free(other);
+    try t.expect(sameWorkspace(t.io, link, ws));
+    try t.expect(sameWorkspace(t.io, ws, link));
+    try t.expect(!sameWorkspace(t.io, other, ws));
+    try t.expect(!sameWorkspace(t.io, "/elsewhere", ws));
+
+    // The file names the unresolved spelling; the app runs on the resolved one.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const by_link = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\" }}", .{link});
+    defer t.allocator.free(by_link);
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/" ++ rel_path, .data = by_link });
+    try restore(&app);
+    try t.expect(app.session.restored);
+    try t.expect(app.lastToast() == null);
+
+    // The reverse: the file is canonical, the app was launched through the link.
+    var via_link = try App.initWith(t.allocator, t.io, .{ .workspace = link, .cols = 120, .rows = 40 });
+    defer via_link.deinit();
+    const by_ws = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\" }}", .{ws});
+    defer t.allocator.free(by_ws);
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/" ++ rel_path, .data = by_ws });
+    try restore(&via_link);
+    try t.expect(via_link.session.restored);
+    try t.expect(via_link.lastToast() == null);
+    // …and what that app writes back is the resolved spelling, not the link.
+    try save(&via_link);
+    const written = try f.tmp.dir.readFileAlloc(t.io, "ws/" ++ rel_path, t.allocator, .limited(1 << 20));
+    defer t.allocator.free(written);
+    try t.expect(std.mem.indexOf(u8, written, ws) != null);
+    try t.expect(std.mem.indexOf(u8, written, link) == null);
+
+    // A real directory that is not this workspace is still one toast.
+    const by_other = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\" }}", .{other});
+    defer t.allocator.free(by_other);
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/" ++ rel_path, .data = by_other });
+    app.session.restored = false;
+    try restore(&app);
+    try t.expect(!app.session.restored);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "belongs to") != null);
 }
 
 test "session: clear deletes the file and stops the autosave; the timer writes every 30 s" {
