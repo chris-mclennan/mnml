@@ -167,6 +167,10 @@ pub const DiffPane = struct {
     wrap: bool = false,
     /// Index into `rows` (Hunk / Inline) or `split_rows` (Split).
     cursor: usize = 0,
+    /// The line selection's other end (`v`, shift+arrows, a drag); the
+    /// verbs act on the selected lines while one is set. Cleared when
+    /// the rows are rebuilt.
+    anchor: ?usize = null,
     pending: bool = true,
     /// `]` / `[` typed, waiting for `c` / `f`.
     bracket: ?u8 = null,
@@ -894,6 +898,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 .diff => |*dp| if (dp.repo == repo.id and dp.scope == d.scope and optEql(dp.path, d.path) and optEql(dp.rev, d.rev)) {
                     adoptArena(&dp.arena, &result.arena, gpa);
                     dp.files = d.files;
+                    dp.anchor = null;
                     dp.rows = try diff_view.flatten(dp.arena.allocator(), d.files);
                     dp.split_rows = try diff_view.pairs(dp.arena.allocator(), d.files);
                     dp.full = d.full;
@@ -1304,6 +1309,7 @@ pub fn setDiffMode(app: *App, dp: *DiffPane, mode: diff_view.Mode) CommandError!
     const at = hunkAtCursor(dp);
     const was_split = dp.mode == .split;
     dp.mode = mode;
+    dp.anchor = null;
     app.git.diff_mode = mode;
     if (was_split != (mode == .split)) {
         dp.cursor = 0;
@@ -1407,23 +1413,127 @@ pub fn hunkAtCursor(dp: *const DiffPane) ?struct { file: u32, hunk: u32 } {
     return .{ .file = h.file, .hunk = h.hunk };
 }
 
-/// Stage / unstage / discard the hunk under the cursor with a
-/// synthesized one-hunk patch.
-pub fn applyHunk(app: *App, dp: *DiffPane, what: enum { stage, unstage, discard }) CommandError!void {
-    const arena = app.frame.allocator();
-    const at = hunkAtCursor(dp) orelse return app.diag.fail(arena, "diff: no hunk under the cursor", .{});
-    const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
-    const f = dp.files[at.file];
-    const patch = try parse.patchForHunk(arena, f, at.hunk);
-    const desc = switch (what) {
-        .stage => try std.fmt.allocPrint(app.gpa, "staged hunk {d} of {s}", .{ at.hunk + 1, f.path() }),
-        .unstage => try std.fmt.allocPrint(app.gpa, "unstaged hunk {d} of {s}", .{ at.hunk + 1, f.path() }),
-        .discard => try std.fmt.allocPrint(app.gpa, "discarded hunk {d} of {s}", .{ at.hunk + 1, f.path() }),
+pub const LineVerb = enum { stage, unstage, discard };
+
+/// The selected lines of the diff pane: the hunk and, per line of it,
+/// whether it is selected; `count` the changed lines among them. Null
+/// when there is no selection. In the split view a selected pair
+/// selects both of its lines.
+pub const LineSelection = struct { file: u32, hunk: u32, mask: []bool, count: usize };
+
+pub fn selectedLines(dp: *const DiffPane, arena: Allocator) Allocator.Error!?LineSelection {
+    const sel = diff_view.selectionOf(diffDoc(dp)) orelse return null;
+    const h = dp.files[sel.hunk.file].hunks[sel.hunk.hunk];
+    const mask = try arena.alloc(bool, h.lines.len);
+    @memset(mask, false);
+    var count: usize = 0;
+    for (dp.shownRows()) |ri| {
+        if (ri < sel.lo or ri > sel.hi) continue;
+        if (dp.mode == .split) {
+            const row = dp.split_rows[ri];
+            if (row != .pair or row.pair.file != sel.hunk.file or row.pair.hunk != sel.hunk.hunk) continue;
+            if (row.pair.left) |l| mask[l] = true;
+            if (row.pair.right) |r| mask[r] = true;
+        } else {
+            const row = dp.rows[ri];
+            if (row != .line or row.line.file != sel.hunk.file or row.line.hunk != sel.hunk.hunk) continue;
+            mask[row.line.line] = true;
+        }
+    }
+    for (h.lines, 0..) |l, i| if (mask[i] and (l.kind == .add or l.kind == .del)) {
+        count += 1;
     };
+    return .{ .file = sel.hunk.file, .hunk = sel.hunk.hunk, .mask = mask, .count = count };
+}
+
+/// The view's document without the paint: what the selection helpers
+/// read.
+fn diffDoc(dp: *const DiffPane) diff_view.Doc {
+    return .{ .files = dp.files, .rows = dp.rows, .shown = dp.shown, .split_rows = dp.split_rows, .split_shown = dp.split_shown, .mode = dp.mode, .cursor = dp.cursor, .anchor = dp.anchor, .focused = true };
+}
+
+/// The patch a verb applies: the selected lines when there is a
+/// selection (`parse.patchForLineMask`, reversed for an unstage or a
+/// discard), else the hunk under the cursor. `desc` is the toast.
+pub const VerbPatch = struct { patch: []const u8, desc: []const u8, file: u32, hunk: u32 };
+
+pub fn verbPatch(app: *App, dp: *const DiffPane, what: LineVerb, arena: Allocator) CommandError!VerbPatch {
+    const past: []const u8 = switch (what) {
+        .stage => "staged",
+        .unstage => "unstaged",
+        .discard => "discarded",
+    };
+    if (try selectedLines(dp, arena)) |sel| {
+        const f = dp.files[sel.file];
+        if (sel.count == 0) return app.diag.fail(arena, "diff: the selection holds no changed line", .{});
+        const patch = (try parse.patchForLineMask(arena, f, sel.hunk, sel.mask, what != .stage)) orelse return app.diag.fail(arena, "diff: the selection holds no changed line", .{});
+        return .{ .patch = patch, .desc = try std.fmt.allocPrint(arena, "{s} {d} line{s} of {s}", .{ past, sel.count, if (sel.count == 1) "" else "s", f.path() }), .file = sel.file, .hunk = sel.hunk };
+    }
+    const at = hunkAtCursor(dp) orelse return app.diag.fail(arena, "diff: no hunk under the cursor", .{});
+    const f = dp.files[at.file];
+    return .{ .patch = try parse.patchForHunk(arena, f, at.hunk), .desc = try std.fmt.allocPrint(arena, "{s} hunk {d} of {s}", .{ past, at.hunk + 1, f.path() }), .file = at.file, .hunk = at.hunk };
+}
+
+/// Stage / unstage / discard the selected lines, else the hunk under
+/// the cursor, with a synthesized patch.
+pub fn applyHunk(app: *App, dp: *DiffPane, what: LineVerb) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
+    const vp = try verbPatch(app, dp, what, arena);
+    const desc = try app.gpa.dupe(u8, vp.desc);
     errdefer app.gpa.free(desc);
-    const owned = try app.gpa.dupe(u8, patch);
+    const owned = try app.gpa.dupe(u8, vp.patch);
     errdefer app.gpa.free(owned);
+    dp.anchor = null;
     try submitOp(app, repo, .{ .apply_patch = .{ .patch = owned, .cached = what != .discard, .reverse = what != .stage, .desc = desc } });
+}
+
+/// `v` / `git.diff_select`: anchor a selection at the cursor, or drop
+/// the one there is.
+pub fn toggleDiffSelect(dp: *DiffPane) void {
+    dp.anchor = if (dp.anchor == null and dp.cursor < dp.rowCount()) dp.cursor else null;
+}
+
+/// Shift+arrow: the selection grows from the cursor.
+fn extendDiffSelect(dp: *DiffPane, delta: isize) void {
+    if (dp.anchor == null and dp.cursor < dp.rowCount()) dp.anchor = dp.cursor;
+    stepDiff(dp, delta);
+}
+
+/// The discard confirm for the selection or the hunk (`x`, the chip,
+/// the menu).
+pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
+    if (hunkAtCursor(dp) == null) return app.toast("diff: no hunk under the cursor", .{});
+    const arena = app.frame.allocator();
+    const sel = selectedLines(dp, arena) catch null;
+    const msg: []const u8 = if (sel != null and sel.?.count > 0)
+        try std.fmt.allocPrint(app.gpa, "  Discard the {d} selected line{s} from the worktree? This cannot be undone.", .{ sel.?.count, if (sel.?.count == 1) "" else "s" })
+    else
+        try app.gpa.dupe(u8, "  Discard this hunk from the worktree? This cannot be undone.");
+    try openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, @constCast(msg));
+}
+
+/// The row menu of a diff pane: the verbs for its scope, worded for
+/// the selection when there is one. Every row is a `git.diff_*` command
+/// on the active pane — the keys and the palette run the same ids.
+pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error!void {
+    const has_sel = (selectedLines(dp, app.frame.allocator()) catch null) != null;
+    const what: []const u8 = if (has_sel) "selected lines" else "hunk";
+    const arena = app.frame.allocator();
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    switch (dp.scope) {
+        .file, .worktree, .head => {
+            try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Stage {s}", .{what}), .action = .{ .command = .@"git.diff_stage_lines" } });
+            try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Discard {s}\u{2026}", .{what}), .action = .{ .command = .@"git.diff_discard_lines" } });
+        },
+        .staged => try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Unstage {s}", .{what}), .action = .{ .command = .@"git.diff_unstage_lines" } }),
+        .commit, .orig => {},
+    }
+    try items.append(app.gpa, .{ .label = if (has_sel) "Clear selection" else "Select lines from here", .action = .{ .command = .@"git.diff_select" }, .separator_before = items.items.len > 0 });
+    try items.append(app.gpa, .{ .label = "Open file at line", .action = .{ .command = .@"git.diff_open_line" } });
+    const owned = try items.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu("Diff", owned, x, y);
 }
 
 // ─── pickers ────────────────────────────────────────────────────────────
@@ -1904,9 +2014,11 @@ pub fn statusPaneKey(app: *App, id: PaneId, sp: *StatusPane, k: Key) Allocator.E
 }
 
 /// The diff pane: motion over the shown rows, `]c [c` / `n p` between
-/// hunks, `]f [f` between files, `s u x` on the hunk, `v` cycles the
-/// view, `/` filters, enter opens the file at the line. While the
-/// filter takes keys, esc clears it and enter keeps it.
+/// hunks, `]f [f` between files, `s u x` on the selected lines (else the
+/// hunk), `v` anchors / drops a selection and shift+↑↓ (`J` / `K`)
+/// grow one, `t` cycles the view, `/` filters, enter opens the file at
+/// the line. Esc drops the selection, then the filter, then the pane.
+/// While the filter takes keys, esc clears it and enter keeps it.
 pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!bool {
     if (dp.filter_mode) {
         switch (k.code) {
@@ -1950,15 +2062,17 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
     }
     const page: isize = @intCast(@max(app.pane_rows, 1));
     switch (k.code) {
-        .up => stepDiff(dp, -1),
-        .down => stepDiff(dp, 1),
+        .up => if (k.mods.shift) extendDiffSelect(dp, -1) else stepDiff(dp, -1),
+        .down => if (k.mods.shift) extendDiffSelect(dp, 1) else stepDiff(dp, 1),
         .page_up => stepDiff(dp, -page),
         .page_down => stepDiff(dp, page),
         .home => diffHome(dp, false),
         .end => diffHome(dp, true),
         .enter => runToast(app, openDiffLine(app, dp)),
         .esc => {
-            if (dp.filter.items.len > 0) {
+            if (dp.anchor != null) {
+                dp.anchor = null;
+            } else if (dp.filter.items.len > 0) {
                 dp.filter.clearRetainingCapacity();
                 try refilterDiff(app, dp);
             } else try app.closePane(id, true);
@@ -1978,7 +2092,10 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
                 ']', '[' => dp.bracket = @intCast(c),
                 'n' => moveHunk(dp, true),
                 'p' => moveHunk(dp, false),
-                'v' => runToast(app, setDiffMode(app, dp, dp.mode.next())),
+                'v', 'V' => toggleDiffSelect(dp),
+                'J' => extendDiffSelect(dp, 1),
+                'K' => extendDiffSelect(dp, -1),
+                't' => runToast(app, setDiffMode(app, dp, dp.mode.next())),
                 '/' => {
                     dp.filter_mode = true;
                     dp.filter.clearRetainingCapacity();
@@ -1986,11 +2103,7 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
                 },
                 's' => runToast(app, applyHunk(app, dp, .stage)),
                 'u' => runToast(app, applyHunk(app, dp, .unstage)),
-                'x' => {
-                    if (hunkAtCursor(dp) == null) {
-                        app.toast("diff: no hunk under the cursor", .{});
-                    } else try openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, try app.gpa.dupe(u8, "  Discard this hunk from the worktree? This cannot be undone."));
-                },
+                'x' => try askDiscard(app, id, dp),
                 'r' => runToast(app, refreshDiff(app, dp)),
                 'q' => try app.closePane(id, true),
                 else => return false,
@@ -2084,7 +2197,7 @@ fn fileOfShown(dp: *const DiffPane, pos: usize) ?u32 {
 }
 
 /// Enter on a diff row: the file at that line.
-fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
+pub fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
     if (dp.cursor >= dp.rowCount()) return;
     const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
     const arena = app.frame.allocator();
@@ -2123,6 +2236,18 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
 /// filter banner takes the keys, a row selects (a second click opens it).
 pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
+    if (m.button == .right) {
+        // A row's menu: the cursor moves there first (the verbs act on
+        // the cursor's hunk when nothing is selected).
+        if (hit_id < dp.rowCount()) {
+            if (!diff_view.isSelected(diffDoc(dp), hit_id)) {
+                dp.anchor = null;
+                dp.cursor = hit_id;
+            }
+            try openDiffRowMenu(app, dp, m.x, m.y);
+        }
+        return;
+    }
     if (m.button != .left) return;
     app.needs_render = true;
     if (git_toolbar.actionOf(hit_id)) |action| {
@@ -2155,7 +2280,8 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
     if (hit_id == diff_view.close_id) return app.closePane(id, true);
     if (diff_view.actionOf(hit_id)) |a| return diffAction(app, id, dp, a);
     if (diff_view.hunkChipOf(hit_id)) |hc| {
-        // A hunk header's own chip acts on that hunk.
+        // A hunk header's own chip acts on that hunk, whatever is selected.
+        dp.anchor = null;
         if (hc.row < dp.rows.len) dp.cursor = hc.row;
         return diffAction(app, id, dp, hc.action);
     }
@@ -2172,7 +2298,40 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
         return;
     }
     if (hit_id >= dp.rowCount()) return;
-    if (dp.cursor == hit_id) runToast(app, openDiffLine(app, dp)) else dp.cursor = hit_id;
+    if (m.mods.shift) {
+        // Shift+click grows the selection from the cursor.
+        if (dp.anchor == null) dp.anchor = dp.cursor;
+        dp.cursor = hit_id;
+        return;
+    }
+    if (dp.cursor == hit_id and dp.anchor == null) return runToast(app, openDiffLine(app, dp));
+    dp.anchor = null;
+    dp.cursor = hit_id;
+    // A drag from here selects rows; a plain release leaves none.
+    app.drag = .{ .diff_select = .{ .pane = id, .anchor = hit_id } };
+}
+
+/// The drag a row press started: the cursor follows the row under the
+/// pointer and the anchor is the pressed row; a release on the same row
+/// is a click and selects nothing.
+pub fn dragDiffSelect(app: *App, id: PaneId, anchor: usize, m: Mouse) void {
+    const pane = app.panes.get(id) orelse return;
+    const dp = switch (pane.*) {
+        .diff => |*d| d,
+        else => return,
+    };
+    if (m.kind == .drag) {
+        const under = app.hits.at(m.x, m.y) orelse return;
+        if (under != .script_hit or under.script_hit.pane != id) return;
+        const row = under.script_hit.id;
+        if (row >= dp.rowCount()) return;
+        if (row != anchor or dp.anchor != null) {
+            dp.anchor = anchor;
+            dp.cursor = row;
+        }
+        return;
+    }
+    if (dp.anchor != null and dp.anchor.? == dp.cursor) dp.anchor = null;
 }
 
 /// A Stage / Discard / Unstage chip: Discard asks first, as `x` does.
@@ -2180,11 +2339,7 @@ fn diffAction(app: *App, id: PaneId, dp: *DiffPane, a: diff_view.Action) Allocat
     switch (a) {
         .stage => runToast(app, applyHunk(app, dp, .stage)),
         .unstage => runToast(app, applyHunk(app, dp, .unstage)),
-        .discard => {
-            if (hunkAtCursor(dp) == null) {
-                app.toast("diff: no hunk under the cursor", .{});
-            } else try openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, try app.gpa.dupe(u8, "  Discard this hunk from the worktree? This cannot be undone."));
-        },
+        .discard => try askDiscard(app, id, dp),
     }
 }
 
@@ -2637,6 +2792,7 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
         .split_shown = dp.split_shown,
         .mode = dp.mode,
         .cursor = dp.cursor,
+        .anchor = dp.anchor,
         .focused = focused,
         .filter = dp.filter.items,
         .filter_mode = dp.filter_mode,

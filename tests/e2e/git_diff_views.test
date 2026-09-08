@@ -1,7 +1,8 @@
 # The diff pane's three views (src/ui/diff_view.zig), painted as the
 # Rust editor paints them: Inline is the default and shows the whole
 # file as one column (a line far from the change appears, no `@@`
-# header); `v` cycles Inline → Split → Hunk; Split shows old and new
+# header); `t` cycles Inline → Split → Hunk (`v` anchors a line
+# selection, see git_diff_stage_lines.test); Split shows old and new
 # side by side under a header that spans both; Hunk shows `@@` headers
 # and three lines of context only. `/` narrows the pane to the hunks
 # holding a string, esc clears it.
@@ -22,12 +23,12 @@ expect screen contains "- fn alpha() {}"
 expect screen contains "+ fn beta() {}"
 expect screen contains "omega"
 expect screen lacks "@@ -1"
-key v
+key t
 # Split: old on the left, new on the right, the header across both.
 expect screen contains "@@ -1"
 expect screen contains "- fn alpha() {}"
 expect screen contains "+ fn beta() {}"
-key v
+key t
 # Hunk: the `@@` header with its own chips; three lines of context
 # stop before `omega`.
 expect screen contains "@@ -1"

@@ -29,6 +29,11 @@
 //! (`▎` per band — green / red / yellow for what the band holds; a
 //! click jumps there) and the scrollbar (`bg2` track, `comment` thumb).
 //!
+//! A selection (`Doc.anchor`, the app's `v` / shift+arrows / a drag)
+//! paints its rows on the editor's selection ground — the rows between
+//! the anchor and the cursor that belong to the anchor's hunk — and the
+//! app's line verbs act on those lines instead of the whole hunk.
+//!
 //! The app owns the parsed files and the flattened rows (`flatten`,
 //! `pairs`); the view keeps only the scroll. Rows register
 //! `.script_hit{ pane, id = row index }`; the toolbar chips, the banner
@@ -458,6 +463,10 @@ pub const Doc = struct {
     mode: Mode = .flat,
     /// Index into `rows` (Hunk / Inline) or `split_rows` (Split).
     cursor: usize,
+    /// The selection's other end (a row index like `cursor`); null when
+    /// nothing is selected. The rows between it and the cursor that
+    /// belong to ITS hunk paint on the editor's selection ground.
+    anchor: ?usize = null,
     focused: bool,
     filter: []const u8 = "",
     filter_mode: bool = false,
@@ -590,6 +599,34 @@ fn cursorHunk(doc: Doc) ?HunkRef {
     if (doc.cursor < doc.rows.len) if (rowHunk(doc.rows[doc.cursor])) |h| return h;
     for (doc.rows) |r| if (rowHunk(r)) |h| return h;
     return null;
+}
+
+/// The selected rows: `lo..=hi` around the anchor and the cursor, and
+/// the hunk the anchor sits in — a selection never crosses a hunk, so
+/// a row of another hunk inside the range is not selected.
+pub const Selection = struct { lo: usize, hi: usize, hunk: HunkRef };
+
+pub fn selectionOf(doc: Doc) ?Selection {
+    const a = doc.anchor orelse return null;
+    const hunk = if (doc.mode == .split)
+        (if (a < doc.split_rows.len) splitRowHunk(doc.split_rows[a]) else null)
+    else
+        (if (a < doc.rows.len) rowHunk(doc.rows[a]) else null);
+    return .{ .lo = @min(a, doc.cursor), .hi = @max(a, doc.cursor), .hunk = hunk orelse return null };
+}
+
+/// Row `ri` (of the current view's list) is a selected line.
+pub fn isSelected(doc: Doc, ri: usize) bool {
+    const sel = selectionOf(doc) orelse return false;
+    if (ri < sel.lo or ri > sel.hi) return false;
+    if (doc.mode == .split) {
+        if (ri >= doc.split_rows.len or doc.split_rows[ri] != .pair) return false;
+        const h = splitRowHunk(doc.split_rows[ri]).?;
+        return h.file == sel.hunk.file and h.hunk == sel.hunk.hunk;
+    }
+    if (ri >= doc.rows.len or doc.rows[ri] != .line) return false;
+    const h = rowHunk(doc.rows[ri]).?;
+    return h.file == sel.hunk.file and h.hunk == sel.hunk.hunk;
 }
 
 /// The hunk's ordinal across the files, 1-based, and the count.
@@ -758,7 +795,7 @@ fn drawUnifiedRow(ui: Ui, pane: PaneId, area: Rect, y0: u16, ri: u32, doc: Doc) 
             const lines = doc.files[l.file].hunks[l.hunk].lines;
             const line = lines[l.line];
             const gw = gutterWidth(doc.files);
-            const bg = rowGround(p, line.kind, on_cursor);
+            const bg = if (!on_cursor and isSelected(doc, ri)) ui.theme.selection.bg else rowGround(p, line.kind, on_cursor);
             ui.fill(r, .{ .bg = bg });
             const marker: []const u8 = switch (line.kind) {
                 .add, .del => if (ui.ascii) "|" else "\u{258F}",
@@ -945,9 +982,10 @@ fn drawSplitRow(ui: Ui, pane: PaneId, r: Rect, ri: u32, doc: Doc) u16 {
             const gutter_w: u16 = 5;
             const col_w: u16 = (r.w -| 13) / 2;
             var x = r.x;
-            x = drawSide(ui, r, x, lines, pr.left, gutter_w, col_w, true, doc, on_cursor);
+            const selected = !on_cursor and isSelected(doc, ri);
+            x = drawSide(ui, r, x, lines, pr.left, gutter_w, col_w, true, doc, on_cursor, selected);
             x += ui.putStr(x, r.y, r.right() -| x, if (ui.ascii) " | " else " \u{2502} ", .{ .fg = p.grey, .bg = p.bg_dark });
-            _ = drawSide(ui, r, x, lines, pr.right, gutter_w, col_w, false, doc, on_cursor);
+            _ = drawSide(ui, r, x, lines, pr.right, gutter_w, col_w, false, doc, on_cursor, selected);
             ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
         },
     }
@@ -955,21 +993,22 @@ fn drawSplitRow(ui: Ui, pane: PaneId, r: Rect, ri: u32, doc: Doc) u16 {
 }
 
 /// One side of a pair from `x0`; returns where it ended.
-fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, gutter_w: u16, col_w: u16, left: bool, doc: Doc, on_cursor: bool) u16 {
+fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, gutter_w: u16, col_w: u16, left: bool, doc: Doc, on_cursor: bool, selected: bool) u16 {
     const p = ui.theme.palette;
     const end = r.right();
     var x = x0;
     const side_w = gutter_w + 1 + col_w;
+    const sel_bg = ui.theme.selection.bg;
     const li = idx orelse {
         // A filler half: the `bg2` ground, a `·` for a sign.
-        const bg = if (on_cursor) p.bg2 else p.bg2;
+        const bg = if (selected) sel_bg else p.bg2;
         ui.fill(Rect.init(x, r.y, @min(side_w, end -| x), 1), .{ .bg = bg });
         x += gutter_w;
         _ = ui.putStr(x, r.y, end -| x, "\u{00B7}", .{ .fg = p.comment, .bg = bg, .bold = true });
         return x0 + side_w;
     };
     const line = lines[li];
-    const bg = rowGround(p, line.kind, on_cursor);
+    const bg = if (selected) sel_bg else rowGround(p, line.kind, on_cursor);
     ui.fill(Rect.init(x, r.y, @min(side_w, end -| x), 1), .{ .bg = bg });
     const no = if (left) line.old_no else line.new_no;
     if (no) |n| _ = ui.putStrRight(x + gutter_w - 1, r.y, gutter_w - 1, ui.fmt("{d}", .{n}), .{ .fg = p.comment, .bg = bg });
@@ -1267,6 +1306,53 @@ test "split draw: a header across both columns, old left, new right, a filler wi
     try testing.expectEqual(@as(u32, 9), f.hits.at(3, 12).?.script_hit.id);
     try testing.expect(f.bgEql(3, 12, .{ .bg = f.theme.palette.bg2 }));
     try testing.expect(f.bgEql(3, 5, .{ .bg = f.theme.palette.bg2 }));
+}
+
+test "a selection paints its rows on the selection ground, inside the anchor's hunk only, in the unified and split views" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const files = try parse.parseDiff(arena, two_hunks);
+    const rows = try flatten(arena, files);
+    const shown = try identity(arena, rows.len);
+    // rows: 0 hunk, 1 keep, 2 -apple, 3 +apricot, 4 keep2, 5 blank, 6 hunk, 7 ctx, …
+    const doc: Doc = .{ .files = files, .rows = rows, .shown = shown, .mode = .hunk, .cursor = 7, .anchor = 2, .focused = true };
+    const sel = selectionOf(doc).?;
+    try testing.expectEqual(@as(usize, 2), sel.lo);
+    try testing.expectEqual(@as(usize, 7), sel.hi);
+    try testing.expectEqual(@as(u32, 0), sel.hunk.hunk);
+    try testing.expect(isSelected(doc, 2));
+    try testing.expect(isSelected(doc, 4));
+    try testing.expect(!isSelected(doc, 1));
+    try testing.expect(!isSelected(doc, 5));
+    try testing.expect(!isSelected(doc, 6));
+    // Row 7 is the cursor but another hunk's: not selected.
+    try testing.expect(!isSelected(doc, 7));
+    var f = try Fixture.init(60, 14);
+    defer f.deinit();
+    var st: State = .{};
+    _ = draw(f.ui(), 1, f.full(), &st, doc);
+    // Body from row 2: banner at 2, hunk header 3, keep 4, -apple 5, +apricot 6, keep2 7.
+    const sel_bg = f.theme.selection.bg;
+    try testing.expect(f.bgEql(12, 5, .{ .bg = sel_bg }));
+    try testing.expect(f.bgEql(12, 6, .{ .bg = sel_bg }));
+    try testing.expect(f.bgEql(12, 7, .{ .bg = sel_bg }));
+    try testing.expect(!f.bgEql(12, 4, .{ .bg = sel_bg }));
+    // No anchor: nothing selected, the added row keeps its tint.
+    var plain = doc;
+    plain.anchor = null;
+    try testing.expect(selectionOf(plain) == null);
+    _ = draw(f.ui(), 1, f.full(), &st, plain);
+    try testing.expect(f.bgEql(12, 6, .{ .bg = addedRowBg(f.theme.palette) }));
+    // Split: pairs 2..3 of hunk 1 (apple/apricot, keep2).
+    const sr = try pairs(arena, files);
+    const sdoc: Doc = .{ .files = files, .rows = rows, .shown = shown, .split_rows = sr, .split_shown = try identity(arena, sr.len), .mode = .split, .cursor = 3, .anchor = 2, .focused = true };
+    try testing.expect(isSelected(sdoc, 2));
+    try testing.expect(!isSelected(sdoc, 0));
+    _ = draw(f.ui(), 1, f.full(), &st, sdoc);
+    // Row 3 body = split row 0 (header), row 5 = pair 2 (apple/apricot): both sides on the selection ground.
+    try testing.expect(f.bgEql(3, 5, .{ .bg = sel_bg }));
+    try testing.expect(f.bgEql(40, 5, .{ .bg = sel_bg }));
 }
 
 test "density: bands take the union of their rows; a strip cell maps back to its band's first row" {

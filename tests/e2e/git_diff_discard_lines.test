@@ -1,0 +1,28 @@
+# Discarding a line selection (src/app/git.zig `askDiscard`): shift+↓
+# grows a selection from the cursor without `v`, `x` asks about the
+# selected lines, `y` reverses just those in the worktree — the other
+# change of the hunk survives.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.txt "one\ntwo\nthree\nfour\nfive\n"
+shell git add code.txt
+shell git commit -q -m "initial"
+shell printf "one\ntwo-x\nthree\nfour-x\nfive\n" > code.txt
+open code.txt
+command git.diff_file
+wait 800
+expect screen contains "+ four-x"
+# ` one`, `- two`, `+ two-x`, ` three`, `- four`: four j's, then grow onto `+ four-x`.
+key j
+key j
+key j
+key j
+key shift+down
+key x
+expect screen contains "Discard the 2 selected lines from the worktree?"
+key y
+wait 1500
+expect screen contains "discarded 2 lines of code.txt"
+expect file code.txt lacks "four-x"
+expect file code.txt contains "two-x"

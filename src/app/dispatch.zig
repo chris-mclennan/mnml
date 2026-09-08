@@ -2082,6 +2082,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
+        .diff_select => |ds| git_app.dragDiffSelect(app, ds.pane, ds.anchor, m),
         .select => |sel| {
             extendSelection(app, sel, m.x, m.y);
             // A press-and-release on one cell is a click: no selection.

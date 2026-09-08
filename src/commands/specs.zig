@@ -954,6 +954,12 @@ pub const specs = [_]Spec{
     // Zig-only: the diff pane's views and filter.
     .{ .id = "git.diff_toggle_view", .title = "Diff: cycle the view (Hunk → Inline → Split)", .group = "git" },
     .{ .id = "git.diff_filter", .title = "Diff: filter to the hunks containing a string (/)", .group = "git" },
+    // Zig-only: the diff pane's line selection and its verbs.
+    .{ .id = "git.diff_select", .title = "Diff: anchor a line selection at the cursor, or drop it (v)", .group = "git" },
+    .{ .id = "git.diff_stage_lines", .title = "Diff: stage the selected lines (else the hunk) (s)", .group = "git" },
+    .{ .id = "git.diff_unstage_lines", .title = "Diff: unstage the selected lines (else the hunk) (u)", .group = "git" },
+    .{ .id = "git.diff_discard_lines", .title = "Diff: discard the selected lines (else the hunk) from the worktree (x, confirm)", .group = "git" },
+    .{ .id = "git.diff_open_line", .title = "Diff: open the file at the cursor's line (enter)", .group = "git" },
     // Zig-only: the graph's detail panel, sort and hash-jump; the branch
     // rail; browse a file / a line / a commit on the remote.
     .{ .id = "git.graph_detail", .title = "Graph: open the detail panel for the selected commit (tab focuses it)", .group = "git" },
@@ -998,7 +1004,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "936 specs, unique ids" {
+test "941 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1010,6 +1016,6 @@ test "936 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 936), specs.len);
+    try std.testing.expectEqual(@as(usize, 941), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

@@ -26,6 +26,11 @@ pub const table = .{
     .@"git.diff_orig" = &diffOrig,
     .@"git.diff_toggle_view" = &diffToggleView,
     .@"git.diff_filter" = &diffFilter,
+    .@"git.diff_select" = &diffSelect,
+    .@"git.diff_stage_lines" = &diffStageLines,
+    .@"git.diff_unstage_lines" = &diffUnstageLines,
+    .@"git.diff_discard_lines" = &diffDiscardLines,
+    .@"git.diff_open_line" = &diffOpenLine,
     .@"git.diff_next_file" = &diffNextFile,
     .@"git.diff_prev_file" = &diffPrevFile,
     .@"git.peek_change" = &peekChange,
@@ -151,6 +156,30 @@ fn diffOrig(app: *App) CommandError!void {
 fn diffToggleView(app: *App) CommandError!void {
     const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
     try git.setDiffMode(app, dp, dp.mode.next());
+}
+
+fn requireDiff(app: *App) CommandError!*git.DiffPane {
+    return git.activeDiff(app) orelse app.diag.fail(arena(app), "no diff pane is active", .{});
+}
+
+fn diffSelect(app: *App) CommandError!void {
+    git.toggleDiffSelect(try requireDiff(app));
+}
+
+fn diffStageLines(app: *App) CommandError!void {
+    try git.applyHunk(app, try requireDiff(app), .stage);
+}
+
+fn diffUnstageLines(app: *App) CommandError!void {
+    try git.applyHunk(app, try requireDiff(app), .unstage);
+}
+
+fn diffDiscardLines(app: *App) CommandError!void {
+    try git.askDiscard(app, app.active.?, try requireDiff(app));
+}
+
+fn diffOpenLine(app: *App) CommandError!void {
+    try git.openDiffLine(app, try requireDiff(app));
 }
 
 /// Start typing a `/` filter on the active diff pane.

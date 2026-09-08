@@ -13,6 +13,8 @@
 //! Written:
 //!   `patchForHunk` — what `git apply --cached [-R]` takes to stage,
 //!   unstage or discard one hunk on its own.
+//!   `patchForLines` / `patchForLineMask` — the same for a subset of a
+//!   hunk's lines (the diff pane's selection).
 
 const std = @import("std");
 const remote_mod = @import("remote.zig");
@@ -460,6 +462,99 @@ pub fn patchForHunk(arena: Allocator, f: FileDiff, hunk_idx: usize) Allocator.Er
         try out.append(arena, '\n');
     }
     return out.items;
+}
+
+/// The patch for a SUBSET of one hunk's lines — a line-level stage /
+/// unstage / discard. `selected[i]` says whether `f.hunks[hunk_idx].
+/// lines[i]` is in the selection. Every context line is kept so the
+/// hunk still locates. A change outside the selection is rewritten
+/// for the side the patch applies to:
+///
+/// * forward (`reverse = false`, a stage): an unselected `+` is left
+///   out (it is not in the target), an unselected `-` becomes context
+///   (the target still has it);
+/// * reverse (`reverse = true`, an unstage or a discard, `git apply -R`):
+///   the mirror — an unselected `+` becomes context (the target has
+///   it and keeps it), an unselected `-` is left out.
+///
+/// A `\ No newline` line follows the line before it. The `@@` counts
+/// are recomputed; the starts are the hunk's. Null when the selection
+/// holds no changed line: there is nothing to apply.
+pub fn patchForLineMask(arena: Allocator, f: FileDiff, hunk_idx: usize, selected: []const bool, reverse: bool) Allocator.Error!?[]const u8 {
+    const h = f.hunks[hunk_idx];
+    std.debug.assert(selected.len == h.lines.len);
+    const Emit = enum { keep, context, drop };
+    const plan = try arena.alloc(Emit, h.lines.len);
+    var changes: usize = 0;
+    var last: Emit = .drop;
+    for (h.lines, 0..) |l, i| {
+        plan[i] = switch (l.kind) {
+            .context => .keep,
+            .meta => last,
+            .add, .del => blk: {
+                if (selected[i]) {
+                    changes += 1;
+                    break :blk .keep;
+                }
+                const unselected_add = l.kind == .add;
+                break :blk if (unselected_add == reverse) .context else .drop;
+            },
+        };
+        if (l.kind != .meta) last = plan[i];
+    }
+    if (changes == 0) return null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    const new_p = f.new_path orelse f.old_path orelse "";
+    const old_p = f.old_path orelse new_p;
+    try out.print(arena, "diff --git a/{s} b/{s}\n", .{ old_p, new_p });
+    if (f.old_path == null) try out.appendSlice(arena, "new file mode 100644\n");
+    if (f.new_path == null) try out.appendSlice(arena, "deleted file mode 100644\n");
+    if (f.old_path) |p| try out.print(arena, "--- a/{s}\n", .{p}) else try out.appendSlice(arena, "--- /dev/null\n");
+    if (f.new_path) |p| try out.print(arena, "+++ b/{s}\n", .{p}) else try out.appendSlice(arena, "+++ /dev/null\n");
+    var oc: u32 = 0;
+    var nc: u32 = 0;
+    for (h.lines, 0..) |l, i| {
+        const kind: LineKind = if (l.kind == .meta) (if (plan[i] == .drop) continue else .meta) else switch (plan[i]) {
+            .drop => continue,
+            .context => .context,
+            .keep => l.kind,
+        };
+        switch (kind) {
+            .context => {
+                oc += 1;
+                nc += 1;
+            },
+            .add => nc += 1,
+            .del => oc += 1,
+            .meta => {},
+        }
+    }
+    try out.print(arena, "@@ -{d},{d} +{d},{d} @@\n", .{ h.old_start, oc, h.new_start, nc });
+    for (h.lines, 0..) |l, i| {
+        const kind: LineKind = if (l.kind == .meta) (if (plan[i] == .drop) continue else .meta) else switch (plan[i]) {
+            .drop => continue,
+            .context => .context,
+            .keep => l.kind,
+        };
+        switch (kind) {
+            .context => try out.append(arena, ' '),
+            .add => try out.append(arena, '+'),
+            .del => try out.append(arena, '-'),
+            .meta => {},
+        }
+        try out.appendSlice(arena, l.text);
+        try out.append(arena, '\n');
+    }
+    return out.items;
+}
+
+/// `patchForLineMask` for the contiguous run `lo..=hi` of the hunk's
+/// lines (the unified views' selection).
+pub fn patchForLines(arena: Allocator, f: FileDiff, hunk_idx: usize, lo: usize, hi: usize, reverse: bool) Allocator.Error!?[]const u8 {
+    const n = f.hunks[hunk_idx].lines.len;
+    const mask = try arena.alloc(bool, n);
+    for (mask, 0..) |*m, i| m.* = i >= lo and i <= hi;
+    return patchForLineMask(arena, f, hunk_idx, mask, reverse);
 }
 
 // ─── gutter marks ───────────────────────────────────────────────────────
@@ -1099,6 +1194,68 @@ test "patchForHunk writes one hunk with recounted ranges and the /dev/null side"
         p,
     );
     const q = try patchForHunk(arenaOf(&a), files[1], 0);
+    try testing.expect(std.mem.indexOf(u8, q, "new file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,1 @@\n+hello\n") != null);
+}
+
+const lines_diff =
+    "diff --git a/f.txt b/f.txt\n" ++
+    "--- a/f.txt\n" ++
+    "+++ b/f.txt\n" ++
+    "@@ -3,5 +3,6 @@\n" ++
+    " ctx1\n" ++
+    "-old a\n" ++
+    "-old b\n" ++
+    "+new a\n" ++
+    "+new b\n" ++
+    "+new c\n" ++
+    " ctx2\n" ++
+    "-tail\n" ++
+    "+tail2\n" ++
+    "\\ No newline at end of file\n";
+
+test "patchForLines: a stage keeps unselected removals as context and drops unselected additions; the header is recounted" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = arenaOf(&a);
+    const files = try parseDiff(arena, lines_diff);
+    // lines: 0 ctx1, 1 -old a, 2 -old b, 3 +new a, 4 +new b, 5 +new c, 6 ctx2, 7 -tail, 8 +tail2, 9 meta
+    // Select `-old a`, `-old b` and `+new a`: `+new b` / `+new c` are
+    // left out, `-tail` stays as context.
+    const p = (try patchForLines(arena, files[0], 0, 1, 3, false)).?;
+    try testing.expectEqualStrings(
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -3,5 +3,4 @@\n ctx1\n-old a\n-old b\n+new a\n ctx2\n tail\n",
+        p,
+    );
+    // The first line alone: one removal, the rest context.
+    const first = (try patchForLines(arena, files[0], 0, 0, 1, false)).?;
+    try testing.expect(std.mem.indexOf(u8, first, "@@ -3,5 +3,4 @@\n ctx1\n-old a\n old b\n ctx2\n tail\n") != null);
+    // The last change alone: `+tail2` kept with its `\ No newline`, `-tail` context.
+    const last = (try patchForLines(arena, files[0], 0, 8, 9, false)).?;
+    try testing.expect(std.mem.indexOf(u8, last, "@@ -3,5 +3,6 @@\n ctx1\n old a\n old b\n ctx2\n tail\n+tail2\n\\ No newline at end of file\n") != null);
+    // Every line: the hunk as `patchForHunk` writes it.
+    const all = (try patchForLines(arena, files[0], 0, 0, 9, false)).?;
+    try testing.expectEqualStrings(try patchForHunk(arena, files[0], 0), all);
+    // Only context selected: nothing to apply.
+    try testing.expect((try patchForLines(arena, files[0], 0, 6, 6, false)) == null);
+}
+
+test "patchForLines reverse (unstage / discard): unselected additions stay as context, unselected removals go; a mask picks non-contiguous lines" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = arenaOf(&a);
+    const files = try parseDiff(arena, lines_diff);
+    const p = (try patchForLines(arena, files[0], 0, 1, 3, true)).?;
+    try testing.expectEqualStrings(
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -3,7 +3,6 @@\n ctx1\n-old a\n-old b\n+new a\n new b\n new c\n ctx2\n tail2\n\\ No newline at end of file\n",
+        p,
+    );
+    // The split view's pair selection: `-old b` and `+new b` (lines 2 and 4).
+    const mask = [_]bool{ false, false, true, false, true, false, false, false, false, false };
+    const m = (try patchForLineMask(arena, files[0], 0, &mask, false)).?;
+    try testing.expect(std.mem.indexOf(u8, m, "@@ -3,5 +3,5 @@\n ctx1\n old a\n-old b\n+new b\n ctx2\n tail\n") != null);
+    // A new file's lines: the /dev/null side survives.
+    const nf = try parseDiff(arena, sample_diff);
+    const q = (try patchForLines(arena, nf[1], 0, 0, 0, false)).?;
     try testing.expect(std.mem.indexOf(u8, q, "new file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,1 @@\n+hello\n") != null);
 }
 
