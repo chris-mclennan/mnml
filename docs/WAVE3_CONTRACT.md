@@ -4238,3 +4238,91 @@ own at the end of `scripting/api.zig`, one new file
   the menu rows, Install… → the tools box), and
   `tests/e2e/lsp_missing_default_quiet.test` (`# env: PATH=`, a
   `.json` open → no toast, ` LSP? `, the status names the install).
+
+## The ZON view (2026-09-08, branch `zon-viewer`) — `// changed:` notes
+
+The user's idea: "a zon viewer/editor but interactive and TUI
+graphical". A `.zon` file as a tree of fields you walk and edit in
+place, beside the raw text.
+
+- `Pane.zon` (`src/app/zon_pane.zig`, painter `src/ui/zon_view.zig`).
+  A `.zon` file's `open` still goes to the raw editor; that tab carries
+  a ` View as tree ` mode chip (`bufferline.ModeChip.kind` gains
+  `view_zon` / `source_zon`) and `zon.view` opens the tree as a tab in
+  the same leaf. `zon.source` (the tree's ` Source ` chip, `e`) reveals
+  or opens the editor tab — the markdown preview's tab-swap idiom,
+  except both tabs stay. Spec count 989 (`zon.view`, `zon.source`).
+- The model (`src/config/zon_tree.zig`): the loader's two passes
+  (`Ast.parse(.zon)` + `ZonGen`) read for shape — every field and list
+  element a node with its literal's byte span, kind and children;
+  `keyPath` is the splice path (`.{ "workspaces", "[1]", "group" }`).
+- The widget table (`src/config/zon_schema.zig`): a schema-known file
+  is walked by key path through its type — `Config` (`config.zon` or
+  a shape of config sections), the session's `Saved` (`session.zon`),
+  an integration `Manifest` (`integrations/*.zon`, or `id`+`binary`+
+  `label`), a theme `Source` (`themes/*.zon`, or `base_30`+`name`).
+  A `Map` takes any key, a slice a `[i]`, a union its tag. A `Dynamic`
+  subtree and an unknown file **infer** from the literal: `true` →
+  bool, `3` → int, `.tag` → an enum with that one choice whose tag may
+  be typed, `null` → optional, a one-field struct → union-shaped (the
+  field NAME is what Enter edits), `.{}` → struct. `docs/CONFIG.md`
+  is embedded (`config_md`, build.zig) and its per-key comments are
+  the config's info-box line (`Docs.parseDocs`).
+- Widgets: bool — Enter / Space / click toggles, `[true] / false` are
+  both hits; enum — `←→` / `h l` cycle, Enter opens a picker (a popup
+  under the row, `✓` on the current tag), past six tags the row reads
+  `[x] ‹ i/n ›`; int / float — `←→` step (ints clamped to the type's
+  range), Enter types, a bad number keeps the field open; string —
+  inline `text_field` seeded with the unescaped text (cursor, arrows,
+  Home/End, paste), commits a quoted literal; list — `+` adds after
+  the row's element (the schema's element default, else a copy of the
+  last element), `x` removes, `J` / `K` reorder; struct — folds
+  (`h l`, Enter, `E` / `C` all); optional — `null  set…` writes the
+  non-null default, `n` clears back to `null`; union — the picker of
+  tags, a void tag as `.tag`, a payload tag as `.{ .tag = <default> }`
+  with the payload's own row below it (its widget is the payload's
+  type).
+- Write-back goes through the settings splice: every edit is
+  `persist.splice` on the pane's working text, checked by a re-parse
+  before it lands; `*` marks a row whose literal differs from the one
+  the file had at open (a section containing one is marked too); Esc
+  on it splices the opened literal back (a list element the file did
+  not have is removed); `Ctrl+S` / `file.save` / the close prompt's
+  Save write through `persist.persistText` (a backup beside the file,
+  `backups/`), reset the baseline and `watch.reload` the raw editor's
+  tab when it is open. **Reordering, adding to and removing from a
+  list rewrite the whole list literal** (`persist.listLiteral`, one
+  element per line when the list was, else inline) — comments between
+  the elements do not come along; a scalar edit inside an element
+  keeps them. `r` re-reads the disk when nothing is unsaved.
+- `persist.splice` grew a `[i]` key: the i-th element of a list
+  literal, so a field inside an element and a union's payload splice
+  in place. `error.NotAList` / `NoSuchElement`. `persistText`,
+  `listLiteral`, `lineIndent` / `lineStart` are public.
+- Chrome: row 0 the breadcrumb (`config.zon › ui › theme`, each crumb
+  a jump, the schema label and `· unsaved` at the right), row 1 the
+  shared filter pill (`/` focuses; narrows by path substring, ancestors
+  kept, containers on the way opened), a hint row at the bottom, a
+  scrollbar when the rows overflow. The info box shows the focused
+  row's path and doc line. Hits are `.script_hit{pane, id}` — a row,
+  each option, an arrow, the value cell, `+`, `x`, a crumb, the
+  filter, a picker row; no new `HitTarget`. Right-click on a row
+  focuses it and, for an enum / union, opens the picker; on a bool it
+  toggles.
+- Not in v1 (named cuts): absent schema keys are not listed as ghost
+  rows with their defaults (the splice's insert path is ready for it);
+  the tree does not watch the file — `r` reloads; no session restore of
+  the tree tab (the editor tab restores and its chip is one click);
+  CONFIG.md docs only for the config schema (Zig has no doc-comment
+  reflection for the other three); a number's `←→` step is 1.
+- Tests: `config/zon_tree.zig` (every literal kind, spans, quoted keys,
+  paths, errors), `config/zon_schema.zig` (detection, the config
+  schema's widgets incl. the nested union and the list of structs, the
+  inference table, CONFIG.md docs), `config/persist.zig` (the `[i]`
+  key, `listLiteral`, `persistText`), `app/zon_pane.zig` (the tab
+  pair, every widget's edit with the comments checked, union / optional
+  / list ops, save + editor reload + backup + `r`, an unknown file's
+  inference and the filter and folds, a file that does not parse), and
+  `tests/e2e/zon_view_{toggle_bool_save, enum_cycle, string_edit,
+  list_add, union_swap, unknown_schema}.test` (break-checked).
+  `docs/ui-spec/zig-zon-view-120x40.txt` is the dump.
