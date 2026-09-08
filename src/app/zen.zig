@@ -1,5 +1,5 @@
-//! Zen mode — the editor and nothing else. `view.zen` / `view.fullscreen`
-//! flip `App.zen`; `render.zig` then skips the palette bar, the tree,
+//! Zen mode — the editor and nothing else. `view.fullscreen`
+//! flips `App.zen`; `render.zig` then skips the palette bar, the tree,
 //! the right panel, the tab strips and the statusline. The `:` line
 //! stays (it is how a vim user leaves). The flag rides along in
 //! `session.zon`, so quitting zoomed comes back zoomed.
@@ -11,7 +11,6 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 
 pub const table = .{
-    .@"view.zen" = &toggle,
     .@"view.fullscreen" = &toggle,
 };
 
@@ -47,7 +46,7 @@ test "zen: the frame drops the tree, the strip and the statusline; a second togg
     try t.expect(std.mem.indexOf(u8, before, "[scratch]") != null); // the tab strip
     try t.expect(std.mem.indexOf(u8, before, "EDIT") != null); // the statusline's mode chip
     try t.expect(app.panes_area.x > 0); // the tree takes the left
-    try command.run(&app, .{ .static = .@"view.zen" });
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
     try t.expect(app.zen);
     try t.expect(app.focus == .pane);
     try app.render();

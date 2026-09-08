@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 Rust ids plus 56 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 795 Rust ids plus 137 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -623,7 +623,6 @@ pub const specs = [_]Spec{
     .{ .id = "dap.open_selected", .title = "DAP: jump to the frame / breakpoint / thread under the cursor", .group = "dap" },
     .{ .id = "dap.watch_selected", .title = "DAP: watch the variable under the cursor", .group = "dap" },
     .{ .id = "dap.copy_value", .title = "DAP: copy the value under the cursor", .group = "dap" },
-    .{ .id = "dap.edit_watch", .title = "DAP: edit the watch expression under the cursor", .group = "dap" },
     .{ .id = "dap.toggle_breakpoint_enabled", .title = "DAP: enable / disable the breakpoint (cursor line, or the row under the cursor)", .group = "dap" },
     .{ .id = "dap.remove_breakpoint", .title = "DAP: remove the breakpoint (cursor line, or the row under the cursor)", .group = "dap" },
     .{ .id = "dap.set_breakpoint_log_message", .title = "DAP: set a log message on the breakpoint (a logpoint)", .group = "dap", .keys = .{ .vim = &.{"space d l"} } },
@@ -779,7 +778,6 @@ pub const specs = [_]Spec{
     .{ .id = "dock.close_all", .title = "Dock: close all widgets", .group = "dock" },
     .{ .id = "dock.move_corner_next", .title = "Dock: move focused widget to next corner", .group = "dock" },
     .{ .id = "dock.toggle", .title = "Dock: hide / show every widget", .group = "dock" },
-    .{ .id = "dock.add", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
     .{ .id = "dock.add_preset", .title = "Dock: add a preset widget (clock, git branch, log tail, note)", .group = "dock" },
     .{ .id = "dock.remove", .title = "Dock: close the focused widget", .group = "dock" },
     .{ .id = "dock.edit", .title = "Dock: edit the focused widget's text or file", .group = "dock" },
@@ -943,7 +941,6 @@ pub const specs = [_]Spec{
     // Zig-only: the menu bar's summon, the coverage chip's click and menu.
     .{ .id = "view.menu_bar_open", .title = "Menu bar: open the File menu (the words follow under `ui.menu_bar = auto`)", .group = "view" },
     .{ .id = "coverage.toast", .title = "Coverage: toast the feature and code numbers", .group = "coverage" },
-    .{ .id = "coverage.mode_menu", .title = "Coverage: pick the statusline chip's mode", .group = "coverage" },
     .{ .id = "git.stage", .title = "Git: stage the selected file (or the active buffer)", .group = "git" },
     .{ .id = "git.unstage", .title = "Git: unstage the selected file (or the active buffer)", .group = "git" },
     .{ .id = "git.stage_all", .title = "Git: stage everything (add -A)", .group = "git" },
@@ -962,7 +959,6 @@ pub const specs = [_]Spec{
     .{ .id = "git.repo_prev", .title = "Git: the previous repo in the branches panel (its left chevron, `[`)", .group = "git" },
     .{ .id = "git.repo_next", .title = "Git: the next repo in the branches panel (its right chevron, `]`)", .group = "git" },
     .{ .id = "git.palette_all", .title = "Git: list every repo in the branches panel (All repos), or one again", .group = "git" },
-    .{ .id = "git.browse_line", .title = "Git: open the current line on the remote", .group = "git" },
     .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
     .{ .id = "git.browse_commit", .title = "Git: open the selected commit (or HEAD) on the remote", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
@@ -973,7 +969,6 @@ pub const specs = [_]Spec{
     .{ .id = "session.save", .title = "Session: save the open panes, layout and history to .mnml/session.zon now", .group = "session" },
     .{ .id = "session.restore", .title = "Session: restore .mnml/session.zon", .group = "session" },
     .{ .id = "session.clear", .title = "Session: delete .mnml/session.zon (the next launch starts clean)", .group = "session" },
-    .{ .id = "view.zen", .title = "Zen mode — hide the tree, the tab strips and the statusline (view.fullscreen)", .group = "view" },
     .{ .id = "app.check_updates", .title = "Check GitHub for a newer mnml release now", .group = "app" },
     .{ .id = "app.startup_picker", .title = "Startup picker — new file / open file / recent files / workspaces", .group = "app" },
     .{ .id = "messages.clear", .title = "Messages: clear the toast history", .group = "view" },
@@ -999,7 +994,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "937 specs, unique ids" {
+test "932 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1011,6 +1006,6 @@ test "937 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 937), specs.len);
+    try std.testing.expectEqual(@as(usize, 932), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

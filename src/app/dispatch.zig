@@ -1704,7 +1704,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .split_max => {
                     focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"view.zen");
+                    try runCmd(app, .@"view.fullscreen");
                 },
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
                 .ai_claude => try runCmd(app, .@"ai.claude_code"),

@@ -42,7 +42,6 @@ pub const State = struct {
 
 pub const table = .{
     .@"coverage.toast" = &toastCmd,
-    .@"coverage.mode_menu" = &modeMenuCmd,
 };
 
 // ─── the files ───────────────────────────────────────────────────────────
@@ -321,10 +320,6 @@ fn toastCmd(app: *App) CommandError!void {
     const f: []const u8 = if (st.feature) |v| try pct(arena, "features", v) else "features —";
     const c: []const u8 = if (st.code) |v| try pct(arena, "code lines", v) else "code lines —";
     app.toast("coverage: {s} · {s}", .{ f, c });
-}
-
-fn modeMenuCmd(app: *App) CommandError!void {
-    try openModeMenu(app, app.screen.width -| 20, app.screen.height -| 2);
 }
 
 /// The chip's right-click: one row per mode, the current one checked.

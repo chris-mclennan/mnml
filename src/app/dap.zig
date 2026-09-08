@@ -526,7 +526,7 @@ pub fn removeWatchPicker(app: *App) CommandError!void {
     try cmd_picker.openPickerWith(app, "Remove watch", .dap_remove_watch, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), hints);
 }
 
-/// `dap.edit_watch`: a prompt seeded with the expression; accept
+/// `dap.edit_selected` on a watch row: a prompt seeded with the expression; accept
 /// replaces it in place (its position kept).
 pub fn editWatchPrompt(app: *App, expr: []const u8) CommandError!void {
     const old = try app.gpa.dupe(u8, expr);
