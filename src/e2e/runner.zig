@@ -324,6 +324,7 @@ const Run = struct {
                         d.click(m.x, m.y, .left, .{}) catch |e| break :blk e;
                         break :blk d.click(m.x, m.y, .left, .{});
                     },
+                    .hover => d.mouse(.{ .x = m.x, .y = m.y, .kind = .motion }),
                     .scroll_up => d.mouse(.{ .x = m.x, .y = m.y, .kind = .scroll_up }),
                     .scroll_down => d.mouse(.{ .x = m.x, .y = m.y, .kind = .scroll_down }),
                 };

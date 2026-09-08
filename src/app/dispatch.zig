@@ -724,7 +724,10 @@ fn menuHover(app: *App, m: Mouse) Allocator.Error!void {
             },
             // A child's row, or the kebab on one.
             1, 3 => if (menu.sub) |*sub| {
-                if (mi.idx < sub.items.len) sub.cursor = mi.idx;
+                if (mi.idx < sub.items.len) {
+                    sub.cursor = mi.idx;
+                    sub.highlight = true;
+                }
             },
             else => {},
         },
@@ -747,6 +750,18 @@ fn menuMove(m: *app_mod.MenuState, delta: i32) void {
     }
     const want = @as(i64, @intCast(m.cursor)) + delta;
     m.cursor = @intCast(@max(0, @min(want, last)));
+}
+
+/// `menuMove` for the open child: its first arrow lights its cursor row.
+fn subMove(sub: *app_mod.MenuState.SubMenu, delta: i32) void {
+    const last: i64 = @as(i64, @intCast(sub.items.len)) - 1;
+    if (last < 0) return;
+    if (!sub.highlight) {
+        sub.highlight = true;
+        return;
+    }
+    const want = @as(i64, @intCast(sub.cursor)) + delta;
+    sub.cursor = @intCast(@max(0, @min(want, last)));
 }
 
 /// Enter on a menu row: a parent opens its child, a leaf runs.
@@ -918,21 +933,20 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             // The child owns the keys while it is open: ← / h step back
             // out of it, Enter / → / l run its row.
             if (m.sub) |*sub| {
-                const slast = sub.items.len -| 1;
                 switch (k.code) {
                     .esc => closeOverlay(app),
                     .left => m.closeSub(gpa),
                     .enter => if (sub.items.len > 0) try runMenuAction(app, sub.items[sub.cursor].action),
                     .right => try subOpenRight(app),
-                    .up => sub.cursor -|= 1,
-                    .down => sub.cursor = @min(sub.cursor + 1, slast),
-                    .home => sub.cursor = 0,
-                    .end => sub.cursor = slast,
+                    .up => subMove(sub, -1),
+                    .down => subMove(sub, 1),
+                    .home => subMove(sub, std.math.minInt(i32)),
+                    .end => subMove(sub, std.math.maxInt(i32)),
                     .char => |c| switch (c) {
                         'h' => m.closeSub(gpa),
                         'l' => try subOpenRight(app),
-                        'k' => sub.cursor -|= 1,
-                        'j' => sub.cursor = @min(sub.cursor + 1, slast),
+                        'k' => subMove(sub, -1),
+                        'j' => subMove(sub, 1),
                         'q' => closeOverlay(app),
                         else => {},
                     },
@@ -1358,6 +1372,23 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
             const menu = &app.overlay.menu;
+            // A right press on a row of a curatable menu: its pin /
+            // hide / copy-id list, as the kebab and → open.
+            if (m.button == .right) {
+                if (!menu.curatable) return;
+                switch (mi.menu) {
+                    0, 2 => if (mi.idx < menu.items.len and menu.items[mi.idx].action == .command) {
+                        menu.cursor = mi.idx;
+                        try context_menus.openCuration(app, mi.idx, menu.items[mi.idx]);
+                    },
+                    1, 3 => if (menu.sub) |*sub| if (mi.idx < sub.items.len and sub.items[mi.idx].action == .command and !isCuration(sub.items[mi.idx])) {
+                        sub.cursor = mi.idx;
+                        try context_menus.openCuration(app, sub.parent, sub.items[mi.idx]);
+                    },
+                    else => {},
+                }
+                return;
+            }
             switch (mi.menu) {
                 // A parent row opens its child; a leaf runs.
                 0 => {
@@ -1712,16 +1743,19 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
                 return menu_bar.openOverflow(app, r.x, m.y + 1);
             }
+            // The strip's `+`: the `Create…` menu, hung under the chip,
+            // on either button (Rust `split_tab_plus_buttons` /
+            // `bufferline_empty_plus`); the leaf it sits on is made
+            // current first so the rows act there.
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
-                if (m.button == .right) return context_menus.openNewTabMenu(app, m.x, m.y);
                 // Git mode's `+` brings a closed repo back (Rust `git.reopen_repo`).
-                if (app.git_palette.active) return runCmd(app, .@"git.reopen_repo");
+                if (m.button == .left and app.git_palette.active) return runCmd(app, .@"git.reopen_repo");
                 const layout = app.layouts.current();
                 if (try layout.leafAt(app.frame.allocator(), leaf_idx)) |lid| {
                     if (layout.leaf(lid)) |leaf| app.setActive(leaf.active);
                 }
-                _ = app.openScratch() catch return error.OutOfMemory;
-                return;
+                const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                return context_menus.openNewTabMenu(app, r.x, r.y + 1);
             }
             // The right cluster's tab-page chips: a chip shows its page,
             // the `×` on the active one closes it.
@@ -1740,7 +1774,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),
-                .new_tab_page => try runCmd(app, .@"tab.new"),
+                // The top-right `+`: a tab page on the left button (what its
+                // place promises), the `Create…` menu on the right (Rust
+                // `right_click.rs`, 2026-09-03).
+                .new_tab_page => if (m.button == .right) {
+                    const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                    try context_menus.openNewTabMenu(app, r.x, r.y + 1);
+                } else try runCmd(app, .@"tab.new"),
                 .tabs_label => try runCmd(app, .@"tab.picker"),
                 // The pill swaps to the configured alternate; without one
                 // it opens the picker so the click never dead-ends.
@@ -3020,7 +3060,7 @@ test "an Alt-press on a tree row dragged onto a folder asks to copy; Tab on the 
     try tmp.dir.access(std.testing.io, "src/zz.txt", .{});
 }
 
-test "gestures: a divider drag resizes with the minimum kept, a tab drag reorders, the + opens a scratch" {
+test "gestures: a divider drag resizes with the minimum kept, a tab drag reorders, the + opens the Create… menu" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.visible = false;
@@ -3057,12 +3097,22 @@ test "gestures: a divider drag resizes with the minimum kept, a tab drag reorder
     try release(&app, 20, 1);
     const leaf = app.layouts.current().leaf(app.layouts.current().leafOf(a).?).?;
     try std.testing.expectEqualSlices(PaneId, &.{ b, a }, leaf.tabs.items);
-    // The `+` after the tabs opens a scratch in that leaf.
+    // The `+` after the tabs opens the `Create…` menu under itself;
+    // its New ▸ Scratch buffer row opens a scratch in that leaf.
     try app.render();
     var plus: ?Rect = null;
     for (app.hits.items.items) |h| if (h.target == .button and h.target.button == render.Button.newTab(0)) {
         plus = h.rect;
     };
     try press(&app, plus.?.x + 1, plus.?.y, .left);
+    try std.testing.expect(app.overlay == .menu);
+    try std.testing.expectEqualStrings("Create…", app.overlay.menu.title);
+    try std.testing.expect(app.overlay.menu.curatable);
+    try std.testing.expectEqual(plus.?.x, app.overlay.menu.x);
+    try std.testing.expectEqual(plus.?.y + 1, app.overlay.menu.y);
+    try app.handle(.{ .key = Key.named(.right) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try std.testing.expect(app.overlay == .none);
     try std.testing.expectEqual(@as(usize, 3), leaf.tabs.items.len);
 }

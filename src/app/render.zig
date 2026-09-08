@@ -1524,7 +1524,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
     if (cinner.isEmpty()) return;
     _ = paintMenuRows(ui, cinner, .{
         .items = sub.items,
-        .cursor = sub.cursor,
+        .cursor = if (sub.highlight) sub.cursor else null,
         .menu_id = 1,
         .kebab = m.curatable,
         .dropdown = m.dropdown,
@@ -1643,13 +1643,17 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
         // context parent, `⋮ ` on a curatable menu's focused leaf.
         var marker: ?[]const u8 = null;
         var kebab_x: ?u16 = null;
+        const air: u16 = if (p.dropdown) 0 else 1;
         if (it.submenu.len > 0) {
             marker = if (p.dropdown) (if (ui.ascii) " >" else " \u{25b8}") else (if (ui.ascii) "> " else "\u{25b8} ");
         } else if (p.kebab and selected and it.action == .command) {
-            marker = if (ui.ascii) ": " else "\u{22ee} ";
+            // The kebab only where the label leaves it room: the width
+            // reserves nothing for it, and on Rust's screen the label
+            // wins (the marker runs off the row) — → and a right press
+            // reach the curation either way.
+            if (ui.width(label) + marker_w + air <= r.right() -| xx) marker = if (ui.ascii) ": " else "\u{22ee} ";
         }
         const marker_room: u16 = if (marker != null) marker_w else 0;
-        const air: u16 = if (p.dropdown) 0 else 1;
         const label_max = r.right() -| xx -| marker_room -| air;
         _ = ui.putStr(xx, r.y, label_max, ui.clipStr(label, label_max), Theme.withFg(style, label_fg));
         if (marker) |mk| {

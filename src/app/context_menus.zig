@@ -1,5 +1,5 @@
 //! The right-click menus: what a tab, a tree row, the editor body, the
-//! statusline mode chip and the strip's `+` offer. Every row is a
+//! statusline mode chip offer — and the `+`'s `Create…` menu. Every row is a
 //! `MenuAction{ .command }`, so a row cannot name an id that does not
 //! exist; the opener makes the clicked thing current first (the tab
 //! active, the tree cursor on the row) and the commands act on that.
@@ -354,66 +354,76 @@ pub fn openGearMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 
 // ─── the curated `+` menu ───────────────────────────────────────────────
 
-/// The section icons and the twins `ui.ascii_icons` paints instead.
-const icon_new_nerd = "\u{f067}"; //  fa-plus
-const icon_new_ascii = "+";
+/// The section icons and the twins `ui.ascii_icons` paints instead —
+/// Rust's `plus_menu_items` (`tui/mouse/down_left.rs`), which names
+/// them because a parent's action is nothing the glyph table can key on.
+const icon_new_nerd = "\u{f15b}"; //  fa-file
+const icon_new_ascii = "f";
 const icon_open_nerd = "\u{f07c}"; //  fa-folder_open
 const icon_open_ascii = "o";
-const icon_panels_nerd = "\u{f0db}"; //  fa-table_columns
-const icon_panels_ascii = "#";
-const icon_tools_nerd = "\u{f0ad}"; //  fa-wrench
-const icon_tools_ascii = "%";
-const icon_integrations_nerd = "\u{f1e6}"; //  fa-plug
+const icon_ai_nerd = "\u{F06A9}"; // 󰚩 md-robot — the Agents section's
+const icon_ai_ascii = "*";
+const icon_dock_nerd = "\u{f0db}"; //  fa-columns
+const icon_dock_ascii = "#";
+const icon_integrations_nerd = "\u{f12e}"; //  fa-puzzle_piece
 const icon_integrations_ascii = "&";
-const icon_pin_nerd = "\u{f08d}"; //  fa-thumbtack
-const icon_pin_ascii = "*";
 
-/// The five sections, each a `▸` row opening its own list. A row's
-/// command id is what `ui.plus_menu_pinned` / `plus_menu_hidden` name.
-pub const plus_sections = [_]MenuItem{
+/// Rust's `Create…` tree, less the Integrations group (built per open
+/// from the enabled integrations) and the "Reopen last closed (N)" row
+/// (prepended while there is something to reopen). Each parent is a
+/// `▸` row opening its list; a leaf's command id is what
+/// `ui.plus_menu_pinned` / `plus_menu_hidden` name.
+pub const plus_tree = [_]MenuItem{
     .{ .label = "New", .action = .none, .icon = icon_new_nerd, .icon_ascii = icon_new_ascii, .submenu = &.{
-        .{ .label = "New file…", .action = .{ .command = .@"file.new" } },
-        .{ .label = "New tab page", .action = .{ .command = .@"tab.new" } },
-        .{ .label = "New request", .action = .{ .command = .@"http.new" } },
-        .{ .label = "New note", .action = .{ .command = .@"notes.new" } },
-        .{ .label = "New TODO", .action = .{ .command = .@"todos.new" } },
-        .{ .label = "New shell", .action = .{ .command = .@"term.shell" } },
-        .{ .label = "New dock note", .action = .{ .command = .@"dock.new_text" } },
+        .{ .label = "Scratch buffer", .action = .{ .command = .@"scratch.new" } },
+        .{ .label = "From clipboard", .action = .{ .command = .@"scratch.from_clipboard" } },
+        .{ .label = "HTTP request", .action = .{ .command = .@"http.new" } },
+        .{ .label = "Shell", .action = .{ .command = .@"term.shell" } },
+        .{ .label = "Browser tab", .action = .{ .command = .@"browser.open" } },
+        .{ .label = "Tab page", .action = .{ .command = .@"tab.new" } },
     } },
     .{ .label = "Open", .action = .none, .icon = icon_open_nerd, .icon_ascii = icon_open_ascii, .submenu = &.{
-        .{ .label = "Open file…", .action = .{ .command = .@"picker.files" } },
-        .{ .label = "Recent files…", .action = .{ .command = .@"picker.recent" } },
-        .{ .label = "Switch buffer…", .action = .{ .command = .@"picker.buffers" } },
-        .{ .label = "Pinned files…", .action = .{ .command = .@"harpoon.menu" } },
-        .{ .label = "Open image…", .action = .{ .command = .@"view.image_open" } },
+        .{ .label = "File…", .action = .{ .command = .@"picker.files" } },
+        .{ .label = "Recent files", .action = .{ .command = .@"picker.recent" } },
+        .{ .label = "File browser", .action = .{ .command = .@"files.open" } },
+        .{ .label = "Dual file panes (commander)", .action = .{ .command = .@"files.open_split" } },
+        .{ .label = "Trash", .action = .{ .command = .@"files.trash" } },
     } },
-    .{ .label = "Panels", .action = .none, .icon = icon_panels_nerd, .icon_ascii = icon_panels_ascii, .submenu = &.{
-        .{ .label = "TODOs", .action = .{ .command = .@"view.activity_todos" } },
-        .{ .label = "Git", .action = .{ .command = .@"view.activity_git" } },
-        .{ .label = "Diagnostics", .action = .{ .command = .@"lsp.diagnostics" } },
-        .{ .label = "HTTP", .action = .{ .command = .@"view.activity_http" } },
-        .{ .label = "Notes", .action = .{ .command = .@"view.activity_notes" } },
-        .{ .label = "Findings", .action = .{ .command = .@"view.activity_findings" } },
-        .{ .label = "Sessions", .action = .{ .command = .@"view.activity_sessions" } },
-        .{ .label = "Agents", .action = .{ .command = .@"view.activity_agents" } },
+    .{ .label = "AI", .action = .none, .icon = icon_ai_nerd, .icon_ascii = icon_ai_ascii, .submenu = &.{
+        .{ .label = "Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
+        .{ .label = "Codex session", .action = .{ .command = .@"ai.codex_new" } },
     } },
-    .{ .label = "Tools", .action = .none, .icon = icon_tools_nerd, .icon_ascii = icon_tools_ascii, .submenu = &.{
-        .{ .label = "Terminal", .action = .{ .command = .@"term.shell" } },
-        .{ .label = "Claude Code", .action = .{ .command = .@"ai.claude_code" } },
-        .{ .label = "Codex", .action = .{ .command = .@"ai.codex" } },
-        .{ .label = "Browser (CDP)", .action = .{ .command = .@"browser.open" } },
-        .{ .label = "WebSocket…", .action = .{ .command = .@"ws.connect" } },
-        .{ .label = "Cheatsheet", .action = .{ .command = .@"view.cheatsheet" } },
-        .{ .label = "Settings", .action = .{ .command = .@"view.settings" } },
-        .{ .label = "Messages", .action = .{ .command = .@"messages.show" } },
-    } },
-    .{ .label = "Integrations", .action = .none, .icon = icon_integrations_nerd, .icon_ascii = icon_integrations_ascii, .submenu = &.{
-        .{ .label = "Installed", .action = .{ .command = .@"integrations.show_installed" } },
-        .{ .label = "Marketplace", .action = .{ .command = .@"integrations.show_marketplace" } },
-        .{ .label = "In development", .action = .{ .command = .@"integrations.show_in_dev" } },
-        .{ .label = "Refresh", .action = .{ .command = .@"integrations.refresh" } },
+    .{ .label = "Dock", .action = .none, .icon = icon_dock_nerd, .icon_ascii = icon_dock_ascii, .submenu = &.{
+        .{ .label = "Note", .action = .{ .command = .@"dock.new_text" } },
+        .{ .label = "Log tail", .action = .{ .command = .@"dock.new_log_tail" } },
     } },
 };
+
+/// The Integrations group: one row per enabled, runnable integration
+/// chip, each with the integration's own glyph, as its chip paints
+/// (Rust: "we have dedicated ones we already use elsewhere"); null
+/// when there is none. Labels and glyphs are copied onto `arena`.
+fn integrationRows(app: *App, arena: Allocator) Allocator.Error!?MenuItem {
+    const integrations = @import("integrations.zig");
+    const chips = try integrations.chips(app, arena);
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    for (chips) |chip| {
+        if (!chip.enabled) continue;
+        const action: command.MenuAction = switch (chip.action) {
+            .dyn => |slot| .{ .dyn = slot },
+            .named => |id| if (command.by_name.get(id)) |cmd| .{ .command = cmd } else if (app.dyn_commands.get(id)) |slot| .{ .dyn = slot } else continue,
+            .none => continue,
+        };
+        try rows.append(arena, .{
+            .label = try arena.dupe(u8, chip.tooltip),
+            .action = action,
+            .icon = if (chip.glyph.len > 0) try arena.dupe(u8, chip.glyph) else null,
+            .icon_ascii = if (chip.fallback.len > 0) try arena.dupe(u8, chip.fallback) else null,
+        });
+    }
+    if (rows.items.len == 0) return null;
+    return .{ .label = "Integrations", .action = .none, .icon = icon_integrations_nerd, .icon_ascii = icon_integrations_ascii, .submenu = try rows.toOwnedSlice(arena) };
+}
 
 fn isPinned(app: *App, id: []const u8) bool {
     for (app.plus_pinned.items) |p| if (std.mem.eql(u8, p, id)) return true;
@@ -425,11 +435,61 @@ fn isHidden(app: *App, id: []const u8) bool {
     return false;
 }
 
-/// The label a section gives a command, so a pinned row reads the same
-/// at the top as it does inside its section.
-fn sectionLabel(id: command.CommandId) []const u8 {
-    for (plus_sections) |sec| for (sec.submenu) |row| if (row.action == .command and row.action.command == id) return row.label;
-    return command.title(id);
+/// The id curation names for a row: a static command's; null for a
+/// parent, a dynamic command, or a row with nothing behind it.
+fn rowId(item: MenuItem) ?[]const u8 {
+    return switch (item.action) {
+        .command => |id| command.name(id),
+        else => null,
+    };
+}
+
+fn pinRank(app: *App, item: MenuItem) ?usize {
+    const id = rowId(item) orelse return null;
+    for (app.plus_pinned.items, 0..) |p, i| if (std.mem.eql(u8, p, id)) return i;
+    return null;
+}
+
+fn rowHidden(app: *App, item: MenuItem) bool {
+    const id = rowId(item) orelse return false;
+    return isHidden(app, id);
+}
+
+/// Rust's `apply_plus_menu_curation`: hidden rows dropped, pinned rows
+/// floated to the top in the order they were pinned — wherever they
+/// live, so a pinned row escapes its group; a group emptied by hiding
+/// and pinning is dropped, since a parent that opens nothing is a dead
+/// click. The result is the menu's (gpa); a trimmed group's rows are
+/// `arena`'s.
+fn curate(app: *App, arena: Allocator, tree: []const MenuItem) Allocator.Error![]MenuItem {
+    const Found = struct { rank: usize, item: MenuItem };
+    var found: std.ArrayListUnmanaged(Found) = .empty;
+    var keep: std.ArrayListUnmanaged(MenuItem) = .empty;
+    for (tree) |item| {
+        if (rowHidden(app, item)) continue;
+        if (item.submenu.len > 0) {
+            var kids: std.ArrayListUnmanaged(MenuItem) = .empty;
+            for (item.submenu) |k| {
+                if (rowHidden(app, k)) continue;
+                if (pinRank(app, k)) |r| try found.append(arena, .{ .rank = r, .item = k }) else try kids.append(arena, k);
+            }
+            if (kids.items.len == 0) continue;
+            var parent = item;
+            parent.submenu = try kids.toOwnedSlice(arena);
+            try keep.append(arena, parent);
+            continue;
+        }
+        if (pinRank(app, item)) |r| try found.append(arena, .{ .rank = r, .item = item }) else try keep.append(arena, item);
+    }
+    std.mem.sort(Found, found.items, {}, struct {
+        fn less(_: void, a: Found, b: Found) bool {
+            return a.rank < b.rank;
+        }
+    }.less);
+    const out = try app.gpa.alloc(MenuItem, found.items.len + keep.items.len);
+    for (found.items, 0..) |f, i| out[i] = f.item;
+    @memcpy(out[found.items.len..], keep.items);
+    return out;
 }
 
 /// The right column's ` 󰐕 `: Rust's "Add panel" menu, the five kinds
@@ -446,24 +506,29 @@ pub fn openAddPanelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Add panel", rows, x, y);
 }
 
-/// The strip's `+`: the pinned rows first, then the five sections.
+/// The `+` (the strip's, the top-right cluster's): Rust's `Create…`
+/// menu — "Reopen last closed (N)" first while there is something to
+/// reopen, then the groups, the enabled integrations as the last
+/// group, curated by `ui.plus_menu_pinned` / `plus_menu_hidden`. It
+/// opens with its first row highlighted (Rust sets `interacted`), and
+/// it is the one menu whose rows can be pinned and hidden.
 pub fn openNewTabMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
-    errdefer rows.deinit(app.gpa);
-    for (app.plus_pinned.items) |id| {
-        const cmd = command.by_name.get(id) orelse continue;
-        try rows.append(app.gpa, .{ .label = sectionLabel(cmd), .action = .{ .command = cmd }, .icon = icon_pin_nerd, .icon_ascii = icon_pin_ascii });
-    }
-    const had_pins = rows.items.len > 0;
-    for (plus_sections, 0..) |sec, i| {
-        var row = sec;
-        row.separator_before = had_pins and i == 0;
-        try rows.append(app.gpa, row);
-    }
-    const owned = try rows.toOwnedSlice(app.gpa);
-    errdefer app.gpa.free(owned);
-    try app.openMenu("New", owned, x, y);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var tree: std.ArrayListUnmanaged(MenuItem) = .empty;
+    if (app.closed.items.len > 0) try tree.append(arena, .{
+        .label = try std.fmt.allocPrint(arena, "Reopen last closed ({d})", .{app.closed.items.len}),
+        .action = .{ .command = .@"buffer.reopen" },
+    });
+    try tree.appendSlice(arena, &plus_tree);
+    if (try integrationRows(app, arena)) |group| try tree.append(arena, group);
+    const rows = try curate(app, arena, tree.items);
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Create…", rows, x, y);
     app.overlay.menu.curatable = true;
+    app.overlay.menu.highlight = true;
+    app.overlay.menu.mem = mem;
 }
 
 /// Open row `idx`'s child beside it (the hidden rows of a curatable
@@ -842,64 +907,171 @@ fn screenOf(app: *App) ![]u8 {
     return @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
 }
 
-test "the + menu: five ▸ sections, → opens a child beside its parent, ← steps back, Enter runs the child's row" {
+test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with Rust's icons, Reopen first when there is a closed tab; → opens a child hung from its row, ← steps back, Enter runs a child's row" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
+    // Rust's bare tree: no integration chip enabled.
+    app.cfg.ui.integration_icons = &.{};
     _ = try app.openScratch();
-    try openNewTabMenu(&app, 4, 1);
+    try openNewTabMenu(&app, 31, 2);
     const m = &app.overlay.menu;
     try t.expect(m.curatable);
-    try t.expectEqual(@as(usize, 5), m.items.len);
-    try t.expectEqualStrings("Panels", m.items[2].label);
-    try t.expect(m.items[2].submenu.len == 8);
+    try t.expect(m.highlight);
+    try t.expect(!m.dropdown);
+    try t.expectEqualStrings("Create…", m.title);
+    // Rust's `plus_menu_items`: four groups (the test config enables no
+    // integration chip with a runnable command), each with its icon.
+    const want = [_]struct { label: []const u8, icon: []const u8, n: usize }{
+        .{ .label = "New", .icon = icon_new_nerd, .n = 6 },
+        .{ .label = "Open", .icon = icon_open_nerd, .n = 5 },
+        .{ .label = "AI", .icon = icon_ai_nerd, .n = 2 },
+        .{ .label = "Dock", .icon = icon_dock_nerd, .n = 2 },
+    };
+    try t.expectEqual(want.len, m.items.len);
+    for (want, m.items) |w, it| {
+        try t.expectEqualStrings(w.label, it.label);
+        try t.expectEqualStrings(w.icon, it.icon.?);
+        try t.expectEqual(w.n, it.submenu.len);
+        try t.expect(it.action == .none);
+    }
+    const leaves = [_]struct { []const u8, command.CommandId }{
+        .{ "Scratch buffer", .@"scratch.new" }, .{ "From clipboard", .@"scratch.from_clipboard" },  .{ "HTTP request", .@"http.new" },
+        .{ "Shell", .@"term.shell" },           .{ "Browser tab", .@"browser.open" },               .{ "Tab page", .@"tab.new" },
+        .{ "File…", .@"picker.files" },
+        .{ "Recent files", .@"picker.recent" }, .{ "File browser", .@"files.open" },                .{ "Dual file panes (commander)", .@"files.open_split" },
+        .{ "Trash", .@"files.trash" },          .{ "Claude Code session", .@"ai.claude_code_new" }, .{ "Codex session", .@"ai.codex_new" },
+        .{ "Note", .@"dock.new_text" },         .{ "Log tail", .@"dock.new_log_tail" },
+    };
+    var k: usize = 0;
+    for (m.items) |it| for (it.submenu) |leaf| {
+        try t.expectEqualStrings(leaves[k][0], leaf.label);
+        try t.expectEqual(leaves[k][1], leaf.action.command);
+        try t.expect(leaf.icon == null);
+        k += 1;
+    };
+    try t.expectEqual(leaves.len, k);
+    // The rows as Rust paints them (`rust-menu-plus-120x40.txt`): the
+    // title in the border, ` <icon>  label` with `▸ ` at the end, the
+    // blank row above the bottom edge; no child yet.
     const closed = try screenOf(&app);
     defer t.allocator.free(closed);
-    // The glyph column and the ▸ marker paint; no child yet.
-    try t.expect(std.mem.indexOf(u8, closed, "\u{f067}  New") != null);
-    try t.expect(std.mem.indexOf(u8, closed, "Panels") != null);
-    try t.expect(std.mem.indexOf(u8, closed, "▸") != null);
-    try t.expect(std.mem.indexOf(u8, closed, "New tab page") == null);
-    // → opens New's child, anchored beside the row; the frame registers its rows.
+    // Four short group names: the inner width is Rust's floor of 12.
+    try t.expect(std.mem.indexOf(u8, closed, "┌ Create… ───┐") != null);
+    try t.expect(std.mem.indexOf(u8, closed, "│ \u{f15b}  New   ▸ │") != null);
+    try t.expect(std.mem.indexOf(u8, closed, "│ \u{F06A9}  AI    ▸ │") != null);
+    try t.expect(std.mem.indexOf(u8, closed, "│            │") != null);
+    try t.expect(std.mem.indexOf(u8, closed, "Scratch buffer") == null);
+    // → opens New's child hung from its row: the frame's top on the
+    // row, the rows below, Rust's glyph rule on each leaf, no
+    // highlight until an arrow; the frame registers its rows.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expect(m.sub != null);
     try t.expectEqual(@as(usize, 0), m.sub.?.parent);
-    try t.expectEqual(@as(usize, 7), m.sub.?.items.len);
+    try t.expectEqual(@as(usize, 6), m.sub.?.items.len);
+    try t.expect(!m.sub.?.highlight);
     const open = try screenOf(&app);
     defer t.allocator.free(open);
-    try t.expect(std.mem.indexOf(u8, open, "New tab page") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f15b}  New   ▸ │┌───────────────────┐") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Open  ▸ ││ \u{f067}  Scratch buffer │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f04b}  From clipboard │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f120}  Shell          │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Browser tab    │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "⋮") == null);
     var child_hits: usize = 0;
     for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 1) {
         child_hits += 1;
     };
-    try t.expectEqual(@as(usize, 7), child_hits);
-    try t.expect(m.sub.?.rect.x >= 4);
-    // j moves in the child, ← closes it, the parent cursor stays.
+    try t.expectEqual(@as(usize, 6), child_hits);
+    try t.expectEqual(@as(u16, 45), m.sub.?.rect.x);
+    try t.expectEqual(@as(u16, 3), m.sub.?.rect.y);
+    // j lights the child's cursor row, the next j moves. The kebab
+    // shows only where the label leaves room for it: not on the
+    // longest rows (Rust's screen keeps the label there), on HTTP request.
+    try app.handle(.{ .key = app_mod.Key.char('j') });
+    try t.expect(m.sub.?.highlight);
+    try t.expectEqual(@as(usize, 0), m.sub.?.cursor);
+    const lit = try screenOf(&app);
+    defer t.allocator.free(lit);
+    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f067}  Scratch buffer │") != null);
+    try t.expect(std.mem.indexOf(u8, lit, "⋮") == null);
     try app.handle(.{ .key = app_mod.Key.char('j') });
     try t.expectEqual(@as(usize, 1), m.sub.?.cursor);
+    try app.handle(.{ .key = app_mod.Key.char('j') });
+    const lit2 = try screenOf(&app);
+    defer t.allocator.free(lit2);
+    try t.expect(std.mem.indexOf(u8, lit2, "│ \u{f067}  HTTP request ⋮ │") != null);
+    // ← closes it, the parent cursor stays.
     try app.handle(.{ .key = app_mod.Key.named(.left) });
     try t.expect(m.sub == null);
     try t.expectEqual(@as(usize, 0), m.cursor);
-    // Enter on a parent opens it; Enter on the second child row runs tab.new.
+    // Enter on a parent opens it; Enter on the last child row runs tab.new.
     const tabs_before = app.layouts.layouts.items.len;
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
     try t.expect(m.sub != null);
-    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.end) });
+    try app.handle(.{ .key = app_mod.Key.named(.end) });
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expectEqual(tabs_before + 1, app.layouts.layouts.items.len);
+    // A closed buffer puts "Reopen last closed (N)" first, a leaf.
+    try app.closed.append(app.gpa, .{ .path = try app.gpa.dupe(u8, "/tmp/gone.txt"), .cursor = 0 });
+    try openNewTabMenu(&app, 31, 2);
+    try t.expectEqual(@as(usize, 5), m.items.len);
+    try t.expectEqualStrings("Reopen last closed (1)", m.items[0].label);
+    try t.expectEqual(command.CommandId.@"buffer.reopen", m.items[0].action.command);
+    const reopen = try screenOf(&app);
+    defer t.allocator.free(reopen);
+    try t.expect(std.mem.indexOf(u8, reopen, "│ \u{f07c}  Reopen last closed (1) │") != null);
     // Under ascii icons the column paints the twins and ▸ is `>`.
     app.cfg.ui.ascii_icons = true;
-    try openNewTabMenu(&app, 4, 1);
+    try openNewTabMenu(&app, 31, 2);
     const ascii = try screenOf(&app);
     defer t.allocator.free(ascii);
-    try t.expect(std.mem.indexOf(u8, ascii, "\u{f067}") == null);
-    try t.expect(std.mem.indexOf(u8, ascii, "+  New") != null);
-    try t.expect(std.mem.indexOf(u8, ascii, "#  Panels") != null);
-    try t.expect(std.mem.indexOf(u8, ascii, ">") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "\u{f15b}") == null);
+    // (The Reopen row is still there, so the frame is wider than above.)
+    try t.expect(std.mem.indexOf(u8, ascii, "| o  Reopen last closed (1) |") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "| f  New                  > |") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "| #  Dock                 > |") != null);
 }
 
-test "a click on the child row's kebab glyph opens the curation, not the row" {
+test "the + menu: the Integrations group lists the enabled integration chips with their own glyphs; a chip without a command is left out" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const Config = @import("../config/Config.zig");
+    const icons = [_]Config.IntegrationIcon{
+        .{ .id = "jira", .glyph = "\u{e75c}", .fallback = "j", .command = "view.settings", .label = "Jira" },
+        .{ .id = "off", .glyph = "\u{e75c}", .fallback = "o", .command = "view.settings", .enabled = false },
+        .{ .id = "mute", .glyph = "\u{e75c}", .fallback = "m" },
+        .{ .id = "under_score", .glyph = "\u{e75c}", .fallback = "u", .command = "view.about" },
+    };
+    app.cfg.ui.integration_icons = &icons;
+    try openNewTabMenu(&app, 31, 2);
+    const m = &app.overlay.menu;
+    try t.expectEqual(@as(usize, 5), m.items.len);
+    const group = m.items[4];
+    try t.expectEqualStrings("Integrations", group.label);
+    try t.expectEqualStrings("\u{f12e}", group.icon.?);
+    try t.expectEqual(@as(usize, 2), group.submenu.len);
+    try t.expectEqualStrings("Jira", group.submenu[0].label);
+    try t.expectEqualStrings("\u{e75c}", group.submenu[0].icon.?);
+    try t.expectEqual(command.CommandId.@"view.settings", group.submenu[0].action.command);
+    try t.expectEqualStrings("under_score", group.submenu[1].label);
+    // The rows paint the chip's glyph, not the play triangle.
+    m.cursor = 4;
+    try app.handle(.{ .key = app_mod.Key.named(.right) });
+    const open = try screenOf(&app);
+    defer t.allocator.free(open);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{e75c}  Jira ") != null);
+    // Hiding the only two rows drops the group.
+    try app.plus_hidden.append(app.gpa, try app.gpa.dupe(u8, "view.settings"));
+    try app.plus_hidden.append(app.gpa, try app.gpa.dupe(u8, "view.about"));
+    try openNewTabMenu(&app, 31, 2);
+    try t.expectEqual(@as(usize, 4), m.items.len);
+}
+
+test "a click on the child row's kebab glyph opens the curation, not the row; a right press on a row does too" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -910,10 +1082,13 @@ test "a click on the child row's kebab glyph opens the curation, not the row" {
     app.tree.visible = false;
     try openNewTabMenu(&app, 45, 1);
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // lights the child's row 0
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // HTTP request: room for the kebab
     try app.render();
-    // The glyph: the cell on the child's row 0 painting `⋮`.
+    // The glyph: the cell on the child's row 2 painting `⋮`.
     var kebab_row: ?u16 = null;
-    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 3 and h.target.menu_item.idx == 0) {
+    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 3 and h.target.menu_item.idx == 2) {
         kebab_row = h.rect.y;
     };
     try t.expect(kebab_row != null);
@@ -929,15 +1104,36 @@ test "a click on the child row's kebab glyph opens the curation, not the row" {
     const hit = app.hits.at(glyph_x.?, y).?;
     try t.expect(hit == .menu_item);
     try t.expectEqual(@as(u32, 3), hit.menu_item.menu);
-    try t.expectEqual(@as(u32, 0), hit.menu_item.idx);
+    try t.expectEqual(@as(u32, 2), hit.menu_item.idx);
     // And the click opens Pin / Hide / Copy for that row rather than running it.
     try app.handle(.{ .mouse = .{ .x = glyph_x.?, .y = y, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .menu);
     try t.expectEqualStrings("Pin to top", app.overlay.menu.sub.?.items[0].label);
-    try t.expectEqual(command.CommandId.@"file.new", app.menu_ctx.?);
+    try t.expectEqual(command.CommandId.@"http.new", app.menu_ctx.?);
+    // A right press on the second child row opens its curation.
+    try app.handle(.{ .key = app_mod.Key.named(.left) });
+    try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸ again
+    try app.render();
+    var row1: ?@import("../ui/rect.zig") = null;
+    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 1 and h.target.menu_item.idx == 1) {
+        row1 = h.rect;
+    };
+    try app.handle(.{ .mouse = .{ .x = row1.?.x + 3, .y = row1.?.y, .kind = .press, .button = .right } });
+    try t.expectEqualStrings("Pin to top", app.overlay.menu.sub.?.items[0].label);
+    try t.expectEqual(command.CommandId.@"scratch.from_clipboard", app.menu_ctx.?);
+    // A right press on a parent row opens nothing new.
+    try app.handle(.{ .mouse = .{ .x = 50, .y = 2, .kind = .press, .button = .right } });
+    try t.expectEqual(command.CommandId.@"scratch.from_clipboard", app.menu_ctx.?);
+    // A right press on a row of a menu that is not curatable does nothing.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try openEditorMenu(&app, 10, 5);
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = 14, .y = 7, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expect(app.overlay.menu.sub == null);
 }
 
-test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top and in the home config; a hide drops the row" {
+test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top and in the home config; a hide drops the row; both survive a fresh App" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -946,50 +1142,81 @@ test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top 
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
+    app.cfg.ui.integration_icons = &.{};
     try openNewTabMenu(&app, 4, 1);
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸
-    try app.handle(.{ .key = app_mod.Key.named(.down) }); // New tab page
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // lights Scratch buffer
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // From clipboard
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // HTTP request
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // curation
     const m = &app.overlay.menu;
     try t.expect(m.sub != null);
     try t.expectEqualStrings("Pin to top", m.sub.?.items[0].label);
-    try t.expectEqual(command.CommandId.@"tab.new", app.menu_ctx.?);
+    try t.expectEqual(command.CommandId.@"http.new", app.menu_ctx.?);
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // lights Pin
     try app.handle(.{ .key = app_mod.Key.named(.enter) }); // pin
     try t.expect(app.overlay == .none);
     try t.expectEqual(@as(usize, 1), app.plus_pinned.items.len);
-    try t.expectEqualStrings("tab.new", app.plus_pinned.items[0]);
+    try t.expectEqualStrings("http.new", app.plus_pinned.items[0]);
     const cfg_text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .unlimited);
     defer t.allocator.free(cfg_text);
-    try t.expect(std.mem.indexOf(u8, cfg_text, ".plus_menu_pinned = .{\"tab.new\"}") != null);
-    // Re-opened: the pinned row leads, the sections follow after a rule.
+    try t.expect(std.mem.indexOf(u8, cfg_text, ".plus_menu_pinned = .{\"http.new\"}") != null);
+    // Re-opened: the pinned row leads, its own label, out of its group;
+    // no rule between it and the groups (Rust paints none).
     try openNewTabMenu(&app, 4, 1);
-    try t.expectEqual(@as(usize, 6), m.items.len);
-    try t.expectEqualStrings("New tab page", m.items[0].label);
-    try t.expect(m.items[1].separator_before);
+    try t.expectEqual(@as(usize, 5), m.items.len);
+    try t.expectEqualStrings("HTTP request", m.items[0].label);
+    try t.expect(!m.items[1].separator_before);
+    try t.expectEqual(@as(usize, 5), m.items[1].submenu.len);
     // → on the pinned row: Unpin leads; Hide drops it from the New child too.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqualStrings("Unpin", m.sub.?.items[0].label);
     try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
     try app.handle(.{ .key = app_mod.Key.named(.enter) }); // hide
     try t.expectEqual(@as(usize, 0), app.plus_pinned.items.len);
-    try t.expectEqualStrings("tab.new", app.plus_hidden.items[0]);
+    try t.expectEqualStrings("http.new", app.plus_hidden.items[0]);
     try openNewTabMenu(&app, 4, 1);
-    try t.expectEqual(@as(usize, 5), m.items.len);
+    try t.expectEqual(@as(usize, 4), m.items.len);
     try app.handle(.{ .key = app_mod.Key.named(.right) });
-    try t.expectEqual(@as(usize, 6), m.sub.?.items.len);
-    for (m.sub.?.items) |it| try t.expect(!std.mem.eql(u8, it.label, "New tab page"));
-    // A click on the child row's kebab opens the curation for that row.
-    try app.render();
-    var kebab: ?@import("../ui/rect.zig") = null;
-    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 3) {
-        kebab = h.rect;
-    };
-    try t.expect(kebab != null);
-    try app.handle(.{ .mouse = .{ .x = kebab.?.x, .y = kebab.?.y, .kind = .press, .button = .left } });
-    try t.expectEqualStrings("Pin to top", m.sub.?.items[0].label);
-    try t.expectEqual(command.CommandId.@"file.new", app.menu_ctx.?);
+    try t.expectEqual(@as(usize, 5), m.sub.?.items.len);
+    for (m.sub.?.items) |it| try t.expect(!std.mem.eql(u8, it.label, "HTTP request"));
     // Copy id lands on the clipboard.
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.right) });
+    try app.handle(.{ .key = app_mod.Key.named(.end) });
     try app.handle(.{ .key = app_mod.Key.named(.end) });
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
-    try t.expectEqualStrings("file.new", app.clipboard.text());
+    try t.expectEqualStrings("scratch.new", app.clipboard.text());
+    // Pin one more, then a fresh App on the same data root reads both back.
+    try openNewTabMenu(&app, 4, 1);
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // Open
+    try t.expectEqual(@as(usize, 1), m.cursor);
+    try app.handle(.{ .key = app_mod.Key.named(.right) });
+    try t.expectEqual(@as(usize, 5), m.sub.?.items.len);
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.end) }); // Trash
+    try t.expectEqual(@as(usize, 4), m.sub.?.cursor);
+    try app.handle(.{ .key = app_mod.Key.named(.right) });
+    try t.expectEqual(command.CommandId.@"files.trash", app.menu_ctx.?);
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.enter) }); // pin files.trash
+    try t.expectEqual(@as(usize, 1), app.plus_pinned.items.len);
+    // The next launch reads the home config (`config.load`) — pinned
+    // rows and hidden rows come back from it.
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", root);
+    var loaded = try @import("../config/load.zig").load(t.allocator, t.io, .{ .workspace = root, .env = .{ .vars = &vars } });
+    var again = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = root, .data_root = root, .cols = 100, .rows = 30 });
+    loaded = undefined; // the app owns it now
+    defer again.deinit();
+    try t.expectEqual(@as(usize, 1), again.plus_pinned.items.len);
+    try t.expectEqualStrings("files.trash", again.plus_pinned.items[0]);
+    try t.expectEqualStrings("http.new", again.plus_hidden.items[0]);
+    again.tree.visible = false;
+    again.cfg.ui.integration_icons = &.{};
+    try openNewTabMenu(&again, 4, 1);
+    try t.expectEqualStrings("Trash", again.overlay.menu.items[0].label);
+    try t.expectEqual(@as(usize, 4), again.overlay.menu.items[2].submenu.len);
 }

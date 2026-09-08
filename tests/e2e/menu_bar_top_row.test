@@ -3,7 +3,7 @@
 # 120 columns: ` ❯_  mnml  File  Edit  » ` at the left, the search chip
 # centred, the right cluster at the far right; the strip's + at column
 # 32 beside the sidebar. A click on the chip opens the palette, on the
-# + a scratch buffer, on a word its menu (Rust's dropdown rows: no
+# + the `Create…` menu (its New ▸ row's Scratch buffer), on a word its menu (Rust's dropdown rows: no
 # title, the icon column, no chords), on the » the menus that did not fit.
 expect screen contains " ❯_  mnml  File  Edit  » "
 expect screen contains "󰍉  mnml-e2e-"
@@ -12,6 +12,10 @@ expect screen contains "Command palette"
 key esc
 expect screen lacks "Command palette"
 click 32 1
+expect screen contains "┌ Create…"
+hover 36 3
+expect screen contains "Scratch buffer"
+click 57 4
 expect pane "[scratch]"
 click 12 0
 expect screen contains "┌────"

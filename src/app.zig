@@ -522,6 +522,9 @@ pub const MenuState = struct {
         parent: usize,
         items: []command.MenuItem,
         cursor: usize = 0,
+        /// A fresh child paints no highlight until it is hovered or
+        /// arrowed (Rust's child `ContextMenu` starts un-`interacted`).
+        highlight: bool = false,
         /// Where the frame painted it (`drawMenu`), for a click.
         rect: @import("ui/rect.zig") = .{},
     };
