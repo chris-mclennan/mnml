@@ -85,6 +85,7 @@ pub const root: Node = .{
                 cmd('o', .@"view.close_others", "close others"),
                 cmd('H', .@"view.move_section_left", "section → left side"),
                 cmd('L', .@"view.move_section_right", "section → right side"),
+                cmd('r', .@"script.run_selection", "run Lua selection"),
             }),
             // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
             groupVim('d', "+debug", &.{
@@ -317,7 +318,7 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expectEqual(CommandId.@"view.split_right", lookup("sv").?.cmd.id);
     try std.testing.expect(lookup("zz") == null);
     try std.testing.expect(lookup("svx") == null);
-    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 11);
+    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 12);
     try std.testing.expect(continuations(std.testing.allocator, "sv", true).len == 0);
     // The +debug group is the vim profile's; the standard popup keeps Rust's rows.
     try std.testing.expect(lookupIn("d", true) != null);

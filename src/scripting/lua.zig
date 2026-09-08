@@ -25,6 +25,7 @@ const command = @import("../core/command.zig");
 const hooks = @import("../core/hooks.zig");
 const script_view = @import("../ui/script_view.zig");
 const api = @import("api.zig");
+const diag = @import("diag.zig");
 
 pub const State = zlua.Lua;
 pub const LuaRef = command.LuaRef;
@@ -71,6 +72,46 @@ pub const Task = struct {
     on_done: LuaRef,
 };
 
+pub const OriginKind = enum {
+    command,
+    hook,
+    segment,
+    source,
+
+    pub fn label(k: OriginKind) []const u8 {
+        return switch (k) {
+            .command => "command",
+            .hook => "hook",
+            .segment => "segment",
+            .source => "picker",
+        };
+    }
+};
+
+/// What a script registered and where: the `file:line` of the
+/// `mnml.command` / `mnml.on` / `mnml.statusline.segment` /
+/// `mnml.picker.source` call, read off the Lua stack at registration
+/// (the SCRIPTS section's rows). Gpa-owned strings; a registration
+/// under the same kind and name replaces its row.
+pub const Origin = struct {
+    kind: OriginKind,
+    /// The command id (`user.hello`), the hook name, the segment or
+    /// source id.
+    name: []u8,
+    /// Absolute; empty for a chunk that is not a file (`:lua`).
+    file: []u8,
+    /// 1-based; 0 when unknown.
+    line: u32,
+};
+
+/// How many of each kind a reload registered — the toast's numbers.
+pub const Summary = struct {
+    commands: u32 = 0,
+    hooks: u32 = 0,
+    segments: u32 = 0,
+    sources: u32 = 0,
+};
+
 pub const Lua = struct {
     L: *State,
     app: *App,
@@ -90,6 +131,12 @@ pub const Lua = struct {
     /// The `on_accept` refs of the picker that is open, by row.
     picker_items: std.ArrayList(PickerItem) = .empty,
     tasks: std.ArrayList(Task) = .empty,
+    /// Everything registered since the last reset, in order.
+    origins: std.ArrayList(Origin) = .empty,
+    /// The script error that is a diagnostic right now (`diag.zig`).
+    report: ?diag.Report = null,
+    /// Whether the last `loadInitFiles` ran every file clean.
+    last_load_ok: bool = true,
 
     /// A fresh state with `base string table math utf8` open, `dofile`
     /// / `loadfile` removed, `print` routed to a toast, and the `mnml`
@@ -115,6 +162,8 @@ pub const Lua = struct {
         self.sources.deinit(self.gpa);
         self.picker_items.deinit(self.gpa);
         self.tasks.deinit(self.gpa);
+        self.origins.deinit(self.gpa);
+        if (self.report) |r| self.gpa.free(r.path);
         self.gpa.destroy(self);
     }
 
@@ -151,9 +200,60 @@ pub const Lua = struct {
         self.sources.clearRetainingCapacity();
         self.picker_items.clearRetainingCapacity();
         self.tasks.clearRetainingCapacity();
+        self.clearOrigins();
         self.loaded_files = 0;
         self.map_seq = 0;
         self.L.deinit();
+    }
+
+    // ── origins (the SCRIPTS section) ──
+
+    fn clearOrigins(self: *Lua) void {
+        for (self.origins.items) |o| {
+            self.gpa.free(o.name);
+            self.gpa.free(o.file);
+        }
+        self.origins.clearRetainingCapacity();
+    }
+
+    /// Record `kind` / `name` as registered by the Lua caller of the
+    /// `mnml.*` function running now (stack level 1: the C function is
+    /// level 0). A registration under the same kind and name replaces
+    /// its row, so the list is what is live, in first-registration order.
+    pub fn noteOrigin(self: *Lua, kind: OriginKind, name: []const u8) Allocator.Error!void {
+        var file: []const u8 = "";
+        var line: u32 = 0;
+        if (self.L.getStack(1)) |got| {
+            var info = got;
+            self.L.getInfo(.{ .S = true, .l = true }, &info);
+            if (info.what != .c) {
+                const src = info.source;
+                file = if (src.len > 0 and src[0] == '@') src[1..] else "";
+                line = @intCast(@max(info.current_line orelse 0, 0));
+            }
+        } else |_| {}
+        const owned_file = try self.gpa.dupe(u8, file);
+        errdefer self.gpa.free(owned_file);
+        for (self.origins.items) |*o| if (o.kind == kind and std.mem.eql(u8, o.name, name)) {
+            self.gpa.free(o.file);
+            o.file = owned_file;
+            o.line = line;
+            return;
+        };
+        const owned_name = try self.gpa.dupe(u8, name);
+        errdefer self.gpa.free(owned_name);
+        try self.origins.append(self.gpa, .{ .kind = kind, .name = owned_name, .file = owned_file, .line = line });
+    }
+
+    pub fn summary(self: *const Lua) Summary {
+        var s: Summary = .{};
+        for (self.origins.items) |o| switch (o.kind) {
+            .command => s.commands += 1,
+            .hook => s.hooks += 1,
+            .segment => s.segments += 1,
+            .source => s.sources += 1,
+        };
+        return s;
     }
 
     // ── the pointer both ways ──
@@ -246,8 +346,13 @@ pub const Lua = struct {
         };
     }
 
+    /// The error `pcall` (or the loader) just caught: a diagnostic on
+    /// the `init.lua` it names, when it names one, and its toast —
+    /// persistent and clickable then, plain otherwise (`diag.zig`).
     fn toastError(self: *Lua, comptime what: []const u8) void {
-        self.app.toastLevel(.err, what ++ ": {s}", .{self.last_error orelse "script error"}) catch {};
+        const msg = self.last_error orelse "script error";
+        const landed = diag.report(self, msg) catch false;
+        diag.toast(self, what, msg, landed);
     }
 
     // ── loading ──
@@ -271,8 +376,9 @@ pub const Lua = struct {
             error.OutOfMemory => return error.OutOfMemory,
             error.LuaSyntax => {
                 const msg = self.L.toStringEx(-1);
-                self.app.toastLevel(.err, "{s}", .{msg}) catch {};
+                self.last_error = self.app.frame.allocator().dupe(u8, msg) catch "syntax error";
                 self.L.pop(2);
+                self.toastError("init.lua");
                 return error.Failed;
             },
         };
@@ -291,20 +397,24 @@ pub const Lua = struct {
     pub fn loadInitFiles(self: *Lua) Allocator.Error!void {
         const app = self.app;
         const arena = app.frame.allocator();
+        var ok = true;
         if (app.data_root.len != 0) {
             const path = try std.fs.path.join(arena, &.{ app.data_root, init_file });
             _ = self.loadInit(path) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.Failed => {},
+                error.Failed => ok = false,
             };
         }
         if (app.workspace_trusted) {
             const path = try std.fs.path.join(arena, &.{ app.workspace, ".mnml", init_file });
             _ = self.loadInit(path) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.Failed => {},
+                error.Failed => ok = false,
             };
         }
+        self.last_load_ok = ok;
+        // Every file ran clean: whatever error was standing is fixed.
+        if (ok) try diag.clear(self);
     }
 
     /// Run a string as a chunk named `lua` (the `:lua` line, tests).
@@ -326,13 +436,58 @@ pub const Lua = struct {
         };
     }
 
+    /// Run `src` (a selection, the cursor line) as a chunk named
+    /// `=selection`, an expression first (`return <src>`) so `1 + 1`
+    /// answers `2`, a statement chunk when that does not parse. The
+    /// values it returns, `tostring`ed and tab-joined, on the frame
+    /// arena; null when it returned nothing. An error is `error.Failed`
+    /// with the message in `last_error` — the caller reports it (there
+    /// is no line of a file to land on).
+    pub fn eval(self: *Lua, src: []const u8) error{ Failed, OutOfMemory }!?[]const u8 {
+        const L = self.L;
+        const arena = self.app.frame.allocator();
+        const as_expr = try std.fmt.allocPrint(arena, "return {s}", .{src});
+        const base = L.getTop();
+        L.loadBuffer(as_expr, "=selection", .text) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LuaSyntax => {
+                L.pop(1);
+                L.loadBuffer(src, "=selection", .text) catch |err2| switch (err2) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.LuaSyntax => {
+                        const msg = L.toStringEx(-1);
+                        self.last_error = arena.dupe(u8, msg) catch "syntax error";
+                        L.pop(2);
+                        return error.Failed;
+                    },
+                };
+            },
+        };
+        try self.pcall(0, zlua.mult_return);
+        const n: usize = @intCast(L.getTop() - base);
+        defer L.setTop(base);
+        if (n == 0) return null;
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            if (i > 0) try out.append(arena, '\t');
+            try out.appendSlice(arena, L.toStringEx(base + 1 + @as(i32, @intCast(i))));
+            L.pop(1);
+        }
+        return out.items;
+    }
+
     // ── the seams ──
 
     /// A `DynRunner.lua` command. The reason lands in `app.diag`, so
     /// `command.run` toasts it once.
     pub fn callCommand(self: *Lua, r: LuaRef) command.CommandError!void {
         self.pushRef(r);
-        self.pcall(0, 0) catch return self.app.diag.fail(self.app.frame.allocator(), "{s}", .{self.last_error orelse "script error"});
+        self.pcall(0, 0) catch {
+            const msg = self.last_error orelse "script error";
+            _ = diag.report(self, msg) catch {};
+            return self.app.diag.fail(self.app.frame.allocator(), "{s}", .{msg});
+        };
     }
 
     /// A `Subscriber.lua` hook: the payload table (its fields per
@@ -367,6 +522,7 @@ pub const Lua = struct {
         L.pushInteger(w);
         L.pushInteger(h);
         self.pcall(2, 1) catch {
+            _ = diag.report(self, self.last_error orelse "") catch {};
             const row = try arena.alloc(Segment, 1);
             row[0] = .{ .text = self.last_error orelse "script error", .style = self.app.theme.error_fg };
             const rows = try arena.alloc([]const Segment, 1);

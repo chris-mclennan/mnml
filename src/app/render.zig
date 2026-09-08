@@ -112,6 +112,7 @@ const integrations = @import("integrations.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
 const files_pane = @import("files_pane.zig");
+const scripts_panel = @import("scripts_panel.zig");
 const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
 const side_mod = @import("side.zig");
@@ -612,6 +613,8 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .outline => try outline.drawPanel(app, ui, area),
         .debug => try debug_panel.draw(app, ui, area),
         .integrations => try integrations.drawSection(app, ui, area),
+        // // changed (lua-track): the SCRIPTS section.
+        .scripts => try scripts_panel.draw(app, ui, area),
         // Pane-backed sections never own a column (`side.surface`).
         .search, .agents, .cloud_agents => unreachable,
     }

@@ -42,12 +42,14 @@ pub const Section = enum(u8) {
     notes,
     todos,
     findings,
+    /// // changed (lua-track): what the scripts registered, with file:line.
+    scripts,
     diagnostics,
     outline,
 
     pub const all = std.enums.values(Section);
     /// The rows the rail paints, in order.
-    pub const rail = all[0..12];
+    pub const rail = all[0..13];
 
     pub const Meta = struct {
         /// The Nerd Font glyph (Rust's codepoint).
@@ -72,6 +74,7 @@ pub const Section = enum(u8) {
             .notes => .{ .glyph = "\u{f249}", .fallback = "N", .label = "Notes" }, // nf-fa-sticky_note
             .todos => .{ .glyph = "\u{f046}", .fallback = "O", .label = "TODOs" }, // nf-fa-check_square
             .findings => .{ .glyph = "\u{f1623}", .fallback = "F", .label = "Findings" }, // nf-md-file_search
+            .scripts => .{ .glyph = "\u{f08b1}", .fallback = "L", .label = "Scripts" }, // nf-md-language_lua
             .diagnostics => .{ .glyph = "\u{f071}", .fallback = "!", .label = "Diagnostics" }, // nf-fa-warning (never on the rail)
             .outline => .{ .glyph = "\u{f01bd}", .fallback = "=", .label = "Outline" }, // nf-md-file_tree (never on the rail)
         };
@@ -191,12 +194,13 @@ fn bold(s: Style) Style {
 const t = std.testing;
 const test_fixture = @import("test_fixture.zig");
 
-test "glyph table: twelve rail sections in Rust's order (plus the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
-    try t.expectEqual(@as(usize, 12), Section.rail.len);
-    try t.expectEqual(@as(usize, 14), Section.all.len);
+test "glyph table: twelve rail sections in Rust's order plus SCRIPTS (and the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
+    try t.expectEqual(@as(usize, 13), Section.rail.len);
+    try t.expectEqual(@as(usize, 15), Section.all.len);
     try t.expectEqual(Section.explorer, Section.rail[0]);
     try t.expectEqual(Section.findings, Section.rail[11]);
-    try t.expectEqual(Section.outline, Section.all[13]);
+    try t.expectEqual(Section.scripts, Section.rail[12]);
+    try t.expectEqual(Section.outline, Section.all[14]);
     var seen_glyphs: [Section.all.len]u21 = undefined;
     for (Section.all, 0..) |s, i| {
         const m = s.meta();

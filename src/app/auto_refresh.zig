@@ -54,6 +54,7 @@ fn label(panel: PanelId) []const u8 {
         .outline => "OUTLINE",
         .debug => "DEBUG",
         .integrations => "INTEGRATIONS",
+        .scripts => "SCRIPTS",
     };
 }
 
@@ -69,6 +70,7 @@ fn refreshId(panel: PanelId) command.CommandId {
         .outline => .@"outline.show",
         .debug => .@"dap.run",
         .integrations => .@"integrations.refresh",
+        .scripts => .@"script.reload",
     };
 }
 

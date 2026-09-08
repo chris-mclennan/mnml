@@ -99,6 +99,8 @@ const marketplace = @import("app/marketplace.zig");
 const http_parse = @import("http/parse.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
+const cmd_script = @import("app/cmd_script.zig");
+const scripts_panel = @import("app/scripts_panel.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
@@ -227,6 +229,9 @@ pub const PromptPurpose = union(enum) {
     dap_bp_log: BpTarget,
     /// LSP: the new name for the symbol at the cursor.
     lsp_rename,
+    /// // changed (lua-track): *Bind in init.lua…* — the key spec for
+    /// `id`; the prompt's title is `title` (both owned).
+    lua_bind: LuaBind,
     /// LSP: a `workspace/symbol` query.
     lsp_workspace_symbol,
 
@@ -273,10 +278,15 @@ pub const PromptPurpose = union(enum) {
             .dap_bp_condition, .dap_hit_count, .dap_bp_log => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             .dap_edit_watch => |w| gpa.free(w),
+            .lua_bind => |b| {
+                gpa.free(b.id);
+                gpa.free(b.title);
+            },
             else => {},
         }
     }
 };
+pub const LuaBind = struct { id: []u8, title: []u8 };
 pub const ConfirmPurpose = union(enum) {
     close_pane: PaneId,
     quit,
@@ -741,6 +751,8 @@ pub const App = struct {
     notes: notes.State,
     findings: findings.State,
     sessions: sessions.State,
+    /// // changed (lua-track): the SCRIPTS section's list state.
+    scripts_panel: scripts_panel.State = .{},
     dock: dock.State = .{},
     /// The editor body before the dock's inline strips came off it.
     dock_area: Rect = .{},
@@ -993,6 +1005,8 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        // A saved `init.lua` reloads the scripts (`cmd_script.zig`).
+        try app.hooks.subscribe(.save_post, .{ .zig = &cmd_script.onSavePost });
         // The session comes back before anything else the startup hook
         // does, so the update toast and the picker land on the restored frame.
         try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
@@ -1162,6 +1176,7 @@ pub const App = struct {
         self.todos.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
+        self.scripts_panel.deinit(gpa);
         self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
         self.dock.deinit(gpa, self.io);
@@ -2273,8 +2288,12 @@ test {
     _ = @import("ui/editor_view.zig");
     _ = @import("scripting/lua.zig");
     _ = @import("scripting/api.zig");
+    _ = @import("scripting/diag.zig");
+    _ = @import("scripting/complete.zig");
     _ = @import("app/script_pane.zig");
     _ = @import("app/cmd_script.zig");
+    _ = @import("app/scripts_panel.zig");
+    _ = @import("ui/scripts_panel.zig");
     _ = @import("ui/script_view.zig");
     _ = @import("app/messages.zig");
     _ = @import("app/zen.zig");

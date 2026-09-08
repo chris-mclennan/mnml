@@ -4025,3 +4025,72 @@ own at the end of `scripting/api.zig`, one new file
   text must write it through `request.script` (or re-derive from it)
   so the Options rows and the tab agree.
 
+## Lua — the editor's help, SCRIPTS, Bind in init.lua (2026-09-08, branch `lua-track`) — `// changed:` notes
+
+- `// changed (app):` a save of either `init.lua` reloads the scripts
+  through `save_post` (`app/cmd_script.zig`); a script error that names
+  a line of one of the files is a third `FileDiags` source beside a
+  server's (`lsp.applyScriptDiagnostics`) — the gutter
+  dot, the squiggle, the DIAGNOSTICS row — and one persistent toast
+  whose click jumps to the line. Every `mnml.*` registration records
+  its caller's `file:line` (`Lua.noteOrigin`, `OriginKind`).
+- `// added (scripting):` `scripting/complete.zig` — the app completes
+  its own API in a `.lua` under `.mnml/`: `api.zig`'s `root_fns` /
+  `tables` spec (which `install()` now builds the `mnml` table from, so
+  the list cannot drift), the hooks (`hookDoc`), the command ids, the
+  key specs one token at a time, the theme roles. The rows ride the
+  server popup as a `Completion` with no server
+  (`lsp.openLocalCompletion`; `Completion.server` / `.incoming` are
+  optional). `K` on an id / API path / hook name is `script_complete.hover`.
+  The request pane's `{{` popup is `http.State.completion`, its own
+  state on the same view — the three clients never meet on one pane.
+- `// changed (lsp):` `lua-language-server` joins the default server
+  table (`lsp/client.zig`). json / yaml / html / css were tried and
+  taken out again: a default server that is not installed toasts, and
+  `package.json` is in every workspace — the statusline spec row
+  (`app/statusline.zig`) caught it as a bell count. The four are a
+  follow-up behind a quieter missing-default path.
+- `// added (core):` `script.run_selection` (vim `space s r`, standard
+  `ctrl+alt+enter`) — the selected lines or the cursor line run in the
+  script state, an expression first; `script.new_init` — the workspace
+  `.mnml/init.lua` from the commented template; `view.activity_scripts`.
+  Spec count 959.
+- `// added (ui):` `ui/scripts_panel.zig` — the SCRIPTS row
+  (`<kind> <name>  <file:line>`, the location clipped from the left and
+  shrinking to six cells before the name gives way; the link row in the
+  accent); `app/scripts_panel.zig` — a `ListPanel` in the left slot
+  with the rail entry `Section.scripts`, keys Enter / `r` / `n` / the
+  filter, the refresh chip and its right-click (`auto_refresh`), the
+  link row `+ create init.lua` (sized for the default `tree_width`).
+- `// changed (core):` `MenuAction` gains `diag_row_open`,
+  `set_severity_filter`, `script_row_open`, `lua_bind` (the id, on the
+  menu's `mem` arena); `PromptPurpose` gains `lua_bind: LuaBind{ id,
+  title }` (both owned — `Prompt.State.title` is borrowed).
+  `menu_glyph.forItem` paints each.
+- `// changed (app):` right-click on a DIAGNOSTICS row (`lsp.rowMouse`
+  → `openRowMenu`: Open, Copy message, Copy location, next / previous,
+  the three filters ✓) and on the severity chip (`lsp.chipMouse` →
+  `openFilterMenu`; `setFilter` sets one outright, `cycleFilter` stays
+  the click); on a SCRIPTS row and its kebab (`scripts_panel.openRowMenu`:
+  Run, Bind in init.lua…, Open file:line, Copy id, Reload scripts; the
+  link row's is Create init.lua); on a palette command row
+  (`cmd_picker.openRowMenu`: Run, Bind in init.lua…, Copy id — the menu
+  takes the palette's place; `right_click_of[.overlay_item]` is `.here`).
+  `context_menus.openOwned` is pub for the three.
+- `// added (app):` *Bind in init.lua…* — `scripts_panel.promptBind`
+  / `acceptBind`: the spec through `keymap.parseKeySeqBuf`, then
+  `mnml.map("<spec>", "<id>")` on a new last line of the workspace
+  `init.lua` (the template first), `watch.reload` on its editor when
+  open and clean (refused when dirty), `script.reload`. `mnml.map`'s
+  second argument may be a command id (`api.zig` `map`).
+- `// changed (api):` `mnml.http` joined the `tables` spec (completion
+  and hover know it); the two HTTP hooks have `hookDoc` lines; the
+  `hook` completion column widened with `http_response`
+  (`tests/e2e/lua_completion.test`).
+- Tests: `app/scripts_panel.zig` (the rows, Enter, the link row, `r`;
+  the row menu, the bind — a bad key, a new last line, the chord runs,
+  a dirty file refused), `app/lsp.zig` (the row menu, the chip menu,
+  `setFilter`), `app/cmd_picker.zig` (the palette row menu),
+  `ui/scripts_panel.zig` (the row's clipping at 40 cells),
+  `tests/e2e/lua_run_selection.test`, `lua_error_diagnostic.test`,
+  `lua_completion.test`.

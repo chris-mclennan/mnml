@@ -38,6 +38,8 @@ const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const script_diag = @import("../scripting/diag.zig");
+const scripts_panel = @import("scripts_panel.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
@@ -172,6 +174,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .http => try http_panel.handleKey(app, k),
             .sessions => try sessions.handleKey(app, k),
             .integrations => try integrations.handleKey(app, k),
+            .scripts => try scripts_panel.handleKey(app, k),
             .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
         };
         if (took) return;
@@ -822,7 +825,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // right-click: a string-carrying row's bytes belong to the menu's
     // own arena, which the close frees — copy them out first.
     const text: ?[]const u8 = switch (action) {
-        .copy_text, .open_url, .open_path, .set_theme => |s| try app.frame.allocator().dupe(u8, s),
+        .copy_text, .open_url, .open_path, .set_theme, .lua_bind => |s| try app.frame.allocator().dupe(u8, s),
         else => null,
     };
     closeOverlay(app);
@@ -845,7 +848,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline, .debug => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -870,6 +873,12 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
         },
+        // // changed (lua-track): the DIAGNOSTICS / SCRIPTS row menus,
+        // the severity chip's menu, Bind in init.lua….
+        .diag_row_open => |i| try lsp.openRowIndex(app, i),
+        .set_severity_filter => |f| lsp.setFilter(app, f),
+        .script_row_open => |i| try scripts_panel.openRowIndex(app, i),
+        .lua_bind => try scripts_panel.promptBind(app, text.?),
         .none => {},
     }
 }
@@ -1091,6 +1100,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_edit_watch => |old| try dap.acceptEditWatch(app, old, text),
         .dap_bp_log => |b| try dap.acceptLogMessage(app, b.path, b.line, text),
         .lsp_rename => try lsp.acceptRename(app, text),
+        .lua_bind => |b| try scripts_panel.acceptBind(app, b.id, text),
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
         .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
         .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
@@ -1306,6 +1316,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
             .integrations => try integrations.rowMouse(app, pr.idx, m),
+            .scripts => try scripts_panel.rowMouse(app, pr.idx, m),
             .outline => {},
         },
         .kebab => |pr| switch (pr.panel) {
@@ -1317,6 +1328,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
             .integrations => try integrations.kebabMouse(app, pr.idx, m),
+            .scripts => try scripts_panel.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline => {},
         },
         .chip => |c| switch (c.panel) {
@@ -1329,6 +1341,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
             .integrations => try integrations.chipMouse(app, c.kind, m),
+            .scripts => try scripts_panel.chipMouse(app, c.kind, m),
             .outline => {},
         },
         .filter_input => |p| switch (p) {
@@ -1341,6 +1354,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
             .integrations => integrations.filterMouse(app, m),
+            .scripts => scripts_panel.filterMouse(app, m),
             .outline => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
@@ -1354,6 +1368,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
                 .integrations => if (hitRect(app, m.x, m.y)) |r| integrations.scrollbarMouse(app, r, m),
+                .scripts => if (hitRect(app, m.x, m.y)) |r| scripts_panel.scrollbarMouse(app, r, m),
                 .outline => {},
             },
             .pane => |id| {
@@ -1557,6 +1572,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 return help_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
             }
             if (m.kind != .press) return;
+            // // changed (lua-track): right-click on a palette row — Run,
+            // Bind in init.lua…, Copy id.
+            if (m.button == .right and app.overlay == .picker and app.overlay.picker.kind == .commands) return cmd_picker.openRowMenu(app, i, m.x, m.y);
             switch (app.overlay) {
                 .confirm => |*c| {
                     const purpose = c.purpose;
@@ -1809,7 +1827,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         if (app.overlay != .none) closeOverlay(app);
                         return context_menus.openToastMenu(app, at, m.x, m.y);
                     }
+                    // A script error's toast: the click jumps to its line.
+                    const is_script = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, script_diag.toast_id) else false;
                     app.dismissToastAt(at);
+                    if (is_script) try script_diag.jump(app);
                 }
                 return;
             }
@@ -3261,7 +3282,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .script_hit = .here,
     .editor_cell = .{ .delegated = "editorCellMouse" },
     .gutter = .here,
-    .overlay_item = .{ .none = "overlay" },
+    .overlay_item = .here,
     .dock = .{ .delegated = "dock.mouse" },
     .rail = .{ .delegated = "activity_bar.mouse" },
     .welcome = .here,

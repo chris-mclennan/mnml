@@ -50,7 +50,7 @@ pub const Segment = struct {
 /// spells them. Any other section is stored too — an integration's
 /// mount id is its own section — but these are the ones the chrome
 /// paints somewhere.
-pub const known_sections = [_][]const u8{ "explorer", "search", "git", "debug", "integrations", "sessions", "agents", "cloud_agents", "http", "notes", "todos", "findings" };
+pub const known_sections = [_][]const u8{ "explorer", "search", "git", "debug", "integrations", "sessions", "agents", "cloud_agents", "http", "notes", "todos", "findings", "scripts" };
 
 pub const State = struct {
     segments: std.ArrayListUnmanaged(Segment) = .empty,

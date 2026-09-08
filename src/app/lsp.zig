@@ -36,6 +36,7 @@ const editor_view = @import("../ui/editor_view.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const fuzzy = @import("../ui/fuzzy.zig");
 const completion_view = @import("../ui/completion_view.zig");
+const script_complete = @import("../scripting/complete.zig");
 const hover_view = @import("../ui/hover_view.zig");
 const peek_view = @import("../ui/peek_view.zig");
 const diagnostics_view = @import("../ui/diagnostics_view.zig");
@@ -55,6 +56,8 @@ const cmd_view = @import("cmd_view.zig");
 const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
 const find_mod = @import("find.zig");
+const context_menus = @import("context_menus.zig");
+const MenuItem = command.MenuItem;
 
 const Style = @import("vaxis").Style;
 
@@ -69,28 +72,34 @@ const Value = jsonrpc.Value;
 const FileDiags = struct {
     arena: alloc.SnapshotArena,
     lint_arena: alloc.SnapshotArena,
+    /// // changed (lua-track): a third source — the script layer's own
+    /// error for an `init.lua` (`scripting/diag.zig`), not a server.
+    script_arena: alloc.SnapshotArena,
     server_items: []types.Diagnostic = &.{},
     lint_items: []types.Diagnostic = &.{},
+    script_items: []types.Diagnostic = &.{},
     items: []types.Diagnostic = &.{},
 
     fn create(gpa: Allocator) Allocator.Error!*FileDiags {
         const fd = try gpa.create(FileDiags);
-        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa) };
+        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa), .script_arena = alloc.SnapshotArena.init(gpa) };
         return fd;
     }
 
     fn destroy(self: *FileDiags, gpa: Allocator) void {
         self.arena.deinit();
         self.lint_arena.deinit();
+        self.script_arena.deinit();
         gpa.free(self.items);
         gpa.destroy(self);
     }
 
-    /// Rebuild `items` from both sources.
+    /// Rebuild `items` from every source.
     fn merge(self: *FileDiags, gpa: Allocator) Allocator.Error!void {
-        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len);
+        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len + self.script_items.len);
         @memcpy(merged[0..self.server_items.len], self.server_items);
-        @memcpy(merged[self.server_items.len..], self.lint_items);
+        @memcpy(merged[self.server_items.len .. self.server_items.len + self.lint_items.len], self.lint_items);
+        @memcpy(merged[self.server_items.len + self.lint_items.len ..], self.script_items);
         std.mem.sort(types.Diagnostic, merged, {}, struct {
             fn lt(_: void, a: types.Diagnostic, b: types.Diagnostic) bool {
                 if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
@@ -114,12 +123,15 @@ const SymbolSet = struct {
 };
 
 /// The completion popup. The items borrow the reply (kept alive here).
+/// // changed (lua-track): `server` and `incoming` are null for a popup
+/// the app filled itself (`scripting/complete.zig`); the items then
+/// live on `arena` alone.
 pub const Completion = struct {
     pane: PaneId,
-    server: *Server,
+    server: ?*Server,
     /// Where the word being completed starts (byte).
     start: usize,
-    incoming: *jsonrpc.Incoming,
+    incoming: ?*jsonrpc.Incoming,
     arena: alloc.SnapshotArena,
     items: []types.CompletionItem,
     selected: usize = 0,
@@ -129,7 +141,7 @@ pub const Completion = struct {
 
     fn destroy(self: *Completion, gpa: Allocator) void {
         self.arena.deinit();
-        self.incoming.destroy(gpa);
+        if (self.incoming) |inc| inc.destroy(gpa);
     }
 };
 
@@ -921,6 +933,17 @@ pub fn applyLintDiagnostics(app: *App, path: []const u8, list: []const types.Dia
     try finishDiagnostics(app, path, fd);
 }
 
+/// // changed (lua-track): the script layer's error for `path` (an
+/// `init.lua`, `scripting/diag.zig`): its list replaced wholesale; the
+/// server's and the linter's stay.
+pub fn applyScriptDiagnostics(app: *App, path: []const u8, list: []const types.Diagnostic) Allocator.Error!void {
+    const fd = try fileDiags(app, path);
+    fd.script_arena.reset();
+    fd.script_items = &.{};
+    fd.script_items = try copyDiagnostics(fd.script_arena.allocator(), list);
+    try finishDiagnostics(app, path, fd);
+}
+
 pub fn diagnosticsFor(app: *App, path: []const u8) []const types.Diagnostic {
     const fd = app.lsp.diags.get(path) orelse return &.{};
     return fd.items;
@@ -1115,6 +1138,8 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
             focusPanel(app);
             const was = st.panel.cursor;
             st.panel.cursor = idx;
+            // // changed (lua-track): right-click is the row's menu.
+            if (m.button == .right) return openRowMenu(app, idx, m.x, m.y);
             if (m.button == .left and was == idx) {
                 const rows = try panelRows(app, app.frame.allocator());
                 if (idx < rows.len) try openRow(app, rows[idx]);
@@ -1126,9 +1151,71 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     }
 }
 
+/// The severity chip: a click cycles the filter; a right-click lists
+/// the three with a ✓ on the current one.
 pub fn chipMouse(app: *App, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
+    if (m.button == .right) return openFilterMenu(app, m.x, m.y);
     cycleFilter(app) catch {};
+}
+
+/// // changed (lua-track): a DIAGNOSTICS row's menu — Open, the two
+/// copies (the message; `file:line:col`), next / previous, the filter.
+pub fn openRowMenu(app: *App, idx: u32, x: u16, y: u16) Allocator.Error!void {
+    const rows = try panelRows(app, app.frame.allocator());
+    if (idx >= rows.len) return;
+    const row = rows[idx];
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const loc = try std.fmt.allocPrint(arena, "{s}:{d}:{d}", .{ row.rel, row.line + 1, row.character + 1 });
+    const message = try arena.dupe(u8, row.message);
+    var out: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer out.deinit(app.gpa);
+    try out.appendSlice(app.gpa, &.{
+        .{ .label = "Open", .action = .{ .diag_row_open = idx } },
+        .{ .label = "Copy message", .action = .{ .copy_text = message }, .separator_before = true },
+        .{ .label = "Copy location", .action = .{ .copy_text = loc } },
+        .{ .label = "Next diagnostic", .action = .{ .command = .@"lsp.next_diagnostic" }, .separator_before = true },
+        .{ .label = "Previous diagnostic", .action = .{ .command = .@"lsp.prev_diagnostic" } },
+    });
+    try appendFilterRows(app, &out, true);
+    const owned = try out.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try context_menus.openOwned(app, loc, owned, x, y, mem);
+}
+
+/// The severity chip's menu: the three filters, ✓ on the current one.
+pub fn openFilterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var out: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer out.deinit(app.gpa);
+    try appendFilterRows(app, &out, false);
+    const owned = try out.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu("Severity", owned, x, y);
+}
+
+fn appendFilterRows(app: *App, out: *std.ArrayListUnmanaged(MenuItem), separator: bool) Allocator.Error!void {
+    inline for (std.meta.tags(SeverityFilter), 0..) |f, i| try out.append(app.gpa, .{
+        .label = f.label(),
+        .action = .{ .set_severity_filter = f },
+        .checked = app.lsp.severity_filter == f,
+        .separator_before = separator and i == 0,
+    });
+}
+
+/// The filter, set outright (the chip's menu; `cycleFilter` is the click).
+pub fn setFilter(app: *App, f: SeverityFilter) void {
+    app.lsp.severity_filter = f;
+    app.lsp.panel.cursor = 0;
+    app.toast("diagnostics filter: {s}", .{f.label()});
+    app.needs_render = true;
+}
+
+/// The row menu's Open: the row at `idx` in the panel's current order.
+pub fn openRowIndex(app: *App, idx: u32) Allocator.Error!void {
+    const rows = try panelRows(app, app.frame.allocator());
+    if (idx < rows.len) try openRow(app, rows[idx]);
 }
 
 pub fn filterMouse(app: *App, m: Mouse) void {
@@ -1402,6 +1489,8 @@ pub fn hover(app: *App) CommandError!void {
     // While the debugger is stopped, `K` / the hover verb evaluates the
     // word under the cursor instead (`dap.hoverAtCursor`).
     if (try @import("dap.zig").hoverAtCursor(app)) return;
+    // // changed (lua-track): a command id, a hook, an API path in a script.
+    if (try script_complete.hover(app)) return;
     const t = try requireServer(app, "hover");
     try sendAt(app, t, .hover, "textDocument/hover", @intCast(@min(t.e.buf.editor.cursor, std.math.maxInt(u32))));
 }
@@ -1496,6 +1585,7 @@ pub fn closeHover(app: *App) void {
 /// `lsp.completion` (ctrl+space): a request at the cursor; the popup
 /// opens when the reply lands.
 pub fn completion(app: *App) CommandError!void {
+    if (try script_complete.manual(app)) return;
     const t = try requireServer(app, "completion");
     try requestCompletion(app, t, true, null);
 }
@@ -1521,6 +1611,9 @@ const manual_flag: u32 = 0x8000_0000;
 pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!void {
     const c = k.typed() orelse return;
     const path = e.buf.doc.path orelse return;
+    // // changed (lua-track): in a script the app completes its own API
+    // first; a server, when there is one, gets the rest of the file.
+    if (try script_complete.onTyped(app, pane, e, c)) return;
     const s = serverFor(app, path) orelse return;
     if (!s.ready) return;
     if (s.caps.on_type_triggers.len > 0) {
@@ -1568,6 +1661,33 @@ fn openCompletion(app: *App, s: *Server, ctx: Ctx, result: ?Value, msg: *jsonrpc
     app.lsp.completion = comp;
     app.needs_render = true;
     return true;
+}
+
+/// // changed (lua-track): a popup whose rows the app made itself
+/// (`scripting/complete.zig`) — no server, no reply; the items are
+/// copied onto the popup's arena.
+pub fn openLocalCompletion(app: *App, pane: PaneId, start: usize, items: []const types.CompletionItem, manual: bool) Allocator.Error!void {
+    closeCompletion(app);
+    if (items.len == 0) {
+        if (manual) app.toast("no completions", .{});
+        return;
+    }
+    var comp: Completion = .{ .pane = pane, .server = null, .start = start, .incoming = null, .arena = alloc.SnapshotArena.init(app.gpa), .items = &.{}, .manual = manual };
+    errdefer comp.arena.deinit();
+    const a = comp.arena.allocator();
+    const copy = try a.alloc(types.CompletionItem, items.len);
+    for (items, 0..) |it, i| {
+        copy[i] = it;
+        copy[i].label = try a.dupe(u8, it.label);
+        copy[i].insert_text = try a.dupe(u8, it.insert_text);
+        if (it.detail) |d| copy[i].detail = try a.dupe(u8, d);
+        if (it.documentation) |d| copy[i].documentation = try a.dupe(u8, d);
+        if (it.sort_text) |d| copy[i].sort_text = try a.dupe(u8, d);
+        if (it.filter_text) |d| copy[i].filter_text = try a.dupe(u8, d);
+    }
+    comp.items = copy;
+    app.lsp.completion = comp;
+    app.needs_render = true;
 }
 
 pub fn closeCompletion(app: *App) void {
@@ -1702,10 +1822,10 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     const text = ed.bytes();
     var start = comp.start;
     var end = ed.cursor;
-    if (item.edit_range) |r| {
-        start = types.byteOf(text, r.start, comp.server.encoding);
-        end = @max(types.byteOf(text, r.end, comp.server.encoding), ed.cursor);
-    }
+    if (item.edit_range) |r| if (comp.server) |srv| {
+        start = types.byteOf(text, r.start, srv.encoding);
+        end = @max(types.byteOf(text, r.end, srv.encoding), ed.cursor);
+    };
     start = @min(start, end);
     const gpa = app.gpa;
     const insert = try gpa.dupe(u8, item.insert_text);
@@ -1718,7 +1838,7 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     const arena = app.frame.allocator();
     const extra_edits = if (has_extra) try types.readTextEdits(arena, jsonrpc.getField(raw, "additionalTextEdits")) else &.{};
     const label = try arena.dupe(u8, item.label);
-    const wants_resolve = !has_extra and server.caps.completion_resolve;
+    const wants_resolve = if (server) |srv| (!has_extra and srv.caps.completion_resolve) else false;
     const raw_json: ?[]u8 = if (wants_resolve) jsonrpc.stringify(gpa, raw) catch null else null;
     defer if (raw_json) |j| gpa.free(j);
     closeCompletion(app);
@@ -1744,17 +1864,17 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     } else {
         try app.splice(e, start, end, insert);
     }
-    if (extra_edits.len > 0) try applyEditsToPane(app, e, extra_edits, server.encoding);
-    if (raw_json) |j| {
+    if (extra_edits.len > 0) if (server) |srv| try applyEditsToPane(app, e, extra_edits, srv.encoding);
+    if (raw_json) |j| if (server) |srv| {
         // Auto-imports ride on the resolved item; ask for it now.
-        const body = try std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"completionItem/resolve\",\"params\":{s}}}", .{ server.transport.allocId(), j });
+        const body = try std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"completionItem/resolve\",\"params\":{s}}}", .{ srv.transport.allocId(), j });
         defer gpa.free(body);
-        const id = server.transport.next_id - 1;
-        try server.transport.expect(id, .{ .kind = @intFromEnum(ReqKind.completion_resolve), .ctx = (Ctx{ .pane = pane }).pack() });
-        server.transport.send(body) catch {
-            _ = server.transport.forget(id);
+        const id = srv.transport.next_id - 1;
+        try srv.transport.expect(id, .{ .kind = @intFromEnum(ReqKind.completion_resolve), .ctx = (Ctx{ .pane = pane }).pack() });
+        srv.transport.send(body) catch {
+            _ = srv.transport.forget(id);
         };
-    }
+    };
     _ = label;
     app.needs_render = true;
 }
@@ -2517,6 +2637,25 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     const rows = try panelRows(&app, arena.allocator());
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("a unused", rows[0].message);
+    // // changed (lua-track): right-click on the row is its menu, titled
+    // with the location; the chip's is the three filters, ✓ on the
+    // current one, and a pick sets the filter outright.
+    try rowMouse(&app, 0, .{ .x = 100, .y = 5, .kind = .press, .button = .right });
+    try testing.expect(app.overlay == .menu);
+    try testing.expect(std.mem.endsWith(u8, app.overlay.menu.title, "api.ts:1:5"));
+    try testing.expectEqualStrings("Copy message", app.overlay.menu.items[1].label);
+    try testing.expectEqualStrings("a unused", app.overlay.menu.items[1].action.copy_text);
+    try testing.expect(app.overlay.menu.items[7].checked); // Errors
+    try app.handle(.{ .key = Key.named(.esc) });
+    try chipMouse(&app, .{ .x = 100, .y = 2, .kind = .press, .button = .right });
+    try testing.expectEqualStrings("Severity", app.overlay.menu.title);
+    try testing.expectEqual(@as(usize, 3), app.overlay.menu.items.len);
+    try testing.expect(app.overlay.menu.items[2].checked and !app.overlay.menu.items[0].checked);
+    try app.handle(.{ .key = Key.named(.esc) });
+    setFilter(&app, .all);
+    try testing.expectEqual(SeverityFilter.all, app.lsp.severity_filter);
+    try testing.expectEqual(@as(usize, 2), (try panelRows(&app, arena.allocator())).len);
+    setFilter(&app, .errors);
     // A republish with an empty list clears the file.
     try applyDiagnostics(&app, "/tmp/api.ts", &.{});
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, "/tmp/api.ts").len);

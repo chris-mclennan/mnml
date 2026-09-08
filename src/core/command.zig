@@ -134,6 +134,7 @@ const runner_tables = .{
     @import("../app/ws_pane.zig"),
     @import("../app/cmd_browser.zig"),
     @import("../app/cmd_script.zig"),
+    @import("../app/scripts_panel.zig"),
     @import("../app/messages.zig"),
     @import("../app/zen.zig"),
     @import("../app/cmd_harpoon.zig"),
@@ -577,6 +578,17 @@ pub const MenuAction = union(enum) {
     /// // right-click: a theme by name — the theme pill's per-theme rows
     /// (Rust `SetTheme`).
     set_theme: []const u8,
+    /// // changed (lua-track): a DIAGNOSTICS row menu's Open — the row's
+    /// index (`app/lsp.zig`).
+    diag_row_open: u32,
+    /// // changed (lua-track): the severity chip's menu — one filter.
+    set_severity_filter: @import("../app/lsp.zig").SeverityFilter,
+    /// // changed (lua-track): a SCRIPTS row menu's "Open <file:line>" —
+    /// the row's index (`app/scripts_panel.zig`).
+    script_row_open: u32,
+    /// // changed (lua-track): *Bind in init.lua…* — the command id; the
+    /// menu's `mem` arena owns the bytes.
+    lua_bind: []const u8,
     none,
 };
 
@@ -631,7 +643,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 956), count);
+    try std.testing.expectEqual(@as(usize, 959), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

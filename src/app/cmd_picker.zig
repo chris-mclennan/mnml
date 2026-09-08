@@ -22,6 +22,8 @@ const tasks = @import("tasks.zig");
 const ai_app = @import("ai.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
+const context_menus = @import("context_menus.zig");
+const MenuItem = command.MenuItem;
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -394,6 +396,35 @@ fn commandAt(app: *App, i: usize) ?command.CommandRef {
     return null;
 }
 
+/// // changed (lua-track): the id of a command, built-in or script.
+pub fn idOf(app: *App, ref: command.CommandRef) []const u8 {
+    return switch (ref) {
+        .static => |id| command.name(id),
+        .dyn => |slot| app.dyn_commands.list.items[slot].id,
+    };
+}
+
+/// // changed (lua-track): right-click on a palette row — Run, Bind in
+/// init.lua…, Copy id. The menu takes the palette's place.
+pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
+    const p = &app.overlay.picker;
+    if (idx >= p.filtered.items.len) return;
+    const ref = commandAt(app, p.filtered.items[idx]) orelse return;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const id = try mem.allocator().dupe(u8, idOf(app, ref));
+    const rows = try app.gpa.dupe(MenuItem, &.{
+        .{ .label = "Run", .action = switch (ref) {
+            .static => |s| .{ .command = s },
+            .dyn => |d| .{ .dyn = d },
+        } },
+        .{ .label = "Bind in init.lua\u{2026}", .action = .{ .lua_bind = id }, .separator_before = true },
+        .{ .label = "Copy id", .action = .{ .copy_text = id } },
+    });
+    errdefer app.gpa.free(rows);
+    try context_menus.openOwned(app, id, rows, x, y, mem);
+}
+
 /// The pick at `idx` (an index into the filtered order) is chosen.
 pub fn accept(app: *App, idx: usize) Allocator.Error!void {
     const p = &app.overlay.picker;
@@ -674,6 +705,27 @@ test "Ctrl+S saves from the palette and from the find bar; both stay open" {
     const saved = try tmp.dir.readFileAlloc(t.io, "a.txt", t.allocator, .limited(64));
     defer t.allocator.free(saved);
     try t.expectEqualStrings("xyalpha\n", saved);
+}
+
+test "right-click on a palette row: Run, Bind in init.lua…, Copy id — titled with the command's id" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .palette });
+    for ("file.save") |c| try app.handle(.{ .key = Key.char(c) });
+    try openRowMenu(&app, 0, 3, 3);
+    try t.expect(app.overlay == .menu);
+    try t.expect(std.mem.startsWith(u8, app.overlay.menu.title, "file.save"));
+    const items = app.overlay.menu.items;
+    try t.expectEqual(@as(usize, 3), items.len);
+    try t.expectEqualStrings("Run", items[0].label);
+    try t.expect(items[0].action == .command);
+    try t.expectEqualStrings("Bind in init.lua…", items[1].label);
+    try t.expectEqualStrings(app.overlay.menu.title, items[1].action.lua_bind);
+    try t.expectEqualStrings("Copy id", items[2].label);
 }
 
 /// The tmp dir's absolute path, gpa-owned without a sentinel.

@@ -363,6 +363,11 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
         .notes => &.{.{ .label = "+ New note", .action = .{ .command = .@"notes.new" } }},
         .todos => &.{.{ .label = "Rescan", .action = .{ .command = .@"todos.refresh" } }},
         .findings => &.{},
+        // // changed (lua-track): the SCRIPTS section's verbs.
+        .scripts => &.{
+            .{ .label = "Reload init.lua", .action = .{ .command = .@"script.reload" } },
+            .{ .label = "New workspace init.lua", .action = .{ .command = .@"script.new_init" } },
+        },
         .diagnostics, .outline => &.{},
     };
     // A section with a column surface can change sides (VS Code's
@@ -804,7 +809,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .diagnostics => app.lsp.panel.cursor,
                 .debug => app.debug_panel.list.cursor,
                 .integrations => app.integrations.panel.cursor,
-                .notes, .findings, .sessions, .outline => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
+                .notes, .findings, .sessions, .outline, .scripts => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
             const m: Mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = .left };
@@ -815,7 +820,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .diagnostics => try @import("lsp.zig").rowMouse(app, @intCast(cursor), .{ .x = r.x, .y = r.y, .kind = .press, .button = .right }),
                 .debug => try @import("debug_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .integrations => try @import("integrations.zig").kebabMouse(app, @intCast(cursor), m),
-                .notes, .findings, .sessions, .outline => {},
+                .notes, .findings, .sessions, .outline, .scripts => {},
             }
         },
         .pane => |id| {
@@ -868,7 +873,7 @@ fn copyPath(app: *App) CommandError!void {
 
 /// Opens `rows` (gpa) whose labels and strings live on `mem`; the menu
 /// owns both and frees them with the overlay.
-fn openOwned(app: *App, title: []const u8, rows: []MenuItem, x: u16, y: u16, mem: std.heap.ArenaAllocator) Allocator.Error!void {
+pub fn openOwned(app: *App, title: []const u8, rows: []MenuItem, x: u16, y: u16, mem: std.heap.ArenaAllocator) Allocator.Error!void {
     try app.openMenu(title, rows, x, y);
     app.overlay.menu.mem = mem;
 }

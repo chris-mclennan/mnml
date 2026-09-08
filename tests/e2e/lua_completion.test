@@ -1,0 +1,34 @@
+# Lua (D10): in an init.lua the app is its own language server — after
+# `mnml.` the popup lists the API table's functions with their docs,
+# Enter accepts; inside `mnml.on("` the hooks; `K` on a command id in
+# a string shows its title and chord.
+write .mnml/init.lua ""
+open .mnml/init.lua
+type "mnml."
+expect screen contains "command    fn      mnml"
+expect screen contains "toast      fn      mnml"
+expect screen contains "buf        module  table"
+expect screen contains "mnml.command{ id, title?, group?, keys?, run }"
+type "toa"
+expect screen contains "toast  fn  mnml"
+expect screen contains "mnml.toast(text, \"info\" | \"warn\" | \"error\")"
+expect screen lacks "command    fn      mnml"
+key enter
+expect screen contains "1 mnml.toast"
+expect screen lacks "toast  fn  mnml"
+# The hooks after `mnml.on("`.
+key enter
+type "mnml.on(\"s"
+expect screen contains "save_post      event  hook"
+expect screen contains "startup        event  hook"
+key esc
+key esc
+# Hover on a command id: its title and chord.
+key enter
+type "mnml.run(\"file.save\")"
+key left
+key left
+key left
+command lsp.hover
+expect screen contains "file.save — Save file"
+expect screen contains "group file · ctrl+s"
