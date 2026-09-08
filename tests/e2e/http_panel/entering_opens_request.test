@@ -6,6 +6,33 @@ expect screen contains "GET  new request"
 expect pane GET
 command view.activity_http
 expect screen contains "GET  new request"
+# Leaving the section closes the untouched preview (Rust's rule, the
+# user's ask): the tab is gone and the welcome screen is back.
 command view.activity_todos
+expect screen lacks "new request"
+# Typed into, it survives the switch. Entering hands the keys to the
+# fresh pane with the URL field focused, so the text goes straight in.
+command view.activity_http
 expect screen contains "new request"
+command view.focus_pane
+type http://x/y
+expect screen contains "http://x/y"
+# The tab is titled by its URL now, so that is the word to keep.
+command view.activity_todos
+expect screen contains "x/y"
 expect pane GET
+# Emptied again it reads blank and goes on the next leave.
+command view.activity_http
+command view.focus_pane
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+command view.activity_todos
+expect screen lacks "new request"

@@ -36,6 +36,7 @@ const context_menus = @import("context_menus.zig");
 const settings = @import("settings.zig");
 const side = @import("side.zig");
 const git_palette = @import("git_palette.zig");
+const http_panel = @import("http_panel.zig");
 
 pub const Section = rail.Section;
 pub const Part = rail.Part;
@@ -129,6 +130,7 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
 /// `leaving_git`), which puts the stashed layout back.
 pub fn enter(app: *App, s: Section) void {
     if (s != .git) git_palette.leave(app);
+    if (s != .http) http_panel.leave(app) catch {};
 }
 
 /// What the painter needs this frame.

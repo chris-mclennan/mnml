@@ -816,7 +816,31 @@ pub fn chipAction(app: *App, section: Section, kind: ChipKind) CommandError!void
 /// close it.
 pub fn enter(app: *App) CommandError!void {
     if (http.activeRequest(app) != null) return;
-    _ = try http.openBlank(app);
+    // The auto-opened pane is a preview: untouched, it goes on the way
+    // out; the flag clears at the first edit (Rust's `is_preview`).
+    const id = try http.openBlank(app);
+    if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        rp.is_preview = true;
+    };
+}
+
+/// Leaving the section (Rust's `leaving_http`, the user's 2026-08-24
+/// ask): a request pane that is still the auto-opened preview, or
+/// that reads blank (typed into and emptied — the preview flag does
+/// not come back), closes on its own. Anything with content stays.
+pub fn leave(app: *App) Allocator.Error!void {
+    var i: usize = app.panes.slots.items.len;
+    while (i > 0) {
+        i -= 1;
+        const slot = &app.panes.slots.items[i];
+        const p = if (slot.*) |*p| p else continue;
+        const rp = switch (p.*) {
+            .request => |*rp| rp,
+            else => continue,
+        };
+        if ((rp.is_preview and !rp.edited) or rp.isEffectivelyBlank())
+            try app.forceClosePane(@intCast(i));
+    }
 }
 
 fn openCmd(app: *App) CommandError!void {
@@ -1502,16 +1526,30 @@ test "activate: an env row becomes the session override; a file row opens a requ
     try f.app.handle(.{ .key = Key.named(.esc) });
 }
 
-test "entering twice opens one pane; with a request pane active none; leaving keeps it" {
+test "entering twice opens one pane; with a request pane active none; leaving closes the preview and the blank, keeps the dirty" {
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     try command.run(&f.app, .{ .static = .@"view.activity_http" });
     try testing.expectEqual(@as(usize, 1), f.app.panes.count());
     try command.run(&f.app, .{ .static = .@"view.activity_http" });
     try testing.expectEqual(@as(usize, 1), f.app.panes.count());
+    // Untouched preview: leaving closes it (Rust's rule).
+    try command.run(&f.app, .{ .static = .@"view.activity_todos" });
+    try testing.expectEqual(@as(usize, 0), f.app.panes.count());
+    // Typed into: it survives.
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    const rp = http.activeRequest(&f.app).?;
+    try rp.url.appendSlice(f.app.gpa, "http://x/y");
+    rp.edited = true;
     try command.run(&f.app, .{ .static = .@"view.activity_todos" });
     try testing.expectEqual(@as(usize, 1), f.app.panes.count());
     try testing.expect(f.app.panes.get(f.app.active.?).?.* == .request);
+    // Emptied again: it reads blank and goes on the next leave.
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    rp.url.clearRetainingCapacity();
+    try testing.expect(rp.isEffectivelyBlank());
+    try command.run(&f.app, .{ .static = .@"view.activity_todos" });
+    try testing.expectEqual(@as(usize, 0), f.app.panes.count());
 }
 
 test "headless: the panel paints the blank row under the filter, seven headers with their ladders, the tree, the words and the links; the filter row narrows; enter on a header folds it" {

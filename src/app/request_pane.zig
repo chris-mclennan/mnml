@@ -398,6 +398,18 @@ pub const RequestPane = struct {
         };
     }
 
+    /// Rust's `is_effectively_blank`: nothing a user would miss —
+    /// no URL, the default method, no headers, no body. A pane typed
+    /// into and emptied again reads blank even though `edited` is set.
+    pub fn isEffectivelyBlank(self: *const RequestPane) bool {
+        const trim = std.mem.trim;
+        return trim(u8, self.url.items, " \t\r\n").len == 0 and
+            std.ascii.eqlIgnoreCase(self.request.method, "GET") and
+            self.request.headers.items.len == 0 and
+            trim(u8, self.body.items, " \t\r\n").len == 0 and
+            trim(u8, self.headers_text.items, " \t\r\n").len == 0;
+    }
+
     pub fn isSending(self: *const RequestPane) bool {
         return self.state == .sending or self.state == .streaming;
     }
