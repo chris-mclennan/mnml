@@ -10,7 +10,9 @@
 //! paints them while a menu is open or the pointer is on the row.
 //! Keyboard: F10 opens File, Alt+<letter> the menu with that initial,
 //! ← / → step between menus while one is open (`view.menu_bar_open`
-//! opens File from the palette; `view.menu_bar_cycle` steps the setting).
+//! opens File from the palette; `view.menu_bar_cycle` steps the
+//! setting). With a menu open the pointer resting on another word
+//! switches to it, on the ` » ` to its list (`hoverSwitch`).
 //!
 //! The rows are built per open — the File menu's recent-files submenu
 //! lives on `State.mem` until the next open.
@@ -26,6 +28,7 @@ const CommandError = command.CommandError;
 const MenuItem = command.MenuItem;
 const settings = @import("settings.zig");
 const render = @import("render.zig");
+const Rect = @import("../ui/rect.zig");
 const side = @import("side.zig");
 const search_glyph = @import("../ui/menu_bar.zig").search_glyph;
 
@@ -94,6 +97,8 @@ pub const State = struct {
     /// How the open menu was summoned — a hover-switch to another word
     /// keeps it (Rust preserves `keyboard_opened` across the switch).
     keyboard: bool = false,
+    /// The ` » ` chip's list of hidden menus is the open overlay.
+    overflow_open: bool = false,
     /// Owns the rows built per open: the recent-files submenu.
     mem: ?std.heap.ArenaAllocator = null,
 
@@ -313,6 +318,7 @@ pub fn open(app: *App, m: Menu, x: u16, y: u16, keyboard: bool) Allocator.Error!
     app.overlay.menu.highlight = keyboard;
     app.menu_bar.open = m;
     app.menu_bar.keyboard = keyboard;
+    app.menu_bar.overflow_open = false;
 }
 
 /// Open menu `idx` under its word — or where the words ended when the
@@ -347,14 +353,40 @@ pub fn openOverflow(app: *App, x: u16, y: u16) Allocator.Error!void {
     errdefer app.gpa.free(rows);
     for (rows, first..) |*r, i| r.* = .{ .label = labels[i], .action = .{ .menu_bar = @intCast(i) }, .icon = "\u{F0C9}", .icon_ascii = "=" };
     try app.openMenu("Menus", rows, x, y);
+    app.menu_bar.open = null;
+    app.menu_bar.overflow_open = true;
 }
 
 /// `closeOverlay` calls this: the words of an `auto` bar go with the menu.
 pub fn menuClosed(app: *App) void {
-    if (app.menu_bar.open != null) {
-        app.menu_bar.open = null;
+    const s = &app.menu_bar;
+    if (s.open != null or s.overflow_open) {
+        s.open = null;
+        s.overflow_open = false;
         app.needs_render = true;
     }
+}
+
+/// The pointer resting on chrome-row button `id` (its rect `r`) while
+/// a menu-bar menu — or the ` » ` list — is open: another word opens
+/// its menu in place of the current one, the ` » ` its list, the way
+/// it was summoned kept (Rust `mouse/mod.rs`: `new_mouse(hovered_idx)`
+/// / `new_keyboard`). Nothing while no bar menu is open, nothing on
+/// the word already open. True when a menu was switched.
+pub fn hoverSwitch(app: *App, id: u32, r: Rect) Allocator.Error!bool {
+    const s = &app.menu_bar;
+    if (s.open == null and !s.overflow_open) return false;
+    if (buttonOf(id)) |which| {
+        if (s.open != null and s.open.? == which) return false;
+        const keyboard = s.keyboard;
+        try open(app, which, r.x, r.y + 1, keyboard);
+        return true;
+    }
+    if (id == overflow_button and !s.overflow_open) {
+        try openOverflow(app, r.x, r.y + 1);
+        return true;
+    }
+    return false;
 }
 
 /// F10 opens File; Alt+<letter> the menu with that initial. Nothing
@@ -586,6 +618,46 @@ test "menu bar: a click drops the menu with chord hints and the recent submenu; 
     try app.handle(.{ .mouse = .{ .x = 20, .y = 3, .kind = .motion } });
     try t.expect(app.overlay.menu.highlight);
     try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
+    // With File open the pointer on Edit opens Edit (mouse-opened: no
+    // highlight), on the brand its menu, on the » its list, back on
+    // File its menu; off the bar the open menu stays; the word already
+    // open is left alone.
+    try app.handle(.{ .mouse = .{ .x = 18, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.edit, app.menu_bar.open.?);
+    try t.expectEqualStrings("Edit", app.overlay.menu.title);
+    try t.expect(!app.overlay.menu.highlight);
+    try t.expectEqual(@as(u16, 16), app.overlay.menu.x);
+    try app.handle(.{ .mouse = .{ .x = 3, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.brand, app.menu_bar.open.?);
+    try app.handle(.{ .mouse = .{ .x = 23, .y = 0, .kind = .motion } });
+    try t.expect(app.menu_bar.open == null);
+    try t.expect(app.menu_bar.overflow_open);
+    try t.expectEqualStrings("Menus", app.overlay.menu.title);
+    try app.handle(.{ .mouse = .{ .x = 23, .y = 0, .kind = .motion } });
+    try t.expect(app.menu_bar.overflow_open);
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.file, app.menu_bar.open.?);
+    try t.expect(!app.menu_bar.overflow_open);
+    try app.handle(.{ .mouse = .{ .x = 60, .y = 12, .kind = .motion } });
+    try t.expectEqual(Menu.file, app.menu_bar.open.?);
+    try t.expect(app.overlay == .menu);
+    app.overlay.menu.cursor = 2;
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .motion } });
+    try t.expectEqual(@as(usize, 2), app.overlay.menu.cursor);
+    // A keyboard-opened menu keeps its highlight across the switch.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.menu_bar.open == null);
+    try app.handle(.{ .key = app_mod.Key.named(.{ .f = 10 }) });
+    try t.expect(app.overlay.menu.highlight);
+    try app.handle(.{ .mouse = .{ .x = 18, .y = 0, .kind = .motion } });
+    try t.expectEqual(Menu.edit, app.menu_bar.open.?);
+    try t.expect(app.overlay.menu.highlight);
+    // No menu open: the pointer on a word opens nothing.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .motion } });
+    try t.expect(app.overlay == .none);
+    try t.expect(app.menu_bar.open == null);
+    try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .press, .button = .left } });
     // → steps to Edit, ← back to File, ← again wraps to the brand menu.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqual(Menu.edit, app.menu_bar.open.?);

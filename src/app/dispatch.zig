@@ -728,6 +728,8 @@ fn menuHover(app: *App, m: Mouse) Allocator.Error!void {
             },
             else => {},
         },
+        // Another word of the menu bar, or its » : that menu instead.
+        .button => |id| _ = try menu_bar.hoverSwitch(app, id, hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1)),
         else => {},
     }
 }
