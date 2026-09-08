@@ -1,0 +1,9 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"view.activity_sessions"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"click","col":10,"row":16,"button":"right"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"click","col":14,"row":17}
+{"cmd":"hover","col":15,"row":22}
+{"cmd":"wait_ms","ms":300}
