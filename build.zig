@@ -500,6 +500,34 @@ pub fn build(b: *std.Build) void {
         .dest_sub_path = b.fmt("mnml-hello{s}", .{if (target.result.os.tag == .windows) ".exe" else ""}),
     }).step);
 
+    // ── integrations/ ──
+    // The official Zig integrations live in `integrations/<id>/`, each
+    // with its own build.zig on the SDK by path. `mnml-sample`
+    // (`integrations/sample/`) is the fixture that proves the host: it
+    // is built here beside the exe, its path reaches the unit tests as
+    // `build_options.sample_integration_exe` and the corpus as
+    // `$MNML_SAMPLE_INTEGRATION` (main.zig's `test`), and its own tests
+    // run under `zig build test`.
+    const sample_mod = b.createModule(.{
+        .root_source_file = b.path("integrations/sample/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "mnml_sdk", .module = sdk_mod }},
+    });
+    const sample = b.addExecutable(.{ .name = "mnml-sample", .root_module = sample_mod });
+    const sample_install = b.addInstallArtifact(sample, .{});
+    b.getInstallStep().dependOn(&sample_install.step);
+    const sample_exe_name = b.fmt("mnml-sample{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    const sample_step = b.step("sample-integration", "Build the sample integration (zig-out/bin/mnml-sample)");
+    sample_step.dependOn(&sample_install.step);
+    build_options.addOption([]const u8, "sample_integration_exe", b.getInstallPath(.bin, sample_exe_name));
+    tests_run.step.dependOn(&sample_install.step);
+    e2e_run.step.dependOn(&sample_install.step);
+    gate_in_test.step.dependOn(&sample_install.step);
+    corpus_run.step.dependOn(&sample_install.step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = sample_mod, .filters = test_filters })).step);
+    gate_step.dependOn(&b.addInstallArtifact(sample, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = sample_exe_name }).step);
+
     // ── fake DAP adapter ──
     // `mnml-fake-dap` (tools/fake_dap/) is the deterministic debug adapter
     // the DAP client test and the `dap_session_*.test` scripts drive; it

@@ -1,0 +1,27 @@
+// The sample integration's manifest — one file, two readers:
+// `mnml-sample --install` writes it into mnml's data root
+// (`@import`ed by main.zig, so the binary and the file cannot drift),
+// and the INTEGRATIONS section's Dev tab reads it beside build.zig to
+// list the folder before anything is built.
+.{
+    .id = "sample",
+    .label = "Sample",
+    .description = "The mnml-sdk sample: a live counter that answers keys and clicks",
+    .version = "0.1.0",
+    .binary = "mnml-sample",
+    .category = "sample",
+    .chip = .{ .glyph = "\u{f0c3}", .fallback = "S", .color = "teal", .tooltip = "Sample integration" }, // nf-fa-flask
+    .commands = .{
+        .{ .id = "sample.open", .title = "Sample: open the counter pane", .keys = .{"ctrl+k s"} },
+        .{ .id = "sample.hello", .title = "Sample: say hello (a toast)", .ex = "echo Hello from the sample integration" },
+    },
+    .context_menu = .{
+        .{ .target = "tree.file", .title = "Sample: hello", .command = "sample.hello" },
+    },
+    .statusline = .{
+        .{ .id = "chip", .text = "S·sample", .color = "teal", .click_command = "sample.open" },
+    },
+    .settings = .{
+        .{ .key = "mood", .label = "Mood", .options = .{ "calm", "eager", "sleepy" }, .default = "calm", .help = "Reaches the binary as MNML_SETTING_MOOD" },
+    },
+}

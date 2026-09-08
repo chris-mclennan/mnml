@@ -1989,6 +1989,7 @@ pub const App = struct {
         self.now_ms = now;
         try self.pumpEvents();
         try self.flushWheel();
+        try integrations.tick(self);
         if (self.chord.deadline_ms) |d| if (now >= d) try dispatch.expireChords(self);
         var i: usize = 0;
         while (i < self.toasts.items.len) {
@@ -2150,7 +2151,6 @@ test {
     _ = @import("app/cmd_term.zig");
     _ = @import("app/mount_pane.zig");
     _ = @import("app/integrations.zig");
-    _ = @import("ui/marketplace_view.zig");
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");

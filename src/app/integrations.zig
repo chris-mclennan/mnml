@@ -1,18 +1,37 @@
-//! Installed integrations: the manifests under
-//! `<data root>/integrations/*.zon` and `<workspace>/.mnml/integrations/*.zon`,
-//! scanned at startup and on `integrations.refresh`. Each manifest
-//! command becomes a `DynCommand` owned by the integration — one that
-//! opens the binary as a `Pane.mount` (or a pty when `mode = .pty`), or
-//! runs the manifest's `ex` line — and each `chip` becomes a button on
-//! the palette bar. `Pane.integrations` lists them; the settings
-//! overlay grows a row per manifest `settings[]` entry, stored in
-//! `<data root>/integration-settings.zon` and handed to the binary as
-//! `MNML_SETTING_<KEY>`.
+//! Integrations: the INTEGRATIONS section (`PanelId.integrations`) and
+//! what feeds it.
+//!
+//!   Installed    the manifests under `<data root>/integrations/*.zon`
+//!                and `<workspace>/.mnml/integrations/*.zon`, scanned at
+//!                startup and on `integrations.refresh`. Each manifest
+//!                command becomes a `DynCommand` owned by the integration
+//!                — one that opens the binary as a `Pane.mount` (or a pty
+//!                when `mode = .pty`), or runs the manifest's `ex` line —
+//!                each `chip` a button on the palette bar, each
+//!                `statusline[]` entry a segment on the statusline, each
+//!                `settings[]` entry a row of the settings overlay
+//!                (stored in `<data root>/integration-settings.zon`,
+//!                handed to the binary as `MNML_SETTING_<KEY>`).
+//!   Marketplace  what the configured sources list (`marketplace.zig`).
+//!   Dev          the folders under `integrations.dev_roots` (and the
+//!                repo's own `integrations/` when the workspace holds
+//!                `sdk/mnml-sdk`) that have a `build.zig` and a
+//!                `manifest.zon` beside it — the manifest-to-be, read
+//!                before anything is built. Build runs `zig build` there
+//!                as a task pane; Install builds when nothing is built
+//!                yet, runs `<binary> --install`, links the binary into
+//!                `<data root>/bin/` and rescans; Rebuild + reinstall
+//!                always builds first. A folder is a folder: the same
+//!                integration sits in Installed and Dev at once.
 //!
 //! The filesystem is the interface: install is a file appearing,
 //! uninstall is deleting it, enable / disable rewrites `chip.enabled`.
+//! `Pane.integrations` is the detail pane for one entry of any tab —
+//! the title, the description, a row of action buttons, the manifest's
+//! sections.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -25,17 +44,27 @@ const command = @import("../core/command.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const CommandError = command.CommandError;
 const alloc = @import("../core/alloc.zig");
+const panel = @import("../core/panel.zig");
+const ListSort = panel.ListSort;
 const manifest_mod = @import("../bridge/manifest.zig");
 const Manifest = manifest_mod.Manifest;
 const mount_pane = @import("mount_pane.zig");
 const pty_pane = @import("pty_pane.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const runners = @import("runners.zig");
+const marketplace = @import("marketplace.zig");
+const side = @import("side.zig");
+const auto_refresh = @import("auto_refresh.zig");
+const hit = @import("../ui/hit.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
+const list_panel = @import("../ui/list_panel.zig");
 const view = @import("../ui/integrations_view.zig");
 const config = @import("../config/root.zig");
 
 pub const settings_file = "integration-settings.zon";
+pub const Tab = view.Tab;
+pub const Panel = list_panel.ListPanel(view.Entry);
 
 pub const Source = enum { home, workspace };
 
@@ -44,7 +73,7 @@ pub const Installed = struct {
     manifest: Manifest,
     path: []const u8,
     source: Source,
-    /// The binary resolves (absolute, or on PATH).
+    /// The binary resolves (absolute, `$VAR`, `<data root>/bin/`, or PATH).
     binary_found: bool,
     /// The dyn slots its commands took, in manifest order.
     slots: []u32,
@@ -54,6 +83,21 @@ pub const Installed = struct {
     }
 
     pub fn id(self: *const Installed) []const u8 {
+        return self.manifest.id;
+    }
+};
+
+/// One folder of a dev root. Borrows `State.dev_snapshot`.
+pub const DevEntry = struct {
+    /// Absolute.
+    dir: []const u8,
+    /// The root it was found under, as the config named it (or `integrations`).
+    root: []const u8,
+    /// `<dir>/manifest.zon`.
+    manifest_path: []const u8,
+    manifest: Manifest,
+
+    pub fn id(self: *const DevEntry) []const u8 {
         return self.manifest.id;
     }
 };
@@ -72,20 +116,172 @@ pub const Chip = struct {
     installed: ?usize,
 };
 
+/// The Installed tab's orders. The chip cycles them; the menu lists
+/// them through `ListSort` (`name` / `name_desc` / `newest` = enabled
+/// first / `oldest` = by category) since a menu row carries a ListSort.
+pub const InstalledSort = enum {
+    name,
+    name_desc,
+    enabled_first,
+    category,
+
+    pub fn label(s: InstalledSort) []const u8 {
+        return switch (s) {
+            .name => "A-Z",
+            .name_desc => "Z-A",
+            .enabled_first => "Enabled",
+            .category => "Category",
+        };
+    }
+
+    pub fn menuLabel(s: InstalledSort) []const u8 {
+        return switch (s) {
+            .name => "Name (A–Z)",
+            .name_desc => "Name (Z–A)",
+            .enabled_first => "Enabled first",
+            .category => "By category",
+        };
+    }
+
+    pub fn next(s: InstalledSort) InstalledSort {
+        return switch (s) {
+            .name => .name_desc,
+            .name_desc => .enabled_first,
+            .enabled_first => .category,
+            .category => .name,
+        };
+    }
+
+    pub fn toList(s: InstalledSort) ListSort {
+        return switch (s) {
+            .name => .name,
+            .name_desc => .name_desc,
+            .enabled_first => .newest,
+            .category => .oldest,
+        };
+    }
+
+    pub fn fromList(l: ListSort) InstalledSort {
+        return switch (l) {
+            .name => .name,
+            .name_desc => .name_desc,
+            .newest => .enabled_first,
+            .oldest => .category,
+        };
+    }
+
+    pub const all = [_]InstalledSort{ .name, .name_desc, .enabled_first, .category };
+};
+
+/// The Marketplace and Dev tabs' orders (`newest` = by kind, `oldest` = by source).
+pub const MarketSort = enum {
+    name,
+    name_desc,
+    kind,
+    source,
+
+    pub fn label(s: MarketSort) []const u8 {
+        return switch (s) {
+            .name => "A-Z",
+            .name_desc => "Z-A",
+            .kind => "Kind",
+            .source => "Source",
+        };
+    }
+
+    pub fn menuLabel(s: MarketSort) []const u8 {
+        return switch (s) {
+            .name => "Name (A–Z)",
+            .name_desc => "Name (Z–A)",
+            .kind => "By kind",
+            .source => "By source",
+        };
+    }
+
+    pub fn next(s: MarketSort) MarketSort {
+        return switch (s) {
+            .name => .name_desc,
+            .name_desc => .kind,
+            .kind => .source,
+            .source => .name,
+        };
+    }
+
+    pub fn toList(s: MarketSort) ListSort {
+        return switch (s) {
+            .name => .name,
+            .name_desc => .name_desc,
+            .kind => .newest,
+            .source => .oldest,
+        };
+    }
+
+    pub fn fromList(l: ListSort) MarketSort {
+        return switch (l) {
+            .name => .name,
+            .name_desc => .name_desc,
+            .newest => .kind,
+            .oldest => .source,
+        };
+    }
+
+    pub const all = [_]MarketSort{ .name, .name_desc, .kind, .source };
+};
+
+/// A Dev install in flight: the task pane running `zig build` and / or
+/// `<binary> --install`; `tick` finishes the job when it exits.
+pub const DevJob = struct {
+    pane: PaneId,
+    dir: []u8,
+    id: []u8,
+    /// The built binary the manifest will name (linked into `<root>/bin/`).
+    built: []u8,
+
+    fn deinit(self: *DevJob, gpa: Allocator) void {
+        gpa.free(self.dir);
+        gpa.free(self.id);
+        gpa.free(self.built);
+    }
+};
+
 pub const State = struct {
     snapshot: alloc.SnapshotArena,
     list: []Installed = &.{},
     /// `<id>.<key>` → value, gpa-owned both sides.
     settings: std.StringHashMapUnmanaged([]u8) = .empty,
-    /// The row a context menu was opened on.
-    menu_row: ?usize = null,
+    /// The row a context menu was opened on: a tab and an index into
+    /// that tab's underlying list.
+    menu_row: ?struct { tab: Tab, idx: usize } = null,
     scanned: bool = false,
     /// The last scan's problems, one line each (snapshot arena).
     problems: [][]const u8 = &.{},
     generation: u32 = 0,
+    /// The statusline segments the manifests set, gpa-owned ids.
+    segment_ids: std.ArrayListUnmanaged([]u8) = .empty,
+
+    // The section.
+    tab: Tab = .installed,
+    /// The filter and the active tab's cursor / scroll; the other tabs'
+    /// cursors wait in `tab_cursor`.
+    panel: Panel.State = .{},
+    tab_cursor: [3]usize = .{ 0, 0, 0 },
+    tab_scroll: [3]usize = .{ 0, 0, 0 },
+    installed_sort: InstalledSort = .name,
+    market_sort: MarketSort = .name,
+    /// `integrations.toggle_dev_tab`'s answer for the session; null
+    /// defers to the config and the roots.
+    show_dev_override: ?bool = null,
+    last_click: ?struct { tab: Tab, idx: usize, at_ms: i64 } = null,
+
+    // The Dev tab.
+    dev_snapshot: alloc.SnapshotArena,
+    dev: []DevEntry = &.{},
+    dev_problems: [][]const u8 = &.{},
+    dev_scanned: bool = false,
+    job: ?DevJob = null,
 
     pub fn init(gpa: Allocator) State {
-        return .{ .snapshot = .init(gpa) };
+        return .{ .snapshot = .init(gpa), .dev_snapshot = .init(gpa) };
     }
 
     pub fn deinit(self: *State, gpa: Allocator) void {
@@ -95,6 +291,11 @@ pub const State = struct {
             gpa.free(e.value_ptr.*);
         }
         self.settings.deinit(gpa);
+        for (self.segment_ids.items) |s| gpa.free(s);
+        self.segment_ids.deinit(gpa);
+        self.panel.deinit(gpa);
+        if (self.job) |*j| j.deinit(gpa);
+        self.dev_snapshot.deinit();
         self.snapshot.deinit();
     }
 
@@ -102,17 +303,57 @@ pub const State = struct {
         for (self.list, 0..) |*i, idx| if (std.mem.eql(u8, i.id(), id)) return idx;
         return null;
     }
+
+    pub fn findDev(self: *const State, dir: []const u8) ?usize {
+        for (self.dev, 0..) |*d, idx| if (std.mem.eql(u8, d.dir, dir)) return idx;
+        return null;
+    }
 };
 
-/// `Pane.integrations`: the installed list.
+/// `Pane.integrations`: the detail pane for one entry.
 pub const IntegrationsPane = struct {
+    target: Target,
+    /// The focused action button.
     cursor: usize = 0,
-    scroll: usize = 0,
-    /// The detail block for the selected row is open.
-    detail: bool = false,
-    sort: Sort = .name,
 
-    pub const Sort = enum { name, category };
+    pub const Target = union(enum) {
+        /// A manifest id.
+        installed: []u8,
+        /// A marketplace entry id.
+        marketplace: []u8,
+        /// A dev folder (absolute).
+        dev: []u8,
+
+        fn key(self: Target) []const u8 {
+            return switch (self) {
+                inline else => |s| s,
+            };
+        }
+    };
+
+    /// `openDetail`'s argument: the same shape, borrowed.
+    pub const TargetRef = union(enum) {
+        installed: []const u8,
+        marketplace: []const u8,
+        dev: []const u8,
+
+        fn key(self: TargetRef) []const u8 {
+            return switch (self) {
+                inline else => |s| s,
+            };
+        }
+    };
+
+    pub fn deinit(self: *IntegrationsPane, gpa: Allocator) void {
+        gpa.free(self.target.key());
+    }
+
+    pub fn title(self: *const IntegrationsPane) []const u8 {
+        return switch (self.target) {
+            .dev => |d| std.fs.path.basename(d),
+            inline else => |s| s,
+        };
+    }
 };
 
 pub const table = .{
@@ -120,6 +361,10 @@ pub const table = .{
     .@"integrations.refresh_binary_cache" = &refreshCmd,
     .@"integrations.show_installed" = &showInstalled,
     .@"view.activity_integrations" = &showInstalled,
+    .@"integrations.show_marketplace" = &showMarketplace,
+    .@"integrations.show_in_dev" = &showDevCmd,
+    .@"integrations.toggle_dev_tab" = &toggleDevTab,
+    .@"integrations.toggle_tab" = &toggleTab,
     .@"integrations.show_details" = &showDetails,
     .@"integrations.show_manifest" = &showManifest,
     .@"integrations.edit" = &editCmd,
@@ -127,9 +372,9 @@ pub const table = .{
     .@"integrations.remove" = &removeCmd,
     .@"integrations.copy_id" = &copyId,
     .@"integrations.cycle_sort" = &cycleSort,
-    .@"integrations.toggle_tab" = &toggleTab,
-    .@"integrations.show_in_dev" = &noDevTab,
-    .@"integrations.toggle_dev_tab" = &noDevTab,
+    .@"integrations.dev_build" = &devBuildCmd,
+    .@"integrations.dev_install" = &devInstallCmd,
+    .@"integrations.dev_rebuild" = &devRebuildCmd,
 };
 
 // ─── discovery ──────────────────────────────────────────────────────────
@@ -147,14 +392,14 @@ fn dirs(app: *App, arena: Allocator) Allocator.Error![2]?[]const u8 {
     return .{ home, ws };
 }
 
-/// Re-scan: drop every integration command and binding, read the
-/// manifests again, register what they declare.
+/// Re-scan: drop every integration command, binding and segment, read
+/// the manifests again, register what they declare.
 pub fn refresh(app: *App) Allocator.Error!void {
     const st = &app.integrations;
-    const gpa = app.gpa;
     // Old bindings go before the arena they point into.
     for (st.list) |*inst| for (inst.manifest.commands) |c| for (c.keys) |k| app.keymap.unbind(k);
     _ = app.dyn_commands.unregisterOwner(.integration);
+    clearSegments(app);
     st.snapshot.reset();
     const arena = st.snapshot.allocator();
     st.list = &.{};
@@ -181,9 +426,10 @@ pub fn refresh(app: *App) Allocator.Error!void {
     // Register the commands now that the list is final.
     for (st.list) |*inst| try registerCommands(app, arena, inst);
     try app.keymap.rebuildPrefixes();
+    try setSegments(app);
     for (st.problems) |p| try app.toastLevel(.warn, "integrations: {s}", .{p});
+    if (st.panel.cursor >= st.list.len) st.panel.cursor = st.list.len -| 1;
     app.needs_render = true;
-    _ = gpa;
 }
 
 fn byLabel(_: void, a: Installed, b: Installed) bool {
@@ -199,18 +445,7 @@ fn scanDir(app: *App, arena: Allocator, dir_path: []const u8, source: Source, fo
         if (entry.kind != .file and entry.kind != .sym_link) continue;
         if (!std.mem.endsWith(u8, entry.name, ".zon")) continue;
         const path = try std.fs.path.join(arena, &.{ dir_path, entry.name });
-        const text = dir.readFileAllocOptions(io, entry.name, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
-            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ path, @errorName(err) }));
-            continue;
-        };
-        var why: []const u8 = "";
-        const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.BadManifest => {
-                try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ app.relPath(path), why }));
-                continue;
-            },
-        };
+        const m = readManifest(app, arena, dir, entry.name, path, problems) orelse continue;
         // A workspace manifest replaces a home one with the same id.
         var replaced = false;
         for (found.items) |*prev| if (std.mem.eql(u8, prev.id(), m.id)) {
@@ -222,16 +457,46 @@ fn scanDir(app: *App, arena: Allocator, dir_path: []const u8, source: Source, fo
     }
 }
 
+/// `<dir>/<name>` parsed as a manifest, or null with the reason in
+/// `problems`.
+fn readManifest(app: *App, arena: Allocator, dir: Io.Dir, name: []const u8, path: []const u8, problems: *std.ArrayListUnmanaged([]const u8)) ?Manifest {
+    const text = dir.readFileAllocOptions(app.io, name, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+        problems.append(arena, std.fmt.allocPrint(arena, "{s}: {s}", .{ path, @errorName(err) }) catch return null) catch {};
+        return null;
+    };
+    var why: []const u8 = "";
+    return manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => null,
+        error.BadManifest => {
+            problems.append(arena, std.fmt.allocPrint(arena, "{s}: {s}", .{ app.relPath(path), why }) catch return null) catch {};
+            return null;
+        },
+    };
+}
+
 /// Absolute → exists; bare → somewhere on PATH.
 pub fn binaryFound(app: *App, arena: Allocator, binary: []const u8) bool {
     return resolveBinary(app, arena, binary) != null;
 }
 
-/// Where a manifest's binary is: itself when absolute, else
-/// `<data root>/bin/<name>` (what the marketplace links), else the
+/// `$NAME` or `$NAME/rest` with the variable's value in place, else
+/// `binary` as given. How a manifest reaches a binary the environment
+/// names (`$MNML_SAMPLE_INTEGRATION` in the corpus).
+pub fn expandEnv(app: *App, arena: Allocator, binary: []const u8) Allocator.Error![]const u8 {
+    if (binary.len < 2 or binary[0] != '$') return binary;
+    const end = std.mem.indexOfScalar(u8, binary, '/') orelse binary.len;
+    const value = app.env.get(binary[1..end]) orelse return binary;
+    if (value.len == 0) return binary;
+    if (end == binary.len) return value;
+    return std.mem.concat(arena, u8, &.{ value, binary[end..] });
+}
+
+/// Where a manifest's binary is: itself when absolute (or `$VAR`),
+/// else `<data root>/bin/<name>` (what an install links), else the
 /// first PATH hit. Null when nowhere.
-pub fn resolveBinary(app: *App, arena: Allocator, binary: []const u8) ?[]const u8 {
+pub fn resolveBinary(app: *App, arena: Allocator, binary_in: []const u8) ?[]const u8 {
     const io = app.io;
+    const binary = expandEnv(app, arena, binary_in) catch return null;
     if (std.fs.path.isAbsolute(binary) or std.mem.indexOfScalar(u8, binary, '/') != null) {
         Io.Dir.cwd().access(io, binary, .{}) catch return null;
         return binary;
@@ -284,7 +549,273 @@ fn registerCommands(app: *App, arena: Allocator, inst: *Installed) Allocator.Err
 
 fn refreshCmd(app: *App) CommandError!void {
     try refresh(app);
+    if (app.integrations.dev_scanned) try scanDev(app);
     app.toast("integrations: {d} installed", .{app.integrations.list.len});
+}
+
+// ─── statusline segments ────────────────────────────────────────────────
+
+/// Every enabled, runnable manifest's `statusline[]` entries become
+/// segments keyed `<id>.<segment id>`; a refresh replaces the set.
+fn setSegments(app: *App) Allocator.Error!void {
+    const st = &app.integrations;
+    const gpa = app.gpa;
+    for (st.list) |*inst| {
+        if (!inst.enabled() or !inst.binary_found) continue;
+        for (inst.manifest.statusline) |seg| {
+            const id = try std.fmt.allocPrint(gpa, "{s}.{s}", .{ inst.id(), seg.id });
+            errdefer gpa.free(id);
+            try app.ipc_fx.setSegment(gpa, .{
+                .id = id,
+                .side = switch (seg.side) {
+                    .left => .left,
+                    .right => .right,
+                },
+                .text = seg.text,
+                .color = seg.color,
+                .click_command = seg.click_command,
+                .priority = seg.priority,
+            });
+            try st.segment_ids.append(gpa, id);
+        }
+    }
+}
+
+fn clearSegments(app: *App) void {
+    const st = &app.integrations;
+    for (st.segment_ids.items) |id| {
+        _ = app.ipc_fx.clearSegment(app.gpa, id);
+        app.gpa.free(id);
+    }
+    st.segment_ids.clearRetainingCapacity();
+}
+
+// ─── the dev roots ──────────────────────────────────────────────────────
+
+/// The roots the Dev tab scans: `integrations.dev_roots` (relative to
+/// the workspace, `~` expanded), then the workspace's own
+/// `integrations/` when it is an SDK checkout (`sdk/mnml-sdk` exists).
+pub fn devRoots(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (app.cfg.integrations.dev_roots) |r| {
+        const expanded = try app.expandTilde(r);
+        const abs = if (std.fs.path.isAbsolute(expanded)) expanded else try std.fs.path.join(arena, &.{ app.workspace, expanded });
+        try out.append(arena, abs);
+    }
+    const sdk = try std.fs.path.join(arena, &.{ app.workspace, "sdk", "mnml-sdk" });
+    if (isDir(app.io, sdk)) {
+        const own = try std.fs.path.join(arena, &.{ app.workspace, "integrations" });
+        var seen = false;
+        for (out.items) |r| if (std.mem.eql(u8, r, own)) {
+            seen = true;
+        };
+        if (!seen) try out.append(arena, own);
+    }
+    return out.toOwnedSlice(arena);
+}
+
+fn isDir(io: Io, path: []const u8) bool {
+    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return st.kind == .directory;
+}
+
+fn isFile(io: Io, path: []const u8) bool {
+    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return st.kind == .file or st.kind == .sym_link;
+}
+
+/// Scan the dev roots: every folder with a `build.zig` and a
+/// `manifest.zon` is an entry, sorted by label.
+pub fn scanDev(app: *App) Allocator.Error!void {
+    const st = &app.integrations;
+    st.dev_snapshot.reset();
+    const arena = st.dev_snapshot.allocator();
+    st.dev = &.{};
+    st.dev_problems = &.{};
+    var found: std.ArrayListUnmanaged(DevEntry) = .empty;
+    var problems: std.ArrayListUnmanaged([]const u8) = .empty;
+    const roots = try devRoots(app, arena);
+    for (roots) |root| {
+        var dir = Io.Dir.cwd().openDir(app.io, root, .{ .iterate = true }) catch {
+            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: not a directory", .{app.relPath(root)}));
+            continue;
+        };
+        defer dir.close(app.io);
+        var it = dir.iterate();
+        while (it.next(app.io) catch null) |entry| {
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
+            if (entry.name.len == 0 or entry.name[0] == '.') continue;
+            const sub = try std.fs.path.join(arena, &.{ root, entry.name });
+            const build_path = try std.fs.path.join(arena, &.{ sub, "build.zig" });
+            const manifest_path = try std.fs.path.join(arena, &.{ sub, "manifest.zon" });
+            if (!isFile(app.io, build_path) or !isFile(app.io, manifest_path)) continue;
+            var subdir = Io.Dir.cwd().openDir(app.io, sub, .{}) catch continue;
+            defer subdir.close(app.io);
+            const m = readManifest(app, arena, subdir, "manifest.zon", manifest_path, &problems) orelse continue;
+            try found.append(arena, .{ .dir = sub, .root = std.fs.path.basename(root), .manifest_path = manifest_path, .manifest = m });
+        }
+    }
+    const Ctx = struct {
+        fn lt(_: void, a: DevEntry, b: DevEntry) bool {
+            return std.ascii.lessThanIgnoreCase(a.manifest.label, b.manifest.label);
+        }
+    };
+    std.mem.sort(DevEntry, found.items, {}, Ctx.lt);
+    st.dev = try found.toOwnedSlice(arena);
+    st.dev_problems = try problems.toOwnedSlice(arena);
+    st.dev_scanned = true;
+    for (st.dev_problems) |p| try app.toastLevel(.warn, "integrations: dev: {s}", .{p});
+    app.needs_render = true;
+}
+
+/// Whether the Dev tab shows: the session's toggle, else the config,
+/// else whenever there is a root to scan.
+pub fn showDev(app: *App) bool {
+    const st = &app.integrations;
+    if (st.show_dev_override) |o| return o;
+    if (app.cfg.marketplace.show_dev_tab) return true;
+    if (app.cfg.integrations.dev_roots.len > 0) return true;
+    return st.dev.len > 0;
+}
+
+/// The binary a dev folder's build leaves: the manifest's binary when
+/// it is absolute or `$VAR` (already somewhere), else
+/// `<dir>/zig-out/bin/<binary>`.
+pub fn devBuiltBinary(app: *App, arena: Allocator, d: *const DevEntry) Allocator.Error![]const u8 {
+    const b = try expandEnv(app, arena, d.manifest.binary);
+    if (std.fs.path.isAbsolute(b) or std.mem.indexOfScalar(u8, b, '/') != null) return b;
+    const name = if (builtin.os.tag == .windows) try std.fmt.allocPrint(arena, "{s}.exe", .{b}) else b;
+    return std.fs.path.join(arena, &.{ d.dir, "zig-out", "bin", name });
+}
+
+fn devEntryAt(app: *App, idx: usize) CommandError!*DevEntry {
+    const st = &app.integrations;
+    if (idx >= st.dev.len) return app.diag.fail(app.frame.allocator(), "integrations: no dev entry there", .{});
+    return &st.dev[idx];
+}
+
+/// `integrations.dev_build`: `zig build` in the folder, as a task pane.
+pub fn devBuild(app: *App, idx: usize) CommandError!void {
+    const d = try devEntryAt(app, idx);
+    if (!pty_pane.supported) return app.diag.fail(app.frame.allocator(), "integrations: a task pane is not available on this platform", .{});
+    if (!runners.onPath(app, "zig")) return app.diag.fail(app.frame.allocator(), "integrations: zig is not on PATH", .{});
+    const label = try std.fmt.allocPrint(app.frame.allocator(), "{s}: zig build", .{d.id()});
+    _ = try runners.spawn(app, label, "zig build", d.dir, .task);
+    app.toast("integrations: building {s} in {s}", .{ d.id(), app.relPath(d.dir) });
+}
+
+/// `integrations.dev_install` / `dev_rebuild`: build when nothing is
+/// built (or always, with `rebuild`), then `<binary> --install`, in a
+/// task pane; `tick` links the binary and rescans once it exits.
+pub fn devInstall(app: *App, idx: usize, rebuild: bool) CommandError!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
+    const d = try devEntryAt(app, idx);
+    if (st.job != null) return app.diag.fail(arena, "integrations: an install is already running", .{});
+    if (!pty_pane.supported) return app.diag.fail(arena, "integrations: a task pane is not available on this platform", .{});
+    if (app.data_root.len == 0) return app.diag.fail(arena, "integrations: no data root to install into", .{});
+    const built = try devBuiltBinary(app, arena, d);
+    const have = isFile(app.io, built);
+    const build_first = rebuild or !have;
+    if (build_first and !runners.onPath(app, "zig")) return app.diag.fail(arena, "integrations: zig is not on PATH", .{});
+    // The data root travels as the environment the shell hands the
+    // binary — `sh -c` takes the assignment in front, `cmd` a `set`.
+    const install_line = if (builtin.os.tag == .windows)
+        try std.fmt.allocPrint(arena, "set \"MNML_DATA_ROOT={s}\" && \"{s}\" --install", .{ app.data_root, built })
+    else
+        try std.fmt.allocPrint(arena, "MNML_DATA_ROOT='{s}' '{s}' --install", .{ app.data_root, built });
+    const cmdline = if (build_first) try std.fmt.allocPrint(arena, "zig build && {s}", .{install_line}) else install_line;
+    const label = try std.fmt.allocPrint(arena, "{s}: {s}", .{ d.id(), if (build_first) "build + install" else "install" });
+    const pane = try runners.spawn(app, label, cmdline, d.dir, .task);
+    const gpa = app.gpa;
+    var job: DevJob = .{ .pane = pane, .dir = try gpa.dupe(u8, d.dir), .id = &.{}, .built = &.{} };
+    errdefer job.deinit(gpa);
+    job.id = try gpa.dupe(u8, d.id());
+    job.built = try gpa.dupe(u8, built);
+    st.job = job;
+    app.toast("integrations: installing {s} from {s}…", .{ d.id(), app.relPath(d.dir) });
+}
+
+/// From `App.tick`: a dev install's task pane has exited — link the
+/// binary and rescan on success, say why on failure.
+pub fn tick(app: *App) Allocator.Error!void {
+    const st = &app.integrations;
+    const job = if (st.job) |*j| j else return;
+    const p = app.panes.get(job.pane) orelse {
+        finishJob(app, "its pane was closed");
+        return;
+    };
+    const exit = switch (p.*) {
+        .pty => |*t| t.exit orelse return,
+        else => {
+            finishJob(app, "its pane was closed");
+            return;
+        },
+    };
+    const ok = switch (exit) {
+        .code => |c| c == 0,
+        .signal => false,
+    };
+    if (!ok) {
+        const why: []const u8 = switch (exit) {
+            .code => |c| try std.fmt.allocPrint(app.frame.allocator(), "exit code {d}", .{c}),
+            .signal => "killed",
+        };
+        finishJob(app, why);
+        return;
+    }
+    // Reachable by its bare name: `<root>/bin` is on `runMount`'s path.
+    const arena = app.frame.allocator();
+    const link_dir = try std.fs.path.join(arena, &.{ app.data_root, "bin" });
+    Io.Dir.cwd().createDirPath(app.io, link_dir) catch {};
+    const link = try std.fs.path.join(arena, &.{ link_dir, std.fs.path.basename(job.built) });
+    Io.Dir.cwd().deleteFile(app.io, link) catch {};
+    Io.Dir.cwd().symLink(app.io, job.built, link, .{}) catch {
+        // No symlinks (Windows without the privilege): a copy does.
+        Io.Dir.cwd().copyFile(job.built, Io.Dir.cwd(), link, app.io, .{}) catch {};
+    };
+    const id = try arena.dupe(u8, job.id);
+    const dir = try arena.dupe(u8, job.dir);
+    job.deinit(app.gpa);
+    st.job = null;
+    try refresh(app);
+    if (st.dev_scanned) try scanDev(app);
+    app.toast("integrations: installed {s} from {s}", .{ id, app.relPath(dir) });
+}
+
+fn finishJob(app: *App, why: []const u8) void {
+    const st = &app.integrations;
+    var job = st.job orelse return;
+    app.toast("integrations: install of {s} failed: {s}", .{ job.id, why });
+    job.deinit(app.gpa);
+    st.job = null;
+    app.needs_render = true;
+}
+
+fn devBuildCmd(app: *App) CommandError!void {
+    return devBuild(app, try focusedDev(app));
+}
+
+fn devInstallCmd(app: *App) CommandError!void {
+    return devInstall(app, try focusedDev(app), false);
+}
+
+fn devRebuildCmd(app: *App) CommandError!void {
+    return devInstall(app, try focusedDev(app), true);
+}
+
+/// The dev entry a command acts on: the menu's row, the active detail
+/// pane's, else the section's cursor on the Dev tab.
+fn focusedDev(app: *App) CommandError!usize {
+    const st = &app.integrations;
+    if (st.menu_row) |r| {
+        st.menu_row = null;
+        if (r.tab == .dev and r.idx < st.dev.len) return r.idx;
+    }
+    if (activeDetail(app)) |ap| if (ap.p.target == .dev) if (st.findDev(ap.p.target.dev)) |i| return i;
+    if (!st.dev_scanned) try scanDev(app);
+    if (st.tab == .dev) if (try cursorEntry(app)) |i| return i;
+    return app.diag.fail(app.frame.allocator(), "integrations: open the Dev tab and pick a folder first", .{});
 }
 
 // ─── running ────────────────────────────────────────────────────────────
@@ -400,7 +931,7 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
     if (idx >= list.len) return;
     const chip = list[idx];
     if (m.button == .right) {
-        if (chip.installed) |row| return openRowMenu(app, row, m.x, m.y);
+        if (chip.installed) |row| return openInstalledMenu(app, row, m.x, m.y);
         // The AI chips: their launch profiles.
         if (std.mem.eql(u8, chip.id, "claude_code")) return launch_profiles.openChipMenu(app, .claude, m.x, m.y);
         if (std.mem.eql(u8, chip.id, "codex")) return launch_profiles.openChipMenu(app, .codex, m.x, m.y);
@@ -423,20 +954,576 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
     }
 }
 
-// ─── the pane ───────────────────────────────────────────────────────────
+// ─── the section ────────────────────────────────────────────────────────
 
-fn showInstalled(app: *App) CommandError!void {
+/// Show the section on `tab`, the keys with it.
+pub fn showTab(app: *App, tab: Tab) CommandError!void {
     @import("activity_bar.zig").enter(app, .integrations);
-    if (!app.integrations.scanned) try refresh(app);
-    if (app.panes.findKind(.integrations)) |id| {
-        app.showPane(id);
-        return;
+    const st = &app.integrations;
+    if (!st.scanned) try refresh(app);
+    setTab(app, tab);
+    side.place(app, .integrations, true);
+    switch (tab) {
+        .marketplace => if (app.marketplace.fetched_at_ms == null and !app.marketplace.fetching) marketplace.refresh(app) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                if (app.diag.msg) |msg| app.toast("{s}", .{msg});
+                app.diag.clear();
+            },
+        },
+        .dev => if (!st.dev_scanned) try scanDev(app),
+        .installed => {},
     }
-    const id = try app.panes.add(.{ .integrations = .{} });
-    app.showPane(id);
 }
 
-fn activePane(app: *App) ?struct { id: PaneId, p: *IntegrationsPane } {
+/// Switch tabs, each keeping its own cursor and scroll.
+pub fn setTab(app: *App, tab: Tab) void {
+    const st = &app.integrations;
+    if (st.tab == tab) return;
+    st.tab_cursor[@intFromEnum(st.tab)] = st.panel.cursor;
+    st.tab_scroll[@intFromEnum(st.tab)] = st.panel.scroll;
+    st.tab = tab;
+    st.panel.cursor = st.tab_cursor[@intFromEnum(tab)];
+    st.panel.scroll = st.tab_scroll[@intFromEnum(tab)];
+    st.panel.on_new = false;
+    if (tab == .dev and !st.dev_scanned) scanDev(app) catch {};
+    app.needs_render = true;
+}
+
+fn showInstalled(app: *App) CommandError!void {
+    return showTab(app, .installed);
+}
+
+fn showMarketplace(app: *App) CommandError!void {
+    return showTab(app, .marketplace);
+}
+
+fn showDevCmd(app: *App) CommandError!void {
+    app.integrations.show_dev_override = true;
+    return showTab(app, .dev);
+}
+
+fn toggleDevTab(app: *App) CommandError!void {
+    const st = &app.integrations;
+    const now = !showDev(app);
+    st.show_dev_override = now;
+    if (!now and st.tab == .dev) setTab(app, .installed);
+    app.toast("integrations: the Dev tab is {s}", .{if (now) "shown" else "hidden"});
+    app.needs_render = true;
+}
+
+fn toggleTab(app: *App) CommandError!void {
+    const st = &app.integrations;
+    if (!side.isShown(app, .integrations)) return showTab(app, .installed);
+    setTab(app, st.tab.next(showDev(app)));
+    if (st.tab == .marketplace and app.marketplace.fetched_at_ms == null and !app.marketplace.fetching) marketplace.refresh(app) catch {};
+}
+
+fn cycleSort(app: *App) CommandError!void {
+    const st = &app.integrations;
+    switch (st.tab) {
+        .installed => st.installed_sort = st.installed_sort.next(),
+        .marketplace, .dev => st.market_sort = st.market_sort.next(),
+    }
+    app.toast("integrations: sorted by {s}", .{sortLabel(app)});
+    app.needs_render = true;
+}
+
+/// The sort menu's row: a `ListSort` mapped onto the active tab's order.
+pub fn setSort(app: *App, sort: ListSort) Allocator.Error!void {
+    const st = &app.integrations;
+    switch (st.tab) {
+        .installed => st.installed_sort = InstalledSort.fromList(sort),
+        .marketplace, .dev => st.market_sort = MarketSort.fromList(sort),
+    }
+    app.needs_render = true;
+}
+
+fn sortLabel(app: *App) []const u8 {
+    const st = &app.integrations;
+    return switch (st.tab) {
+        .installed => st.installed_sort.label(),
+        .marketplace, .dev => st.market_sort.label(),
+    };
+}
+
+fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
+    return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+}
+
+/// The active tab's entries after the filter and the sort, as indices
+/// into that tab's underlying list. On `arena`.
+pub fn visibleEntries(app: *App, arena: Allocator) Allocator.Error![]usize {
+    const st = &app.integrations;
+    const q = st.panel.filterText();
+    var out: std.ArrayListUnmanaged(usize) = .empty;
+    switch (st.tab) {
+        .installed => {
+            for (st.list, 0..) |*inst, i| {
+                const m = inst.manifest;
+                const first: []const u8 = if (m.commands.len > 0) m.commands[0].id else m.binary;
+                if (q.len > 0 and !(containsIgnoreCase(m.label, q) or containsIgnoreCase(m.id, q) or containsIgnoreCase(first, q) or containsIgnoreCase(m.category, q))) continue;
+                try out.append(arena, i);
+            }
+            const Ctx = struct {
+                list: []Installed,
+                sort: InstalledSort,
+                fn lt(self: @This(), a: usize, b: usize) bool {
+                    const ma = self.list[a].manifest;
+                    const mb = self.list[b].manifest;
+                    switch (self.sort) {
+                        .name => {},
+                        .name_desc => return std.ascii.lessThanIgnoreCase(mb.label, ma.label),
+                        .enabled_first => {
+                            const ea = self.list[a].enabled();
+                            const eb = self.list[b].enabled();
+                            if (ea != eb) return ea;
+                        },
+                        .category => {
+                            const c = std.ascii.orderIgnoreCase(ma.category, mb.category);
+                            if (c != .eq) return c == .lt;
+                        },
+                    }
+                    return std.ascii.lessThanIgnoreCase(ma.label, mb.label);
+                }
+            };
+            std.mem.sort(usize, out.items, Ctx{ .list = st.list, .sort = st.installed_sort }, Ctx.lt);
+        },
+        .marketplace => {
+            for (app.marketplace.entries, 0..) |e, i| {
+                if (q.len > 0 and !(containsIgnoreCase(e.label, q) or containsIgnoreCase(e.id, q) or containsIgnoreCase(e.description, q))) continue;
+                try out.append(arena, i);
+            }
+            const Ctx = struct {
+                list: []marketplace.Entry,
+                sort: MarketSort,
+                fn lt(self: @This(), a: usize, b: usize) bool {
+                    const ea = self.list[a];
+                    const eb = self.list[b];
+                    switch (self.sort) {
+                        .name => {},
+                        .name_desc => return std.ascii.lessThanIgnoreCase(eb.label, ea.label),
+                        .kind => if (ea.kind != eb.kind) return @intFromEnum(ea.kind) < @intFromEnum(eb.kind),
+                        .source => {
+                            const c = std.ascii.orderIgnoreCase(ea.source, eb.source);
+                            if (c != .eq) return c == .lt;
+                        },
+                    }
+                    return std.ascii.lessThanIgnoreCase(ea.label, eb.label);
+                }
+            };
+            std.mem.sort(usize, out.items, Ctx{ .list = app.marketplace.entries, .sort = st.market_sort }, Ctx.lt);
+        },
+        .dev => {
+            for (st.dev, 0..) |*d, i| {
+                const m = d.manifest;
+                if (q.len > 0 and !(containsIgnoreCase(m.label, q) or containsIgnoreCase(m.id, q) or containsIgnoreCase(d.dir, q))) continue;
+                try out.append(arena, i);
+            }
+            const Ctx = struct {
+                list: []DevEntry,
+                sort: MarketSort,
+                fn lt(self: @This(), a: usize, b: usize) bool {
+                    const da = self.list[a];
+                    const db = self.list[b];
+                    switch (self.sort) {
+                        .name, .kind => {},
+                        .name_desc => return std.ascii.lessThanIgnoreCase(db.manifest.label, da.manifest.label),
+                        .source => {
+                            const c = std.ascii.orderIgnoreCase(da.root, db.root);
+                            if (c != .eq) return c == .lt;
+                        },
+                    }
+                    return std.ascii.lessThanIgnoreCase(da.manifest.label, db.manifest.label);
+                }
+            };
+            std.mem.sort(usize, out.items, Ctx{ .list = st.dev, .sort = st.market_sort }, Ctx.lt);
+        },
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The underlying index of the section's cursor on the active tab.
+fn cursorEntry(app: *App) Allocator.Error!?usize {
+    const st = &app.integrations;
+    const rows = try visibleEntries(app, app.frame.allocator());
+    if (st.panel.cursor >= rows.len) return null;
+    return rows[st.panel.cursor];
+}
+
+fn entryAt(app: *App, visible_idx: usize) Allocator.Error!?usize {
+    const rows = try visibleEntries(app, app.frame.allocator());
+    if (visible_idx >= rows.len) return null;
+    return rows[visible_idx];
+}
+
+/// The marketplace entry a `marketplace.*_focused` command acts on: the
+/// menu's row, the active detail pane's, else the section's cursor.
+pub fn marketRow(app: *App) CommandError!usize {
+    const st = &app.integrations;
+    if (st.menu_row) |r| {
+        st.menu_row = null;
+        if (r.tab == .marketplace and r.idx < app.marketplace.entries.len) return r.idx;
+    }
+    if (activeDetail(app)) |ap| if (ap.p.target == .marketplace) if (marketplace.find(app, ap.p.target.marketplace)) |i| return i;
+    if (st.tab == .marketplace) if (try cursorEntry(app)) |i| return i;
+    return app.diag.fail(app.frame.allocator(), "marketplace: open the Marketplace tab and pick an entry first", .{});
+}
+
+/// Enter / a second click on an entry: Installed opens it, the other
+/// tabs open the detail pane.
+fn activate(app: *App, visible_idx: usize) CommandError!void {
+    const st = &app.integrations;
+    const idx = (try entryAt(app, visible_idx)) orelse return;
+    switch (st.tab) {
+        .installed => return openRow(app, idx),
+        .marketplace => return openDetail(app, .{ .marketplace = app.marketplace.entries[idx].id }),
+        .dev => return openDetail(app, .{ .dev = st.dev[idx].dir }),
+    }
+}
+
+pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
+    const st = &app.integrations;
+    switch (try Panel.handleKey(&st.panel, app.gpa, k)) {
+        .consumed => {
+            app.needs_render = true;
+            return true;
+        },
+        .filter_changed => {
+            st.panel.cursor = 0;
+            app.needs_render = true;
+            return true;
+        },
+        .activate => |i| {
+            runToast(app, activate(app, i));
+            return true;
+        },
+        .new_activate => return true,
+        .ignored => {},
+    }
+    if (st.panel.filter_focused) return false;
+    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    switch (k.code) {
+        .esc => {
+            if (app.active) |a| app.focus = .{ .pane = a };
+            return true;
+        },
+        .tab => setTab(app, st.tab.next(showDev(app))),
+        .backtab => setTab(app, st.tab.prev(showDev(app))),
+        .left => setTab(app, st.tab.prev(showDev(app))),
+        .right => setTab(app, st.tab.next(showDev(app))),
+        .char => |c| switch (c) {
+            'h' => setTab(app, st.tab.prev(showDev(app))),
+            'l' => setTab(app, st.tab.next(showDev(app))),
+            '1' => setTab(app, .installed),
+            '2' => runToast(app, showTab(app, .marketplace)),
+            '3' => if (showDev(app)) setTab(app, .dev),
+            'd' => runToast(app, showDetails(app)),
+            'r' => runToast(app, refreshTab(app)),
+            's' => runToast(app, cycleSort(app)),
+            'i' => runToast(app, installFocused(app)),
+            'b' => if (st.tab == .dev) runToast(app, devBuildCmd(app)) else return false,
+            'B' => if (st.tab == .dev) runToast(app, devRebuildCmd(app)) else return false,
+            'e' => if (st.tab == .installed) runToast(app, toggleEnabled(app)) else return false,
+            'm' => runToast(app, showManifest(app)),
+            'y' => runToast(app, copyId(app)),
+            'x' => if (st.tab == .installed) runToast(app, removeCmd(app)) else return false,
+            else => return false,
+        },
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
+}
+
+/// The refresh chip's action for the active tab.
+fn refreshTab(app: *App) CommandError!void {
+    switch (app.integrations.tab) {
+        .installed => return refreshCmd(app),
+        .marketplace => return command.run(app, .{ .static = .@"marketplace.refresh" }),
+        .dev => {
+            try scanDev(app);
+            app.toast("integrations: {d} dev folder{s}", .{ app.integrations.dev.len, if (app.integrations.dev.len == 1) "" else "s" });
+        },
+    }
+}
+
+/// `i`: install the focused marketplace or dev entry.
+fn installFocused(app: *App) CommandError!void {
+    switch (app.integrations.tab) {
+        .installed => return app.diag.fail(app.frame.allocator(), "integrations: already installed — the Marketplace and Dev tabs install", .{}),
+        .marketplace => return command.run(app, .{ .static = .@"marketplace.install_focused" }),
+        .dev => return devInstallCmd(app),
+    }
+}
+
+fn runToast(app: *App, result: CommandError!void) void {
+    result catch |err| switch (err) {
+        error.Canceled => {},
+        else => {
+            if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("integrations: {s}", .{@errorName(err)});
+            app.diag.clear();
+        },
+    };
+}
+
+pub fn focusPanel(app: *App) void {
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .{ .panel = .integrations };
+    app.needs_render = true;
+}
+
+const double_click_ms: i64 = 500;
+
+/// A press on an entry's rows: left selects (twice, or a double click,
+/// activates); right opens the entry's menu.
+pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
+    const st = &app.integrations;
+    switch (m.kind) {
+        .press => {
+            const rows = try visibleEntries(app, app.frame.allocator());
+            if (idx >= rows.len) return;
+            focusPanel(app);
+            st.panel.cursor = idx;
+            if (m.button == .right) return openEntryMenu(app, rows[idx], m.x, m.y);
+            if (m.button != .left) return;
+            const again = if (st.last_click) |lc| lc.tab == st.tab and lc.idx == idx and app.now_ms - lc.at_ms <= double_click_ms else false;
+            st.last_click = .{ .tab = st.tab, .idx = idx, .at_ms = app.now_ms };
+            if (again) {
+                st.last_click = null;
+                runToast(app, activate(app, idx));
+            }
+        },
+        .scroll_up => st.panel.cursor -|= 1,
+        .scroll_down => st.panel.cursor = @min(st.panel.cursor + 1, st.panel.total -| 1),
+        else => {},
+    }
+    app.needs_render = true;
+}
+
+pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
+    if (m.kind != .press) return;
+    const rows = try visibleEntries(app, app.frame.allocator());
+    if (idx >= rows.len) return;
+    focusPanel(app);
+    app.integrations.panel.cursor = idx;
+    try openEntryMenu(app, rows[idx], m.x, m.y);
+}
+
+pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
+    if (m.kind != .press) return;
+    switch (kind) {
+        .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, cycleSort(app)),
+        .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .integrations, m.x, m.y) else runToast(app, refreshTab(app)),
+        .new, .view => {},
+    }
+}
+
+pub fn filterMouse(app: *App, m: Mouse) void {
+    if (m.kind != .press) return;
+    focusPanel(app);
+    app.integrations.panel.filter_focused = true;
+}
+
+pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
+    const st = &app.integrations;
+    const total = st.panel.total;
+    if (total == 0 or bar.h == 0) return;
+    switch (m.kind) {
+        .press, .drag => {
+            focusPanel(app);
+            const off: usize = m.y -| bar.y;
+            st.panel.cursor = @min(off * total / bar.h, total - 1);
+        },
+        .scroll_up => st.panel.cursor -|= 1,
+        .scroll_down => st.panel.cursor = @min(st.panel.cursor + 1, total - 1),
+        else => {},
+    }
+    app.needs_render = true;
+}
+
+/// A press on tab `idx` of the strip.
+pub fn tabClick(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
+    if (m.kind != .press or m.button != .left or idx >= Tab.all.len) return;
+    const tab: Tab = @enumFromInt(idx);
+    if (tab == .dev and !showDev(app)) return;
+    focusPanel(app);
+    runToast(app, showTab(app, tab));
+}
+
+fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    const items = try app.gpa.alloc(command.MenuItem, 4);
+    errdefer app.gpa.free(items);
+    switch (st.tab) {
+        .installed => for (InstalledSort.all, 0..) |s, i| {
+            items[i] = .{ .label = s.menuLabel(), .action = .{ .set_panel_sort = .{ .panel = .integrations, .sort = s.toList() } }, .checked = s == st.installed_sort };
+        },
+        .marketplace, .dev => for (MarketSort.all, 0..) |s, i| {
+            items[i] = .{ .label = s.menuLabel(), .action = .{ .set_panel_sort = .{ .panel = .integrations, .sort = s.toList() } }, .checked = s == st.market_sort };
+        },
+    }
+    try app.openMenu("Sort by", items, x, y);
+}
+
+/// The entry's menu: the actions of its tab, over its real index.
+fn openEntryMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    switch (st.tab) {
+        .installed => return openInstalledMenu(app, idx, x, y),
+        .marketplace => {
+            if (idx >= app.marketplace.entries.len) return;
+            st.menu_row = .{ .tab = .marketplace, .idx = idx };
+            const e = app.marketplace.entries[idx];
+            const installed = st.find(e.id) != null;
+            const items = try app.gpa.dupe(command.MenuItem, &.{
+                .{ .label = if (installed) "Reinstall" else "Install", .action = .{ .command = .@"marketplace.install_focused" } },
+                .{ .label = "Details", .action = .{ .command = .@"marketplace.open_detail_focused" } },
+                .{ .label = "Copy id", .action = .{ .command = .@"marketplace.copy_id_focused" } },
+            });
+            errdefer app.gpa.free(items);
+            try app.openMenu(e.label, items, x, y);
+        },
+        .dev => {
+            if (idx >= st.dev.len) return;
+            st.menu_row = .{ .tab = .dev, .idx = idx };
+            const d = &st.dev[idx];
+            const installed = st.find(d.id()) != null;
+            const items = try app.gpa.dupe(command.MenuItem, &.{
+                .{ .label = "Build", .action = .{ .command = .@"integrations.dev_build" } },
+                .{ .label = if (installed) "Reinstall" else "Install", .action = .{ .command = .@"integrations.dev_install" } },
+                .{ .label = "Rebuild + reinstall", .action = .{ .command = .@"integrations.dev_rebuild" } },
+                .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" }, .separator_before = true },
+                .{ .label = "Open manifest.zon", .action = .{ .command = .@"integrations.show_manifest" } },
+                .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
+            });
+            errdefer app.gpa.free(items);
+            try app.openMenu(d.manifest.label, items, x, y);
+        },
+    }
+}
+
+fn openInstalledMenu(app: *App, row: usize, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    if (row >= st.list.len) return;
+    st.menu_row = .{ .tab = .installed, .idx = row };
+    const enabled = st.list[row].enabled();
+    const items = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" } },
+        .{ .label = if (enabled) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } },
+        .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" } },
+        .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
+        .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu(st.list[row].manifest.label, items, x, y);
+}
+
+/// The section's frame.
+pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    const st = &app.integrations;
+    if (!st.scanned) try refresh(app);
+    const idxs = try visibleEntries(app, ui.arena);
+    const rows = try ui.arena.alloc(view.Entry, idxs.len);
+    for (idxs, 0..) |i, k| rows[k] = try entryRow(app, ui.arena, i);
+    st.panel.total = rows.len;
+    st.panel.visible = @max((area.h -| view.body_top) + 1, 1) / view.rows_per_entry;
+    if (st.panel.cursor >= rows.len) st.panel.cursor = rows.len -| 1;
+    const q = st.panel.filterText();
+    const empty: list_panel.EmptyState = if (q.len > 0)
+        .{ .message = ui.fmt("No matches for \"{s}\" — Esc clears", .{q}) }
+    else switch (st.tab) {
+        .installed => .{ .message = "Nothing installed yet — try the Marketplace tab", .hint = "or a Dev folder: Install runs <binary> --install" },
+        .marketplace => if (app.marketplace.fetching)
+            .{ .message = if (ui.ascii) "Fetching the sources..." else "Fetching the sources…" }
+        else if (app.marketplace.fetched_at_ms == null)
+            .{ .message = "No marketplace entries yet — run `marketplace.refresh`", .hint = "r fetches the configured sources" }
+        else
+            .{ .message = "Nothing listed — the sources are empty", .hint = "marketplace.sources in config.zon" },
+        .dev => .{ .message = "No dev folders — nothing under integrations.dev_roots", .hint = "a folder is a build.zig with a manifest.zon beside it" },
+    };
+    const caret = view.drawSection(ui, area, .{
+        .tab = st.tab,
+        .counts = .{ st.list.len, app.marketplace.entries.len, st.dev.len },
+        .show_dev = showDev(app),
+        .filter = st.panel.filterText(),
+        .filter_caret = st.panel.filter_caret,
+        .filter_focused = st.panel.filter_focused,
+        .sort_label = sortLabel(app),
+        .rows = rows,
+        .scroll = &st.panel.scroll,
+        .cursor = st.panel.cursor,
+        .focused = ui.isFocused(.{ .panel = .integrations }),
+        .empty = empty,
+        .busy = marketplace.busy(app) or st.job != null,
+        .now_ms = app.now_ms,
+    });
+    if (caret) |c| if (app.focus == .panel and app.focus.panel == .integrations) {
+        app.cursor_pos = .{ .x = c.x, .y = c.y };
+    };
+}
+
+/// One entry of the active tab as the painter wants it.
+fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry {
+    const st = &app.integrations;
+    switch (st.tab) {
+        .installed => {
+            const inst = &st.list[idx];
+            const m = inst.manifest;
+            return .{
+                .glyph = if (m.chip) |c| c.glyph else "",
+                .fallback = if (m.chip) |c| c.fallback else "",
+                .color = if (m.chip) |c| c.color else "",
+                .kind = .installed,
+                .label = m.label,
+                .hidden = !inst.enabled(),
+                .missing = if (inst.binary_found) null else std.fs.path.basename(m.binary),
+                .version = m.version,
+                .line2 = if (m.commands.len > 0) m.commands[0].id else m.binary,
+            };
+        },
+        .marketplace => {
+            const e = app.marketplace.entries[idx];
+            const installed = st.find(e.id) != null;
+            return .{
+                .glyph = e.glyph,
+                .fallback = e.fallback,
+                .color = e.color,
+                .kind = switch (e.kind) {
+                    .launcher => .launcher,
+                    .app => .app,
+                },
+                .label = e.label,
+                .badge = if (e.private) .private else if (e.official) .official else .community,
+                .source = e.source,
+                .line2 = if (e.description.len > 0) e.description else "(no description)",
+                .dim = installed,
+                .installing = if (app.marketplace.installing) |cur| std.mem.eql(u8, cur, e.id) else false,
+            };
+        },
+        .dev => {
+            const d = &st.dev[idx];
+            const m = d.manifest;
+            const installed = st.find(m.id) != null;
+            return .{
+                .glyph = if (m.chip) |c| c.glyph else "",
+                .fallback = if (m.chip) |c| c.fallback else "",
+                .color = if (m.chip) |c| c.color else "",
+                .kind = .dev,
+                .label = m.label,
+                .version = m.version,
+                .badge = if (installed) .installed_here else .not_installed,
+                .source = d.root,
+                .line2 = try arena.dupe(u8, app.relPath(d.dir)),
+                .installing = if (st.job) |j| std.mem.eql(u8, j.dir, d.dir) else false,
+            };
+        },
+    }
+}
+
+// ─── the detail pane ────────────────────────────────────────────────────
+
+fn activeDetail(app: *App) ?struct { id: PaneId, p: *IntegrationsPane } {
     const id = app.active orelse return null;
     const pane = app.panes.get(id) orelse return null;
     return switch (pane.*) {
@@ -445,15 +1532,52 @@ fn activePane(app: *App) ?struct { id: PaneId, p: *IntegrationsPane } {
     };
 }
 
-/// The row a command acts on: the menu's, else the pane's cursor, else
-/// null (a picker is opened).
-fn focusedRow(app: *App) ?usize {
+/// Open (or refocus) the detail pane on `target`.
+pub fn openDetail(app: *App, target: IntegrationsPane.TargetRef) CommandError!void {
+    // One detail pane at a time: retarget an open one.
+    if (app.panes.findKind(.integrations)) |id| {
+        const p = &app.panes.get(id).?.integrations;
+        const copy = try app.gpa.dupe(u8, target.key());
+        p.deinit(app.gpa);
+        p.target = switch (target) {
+            .installed => .{ .installed = copy },
+            .marketplace => .{ .marketplace = copy },
+            .dev => .{ .dev = copy },
+        };
+        p.cursor = 0;
+        app.showPane(id);
+        return;
+    }
+    const copy = try app.gpa.dupe(u8, target.key());
+    errdefer app.gpa.free(copy);
+    const owned: IntegrationsPane.Target = switch (target) {
+        .installed => .{ .installed = copy },
+        .marketplace => .{ .marketplace = copy },
+        .dev => .{ .dev = copy },
+    };
+    const id = try app.panes.add(.{ .integrations = .{ .target = owned } });
+    app.showPane(id);
+}
+
+/// The row a command acts on: the menu's, the detail pane's, else the
+/// section's cursor on the Installed tab, else null (a picker opens).
+fn focusedRow(app: *App) Allocator.Error!?usize {
     const st = &app.integrations;
     if (st.menu_row) |r| {
         st.menu_row = null;
-        if (r < st.list.len) return r;
+        if (r.tab == .installed and r.idx < st.list.len) return r.idx;
+        if (r.tab == .dev and r.idx < st.dev.len) return st.find(st.dev[r.idx].id());
+        return null;
     }
-    if (activePane(app)) |ap| if (app.focus == .pane and ap.p.cursor < st.list.len) return ap.p.cursor;
+    if (activeDetail(app)) |ap| switch (ap.p.target) {
+        .installed => |id| return st.find(id),
+        .dev => |dir| if (st.findDev(dir)) |i| return st.find(st.dev[i].id()),
+        .marketplace => {},
+    };
+    if (app.focus == .panel and app.focus.panel == .integrations) {
+        if (st.tab == .installed) return try cursorEntry(app);
+        if (st.tab == .dev) if (try cursorEntry(app)) |i| return st.find(st.dev[i].id());
+    }
     return null;
 }
 
@@ -494,31 +1618,54 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize) Allocator.Err
 }
 
 fn showDetails(app: *App) CommandError!void {
-    if (focusedRow(app)) |r| return detailsAt(app, r);
+    const st = &app.integrations;
+    // On the Dev / Marketplace tab, the detail pane of the entry under
+    // the cursor (or the menu's row) — installed or not.
+    if (st.menu_row) |r| if (r.tab == .dev and r.idx < st.dev.len) {
+        st.menu_row = null;
+        return openDetail(app, .{ .dev = st.dev[r.idx].dir });
+    };
+    if (app.focus == .panel and app.focus.panel == .integrations) switch (st.tab) {
+        .dev => if (try cursorEntry(app)) |i| return openDetail(app, .{ .dev = st.dev[i].dir }),
+        .marketplace => if (try cursorEntry(app)) |i| return openDetail(app, .{ .marketplace = app.marketplace.entries[i].id }),
+        .installed => {},
+    };
+    if (try focusedRow(app)) |r| return detailsAt(app, r);
     return pickRow(app, .integrations_details, "Integration details");
 }
 
 fn detailsAt(app: *App, i: usize) CommandError!void {
-    try showInstalled(app);
-    const ap = activePane(app) orelse return;
-    ap.p.cursor = i;
-    ap.p.detail = true;
+    const st = &app.integrations;
+    if (i >= st.list.len) return;
+    return openDetail(app, .{ .installed = st.list[i].id() });
 }
 
 fn showManifest(app: *App) CommandError!void {
-    if (focusedRow(app)) |r| return manifestAt(app, r);
+    const st = &app.integrations;
+    // A dev folder's manifest.zon is the file to edit.
+    if (st.menu_row) |r| if (r.tab == .dev and r.idx < st.dev.len) {
+        st.menu_row = null;
+        return openFile(app, st.dev[r.idx].manifest_path);
+    };
+    if (activeDetail(app)) |ap| if (ap.p.target == .dev) if (st.findDev(ap.p.target.dev)) |i| return openFile(app, st.dev[i].manifest_path);
+    if (app.focus == .panel and app.focus.panel == .integrations and st.tab == .dev) if (try cursorEntry(app)) |i| return openFile(app, st.dev[i].manifest_path);
+    if (try focusedRow(app)) |r| return manifestAt(app, r);
     return pickRow(app, .integrations_manifest, "Open manifest");
 }
 
 fn editCmd(app: *App) CommandError!void {
-    if (focusedRow(app)) |r| return manifestAt(app, r);
+    if (try focusedRow(app)) |r| return manifestAt(app, r);
     return pickRow(app, .integrations_manifest, "Edit integration (its manifest)");
 }
 
 fn manifestAt(app: *App, i: usize) CommandError!void {
     const st = &app.integrations;
     if (i >= st.list.len) return;
-    const path = try app.frame.allocator().dupe(u8, st.list[i].path);
+    return openFile(app, st.list[i].path);
+}
+
+fn openFile(app: *App, path_in: []const u8) CommandError!void {
+    const path = try app.frame.allocator().dupe(u8, path_in);
     _ = app.openPath(path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return app.diag.fail(app.frame.allocator(), "cannot open {s}: {s}", .{ path, @errorName(err) }),
@@ -526,7 +1673,7 @@ fn manifestAt(app: *App, i: usize) CommandError!void {
 }
 
 fn toggleEnabled(app: *App) CommandError!void {
-    if (focusedRow(app)) |r| return toggleAt(app, r);
+    if (try focusedRow(app)) |r| return toggleAt(app, r);
     return pickRow(app, .integrations_toggle, "Enable / disable integration");
 }
 
@@ -551,7 +1698,7 @@ fn toggleAt(app: *App, i: usize) CommandError!void {
 }
 
 fn removeCmd(app: *App) CommandError!void {
-    if (focusedRow(app)) |r| return removeAt(app, r);
+    if (try focusedRow(app)) |r| return removeAt(app, r);
     return pickRow(app, .integrations_remove, "Remove integration");
 }
 
@@ -576,6 +1723,8 @@ fn removeAt(app: *App, i: usize) CommandError!void {
 
 pub const remove_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'r', .label = "Remove" }, .{ .key = 'c', .label = "Cancel" } };
 
+/// The confirm's yes: the manifest goes, and with it the commands, the
+/// chip and the segments the next scan no longer finds.
 pub fn removeAccept(app: *App, id: []const u8) Allocator.Error!void {
     const st = &app.integrations;
     const i = st.find(id) orelse return;
@@ -584,12 +1733,27 @@ pub fn removeAccept(app: *App, id: []const u8) Allocator.Error!void {
         app.toast("cannot delete {s}: {s}", .{ app.relPath(path), @errorName(err) });
         return;
     };
+    const copy = try app.frame.allocator().dupe(u8, id);
     try refresh(app);
-    app.toast("removed {s}", .{id});
+    app.toast("removed {s}", .{copy});
 }
 
 fn copyId(app: *App) CommandError!void {
-    if (focusedRow(app)) |r| return copyIdAt(app, r);
+    const st = &app.integrations;
+    if (st.menu_row) |r| if (r.tab == .dev and r.idx < st.dev.len) {
+        st.menu_row = null;
+        try app.clipboard.set(st.dev[r.idx].id(), false);
+        app.toast("copied {s}", .{st.dev[r.idx].id()});
+        return;
+    };
+    if (activeDetail(app)) |ap| {
+        const key = ap.p.target.key();
+        const id: []const u8 = if (ap.p.target == .dev) (if (st.findDev(key)) |d| st.dev[d].id() else std.fs.path.basename(key)) else key;
+        try app.clipboard.set(id, false);
+        app.toast("copied {s}", .{id});
+        return;
+    }
+    if (try focusedRow(app)) |r| return copyIdAt(app, r);
     return pickRow(app, .integrations_copy_id, "Copy integration id");
 }
 
@@ -600,67 +1764,88 @@ fn copyIdAt(app: *App, i: usize) CommandError!void {
     app.toast("copied {s}", .{st.list[i].id()});
 }
 
-fn cycleSort(app: *App) CommandError!void {
-    const ap = activePane(app) orelse return app.diag.fail(app.frame.allocator(), "integrations: no list pane is active", .{});
-    ap.p.sort = if (ap.p.sort == .name) .category else .name;
-    app.toast("integrations: sorted by {s}", .{@tagName(ap.p.sort)});
-}
+/// The detail pane's buttons for its target, in order.
+const Button = enum {
+    open,
+    toggle,
+    edit_manifest,
+    copy_id,
+    refresh,
+    uninstall,
+    install,
+    reinstall,
+    build,
+    rebuild,
 
-fn toggleTab(app: *App) CommandError!void {
-    if (activePane(app) != null) return command.run(app, .{ .static = .@"integrations.show_marketplace" });
-    return showInstalled(app);
-}
-
-fn noDevTab(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "integrations: the In-Development tab is not in this build", .{});
-}
-
-/// The rows in the pane's order (`sort`), as indices into `list`.
-pub fn order(app: *App, arena: Allocator, p: *const IntegrationsPane) Allocator.Error![]usize {
-    const st = &app.integrations;
-    const out = try arena.alloc(usize, st.list.len);
-    for (out, 0..) |*o, i| o.* = i;
-    if (p.sort == .category) {
-        const Ctx = struct {
-            list: []Installed,
-            fn less(self: @This(), a: usize, b: usize) bool {
-                const ca = self.list[a].manifest.category;
-                const cb = self.list[b].manifest.category;
-                const c = std.ascii.orderIgnoreCase(ca, cb);
-                if (c != .eq) return c == .lt;
-                return std.ascii.lessThanIgnoreCase(self.list[a].manifest.label, self.list[b].manifest.label);
-            }
+    fn label(b: Button, app: *App, p: *const IntegrationsPane) []const u8 {
+        return switch (b) {
+            .open => "Open",
+            .toggle => if (p.target == .installed) (if (app.integrations.find(p.target.installed)) |i| (if (app.integrations.list[i].enabled()) "Disable" else "Enable") else "Enable") else "Enable",
+            .edit_manifest => "Edit manifest",
+            .copy_id => "Copy id",
+            .refresh => "Refresh",
+            .uninstall => "Uninstall",
+            .install => "Install",
+            .reinstall => "Reinstall",
+            .build => "Build",
+            .rebuild => "Rebuild + reinstall",
         };
-        std.mem.sort(usize, out, Ctx{ .list = st.list }, Ctx.less);
     }
-    return out;
+};
+
+fn buttonsFor(app: *App, p: *const IntegrationsPane) []const Button {
+    const st = &app.integrations;
+    return switch (p.target) {
+        .installed => &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall },
+        .marketplace => |id| if (st.find(id) != null) &.{ .reinstall, .copy_id, .refresh } else &.{ .install, .copy_id, .refresh },
+        .dev => |dir| if (st.findDev(dir)) |i| (if (st.find(st.dev[i].id()) != null) &.{ .build, .reinstall, .rebuild, .open, .edit_manifest, .copy_id } else &.{ .build, .install, .rebuild, .edit_manifest, .copy_id }) else &.{.refresh},
+    };
 }
 
-pub fn handleKey(app: *App, id: PaneId, p: *IntegrationsPane, k: Key) Allocator.Error!bool {
+/// Fire the detail pane's focused button.
+fn fireButton(app: *App, p: *IntegrationsPane) CommandError!void {
     const st = &app.integrations;
-    const n = st.list.len;
+    const buttons = buttonsFor(app, p);
+    if (p.cursor >= buttons.len) return;
+    switch (buttons[p.cursor]) {
+        .open => switch (p.target) {
+            .installed => |id| if (st.find(id)) |i| return openRow(app, i),
+            .dev => |dir| if (st.findDev(dir)) |d| if (st.find(st.dev[d].id())) |i| return openRow(app, i),
+            .marketplace => {},
+        },
+        .toggle => if (try focusedRow(app)) |i| return toggleAt(app, i),
+        .edit_manifest => return showManifest(app),
+        .copy_id => return copyId(app),
+        .refresh => return refreshCmd(app),
+        .uninstall => if (try focusedRow(app)) |i| return removeAt(app, i),
+        .install, .reinstall => switch (p.target) {
+            .marketplace => return command.run(app, .{ .static = .@"marketplace.install_focused" }),
+            .dev => return devInstallCmd(app),
+            .installed => {},
+        },
+        .build => return devBuildCmd(app),
+        .rebuild => return devRebuildCmd(app),
+    }
+}
+
+/// Keys in the detail pane: the arrows / h l / tab walk the buttons,
+/// Enter fires, Esc / q close.
+pub fn paneKey(app: *App, id: PaneId, p: *IntegrationsPane, k: Key) Allocator.Error!bool {
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    const n = buttonsFor(app, p).len;
     switch (k.code) {
-        .down => p.cursor = @min(p.cursor + 1, n -| 1),
-        .up => p.cursor -|= 1,
+        .left, .up, .backtab => p.cursor -|= 1,
+        .right, .down, .tab => p.cursor = @min(p.cursor + 1, n -| 1),
         .home => p.cursor = 0,
         .end => p.cursor = n -| 1,
-        .enter => runToast(app, openRow(app, p.cursor)),
+        .enter => runToast(app, fireButton(app, p)),
         .esc => try app.forceClosePane(id),
         .char => |c| switch (c) {
-            'j' => p.cursor = @min(p.cursor + 1, n -| 1),
-            'k' => p.cursor -|= 1,
-            'g' => p.cursor = 0,
-            'G' => p.cursor = n -| 1,
+            'h', 'k' => p.cursor -|= 1,
+            'l', 'j' => p.cursor = @min(p.cursor + 1, n -| 1),
             'q' => try app.forceClosePane(id),
-            'd' => p.detail = !p.detail,
+            'y' => runToast(app, copyId(app)),
             'r' => runToast(app, refreshCmd(app)),
-            'e' => runToast(app, toggleAt(app, p.cursor)),
-            'm' => runToast(app, manifestAt(app, p.cursor)),
-            'y' => runToast(app, copyIdAt(app, p.cursor)),
-            'x' => runToast(app, removeAt(app, p.cursor)),
-            's' => runToast(app, cycleSort(app)),
-            'M' => runToast(app, command.run(app, .{ .static = .@"integrations.show_marketplace" })),
             else => return false,
         },
         else => return false,
@@ -669,83 +1854,95 @@ pub fn handleKey(app: *App, id: PaneId, p: *IntegrationsPane, k: Key) Allocator.
     return true;
 }
 
-fn runToast(app: *App, result: CommandError!void) void {
-    result catch |err| switch (err) {
-        error.Canceled => {},
-        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("integrations: {s}", .{@errorName(err)}),
-    };
-}
-
-/// A press on row `hit` (an index into `order`): left selects, twice
-/// opens; right opens the menu.
-pub fn click(app: *App, id: PaneId, p: *IntegrationsPane, hit: u32, m: Mouse) Allocator.Error!void {
+/// A press on button `hit` of the detail pane.
+pub fn click(app: *App, id: PaneId, p: *IntegrationsPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     _ = id;
-    const rows = try order(app, app.frame.allocator(), p);
-    if (hit >= rows.len) return;
-    const row = rows[hit];
-    if (m.button == .right) {
-        app.integrations.menu_row = row;
-        return openRowMenu(app, row, m.x, m.y);
-    }
-    if (p.cursor == row) {
-        runToast(app, openRow(app, row));
-    } else p.cursor = row;
+    if (m.kind != .press or m.button != .left) return;
+    if (hit_id >= buttonsFor(app, p).len) return;
+    p.cursor = hit_id;
+    runToast(app, fireButton(app, p));
+    app.needs_render = true;
 }
 
 pub fn scrollBy(app: *App, p: *IntegrationsPane, delta: i64) void {
-    const n = app.integrations.list.len;
+    const n: i64 = @intCast(buttonsFor(app, p).len);
     const cur: i64 = @intCast(p.cursor);
-    p.cursor = @intCast(std.math.clamp(cur + delta, 0, @as(i64, @intCast(n -| 1))));
-}
-
-fn openRowMenu(app: *App, row: usize, x: u16, y: u16) Allocator.Error!void {
-    const st = &app.integrations;
-    if (row >= st.list.len) return;
-    st.menu_row = row;
-    const enabled = st.list[row].enabled();
-    const items = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" } },
-        .{ .label = if (enabled) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } },
-        .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" } },
-        .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
-        .{ .label = "Remove…", .action = .{ .command = .@"integrations.remove" }, .separator_before = true },
-    });
-    errdefer app.gpa.free(items);
-    try app.openMenu(st.list[row].manifest.label, items, x, y);
+    p.cursor = @intCast(std.math.clamp(cur + delta, 0, @max(n - 1, 0)));
 }
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) Allocator.Error!void {
+    const st = &app.integrations;
     const focused = app.active == id and app.focus == .pane;
     if (app.active == id) app.pane_rows = @max(rect.h, 1);
-    const rows = try order(app, ui.arena, p);
-    const st = &app.integrations;
-    const list = try ui.arena.alloc(view.Row, rows.len);
-    for (rows, 0..) |r, i| {
-        const inst = &st.list[r];
-        const sel = r == p.cursor;
-        list[i] = .{
-            .glyph = if (inst.manifest.chip) |c| c.glyph else "",
-            .fallback = if (inst.manifest.chip) |c| c.fallback else "",
-            .color = if (inst.manifest.chip) |c| c.color else "",
-            .label = inst.manifest.label,
-            .id = inst.id(),
-            .version = inst.manifest.version,
-            .category = inst.manifest.category,
-            .enabled = inst.enabled(),
-            .binary_found = inst.binary_found,
-            .selected = sel,
-            .detail = if (sel and p.detail) .{
-                .description = inst.manifest.description,
-                .binary = inst.manifest.binary,
-                .mode = @tagName(inst.manifest.mode),
-                .path = app.relPath(inst.path),
-                .commands = inst.manifest.commands,
-                .settings = inst.manifest.settings,
-                .requires = inst.manifest.requires,
-            } else null,
-        };
+    const buttons = buttonsFor(app, p);
+    const labels = try ui.arena.alloc([]const u8, buttons.len);
+    for (buttons, 0..) |b, i| labels[i] = b.label(app, p);
+    if (p.cursor >= labels.len) p.cursor = labels.len -| 1;
+    var props: view.DetailProps = .{ .label = "", .id = p.target.key(), .buttons = labels, .cursor = p.cursor, .focused = focused };
+    switch (p.target) {
+        .installed => |mid| if (st.find(mid)) |i| {
+            const inst = &st.list[i];
+            fillManifest(&props, inst.manifest);
+            props.origin = ui.fmt("installed · {s}", .{app.relPath(inst.path)});
+            props.status = if (!inst.binary_found) "binary missing" else if (!inst.enabled()) "disabled" else null;
+        } else {
+            props.label = mid;
+            props.description = "not installed — was it uninstalled?";
+        },
+        .marketplace => |mid| if (marketplace.find(app, mid)) |i| {
+            const e = app.marketplace.entries[i];
+            props.label = e.label;
+            props.version = e.version;
+            props.description = e.description;
+            props.glyph = e.glyph;
+            props.fallback = e.fallback;
+            props.color = e.color;
+            props.origin = ui.fmt("marketplace · {s} ({s}){s}", .{ e.source, @tagName(e.kind), if (e.private) " · private" else if (e.official) " · official" else "" });
+            props.binary = e.url;
+            if (st.find(mid)) |k| {
+                fillManifest(&props, st.list[k].manifest);
+                props.status = "installed";
+            }
+            if (app.marketplace.installing) |cur| if (std.mem.eql(u8, cur, mid)) {
+                props.status = if (ui.ascii) "installing..." else "installing…";
+            };
+        } else {
+            props.label = mid;
+            props.description = "not listed — refresh the marketplace";
+        },
+        .dev => |dir| if (st.findDev(dir)) |i| {
+            const d = &st.dev[i];
+            fillManifest(&props, d.manifest);
+            props.origin = ui.fmt("dev · {s} · {s}", .{ d.root, app.relPath(d.dir) });
+            const built = try devBuiltBinary(app, ui.arena, d);
+            props.status = if (st.job != null and std.mem.eql(u8, st.job.?.dir, dir)) (if (ui.ascii) "installing..." else "installing…") else if (st.find(d.id()) != null) "installed from here" else if (isFile(app.io, built)) "built, not installed" else "not built";
+        } else {
+            props.label = std.fs.path.basename(dir);
+            props.description = "not a dev folder any more — refresh";
+        },
     }
-    view.draw(ui, id, rect, .{ .rows = list, .scroll = &p.scroll, .focused = focused, .problems = st.problems, .sort = @tagName(p.sort) });
+    view.drawDetail(ui, id, rect, props);
+}
+
+fn fillManifest(props: *view.DetailProps, m: Manifest) void {
+    props.label = m.label;
+    props.id = m.id;
+    props.version = m.version;
+    props.category = m.category;
+    props.description = m.description;
+    props.binary = m.binary;
+    props.mode = @tagName(m.mode);
+    if (m.chip) |c| {
+        props.glyph = c.glyph;
+        props.fallback = c.fallback;
+        props.color = c.color;
+    }
+    props.commands = m.commands;
+    props.settings = m.settings;
+    props.requires = m.requires;
+    props.statusline = m.statusline;
+    props.context_menu = m.context_menu;
+    props.menu_bar = m.menu_bar;
 }
 
 // ─── settings ───────────────────────────────────────────────────────────
@@ -862,6 +2059,8 @@ pub fn loadSettings(app: *App) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const build_options = @import("build_options");
+const screen_mod = @import("../ipc/screen.zig");
 
 const fixture_manifest =
     \\.{
@@ -876,6 +2075,7 @@ const fixture_manifest =
     \\        .{ .id = "hello.open", .title = "Hello: open", .keys = .{ "ctrl+k h" } },
     \\        .{ .id = "hello.shell", .title = "Hello: shell", .ex = "term true" },
     \\    },
+    \\    .statusline = .{ .{ .id = "chip", .text = "H·1", .click_command = "hello.open" } },
     \\    .settings = .{ .{ .key = "greeting", .label = "Greeting", .options = .{ "HELLO", "HOWDY" }, .default = "HELLO" } },
     \\}
     \\
@@ -890,7 +2090,12 @@ fn testApp(tmp: *testing.TmpDir) !App {
     try tmp.dir.createDirPath(testing.io, "ws");
     const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
     defer testing.allocator.free(ws);
-    return App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 20 });
+    return App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 24 });
+}
+
+fn screenText(app: *App) ![]u8 {
+    try app.render();
+    return screen_mod.toTestText(testing.allocator, &app.screen);
 }
 
 test "discovery: manifests become dyn commands with bindings; a broken file is a warning; refresh is idempotent" {
@@ -933,6 +2138,43 @@ test "discovery: manifests become dyn commands with bindings; a broken file is a
     try testing.expectEqualStrings("browser", c[0].id);
     try testing.expectEqualStrings("hello", c[1].id);
     try testing.expect(!c[1].enabled); // the binary is missing
+    // A missing binary sets no statusline segment.
+    try testing.expect(app.ipc_fx.find("hello.chip") == null);
+}
+
+test "a `\\$VAR` binary resolves through the environment; a runnable manifest's statusline entry is a segment, gone on uninstall" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tool", .data = "#!/bin/sh\n" });
+    const with_var = try std.mem.replaceOwned(u8, testing.allocator, fixture_manifest, "/definitely/not/here/mnml-hello", "$HELLO_BIN");
+    defer testing.allocator.free(with_var);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/hello.zon", .data = with_var });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const tool = try std.fs.path.join(testing.allocator, &.{ root, "tool" });
+    defer testing.allocator.free(tool);
+    try env.put("HELLO_BIN", tool);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 24, .env = &env });
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expect(app.integrations.list[0].binary_found);
+    try testing.expectEqualStrings(tool, resolveBinary(&app, app.frame.allocator(), "$HELLO_BIN").?);
+    try testing.expect(resolveBinary(&app, app.frame.allocator(), "$NOPE_BIN") == null);
+    const seg = app.ipc_fx.find("hello.chip").?;
+    try testing.expectEqualStrings("H·1", app.ipc_fx.segments.items[seg].text);
+    try testing.expectEqualStrings("hello.open", app.ipc_fx.segments.items[seg].click_command.?);
+    // The statusline paints it.
+    const txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "H·1") != null);
+    // Uninstall: the segment, the command and the chip go with the file.
+    try removeAccept(&app, "hello");
+    try testing.expect(app.ipc_fx.find("hello.chip") == null);
+    try testing.expect(command.resolve(&app, "hello.open") == null);
+    try testing.expectEqual(@as(usize, 1), (try chips(&app, app.frame.allocator())).len);
 }
 
 test "toggle_enabled rewrites the manifest and the list follows; remove deletes it after a confirm" {
@@ -980,31 +2222,165 @@ test "settings: a manifest setting reads its default, persists a choice, and rea
     try testing.expectEqual(@as(usize, 1), settingIndex(&app2, refs[0]));
 }
 
-test "the pane lists what is installed and its keys act on the cursor" {
+test "the section: Installed lists the manifest in the Rust row shape, the tabs switch, the keys act on the cursor, the detail pane opens" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var app = try testApp(&tmp);
     defer app.deinit();
-    app.tree.visible = false;
+    app.tree.width = 44; // the column these rows read; the pane keeps its buttons row
     try command.run(&app, .{ .static = .@"integrations.show_installed" });
-    try testing.expect(app.panes.findKind(.integrations) != null);
-    try app.render();
-    const txt = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
+    try testing.expect(side.isShown(&app, .integrations));
+    try testing.expect(app.focus == .panel and app.focus.panel == .integrations);
+    var txt = try screenText(&app);
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "INTEGRATIONS") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Hello") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "binary missing") != null);
-    // `d` opens the detail block; `y` copies the id.
-    const id = app.panes.findKind(.integrations).?;
-    const p = &app.panes.get(id).?.integrations;
-    try testing.expect(try handleKey(&app, id, p, .{ .code = .{ .char = 'd' } }));
-    try app.render();
-    const txt2 = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
-    defer testing.allocator.free(txt2);
-    try testing.expect(std.mem.indexOf(u8, txt2, "hello.open") != null);
-    try testing.expect(std.mem.indexOf(u8, txt2, "ctrl+k h") != null);
-    try testing.expect(try handleKey(&app, id, p, .{ .code = .{ .char = 'y' } }));
+    try testing.expect(std.mem.indexOf(u8, txt, "Installed (1)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "H Hello (mnml-hello not installed)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "hello.open") != null);
+    // `tab` walks to the marketplace (no fetch without a source that answers — the empty state).
+    try testing.expect(try handleKey(&app, .{ .code = .tab }));
+    try testing.expectEqual(Tab.marketplace, app.integrations.tab);
+    try testing.expect(try handleKey(&app, .{ .code = .backtab }));
+    try testing.expectEqual(Tab.installed, app.integrations.tab);
+    // `y` copies the id; `d` opens the detail pane with its buttons.
+    try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'y' } }));
     try testing.expectEqualStrings("hello", app.clipboard.text());
+    try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'd' } }));
+    const id = app.panes.findKind(.integrations).?;
+    try testing.expectEqualStrings("hello", app.panes.get(id).?.title());
+    testing.allocator.free(txt);
+    txt = try screenText(&app);
+    try testing.expect(std.mem.indexOf(u8, txt, "[ Open ]  [ Disable ]  [ Edit manifest ]") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "hello.open  Hello: open  ctrl+k h") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "binary missing") != null);
+    // The pane's keys: `l` to Disable, Enter fires it.
+    const p = &app.panes.get(id).?.integrations;
+    try testing.expect(try paneKey(&app, id, p, .{ .code = .{ .char = 'l' } }));
+    try testing.expect(try paneKey(&app, id, p, .{ .code = .enter }));
+    try testing.expect(!app.integrations.list[0].enabled());
+    // The filter narrows to nothing and says so.
+    app.integrations.panel.filter_focused = true;
+    try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'z' } }));
+    testing.allocator.free(txt);
+    txt = try screenText(&app);
+    try testing.expect(std.mem.indexOf(u8, txt, "No matches for \"z\"") != null);
+}
+
+test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a configured root too; a folder without a manifest is skipped" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "ws/sdk/mnml-sdk");
+    try tmp.dir.createDirPath(testing.io, "ws/integrations/sample");
+    try tmp.dir.createDirPath(testing.io, "ws/integrations/nomanifest");
+    try tmp.dir.createDirPath(testing.io, "elsewhere/other");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/integrations/sample/build.zig", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/integrations/nomanifest/build.zig", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/integrations/sample/manifest.zon", .data = ".{ .id = \"sample\", .label = \"Sample\", .binary = \"mnml-sample\", .description = \"A counter\" }" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "elsewhere/other/build.zig", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "elsewhere/other/manifest.zon", .data = ".{ .id = \"other\", .label = \"Other\", .binary = \"mnml-other\" }" });
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    var cfg: config.Config = .{};
+    cfg.integrations.dev_roots = &.{"../elsewhere"};
+    var app = try App.initWith(testing.allocator, testing.io, .{ .cfg = cfg, .workspace = ws, .data_root = root, .cols = 100, .rows = 24 });
+    defer app.deinit();
+    try scanDev(&app);
+    const st = &app.integrations;
+    try testing.expectEqual(@as(usize, 2), st.dev.len);
+    try testing.expectEqualStrings("other", st.dev[0].id());
+    try testing.expectEqualStrings("elsewhere", st.dev[0].root);
+    try testing.expectEqualStrings("sample", st.dev[1].id());
+    try testing.expectEqualStrings("integrations", st.dev[1].root);
+    try testing.expect(showDev(&app));
+    // The Dev tab paints them with their state.
+    app.tree.width = 60;
+    try command.run(&app, .{ .static = .@"integrations.show_in_dev" });
+    try testing.expectEqual(Tab.dev, st.tab);
+    const txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "[dev] Other  not installed  (elsewhere)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[dev] Sample  not installed  (integrations)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "integrations/sample") != null);
+    // Nothing built: the built binary is the folder's zig-out.
+    const built = try devBuiltBinary(&app, app.frame.allocator(), &st.dev[1]);
+    try testing.expect(std.mem.endsWith(u8, built, "integrations/sample/zig-out/bin/mnml-sample"));
+}
+
+/// Poll `tick` until `pred` holds or `ms` elapse.
+fn waitFor(app: *App, ms: u32, ctx: anytype, comptime pred: fn (@TypeOf(ctx)) bool) !void {
+    var waited: u32 = 0;
+    while (waited <= ms) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        if (pred(ctx)) return;
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    return error.TimedOut;
+}
+
+test "install from a dev folder: the prebuilt sample's --install runs in a task pane, the binary is linked, the manifest lands with its chip, command and segment; uninstall removes all of it" {
+    if (!pty_pane.supported) return error.SkipZigTest;
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "ws/dev/sample");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/dev/sample/build.zig", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/dev/sample/manifest.zon", .data = ".{ .id = \"sample\", .label = \"Sample\", .binary = \"$MNML_SAMPLE_INTEGRATION\" }" });
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    try env.put("MNML_SAMPLE_INTEGRATION", exe);
+    var cfg: config.Config = .{};
+    cfg.integrations.dev_roots = &.{"dev"};
+    var app = try App.initWith(testing.allocator, testing.io, .{ .cfg = cfg, .workspace = ws, .data_root = root, .cols = 100, .rows = 24, .env = &env });
+    defer app.deinit();
+    app.tree.width = 60;
+    try command.run(&app, .{ .static = .@"integrations.show_in_dev" });
+    try testing.expectEqual(@as(usize, 1), app.integrations.dev.len);
+    // `i` on the Dev tab: the binary is already built (the env names it), so only --install runs.
+    try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'i' } }));
+    try testing.expect(app.integrations.job != null);
+    const Done = struct {
+        fn done(a: *App) bool {
+            return a.integrations.job == null;
+        }
+    };
+    try waitFor(&app, 20_000, &app, Done.done);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "installed sample") != null);
+    const st = &app.integrations;
+    try testing.expectEqual(@as(usize, 1), st.list.len);
+    try testing.expectEqualStrings("sample", st.list[0].id());
+    try testing.expect(st.list[0].binary_found); // through <root>/bin/mnml-sample
+    try testing.expect(command.resolve(&app, "sample.open") != null);
+    try testing.expect(command.resolve(&app, "sample.hello") != null);
+    try testing.expect(app.ipc_fx.find("sample.chip") != null);
+    const c = try chips(&app, app.frame.allocator());
+    try testing.expectEqualStrings("sample", c[c.len - 1].id);
+    try testing.expect(c[c.len - 1].enabled);
+    // The Dev tab now says so; the Installed tab lists it.
+    var txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "[dev] Sample  installed from here  (dev)") != null);
+    setTab(&app, .installed);
+    testing.allocator.free(txt);
+    txt = try screenText(&app);
+    try testing.expect(std.mem.indexOf(u8, txt, "Sample  0.1.0") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "sample.open") != null);
+    // The ex-backed command toasts.
+    try command.runNamed(&app, "sample.hello");
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "Hello from the sample integration") != null);
+    // Uninstall: everything goes.
+    try removeAccept(&app, "sample");
+    try testing.expectEqual(@as(usize, 0), st.list.len);
+    try testing.expect(command.resolve(&app, "sample.open") == null);
+    try testing.expect(app.ipc_fx.find("sample.chip") == null);
+    try testing.expect(app.integrations.find("sample") == null);
 }
 
 test "a workspace manifest waits for trust: skipped while the workspace is untrusted, registered once it is trusted" {

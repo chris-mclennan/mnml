@@ -32,7 +32,6 @@ const browser_pane = @import("browser_pane.zig");
 const script_pane = @import("script_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
-const marketplace = @import("marketplace.zig");
 const ai_apply = @import("ai_apply.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
@@ -168,10 +167,8 @@ pub const Pane = union(enum) {
     script: script_pane.ScriptPane,
     /// An integration hosted over a mount socket (`mount.open`, a manifest command).
     mount: MountPane,
-    /// The installed integrations (one at a time).
+    /// One integration's detail pane (one at a time).
     integrations: integrations.IntegrationsPane,
-    /// What can be installed (one at a time).
-    marketplace: marketplace.MarketplacePane,
     /// An AI proposal reviewed hunk by hunk before it reaches the editor.
     ai_apply: ai_apply.AiApplyPane,
     /// A Playwright run's results (one at a time).
@@ -189,7 +186,7 @@ pub const Pane = union(enum) {
             .browser => |*b| b.deinit(gpa),
             .script => |*s| s.deinit(gpa),
             .mount => |*m| m.deinit(gpa),
-            .integrations, .marketplace => {},
+            .integrations => |*ip| ip.deinit(gpa),
             .ai_apply => |*a| a.deinit(),
             .tests => |*tp| tp.deinit(gpa, io),
             .flaky => |*fp| fp.deinit(),
@@ -237,8 +234,7 @@ pub const Pane = union(enum) {
             .browser => |*b| return b.title(),
             .script => |*s| return s.title,
             .mount => |*m| return m.title(),
-            .integrations => return "Integrations",
-            .marketplace => return "Marketplace",
+            .integrations => |*ip| return ip.title(),
             .ai_apply => return "ai.apply",
             .tests => |*tp| return tp.title(),
             .flaky => |*fp| return fp.title(),
@@ -249,7 +245,7 @@ pub const Pane = union(enum) {
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 

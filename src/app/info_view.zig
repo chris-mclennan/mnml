@@ -206,6 +206,7 @@ fn sectionTitle(p: app_mod.PanelId) []const u8 {
         .http => "HTTP",
         .outline => "Outline",
         .debug => "Run and debug",
+        .integrations => "Integrations",
     };
 }
 
@@ -215,7 +216,13 @@ fn emptyCopy(app: *App) Copy {
         .tree => .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." },
         // The box is titled with the section (Rust's `Todos`), whichever
         // column it is in.
-        .panel => |p| if (p == .git and app.git_palette.active) .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." } else .{ .title = sectionTitle(p), .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
+        .panel => |p| if (p == .git and app.git_palette.active)
+            .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." }
+        else if (p == .integrations)
+            // Rust's words for the INTEGRATIONS section.
+            .{ .title = sectionTitle(p), .body = "Installed integrations. Enter fires the command. Right-click for Configure / Uninstall." }
+        else
+            .{ .title = sectionTitle(p), .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
         // In git mode the graph pane says nothing of its own and Rust's box
         // shows the sidebar's words.
         .pane => |id| if (app.git_palette.active and app.panes.get(id) != null and app.panes.get(id).?.* == .git_graph)

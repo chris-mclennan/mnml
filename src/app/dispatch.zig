@@ -90,7 +90,6 @@ const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
-const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
 const cmd_browser = @import("cmd_browser.zig");
@@ -171,6 +170,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
             .sessions => try sessions.handleKey(app, k),
+            .integrations => try integrations.handleKey(app, k),
             .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
         };
         if (took) return;
@@ -268,7 +268,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             return;
         },
         .integrations => |*ip| {
-            if (try integrations.handleKey(app, id, ip, k)) return;
+            if (try integrations.paneKey(app, id, ip, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -284,11 +284,6 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .flaky => |*fp| {
             if (try flaky.handleKey(app, id, fp, k)) return;
-            _ = try chordChain(app, k);
-            return;
-        },
-        .marketplace => |*mk| {
-            if (try marketplace.handleKey(app, id, mk, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -769,6 +764,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .todos => try todos.setSort(app, s.sort),
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
+            .integrations => try integrations.setSort(app, s.sort),
             .sessions, .git, .diagnostics, .http, .outline, .debug => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
@@ -1203,6 +1199,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => try git_palette.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
+            .integrations => try integrations.rowMouse(app, pr.idx, m),
             .outline => {},
         },
         .kebab => |pr| switch (pr.panel) {
@@ -1213,6 +1210,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .sessions => try sessions.kebabMouse(app, pr.idx, m),
             .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
+            .integrations => try integrations.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline => {},
         },
         .chip => |c| switch (c.panel) {
@@ -1224,6 +1222,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => try git_palette.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
+            .integrations => try integrations.chipMouse(app, c.kind, m),
             .outline => {},
         },
         .filter_input => |p| switch (p) {
@@ -1235,6 +1234,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => git_palette.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
+            .integrations => integrations.filterMouse(app, m),
             .outline => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
@@ -1247,6 +1247,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git => if (hitRect(app, m.x, m.y)) |r| git_palette.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
+                .integrations => if (hitRect(app, m.x, m.y)) |r| integrations.scrollbarMouse(app, r, m),
                 .outline => {},
             },
             .pane => |id| {
@@ -1490,7 +1491,6 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
-                .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 // A code lens segment sits above `lens_hit_base`; the
                 // `{{VAR}}` spans below it.
                 // The debug toolbar strip's buttons sit above both.
@@ -1647,6 +1647,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // The palette bar's integration chips.
             if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
                 return integrations.chipClick(app, id - integrations_view.chip_base, m);
+            }
+            // The INTEGRATIONS section's tabs.
+            if (id >= integrations_view.tab_base and id < integrations_view.tab_base + integrations_view.Tab.all.len) {
+                return integrations.tabClick(app, id - integrations_view.tab_base, m);
             }
             if (menu_bar.buttonOf(id)) |which| {
                 const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
@@ -1893,7 +1897,6 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         // mount's rows carry the wheel through `.script_hit`.
         .mount => {},
         .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
-        .marketplace => |*mk| marketplace.scrollBy(app, mk, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),

@@ -63,7 +63,9 @@ pub fn surface(s: Section) ?Surface {
         .outline => .{ .panel = .outline },
         // // changed (debug-ui): the DEBUG section is a column surface.
         .debug => .{ .panel = .debug },
-        .search, .integrations, .agents, .cloud_agents => null,
+        // The INTEGRATIONS section is a column too (Rust's sidebar).
+        .integrations => .{ .panel = .integrations },
+        .search, .agents, .cloud_agents => null,
     };
 }
 
@@ -78,6 +80,7 @@ pub fn sectionOfPanel(p: PanelId) Section {
         .http => .http,
         .outline => .outline,
         .debug => .debug,
+        .integrations => .integrations,
     };
 }
 

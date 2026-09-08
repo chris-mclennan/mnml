@@ -354,6 +354,13 @@ otherwise. Copy what you need; leave the rest out.
     .integrations = .{
         .auto_update_cargo = false,
         .auto_update_git = false,
+        // Folders the INTEGRATIONS section's Dev tab scans: every
+        // subfolder with a build.zig and a manifest.zon beside it is an
+        // integration in development (Build / Install / Rebuild +
+        // reinstall from the row). Relative to the workspace, `~`
+        // expanded. A workspace with sdk/mnml-sdk adds its own
+        // integrations/ by itself.
+        .dev_roots = .{ "../my-integrations" },
     },
 
     // ── workspaces ─────────────────────────────────────────────────────
@@ -370,6 +377,13 @@ otherwise. Copy what you need; leave the rest out.
             .{ .crates_keyword = .{ .id = "crates.io", .keyword = "mnml-integration" } },
             .{ .github_launcher_folder = .{ .id = "me/launchers", .repo = "me/launchers", .path = "launchers" } },
             .{ .github_monorepo_apps = .{ .id = "me/apps", .repo = "me/mono", .apps_dir = "apps" } },
+            // A folder on this machine or a mounted share — the private
+            // path: every *.zon in it is a manifest to install as-is,
+            // every subfolder with a build.zig and a manifest.zon a Zig
+            // integration built in place. Relative to the workspace,
+            // `~` expanded. `MNML_MARKETPLACE_LOCAL=<folder>` in the
+            // environment makes such a folder the only source.
+            .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
         },
         .show_dev_tab = false,
     },
