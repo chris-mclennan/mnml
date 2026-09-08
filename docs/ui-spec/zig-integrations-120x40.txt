@@ -26,7 +26,7 @@
    │                          │                                    ^B     toggle tree
    │                          │                                        ^Q     quit
    │──────────────────────────│
-   │ Integrations           ⋮ │                              mnml 0.3.0-dev+gf1f3968-dirty
+   │ Integrations           ⋮ │                                 mnml 0.3.0-dev+g630df94
    │                          │
    │ Installed integrations.  │
    │ Enter fires the command. │
@@ -36,5 +36,5 @@
    │                          │
   │                          │
    │                          │
- TREE   main  󰐙 2  [no file]                              S·sample   F 57% ▲1.0  󱼀 󰐎  WRAP    22:29  ws   —
+ TREE   main  󰐙 2  [no file]                              S·sample   C 74% ±0.0  󱼀 󰐎  WRAP    23:07  ws   —
 
