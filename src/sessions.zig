@@ -5,17 +5,23 @@
 //! scan worker posts `.sessions = *ScanResult`, the snapshot arena keeps
 //! the rows, `handle` adopts the payload, a stale generation is dropped.
 //!
-//! A row is `<glyph> <badge> <name>  <age>`: the source glyph, the state
-//! badge (live / tool / idle / ended), the session's name — an alias the
-//! user gave it, else its last prompt, else the id — and how long ago
-//! its transcript moved. Enter resumes the session in a pty pane to the
-//! right (`claude --resume <id>`); the row menu opens the transcript,
-//! renames, copies the id, deletes the transcript after a confirm.
+//! A row is Rust's card (`src/ui/sessions_panel.rs`), cell for cell:
+//! four rows and a blank one — the accent `▌` down its left, the name
+//! (an alias the user gave it, else its last prompt, else the id) after
+//! a pin, then the transcript's last exchange as `you: …` / `claude: …`
+//! (`exited` alone once the session has ended). Above the cards the
+//! panel is the Zig idiom: the caps header with the sort and refresh
+//! chips, the filter pill, a blank, the green `+ New session` row (a
+//! fresh Claude Code session, `ai.claude_code_new`), a blank. Enter
+//! resumes the session in a pty pane to the right (`claude --resume
+//! <id>`); the row menu pins, moves, renames, opens the transcript,
+//! copies the id, deletes the transcript after a confirm.
 //!
 //! The `sort:` chip is SESSIONS' own axis — State (approval-shaped
 //! first, then live, tool, idle, ended, newest within) or Manual (the
 //! order `J` / `K` build, persisted in the session file with the
-//! aliases). While the panel is shown it rescans every `refresh_ms`.
+//! aliases); pinned sessions lead on either. While the panel is shown
+//! it rescans every `refresh_ms`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -62,14 +68,28 @@ pub const Item = struct {
     /// Unix seconds of the last transcript change.
     last_activity_s: i64,
     last_user_msg: ?[]const u8,
+    last_assistant_msg: ?[]const u8,
     /// Claude Code's confirmation prompt is waiting: the transcript's
     /// last tool use has no result yet and the file has gone quiet.
     needs_approval: bool,
 };
 
-/// What `paintRow` sees: the item plus its display name, resolved
-/// against the aliases on the frame arena.
-pub const RowView = struct { item: Item, name: []const u8 };
+/// What `paintRow` sees: the item and the card's view of it, resolved
+/// on the frame arena — the name (against the aliases), the pin,
+/// whether its pty pane is the active one, the summary rows and the
+/// ticket chip.
+pub const RowView = struct {
+    item: Item,
+    name: []const u8,
+    pinned: bool = false,
+    active: bool = false,
+    /// `exited` alone, the last exchange, or `—`.
+    lines: []const []const u8 = &.{},
+    kind: Summary = .none,
+    ticket: ?[]const u8 = null,
+};
+
+pub const Summary = enum { exited, none, text };
 
 pub const ScanResult = struct {
     arena: std.heap.ArenaAllocator,
@@ -104,6 +124,7 @@ pub const table = .{
     .@"sessions.move_up" = &moveUpCmd,
     .@"sessions.move_down" = &moveDownCmd,
     .@"sessions.all_workspaces" = &allWorkspacesCmd,
+    .@"sessions.pin" = &pinCmd,
 };
 
 /// A shown panel rescans this often (the dashboard's cadence).
@@ -127,6 +148,8 @@ pub const State = struct {
     order: std.ArrayListUnmanaged([]u8) = .empty,
     /// Display names by session id. Owned.
     aliases: std.ArrayListUnmanaged(Alias) = .empty,
+    /// Pinned session ids, in memory for this launch (as Rust's). Owned.
+    pinned: std.ArrayListUnmanaged([]u8) = .empty,
     generation: u32 = 0,
     scanning: bool = false,
     scanned_once: bool = false,
@@ -149,6 +172,8 @@ pub const State = struct {
             gpa.free(a.name);
         }
         self.aliases.deinit(gpa);
+        for (self.pinned.items) |id| gpa.free(id);
+        self.pinned.deinit(gpa);
         if (self.home) |h| gpa.free(h);
         self.filtered.deinit(gpa);
         self.list.deinit(gpa);
@@ -191,6 +216,23 @@ pub const State = struct {
         for (self.order.items, 0..) |o, i| if (std.mem.eql(u8, o, id)) return i;
         return null;
     }
+
+    pub fn isPinned(self: *const State, id: []const u8) bool {
+        for (self.pinned.items) |p| if (std.mem.eql(u8, p, id)) return true;
+        return false;
+    }
+
+    /// Pin, or unpin; the new state.
+    pub fn togglePin(self: *State, gpa: Allocator, id: []const u8) Allocator.Error!bool {
+        for (self.pinned.items, 0..) |p, i| if (std.mem.eql(u8, p, id)) {
+            gpa.free(self.pinned.orderedRemove(i));
+            return false;
+        };
+        const owned = try gpa.dupe(u8, id);
+        errdefer gpa.free(owned);
+        try self.pinned.append(gpa, owned);
+        return true;
+    }
 };
 
 // ─── the scan worker (D1 + D3) ──────────────────────────────────────────
@@ -202,7 +244,7 @@ pub fn refresh(app: *App) CommandError!void {
     const st = &app.sessions;
     st.last_scan_ms = app.now_ms;
     st.scanned_once = true;
-    const home = st.home orelse app.homeDir() orelse {
+    const home = try homeFor(app) orelse {
         st.scanning = false;
         st.snapshot.reset();
         st.items = &.{};
@@ -217,6 +259,24 @@ pub fn refresh(app: *App) CommandError!void {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };
+}
+
+/// `$HOME` as the config loader saw it, else as the children see it (a
+/// `.test` file's `# env:` lines land there; the runner loads no file).
+pub fn envHome(app: *const App) ?[]const u8 {
+    return app.homeDir() orelse app.env.get("HOME");
+}
+
+/// The test override, else `$HOME`. A relative HOME — a `.test` file's
+/// `# env: HOME=home` — is under the workspace, and is kept as the
+/// override so the worker's slice outlives the frame.
+fn homeFor(app: *App) Allocator.Error!?[]const u8 {
+    const st = &app.sessions;
+    if (st.home) |h| return h;
+    const h = envHome(app) orelse return null;
+    if (std.fs.path.isAbsolute(h)) return h;
+    st.home = try std.fs.path.join(app.gpa, &.{ app.workspace, h });
+    return st.home.?;
 }
 
 fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, generation: u32) Io.Cancelable!void {
@@ -261,6 +321,7 @@ pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8,
         .pid = row.pid,
         .last_activity_s = row.last_activity_s,
         .last_user_msg = if (row.last_user_msg) |m| try arena.dupe(u8, m) else null,
+        .last_assistant_msg = if (row.last_assistant_msg) |m| try arena.dupe(u8, m) else null,
         .needs_approval = row.pid != null and row.pending_tool_uses > 0 and row.state != .streaming,
     };
     r.items = items;
@@ -288,6 +349,7 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
         .pid = it.pid,
         .last_activity_s = it.last_activity_s,
         .last_user_msg = if (it.last_user_msg) |m| try arena.dupe(u8, m) else null,
+        .last_assistant_msg = if (it.last_assistant_msg) |m| try arena.dupe(u8, m) else null,
         .needs_approval = it.needs_approval,
     };
     st.items = items;
@@ -307,8 +369,9 @@ fn rank(it: Item) u8 {
     return 1 + it.state.rank();
 }
 
-/// Workspace, state filter and the `/` text narrow; then the axis
-/// orders: State, or the manual list (ids not on it follow, newest first).
+/// Workspace, state filter and the `/` text narrow; then pinned
+/// sessions lead, and the axis orders: State, or the manual list (ids
+/// not on it follow, newest first).
 pub fn refilter(app: *App) Allocator.Error!void {
     const st = &app.sessions;
     st.filtered.clearRetainingCapacity();
@@ -325,6 +388,9 @@ pub fn refilter(app: *App) Allocator.Error!void {
         fn lt(ctx: @This(), a: u32, b: u32) bool {
             const ia = ctx.st.items[a];
             const ib = ctx.st.items[b];
+            const pa = ctx.st.isPinned(ia.session_id);
+            const pb = ctx.st.isPinned(ib.session_id);
+            if (pa != pb) return pa;
             switch (ctx.st.sort) {
                 .auto => {
                     const ra = rank(ia);
@@ -449,7 +515,30 @@ fn allWorkspacesCmd(app: *App) CommandError!void {
     app.toast("sessions: {s}", .{if (app.sessions.all_workspaces) "every workspace" else "this workspace"});
 }
 
-/// Enter / double-click / the menu's first row: resume the session in
+/// `p` / the menu's first row: pin or unpin the selected session;
+/// pinned sessions lead the list on either axis. In memory, as Rust's.
+fn pinCmd(app: *App) CommandError!void {
+    const st = &app.sessions;
+    const arena = app.frame.allocator();
+    const it = st.selected() orelse return app.diag.fail(arena, "sessions: nothing selected", .{});
+    const id = try arena.dupe(u8, it.session_id);
+    const pinned = try st.togglePin(app.gpa, id);
+    try refilter(app);
+    for (st.filtered.items, 0..) |idx, vi| if (std.mem.eql(u8, st.items[idx].session_id, id)) {
+        st.list.cursor = vi;
+        break;
+    };
+    app.needs_render = true;
+    app.toast("{s} {s}", .{ if (pinned) "pinned" else "unpinned", displayName(app, st.selected() orelse it) });
+}
+
+/// The `+ New session` row and the chip's left click: a fresh Claude
+/// Code session, what Rust's chip runs.
+fn newCmd(app: *App) CommandError!void {
+    return command.run(app, .{ .static = new_command });
+}
+
+/// Enter / double-click / the menu's Resume row: resume the session in
 /// a pty pane to the right, in its own cwd.
 fn openCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
@@ -602,7 +691,10 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             runToast(app, openCmd(app));
             return true;
         },
-        .new_activate => {},
+        .new_activate => {
+            runToast(app, newCmd(app));
+            return true;
+        },
         .ignored => {},
     }
     if (st.list.filter_focused) return false;
@@ -616,6 +708,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             switch (c) {
                 'r' => runToast(app, refresh(app)),
                 's' => runToast(app, sortCmd(app)),
+                'p' => runToast(app, pinCmd(app)),
                 'f' => runToast(app, cycleStateCmd(app)),
                 'w' => runToast(app, allWorkspacesCmd(app)),
                 'o' => runToast(app, openTranscriptCmd(app)),
@@ -676,7 +769,8 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, refresh(app)),
-        .new, .view => {},
+        .new => if (m.button == .right) try openNewMenu(app, m.x, m.y) else runToast(app, newCmd(app)),
+        .view => {},
     }
 }
 
@@ -708,18 +802,34 @@ pub fn focusPanel(app: *App) void {
     app.needs_render = true;
 }
 
+/// Rust's row menu leads with Pin, Move up, Move down, Rename…; the
+/// transcript rows are this module's.
 fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const pinned = if (app.sessions.selected()) |it| app.sessions.isPinned(it.session_id) else false;
     const items = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = "Resume in a terminal", .action = .{ .command = .@"sessions.open" } },
-        .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" } },
-        .{ .label = "Rename…", .action = .{ .command = .@"sessions.rename" }, .separator_before = true },
-        .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } },
-        .{ .label = "Move up", .action = .{ .command = .@"sessions.move_up" }, .separator_before = true },
+        .{ .label = if (pinned) "Unpin" else "Pin", .action = .{ .command = .@"sessions.pin" } },
+        .{ .label = "Move up", .action = .{ .command = .@"sessions.move_up" } },
         .{ .label = "Move down", .action = .{ .command = .@"sessions.move_down" } },
+        .{ .label = "Rename…", .action = .{ .command = .@"sessions.rename" } },
+        .{ .label = "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true },
+        .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" } },
+        .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } },
         .{ .label = "Delete transcript…", .action = .{ .command = .@"sessions.delete" }, .separator_before = true },
     });
     errdefer app.gpa.free(items);
     try app.openMenu("Session", items, x, y);
+}
+
+/// The chip's right click, Rust's batch menu: one session, or a cluster.
+fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const items = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "New session", .action = .{ .command = .@"ai.claude_code_new" } },
+        .{ .label = "Open ×2", .action = .{ .command = .@"ai.claude_code_new_x2" } },
+        .{ .label = "Open ×4", .action = .{ .command = .@"ai.claude_code_new_x4" } },
+        .{ .label = "Open ×8", .action = .{ .command = .@"ai.claude_code_new_x8" } },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("New Claude sessions", items, x, y);
 }
 
 /// SESSIONS' own axis: the two modes name their commands directly.
@@ -734,11 +844,18 @@ fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 
 // ─── draw (D6) ──────────────────────────────────────────────────────────
 
+/// Rust's card: four rows and a blank one (`sessions_panel.rs`, `TAB_H`).
+pub const card_h: u16 = 4;
+pub const card_gap: u16 = 1;
+pub const new_label = "+ New session";
+/// What the `+ New session` row runs — Rust's chip runs the same.
+pub const new_command: command.CommandId = .@"ai.claude_code_new";
+
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const st = &app.sessions;
     if (!st.scanned_once and !st.scanning) refresh(app) catch {};
     const rows = try ui.arena.alloc(RowView, st.filtered.items.len);
-    for (st.filtered.items, 0..) |idx, i| rows[i] = .{ .item = st.items[idx], .name = displayName(app, st.items[idx]) };
+    for (st.filtered.items, 0..) |idx, i| rows[i] = try rowView(app, ui.arena, st.items[idx]);
     var in_ws: usize = 0;
     const ws_name = std.fs.path.basename(app.workspace);
     for (st.items) |it| if (st.all_workspaces or inWorkspace(it, app.workspace, ws_name)) {
@@ -751,7 +868,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         ui.fmt(" ({d} of {d} · {s})", .{ rows.len, in_ws, @tagName(s) })
     else
         ui.fmt(" ({d} of {d})", .{ rows.len, in_ws });
-    const no_home = st.home == null and app.homeDir() == null;
+    const no_home = st.home == null and envHome(app) == null;
     const empty: list_panel.EmptyState = if (st.scanning and st.items.len == 0)
         .{ .message = "Scanning sessions…" }
     else if (no_home)
@@ -762,7 +879,6 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .{ .message = "No sessions yet." }
     else
         .{ .message = "No matches — Esc clears" };
-    now_s = Io.Timestamp.now(app.io, .real).toSeconds();
     const caret = Panel.draw(&st.list, ui, area, .{
         .panel = .sessions,
         .label = "SESSIONS",
@@ -773,52 +889,130 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .paintRow = paintRow,
         .has_kebab = true,
         .empty = empty,
+        .new_label = new_label,
+        .row_h = card_h,
+        .row_gap = card_gap,
+        .own_marker = true,
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
     if (st.scanning) list_panel.paintSpinner(ui, area, "SESSIONS", app.now_ms);
 }
 
-/// Set by `draw` (the paint callback has no `*App`).
-var now_s: i64 = 0;
-
-fn badgeStyle(t: *const Theme, it: Item, base: vaxis.Style) vaxis.Style {
-    if (it.needs_approval) {
-        var s = Theme.withFg(base, t.warn_fg.fg);
-        s.bold = true;
-        return s;
+/// The card's view of an item, on the frame arena. The summary rows are
+/// Rust's `session_lines_for_card` at rest: `exited` alone for an ended
+/// session, else the transcript's last exchange, else `—`.
+pub fn rowView(app: *App, arena: Allocator, it: Item) Allocator.Error!RowView {
+    const name = displayName(app, it);
+    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    var kind: Summary = .text;
+    if (it.state == .ended) {
+        kind = .exited;
+        try lines.append(arena, "exited");
+    } else {
+        if (it.last_user_msg) |m| if (try collapseWs(arena, m)) |c| try lines.append(arena, try std.fmt.allocPrint(arena, "you: {s}", .{c}));
+        if (it.last_assistant_msg) |m| if (try collapseWs(arena, m)) |c| try lines.append(arena, try std.fmt.allocPrint(arena, "claude: {s}", .{c}));
+        if (lines.items.len == 0) {
+            kind = .none;
+            try lines.append(arena, "—");
+        }
     }
-    return Theme.withFg(base, switch (it.state) {
-        .streaming => t.accent.fg,
-        .tool_call => t.info_fg.fg,
-        .idle => t.fg.fg,
-        .ended => t.muted.fg,
-    });
+    const aliased = app.sessions.alias(it.session_id) != null;
+    return .{
+        .item = it,
+        .name = name,
+        .pinned = app.sessions.isPinned(it.session_id),
+        .active = isActive(app, it.session_id),
+        .lines = lines.items,
+        .kind = kind,
+        .ticket = if (aliased) null else detectTicket(app.cfg.ui.ticket_prefixes, &.{name}),
+    };
 }
 
-/// `<glyph> <badge> <name>  <age>`: the badge coloured by state (an
-/// approval wait in the warning colour), the name in the text colour,
-/// the age dim and right-aligned. The name gives way first.
+/// Newlines and runs of whitespace collapsed to one space, as Rust keeps
+/// a row readable in a narrow card; null when nothing is left.
+fn collapseWs(arena: Allocator, s: []const u8) Allocator.Error!?[]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var it = std.mem.tokenizeAny(u8, s, " \t\r\n");
+    while (it.next()) |w| {
+        if (out.items.len > 0) try out.append(arena, ' ');
+        try out.appendSlice(arena, w);
+    }
+    return if (out.items.len == 0) null else out.items;
+}
+
+/// The session's resumed pty pane is the active pane: its argv names the id.
+fn isActive(app: *App, sid: []const u8) bool {
+    const a = app.active orelse return false;
+    const pane = app.panes.get(a) orelse return false;
+    switch (pane.*) {
+        .pty => |*p| for (p.argv) |arg| {
+            if (std.mem.eql(u8, arg, sid)) return true;
+        },
+        else => {},
+    }
+    return false;
+}
+
+/// Rust's `detect_ticket`: the first `<prefix><digits>` in `candidates`
+/// for the configured `[ui] ticket_prefixes`, the prefix matched without
+/// case; null when there are no prefixes.
+pub fn detectTicket(prefixes: []const []const u8, candidates: []const []const u8) ?[]const u8 {
+    for (candidates) |cand| {
+        if (cand.len == 0) continue;
+        for (prefixes) |p| {
+            if (p.len == 0) continue;
+            var from: usize = 0;
+            while (std.ascii.indexOfIgnoreCasePos(cand, from, p)) |start| {
+                const after = start + p.len;
+                var end = after;
+                while (end < cand.len and std.ascii.isDigit(cand[end])) : (end += 1) {}
+                if (end > after) return cand[start..end];
+                from = after;
+            }
+        }
+    }
+    return null;
+}
+
+/// Rust's card, cell for cell (`sessions_panel.rs`): the accent `▌` down
+/// `x + 1` — cyan on the cursor's card while the panel has focus, green
+/// on the card whose pty pane is the active one, else the ground (Rust
+/// paints a user colour first; there is none here) — then at `x + 3`
+/// the name after a pin `󰐃 ` (bold when active, clipped hard at the
+/// edge), and up to three summary rows clipped to `width − 6` with `…`,
+/// the first with ` · TICKET` when one was detected. No bell, no ports.
 fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     const t = ui.theme;
-    const it = row.item;
-    const base = list_panel.rowStyle(t, selected);
-    var x = r.x;
+    const bg = t.panel_bg;
+    if (r.w < 3 or r.h == 0) return;
+    const focused = ui.isFocused(.{ .panel = .sessions });
+    const accent = if (selected and focused) t.palette.cyan else if (row.active) t.palette.green else bg.bg;
+    const bar = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+    var y: u16 = 0;
+    while (y < r.h) : (y += 1) _ = ui.putStr(r.x + 1, r.y + y, 1, bar, Theme.withFg(bg, accent));
     const end = r.right();
-    const age = list_panel.ageText(ui, now_s, it.last_activity_s);
-    const age_w = ui.width(age);
-    var body_end = end;
-    if (age_w + 2 < end -| x) {
-        _ = ui.putStr(end - age_w, r.y, age_w, age, Theme.onBg(t.muted, base.bg));
-        body_end = end - age_w - 1;
-    }
-    x += ui.putStr(x, r.y, body_end -| x, it.source.glyph(ui.ascii), Theme.withFg(base, t.accent.fg));
-    x += ui.putStr(x, r.y, body_end -| x, " ", base);
-    const badge: []const u8 = if (it.needs_approval) (if (ui.ascii) "! wait" else "▲ wait") else it.state.badge(ui.ascii);
-    x += ui.putStr(x, r.y, body_end -| x, badge, badgeStyle(t, it, base));
-    if (body_end -| x > 3) {
-        x += ui.putStr(x, r.y, body_end -| x, "  ", base);
-        const name_style = if (it.state == .ended) Theme.onBg(t.muted, base.bg) else Theme.onBg(t.fg, base.bg);
-        _ = ui.putStr(x, r.y, body_end -| x, ui.clipStr(row.name, body_end -| x), name_style);
+    var x = r.x + 2;
+    x += ui.putStr(x, r.y, end -| x, " ", bg);
+    if (row.pinned) x += ui.putStr(x, r.y, end -| x, if (ui.ascii) "📌 " else "\u{F0403} ", Theme.withFg(bg, t.palette.orange));
+    var name_style = Theme.withFg(bg, t.fg.fg);
+    name_style.bold = row.active;
+    _ = ui.putStr(x, r.y, end -| x, row.name, name_style);
+    const max_cells: u16 = @max(4, r.w -| 6);
+    const color = switch (row.kind) {
+        .exited => t.palette.red,
+        .none => t.palette.grey,
+        .text => t.muted.fg,
+    };
+    for (row.lines, 0..) |line, i| {
+        if (i >= 3 or i + 1 >= r.h) break;
+        const yy = r.y + 1 + @as(u16, @intCast(i));
+        var xx = r.x + 2;
+        xx += ui.putStr(xx, yy, end -| xx, " ", bg);
+        xx += ui.putStr(xx, yy, end -| xx, ui.clipStr(line, max_cells), Theme.withFg(bg, color));
+        if (i == 0) if (row.ticket) |tk| {
+            xx += ui.putStr(xx, yy, end -| xx, " · ", Theme.withFg(bg, t.muted.fg));
+            _ = ui.putStr(xx, yy, end -| xx, tk, Theme.withFg(bg, t.palette.cyan));
+        };
     }
 }
 
@@ -874,7 +1068,7 @@ const Fixture = struct {
 };
 
 fn item(id: []const u8, state: AgentState, at: i64, ws: []const u8, msg: ?[]const u8) Item {
-    return .{ .source = .claude, .session_id = id, .workspace = ws, .cwd = null, .transcript_path = "/t", .state = state, .pid = null, .last_activity_s = at, .last_user_msg = msg, .needs_approval = false };
+    return .{ .source = .claude, .session_id = id, .workspace = ws, .cwd = null, .transcript_path = "/t", .state = state, .pid = null, .last_activity_s = at, .last_user_msg = msg, .last_assistant_msg = null, .needs_approval = false };
 }
 
 test "refilter: this workspace only unless toggled; State ranks approval, live, tool, idle, ended; Manual follows the order list then recency" {
@@ -980,7 +1174,10 @@ test "headless: the panel lists every workspace's sessions after w, J adopts the
     try testing.expect(f.app.sessions.all_workspaces);
     const txt2 = try f.screen();
     defer testing.allocator.free(txt2);
-    try testing.expect(std.mem.indexOf(u8, txt2, "ended") != null);
+    // The ended Claude fixture is a card: its prompt as the name, `exited` under it.
+    try testing.expect(std.mem.indexOf(u8, txt2, "fix the build") != null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "exited") != null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "+ New session") != null);
     try testing.expectEqual(@as(usize, 2), f.app.sessions.filtered.items.len);
     // J moves the top row down: the visible order becomes the manual list.
     const first = f.app.sessions.items[f.app.sessions.filtered.items[0]].session_id;
@@ -1012,7 +1209,7 @@ test "headless: the panel lists every workspace's sessions after w, J adopts the
     try testing.expect(row0 != null and sort_chip != null);
     try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 7), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 8), f.app.overlay.menu.items.len);
     for (f.app.overlay.menu.items) |it| try testing.expect(it.action == .command);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try f.app.handle(.{ .mouse = .{ .x = sort_chip.?.x + 1, .y = sort_chip.?.y, .kind = .press, .button = .right } });
@@ -1072,4 +1269,240 @@ test "tick rescans a shown panel on the cadence and leaves a hidden one alone" {
     try testing.expectEqual(@as(u32, 1), st.generation);
     try testing.expect(nextDeadlineMs(&f.app) != null);
     try f.settle(2000);
+}
+
+// ─── the card against the spec ──────────────────────────────────────────
+
+const UiFixture = @import("ui/test_fixture.zig");
+const spec_120x40 = @embedFile("ui_spec_rust_sessions_120x40");
+
+/// Screen row `y` of the Rust dump, the sidebar's 26 cells between the
+/// rail's `│` and the divider's, trailing spaces trimmed.
+fn specRow(y: usize) []const u8 {
+    var lines = std.mem.splitScalar(u8, spec_120x40, '\n');
+    var i: usize = 0;
+    while (lines.next()) |line| : (i += 1) if (i == y) {
+        const bar = "│";
+        const first = std.mem.indexOf(u8, line, bar).? + bar.len;
+        const second = std.mem.indexOfPos(u8, line, first, bar).?;
+        return std.mem.trimEnd(u8, line[first..second], " ");
+    };
+    unreachable;
+}
+
+fn cardProps(rows: []const RowView) Panel.Props {
+    return .{
+        .panel = .sessions,
+        .label = "SESSIONS",
+        .subtitle = " (3)",
+        .sort_chip = sortLabel(.auto),
+        .sort_widest = sort_widest,
+        .rows = rows,
+        .paintRow = paintRow,
+        .has_kebab = true,
+        .empty = .{ .message = "No sessions yet." },
+        .new_label = new_label,
+        .row_h = card_h,
+        .row_gap = card_gap,
+        .own_marker = true,
+    };
+}
+
+/// The three cards of `rust-sessions-120x40.txt`, as `rowView` builds them.
+fn specCards() [3]RowView {
+    return .{
+        .{ .item = item("5e551011-0000-4000-8000-000000000003", .ended, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{"exited"}, .kind = .exited },
+        .{ .item = item("5e551011-0000-4000-8000-000000000001", .streaming, 3, "ws", "fix the failing tests in src/main.rs"), .name = "fix the failing tests in src/main.rs", .lines = &.{ "you: fix the failing tests in src/main.rs", "claude: Running the suite first to see which ones fail." }, .kind = .text },
+        .{ .item = item("5e551011-0000-4000-8000-000000000002", .idle, 2, "ws", "add a --json flag to the CLI"), .name = "release train", .lines = &.{ "you: add a --json flag to the CLI", "claude: Added the flag and a test for it. Anything else?" }, .kind = .text },
+    };
+}
+
+test "the card at 26 cells is Rust's, cell for cell: rows 3–18 of rust-sessions-120x40.txt, the top block per the user above them" {
+    var f = try UiFixture.init(26, 20);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = specCards();
+    _ = Panel.draw(&st, f.ui(), f.full(), cardProps(&rows));
+    // The top block: the header, the pill, a blank, the New row, a blank.
+    try f.expectRow(1, "  \u{F0349} / filter");
+    try f.expectRow(2, "");
+    try f.expectRow(3, "  + New session");
+    try f.expectRow(4, "");
+    // Rust's rows 3–18 land on the same screen rows: the chip row, the
+    // blank, the pinned ended card, the live card, the renamed idle card.
+    var buf: [256]u8 = undefined;
+    var y: u16 = 3;
+    while (y <= 18) : (y += 1) try testing.expectEqualStrings(specRow(y), f.row(y, &buf));
+    // Hits: the New chip alone on its row, the blanks take none, a card's
+    // hit covers its four rows and the gap none.
+    try testing.expectEqual(hit.ChipKind.new, f.hits.at(3, 3).?.chip.kind);
+    try testing.expect(f.hits.at(5, 2) == null);
+    try testing.expect(f.hits.at(5, 4) == null);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(20, 8).?.row.idx);
+    try testing.expect(f.hits.at(5, 9) == null);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(5, 10).?.row.idx);
+    try testing.expectEqual(@as(u32, 2), f.hits.at(5, 15).?.row.idx);
+    try testing.expectEqual(hit.PanelId.sessions, f.hits.at(10, 1).?.filter_input);
+    // The selected card keeps the ground; its accent is the cursor's
+    // cyan only while the panel has focus (the fixture focuses a pane).
+    try testing.expect(f.bgEql(10, 5, f.theme.panel_bg));
+    try testing.expect(vaxis.Color.eql(f.style(1, 5).fg, f.theme.panel_bg.bg));
+    try testing.expect(vaxis.Color.eql(f.style(3, 5).fg, f.theme.palette.orange));
+    try testing.expect(vaxis.Color.eql(f.style(3, 6).fg, f.theme.palette.red));
+    try testing.expect(vaxis.Color.eql(f.style(3, 11).fg, f.theme.muted.fg));
+}
+
+test "the card at 30 and 34 cells: the name clips hard at the edge, the summary keeps width − 6 with the ellipsis" {
+    const rows = specCards();
+    var f = try UiFixture.init(30, 20);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    _ = Panel.draw(&st, f.ui(), f.full(), cardProps(&rows));
+    try f.expectRow(5, " \u{258c} \u{F0403} write the release notes f");
+    try f.expectRow(10, " \u{258c} fix the failing tests in sr");
+    try f.expectRow(11, " \u{258c} you: fix the failing te…");
+    try f.expectRow(12, " \u{258c} claude: Running the sui…");
+    var g = try UiFixture.init(34, 20);
+    defer g.deinit();
+    _ = Panel.draw(&st, g.ui(), g.full(), cardProps(&rows));
+    try g.expectRow(10, " \u{258c} fix the failing tests in src/ma");
+    try g.expectRow(11, " \u{258c} you: fix the failing tests …");
+    try g.expectRow(17, " \u{258c} claude: Added the flag and …");
+    // Narrow: nothing off-screen, and a card too narrow for a name is bare.
+    var h = try UiFixture.init(3, 12);
+    defer h.deinit();
+    _ = Panel.draw(&st, h.ui(), h.full(), cardProps(&rows));
+    for (h.hits.items.items) |e| try testing.expect(h.full().intersect(e.rect).eql(e.rect));
+}
+
+test "the summary rows: the last exchange collapsed, exited alone for an ended session, — for none; the ticket chip from ui.ticket_prefixes, hidden by an alias" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    const arena = f.app.frame.allocator();
+    var live = item("live", .streaming, 1, "ws", "fix  the   tests\r\n");
+    live.last_assistant_msg = "On it.\nRunning them now.";
+    const v = try rowView(&f.app, arena, live);
+    try testing.expectEqual(Summary.text, v.kind);
+    try testing.expectEqual(@as(usize, 2), v.lines.len);
+    try testing.expectEqualStrings("you: fix the tests", v.lines[0]);
+    try testing.expectEqualStrings("claude: On it. Running them now.", v.lines[1]);
+    try testing.expectEqualStrings("fix  the   tests", v.name);
+    try testing.expect(!v.pinned and !v.active and v.ticket == null);
+    const ended = try rowView(&f.app, arena, item("gone", .ended, 1, "ws", "anything"));
+    try testing.expectEqual(Summary.exited, ended.kind);
+    try testing.expectEqualStrings("exited", ended.lines[0]);
+    const bare = try rowView(&f.app, arena, item("bare", .idle, 1, "ws", "   "));
+    try testing.expectEqual(Summary.none, bare.kind);
+    try testing.expectEqualStrings("—", bare.lines[0]);
+    try testing.expectEqualStrings("bare", bare.name);
+    // The ticket: the prefix without case, digits required, the first hit.
+    try testing.expect(detectTicket(&.{}, &.{"TE-9"}) == null);
+    try testing.expectEqualStrings("ENG-1234", detectTicket(&.{ "TKT-", "TE-" }, &.{"Review ENG-1234 and te-5"}).?);
+    try testing.expectEqualStrings("te-5", detectTicket(&.{"TE-"}, &.{ "", "TE-foo te-5" }).?);
+    try testing.expect(detectTicket(&.{"TE-"}, &.{"TE-foo"}) == null);
+    f.app.cfg.ui.ticket_prefixes = &.{"TE-"};
+    const ticketed = try rowView(&f.app, arena, item("t", .idle, 1, "ws", "review TE-77 today"));
+    try testing.expectEqualStrings("TE-77", ticketed.ticket.?);
+    try f.app.sessions.setAlias(testing.allocator, "t", "the review");
+    const aliased = try rowView(&f.app, arena, item("t", .idle, 1, "ws", "review TE-77 today"));
+    try testing.expect(aliased.ticket == null);
+    try testing.expectEqualStrings("the review", aliased.name);
+    try testing.expect(aliased.pinned == false);
+    _ = try f.app.sessions.togglePin(testing.allocator, "t");
+    try testing.expect((try rowView(&f.app, arena, item("t", .idle, 1, "ws", "x"))).pinned);
+}
+
+test "pins lead the list on either axis; p toggles and follows the session; the row menu leads with Pin / Unpin; the New chip's right click is the batch menu" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    const ws = std.fs.path.basename(f.root);
+    const r = try ScanResult.create(testing.allocator, 1);
+    const items = try r.arena.allocator().alloc(Item, 3);
+    items[0] = item("live", .streaming, 30, ws, "ship it");
+    items[1] = item("idle", .idle, 20, ws, "fix the tests");
+    items[2] = item("gone", .ended, 10, ws, "notes");
+    r.items = items;
+    st.generation = 1;
+    try handle(&f.app, r);
+    st.scanned_once = true; // the panel must not rescan the real home over these
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
+    // p on the ended session pins it to the top and keeps it selected.
+    f.app.side.of.set(.sessions, .right);
+    f.app.side.right_width = 40;
+    try command.run(&f.app, .{ .static = .@"view.activity_sessions" });
+    focusPanel(&f.app);
+    st.list.cursor = 2;
+    try f.app.handle(.{ .key = Key.char('p') });
+    try testing.expect(st.isPinned("gone"));
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqual(@as(usize, 0), st.list.cursor);
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[1]].session_id);
+    // On the manual axis too, ahead of the order list.
+    try st.order.append(testing.allocator, try testing.allocator.dupe(u8, "idle"));
+    try setSort(&f.app, .manual);
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqualStrings("idle", st.items[st.filtered.items[1]].session_id);
+    try setSort(&f.app, .auto);
+    // The card shows the pin; the menu offers Unpin first, Pin on another.
+    try f.app.render();
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0403} notes") != null);
+    var row0: ?Rect = null;
+    var new_chip: ?Rect = null;
+    for (f.app.hits.items.items) |h| switch (h.target) {
+        .row => |pr| if (pr.panel == .sessions and pr.idx == 0) {
+            row0 = h.rect;
+        },
+        .chip => |c| if (c.panel == .sessions and c.kind == .new) {
+            new_chip = h.rect;
+        },
+        else => {},
+    };
+    try testing.expect(row0 != null and new_chip != null);
+    try testing.expectEqual(card_h, row0.?.h);
+    try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 3, .y = row0.?.y + 2, .kind = .press, .button = .right } });
+    try testing.expect(f.app.overlay == .menu);
+    try testing.expectEqualStrings("Unpin", f.app.overlay.menu.items[0].label);
+    try testing.expectEqual(command.CommandId.@"sessions.pin", f.app.overlay.menu.items[0].action.command);
+    try testing.expectEqualStrings("Move up", f.app.overlay.menu.items[1].label);
+    try testing.expectEqualStrings("Rename…", f.app.overlay.menu.items[3].label);
+    try f.app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(!st.isPinned("gone"));
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
+    try f.app.render();
+    try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 3, .y = row0.?.y, .kind = .press, .button = .right } });
+    try testing.expectEqualStrings("Pin", f.app.overlay.menu.items[0].label);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // The New row runs Rust's command; its right click is the ×2 / ×4 / ×8 menu.
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new", new_command);
+    try f.app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .right } });
+    try testing.expect(f.app.overlay == .menu);
+    try testing.expectEqual(@as(usize, 4), f.app.overlay.menu.items.len);
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new", f.app.overlay.menu.items[0].action.command);
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x8", f.app.overlay.menu.items[3].action.command);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "a relative HOME is under the workspace: what a .test file seeds" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    const root = try testing.allocator.dupe(u8, buf[0..n]);
+    defer testing.allocator.free(root);
+    var vars = std.process.Environ.Map.init(testing.allocator);
+    defer vars.deinit();
+    try vars.put("HOME", "home");
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 80, .rows = 20, .env = &vars });
+    defer app.deinit();
+    const home = (try homeFor(&app)).?;
+    try testing.expect(std.fs.path.isAbsolute(home));
+    try testing.expectEqualStrings("home", std.fs.path.basename(home));
+    try testing.expect(std.mem.startsWith(u8, home, root));
+    try testing.expectEqualStrings(home, app.sessions.home.?);
 }

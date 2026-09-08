@@ -489,6 +489,7 @@ pub const specs = [_]Spec{
     .{ .id = "sessions.move_up", .title = "Sessions: move the selected session up (manual order)", .group = "sessions" },
     .{ .id = "sessions.move_down", .title = "Sessions: move the selected session down (manual order)", .group = "sessions" },
     .{ .id = "sessions.all_workspaces", .title = "Sessions: toggle every workspace's sessions / this one's", .group = "sessions" },
+    .{ .id = "sessions.pin", .title = "Sessions: pin / unpin the selected session (pinned lead the list)", .group = "sessions" },
     // Zig-only: the context-menu rows on a tab, a tree row and the
     // editor body name commands, so these act on "the row / tab the
     // menu was opened on" (the tree cursor; the active pane).
@@ -994,7 +995,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "932 specs, unique ids" {
+test "933 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1006,6 +1007,6 @@ test "932 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 932), specs.len);
+    try std.testing.expectEqual(@as(usize, 933), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

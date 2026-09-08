@@ -3681,3 +3681,52 @@ bottom, and a blank request pane opened in the centre on entry.
   — Zig keeps `HTTP (n)  +  ⟳`; Rust's blank between the two action
   rows and the bottom-pinned rows (the list scrolls instead); the
   ≥ 2-files collection rule.
+
+---
+
+## SESSIONS — Rust's cards (2026-09-07, branch `sessions`) — `// changed:` notes
+
+- `// changed (ui):` `ListPanel.Props` gains `row_h` / `row_gap` — rows
+  per item and blank rows between them; the scroll window, the hits
+  and the paging count items, an item's hit covers all its rows, the
+  kebab sits on its first — and `own_marker`: the row paints its own
+  selection signal (no cursor-line ground, no marker; `paintRow` gets
+  the item rect from `x`). Every other panel is unchanged at the
+  defaults (`1` / `0` / `false`).
+- `// changed (app):` `src/sessions.zig` paints Rust's card
+  (`sessions_panel.rs`, `TAB_H = 4` and a blank row): ` ▌ <name>` with
+  the pin `󰐃 ` (U+F0403) before a pinned name, the name clipped hard at
+  the edge; ` ▌ you: …` / ` ▌ claude: …` from the transcript's last
+  exchange (`Item` gains `last_assistant_msg`; runs of whitespace
+  collapsed as Rust's), `exited` alone for an ended session, `—` for
+  none, each clipped to `width − 6` with the ellipsis; ` · TICKET` after
+  the first summary row from `ui.ticket_prefixes` (Rust's
+  `detect_ticket`, on the display name, hidden by an alias). The accent
+  is cyan on the cursor's card while the panel has focus, green on the
+  card whose pty pane is the active one (its argv names the id), else
+  the ground — Rust paints a user colour first; there is none here. No
+  source glyph, state badge or age on the row (Rust's has none); no
+  bell and no ports chip (nothing here feeds them). The rows are
+  measured against `docs/ui-spec/rust-sessions-120x40.txt` rows 3–18 in
+  the unit test, cell for cell.
+- `// changed (app):` the top block is the Zig idiom, per the user: the
+  caps header with the sort / refresh chips, the filter pill, a blank,
+  the green `+ New session` row (`Props.new_label`; Enter and its click
+  run `ai.claude_code_new`, what Rust's chip runs; its right click is
+  Rust's batch menu ×2 / ×4 / ×8), a blank — so every card sits one row
+  lower than Rust's (`docs/ui-spec/README.md`, `rust-sessions-*.txt`).
+- `// added (app):` `sessions.pin` (`p`; the row menu's first row —
+  Rust's order: Pin / Unpin, Move up, Move down, Rename…, then this
+  panel's Resume / transcript / copy / delete rows): pinned ids lead the
+  list on either axis, in memory for the launch as Rust's
+  `sessions_pinned`. Spec count 935.
+- `// changed (app):` `$HOME` for the scan is the loader's, else the
+  children's (`App.env`, where a `.test` file's `# env:` lines land,
+  the runner loading no file); a relative HOME is under the workspace,
+  so `tests/e2e/sessions_*.test` seed `home/.claude/projects/…` with
+  `write` and `# env: HOME=home`. `tools/seed-sessions-home.sh` is the
+  spec's fake home, with a fake `claude` both editors spawn.
+- Kept from the Zig panel, hover- or width-only or Rust-less: the
+  `/ filter` pill, the scrollbar column when the cards overflow (Rust
+  clips), the kebab on the hovered card, `w` for every workspace, `f`
+  for the state filter, the rename / delete flows.

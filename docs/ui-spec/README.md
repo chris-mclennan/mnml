@@ -120,6 +120,43 @@ workspace at 120×40:
   spacing (`TODOS (0)` vs `TODOS  (0)`), the empty state's `…` clip
   (Rust clips hard), the info box's copy, the version line, and the
   statusline's stock / now-playing chips.
+- `sessions` — `rust-sessions-120x40.txt` / `rust-sessions-80x24.txt`
+  (`steps-sessions.jsonl`): the SESSIONS section on a fake home. Both
+  editors list the Claude Code sessions of `$HOME/.claude/projects`, so
+  the spec is cut on a home of its own: `tools/seed-sessions-home.sh
+  HOME_DIR WS` writes three transcripts of WS (live `…0001`, idle
+  `…0002` renamed "release train", ended `…0003`), a fake `claude` in
+  `HOME_DIR/bin` (on `--resume <sid>` it titles its window `✳ <the
+  session's prompt>`, as Claude Code titles its window with a summary of
+  the conversation, and stays up — the ended one exits), adds the three
+  to `WS/.mnml/session.json` (`claude_sessions`, which Rust resumes at
+  startup — the three pty panes on the right of the dump are the fake's
+  output and not part of the spec) and the alias to `session.zon`, and
+  starts two background copies for the live and the idle session (Zig
+  pairs them through `ps`; `seed-sessions-home.sh stop HOME_DIR` ends
+  them). Run the harness with `HOME=HOME_DIR PATH=HOME_DIR/bin:$PATH`
+  and `--no-copy`: the transcripts name WS, and Rust reads a session's
+  transcript under the workspace's own encoded path, so a private copy
+  of WS finds none and falls back to the pty's grid lines.
+  The steps open the section, right-click the ended card and click
+  `Pin` (row 0 of both menus). Rust's rows, cell for cell: a card of
+  four rows — ` ▌ <name>` (the accent at `x + 1`, a pin `󰐃 ` before a
+  pinned name, the name clipped hard at the edge), ` ▌ you: …` /
+  ` ▌ claude: …` (the transcript's last exchange, each clipped to
+  `width − 6` with `…`; `exited` alone on a dead session), a fourth row
+  for a third line — then a blank row; pinned first, then live, idle,
+  ended. The Zig columns match below the top block; the top block is
+  the Zig idiom (header, filter, a blank, `+ New session`, a blank), so
+  every card sits one row lower than Rust's. At 80×24 one card fits
+  and the ended card is off-screen, so the pin click lands on nothing
+  and that dump is unpinned. Accepted residue: the header's count
+  spacing, the filter pill, the info box's copy, the version line, the
+  statusline chips, the panes on the right, and — Zig's — the
+  scrollbar column when the cards overflow. `src/sessions.zig`'s unit
+  test embeds the 120×40 dump and holds rows 3–18 to it cell for cell;
+  `tests/e2e/sessions_*.test` seed their own home (`# env: HOME=home`,
+  a relative HOME is under the workspace) and need no fake `claude`
+  beyond the one script that starts a sleeping process for a live card.
 - `outline` — `src/main.rs` open, `view.toggle_right_panel`,
   `outline.show`: the outline in the right panel at Rust's 32 cells (the
   divider at 87), a strip row above it (`main.rs ⌥1   󰐕 … ×`,

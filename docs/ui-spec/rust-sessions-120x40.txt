@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │ SESSIONS  (3)          │ 󱸀 fix the failing t… 󰅖   󰐕             │ 󱸀 rel 󰐕         │ 󱸀 writ 󰐕        
+  │ 󰍉 type to filter…▏       │▌claude (fake) 5e551011-0000-4000-8000-00000│▌claude (fake) 5e5510│▌claude (fake) 5e55101
+ 󰍉 │  + New session           │▌0000001                                    │▌11-0000-4000-8000-00│▌1-0000-4000-8000-0000
+ 󰊢 │                          │▌                                           │▌0000000002          │▌00000003
+  │ ▌ 󰐃 write the release not│▌                                           │▌                    │▌^[
+ 󰐱 │ ▌ exited                 │▌                                           │▌                    │▌
+▌󰎒 │ ▌                        │▌                                           │▌                    │▌
+ 󰚩 │ ▌                        │▌                                           │▌                    │▌
+ 󰅣 │                          │▌                                           │▌                    │▌
+  │ ▌ fix the failing tests i│▌                                           │▌                    │▌
+  │ ▌ you: fix the failin…   │▌                                           │▌                    │▌
+  │ ▌ claude: Running the…   │▌                                           │▌                    │▌
+ 󱘣 │ ▌                        │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │ ▌ release train          │▌                                           │▌                    │▌
+   │ ▌ you: add a --json f…   │▌                                           │▌                    │▌
+   │ ▌ claude: Added the f…   │▌                                           │▌                    │▌
+   │ ▌                        │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │──────────────────────────│▌                                           │▌                    │▌
+   │ Sessions               ⋮ │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │ Open Pty sessions. Click │▌                                           │▌                    │▌
+   │ a tab to focus. `×`      │▌                                           │▌                    │▌
+   │ closes.                  │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌                    │▌
+   │                          │▌                                           │▌               ┌────────────────────── × ┐
+  │                          │▌                                           │▌               │ marketplace: 42 entries │
+   │                          │▌                                           │▌               └─────────────────────────┘
+ TREE   main  󰐙 2  [no file]                                                       󱼀 󰐎  WRAP    21:14  ws   —
+
