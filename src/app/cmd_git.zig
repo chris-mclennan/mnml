@@ -79,7 +79,6 @@ pub const table = .{
     .@"git.revert" = &revert,
     .@"git.file_history" = &fileHistory,
     .@"git.browse" = &browseLine,
-    .@"git.browse_line" = &browseLine,
     .@"git.browse_file" = &browseFile,
     .@"git.browse_commit" = &browseCommit,
     .@"git.graph_sort" = &graphSort,

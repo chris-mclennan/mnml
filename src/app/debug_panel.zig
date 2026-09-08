@@ -75,7 +75,6 @@ pub const table = .{
     .@"dap.open_selected" = &openSelected,
     .@"dap.watch_selected" = &watchSelected,
     .@"dap.copy_value" = &copyValue,
-    .@"dap.edit_watch" = &editWatch,
     .@"dap.enable_all_breakpoints" = &enableAll,
     .@"dap.disable_all_breakpoints" = &disableAll,
 };
@@ -499,8 +498,8 @@ fn copyValue(app: *App) CommandError!void {
     app.toast("yanked: {s}{s}", .{ value[0..@min(value.len, 40)], if (value.len > 40) "\u{2026}" else "" });
 }
 
-/// `dap.edit_watch`: a prompt seeded with the selected watch's
-/// expression; accept replaces it in place.
+/// The watch half of `dap.edit_selected`: a prompt seeded with the
+/// selected watch's expression; accept replaces it in place.
 fn editWatch(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const r = (try selected(app)) orelse return app.diag.fail(arena, "debug: no watch under the cursor", .{});
@@ -665,7 +664,7 @@ pub fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
             .{ .label = if (v.row.expanded) "Collapse" else "Expand", .action = .{ .command = .@"dap.toggle_section" }, .separator_before = true },
         } },
         .watch => .{ "Watch", &.{
-            .{ .label = "Edit expression\u{2026}", .action = .{ .command = .@"dap.edit_watch" } },
+            .{ .label = "Edit expression\u{2026}", .action = .{ .command = .@"dap.edit_selected" } },
             .{ .label = "Remove", .action = .{ .command = .@"dap.remove_selected" } },
             .{ .label = "Copy value", .action = .{ .command = .@"dap.copy_value" } },
             .{ .label = "+ Add watch\u{2026}", .action = .{ .command = .@"dap.add_watch" }, .separator_before = true },

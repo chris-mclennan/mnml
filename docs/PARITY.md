@@ -654,7 +654,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | `:messages!` dump | done | `dump` in `messages.zig`, `:messages!` in `ex.zig` | |
 | Persists per workspace | done | `session.zig` `messages` | |
 | Bell chip — three states | done | `SegId.bell` in `src/app/statusline.zig` | always there; the colour carries the level — idle, yellow count, red count; the clock beside it |
-| Zen mode | done | `src/app/zen.zig` (`view.zen` / `view.fullscreen`) | |
+| Zen mode | done | `src/app/zen.zig` (`view.fullscreen`) | |
 | Clickable statusline | done | `SegId` in `src/app/statusline.zig`, `Seg.hit` in `src/ui/statusline.zig`, `.statusline_seg` in `dispatch.zig` | mode / position / file / language / branch / PR / diagnostics / symbol / macro / find / tests / Claude / Codex / coverage / transfer / LSP / WRAP / autosave / size / bell / stress / clock / workspace; host segments above `seg_dyn_base`; `// changed:` the indent, encoding and input-style chips are gone — the Rust row has none, the mode chip cycles the keymap |
 | Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e/palette_bar_clock.test` |
 | Settings overlay | done | `src/app/settings.zig` (`rows`), `src/ui/settings.zig` | 61 discrete rows + 9 number rows (`‹ [32] ›`) — 70, with the activity bar, the debug toolbar strip, the default sidebar side and the inline debugger values among them |

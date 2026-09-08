@@ -148,7 +148,6 @@ pub const table = .{
     .@"dock.close_all" = &closeAll,
     .@"dock.move_corner_next" = &moveCornerNext,
     .@"dock.toggle" = &toggle,
-    .@"dock.add" = &newTextBl,
     .@"dock.add_preset" = &addPreset,
     .@"dock.remove" = &removeFocused,
     .@"dock.edit" = &editFocused,
@@ -735,7 +734,7 @@ fn moveCornerNext(app: *App) CommandError!void {
 
 fn toggle(app: *App) CommandError!void {
     const st = &app.dock;
-    if (st.widgets.items.len == 0) return app.diag.fail(app.frame.allocator(), "dock: no widgets — dock.add starts one", .{});
+    if (st.widgets.items.len == 0) return app.diag.fail(app.frame.allocator(), "dock: no widgets — dock.new_text starts one", .{});
     st.hidden = !st.hidden;
     app.needs_render = true;
 }
