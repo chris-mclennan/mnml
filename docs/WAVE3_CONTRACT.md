@@ -4487,3 +4487,117 @@ place, beside the raw text.
   `dotnet.debug` both ways), `structure.zig` / `syntax.zig` /
   `outline.zig` (the grammar), `runner.zig` (`expandEnv`), and the
   seven `tests/e2e/dotnet_*.test` scripts.
+## Git — diff any two refs, the branch verbs, stash depth, the command log, the detail rows' menu (2026-09-08, branch `git-more2`) — `// changed:` notes
+
+Items 6, 7, 9 and 10 of `docs/research/git-vs-lazygit.md` §3, plus
+right-click audit #101.
+
+- `// changed (git):` `client.DiffScope` gains `range` — `rev` holds
+  `from..to` (`rangeRev`; `rangeTitle` shortens a full sha on either
+  side for the tab) and `path` narrows it to one file. `GraphPane`
+  keeps `compare_base` (a sha, so it survives a log reload): `W` sets
+  or clears it, the mark cell shows `⚑` on the base (`B` in ascii),
+  and the rows in `base..HEAD` (`rangeSet`, reachability over the
+  loaded parents) sit on the raised ground (`pal.bg3`) — nothing
+  changes at rest, so the pane columns match Rust as before. `d` on
+  another row (`diffSelected`) or the row menu's *Diff against ⚑*
+  opens the range diff; *Diff this commit* keeps the plain one. The
+  branches panel's local and remote rows gain *Diff against current*
+  (`GitPaletteAct.diff_current` → `git.diffAgainstCurrent`,
+  `current..branch`, HEAD when detached); `git.diff_against_current`
+  takes the panel's row or a branch picker (`Pick.diff_current`).
+- `// changed (git):` the branch verbs. `Job.new_branch` is `{name,
+  start}` and `worktree_add` gains `start` (a `--detach`ed tree when
+  no branch is made); `branch_rename` (`branch -m`), `fast_forward`
+  (`merge -q --ff-only <upstream>` when checked out — snapshot undo —
+  else `fetch <remote> <ref>:<branch>`; null argv when the upstream
+  has no `remote/` half), `set_upstream` (`branch -u`),
+  `checkout_force` (`checkout -f`, snapshot undo), `delete_remote`
+  (`push <remote> --delete <branch>`), `push_force` (`push
+  --force-with-lease`). The argv builders `newBranchArgs` /
+  `worktreeAddArgs` / `fastForwardArgs` are pure and tested. `git.State`
+  gains `verb_branch` / `verb_start` (the branch a prompt or picker
+  acts on; the commit a new branch / worktree starts from — taken by
+  the prompt's accept); `PromptKind.branch_rename`; `Confirm.
+  checkout_force / delete_remote / push_force`; `Pick.set_upstream`
+  (remote branches only) / `checkout_force` / `delete_remote`. The
+  branches panel's rows carry Rename… / Fast-forward to upstream /
+  Set upstream… / Force checkout… / Delete on the remote… / Push
+  --force-with-lease… (the current row), a remote row Delete on the
+  remote…, a tag row New branch / New worktree from tag…; *New branch
+  from here…* on a branch row now starts at that branch, not HEAD; the
+  graph row menu gains New branch / New worktree from here…. The
+  force-push confirm names the risk — Rust refused a force push
+  outright; this is the deliberate change.
+- `// changed (git):` `Job.stash` is `StashPush {msg, paths,
+  staged_only, keep_index}` (`stashArgs`: `--staged` drops `-u`, which
+  git refuses together). The status pane's menu offers Stash this
+  file… / staged only… / keeping the index… / everything…
+  (`git.stash_file` / `_staged` / `_keep_index` set
+  `State.stash_variant` before the stash prompt). A STASHES row's
+  Enter is `Job.stash_show` (`stash show --name-status
+  --include-untracked`, the flag dropped on an older git) → the
+  `.stash_show` result opens a `Pane.list` of kind `stash_files`
+  (`State.stash_view` names the stash); Enter on a file opens the
+  `.range` diff `ref^..ref` for it. The row menu leads with Show files
+  and adds Branch from stash… (`Job.stash_branch`) and Rename…
+  (`Job.stash_rename`: `rev-parse`, `stash drop`, `stash store -m` —
+  `parse.stashRenameMessage` keeps the `On <branch>: ` half,
+  `stashNote` is what the prompt opens with). The stash lists read
+  `%gs` (the reflog subject) so a rename shows; `stashMessage` finds a
+  ref's message the same way.
+- `// changed (app):` `Pane.list` (`ListPane`) gains the kinds
+  `stash_files` and `git_log`, a `/` filter (`filters(kind)`, `shown`
+  / `entryAt` / `shownCount` over the case-insensitive needle; the
+  filter row paints under the header), `y` (the row's path or text —
+  the command line on the log), and a right-click row menu on the git
+  kinds (`git.openListRowMenu`, on the menu's own arena). Enter on
+  the git kinds goes through `git.stashFileEnter` / `git.logEnter`.
+- `// changed (git):` the command log. `Repo` keeps `events` from
+  `start` and `log_seq`; `gitIn` and `run` time every child and post a
+  `.log_line` result (`LogLine {seq, argv, args, cwd, ok, exit, ms,
+  stderr}` — the first stderr line) as its own `.git` event, so a
+  job's line lands before its outcome. The handler numbers them in
+  arrival order and keeps the last 200 on `git.State.log`
+  (`LogRing`); a failed child sets `last_failed_seq`. A failed op's
+  toast now carries `log_toast_id` and ends in ` · log` (the reason
+  clipped so the link stays inside the box); the op handler records
+  `log_link_seq` = the last failed child; a click on that toast
+  (`dispatch`'s toast arm) or the toast menu's first row opens
+  `git.command_log` at the entry. The pane lists newest first; Enter
+  re-runs a read-only command (`client.isReadOnly`: the listing verbs,
+  and only the listing forms of `branch` / `stash` / `remote` /
+  `worktree` / `config`) through `Job.rerun` (the first output line
+  rides in the toast) and refuses a writing one by name; an open
+  pane refills as lines land, keeping its entry. The ring lives with
+  the handler, not the worker: the worker only posts (D3 — nothing on
+  the UI thread reads worker memory).
+- `// changed (app):` right-click on the graph's detail file rows
+  (audit #101 — Rust's embedded diff rows): a working-tree row offers
+  Open diff / Open file / Stage or Unstage / Discard… / Stash this
+  file… / Copy path; a commit's file row Open the file's diff in this
+  commit / Open file at this revision (`Job.show_file` → `.file_text`
+  → `App.openScratchWith`, a scratch copy) / Copy commit hash (sha) /
+  Copy path / Browse commit on remote (`openDetailRowMenu`). The
+  `git.stage` family reads the graph's WIP detail row when its column
+  has the keys (`git.wipDetailRow`, `cmd_git.selectedRow`).
+- `// added (spec):` twenty-three ids — `git.compare_base`
+  `git.diff_against_base` `git.graph_diff` `git.diff_against_current`
+  `git.branch_rename` `git.fast_forward` `git.set_upstream`
+  `git.checkout_force` `git.delete_remote_branch` `git.new_branch_from`
+  `git.worktree_add_from` `git.push_force` `git.stash_staged`
+  `git.stash_file` `git.stash_keep_index` `git.stash_show`
+  `git.stash_show_diff` `git.stash_branch` `git.stash_rename`
+  `git.command_log` `git.command_log_rerun` `git.graph_detail_open`
+  `git.graph_file_at_rev`. Spec count 1031 (1008 on main + 23).
+- Tests: `client.zig` (`rangeRev` / `rangeTitle`, the branch verbs'
+  argv, `stashArgs`, `isReadOnly`), `parse.zig`
+  (`stashRenameMessage`), `app/git.zig` (the compare base on a seeded
+  repo; the verbs on a seeded bare remote; the stash variants, the
+  files pane, rename and branch; the ring's cap and the log's toast
+  link, re-run and refusal; the detail rows' menus and the scratch
+  copy), and `tests/e2e/git_compare_base`, `git_branch_rename`,
+  `git_fast_forward`, `git_new_branch_from`, `git_stash_staged_pop`,
+  `git_stash_show`, `git_command_log`,
+  `git_graph_detail_rightclick.test`; `git_palette_apply_stash.test`
+  re-aimed (a second click shows the files; Apply is the menu's).
