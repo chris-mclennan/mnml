@@ -644,6 +644,13 @@ test "fallback: rust, python and go shapes" {
     const a = arena.allocator();
     const rs = "pub(crate) fn alpha() {}\nstruct Gamma {\n    x: u32,\n}\nimpl<T> Gamma {\n    pub async fn beta() {}\n}\nconst MAX_N: u32 = 1;\nconst lower: u32 = 2;\n";
     try testing.expectEqualStrings("alpha Gamma Gamma beta MAX_N", try namesOf(a, try fallback(a, rs, "rs")));
+    // C#: the types by keyword, a method by its signature; calls, statements and attributes are not methods.
+    const cs = "namespace Acme.Tests;\n\npublic record Point(int X, int Y);\n\npublic class CalcTests\n{\n    [Fact]\n    public async Task<int> Adds()\n    {\n        Assert.Equal(2, 1 + 1);\n        return await Task.FromResult(1);\n    }\n\n    public int Sub(int a) => a - 1;\n    private static readonly List<int> Cache = new List<int>();\n}\n\ninternal struct P { }\npublic interface IRun { void Run(); }\npublic enum Color { Red }\n";
+    const cs_syms = try fallback(a, cs, "cs");
+    try testing.expectEqualStrings("Acme Point CalcTests Adds Sub P IRun Color", try namesOf(a, cs_syms));
+    try testing.expectEqual(Kind.method, cs_syms[3].kind);
+    try testing.expectEqual(@as(u32, 7), cs_syms[3].line);
+    try testing.expectEqual(Kind.method, cs_syms[4].kind);
     const py = "class Greeter:\n    def __init__(self):\n        pass\n";
     const psyms = try fallback(a, py, "py");
     try testing.expectEqualStrings("Greeter __init__", try namesOf(a, psyms));

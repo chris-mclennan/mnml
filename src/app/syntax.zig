@@ -219,6 +219,43 @@ test "language detection: filename, extension (tsx is tsx), shebang" {
     try testing.expect(keyFor(null, "#!/usr/bin/perl\n") == null);
 }
 
+test "C#: the grammar loads for .cs — highlights, the outline, if/af, the sticky chain, a bracket fold" {
+    try testing.expectEqualStrings("cs", keyFor("/x/Program.cs", "").?);
+    try testing.expectEqualStrings("cs", keyFor("/x/PROGRAM.CS", "").?);
+    const gpa = testing.allocator;
+    const text = "using System;\n\nnamespace Acme;\n\npublic class Calc\n{\n    public int Count { get; set; }\n\n    public int Add(int a, int b)\n    {\n        var s = \"sum\";\n        return a + b;\n    }\n}\n";
+    const ed = try Editor.init(gpa, text);
+    defer ed.deinit();
+    var s = Syntax.init(gpa);
+    defer s.deinit();
+    s.setLanguage("/ws/Calc.cs", ed.bytes());
+    try testing.expect(s.hasLanguage());
+    try s.refresh(ed);
+    try testing.expect(s.hl.spans.items.len >= 12);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const syms = (try s.symbols(ed, arena.allocator())).?;
+    try testing.expectEqual(@as(usize, 4), syms.len);
+    try testing.expectEqualStrings("Acme", syms[0].name);
+    try testing.expectEqualStrings("Calc", syms[1].name);
+    try testing.expectEqualStrings("Count", syms[2].name);
+    try testing.expectEqualStrings("prop", syms[2].kind.label());
+    try testing.expectEqualStrings("Add", syms[3].name);
+    try testing.expectEqualStrings("method", syms[3].kind.label());
+    const at = std.mem.indexOf(u8, text, "return a").?;
+    const inner = s.objectRange(ed, .function, at, false).?;
+    try testing.expectEqualStrings("\n        var s = \"sum\";\n        return a + b;\n    ", text[inner[0]..inner[1]]);
+    const cls = s.objectRange(ed, .class, at, true).?;
+    try testing.expect(std.mem.startsWith(u8, text[cls[0]..cls[1]], "public class Calc"));
+    // Line 11 (`return`) sits under the class (line 4) and the method (line 8).
+    try testing.expectEqualSlices(u32, &.{ 4, 8 }, try s.scopeChain(ed, arena.allocator(), 11));
+    // A fold on the method's opening brace covers its block.
+    ed.placeCursor(9, 4);
+    const fold = @import("cmd_editor.zig").foldRangeAt(ed, 9).?;
+    try testing.expectEqual(@as(usize, 9), fold[0]);
+    try testing.expectEqual(@as(usize, 12), fold[1]);
+}
+
 test "spans follow the text through the edit log: shifted at once, reparsed on refresh" {
     const gpa = testing.allocator;
     const ed = try Editor.init(gpa, "fn a() {}\nfn b() {}\n");
