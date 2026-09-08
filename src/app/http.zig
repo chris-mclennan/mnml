@@ -114,6 +114,9 @@ pub const State = struct {
     /// A send `mnml.http.send` asked for from inside `http_response`;
     /// fired once the hook returns.
     resend_pane: ?PaneId = null,
+    /// The workspace's header usage, for the Headers tab's completion;
+    /// rebuilt after `header_scan_ttl_ms`.
+    header_scan: ?*HeaderScan = null,
     /// The `{{VAR}}` the quick-fix menu was opened on. Owned.
     quick_fix_var: ?[]u8 = null,
     /// Lines a `.ws` file queued for a pane that is still connecting.
@@ -141,6 +144,7 @@ pub const State = struct {
         for (self.ws_queue.items) |q| gpa.free(q.text);
         self.ws_queue.deinit(gpa);
         self.picker_arena.deinit();
+        if (self.header_scan) |hs| hs.destroy(gpa);
     }
 
     pub fn nextJob(self: *State) u64 {
@@ -1579,6 +1583,248 @@ fn saveResponseCmd(app: *App) CommandError!void {
     return @import("cmd_http.zig").openSaveResponsePrompt(app);
 }
 
+// ─── Headers tab completion ─────────────────────────────────────────────
+// The name column completes from what the last response suggests, the
+// names this workspace's `.http` files use, then the bundled table
+// (`http/header_table.zig`); the value column from the response's own
+// values, the workspace's values for that name, the table's, and the
+// env's `{{VAR}}`s. Each source is tagged so the popup says where a row
+// came from.
+
+const header_table = @import("../http/header_table.zig");
+
+pub const HeaderCandidate = struct {
+    label: []const u8,
+    /// `response`, `response ← ETag`, `workspace ×3`, `env`, `` for the table.
+    kind: []const u8,
+    /// The popup's footer and the `?` tip.
+    doc: ?[]const u8,
+};
+
+/// A name or value with how often the workspace's files use it.
+pub const Counted = struct { text: []const u8, count: u32 };
+
+/// One header name's values across the workspace.
+pub const NameValues = struct { name: []const u8, values: []const Counted };
+
+pub const header_scan_ttl_ms: i64 = 5000;
+const header_scan_file_cap: usize = 1 << 20;
+
+/// The workspace's header usage: names by frequency, values per name.
+pub const HeaderScan = struct {
+    arena: std.heap.ArenaAllocator,
+    at_ms: i64,
+    names: []const Counted = &.{},
+    values: []const NameValues = &.{},
+
+    fn destroy(self: *HeaderScan, gpa: Allocator) void {
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
+
+    pub fn valuesFor(self: *const HeaderScan, name: []const u8) []const Counted {
+        for (self.values) |nv| if (std.ascii.eqlIgnoreCase(nv.name, name)) return nv.values;
+        return &.{};
+    }
+};
+
+fn bumpCounted(arena: Allocator, list: *std.ArrayListUnmanaged(Counted), text: []const u8) Allocator.Error!void {
+    for (list.items) |*c| if (std.ascii.eqlIgnoreCase(c.text, text)) {
+        c.count += 1;
+        return;
+    };
+    try list.append(arena, .{ .text = try arena.dupe(u8, text), .count = 1 });
+}
+
+fn sortCounted(list: []Counted) void {
+    std.mem.sort(Counted, list, {}, struct {
+        fn lt(_: void, a: Counted, b: Counted) bool {
+            if (a.count != b.count) return a.count > b.count;
+            return std.ascii.lessThanIgnoreCase(a.text, b.text);
+        }
+    }.lt);
+}
+
+/// The scan, fresh within the TTL. Every request file the HTTP panel
+/// lists (the same capped workspace walk), each block parsed.
+pub fn headerScan(app: *App) Allocator.Error!*const HeaderScan {
+    if (app.http.header_scan) |hs| if (app.now_ms - hs.at_ms < header_scan_ttl_ms) return hs;
+    const panel = @import("http_panel.zig");
+    if (!app.http_panel.scanned_once) try panel.refresh(app);
+    const gpa = app.gpa;
+    const fresh = try gpa.create(HeaderScan);
+    errdefer gpa.destroy(fresh);
+    fresh.* = .{ .arena = std.heap.ArenaAllocator.init(gpa), .at_ms = app.now_ms };
+    errdefer fresh.arena.deinit();
+    const a = fresh.arena.allocator();
+    var names: std.ArrayListUnmanaged(Counted) = .empty;
+    var per_name: std.ArrayListUnmanaged(struct { name: []const u8, values: std.ArrayListUnmanaged(Counted) }) = .empty;
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    for (app.http_panel.files) |rel| {
+        _ = scratch.reset(.retain_capacity);
+        const sa = scratch.allocator();
+        const abs = try std.fs.path.join(sa, &.{ app.workspace, rel });
+        const text = Io.Dir.cwd().readFileAlloc(app.io, abs, sa, .limited(header_scan_file_cap)) catch continue;
+        for (try parse.blocks(sa, text)) |b| {
+            var req = parse.parse(sa, b.text) catch continue;
+            defer req.deinit(sa);
+            for (req.headers.items) |h| {
+                try bumpCounted(a, &names, h.name);
+                var slot: ?usize = null;
+                for (per_name.items, 0..) |pn, i| if (std.ascii.eqlIgnoreCase(pn.name, h.name)) {
+                    slot = i;
+                    break;
+                };
+                if (slot == null) {
+                    try per_name.append(a, .{ .name = try a.dupe(u8, h.name), .values = .empty });
+                    slot = per_name.items.len - 1;
+                }
+                try bumpCounted(a, &per_name.items[slot.?].values, h.value);
+            }
+        }
+    }
+    sortCounted(names.items);
+    const values = try a.alloc(NameValues, per_name.items.len);
+    for (per_name.items, 0..) |*pn, i| {
+        sortCounted(pn.values.items);
+        values[i] = .{ .name = pn.name, .values = pn.values.items };
+    }
+    fresh.names = names.items;
+    fresh.values = values;
+    if (app.http.header_scan) |old| old.destroy(gpa);
+    app.http.header_scan = fresh;
+    return fresh;
+}
+
+/// The response the completion reads: the Done one, else the previous.
+fn lastResponse(rp: *RequestPane) ?*const client.Response {
+    if (rp.response()) |r| return r;
+    if (rp.prev) |*p| return p;
+    return null;
+}
+
+fn hasCandidate(list: []const HeaderCandidate, label: []const u8) bool {
+    for (list) |c| if (std.ascii.eqlIgnoreCase(c.label, label)) return true;
+    return false;
+}
+
+fn hasName(names: []const []const u8, name: []const u8) bool {
+    for (names) |n| if (std.ascii.eqlIgnoreCase(n, name)) return true;
+    return false;
+}
+
+/// The name column's rows, in priority order: the request headers the
+/// last response's headers call for (`ETag` → `If-None-Match`), the
+/// response's own names, the workspace's names most-used first, then
+/// the table. Names already on the tab are left out, except the row
+/// being edited (`editing`).
+pub fn headerNameCandidates(app: *App, rp: *RequestPane, arena: Allocator, present: []const []const u8, editing: ?[]const u8) Allocator.Error![]HeaderCandidate {
+    var out: std.ArrayListUnmanaged(HeaderCandidate) = .empty;
+    const skip = struct {
+        fn f(list: []const HeaderCandidate, on_tab: []const []const u8, edit: ?[]const u8, name: []const u8) bool {
+            if (hasCandidate(list, name)) return true;
+            if (edit) |e| if (std.ascii.eqlIgnoreCase(e, name)) return false;
+            return hasName(on_tab, name);
+        }
+    }.f;
+    if (lastResponse(rp)) |resp| {
+        for (resp.headers) |h| if (header_table.suggestedRequestHeader(h.name)) |want| {
+            if (skip(out.items, present, editing, want)) continue;
+            try out.append(arena, .{ .label = want, .kind = try std.fmt.allocPrint(arena, "response \u{2190} {s}", .{h.name}), .doc = if (header_table.find(want)) |e| e.doc else null });
+        };
+        for (resp.headers) |h| {
+            if (skip(out.items, present, editing, h.name)) continue;
+            try out.append(arena, .{ .label = try arena.dupe(u8, h.name), .kind = "response", .doc = if (header_table.find(h.name)) |e| e.doc else null });
+        }
+    }
+    const scan = try headerScan(app);
+    for (scan.names) |n| {
+        if (skip(out.items, present, editing, n.text)) continue;
+        try out.append(arena, .{ .label = n.text, .kind = try std.fmt.allocPrint(arena, "workspace \u{00D7}{d}", .{n.count}), .doc = if (header_table.find(n.text)) |e| e.doc else null });
+    }
+    for (&header_table.entries) |*e| {
+        if (skip(out.items, present, editing, e.name)) continue;
+        try out.append(arena, .{ .label = e.name, .kind = "", .doc = e.doc });
+    }
+    return out.items;
+}
+
+/// The value column's rows for `name`: the last response's answer (the
+/// paired header's value, the same name's value, a `Set-Cookie`'s
+/// `name=value` for `Cookie`), the workspace's values for the name, the
+/// table's, then the env's `{{VAR}}`s.
+pub fn headerValueCandidates(app: *App, rp: *RequestPane, arena: Allocator, name: []const u8) Allocator.Error![]HeaderCandidate {
+    var out: std.ArrayListUnmanaged(HeaderCandidate) = .empty;
+    const doc: ?[]const u8 = if (header_table.find(name)) |e| e.doc else null;
+    if (lastResponse(rp)) |resp| {
+        if (std.ascii.eqlIgnoreCase(name, "cookie")) {
+            for (resp.headers) |h| if (std.ascii.eqlIgnoreCase(h.name, "set-cookie")) {
+                const nv = std.mem.trim(u8, std.mem.sliceTo(h.value, ';'), " ");
+                if (nv.len == 0 or hasCandidate(out.items, nv)) continue;
+                try out.append(arena, .{ .label = try arena.dupe(u8, nv), .kind = "response \u{2190} Set-Cookie", .doc = doc });
+            };
+        }
+        if (header_table.pairedResponseHeader(name)) |paired| for (resp.headers) |h| {
+            if (!std.ascii.eqlIgnoreCase(h.name, paired) or hasCandidate(out.items, h.value)) continue;
+            try out.append(arena, .{ .label = try arena.dupe(u8, h.value), .kind = try std.fmt.allocPrint(arena, "response \u{2190} {s}", .{h.name}), .doc = doc });
+        };
+        for (resp.headers) |h| {
+            if (!std.ascii.eqlIgnoreCase(h.name, name) or hasCandidate(out.items, h.value)) continue;
+            try out.append(arena, .{ .label = try arena.dupe(u8, h.value), .kind = "response", .doc = doc });
+        }
+    }
+    const scan = try headerScan(app);
+    for (scan.valuesFor(name)) |v| {
+        if (hasCandidate(out.items, v.text)) continue;
+        try out.append(arena, .{ .label = v.text, .kind = try std.fmt.allocPrint(arena, "workspace \u{00D7}{d}", .{v.count}), .doc = doc });
+    }
+    if (header_table.find(name)) |e| for (e.values) |v| {
+        if (hasCandidate(out.items, v)) continue;
+        try out.append(arena, .{ .label = v, .kind = "", .doc = doc });
+    };
+    var set = try loadEnv(app, arena);
+    defer set.deinit();
+    for (set.vars.keys()) |k| {
+        const label = try std.fmt.allocPrint(arena, "{{{{{s}}}}}", .{k});
+        if (hasCandidate(out.items, label)) continue;
+        try out.append(arena, .{ .label = label, .kind = "env", .doc = doc });
+    }
+    return out.items;
+}
+
+/// The one-line description the `?` tip and a hover show for `name`.
+pub fn headerDoc(name: []const u8) ?[]const u8 {
+    return if (header_table.find(name)) |e| e.doc else null;
+}
+
+/// The hit of `pane` under the pointer whose id is in
+/// `[base, base + count)`, scanned back to front like `hoveredVar`.
+pub fn hoveredHitIn(ui: Ui, pane: PaneId, base: u32, count: u32) ?struct { idx: usize, rect: @import("../ui/rect.zig") } {
+    const h = ui.hover orelse return null;
+    var i = ui.hits.items.items.len;
+    while (i > 0) {
+        i -= 1;
+        const e = ui.hits.items.items[i];
+        if (!e.rect.contains(h.x, h.y)) continue;
+        switch (e.target) {
+            .script_hit => |sh| if (sh.pane == pane and sh.id >= base and sh.id < base + count) return .{ .idx = sh.id - base, .rect = e.rect },
+            else => {},
+        }
+        return null;
+    }
+    return null;
+}
+
+/// The rect a `.script_hit` of `pane` with `id` was registered at.
+pub fn hitRectOf(ui: Ui, pane: PaneId, id: u32) ?@import("../ui/rect.zig") {
+    for (ui.hits.items.items) |e| switch (e.target) {
+        .script_hit => |sh| if (sh.pane == pane and sh.id == id) return e.rect,
+        else => {},
+    };
+    return null;
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -2095,4 +2341,89 @@ test "vars: the editor hook paints a request buffer's tokens and gd on one jumps
     try testing.expect(try jumpVarAtCursor(&app));
     try testing.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.doc.path.?, "dev.env"));
     try testing.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
+}
+
+test "Headers completion: names from the last response first (a paired header, then its own), the workspace's next, then the table; values likewise, the env's vars last" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, "api");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "api/a.http", .data = "GET https://x/a\nX-Team: alpha\nAccept: text/csv\n\n###\nGET https://x/b\nX-Team: alpha\nX-Team: beta\n" });
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "TOKEN=abc\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // No response yet: the workspace's names lead, most used first, then the table.
+    const cold = try headerNameCandidates(&app, rp, a, &.{}, null);
+    try testing.expectEqualStrings("X-Team", cold[0].label);
+    try testing.expectEqualStrings("workspace \u{00D7}3", cold[0].kind);
+    try testing.expectEqualStrings("Accept", cold[1].label);
+    try testing.expectEqualStrings("workspace \u{00D7}1", cold[1].kind);
+    try testing.expectEqualStrings("Accept-Charset", cold[2].label);
+    try testing.expectEqualStrings("", cold[2].kind);
+    try testing.expect(cold[2].doc != null);
+    // A response: what it calls for first (ETag → If-None-Match, Content-Type → Accept),
+    // then its own names, then the workspace's, then the table's.
+    const mk = struct {
+        fn h(gpa: Allocator, n: []const u8, v: []const u8) !client.Header {
+            return .{ .name = try gpa.dupe(u8, n), .value = try gpa.dupe(u8, v) };
+        }
+    };
+    const gpa = testing.allocator;
+    const hs = try gpa.alloc(client.Header, 4);
+    hs[0] = try mk.h(gpa, "ETag", "\"abc\"");
+    hs[1] = try mk.h(gpa, "Server", "mock");
+    hs[2] = try mk.h(gpa, "Content-Type", "application/json");
+    hs[3] = try mk.h(gpa, "Set-Cookie", "sid=1; Path=/");
+    try rp.setResponse(.{ .status = 200, .status_text = try gpa.dupe(u8, "OK"), .final_url = try gpa.dupe(u8, "http://x/"), .headers = hs, .body = try gpa.dupe(u8, "{}") });
+    const warm = try headerNameCandidates(&app, rp, a, &.{}, null);
+    try testing.expectEqualStrings("If-None-Match", warm[0].label);
+    try testing.expectEqualStrings("response \u{2190} ETag", warm[0].kind);
+    try testing.expectEqualStrings("Accept", warm[1].label);
+    try testing.expectEqualStrings("response \u{2190} Content-Type", warm[1].kind);
+    try testing.expectEqualStrings("ETag", warm[2].label);
+    try testing.expectEqualStrings("response", warm[2].kind);
+    try testing.expectEqualStrings("Server", warm[3].label);
+    try testing.expectEqualStrings("Content-Type", warm[4].label);
+    try testing.expectEqualStrings("Set-Cookie", warm[5].label);
+    try testing.expectEqualStrings("X-Team", warm[6].label);
+    try testing.expectEqualStrings("workspace \u{00D7}3", warm[6].kind);
+    try testing.expectEqualStrings("Accept-Charset", warm[7].label);
+    // Names already on the tab are left out — except the row being edited.
+    const present = [_][]const u8{ "content-type", "X-Team" };
+    const trimmed = try headerNameCandidates(&app, rp, a, &present, "X-Team");
+    for (trimmed) |c| try testing.expect(!std.ascii.eqlIgnoreCase(c.label, "Content-Type"));
+    try testing.expectEqualStrings("X-Team", trimmed[5].label);
+    // Values: the paired response header's value, then the workspace's,
+    // the table's, the env's `{{VAR}}`s.
+    const inm = try headerValueCandidates(&app, rp, a, "If-None-Match");
+    try testing.expectEqualStrings("\"abc\"", inm[0].label);
+    try testing.expectEqualStrings("response \u{2190} ETag", inm[0].kind);
+    try testing.expectEqualStrings("*", inm[1].label);
+    try testing.expectEqualStrings("{{TOKEN}}", inm[inm.len - 1].label);
+    try testing.expectEqualStrings("env", inm[inm.len - 1].kind);
+    const accept = try headerValueCandidates(&app, rp, a, "accept");
+    try testing.expectEqualStrings("application/json", accept[0].label);
+    try testing.expectEqualStrings("response \u{2190} Content-Type", accept[0].kind);
+    try testing.expectEqualStrings("text/csv", accept[1].label);
+    try testing.expectEqualStrings("workspace \u{00D7}1", accept[1].kind);
+    try testing.expectEqualStrings("*/*", accept[2].label); // application/json deduped from the table
+    try testing.expect(accept[0].doc != null);
+    const cookie = try headerValueCandidates(&app, rp, a, "Cookie");
+    try testing.expectEqualStrings("sid=1", cookie[0].label);
+    try testing.expectEqualStrings("response \u{2190} Set-Cookie", cookie[0].kind);
+    const team = try headerValueCandidates(&app, rp, a, "x-team");
+    try testing.expectEqualStrings("alpha", team[0].label);
+    try testing.expectEqualStrings("workspace \u{00D7}2", team[0].kind);
+    try testing.expectEqualStrings("beta", team[1].label);
+    try testing.expectEqualStrings("{{TOKEN}}", team[2].label);
+    // The description the `?` tip and the hover copy show.
+    try testing.expect(std.mem.startsWith(u8, headerDoc("content-type").?, "The media type"));
+    try testing.expect(headerDoc("X-Team") == null);
 }

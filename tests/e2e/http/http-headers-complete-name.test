@@ -1,0 +1,31 @@
+# The Headers tab is a key / value table like Params. Typing in the
+# name cell completes from the bundled header table; the popup's
+# footer describes the selected name; Enter takes the name and moves on
+# to the value, whose popup lists the values the name is sent with.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+type "https://example.com/api"
+key ctrl+3
+expect screen contains "+ Add row"
+
+# `a` opens a draft row; the name cell fills with a prefix.
+type "a"
+expect screen contains "(value)"
+type "content-ty"
+expect screen contains "Content-Type"
+expect screen contains "The media type of the body"
+key enter
+
+# The value cell: the media types, table order.
+expect screen contains "application/json"
+expect screen contains "multipart/form-data"
+type "urlenc"
+key enter
+key enter
+
+expect screen contains "│ Content-Type"
+expect screen contains "│ application/x-www-form-urlencoded"
+expect screen contains "headers: added"

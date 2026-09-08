@@ -3823,3 +3823,104 @@ menu and the `+` menu are in `docs/ui-spec/` (`rust-menu-file-120x40.txt`,
   motion, no button — `Driver.mouse(.motion)`); the headless IPC
   `hover` already existed.
 
+
+## HTTP hooks + Headers completion (2026-09-07, branch `http-hooks`) — `// changed:` notes
+
+`docs/research/http-vs-posting.md` §3 rows 1–2 and §4-A. Additive
+throughout: two hook variants, one `mnml.http` table in a block of its
+own at the end of `scripting/api.zig`, one new file
+(`src/http/header_table.zig`), and the Headers tab's painter prong.
+
+- `// changed (core):` `Hook` gains `http_request` / `http_response`;
+  their payloads (`HttpRequestArgs`, `HttpResponseArgs`) are not flat —
+  `headers` is a `[]HttpHeader` the Lua bridge turns into a name → value
+  table, and `http_request` carries `rewrite: *HttpRewrite` (gpa-owned
+  `method` / `url` / `headers` / `body`, `clear_body`) that subscribers
+  fill and the emitter applies. `hooks.emit` is unchanged;
+  `Lua.callHook` routes the two to `api.callHttpHook` before its
+  `pushAny` prong, so D10's "flat payloads" rule holds for every other
+  hook and these two are marshalled by hand (`pushHeaderTable`,
+  `readRewrite`). `hooks.http_body_cap` (1 MB) caps the body a
+  subscriber sees; `body_truncated` says so.
+- `// changed (app):` `cmd_http.beforeSend(app, id, rp, &req, env)` is
+  called from `http.fire` after `applyPre` and `expandWith` — the order
+  is directives → expansion → hook, and a returned field goes on the
+  wire as-is (no second expansion; the jar's `Cookie` is added by the
+  transport after). `afterResponse` ends with `emitResponseHook`: jar →
+  schema → `@assert` / `@capture` → `http_response`, so `set_var` lands
+  after the captures. `replayMockFrom` fires `http_response` too.
+  `http.State` gains `hook` (`none` / `request` / `response`) and
+  `resend_pane`: `mnml.http.send` from inside `http_response` is
+  deferred until the hook returns; from inside `http_request` it is a
+  Lua error. Chains, fan-out, bench and the CLI fire neither hook.
+  `cmd_http.setEnvVar` is `writeEnvVar` returning its refusal
+  (`InvalidKey` / `InvalidValue` / `WriteFailed`) for `mnml.http.set_var`.
+- `// changed (app):` `RequestPane.sent_headers` keeps the wire headers
+  (`setSentHeaders`, from `beforeSend`); `ResponseModel.sent_headers`
+  carries them and the Timeline tab lists them under a `Sent` label
+  with `sent_line` — the one place the user sees what a hook or a
+  `@set-header` did.
+- `// changed (app):` the Headers tab is a table. `headers_text` stays
+  the storage (`commit`, `syncHeadersText`, `inlineVar`,
+  `http.insert_header`, the Auth tab's `auth_current` all read it as
+  before); `headerRows` parses it live for the painter with each row's
+  byte range and value offset, so `commitHeaderDraft` rewrites one
+  line, `removeHeaderRow` drops one, and the `{{VAR}}` spans (offsets
+  into the whole text) land in the value cells. `Draft.edit_row` marks
+  an in-place edit; `startHeaderDraft(edit_row)` prefills. `activeBuf`
+  is null on `.headers` (no caret in the text any more): `paste` on the
+  tab appends `Name: value` lines; `varAtCaret` has nothing on the tab
+  — the painted spans' hits still open the quick-fix. Keys
+  (`headersKey`): `j` / `k` / arrows, Enter edits, `a` / `+` adds, `d`
+  / Delete / Backspace drops, `?` toggles the description tip; in a
+  draft Tab flips the cell, Enter commits (an empty name cancels).
+- `// changed (app):` `RequestPane.completion` (`Completion`: the
+  candidates on their own arena, `on_value`, `selected`, `scroll`) is
+  the Headers popup; `refreshCompletion` opens it on the first name
+  character and as soon as the caret lands on the value cell (an empty
+  value lists every known value), rebuilds it when the column changes,
+  closes it when the name cell empties or nothing is known;
+  `visibleCompletion` filters with `ui/fuzzy.zig` every frame, source
+  order preserved among equal scores; Up / Down / Tab / Enter go to the
+  popup first, Esc closes it before the draft. `acceptCompletion` on a
+  name moves the caret on to the value and opens its popup. The popup
+  is painted by `ui/completion_view.zig` from `request_pane.draw`,
+  anchored on the draft cell's caret (`KvPainted.caret`, Headers only);
+  its rows' `.overlay_item` hits are not routed (the LSP popup's
+  `dispatch` prong checks `app.lsp.completion`), so it is keyboard-only.
+- `// changed (app):` the sources, `http.zig`: `headerNameCandidates(app,
+  rp, arena, present, editing)` — the request headers the last
+  response's headers call for (`header_table.pairings`: `ETag` →
+  `If-None-Match`, `Content-Type` → `Accept`, …), the response's own
+  names, the workspace's names most-used first, the table; names
+  already on the tab are left out except the row being edited.
+  `headerValueCandidates(app, rp, arena, name)` — the paired response
+  header's value, the same name's value, a `Set-Cookie`'s `name=value`
+  for `Cookie`, the workspace's values for the name, the table's, the
+  env's `{{VAR}}`s. `headerScan` reads every file `http_panel.files`
+  lists (refreshing the panel once if it never scanned), parses each
+  block, counts names and values; cached on `http.State.header_scan`
+  for `header_scan_ttl_ms` (5 s). `headerDoc(name)` is the `?` / hover
+  copy; `hoveredHitIn` / `hitRectOf` find a hit by id range / id.
+- `// changed (ui):` `drawKvTable` takes a `KvOpts` (kind, hits, add,
+  cursor, focus, and for Headers `value_offs` + `vars` + `tip`) and
+  returns `KvPainted{ rows, caret }`; the `.headers` prong of
+  `drawEdit` paints it on `Model.headers` / `header_value_offs` /
+  `header_tip` (new fields, defaulted). `hit_header_row = 600 + row`,
+  `hit_header_del = 700 + row`. `drawTip` is the one-row tip
+  (`drawVarTip`'s shape) under a row. The old `(Name: value per line)`
+  text area is gone; `tests/e2e/http_request_pane.test` re-aimed at the
+  cells.
+- `// changed (docs):` `docs/LUA.md` — the two hook rows, "The HTTP
+  hooks" (payloads, the returned table, the order, the 1 MB cut,
+  `mnml.http`); `docs/examples/init.lua` carries both hooks.
+- Tests: `hooks:` ×3 in `cmd_http.zig` (the rewrite on the wire after
+  the directives, the response hook after the captures, `set_var`'s
+  round-trip and refusals, the deferred re-send, `body = false`, the
+  truncation rule), `HttpRewrite` in `hooks.zig`, `header_table`'s
+  self-check, `Headers completion:` in `http.zig` (the source order,
+  both columns), `Headers tab:` + `headerRows:` in `request_pane.zig`
+  (the keys), `the Headers table:` in `request_view.zig` (cells, spans,
+  the draft caret, the tip); `tests/e2e/lua_http_hooks.test`,
+  `tests/e2e/http/http-headers-complete-name.test`,
+  `http-headers-complete-value.test`, `http-headers-describe.test`.

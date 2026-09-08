@@ -31,6 +31,8 @@ const env_mod = @import("../http/env.zig");
 const syntax = @import("syntax.zig");
 const editor_mod = @import("../editor/editor.zig");
 const http = @import("http.zig");
+const fuzzy = @import("../ui/fuzzy.zig");
+const completion_view = @import("../ui/completion_view.zig");
 
 pub const Request = parse.Request;
 pub const Response = client.Response;
@@ -97,10 +99,63 @@ pub const Draft = struct {
     key_caret: usize = 0,
     value_caret: usize = 0,
     on_value: bool = false,
+    /// The Headers row being edited in place; null for a new row.
+    edit_row: ?usize = null,
 
     pub fn deinit(self: *Draft, gpa: Allocator) void {
         self.key.deinit(gpa);
         self.value.deinit(gpa);
+    }
+};
+
+/// One `Name: value` line of the Headers tab's text, with where it
+/// sits so a row edit rewrites just that line and the `{{VAR}}` spans
+/// (byte offsets into the whole text) land in the value cell.
+pub const HeaderRow = struct {
+    key: []const u8,
+    value: []const u8,
+    /// The line's byte range in the text, newline excluded.
+    line_start: usize,
+    line_end: usize,
+    /// Where `value` starts in the text.
+    value_off: usize,
+};
+
+/// The Headers tab's rows, parsed from the live text: `Name: value`
+/// per line; blank lines and `#` lines are skipped as `commit` skips
+/// them. On `arena`.
+pub fn headerRows(arena: Allocator, text: []const u8) Allocator.Error![]HeaderRow {
+    var out: std.ArrayListUnmanaged(HeaderRow) = .empty;
+    var off: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| : (off += raw.len + 1) {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        const t = std.mem.trim(u8, line, " \t");
+        if (t.len == 0 or t[0] == '#') continue;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse line.len;
+        const key = std.mem.trim(u8, line[0..colon], " \t");
+        if (key.len == 0) continue;
+        var vs = if (colon < line.len) colon + 1 else line.len;
+        while (vs < line.len and (line[vs] == ' ' or line[vs] == '\t')) vs += 1;
+        const value = std.mem.trimEnd(u8, line[vs..], " \t");
+        try out.append(arena, .{ .key = key, .value = value, .line_start = off, .line_end = off + line.len, .value_off = off + vs });
+    }
+    return out.items;
+}
+
+/// The Headers tab's completion popup: the candidates for the draft
+/// cell it opened on, on their own arena; the app filters them against
+/// the cell's text every frame (`visibleCompletion`).
+pub const Completion = struct {
+    arena: std.heap.ArenaAllocator,
+    items: []const http.HeaderCandidate = &.{},
+    selected: usize = 0,
+    scroll: usize = 0,
+    /// Opened on the value cell (else the name cell).
+    on_value: bool,
+
+    fn deinit(self: *Completion) void {
+        self.arena.deinit();
     }
 };
 
@@ -156,6 +211,10 @@ pub const RequestPane = struct {
     edit_tab: EditTab = .body,
     field: Field = .url,
     draft: ?Draft = null,
+    /// The Headers tab's popup, while a draft cell is being typed.
+    completion: ?Completion = null,
+    /// `?` on a Headers row: the name's description under the row.
+    header_help: bool = false,
     row_cursor: usize = 0,
     edit_scroll: usize = 0,
     response_tab: ResponseTab = .body,
@@ -216,6 +275,7 @@ pub const RequestPane = struct {
         for (self.tests.items) |t| gpa.free(t);
         self.tests.deinit(gpa);
         if (self.draft) |*d| d.deinit(gpa);
+        if (self.completion) |*c| c.deinit();
         if (self.resp_editor) |e| e.deinit();
         if (self.resp_pretty) |b| gpa.free(b);
         self.resp_syntax.deinit();
@@ -489,9 +549,9 @@ pub const RequestPane = struct {
             .method => null,
             .content => switch (self.edit_tab) {
                 .body => .{ .buf = &self.body, .caret = &self.body_caret },
-                .headers => .{ .buf = &self.headers_text, .caret = &self.headers_caret },
                 .source => .{ .buf = &self.source, .caret = &self.source_caret },
-                .params, .auth, .vars => null,
+                // Headers is a table: its text is edited a row at a time.
+                .params, .headers, .auth, .vars => null,
             },
         };
     }
@@ -518,6 +578,7 @@ pub const RequestPane = struct {
 
     pub fn showTab(self: *RequestPane, tab: EditTab) void {
         if (self.split and tab == self.split_tab and tab != self.edit_tab) self.split_tab = self.edit_tab;
+        if (tab != self.edit_tab) self.closeCompletion();
         self.edit_tab = tab;
         self.block = .request;
         self.field = .content;
@@ -584,6 +645,115 @@ pub const RequestPane = struct {
     pub fn cancelDraft(self: *RequestPane) void {
         if (self.draft) |*d| d.deinit(self.gpa);
         self.draft = null;
+        self.closeCompletion();
+    }
+
+    pub fn closeCompletion(self: *RequestPane) void {
+        if (self.completion) |*c| c.deinit();
+        self.completion = null;
+    }
+
+    // ── the Headers table ──
+
+    /// The tab's rows on `arena`.
+    pub fn headerRowsOn(self: *const RequestPane, arena: Allocator) Allocator.Error![]HeaderRow {
+        return headerRows(arena, self.headers_text.items);
+    }
+
+    /// A draft on the Headers tab: a new row, or row `edit_row`'s name
+    /// and value to change in place.
+    pub fn startHeaderDraft(self: *RequestPane, edit_row: ?usize) Allocator.Error!void {
+        if (self.draft) |*d| d.deinit(self.gpa);
+        self.draft = .{ .edit_row = edit_row };
+        self.closeCompletion();
+        if (edit_row) |i| {
+            var arena = std.heap.ArenaAllocator.init(self.gpa);
+            defer arena.deinit();
+            const rows = try self.headerRowsOn(arena.allocator());
+            if (i < rows.len) {
+                try self.draft.?.key.appendSlice(self.gpa, rows[i].key);
+                try self.draft.?.value.appendSlice(self.gpa, rows[i].value);
+                self.draft.?.key_caret = rows[i].key.len;
+                self.draft.?.value_caret = rows[i].value.len;
+            } else self.draft.?.edit_row = null;
+        }
+        // Not `showTab`: the row cursor stays where the draft came from.
+        if (self.edit_tab != .headers) self.showTab(.headers);
+        self.block = .request;
+        self.field = .content;
+    }
+
+    /// The draft becomes a `Name: value` line — the edited row's, else a
+    /// new one at the end. An empty name cancels.
+    pub fn commitHeaderDraft(self: *RequestPane) Allocator.Error!bool {
+        const d = &(self.draft orelse return false);
+        const key = std.mem.trim(u8, d.key.items, " \t:");
+        if (key.len == 0) {
+            self.cancelDraft();
+            return false;
+        }
+        const gpa = self.gpa;
+        const line = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ key, std.mem.trim(u8, d.value.items, " \t") });
+        defer gpa.free(line);
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const rows = try self.headerRowsOn(arena.allocator());
+        if (d.edit_row != null and d.edit_row.? < rows.len) {
+            const r = rows[d.edit_row.?];
+            try self.headers_text.replaceRange(gpa, r.line_start, r.line_end - r.line_start, line);
+            self.row_cursor = d.edit_row.?;
+        } else {
+            if (self.headers_text.items.len > 0 and self.headers_text.items[self.headers_text.items.len - 1] != '\n') try self.headers_text.append(gpa, '\n');
+            try self.headers_text.appendSlice(gpa, line);
+            try self.headers_text.append(gpa, '\n');
+            self.row_cursor = rows.len;
+        }
+        self.headers_caret = self.headers_text.items.len;
+        self.cancelDraft();
+        try self.commit();
+        self.edited = true;
+        return true;
+    }
+
+    /// Drop the Headers row at `idx` (its line goes from the text).
+    pub fn removeHeaderRow(self: *RequestPane, idx: usize) Allocator.Error!void {
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const rows = try self.headerRowsOn(arena.allocator());
+        if (idx >= rows.len) return;
+        const r = rows[idx];
+        const end = if (r.line_end < self.headers_text.items.len) r.line_end + 1 else r.line_end;
+        try self.headers_text.replaceRange(self.gpa, r.line_start, end - r.line_start, "");
+        self.headers_caret = @min(self.headers_caret, self.headers_text.items.len);
+        self.row_cursor = @min(self.row_cursor, rows.len -| 2);
+        try self.commit();
+        self.edited = true;
+    }
+
+    /// The popup's rows that match the draft cell's text, best first —
+    /// every candidate when the cell is empty. Frame arena; indices
+    /// into `completion.items`.
+    pub fn visibleCompletion(self: *const RequestPane, arena: Allocator) Allocator.Error![]u32 {
+        const c = &(self.completion orelse return &.{});
+        const d = &(self.draft orelse return &.{});
+        const word = std.mem.trim(u8, if (c.on_value) d.value.items else d.key.items, " ");
+        const Scored = struct { idx: u32, score: u32 };
+        var scored: std.ArrayListUnmanaged(Scored) = .empty;
+        for (c.items, 0..) |it, i| {
+            const score = if (word.len == 0) fuzzy.base else (fuzzy.score(word, it.label) orelse continue);
+            try scored.append(arena, .{ .idx = @intCast(i), .score = score });
+        }
+        // A stable sort keeps the source order among equal scores: the
+        // response's rows before the workspace's before the table's.
+        std.mem.sort(Scored, scored.items, {}, struct {
+            fn lt(_: void, a: Scored, b: Scored) bool {
+                if (a.score != b.score) return a.score > b.score;
+                return a.idx < b.idx;
+            }
+        }.lt);
+        const out = try arena.alloc(u32, scored.items.len);
+        for (scored.items, 0..) |sc, i| out[i] = sc.idx;
+        return out;
     }
 
     /// The draft becomes `?key=value` on the URL.
@@ -684,8 +854,9 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
         else => {},
     };
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
-    // A params draft owns Tab (key → value) and Enter (commit).
-    if (rp.draft != null and rp.block == .request and (k.code == .tab or k.code == .backtab or k.code == .enter)) return paramsKey(app, rp, k);
+    // A draft row owns Tab (key → value) and Enter (commit) — the Params
+    // tab's or the Headers tab's.
+    if (rp.draft != null and rp.block == .request and (k.code == .tab or k.code == .backtab or k.code == .enter)) return if (rp.edit_tab == .headers) headersKey(app, rp, k) else paramsKey(app, rp, k);
     switch (k.code) {
         .tab => {
             if (rp.block == .response) rp.focusUrl() else rp.block = .response;
@@ -704,6 +875,11 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
             return true;
         },
         .esc => {
+            // The popup first, then the draft under it.
+            if (rp.completion != null) {
+                rp.closeCompletion();
+                return true;
+            }
             if (rp.draft != null) {
                 rp.cancelDraft();
                 return true;
@@ -750,7 +926,8 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
         .content => {},
     }
     switch (rp.edit_tab) {
-        .body, .headers, .source => {
+        .headers => return headersKey(app, rp, k),
+        .body, .source => {
             const f = rp.activeBuf().?;
             if (k.code == .enter) {
                 try text_field.insert(f.buf, f.caret, gpa, "\n");
@@ -894,6 +1071,132 @@ fn paramsKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
     return true;
 }
 
+/// The Headers tab: a table like Params'. Without a draft the rows are
+/// browsed (`j` / `k`, Enter edits, `a` / `+` adds, `d` / Delete drops,
+/// `?` shows the name's description). With one, the cell's keys — and
+/// the completion popup over it takes Up / Down / Tab / Enter first.
+fn headersKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
+    const gpa = app.gpa;
+    if (rp.draft) |*d| {
+        if (rp.completion) |*c| {
+            const vis = try rp.visibleCompletion(app.frame.allocator());
+            const n = vis.len;
+            switch (k.code) {
+                .up => {
+                    c.selected -|= 1;
+                    return true;
+                },
+                .down => {
+                    c.selected = @min(c.selected + 1, n -| 1);
+                    return true;
+                },
+                .tab, .enter => if (n > 0) {
+                    try acceptCompletion(app, rp, vis[@min(c.selected, n - 1)]);
+                    return true;
+                } else rp.closeCompletion(),
+                else => {},
+            }
+        }
+        switch (k.code) {
+            .tab, .backtab => {
+                d.on_value = !d.on_value;
+                try refreshCompletion(app, rp);
+                return true;
+            },
+            .enter => {
+                if (!d.on_value and d.value.items.len == 0 and d.key.items.len > 0) {
+                    d.on_value = true;
+                    try refreshCompletion(app, rp);
+                    return true;
+                }
+                const editing = d.edit_row != null;
+                if (try rp.commitHeaderDraft()) app.toast("headers: {s}", .{if (editing) "updated" else "added"});
+                return true;
+            },
+            else => {},
+        }
+        const buf = if (d.on_value) &d.value else &d.key;
+        const caret = if (d.on_value) &d.value_caret else &d.key_caret;
+        const edit = try text_field.handleKey(buf, caret, gpa, k);
+        if (edit == .changed) try refreshCompletion(app, rp);
+        return edit != .ignored;
+    }
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rows = try rp.headerRowsOn(arena.allocator());
+    switch (k.code) {
+        .up => {
+            if (rp.row_cursor == 0) rp.field = .url else rp.row_cursor -= 1;
+        },
+        .down => rp.row_cursor = @min(rp.row_cursor + 1, rows.len -| 1),
+        .enter => try rp.startHeaderDraft(if (rows.len > 0) @min(rp.row_cursor, rows.len - 1) else null),
+        .delete, .backspace => if (rows.len > 0) try rp.removeHeaderRow(@min(rp.row_cursor, rows.len - 1)),
+        .char => |c| switch (c) {
+            'a', '+' => try rp.startHeaderDraft(null),
+            'd' => if (rows.len > 0) try rp.removeHeaderRow(@min(rp.row_cursor, rows.len - 1)),
+            'k' => rp.row_cursor -|= 1,
+            'j' => rp.row_cursor = @min(rp.row_cursor + 1, rows.len -| 1),
+            '?' => rp.header_help = !rp.header_help,
+            else => return false,
+        },
+        else => return false,
+    }
+    return true;
+}
+
+/// The popup for the draft cell being typed: the name column's rows
+/// once the name has a character, the value column's as soon as the
+/// caret lands there (an empty value shows every known value).
+/// Rebuilt when the column changes; closed when the name cell empties.
+fn refreshCompletion(app: *App, rp: *RequestPane) Allocator.Error!void {
+    const d = &(rp.draft orelse return rp.closeCompletion());
+    if (!d.on_value and std.mem.trim(u8, d.key.items, " ").len == 0) return rp.closeCompletion();
+    if (rp.completion) |c| if (c.on_value == d.on_value) return;
+    rp.closeCompletion();
+    var comp: Completion = .{ .arena = std.heap.ArenaAllocator.init(app.gpa), .on_value = d.on_value };
+    var kept = false;
+    defer if (!kept) comp.deinit();
+    const a = comp.arena.allocator();
+    if (d.on_value) {
+        const name = std.mem.trim(u8, d.key.items, " \t:");
+        if (name.len == 0) return;
+        comp.items = try http.headerValueCandidates(app, rp, a, name);
+    } else {
+        var arena = std.heap.ArenaAllocator.init(app.gpa);
+        defer arena.deinit();
+        const rows = try rp.headerRowsOn(arena.allocator());
+        const present = try arena.allocator().alloc([]const u8, rows.len);
+        for (rows, 0..) |r, i| present[i] = r.key;
+        const editing: ?[]const u8 = if (d.edit_row) |i| (if (i < rows.len) rows[i].key else null) else null;
+        comp.items = try http.headerNameCandidates(app, rp, a, present, editing);
+    }
+    if (comp.items.len == 0) return;
+    kept = true;
+    rp.completion = comp;
+}
+
+/// Row `idx` of the popup into the draft cell: a name moves the caret
+/// on to the value and opens its popup; a value closes it.
+fn acceptCompletion(app: *App, rp: *RequestPane, idx: u32) Allocator.Error!void {
+    const c = &(rp.completion orelse return);
+    const d = &(rp.draft orelse return rp.closeCompletion());
+    if (idx >= c.items.len) return rp.closeCompletion();
+    const label = try app.gpa.dupe(u8, c.items[idx].label);
+    defer app.gpa.free(label);
+    const gpa = app.gpa;
+    if (c.on_value) {
+        try d.value.replaceRange(gpa, 0, d.value.items.len, label);
+        d.value_caret = d.value.items.len;
+        rp.closeCompletion();
+    } else {
+        try d.key.replaceRange(gpa, 0, d.key.items.len, label);
+        d.key_caret = d.key.items.len;
+        d.on_value = true;
+        rp.closeCompletion();
+        try refreshCompletion(app, rp);
+    }
+}
+
 fn responseKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
     const rows = @max(app.pane_rows, 1);
     switch (k.code) {
@@ -949,6 +1252,18 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
         const buf = if (d.on_value) &d.value else &d.key;
         const caret = if (d.on_value) &d.value_caret else &d.key_caret;
         try text_field.insert(buf, caret, app.gpa, text);
+        return;
+    }
+    if (rp.field == .content and rp.edit_tab == .headers) {
+        // Pasted `Name: value` lines become rows.
+        const gpa = app.gpa;
+        if (rp.headers_text.items.len > 0 and rp.headers_text.items[rp.headers_text.items.len - 1] != '\n') try rp.headers_text.append(gpa, '\n');
+        try rp.headers_text.appendSlice(gpa, std.mem.trim(u8, text, "\r\n"));
+        try rp.headers_text.append(gpa, '\n');
+        rp.headers_caret = rp.headers_text.items.len;
+        rp.edited = true;
+        try rp.commit();
+        app.needs_render = true;
         return;
     }
     const f = rp.activeBuf() orelse return;
@@ -1027,6 +1342,17 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         rp.row_cursor = hit_id - view.hit_param_row;
         return;
     }
+    if (hit_id >= view.hit_header_row and hit_id < view.hit_header_row + 100) {
+        rp.showTab(.headers);
+        rp.row_cursor = hit_id - view.hit_header_row;
+        if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, .headers, m.x, m.y);
+        return;
+    }
+    if (hit_id >= view.hit_header_del and hit_id < view.hit_header_del + 100) {
+        rp.showTab(.headers);
+        try rp.removeHeaderRow(hit_id - view.hit_header_del);
+        return;
+    }
     if (hit_id >= view.hit_param_del and hit_id < view.hit_param_del + 100) {
         rp.showTab(.params);
         try rp.removeParam(hit_id - view.hit_param_del);
@@ -1073,12 +1399,16 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
             return;
         },
         view.hit_add_row => {
+            if (rp.edit_tab == .headers) {
+                if (rp.draft == null) try rp.startHeaderDraft(null);
+                return;
+            }
             rp.showTab(.params);
             if (rp.draft == null) try rp.startDraft();
             return;
         },
         view.hit_draft_commit => {
-            _ = try rp.commitDraft();
+            _ = if (rp.edit_tab == .headers) try rp.commitHeaderDraft() else try rp.commitDraft();
             return;
         },
         else => {},
@@ -1119,8 +1449,9 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
             if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, .response, m.x, m.y);
         },
         view.hit_draft_key, view.hit_draft_value => {
-            if (rp.draft == null) try rp.startDraft();
+            if (rp.draft == null) try if (rp.edit_tab == .headers) rp.startHeaderDraft(null) else rp.startDraft();
             rp.draft.?.on_value = hit_id == view.hit_draft_value;
+            if (rp.edit_tab == .headers) try refreshCompletion(app, rp);
         },
         view.hit_content => {
             rp.block = .request;
@@ -1159,6 +1490,18 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         for (try tmp.params(arena)) |p| try params_list.append(arena, .{ .key = p.key, .value = p.value });
     }
     const draft: ?view.Draft = if (rp.draft) |d| .{ .key = d.key.items, .value = d.value.items, .key_caret = d.key_caret, .value_caret = d.value_caret, .on_value = d.on_value } else null;
+    // The Headers table reads the tab's text live, like Params reads the URL.
+    const header_rows = try rp.headerRowsOn(arena);
+    const headers = try arena.alloc(view.Pair, header_rows.len);
+    const header_offs = try arena.alloc(usize, header_rows.len);
+    for (header_rows, 0..) |r, i| {
+        headers[i] = .{ .key = r.key, .value = r.value };
+        header_offs[i] = r.value_off;
+    }
+    const header_tip: ?[]const u8 = if (rp.header_help and rp.draft == null and header_rows.len > 0) blk: {
+        const name = header_rows[@min(rp.row_cursor, header_rows.len - 1)].key;
+        break :blk if (http.headerDoc(name)) |doc| try std.fmt.allocPrint(arena, " {s} \u{2014} {s} ", .{ name, doc }) else try std.fmt.allocPrint(arena, " {s} \u{2014} not in the bundled table ", .{name});
+    } else null;
     const auth_current: ?[]const u8 = blk: {
         var lines = std.mem.splitScalar(u8, rp.headers_text.items, '\n');
         while (lines.next()) |l| {
@@ -1223,6 +1566,9 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .source = rp.source.items,
         .source_caret = rp.source_caret,
         .params = params_list.items,
+        .headers = headers,
+        .header_value_offs = header_offs,
+        .header_tip = header_tip,
         .draft = draft,
         .row_cursor = rp.row_cursor,
         .auth_current = auth_current,
@@ -1260,6 +1606,23 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         const tok = toks.all[hv.idx];
         view.drawVarTip(ui, area, hv.rect, tok.name, tok.shown, env_name);
     };
+    // A hovered Headers row shows the name's description — the `?` copy.
+    if (rp.edit_tab == .headers and rp.draft == null) if (http.hoveredHitIn(ui, id, view.hit_header_row, 100)) |hh| if (hh.idx < header_rows.len) {
+        const name = header_rows[hh.idx].key;
+        if (http.headerDoc(name)) |doc| view.drawTip(ui, area, hh.rect, try std.fmt.allocPrint(arena, " {s} \u{2014} {s} ", .{ name, doc }));
+    };
+    // The Headers tab's completion popup, under the draft cell.
+    if (focused and rp.edit_tab == .headers and rp.completion != null and rp.draft != null) {
+        const comp = &rp.completion.?;
+        const vis = try rp.visibleCompletion(arena);
+        if (vis.len > 0) {
+            const rows = try arena.alloc(completion_view.Row, vis.len);
+            for (vis, 0..) |vi, i| rows[i] = .{ .label = comp.items[vi].label, .kind = comp.items[vi].kind, .detail = "" };
+            const sel = @min(comp.selected, vis.len - 1);
+            const cursor: ?editor_view.Cursor = if (caret) |c| .{ .x = c.x, .y = c.y } else null;
+            completion_view.draw(ui, area, cursor, &comp.scroll, .{ .rows = rows, .selected = sel, .doc = comp.items[vis[sel]].doc });
+        }
+    }
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -1408,4 +1771,115 @@ test "a result jumps to the response unless the user moved into the request bloc
     rp.state = .{ .sending = 9 };
     try rp.setFailed("no network");
     try t.expectEqual(Block.response, rp.block);
+}
+
+fn keysTestRoot(tmp: *std.testing.TmpDir, gpa: Allocator) ![]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    return gpa.dupe(u8, buf[0..n]);
+}
+
+fn typeText(app: *App, id: PaneId, rp: *RequestPane, text: []const u8) !void {
+    for (text) |c| try testing.expect(try handleKey(app, id, rp, Key.char(c)));
+}
+
+test "Headers tab: `a` drafts a row that Tab and Enter commit, Enter on a row edits it in place, `d` drops it; the popup takes Enter first; `?` and paste" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try keysTestRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const id = try http.openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    rp.showTab(.headers);
+    try testing.expect(try handleKey(&app, id, rp, Key.char('a')));
+    try testing.expect(rp.draft != null and rp.edit_tab == .headers and rp.draft.?.edit_row == null);
+    // A name no table knows: the popup opens on the first character and
+    // empties out; the keys still edit the cell.
+    try typeText(&app, id, rp, "X-Ping");
+    try testing.expectEqualStrings("X-Ping", rp.draft.?.key.items);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.tab)));
+    try testing.expect(rp.draft.?.on_value);
+    try testing.expect(rp.completion == null); // no known value for X-Ping
+    try typeText(&app, id, rp, "1");
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(rp.draft == null);
+    try testing.expectEqualStrings("X-Ping: 1\n", rp.headers_text.items);
+    try testing.expectEqualStrings("1", rp.request.header("x-ping").?);
+    try testing.expect(rp.edited);
+    // Enter on the row edits it in place: the cells come prefilled.
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expectEqual(@as(?usize, 0), rp.draft.?.edit_row);
+    try testing.expectEqualStrings("X-Ping", rp.draft.?.key.items);
+    try testing.expectEqualStrings("1", rp.draft.?.value.items);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.tab)));
+    try typeText(&app, id, rp, "2");
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expectEqualStrings("X-Ping: 12\n", rp.headers_text.items);
+    // A known name: typing it opens the popup; Enter takes the row and
+    // moves on to the value, whose popup lists the table's values; Down
+    // picks the second, Enter takes it, Enter commits.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('+')));
+    try typeText(&app, id, rp, "Accept");
+    try testing.expect(rp.completion != null and !rp.completion.?.on_value);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const vis = try rp.visibleCompletion(arena.allocator());
+    try testing.expect(vis.len > 0);
+    try testing.expectEqualStrings("Accept", rp.completion.?.items[vis[0]].label);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(rp.draft != null and rp.draft.?.on_value);
+    try testing.expectEqualStrings("Accept", rp.draft.?.key.items);
+    try testing.expect(rp.completion != null and rp.completion.?.on_value);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.down)));
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(rp.completion == null);
+    try testing.expectEqualStrings("*/*", rp.draft.?.value.items);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expectEqualStrings("X-Ping: 12\nAccept: */*\n", rp.headers_text.items);
+    try testing.expectEqual(@as(usize, 1), rp.row_cursor);
+    // Esc closes the popup before it cancels the draft.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('a')));
+    try typeText(&app, id, rp, "Ca");
+    try testing.expect(rp.completion != null);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.esc)));
+    try testing.expect(rp.completion == null and rp.draft != null);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.esc)));
+    try testing.expect(rp.draft == null);
+    // `?` toggles the tip; `d` drops the cursor row; `k` moves up.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('?')));
+    try testing.expect(rp.header_help);
+    try testing.expect(try handleKey(&app, id, rp, Key.char('d')));
+    try testing.expectEqualStrings("X-Ping: 12\n", rp.headers_text.items);
+    try testing.expect(rp.request.header("accept") == null);
+    try testing.expect(try handleKey(&app, id, rp, Key.char('k')));
+    try testing.expectEqual(@as(usize, 0), rp.row_cursor);
+    // Up from the first row lands on the URL, as on Params.
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.up)));
+    try testing.expect(rp.field == .url);
+    // A paste on the tab becomes rows.
+    rp.field = .content;
+    try paste(&app, rp, "A: 1\nB: 2\n");
+    try testing.expectEqualStrings("X-Ping: 12\nA: 1\nB: 2\n", rp.headers_text.items);
+    try testing.expectEqualStrings("2", rp.request.header("b").?);
+    // The rows the painter reads, with the value offsets the spans need.
+    const rows = try rp.headerRowsOn(arena.allocator());
+    try testing.expectEqual(@as(usize, 3), rows.len);
+    try testing.expectEqualStrings("A", rows[1].key);
+    try testing.expectEqualStrings("1", rows[1].value);
+    try testing.expectEqual(@as(usize, 14), rows[1].value_off);
+    try testing.expectEqualStrings("1", rp.headers_text.items[rows[1].value_off .. rows[1].value_off + 1]);
+}
+
+test "headerRows: blanks and comments skipped, a colon-less line is a name, values trimmed" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const rows = try headerRows(arena.allocator(), "Accept:   application/json  \r\n\n# note\nX-Bare\nA:B\n");
+    try testing.expectEqual(@as(usize, 3), rows.len);
+    try testing.expectEqualStrings("application/json", rows[0].value);
+    try testing.expectEqual(@as(usize, 0), rows[0].line_start);
+    try testing.expectEqualStrings("X-Bare", rows[1].key);
+    try testing.expectEqualStrings("", rows[1].value);
+    try testing.expectEqualStrings("B", rows[2].value);
 }
