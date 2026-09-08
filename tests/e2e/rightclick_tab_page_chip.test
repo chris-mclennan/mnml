@@ -1,0 +1,10 @@
+# The right cluster's tab-page chip (Zig-only): close / close others /
+# new / move / the picker. At 120x40 the `1` chip is at column 108.
+write a.txt "hello\n"
+open a.txt
+rightclick 108 0
+expect screen contains "┌ Tab page 1"
+expect screen contains "Close other pages"
+expect screen contains "New tab page"
+key esc
+expect screen lacks "Close other pages"

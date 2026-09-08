@@ -56,7 +56,11 @@ pub fn openEditorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Hover info", .action = .{ .command = .@"lsp.hover" } },
         .{ .label = "Rename symbol", .action = .{ .command = .@"lsp.rename" } },
         .{ .label = "Select all occurrences", .action = .{ .command = .@"editor.select_all_occurrences" }, .separator_before = true },
+        .{ .label = "Expand selection", .action = .{ .command = .@"lsp.selection_expand" } },
         .{ .label = "Toggle fold", .action = .{ .command = .@"editor.toggle_fold" } },
+        // right-click: Rust's two AI rows.
+        .{ .label = "Explain with Claude", .action = .{ .command = .@"ai.explain" }, .separator_before = true },
+        .{ .label = "Ask Claude…", .action = .{ .command = .@"ai.ask" } },
         .{ .label = "Save", .action = .{ .command = .@"file.save" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -78,6 +82,10 @@ pub fn openGutterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Start debugging", .action = .{ .command = .@"dap.run" }, .separator_before = true },
         .{ .label = "Continue", .action = .{ .command = .@"dap.continue" } },
         .{ .label = "Evaluate word under cursor", .action = .{ .command = .@"dap.evaluate_hover" } },
+        // right-click: Rust's git rows for the line.
+        .{ .label = "Peek change", .action = .{ .command = .@"git.peek_change" }, .separator_before = true },
+        .{ .label = "Toggle blame", .action = .{ .command = .@"git.blame_toggle" } },
+        .{ .label = "Open on remote", .action = .{ .command = .@"git.browse" } },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Breakpoint", rows, x, y);
@@ -118,8 +126,11 @@ pub fn openRequestFieldMenu(app: *App, field: RequestField, x: u16, y: u16) Allo
     try app.openMenu(field.title(), rows, x, y);
 }
 
-/// A strip tab: Save (when dirty) first, then the close family and the
-/// path. The tab is made active before the menu opens.
+/// A strip tab: Save (when dirty) first, then the close family, the
+/// splits, the file rows (a markdown preview, the two reveals, the
+/// path) and — for a pty — the session verbs (Rust
+/// `open_tab_context_menu`). The tab is made active before the menu
+/// opens, so the rows act on it.
 pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
     const p = app.panes.get(pane) orelse return;
     app.showPane(pane);
@@ -134,7 +145,23 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         .{ .label = if (p.pinned()) "Unpin tab" else "Pin tab", .action = .{ .command = .@"buffer.pin_toggle" }, .separator_before = true },
         .{ .label = "Split right", .action = .{ .command = .@"view.split_right" }, .separator_before = true },
         .{ .label = "Split down", .action = .{ .command = .@"view.split_down" } },
-        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = true },
+    });
+    // right-click: the file rows, for a tab that names a file on disk.
+    const file_path: ?[]const u8 = if (app.panes.editor(pane)) |e| e.buf.doc.path else null;
+    if (file_path) |path| {
+        if (@import("md_preview.zig").isMarkdownPath(path)) try rows.append(app.gpa, .{ .label = "Preview markdown", .action = .{ .command = .@"markdown.preview" }, .separator_before = true });
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Reveal in tree", .action = .{ .command = .@"view.reveal_in_tree" }, .separator_before = true },
+            .{ .label = "Reveal in Finder", .action = .{ .command = .@"view.reveal_active" } },
+        });
+    }
+    try rows.append(app.gpa, .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = file_path == null });
+    // right-click: a pty tab's session verbs (Rust's Rename / Restart /
+    // Clear rows on a Pty tab).
+    if (app.panes.pty(pane) != null) try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
+        .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
+        .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
     });
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
@@ -210,15 +237,22 @@ pub fn openStressMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Stress meter", rows, x, y);
 }
 
-/// The branch chip: the status pane, the graph, the remote verbs.
+/// The branch chip (Rust `open_statusline_branch_context_menu`): the
+/// status pane, the graph, the branch verbs, the remote verbs, the
+/// stash pair, the commit pair.
 pub fn openBranchMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Status / staging", .action = .{ .command = .@"git.status_pane" } },
         .{ .label = "Commit graph", .action = .{ .command = .@"git.graph" } },
-        .{ .label = "Commit…", .action = .{ .command = .@"git.commit" }, .separator_before = true },
-        .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" } },
+        .{ .label = "Checkout branch…", .action = .{ .command = .@"git.checkout" }, .separator_before = true },
+        .{ .label = "New branch…", .action = .{ .command = .@"git.new_branch" } },
+        .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" }, .separator_before = true },
         .{ .label = "Pull", .action = .{ .command = .@"git.pull" } },
         .{ .label = "Push", .action = .{ .command = .@"git.push" } },
+        .{ .label = "Stash…", .action = .{ .command = .@"git.stash" }, .separator_before = true },
+        .{ .label = "Stash pop", .action = .{ .command = .@"git.stash_pop" } },
+        .{ .label = "Commit…", .action = .{ .command = .@"git.commit" }, .separator_before = true },
+        .{ .label = "AI commit message", .action = .{ .command = .@"git.ai_commit" } },
         .{ .label = "Refresh", .action = .{ .command = .@"git.refresh" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -237,23 +271,31 @@ pub fn openDiagnosticsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Diagnostics", rows, x, y);
 }
 
-/// The bell: the history picker and its clear.
-/// The statusline's file chip: Rust's "Buffer" menu, less the rows
-/// whose runners this build lacks (reveal in the tree / in the OS).
+/// The statusline's file chip: Rust's "Buffer" menu — the two reveals,
+/// the three copies, Close.
 pub fn openFileChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const e = app.activeEditor() orelse return;
-    if (e.buf.doc.path == null) {
+    const path = e.buf.doc.path orelse {
         app.toast("no saved file", .{});
         return;
-    }
+    };
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const abs = try arena.dupe(u8, path);
     const rows = try items(app, &.{
-        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" } },
+        .{ .label = "Reveal in tree", .action = .{ .command = .@"view.reveal_in_tree" } },
+        .{ .label = "Reveal in Finder", .action = .{ .command = .@"view.reveal_active" } },
+        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = true },
+        .{ .label = "Copy absolute path", .action = .{ .copy_text = abs } },
+        .{ .label = "Copy file name", .action = .{ .copy_text = std.fs.path.basename(abs) } },
         .{ .label = "Close buffer", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
-    try app.openMenu("Buffer", rows, x, y);
+    try openOwned(app, "Buffer", rows, x, y, mem);
 }
 
+/// The bell: the history picker and its clear.
 pub fn openBellMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Show messages", .action = .{ .command = .@"messages.show" } },
@@ -819,9 +861,721 @@ fn copyPath(app: *App) CommandError!void {
     app.toast("copied {s}", .{rel});
 }
 
+// ─── right-click: the statusline chips ──────────────────────────────────
+// Rust `right_click.rs` + `context_menus.rs`, one opener per chip. A
+// chip whose rows carry their own string (a URL, a position) builds
+// them on an arena the menu then owns.
+
+/// Opens `rows` (gpa) whose labels and strings live on `mem`; the menu
+/// owns both and frees them with the overlay.
+fn openOwned(app: *App, title: []const u8, rows: []MenuItem, x: u16, y: u16, mem: std.heap.ArenaAllocator) Allocator.Error!void {
+    try app.openMenu(title, rows, x, y);
+    app.overlay.menu.mem = mem;
+}
+
+/// The workspace chip (Rust `open_statusline_workspace_context_menu`):
+/// the repo verbs when the workspace holds more than one repo, the
+/// worktree picker, the workspace verbs, a repo rescan.
+pub fn openWorkspaceChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    const multi = app.git.repos.items.len > 1;
+    if (multi) try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Switch repo…", .action = .{ .command = .@"git.switch_repo" } },
+        .{ .label = "Next repo", .action = .{ .command = .@"git.next_repo" } },
+        .{ .label = "Previous repo", .action = .{ .command = .@"git.prev_repo" } },
+    });
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Worktrees…", .action = .{ .command = .@"git.worktrees" }, .separator_before = multi },
+        .{ .label = "Switch workspace…", .action = .{ .command = .@"view.switch_workspace" }, .separator_before = true },
+        .{ .label = "Add workspace…", .action = .{ .command = .@"view.add_workspace" } },
+        .{ .label = "Manage workspaces…", .action = .{ .command = .@"view.manage_workspaces" } },
+        .{ .label = "Rescan repos", .action = .{ .command = .@"git.refresh_repos" }, .separator_before = true },
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu(std.fs.path.basename(app.workspace), owned, x, y);
+}
+
+/// The PR chip (Rust `open_statusline_pr_context_menu`): open, the
+/// two copies, a refresh.
+pub fn openPrMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const statusline_app = @import("statusline.zig");
+    const pr = statusline_app.currentPr(app) orelse return;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const url = try arena.dupe(u8, pr.url);
+    const number = try std.fmt.allocPrint(arena, "{d}", .{pr.number});
+    const rows = try items(app, &.{
+        .{ .label = "Open in browser", .action = .{ .open_url = url } },
+        .{ .label = "Copy URL", .action = .{ .copy_text = url }, .separator_before = true },
+        .{ .label = try std.fmt.allocPrint(arena, "Copy number (#{s})", .{number}), .action = .{ .copy_text = number } },
+        .{ .label = "Refresh", .action = .{ .command = .@"pr.refresh" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, try std.fmt.allocPrint(arena, "PR #{s}", .{number}), rows, x, y, mem);
+}
+
+/// The language chip (Rust `open_statusline_language_context_menu`):
+/// the name to the clipboard, then the LSP's file-level verbs.
+pub fn openLanguageMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const lang: []const u8 = if (app.activeEditor()) |e| (e.buf.doc.language orelse "—") else "—";
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, lang);
+    const rows = try items(app, &.{
+        .{ .label = try std.fmt.allocPrint(arena, "Copy language name ({s})", .{copy}), .action = .{ .copy_text = copy } },
+        .{ .label = "Symbols in file", .action = .{ .command = .@"lsp.symbols" }, .separator_before = true },
+        .{ .label = "Format file", .action = .{ .command = .@"lsp.format" } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Language", rows, x, y, mem);
+}
+
+/// The Ln/Col chip (Rust `open_statusline_lncol_context_menu`): go to
+/// line, the position to the clipboard.
+pub fn openPositionMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const pos: []const u8 = if (app.activeEditor()) |e| blk: {
+        const rc = e.buf.editor.rowCol();
+        break :blk try std.fmt.allocPrint(arena, "{d}:{d}", .{ rc.row + 1, rc.col + 1 });
+    } else "";
+    const rows = try items(app, &.{
+        .{ .label = "Go to line…", .action = .{ .command = .@"editor.goto_line" } },
+        .{ .label = try std.fmt.allocPrint(arena, "Copy position ({s})", .{pos}), .action = .{ .copy_text = pos } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Cursor", rows, x, y, mem);
+}
+
+/// The find chip (Rust `open_statusline_find_context_menu`).
+pub fn openFindMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Next match", .action = .{ .command = .@"find.next" } },
+        .{ .label = "Previous match", .action = .{ .command = .@"find.prev" } },
+        .{ .label = "Clear highlight", .action = .{ .command = .@"find.clear" }, .separator_before = true },
+        .{ .label = "Find…", .action = .{ .command = .@"find.find" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Find", rows, x, y);
+}
+
+/// The Sel chip (Rust `open_statusline_sel_context_menu`).
+pub fn openSelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Copy selection", .action = .{ .command = .@"editor.copy" } },
+        .{ .label = "Cut selection", .action = .{ .command = .@"editor.cut" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Selection", rows, x, y);
+}
+
+/// The size chip (Rust `open_statusline_filesize_context_menu`): the
+/// byte count to the clipboard. Rust's "Open externally" row has no
+/// runner here.
+pub fn openSizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const e = app.activeEditor() orelse return;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const n = e.buf.editor.bytes().len;
+    const size = try std.fmt.allocPrint(arena, "{d}", .{n});
+    const rows = try items(app, &.{
+        .{ .label = try std.fmt.allocPrint(arena, "Copy size ({s} bytes, {d} lines)", .{ size, e.buf.editor.lineCount() }), .action = .{ .copy_text = size } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Size", rows, x, y, mem);
+}
+
+/// The WRAP chip (Rust `open_statusline_wrap_context_menu`): the title
+/// says the state, the row flips it, Settings holds the rest.
+pub fn openWrapMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const on = if (app.activeEditor()) |e| (e.wrap orelse app.cfg.ui.wrap) else app.cfg.ui.wrap;
+    const rows = try items(app, &.{
+        .{ .label = if (on) "Disable wrap" else "Enable wrap", .action = .{ .command = .@"view.toggle_wrap" } },
+        .{ .label = "Editor settings…", .action = .{ .command = .@"view.settings" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (on) "Wrap · on" else "Wrap · off", rows, x, y);
+}
+
+/// The test chip (Rust `statusline_test_chip`).
+pub fn openTestMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Run all", .action = .{ .command = .@"test.run_all" } },
+        .{ .label = "Run file", .action = .{ .command = .@"test.run_file" } },
+        .{ .label = "Run at cursor", .action = .{ .command = .@"test.run_at_cursor" } },
+        .{ .label = "Re-run failed", .action = .{ .command = .@"test.rerun_failed" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Tests", rows, x, y);
+}
+
+/// The AI usage chips (Rust `open_statusline_ai_context_menu`): the
+/// usage pane, a refresh, the last response; what the chip shows; the
+/// reset countdown; how every AI chip paints.
+pub fn openAiChipMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
+    const detail = app.ai.chip_detail;
+    const meter = app.cfg.ai.claude_meter_mode;
+    const rows = try items(app, &.{
+        .{ .label = "Open usage pane", .action = .{ .command = if (codex) .@"ai.codex_usage" else .@"ai.claude_usage" } },
+        .{ .label = "Refresh usage now", .action = .{ .command = .@"ai.refresh_usage" } },
+        .{ .label = "Show last response", .action = .{ .command = .@"ai.show_last_response" } },
+        .{ .label = "Session only", .action = .{ .command = .@"ai.chip_show_session" }, .checked = detail == .session, .separator_before = true },
+        .{ .label = "Weekly only", .action = .{ .command = .@"ai.chip_show_weekly" }, .checked = detail == .weekly },
+        .{ .label = "Both", .action = .{ .command = .@"ai.chip_show_both" }, .checked = detail == .both },
+        .{ .label = "Reset countdown", .action = .{ .command = .@"ai.chip_toggle_reset" }, .checked = app.ai.chip_reset_suffix, .separator_before = true },
+        .{ .label = "All AI chips: off", .action = .{ .command = .@"ai.chip_show_all_off" }, .checked = meter == .off, .separator_before = true },
+        .{ .label = "All AI chips: compact", .action = .{ .command = .@"ai.chip_show_all_compact" }, .checked = meter == .compact },
+        .{ .label = "All AI chips: ticker", .action = .{ .command = .@"ai.chip_show_all_ticker" }, .checked = meter == .ticker },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (codex) "Codex" else "Claude", rows, x, y);
+}
+
+/// The enclosing-symbol chip (Zig-only): the outline and the two
+/// symbol pickers.
+pub fn openSymbolMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Outline", .action = .{ .command = .@"outline.show" } },
+        .{ .label = "Symbols in file…", .action = .{ .command = .@"lsp.symbols" }, .separator_before = true },
+        .{ .label = "Symbols in workspace…", .action = .{ .command = .@"lsp.workspace_symbols" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Symbol", rows, x, y);
+}
+
+/// The transfer chip (Zig-only): the one verb, named before it runs.
+pub fn openTransferMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Cancel all transfers", .action = .{ .command = .@"transfer.cancel_all" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Transfers", rows, x, y);
+}
+
+// ─── right-click: the workspace headers ─────────────────────────────────
+
+/// A `> WORKSPACE` header, or the empty rows under a section (Rust
+/// `open_workspace_header_context_menu` for root 0,
+/// `open_extra_workspace_header_context_menu` for the rest): fold, the
+/// whole-tree folds, the workspace verbs, a rescan, the dots.
+pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Error!void {
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .tree;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const path: []const u8 = if (root == 0) app.workspace else if (root - 1 < app.tree.roots.items.len) app.tree.roots.items[root - 1].path else app.workspace;
+    const title = try arena.dupe(u8, std.fs.path.basename(path));
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    if (root == 0) {
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Collapse / expand section", .action = .{ .command = .@"view.toggle_tree_section" } },
+            .{ .label = "Expand all", .action = .{ .command = .@"tree.expand_all" }, .separator_before = true },
+            .{ .label = "Collapse all", .action = .{ .command = .@"tree.collapse_all" } },
+            .{ .label = "New file…", .action = .{ .command = .@"file.new" }, .separator_before = true },
+            .{ .label = "New folder…", .action = .{ .command = .@"file.new_folder" } },
+            .{ .label = "Paste here", .action = .{ .command = .@"file.paste" } },
+        });
+    } else {
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Switch to this workspace", .action = .{ .command = .@"view.switch_workspace" } },
+            .{ .label = "Open in file browser", .action = .{ .open_path = try arena.dupe(u8, path) } },
+            .{ .label = "Remove workspace…", .action = .{ .command = .@"view.remove_workspace" }, .separator_before = true },
+        });
+    }
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Switch workspace…", .action = .{ .command = .@"view.switch_workspace" }, .separator_before = true },
+        .{ .label = "Add workspace…", .action = .{ .command = .@"view.add_workspace" } },
+        .{ .label = "Manage workspaces…", .action = .{ .command = .@"view.manage_workspaces" } },
+        .{ .label = "Copy path", .action = .{ .copy_text = try arena.dupe(u8, path) }, .separator_before = true },
+        .{ .label = "Refresh tree", .action = .{ .command = .@"tree.refresh" } },
+        .{ .label = "Show workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" }, .checked = app.cfg.ui.show_workspace_dots, .separator_before = true },
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try openOwned(app, title, owned, x, y, mem);
+}
+
+// ─── right-click: the panes ─────────────────────────────────────────────
+
+/// A pty pane's body (Rust `open_pty_dock_context_menu`): the session
+/// verbs, where the pane docks, how big it gets, its name, close. The
+/// pane is made active first.
+pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
+    const p = app.panes.get(pane) orelse return;
+    app.showPane(pane);
+    const rows = try items(app, &.{
+        .{ .label = "Paste", .action = .{ .command = .@"term.paste" } },
+        .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
+        .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
+        .{ .label = "Dock left", .action = .{ .command = .@"view.move_split_left" }, .separator_before = true },
+        .{ .label = "Dock right", .action = .{ .command = .@"view.move_split_right" } },
+        .{ .label = "Dock top", .action = .{ .command = .@"view.move_split_up" } },
+        .{ .label = "Dock bottom", .action = .{ .command = .@"view.move_split_down" } },
+        .{ .label = "Maximize width", .action = .{ .command = .@"view.maximize_width" }, .separator_before = true },
+        .{ .label = "Maximize height", .action = .{ .command = .@"view.maximize_height" } },
+        .{ .label = "Full screen", .action = .{ .command = .@"view.fullscreen" } },
+        .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" } },
+        .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
+        .{ .label = "Close pane", .action = .{ .command = .@"buffer.close" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(p.title(), rows, x, y);
+}
+
+/// An AI pane's body (Rust `open_ai_pane_context_menu`): re-ask,
+/// cancel, promote, apply. Rust's transcript row has no runner here.
+pub fn openAiPaneMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Re-ask (fresh session)", .action = .{ .command = .@"ai.reask" } },
+        .{ .label = "Cancel running job", .action = .{ .command = .@"ai.cancel" } },
+        .{ .label = "Promote to interactive (claude --resume)", .action = .{ .command = .@"ai.promote" }, .separator_before = true },
+        .{ .label = "Apply suggested change", .action = .{ .command = .@"ai.apply" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("AI", rows, x, y);
+}
+
+/// A breadcrumb segment (Zig-only): the directory it names, to a Files
+/// pane or the clipboard.
+pub fn openBreadcrumbMenu(app: *App, dir: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, dir);
+    const rows = try items(app, &.{
+        .{ .label = "Open in file browser", .action = .{ .open_path = copy } },
+        .{ .label = "Copy path", .action = .{ .copy_text = copy } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, std.fs.path.basename(copy), rows, x, y, mem);
+}
+
+/// A welcome-screen recent row (Zig-only): open, copy, the picker.
+pub fn openWelcomeRecentMenu(app: *App, path: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, path);
+    const rows = try items(app, &.{
+        .{ .label = "Open", .action = .{ .open_path = copy } },
+        .{ .label = "Copy path", .action = .{ .copy_text = try arena.dupe(u8, app.relPath(copy)) } },
+        .{ .label = "Recent files…", .action = .{ .command = .@"picker.recent" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, std.fs.path.basename(copy), rows, x, y, mem);
+}
+
+/// A link (a preview's, a detail pane's — Rust `integration_detail_links`
+/// copies the URL): open it, copy it.
+pub fn openLinkMenu(app: *App, url: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const copy = try arena.dupe(u8, url);
+    const rows = try items(app, &.{
+        .{ .label = "Open in browser", .action = .{ .open_url = copy } },
+        .{ .label = "Copy URL", .action = .{ .copy_text = copy } },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, "Link", rows, x, y, mem);
+}
+
+// ─── right-click: the chrome chips ──────────────────────────────────────
+// The palette bar, the bufferline's right cluster, the split strip and
+// the right column's strip (Rust `right_click.rs`): one menu per chip,
+// keyed by `render.Button`. `openButtonMenu` answers false for a chip
+// with no menu so the press falls through to its left action.
+
+pub fn openButtonMenu(app: *App, id: u32, x: u16, y: u16) Allocator.Error!bool {
+    const render = @import("render.zig");
+    const menu_bar = @import("menu_bar.zig");
+    const integrations_view = @import("../ui/integrations_view.zig");
+    if (render.Button.tabPageOf(id)) |page| return openTabPageMenu(app, page, x, y);
+    if (render.Button.tabPageCloseOf(id)) |page| return openTabPageMenu(app, page, x, y);
+    if (id >= integrations_view.tab_base and id < integrations_view.tab_base + integrations_view.Tab.all.len) {
+        try openIntegrationsTabsMenu(app, x, y);
+        return true;
+    }
+    if (menu_bar.buttonOf(id)) |which| {
+        try openMenuBarMenu(app, which, x, y);
+        return true;
+    }
+    switch (@as(render.Button, @enumFromInt(id))) {
+        // The search chip mirrors the chevron: recents, as Rust.
+        .palette => {
+            command.run(app, .{ .static = .@"picker.recent" }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+            return true;
+        },
+        .toggle_tree => try openSidebarMenu(app, x, y),
+        .toggle_right_panel => try openRightPanelMenu(app, x, y),
+        .right_tab, .right_close => try openRightColumnMenu(app, x, y),
+        .right_new => try openAddPanelMenu(app, x, y),
+        .back => try openNavMenu(app, false, x, y),
+        .forward => try openNavMenu(app, true, x, y),
+        .dropdown => try openOpenMenu(app, x, y),
+        .tabs_label => try openClusterMenu(app, x, y),
+        .theme_toggle => try openThemeMenu(app, x, y),
+        .window_close => try openWindowMenu(app, x, y),
+        .split_term => try openTerminalChipMenu(app, x, y),
+        .split_right => try openSplitChipMenu(app, .horizontal, x, y),
+        .split_down => try openSplitChipMenu(app, .vertical, x, y),
+        .split_max => try openMaximizeMenu(app, x, y),
+        .ai_claude => try openAiLauncherMenu(app, false, x, y),
+        .ai_codex => try openAiLauncherMenu(app, true, x, y),
+        else => return false,
+    }
+    return true;
+}
+
+/// The sidebar toggle (Rust `palette_sidebar_button`).
+fn openSidebarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const visible = side.shown(app, .left) != null;
+    const rows = try items(app, &.{
+        .{ .label = if (visible) "Hide sidebar" else "Show sidebar", .action = .{ .command = .@"view.toggle_tree" } },
+        .{ .label = "Reset sidebar width", .action = .{ .command = .@"view.reset_tree_width" } },
+        .{ .label = "Focus sidebar", .action = .{ .command = .@"view.focus_tree" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Sidebar", rows, x, y);
+}
+
+/// The right-column toggle (Rust `palette_right_panel_button`).
+fn openRightPanelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const visible = side.shown(app, .right) != null;
+    const rows = try items(app, &.{
+        .{ .label = if (visible) "Hide right column" else "Show right column", .action = .{ .command = .@"view.toggle_right_panel" } },
+        .{ .label = "Focus right column", .action = .{ .command = .@"view.focus_right_panel" } },
+        .{ .label = "Add Outline", .action = .{ .command = .@"outline.show" }, .separator_before = true },
+        .{ .label = "Add Problems", .action = .{ .command = .@"lsp.diagnostics" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Right panel", rows, x, y);
+}
+
+/// The right column's strip — its chip and its `×` (Rust
+/// `open_right_panel_tab_context_menu`): focus, the neighbours, close,
+/// hide the column.
+fn openRightColumnMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Focus", .action = .{ .command = .@"view.focus_right_panel" } },
+        .{ .label = "Next section", .action = .{ .command = .@"view.right_panel_next_tab" }, .separator_before = true },
+        .{ .label = "Previous section", .action = .{ .command = .@"view.right_panel_prev_tab" } },
+        .{ .label = "Close section", .action = .{ .command = .@"view.right_panel_close_tab" }, .separator_before = true },
+        .{ .label = "Hide right column", .action = .{ .command = .@"view.toggle_right_panel" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (side.shown(app, .right)) |s| side.label(s) else "Right panel", rows, x, y);
+}
+
+/// The palette bar's ` ← ` / ` → ` (Rust `open_palette_nav_context_menu`):
+/// the two steps, the picker, the history's clear.
+fn openNavMenu(app: *App, forward: bool, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Previous buffer", .action = .{ .command = .@"buffer.prev" } },
+        .{ .label = "Next buffer", .action = .{ .command = .@"buffer.next" } },
+        .{ .label = "Buffers…", .action = .{ .command = .@"picker.buffers" }, .separator_before = true },
+        .{ .label = "Clear history", .action = .{ .command = .@"buffer.clear_mru" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (forward) "Forward" else "Back", rows, x, y);
+}
+
+/// The palette bar's ` ▾ ` (Rust `palette_dropdown_button`).
+fn openOpenMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Recent files", .action = .{ .command = .@"picker.recent" } },
+        .{ .label = "Recent commands", .action = .{ .command = .@"picker.recent_commands" } },
+        .{ .label = "All files", .action = .{ .command = .@"picker.files" } },
+        .{ .label = "Command palette", .action = .{ .command = .palette }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Open…", rows, x, y);
+}
+
+/// The ` TABS ` label (Rust `open_top_bar_cluster_context_menu`): the
+/// cluster mode, ticked; then the page picker.
+fn openClusterMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cur = app.cfg.ui.top_bar_cluster_mode;
+    const rows = try items(app, &.{
+        .{ .label = "Expanded", .action = .{ .command = .@"view.cluster_mode_expanded" }, .checked = cur == .expanded },
+        .{ .label = "Compact", .action = .{ .command = .@"view.cluster_mode_compact" }, .checked = cur == .compact },
+        .{ .label = "Auto", .action = .{ .command = .@"view.cluster_mode_auto" }, .checked = cur == .auto },
+        .{ .label = "Tab pages…", .action = .{ .command = .@"tab.picker" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Tab cluster", rows, x, y);
+}
+
+/// The theme pill (Rust `bufferline_theme_toggle`): the toggle, the
+/// system follow, the reset, the picker, then every theme with the
+/// painted one ticked.
+pub fn openThemeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const Theme = @import("../ui/theme.zig");
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    const cur = app.theme.name;
+    const toggle_label: []const u8 = if (app.cfg.ui.theme_toggle) |alt|
+        (if (!std.ascii.eqlIgnoreCase(alt, cur)) try std.fmt.allocPrint(arena, "Toggle → {s}", .{alt}) else "Toggle (primary ⇄ alt)")
+    else
+        "Toggle (set ui.theme_toggle first)";
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = toggle_label, .action = .{ .command = .@"theme.toggle" } },
+        .{ .label = "Auto: match system (light / dark)", .action = .{ .command = if (app.cfg.ui.theme_auto_system) .@"theme.auto_system_off" else .@"theme.auto_system" }, .checked = app.cfg.ui.theme_auto_system },
+        .{ .label = "Reset to config default", .action = .{ .command = .@"theme.reset" } },
+        .{ .label = "Pick theme…  (fuzzy)", .action = .{ .command = .@"theme.pick" } },
+    });
+    for (&Theme.all, 0..) |*th, i| try rows.append(app.gpa, .{
+        .label = th.name,
+        .action = .{ .set_theme = th.name },
+        .checked = std.ascii.eqlIgnoreCase(th.name, cur),
+        .separator_before = i == 0,
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try openOwned(app, "Theme", owned, x, y, mem);
+}
+
+/// The window `×` (Rust `bufferline_window_close`).
+fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Quit (with confirm)", .action = .{ .command = .@"app.quit" } },
+        .{ .label = "Save all", .action = .{ .command = .@"file.save_all" }, .separator_before = true },
+        .{ .label = "Restart", .action = .{ .command = .@"app.restart" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("mnml", rows, x, y);
+}
+
+/// The strip's terminal chip (Rust `split_strip_term_buttons`): where
+/// the shell goes.
+fn openTerminalChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Open shell (beside)", .action = .{ .command = .@"term.shell" } },
+        .{ .label = "Open shell in left half", .action = .{ .command = .@"term.shell_left" }, .separator_before = true },
+        .{ .label = "Open shell in right half", .action = .{ .command = .@"term.shell_right" } },
+        .{ .label = "Open shell in top half", .action = .{ .command = .@"term.shell_top" } },
+        .{ .label = "Open shell in bottom half", .action = .{ .command = .@"term.shell_bottom" } },
+        .{ .label = "Scratch terminal", .action = .{ .command = .@"term.scratch_toggle" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Terminal", rows, x, y);
+}
+
+/// The strip's split chips (Rust `split_strip_buttons`): the split, the
+/// equalize, the grow / shrink pair, close.
+fn openSplitChipMenu(app: *App, dir: enum { horizontal, vertical }, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, switch (dir) {
+        .horizontal => &.{
+            .{ .label = "Split right", .action = .{ .command = .@"view.split_right" } },
+            .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
+            .{ .label = "Grow width", .action = .{ .command = .@"view.split_grow_width" } },
+            .{ .label = "Shrink width", .action = .{ .command = .@"view.split_shrink_width" } },
+            .{ .label = "Close active pane", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
+        },
+        .vertical => &.{
+            .{ .label = "Split down", .action = .{ .command = .@"view.split_down" } },
+            .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
+            .{ .label = "Grow height", .action = .{ .command = .@"view.split_grow_height" } },
+            .{ .label = "Shrink height", .action = .{ .command = .@"view.split_shrink_height" } },
+            .{ .label = "Close active pane", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
+        },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (dir == .horizontal) "Split horizontal" else "Split vertical", rows, x, y);
+}
+
+/// The strip's maximize chip (Rust `split_strip_maximize_buttons`).
+fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Zoom this leaf / restore", .action = .{ .command = .@"view.toggle_zoom" } },
+        .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" } },
+        .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Maximize", rows, x, y);
+}
+
+/// The strip's AI chips (Rust `split_strip_ai_buttons`): toggle the
+/// existing pane, a new session in each half, the layout mode, the
+/// glyph pair.
+fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
+    const grid = app.cfg.ui.ai_layout_mode == .grid;
+    const rows = try items(app, if (codex) &.{
+        .{ .label = "Toggle existing Codex pane", .action = .{ .command = .@"ai.codex" } },
+        .{ .label = "New Codex session in left half", .action = .{ .command = .@"ai.codex_new_left" }, .separator_before = true },
+        .{ .label = "New Codex session in right half", .action = .{ .command = .@"ai.codex_new_right" } },
+        .{ .label = "New Codex session in top half", .action = .{ .command = .@"ai.codex_new_top" } },
+        .{ .label = "New Codex session in bottom half", .action = .{ .command = .@"ai.codex_new_bottom" } },
+        .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
+        .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
+        .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
+        .{ .label = "Edit Codex glyph…", .action = .{ .command = .@"integrations.edit_codex_glyph" } },
+    } else &.{
+        .{ .label = "Toggle existing Claude Code pane", .action = .{ .command = .@"ai.claude_code" } },
+        .{ .label = "New Claude Code session in left half", .action = .{ .command = .@"ai.claude_code_new_left" }, .separator_before = true },
+        .{ .label = "New Claude Code session in right half", .action = .{ .command = .@"ai.claude_code_new_right" } },
+        .{ .label = "New Claude Code session in top half", .action = .{ .command = .@"ai.claude_code_new_top" } },
+        .{ .label = "New Claude Code session in bottom half", .action = .{ .command = .@"ai.claude_code_new_bottom" } },
+        .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
+        .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
+        .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
+        .{ .label = "Edit Claude Code glyph…", .action = .{ .command = .@"integrations.edit_claude_glyph" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (codex) "Codex launcher" else "Claude Code launcher", rows, x, y);
+}
+
+/// A tab-page chip or its `×` (Zig-only — Rust's cluster had no menu):
+/// the page is shown first, as a tab is made active, so the rows act
+/// on it.
+fn openTabPageMenu(app: *App, page: usize, x: u16, y: u16) Allocator.Error!bool {
+    const cmd_tab = @import("cmd_tab.zig");
+    if (page >= app.layouts.layouts.items.len) return false;
+    cmd_tab.switchTab(app, page);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const rows = try items(app, &.{
+        .{ .label = "Close page", .action = .{ .command = .@"tab.close" } },
+        .{ .label = "Close other pages", .action = .{ .command = .@"tab.only" } },
+        .{ .label = "New tab page", .action = .{ .command = .@"tab.new" }, .separator_before = true },
+        .{ .label = "Move left", .action = .{ .command = .@"tab.move_left" }, .separator_before = true },
+        .{ .label = "Move right", .action = .{ .command = .@"tab.move_right" } },
+        .{ .label = "Tab pages…", .action = .{ .command = .@"tab.picker" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try openOwned(app, try std.fmt.allocPrint(arena, "Tab page {d}", .{page + 1}), rows, x, y, mem);
+    return true;
+}
+
+/// The INTEGRATIONS section's tab strip (Zig-only): the tabs, ticked,
+/// and a refresh.
+fn openIntegrationsTabsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cur = app.integrations.tab;
+    const rows = try items(app, &.{
+        .{ .label = "Installed", .action = .{ .command = .@"integrations.show_installed" }, .checked = cur == .installed },
+        .{ .label = "Marketplace", .action = .{ .command = .@"integrations.show_marketplace" }, .checked = cur == .marketplace },
+        .{ .label = "Dev", .action = .{ .command = .@"integrations.show_in_dev" }, .checked = cur == .dev },
+        .{ .label = "Refresh", .action = .{ .command = .@"integrations.refresh" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Integrations", rows, x, y);
+}
+
+/// A menu-bar word (Rust `menu_bar_words`): open it, then the bar's
+/// own mode.
+fn openMenuBarMenu(app: *App, which: @import("menu_bar.zig").Menu, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Open", .action = .{ .menu_bar = @intFromEnum(which) } },
+        .{ .label = switch (app.cfg.ui.menu_bar) {
+            .always => "Menu bar: always → auto",
+            .auto => "Menu bar: auto → hidden",
+            .hidden => "Menu bar: hidden → always",
+        }, .action = .{ .command = .@"view.menu_bar_cycle" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Menu bar", rows, x, y);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+fn closeMenu(app: *App) void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+}
+
+test "right-click: the workspace chip, the Ln/Col chip, the PR chip, the AI chips and the workspace headers open Rust's rows" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    // One repo: the repo rows stay out and the worktree picker leads.
+    try openWorkspaceChipMenu(&app, 3, 3);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("tmp", app.overlay.menu.title);
+    try t.expectEqualStrings("Worktrees…", app.overlay.menu.items[0].label);
+    try t.expect(!app.overlay.menu.items[0].separator_before);
+    closeMenu(&app);
+    // The position chip carries the cursor's own text.
+    _ = try app.openScratch();
+    try openPositionMenu(&app, 3, 3);
+    try t.expectEqualStrings("Cursor", app.overlay.menu.title);
+    try t.expectEqualStrings("Copy position (1:1)", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("1:1", app.overlay.menu.items[1].action.copy_text);
+    closeMenu(&app);
+    // No PR: no menu, nothing to act on.
+    try openPrMenu(&app, 3, 3);
+    try t.expect(app.overlay == .none);
+    // The Codex chip opens Codex's usage; the mode rows tick the state.
+    try openAiChipMenu(&app, true, 3, 3);
+    try t.expectEqualStrings("Codex", app.overlay.menu.title);
+    try t.expectEqual(command.CommandId.@"ai.codex_usage", app.overlay.menu.items[0].action.command);
+    try t.expect(app.overlay.menu.items[5].checked); // Both, the default
+    closeMenu(&app);
+    // The primary header leads with the fold; an extra root with switch-to.
+    try openWorkspaceHeaderMenu(&app, 0, 3, 3);
+    try t.expectEqualStrings("Collapse / expand section", app.overlay.menu.items[0].label);
+    try t.expectEqual(app_mod.FocusId.tree, app.overlay.menu.return_focus);
+    closeMenu(&app);
+    try openWorkspaceHeaderMenu(&app, 1, 3, 3);
+    try t.expectEqualStrings("Switch to this workspace", app.overlay.menu.items[0].label);
+    closeMenu(&app);
+}
+
+test "right-click: the chrome chips — a chip with a menu answers true, one without false; the theme pill ticks the painted theme" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const render = @import("render.zig");
+    try t.expect(!try openButtonMenu(&app, @intFromEnum(render.Button.hidden_tabs), 3, 3));
+    try t.expect(app.overlay == .none);
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.toggle_tree), 3, 3));
+    try t.expectEqualStrings("Sidebar", app.overlay.menu.title);
+    closeMenu(&app);
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.theme_toggle), 3, 3));
+    var ticked: usize = 0;
+    for (app.overlay.menu.items) |it| if (it.action == .set_theme) {
+        if (it.checked) {
+            ticked += 1;
+            try t.expectEqualStrings(app.theme.name, it.action.set_theme);
+        }
+    };
+    try t.expectEqual(@as(usize, 1), ticked);
+    closeMenu(&app);
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
+    try t.expectEqualStrings("Terminal", app.overlay.menu.title);
+    try t.expectEqual(command.CommandId.@"term.shell_left", app.overlay.menu.items[1].action.command);
+    closeMenu(&app);
+    // A page chip: the page is shown, its rows act on it.
+    try t.expect(try openButtonMenu(&app, render.Button.tabPage(0), 3, 3));
+    try t.expectEqualStrings("Tab page 1", app.overlay.menu.title);
+    closeMenu(&app);
+    try t.expect(!try openButtonMenu(&app, render.Button.tabPage(7), 3, 3));
+}
+
+test "right-click: a copy_text row lands on the clipboard after the menu's own arena is gone" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try openPositionMenu(&app, 3, 3);
+    const action = app.overlay.menu.items[1].action;
+    try @import("dispatch.zig").runMenuActionForTest(&app, action);
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("1:1", app.clipboard.text());
+}
 
 test "the request field menu is titled by the field under the pointer" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });

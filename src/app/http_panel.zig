@@ -873,20 +873,68 @@ pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
 pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
-        .refresh => runToast(app, refresh(app)),
-        .new => runToast(app, command.run(app, .{ .static = .@"http.new" })),
+        // right-click: the ⟳ menu every list panel has; the ` + `'s
+        // ladder of everything the section can create.
+        .refresh => if (m.button == .right) try @import("auto_refresh.zig").openRefreshMenu(app, .http, m.x, m.y) else runToast(app, refresh(app)),
+        .new => if (m.button == .right) try openNewLadderMenu(app, m.x, m.y) else runToast(app, command.run(app, .{ .static = .@"http.new" })),
         .sort, .view => {},
     }
 }
 
+/// right-click: the header ` + `'s ladder (Zig-only) — one row per
+/// thing the section creates, then the two imports.
+fn openNewLadderMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const items = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "New request…", .action = .{ .command = .@"http.new_request" } },
+        .{ .label = "New collection…", .action = .{ .command = .@"http.new_collection" } },
+        .{ .label = "New env…", .action = .{ .command = .@"http.new_env" } },
+        .{ .label = "New chain…", .action = .{ .command = .@"http.new_chain" } },
+        .{ .label = "Paste curl from clipboard", .action = .{ .command = .@"http.paste_curl" }, .separator_before = true },
+        .{ .label = "Import Postman collection…", .action = .{ .command = .@"http.import_postman" } },
+        .{ .label = "Import HAR…", .action = .{ .command = .@"http.import_har" } },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("New", items, x, y);
+}
+
 /// The section's own targets: a header chip, a link, a folder's ` + `.
+/// right-click: each opens the menu of the row it sits on — the
+/// section header's, the link row's, the folder row's.
 pub fn partMouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
-    if (m.kind != .press or m.button != .left) return;
+    if (m.kind != .press) return;
+    if (m.button == .right) {
+        const st = &app.http_panel;
+        const idx: ?usize = switch (part) {
+            .chip => |c| rowIndex(st, c.section, .header, null, null),
+            .link => |l| rowIndex(st, null, .link, l, null),
+            .folder_new => |i| rowIndex(st, .collections, .folder, null, i),
+        };
+        if (idx) |i| {
+            focusPanel(app);
+            st.list.cursor = i;
+            try openRowMenu(app, m.x, m.y);
+        }
+        return;
+    }
+    if (m.button != .left) return;
     switch (part) {
         .chip => |c| runToast(app, chipAction(app, c.section, c.kind)),
         .link => |l| runToast(app, linkAction(app, l, .{ .x = m.x, .y = m.y })),
         .folder_new => |i| runToast(app, newRequestInFolder(app, i)),
     }
+}
+
+/// The first displayed row matching what is given of section / kind /
+/// link / folder index.
+fn rowIndex(st: *const State, section: ?Section, kind: Kind, link: ?Link, folder: ?u32) ?usize {
+    for (st.rows.items, 0..) |row, i| {
+        if (row.kind != kind) continue;
+        if (section) |s| if (row.section != s) continue;
+        if (link) |l| if (row.link != l) continue;
+        if (folder) |f| if (row.idx != f) continue;
+        return i;
+    }
+    return null;
 }
 
 pub fn filterMouse(app: *App, m: Mouse) void {

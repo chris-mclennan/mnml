@@ -565,6 +565,18 @@ pub const MenuAction = union(enum) {
     /// The rail menu's "Move to <side> side": the section the menu was
     /// opened on, not the focused one (`app/side.zig`).
     move_section: struct { section: @import("../ui/activity_bar.zig").Section, side: @import("../config/Config.zig").Side },
+    /// // right-click: the row's own text to the clipboard — a URL, a
+    /// position, a language name (Rust `CopyPath` / `CopyText`). The
+    /// menu's `mem` arena or a static owns the bytes.
+    copy_text: []const u8,
+    /// // right-click: a web URL for the external browser (Rust `OpenUrl`).
+    open_url: []const u8,
+    /// // right-click: a path to open — a file in a buffer, a directory
+    /// in a Files pane (Rust `OpenPath` / `OpenFilesPane`).
+    open_path: []const u8,
+    /// // right-click: a theme by name — the theme pill's per-theme rows
+    /// (Rust `SetTheme`).
+    set_theme: []const u8,
     none,
 };
 

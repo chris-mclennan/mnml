@@ -1,0 +1,11 @@
+# The tree's empty rows below the last file: a right press opens the
+# workspace menu (VS Code's empty-Explorer menu), titled by the
+# workspace, with the create verbs in it.
+write a.txt "hello\n"
+open a.txt
+rightclick 10 20
+expect screen contains "Collapse / expand section"
+expect screen contains "New file…"
+expect screen contains "Show workspace dots"
+key esc
+expect screen lacks "New file…"

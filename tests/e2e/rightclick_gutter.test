@@ -1,0 +1,12 @@
+# The editor gutter's right-click: the breakpoint menu, with Rust's git
+# rows for the line at the end (Peek change / Toggle blame / Open on
+# remote). At 120x40 the gutter of line 1 is column 31, row 2.
+write a.txt "hello\n"
+open a.txt
+rightclick 31 2
+expect screen contains "┌ Breakpoint"
+expect screen contains "Add breakpoint"
+expect screen contains "Peek change"
+expect screen contains "Open on remote"
+key esc
+expect screen lacks "Peek change"

@@ -234,8 +234,22 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         }
     }
     out.painted = i - p.scroll;
+    // right-click: the rows below the last item belong to the last
+    // section painted — a right press there opens its workspace menu,
+    // as VS Code's empty Explorer space does.
+    if (y < area.h) ui.hit(Rect.init(area.x, area.y + y, area.w -| sb_w, area.h - y), .{ .tree_empty = lastRoot(p.items, i) });
     if (out.overflow) scrollbar.drawVertical(ui, Rect.init(area.right() - 1, area.y, 1, area.h), .tree, contentLen(p.items), area.h, p.scroll);
     return out;
+}
+
+/// The root of the last section at or before item `end`.
+fn lastRoot(items: []const Item, end: usize) u8 {
+    var i = @min(end, items.len);
+    while (i > 0) {
+        i -= 1;
+        if (items[i] == .section) return items[i].section.root;
+    }
+    return 0;
 }
 
 /// ` ▾ ` + [`● `] + label; the primary adds the chip cluster.

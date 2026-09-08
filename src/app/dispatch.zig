@@ -819,6 +819,12 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // The `{{VAR}}` a quick-fix menu was opened on rides through the
     // close to the row's command.
     const quick_fix = http_app.takeQuickFix(app);
+    // right-click: a string-carrying row's bytes belong to the menu's
+    // own arena, which the close frees — copy them out first.
+    const text: ?[]const u8 = switch (action) {
+        .copy_text, .open_url, .open_path, .set_theme => |s| try app.frame.allocator().dupe(u8, s),
+        else => null,
+    };
     closeOverlay(app);
     app.http.quick_fix_var = quick_fix;
     switch (action) {
@@ -853,8 +859,33 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .set_coverage_mode => |m| try coverage.setMode(app, m),
         .menu_bar => |i| try menu_bar.openIndex(app, i),
         .git_palette => |a| try git_palette.menuAction(app, a),
+        // right-click: the string-carrying rows, on the copy taken above.
+        .copy_text => {
+            try app.clipboard.set(text.?, false);
+            app.toast("copied {s}", .{text.?});
+        },
+        .open_url => git_app.openExternal(app, text.?),
+        .open_path => try openPathRow(app, text.?),
+        .set_theme => cmd_view.acceptTheme(app, text.?) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+        },
         .none => {},
     }
+}
+
+/// right-click: a menu row's path — a directory opens in a Files pane,
+/// anything else in a buffer.
+fn openPathRow(app: *App, path: []const u8) Allocator.Error!void {
+    const is_dir = if (std.Io.Dir.cwd().statFile(app.io, path, .{})) |st| st.kind == .directory else |_| false;
+    if (is_dir) {
+        _ = try files_pane.open(app, path);
+        return;
+    }
+    _ = app.openPath(path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => app.toast("cannot open {s}", .{path}),
+    };
 }
 
 fn overlayKey(app: *App, k: Key) Allocator.Error!void {
@@ -1364,9 +1395,28 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // directory inside the primary with it (Rust `tree_toggle`).
         .tree_root => |root| {
             if (wheel) return treeWheel(app, m, count);
-            if (m.kind != .press or m.button != .left) return;
+            if (m.kind != .press) return;
+            // right-click: the root's workspace menu (Rust `tree_toggle`
+            // / `extra_workspace_toggles`).
+            if (m.button == .right) {
+                if (app.overlay != .none) closeOverlay(app);
+                return context_menus.openWorkspaceHeaderMenu(app, root, m.x, m.y);
+            }
+            if (m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
             try app.tree.toggleRoot(app, root, m.mods.alt);
+        },
+        // right-click: the empty rows under the last section — a press
+        // focuses the tree, a right press opens that root's workspace
+        // menu (Rust: the empty Explorer space).
+        .tree_empty => |root| {
+            if (wheel) return treeWheel(app, m, count);
+            if (m.kind != .press) return;
+            if (app.overlay != .none) closeOverlay(app);
+            if (m.button == .right) return context_menus.openWorkspaceHeaderMenu(app, root, m.x, m.y);
+            if (m.button != .left) return;
+            if (app.activeBuffer()) |b| b.input.onBlur();
+            app.focus = .tree;
         },
         .tree_chip => |c| {
             if (wheel) return treeWheel(app, m, count);
@@ -1467,21 +1517,26 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .tab_close => |tb| {
-            if (wheel or m.kind != .press or m.button != .left) return;
+            if (wheel or m.kind != .press or (m.button != .left and m.button != .right)) return;
             const layout = app.layouts.current();
             const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
             const leaf = layout.leaf(lid) orelse return;
             if (tb.idx >= leaf.tabs.items.len) return;
             if (app.overlay != .none) closeOverlay(app);
+            // right-click: the tab's menu — Rust's tab rect covered the
+            // badge, so a right press there was the tab's.
+            if (m.button == .right) return context_menus.openTabMenu(app, leaf.tabs.items[tb.idx], m.x, m.y);
             try app.closePane(leaf.tabs.items[tb.idx], false);
         },
         .breadcrumb => |bc| {
             // A segment opens a Files pane at the directory it names.
-            if (wheel or m.kind != .press or m.button != .left) return;
+            if (wheel or m.kind != .press or (m.button != .left and m.button != .right)) return;
             const e = app.panes.editor(bc.pane) orelse return;
             const path = e.buf.doc.path orelse return;
             const dir = (try render.breadcrumbDir(app, app.frame.allocator(), path, bc.idx)) orelse return;
             if (app.overlay != .none) closeOverlay(app);
+            // right-click: the directory's own rows (Zig-only).
+            if (m.button == .right) return context_menus.openBreadcrumbMenu(app, dir, m.x, m.y);
             _ = try files_pane.open(app, dir);
         },
         .overlay_item => |i| {
@@ -1535,6 +1590,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 }
                 if (p.encoding().mouse == .none) {
                     if (wheel) return wheelOnPane(app, id, m, count);
+                    // right-click: Rust's dock menu, when the child is
+                    // not tracking the mouse (a tracking child owns its
+                    // right button).
+                    if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
                     return;
                 }
                 const r = hitRect(app, m.x, m.y) orelse return;
@@ -1546,8 +1605,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
             if (app.active != id) app.showPane(id) else app.focus = .{ .pane = id };
+            // right-click: the editor's text menu; an AI pane's own
+            // rows (Rust `open_ai_pane_context_menu`); any other pane
+            // body gets its tab's menu (Zig-only — Rust fell through).
             if (m.button == .right) {
-                if (app.panes.editor(id) != null) try context_menus.openEditorMenu(app, m.x, m.y);
+                if (app.panes.editor(id) != null) return context_menus.openEditorMenu(app, m.x, m.y);
+                if (app.panes.get(id)) |pane| if (pane.* == .ai) return context_menus.openAiPaneMenu(app, m.x, m.y);
+                try context_menus.openTabMenu(app, id, m.x, m.y);
             }
         },
         .script_hit => |sh| {
@@ -1636,48 +1700,50 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             const right = m.button == .right;
             switch (seg) {
                 statusline.seg_mode => if (right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
-                statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
+                // right-click: every chip Rust gives a menu has one here
+                // (`context_menus.zig`, "the statusline chips").
+                statusline.seg_position => if (right) try context_menus.openPositionMenu(app, m.x, m.y) else try runCmd(app, .@"editor.goto_line"),
                 // The file chip is words on hover and a menu on the right
                 // button; a left click does nothing, as in Rust.
                 statusline.seg_file => if (right) try context_menus.openFileChipMenu(app, m.x, m.y),
-                statusline.seg_language => {
+                statusline.seg_language => if (right) try context_menus.openLanguageMenu(app, m.x, m.y) else {
                     const lang: []const u8 = if (app.activeEditor()) |e| (e.buf.doc.language orelse "—") else "—";
                     app.toast("language: {s} (via file extension)", .{lang});
                 },
                 statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
                 else => if (statusline_app.SegId.of(seg)) |id| switch (id) {
                     .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y) else try runCmd(app, .@"git.status_pane"),
-                    .pr => if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
+                    .pr => if (right) try context_menus.openPrMenu(app, m.x, m.y) else if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
                     .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.diagnostics"),
-                    .symbol => try runCmd(app, .@"outline.show"),
+                    .symbol => if (right) try context_menus.openSymbolMenu(app, m.x, m.y) else try runCmd(app, .@"outline.show"),
                     .macro => try runCmd(app, .@"vim.macro_toggle"),
-                    .find => try runCmd(app, .@"find.find"),
-                    .test_run => if (tests_pane.find(app)) |id_pane| {
+                    .find => if (right) try context_menus.openFindMenu(app, m.x, m.y) else try runCmd(app, .@"find.find"),
+                    .test_run => if (right) try context_menus.openTestMenu(app, m.x, m.y) else if (tests_pane.find(app)) |id_pane| {
                         app.setActive(id_pane);
                         app.focus = .{ .pane = id_pane };
                     },
-                    .ai_claude, .ai_codex => try runCmd(app, .@"ai.spend_today"),
+                    .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y) else try runCmd(app, .@"ai.spend_today"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.
                     .np_brand, .np_track => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .label),
                     .np_play => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .play),
                     .np_next => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .next),
-                    .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
+                    .transfer => if (right) try context_menus.openTransferMenu(app, m.x, m.y),
                     // The LSP chip, as Rust: the servers on the left button
                     // (`:LspStatus`), the LSP menu on the right.
                     .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.status"),
-                    .wrap => try runCmd(app, .@"view.toggle_wrap"),
+                    .wrap => if (right) try context_menus.openWrapMenu(app, m.x, m.y) else try runCmd(app, .@"view.toggle_wrap"),
                     .autosave => app.toast("autosave: {d}s (`[editor] autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
-                    .filesize => if (app.activeEditor()) |e| {
+                    .filesize => if (right) try context_menus.openSizeMenu(app, m.x, m.y) else if (app.activeEditor()) |e| {
                         const n = e.buf.editor.bytes().len;
                         app.toast("{s}: {d} byte{s} · {d} line{s}", .{ if (e.buf.doc.path) |pth| std.fs.path.basename(pth) else "[scratch]", n, if (n == 1) "" else "s", e.buf.editor.lineCount(), if (e.buf.editor.lineCount() == 1) "" else "s" });
                     },
-                    .sel => {},
+                    .sel => if (right) try context_menus.openSelMenu(app, m.x, m.y),
                     .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
-                    .workspace => try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
+                    .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
                     _ => {},
                 } else if (seg >= statusline.seg_dyn_base and !right) {
                     // A host's segment: its `click_command`, on a left click.
@@ -1692,7 +1758,17 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .welcome => |row| {
             // The welcome pane: a recent file opens, a shortcut row runs
             // its command.
-            if (wheel or m.kind != .press or m.button != .left) return;
+            if (wheel or m.kind != .press) return;
+            // right-click: a recent row's own rows (Zig-only); a
+            // shortcut row is one verb and keeps none.
+            if (m.button == .right) {
+                if (row.kind == .recent) if (render.welcomeRecentPath(app, row.idx)) |path| {
+                    if (app.overlay != .none) closeOverlay(app);
+                    try context_menus.openWelcomeRecentMenu(app, path, m.x, m.y);
+                };
+                return;
+            }
+            if (m.button != .left) return;
             switch (row.kind) {
                 .recent => if (render.welcomeRecentPath(app, row.idx)) |path| {
                     const copy = try app.frame.allocator().dupe(u8, path);
@@ -1741,6 +1817,16 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // The palette bar's integration chips.
             if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
                 return integrations.chipClick(app, id - integrations_view.chip_base, m);
+            }
+            // right-click: the chrome chips' menus (Rust `right_click.rs`;
+            // `context_menus.openButtonMenu`). A strip chip's rows act on
+            // the leaf it sits on. A chip with no menu falls through.
+            if (m.button == .right) {
+                switch (@as(render.Button, @enumFromInt(id))) {
+                    .split_term, .split_right, .split_down, .split_max, .ai_claude, .ai_codex => focusLeafAt(app, m.x, m.y),
+                    else => {},
+                }
+                if (try context_menus.openButtonMenu(app, id, m.x, m.y)) return;
             }
             // The INTEGRATIONS section's tabs.
             if (id >= integrations_view.tab_base and id < integrations_view.tab_base + integrations_view.Tab.all.len) {
@@ -1820,7 +1906,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => {},
             }
         },
-        .link => {},
+        // right-click: a link's open / copy rows (Rust copies the URL
+        // of a detail pane's link row).
+        .link => |l| if (m.kind == .press and m.button == .right) {
+            if (app.overlay != .none) closeOverlay(app);
+            try context_menus.openLinkMenu(app, l.url, m.x, m.y);
+        },
     }
 }
 
@@ -3127,4 +3218,95 @@ test "gestures: a divider drag resizes with the minimum kept, a tab drag reorder
     try app.handle(.{ .key = Key.named(.enter) });
     try std.testing.expect(app.overlay == .none);
     try std.testing.expectEqual(@as(usize, 3), leaf.tabs.items.len);
+}
+
+// ─── right-click: the structural test ───────────────────────────────────
+
+/// What each hit kind does with the right button. `EnumArray.init`
+/// wants every tag, so a new `HitTarget` variant does not compile until
+/// it is placed here — with a menu of its own, a delegate that opens
+/// one, or a one-word reason it has none. The test below then checks
+/// the claim against `mouse`'s own source.
+pub const RightClick = union(enum) {
+    /// The arm in `mouse` reads `.right` itself.
+    here,
+    /// The arm hands the press to this call, which reads `.right`.
+    delegated: []const u8,
+    /// No right-click, and the one-word reason.
+    none: []const u8,
+};
+
+const HitTag = std.meta.Tag(@import("../ui/hit.zig").HitTarget);
+
+pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
+    .pane = .here,
+    .divider = .{ .none = "drag" },
+    .tab = .here,
+    .tab_close = .here,
+    .breadcrumb = .here,
+    .row = .{ .delegated = "rowMouse" },
+    .kebab = .{ .delegated = "kebabMouse" },
+    .chip = .{ .delegated = "chipMouse" },
+    .filter_input = .{ .none = "focus" },
+    .scrollbar = .{ .none = "drag" },
+    .button = .here,
+    .link = .here,
+    .menu_item = .here,
+    .statusline_seg = .here,
+    .tree_node = .here,
+    .tree_root = .here,
+    .tree_empty = .here,
+    .tree_chip = .{ .none = "one-verb" },
+    .info_view = .{ .delegated = "info_view_app.mouse" },
+    .script_hit = .here,
+    .editor_cell = .{ .delegated = "editorCellMouse" },
+    .gutter = .here,
+    .overlay_item = .{ .none = "overlay" },
+    .dock = .{ .delegated = "dock.mouse" },
+    .rail = .{ .delegated = "activity_bar.mouse" },
+    .welcome = .here,
+    .git_palette = .{ .delegated = "git_palette.partMouse" },
+    .http = .{ .delegated = "http_panel.partMouse" },
+});
+
+/// The source of `mouse`'s arm for `tag`: from `        .tag => ` (the
+/// switch's own indent) to the next arm at that indent, or the switch's
+/// close.
+fn armSource(body: []const u8, tag: []const u8) ?[]const u8 {
+    var needle_buf: [64]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\n        .{s} => ", .{tag}) catch return null;
+    const start = std.mem.indexOf(u8, body, needle) orelse return null;
+    const rest = body[start + needle.len ..];
+    const next_arm = std.mem.indexOf(u8, rest, "\n        .") orelse rest.len;
+    const close = std.mem.indexOf(u8, rest, "\n    }") orelse rest.len;
+    return rest[0..@min(next_arm, close)];
+}
+
+test "right-click: every HitTarget's mouse arm reads the right button, hands it to a call that does, or is listed with a reason" {
+    const src = @embedFile("dispatch.zig");
+    const start = std.mem.indexOf(u8, src, "\npub fn mouse(").?;
+    const body = src[start..];
+    inline for (std.meta.fields(HitTag)) |f| {
+        const arm = armSource(body, f.name) orelse {
+            std.debug.print("no `.{s} =>` arm in dispatch.mouse\n", .{f.name});
+            return error.TestUnexpectedResult;
+        };
+        const claim = right_click_of.get(@field(HitTag, f.name));
+        const ok = switch (claim) {
+            .here => std.mem.indexOf(u8, arm, ".right") != null,
+            .delegated => |call| std.mem.indexOf(u8, arm, call) != null,
+            .none => std.mem.indexOf(u8, arm, ".right") == null,
+        };
+        if (!ok) {
+            std.debug.print("`.{s}` is listed as {s} but its arm says otherwise\n", .{ f.name, @tagName(claim) });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "right-click: armSource finds an arm by its exact tag and stops at the next" {
+    const body = "\npub fn mouse() {\n    switch (t) {\n        .tab => |tb| {\n            x\n        },\n        .tab_close => |tb| {\n            .right\n        },\n    }\n}\n";
+    try std.testing.expect(std.mem.indexOf(u8, armSource(body, "tab").?, ".right") == null);
+    try std.testing.expect(std.mem.indexOf(u8, armSource(body, "tab_close").?, ".right") != null);
+    try std.testing.expect(armSource(body, "nope") == null);
 }

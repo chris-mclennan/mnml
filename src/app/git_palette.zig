@@ -1058,6 +1058,9 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .refresh => {
+            // right-click: the ⟳ menu every list panel has (Refresh now,
+            // the auto-refresh toggle).
+            if (m.button == .right) return @import("auto_refresh.zig").openRefreshMenu(app, .git, m.x, m.y);
             git.runToast(app, git.discover(app));
             if (app.git.activeRepo() != null) {
                 app.git.status_pending = false;
