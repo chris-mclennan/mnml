@@ -33,6 +33,7 @@ const captured = @import("../http/captured.zig");
 const chain_mod = @import("../http/chain.zig");
 const bench_mod = @import("../http/bench.zig");
 const sources = @import("../http/sources.zig");
+const hooks = @import("../core/hooks.zig");
 
 pub const table = .{
     .@"http.edit_env" = &editEnvCmd,
@@ -105,7 +106,6 @@ fn saveJar(app: *App) void {
 /// Cookies into the jar (keyed by the host that answered), the schema
 /// sidecar checked, the Tests tab filled.
 pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!void {
-    _ = id;
     const resp = rp.response() orelse return;
     // A redirect hop's cookies belong to the host that set them, the
     // final response's to the host it came from.
@@ -125,6 +125,84 @@ pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!vo
     rp.clearTests();
     try validateSchema(app, rp, false);
     try runScript(app, rp);
+    try emitResponseHook(app, id, rp);
+}
+
+// ─── the http_request / http_response hooks ─────────────────────────────
+// Order, before a send: the block's `@set-*` directives, the `{{VAR}}`
+// expansion, then `http_request` — a subscriber sees the wire form and
+// what it returns goes out as-is (no further expansion). After a
+// response: cookies into the jar, the schema sidecar, `@assert` /
+// `@capture`, then `http_response` — so a Lua subscriber can read a
+// variable a capture just wrote, and `mnml.http.set_var` lands after the
+// captures. Only a request pane's sends fire them (not chains, fan-out,
+// bench or the CLI); a replayed mock fires `http_response` too.
+
+/// `http_request` on the expanded request about to go out; the
+/// subscribers' rewrite is applied to `req` in place. The pane keeps
+/// the final headers for its Timeline tab.
+pub fn beforeSend(app: *App, id: PaneId, rp: *RequestPane, req: *parse.Request, env_name: ?[]const u8) Allocator.Error!void {
+    if (app.hooks.count(.http_request) > 0) {
+        var arena = std.heap.ArenaAllocator.init(app.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const hs = try a.alloc(hooks.HttpHeader, req.headers.items.len);
+        for (req.headers.items, 0..) |h, i| hs[i] = .{ .name = h.name, .value = h.value };
+        var rw = hooks.HttpRewrite.init(app.gpa);
+        defer rw.deinit();
+        app.http.hook = .request;
+        defer app.http.hook = .none;
+        app.hooks.emit(app, .{ .http_request = .{ .pane = id, .method = req.method, .url = req.url, .headers = hs, .body = req.body, .env = env_name, .rewrite = &rw } });
+        try applyRewrite(app.gpa, req, &rw);
+    }
+    try rp.setSentHeaders(req.headers.items);
+}
+
+fn applyRewrite(gpa: Allocator, req: *parse.Request, rw: *const hooks.HttpRewrite) Allocator.Error!void {
+    if (rw.method) |m| try req.setMethod(gpa, m);
+    if (rw.url) |u| try req.setUrl(gpa, u);
+    if (rw.headers) |hs| {
+        req.clearHeaders(gpa);
+        for (hs.items) |h| try req.addHeader(gpa, h.name, h.value);
+    }
+    if (rw.clear_body) try req.setBody(gpa, null) else if (rw.body) |b| try req.setBody(gpa, b);
+}
+
+/// The `http_response` payload for `resp`: the body cut at
+/// `hooks.http_body_cap` (flagged), the headers as borrowed pairs.
+pub fn responseHookArgs(arena: Allocator, pane: PaneId, resp: *const client.Response) Allocator.Error!hooks.HttpResponseArgs {
+    const hs = try arena.alloc(hooks.HttpHeader, resp.headers.len);
+    for (resp.headers, 0..) |h, i| hs[i] = .{ .name = h.name, .value = h.value };
+    const cut = resp.body.len > hooks.http_body_cap;
+    return .{
+        .pane = pane,
+        .status = resp.status,
+        .headers = hs,
+        .body = if (cut) resp.body[0..hooks.http_body_cap] else resp.body,
+        .body_truncated = cut or resp.truncated,
+        .timing_ms = resp.timing.total_ms,
+    };
+}
+
+/// `http_response` for the pane's Done response, then any send a
+/// subscriber asked for through `mnml.http.send`.
+fn emitResponseHook(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!void {
+    if (app.hooks.count(.http_response) == 0) return;
+    const resp = rp.response() orelse return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const args = try responseHookArgs(arena.allocator(), id, resp);
+    app.http.hook = .response;
+    app.http.resend_pane = null;
+    app.hooks.emit(app, .{ .http_response = args });
+    app.http.hook = .none;
+    if (app.http.resend_pane) |again| {
+        app.http.resend_pane = null;
+        http.fire(app, again) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
+        };
+    }
 }
 
 /// The block's `@assert` / `@capture` lines against the Done response:
@@ -377,25 +455,31 @@ fn jumpToEnvVarCmd(app: *App) CommandError!void {
 }
 
 /// Write `key=value` into the active env (the file that holds the key,
-/// else `.mnml/env/<name>.env`).
+/// else `.mnml/env/<name>.env`); a refused write says why in a toast.
 fn writeEnvVar(app: *App, key: []const u8, value: []const u8) Allocator.Error!void {
+    setEnvVar(app, key, value) catch |err| switch (err) {
+        error.InvalidValue => app.toast("env: a value cannot contain newlines", .{}),
+        error.InvalidKey => app.toast("env: key must be [A-Za-z0-9_]", .{}),
+        error.OutOfMemory => return error.OutOfMemory,
+        error.WriteFailed => app.toast("env: write failed: {s}", .{app.diag.msg orelse "?"}),
+    };
+}
+
+pub const EnvWriteError = Allocator.Error || error{ InvalidKey, InvalidValue, WriteFailed };
+
+/// `writeEnvVar` for a caller that wants the refusal back
+/// (`mnml.http.set_var`): the file is written and toasted, or the
+/// error names what was wrong.
+pub fn setEnvVar(app: *App, key: []const u8, value: []const u8) EnvWriteError!void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const sel = try activeEnvName(app, arena.allocator());
     if (sel.is_fallback) app.toast("env: no active env — using dev.env (set `[http] default_env` or MNML_ENV)", .{});
     const up = env_mod.upsert(app.gpa, app.io, app.workspace, sel.name, key, value) catch |err| switch (err) {
-        error.InvalidValue => {
-            app.toast("env: a value cannot contain newlines", .{});
-            return;
-        },
-        error.InvalidKey => {
-            app.toast("env: key must be [A-Za-z0-9_]", .{});
-            return;
-        },
-        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidValue, error.InvalidKey, error.OutOfMemory => |e| return e,
         else => {
-            app.toast("env: write failed: {s}", .{@errorName(err)});
-            return;
+            app.diag.fail(app.frame.allocator(), "{s}", .{@errorName(err)}) catch {};
+            return error.WriteFailed;
         },
     };
     defer app.gpa.free(up.path);
@@ -1234,6 +1318,7 @@ pub fn replayMockFrom(app: *App, rp: *RequestPane, path: []const u8) CommandErro
     try rp.addTest("mock: replayed from {s}", .{app.relPath(path)});
     try validateSchema(app, rp, false);
     app.toast("mock: replayed {d} {s} from {s}", .{ m.status, m.status_text, app.relPath(path) });
+    if (app.active) |id| try emitResponseHook(app, id, rp);
 }
 
 /// A picker opened here was accepted. `i` indexes the labels.
@@ -1491,4 +1576,189 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
         },
         else => {},
     }
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+fn testRoot(tmp: *std.testing.TmpDir, gpa: Allocator) ![]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    return gpa.dupe(u8, buf[0..n]);
+}
+
+fn pumpUntilSettled(app: *App, rp: *RequestPane, max_ticks: usize) !void {
+    var waited: usize = 0;
+    while ((rp.state == .sending or rp.state == .streaming) and waited < max_ticks) : (waited += 1) {
+        try app.tick(App.nowMs(app.io));
+        try Io.sleep(app.io, .fromMilliseconds(10), .awake);
+    }
+}
+
+const HookProbe = struct {
+    var tests_at_response: usize = 0;
+    var responses: u32 = 0;
+    fn onResponse(app: *App, args: hooks.HookArgs) void {
+        responses += 1;
+        const rp = (app.panes.get(args.http_response.pane) orelse return).asRequest() orelse return;
+        tests_at_response = rp.tests.items.len;
+    }
+};
+
+test "hooks: http_request rewrites the wire after the directives; http_response fires after the captures; set_var round-trips to the env file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try testRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .headers = &.{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "x-request-id", .value = "req-7" } }, .body = "{\"id\":7}" });
+    defer server.stop(testing.io);
+    const src = try std.fmt.allocPrint(testing.allocator,
+        \\# @set-header X-Probe = yes
+        \\# @capture TRACE = header x-request-id
+        \\GET http://127.0.0.1:{d}/users/7
+        \\Accept: application/json
+        \\
+    , .{server.port});
+    defer testing.allocator.free(src);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "u.http", .data = src });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    HookProbe.tests_at_response = 0;
+    HookProbe.responses = 0;
+    try app.hooks.subscribe(.http_response, .{ .zig = &HookProbe.onResponse });
+    const lua = app.script();
+    lua.runString(
+        \\log = {}
+        \\mnml.on("http_request", function(a)
+        \\  log[#log + 1] = "req " .. a.method .. " " .. (a.headers["X-Probe"] or "-") .. " " .. (a.headers["Accept"] or "-") .. " env=" .. tostring(a.env) .. " body=" .. tostring(a.body)
+        \\  a.headers["X-Hook"] = "lua"
+        \\  a.url = a.url .. "?hooked=1"
+        \\  a.method = "post"
+        \\  a.body = "from-lua"
+        \\  return a
+        \\end)
+        \\mnml.on("http_response", function(a)
+        \\  log[#log + 1] = "resp " .. a.status .. " " .. a.headers["x-request-id"] .. " " .. a.body .. " " .. tostring(a.body_truncated) .. " " .. a.hook
+        \\  assert(type(a.timing_ms) == "number")
+        \\  assert(mnml.http.set_var("HOOK_STATUS", tostring(a.status)))
+        \\  local ok, why = mnml.http.set_var("bad key", "x")
+        \\  assert(not ok and why:find("A%-Za%-z0%-9_"), tostring(why))
+        \\  local ok2, why2 = mnml.http.set_var("NL", "a\nb")
+        \\  assert(not ok2 and why2:find("newline"), tostring(why2))
+        \\end)
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "u.http" });
+    defer testing.allocator.free(path);
+    const id = try app.openPath(path);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntilSettled(&app, rp, 300);
+    try testing.expect(rp.state == .done);
+    // The wire: the hook's method, url, header and body, over the
+    // directive's header (which the hook saw — directives run first).
+    const seen = server.lastRequest();
+    try testing.expect(std.mem.startsWith(u8, seen, "POST /users/7?hooked=1 HTTP/1.1\r\n"));
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-hook: lua\r\n") != null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-probe: yes\r\n") != null);
+    try testing.expect(std.mem.endsWith(u8, seen, "\r\n\r\nfrom-lua"));
+    try testing.expect(std.mem.startsWith(u8, rp.sent_line.?, "POST http://127.0.0.1:"));
+    try testing.expect(std.mem.endsWith(u8, rp.sent_line.?, "/users/7?hooked=1"));
+    var sent_hook = false;
+    for (rp.sent_headers.items) |h| if (std.mem.eql(u8, h.name, "X-Hook") and std.mem.eql(u8, h.value, "lua")) {
+        sent_hook = true;
+    };
+    try testing.expect(sent_hook);
+    // The pane's own fields stay as written.
+    try testing.expectEqualStrings("GET", rp.request.method);
+    try testing.expect(std.mem.indexOf(u8, rp.headers_text.items, "X-Hook") == null);
+    // The payloads, in order; the response hook came after the capture
+    // row landed (Zig subscribers run before Lua's, same emit).
+    try lua.runString(
+        \\assert(#log == 2, #log)
+        \\assert(log[1] == "req GET yes application/json env=dev body=nil", log[1])
+        \\assert(log[2] == 'resp 200 req-7 {"id":7} false http_response', log[2])
+    );
+    try testing.expectEqual(@as(u32, 1), HookProbe.responses);
+    try testing.expect(HookProbe.tests_at_response > 0);
+    const env_text = try tmp.dir.readFileAlloc(testing.io, ".mnml/env/dev.env", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(env_text);
+    try testing.expect(std.mem.indexOf(u8, env_text, "TRACE=req-7\n") != null);
+    try testing.expect(std.mem.indexOf(u8, env_text, "HOOK_STATUS=200\n") != null);
+    try testing.expect(std.mem.indexOf(u8, env_text, "bad key") == null);
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "hooks: mnml.http.send inside http_response re-fires once the hook returns; inside http_request it is refused; body = false drops the body" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try testRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .body = "ok" });
+    defer server.stop(testing.io);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const lua = app.script();
+    try lua.runString(
+        \\sends = 0
+        \\mnml.on("http_request", function(a)
+        \\  local ok, why = pcall(mnml.http.send)
+        \\  assert(not ok and tostring(why):find("http_request"), tostring(why))
+        \\  return { body = false }
+        \\end)
+        \\mnml.on("http_response", function(a)
+        \\  sends = sends + 1
+        \\  if sends == 1 then assert(mnml.http.send()) end
+        \\end)
+    );
+    const id = try http.openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/x", .{server.port});
+    defer testing.allocator.free(url);
+    try rp.url.appendSlice(testing.allocator, url);
+    try rp.body.appendSlice(testing.allocator, "{\"a\":1}");
+    try rp.setMethod("post");
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntilSettled(&app, rp, 300);
+    // The first response's hook re-fired: a second send is in flight or done.
+    try pumpUntilSettled(&app, rp, 300);
+    try testing.expect(rp.state == .done);
+    try testing.expectEqual(@as(u32, 2), server.served.load(.acquire));
+    try lua.runString("assert(sends == 2, sends)");
+    // `body = false`: no body went out even though the pane has one.
+    const seen = server.lastRequest();
+    try testing.expect(std.mem.startsWith(u8, seen, "POST /x HTTP/1.1\r\n"));
+    try testing.expect(std.mem.endsWith(u8, seen, "\r\n\r\n"));
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "content-length: 7") == null);
+    try testing.expectEqualStrings("{\"a\":1}", rp.body.items);
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "hooks: a response body past 1 MB reaches the hook cut there with body_truncated; a smaller one whole" {
+    const gpa = testing.allocator;
+    const big = try gpa.alloc(u8, hooks.http_body_cap + 1);
+    defer gpa.free(big);
+    @memset(big, 'x');
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var hs = [_]client.Header{.{ .name = @constCast("content-type"), .value = @constCast("text/plain") }};
+    var resp: client.Response = .{ .status = 200, .status_text = @constCast("OK"), .final_url = @constCast("http://x/"), .headers = &hs, .body = big, .timing = .{ .total_ms = 12 } };
+    const cut = try responseHookArgs(a, 3, &resp);
+    try testing.expectEqual(hooks.http_body_cap, cut.body.len);
+    try testing.expect(cut.body_truncated);
+    try testing.expectEqual(@as(u64, 12), cut.timing_ms);
+    try testing.expectEqual(@as(u32, 3), cut.pane);
+    try testing.expectEqualStrings("content-type", cut.headers[0].name);
+    resp.body = big[0..hooks.http_body_cap];
+    const whole = try responseHookArgs(a, 3, &resp);
+    try testing.expectEqual(hooks.http_body_cap, whole.body.len);
+    try testing.expect(!whole.body_truncated);
+    // The wire's own cut (`client.max_body`) is reported the same way.
+    resp.body = big[0..10];
+    resp.truncated = true;
+    try testing.expect((try responseHookArgs(a, 3, &resp)).body_truncated);
 }

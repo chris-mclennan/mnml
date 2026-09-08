@@ -109,6 +109,11 @@ pub const State = struct {
     sending: u32 = 0,
     /// `http.send_streaming`: the next `fire` streams whatever comes.
     force_stream: bool = false,
+    /// Which HTTP hook is being emitted, for `mnml.http.send`'s rules.
+    hook: enum { none, request, response } = .none,
+    /// A send `mnml.http.send` asked for from inside `http_response`;
+    /// fired once the hook returns.
+    resend_pane: ?PaneId = null,
     /// The `{{VAR}}` the quick-fix menu was opened on. Owned.
     quick_fix_var: ?[]u8 = null,
     /// Lines a `.ws` file queued for a pane that is still connecting.
@@ -946,11 +951,17 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     try script_mod.applyPre(a, &staged, &set, script);
     const missing = try env_mod.unresolved(a, staged.url, &set);
     if (missing.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing[0], set.name orelse "?" });
-    const expanded = try expandWith(app.gpa, app.io, &staged, &set);
+    var expanded = try expandWith(app.gpa, app.io, &staged, &set);
+    var handed = false;
+    errdefer if (!handed) expanded.deinit(app.gpa);
+    // Directives, expansion, then the `http_request` hook (its rewrite
+    // lands on `expanded`; `cmd_http.zig` documents the order).
+    try @import("cmd_http.zig").beforeSend(app, id, rp, &expanded, set.name);
     try rp.setSentLine(expanded.method, expanded.url);
     const cookie = try @import("cmd_http.zig").cookieHeaderFor(app, a, expanded.url);
     const mode: StreamMode = if (app.http.force_stream) .always else .auto;
     app.http.force_stream = false;
+    handed = true;
     const job = try spawnWith(app, id, .send, expanded, .{ .cookie = cookie, .stream = mode });
     rp.keepAsPrev();
     rp.state = .{ .sending = job };

@@ -339,8 +339,14 @@ pub const Lua = struct {
     /// `HookArgs`, plus `hook = "<name>"`) is the one argument.
     pub fn callHook(self: *Lua, r: LuaRef, args: hooks.HookArgs) void {
         const L = self.L;
+        // The two HTTP hooks carry a header table and a rewrite: hand-marshalled.
+        switch (args) {
+            .http_request, .http_response => return api.callHttpHook(self, r, args),
+            else => {},
+        }
         self.pushRef(r);
         switch (args) {
+            .http_request, .http_response => unreachable,
             inline else => |payload| L.pushAny(payload) catch {
                 L.pop(1);
                 return;

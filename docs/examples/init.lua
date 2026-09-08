@@ -22,6 +22,18 @@ mnml.on("save_post", function(a)
   mnml.toast(a.path .. " saved (" .. a.bytes .. " bytes)")
 end)
 
+-- The HTTP hooks: every send from a request pane carries a header, and
+-- a 401 empties the token in the active env so the next `{{TOKEN}}`
+-- shows as unresolved. `a.headers` is a name → value table; returning
+-- the table sends it as it is (docs/LUA.md, "The HTTP hooks").
+mnml.on("http_request", function(a)
+  a.headers["X-Client"] = "mnml/init.lua"
+  return a
+end)
+mnml.on("http_response", function(a)
+  if a.status == 401 then mnml.http.set_var("TOKEN", "") end
+end)
+
 -- A statusline segment, polled every 250 ms; nil hides it.
 mnml.statusline.segment{
   id = "notes",

@@ -86,6 +86,8 @@ pub fn install(self: *Lua) void {
     put(L, "get", configGet);
     L.setField(-2, "config");
 
+    installHttp(L);
+
     L.setGlobal("mnml");
 }
 
@@ -838,6 +840,182 @@ fn pushDynamicPath(L: *State, d: Dynamic, path: []const u8) void {
             pushDynamicPath(L, items[idx - 1], rest);
         },
         else => L.pushNil(),
+    }
+}
+
+// ─── mnml.http — the HTTP hooks and the way back into the client ────────
+// An additive block: nothing above it reads anything below. The two
+// HTTP hooks (`core/hooks.zig`) are marshalled here by hand because
+// their `headers` crosses as a name → value table, not a flat field,
+// and `http_request` reads a returned table back into the rewrite.
+
+const cmd_http = @import("../app/cmd_http.zig");
+const http_app = @import("../app/http.zig");
+
+fn installHttp(L: *State) void {
+    L.newTable();
+    put(L, "set_var", httpSetVar);
+    put(L, "send", httpSend);
+    L.setField(-2, "http");
+}
+
+/// `mnml.http.set_var(name, value)` — `NAME=value` into the active env
+/// file (the one `@capture` writes), creating the file when it is new.
+/// Returns true, or false and the reason (a bad name, a newline).
+fn httpSetVar(L: *State) !i32 {
+    const c = ctx(L);
+    const name = L.checkString(1);
+    const value = L.checkString(2);
+    cmd_http.setEnvVar(c.app, name, value) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidKey => {
+            L.pushBoolean(false);
+            _ = L.pushString("key must be [A-Za-z0-9_]");
+            return 2;
+        },
+        error.InvalidValue => {
+            L.pushBoolean(false);
+            _ = L.pushString("a value cannot contain newlines");
+            return 2;
+        },
+        error.WriteFailed => {
+            L.pushBoolean(false);
+            _ = L.pushString(c.app.diag.msg orelse "write failed");
+            return 2;
+        },
+    };
+    L.pushBoolean(true);
+    return 1;
+}
+
+/// `mnml.http.send(pane?)` — fire the request pane (the active one
+/// without an argument). From inside `http_response` the send is
+/// deferred until the hook returns; from inside `http_request` it is
+/// an error (the send it would start is the one in flight).
+fn httpSend(L: *State) !i32 {
+    const c = ctx(L);
+    const app = c.app;
+    const id: PaneId = if (!L.isNoneOrNil(1)) blk: {
+        const n = L.checkInteger(1);
+        if (n < 0 or n > std.math.maxInt(PaneId)) L.argError(1, "pane id out of range");
+        break :blk @intCast(n);
+    } else (app.active orelse L.raiseErrorStr("mnml.http.send: no active pane", .{}));
+    const p = app.panes.get(id) orelse L.raiseErrorStr("mnml.http.send: no pane %d", .{@as(c_int, @intCast(id))});
+    if (p.asRequest() == null) L.raiseErrorStr("mnml.http.send: pane %d is not a request", .{@as(c_int, @intCast(id))});
+    switch (app.http.hook) {
+        .request => L.raiseErrorStr("mnml.http.send: not from inside http_request (that send is the one in flight)", .{}),
+        .response => {
+            app.http.resend_pane = id;
+            L.pushBoolean(true);
+            return 1;
+        },
+        .none => {},
+    }
+    http_app.fire(app, id) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            L.pushBoolean(false);
+            _ = L.pushString(app.diag.msg orelse @errorName(err));
+            return 2;
+        },
+    };
+    L.pushBoolean(true);
+    return 1;
+}
+
+fn setStrField(L: *State, name: [:0]const u8, value: []const u8) void {
+    _ = L.pushString(value);
+    L.setField(-2, name);
+}
+
+/// `{ name = value, … }`; a repeated name keeps the last value.
+fn pushHeaderTable(L: *State, headers: []const hooks.HttpHeader) void {
+    L.newTable();
+    for (headers) |h| {
+        _ = L.pushString(h.name);
+        _ = L.pushString(h.value);
+        L.setTable(-3);
+    }
+}
+
+/// The `.lua` prong of `hooks.emit` for `http_request` / `http_response`:
+/// the payload table (plus `hook = "<name>"`) is the one argument; an
+/// `http_request` subscriber's returned table lands in the rewrite.
+pub fn callHttpHook(self: *Lua, r: LuaRef, args: hooks.HookArgs) void {
+    const L = self.L;
+    self.pushRef(r);
+    switch (args) {
+        .http_request => |a| {
+            L.newTable();
+            setStrField(L, "hook", "http_request");
+            L.pushInteger(a.pane);
+            L.setField(-2, "pane");
+            setStrField(L, "method", a.method);
+            setStrField(L, "url", a.url);
+            pushHeaderTable(L, a.headers);
+            L.setField(-2, "headers");
+            if (a.body) |b| setStrField(L, "body", b);
+            if (a.env) |e| setStrField(L, "env", e);
+            self.pcall(1, 1) catch return toastHookError(self);
+            defer L.pop(1);
+            if (L.isTable(-1)) readRewrite(L, -1, a.rewrite) catch {
+                self.app.toastLevel(.err, "hook: out of memory reading the http_request result", .{}) catch {};
+            };
+        },
+        .http_response => |a| {
+            L.newTable();
+            setStrField(L, "hook", "http_response");
+            L.pushInteger(a.pane);
+            L.setField(-2, "pane");
+            L.pushInteger(a.status);
+            L.setField(-2, "status");
+            pushHeaderTable(L, a.headers);
+            L.setField(-2, "headers");
+            setStrField(L, "body", a.body);
+            L.pushBoolean(a.body_truncated);
+            L.setField(-2, "body_truncated");
+            L.pushInteger(@intCast(@min(a.timing_ms, std.math.maxInt(i64))));
+            L.setField(-2, "timing_ms");
+            self.pcall(1, 0) catch return toastHookError(self);
+        },
+        else => unreachable,
+    }
+}
+
+fn toastHookError(self: *Lua) void {
+    self.app.toastLevel(.err, "hook: {s}", .{self.last_error orelse "script error"}) catch {};
+}
+
+/// The table at `t` → the rewrite: `method` / `url` / `body` strings
+/// (`body = false` drops the body), `headers` a name → value table
+/// that replaces the whole set. Anything else is ignored.
+fn readRewrite(L: *State, t: i32, rw: *hooks.HttpRewrite) Allocator.Error!void {
+    const at = L.absIndex(t);
+    const top = L.getTop();
+    defer L.setTop(top);
+    if (strField(L, at, "method")) |m| try rw.setMethod(m);
+    if (strField(L, at, "url")) |u| try rw.setUrl(u);
+    switch (L.getField(at, "body")) {
+        .string, .number => try rw.setBody(L.toString(-1) catch ""),
+        .boolean => if (!L.toBoolean(-1)) rw.clearBody(),
+        else => {},
+    }
+    L.pop(1);
+    if (L.getField(at, "headers") == .table) {
+        rw.beginHeaders();
+        const ht = L.absIndex(-1);
+        L.pushNil();
+        while (L.next(ht)) {
+            // key at -2, value at -1; the key is left as it is for `next`
+            // (`toStringEx` pushes the value's string form, popped here).
+            if (L.typeOf(-2) == .string) {
+                const name = L.toString(-2) catch "";
+                const value = L.toStringEx(-1);
+                try rw.addHeader(name, value);
+                L.pop(1);
+            }
+            L.pop(1);
+        }
     }
 }
 

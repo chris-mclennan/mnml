@@ -146,6 +146,10 @@ pub const RequestPane = struct {
     prev: ?Response = null,
     /// `METHOD url` as last sent (post-expansion). Owned.
     sent_line: ?[]u8 = null,
+    /// The headers as last sent — after the `@set-*` directives, the
+    /// expansion and the `http_request` hook (the Timeline tab shows
+    /// them). Owned.
+    sent_headers: std.ArrayListUnmanaged(parse.Header) = .empty,
     /// Result lines for the Tests tab (schema, assertions). Owned.
     tests: std.ArrayListUnmanaged([]u8) = .empty,
     block: Block = .request,
@@ -207,6 +211,8 @@ pub const RequestPane = struct {
         self.state.deinit(gpa);
         if (self.prev) |*p| p.deinit(gpa);
         if (self.sent_line) |s| gpa.free(s);
+        self.clearSentHeaders();
+        self.sent_headers.deinit(gpa);
         for (self.tests.items) |t| gpa.free(t);
         self.tests.deinit(gpa);
         if (self.draft) |*d| d.deinit(gpa);
@@ -402,6 +408,26 @@ pub const RequestPane = struct {
         const line = try std.fmt.allocPrint(self.gpa, "{s} {s}", .{ method, url });
         if (self.sent_line) |s| self.gpa.free(s);
         self.sent_line = line;
+    }
+
+    fn clearSentHeaders(self: *RequestPane) void {
+        for (self.sent_headers.items) |h| {
+            self.gpa.free(h.name);
+            self.gpa.free(h.value);
+        }
+        self.sent_headers.clearRetainingCapacity();
+    }
+
+    /// Keep a copy of the headers that went on the wire.
+    pub fn setSentHeaders(self: *RequestPane, hs: []const parse.Header) Allocator.Error!void {
+        self.clearSentHeaders();
+        try self.sent_headers.ensureTotalCapacity(self.gpa, hs.len);
+        for (hs) |h| {
+            const n = try self.gpa.dupe(u8, h.name);
+            errdefer self.gpa.free(n);
+            const v = try self.gpa.dupe(u8, h.value);
+            self.sent_headers.appendAssumeCapacity(.{ .name = n, .value = v });
+        }
     }
 
     pub fn clearTests(self: *RequestPane) void {
@@ -1167,6 +1193,8 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         for (r.headers, 0..) |h, i| hs[i] = .{ .key = h.name, .value = h.value };
         const tests = try arena.alloc([]const u8, rp.tests.items.len);
         for (rp.tests.items, 0..) |t, i| tests[i] = t;
+        const sent = try arena.alloc(view.Pair, rp.sent_headers.items.len);
+        for (rp.sent_headers.items, 0..) |h, i| sent[i] = .{ .key = h.name, .value = h.value };
         resp_model = .{
             .status = r.status,
             .status_text = r.status_text,
@@ -1178,6 +1206,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
             .cookies = try r.setCookies(arena),
             .spans = try rp.responseSpans(arena, &app.theme),
             .tests = tests,
+            .sent_headers = sent,
         };
     }
     const m: view.Model = .{

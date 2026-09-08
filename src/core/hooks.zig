@@ -23,6 +23,13 @@ pub const Hook = enum {
     pane_focus,
     lsp_attach,
     git_status,
+    /// A request pane's send, after its `@set-*` directives and the
+    /// `{{VAR}}` expansion, before the wire. A subscriber may rewrite
+    /// it through `rewrite`.
+    http_request,
+    /// A response landed on a request pane, after its `@assert` /
+    /// `@capture` directives ran. Read-only.
+    http_response,
 };
 
 pub const HookArgs = union(Hook) {
@@ -37,6 +44,124 @@ pub const HookArgs = union(Hook) {
     pane_focus: struct { pane: ?u32 },
     lsp_attach: struct { server: []const u8, pane: u32 },
     git_status: struct { branch: []const u8, dirty: u32 },
+    http_request: HttpRequestArgs,
+    http_response: HttpResponseArgs,
+};
+
+// ─── the HTTP hooks ─────────────────────────────────────────────────────
+// Their payloads are not flat: `headers` is a list the Lua bridge turns
+// into a name → value table, and `http_request` carries a rewrite the
+// subscribers fill. `scripting/api.zig` marshals these two by hand.
+
+pub const HttpHeader = struct { name: []const u8, value: []const u8 };
+
+/// Borrowed for the duration of the emit. `body` is null for a
+/// bodiless request; `env` is the active env's name.
+pub const HttpRequestArgs = struct {
+    pane: u32,
+    method: []const u8,
+    url: []const u8,
+    headers: []const HttpHeader,
+    body: ?[]const u8,
+    env: ?[]const u8,
+    rewrite: *HttpRewrite,
+};
+
+/// Bodies past `http_body_cap` reach a subscriber cut there, with
+/// `body_truncated` set — the Lua budget stays at 20 ms.
+pub const http_body_cap: usize = 1 << 20;
+
+pub const HttpResponseArgs = struct {
+    pane: u32,
+    status: u16,
+    headers: []const HttpHeader,
+    body: []const u8,
+    body_truncated: bool,
+    timing_ms: u64,
+};
+
+/// What `http_request` subscribers want changed before the send. A set
+/// field replaces the request's; a later subscriber's set field wins.
+/// `headers` replaces the whole set. Strings are owned by `gpa`; the
+/// emitter applies the rewrite and frees it.
+pub const HttpRewrite = struct {
+    gpa: Allocator,
+    method: ?[]u8 = null,
+    url: ?[]u8 = null,
+    headers: ?std.ArrayListUnmanaged(Header) = null,
+    body: ?[]u8 = null,
+    /// The body goes (`body = false` from Lua).
+    clear_body: bool = false,
+
+    pub const Header = struct { name: []u8, value: []u8 };
+
+    pub fn init(gpa: Allocator) HttpRewrite {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(self: *HttpRewrite) void {
+        const gpa = self.gpa;
+        if (self.method) |m| gpa.free(m);
+        if (self.url) |u| gpa.free(u);
+        if (self.body) |b| gpa.free(b);
+        self.dropHeaders();
+        self.* = undefined;
+    }
+
+    fn dropHeaders(self: *HttpRewrite) void {
+        if (self.headers) |*hs| {
+            for (hs.items) |h| {
+                self.gpa.free(h.name);
+                self.gpa.free(h.value);
+            }
+            hs.deinit(self.gpa);
+        }
+        self.headers = null;
+    }
+
+    pub fn setMethod(self: *HttpRewrite, m: []const u8) Allocator.Error!void {
+        const d = try self.gpa.dupe(u8, m);
+        if (self.method) |old| self.gpa.free(old);
+        self.method = d;
+    }
+
+    pub fn setUrl(self: *HttpRewrite, u: []const u8) Allocator.Error!void {
+        const d = try self.gpa.dupe(u8, u);
+        if (self.url) |old| self.gpa.free(old);
+        self.url = d;
+    }
+
+    pub fn setBody(self: *HttpRewrite, b: []const u8) Allocator.Error!void {
+        const d = try self.gpa.dupe(u8, b);
+        if (self.body) |old| self.gpa.free(old);
+        self.body = d;
+        self.clear_body = false;
+    }
+
+    pub fn clearBody(self: *HttpRewrite) void {
+        if (self.body) |old| self.gpa.free(old);
+        self.body = null;
+        self.clear_body = true;
+    }
+
+    /// Start a replacement header set (an earlier subscriber's goes).
+    pub fn beginHeaders(self: *HttpRewrite) void {
+        self.dropHeaders();
+        self.headers = .empty;
+    }
+
+    pub fn addHeader(self: *HttpRewrite, name: []const u8, value: []const u8) Allocator.Error!void {
+        if (self.headers == null) self.headers = .empty;
+        const n = try self.gpa.dupe(u8, name);
+        errdefer self.gpa.free(n);
+        const v = try self.gpa.dupe(u8, value);
+        errdefer self.gpa.free(v);
+        try self.headers.?.append(self.gpa, .{ .name = n, .value = v });
+    }
+
+    pub fn any(self: *const HttpRewrite) bool {
+        return self.method != null or self.url != null or self.headers != null or self.body != null or self.clear_body;
+    }
 };
 
 pub const Subscriber = union(enum) {
@@ -135,4 +260,24 @@ test "emit delivers to the hook's subscribers only, in order, with the payload" 
     try std.testing.expectEqual(@as(usize, 2), hooks.count(.save_post));
     try std.testing.expectEqual(@as(usize, 1), hooks.unsubscribeLua());
     try std.testing.expectEqual(@as(usize, 1), hooks.count(.save_post));
+}
+
+test "HttpRewrite: a set field replaces an earlier one, headers begin fresh, and it frees what it owns" {
+    var rw = HttpRewrite.init(std.testing.allocator);
+    defer rw.deinit();
+    try std.testing.expect(!rw.any());
+    try rw.setMethod("POST");
+    try rw.setMethod("PUT");
+    try rw.setUrl("http://a/");
+    try rw.addHeader("A", "1");
+    rw.beginHeaders();
+    try rw.addHeader("B", "2");
+    try rw.setBody("x");
+    rw.clearBody();
+    try std.testing.expectEqualStrings("PUT", rw.method.?);
+    try std.testing.expectEqual(@as(usize, 1), rw.headers.?.items.len);
+    try std.testing.expectEqualStrings("B", rw.headers.?.items[0].name);
+    try std.testing.expect(rw.body == null and rw.clear_body and rw.any());
+    try rw.setBody("y");
+    try std.testing.expect(!rw.clear_body);
 }

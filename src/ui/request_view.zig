@@ -209,6 +209,9 @@ pub const ResponseModel = struct {
     spans: []const editor_view.Span = &.{},
     /// `✓ schema valid` / `✗ 2 schema error(s)` / assertion lines.
     tests: []const []const u8 = &.{},
+    /// The request headers as they went out (directives, expansion and
+    /// the `http_request` hook applied) — the Timeline tab lists them.
+    sent_headers: []const Pair = &.{},
 };
 
 pub const Model = struct {
@@ -1287,6 +1290,12 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
             push(&out, ui.arena, timelineBar(ui, resp.timing.receive_ms, max, bar_w, p.green));
             push(&out, ui.arena, plain(ui, "", body_style));
             push(&out, ui.arena, plain(ui, ui.fmt("  Total    {d} ms", .{resp.timing.total_ms}), .{ .fg = p.fg, .bg = p.bg_dark, .bold = true }));
+            // What went out: the line as sent and the wire headers, after
+            // the directives, the expansion and the `http_request` hook.
+            push(&out, ui.arena, plain(ui, "", body_style));
+            push(&out, ui.arena, lineOf(ui, &.{ .{ .text = "  Sent     ", .style = label_style }, .{ .text = "(after directives, {{VAR}} expansion and hooks)", .style = dim(p) } }));
+            if (m.sent_line) |l| push(&out, ui.arena, plain(ui, ui.fmt("    {s}", .{l}), body_style));
+            for (resp.sent_headers) |h| push(&out, ui.arena, lineOf(ui, &.{ .{ .text = ui.fmt("    {s}: ", .{h.key}), .style = .{ .fg = p.cyan, .bg = p.bg_dark } }, .{ .text = h.value, .style = body_style } }));
         },
         .tests => {
             if (resp.tests.len == 0) {
