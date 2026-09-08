@@ -130,6 +130,11 @@ pub const Job = union(enum) {
     /// A conflicted file's three stages (`:1:` base, `:2:` ours, `:3:`
     /// theirs) as text, for the AI resolve prompt.
     conflict_text: []u8,
+    /// `git <op> --continue` / `--abort` / `--skip` on the operation
+    /// the status found in progress (`Status.in_progress`).
+    op_continue: parse.InProgress,
+    op_abort: parse.InProgress,
+    op_skip: parse.InProgress,
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -157,6 +162,7 @@ pub const Job = union(enum) {
             .amend => |s| gpa.free(s),
             .ai_context => {},
             .rail => {},
+            .op_continue, .op_abort, .op_skip => {},
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
             .stash_lines => |l| {
                 gpa.free(l.patch);
@@ -275,6 +281,9 @@ pub const Repo = struct {
     /// Jobs submitted; the handler compares against `finished` to know
     /// whether the repo is busy (a spinner, a "pending" status).
     submitted: u32 = 0,
+    /// Worker-owned: `rev-parse --absolute-git-dir`, asked once (a
+    /// linked worktree's `.git` is a file pointing elsewhere).
+    git_dir: ?[]u8 = null,
 
     pub fn create(gpa: Allocator, path: []const u8, name: []const u8, id: u32, is_workspace_root: bool) Allocator.Error!*Repo {
         const r = try gpa.create(Repo);
@@ -306,6 +315,7 @@ pub const Repo = struct {
         for (self.redo.items) |e| e.deinit(gpa);
         self.redo.deinit(gpa);
         if (self.env) |*e| e.deinit();
+        if (self.git_dir) |d| gpa.free(d);
         gpa.free(self.jobs_buf);
         gpa.free(self.name);
         gpa.free(self.path);
@@ -487,7 +497,11 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 events.post(io, .{ .git = r });
                 return;
             }
-            const status = try parse.parseStatus(arena, st.stdout);
+            var status = try parse.parseStatus(arena, st.stdout);
+            const prog = try readProgress(repo, io, arena);
+            status.in_progress = prog.op;
+            status.step = prog.step;
+            status.total = prog.total;
             // Signs against HEAD; an initial repo has no HEAD and no signs.
             var signs: []parse.FileDiff = &.{};
             if (status.oid != null) {
@@ -786,6 +800,22 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             } else try simple(repo, io, r, &.{ "worktree", "add", w.path }, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
         },
         .worktree_remove => |p| try simple(repo, io, r, &.{ "worktree", "remove", "--force", p }, try std.fmt.allocPrint(arena, "worktree removed: {s}", .{p})),
+        .op_continue => |op| switch (op) {
+            .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
+            .bisect => r.payload = .{ .op = .{ .desc = "bisect: mark a commit good or bad instead", .ok = false, .refresh = false } },
+            else => try simple(repo, io, r, &.{ "-c", "core.editor=true", op.verb(), "--continue" }, try std.fmt.allocPrint(arena, "{s} continued", .{op.verb()})),
+        },
+        .op_abort => |op| switch (op) {
+            .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
+            .bisect => try simple(repo, io, r, &.{ "bisect", "reset" }, "bisect reset"),
+            else => try simple(repo, io, r, &.{ op.verb(), "--abort" }, try std.fmt.allocPrint(arena, "{s} aborted", .{op.verb()})),
+        },
+        .op_skip => |op| switch (op) {
+            .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
+            .bisect => try simple(repo, io, r, &.{ "bisect", "skip" }, "bisect: skipped"),
+            .merge => r.payload = .{ .op = .{ .desc = "merge: nothing to skip (abort or continue)", .ok = false, .refresh = false } },
+            else => try simple(repo, io, r, &.{ "-c", "core.editor=true", op.verb(), "--skip" }, try std.fmt.allocPrint(arena, "{s}: step skipped", .{op.verb()})),
+        },
         .head_sha => {
             const out = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
             if (out.ok) r.payload = .{ .head_sha = trimmed(out.stdout) } else r.payload = .{ .op = .{ .desc = "no HEAD (not a git repo?)", .ok = false, .refresh = false } };
@@ -805,6 +835,51 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
     }
     events.post(io, .{ .git = r });
+}
+
+/// The repo's git dir, asked of git once and kept on the repo.
+fn gitDir(repo: *Repo, io: Io, arena: Allocator) JobError!?[]const u8 {
+    if (repo.git_dir) |d| return d;
+    const out = try git(repo, io, arena, &.{ "rev-parse", "--absolute-git-dir" }, null);
+    if (!out.ok) return null;
+    const d = trimmed(out.stdout);
+    if (d.len == 0) return null;
+    repo.git_dir = try repo.gpa.dupe(u8, d);
+    return repo.git_dir;
+}
+
+fn gitDirHas(io: Io, arena: Allocator, dir: []const u8, name: []const u8) Allocator.Error!bool {
+    const p = try std.fs.path.join(arena, &.{ dir, name });
+    Io.Dir.cwd().access(io, p, .{}) catch return false;
+    return true;
+}
+
+fn gitDirRead(io: Io, arena: Allocator, dir: []const u8, name: []const u8) Allocator.Error!?[]const u8 {
+    const p = try std.fs.path.join(arena, &.{ dir, name });
+    return Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(64)) catch null;
+}
+
+/// The operation in progress, from the git dir's state files.
+fn readProgress(repo: *Repo, io: Io, arena: Allocator) JobError!parse.Progress {
+    const dir = (try gitDir(repo, io, arena)) orelse return .{};
+    const flags: parse.GitDirFlags = .{
+        .rebase_merge = try gitDirHas(io, arena, dir, "rebase-merge"),
+        .rebase_apply = try gitDirHas(io, arena, dir, "rebase-apply"),
+        .merge_head = try gitDirHas(io, arena, dir, "MERGE_HEAD"),
+        .cherry_pick_head = try gitDirHas(io, arena, dir, "CHERRY_PICK_HEAD"),
+        .revert_head = try gitDirHas(io, arena, dir, "REVERT_HEAD"),
+        .bisect_log = try gitDirHas(io, arena, dir, "BISECT_LOG"),
+    };
+    var msgnum: ?[]const u8 = null;
+    var end: ?[]const u8 = null;
+    if (flags.rebase_merge) {
+        msgnum = try gitDirRead(io, arena, dir, "rebase-merge/msgnum");
+        end = try gitDirRead(io, arena, dir, "rebase-merge/end");
+    } else if (flags.rebase_apply) {
+        msgnum = try gitDirRead(io, arena, dir, "rebase-apply/next");
+        end = try gitDirRead(io, arena, dir, "rebase-apply/last");
+    }
+    return parse.progressFrom(flags, msgnum, end);
 }
 
 /// Local branches then remote ones, newest first within each.

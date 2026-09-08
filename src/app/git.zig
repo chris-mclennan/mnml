@@ -2332,6 +2332,9 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
             .stash => .@"git.stash",
             .pop => .@"git.stash_pop",
             .reflog => .@"git.reflog",
+            .cont => .@"git.op_continue",
+            .abort => .@"git.op_abort",
+            .skip => .@"git.op_skip",
             .refresh => return runToast(app, refreshDiff(app, dp)),
         };
         command.run(app, .{ .static = cmd }) catch |err| switch (err) {
@@ -2694,6 +2697,9 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
             .stash => .@"git.stash",
             .pop => .@"git.stash_pop",
             .reflog => .@"git.reflog",
+            .cont => .@"git.op_continue",
+            .abort => .@"git.op_abort",
+            .skip => .@"git.op_skip",
             .refresh => return runToast(app, refreshGraph(app, g)),
         };
         return runToast(app, command.run(app, .{ .static = cmd }));
@@ -2911,6 +2917,14 @@ fn filterLabel(app: *App, g: *const GraphPane) Allocator.Error!?[]const u8 {
     return out.items;
 }
 
+/// The operation repo `id` is in the middle of, as the last status saw it.
+pub fn inProgressOf(app: *App, id: u32) parse.InProgress {
+    const st = &app.git;
+    if (st.status_repo != id) return .none;
+    const s = st.status orelse return .none;
+    return s.in_progress;
+}
+
 /// `Pane.git_graph`.
 pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) void {
     const st = &app.git;
@@ -2961,6 +2975,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         .detail_w = g.detail_w orelse app.cfg.ui.git_graph_detail_col,
         .branch_col = app.cfg.ui.git_graph_branch_col,
         .author_col = app.cfg.ui.git_graph_author_col,
+        .in_progress = inProgressOf(app, g.repo),
     });
     // The drag measures against the whole body under the toolbar.
     g.body = Rect.init(painted.list.x, painted.list.y, painted.list.w + painted.detail.w + @as(u16, if (painted.detail.w > 0) 1 else 0), painted.list.h);

@@ -10,6 +10,8 @@
 //!   `blame --porcelain`             → `[]BlameLine` (indexed by final line)
 //!   `log --format=<fields>`         → `[]Commit`
 //!   `for-each-ref --format=<fields>`→ `[]Branch`
+//!   the git dir's state files       → `progressFrom` (`Status.in_progress`)
+//!   a `rebase -i` todo              → `[]TodoLine`
 //! Written:
 //!   `patchForHunk` — what `git apply --cached [-R]` takes to stage,
 //!   unstage or discard one hunk on its own.
@@ -66,12 +68,156 @@ pub const Status = struct {
     unstaged: u32 = 0,
     untracked: u32 = 0,
     conflicted: u32 = 0,
+    /// The operation the repo is in the middle of, read off the git
+    /// dir (`rebase-merge/`, `MERGE_HEAD`, …), and for a rebase the
+    /// step it stopped at out of the total (`msgnum` / `end`).
+    in_progress: InProgress = .none,
+    step: u32 = 0,
+    total: u32 = 0,
 
     /// Everything the rail lists.
     pub fn changeCount(s: Status) u32 {
         return s.staged + s.unstaged + s.untracked + s.conflicted;
     }
 };
+
+/// An operation that stopped part-way and waits on the user: git left
+/// its state files in the git dir, and `--continue` / `--abort` /
+/// `--skip` are the only ways forward.
+pub const InProgress = enum {
+    none,
+    rebase,
+    merge,
+    cherry_pick,
+    revert,
+    bisect,
+
+    /// The statusline chip's word.
+    pub fn label(op: InProgress) []const u8 {
+        return switch (op) {
+            .none => "",
+            .rebase => "REBASE",
+            .merge => "MERGE",
+            .cherry_pick => "CHERRY-PICK",
+            .revert => "REVERT",
+            .bisect => "BISECT",
+        };
+    }
+
+    /// The verb `git <verb> --continue` takes.
+    pub fn verb(op: InProgress) []const u8 {
+        return switch (op) {
+            .none => "",
+            .rebase => "rebase",
+            .merge => "merge",
+            .cherry_pick => "cherry-pick",
+            .revert => "revert",
+            .bisect => "bisect",
+        };
+    }
+
+    /// `--skip` exists for the sequencer's operations only.
+    pub fn canSkip(op: InProgress) bool {
+        return switch (op) {
+            .rebase, .cherry_pick, .revert => true,
+            .none, .merge, .bisect => false,
+        };
+    }
+};
+
+/// Which state files the worker found in the git dir.
+pub const GitDirFlags = struct {
+    rebase_merge: bool = false,
+    rebase_apply: bool = false,
+    merge_head: bool = false,
+    cherry_pick_head: bool = false,
+    revert_head: bool = false,
+    bisect_log: bool = false,
+};
+
+pub const Progress = struct { op: InProgress = .none, step: u32 = 0, total: u32 = 0 };
+
+/// The in-progress operation from the state files, first match wins in
+/// git's own order (a rebase that stopped on a cherry-pick step still
+/// reads as the rebase). `msgnum` / `end` are the two counter files'
+/// text for a rebase (`rebase-merge/msgnum` + `end`, or
+/// `rebase-apply/next` + `last`); either missing leaves the count 0.
+pub fn progressFrom(flags: GitDirFlags, msgnum: ?[]const u8, end: ?[]const u8) Progress {
+    if (flags.rebase_merge or flags.rebase_apply) {
+        return .{ .op = .rebase, .step = parseCount(msgnum), .total = parseCount(end) };
+    }
+    if (flags.merge_head) return .{ .op = .merge };
+    if (flags.cherry_pick_head) return .{ .op = .cherry_pick };
+    if (flags.revert_head) return .{ .op = .revert };
+    if (flags.bisect_log) return .{ .op = .bisect };
+    return .{};
+}
+
+fn parseCount(text: ?[]const u8) u32 {
+    const t = std.mem.trim(u8, text orelse return 0, " \t\r\n");
+    return std.fmt.parseInt(u32, t, 10) catch 0;
+}
+
+// ─── the rebase todo ────────────────────────────────────────────────────
+
+/// One line of a `rebase -i` todo, as git writes it and as the plan
+/// rewrites it.
+pub const TodoAction = enum {
+    pick,
+    reword,
+    edit,
+    squash,
+    fixup,
+    drop,
+
+    pub fn word(a: TodoAction) []const u8 {
+        return @tagName(a);
+    }
+
+    /// git's one-letter forms (`p r e s f d`), the same letters the plan
+    /// modal takes.
+    pub fn fromLetter(c: u8) ?TodoAction {
+        return switch (c) {
+            'p' => .pick,
+            'r' => .reword,
+            'e' => .edit,
+            's' => .squash,
+            'f' => .fixup,
+            'd' => .drop,
+            else => null,
+        };
+    }
+
+    pub fn next(a: TodoAction) TodoAction {
+        const n = @typeInfo(TodoAction).@"enum".fields.len;
+        return @enumFromInt((@intFromEnum(a) + 1) % n);
+    }
+
+    pub fn prev(a: TodoAction) TodoAction {
+        const n = @typeInfo(TodoAction).@"enum".fields.len;
+        return @enumFromInt((@intFromEnum(a) + n - 1) % n);
+    }
+};
+
+pub const TodoLine = struct { action: TodoAction, sha: []const u8, rest: []const u8 = "" };
+
+/// The `<action> <sha> [subject]` lines of a todo file; comments, blank
+/// lines and the lines git adds that are not commits (`exec`, `break`,
+/// `label`, …) are skipped. Accepts the long and the one-letter words.
+pub fn parseTodo(arena: Allocator, text: []const u8) Allocator.Error![]TodoLine {
+    var out: std.ArrayListUnmanaged(TodoLine) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        var it = std.mem.tokenizeScalar(u8, line, ' ');
+        const w = it.next() orelse continue;
+        const action: TodoAction = if (w.len == 1) (TodoAction.fromLetter(w[0]) orelse continue) else (std.meta.stringToEnum(TodoAction, w) orelse continue);
+        const sha = it.next() orelse continue;
+        try out.append(arena, .{ .action = action, .sha = try arena.dupe(u8, sha), .rest = try arena.dupe(u8, std.mem.trim(u8, it.rest(), " \t")) });
+    }
+    return out.items;
+}
 
 /// `git status --porcelain=v2 -b` → `Status`. Every slice borrows `arena`.
 pub fn parseStatus(arena: Allocator, text: []const u8) Allocator.Error!Status {
@@ -1534,4 +1680,44 @@ test "parseRemotes: one row per remote from the fetch lines, the forge read off 
     try testing.expectEqual(remote_mod.Provider.github, rs[0].provider);
     try testing.expectEqualStrings("mirror", rs[1].name);
     try testing.expectEqual(remote_mod.Provider.other, rs[1].provider);
+}
+
+test "progressFrom: the state files name the operation in git's order; the rebase counters read as step/total, garbage as 0" {
+    try testing.expectEqual(InProgress.none, progressFrom(.{}, null, null).op);
+    const rb = progressFrom(.{ .rebase_merge = true, .cherry_pick_head = true }, "2\n", "5\n");
+    try testing.expectEqual(InProgress.rebase, rb.op);
+    try testing.expectEqual(@as(u32, 2), rb.step);
+    try testing.expectEqual(@as(u32, 5), rb.total);
+    const am = progressFrom(.{ .rebase_apply = true }, " 1 ", null);
+    try testing.expectEqual(InProgress.rebase, am.op);
+    try testing.expectEqual(@as(u32, 1), am.step);
+    try testing.expectEqual(@as(u32, 0), am.total);
+    try testing.expectEqual(InProgress.merge, progressFrom(.{ .merge_head = true, .revert_head = true }, null, null).op);
+    try testing.expectEqual(InProgress.cherry_pick, progressFrom(.{ .cherry_pick_head = true }, "x", "y").op);
+    try testing.expectEqual(InProgress.revert, progressFrom(.{ .revert_head = true }, null, null).op);
+    try testing.expectEqual(InProgress.bisect, progressFrom(.{ .bisect_log = true }, null, null).op);
+    try testing.expectEqualStrings("CHERRY-PICK", InProgress.cherry_pick.label());
+    try testing.expectEqualStrings("cherry-pick", InProgress.cherry_pick.verb());
+    try testing.expect(InProgress.rebase.canSkip());
+    try testing.expect(!InProgress.merge.canSkip());
+}
+
+test "parseTodo: git's todo with its comment block, long and short words, exec lines skipped" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const text = "pick 1111111 first\nr 2222222 second one\nexec make test\n# Rebase abc..def onto abc (3 commands)\n#\n# Commands:\n\nsquash 3333333\nnonsense 4444444 x\ndrop 5555555 gone\n";
+    const lines = try parseTodo(a.allocator(), text);
+    try testing.expectEqual(@as(usize, 4), lines.len);
+    try testing.expectEqual(TodoAction.pick, lines[0].action);
+    try testing.expectEqualStrings("1111111", lines[0].sha);
+    try testing.expectEqualStrings("first", lines[0].rest);
+    try testing.expectEqual(TodoAction.reword, lines[1].action);
+    try testing.expectEqualStrings("second one", lines[1].rest);
+    try testing.expectEqual(TodoAction.squash, lines[2].action);
+    try testing.expectEqualStrings("", lines[2].rest);
+    try testing.expectEqual(TodoAction.drop, lines[3].action);
+    try testing.expectEqual(TodoAction.reword, TodoAction.pick.next());
+    try testing.expectEqual(TodoAction.drop, TodoAction.pick.prev());
+    try testing.expectEqual(@as(?TodoAction, .fixup), TodoAction.fromLetter('f'));
+    try testing.expectEqual(@as(?TodoAction, null), TodoAction.fromLetter('x'));
 }

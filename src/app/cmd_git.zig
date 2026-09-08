@@ -15,6 +15,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const git = @import("git.zig");
 const client = @import("../git/client.zig");
+const parse = @import("../git/parse.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 
@@ -108,6 +109,9 @@ pub const table = .{
     .@"git.worktree_list" = &worktreeList,
     .@"git.worktree_remove" = &worktreeRemove,
     .@"git.worktrees" = &worktrees,
+    .@"git.op_continue" = &opContinue,
+    .@"git.op_abort" = &opAbort,
+    .@"git.op_skip" = &opSkip,
 };
 
 fn arena(app: *App) std.mem.Allocator {
@@ -577,6 +581,32 @@ fn undo(app: *App) CommandError!void {
 fn redo(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .redo);
+}
+
+// ─── an operation in progress ───────────────────────────────────────────
+
+/// The rebase / merge / cherry-pick / revert / bisect the last status
+/// found waiting, or the reason there is none.
+fn inProgress(app: *App) CommandError!parse.InProgress {
+    const repo = try git.requireRepo(app);
+    const op = git.inProgressOf(app, repo.id);
+    if (op == .none) return app.diag.fail(arena(app), "git: nothing in progress (no rebase, merge, cherry-pick, revert or bisect)", .{});
+    return op;
+}
+
+fn opContinue(app: *App) CommandError!void {
+    const op = try inProgress(app);
+    try git.submitOp(app, try git.requireRepo(app), .{ .op_continue = op });
+}
+
+fn opAbort(app: *App) CommandError!void {
+    const op = try inProgress(app);
+    try git.submitOp(app, try git.requireRepo(app), .{ .op_abort = op });
+}
+
+fn opSkip(app: *App) CommandError!void {
+    const op = try inProgress(app);
+    try git.submitOp(app, try git.requireRepo(app), .{ .op_skip = op });
 }
 
 // ─── the graph ──────────────────────────────────────────────────────────

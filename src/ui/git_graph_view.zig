@@ -398,6 +398,8 @@ pub const Doc = struct {
     branch_col: ?u16 = null,
     author_col: ?u16 = null,
     has_stash: bool = false,
+    /// The operation the repo is in the middle of; the toolbar swaps.
+    in_progress: parse.InProgress = .none,
 };
 
 /// What `draw` measured.
@@ -651,7 +653,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     // ── the toolbar ──
     var body_full = area;
     if (area.w >= 40 and area.h >= 6) {
-        git_toolbar.draw(ui, area.row(0), .{ .pane = pane, .has_stash = doc.has_stash });
+        git_toolbar.draw(ui, area.row(0), .{ .pane = pane, .has_stash = doc.has_stash, .in_progress = doc.in_progress });
         body_full = area.splitTop(1).rest;
     }
 

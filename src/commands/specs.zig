@@ -987,6 +987,9 @@ pub const specs = [_]Spec{
     .{ .id = "git.palette_all", .title = "Git: list every repo in the branches panel (All repos), or one again", .group = "git" },
     .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
     .{ .id = "git.browse_commit", .title = "Git: open the selected commit (or HEAD) on the remote", .group = "git" },
+    .{ .id = "git.op_continue", .title = "Git: continue the rebase / merge / cherry-pick / revert in progress", .group = "git" },
+    .{ .id = "git.op_abort", .title = "Git: abort the operation in progress (rebase / merge / cherry-pick / revert / bisect)", .group = "git" },
+    .{ .id = "git.op_skip", .title = "Git: skip the current step of the rebase / cherry-pick / revert in progress", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1023,7 +1026,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "959 specs, unique ids" {
+test "962 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1034,7 +1037,7 @@ test "959 specs, unique ids" {
     // + three browse commands (file / line / commit on the remote)
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
-    // chip commands.
-    try std.testing.expectEqual(@as(usize, 959), specs.len);
+    // chip commands + three in-progress operation commands.
+    try std.testing.expectEqual(@as(usize, 962), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
