@@ -98,9 +98,6 @@ pub const table = .{
     .@"cloud_agents.focus_quick_input" = &cloudNotInBuild,
     .@"cloud_agents.spawn_worker" = &cloudNotInBuild,
     .@"cloud_agents.webhook_docs" = &cloudNotInBuild,
-    .@"cloud_agents.toggle_view" = &cloudToggleView,
-    .@"cloud_agents.view_compact" = &cloudViewCompact,
-    .@"cloud_agents.view_standard" = &cloudViewStandard,
 };
 
 /// How many API turns an agentic job may take before it is stopped.
@@ -152,7 +149,6 @@ pub const State = struct {
     /// A default profile name set this session (`launch_profiles.setDefault`);
     /// the config borrows it until the next load.
     owned_default: ?[]u8 = null,
-    cloud_compact: bool = false,
     /// The workers posting `.spend` for the meter (no pane).
     spend_group: Io.Group = .init,
 
@@ -1566,19 +1562,6 @@ fn chipAllTicker(app: *App) CommandError!void {
 
 fn cloudNotInBuild(app: *App) CommandError!void {
     return app.diag.fail(app.frame.allocator(), "cloud agents (AWS ECS / Managed Agents) are not in this build yet", .{});
-}
-
-fn cloudToggleView(app: *App) CommandError!void {
-    app.ai.cloud_compact = !app.ai.cloud_compact;
-    app.toast("cloud agents: {s} rows", .{if (app.ai.cloud_compact) "compact" else "standard"});
-}
-fn cloudViewCompact(app: *App) CommandError!void {
-    app.ai.cloud_compact = true;
-    app.toast("cloud agents: compact rows", .{});
-}
-fn cloudViewStandard(app: *App) CommandError!void {
-    app.ai.cloud_compact = false;
-    app.toast("cloud agents: standard rows", .{});
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

@@ -234,6 +234,33 @@ fn cancelRunCmd(app: *App) CommandError!void {
     return cancelRun(app, try cloudRow(app));
 }
 
+/// Rust's `EcsRunMeta::cloudwatch_url`: a Logs Insights query for the
+/// run id over the last day, in the console. Null without an account,
+/// a region and a log group — the row is not offered then.
+pub fn cloudwatchUrl(arena: Allocator, region: []const u8, account: []const u8, log_group: []const u8, run_id: []const u8) Allocator.Error!?[]const u8 {
+    if (region.len == 0 or account.len == 0 or log_group.len == 0) return null;
+    const group = try std.mem.replaceOwned(u8, arena, log_group, "/", "$252F");
+    const query = try std.fmt.allocPrint(arena, "fields @timestamp, @message | filter @message like /{s}/ | sort @timestamp desc", .{run_id});
+    // The console's own escaping of the query (Rust `urlencoding_minimal`).
+    var enc: std.ArrayListUnmanaged(u8) = .empty;
+    for (query) |c| {
+        const rep: ?[]const u8 = switch (c) {
+            ' ' => "*20",
+            '|' => "*7c",
+            '/' => "*2f",
+            '.' => "*2e",
+            ',' => "*2c",
+            '\'' => "*27",
+            '(' => "*28",
+            ')' => "*29",
+            '@' => "*40",
+            else => null,
+        };
+        if (rep) |r| try enc.appendSlice(arena, r) else try enc.append(arena, c);
+    }
+    return try std.fmt.allocPrint(arena, "https://{s}.console.aws.amazon.com/cloudwatch/home?region={s}#logsV2:logs-insights$3FqueryDetail$3D~(end~0~start~-86400~timeType~'RELATIVE~unit~'seconds~editorString~'{s}~source~(~'{s}))?account={s}", .{ region, region, enc.items, group, account });
+}
+
 /// `aws logs tail` on the run's stream prefix; `--follow` keeps it up.
 pub fn tailArgv(arena: Allocator, o: Opts, run_id: []const u8, follow: bool) Allocator.Error![]const []const u8 {
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -484,6 +511,22 @@ test "the argv builders: describe by task or by record, stop, run-task with the 
     try t.expect(std.mem.indexOf(u8, run[10], "\"MODEL\",\"value\":\"opus\"") != null);
     const run_plain = try runTaskArgv(a, o, "TE-9", null);
     try t.expect(std.mem.indexOf(u8, run_plain[10], "MODEL") == null);
+}
+
+test "cloudwatchUrl: Rust's console link, the query escaped its way; null unless the account, region and group are all set" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expect(try cloudwatchUrl(a, "r", "", "g", "run-x") == null);
+    try t.expect(try cloudwatchUrl(a, "", "1", "g", "run-x") == null);
+    try t.expect(try cloudwatchUrl(a, "r", "1", "", "run-x") == null);
+    const url = (try cloudwatchUrl(a, "us-east-1", "123", "/ecs/runner", "run-x")).?;
+    try t.expect(std.mem.startsWith(u8, url, "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:logs-insights"));
+    try t.expect(std.mem.indexOf(u8, url, "fields*20@timestamp") == null);
+    try t.expect(std.mem.indexOf(u8, url, "fields*20*40timestamp*2c*20*40message*20*7c*20filter") != null);
+    try t.expect(std.mem.indexOf(u8, url, "like*20*2frun-x*2f*20") != null);
+    try t.expect(std.mem.indexOf(u8, url, "source~(~'$252Fecs$252Frunner))") != null);
+    try t.expect(std.mem.endsWith(u8, url, "?account=123"));
 }
 
 test "the wizards refuse without the config; the New menu says so" {

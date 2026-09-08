@@ -213,6 +213,8 @@ pub const table = .{
     .@"sessions.delete" = &deleteCmd,
     .@"sessions.move_up" = &moveUpCmd,
     .@"sessions.move_down" = &moveDownCmd,
+    .@"sessions.move_top" = &moveTopCmd,
+    .@"sessions.move_bottom" = &moveBottomCmd,
     .@"sessions.all_workspaces" = &allWorkspacesCmd,
     .@"sessions.pin" = &pinCmd,
     .@"sessions.copy_cwd" = &copyCwdCmd,
@@ -905,14 +907,50 @@ fn moveBy(app: *App, delta: i32) CommandError!void {
     const ia = st.orderIndex(a).?;
     const ib = st.orderIndex(b).?;
     std.mem.swap([]u8, &st.order.items[ia], &st.order.items[ib]);
-    if (st.sort != .manual) {
-        st.sort = .manual;
-        app.cfg.ui.sessions_sort = .manual;
-        _ = try settings.persist(app, .workspace, &.{ "ui", "sessions_sort" }, SessionsSort.manual);
-    }
+    try adoptManualAxis(app);
     try refilter(app);
     st.list.cursor = @intCast(target);
     app.needs_render = true;
+}
+
+/// The row menu's Move to top / Move to bottom (Rust's
+/// `SessionMoveToTop` / `SessionMoveToBottom`): the selected row leads,
+/// or ends, the manual order — pins still lead the list.
+fn moveTopCmd(app: *App) CommandError!void {
+    return moveTo(app, .top);
+}
+
+fn moveBottomCmd(app: *App) CommandError!void {
+    return moveTo(app, .bottom);
+}
+
+fn moveTo(app: *App, end: enum { top, bottom }) CommandError!void {
+    const st = &app.sessions;
+    if (st.filtered.items.len == 0) return app.diag.fail(app.frame.allocator(), "sessions: nothing selected", .{});
+    try adoptVisibleOrder(app);
+    const id = st.items[st.filtered.items[st.list.cursor]].session_id;
+    const owned = st.order.orderedRemove(st.orderIndex(id).?);
+    errdefer app.gpa.free(owned);
+    switch (end) {
+        .top => try st.order.insert(app.gpa, 0, owned),
+        .bottom => try st.order.append(app.gpa, owned),
+    }
+    try adoptManualAxis(app);
+    try refilter(app);
+    for (st.filtered.items, 0..) |idx, vi| if (std.mem.eql(u8, st.items[idx].session_id, owned)) {
+        st.list.cursor = vi;
+        break;
+    };
+    app.needs_render = true;
+}
+
+/// A move lands on the manual axis; the switch persists like the chip's.
+fn adoptManualAxis(app: *App) Allocator.Error!void {
+    const st = &app.sessions;
+    if (st.sort == .manual) return;
+    st.sort = .manual;
+    app.cfg.ui.sessions_sort = .manual;
+    _ = try settings.persist(app, .workspace, &.{ "ui", "sessions_sort" }, SessionsSort.manual);
 }
 
 /// Every visible id joins the manual list, in the order shown, after
@@ -1058,9 +1096,16 @@ pub fn focusPanel(app: *App) void {
     app.needs_render = true;
 }
 
-/// Rust's row menu leads with Pin, Move up, Move down, Rename…; the
-/// transcript rows are this module's. The section's and the table's
-/// rows share it (`sessions_table` calls it with `.table`).
+/// Rust's row menu leads with Pin, Move up / down / to top / to bottom,
+/// the Auto sort tick, Rename…; the transcript rows are this module's.
+/// The section's and the table's rows share it (`sessions_table` calls
+/// it with `.table`; the table has no manual order, so no move rows).
+/// A cloud row is titled by its run (Rust's `workspace · runId`) and
+/// offers the run's links: CloudWatch when the account, region and log
+/// group are configured, the PR when the record names one.
+/// // right-click (#11, #15): the to-top / to-bottom / Auto sort rows
+/// and the two links. Rust's colour rows tint a pty pane's card; these
+/// rows are transcripts with no colour model, so there are none.
 pub fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     return openRowMenuFor(app, .section, x, y);
 }
@@ -1072,18 +1117,34 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
     const pinned = if (it) |i| app.sessions.isPinned(i.session_id) else false;
     const cloud = if (it) |i| i.where == .cloud else false;
     const live = if (it) |i| i.pid != null else false;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
     var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     errdefer items.deinit(app.gpa);
     try items.append(app.gpa, .{ .label = if (pinned) "Unpin" else "Pin", .action = .{ .command = .@"sessions.pin" } });
     if (host == .section) {
         try items.append(app.gpa, .{ .label = "Move up", .action = .{ .command = .@"sessions.move_up" } });
         try items.append(app.gpa, .{ .label = "Move down", .action = .{ .command = .@"sessions.move_down" } });
+        try items.append(app.gpa, .{ .label = "Move to top", .action = .{ .command = .@"sessions.move_top" } });
+        try items.append(app.gpa, .{ .label = "Move to bottom", .action = .{ .command = .@"sessions.move_bottom" } });
+        try items.append(app.gpa, .{ .label = "Auto sort", .action = .{ .command = .@"sessions.sort_auto" }, .checked = app.sessions.sort == .auto });
     }
     try items.append(app.gpa, .{ .label = "Rename…", .action = .{ .command = .@"sessions.rename" } });
+    var title: []const u8 = "Session";
     if (cloud) {
+        const i = it.?;
+        title = try std.fmt.allocPrint(arena, "{s} · {s}", .{ i.workspace, i.session_id });
         try items.append(app.gpa, .{ .label = "Open run", .action = .{ .command = .@"sessions.cloud_open" }, .separator_before = true });
         try items.append(app.gpa, .{ .label = "Tail log", .action = .{ .command = .@"sessions.cloud_tail" } });
         try items.append(app.gpa, .{ .label = "Copy run id", .action = .{ .command = .@"sessions.copy_id" } });
+        const cfg = &app.cfg.cloud_agents;
+        if (try cloud_agents.cloudwatchUrl(arena, cloud_agents.regionOf(cfg, &app.env), cfg.account_id, cfg.log_group, i.session_id)) |url| {
+            try items.append(app.gpa, .{ .label = "Open CloudWatch in browser", .action = .{ .open_url = url }, .separator_before = true });
+        }
+        if (i.cloud) |c| if (c.pr_url) |pr| {
+            try items.append(app.gpa, .{ .label = "Open PR", .action = .{ .open_url = try arena.dupe(u8, pr) } });
+        };
         try items.append(app.gpa, .{ .label = "Cancel run…", .action = .{ .command = .@"sessions.cloud_cancel" }, .separator_before = true });
     } else {
         try items.append(app.gpa, .{ .label = "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true });
@@ -1097,7 +1158,8 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
     if (host == .section) try items.append(app.gpa, .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" }, .separator_before = true });
     const owned = try items.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
-    try app.openMenu("Session", owned, x, y);
+    try app.openMenu(title, owned, x, y);
+    app.overlay.menu.mem = mem;
 }
 
 /// The `+ New session` menu: a local session, a batch (Rust's ×2 / ×4
@@ -1501,9 +1563,9 @@ test "headless: the panel lists every workspace's sessions after w, J adopts the
     try testing.expect(row0 != null and sort_chip != null);
     try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 11), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 14), f.app.overlay.menu.items.len);
     for (f.app.overlay.menu.items) |it| try testing.expect(it.action == .command);
-    try testing.expectEqualStrings("Open as a table", f.app.overlay.menu.items[10].label);
+    try testing.expectEqualStrings("Open as a table", f.app.overlay.menu.items[13].label);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try f.app.handle(.{ .mouse = .{ .x = sort_chip.?.x + 1, .y = sort_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
@@ -1766,7 +1828,9 @@ test "pins lead the list on either axis; p toggles and follows the session; the 
     try testing.expectEqualStrings("Unpin", f.app.overlay.menu.items[0].label);
     try testing.expectEqual(command.CommandId.@"sessions.pin", f.app.overlay.menu.items[0].action.command);
     try testing.expectEqualStrings("Move up", f.app.overlay.menu.items[1].label);
-    try testing.expectEqualStrings("Rename…", f.app.overlay.menu.items[3].label);
+    try testing.expectEqualStrings("Move to bottom", f.app.overlay.menu.items[4].label);
+    try testing.expect(f.app.overlay.menu.items[5].checked);
+    try testing.expectEqualStrings("Rename…", f.app.overlay.menu.items[6].label);
     // An ended session offers no Kill row; the separator sits on Delete.
     for (f.app.overlay.menu.items) |mi| try testing.expect(!std.mem.eql(u8, mi.label, "Kill session…"));
     try f.app.handle(.{ .key = Key.named(.enter) });
@@ -1792,6 +1856,87 @@ test "pins lead the list on either axis; p toggles and follows the session; the 
     try f.app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .left } });
     try testing.expect(f.app.overlay == .menu);
     try testing.expectEqual(@as(usize, 6), f.app.overlay.menu.items.len);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "Move to top / bottom lead or end the manual order under the pins; a cloud row's menu is titled by its run and links CloudWatch and the PR when configured" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    const ws = std.fs.path.basename(f.root);
+    const r = try ScanResult.create(testing.allocator, 1);
+    const items = try r.arena.allocator().alloc(Item, 4);
+    items[0] = item("live", .streaming, 30, ws, "ship it");
+    items[1] = item("idle", .idle, 20, ws, "fix the tests");
+    items[2] = item("gone", .done, 10, ws, "notes");
+    items[3] = item("run-1", .streaming, 40, "cloud", "TE-1");
+    items[3].where = .cloud;
+    items[3].cloud = .{ .ticket = "TE-1", .pr_url = "https://example.test/pr/1" };
+    r.items = items;
+    st.generation = 1;
+    try handle(&f.app, r);
+    st.scanned_once = true;
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[2]].session_id);
+    // The ended row to the top: the axis flips to Manual and the row
+    // stays selected; then to the bottom.
+    st.list.cursor = 2;
+    try command.run(&f.app, .{ .static = .@"sessions.move_top" });
+    try testing.expectEqual(SessionsSort.manual, st.sort);
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqual(@as(usize, 0), st.list.cursor);
+    try command.run(&f.app, .{ .static = .@"sessions.move_bottom" });
+    try testing.expectEqualStrings("gone", st.items[st.filtered.items[2]].session_id);
+    try testing.expectEqual(@as(usize, 2), st.list.cursor);
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[0]].session_id);
+    // A pin still leads: idle pinned, then live to the top sits under it.
+    _ = try st.togglePin(testing.allocator, "idle");
+    try refilter(&f.app);
+    st.list.cursor = 1;
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[1]].session_id);
+    try command.run(&f.app, .{ .static = .@"sessions.move_top" });
+    try testing.expectEqualStrings("idle", st.items[st.filtered.items[0]].session_id);
+    try testing.expectEqualStrings("live", st.items[st.filtered.items[1]].session_id);
+    // The menu's Auto sort row is unticked on the manual axis.
+    try openRowMenuFor(&f.app, .section, 0, 0);
+    try testing.expectEqualStrings("Auto sort", f.app.overlay.menu.items[5].label);
+    try testing.expect(!f.app.overlay.menu.items[5].checked);
+    try testing.expectEqual(command.CommandId.@"sessions.sort_auto", f.app.overlay.menu.items[5].action.command);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // The cloud row shows under `w`; its menu is the run's, with the PR
+    // link and — unconfigured — no CloudWatch row.
+    st.all_workspaces = true;
+    try refilter(&f.app);
+    for (st.filtered.items, 0..) |idx, vi| if (st.items[idx].where == .cloud) {
+        st.list.cursor = vi;
+    };
+    try openRowMenuFor(&f.app, .section, 0, 0);
+    try testing.expectEqualStrings("cloud · run-1", f.app.overlay.menu.title);
+    var saw_pr = false;
+    var saw_cw = false;
+    for (f.app.overlay.menu.items) |mi| {
+        if (std.mem.eql(u8, mi.label, "Open PR")) {
+            saw_pr = true;
+            try testing.expectEqualStrings("https://example.test/pr/1", mi.action.open_url);
+        }
+        if (std.mem.eql(u8, mi.label, "Open CloudWatch in browser")) saw_cw = true;
+        try testing.expect(!std.mem.eql(u8, mi.label, "Resume in a terminal"));
+    }
+    try testing.expect(saw_pr and !saw_cw);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // Configured, the CloudWatch row names the run's query.
+    f.app.cfg.cloud_agents.region = "eu-west-1";
+    f.app.cfg.cloud_agents.account_id = "123456789012";
+    f.app.cfg.cloud_agents.log_group = "/ecs/runner";
+    try openRowMenuFor(&f.app, .section, 0, 0);
+    saw_cw = false;
+    for (f.app.overlay.menu.items) |mi| if (std.mem.eql(u8, mi.label, "Open CloudWatch in browser")) {
+        saw_cw = true;
+        try testing.expect(std.mem.startsWith(u8, mi.action.open_url, "https://eu-west-1.console.aws.amazon.com/cloudwatch/"));
+        try testing.expect(std.mem.indexOf(u8, mi.action.open_url, "run-1") != null);
+        try testing.expect(std.mem.endsWith(u8, mi.action.open_url, "?account=123456789012"));
+    };
+    try testing.expect(saw_cw);
     try f.app.handle(.{ .key = Key.named(.esc) });
 }
 

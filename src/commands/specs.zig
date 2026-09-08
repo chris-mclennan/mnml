@@ -488,6 +488,8 @@ pub const specs = [_]Spec{
     .{ .id = "sessions.delete", .title = "Sessions: delete the selected session's transcript (confirm)", .group = "sessions" },
     .{ .id = "sessions.move_up", .title = "Sessions: move the selected session up (manual order)", .group = "sessions" },
     .{ .id = "sessions.move_down", .title = "Sessions: move the selected session down (manual order)", .group = "sessions" },
+    .{ .id = "sessions.move_top", .title = "Sessions: move the selected session to the top (manual order)", .group = "sessions" },
+    .{ .id = "sessions.move_bottom", .title = "Sessions: move the selected session to the bottom (manual order)", .group = "sessions" },
     .{ .id = "sessions.all_workspaces", .title = "Sessions: toggle every workspace's sessions / this one's", .group = "sessions" },
     .{ .id = "sessions.pin", .title = "Sessions: pin / unpin the selected session (pinned lead the list)", .group = "sessions" },
     // Zig-only: the context-menu rows on a tab, a tree row and the
@@ -527,7 +529,6 @@ pub const specs = [_]Spec{
     .{ .id = "cloud_agents.focus_quick_input", .title = "Cloud agents: focus the quick-fire prompt input", .group = "view" },
     .{ .id = "cloud_agents.spawn_worker", .title = "Cloud agents: spawn ant beta:worker poll for a self-hosted sandbox", .group = "view" },
     .{ .id = "cloud_agents.webhook_docs", .title = "Cloud agents: open webhook-handler docs (alternative to ant poll)", .group = "view" },
-    .{ .id = "cloud_agents.toggle_view", .title = "Cloud agents: toggle row density (compact ↔ standard)", .group = "view" },
     .{ .id = "view.git_commit_focus", .title = "Activity: focus the Git section's commit textarea", .group = "view" },
     .{ .id = "git.blame_toggle", .title = "Git: toggle blame gutter", .group = "git", .keys = .{ .standard = &.{"ctrl+k b"} } },
     .{ .id = "git.commit", .title = "Git: commit staged changes", .group = "git", .keys = .{ .standard = &.{"ctrl+k g c"} } },
@@ -744,8 +745,6 @@ pub const specs = [_]Spec{
     .{ .id = "http.copy_response_cookies", .title = "HTTP: copy the response Set-Cookie headers", .group = "http" },
     .{ .id = "http.copy_response_timeline", .title = "HTTP: copy the response timeline (wait / receive / total)", .group = "http" },
     .{ .id = "http.copy_response_tests", .title = "HTTP: copy the response assertions summary", .group = "http" },
-    .{ .id = "cloud_agents.view_compact", .title = "Cloud Agents: compact row density", .group = "cloud_agents" },
-    .{ .id = "cloud_agents.view_standard", .title = "Cloud Agents: standard row density", .group = "cloud_agents" },
     .{ .id = "http.save", .title = "HTTP: save request (Save-As if new)", .group = "http" },
     .{ .id = "http.copy_as", .title = "HTTP: copy request as code (curl / Python / JS / Go / wget / HTTPie)", .group = "http" },
     .{ .id = "http.generate_code", .title = "HTTP: copy request as code (alias for http.copy_as)", .group = "http" },
@@ -1066,6 +1065,6 @@ test "973 specs, unique ids" {
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands + three in-progress operation commands + eleven
     // rebase-plan / amend / reset commands.
-    try std.testing.expectEqual(@as(usize, 988), specs.len);
+    try std.testing.expectEqual(@as(usize, 987), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
