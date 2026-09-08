@@ -804,10 +804,14 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .revert => |sha| try simple(repo, io, r, &.{ "revert", "--no-edit", sha }, try std.fmt.allocPrint(arena, "reverted {s}", .{sha[0..@min(7, sha.len)]})),
         .undo => {
             if (repo.undo.pop()) |entry| {
+                // Popped and not yet on the other list: a step that fails
+                // part-way (the child cancelled at shutdown) frees it.
+                errdefer entry.deinit(gpa);
                 const out = try applyAction(repo, io, arena, entry.undo);
                 if (out.ok) {
+                    const desc = try std.fmt.allocPrint(arena, "undid: {s}", .{entry.desc});
                     try repo.redo.append(gpa, entry);
-                    r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "undid: {s}", .{entry.desc}), .ok = true } };
+                    r.payload = .{ .op = .{ .desc = desc, .ok = true } };
                 } else {
                     entry.deinit(gpa);
                     r.payload = .{ .op = .{ .desc = "undo failed", .ok = false, .msg = out.reason() } };
@@ -818,10 +822,14 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .redo => {
             if (repo.redo.pop()) |entry| {
+                // Popped and not yet on the other list: a step that fails
+                // part-way (the child cancelled at shutdown) frees it.
+                errdefer entry.deinit(gpa);
                 const out = try applyAction(repo, io, arena, entry.redo);
                 if (out.ok) {
+                    const desc = try std.fmt.allocPrint(arena, "redid: {s}", .{entry.desc});
                     try repo.undo.append(gpa, entry);
-                    r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "redid: {s}", .{entry.desc}), .ok = true } };
+                    r.payload = .{ .op = .{ .desc = desc, .ok = true } };
                 } else {
                     entry.deinit(gpa);
                     r.payload = .{ .op = .{ .desc = "redo failed", .ok = false, .msg = out.reason() } };
