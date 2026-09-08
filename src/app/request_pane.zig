@@ -166,6 +166,11 @@ pub const RequestPane = struct {
     resp_pretty: ?[]u8 = null,
     /// Edited since it was loaded or saved.
     edited: bool = false,
+    /// Set by a key or click that leaves the user in the request block
+    /// while a send is in flight: the result then stays out of their way
+    /// instead of yanking focus to the response (a failed send racing an
+    /// edit used to send the typed text to the response block).
+    moved_since_send: bool = false,
     /// Opened by browsing (a single click); replaced by the next browse.
     is_preview: bool = false,
     /// The side-by-side edit view: on, the right half's tab, the left
@@ -327,7 +332,7 @@ pub const RequestPane = struct {
         self.state = .{ .streaming = .{ .job = job, .head = head, .is_sse = is_sse, .chunked = chunked, .started_ms = now_ms } };
         self.resp_view = .{};
         self.response_tab = .body;
-        self.block = .response;
+        if (!self.moved_since_send) self.block = .response;
     }
 
     /// A run of body bytes; the view follows the tail.
@@ -368,7 +373,7 @@ pub const RequestPane = struct {
         self.resp_view = .{};
         self.response_tab = .body;
         try self.highlightResponse();
-        self.block = .response;
+        if (!self.moved_since_send) self.block = .response;
     }
 
     /// A Done response becomes `prev` (for the diff); any other state
@@ -390,7 +395,7 @@ pub const RequestPane = struct {
         self.resp_pretty = null;
         self.state.deinit(self.gpa);
         self.state = .{ .failed = copy };
-        self.block = .response;
+        if (!self.moved_since_send) self.block = .response;
     }
 
     pub fn setSentLine(self: *RequestPane, method: []const u8, url: []const u8) Allocator.Error!void {
@@ -607,6 +612,9 @@ pub const RequestPane = struct {
 /// True when the pane took the key. Chords with ctrl / alt that are not
 /// the pane's own fall through to the chord chain.
 pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bool {
+    defer if (rp.isSending() and rp.block == .request) {
+        rp.moved_since_send = true;
+    };
     app.needs_render = true;
     const gpa = app.gpa;
     // Pane-wide chords.
@@ -930,6 +938,9 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
 
 /// A press on one of the view's hits.
 pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit_rect: ?Rect) Allocator.Error!void {
+    defer if (rp.isSending() and rp.block == .request) {
+        rp.moved_since_send = true;
+    };
     app.needs_render = true;
     // A divider drag: the press armed it, every drag inside the edit
     // area moves it, the release ends it.
@@ -1343,4 +1354,29 @@ test "varAtCaret finds the token under the URL caret; inlineVar replaces every o
     try testing.expectEqualStrings("1", rp.request.header("a").?);
     try testing.expectEqual(@as(usize, 0), try rp.inlineVar("NOPE", "z"));
     try testing.expect(rp.edited);
+}
+
+test "a result jumps to the response unless the user moved into the request block during the send" {
+    const t = std.testing;
+    var rp = try RequestPane.init(t.allocator);
+    defer rp.deinit();
+    // Sent from the URL, nothing touched since: the failure shows itself.
+    rp.state = .{ .sending = 7 };
+    rp.block = .request;
+    try rp.setFailed("no network");
+    try t.expectEqual(Block.response, rp.block);
+    // Tabbed back into the request while it was still in flight: the
+    // failure lands without stealing the edit.
+    rp.state.deinit(t.allocator);
+    rp.state = .{ .sending = 8 };
+    rp.moved_since_send = true;
+    rp.block = .request;
+    try rp.setFailed("no network");
+    try t.expectEqual(Block.request, rp.block);
+    // The next send starts clean (fire() resets the flag; mirrored here).
+    rp.moved_since_send = false;
+    rp.state.deinit(t.allocator);
+    rp.state = .{ .sending = 9 };
+    try rp.setFailed("no network");
+    try t.expectEqual(Block.response, rp.block);
 }

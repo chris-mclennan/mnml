@@ -954,6 +954,7 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     const job = try spawnWith(app, id, .send, expanded, .{ .cookie = cookie, .stream = mode });
     rp.keepAsPrev();
     rp.state = .{ .sending = job };
+    rp.moved_since_send = false;
     app.http.sending += 1;
     app.needs_render = true;
 }
@@ -1646,6 +1647,51 @@ test "send: a mock server answers; the response lands on the pane and history re
     try testing.expect(rp.prev != null);
     try command.run(&app, .{ .static = .@"http.diff_last_two" });
     try testing.expect(std.mem.startsWith(u8, app.activeBuffer().?.editor.bytes(), "# HTTP diff"));
+}
+
+test "send: a failure landing while the user tabbed back into the request leaves the edit alone" {
+    // The race tests/e2e/http_multi_block_writeback.test only hits under
+    // load: the worker's failure used to move the focus block to the
+    // response whenever it arrived, so a Tab into the URL followed by
+    // typing lost the typed text to the response block. Here the order
+    // is forced: send → Tab twice during the send (request → response →
+    // request) → the failure is pumped by tick → the block must still be
+    // the request. Without a user move, the failure shows itself.
+    const Key = @import("../core/key.zig").Key;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    // Port 1 refuses: the worker reports a failure, asynchronously.
+    try rp.url.appendSlice(testing.allocator, "http://127.0.0.1:1/refused");
+    try command.run(&app, .{ .static = .@"http.send" });
+    try testing.expect(rp.state == .sending);
+    try testing.expect(!rp.moved_since_send);
+    _ = try request_pane.handleKey(&app, id, rp, Key.named(.tab));
+    try testing.expect(rp.block == .response);
+    _ = try request_pane.handleKey(&app, id, rp, Key.named(.tab));
+    try testing.expect(rp.block == .request and rp.moved_since_send);
+    var waited: usize = 0;
+    while (rp.state == .sending and waited < 300) : (waited += 1) {
+        try app.tick(App.nowMs(app.io));
+        try Io.sleep(app.io, .fromMilliseconds(10), .awake);
+    }
+    try testing.expect(rp.state == .failed);
+    try testing.expect(rp.block == .request);
+    // The control: the next send, untouched, jumps to the response.
+    try command.run(&app, .{ .static = .@"http.send" });
+    try testing.expect(!rp.moved_since_send);
+    waited = 0;
+    while (rp.state == .sending and waited < 300) : (waited += 1) {
+        try app.tick(App.nowMs(app.io));
+        try Io.sleep(app.io, .fromMilliseconds(10), .awake);
+    }
+    try testing.expect(rp.state == .failed);
+    try testing.expect(rp.block == .response);
 }
 
 test "save: a multi-block .http writes back one block; a scratch prompts" {
