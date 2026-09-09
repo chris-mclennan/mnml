@@ -9,23 +9,23 @@
 //!   ws 󰅀   󰅁  󰅂
 //!  Viewing 9
 //!
-//!  󰅀 󰌢 LOCAL             2
+//!   󰌢 LOCAL             2
 //!  󰄬 󰘬 main         1↑ 3↓     ← the checked-out branch: green ground,
 //!     󰘬 feature                  a check in the gutter, ahead / behind
 //!
-//!  󰅀 󰅟 REMOTE            3
+//!   󰅟 REMOTE            3
 //!     󰊤 origin
 //!       󰘬 main
 //!       󰘬 feature
 //!
-//!  󰅀 󰐅 WORKTREES         2
+//!   󰐅 WORKTREES         2
 //!     󰋜 ws                         ← the house is the main tree
 //!  󰌾 󰐅 wt-fix (fix)         ●     ← locked (gutter) · dirty (the dot)
 //!
-//!  󰅀 󰏗 STASHES           1
+//!   󰏗 STASHES           1
 //!     ab12cd3 On main: half done
 //!
-//!  󰅀 󰓻 TAGS              2
+//!   󰓻 TAGS              2
 //!     󰓹 v2.0
 //! ```
 //!
