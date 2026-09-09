@@ -1,15 +1,15 @@
-# `integrations.audit_glyphs` audits the workspace's src/ against its
-# data/nerd-glyphnames.json into a scratch pane; without the catalog it
-# says so.
+# `integrations.audit_glyphs` audits the workspace's src/ against the
+# embedded Nerd Font catalog into a scratch pane, the tofu check first;
+# without a src/ it says so.
 write a.txt alpha
 open a.txt
 command integrations.audit_glyphs
-expect screen contains "no data/nerd-glyphnames.json"
-write data/nerd-glyphnames.json "{\"METADATA\":{},\"fa-sort\":{\"char\":\"x\",\"code\":\"f0dc\"}}"
+expect screen contains "glyph audit: src/"
 write src/chip.zig "pub const sort_icon_nerd = \"\\u{f0dc}\";\npub const sort_icon_ascii = \"~\";\n"
 command integrations.audit_glyphs
+expect screen contains "# tofu check"
 expect screen contains "# glyph audit"
-expect screen contains "fa-sort"
+expect screen contains "U+F0DC  fa-"
 expect screen contains "1 sites, 0 tests, 0 without a fallback, 0 unknown"
 command integrations.bake_all_glyphs
-expect screen contains "glyph bake: 1 glyphs"
+expect screen contains "glyph bake: "

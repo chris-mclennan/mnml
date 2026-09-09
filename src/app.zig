@@ -96,6 +96,7 @@ const mount_pane = @import("app/mount_pane.zig");
 const integrations = @import("app/integrations.zig");
 const marketplace = @import("app/marketplace.zig");
 const font_scan = @import("app/font_scan.zig");
+const glyph_audit = @import("app/glyph_audit.zig");
 const http_parse = @import("http/parse.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
@@ -1061,8 +1062,10 @@ pub const App = struct {
         try app.hooks.subscribe(.exit, .{ .zig = &marks_store.onExit });
         // Installed integrations are scanned once the app is up.
         try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
-        // The installed Nerd Fonts, once the manifests are scanned.
+        // The installed Nerd Fonts, then the tofu check over the
+        // manifests just scanned and the fonts just found.
         try app.hooks.subscribe(.startup, .{ .zig = &font_scan.onStartup });
+        try app.hooks.subscribe(.startup, .{ .zig = &glyph_audit.onStartup });
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
