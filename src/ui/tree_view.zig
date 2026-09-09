@@ -644,7 +644,7 @@ test "sections: the cursor bar on a focused header, the triangle indicator, the 
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &items, .cursor = 1, .focused = true, .show_dots = true, .triangle = true });
     try f.expectRow(0, " ▾ ● /w/       \u{EA80}  \u{EA7F}  \u{EB40}  \u{EAC5}  \u{EB37}");
-    try f.expectRow(1, " ▸ ○ mixr");
+    try f.expectRow(1, "\u{258c}▸ ○ mixr");
     try testing.expect(vaxis.Color.eql(f.style(5, 1).bg, f.theme.palette.bg2));
     try testing.expect(vaxis.Color.eql(f.style(0, 1).bg, f.theme.palette.bg_darker));
     inline for (.{ chevron_open_glyph, chevron_closed_glyph, cont_glyph, corner_glyph, new_folder_glyph, new_file_glyph, pull_glyph, collapse_all_glyph, expand_all_glyph, add_workspace_glyph }) |g| {
