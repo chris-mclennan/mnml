@@ -77,6 +77,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
 
     const want_sb = body.w >= 12;
     const list = if (want_sb) Rect.init(body.x, body.y, body.w - 1, body.h) else body;
+    // A cell of air between a row's text and the bar; the row's ground
+    // and its hit still reach it.
+    const air: u16 = if (want_sb) 1 else 0;
     const rows_h: usize = list.h;
     if (rows_h > 0) {
         if (p.cursor < p.scroll) p.scroll = p.cursor;
@@ -91,6 +94,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
         y += 1;
     }) {
         const r = list.row(y);
+        const tr = Rect.init(r.x, r.y, r.w -| air, 1);
         const sel = i == p.cursor;
         const bg = if (sel and focused) th.cursor_line.bg else if (sel) th.panel_bg.bg else th.bg.bg;
         if (sel) ui.fill(r, if (focused) th.cursor_line else th.panel_bg);
@@ -99,9 +103,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
                 const grp = p.groups.items[g];
                 const chevron: []const u8 = if (grp.collapsed) (if (ui.ascii) ">" else "▸") else (if (ui.ascii) "v" else "▾");
                 const line = ui.fmt("{s} {s} ({d})", .{ chevron, grp.rel, grp.count });
-                _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(line, r.w), Theme.onBg(th.accent, bg));
+                _ = ui.putStr(tr.x, tr.y, tr.w, ui.clipStr(line, tr.w), Theme.onBg(th.accent, bg));
             },
-            .hit => |h| paintHit(ui, r, p.hits.items[h], p.isDisabled(h), bg),
+            .hit => |h| paintHit(ui, tr, p.hits.items[h], p.isDisabled(h), bg),
         }
         ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = grep.row_base + @as(u32, @intCast(i)) } });
     }

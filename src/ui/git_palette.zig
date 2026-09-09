@@ -756,3 +756,19 @@ test "ascii: every glyph has a one-cell twin and the row shapes hold" {
     try testing.expectEqualStrings("", trackText(ui, 0, 0));
     try testing.expectEqualStrings("2v", trackText(ui, 0, 2));
 }
+
+test "a cell of air before the bar at 26 cells: a section's count, a long branch name's ellipsis and the ahead / behind all stop a cell short of it" {
+    var f = try Fixture.init(26, 12);
+    defer f.deinit();
+    var rows: [14]Row = undefined;
+    rows[0] = .{ .section = .{ .s = .local, .count = 13, .collapsed = false } };
+    for (1..14) |i| rows[i] = .{ .branch = .{ .idx = @intCast(i - 1), .name = "a-long-branch-name-that-overflows", .current = i == 1, .ahead = 12, .behind = 3 } };
+    const p = draw(f.ui(), f.full(), .{ .rows = &rows, .repo = "ws", .viewing = 13, .cursor = 2 });
+    try testing.expectEqual(@as(usize, 6), p.visible);
+    try f.expectAirBeforeBar(head_rows, 12, 25);
+    var buf: [128]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, f.row(6, &buf), "13 █"));
+    try testing.expect(std.mem.endsWith(u8, f.row(7, &buf), "12\u{2191} 3\u{2193} █"));
+    try testing.expect(std.mem.endsWith(u8, f.row(8, &buf), "… █"));
+    try testing.expect(f.hits.at(25, 8).? == .scrollbar);
+}

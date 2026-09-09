@@ -18,7 +18,7 @@
 //!
 //! // changed: `Doc.scrollbar` paints the one-cell vertical bar in the
 //! pane's last column (registered `.scrollbar{pane, v}`) when the text
-//! outgrows the rows, and `ViewState.pin` lets the app scroll the
+//! outgrows the rows, the text stopping a cell short of it, and `ViewState.pin` lets the app scroll the
 //! viewport away from the cursor (a wheel in standard mode): while the
 //! cursor stays at the pinned byte the view is not pulled back to it.
 
@@ -697,7 +697,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     const num_w: u16 = gutter_w -| 2;
     const text_h = area.h;
     const bar = doc.scrollbar and total > text_h and area.w > gutter_w + 4;
-    const text_w = area.w - gutter_w - @as(u16, if (bar) scrollbar_w else 0);
+    // The bar's column and a cell of air before it (Rust keeps a pad
+    // there too, beside its change strip).
+    const text_w = area.w - gutter_w - @as(u16, if (bar) scrollbar_w + 1 else 0);
     const text_x = area.x + gutter_w;
 
     try keepCursorVisible(ui, doc, lines, view, text_w, text_h);
@@ -1861,4 +1863,21 @@ test "the breadcrumb row: ` src › main.rs ` in the comment colour, a hit per s
     try g.expectRow(0, " src ~in.rs");
     try testing.expectEqualStrings("a > b", breadcrumbLabel(g.ui(), &.{ "a", "b" }));
     drawBreadcrumb(g.ui(), 3, Rect.empty, &names);
+}
+
+test "the scrollbar takes the last column and a cell of air before it; without it the text runs to the edge" {
+    var f = try Fixture.init(20, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a" ** 30 ++ "\n" ++ "b" ** 30 ++ "\n" ++ "c" ** 30 ++ "\nd\ne\nf\ng\nh\ni\nj");
+    d.line_numbers = false;
+    d.scrollbar = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "a" ** 18 ++ " █");
+    try f.expectRow(1, "b" ** 18 ++ " █");
+    try f.expectAirBeforeBar(0, 4, 19);
+    try testing.expect(f.hits.at(19, 0).? == .scrollbar);
+    d.scrollbar = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "a" ** 20);
 }

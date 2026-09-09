@@ -85,6 +85,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
 
     // ── the rows ──
     const list = if (z.rows.len > rest.h) rest.splitRight(1).left else rest;
+    // A cell of air between a row's text and the bar; the row's ground
+    // and its hit still reach it.
+    const air: u16 = if (z.rows.len > rest.h) 1 else 0;
     const rows_h: usize = list.h;
     z.rows_h = rows_h;
     if (z.cursor < z.scroll) z.scroll = z.cursor;
@@ -105,29 +108,30 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
         const bg = if (is_cur) t.cursor_line.bg else t.bg.bg;
         if (is_cur) ui.fill(r, t.cursor_line);
         ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(i) } });
+        const tr = Rect.init(r.x, r.y, r.w -| air, 1);
         const node = z.node(row.node);
         var x = r.x;
         x += ui.putStr(x, r.y, 2, if (is_cur) (if (ui.ascii) "> " else "▸ ") else "  ", Theme.onBg(t.accent, bg));
         const indent: u16 = (node.depth -| 1) * 2;
-        x += @min(indent, r.right() -| x);
+        x += @min(indent, tr.right() -| x);
         // The fold glyph on a container.
         if (node.kind.isContainer()) {
             const g: []const u8 = if (row.collapsed) (if (ui.ascii) tree_view.chevron_closed_ascii else tree_view.chevron_closed_glyph) else (if (ui.ascii) tree_view.chevron_open_ascii else tree_view.chevron_open_glyph);
-            x += ui.putStr(x, r.y, r.right() -| x, g, Theme.onBg(t.muted, bg));
-            x += ui.putStr(x, r.y, r.right() -| x, " ", Theme.onBg(t.muted, bg));
+            x += ui.putStr(x, r.y, tr.right() -| x, g, Theme.onBg(t.muted, bg));
+            x += ui.putStr(x, r.y, tr.right() -| x, " ", Theme.onBg(t.muted, bg));
         }
         const name_style = Theme.onBg(if (node.isListElement()) t.muted else t.fg, bg);
-        x += ui.putStr(x, r.y, r.right() -| x, ui.clipStr(node.name, r.right() -| x), name_style);
-        x += ui.putStr(x, r.y, r.right() -| x, ":  ", Theme.onBg(t.muted, bg));
-        if (x >= r.right()) continue;
-        const value = Rect.init(x, r.y, r.right() - x, 1);
+        x += ui.putStr(x, r.y, tr.right() -| x, ui.clipStr(node.name, tr.right() -| x), name_style);
+        x += ui.putStr(x, r.y, tr.right() -| x, ":  ", Theme.onBg(t.muted, bg));
+        if (x >= tr.right()) continue;
+        const value = Rect.init(x, r.y, tr.right() - x, 1);
         if (z.editing) |e| if (e.node == row.node) {
             const c = drawField(ui, value, e, focused);
             if (c) |cc| caret = cc;
             continue;
         };
         const end = drawValue(ui, pane, value, z, i, row, bg, is_cur);
-        if (row.modified and end < r.right()) _ = ui.putStr(end + 1, r.y, r.right() -| (end + 1), "*", Theme.onBg(t.warn_fg, bg));
+        if (row.modified and end < tr.right()) _ = ui.putStr(end + 1, r.y, tr.right() -| (end + 1), "*", Theme.onBg(t.warn_fg, bg));
         if (z.picker != null and z.picker.?.node == row.node) picker_at = Rect.init(value.x, r.y, value.w, 1);
     }
     if (z.rows.len > rest.h) scrollbar.drawVertical(ui, rest.rightCells(1), .{ .pane = pane }, z.rows.len, rows_h, z.scroll);

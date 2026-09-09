@@ -4,7 +4,8 @@ command view.activity_http
 expect screen contains "COLLECTIONS (2)"
 expect screen contains "requests (2)"
 expect screen contains "a.http"
-click 28 5
+# The folder's ` + ` sits a cell short of the scrollbar column: its glyph is screen column 26.
+click 26 5
 expect screen contains "req-1.http"
 expect screen contains "new request in requests: req-1.http"
 click 12 5

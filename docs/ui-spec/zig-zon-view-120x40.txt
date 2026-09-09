@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS ●1 󰅖  ●━  󰅖
    │  ● /pri…            │  config.zon 󰅖    config.zon 󰅖   󰐕                          󰅁  󰅂   Source        
-▌ │     .mnml              │ config.zon › ui › md_preview_engine                               mnml config · unsaved
+▌ │▌    .mnml              │ config.zon › ui › md_preview_engine                               mnml config · unsaved
    │       ipc-zig          │  󰍉 / filter
  󰍉 │     󱼅  config.zon       │   editor:  .{ 4 fields } *
    │      prog.dbg           │    input_style:  vim / [standard]
@@ -36,5 +36,5 @@
    │                          │
   │                          │
    │                          │ ⏎ edit · ←→ adjust · + add · x remove · J/K move · n null · / filter · e source · ^S sa…
- VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    09:30  ws   —
+ VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    23:05  ws   —
 

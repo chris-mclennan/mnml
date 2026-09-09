@@ -106,28 +106,31 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
     // The bar's column is reserved whether or not the list needs it.
     const cols = area.splitRight(if (area.w >= bar_min_w) 1 else 0);
     const body = cols.left;
+    // One cell of air between any text and the bar.
+    const air: u16 = if (cols.rest.isEmpty()) 0 else 1;
+    const text_end = body.right() -| air;
     // Header.
     const glyph: []const u8 = if (ui.ascii) "outline" else "⌥";
     var x = body.x + 2;
-    x += ui.putStr(x, body.y, body.right() -| x, glyph, Theme.onBg(t.syntax.keyword, bg));
+    x += ui.putStr(x, body.y, text_end -| x, glyph, Theme.onBg(t.syntax.keyword, bg));
     x += 1;
-    x += ui.putStr(x, body.y, body.right() -| x, ui.clipStr(p.title, body.right() -| x), Theme.onBg(Theme.withFg(t.tab_active, t.fg.fg), bg));
+    x += ui.putStr(x, body.y, text_end -| x, ui.clipStr(p.title, text_end -| x), Theme.onBg(Theme.withFg(t.tab_active, t.fg.fg), bg));
     const count = if (p.query.len > 0)
         ui.fmt("   {d}/{d} symbol(s)", .{ p.rows.len, p.total })
     else
         ui.fmt("   {d} symbol{s}", .{ p.total, if (p.total == 1) "" else "s" });
-    _ = ui.putStr(x, body.y, body.right() -| x, count, Theme.onBg(t.muted, bg));
+    _ = ui.putStr(x, body.y, text_end -| x, count, Theme.onBg(t.muted, bg));
     var y = body.y + 1;
     if (y < body.bottom()) {
-        const h = hint(ui.ascii, p.filter_mode, body.w);
-        _ = ui.putStr(body.x, y, body.w, ui.clipStr(h, body.w), Theme.onBg(t.muted, bg));
+        const h = hint(ui.ascii, p.filter_mode, body.w -| air);
+        _ = ui.putStr(body.x, y, body.w -| air, ui.clipStr(h, body.w -| air), Theme.onBg(t.muted, bg));
         y += 1;
     }
     if (showsQuery(p) and y < body.bottom()) {
         var qx = body.x;
-        qx += ui.putStr(qx, y, body.right() -| qx, "  / ", Theme.onBg(Theme.withFg(t.fg, t.palette.yellow), bg));
-        qx += ui.putStr(qx, y, body.right() -| qx, ui.clipStr(p.query, body.right() -| qx), Theme.onBg(t.fg, bg));
-        if (p.filter_mode) _ = ui.putStr(qx, y, body.right() -| qx, "█", Theme.onBg(Theme.withFg(t.fg, t.palette.yellow), bg));
+        qx += ui.putStr(qx, y, text_end -| qx, "  / ", Theme.onBg(Theme.withFg(t.fg, t.palette.yellow), bg));
+        qx += ui.putStr(qx, y, text_end -| qx, ui.clipStr(p.query, text_end -| qx), Theme.onBg(t.fg, bg));
+        if (p.filter_mode) _ = ui.putStr(qx, y, text_end -| qx, "█", Theme.onBg(Theme.withFg(t.fg, t.palette.yellow), bg));
         y += 1;
     }
     // The blank row.
@@ -136,7 +139,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
     if (p.total == 0 or p.rows.len == 0) {
         scroll.* = 0;
         const note: []const u8 = if (p.total == 0) "  (no symbols)" else "  (no matches)";
-        if (!list.isEmpty()) _ = ui.putStr(list.x, list.y, list.w, ui.clipStr(note, list.w), Theme.onBg(t.muted, bg));
+        if (!list.isEmpty()) _ = ui.putStr(list.x, list.y, list.w -| air, ui.clipStr(note, list.w -| air), Theme.onBg(t.muted, bg));
         if (!cols.rest.isEmpty()) scrollbar.drawVertical(ui, cols.rest, .{ .pane = pane }, 0, @max(list.h, 1), 0);
         return;
     }
@@ -158,14 +161,15 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
             _ = ui.putStr(r.x, r.y, r.w, if (ui.ascii) "*" else "●", Theme.withFg(style, t.palette.yellow));
         }
         // Kind, right-aligned in its column.
+        const end = r.right() -| air;
         const kind_right = r.x + arrow_w + kind_w;
-        if (kind_right <= r.right()) _ = ui.putStrRight(kind_right, r.y, kind_w, row.kind, Theme.withFg(style, kindColor(t, row.kind)));
+        if (kind_right <= end) _ = ui.putStrRight(kind_right, r.y, kind_w, row.kind, Theme.withFg(style, kindColor(t, row.kind)));
         const name_x = kind_right + 1 + @as(u16, row.depth) * 2;
-        if (name_x >= r.right()) {
+        if (name_x >= end) {
             ui.hit(r, .{ .editor_cell = .{ .pane = pane, .line = row.line, .col = row.col } });
             continue;
         }
-        const avail = r.right() - name_x;
+        const avail = end - name_x;
         const label = ui.fmt("{s}:{d}", .{ row.name, row.line + 1 });
         var name_style = Theme.withFg(style, t.fg.fg);
         name_style.bold = selected;
@@ -280,7 +284,7 @@ test "a 100k-char symbol name paints clipped without overflowing the cell sum" {
     var buf: [256]u8 = undefined;
     try testing.expect(std.mem.indexOf(u8, f.row(0, &buf), "nnnn") != null);
     try testing.expect(std.mem.indexOf(u8, f.row(3, &buf), "fn nnnn") != null);
-    try testing.expect(std.mem.endsWith(u8, f.row(3, &buf), "…█"));
+    try testing.expect(std.mem.endsWith(u8, f.row(3, &buf), "… █"));
 }
 
 test "the list scrolls to keep the cursor visible and the bar grows a thumb; under eight cells there is no bar" {
@@ -307,4 +311,19 @@ test "the list scrolls to keep the cursor visible and the bar grows a thumb; und
     draw(g.ui(), 0, g.full(), &scroll, .{ .title = "t", .rows = &rows, .total = 10, .cursor = 0, .current = null, .focused = true });
     try testing.expect(g.hits.at(6, 3) == null or g.hits.at(6, 3).? == .editor_cell);
     for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
+}
+
+test "a cell of air before the bar: the header, the hint and every row stop a cell short of it, a long name with the ellipsis before the air" {
+    var f = try Fixture.init(30, 8);
+    defer f.deinit();
+    var scroll: usize = 0;
+    var rows: [12]Row = undefined;
+    for (&rows, 0..) |*r, i| r.* = .{ .name = "a_symbol_name_that_is_long", .kind = "fn", .line = @intCast(i), .col = 0, .depth = 0 };
+    draw(f.ui(), 0, f.full(), &scroll, .{ .title = "a-file-name-that-is-long.zig", .rows = &rows, .total = 12, .cursor = 0, .current = null, .focused = true });
+    try f.expectRow(0, "  ⌥ a-file-name-that-is-lon… █");
+    try f.expectRow(1, "  ⏎ / r / esc" ++ " " ** 16 ++ "█");
+    try f.expectRow(3, "▶         fn a_symbol_name_… █");
+    try f.expectRow(4, "          fn a_symbol_name_… █");
+    try f.expectAirBeforeBar(1, 8, 29);
+    try testing.expect(f.hits.at(28, 3).? == .editor_cell);
 }

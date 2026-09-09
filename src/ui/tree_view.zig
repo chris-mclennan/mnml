@@ -12,14 +12,18 @@
 //! the edge. An extra workspace (`[[workspaces]]`) is ` ▸ name ` alone.
 //!
 //! An entry is ` ` + indent + connector + chevron + icon + name, the git
-//! badge right-aligned: two cells of indent per level, a `│` down every
+//! badge right-aligned (a cell of air between it, or a long name, and the
+//! scrollbar): two cells of indent per level, a `│` down every
 //! ancestor level that has siblings to come (levels 2 and up — the top
 //! level draws none, as neo-tree), the chevron slot of a file row taking
 //! `│` or `└` under the parent's folder icon. The connectors are mnml's
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
 //! shifted right so they meet the chevron above), the chevrons the
 //! Octicons pair, the file icons `icons.zig`. Every glyph has its
-//! `ui.ascii_icons` twin beside it.
+//! `ui.ascii_icons` twin beside it. The cursor row carries the list
+//! panels' marker (`▌`, the accent when the tree has the keys, muted
+//! otherwise) in its leading cell — the cell that otherwise keeps the
+//! rail's ground on every row.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -29,6 +33,7 @@ const Theme = @import("theme.zig");
 const icons = @import("icons.zig");
 const chip_mod = @import("chip.zig");
 const scrollbar = @import("scrollbar.zig");
+const list_panel = @import("list_panel.zig");
 
 const Style = vaxis.Style;
 
@@ -227,11 +232,12 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         const r = area.row(y);
         const is_cursor = if (p.cursor) |c| c == i else false;
         switch (p.items[i]) {
-            .section => |s| drawSection(ui, r, s, p, is_cursor),
+            .section => |s| drawSection(ui, r, sb_w, s, p, is_cursor),
             .entry => |e| drawEntry(ui, r, sb_w, p.items, i, e, is_cursor, p),
             .blank => {},
             .add_workspace => drawAddRow(ui, r),
         }
+        if (is_cursor) drawMarker(ui, r, p.focused);
     }
     out.painted = i - p.scroll;
     // right-click: the rows below the last item belong to the last
@@ -240,6 +246,16 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     if (y < area.h) ui.hit(Rect.init(area.x, area.y + y, area.w -| sb_w, area.h - y), .{ .tree_empty = lastRoot(p.items, i) });
     if (out.overflow) scrollbar.drawVertical(ui, Rect.init(area.right() - 1, area.y, 1, area.h), .tree, contentLen(p.items), area.h, p.scroll);
     return out;
+}
+
+/// The cursor row's marker in the leading cell: the list panels' `▌`,
+/// the accent when the tree is focused, muted otherwise. The cell
+/// keeps the rail's ground under it (a row's highlight still starts at
+/// the second cell); only the cursor row gets the glyph.
+fn drawMarker(ui: Ui, r: Rect, focused: bool) void {
+    const t = ui.theme;
+    const marker = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+    _ = ui.putStr(r.x, r.y, 1, marker, Theme.onBg(Theme.withFg(t.fg, if (focused) t.accent.fg else t.muted.fg), t.palette.bg_darker));
 }
 
 /// The root of the last section at or before item `end`.
@@ -253,7 +269,7 @@ fn lastRoot(items: []const Item, end: usize) u8 {
 }
 
 /// ` ▾ ` + [`● `] + label; the primary adds the chip cluster.
-fn drawSection(ui: Ui, r: Rect, s: Section, p: Props, is_cursor: bool) void {
+fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool) void {
     const t = ui.theme;
     const pal = t.palette;
     const rail_bg = pal.bg_darker;
@@ -270,8 +286,9 @@ fn drawSection(ui: Ui, r: Rect, s: Section, p: Props, is_cursor: bool) void {
         const dot: []const u8 = if (primary) (if (ui.ascii) "* " else "● ") else (if (ui.ascii) "o " else "○ ");
         x += ui.putStr(x, r.y, r.right() -| x, dot, Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.comment), bg));
     }
-    // The label's room: the primary keeps the cluster's, an extra four cells.
-    const max_label: u16 = @max(4, if (primary) r.w -| (3 + 2 + chip_reserve) else r.w -| 4);
+    // The label's room: the primary keeps the cluster's, an extra four
+    // cells — and a cell of air before the bar.
+    const max_label: u16 = @max(4, if (primary) r.w -| (3 + 2 + chip_reserve) else r.w -| 4 -| sb_w);
     const label = ui.clipStr(s.label, max_label);
     var style = Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.fg), bg);
     style.bold = true;
@@ -394,7 +411,9 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     name_style.bold = e.is_dir or lit;
     name_style.dim = (e.repo != null and !e.repo.?.active) or (e.name.len > 0 and e.name[0] == '.');
     const badge_w: u16 = if (e.dirty or e.git != null) 2 else 0;
-    _ = ui.putStr(x, r.y, right -| x -| badge_w, e.name, name_style);
+    // The name stops at the badge, or a cell short of the bar.
+    const name_end = if (badge_w > 0) right -| badge_w else right -| sb_w;
+    _ = ui.putStr(x, r.y, name_end -| x, e.name, name_style);
     if (badge_w > 0 and right >= r.x + 1 + badge_w) {
         const badge: []const u8 = if (e.dirty) (if (ui.ascii) "*" else "●") else switch (e.git.?) {
             .modified => "M",
@@ -441,7 +460,7 @@ test "the spec's rows at 26 columns: header, chips at 17/20/23/26, icons, connec
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
     try f.expectRow(0, " \u{F47C} /pri…      \u{EA80}  \u{EA7F}  \u{EB40}  \u{EB37}");
-    try f.expectRow(1, "   \u{F47C} \u{F07C} src");
+    try f.expectRow(1, "\u{258c}  \u{F47C} \u{F07C} src");
     try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
     try f.expectRow(3, "     \u{E702} .gitignore       ?");
     try f.expectRow(4, "     \u{E71E} package.json");
@@ -625,7 +644,7 @@ test "sections: the cursor bar on a focused header, the triangle indicator, the 
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &items, .cursor = 1, .focused = true, .show_dots = true, .triangle = true });
     try f.expectRow(0, " ▾ ● /w/       \u{EA80}  \u{EA7F}  \u{EB40}  \u{EAC5}  \u{EB37}");
-    try f.expectRow(1, " ▸ ○ mixr");
+    try f.expectRow(1, "\u{258c}▸ ○ mixr");
     try testing.expect(vaxis.Color.eql(f.style(5, 1).bg, f.theme.palette.bg2));
     try testing.expect(vaxis.Color.eql(f.style(0, 1).bg, f.theme.palette.bg_darker));
     inline for (.{ chevron_open_glyph, chevron_closed_glyph, cont_glyph, corner_glyph, new_folder_glyph, new_file_glyph, pull_glyph, collapse_all_glyph, expand_all_glyph, add_workspace_glyph }) |g| {
@@ -638,4 +657,58 @@ test "sections: the cursor bar on a focused header, the triangle indicator, the 
     try testing.expectEqualStrings("expand all", Chip.collapse.label(true));
     try testing.expectEqualStrings(expand_all_glyph, Chip.collapse.glyph(true, false));
     _ = draw(f.ui(), Rect.empty, .{ .items = &items });
+}
+
+test "the cursor row's marker: the list panels' bar in the leading cell, the accent when focused and muted when not, on an entry and on a section header alike, nowhere else" {
+    var f = try Fixture.init(26, 10);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 2, .focused = true });
+    try f.expectRow(2, "\u{258c}    \u{F1F05} \u{E68B} main.rs");
+    try f.expectRow(1, "   \u{F47C} \u{F07C} src");
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 2).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, f.theme.accent.fg));
+    // The leading cell keeps the rail's ground under the marker.
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).bg, f.theme.palette.bg_darker));
+    try testing.expect(vaxis.Color.eql(f.style(1, 2).bg, f.theme.palette.bg2));
+    // Unfocused: the same glyph, muted.
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 2, .focused = false });
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 2).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, f.theme.muted.fg));
+    try testing.expect(!vaxis.Color.eql(f.style(0, 2).fg, f.theme.accent.fg));
+    // On a section header, and only there.
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 7, .focused = true });
+    try f.expectRow(7, "\u{258c}\u{F460} mixr");
+    try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
+    // No cursor: no marker anywhere; ascii has its twin.
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items });
+    var y: u16 = 0;
+    while (y < 10) : (y += 1) try testing.expectEqualStrings(" ", f.cell(0, y).char.grapheme);
+    var ui = f.ui();
+    ui.ascii = true;
+    _ = draw(ui, f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
+    try testing.expectEqualStrings(list_panel.marker_ascii, f.cell(0, 1).char.grapheme);
+}
+
+test "a cell of air before the bar: a long name is cut a cell short of it, an extra section's label clips a cell short of it, the blank row keeps it" {
+    var items: [9]Item = undefined;
+    items[0] = section(0, "/w/", true);
+    for (1..7) |i| items[i] = entry(@intCast(i - 1), "a-long-file-name-that-overflows.txt", 0, false, false);
+    items[7] = .blank;
+    items[8] = section(1, "a-very-long-workspace-name-indeed", false);
+    var f = try Fixture.init(26, 6);
+    defer f.deinit();
+    const l = draw(f.ui(), f.full(), .{ .items = &items, .scroll = 3, .cursor = 3, .focused = true });
+    try testing.expect(l.overflow);
+    try f.expectRow(0, "\u{258c}    \u{F0219} a-long-file-name- █");
+    try f.expectRow(3, "     \u{F0219} a-long-file-name- █");
+    try f.expectRow(4, "                         █");
+    try f.expectRow(5, " \u{F460} a-very-long-workspac… █");
+    try f.expectAirBeforeBar(0, 6, 25);
+    // Without the bar the name runs to the edge and the label keeps
+    // Rust's one cell of margin.
+    var g = try Fixture.init(26, 12);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), .{ .items = &items });
+    try g.expectRow(1, "     \u{F0219} a-long-file-name-th");
+    try g.expectRow(8, " \u{F460} a-very-long-workspace…");
 }
