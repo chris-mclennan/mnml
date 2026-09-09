@@ -147,6 +147,9 @@ pub const HitTarget = union(enum) {
     /// header's chip, a link row, the ` + ` on a collection folder row;
     /// its list rows are `.row{ .http }`.
     http: http_panel.Part,
+    /// The `↑ Update` chip of a FONTS row (`ui/fonts_section.zig`), by
+    /// the row's index into the scanned families.
+    font_update: u16,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -155,6 +158,7 @@ pub const HitTarget = union(enum) {
         switch (t) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
             .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
+            .font_update => |n| try w.print(":{d}", .{n}),
             .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
             .info_view => |p| switch (p) {
                 .try_it => |i| try w.print(":try_it:{d}", .{i}),

@@ -718,8 +718,9 @@ fn copyIdFocused(app: *App) CommandError!void {
 const testing = std.testing;
 const screen_mod = @import("../ipc/screen.zig");
 
-/// A tiny HTTP server that answers by path from a table.
-const FakeGitHub = struct {
+/// A tiny HTTP server that answers by path from a table. Shared with
+/// `font_scan.zig`'s release-lookup test.
+pub const FakeGitHub = struct {
     pub const Route = struct { path: []const u8, body: []const u8, status: u16 = 200 };
     gpa: Allocator,
     io: Io,
@@ -729,7 +730,7 @@ const FakeGitHub = struct {
     thread: std.Thread = undefined,
     stopping: std.atomic.Value(bool) = .init(false),
 
-    fn start(gpa: Allocator, io: Io, routes: []const Route) !*FakeGitHub {
+    pub fn start(gpa: Allocator, io: Io, routes: []const Route) !*FakeGitHub {
         const self = try gpa.create(FakeGitHub);
         errdefer gpa.destroy(self);
         const addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
@@ -740,7 +741,7 @@ const FakeGitHub = struct {
         return self;
     }
 
-    fn stop(self: *FakeGitHub) void {
+    pub fn stop(self: *FakeGitHub) void {
         const io = self.io;
         self.stopping.store(true, .release);
         const addr: Io.net.IpAddress = .{ .ip4 = .loopback(self.port) };

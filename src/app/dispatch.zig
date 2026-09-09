@@ -99,6 +99,7 @@ const ipc = @import("../ipc/root.zig");
 const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
+const font_scan = @import("font_scan.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
 const side = @import("side.zig");
@@ -1242,6 +1243,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .delete_session => |path| if (choice == 0) try sessions.acceptDelete(app, path),
         .http_delete_request => |t| if (choice == 0) try @import("http_ops.zig").acceptDelete(app, t),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
+        .font_update => |idx| try toastOnFail(app, font_scan.updateAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
         .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
         .kill_pids => |pids| if (choice == 0) try sessions.killAccept(app, pids),
@@ -1856,6 +1858,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .rail => |part| try activity_bar.mouse(app, part, m),
         .git_palette => |part| try git_palette.partMouse(app, part, m),
+        .font_update => |row| try font_scan.updateChipMouse(app, row, m),
         .http => |part| try http_panel.partMouse(app, part, m),
         .welcome => |row| {
             // The welcome pane: a recent file opens, a shortcut row runs
@@ -3383,6 +3386,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .welcome = .here,
     .git_palette = .{ .delegated = "git_palette.partMouse" },
     .http = .{ .delegated = "http_panel.partMouse" },
+    .font_update = .{ .none = "one-verb" },
 });
 
 /// The source of `mouse`'s arm for `tag`: from `        .tag => ` (the

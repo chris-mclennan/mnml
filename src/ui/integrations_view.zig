@@ -31,6 +31,7 @@ const empty_state = @import("empty_state.zig");
 const text_field = @import("text_field.zig");
 const ids = @import("../core/ids.zig");
 const manifest = @import("../bridge/manifest.zig");
+const fonts_section = @import("fonts_section.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Caret = text_field.Caret;
@@ -138,6 +139,9 @@ pub const SectionProps = struct {
     /// A fetch or an install runs: the refresh chip spins.
     busy: bool = false,
     now_ms: i64 = 0,
+    /// The FONTS rows above the Marketplace entries (`fonts_section.zig`);
+    /// null hides the section.
+    fonts: ?fonts_section.Props = null,
 };
 
 /// Rows an entry takes: the label row, the detail row, a blank. The
@@ -294,6 +298,12 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
     var body = area;
     body.y += body_top;
     body.h -= body_top;
+    if (p.fonts) |fp| {
+        const used = fonts_section.draw(ui, body, fp);
+        body.y += used;
+        body.h -= used;
+        if (body.h == 0) return caret;
+    }
 
     if (p.rows.len == 0) {
         p.scroll.* = 0;

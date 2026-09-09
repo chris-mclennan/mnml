@@ -163,6 +163,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             },
             .folder_new => .{ .title = "New request in collection", .detail = "Opens a blank Request pane whose Ctrl+S lands as req-N.http inside this collection's folder — the fastest way to add a request without leaving the HTTP panel." },
         },
+        .font_update => .{ .title = "Update font", .detail = "click: the Homebrew command that brings this Nerd Font family to the latest release, in a terminal pane below" },
         .git_palette => |part| switch (part) {
             .repo => .{ .title = "Repo", .detail = "click: switch repo · All repos · reopen a closed one · add a workspace" },
             .repo_prev => .{ .title = "Previous repo", .detail = "click: the previous repo in discovery order, wrapping ([)" },

@@ -95,6 +95,7 @@ const browser_pane = @import("app/browser_pane.zig");
 const mount_pane = @import("app/mount_pane.zig");
 const integrations = @import("app/integrations.zig");
 const marketplace = @import("app/marketplace.zig");
+const font_scan = @import("app/font_scan.zig");
 const http_parse = @import("http/parse.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
@@ -308,6 +309,9 @@ pub const ConfirmPurpose = union(enum) {
     review_trust,
     /// Install the missing tool (`runners.zig`); the payload indexes the installer table.
     install_tool: u16,
+    /// Update an installed Nerd Font family (`font_scan.zig`); the
+    /// payload indexes the scanned families.
+    font_update: u16,
     /// A git yes/no; `git.State.confirm` holds the payload.
     git,
     /// Delete one workspace-relative path directly (owned) — the
@@ -801,6 +805,8 @@ pub const App = struct {
     http_panel: http_panel.State,
     integrations: integrations.State,
     marketplace: marketplace.State = .{},
+    /// The installed Nerd Fonts and the latest release (`app/font_scan.zig`).
+    fonts: font_scan.State,
     /// A host's statusline segments and activity badges (`ipc/effects.zig`).
     ipc_fx: ipc.effects.State = .{},
     /// The workspace's Playwright outcome history (`app/flaky.zig`).
@@ -1009,6 +1015,7 @@ pub const App = struct {
             .http = http_app.State.init(gpa),
             .http_panel = http_panel.State.init(gpa),
             .integrations = integrations.State.init(gpa),
+            .fonts = font_scan.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -1054,6 +1061,8 @@ pub const App = struct {
         try app.hooks.subscribe(.exit, .{ .zig = &marks_store.onExit });
         // Installed integrations are scanned once the app is up.
         try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
+        // The installed Nerd Fonts, once the manifests are scanned.
+        try app.hooks.subscribe(.startup, .{ .zig = &font_scan.onStartup });
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
@@ -1216,6 +1225,7 @@ pub const App = struct {
         self.git.deinit(gpa, self.io);
         self.git_palette.deinit(gpa);
         self.marketplace.deinit(gpa, self.io);
+        self.fonts.deinit(gpa, self.io);
         self.ipc_fx.deinit(gpa);
         self.flaky.deinit(gpa);
         self.dap.deinit(gpa);
@@ -2003,6 +2013,7 @@ pub const App = struct {
             .cdp => |cev| try browser_pane.handle(self, cev),
             .mount => |mev| try mount_pane.handle(self, mev),
             .marketplace => |r| try marketplace.handle(self, r),
+            .fonts => |r| try font_scan.handle(self, r),
             .transfer => |tev| try transfers.handle(self, tev),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
