@@ -872,6 +872,9 @@ pub const App = struct {
     /// at the top of `render`).
     image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
+    /// The wizard's answers while one of its install panes runs; the
+    /// pane's exit puts them back (`first_launch.refresh`).
+    wizard_stash: ?first_launch.State = null,
     /// The click-discovery panel's flash: the family a row press lit,
     /// until when (`discovery.flashRow`).
     discovery_flash: ?discovery_app.Flash = null,

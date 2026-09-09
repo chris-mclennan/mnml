@@ -12,10 +12,15 @@
 //! `ui.ascii_icons` from the Nerd Font answer, `ai.routing.<product>.backend`
 //! per row cycled, `ai.inline_suggestions` from the ghost-text row — and
 //! always `ui.first_launch_complete = true`, all to the home config.
+//!
+//! Space is the install key: a Nerd Font once "boxes" is answered, the
+//! missing AI CLIs, the `code` shim (`first_launch_install.zig`). Each
+//! opens a pane, closes the wizard for it without persisting anything,
+//! and the wizard comes back on the pane's exit with the section's
+//! detection re-run.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Io = std.Io;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
@@ -24,6 +29,9 @@ const Config = config.Config;
 const input = @import("../input/mod.zig");
 const wizard = @import("../ui/wizard.zig");
 const settings = @import("settings.zig");
+const install = @import("first_launch_install.zig");
+
+pub const Section = wizard.Section;
 
 pub const State = struct {
     ui: wizard.State = .{},
@@ -40,6 +48,7 @@ pub const State = struct {
     keys_seen: [wizard.probes.len]bool = .{false} ** wizard.probes.len,
     claude_installed: bool = false,
     codex_installed: bool = false,
+    code_shim_ok: bool = false,
 };
 
 fn routeOf(backend: ?Config.AiBackend) wizard.Route {
@@ -61,13 +70,12 @@ fn backendOf(r: wizard.Route) ?Config.AiBackend {
     };
 }
 
-/// Does `$HOME/<dir>` exist — the cheap "is this CLI set up" probe.
-fn homeHas(app: *App, dir: []const u8) bool {
-    const home = app.homeDir() orelse return false;
-    const p = std.fs.path.join(app.frame.allocator(), &.{ home, dir }) catch return false;
-    var d = Io.Dir.cwd().openDir(app.io, p, .{}) catch return false;
-    d.close(app.io);
-    return true;
+/// The PATH probes behind the badge rows — the same `onPath` the chip
+/// reads, so a row says "installed" exactly when the chip appears.
+fn detect(app: *App, st: *State) void {
+    st.claude_installed = install.claudeInstalled(app);
+    st.codex_installed = install.codexInstalled(app);
+    st.code_shim_ok = install.codeShimInstalled(app);
 }
 
 /// `first_launch.show`: open on the persisted answers.
@@ -79,11 +87,10 @@ pub fn show(app: *App) Allocator.Error!void {
         .route_codex = routeOf(c.ai.routing.codex.backend orelse c.ai.backend),
         .ghost_text = c.ai.inline_suggestions,
         .nerd_font_icons = if (c.ui.ascii_icons) false else null,
-        .claude_installed = homeHas(app, ".claude"),
-        .codex_installed = homeHas(app, ".codex"),
     };
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .wizard = st };
+    detect(app, &app.overlay.wizard);
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -97,7 +104,15 @@ pub fn showIfPending(app: *App) Allocator.Error!void {
 
 pub fn model(app: *App) wizard.Model {
     const st = &app.overlay.wizard;
+    const macos_note = "macOS 26: use this — dragging the .ttf into Font Book looks like it works,\nbut CoreText silently skips unsigned Nerd Fonts. The cask registers.";
     return .{
+        .code_shim_ok = st.code_shim_ok,
+        .nerd_install = install.nerdFontSummary(install.host_os),
+        .nerd_note = if (install.host_os == .macos) macos_note else "",
+        .code_shim_note = switch (install.host_os) {
+            .macos => "Space links VS Code.app's `code` into /usr/local/bin (sudo asks in a pane).",
+            else => "Not macOS: install `code` from VS Code itself\n(Shell Command: Install 'code' command in PATH).",
+        },
         .nerd_font_icons = st.nerd_font_icons,
         .keys_seen = st.keys_seen,
         .vim = st.input_style == .vim,
@@ -120,12 +135,37 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         .answer => |yes| answer(app, st.ui.section, yes),
         .probe => |i| st.keys_seen[i] = true,
         .other_row => st.ai_row +%= 1,
+        .action => try action(app, st.ui.section),
     }
     app.needs_render = true;
 }
 
-/// A click on a section header focuses it; on an answer chip, answers.
-pub fn click(app: *App, hit: u32) void {
+/// Space: the section's install where it has one, else the same as →.
+fn action(app: *App, section: wizard.Section) Allocator.Error!void {
+    const st = &app.overlay.wizard;
+    switch (section) {
+        // "boxes" first, then the install — the row Space fires is
+        // the one that appears under that answer.
+        .nerd_font => if (st.nerd_font_icons == false) try toastOnFail(app, install.installNerdFont(app)) else answer(app, section, false),
+        .claude_codex => try toastOnFail(app, install.installAiClis(app)),
+        .vscode_shim => try toastOnFail(app, install.installCodeShim(app)),
+        .keyboard => {},
+        .input_style, .ai_routing, .ai_ghost_text => adjust(app, section, 1),
+    }
+}
+
+/// A pane that could not open says why; the wizard stays.
+fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!void {
+    result catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => {},
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
+    };
+}
+
+/// A click on a section header focuses it; on an answer chip, answers;
+/// on an install row, installs.
+pub fn click(app: *App, hit: u32) Allocator.Error!void {
     const st = &app.overlay.wizard;
     switch (wizard.decodeHit(hit) orelse return) {
         .section => |s| st.ui.section = s,
@@ -133,10 +173,40 @@ pub fn click(app: *App, hit: u32) void {
             st.ui.section = c.section;
             switch (c.section) {
                 .ai_routing => st.ai_row = @intCast(c.choice & 1),
+                .nerd_font => if (c.choice == 2) try action(app, .nerd_font) else answer(app, c.section, c.choice == 1),
+                .claude_codex, .vscode_shim => try action(app, c.section),
                 else => answer(app, c.section, c.choice == 1),
             }
         },
     }
+    app.needs_render = true;
+}
+
+/// An install pane is opening: close without persisting or toasting
+/// (the install's own toast follows), keeping the answers for the
+/// pane's exit.
+pub fn closeForInstall(app: *App) void {
+    if (app.overlay != .wizard) return;
+    app.wizard_stash = app.overlay.wizard;
+    app.overlay.deinit(app.gpa);
+    app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+    app.needs_render = true;
+}
+
+/// An install pane ended: re-run detection into the open wizard, or
+/// bring it back — with the answers it closed on — focused on
+/// `section`, when nothing else is up.
+pub fn refresh(app: *App, section: wizard.Section) void {
+    if (app.overlay == .wizard) {
+        detect(app, &app.overlay.wizard);
+    } else if (app.overlay == .none) {
+        const st = app.wizard_stash orelse return;
+        app.wizard_stash = null;
+        app.overlay = .{ .wizard = st };
+        app.focus = .overlay;
+        detect(app, &app.overlay.wizard);
+    } else return;
+    app.overlay.wizard.ui.section = section;
     app.needs_render = true;
 }
 
@@ -220,6 +290,8 @@ fn finish(app: *App) Allocator.Error!void {
 
 const t = std.testing;
 const command = @import("../core/command.zig");
+const builtin = @import("builtin");
+const pty_pane = @import("pty_pane.zig");
 
 test "Esc persists nothing and the wizard reopens; Enter writes the touched answers and first_launch_complete" {
     var tmp = t.tmpDir(.{});
@@ -298,4 +370,187 @@ test "the wizard renders its sections on the 120x40 screen and walks them" {
     try t.expect(app.overlay == .wizard);
     try t.expectEqual(input.Style.vim, app.overlay.wizard.input_style);
     try t.expect(app.overlay.wizard.ui.section == .input_style);
+}
+
+/// A private PATH with fake tools in it, for the install flows: the
+/// pane runs `/bin/sh -c <line>` with the app's env, so a `brew` or
+/// `curl` script here is what the line reaches.
+const InstallRig = struct {
+    tmp: std.testing.TmpDir,
+    root: []u8,
+    env: std.process.Environ.Map,
+
+    fn init() !InstallRig {
+        var tmp = t.tmpDir(.{});
+        errdefer tmp.cleanup();
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try tmp.dir.realPath(t.io, &buf);
+        const root = try t.allocator.dupe(u8, buf[0..n]);
+        errdefer t.allocator.free(root);
+        var env = std.process.Environ.Map.init(t.allocator);
+        errdefer env.deinit();
+        try tmp.dir.createDirPath(t.io, "tools");
+        try tmp.dir.createDirPath(t.io, "installed");
+        const path = try std.fmt.allocPrint(t.allocator, "{s}/tools:{s}/installed:/bin:/usr/bin", .{ root, root });
+        defer t.allocator.free(path);
+        try env.put("PATH", path);
+        const fake_bin = try std.fmt.allocPrint(t.allocator, "{s}/installed", .{root});
+        defer t.allocator.free(fake_bin);
+        try env.put("MNML_FAKE_BIN", fake_bin);
+        return .{ .tmp = tmp, .root = root, .env = env };
+    }
+
+    fn deinit(r: *InstallRig) void {
+        r.env.deinit();
+        t.allocator.free(r.root);
+        r.tmp.cleanup();
+    }
+
+    fn tool(r: *InstallRig, name: []const u8, script: []const u8) !void {
+        const rel = try std.fmt.allocPrint(t.allocator, "tools/{s}", .{name});
+        defer t.allocator.free(rel);
+        try r.tmp.dir.writeFile(t.io, .{ .sub_path = rel, .data = script });
+        const abs = try std.fs.path.join(t.allocator, &.{ r.root, rel });
+        defer t.allocator.free(abs);
+        try std.Io.Dir.cwd().setFilePermissions(t.io, abs, .fromMode(0o755), .{});
+    }
+
+    fn app(r: *InstallRig) !App {
+        var a = try App.initWith(t.allocator, t.io, .{ .workspace = r.root, .data_root = r.root, .cols = 120, .rows = 40, .env = &r.env });
+        a.tree.visible = false;
+        return a;
+    }
+};
+
+/// The newest pane labelled `label`.
+fn installPane(app: *App, label: []const u8) ?*pty_pane.PtyPane {
+    var found: ?*pty_pane.PtyPane = null;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| if (pane.* == .pty and std.mem.eql(u8, pane.pty.label, label)) {
+        found = &pane.pty;
+    };
+    return found;
+}
+
+/// Tick until the newest `label` pane has exited.
+fn waitExit(app: *App, label: []const u8) !pty_pane.Exit {
+    const pane = installPane(app, label) orelse return error.TestUnexpectedResult;
+    var waited: u32 = 0;
+    while (waited <= 5000) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        try app.render();
+        if (pane.exit) |e| return e;
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    return error.TestUnexpectedResult;
+}
+
+test "Nerd Font: Space on 'boxes' runs the install in a pane; the terminal hint toasts on exit 0 and never before; a failed install says so" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (install.host_os != .macos and install.host_os != .linux) return error.SkipZigTest;
+    var rig = try InstallRig.init();
+    defer rig.deinit();
+    // What this OS's line reaches; `MNML_FAKE_FAIL` makes it fail.
+    const script = "#!/bin/sh\nif [ -n \"$MNML_FAKE_FAIL\" ]; then echo 'boom'; exit 3; fi\necho \"fake $0 $*\"\n";
+    try rig.tool("brew", script);
+    try rig.tool("curl", "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then : > \"$2\"; fi; shift; done\n");
+    try rig.tool("unzip", script);
+    try rig.tool("fc-cache", script);
+    try rig.env.put("HOME", rig.root);
+    try rig.env.put("TERM_PROGRAM", "ghostty");
+    var app = try rig.app();
+    defer app.deinit();
+
+    try command.run(&app, .{ .static = .@"first_launch.show" });
+    // Space with "icons" still unanswered answers "boxes" first…
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .wizard);
+    try t.expectEqual(@as(?bool, false), app.overlay.wizard.nerd_font_icons);
+    try t.expect(installPane(&app, install.nerd_font_label) == null);
+    // …and the next Space installs: the wizard closes for the pane.
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .none);
+    const pane = installPane(&app, install.nerd_font_label) orelse return error.TestUnexpectedResult;
+    try t.expectEqual(pty_pane.Kind.task, pane.kind);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "watch the `install: nerd font` pane") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "JetBrainsMono") == null);
+    try t.expect((try waitExit(&app, install.nerd_font_label)).ok());
+    // exit 0: the ghostty hint, and the wizard is back on the section
+    // with its answers
+    var saw_hint = false;
+    for (app.toasts.items) |toast| saw_hint = saw_hint or std.mem.indexOf(u8, toast.text, "font-family = JetBrainsMono Nerd Font Mono") != null;
+    try t.expect(saw_hint);
+    try t.expect(app.overlay == .wizard);
+    try t.expect(app.overlay.wizard.ui.section == .nerd_font);
+    try t.expectEqual(@as(?bool, false), app.overlay.wizard.nerd_font_icons);
+    try t.expect(!app.cfg.ui.first_launch_complete);
+
+    // A failing install: no hint, the failure named.
+    try rig.env.put("MNML_FAKE_FAIL", "1");
+    app.env.deinit();
+    app.env = try rig.env.clone(t.allocator);
+    while (app.toasts.items.len > 0) app.dismissToastAt(0);
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(pty_pane.Exit{ .code = 3 }, try waitExit(&app, install.nerd_font_label));
+    var saw_fail = false;
+    saw_hint = false;
+    for (app.toasts.items) |toast| {
+        saw_fail = saw_fail or std.mem.indexOf(u8, toast.text, "`install: nerd font` failed (exit 3)") != null;
+        saw_hint = saw_hint or std.mem.indexOf(u8, toast.text, "JetBrainsMono") != null;
+    }
+    try t.expect(saw_fail and !saw_hint);
+}
+
+test "Claude / Codex: Space runs the missing CLIs' installers in a pane; the row flips to found when the pane ends; both present is a toast" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (install.host_os != .macos and install.host_os != .linux) return error.SkipZigTest;
+    var rig = try InstallRig.init();
+    defer rig.deinit();
+    // The fake installer script `curl` prints: it drops a `claude` into
+    // the PATH dir the rig made for it.
+    try rig.tool("curl", "#!/bin/sh\necho 'printf \"#!/bin/sh\\nexit 0\\n\" > \"$MNML_FAKE_BIN/claude\"; chmod +x \"$MNML_FAKE_BIN/claude\"; echo fake-installer-ran'\n");
+    var app = try rig.app();
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"first_launch.show" });
+    try t.expect(!app.overlay.wizard.claude_installed and !app.overlay.wizard.codex_installed);
+    try app.handle(.{ .key = Key.char('4') });
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .none);
+    const pane = installPane(&app, install.ai_cli_label) orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings("curl -fsSL https://claude.ai/install.sh | bash && curl -fsSL https://chatgpt.com/codex/install.sh | sh", pane.argv[2]);
+    try t.expect((try waitExit(&app, install.ai_cli_label)).ok());
+    try t.expect(app.overlay == .wizard);
+    try t.expect(app.overlay.wizard.ui.section == .claude_codex);
+    try t.expect(app.overlay.wizard.claude_installed);
+    try t.expect(!app.overlay.wizard.codex_installed);
+    var saw = false;
+    for (app.toasts.items) |toast| saw = saw or std.mem.indexOf(u8, toast.text, "Claude Code: found · Codex: not found") != null;
+    try t.expect(saw);
+    // Only the missing one now.
+    try app.handle(.{ .key = Key.char(' ') });
+    const second = installPane(&app, install.ai_cli_label).?;
+    try t.expect(second != pane);
+    try t.expectEqualStrings("curl -fsSL https://chatgpt.com/codex/install.sh | sh", second.argv[2]);
+    try t.expect((try waitExit(&app, install.ai_cli_label)).ok());
+    // Both present: no pane, a toast.
+    try rig.tool("codex", "#!/bin/sh\nexit 0\n");
+    try t.expect(app.overlay == .wizard);
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .wizard);
+    try t.expectEqualStrings("Claude Code + Codex already installed.", app.lastToast().?);
+}
+
+test "code shim: on PATH already is a toast, never a pane" {
+    var rig = try InstallRig.init();
+    defer rig.deinit();
+    try rig.tool("code", "#!/bin/sh\nexit 0\n");
+    var app = try rig.app();
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"first_launch.show" });
+    try t.expect(app.overlay.wizard.code_shim_ok);
+    try app.handle(.{ .key = Key.char('7') });
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .wizard);
+    try t.expectEqualStrings("`code` is already on PATH.", app.lastToast().?);
+    try t.expect(installPane(&app, install.code_shim_label) == null);
 }

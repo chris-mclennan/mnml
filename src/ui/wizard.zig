@@ -2,8 +2,9 @@
 //! Nerd Font · Keyboard · Input style · Claude Code + Codex · AI billing
 //! preference · AI ghost-text · VSCode `code` shim. The focused section
 //! carries the `▸`; ↑↓ move between sections, 1–7 jump, ←→ (h l) change
-//! the focused section's answer, y / n answer a yes-no outright, Enter
-//! finishes, Esc is "ask me later".
+//! the focused section's answer, y / n answer a yes-no outright, Space
+//! runs the section's action (an install) where it has one and cycles
+//! the answer where it does not, Enter finishes, Esc is "ask me later".
 //!
 //! The component paints from a `Model` (every answer as a value) and
 //! hands what a key *means* back as an `Outcome`; the app owns the
@@ -72,6 +73,14 @@ pub const Model = struct {
     /// Which product row ←→ changes inside AI billing.
     ai_row: u1 = 0,
     ghost_text: bool = true,
+    /// `code` resolves on PATH.
+    code_shim_ok: bool = false,
+    /// The Nerd Font install line's short form for this OS, shown once
+    /// "boxes" is answered; the OS note under it (empty = none).
+    nerd_install: []const u8 = "",
+    nerd_note: []const u8 = "",
+    /// What Space does on the `code` shim section, in one line.
+    code_shim_note: []const u8 = "",
 };
 
 pub const State = struct {
@@ -93,6 +102,9 @@ pub const Outcome = union(enum) {
     probe: usize,
     /// Tab inside AI billing: the other product row.
     other_row,
+    /// Space: the focused section's action — an install where the
+    /// section has one, else the same as `adjust = 1`.
+    action,
 };
 
 /// Hit ids: a section header is its index; an answer chip is
@@ -132,7 +144,7 @@ pub fn handleKey(s: *State, key: Key) Outcome {
                 'j' => s.section = @enumFromInt(@min(@intFromEnum(s.section) + 1, last)),
                 'h' => return .{ .adjust = -1 },
                 'l' => return .{ .adjust = 1 },
-                ' ' => return .{ .adjust = 1 },
+                ' ' => return .action,
                 'y' => return .{ .answer = true },
                 'n' => return .{ .answer = false },
                 '1'...'9' => {
@@ -148,8 +160,8 @@ pub fn handleKey(s: *State, key: Key) Outcome {
 }
 
 pub const title = "First-launch setup";
-pub const hint_text = "[↑↓] section · [←→] choose · [1-7] jump · [Enter] Finish · [Esc] Ask me later";
-pub const hint_text_ascii = "[up/down] section - [left/right] choose - [1-7] jump - [Enter] Finish - [Esc] Ask me later";
+pub const hint_text = "[↑↓] section · [←→] choose · [Space] install · [Enter] Finish · [Esc] Ask me later";
+pub const hint_text_ascii = "[up/dn] section - [lt/rt] choose - [Space] install - [Enter] Finish - [Esc] Ask me later";
 pub const max_width: u16 = 92;
 
 const Line = struct {
@@ -160,6 +172,24 @@ const Line = struct {
 
 fn radio(ui: Ui, on: bool, label: []const u8) []const u8 {
     return ui.fmt("  {s} {s}", .{ if (on) (if (ui.ascii) "(*)" else "(•)") else "( )", label });
+}
+
+pub const badge_installed = "[✓ installed]";
+pub const badge_installed_ascii = "[+ installed]";
+pub const badge_missing = "[ not installed — Space to install ]";
+pub const badge_missing_ascii = "[ not installed - Space to install ]";
+
+/// A note under a row, one line per `\n`; nothing for an empty note.
+fn noteLines(ui: Ui, lines: *std.ArrayListUnmanaged(Line), note: []const u8, style: Style) !void {
+    if (note.len == 0) return;
+    var it = std.mem.splitScalar(u8, note, '\n');
+    while (it.next()) |l| try lines.append(ui.arena, .{ .text = ui.fmt("  {s}", .{l}), .style = style });
+}
+
+/// `  <label>                  [✓ installed]` — Rust's badge row.
+fn badge(ui: Ui, label: []const u8, on: bool) []const u8 {
+    const b = if (on) (if (ui.ascii) badge_installed_ascii else badge_installed) else (if (ui.ascii) badge_missing_ascii else badge_missing);
+    return ui.fmt("  {s:<30}{s}", .{ label, b });
 }
 
 /// Paint the box, scrolled so the focused section shows. Registers a
@@ -185,6 +215,12 @@ pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
                 lines.append(ui.arena, .{ .text = if (ui.ascii) "  Sample glyphs:   >   [f]   [x]   *" else "  Sample glyphs:   ▸   󰈙   󰅖   ●", .style = body }) catch return;
                 lines.append(ui.arena, .{ .text = radio(ui, m.nerd_font_icons == true, "Render as icons — Nerd Font detected"), .style = body, .hit = chipHit(sec, 1) }) catch return;
                 lines.append(ui.arena, .{ .text = radio(ui, m.nerd_font_icons == false, "Render as boxes — no Nerd Font"), .style = body, .hit = chipHit(sec, 0) }) catch return;
+                if (m.nerd_font_icons == false) {
+                    const act = if (focused) Theme.onBg(t.accent, bg) else body;
+                    lines.append(ui.arena, .{ .text = "  Space — install Symbols Nerd Font Mono for this OS:", .style = act, .hit = chipHit(sec, 2) }) catch return;
+                    lines.append(ui.arena, .{ .text = ui.fmt("    {s}", .{m.nerd_install}), .style = act, .hit = chipHit(sec, 2) }) catch return;
+                    noteLines(ui, &lines, m.nerd_note, muted) catch return;
+                }
             },
             .keyboard => {
                 for (probes, 0..) |p, i| {
@@ -199,8 +235,10 @@ pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
                 lines.append(ui.arena, .{ .text = radio(ui, m.vim, "vim — Neovim + NvChad chords"), .style = body, .hit = chipHit(sec, 1) }) catch return;
             },
             .claude_codex => {
-                lines.append(ui.arena, .{ .text = ui.fmt("  Claude Code   {s}", .{if (m.claude_installed) "installed" else "not found — https://claude.ai/code"}), .style = if (m.claude_installed) good else body }) catch return;
-                lines.append(ui.arena, .{ .text = ui.fmt("  Codex         {s}", .{if (m.codex_installed) "installed" else "not found — https://github.com/openai/codex"}), .style = if (m.codex_installed) good else body }) catch return;
+                lines.append(ui.arena, .{ .text = badge(ui, "Claude Code CLI (`claude`)", m.claude_installed), .style = if (m.claude_installed) good else body, .hit = chipHit(sec, 0) }) catch return;
+                lines.append(ui.arena, .{ .text = badge(ui, "Codex CLI (`codex`)", m.codex_installed), .style = if (m.codex_installed) good else body, .hit = chipHit(sec, 1) }) catch return;
+                lines.append(ui.arena, .{ .text = "  Space runs the missing one's installer in a pane.", .style = muted }) catch return;
+                lines.append(ui.arena, .{ .text = "  The chip in the top-right appears when the CLI is found.", .style = muted }) catch return;
             },
             .ai_routing => {
                 lines.append(ui.arena, .{ .text = routeRow(ui, "Claude Code:", m.route_claude, focused and m.ai_row == 0), .style = body, .hit = chipHit(sec, 0) }) catch return;
@@ -212,7 +250,8 @@ pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
                 lines.append(ui.arena, .{ .text = radio(ui, !m.ghost_text, "Off"), .style = body, .hit = chipHit(sec, 0) }) catch return;
             },
             .vscode_shim => {
-                lines.append(ui.arena, .{ .text = "  Not in this build — the `code` shim lands with the CLI phase.", .style = muted }) catch return;
+                lines.append(ui.arena, .{ .text = badge(ui, "`code` on PATH", m.code_shim_ok), .style = if (m.code_shim_ok) good else body, .hit = chipHit(sec, 0) }) catch return;
+                noteLines(ui, &lines, m.code_shim_note, muted) catch return;
             },
         }
         lines.append(ui.arena, .{ .text = "", .style = body }) catch return;
@@ -275,7 +314,7 @@ test "the seven sections paint in order with their answers; the focused one carr
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     var s: State = .{};
-    var m: Model = .{ .nerd_font_icons = true, .vim = true, .route_claude = .sub };
+    var m: Model = .{ .nerd_font_icons = true, .vim = true, .route_claude = .sub, .code_shim_ok = true, .nerd_install = "brew install --cask font-symbols-only-nerd-font", .code_shim_note = "Space links the bundle's `code`." };
     m.keys_seen[0] = true;
     draw(f.ui(), f.full(), &s, m);
     const text = try f.text();
@@ -287,7 +326,12 @@ test "the seven sections paint in order with their answers; the focused one carr
     try testing.expect(std.mem.indexOf(u8, text, "✓  Ctrl+→") != null);
     try testing.expect(std.mem.indexOf(u8, text, "·  Option/Alt+→") != null);
     try testing.expect(std.mem.indexOf(u8, text, "(•) vim") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "Claude Code   not found") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Claude Code CLI (`claude`)    [ not installed — Space to install ]") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "`code` on PATH                [✓ installed]") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "chip in the top-right appears when the CLI is found") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Space links the bundle's") != null);
+    // "icons" answered: no install row
+    try testing.expect(std.mem.indexOf(u8, text, "Space — install Symbols") == null);
     try testing.expect(std.mem.indexOf(u8, text, "AI billing preference") != null);
     try testing.expect(std.mem.indexOf(u8, text, "Claude Code:   Auto   [Sub]   API    Off") != null);
     try testing.expect(std.mem.indexOf(u8, text, "Ask me later") != null);
@@ -299,6 +343,22 @@ test "the seven sections paint in order with their answers; the focused one carr
         .chip => |c| saw_chip = saw_chip or (c.section == .input_style and c.choice == 1),
     };
     try testing.expect(saw_section and saw_chip);
+    // "boxes" answered: the install row with this OS's line, a click target
+    m.nerd_font_icons = false;
+    m.nerd_note = "macOS 26: the cask is the path that registers.";
+    var g = try Fixture.init(100, 40);
+    defer g.deinit();
+    draw(g.ui(), g.full(), &s, m);
+    const text2 = try g.text();
+    try testing.expect(std.mem.indexOf(u8, text2, "Space — install Symbols Nerd Font Mono for this OS:") != null);
+    try testing.expect(std.mem.indexOf(u8, text2, "    brew install --cask font-symbols-only-nerd-font") != null);
+    try testing.expect(std.mem.indexOf(u8, text2, "macOS 26: the cask") != null);
+    var saw_install = false;
+    for (g.hits.items.items) |h| if (decodeHit(h.target.overlay_item)) |hit| switch (hit) {
+        .chip => |c| saw_install = saw_install or (c.section == .nerd_font and c.choice == 2),
+        else => {},
+    };
+    try testing.expect(saw_install);
 }
 
 test "keys: sections walk with ↓/j and 1-7; answers, probes, finish and cancel come back as outcomes" {
@@ -319,6 +379,7 @@ test "keys: sections walk with ↓/j and 1-7; answers, probes, finish and cancel
     _ = handleKey(&s, Key.named(.up));
     try testing.expect(s.section == .nerd_font);
     try testing.expect(handleKey(&s, Key.named(.tab)) == .other_row);
+    try testing.expect(handleKey(&s, Key.char(' ')) == .action);
     try testing.expect(handleKey(&s, Key.named(.enter)) == .finish);
     try testing.expect(handleKey(&s, Key.named(.esc)) == .cancel);
 }
