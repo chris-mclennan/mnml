@@ -275,7 +275,7 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
         var x = r.x + list_panel.marker_w;
         x += drawLabel(ui, x, r.y, label_avail, label, s.query.items, label_style, hit_style);
         if (it.hint) |hh| {
-            const room = (r.right() -| detail_cost) -| x;
+            const room = (r.right() -| detail_cost -| right_pad) -| x;
             if (room > 2) x += ui.putStr(x, r.y, room, ui.clipStr(ui.fmt(" {s}", .{hh}), room), Theme.onBg(t.muted, row_bg));
         }
         if (dw > 0) _ = ui.putStrRight(r.right(), r.y, dw + 2, ui.fmt(" {s} ", .{detail}), Theme.onBg(t.muted, row_bg));
@@ -491,4 +491,20 @@ test "the box never exceeds a tiny screen" {
         _ = draw(f.ui(), f.full(), &s, &files);
         for (f.hits.items.items) |e| try testing.expect(f.full().intersect(e.rect).eql(e.rect));
     }
+}
+
+test "a cell of air before the bar: a hint without a detail owes the edge the cell the label does" {
+    var f = try Fixture.init(40, 12);
+    defer f.deinit();
+    var s: State = .{ .title = "Files" };
+    defer s.deinit(testing.allocator);
+    var items: [20]Item = undefined;
+    for (&items) |*it| it.* = .{ .label = "a.txt", .hint = "a hint long enough to reach the edge of the row" };
+    _ = draw(f.ui(), f.full(), &s, &items);
+    const bar = for (f.hits.items.items) |e| {
+        if (e.target == .scrollbar) break e.rect;
+    } else return error.TestNoBar;
+    try f.expectAirBeforeBar(bar.y, bar.y + bar.h, bar.x);
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, f.row(bar.y, &buf), "… █│"));
 }
