@@ -1,0 +1,27 @@
+# The wizard's Claude Code + Codex section. With neither CLI on PATH the
+# rows read "not installed — Space to install"; Space runs the vendors'
+# curl | sh installers in an `install: ai clis` pane (the wizard closes
+# for it); when the pane exits the rows re-detect over PATH and the
+# wizard returns on the section with both found. The `curl` on PATH is
+# the corpus shim: its "installer" drops a do-nothing `claude` / `codex`
+# into $MNML_FAKE_BIN, a directory inside the workspace that PATH names.
+# The real PATH is left out so a CLI installed on the machine cannot
+# make the rows read "installed" before the pane ran; MNML_SHIM_SLEEP
+# keeps the pane alive long enough to be seen.
+# env: PATH=${MNML_SHIMS}:${MNML_E2E_WORKSPACE}/bin:/bin:/usr/bin
+# env: MNML_SHIM_SLEEP=1
+# env: MNML_FAKE_BIN=${MNML_E2E_WORKSPACE}/bin
+command first_launch.show
+key 4
+expect screen contains "Claude Code CLI (`claude`)"
+expect screen contains "Codex CLI (`codex`)"
+expect screen contains "not installed — Space to install"
+expect screen contains "chip in the top-right appears when the CLI is found"
+key space
+expect screen lacks "First-launch setup"
+expect screen contains "install: ai clis"
+expect screen contains "Claude Code: found"
+expect screen contains "First-launch setup"
+expect screen contains "[✓ installed]"
+expect screen lacks "not installed — Space to install"
+key esc

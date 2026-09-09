@@ -69,6 +69,8 @@ const dock = @import("dock.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
+const first_launch_install = @import("first_launch_install.zig");
+const Config = @import("../config/Config.zig");
 const flash = @import("flash.zig");
 const wizard_ui = @import("../ui/wizard.zig");
 const syntax = @import("syntax.zig");
@@ -543,21 +545,37 @@ fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocat
     }
 }
 
-/// The strip's AI chips: Claude / Codex when `ui.tab_bar_ai_icon`
-/// names them and the integration is enabled — mnml's own marks under
-/// `ui.ai_chip_use_mnml_glyphs`, lit while a session runs.
+/// The strip's AI chips, lit while a session runs. A product's chip
+/// shows when its icon is enabled in `ui.integration_icons`, or when
+/// its CLI is on PATH and `ui.tab_bar_ai_icon` names it (`.claude_code`
+/// — the default — / `.codex` / `.both`); `.none` hides both. So a
+/// fresh install with `claude` on PATH gets the Claude chip with no
+/// config, an enabled icon shows whatever the key says, and the
+/// `view.tab_bar_ai_*` commands are the way to hide a found CLI's chip.
+/// The marks are mnml's own baked glyphs (U+F1E00 / U+F1E01) — Rust's
+/// `ai_chip_use_mnml_glyphs` resolves to them on both arms and the key
+/// is deprecated here too.
 fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
     const want = app.cfg.ui.tab_bar_ai_icon;
     if (want == .none) return &.{};
     var out: std.ArrayListUnmanaged(bufferline.AiChip) = .empty;
-    const mnml = app.cfg.ui.ai_chip_use_mnml_glyphs;
-    const claude_live = ai_app.findSession(app, .claude) != null;
-    const codex_live = ai_app.findSession(app, .codex) != null;
-    const claude_glyph: []const u8 = if (mnml) "\u{F1E00}" else "\u{2733}"; // .fallback = "*"
-    const codex_glyph: []const u8 = if (mnml) "\u{F1E01}" else "\u{276F}"; // .fallback = ">"
-    if ((want == .claude_code or want == .both) and integrationEnabled(app, "claude_code")) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = claude_glyph, .fallback = "*", .live = claude_live });
-    if ((want == .codex or want == .both) and integrationEnabled(app, "codex")) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = codex_glyph, .fallback = ">", .live = codex_live });
+    if (aiChipShown(app, .claude)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = "\u{F1E00}", .fallback = "*", .live = ai_app.findSession(app, .claude) != null });
+    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = "\u{F1E01}", .fallback = ">", .live = ai_app.findSession(app, .codex) != null });
     return out.items;
+}
+
+fn aiChipShown(app: *App, product: Config.AiProduct) bool {
+    const want = app.cfg.ui.tab_bar_ai_icon;
+    const id: []const u8 = switch (product) {
+        .claude => "claude_code",
+        .codex => "codex",
+    };
+    if (integrationEnabled(app, id)) return true;
+    const named = switch (product) {
+        .claude => want == .claude_code or want == .both,
+        .codex => want == .codex or want == .both,
+    };
+    return named and first_launch_install.cliOnPath(app, product);
 }
 
 fn integrationEnabled(app: *const App, id: []const u8) bool {
@@ -1911,7 +1929,11 @@ test "menuTop: below when it fits, flipped onto the pointer when it does not, cl
 // ── ui toggles: the frame-level ones, one cell each ──
 
 test "ui toggles: cluster mode picks the full or compact right cluster; the AI chips sit on the strip when their integrations are enabled" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+    // No PATH: nothing found, so only the icons decide here.
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", "");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12, .env = &env });
     defer app.deinit();
     app.tree.visible = false;
     app.cfg.ui.tab_bar_ai_icon = .none;
@@ -1939,9 +1961,92 @@ test "ui toggles: cluster mode picks the full or compact right cluster; the AI c
     // On the strip, left of the split buttons.
     try t.expect(claude.?.y == 1 and claude.?.right() <= codex.?.x);
     try t.expectEqual(@intFromEnum(Button.split_term), app.hits.at(codex.?.right() + 1, 1).?.button);
+    // An enabled icon shows under any key but .none (the key only
+    // decides which found-on-PATH CLIs show).
     app.cfg.ui.tab_bar_ai_icon = .codex;
     try app.render();
-    for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
+    try t.expect(hasButton(&app, .ai_claude) and hasButton(&app, .ai_codex));
+    app.cfg.ui.tab_bar_ai_icon = .none;
+    try app.render();
+    try t.expect(!hasButton(&app, .ai_claude) and !hasButton(&app, .ai_codex));
+}
+
+fn hasButton(app: *App, b: Button) bool {
+    for (app.hits.items.items) |h| if (h.target == .button and h.target.button == @intFromEnum(b)) return true;
+    return false;
+}
+
+test "AI chips: a CLI on PATH shows its chip under the default config; the key names which found CLIs show and .none hides both; an enabled icon shows regardless" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &pbuf);
+    const root = pbuf[0..n];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 12, .env = &env });
+    defer app.deinit();
+    app.tree.visible = false;
+    // The shipped default: `.claude_code`, both icons disabled, nothing on PATH.
+    try t.expectEqual(Config.TabBarAiIcon.claude_code, app.cfg.ui.tab_bar_ai_icon);
+    try app.render();
+    try t.expect(!hasButton(&app, .ai_claude) and !hasButton(&app, .ai_codex));
+    // claude lands on PATH: its chip, and only its chip.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "claude", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "codex", .data = "" });
+    first_launch_install.forgetProbe(&app);
+    try app.render();
+    try t.expect(hasButton(&app, .ai_claude) and !hasButton(&app, .ai_codex));
+    // The probe is cached for a while: the file going away is not seen at once…
+    try tmp.dir.deleteFile(t.io, "claude");
+    try app.render();
+    try t.expect(hasButton(&app, .ai_claude));
+    // …but is after the TTL.
+    app.now_ms += first_launch_install.probe_ttl_ms;
+    try app.render();
+    try t.expect(!hasButton(&app, .ai_claude));
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "claude", .data = "" });
+    first_launch_install.forgetProbe(&app);
+    // `.both` lets the found codex through; `.codex` hides the found claude; `.none` hides both.
+    app.cfg.ui.tab_bar_ai_icon = .both;
+    try app.render();
+    try t.expect(hasButton(&app, .ai_claude) and hasButton(&app, .ai_codex));
+    app.cfg.ui.tab_bar_ai_icon = .codex;
+    try app.render();
+    try t.expect(!hasButton(&app, .ai_claude) and hasButton(&app, .ai_codex));
+    app.cfg.ui.tab_bar_ai_icon = .none;
+    try app.render();
+    try t.expect(!hasButton(&app, .ai_claude) and !hasButton(&app, .ai_codex));
+    // An enabled icon shows without the CLI, whatever the key names (not .none).
+    try tmp.dir.deleteFile(t.io, "claude");
+    try tmp.dir.deleteFile(t.io, "codex");
+    first_launch_install.forgetProbe(&app);
+    app.cfg.ui.tab_bar_ai_icon = .claude_code;
+    app.cfg.ui.integration_icons = &.{.{ .id = "codex", .enabled = true }};
+    try app.render();
+    try t.expect(!hasButton(&app, .ai_claude) and hasButton(&app, .ai_codex));
+    // The marks are mnml's baked pair, whatever the deprecated flag says.
+    var f: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .button and h.target.button == @intFromEnum(Button.ai_codex)) {
+        f = h.rect;
+    };
+    app.cfg.ui.ai_chip_use_mnml_glyphs = true;
+    try app.render();
+    var glyph_a: []const u8 = "";
+    var x: u16 = f.?.x;
+    while (x < f.?.right()) : (x += 1) if (app.screen.readCell(x, f.?.y)) |c| if (c.char.grapheme.len > 1) {
+        glyph_a = c.char.grapheme;
+    };
+    try t.expectEqualStrings("\u{F1E01}", glyph_a);
+    app.cfg.ui.ai_chip_use_mnml_glyphs = false;
+    try app.render();
+    var glyph_b: []const u8 = "";
+    x = f.?.x;
+    while (x < f.?.right()) : (x += 1) if (app.screen.readCell(x, f.?.y)) |c| if (c.char.grapheme.len > 1) {
+        glyph_b = c.char.grapheme;
+    };
+    try t.expectEqualStrings("\u{F1E01}", glyph_b);
 }
 
 test "ui toggles: the breadcrumb row under the strip follows editor.breadcrumb" {

@@ -28,6 +28,11 @@ pub const Sink = enum {
     startup_pty,
     startup_task,
     external_browser,
+    /// `ai.launch_profiles[]` (a binary, its args and env, run when a
+    /// session starts) and `ai.default_profile` (which of them a plain
+    /// chip click runs). A profile list is whole-replace in a layer, so
+    /// an untrusted one could put its own binary behind the AI chip.
+    launch_profile,
     /// `<ws>/.mnml/init.lua` — not a config key but a file beside the
     /// config, which runs with the whole `mnml` table (tasks, panes,
     /// keys) once the workspace is trusted.
@@ -48,6 +53,7 @@ pub const Sink = enum {
             .startup_pty => "run at startup",
             .startup_task => "task at startup",
             .external_browser => "browser",
+            .launch_profile => "AI launch profile",
             .init_lua => "script",
             .workspace_manifests => "integration",
         };
@@ -63,6 +69,7 @@ pub const Sink = enum {
             .md_preview => "when you preview markdown",
             .startup_pty, .startup_task => "immediately, on open",
             .external_browser => "when you open a link",
+            .launch_profile => "when you start a Claude / Codex session",
             .init_lua => "immediately, on open",
             .workspace_manifests => "when you run one of its commands",
         };
@@ -83,6 +90,8 @@ pub const exec_bearing = [_]Rule{
     .{ .path = "dap.<name>", .sink = .debug_adapter },
     .{ .path = "startup.layout[] with .kind = .pty", .sink = .startup_pty },
     .{ .path = "startup.tasks", .sink = .startup_task },
+    .{ .path = "ai.launch_profiles[] .binary / .args / .env", .sink = .launch_profile },
+    .{ .path = "ai.default_profile", .sink = .launch_profile },
     .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
     .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },
 };
@@ -191,6 +200,20 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
             if (tasks.len == 0) return 0;
             startup.tasks = &.{};
             return tasks.len;
+        },
+        .launch_profile => {
+            const ai = &(p.ai orelse return 0);
+            var n: usize = 0;
+            if (ai.launch_profiles) |profiles| {
+                n += profiles.len;
+                ai.launch_profiles = null;
+            }
+            if (ai.default_profile) |dp| {
+                if (dp.claude != null) n += 1;
+                if (dp.codex != null) n += 1;
+                ai.default_profile = null;
+            }
+            return n;
         },
         // Nothing in the patch: the file is gated by `workspace_trusted`.
         .init_lua => return 0,
@@ -337,6 +360,28 @@ fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts
                 if (cmd.len != 0) try out.append(arena, .{ .sink = sink, .key = "startup.layout", .command = cmd });
             }
         },
+        .launch_profile => {
+            const ai = p.ai orelse return;
+            for (ai.launch_profiles orelse &.{}) |profile| {
+                if (profile.binary.len == 0) continue;
+                try out.append(arena, .{
+                    .sink = sink,
+                    .key = try std.fmt.allocPrint(arena, "ai.launch_profiles.{s}", .{profile.name}),
+                    .command = try joinArgs(arena, profile.binary, profile.args),
+                });
+            }
+            if (ai.default_profile) |dp| {
+                // The claim is "a plain chip click runs profile <name>";
+                // the binary behind the name may sit in a trusted layer.
+                inline for (.{ "claude", "codex" }) |product| {
+                    if (@field(dp, product)) |name| if (name.len != 0) try out.append(arena, .{
+                        .sink = sink,
+                        .key = "ai.default_profile." ++ product,
+                        .command = name,
+                    });
+                }
+            }
+        },
         .startup_task => {
             const startup = p.startup orelse return;
             for (startup.tasks orelse return) |name| {
@@ -407,6 +452,11 @@ const hostile_layer =
     \\        },
     \\    },
     \\    .editor = .{ .tab_width = 2 },
+    \\    .ai = .{
+    \\        .launch_profiles = .{ .{ .name = "evil", .product = .claude, .binary = "/tmp/evil.sh", .args = .{"--yes"} } },
+    \\        .default_profile = .{ .claude = "evil" },
+    \\        .inline_suggestions = false,
+    \\    },
     \\}
 ;
 
@@ -419,10 +469,10 @@ test "an untrusted layer loses exactly the exec-bearing keys" {
     try t.expectEqual(@as(usize, 0), diags.count());
 
     const before = try claims(arena, p);
-    try t.expectEqual(@as(usize, 8), before.len);
+    try t.expectEqual(@as(usize, 10), before.len);
 
     const removed = try strip(arena, &p);
-    try t.expectEqual(@as(usize, 8), removed);
+    try t.expectEqual(@as(usize, 10), removed);
 
     // gone
     try t.expect(p.ui.?.md_preview_engine == null);
@@ -435,7 +485,10 @@ test "an untrusted layer loses exactly the exec-bearing keys" {
     try t.expectEqual(@as(usize, 0), p.startup.?.tasks.?.len);
     try t.expectEqual(@as(usize, 1), p.startup.?.layout.?.len);
     try t.expectEqual(Config.LayoutKind.editor, p.startup.?.layout.?[0].kind);
+    try t.expect(p.ai.?.launch_profiles == null);
+    try t.expect(p.ai.?.default_profile == null);
     // kept
+    try t.expectEqual(@as(?bool, false), p.ai.?.inline_suggestions);
     try t.expectEqual(@as(usize, 2), p.lsp.get("rust").?.extensions.len);
     try t.expectEqual(@as(?u16, 42), p.ui.?.tree_width);
     try t.expectEqual(@as(?u8, 2), p.editor.?.tab_width);
@@ -469,8 +522,17 @@ test "claims render for the dialog, sorted, with the verbatim command" {
         found = true;
     };
     try t.expect(found);
-    // sorted: sinks in table order, external_browser last
-    try t.expectEqual(Sink.external_browser, list[list.len - 1].sink);
+    // a launch profile claims its binary and args; the default names the profile
+    var profile_claims: usize = 0;
+    for (list) |c| if (c.sink == .launch_profile) {
+        profile_claims += 1;
+        if (std.mem.eql(u8, c.key, "ai.launch_profiles.evil")) try t.expectEqualStrings("/tmp/evil.sh --yes", c.command);
+        if (std.mem.eql(u8, c.key, "ai.default_profile.claude")) try t.expectEqualStrings("evil", c.command);
+    };
+    try t.expectEqual(@as(usize, 2), profile_claims);
+    // sorted: sinks in table order, launch_profile after external_browser, last
+    try t.expectEqual(Sink.launch_profile, list[list.len - 1].sink);
+    try t.expectEqual(Sink.external_browser, list[list.len - 3].sink);
 }
 
 test "an init.lua beside the config is a claim of its own, and moves the fingerprint" {

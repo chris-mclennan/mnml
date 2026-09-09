@@ -1,0 +1,14 @@
+#!/bin/sh
+# tools/shims/brew — the `brew` the .test corpus sees (macOS arm of the
+# wizard's Nerd Font install). Prints the argv it got and exits 0;
+# `MNML_SHIM_FAIL=1` makes it exit 3 with an error line instead, so a
+# script can assert that a failed install is reported as one.
+# `MNML_SHIM_SLEEP=<secs>` keeps the process alive that long first, so a
+# script can see the pane before it exits.
+[ -n "${MNML_SHIM_SLEEP:-}" ] && sleep "$MNML_SHIM_SLEEP"
+if [ -n "${MNML_SHIM_FAIL:-}" ]; then
+  echo "Error: shim asked to fail"
+  exit 3
+fi
+echo "brew (shim): $*"
+exit 0

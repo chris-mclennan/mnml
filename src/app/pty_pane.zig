@@ -34,6 +34,7 @@ const CommandError = command.CommandError;
 /// grew up gating on it.
 pub const supported = true;
 const pty = @import("pty");
+const first_launch_install = @import("first_launch_install.zig");
 
 pub const Session = pty.Session;
 pub const Grid = pty.Grid;
@@ -53,6 +54,12 @@ pub const Exit = union(enum) {
 /// shell that hides instead of closing, and is never persisted.
 pub const Kind = enum { shell, command, runner, task, scratch };
 
+/// What to do once the child ends — the first-launch wizard's install
+/// panes name one, so the terminal hint toasts on the pane's exit 0
+/// and never before (`first_launch_install.afterExit`). A follow-up
+/// must not open or close panes: it runs from inside the pane walk.
+pub const AfterExit = enum { nerd_font_install, ai_cli_install, code_shim_install };
+
 /// Where a new pane lands relative to the active one.
 pub const Placement = enum { below, right, above, left, tab };
 
@@ -66,6 +73,7 @@ pub const OpenOptions = struct {
     label: ?[]const u8 = null,
     placement: Placement = .below,
     kind: Kind = .shell,
+    after_exit: ?AfterExit = null,
 };
 
 /// The reader thread's way into the app: posts `.pty_readable{pane}`
@@ -95,6 +103,7 @@ pub const PtyPane = struct {
     cwd: ?[]u8,
     kind: Kind,
     exit: ?Exit = null,
+    after_exit: ?AfterExit = null,
     /// // changed (sessions-merge): the session in this pane needs input
     /// (`sessions.zig` sets it on the edge); the tab shows a badge until
     /// the pane is looked at.
@@ -120,8 +129,18 @@ pub const PtyPane = struct {
     pub fn pump(self: *PtyPane, app: *App) void {
         if (!supported) return;
         const fed = self.session.pump();
-        if (self.exit == null) self.exit = exitOf(self.session.exited());
+        if (self.exit == null) {
+            self.exit = exitOf(self.session.exited());
+            if (self.exit != null) self.noticeExit(app);
+        }
         if (fed or self.exit != null) app.needs_render = true;
+    }
+
+    /// The exit just landed: run the follow-up, once.
+    fn noticeExit(self: *PtyPane, app: *App) void {
+        const follow = self.after_exit orelse return;
+        self.after_exit = null;
+        first_launch_install.afterExit(app, follow, self.exit.?);
     }
 
     fn exitOf(e: ?pty.session.Exit) ?Exit {
@@ -239,6 +258,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .argv = argv,
         .cwd = cwd,
         .kind = opts.kind,
+        .after_exit = opts.after_exit,
         .cols = size.cols,
         .rows = size.rows,
     } });
@@ -366,6 +386,7 @@ pub fn tickAll(app: *App) void {
                 p.pump(app);
             } else if (p.session.exited()) |e| {
                 p.exit = PtyPane.exitOf(e);
+                p.noticeExit(app);
                 app.needs_render = true;
             }
         },

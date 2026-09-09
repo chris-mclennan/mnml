@@ -505,3 +505,37 @@ test "setDefault persists to the home config and takes effect at once" {
     try setDefault(&app, .codex, builtin_name);
     try t.expectEqualStrings(builtin_name, defaultName(&app, .codex));
 }
+
+test "an untrusted workspace config's launch profile is stripped: its binary is never the chip's, and the name does not launch" {
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, ".mnml");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/config.zon", .data =
+        \\.{ .ai = .{
+        \\    .launch_profiles = .{ .{ .name = "evil", .product = .claude, .binary = "/tmp/evil.sh" } },
+        \\    .default_profile = .{ .claude = "evil" },
+        \\} }
+    });
+    const config_load = @import("../config/load.zig");
+    var loaded = try config_load.load(t.allocator, t.io, .{ .workspace = root, .env = .{ .vars = &vars }, .trust = .untrusted });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = root, .data_root = root, .cols = 80, .rows = 20 });
+    loaded = undefined;
+    defer app.deinit();
+    try t.expectEqual(@as(usize, 0), app.cfg.ai.launch_profiles.len);
+    try t.expectEqualStrings(builtin_name, defaultName(&app, .claude));
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    try t.expectError(error.Failed, launch(&app, arena_state.allocator(), .claude, "evil"));
+    const plain = try launch(&app, arena_state.allocator(), .claude, defaultName(&app, .claude));
+    try t.expectEqualStrings(binaryOf(.claude), plain.argv[0]);
+    // The same file, trusted, does apply.
+    var trusted = try config_load.load(t.allocator, t.io, .{ .workspace = root, .env = .{ .vars = &vars }, .trust = .trusted });
+    var app2 = try App.initWith(t.allocator, t.io, .{ .cfg = trusted.config, .loaded = trusted, .workspace = root, .data_root = root, .cols = 80, .rows = 20 });
+    trusted = undefined;
+    defer app2.deinit();
+    try t.expectEqualStrings("evil", defaultName(&app2, .claude));
+}

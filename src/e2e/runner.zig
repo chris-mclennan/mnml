@@ -170,11 +170,15 @@ const Run = struct {
         // (or the process's) plus those, for this file only. `$NAME` /
         // `${NAME}` in a value expands from the run's environment
         // (`PATH=${MNML_SHIMS}:${PATH}`), an unset name to nothing.
+        // `MNML_E2E_WORKSPACE` is this file's temp workspace, so a
+        // value can name a directory inside it (`HOME=`, a PATH entry a
+        // shim's "installer" drops a fake binary into).
         const header = parser.parseHeader(text);
         var file_env: ?std.process.Environ.Map = null;
         defer if (file_env) |*m| m.deinit();
         if (header.env_len > 0) {
             var m = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
+            m.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
             for (header.envPairs()) |pair| {
                 const value = expandEnv(gpa, pair.value, &m) catch return self.fail("out of memory", .{});
                 defer gpa.free(value);

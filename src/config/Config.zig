@@ -272,6 +272,9 @@ pub const Ui = struct {
     top_bar_cluster_mode: TopBarClusterMode = .auto,
     tab_bar_ai_icon: TabBarAiIcon = .claude_code,
     ai_layout_mode: AiLayoutMode = .grid,
+    /// Deprecated, read by nothing: the AI chips always paint mnml's own
+    /// baked marks (U+F1E00 / U+F1E01). Accepted so a 0.2.x config
+    /// still loads.
     ai_chip_use_mnml_glyphs: bool = false,
     auto_show_sessions_on_ai_activate: bool = true,
     git_section_default_expanded: bool = false,

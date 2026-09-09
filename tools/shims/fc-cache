@@ -1,0 +1,8 @@
+#!/bin/sh
+# tools/shims/fc-cache — the `fc-cache` the .test corpus sees (Linux arm
+# of the wizard's Nerd Font install). Prints and exits 0.
+# `MNML_SHIM_SLEEP=<secs>` keeps the process alive that long first, so a
+# script can see the pane before it exits.
+[ -n "${MNML_SHIM_SLEEP:-}" ] && sleep "$MNML_SHIM_SLEEP"
+echo "fc-cache (shim): $*"
+exit 0
