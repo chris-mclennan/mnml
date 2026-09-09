@@ -759,9 +759,9 @@ test "no session: the status row, four headers with their hints, a watch row; th
         try testing.expectEqualStrings("", std.mem.trim(u8, nr[from..end], " "));
         try testing.expect(std.mem.indexOf(u8, nr, "no session") == null);
     }
-    try testing.expect(std.mem.indexOf(u8, t1, "▾ VARIABLES (0)") != null);
+    try testing.expect(std.mem.indexOf(u8, t1, "\u{F47C} VARIABLES (0)") != null);
     try testing.expect(std.mem.indexOf(u8, t1, "⌖ x + 1 = (no value)") != null);
-    try testing.expect(std.mem.indexOf(u8, t1, "▾ BREAKPOINTS (0)") != null);
+    try testing.expect(std.mem.indexOf(u8, t1, "\u{F47C} BREAKPOINTS (0)") != null);
     try testing.expect(std.mem.indexOf(u8, t1, "none — F9 sets one") != null);
     // Folding WATCH hides its rows; the count stays.
     const all = try rows(&app, app.frame.allocator());
@@ -774,7 +774,7 @@ test "no session: the status row, four headers with their hints, a watch row; th
     try testing.expect(app.debug_panel.collapsed.contains(.watch));
     const t2 = try screenText(&app);
     defer testing.allocator.free(t2);
-    try testing.expect(std.mem.indexOf(u8, t2, "▸ WATCH (1)") != null);
+    try testing.expect(std.mem.indexOf(u8, t2, "\u{F460} WATCH (1)") != null);
     try testing.expect(std.mem.indexOf(u8, t2, "x + 1 =") == null);
     try app.handle(.{ .key = Key.named(.right) });
     try testing.expect(!app.debug_panel.collapsed.contains(.watch));
@@ -833,5 +833,5 @@ test "row menus name real ids for every row kind; d removes the watch under the 
     try testing.expectEqual(side.Side.right, side.sideOf(&app, .debug));
     const t = try screenText(&app);
     defer testing.allocator.free(t);
-    try testing.expect(std.mem.indexOf(u8, t, "▾ CALL STACK (0)") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "\u{F47C} CALL STACK (0)") != null);
 }

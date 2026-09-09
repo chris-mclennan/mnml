@@ -3,7 +3,8 @@
 //! four collapsible sections in VS Code's order — VARIABLES (scopes as
 //! trees), WATCH, CALL STACK (threads, then the current thread's
 //! frames), BREAKPOINTS (every file's breakpoints, then the adapter's
-//! exception filters) — each behind a `▾ NAME (n)` header row.
+//! exception filters) — each behind a `NAME (n)` header row with its
+//! expander (`expander.zig`'s chevron, in its grey, as every panel's).
 //!
 //! Zig-authored: the Rust debug pane was never the spec here. Every
 //! row is one cell tall and paints itself from its own fields (the
@@ -16,6 +17,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
+const expander = @import("expander.zig");
 const types = @import("../dap/types.zig");
 
 pub const Style = vaxis.Style;
@@ -96,10 +98,6 @@ pub const Row = union(enum) {
 
 pub const Panel = list_panel.ListPanel(Row);
 
-pub const chevron_open = "\u{25BE} "; // ▾
-pub const chevron_closed = "\u{25B8} "; // ▸
-pub const chevron_open_ascii = "v ";
-pub const chevron_closed_ascii = "> ";
 pub const check_on = "[x] ";
 pub const check_off = "[ ] ";
 pub const watch_glyph = "\u{2316} "; // ⌖
@@ -110,11 +108,6 @@ pub const dot_on = "\u{25CF}"; // ●
 pub const dot_off = "\u{25CB}"; // ○
 pub const dot_on_ascii = "*";
 pub const dot_off_ascii = "o";
-
-fn chevron(ui: Ui, open: bool) []const u8 {
-    if (ui.ascii) return if (open) chevron_open_ascii else chevron_closed_ascii;
-    return if (open) chevron_open else chevron_closed;
-}
 
 /// One row's cells, after the marker. The ground is already filled.
 pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
@@ -139,9 +132,10 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             _ = ui.putStr(x, r.y, end -| x, ui.clipStr(text, end -| x), st);
         },
         .header => |h| {
-            var st = Theme.withFg(base, t.accent.fg);
+            // The git panel's header grey, bold; the expander in its colour.
+            var st = Theme.withFg(base, t.muted.fg);
             st.bold = true;
-            x += ui.putStr(x, r.y, end -| x, chevron(ui, !h.collapsed), st);
+            x += ui.putStr(x, r.y, end -| x, expander.slot(ui, !h.collapsed), expander.style(ui, base));
             x += ui.putStr(x, r.y, end -| x, h.sub.label(), st);
             const count = ui.fmt(" ({d})", .{h.count});
             if (end -| x > ui.width(count)) _ = ui.putStr(x, r.y, end -| x, count, Theme.withFg(base, t.muted.fg));
@@ -150,8 +144,11 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             const vr = v.row;
             x += @as(u16, vr.depth) * 2;
             if (x >= end) return;
-            const chev: []const u8 = if (vr.expandable) chevron(ui, vr.expanded) else "  ";
-            x += ui.putStr(x, r.y, end -| x, chev, Theme.withFg(base, t.accent.fg));
+            if (vr.expandable) {
+                x += ui.putStr(x, r.y, end -| x, expander.slot(ui, vr.expanded), expander.style(ui, base));
+            } else {
+                x += ui.putStr(x, r.y, end -| x, "  ", base);
+            }
             var label_style = Theme.withFg(base, if (vr.is_scope) t.accent.fg else t.fg.fg);
             label_style.bold = vr.is_scope;
             x += ui.putStr(x, r.y, end -| x, ui.clipStr(vr.label, end -| x), label_style);
@@ -276,17 +273,22 @@ test "every row kind paints its shape at the shipped width (26 cells) and regist
     _ = Panel.draw(&st, f.ui(), f.full(), props(&rows));
     try f.expectContains("DEBUG");
     try f.expectRow(2, "▌● prog.dbg:3 · main");
-    try f.expectRow(3, " ▾ VARIABLES (2)");
-    try f.expectRow(4, " ▾ Locals");
+    try f.expectRow(3, " \u{F47C} VARIABLES (2)");
+    try f.expectRow(4, " \u{F47C} Locals");
     try f.expectRow(5, "     x: int = 7");
     try f.expectRow(7, "   ⌖ x * 100 = 700");
     try f.expectRow(9, "   ● thread main");
     try f.expectRow(10, "   ▶ prog.dbg:3  main");
-    try f.expectRow(11, " ▸ BREAKPOINTS (2)");
+    try f.expectRow(11, " \u{F460} BREAKPOINTS (2)");
     try f.expectRow(12, "   [x] prog.dbg:3  when i…");
     try f.expectRow(13, "   [x] Uncaught errors");
-    // The changed value is the warning colour; the frame's ▶ too.
+    // The changed value is the warning colour; the frame's ▶ too. The
+    // headers and their expanders are the git panel's grey.
     try testing.expect(f.fgEql(14, 5, f.theme.warn_fg));
+    try testing.expect(f.fgEql(1, 3, f.theme.muted));
+    try testing.expect(f.fgEql(3, 3, f.theme.muted));
+    try testing.expect(f.style(3, 3).bold);
+    try testing.expect(f.fgEql(1, 11, f.theme.muted));
     try testing.expectEqual(@as(u32, 3), f.hits.at(5, 5).?.row.idx);
     try testing.expectEqual(list_panel.PanelId.debug, f.hits.at(5, 5).?.row.panel);
 }

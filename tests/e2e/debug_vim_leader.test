@@ -30,14 +30,14 @@ key esc
 key space
 key d
 key u
-expect screen contains "▾ VARIABLES"
+expect screen contains " VARIABLES"
 # The section has the keys now (Space is its checkbox key); Esc hands
 # them back to the editor, where the leader chord hides it again.
 key esc
 key space
 key d
 key u
-expect screen lacks "▾ VARIABLES"
+expect screen lacks " VARIABLES"
 key space
 key d
 key t
