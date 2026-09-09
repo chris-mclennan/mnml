@@ -137,6 +137,7 @@ pub fn allRows(app: *App, arena: Allocator) Allocator.Error![]Row {
     }
 
     // WATCH.
+    try out.append(arena, .gap);
     try out.append(arena, .{ .header = .{ .sub = .watch, .count = app.dap.watches.items.len, .collapsed = st.collapsed.contains(.watch) } });
     if (!st.collapsed.contains(.watch)) {
         if (app.dap.watches.items.len == 0) {
@@ -155,6 +156,7 @@ pub fn allRows(app: *App, arena: Allocator) Allocator.Error![]Row {
 
     // CALL STACK: the threads, then the current thread's frames.
     const n_frames: usize = if (s) |ss| ss.frames.len else 0;
+    try out.append(arena, .gap);
     try out.append(arena, .{ .header = .{ .sub = .call_stack, .count = n_frames, .collapsed = st.collapsed.contains(.call_stack) } });
     if (!st.collapsed.contains(.call_stack)) {
         if (s == null or (s.?.threads.len == 0 and n_frames == 0)) {
@@ -182,6 +184,7 @@ pub fn allRows(app: *App, arena: Allocator) Allocator.Error![]Row {
     }.lt);
     var n_bps: usize = 0;
     for (paths.items) |p| n_bps += app.dap.bpsFor(p).len;
+    try out.append(arena, .gap);
     try out.append(arena, .{ .header = .{ .sub = .breakpoints, .count = n_bps, .collapsed = st.collapsed.contains(.breakpoints) } });
     if (!st.collapsed.contains(.breakpoints)) {
         for (paths.items) |p| for (app.dap.bpsFor(p)) |b| {
@@ -278,8 +281,12 @@ pub fn snapshotValues(app: *App) Allocator.Error!void {
 
 pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     const st = &app.debug_panel;
+    const before = st.list.cursor;
     switch (try Panel.handleKey(&st.list, app.gpa, k)) {
-        .consumed => return true,
+        .consumed => {
+            try settle(app, st.list.cursor >= before);
+            return true;
+        },
         .filter_changed => return true,
         .activate => |i| {
             st.list.cursor = i;
@@ -325,6 +332,44 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     }
 }
 
+/// The cursor never rests on the blank row between two sections: from
+/// wherever a move landed it walks on in the move's direction to the
+/// next stop, or back when there is none (`http_panel`'s rule).
+fn settle(app: *App, down: bool) Allocator.Error!void {
+    const st = &app.debug_panel;
+    const list = try rows(app, app.frame.allocator());
+    if (list.len == 0) return;
+    var i = st.list.cursor;
+    if (i >= list.len) i = list.len - 1;
+    if (list[i].isStop()) {
+        st.list.cursor = i;
+        return;
+    }
+    var j = i;
+    if (down) {
+        while (j + 1 < list.len) : (j += 1) if (list[j + 1].isStop()) {
+            st.list.cursor = j + 1;
+            return;
+        };
+        j = i;
+        while (j > 0) : (j -= 1) if (list[j - 1].isStop()) {
+            st.list.cursor = j - 1;
+            return;
+        };
+    } else {
+        while (j > 0) : (j -= 1) if (list[j - 1].isStop()) {
+            st.list.cursor = j - 1;
+            return;
+        };
+        j = i;
+        while (j + 1 < list.len) : (j += 1) if (list[j + 1].isStop()) {
+            st.list.cursor = j + 1;
+            return;
+        };
+    }
+    st.list.cursor = i;
+}
+
 fn runToast(app: *App, result: CommandError!void) void {
     result catch |err| {
         if (err == error.Canceled) return;
@@ -347,7 +392,7 @@ fn activateRow(app: *App) Allocator.Error!void {
         .watch => runToast(app, editSelected(app)),
         .thread, .frame, .breakpoint => runToast(app, openSelected(app)),
         .filter => runToast(app, toggleSelected(app)),
-        .hint => {},
+        .hint, .gap => {},
     }
     app.needs_render = true;
 }
@@ -529,6 +574,8 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
         .press => {
             const list = try rows(app, app.frame.allocator());
             if (idx >= list.len) return;
+            // The blank row between two sections takes no click.
+            if (!list[idx].isStop()) return;
             focusPanel(app);
             st.list.cursor = idx;
             if (m.button == .right) return openRowMenu(app, m.x, m.y);
@@ -571,6 +618,8 @@ fn hitRectOf(app: *App, idx: u32) ?Rect {
 
 pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
+    const list = try rows(app, app.frame.allocator());
+    if (idx >= list.len or !list[idx].isStop()) return;
     focusPanel(app);
     app.debug_panel.list.cursor = idx;
     try openRowMenu(app, m.x, m.y);
@@ -688,7 +737,7 @@ pub fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .filter => |f| .{ "Exception breakpoint", &.{
             .{ .label = if (f.on) "Disable" else "Enable", .action = .{ .command = .@"dap.toggle_selected" } },
         } },
-        .hint => return,
+        .hint, .gap => return,
     };
     _ = arena;
     const copy = try app.gpa.dupe(MenuItem, items);
@@ -789,6 +838,67 @@ test "no session: the status row, four headers with their hints, a watch row; th
     try app.handle(.{ .key = Key.named(.esc) });
     try app.handle(.{ .key = Key.named(.esc) });
     try testing.expect(app.focus == .pane);
+}
+
+test "a blank row sits between one section and the next — none before the first, none after the last; j / k step over it and a click on it does nothing" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.activity_debug" });
+    const all = try rows(&app, app.frame.allocator());
+    // The status row, then each header with its hint; a gap before every
+    // header but the first and none at the end.
+    var headers: usize = 0;
+    for (all, 0..) |r, i| {
+        if (r == .header) {
+            headers += 1;
+            if (i > 1) try testing.expect(all[i - 1] == .gap) else try testing.expect(all[i - 1] == .status);
+        }
+        if (r == .gap) {
+            try testing.expect(i + 1 < all.len);
+            try testing.expect(all[i + 1] == .header);
+            try testing.expect(all[i - 1] != .gap);
+        }
+    }
+    try testing.expectEqual(@as(usize, 4), headers);
+    try testing.expect(all[all.len - 1] != .gap);
+    // On the screen: the row above WATCH is blank across the panel.
+    const t = try screenText(&app);
+    defer testing.allocator.free(t);
+    {
+        var lines = std.mem.splitScalar(u8, t, '\n');
+        var prev: []const u8 = "";
+        var seen = false;
+        while (lines.next()) |line| {
+            if (std.mem.indexOf(u8, line, "WATCH (0)")) |col| {
+                const end = if (std.mem.indexOf(u8, prev[@min(col, prev.len)..], "\u{2502}")) |b| @min(col, prev.len) + b else prev.len;
+                try testing.expectEqualStrings("", std.mem.trim(u8, prev[@min(col, prev.len)..end], " "));
+                seen = true;
+            }
+            prev = line;
+        }
+        try testing.expect(seen);
+    }
+    // The hint under VARIABLES is row 2; j lands on WATCH's header (4),
+    // never on the gap (3); k walks back over it.
+    try testing.expect(all[2] == .hint);
+    try testing.expect(all[3] == .gap);
+    try testing.expect(all[4] == .header);
+    app.debug_panel.list.cursor = 2;
+    try app.handle(.{ .key = Key.char('j') });
+    try testing.expectEqual(@as(usize, 4), app.debug_panel.list.cursor);
+    try app.handle(.{ .key = Key.char('k') });
+    try testing.expectEqual(@as(usize, 2), app.debug_panel.list.cursor);
+    try app.handle(.{ .key = Key.named(.down) });
+    try testing.expectEqual(@as(usize, 4), app.debug_panel.list.cursor);
+    try app.handle(.{ .key = Key.named(.up) });
+    try testing.expectEqual(@as(usize, 2), app.debug_panel.list.cursor);
+    // A press on the gap moves nothing and opens nothing.
+    try rowMouse(&app, 3, .{ .x = 5, .y = 5, .kind = .press, .button = .left });
+    try testing.expectEqual(@as(usize, 2), app.debug_panel.list.cursor);
+    try rowMouse(&app, 3, .{ .x = 5, .y = 5, .kind = .press, .button = .right });
+    try testing.expectEqual(@as(usize, 2), app.debug_panel.list.cursor);
+    try testing.expect(app.overlay != .menu);
 }
 
 test "row menus name real ids for every row kind; d removes the watch under the cursor; the section moves right and still draws" {

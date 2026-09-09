@@ -4,7 +4,8 @@
 //! trees), WATCH, CALL STACK (threads, then the current thread's
 //! frames), BREAKPOINTS (every file's breakpoints, then the adapter's
 //! exception filters) — each behind a `NAME (n)` header row with its
-//! expander (`expander.zig`'s chevron, in its grey, as every panel's).
+//! expander (`expander.zig`'s chevron, in its grey, as every panel's),
+//! a blank row between one section and the next.
 //!
 //! Zig-authored: the Rust debug pane was never the spec here. Every
 //! row is one cell tall and paints itself from its own fields (the
@@ -80,12 +81,20 @@ pub const Row = union(enum) {
     filter: Filter,
     /// A dim one-liner under an empty section (`no watches — w adds one`).
     hint: []const u8,
+    /// The blank row between two sections: the cursor skips it, a
+    /// click on it does nothing.
+    gap,
 
-    /// The text a filter matches against; headers and the status row
-    /// are never filtered out.
+    /// A row the cursor can rest on.
+    pub fn isStop(r: Row) bool {
+        return r != .gap;
+    }
+
+    /// The text a filter matches against; headers, the status row and
+    /// the gaps are never filtered out.
     pub fn filterText(r: Row) ?[]const u8 {
         return switch (r) {
-            .status, .header, .hint => null,
+            .status, .header, .hint, .gap => null,
             .variable => |v| v.row.label,
             .watch => |w| w.expression,
             .thread => |t| t.name,
@@ -205,6 +214,7 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             x += 4;
             _ = ui.putStr(x, r.y, end -| x, ui.clipStr(h, end -| x), Theme.withFg(base, t.muted.fg));
         },
+        .gap => {},
     }
 }
 
