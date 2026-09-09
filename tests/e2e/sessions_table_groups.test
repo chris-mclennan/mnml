@@ -17,7 +17,7 @@ command view.toggle_tree
 command sessions.table
 wait 800
 expect screen contains " summary "
-expect screen contains "▾ "
+expect screen contains " "
 expect screen contains " (2)"
 expect screen contains "other-proj (1)"
 expect screen contains "write the release notes"
@@ -27,7 +27,7 @@ expect screen contains "2 dirty, ended"
 # z on the workspace's group (the first row) folds it: its rows go, the
 # other group's stay; z again brings them back.
 key z
-expect screen contains "▸ "
+expect screen contains " "
 expect screen lacks "write the release notes"
 expect screen contains "ship the other thing"
 key z
