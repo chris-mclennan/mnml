@@ -12,7 +12,8 @@
 //! the edge. An extra workspace (`[[workspaces]]`) is ` ▸ name ` alone.
 //!
 //! An entry is ` ` + indent + connector + chevron + icon + name, the git
-//! badge right-aligned: two cells of indent per level, a `│` down every
+//! badge right-aligned (a cell of air between it, or a long name, and the
+//! scrollbar): two cells of indent per level, a `│` down every
 //! ancestor level that has siblings to come (levels 2 and up — the top
 //! level draws none, as neo-tree), the chevron slot of a file row taking
 //! `│` or `└` under the parent's folder icon. The connectors are mnml's
@@ -231,7 +232,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         const r = area.row(y);
         const is_cursor = if (p.cursor) |c| c == i else false;
         switch (p.items[i]) {
-            .section => |s| drawSection(ui, r, s, p, is_cursor),
+            .section => |s| drawSection(ui, r, sb_w, s, p, is_cursor),
             .entry => |e| drawEntry(ui, r, sb_w, p.items, i, e, is_cursor, p),
             .blank => {},
             .add_workspace => drawAddRow(ui, r),
@@ -268,7 +269,7 @@ fn lastRoot(items: []const Item, end: usize) u8 {
 }
 
 /// ` ▾ ` + [`● `] + label; the primary adds the chip cluster.
-fn drawSection(ui: Ui, r: Rect, s: Section, p: Props, is_cursor: bool) void {
+fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool) void {
     const t = ui.theme;
     const pal = t.palette;
     const rail_bg = pal.bg_darker;
@@ -285,8 +286,9 @@ fn drawSection(ui: Ui, r: Rect, s: Section, p: Props, is_cursor: bool) void {
         const dot: []const u8 = if (primary) (if (ui.ascii) "* " else "● ") else (if (ui.ascii) "o " else "○ ");
         x += ui.putStr(x, r.y, r.right() -| x, dot, Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.comment), bg));
     }
-    // The label's room: the primary keeps the cluster's, an extra four cells.
-    const max_label: u16 = @max(4, if (primary) r.w -| (3 + 2 + chip_reserve) else r.w -| 4);
+    // The label's room: the primary keeps the cluster's, an extra four
+    // cells — and a cell of air before the bar.
+    const max_label: u16 = @max(4, if (primary) r.w -| (3 + 2 + chip_reserve) else r.w -| 4 -| sb_w);
     const label = ui.clipStr(s.label, max_label);
     var style = Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.fg), bg);
     style.bold = true;
@@ -409,7 +411,9 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     name_style.bold = e.is_dir or lit;
     name_style.dim = (e.repo != null and !e.repo.?.active) or (e.name.len > 0 and e.name[0] == '.');
     const badge_w: u16 = if (e.dirty or e.git != null) 2 else 0;
-    _ = ui.putStr(x, r.y, right -| x -| badge_w, e.name, name_style);
+    // The name stops at the badge, or a cell short of the bar.
+    const name_end = if (badge_w > 0) right -| badge_w else right -| sb_w;
+    _ = ui.putStr(x, r.y, name_end -| x, e.name, name_style);
     if (badge_w > 0 and right >= r.x + 1 + badge_w) {
         const badge: []const u8 = if (e.dirty) (if (ui.ascii) "*" else "●") else switch (e.git.?) {
             .modified => "M",
@@ -683,4 +687,28 @@ test "the cursor row's marker: the list panels' bar in the leading cell, the acc
     ui.ascii = true;
     _ = draw(ui, f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
     try testing.expectEqualStrings(list_panel.marker_ascii, f.cell(0, 1).char.grapheme);
+}
+
+test "a cell of air before the bar: a long name is cut a cell short of it, an extra section's label clips a cell short of it, the blank row keeps it" {
+    var items: [9]Item = undefined;
+    items[0] = section(0, "/w/", true);
+    for (1..7) |i| items[i] = entry(@intCast(i - 1), "a-long-file-name-that-overflows.txt", 0, false, false);
+    items[7] = .blank;
+    items[8] = section(1, "a-very-long-workspace-name-indeed", false);
+    var f = try Fixture.init(26, 6);
+    defer f.deinit();
+    const l = draw(f.ui(), f.full(), .{ .items = &items, .scroll = 3, .cursor = 3, .focused = true });
+    try testing.expect(l.overflow);
+    try f.expectRow(0, "\u{258c}    \u{F0219} a-long-file-name- █");
+    try f.expectRow(3, "     \u{F0219} a-long-file-name- █");
+    try f.expectRow(4, "                         █");
+    try f.expectRow(5, " \u{F460} a-very-long-workspac… █");
+    try f.expectAirBeforeBar(0, 6, 25);
+    // Without the bar the name runs to the edge and the label keeps
+    // Rust's one cell of margin.
+    var g = try Fixture.init(26, 12);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), .{ .items = &items });
+    try g.expectRow(1, "     \u{F0219} a-long-file-name-th");
+    try g.expectRow(8, " \u{F460} a-very-long-workspace…");
 }
