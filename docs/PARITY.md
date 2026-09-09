@@ -38,9 +38,9 @@ line), not by hand.
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
 | UI & theming | 75 | 1 | 3 | 1 | 80 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
+| Headless, IPC & extensibility | 41 | 2 | 2 | 2 | 47 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **510** | **4** | **9** | **3** | **526** |
+| **total** | **516** | **4** | **9** | **3** | **532** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -730,7 +730,13 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
 | Installed / Marketplace / In-Dev tabs | partial | `Pane.integrations` + `Pane.marketplace`, `integrations.toggle_tab` | `integrations.show_in_dev` toasts "not in this build" |
 | `integrations.icon_picker` | missing | spec only | |
-| Glyph baking / audit tooling | done | `tools/glyph_audit.zig` (`zig build glyph-audit`), and the same logic in-process — the tool is an import of the app — behind `integrations.audit_glyphs` / `bake_ai_glyphs` / `bake_all_glyphs` / `bake_integration_glyphs` in `src/app/glyph_audit.zig` | the audit lands in a scratch pane with a toast; the three `bake_*` ids do the one bake this build has (the catalog → `<data root>/nerd-glyphs.tsv`) — Rust baked SVGs into a font, which is cut; `tests/e2e/glyph_audit.test` |
+| Glyph baking / audit tooling | done | `tools/glyph_audit.zig` (`zig build glyph-audit`), and the same logic in-process — the tool is an import of the app — behind `integrations.audit_glyphs` / `bake_ai_glyphs` / `bake_all_glyphs` / `bake_integration_glyphs` in `src/app/glyph_audit.zig` | the audit lands in a scratch pane with a toast; the three `bake_*` ids do the one bake this build has (the catalog → `<data root>/nerd-glyphs.tsv`) — Rust baked SVGs into a font, which is cut; `tests/e2e/glyph_audit.test`; the catalog is embedded (`data/root.zig`), so the audit works in any workspace |
+| Installed Nerd Font scan | done | `src/app/font_scan.zig`: the seek-based sfnt name-table reader (name ID 5's `Nerd Fonts X.Y.Z`, ID 16 / 1 for the family, `ttcf` / `OTTO`), the platform font dirs, `MNML_FONT_DIRS` | families grouped as Rust groups them (`X Nerd Font [Mono\|Propo]`, ` NF` / ` NFM` / ` NFP`, the NL marker); the scan runs on the `startup` hook |
+| FONTS section on the Marketplace tab | done | `src/ui/fonts_section.zig`, `.fonts` in `integrations_view.SectionProps`; `docs/ui-spec/zig-fonts-120x40.txt` | ` FONTS · latest Nerd Fonts <v>`, one row per family, the tick / yellow / muted version rule; hidden while a filter is typed or once scrolled, as Rust hides it; the rows are not list rows |
+| `↑ Update` chip | done | `font_scan.updateCommand` (the cask rule, macOS), `HitTarget.font_update`, `ConfirmPurpose.font_update` | painted only when behind and a command is known; the box runs the cask line in a pty pane below (the tools installer's path) or copies it |
+| Latest Nerd Fonts release, cached 24 h | done | `font_scan.fetchLatest` on the state's `Io.Group`, the `.fonts` event; `<data root>/cache/nerdfonts-latest.json`; `MNML_NERDFONTS_LATEST` | fetched only when a family is installed to compare; `MNML_MARKETPLACE_API` stubs it in the tests |
+| ghostty `font-codepoint-map` | done | `src/app/ghostty_config.zig` | the last rule wins; comma-separated ranges; `$XDG_CONFIG_HOME`, `~/.config`, the macOS app-support folder; `config-file` includes are not followed (Rust did not either) |
+| Startup tofu check + toast | done | `glyph_audit.tofuCheck` / `onStartup`; the check leads `integrations.audit_glyphs`'s pane | Rust's three verdicts over the config icons, the manifests' chips and the four core mnml-block glyphs; silent when clean; mnml-block refs stand down while no MnmlSymbols face is installed |
 | Glyph-builder SVG preview / font patching | cut | `cutRunner` toasts | |
 | Settings overlay `:settings` | done | `view.settings`, `src/app/settings.zig` | a row per manifest `settings[]` entry too |
 | Rows `▸ label: [active] / other *`, section headers | done | `src/ui/settings.zig` | |
@@ -771,5 +777,5 @@ line at the top of this page is today's.)*
 
 | note | claim | what was looked for | row stays |
 |---|---|---|---|
-| `misc` | Glyph baking / audit tooling — `done` | `tools/glyph_audit.zig` and `zig build glyph-audit` exist (bake + audit); but the ledger row is the command surface, and `integrations.audit_glyphs`, `bake_ai_glyphs`, `bake_all_glyphs`, `bake_integration_glyphs`, `edit_claude_glyph`, `edit_codex_glyph` and `menu.glyph_audit` have no runner (`zig build -Dpartial=false`) | `partial` |
+| `misc` | Glyph baking / audit tooling — `done` | `tools/glyph_audit.zig` and `zig build glyph-audit` exist (bake + audit); the ledger row is the command surface, and at the time `integrations.audit_glyphs`, `bake_ai_glyphs`, `bake_all_glyphs`, `bake_integration_glyphs`, `edit_claude_glyph`, `edit_codex_glyph` and `menu.glyph_audit` had no runner. Since `62e607e` all but the two `edit_*_glyph` ids run (`src/app/glyph_audit.zig`; those two sit in the no-runner list above), and the catalog is embedded, so the row and this line agree | `done` |
 | `files`, `search`, `ui-polish` | "Command ids: N — every one with a runner" | true of each track's own ids; 89 of the 901 spec ids still have no runner (the list at the top of this page's Remaining table is drawn from them) | the totals line above says 812 / 901 |
