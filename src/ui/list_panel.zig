@@ -3,7 +3,8 @@
 //! ` + New … ` action row (Rust's `action_button::primary` chip, a
 //! blank row on either side of it), a scrolling list of rows with a
 //! selection marker, a scrollbar when the list is longer
-//! than the panel, a kebab on the hovered row, and an empty state when
+//! than the panel (a cell of air kept between every row's text and the
+//! bar), a kebab on the hovered row, and an empty state when
 //! there is nothing to list. TODOS, NOTES, FINDINGS and SESSIONS are
 //! all this type with a different `Row` and `paintRow`; an item may be
 //! taller than a row (`Props.row_h` / `row_gap` — SESSIONS' four-row
@@ -147,7 +148,8 @@ pub fn ListPanel(comptime Row: type) type {
         };
 
         /// Paints one row's content into `r` (the cells after the
-        /// marker). The ground is already filled in `rowStyle`.
+        /// marker, ending a cell before the scrollbar when there is
+        /// one). The ground is already filled in `rowStyle`.
         pub const PaintRow = *const fn (ui: Ui, r: Rect, row: Row, selected: bool) void;
 
         pub const Props = struct {
@@ -297,9 +299,14 @@ pub fn ListPanel(comptime Row: type) type {
             const win = scrollWindow(&st.scroll, st.cursor, p.rows.len, per_page);
             st.visible = per_page;
             var list = rest;
+            // The cell of air between a row's text and the bar: the row
+            // (its ground, its hit) runs to the bar; the painter's content
+            // stops one cell short of it.
+            var air: u16 = 0;
             if (win.needs_bar and rest.w > marker_w + 1) {
                 const split = rest.splitRight(1);
                 list = split.left;
+                air = 1;
                 const owner: hit.Owner = if (p.pane) |id| .{ .pane = id } else .{ .panel = p.panel };
                 scrollbar.drawVertical(ui, split.rest, owner, p.rows.len, per_page, st.scroll);
             }
@@ -323,7 +330,10 @@ pub fn ListPanel(comptime Row: type) type {
                 }
                 const hovered = p.has_kebab and ui.hovered(row_rect);
                 if (hovered and content.w > kebab_w) {
+                    // The kebab's own trailing cell is the air.
                     content = content.splitRight(kebab_w).left;
+                } else if (content.w > air) {
+                    content = content.splitRight(air).left;
                 }
                 // The row's hit goes under the painter's own (a header's
                 // chips, a link): last painted wins.
@@ -541,6 +551,31 @@ test "header, filter, rows, scrollbar: the shape at the shipped width" {
     try testing.expectEqual(hit.PanelId.todos, f.hits.at(10, 1).?.filter_input);
     try testing.expect(f.bgEql(5, 2, f.theme.cursor_line));
     try testing.expect(f.bgEql(5, 3, f.theme.panel_bg));
+}
+
+test "a cell of air before the bar at the shipped width: long labels clip with the ellipsis a cell short of it, on every row, and the row's ground and hit still reach it" {
+    // `tree_width = 30` (Config's default) leaves the panel 26 cells:
+    // rail 3, border 1, the panel, the divider at 30.
+    var f = try Fixture.init(26, 8);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = try f.arena_state.allocator().alloc(Todo, 12);
+    for (rows, 0..) |*r, i| r.* = .{ .title = "a title long enough to overflow the row", .done = i % 2 == 0 };
+    _ = Todos.draw(&st, f.ui(), f.full(), props(rows));
+    try f.expectRow(2, "\u{258c}[x] a title long enoug… █");
+    try f.expectRow(3, " [ ] a title long enoug… █");
+    try f.expectRow(7, " [ ] a title long enoug… █");
+    try f.expectAirBeforeBar(2, 8, 25);
+    // The cursor row's ground runs up to the bar; the air cell is the row.
+    try testing.expect(f.bgEql(24, 2, f.theme.cursor_line));
+    try testing.expectEqual(@as(u32, 0), f.hits.at(24, 2).?.row.idx);
+    try testing.expectEqual(hit.Axis.v, f.hits.at(25, 2).?.scrollbar.axis);
+    // A kebab on the hovered row: its own trailing cell is the air.
+    f.hover = .{ .x = 5, .y = 3 };
+    _ = Todos.draw(&st, f.ui(), f.full(), props(rows));
+    try f.expectRow(3, " [ ] a title long eno… \u{22ef} █");
+    try f.expectAirBeforeBar(2, 8, 25);
 }
 
 test "the cursor scrolls the window both ways and the tail never goes blank" {

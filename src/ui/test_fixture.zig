@@ -112,6 +112,25 @@ pub fn fgEql(f: *Fixture, x: u16, y: u16, s: vaxis.Style) bool {
     return vaxis.Color.eql(f.style(x, y).fg, s.fg);
 }
 
+/// Every row from `y0` up to `y1` has the vertical bar's glyph in
+/// column `bar_x` and a blank in the cell before it — the cell of air
+/// every list keeps between its text and its scrollbar. Prints the
+/// offending row on failure.
+pub fn expectAirBeforeBar(f: *Fixture, y0: u16, y1: u16, bar_x: u16) !void {
+    var y = y0;
+    while (y < y1) : (y += 1) {
+        const bar = f.cell(bar_x, y).char.grapheme;
+        const before = f.cell(bar_x - 1, y).char.grapheme;
+        const bar_ok = std.mem.eql(u8, bar, "█") or std.mem.eql(u8, bar, "|") or std.mem.eql(u8, bar, "#");
+        const air_ok = std.mem.eql(u8, before, " ") or before.len == 0;
+        if (!bar_ok or !air_ok) {
+            var buf: [1024]u8 = undefined;
+            std.debug.print("row {d} is {s} (bar {s}, before it {s})\n", .{ y, f.row(y, &buf), bar, before });
+            return error.TestNoAirBeforeBar;
+        }
+    }
+}
+
 /// Dumps the screen — for a failing test's message.
 pub fn dump(f: *Fixture) void {
     const t = f.text() catch return;
