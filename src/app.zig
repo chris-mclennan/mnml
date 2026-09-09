@@ -2167,6 +2167,7 @@ pub const App = struct {
             .arena = self.frame.allocator(),
             .focus = self.focus,
             .ascii = self.cfg.ui.ascii_icons,
+            .triangle = self.cfg.ui.expand_indicator == .triangle,
         };
     }
 

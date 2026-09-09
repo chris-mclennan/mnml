@@ -21,6 +21,7 @@ arena_state: std.heap.ArenaAllocator,
 theme: Theme = Theme.default,
 ascii: bool = false,
 nerd_font: bool = true,
+triangle: bool = false,
 hover: ?struct { x: u16, y: u16 } = null,
 
 pub fn init(w: u16, h: u16) !Fixture {
@@ -44,6 +45,7 @@ pub fn ui(f: *Fixture) Ui {
         .hover = if (f.hover) |h| .{ .x = h.x, .y = h.y } else null,
         .ascii = f.ascii,
         .nerd_font = f.nerd_font,
+        .triangle = f.triangle,
     };
 }
 

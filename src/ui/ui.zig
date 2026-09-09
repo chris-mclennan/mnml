@@ -35,6 +35,7 @@ pub const empty_state = @import("empty_state.zig");
 pub const welcome = @import("welcome.zig");
 pub const header = @import("header.zig");
 pub const filter_input = @import("filter_input.zig");
+pub const expander = @import("expander.zig");
 pub const list_panel = @import("list_panel.zig");
 pub const ListPanel = list_panel.ListPanel;
 
