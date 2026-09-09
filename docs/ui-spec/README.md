@@ -57,6 +57,33 @@ run: esc 16, todos 36, editor ~14, status ~16, graph2 ~40 — the number
 to watch is the count of rows whose columns 4+ differ (esc 2, todos 12,
 status 0 at rest).
 
+*// changed 2026-09-08 (padding):* the tree's cursor row now carries
+the list panels' `▌` in its leading cell (column 4 on screen) — the
+one deliberate departure from Rust's tree, which keeps that cell
+blank — so every screen that shows the tree reads one row more:
+esc 2 → 3, editor 1 → 2 (status 1 → 1, todos 12 → 12, notes 13 → 12,
+findings 13 → 13 — the statusline's battery / clock chips flicker a
+row in and out between runs; the todos / notes / findings columns
+have no tree and no bar, so they did not move).
+
+## Scrollbars: the cell of air (2026-09-08)
+
+Text never touches a vertical scrollbar. Wherever a bar is painted —
+`ListPanel` (TODOS / NOTES / FINDINGS / SESSIONS / SCRIPTS / HTTP /
+DIAGNOSTICS / DEBUG), the tree, the outline, the git palette, the
+staging pane, the editor, the info box, the help overlay, the picker,
+the grep and ZON panes — the row's text, its clipped `…` and its
+right-aligned badge or count all stop one cell short of the bar's
+column, so there is always a blank cell between the last glyph and
+the bar (`a-long-name… █`, `13 █`, `1↑ 3↓ █`). The row's ground and
+its hit still run to the bar; a hovered row's kebab (` ⋯ `) and a
+header chip's own trailing pad are that cell. The Rust dumps keep the
+same air (`1 symbol         █`, `ctrl+k b █`); the one place Rust
+does not — the staging pane's hint row, clipped `⏎ di█` at 80×24 —
+now reads `⏎ d █` here. The editor's text column also ends a cell
+short of its bar (Rust keeps a pad beside its change strip); the
+gutter does not move.
+
 ## Overlays (2026-09-07)
 
 Each `rust-<name>-120x40.txt` below is the Rust screen after the
@@ -272,8 +299,8 @@ is never touched.
 - `zig-git-palette-80x24.txt` — the same at 80×24: the column is 12
   cells, the pill paints alone (no room for the chevrons), labels and
   names clip with `…` before the counts and the right-edge cells, the
-  list scrolls with the scrollbar in its last column, nothing
-  overflows.
+  list scrolls with the scrollbar in its last column and a cell of
+  air before it, nothing overflows.
 - `zig-git-palette-all-120x40.txt` — `steps-git-palette-all.jsonl`
   (the graph2 steps, then `git.palette_all`) on the `-all` layout: the
   seeded repo at `ws/alpha` beside `ws/beta` (on `dev`; a `main`, one
@@ -305,8 +332,9 @@ is at 58 differing lines, every hunk deliberate:
   (`▾ 󰉋 requests (1)` with the `+` at its edge, `demo.http` under it);
 - COOKIES — Zig's section, with its words (`No cookies yet — …`) and
   the RECENT ladder; Rust has none;
-- the scrollbar in the column's last cell — the list is longer than
-  the column, Rust simply stops painting (its `+ New request` /
+- the scrollbar in the column's last cell, a cell of air before it —
+  the list is longer than the column, Rust simply stops painting (its
+  `+ New request` /
   `↓ Paste curl…` / `↓ Import…` are below the cut on both, and reach
   with `G` here);
 - the empty words at Zig's two-cell pad and the `…` clip (Rust pads
