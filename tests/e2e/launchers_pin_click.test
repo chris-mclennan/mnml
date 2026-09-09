@@ -1,0 +1,35 @@
+# width: 120
+# env: PATH=${MNML_SHIMS}:${PATH}
+# The pinned activity-bar icon: `integrations.pin_to_activity_bar` on
+# the focused Installed row adds the launcher's id to
+# ui.activity_bar_pinned_integrations, and the rail paints its chip
+# after the sections — eleven sections two rows apart from row 2, so the
+# first pin sits on row 24. A click there fires the chip's command (the
+# htop shim in a pty pane); a right click opens the chip's menu.
+write launchers/htop.zon ".{ .id = \"htop\", .label = \"htop\", .chip = .{ .glyph_codepoint = \"F1D00\", .fallback = \"H\", .color = \"green\", .in_palette_bar = false }, .commands = .{ .{ .id = \"htop.open\", .title = \"htop: open\", .run = \":term htop\" } } }"
+command launcher.add_local
+type launchers/htop.zon
+key enter
+expect screen contains "installed htop"
+command integrations.show_installed
+command integrations.pin_to_activity_bar
+expect screen contains "htop: added to the activity bar"
+# The icon: a left click runs htop.open.
+click 1 24
+wait 400
+expect screen contains "htop (shim): pid"
+# The right click: the chip's menu.
+rightclick 1 24
+expect screen contains "Remove from activity bar"
+expect screen contains "Show on top bar"
+key esc
+expect screen lacks "Remove from activity bar"
+# Unpin and uninstall, so the size sweep (one data root, one home
+# config for every size) starts clean.
+command integrations.show_installed
+command integrations.unpin_from_activity_bar
+expect screen contains "htop: removed from the activity bar"
+key x
+expect screen contains "Remove htop?"
+key r
+expect screen contains "removed htop"

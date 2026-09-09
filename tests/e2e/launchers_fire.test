@@ -1,0 +1,45 @@
+# env: PATH=${MNML_SHIMS}:${PATH}
+# Firing a launcher: `launcher.add_local` installs a workspace .zon from
+# a prompt, and its command's `run` line (`:term htop`, the `{{tokens}}`
+# expanded) opens a pty pane below the editor running the htop on PATH —
+# here the corpus shim (tools/shims/htop), which prints one line. A
+# launcher whose program is not on PATH toasts the install hint instead
+# of opening a pane that dies.
+write launchers/htop.zon ".{ .id = \"htop\", .label = \"htop\", .description = \"Process viewer\", .chip = .{ .glyph_codepoint = \"F1D00\", .fallback = \"H\", .color = \"green\" }, .commands = .{ .{ .id = \"htop.open\", .title = \"htop: open\", .run = \":term htop {{workspace_name}}\" } } }"
+write launchers/nope.zon ".{ .id = \"nope\", .label = \"Nope\", .commands = .{ .{ .id = \"nope.open\", .title = \"Nope: open\", .run = \":term nosuchprog-xyz\" } } }"
+write a.txt "hello\n"
+open a.txt
+command launcher.add_local
+expect screen contains "Add launcher: path to its .zon manifest"
+type launchers/htop.zon
+key enter
+expect screen contains "installed htop"
+command launcher.add_local
+type launchers/nope.zon
+key enter
+expect screen contains "installed nope"
+# The launcher's command is registered and fires: the shim's line in a pane.
+command htop.open
+wait 400
+expect screen contains "htop (shim): pid"
+# Not on PATH: the hint, and no new pane.
+command nope.open
+expect screen contains "nosuchprog-xyz is not on PATH"
+# The Installed tab lists both as launchers: a chip glyph, no missing binary.
+command integrations.show_installed
+drag 30 5 60 5
+expect screen contains "Installed (2)"
+expect screen contains "htop.open"
+expect screen contains "nope.open"
+expect screen lacks "not installed"
+# Uninstall both, so the size sweep starts clean.
+key x
+expect screen contains "Remove htop?"
+key r
+expect screen contains "removed htop"
+# The confirm hands focus back to the pane; the section takes it again.
+command integrations.show_installed
+key x
+expect screen contains "Remove Nope?"
+key r
+expect screen contains "removed nope"
