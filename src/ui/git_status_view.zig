@@ -191,13 +191,15 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) void {
     const n = doc.unstaged.len + doc.staged.len;
     const sb_w: u16 = if (area.w >= min_scrollbar_width) 1 else 0;
     const body = Rect.init(area.x, area.y, area.w - sb_w, area.h);
+    // The text stops a cell short of the bar; a row's hit reaches it.
+    const text = Rect.init(body.x, body.y, body.w -| sb_w, body.h);
     const ls = lines(ui.arena, doc) catch return;
     const h: usize = area.h;
     if (n == 0) {
         // Rust paints the four rows from the top and no scrollbar.
         for (ls, 0..) |l, i| {
             if (i >= h) break;
-            paintLine(ui, pane, body.row(@intCast(i)), doc, l);
+            paintLine(ui, pane, text.row(@intCast(i)), doc, l);
         }
         return;
     }
@@ -209,7 +211,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) void {
         y += 1;
     }) {
         const r = body.row(y);
-        paintLine(ui, pane, r, doc, ls[i]);
+        paintLine(ui, pane, text.row(y), doc, ls[i]);
         switch (ls[i]) {
             .entry => |e| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(e.flat) } }),
             else => {},
@@ -414,7 +416,7 @@ test "draw at 49 wide (rust-git-status-80x24) clips the hint row at the edge and
     draw(f.ui(), 1, Rect.init(0, 0, 49, 8), fixtureDoc(), &scroll);
     const arena = f.arena_state.allocator();
     try f.expectRow(0, try withBar(arena, "  on main   2 unstaged \u{B7} 0 staged", 49));
-    try f.expectRow(1, try withBar(arena, "  s/u stage\u{B7}unstage  space toggle  a/A all  \u{23CE} di", 49));
+    try f.expectRow(1, try withBar(arena, "  s/u stage\u{B7}unstage  space toggle  a/A all  \u{23CE} d", 49));
     try f.expectRow(3, try withBar(arena, "  \u{25B6} ? .gitignore", 49));
     // The clipped `⏎ di` is still the diff hit; the words past the
     // edge are not registered.
