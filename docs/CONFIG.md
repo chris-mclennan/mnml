@@ -191,9 +191,12 @@ otherwise. Copy what you need; leave the rest out.
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
         .terminal_glyph_svg = "",
         .top_bar_cluster_mode = .auto, // .auto | .expanded | .compact
-        .tab_bar_ai_icon = .claude_code, // .none | .claude_code | .codex | .both
+        // .none hides the AI chips; otherwise an enabled integration icon
+        // shows its chip, and a CLI found on PATH shows its chip when named
+        // here (.claude_code | .codex | .both). view.tab_bar_ai_* set it.
+        .tab_bar_ai_icon = .claude_code,
         .ai_layout_mode = .grid, // .grid | .tabs
-        .ai_chip_use_mnml_glyphs = false,
+        .ai_chip_use_mnml_glyphs = false, // deprecated, read by nothing: the chips always paint mnml's baked marks
         .auto_show_sessions_on_ai_activate = true,
         .git_section_default_expanded = false,
         .integrations_section_default_expanded = false,
@@ -606,6 +609,20 @@ Enter writes only what was touched — `editor.input_style`,
 `ai.inline_suggestions` — plus `first_launch_complete = true`, to the
 home config. Esc writes nothing and asks again next launch;
 `first_launch.show` reopens it any time.
+
+Space is the install key and writes no config. On the Nerd Font section
+with "boxes" answered it runs this OS's install of Symbols Nerd Font
+Mono (`brew install --cask font-symbols-only-nerd-font`; on Linux the
+NerdFontsSymbolsOnly zip into `~/.local/share/fonts/nerd-symbols` and
+`fc-cache -f`; on Windows PowerShell into the per-user font directory
+with an HKCU registration, no admin); on Claude Code + Codex it runs
+the vendors' installers for whichever CLI is missing; on the `code`
+shim (macOS) it links the VS Code bundle's `code` into `/usr/local/bin`
+under sudo. Each runs in an `install: …` pane; the wizard closes for
+the pane, keeps its answers, and comes back when the pane ends — with
+the rows re-detected, and, for the font, a toast saying how to point
+your terminal at it (keyed off `TERM_PROGRAM`) that appears only when
+the pane exited 0.
 
 ## Coming from 0.2.x (TOML)
 

@@ -102,6 +102,11 @@ matching `steps-<name>.jsonl`, on the fixture workspace (which now has
 - `discovery` — `view.discovery`: the click-discovery panel.
 - `close` — `src/main.rs` open, type `x`, `ctrl+w`: the unsaved-changes
   prompt (the buffer is never saved; the quit discards it).
+- `wizard` (Zig-only, `zig-wizard-120x40.txt` via `tools/zig-spec.sh`,
+  run with `PATH=/usr/bin:/bin` so no CLI is found) — `first_launch.show`,
+  then `n`: the first-launch wizard with "boxes" answered, so the Nerd
+  Font install row and the macOS note show; sections 4–6 with the
+  not-installed badges; section 7 is below the fold at 40 rows.
 
 Every dump with `src/main.rs` open (`goto`, `close`, `editor`, `diff`,
 `delete`, `rename`, `outline`) also shows rust-analyzer started on it:

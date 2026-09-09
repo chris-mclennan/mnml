@@ -29,7 +29,7 @@ line), not by hand.
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
 | Git | 46 | 1 | 2 | 0 | 49 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
-| AI | 24 | 0 | 1 | 0 | 25 |
+| AI | 26 | 0 | 1 | 0 | 27 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
 | HTTP request client | 48 | 0 | 1 | 0 | 49 |
@@ -37,10 +37,10 @@ line), not by hand.
 | Debugging (DAP) | 25 | 0 | 0 | 0 | 25 |
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
 | UI & theming | 75 | 1 | 3 | 1 | 80 |
-| Workspace trust | 10 | 0 | 0 | 0 | 10 |
+| Workspace trust | 11 | 0 | 0 | 0 | 11 |
 | Headless, IPC & extensibility | 35 | 2 | 2 | 2 | 41 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **507** | **4** | **9** | **3** | **523** |
+| **total** | **510** | **4** | **9** | **3** | **526** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -48,7 +48,7 @@ table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
 and bridge v2 — the last two beyond the Rust list.
 
-Ids: 933 in `src/commands/specs.zig`; 870 have runners (34 of them the deliberate `cutRunner` / `notInBuild` stubs), 63 have none. `zig build -Dpartial=false` stops at the first of them (`app.reset_to_defaults`); the counts are the runner tables `src/core/command.zig` merges, diffed against the spec ids. The 63 are listed under Remaining — none of them is the only door to a row marked `done` above.
+Ids: 1031 in `src/commands/specs.zig`; 975 have runners (34 of them the deliberate `cutRunner` / `notInBuild` stubs), 56 have none. `zig build -Dpartial=false` stops at the first of them (`app.reset_to_defaults`); the counts are the runner tables `src/core/command.zig` merges, diffed against the spec ids. The 56 are listed under Remaining — none of them is the only door to a row marked `done` above.
 
 ## Landed since the first ledger
 
@@ -98,6 +98,7 @@ source on 2026-09-07; the rows they touched carry the new pointers.
 | `git-status` | 2026-09-07 | the staging pane is Rust's `git_status_view.rs` cell for cell; the provider badge and the grouped rail rows went with the old pane |
 | `section-side` | 2026-09-07 | every section has a side (`src/app/side.zig`); two columns replace the sidebar + right-panel slot; `view.move_section_left` / `_right`, `:sidebar`, `Ctrl-W H` / `L`; `ui.sidebar_side` / `ui.section_side`; `ui.right_panel_width` back to Rust's 32 |
 | `debug-ui` | 2026-09-07 | the DEBUG section, the step toolbar and its strip, the Debug Console (`Pane.dap_repl` and `ui/dap_repl_view.zig` are gone), gutter breakpoint editing, inline and hover values, nvim-dap chords |
+| `wizard` | 2026-09-08 | the first-launch wizard's installs (`src/app/first_launch_install.zig`): Space runs the Nerd Font install (brew cask / zip + fc-cache / PowerShell per OS), the vendors' `curl \| sh` lines for a missing `claude` / `codex`, the `code` shim symlink — each in an `install: …` pane whose exit 0 toasts the terminal hint and re-detects; the AI chips show a CLI found on PATH; `view.tab_bar_ai_*` / `view.cluster_mode_*` got runners; `ai.launch_profiles` / `default_profile` are exec-bearing; `zig-wizard-120x40.txt` |
 | `http-hooks` | 2026-09-07 | `docs/research/http-vs-posting.md` §3 rows 1–2: the `http_request` / `http_response` hooks with `mnml.http.set_var` / `send` (beyond the Rust list), and the Headers tab as a key / value table whose name and value cells complete — from the last response first, the workspace's `.http` files next, the bundled table last |
 
 ## Remaining — what is still `missing` or `partial`, with an estimate
@@ -111,7 +112,7 @@ the tree. Nothing left is larger than M.
 | The palette bar's green `+` (→ Marketplace) and the row-0 stress copy: the chrome row is Rust's `rust-120x40.txt` cell for cell now and shows neither; `integrations.show_marketplace` is reached from the `+` menu's Integrations submenu and `M` in the integrations pane, the stress meter from the statusline | S | UI & theming |
 | The status pane's clickable provider badge: the glyph paints in the statusline's branch and PR chips (`providerGlyph` / `hostTag` in `src/app/statusline.zig`), but no badge is a click target for `git.browse_commit` since the pane was re-cut to the Rust spec | S | Git |
 | Git mode residue (`git-mode` notes): stashes and tags sections in the palette, the `+N more` branch cap, the hash-typing header chip, the AI message streaming into the commit box | S | Git |
-| 63 spec ids without a runner (`zig build -Dpartial=false` refuses the build): `app.choose_data_layout` `app.reset_to_defaults` `bookmarks.open` `coverage.chip_show_*` (4) `debug.toggle_click_inspector` `editor.input_mode_menu` `editor.insert_alt_filename` `editor.insert_last_inserted` `editor.insert_last_search` `editor.keyword_complete` / `_back` `editor.repeat_last_substitute` `integrations.audit_shadowed_binaries` `integrations.check_updates_now` `integrations.configure_picker` `integrations.diag` `integrations.edit_claude_glyph` / `edit_codex_glyph` `integrations.fire_auto_updates_now` `integrations.icon_picker` `keys.doctor` `launcher.add_local` `layout.merge_to_tabs` / `spread_to_splits` `markdown.cycle_engine` `markdown.link_check` `mounts.refresh` `noop` `palette` `search.toggle_case_sensitive` / `toggle_whole_word` `setup.install_to_path` `view.ai_layout_grid` / `_tabs` `view.cluster_mode_*` (3) `view.commands_reference` `view.git_commit_focus` `view.host_active_in_bottom_panel` `view.manage_workspaces` `view.move_to_new_tab` `view.open_default_workspace` `view.remove_workspace` `view.reveal_active` `view.reveal_in_tree` `view.tab_bar_ai_*` (4) `view.toggle_bottom_panel` `view.toggle_integrations_section` `view.toggle_picker_position` `view.toggle_tree_section` `view.toggle_zoom` `view.workspace_menu` `vim.dot_repeat` `vim.go_to_last_insert` `vim.macro_replay` / `macro_toggle`. Several are Rust ids whose feature lives under another door here (the `view.*_mode_*` setters are Settings rows; the `vim.*` verbs are the handler's); each still needs a runner or a `cutRunner` before `-Dpartial` can go | M | Headless, IPC & extensibility |
+| 56 spec ids without a runner (`zig build -Dpartial=false` refuses the build): `app.choose_data_layout` `app.reset_to_defaults` `bookmarks.open` `coverage.chip_show_*` (4) `debug.toggle_click_inspector` `editor.input_mode_menu` `editor.insert_alt_filename` `editor.insert_last_inserted` `editor.insert_last_search` `editor.keyword_complete` / `_back` `editor.repeat_last_substitute` `integrations.audit_shadowed_binaries` `integrations.check_updates_now` `integrations.configure_picker` `integrations.diag` `integrations.edit_claude_glyph` / `edit_codex_glyph` `integrations.fire_auto_updates_now` `integrations.icon_picker` `keys.doctor` `launcher.add_local` `layout.merge_to_tabs` / `spread_to_splits` `markdown.cycle_engine` `markdown.link_check` `mounts.refresh` `noop` `palette` `search.toggle_case_sensitive` / `toggle_whole_word` `setup.install_to_path` `view.ai_layout_grid` / `_tabs` `view.commands_reference` `view.git_commit_focus` `view.host_active_in_bottom_panel` `view.manage_workspaces` `view.move_to_new_tab` `view.open_default_workspace` `view.remove_workspace` `view.reveal_active` `view.reveal_in_tree` `view.toggle_bottom_panel` `view.toggle_integrations_section` `view.toggle_picker_position` `view.toggle_tree_section` `view.toggle_zoom` `view.workspace_menu` `vim.dot_repeat` `vim.go_to_last_insert` `vim.macro_replay` / `macro_toggle`. Several are Rust ids whose feature lives under another door here (the `vim.*` verbs are the handler's); each still needs a runner or a `cutRunner` before `-Dpartial` can go | M | Headless, IPC & extensibility |
 
 Everything else the first Remaining list named landed on the `remaining`
 branch (2026-09-05; the corpus was 351/352 then — the one failure asserted TOML; it asserts ZON since 2026-09-07 and the corpus is 393/393): MRU buffers, pins and `tab.reopen`; the symbol,
@@ -415,12 +416,14 @@ trust sink. Each row names its file and its test.
 | Config knobs — backend / model / prompt / cap | done | `Config.Ai`, `ai.show_config` | |
 | Ghost text — API backend | done | `src/ai/suggest.zig`, `drawGhost` in `render.zig` | |
 | Ghost text — local FIM model | cut | `ai.zig` header; `suggest_backend = local` toasts the migration note | |
-| Opt-in via the first-launch wizard | done | `src/app/first_launch.zig` | |
+| Opt-in via the first-launch wizard | done | `src/app/first_launch.zig` (the AI ghost-text section), `src/app/first_launch_install.zig` (the Claude Code + Codex section's Space: the vendors' `curl … \| sh` installers — `irm \| iex` on Windows — for whichever is missing, in an `install: ai clis` pane; the rows re-detect on its exit and the wizard returns with them) | the rows are Rust's badge rows; a line says the top-right chip appears when the CLI is found; `tests/e2e/first_launch_ai_cli_install.test` |
 | Opt-in via `ai.setup_suggestions` | done | `ai.zig` | |
 | Opt-in via Settings → AI | done | `Section.ai` in `src/app/settings.zig` — ghost text, ghost-text backend (a virtual row over `ai.extra` + the setup picker's override), Claude / Codex backend (`ai.routing.*.backend`, optional enums: `unset` first), Claude meter | the model stays `ai.model` in the config — free text, and v1 rows are discrete choices (the family idiom); `tests/e2e/settings_ai_section.test` |
 | Secret-bearing files never sent | done | `isSecretBearing` in `suggest.zig` | |
 | Context-aware chat | done | `chatCmd` in `ai.zig` | |
-| Launch profiles | done | `src/app/launch_profiles.zig`, `Config.Ai.launch_profiles` / `default_profile` | the chip menu's *New session:* / *Default:* lanes; the `mnml-ai-<name>` shim (`writeShim`) |
+| Launch profiles | done | `src/app/launch_profiles.zig`, `Config.Ai.launch_profiles` / `default_profile` | the chip menu's *New session:* / *Default:* lanes; the `mnml-ai-<name>` shim (`writeShim`); both keys are exec-bearing (`Sink.launch_profile`), as Rust's `pty_pane.rs` refused an untrusted workspace's launcher |
+| AI chips when the CLI is found | done (Zig-only rule) | `aiChips` / `aiChipShown` in `src/app/render.zig`, `cliOnPath` (a PATH walk cached ten seconds on `App.cli_probe`) in `first_launch_install.zig` | Rust reads the icon's `enabled` only (`bufferline.rs`), so a fresh install shows no chip until the integrations pane toggles it; here an enabled icon shows under any key but `.none`, and a CLI found on PATH shows its chip when `ui.tab_bar_ai_icon` names it (the default `.claude_code` shows a found `claude`; `.both` a found `codex` too); `view.tab_bar_ai_*` and `view.cluster_mode_*` set and persist their key |
+| `ui.ai_chip_use_mnml_glyphs` | done | the field's doc in `Config.zig`; `aiChips` paints U+F1E00 / U+F1E01 on both arms | deprecated as Rust's `theme.rs` has it (both arms resolve to the baked pair); accepted so a 0.2.x config loads |
 | Legacy "Set launcher script…" | done | the last row of the AI chip menu (`legacy_label` / `openProfilePicker` in `src/app/launch_profiles.zig`) | opens the launch-profile picker (Enter starts a session) and toasts that launcher scripts are profiles now |
 | Sessions table (was the Agents dashboard), spend report | done | `src/app/sessions_table.zig`, `src/ui/sessions_table_view.zig`, `src/app/spend.zig`; `sessions.table` / `ai.dashboard` | one row model (`sessions.Item`) behind the SESSIONS cards and the table: grouped by cwd, this workspace first; state / where / text filters; ended past a day hidden until the `ended:` chip; space ticks, K kills the batch; the summary block |
 | Cloud runs as SESSIONS rows | done | `src/app/cloud_agents.zig`, `Item.where` / `CloudInfo` in `src/sessions.zig` | scanned when `[cloud_agents]` is configured; Open run / Tail log / Cancel run… and the CloudWatch / PR links on the row menu; the two wizards under `+ New session` |
@@ -649,7 +652,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Hover tooltips on chips | done | `describe` in `discovery.zig`, `src/ui/tooltip.zig` | `ui.hover_tooltip` popup and the `ui.hover_help` rail box; wake on motion only |
 | Right-click menus throughout | done | `src/app/context_menus.zig` — editor / tab / tree / mode / `+` / request / todos / stress / branch / diagnostics / bell / toast | |
 | Welcome pane (no pane open) | done | `src/ui/welcome.zig`, the `// ── welcome ──` block in `src/app/render.zig` | logo · workspace · branch · Recent Files · Shortcuts · version; rows 10–28 of `docs/ui-spec/rust-120x40.txt` match |
-| First-launch welcome | done | `src/app/first_launch.zig` | |
+| First-launch welcome | done | `src/app/first_launch.zig`, `src/ui/wizard.zig`, `src/app/first_launch_install.zig` | seven sections; Space installs — the Nerd Font once "boxes" is answered (`brew install --cask font-symbols-only-nerd-font` / the NerdFontsSymbolsOnly zip into `~/.local/share/fonts` + `fc-cache -f` / PowerShell into the per-user font dir with an HKCU registration; a toast at nerdfonts.com elsewhere), the AI CLIs, the `code` shim (`sudo ln -sf` of the VS Code bundle's `code` into `/usr/local/bin`, macOS) — in an `install: …` pane; the wizard closes for it keeping its answers and returns on the pane's exit; the terminal hint (ghostty / iTerm2 / Terminal.app / WezTerm / Windows Terminal, off `TERM_PROGRAM`) toasts on exit 0 only; `docs/ui-spec/zig-wizard-120x40.txt`; `first_launch_nerd_font_install.test`. Not carried: Rust's Keyboard-section Space (the ghostty `macos-option-as-alt` auto-fix) — the probes tick, no fix is written |
 | About & Settings overlays | done | `view.about` / `view.welcome`, `src/app/settings.zig` | |
 | Markdown live preview | done | `src/app/md_preview.zig`, `src/ui/md_view.zig` | |
 | Inline images in the preview | done | `Placement` / `renderWith` in `md_view.zig`, `ui.md_image_rows` | a standalone `![alt](src)` reserves rows; text fallback headless |
@@ -689,7 +692,8 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
-| Exec-bearing keys gated before use | done | `src/config/trust.zig` (`exec_bearing`, `strip`, `claims`) | 9 sinks, `init.lua` among them |
+| Exec-bearing keys gated before use | done | `src/config/trust.zig` (`exec_bearing`, `strip`, `claims`) | 11 sinks, `init.lua` among them |
+| AI launch profiles gated | done | the `launch_profile` sink in `src/config/trust.zig`: `ai.launch_profiles[]` (a whole-replace list in a layer) and `ai.default_profile` stripped from an untrusted layer, each profile's binary + args a claim | Rust's `launcher_from_an_untrusted_workspace_is_ignored` (`pty_pane.rs`) as a Zig test in `launch_profiles.zig`: an untrusted workspace naming a profile binary is not spawnable by name and the default stays the built-in |
 | `.mnml/integrations/*` manifests gated | done | the `workspace_manifests` sink in `src/config/trust.zig` (`Facts.manifests` via `manifestNames`, one claim per file); the scan gate in `integrations.refresh`; `reloadConfig` re-scans on the grant | quiet like every other stripped sink; the dialog lists `integration <name> — runs .mnml/integrations/<name>.zon` |
 | Quiet by default | done | `promptIfNeeded` in `src/app/trust.zig` | |
 | Dialog shows the commands, "Don't trust" focused | done | `src/app/trust.zig`, `Claim.format` | |

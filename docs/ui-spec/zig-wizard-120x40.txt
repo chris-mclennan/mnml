@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /pri…  ╭ First-launch setup ──────────────────────────────────────────────────────────────────╮            
+▌ │     .mnml│▸ ── 1 · Nerd Font ──                                                                 │
+   │       ipc│  Sample glyphs:   ▸   󰈙   󰅖   ●                                                      │
+ 󰍉 │      prog.│  ( ) Render as icons — Nerd Font detected                                            │
+   │            │  (•) Render as boxes — no Nerd Font                                                  │
+ 󰊢 │         󰐙 A│  Space — install Symbols Nerd Font Mono for this OS:                                 │
+   │            │    brew install --cask font-symbols-only-nerd-font                                   │
+  │            │  macOS 26: use this — dragging the .ttf into Font Book looks like it works,          │
+   │            │  but CoreText silently skips unsigned Nerd Fonts. The cask registers.                │
+ 󰐱 │            │                                                                                      │
+   │            │  ── 2 · Keyboard ──                                                                  │
+ 󰎒 │            │  ·  Ctrl+→        word right                                                         │
+   │            │  ·  Ctrl+←        word left                                                          │
+  │            │  ·  Option/Alt+→  word right (macOS Option)                                          │
+   │            │  ·  Option/Alt+←  word left (macOS Option)                                           │
+  │            │  Press each chord; a tick means it reached mnml.                                     │
+   │            │                                                                                      │
+  │            │  ── 3 · Input style ──                                                               │
+   │            │  (•) standard — VS Code keys, modeless                                               │
+ 󱘣 │            │  ( ) vim — Neovim + NvChad chords                                                    │
+   │            │                                                                                      │
+ 󰢱 │            │  ── 4 · Claude Code + Codex ──                                                       │
+   │            │  Claude Code CLI (`claude`)    [ not installed — Space to install ]                  │
+   │            │  Codex CLI (`codex`)           [ not installed — Space to install ]                  │
+   │            │  Space runs the missing one's installer in a pane.                                   │
+   │            │  The chip in the top-right appears when the CLI is found.                            │
+   │            │                                                                                      │
+   │            │  ── 5 · AI billing preference ──                                                     │
+   │            │    Claude Code:  [Auto]   Sub    API    Off                                          │
+   │────────────│    Codex:        [Auto]   Sub    API    Off                                          │
+   │ Sidebar    │  Auto follows your login · Sub: the subscription · API: the key · Tab switches rows  │
+   │            │                                                                                      │
+   │ Arrows or j│  ── 6 · AI ghost-text ──                                                             │
+   │ Enter opens│  (•) On — inline suggestions as you type                                             │
+   │ selection. │  ( ) Off                                                                             │
+  │ opens the p│                                                                                      │
+   │            │ [↑↓] section · [←→] choose · [Space] install · [Enter] Finish · [Esc] Ask me later   │
+ TREE  [no file╰──────────────────────────────────────────────────────────────────────────────────────╯3:19  ws   —
+
