@@ -1,0 +1,30 @@
+# The wizard's Nerd Font install. Answering "boxes" (n) shows the
+# install row; Space runs this OS's line in an `install: nerd font`
+# pane (the wizard closes for it, persisting nothing) and the terminal
+# hint toasts only once that pane exits 0 — then the wizard is back on
+# the section with the answer kept. The tools the line reaches are the
+# corpus shims: brew on macOS; curl / unzip / fc-cache on Linux, under
+# a HOME inside the workspace so nothing lands in the real font dir;
+# MNML_SHIM_SLEEP keeps the pane alive long enough to be seen. The
+# hint's body (font-family, the codepoint map) is pinned by the unit
+# test in first_launch_install.zig — a toast clips before it.
+# env: PATH=${MNML_SHIMS}:${PATH}
+# env: MNML_SHIM_SLEEP=1
+# env: HOME=${MNML_E2E_WORKSPACE}
+# env: TERM_PROGRAM=ghostty
+command first_launch.show
+expect screen contains "First-launch setup"
+expect screen lacks "Space — install Symbols Nerd Font Mono"
+key n
+expect screen contains "Render as boxes"
+expect screen contains "Space — install Symbols Nerd Font Mono"
+key space
+expect screen lacks "First-launch setup"
+expect screen contains "install: nerd font"
+expect screen contains "watch the `install: nerd font` pane"
+# exit 0: the ghostty hint, and the wizard returns
+expect screen contains "Symbols Nerd Font Mono installed"
+expect screen contains "First-launch setup"
+expect screen contains "Space — install Symbols Nerd Font Mono"
+key esc
+expect screen lacks "First-launch setup"

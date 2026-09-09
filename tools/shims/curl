@@ -1,0 +1,43 @@
+#!/bin/sh
+# tools/shims/curl — the `curl` the .test corpus sees. Two shapes:
+#
+#   curl -fsSL URL -o FILE   creates an empty FILE (the Nerd Font zip on
+#                            Linux; the unzip / fc-cache shims take it
+#                            from there)
+#   curl -fsSL URL           prints an "installer" script for the vendor
+#                            in URL (claude.ai → claude, codex → codex):
+#                            it drops a do-nothing binary of that name
+#                            into $MNML_FAKE_BIN when that is set and
+#                            says so — piped to sh / bash by the
+#                            wizard's AI CLI install line.
+# `MNML_SHIM_SLEEP=<secs>` keeps the process alive that long first, so a
+# script can see the pane before it exits.
+[ -n "${MNML_SHIM_SLEEP:-}" ] && sleep "$MNML_SHIM_SLEEP"
+out=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift ;;
+    -*) ;;
+    *) url=$1 ;;
+  esac
+  shift
+done
+if [ -n "$out" ]; then
+  : > "$out"
+  echo "curl (shim): fetched $url -> $out"
+  exit 0
+fi
+case "$url" in
+  *claude.ai*) name=claude ;;
+  *codex*) name=codex ;;
+  *) name=tool ;;
+esac
+cat <<EOS
+echo "fake installer for $name"
+if [ -n "\$MNML_FAKE_BIN" ]; then
+  mkdir -p "\$MNML_FAKE_BIN"
+  printf '#!/bin/sh\nexit 0\n' > "\$MNML_FAKE_BIN/$name"
+  chmod +x "\$MNML_FAKE_BIN/$name"
+  echo "installed $name into \$MNML_FAKE_BIN"
+fi
+EOS
