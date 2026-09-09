@@ -1,5 +1,5 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS            │ 󰐕                                                                                   
+   │ INTEGRATIONS            │ 󰐕                                                                            󱸀      
   │ Inst (0) Mkt (0)         │
    │  󰍉 / filter        A-Z ▾ │
  󰍉 │                          │
@@ -26,7 +26,7 @@
    │                          │                                    ^B     toggle tree
    │                          │                                        ^Q     quit
    │                          │
-   │                          │                              mnml 0.3.0-dev+gc6620b5-dirty
+   │                          │                                 mnml 0.3.0-dev+gcffb814
    │                          │
    │──────────────────────────│
    │ Integrations           ⋮ │
@@ -36,5 +36,5 @@
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    23:11  ws   —
+ TREE  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    02:06  ws   —
 

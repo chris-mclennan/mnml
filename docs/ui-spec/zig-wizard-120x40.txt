@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /pri…  ╭ First-launch setup ──────────────────────────────────────────────────────────────────╮            
-▌ │     .mnml│▸ ── 1 · Nerd Font ──                                                                 │
+▌ │▌    .mnml│▸ ── 1 · Nerd Font ──                                                                 │
    │       ipc│  Sample glyphs:   ▸   󰈙   󰅖   ●                                                      │
  󰍉 │      prog.│  ( ) Render as icons — Nerd Font detected                                            │
    │            │  (•) Render as boxes — no Nerd Font                                                  │
@@ -36,5 +36,5 @@
    │ selection. │  ( ) Off                                                                             │
   │ opens the p│                                                                                      │
    │            │ [↑↓] section · [←→] choose · [Space] install · [Enter] Finish · [Esc] Ask me later   │
- TREE  [no file╰──────────────────────────────────────────────────────────────────────────────────────╯3:19  ws   —
+ TREE  [no file╰──────────────────────────────────────────────────────────────────────────────────────╯2:06  ws   —
 

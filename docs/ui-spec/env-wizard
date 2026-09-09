@@ -1,0 +1,3 @@
+# The wizard dump must not find a Claude or Codex CLI on the author's PATH:
+# the install rows read "not installed" on every machine.
+PATH=/usr/bin:/bin
