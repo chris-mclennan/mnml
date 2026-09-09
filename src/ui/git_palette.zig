@@ -63,6 +63,7 @@ const Theme = @import("theme.zig");
 const chip = @import("chip.zig");
 const header = @import("header.zig");
 const bufferline = @import("bufferline.zig");
+const expander = @import("expander.zig");
 const filter_input = @import("filter_input.zig");
 const list_panel = @import("list_panel.zig");
 const scrollbar = @import("scrollbar.zig");
@@ -162,12 +163,9 @@ pub const Painted = struct {
 
 // ── glyphs ──
 
+/// The pill's dropdown mark — not an expander (those are `expander.zig`'s).
 pub const repo_chevron_nerd = "\u{F0140}"; // md-chevron_down
 pub const repo_chevron_ascii = "v";
-pub const chevron_open_nerd = "\u{F0140}"; // md-chevron_down
-pub const chevron_open_ascii = "v";
-pub const chevron_closed_nerd = "\u{F0142}"; // md-chevron_right
-pub const chevron_closed_ascii = ">";
 pub const local_nerd = "\u{F0322}"; // md-laptop
 pub const local_ascii = "%";
 pub const remote_nerd = "\u{F015F}"; // md-cloud
@@ -398,8 +396,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
             },
             .section => |s| {
                 x += 1;
-                x += ui.putStr(x, y, right_x -| x, g(ui, if (s.collapsed) chevron_closed_nerd else chevron_open_nerd, if (s.collapsed) chevron_closed_ascii else chevron_open_ascii), muted);
-                x += ui.putStr(x, y, right_x -| x, " ", ground);
+                x += ui.putStr(x, y, right_x -| x, expander.slot(ui, !s.collapsed), expander.style(ui, ground));
                 x += ui.putStr(x, y, right_x -| x, sectionGlyph(ui, s.s), muted);
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
                 var ls = muted;
@@ -479,6 +476,11 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
+/// The pill row of the spec: the name, the dropdown mark, the tab
+/// strip's two arrows after a cell of air (none at 20 cells).
+const pill_ws = "  ws " ++ repo_chevron_nerd ++ "   " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
+const pill_all = "  All repos " ++ repo_chevron_nerd ++ "   " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
+const pill_all_narrow = "  All repos " ++ repo_chevron_nerd ++ "  " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
 
 /// The panel of the doc comment: two locals, one remote with three
 /// branches, two worktrees (one locked, one dirty), a stash, two tags.
@@ -519,28 +521,28 @@ test "the spec's column at 26 cells: the caps header with its refresh chip, the 
     try f.expectRow(0, " GIT                    \u{eb37}");
     try f.expectRow(1, "  \u{F0349} / filter");
     try f.expectRow(2, "");
-    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try f.expectRow(3, pill_ws);
     try f.expectRow(4, " Viewing 8");
     try f.expectRow(5, "");
     // The cursor rests on the first row: its muted marker in the gutter.
-    try f.expectRow(6, "\u{258c}\u{F0140} \u{F0322} LOCAL              2");
+    try f.expectRow(6, "\u{258c}\u{F47C} \u{F0322} LOCAL              2");
     try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
     try f.expectRow(8, "  \u{F062C} feature");
     try f.expectRow(9, "");
-    try f.expectRow(10, " \u{F0140} \u{F015F} REMOTE             3");
+    try f.expectRow(10, " \u{F47C} \u{F015F} REMOTE             3");
     try f.expectRow(11, "  \u{F02A4} origin");
     try f.expectRow(12, "    \u{F062C} main");
     try f.expectRow(13, "    \u{F062C} feature");
     try f.expectRow(14, "    \u{F062C} hotfix");
     try f.expectRow(15, "");
-    try f.expectRow(16, " \u{F0140} \u{F0405} WORKTREES          2");
+    try f.expectRow(16, " \u{F47C} \u{F0405} WORKTREES          2");
     try f.expectRow(17, "\u{F012C} \u{F02DC} ws              1\u{2191} 3\u{2193}");
     try f.expectRow(18, "\u{F033E} \u{F0405} fix (wt-fix)        \u{25CF}");
     try f.expectRow(19, "");
-    try f.expectRow(20, " \u{F0140} \u{F03D7} STASHES            1");
+    try f.expectRow(20, " \u{F47C} \u{F03D7} STASHES            1");
     try f.expectRow(21, "  ab12cd3 On main: half \u{2026}");
     try f.expectRow(22, "");
-    try f.expectRow(23, " \u{F0142} \u{F04FB} TAGS               2");
+    try f.expectRow(23, " \u{F460} \u{F04FB} TAGS               2");
     try f.expectRow(24, "");
     // Hits: the header's chip is the `.git` refresh, the filter, the
     // pill over its cells with the chevrons dim and inert at one repo
@@ -584,7 +586,7 @@ test "the chevrons: lit and clickable with two repos (prev, next), dim and inert
     var f = try Fixture.init(26, 8);
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .repo_count = 2 });
-    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try f.expectRow(3, pill_ws);
     try testing.expectEqual(Part.repo_prev, f.hits.at(8, 3).?.git_palette);
     try testing.expectEqual(Part.repo_prev, f.hits.at(10, 3).?.git_palette);
     try testing.expectEqual(Part.repo_next, f.hits.at(11, 3).?.git_palette);
@@ -597,7 +599,7 @@ test "the chevrons: lit and clickable with two repos (prev, next), dim and inert
     var one = try Fixture.init(26, 8);
     defer one.deinit();
     _ = draw(one.ui(), one.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .repo_count = 1 });
-    try one.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try one.expectRow(3, pill_ws);
     try testing.expect(one.hits.at(9, 3) == null);
     try testing.expect(one.hits.at(12, 3) == null);
     try testing.expect(one.style(9, 3).dim);
@@ -627,8 +629,8 @@ test "all repos: a muted sub-header per repo under each section, the rows one le
         .gap,
     };
     _ = draw(f.ui(), f.full(), .{ .rows = &grouped, .repo = "All repos", .viewing = 3, .repo_count = 2, .grouped = true, .cursor = 2 });
-    try f.expectRow(3, "  All repos \u{F0140}   \u{F0141}  \u{F0142}");
-    try f.expectRow(6, " \u{F0140} \u{F0322} LOCAL              3");
+    try f.expectRow(3, pill_all);
+    try f.expectRow(6, " \u{F47C} \u{F0322} LOCAL              3");
     try f.expectRow(7, "  alpha");
     try f.expectRow(8, "\u{F012C}   \u{F062C} main             1\u{2191}");
     try f.expectRow(9, "    \u{F062C} feature");
@@ -645,7 +647,7 @@ test "all repos: a muted sub-header per repo under each section, the rows one le
     var narrow = try Fixture.init(20, 8);
     defer narrow.deinit();
     _ = draw(narrow.ui(), narrow.full(), .{ .rows = &grouped, .repo = "All repos", .viewing = 3, .repo_count = 2, .grouped = true });
-    try narrow.expectRow(3, "  All repos \u{F0140}  \u{F0141}  \u{F0142}");
+    try narrow.expectRow(3, pill_all_narrow);
     try testing.expectEqual(Part.repo_prev, narrow.hits.at(15, 3).?.git_palette);
     try testing.expectEqual(Part.repo_next, narrow.hits.at(18, 3).?.git_palette);
     try testing.expectEqual(Part.repo, narrow.hits.at(13, 3).?.git_palette);
@@ -681,9 +683,9 @@ test "the list scrolls as one: the scroll follows the cursor, the scrollbar take
     try testing.expectEqual(@as(usize, 4), p.visible);
     try testing.expectEqual(@as(usize, 9), p.scroll);
     try f.expectRow(0, " GIT                    \u{eb37}");
-    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try f.expectRow(3, pill_ws);
     var buf: [128]u8 = undefined;
-    try testing.expect(std.mem.startsWith(u8, f.row(7, &buf), " \u{F0140} \u{F0405} WORKTREES"));
+    try testing.expect(std.mem.startsWith(u8, f.row(7, &buf), " \u{F47C} \u{F0405} WORKTREES"));
     try testing.expect(std.mem.startsWith(u8, f.row(9, &buf), "\u{F033E} \u{F0405} fix (wt-fix)"));
     try testing.expect(f.hits.at(25, 7).?.scrollbar.owner.panel == .git);
     try testing.expectEqual(@as(u32, 10), f.hits.at(24, 7).?.row.idx);
@@ -731,11 +733,11 @@ test "narrow columns: at 16, 20 and 24 cells nothing paints past the edge, the c
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .rows = &long_rows, .repo = "ws", .viewing = 2, .repo_count = 2 });
     try f.expectRow(0, " GIT          \u{eb37}");
-    try f.expectRow(3, "  ws \u{F0140}   \u{F0141}  \u{F0142}");
+    try f.expectRow(3, pill_ws);
     try testing.expectEqual(@import("hit.zig").ChipKind.refresh, f.hits.at(14, 0).?.chip.kind);
     try testing.expect(f.hits.at(14, 3) == null);
     try testing.expectEqual(Part.repo_next, f.hits.at(12, 3).?.git_palette);
-    try f.expectRow(6, "\u{258c}\u{F0140} \u{F0405} WORKTR\u{2026} 12");
+    try f.expectRow(6, "\u{258c}\u{F47C} \u{F0405} WORKTR\u{2026} 12");
 }
 
 test "ascii: every glyph has a one-cell twin and the row shapes hold" {

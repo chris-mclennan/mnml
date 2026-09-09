@@ -15,7 +15,7 @@ shell git stash push -q -m "keep this"
 expect file a.txt contains "one"
 command view.activity_git
 wait 1000
-expect screen contains "󰅀 󰏗 STASHES"
+expect screen contains " 󰏗 STASHES"
 expect screen contains "On main: keep this"
 click 6 16
 click 6 16

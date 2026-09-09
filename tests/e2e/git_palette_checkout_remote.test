@@ -15,7 +15,7 @@ shell git push -q -u origin main main:hotfix
 command view.activity_git
 wait 1000
 expect screen contains "Viewing 4"
-expect screen contains "󰅀 󰅟 REMOTE"
+expect screen contains " 󰅟 REMOTE"
 expect screen contains "󰖟 origin"
 expect screen contains "    󰘬 hotfix"
 click 6 12

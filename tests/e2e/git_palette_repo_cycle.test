@@ -23,7 +23,7 @@ expect screen contains " alpha 󰅀"
 expect screen contains "󰄬 󰘬 main"
 click 8 7
 click 8 7
-expect screen contains "󰅀 󰌢 LOCAL"
+expect screen contains " 󰌢 LOCAL"
 key ]
 wait 800
 expect screen contains " beta 󰅀"
