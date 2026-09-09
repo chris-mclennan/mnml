@@ -383,7 +383,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         // The activity bar down the sidebar's left edge, and the `│`
         // between it and the tree — `t.line` on the rail's ground, as
         // Rust paints it, so no panel fill butts against the icons.
-        if (!fr.rail.isEmpty()) rail_mod.draw(ui, fr.rail, activity_bar.props(app));
+        if (!fr.rail.isEmpty()) rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
         if (!fr.rail_border.isEmpty()) {
             const pal = app.theme.palette;
             const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);

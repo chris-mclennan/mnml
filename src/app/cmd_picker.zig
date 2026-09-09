@@ -448,7 +448,7 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 return;
             };
         },
-        .integrations_details, .integrations_manifest, .integrations_toggle, .integrations_remove, .integrations_copy_id => |kind| {
+        .integrations_details, .integrations_manifest, .integrations_toggle, .integrations_remove, .integrations_copy_id, .integrations_pin, .integrations_unpin, .integrations_toggle_bar => |kind| {
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
             try @import("integrations.zig").acceptPicker(app, kind, i);

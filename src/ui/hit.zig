@@ -186,6 +186,7 @@ pub const HitTarget = union(enum) {
             .rail => |v| switch (v) {
                 .section => |s| try w.print(":{s}", .{@tagName(s)}),
                 .gear => try w.writeAll(":gear"),
+                .pin => |i| try w.print(":pin:{d}", .{i}),
             },
             .welcome => |v| try w.print(":{s}:{d}", .{ @tagName(v.kind), v.idx }),
             .git_palette => |v| try w.print(":{s}", .{@tagName(v)}),
@@ -343,6 +344,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("rail:explorer", .{ .rail = .{ .section = .explorer } });
     try expectLabel("rail:sessions", .{ .rail = .{ .section = .sessions } });
     try expectLabel("rail:gear", .{ .rail = .gear });
+    try expectLabel("rail:pin:2", .{ .rail = .{ .pin = 2 } });
     try expectLabel("git_palette:repo", .{ .git_palette = .repo });
     try expectLabel("git_palette:repo_next", .{ .git_palette = .repo_next });
     try expectLabel("http:chip:recent:clear", .{ .http = .{ .chip = .{ .section = .recent, .kind = .clear } } });

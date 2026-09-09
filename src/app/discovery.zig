@@ -192,7 +192,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .detail = "click the sign cell: toggle breakpoint · right-click: breakpoint menu",
         },
         .overlay_item => .{ .title = "Overlay item", .detail = "click chooses it" },
-        .rail => |part| activity_bar.describe(part),
+        .rail => |part| try activity_bar.describeIn(app, arena, part),
         .welcome => |row| switch (row.kind) {
             .recent => .{ .title = "Recent file", .detail = "click opens it" },
             .shortcut => .{ .title = "Shortcut", .detail = "click runs it" },

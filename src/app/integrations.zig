@@ -57,6 +57,7 @@ const font_scan = @import("font_scan.zig");
 const fonts_section = @import("../ui/fonts_section.zig");
 const side = @import("side.zig");
 const auto_refresh = @import("auto_refresh.zig");
+const settings = @import("settings.zig");
 const hit = @import("../ui/hit.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
@@ -122,11 +123,17 @@ pub const Chip = struct {
     color: []const u8,
     tooltip: []const u8,
     enabled: bool,
+    /// On the palette bar's strip (`chips`), or only pinnable / listed.
+    in_palette_bar: bool = true,
     /// What a click runs.
     action: union(enum) { dyn: u32, named: []const u8, none },
     /// The row in `State.list`, for the context menu.
     installed: ?usize,
 };
+
+/// A pinned activity-bar icon: the chip an id of
+/// `ui.activity_bar_pinned_integrations` names.
+pub const Pinned = struct { chip: Chip };
 
 /// The Installed tab's orders. The chip cycles them; the menu lists
 /// them through `ListSort` (`name` / `name_desc` / `newest` = enabled
@@ -264,6 +271,13 @@ pub const State = struct {
     /// The row a context menu was opened on: a tab and an index into
     /// that tab's underlying list.
     menu_row: ?struct { tab: Tab, idx: usize } = null,
+    /// The chip a chip / pinned-icon menu was opened on (its id,
+    /// gpa-owned): what `integrations.pin_to_activity_bar` and its
+    /// twin act on first.
+    menu_chip: ?[]u8 = null,
+    /// `ui.activity_bar_pinned_integrations` after a pin / unpin: the
+    /// config field points here until the next reload.
+    pins_owned: ?[][]u8 = null,
     scanned: bool = false,
     /// The last scan's problems, one line each (snapshot arena).
     problems: [][]const u8 = &.{},
@@ -305,6 +319,8 @@ pub const State = struct {
         self.settings.deinit(gpa);
         for (self.segment_ids.items) |s| gpa.free(s);
         self.segment_ids.deinit(gpa);
+        if (self.menu_chip) |c| gpa.free(c);
+        self.freePins(gpa);
         self.panel.deinit(gpa);
         if (self.job) |*j| j.deinit(gpa);
         self.dev_snapshot.deinit();
@@ -314,6 +330,18 @@ pub const State = struct {
     pub fn find(self: *const State, id: []const u8) ?usize {
         for (self.list, 0..) |*i, idx| if (std.mem.eql(u8, i.id(), id)) return idx;
         return null;
+    }
+
+    fn freePins(self: *State, gpa: Allocator) void {
+        const owned = self.pins_owned orelse return;
+        for (owned) |p| gpa.free(p);
+        gpa.free(owned);
+        self.pins_owned = null;
+    }
+
+    fn setMenuChip(self: *State, gpa: Allocator, id: ?[]const u8) Allocator.Error!void {
+        if (self.menu_chip) |c| gpa.free(c);
+        self.menu_chip = if (id) |i| try gpa.dupe(u8, i) else null;
     }
 
     pub fn findDev(self: *const State, key: []const u8) ?usize {
@@ -387,6 +415,9 @@ pub const table = .{
     .@"integrations.dev_build" = &devBuildCmd,
     .@"integrations.dev_install" = &devInstallCmd,
     .@"integrations.dev_rebuild" = &devRebuildCmd,
+    .@"integrations.pin_to_activity_bar" = &pinCmd,
+    .@"integrations.unpin_from_activity_bar" = &unpinCmd,
+    .@"integrations.toggle_palette_bar" = &togglePaletteBar,
 };
 
 // ─── discovery ──────────────────────────────────────────────────────────
@@ -921,12 +952,13 @@ fn openRow(app: *App, idx: usize) CommandError!void {
 
 // ─── chips ──────────────────────────────────────────────────────────────
 
-/// The palette-bar chips: config icons and installed manifests with a
-/// chip, in `ui.integration_icon_order` first, then by label.
-pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
+/// Every chip there is — config icons and installed manifests with a
+/// chip, on the bar or not — in `ui.integration_icon_order` first,
+/// then by id. `chips` is the strip's subset.
+pub fn allChips(app: *App, arena: Allocator) Allocator.Error![]Chip {
     var out: std.ArrayListUnmanaged(Chip) = .empty;
     for (app.cfg.ui.integration_icons) |icon| {
-        if (!icon.in_palette_bar or icon.id.len == 0) continue;
+        if (icon.id.len == 0) continue;
         try out.append(arena, .{
             .id = icon.id,
             .glyph = icon.glyph,
@@ -934,13 +966,13 @@ pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
             .color = icon.color,
             .tooltip = icon.label orelse icon.id,
             .enabled = icon.enabled,
+            .in_palette_bar = icon.in_palette_bar,
             .action = if (icon.command.len > 0) .{ .named = icon.command } else .none,
             .installed = null,
         });
     }
     for (app.integrations.list, 0..) |*inst, i| {
         const c = inst.manifest.chip orelse continue;
-        if (!c.in_palette_bar) continue;
         try out.append(arena, .{
             .id = inst.id(),
             .glyph = try chipGlyph(arena, c),
@@ -948,6 +980,7 @@ pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
             .color = c.color,
             .tooltip = if (c.tooltip.len > 0) c.tooltip else inst.manifest.label,
             .enabled = c.enabled and inst.binary_found,
+            .in_palette_bar = c.in_palette_bar,
             .action = if (inst.slots.len > 0) .{ .dyn = inst.slots[0] } else .none,
             .installed = i,
         });
@@ -970,6 +1003,20 @@ pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
     return out.toOwnedSlice(arena);
 }
 
+/// The palette-bar chips: `allChips` less the ones kept off the bar.
+pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
+    const all = try allChips(app, arena);
+    var out: std.ArrayListUnmanaged(Chip) = .empty;
+    for (all) |c| if (c.in_palette_bar) try out.append(arena, c);
+    return out.toOwnedSlice(arena);
+}
+
+/// The chip with `id`, on the bar or not.
+pub fn findChip(app: *App, arena: Allocator, id: []const u8) Allocator.Error!?Chip {
+    for (try allChips(app, arena)) |c| if (std.mem.eql(u8, c.id, id)) return c;
+    return null;
+}
+
 /// A press on chip `idx` of the strip as `chips` ordered it.
 pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
     const list = try chips(app, app.frame.allocator());
@@ -980,8 +1027,13 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
         // The AI chips: their launch profiles.
         if (std.mem.eql(u8, chip.id, "claude_code")) return launch_profiles.openChipMenu(app, .claude, m.x, m.y);
         if (std.mem.eql(u8, chip.id, "codex")) return launch_profiles.openChipMenu(app, .codex, m.x, m.y);
-        return;
+        return openIconMenu(app, chip, m.x, m.y);
     }
+    return runChip(app, chip);
+}
+
+/// What a left press on a chip does, wherever the chip is painted.
+fn runChip(app: *App, chip: Chip) Allocator.Error!void {
     if (!chip.enabled) {
         app.toast("{s} is disabled — right-click to enable", .{chip.tooltip});
         return;
@@ -997,6 +1049,177 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
         },
         .none => app.toast("{s}: nothing to run", .{chip.tooltip}),
     }
+}
+
+// ─── the pinned activity-bar icons ──────────────────────────────────────
+
+/// The chips `ui.activity_bar_pinned_integrations` names, in that
+/// order; an id no chip answers to is skipped.
+pub fn pinnedChips(app: *App, arena: Allocator) Allocator.Error![]Pinned {
+    const all = try allChips(app, arena);
+    var out: std.ArrayListUnmanaged(Pinned) = .empty;
+    for (app.cfg.ui.activity_bar_pinned_integrations) |id| {
+        for (all) |c| if (std.mem.eql(u8, c.id, id)) {
+            try out.append(arena, .{ .chip = c });
+            break;
+        };
+    }
+    return out.toOwnedSlice(arena);
+}
+
+pub fn isPinned(app: *App, id: []const u8) bool {
+    for (app.cfg.ui.activity_bar_pinned_integrations) |p| if (std.mem.eql(u8, p, id)) return true;
+    return false;
+}
+
+/// A left press on the `i`-th pinned icon: the chip's command, as the
+/// chip on the bar would run it.
+pub fn pinClick(app: *App, i: usize) Allocator.Error!void {
+    const pins = try pinnedChips(app, app.frame.allocator());
+    if (i >= pins.len) return;
+    try runChip(app, pins[i].chip);
+}
+
+/// The right click on a pinned icon: the chip's menu — Enable / Disable
+/// and the palette-bar row for an installed manifest, Remove from
+/// activity bar, Copy id.
+pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    const pins = try pinnedChips(app, app.frame.allocator());
+    if (i >= pins.len) return;
+    const chip = pins[i].chip;
+    try st.setMenuChip(app.gpa, chip.id);
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    if (chip.installed) |row| {
+        st.menu_row = .{ .tab = .installed, .idx = row };
+        const inst = &st.list[row];
+        const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else true;
+        try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
+        try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
+        try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
+        try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } });
+    } else {
+        try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
+        try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
+    }
+    try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The right click on a config icon's chip (not a manifest's, not an
+/// AI chip): Add / Remove from activity bar when its command is a
+/// `term` line — the only kind a pinned icon can run without a side
+/// panel, Rust's rule — and Copy id.
+fn openIconMenu(app: *App, chip: Chip, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    try st.setMenuChip(app.gpa, chip.id);
+    st.menu_row = null;
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    const term_line = switch (chip.action) {
+        .named => |cmd| launchers.termProgram(cmd) != null,
+        .dyn => true,
+        .none => false,
+    };
+    if (term_line) {
+        if (isPinned(app, chip.id))
+            try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } })
+        else
+            try items.append(app.gpa, .{ .label = "Add to activity bar", .action = .{ .command = .@"integrations.pin_to_activity_bar" } });
+    }
+    try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
+    try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The id a pin / unpin acts on: the chip a menu was opened on, else
+/// the focused Installed row's, else null (a picker opens).
+fn pinTarget(app: *App) Allocator.Error!?[]const u8 {
+    const st = &app.integrations;
+    if (st.menu_chip) |c| {
+        const copy = try app.frame.allocator().dupe(u8, c);
+        try st.setMenuChip(app.gpa, null);
+        st.menu_row = null;
+        return copy;
+    }
+    if (try focusedRow(app)) |r| return st.list[r].id();
+    return null;
+}
+
+fn pinCmd(app: *App) CommandError!void {
+    if (try pinTarget(app)) |id| return pinId(app, id);
+    return pickRow(app, .integrations_pin, "Add to activity bar");
+}
+
+fn unpinCmd(app: *App) CommandError!void {
+    if (try pinTarget(app)) |id| return unpinId(app, id);
+    return pickRow(app, .integrations_unpin, "Remove from activity bar");
+}
+
+/// Append `id` to `ui.activity_bar_pinned_integrations` and write it home.
+pub fn pinId(app: *App, id: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (isPinned(app, id)) {
+        app.toast("{s} is already on the activity bar", .{id});
+        return;
+    }
+    if ((try findChip(app, arena, id)) == null) return app.diag.fail(arena, "integrations: {s} has no chip to pin", .{id});
+    const old = app.cfg.ui.activity_bar_pinned_integrations;
+    const next = try arena.alloc([]const u8, old.len + 1);
+    @memcpy(next[0..old.len], old);
+    next[old.len] = id;
+    try setPinned(app, next);
+    app.toast("{s}: added to the activity bar", .{id});
+}
+
+/// Drop `id` from `ui.activity_bar_pinned_integrations` and write it home.
+pub fn unpinId(app: *App, id: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (!isPinned(app, id)) {
+        app.toast("{s} is not on the activity bar", .{id});
+        return;
+    }
+    const old = app.cfg.ui.activity_bar_pinned_integrations;
+    var next: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (old) |p| if (!std.mem.eql(u8, p, id)) try next.append(arena, p);
+    try setPinned(app, next.items);
+    app.toast("{s}: removed from the activity bar", .{id});
+}
+
+/// The new list, gpa-owned by the state and named by the config field,
+/// persisted to the home config.
+pub fn setPinned(app: *App, ids: []const []const u8) Allocator.Error!void {
+    const st = &app.integrations;
+    const gpa = app.gpa;
+    const owned = try gpa.alloc([]u8, ids.len);
+    var n: usize = 0;
+    errdefer {
+        for (owned[0..n]) |p| gpa.free(p);
+        gpa.free(owned);
+    }
+    for (ids) |id| {
+        owned[n] = try gpa.dupe(u8, id);
+        n += 1;
+    }
+    st.freePins(gpa);
+    st.pins_owned = owned;
+    app.cfg.ui.activity_bar_pinned_integrations = @ptrCast(owned);
+    _ = try settings.persist(app, .home, &.{ "ui", "activity_bar_pinned_integrations" }, app.cfg.ui.activity_bar_pinned_integrations);
+    app.needs_render = true;
+}
+
+/// `integrations.toggle_palette_bar`: flip the chip's `in_palette_bar`
+/// and write the manifest back.
+fn togglePaletteBar(app: *App) CommandError!void {
+    const st = &app.integrations;
+    if (st.menu_chip) |c| {
+        const row = st.find(c);
+        try st.setMenuChip(app.gpa, null);
+        st.menu_row = null;
+        if (row) |r| return toggleChipField(app, r, .in_palette_bar);
+        return app.diag.fail(app.frame.allocator(), "integrations: only a manifest's chip can leave the bar — a config icon's `in_palette_bar` lives in config.zon", .{});
+    }
+    if (try focusedRow(app)) |r| return toggleChipField(app, r, .in_palette_bar);
+    return pickRow(app, .integrations_toggle_bar, "Show / hide on the palette bar");
 }
 
 // ─── the section ────────────────────────────────────────────────────────
@@ -1455,14 +1678,21 @@ fn openInstalledMenu(app: *App, row: usize, x: u16, y: u16) Allocator.Error!void
     const st = &app.integrations;
     if (row >= st.list.len) return;
     st.menu_row = .{ .tab = .installed, .idx = row };
-    const enabled = st.list[row].enabled();
+    try st.setMenuChip(app.gpa, null);
+    const inst = &st.list[row];
+    const enabled = inst.enabled();
+    const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
+    const pinned = isPinned(app, inst.id());
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" } },
         .{ .label = if (enabled) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } },
-        .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" } },
+        .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } },
+        .{ .label = if (pinned) "Remove from activity bar" else "Add to activity bar", .action = .{ .command = if (pinned) .@"integrations.unpin_from_activity_bar" else .@"integrations.pin_to_activity_bar" } },
+        .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" }, .separator_before = true },
         .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
         .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" }, .separator_before = true },
     });
+
     errdefer app.gpa.free(items);
     try app.openMenu(st.list[row].manifest.label, items, x, y);
 }
@@ -1667,6 +1897,9 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize) Allocator.Err
         .integrations_toggle => toggleAt(app, i),
         .integrations_remove => removeAt(app, i),
         .integrations_copy_id => copyIdAt(app, i),
+        .integrations_pin => if (i < app.integrations.list.len) pinId(app, app.integrations.list[i].id()) else {},
+        .integrations_unpin => if (i < app.integrations.list.len) unpinId(app, app.integrations.list[i].id()) else {},
+        .integrations_toggle_bar => toggleChipField(app, i, .in_palette_bar),
         else => {},
     };
     result catch |err| switch (err) {
@@ -1737,12 +1970,23 @@ fn toggleEnabled(app: *App) CommandError!void {
 
 /// Flip `chip.enabled` and write the manifest back.
 fn toggleAt(app: *App, i: usize) CommandError!void {
+    return toggleChipField(app, i, .enabled);
+}
+
+const ChipFlag = enum { enabled, in_palette_bar };
+
+/// Flip one of the chip's two user-preference flags and write the
+/// manifest back; the list follows.
+fn toggleChipField(app: *App, i: usize, flag: ChipFlag) CommandError!void {
     const st = &app.integrations;
     if (i >= st.list.len) return;
     const inst = &st.list[i];
     var m = inst.manifest;
     var chip: manifest_mod.Chip = m.chip orelse .{};
-    chip.enabled = !chip.enabled;
+    switch (flag) {
+        .enabled => chip.enabled = !chip.enabled,
+        .in_palette_bar => chip.in_palette_bar = !chip.in_palette_bar,
+    }
     m.chip = chip;
     const text = try manifest_mod.render(app.gpa, m);
     defer app.gpa.free(text);
@@ -1750,9 +1994,15 @@ fn toggleAt(app: *App, i: usize) CommandError!void {
         return app.diag.fail(app.frame.allocator(), "cannot write {s}: {s}", .{ app.relPath(inst.path), @errorName(err) });
     };
     const id = try app.frame.allocator().dupe(u8, inst.id());
-    const now_enabled = chip.enabled;
+    const now = switch (flag) {
+        .enabled => chip.enabled,
+        .in_palette_bar => chip.in_palette_bar,
+    };
     try refresh(app);
-    app.toast("{s}: {s}", .{ id, if (now_enabled) "enabled" else "disabled" });
+    switch (flag) {
+        .enabled => app.toast("{s}: {s}", .{ id, if (now) "enabled" else "disabled" }),
+        .in_palette_bar => app.toast("{s}: {s} the palette bar", .{ id, if (now) "shown on" else "hidden from" }),
+    }
 }
 
 fn removeCmd(app: *App) CommandError!void {
