@@ -190,6 +190,8 @@ pub const PromptPurpose = union(enum) {
     /// Runners: the npm script / the `go run` path typed into the prompt.
     npm_run_script,
     go_run_path,
+    /// `launcher.add_local`: the path of a `.zon` manifest to install.
+    launcher_add_local,
     /// A workspace-relative path typed into the prompt; the payload is
     /// the directory it is created in (owned).
     new_file: []u8,

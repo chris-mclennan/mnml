@@ -450,12 +450,15 @@ fn scanDir(app: *App, arena: Allocator, dir_path: []const u8, source: Source, fo
         const m = readManifest(app, arena, dir, entry.name, path, problems) orelse continue;
         // A workspace manifest replaces a home one with the same id.
         var replaced = false;
+        // A launcher has no binary to find; its lines check their own
+        // program when they fire.
+        const have = m.isLauncher() or binaryFound(app, arena, m.binary);
         for (found.items) |*prev| if (std.mem.eql(u8, prev.id(), m.id)) {
-            prev.* = .{ .manifest = m, .path = path, .source = source, .binary_found = binaryFound(app, arena, m.binary), .slots = &.{} };
+            prev.* = .{ .manifest = m, .path = path, .source = source, .binary_found = have, .slots = &.{} };
             replaced = true;
         };
         if (replaced) continue;
-        try found.append(arena, .{ .manifest = m, .path = path, .source = source, .binary_found = binaryFound(app, arena, m.binary), .slots = &.{} });
+        try found.append(arena, .{ .manifest = m, .path = path, .source = source, .binary_found = have, .slots = &.{} });
     }
 }
 
@@ -524,7 +527,9 @@ fn registerCommands(app: *App, arena: Allocator, inst: *Installed) Allocator.Err
     var n: usize = 0;
     for (m.commands) |c| {
         const args = try std.mem.concat(arena, []const u8, &.{ m.args, c.args });
-        const runner: command.DynInit.Runner = if (c.ex) |line|
+        // A `run` / `ex` line runs through `launchers.fire` (its tokens
+        // expanded); anything else opens the binary.
+        const runner: command.DynInit.Runner = if (c.line()) |line|
             .{ .ex = line }
         else
             .{ .mount = .{ .binary = m.binary, .args = args, .pty = m.mode == .pty, .label = m.label } };

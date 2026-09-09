@@ -700,14 +700,20 @@ fn toolRunner(comptime bin: []const u8) CommandFn {
     return &struct {
         fn run(app: *App) CommandError!void {
             if (onPath(app, bin)) return cmd_term.termEx(app, bin);
-            const hint = switch (builtin.os.tag) {
-                .macos => "brew install " ++ bin,
-                .windows => "winget install " ++ bin,
-                else => "sudo apt install " ++ bin,
-            };
-            return app.diag.fail(app.frame.allocator(), "{s} is not on PATH — {s}", .{ bin, hint });
+            return app.diag.fail(app.frame.allocator(), "{s} is not on PATH — {s}{s}", .{ bin, installHintPrefix(), bin });
         }
     }.run;
+}
+
+/// The package manager's install verb for this platform — the hint a
+/// missing tool's toast ends with (`brew install <bin>`). Launchers
+/// (`app/launchers.zig`) give the same one.
+pub fn installHintPrefix() []const u8 {
+    return switch (builtin.os.tag) {
+        .macos => "brew install ",
+        .windows => "winget install ",
+        else => "sudo apt install ",
+    };
 }
 
 /// Whether `bin` resolves through `$PATH`.
