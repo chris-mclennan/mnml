@@ -622,3 +622,26 @@ test "a chip hit's label" {
     try (hit.HitTarget{ .http = .{ .chip = .{ .section = .envs, .kind = .new } } }).writeLabel(&w);
     try testing.expectEqualStrings("http:chip:envs:new", w.buffered());
 }
+
+test "at the panel's 26 cells with the bar: the header's cluster, a folder's +, every item's clipped label and a link all stop a cell short of the scrollbar" {
+    var f = try Fixture.init(26, 9);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    var rows: [9]Row = undefined;
+    rows[0] = header(.collections, 7);
+    rows[1] = .{ .section = .collections, .kind = .folder, .label = "a-folder-name-that-overflows", .count = 2 };
+    for (2..8) |i| rows[i] = .{ .section = .collections, .label = "a-request-file-name-that-is-long.http", .idx = @intCast(i) };
+    rows[8] = .{ .section = .collections, .kind = .link, .link = .new_request };
+    _ = draw(&st, f.ui(), f.full(), .{ .rows = &rows, .empty = .{ .message = "", .hint = "" } });
+    // Header, filter, the gap row, then six list rows and the bar.
+    try f.expectRow(3, "\u{258c}\u{25BC} COLLECTIONS (7)    \u{EA60}  █");
+    try f.expectRow(4, "   \u{25BE} \u{F07B} a-folder-nam…  +  █");
+    try f.expectRow(5, "   \u{F1D8} a-request-file-nam… █");
+    try f.expectRow(8, "   \u{F1D8} a-request-file-nam… █");
+    try f.expectAirBeforeBar(3, 9, 25);
+    // The chips still act, at their new cells.
+    try testing.expectEqual(ChipKind.new, f.hits.at(22, 3).?.http.chip.kind);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(22, 4).?.http.folder_new);
+    try testing.expectEqual(hit.Axis.v, f.hits.at(25, 5).?.scrollbar.axis);
+}

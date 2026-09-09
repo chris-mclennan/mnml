@@ -90,3 +90,27 @@ test "row: the kind word, the name, the location at the right edge; a long name 
     try f.expectContains("+ create init.lua");
     try testing.expectEqualStrings("hook", kindWord(.hook));
 }
+
+test "at the panel's 26 cells with the bar: the location stays a cell short of the scrollbar on every row, a long name giving way first" {
+    const Fixture = test_fixture;
+    var f = try Fixture.init(26, 8);
+    defer f.deinit();
+    const Panel = list_panel.ListPanel(Row);
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    var rows: [12]Row = undefined;
+    for (&rows, 0..) |*r, i| r.* = if (i % 2 == 0)
+        .{ .kind = .command, .name = "user.hello", .loc = "init.lua:12" }
+    else
+        .{ .kind = .hook, .name = "a_very_long_hook_name_that_goes_on", .loc = ".mnml/init.lua:3" };
+    _ = Panel.draw(&st, f.ui(), f.full(), .{
+        .panel = .scripts,
+        .label = "SCRIPTS",
+        .rows = &rows,
+        .paintRow = paintRow,
+        .empty = .{ .message = "", .hint = "" },
+    });
+    try f.expectRow(2, "\u{258c}cmd  user.hello  …ua:12 █");
+    try f.expectRow(3, " hook a_very_lo…  …lua:3 █");
+    try f.expectAirBeforeBar(2, 8, 25);
+}
