@@ -3,25 +3,25 @@
   │  󰍉 / filter              │ prog.dbg                                   │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
    │                          │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛                     │ ── started prog.dbg ──
  󰍉 │▌● prog.dbg:4 · main      │   1 let x = 1  x = 1                       │ hello
-   │ ▾ VARIABLES (4)          │   2 let p = struct{a=1,b="two"}  p = {a=1, │ > x * 2
- 󰊢 │ ▾ Locals                 │   3 print "hello"                          │   2 : int
+   │  VARIABLES (4)          │   2 let p = struct{a=1,b="two"}  p = {a=1, │ > x * 2
+ 󰊢 │  Locals                 │   3 print "hello"                          │   2 : int
    │     x: int = 1           │▶  4 x = x + 1  x = 1                       │ > p
-▌ │   ▸ p: struct = {a=1, b=…│   5 fn f                                   │   ▸ {a=1, b="two"} : struct
-   │ ▾ Globals                │   6   let y = 10                           │ > nope
+▌ │    p: struct = {a=1, b=…│   5 fn f                                   │    {a=1, b="two"} : struct
+   │  Globals                │   6   let y = 10                           │ > nope
  󰐱 │     x: int = 1           │   7   x = x * y                            │   err: no such variable
-   │   ▸ p: struct = {a=1, b=…│   8 end                                    │
- 󰎒 │ ▾ WATCH (0)              │   9 call f                                 │
-   │     no watches — w adds …│  10 print x                                │
-  │ ▾ CALL STACK (1)         │                                            │
+   │    p: struct = {a=1, b=…│   8 end                                    │
+ 󰎒 │                          │   9 call f                                 │
+   │  WATCH (0)              │  10 print x                                │
+  │     no watches — w adds …│                                            │
+   │                          │                                            │
+  │  CALL STACK (1)         │                                            │
    │   ● thread main          │                                            │
-  │   ▶ prog.dbg:4  main     │                                            │
-   │ ▾ BREAKPOINTS (1)        │                                            │
-  │   [x] prog.dbg:4         │                                            │
-   │   [ ] All errors         │                                            │
- 󱘣 │   [x] Uncaught errors    │                                            │
+  │   ▶ prog.dbg:4  main     │                                            │
    │                          │                                            │
- 󰢱 │                          │                                            │
-   │                          │                                            │
+ 󱘣 │  BREAKPOINTS (1)        │                                            │
+   │   [x] prog.dbg:4         │                                            │
+ 󰢱 │   [ ] All errors         │                                            │
+   │   [x] Uncaught errors    │                                            │
    │                          │                                            │
    │                          │                                            │
    │                          │                                            │
@@ -36,5 +36,5 @@
    │                          │                                            │
   │                          │                                            │
    │                          │                                            │ > p
- VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    20:11  ws   —
+ VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    23:18  ws   —
 
