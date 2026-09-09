@@ -3,6 +3,11 @@
 # the `󰐕` after it and the `󰅁  󰅂` chevrons on the right; the
 # wheel over the strip scrolls it a tab at a time, back to the first
 # tab and forward again; Ctrl+Tab wraps to the first tab and reveals it.
+# The strip's right cluster paints an AI chip for a `claude` / `codex`
+# found on PATH, which would cost the strip three cells on a machine
+# that has one; nothing here spawns, so PATH is empty and the layout
+# is the same everywhere.
+# env: PATH=
 write alpha.zig "const alpha = 1;\n"
 write t1.txt "t1\n"
 write t2.txt "t2\n"
