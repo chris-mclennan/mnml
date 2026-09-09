@@ -395,6 +395,23 @@ SESSIONS column itself is unchanged, card for card.
   manifest and the linked binary): `Inst (1) Mkt (0)  (0)`, the
   `Sample` row over `sample.open`, the sample's chip on the palette bar
   and its `S·sample` segment on the statusline.
+## The FONTS section (Zig-authored, 2026-09-08)
+
+`zig-fonts-120x40.txt` is the Marketplace tab with the FONTS section at
+its top (`steps-fonts.jsonl`: `integrations.show_marketplace` from the
+resting screen). The Rust dumps were cut on a machine whose scan saw
+nothing, so the Rust screen for it is the author's screenshot, not a
+dump: ` FONTS · latest Nerd Fonts 3.5.1`, then `A  <family>  v3.5.1 ✓`
+per family (nf-fa-font, the tick green when current, the version
+yellow when behind, `auto-baked by mnml` on the mnml face), one blank
+row, then the entries. `env-fonts` seeds it: `MNML_FONT_DIRS` points at
+`fonts-fixture/` — four minimal sfnt files `tools/fixture-font.py`
+writes (a name table each, a format-12 cmap on MnmlSymbols; nothing
+renders from them) — and `MNML_NERDFONTS_LATEST` pins the release, so
+the dump is the same on every machine. The `↑ Update` chip at the
+right of the Symbols row is macOS-only (`font_scan.updateCommand`); a
+dump cut on Linux or Windows shows the yellow version alone.
+
 ## Menus (2026-09-07)
 
 - `rust-menu-file-120x40.txt` — `steps-menu-file.jsonl`: a click on the

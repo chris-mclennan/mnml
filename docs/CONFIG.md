@@ -442,6 +442,14 @@ otherwise. Copy what you need; leave the rest out.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
         },
         .show_dev_tab = false,
+        // The Marketplace tab opens with a FONTS section: every Nerd
+        // Font family installed (the platform font folders, read from
+        // the font files' own name tables) against the latest release,
+        // with a one-click update on macOS. Nothing here configures it;
+        // two environment variables do: MNML_FONT_DIRS=<dir:dir> (`;`
+        // on Windows) replaces the folders scanned, MNML_NERDFONTS_LATEST=X.Y.Z
+        // names the latest release and skips the once-a-day lookup
+        // (cached at <data root>/cache/nerdfonts-latest.json).
     },
 
     // ── cloud ──────────────────────────────────────────────────────────

@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ INTEGRATIONS            │ 󰐕                                                                                   
+  │ Inst (0) Mkt (0)         │
+   │  󰍉 / filter        A-Z ▾ │
+ 󰍉 │                          │
+   │  FONTS · latest Nerd Fon…│
+ 󰊢 │    JetBrainsMono Nerd F…│
+   │    MnmlSymbols  auto-ba…│
+  │    Symbols Nerd Font  v…│
+   │                          │
+▌󰐱 │  No sources yet — the of…│
+   │  marketplace.sources in …│                                                            _
+ 󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
+   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+  │                          │                           | | | | | | | | | | | | | | | | | |
+   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+  │                          │
+   │                          │                                     workspace · ws
+  │                          │
+   │                          │                                        Shortcuts
+ 󱘣 │                          │                                     ──────────────
+   │                          │                                     ^P     find file
+ 󰢱 │                          │                                    ^R     recent files
+   │                          │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │                          │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │                          │
+   │                          │                              mnml 0.3.0-dev+gc6620b5-dirty
+   │                          │
+   │──────────────────────────│
+   │ Integrations           ⋮ │
+   │                          │
+   │ Installed integrations.  │
+   │ Enter fires the command. │
+   │ Right-click for          │
+  │ Configure / Uninstall.   │
+   │                          │
+ TREE  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    23:11  ws   —
+

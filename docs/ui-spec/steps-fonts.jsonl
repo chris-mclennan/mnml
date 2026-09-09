@@ -1,0 +1,4 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"integrations.show_marketplace"}
+{"cmd":"wait_ms","ms":1200}

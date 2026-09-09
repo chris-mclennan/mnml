@@ -1,0 +1,5 @@
+# The FONTS section's seed (`tools/zig-spec.sh fonts`): the fixture
+# fonts stand in for the platform font folders, and the latest release
+# is pinned so the dump never needs the network.
+MNML_FONT_DIRS=$ROOT/docs/ui-spec/fonts-fixture
+MNML_NERDFONTS_LATEST=3.5.1

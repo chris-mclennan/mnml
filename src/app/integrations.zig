@@ -53,6 +53,8 @@ const pty_pane = @import("pty_pane.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const runners = @import("runners.zig");
 const marketplace = @import("marketplace.zig");
+const font_scan = @import("font_scan.zig");
+const fonts_section = @import("../ui/fonts_section.zig");
 const side = @import("side.zig");
 const auto_refresh = @import("auto_refresh.zig");
 const hit = @import("../ui/hit.zig");
@@ -1430,7 +1432,14 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const rows = try ui.arena.alloc(view.Entry, idxs.len);
     for (idxs, 0..) |i, k| rows[k] = try entryRow(app, ui.arena, i);
     st.panel.total = rows.len;
-    st.panel.visible = @max((area.h -| view.body_top) + 1, 1) / view.rows_per_entry;
+    // The FONTS section: the Marketplace tab, no filter, not scrolled —
+    // hidden otherwise, as Rust hides it, so the list math stays put.
+    const fonts: ?fonts_section.Props = if (st.tab == .marketplace and st.panel.filterText().len == 0 and st.panel.scroll == 0)
+        try font_scan.sectionProps(app, ui.arena)
+    else
+        null;
+    const fonts_rows: u16 = if (fonts) |fp| fonts_section.height(fp, area.h -| view.body_top) else 0;
+    st.panel.visible = @max((area.h -| view.body_top -| fonts_rows) + 1, 1) / view.rows_per_entry;
     if (st.panel.cursor >= rows.len) st.panel.cursor = rows.len -| 1;
     const q = st.panel.filterText();
     const empty: list_panel.EmptyState = if (q.len > 0)
@@ -1462,6 +1471,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .empty = empty,
         .busy = marketplace.busy(app) or st.job != null,
         .now_ms = app.now_ms,
+        .fonts = fonts,
     });
     if (caret) |c| if (app.focus == .panel and app.focus.panel == .integrations) {
         app.cursor_pos = .{ .x = c.x, .y = c.y };

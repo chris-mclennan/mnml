@@ -30,8 +30,11 @@ mkdir -p "$WS" "$DATA"
 # `x = x + 1` with x = 1 and p a struct.
 printf 'let x = 1\nlet p = struct{a=1,b="two"}\nprint "hello"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n' >"$WS/prog.dbg"
 # A spec that needs more in its workspace ships it as
-# docs/ui-spec/seed-<NAME>/ (the ZON view's config.zon, say).
+# docs/ui-spec/seed-<NAME>/ (the ZON view's config.zon, say); one that
+# needs the environment set ships docs/ui-spec/env-<NAME>, sourced here
+# with $ROOT in scope (the FONTS section's fixture fonts, say).
 [ -d "$ROOT/docs/ui-spec/seed-$NAME" ] && cp -R "$ROOT/docs/ui-spec/seed-$NAME/." "$WS/"
+if [ -f "$ROOT/docs/ui-spec/env-$NAME" ]; then set -a; . "$ROOT/docs/ui-spec/env-$NAME"; set +a; fi
 cat >"$DATA/config.zon" <<'EOF'
 .{
     .editor = .{ .input_style = .standard },

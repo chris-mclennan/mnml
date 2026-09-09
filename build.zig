@@ -101,6 +101,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // ── data ──
+    // `data/root.zig` embeds the data files the app carries (the Nerd
+    // Font glyph catalog); its own module for the same reason as themes.
+    const data_mod = b.createModule(.{
+        .root_source_file = b.path("data/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // ── command table: -Dpartial ──
     // Downgrades "command id has no runner" from a compile error to a
     // runtime toast. The spike ships with it ON because only the todos
@@ -131,6 +140,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "tree_sitter", .module = ts.runtime },
             .{ .name = "highlight", .module = ts.highlight },
             .{ .name = "themes", .module = themes_mod },
+            .{ .name = "data", .module = data_mod },
             .{ .name = "zlua", .module = zlua_mod },
             .{ .name = "oniguruma", .module = onig_mod },
         },

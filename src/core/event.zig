@@ -24,6 +24,7 @@ const ws_pane = @import("../app/ws_pane.zig");
 const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
 const marketplace = @import("../app/marketplace.zig");
+const font_scan = @import("../app/font_scan.zig");
 const transfers = @import("../app/transfers.zig");
 const grep = @import("../app/grep.zig");
 
@@ -128,6 +129,9 @@ pub const AppEvent = union(enum) {
     statusline: StatuslineSegment,
     /// A finished marketplace fetch or install. Owned; `marketplace.handle` adopts it.
     marketplace: *marketplace.Result,
+    /// The latest Nerd Fonts release (or why the lookup failed). Owned;
+    /// `font_scan.handle` adopts or frees it.
+    fonts: *font_scan.Result,
     ipc: IpcCommand,
     /// A mounted integration spoke (or its stream ended). Owned;
     /// `mount_pane.handle` reads it and `destroy`s it on every path.
@@ -186,6 +190,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .ws => |p| p.destroy(gpa),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| p.destroy(gpa),
+        .fonts => |p| p.destroy(gpa),
         .mount => |p| p.destroy(gpa),
         .transfer => |p| p.destroy(gpa),
         .key, .mouse, .winsize, .focus, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
