@@ -709,6 +709,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .has_kebab = true,
         .show_refresh = false,
         .new_chip = true,
+        .filter_gap = true,
         .empty = .{ .message = "No session", .hint = "F5 starts one" },
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
@@ -736,6 +737,28 @@ test "no session: the status row, four headers with their hints, a watch row; th
     defer testing.allocator.free(t1);
     try testing.expect(std.mem.indexOf(u8, t1, "DEBUG") != null);
     try testing.expect(std.mem.indexOf(u8, t1, "○ no session") != null);
+    // A blank line sits between the filter and the first row, as in
+    // every other list panel: the row under "/ filter" holds nothing
+    // across the panel's columns.
+    {
+        var lines = std.mem.splitScalar(u8, t1, '\n');
+        var filter_row: ?[]const u8 = null;
+        var next_row: ?[]const u8 = null;
+        while (lines.next()) |line| {
+            if (filter_row != null) {
+                next_row = line;
+                break;
+            }
+            if (std.mem.indexOf(u8, line, "/ filter") != null) filter_row = line;
+        }
+        const fr = filter_row orelse return error.NoFilterRow;
+        const nr = next_row orelse return error.NoRowUnderFilter;
+        const col = std.mem.indexOf(u8, fr, "/ filter").?;
+        const from = @min(col, nr.len);
+        const end = if (std.mem.indexOf(u8, nr[from..], "\u{2502}")) |b| from + b else nr.len;
+        try testing.expectEqualStrings("", std.mem.trim(u8, nr[from..end], " "));
+        try testing.expect(std.mem.indexOf(u8, nr, "no session") == null);
+    }
     try testing.expect(std.mem.indexOf(u8, t1, "▾ VARIABLES (0)") != null);
     try testing.expect(std.mem.indexOf(u8, t1, "⌖ x + 1 = (no value)") != null);
     try testing.expect(std.mem.indexOf(u8, t1, "▾ BREAKPOINTS (0)") != null);
