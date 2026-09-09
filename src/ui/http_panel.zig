@@ -633,8 +633,8 @@ test "at the panel's 26 cells with the bar: the header's cluster, a folder's +, 
     rows[8] = .{ .section = .collections, .kind = .link, .link = .new_request };
     _ = draw(&st, f.ui(), f.full(), .{ .rows = &rows, .empty = .{ .message = "", .hint = "" } });
     // Header, filter, the gap row, then six list rows and the bar.
-    try f.expectRow(3, "\u{258c}\u{25BC} COLLECTIONS (7)    \u{EA60}  █");
-    try f.expectRow(4, "   \u{25BE} \u{F07B} a-folder-nam…  +  █");
+    try f.expectRow(3, "\u{258c}" ++ expander.open_glyph ++ " COLLECTIONS (7)    \u{EA60}  █");
+    try f.expectRow(4, "   " ++ expander.open_glyph ++ " \u{F07B} a-folder-nam…  +  █");
     try f.expectRow(5, "   \u{F1D8} a-request-file-nam… █");
     try f.expectRow(8, "   \u{F1D8} a-request-file-nam… █");
     try f.expectAirBeforeBar(3, 9, 25);
