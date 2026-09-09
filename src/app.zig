@@ -875,6 +875,9 @@ pub const App = struct {
     /// The wizard's answers while one of its install panes runs; the
     /// pane's exit puts them back (`first_launch.refresh`).
     wizard_stash: ?first_launch.State = null,
+    /// Whether `claude` / `codex` resolve on PATH, as of `checked_ms`
+    /// — the AI chips read it every frame (`first_launch_install.cliOnPath`).
+    cli_probe: struct { claude: bool = false, codex: bool = false, checked_ms: ?i64 = null } = .{},
     /// The click-discovery panel's flash: the family a row press lit,
     /// until when (`discovery.flashRow`).
     discovery_flash: ?discovery_app.Flash = null,

@@ -54,7 +54,29 @@ pub const table = .{
     .@"view.toggle_hover_tooltip" = toggleRunner("ui.hover_tooltip", "hover tooltips"),
     .@"view.toggle_workspace_dots" = toggleRunner("ui.show_workspace_dots", "workspace dots"),
     .@"view.toggle_color_column" = &toggleColorColumn,
+    // The setters Rust listed and never ran: set the key, write it to
+    // the home config, say so.
+    .@"view.tab_bar_ai_claude_only" = setRunner("ui.tab_bar_ai_icon", .claude_code, "AI chips: Claude, and Codex when its icon is enabled"),
+    .@"view.tab_bar_ai_codex_only" = setRunner("ui.tab_bar_ai_icon", .codex, "AI chips: Codex, and Claude when its icon is enabled"),
+    .@"view.tab_bar_ai_both" = setRunner("ui.tab_bar_ai_icon", .both, "AI chips: Claude + Codex when found"),
+    .@"view.tab_bar_ai_none" = setRunner("ui.tab_bar_ai_icon", .none, "AI chips hidden"),
+    .@"view.cluster_mode_expanded" = setRunner("ui.top_bar_cluster_mode", .expanded, "top-bar cluster: expanded"),
+    .@"view.cluster_mode_compact" = setRunner("ui.top_bar_cluster_mode", .compact, "top-bar cluster: compact"),
+    .@"view.cluster_mode_auto" = setRunner("ui.top_bar_cluster_mode", .auto, "top-bar cluster: auto"),
 };
+
+/// A runner that sets `path` to `value`, persists it to the home
+/// config, and toasts `label`.
+fn setRunner(comptime path: []const u8, comptime value: FieldType(path), comptime label: []const u8) command.CommandFn {
+    return &struct {
+        fn run(app: *App) command.CommandError!void {
+            fieldPtr(&app.cfg, path).* = value;
+            _ = try persist(app, .home, comptime keyPath(path), value);
+            app.toast(label, .{});
+            app.needs_render = true;
+        }
+    }.run;
+}
 
 fn toggleRunner(comptime path: []const u8, comptime label: []const u8) command.CommandFn {
     return &struct {
@@ -933,4 +955,32 @@ test "the AI section: the ghost-text row writes the token and the runtime overri
     try cancel(&app);
     try t.expect(app.ai.backend_override == null);
     try t.expect(app.overlay == .none);
+}
+
+test "view.tab_bar_ai_* and view.cluster_mode_* set the key, persist it to the home config, and toast" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.tab_bar_ai_none" });
+    try std.testing.expectEqual(Config.TabBarAiIcon.none, app.cfg.ui.tab_bar_ai_icon);
+    try std.testing.expectEqualStrings("AI chips hidden", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"view.cluster_mode_compact" });
+    try std.testing.expectEqual(Config.TopBarClusterMode.compact, app.cfg.ui.top_bar_cluster_mode);
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, try std.fs.path.join(app.frame.allocator(), &.{ root, "config.zon" }), std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".tab_bar_ai_icon = .none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".top_bar_cluster_mode = .compact") != null);
+    try command.run(&app, .{ .static = .@"view.tab_bar_ai_both" });
+    try std.testing.expectEqual(Config.TabBarAiIcon.both, app.cfg.ui.tab_bar_ai_icon);
+    try command.run(&app, .{ .static = .@"view.tab_bar_ai_claude_only" });
+    try std.testing.expectEqual(Config.TabBarAiIcon.claude_code, app.cfg.ui.tab_bar_ai_icon);
+    try command.run(&app, .{ .static = .@"view.tab_bar_ai_codex_only" });
+    try command.run(&app, .{ .static = .@"view.cluster_mode_expanded" });
+    try command.run(&app, .{ .static = .@"view.cluster_mode_auto" });
+    try std.testing.expectEqual(Config.TabBarAiIcon.codex, app.cfg.ui.tab_bar_ai_icon);
+    try std.testing.expectEqual(Config.TopBarClusterMode.auto, app.cfg.ui.top_bar_cluster_mode);
 }

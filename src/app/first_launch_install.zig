@@ -24,6 +24,7 @@ const pty_pane = @import("pty_pane.zig");
 const runners = @import("runners.zig");
 const first_launch = @import("first_launch.zig");
 const cli = @import("../ai/cli.zig");
+const Config = @import("../config/Config.zig");
 
 pub const Os = enum { macos, linux, windows, other };
 
@@ -162,6 +163,31 @@ pub fn codeShimInstalled(app: *App) bool {
     return installed(app, "code");
 }
 
+/// How long the chips trust a PATH walk before walking again.
+pub const probe_ttl_ms: i64 = 10_000;
+
+/// `claudeInstalled` / `codexInstalled` for the frame: one PATH walk
+/// per `probe_ttl_ms`, so the chips can ask every render. An install
+/// pane's exit drops the cache.
+pub fn cliOnPath(app: *App, product: Config.AiProduct) bool {
+    const probe = &app.cli_probe;
+    const stale = if (probe.checked_ms) |at| app.now_ms - at >= probe_ttl_ms or app.now_ms < at else true;
+    if (stale) {
+        probe.claude = claudeInstalled(app);
+        probe.codex = codexInstalled(app);
+        probe.checked_ms = app.now_ms;
+    }
+    return switch (product) {
+        .claude => probe.claude,
+        .codex => probe.codex,
+    };
+}
+
+/// Forget the PATH walk: the next frame looks again.
+pub fn forgetProbe(app: *App) void {
+    app.cli_probe.checked_ms = null;
+}
+
 /// Whether the bundle's `code` exists, so the shim can point at it.
 pub fn codeBundlePresent(app: *App) bool {
     _ = std.Io.Dir.cwd().statFile(app.io, code_bundle_shim, .{}) catch return false;
@@ -230,6 +256,7 @@ fn spawnInstall(app: *App, label: []const u8, line: []const u8, after: pty_pane.
 /// or closed here.
 pub fn afterExit(app: *App, follow: pty_pane.AfterExit, exit: pty_pane.Exit) void {
     const ok = exit.ok();
+    forgetProbe(app);
     const section: first_launch.Section = switch (follow) {
         .nerd_font_install => .nerd_font,
         .ai_cli_install => .claude_codex,
