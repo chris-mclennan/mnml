@@ -27,6 +27,7 @@ const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
 const chip = @import("chip.zig");
 const icons = @import("icons.zig");
+const expander = @import("expander.zig");
 const request_view = @import("request_view.zig");
 
 const Style = vaxis.Style;
@@ -328,16 +329,14 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     }
 }
 
-/// `▼ NAME (n)` (`▶` folded), the chip cluster at the right edge.
+/// The expander, `NAME (n)`, the chip cluster at the right edge.
 fn paintHeader(ui: Ui, r: Rect, row: Row, base: Style) void {
     const t = ui.theme;
     const l = ladder(ui, row.section, row.count, r.w);
     const cluster_w = l.width();
     const text_end = r.right() -| (cluster_w + @as(u16, if (cluster_w > 0) 1 else 0));
     var x = r.x;
-    const open = !row.collapsed;
-    const chevron: []const u8 = if (ui.ascii) (if (open) "v " else "> ") else (if (open) "\u{25BC} " else "\u{25B6} ");
-    x += ui.putStr(x, r.y, text_end -| x, chevron, Theme.onBg(t.muted, base.bg));
+    x += ui.putStr(x, r.y, text_end -| x, expander.slot(ui, !row.collapsed), expander.style(ui, base));
     var label_style = Theme.onBg(t.fg, base.bg);
     label_style.bold = true;
     x += ui.putStr(x, r.y, text_end -| x, ui.clipStr(row.section.label(), text_end -| x), label_style);
@@ -353,15 +352,14 @@ fn paintHeader(ui: Ui, r: Rect, row: Row, base: Style) void {
     }
 }
 
-/// `▾ 󰉋 name (n)` with ` + ` at the edge; `▸` folded, the hollow
+/// The expander, `󰉋 name (n)` with ` + ` at the edge; the hollow
 /// folder for a hidden collection.
 fn paintFolder(ui: Ui, r: Rect, row: Row, base: Style) void {
     const t = ui.theme;
     const has_new = r.w > 12;
     const text_end = if (has_new) r.right() -| (chip_w + 1) else r.right();
     var x = r.x + 2;
-    const chevron: []const u8 = if (ui.ascii) (if (row.collapsed) "> " else "v ") else (if (row.collapsed) "\u{25B8} " else "\u{25BE} ");
-    x += ui.putStr(x, r.y, text_end -| x, chevron, Theme.onBg(t.muted, base.bg));
+    x += ui.putStr(x, r.y, text_end -| x, expander.slot(ui, !row.collapsed), expander.style(ui, base));
     const glyph: []const u8 = if (row.hidden) (if (ui.ascii) hidden_folder_ascii else hidden_folder_glyph) else (if (ui.ascii) icons.folder_closed_ascii else icons.folder_closed_glyph);
     const glyph_style: Style = if (row.hidden) Theme.onBg(t.muted, base.bg) else .{ .fg = t.palette.yellow, .bg = base.bg };
     x += ui.putStr(x, r.y, text_end -| x, ui.fmt("{s} ", .{glyph}), glyph_style);
@@ -515,7 +513,7 @@ test "a header paints the chevron, the bold label, the dim count and the cluster
     defer f.deinit();
     const ui = f.ui();
     paintRow(ui, Rect.init(0, 0, 25, 1), header(.captured, 0), false);
-    try f.expectRow(0, "\u{25BC} CAPTURED (0)     \u{EB83}   \u{EB01}");
+    try f.expectRow(0, "\u{F47C} CAPTURED (0)     \u{EB83}   \u{EB01}");
     try testing.expect(f.style(2, 0).bold);
     try testing.expectEqual(ChipKind.filter, f.hits.at(18, 0).?.http.chip.kind);
     try testing.expectEqual(Section.captured, f.hits.at(18, 0).?.http.chip.section);
@@ -525,17 +523,17 @@ test "a header paints the chevron, the bold label, the dim count and the cluster
     var folded = header(.recent, 12);
     folded.collapsed = true;
     paintRow(ui, Rect.init(0, 1, 29, 1), folded, true);
-    try f.expectRow(1, "\u{25B6} RECENT (12)      \u{EB83}   \u{EB37}   \u{EA76}");
+    try f.expectRow(1, "\u{F460} RECENT (12)      \u{EB83}   \u{EB37}   \u{EA76}");
     try testing.expect(vaxis.Color.eql(f.style(27, 1).fg, f.theme.palette.red));
     try testing.expectEqual(ChipKind.clear, f.hits.at(26, 1).?.http.chip.kind);
     // The ENVS `+` is green; a long label clips before the cluster.
     paintRow(ui, Rect.init(0, 2, 25, 1), header(.envs, 3), false);
-    try f.expectRow(2, "\u{25BC} ENVS (3)         \u{EB83}   \u{EA60}");
+    try f.expectRow(2, "\u{F47C} ENVS (3)         \u{EB83}   \u{EA60}");
     try testing.expect(vaxis.Color.eql(f.style(23, 2).fg, f.theme.palette.green));
     var g = try Fixture.init(12, 1);
     defer g.deinit();
     paintRow(g.ui(), g.full().row(0), header(.collections, 0), false);
-    try g.expectRow(0, "\u{25BC} COLLECTIO…");
+    try g.expectRow(0, "\u{F47C} COLLECTIO…");
     try testing.expectEqual(@as(usize, 0), g.hits.items.items.len);
 }
 
@@ -544,11 +542,11 @@ test "folder, member, loose file, env, chain, mock, recent and captured rows; th
     defer f.deinit();
     const ui = f.ui();
     paintRow(ui, f.full().row(0), .{ .section = .collections, .kind = .folder, .label = "requests", .count = 3, .idx = 1 }, false);
-    try f.expectRow(0, "  \u{25BE} \u{F07B} requests (3)          +");
+    try f.expectRow(0, "  \u{F47C} \u{F07B} requests (3)          +");
     try testing.expectEqual(@as(u32, 1), f.hits.at(28, 0).?.http.folder_new);
     try testing.expect(f.hits.at(26, 0) == null);
     paintRow(ui, f.full().row(1), .{ .section = .collections, .kind = .folder, .label = "smoke", .count = 1, .hidden = true, .collapsed = true }, false);
-    try f.expectRow(1, "  \u{25B8} \u{F114} smoke (1)             +");
+    try f.expectRow(1, "  \u{F460} \u{F114} smoke (1)             +");
     paintRow(ui, f.full().row(2), .{ .section = .collections, .label = "demo.http", .in_folder = true }, false);
     try f.expectRow(2, "    \u{F15C} demo.http");
     paintRow(ui, f.full().row(3), .{ .section = .collections, .label = "loose.http" }, false);
