@@ -105,6 +105,7 @@ const covered = [_]struct {
         .{ .lit = cp(0xF0142), .n = 1, .why = "the tab strip's next arrow, in the diagram of the column" },
     } },
     .{ .path = "debug_panel.zig", .src = @embedFile("debug_panel.zig") },
+    .{ .path = "dap_view.zig", .src = @embedFile("dap_view.zig") },
     .{ .path = "http_panel.zig", .src = @embedFile("http_panel.zig") },
     .{ .path = "grep_view.zig", .src = @embedFile("grep_view.zig") },
     .{ .path = "sessions_table_view.zig", .src = @embedFile("sessions_table_view.zig"), .allow = &.{

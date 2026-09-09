@@ -18,6 +18,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const text_field = @import("text_field.zig");
+const expander = @import("expander.zig");
 const toolbar = @import("debug_toolbar.zig");
 const ids = @import("../core/ids.zig");
 
@@ -38,6 +39,9 @@ pub const Line = struct {
     text: []const u8,
     /// The evaluation this line belongs to (a click toggles it).
     entry: ?u32 = null,
+    /// A result that folds (a struct, an array): the expander sits
+    /// before the text, open or closed, in the expander's colour.
+    fold: ?bool = null,
 };
 
 pub const Props = struct {
@@ -108,6 +112,11 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: Props) ?Caret {
             var cx = r.x + 1;
             cx += ui.putStr(cx, y, r.w -| 1, prompt, style);
             _ = ui.putStr(cx, y, r.right() -| cx, ui.clipStr(l.text, r.right() -| cx), Theme.onBg(t.fg, bg));
+        } else if (l.fold) |open| {
+            var cx = r.x + 1;
+            cx += ui.putStr(cx, y, r.right() -| cx, "  ", style);
+            cx += ui.putStr(cx, y, r.right() -| cx, expander.slot(ui, open), expander.style(ui, .{ .bg = bg }));
+            _ = ui.putStr(cx, y, r.right() -| cx, ui.clipStr(l.text, r.right() -| cx), style);
         } else {
             _ = ui.putStr(r.x + 1, y, r.w -| 1, ui.clipStr(l.text, r.w -| 1), style);
         }
@@ -132,7 +141,7 @@ test "toolbar, the scrollback's tail, the echo rows as hits, the input row with 
         .{ .kind = .echo, .text = "x * 2", .entry = 0 },
         .{ .kind = .result, .text = "  10 : int", .entry = 0 },
         .{ .kind = .echo, .text = "p", .entry = 1 },
-        .{ .kind = .result, .text = "  \u{25BE} {a=1, b=2} : struct", .entry = 1 },
+        .{ .kind = .result, .text = "{a=1, b=2} : struct", .entry = 1, .fold = true },
         .{ .kind = .child, .text = "      a : int = 1", .entry = 1 },
     };
     const caret = draw(f.ui(), 4, f.full(), .{ .lines = &lines, .scroll = 0, .input = "y", .caret = 1, .state = .stopped, .focused = true });
@@ -140,6 +149,11 @@ test "toolbar, the scrollback's tail, the echo rows as hits, the input row with 
     try f.expectContains(" throw: boom");
     try f.expectContains(" > x * 2");
     try f.expectContains("   10 : int");
+    // A foldable result: the expander before its text, in the
+    // expander's grey; the text keeps the result colour.
+    try f.expectContains("   \u{F47C} {a=1, b=2} : struct");
+    try testing.expect(f.fgEql(3, 5, f.theme.muted));
+    try testing.expect(f.fgEql(5, 5, f.theme.info_fg));
     try f.expectContains("       a : int = 1");
     try f.expectRow(7, " > y");
     try testing.expectEqual(@as(u16, 4), caret.?.x);
