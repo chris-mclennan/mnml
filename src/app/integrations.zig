@@ -961,6 +961,9 @@ pub fn showTab(app: *App, tab: Tab) CommandError!void {
     @import("activity_bar.zig").enter(app, .integrations);
     const st = &app.integrations;
     if (!st.scanned) try refresh(app);
+    // The Dev count in the tab strip is read before the tab is opened,
+    // so the roots are scanned on entering the section, not the tab.
+    if (!st.dev_scanned) try scanDev(app);
     setTab(app, tab);
     side.place(app, .integrations, true);
     switch (tab) {
@@ -2288,8 +2291,12 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     cfg.integrations.dev_roots = &.{"../elsewhere"};
     var app = try App.initWith(testing.allocator, testing.io, .{ .cfg = cfg, .workspace = ws, .data_root = root, .cols = 100, .rows = 24 });
     defer app.deinit();
-    try scanDev(&app);
+    // Entering the section on any tab scans the roots: the strip's Dev
+    // count is right before the tab is ever opened.
     const st = &app.integrations;
+    try testing.expect(!st.dev_scanned);
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    try testing.expect(st.dev_scanned);
     try testing.expectEqual(@as(usize, 2), st.dev.len);
     try testing.expectEqualStrings("other", st.dev[0].id());
     try testing.expectEqualStrings("elsewhere", st.dev[0].root);
