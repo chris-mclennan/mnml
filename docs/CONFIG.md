@@ -511,6 +511,7 @@ workspace layer and everything else still applies:
 | `.dap.<name>` | when you start a debug session |
 | `.startup.layout[]` with `.kind = .pty` | immediately, on open |
 | `.startup.tasks` | immediately, on open |
+| `.ai.launch_profiles[]` (`.binary` / `.args` / `.env`) and `.ai.default_profile` | when you start a Claude / Codex session |
 | `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
 | `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
 
