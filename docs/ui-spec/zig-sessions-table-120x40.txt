@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /pri…            │ 󰎒 Sessions 󰅖   󰐕                                                                   
-  │     .mnml              │ SESSIONS (3 of 4)                   ended: hidden   ⏸ pause   ? help   sort: state    
+  │▌    .mnml              │ SESSIONS (3 of 4)                   ended: hidden   ⏸ pause   ? help   sort: state    
    │       ipc-zig          │  󰍉 / filter
  󰍉 │     󱼅  session.zon      │
    │                          │  + New session
@@ -33,8 +33,8 @@
    │                          │
    │                          │── summary ──────────────────────────────────────────────────────────────────────────────
    │                          │  ⚠ 1 waiting · ● 1 live · ▸ 0 tool · ○ 1 idle · ✗ 0 failed · · 1 done · 1 hidden · 4.4k…
-   │                          │  run the release build · ✦ claude · claude-sonnet-4-5-20250929 · pid 53197 · 󰘬 main · /…
+   │                          │  run the release build · ✦ claude · claude-sonnet-4-5-20250929 · pid 20676 · 󰘬 main · /…
   │                          │  you: run the release build
    │                          │  claude: Running it.
- VIEW  [no file]                                                                            󱼀 󰐎    23:07  ws   —
+ VIEW  [no file]                                                                            󱼀 󰐎    00:53  ws   —
 

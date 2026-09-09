@@ -20,5 +20,5 @@
    │ rows.     ││
   │ Enter     ││
    │            │
- VIEW   main  ⇡1  [no file]         F 57% ▲1.0  󱼀 󰐎    23:09  ws   —
+ VIEW   main  ⇡1  [no file]         F 57% ▲1.0  󱼀 󰐎    00:53  ws   —
 
