@@ -425,7 +425,7 @@ otherwise. Copy what you need; leave the rest out.
     .marketplace = .{
         .enabled = true,
         .cache_ttl_secs = 3600,
-        .use_defaults = true, // prepend mnml's own sources
+        .use_defaults = true, // prepend mnml's own sources (none ship yet — the official set comes with the first Zig integrations)
         .sources = .{
             .{ .crates_keyword = .{ .id = "crates.io", .keyword = "mnml-integration" } },
             .{ .github_launcher_folder = .{ .id = "me/launchers", .repo = "me/launchers", .path = "launchers" } },

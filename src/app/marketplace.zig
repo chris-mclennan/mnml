@@ -27,7 +27,9 @@
 //!
 //! `crates_keyword` is kept in the config so a 0.2 file still loads,
 //! but integrations are no longer crates: it is reported and lists
-//! nothing.
+//! nothing. No source ships by default yet (`Config.default_marketplace_sources`
+//! is empty): the 0.2 sources listed integrations on the old bridge,
+//! which this host cannot mount.
 //!
 //! `MNML_MARKETPLACE_API` replaces `https://api.github.com` (the tests
 //! point it at a local server). `MNML_MARKETPLACE_LOCAL=<folder>` makes
@@ -171,6 +173,14 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
     return out.toOwnedSlice(gpa);
 }
 
+/// How many sources `sources` would list, without building them: the
+/// `MNML_MARKETPLACE_LOCAL` folder counts as one.
+pub fn sourceCount(app: *App) usize {
+    if (app.env.get("MNML_MARKETPLACE_LOCAL")) |folder| if (folder.len > 0) return 1;
+    const defaults: usize = if (app.cfg.marketplace.use_defaults) Config.default_marketplace_sources.len else 0;
+    return defaults + app.cfg.marketplace.sources.len;
+}
+
 fn specOf(app: *App, gpa: Allocator, s: Config.MarketplaceSource) Allocator.Error!SourceSpec {
     return switch (s) {
         .crates_keyword => |c| .{ .id = try gpa.dupe(u8, c.id), .kind = .crates, .repo = try gpa.dupe(u8, ""), .path = try gpa.dupe(u8, c.keyword) },
@@ -203,6 +213,14 @@ pub fn refresh(app: *App) CommandError!void {
         for (specs) |s| s.deinit(gpa);
         gpa.free(specs);
     }
+    // Nothing to fetch: no worker, no spinner — the tab's empty state
+    // says why.
+    if (specs.len == 0) {
+        gpa.free(specs);
+        st.fetching = false;
+        app.needs_render = true;
+        return;
+    }
     const api = try gpa.dupe(u8, apiBase(app));
     errdefer gpa.free(api);
     st.group.concurrent(app.io, fetchWorker, .{ &app.events, app.io, gpa, specs, api, st.generation }) catch |err| {
@@ -214,6 +232,7 @@ pub fn refresh(app: *App) CommandError!void {
 
 fn refreshCmd(app: *App) CommandError!void {
     try refresh(app);
+    if (sourceCount(app) == 0) return app.toast("marketplace: no sources configured (marketplace.sources)", .{});
     app.toast("marketplace: fetching…", .{});
 }
 
@@ -697,6 +716,7 @@ fn copyIdFocused(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const screen_mod = @import("../ipc/screen.zig");
 
 /// A tiny HTTP server that answers by path from a table.
 const FakeGitHub = struct {
@@ -783,6 +803,40 @@ const apps_json =
 const hello_zon =
     \\.{ .id = "hello", .label = "Hello", .description = "The sample", .version = "0.1.0", .binary = "mnml-hello" }
 ;
+
+test "the shipped defaults list no source: nothing from the 0.2 monorepo, launchers or crates reaches the Marketplace tab" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 20 });
+    defer app.deinit();
+    try testing.expect(app.cfg.marketplace.use_defaults);
+    try testing.expectEqual(@as(usize, 0), sourceCount(&app));
+    const specs = try sources(&app, gpa);
+    defer {
+        for (specs) |sp| sp.deinit(gpa);
+        gpa.free(specs);
+    }
+    try testing.expectEqual(@as(usize, 0), specs.len);
+    for (Config.default_marketplace_sources) |d| switch (d) {
+        .github_launcher_folder => |g| try testing.expect(std.mem.indexOf(u8, g.repo, "mnml-integrations") == null),
+        .github_monorepo_apps => |g| try testing.expect(std.mem.indexOf(u8, g.repo, "mnml-integrations") == null),
+        .crates_keyword => return error.CratesSourceShipped,
+        .local_folder => {},
+    };
+    // The tab says why it is empty instead of asking for a refresh.
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"integrations.show_marketplace" });
+    try app.render();
+    const text = try screen_mod.toTestText(gpa, &app.screen);
+    defer gpa.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "No sources yet") != null);
+    try testing.expect(!app.marketplace.fetching);
+    try testing.expect(std.mem.indexOf(u8, text, "run `marketplace.refresh`") == null);
+}
 
 test "parseContents keeps the shape GitHub sends; safeName is the path guard" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);

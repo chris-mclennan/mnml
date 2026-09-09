@@ -1434,7 +1434,9 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .{ .message = ui.fmt("No matches for \"{s}\" — Esc clears", .{q}) }
     else switch (st.tab) {
         .installed => .{ .message = "Nothing installed yet — try the Marketplace tab", .hint = "or a Dev folder: Install runs <binary> --install" },
-        .marketplace => if (app.marketplace.fetching)
+        .marketplace => if (marketplace.sourceCount(app) == 0)
+            .{ .message = "No sources yet — the official set comes with the first Zig integrations", .hint = "marketplace.sources in config.zon adds one" }
+        else if (app.marketplace.fetching)
             .{ .message = if (ui.ascii) "Fetching the sources..." else "Fetching the sources…" }
         else if (app.marketplace.fetched_at_ms == null)
             .{ .message = "No marketplace entries yet — run `marketplace.refresh`", .hint = "r fetches the configured sources" }

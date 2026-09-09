@@ -595,11 +595,12 @@ pub const Marketplace = struct {
 };
 
 /// The sources mnml ships with when `.marketplace.use_defaults` is on.
-pub const default_marketplace_sources = [_]MarketplaceSource{
-    .{ .crates_keyword = .{ .id = "crates.io", .keyword = "mnml-integration" } },
-    .{ .github_launcher_folder = .{ .id = "chris-mclennan/mnml-integrations", .repo = "chris-mclennan/mnml-integrations", .path = "launchers" } },
-    .{ .github_monorepo_apps = .{ .id = "chris-mclennan/mnml-integrations-apps", .repo = "chris-mclennan/mnml-integrations", .apps_dir = "apps" } },
-};
+/// None yet: the 0.2 sources (the crates.io keyword, the launchers
+/// folder and the apps monorepo) list integrations built on the old
+/// bridge, which this host cannot mount, so they are gone. The official
+/// set is this repo's `integrations/` folder, served here as a
+/// `github_monorepo_apps` source once jira and bitbucket are in it.
+pub const default_marketplace_sources = [_]MarketplaceSource{};
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
@@ -683,7 +684,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u32, 3600), c.marketplace.cache_ttl_secs);
     try std.testing.expect(c.marketplace.use_defaults);
     try std.testing.expectEqual(@as(usize, 0), c.marketplace.sources.len);
-    try std.testing.expectEqual(@as(usize, 3), default_marketplace_sources.len);
+    try std.testing.expectEqual(@as(usize, 0), default_marketplace_sources.len);
     try std.testing.expectEqual(@as(usize, 0), c.lsp.count());
     try std.testing.expectEqual(@as(usize, 0), c.keys.global.count());
     try std.testing.expect(c.tools.isEmpty());
