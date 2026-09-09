@@ -708,7 +708,6 @@ pub const Tree = struct {
             .focused = app.focus == .tree,
             .scroll = self.scroll,
             .show_dots = app.cfg.ui.show_workspace_dots,
-            .triangle = app.cfg.ui.expand_indicator == .triangle,
         });
     }
 

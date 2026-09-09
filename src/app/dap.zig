@@ -1386,9 +1386,12 @@ fn consoleLines(app: *App, arena: Allocator) Allocator.Error![]dap_view.Line {
                 } else if (ev.err) |err| {
                     try out.append(arena, .{ .kind = .err, .text = try std.fmt.allocPrint(arena, "  err: {s}", .{err}), .entry = idx });
                 } else {
-                    const chev: []const u8 = if (ev.variables_ref > 0) (if (ev.expanded) "\u{25BE} " else "\u{25B8} ") else "";
-                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "  {s}{s} : {s}", .{ chev, ev.value, ty }) else try std.fmt.allocPrint(arena, "  {s}{s}", .{ chev, ev.value });
-                    try out.append(arena, .{ .kind = .result, .text = text, .entry = idx });
+                    // A foldable result carries its expander; the view
+                    // paints it before the text.
+                    const folds = ev.variables_ref > 0;
+                    const indent: []const u8 = if (folds) "" else "  ";
+                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "{s}{s} : {s}", .{ indent, ev.value, ty }) else try std.fmt.allocPrint(arena, "{s}{s}", .{ indent, ev.value });
+                    try out.append(arena, .{ .kind = .result, .text = text, .entry = idx, .fold = if (folds) ev.expanded else null });
                     if (ev.expanded and ev.variables_ref > 0) {
                         if (app.dap.session) |s| if (s.variables.get(ev.variables_ref)) |kids| {
                             for (kids) |k| {

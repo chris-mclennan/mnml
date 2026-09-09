@@ -1574,7 +1574,7 @@ test "headless: the panel paints the blank row under the filter, seven headers w
     var x: u16 = 4;
     while (x < 30) : (x += 1) try testing.expectEqualStrings(" ", f.app.screen.readCell(x, 3).?.char.grapheme);
     try testing.expect(std.mem.indexOf(u8, lines.next().?, "COLLECTIONS (4)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} \u{F07B} api (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F07B} api (2)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F15C} users.http") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F1D8} loose.http") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F114} smoke (1)") != null);

@@ -23,7 +23,7 @@ expect screen contains " alpha 󰅀"
 command git.palette_all
 wait 1200
 expect screen contains " All repos 󰅀"
-expect screen contains "󰅀 󰌢 LOCAL"
+expect screen contains " 󰌢 LOCAL"
 expect screen contains "  alpha"
 expect screen contains "  beta"
 expect screen contains "󰄬   󰘬 main"

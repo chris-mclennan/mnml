@@ -4862,10 +4862,10 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0322} LOCAL") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F0322} LOCAL") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "  \u{F062C} feature") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F062C} main") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0140} \u{F0405} WORKTREES") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F0405} WORKTREES") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F02DC} main") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F03D7} STASHES") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F04FB} TAGS") != null);

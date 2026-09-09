@@ -365,6 +365,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .focus = app.focus,
         .hover = if (app.hover) |h| .{ .x = h.x, .y = h.y } else null,
         .ascii = app.cfg.ui.ascii_icons,
+        .triangle = app.cfg.ui.expand_indicator == .triangle,
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);

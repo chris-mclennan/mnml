@@ -220,7 +220,10 @@ so no dialog), feeds `steps-NAME.jsonl` over IPC and keeps the screen:
   breakpoint on line 4, `dap.run`, `dap.show`. The DEBUG section in the
   left column (the status row's narrow form `● prog.dbg:4 · main`,
   VARIABLES with both scopes, WATCH, CALL STACK, BREAKPOINTS with the
-  adapter's two exception filters), the editor with the ▶ and its band,
+  adapter's two exception filters, a blank row between one section and
+  the next, every section and scope behind the tree's chevron in the
+  headers' grey — `src/ui/expander.zig`, the one expander every left
+  panel paints), the editor with the ▶ and its band,
   the step toolbar strip under the breadcrumb, `  x = 1` inline values,
   the hover tooltip over `x` (`ui.hover_tooltip`), and the Debug pane —
   toolbar, `── started prog.dbg ──`, `hello`, the input row.
@@ -246,7 +249,7 @@ spec, so there is nothing to diff against:
 
 - `zig-sessions-table-120x40.txt` — the table pane: the header chips
   (`state:` sort, `ended: hidden`, `⏸ pause`, `? help`), one group
-  row `▾ ws (3 · 1 hidden)` (the ended session is a day old), the
+  row ` ws (3 · 1 hidden)` (the ended session is a day old), the
   rows sorted by state — waiting, live, idle — with the id, tokens,
   cost, age and dirty columns, and the summary block: the counts per
   state, the hidden count, and the selected row's last exchange.
@@ -294,8 +297,10 @@ is never touched.
   branches indented without the prefix), WORKTREES (the house on the
   main tree with `1↑`, the lock in the gutter of `wt-locked`, the blue
   dot at the edge of `wt-dirty`), STASHES (`sha message`), TAGS newest
-  first. The cursor rests on LOCAL with the muted marker, as every
-  list panel's does.
+  first. Every section folds behind the tree's chevron
+  (`src/ui/expander.zig`), as every left panel's expander does. The
+  cursor rests on LOCAL with the muted marker, as every list panel's
+  does.
 - `zig-git-palette-80x24.txt` — the same at 80×24: the column is 12
   cells, the pill paints alone (no room for the chevrons), labels and
   names clip with `…` before the counts and the right-edge cells, the
@@ -329,7 +334,7 @@ is at 58 differing lines, every hunk deliberate:
 - COLLECTIONS — Rust needs two files in a folder to call it a
   collection, so its `requests/demo.http` is a FILES straggler under
   an empty COLLECTIONS with `+ New collection`; Zig groups every folder
-  (`▾ 󰉋 requests (1)` with the `+` at its edge, `demo.http` under it);
+  (` 󰉋 requests (1)` with the `+` at its edge, `demo.http` under it);
 - COOKIES — Zig's section, with its words (`No cookies yet — …`) and
   the RECENT ladder; Rust has none;
 - the scrollbar in the column's last cell, a cell of air before it —
@@ -343,7 +348,9 @@ is at 58 differing lines, every hunk deliberate:
   chips (pre-existing residue, in every dump).
 
 Element for element the Zig column has what the Rust one has: the
-blank row under the filter, `▼ NAME (n)` with the ladder at the edge
+blank row under the filter, `NAME (n)` behind the expander (the tree's
+chevron, `src/ui/expander.zig`, where Rust paints `▼`; the user's call,
+2026-09-08) with the ladder at the edge
 (`+` alone on COLLECTIONS at 26 cells with the bar, `≡ +` on ENVS,
 none on CHAINS, `≡ ⟳ ✕` on MOCKS, `≡ ⟳` on RECENT, `≡ 🌐` on CAPTURED
 — Rust's drop rule at this width), the folder tree, `● / ○` envs,

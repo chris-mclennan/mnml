@@ -21,7 +21,7 @@ const text_field = @import("text_field.zig");
 const filter_input = @import("filter_input.zig");
 const scrollbar = @import("scrollbar.zig");
 const overlay = @import("overlay.zig");
-const tree_view = @import("tree_view.zig");
+const expander = @import("expander.zig");
 const ids = @import("../core/ids.zig");
 const zon_pane = @import("../app/zon_pane.zig");
 const ZonPane = zon_pane.ZonPane;
@@ -116,9 +116,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
         x += @min(indent, tr.right() -| x);
         // The fold glyph on a container.
         if (node.kind.isContainer()) {
-            const g: []const u8 = if (row.collapsed) (if (ui.ascii) tree_view.chevron_closed_ascii else tree_view.chevron_closed_glyph) else (if (ui.ascii) tree_view.chevron_open_ascii else tree_view.chevron_open_glyph);
-            x += ui.putStr(x, r.y, tr.right() -| x, g, Theme.onBg(t.muted, bg));
-            x += ui.putStr(x, r.y, tr.right() -| x, " ", Theme.onBg(t.muted, bg));
+            x += ui.putStr(x, r.y, tr.right() -| x, expander.slot(ui, !row.collapsed), expander.style(ui, Theme.onBg(t.fg, bg)));
         }
         const name_style = Theme.onBg(if (node.isListElement()) t.muted else t.fg, bg);
         x += ui.putStr(x, r.y, tr.right() -| x, ui.clipStr(node.name, tr.right() -| x), name_style);

@@ -15,7 +15,7 @@ type 2j
 command dap.toggle_breakpoint
 expect screen contains "breakpoint set: line 4"
 command view.activity_debug
-expect screen contains "▾ BREAKPOINTS (2)"
+expect screen contains " BREAKPOINTS (2)"
 expect screen contains "[x] prog.dbg:2  when x"
 expect screen contains "[x] prog.dbg:4"
 # status · VARIABLES · hint · WATCH · hint · CALL STACK · hint · BREAKPOINTS · prog.dbg:2
@@ -35,5 +35,5 @@ key space
 expect screen contains "breakpoint line 2: enabled"
 key x
 expect screen contains "breakpoint cleared: line 2"
-expect screen contains "▾ BREAKPOINTS (1)"
+expect screen contains " BREAKPOINTS (1)"
 expect screen lacks "prog.dbg:2"

@@ -18,6 +18,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const text_field = @import("text_field.zig");
 const list_panel = @import("list_panel.zig");
+const expander = @import("expander.zig");
 const header = @import("header.zig");
 const ids = @import("../core/ids.zig");
 const table = @import("../app/sessions_table.zig");
@@ -200,11 +201,10 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     const cols = columns(r.w);
     switch (row) {
         .group => |g| {
-            const arrow = if (ui.ascii) (if (g.collapsed) "> " else "v ") else (if (g.collapsed) "▸ " else "▾ ");
             var x = r.x + 1;
             var gstyle = Theme.withFg(style, th.accent.fg);
             gstyle.bold = true;
-            x += ui.putStr(x, r.y, r.right() -| x, arrow, gstyle);
+            x += ui.putStr(x, r.y, r.right() -| x, expander.slot(ui, !g.collapsed), expander.style(ui, style));
             const where_mark: []const u8 = if (g.where == .cloud) (if (ui.ascii) "cloud: " else "☁ ") else "";
             x += ui.putStr(x, r.y, r.right() -| x, where_mark, gstyle);
             const cap_x = r.right() -| cols.right_w;
@@ -419,7 +419,7 @@ test "a group row carries the captions over the numbers; a session row is the ba
     paintRow(f.ui(), Rect.init(0, 1, 90, 1), rows[1], false);
     var buf: [256]u8 = undefined;
     const g = f.row(0, &buf);
-    try testing.expect(std.mem.indexOf(u8, g, "▾ mnml (1 · 2 hidden)") != null);
+    try testing.expect(std.mem.indexOf(u8, g, "\u{F47C} mnml (1 · 2 hidden)") != null);
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, g, " "), "id  tokens     cost   age dirty"));
     var buf2: [256]u8 = undefined;
     const s = f.row(1, &buf2);

@@ -39,6 +39,9 @@ focus: FocusId,
 hover: ?struct { x: u16, y: u16 } = null,
 ascii: bool = false,
 nerd_font: bool = true,
+/// `ui.expand_indicator = .triangle`: every expander paints the small
+/// triangle instead of the chevron (`expander.zig`).
+triangle: bool = false,
 
 /// Registers `t` for `r`. OOM drops the entry: the paint already
 /// happened and the next frame re-registers it.

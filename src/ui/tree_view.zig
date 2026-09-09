@@ -5,11 +5,11 @@
 //! workspace` row that trails them. Every hit is registered in the same
 //! statement as its cells.
 //!
-//! The primary header is ` ▾ ~/path/` in bold green with the action
+//! The primary header is the expander, then ` ~/path/` in bold green with the action
 //! chips right-aligned — new folder, new file, pull, collapse / expand,
 //! then the refresh chip — dropped from the right of the cluster until
 //! the label and the refresh chip fit, one cell of margin kept clear at
-//! the edge. An extra workspace (`[[workspaces]]`) is ` ▸ name ` alone.
+//! the edge. An extra workspace (`[[workspaces]]`) is its expander and ` name ` alone.
 //!
 //! An entry is ` ` + indent + connector + chevron + icon + name, the git
 //! badge right-aligned (a cell of air between it, or a long name, and the
@@ -18,12 +18,12 @@
 //! level draws none, as neo-tree), the chevron slot of a file row taking
 //! `│` or `└` under the parent's folder icon. The connectors are mnml's
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
-//! shifted right so they meet the chevron above), the chevrons the
-//! Octicons pair, the file icons `icons.zig`. Every glyph has its
-//! `ui.ascii_icons` twin beside it. The cursor row carries the list
-//! panels' marker (`▌`, the accent when the tree has the keys, muted
-//! otherwise) in its leading cell — the cell that otherwise keeps the
-//! rail's ground on every row.
+//! shifted right so they meet the chevron above), the chevrons
+//! `expander.zig`'s pair in its colour, the file icons `icons.zig`.
+//! Every glyph has its `ui.ascii_icons` twin beside it. The cursor row
+//! carries the list panels' marker (`▌`, the accent when the tree has
+//! the keys, muted otherwise) in its leading cell — the cell that
+//! otherwise keeps the rail's ground on every row.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -34,16 +34,12 @@ const icons = @import("icons.zig");
 const chip_mod = @import("chip.zig");
 const scrollbar = @import("scrollbar.zig");
 const list_panel = @import("list_panel.zig");
+const expander = @import("expander.zig");
 
 const Style = vaxis.Style;
 
 // ── glyphs ──
 
-/// nf-oct-chevron_down / nf-oct-chevron_right — neo-tree's expanders.
-pub const chevron_open_glyph = "\u{F47C}";
-pub const chevron_open_ascii = "▼";
-pub const chevron_closed_glyph = "\u{F460}";
-pub const chevron_closed_ascii = "▶";
 /// mnml's baked `│` and `└`, shifted right to sit under the chevron.
 pub const cont_glyph = "\u{F1F04}";
 pub const cont_ascii = "|";
@@ -179,8 +175,6 @@ pub const Props = struct {
     scroll: usize = 0,
     /// `ui.show_workspace_dots`: `● ` / `○ ` after a section's chevron.
     show_dots: bool = false,
-    /// `ui.expand_indicator = .triangle`: `▾` / `▸` instead of the chevrons.
-    triangle: bool = false,
 };
 
 pub const Layout = struct {
@@ -206,13 +200,6 @@ pub fn contentLen(items: []const Item) usize {
         n += 1;
     }
     return n;
-}
-
-/// The section chevron, honouring `ui.expand_indicator`.
-pub fn chevron(expanded: bool, ascii: bool, triangle: bool) []const u8 {
-    if (triangle) return if (expanded) "▾" else "▸";
-    if (expanded) return if (ascii) chevron_open_ascii else chevron_open_glyph;
-    return if (ascii) chevron_closed_ascii else chevron_closed_glyph;
 }
 
 pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
@@ -268,7 +255,7 @@ fn lastRoot(items: []const Item, end: usize) u8 {
     return 0;
 }
 
-/// ` ▾ ` + [`● `] + label; the primary adds the chip cluster.
+/// The expander + [`● `] + label; the primary adds the chip cluster.
 fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool) void {
     const t = ui.theme;
     const pal = t.palette;
@@ -280,8 +267,7 @@ fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool
     const primary = s.root == 0;
     // The leading cell keeps the rail's ground, as an entry's does.
     var x = r.x + 1;
-    const chev = ui.fmt("{s} ", .{chevron(s.expanded, ui.ascii, p.triangle)});
-    x += ui.putStr(x, r.y, r.right() -| x, chev, Theme.onBg(Theme.withFg(t.fg, pal.comment), bg));
+    x += ui.putStr(x, r.y, r.right() -| x, expander.slot(ui, s.expanded), expander.style(ui, Theme.onBg(t.fg, bg)));
     if (p.show_dots) {
         const dot: []const u8 = if (primary) (if (ui.ascii) "* " else "● ") else (if (ui.ascii) "o " else "○ ");
         x += ui.putStr(x, r.y, r.right() -| x, dot, Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.comment), bg));
@@ -383,15 +369,15 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     }
     // The row's own level: bars from level two, spaces at level one.
     if (e.depth >= 1) x += ui.putStr(x, r.y, right -| x, if (e.depth >= 2) cont else "  ", trace_style);
-    // The chevron slot.
+    // The chevron slot: a folder's expander in its own colour, a file's
+    // connector in the trace's.
     if (!ui.ascii) {
-        const slot: []const u8 = if (e.is_dir)
-            ui.fmt("{s} ", .{chevron(e.expanded, false, p.triangle)})
-        else if (e.depth >= 1)
-            (if (isLastChild(items, i)) corner_glyph ++ " " else cont_glyph ++ " ")
-        else
-            "  ";
-        x += ui.putStr(x, r.y, right -| x, slot, trace_style);
+        if (e.is_dir) {
+            x += ui.putStr(x, r.y, right -| x, expander.slot(ui, e.expanded), expander.style(ui, Theme.onBg(t.fg, bg)));
+        } else {
+            const slot: []const u8 = if (e.depth >= 1) (if (isLastChild(items, i)) corner_glyph ++ " " else cont_glyph ++ " ") else "  ";
+            x += ui.putStr(x, r.y, right -| x, slot, trace_style);
+        }
     }
     // The icon.
     const icon = if (e.repo != null) icons.repo(e.expanded, ui.ascii) else icons.forName(e.name, e.is_dir, e.expanded, ui.ascii);
@@ -577,7 +563,7 @@ test "connectors: ancestors with siblings to come draw a bar from level two, the
     var ui = g.ui();
     ui.ascii = true;
     _ = draw(ui, g.full(), .{ .items = &items });
-    try g.expectRow(0, " ▼ /w/         d+ f+ ↓  ↕  \u{21BA}");
+    try g.expectRow(0, " v /w/         d+ f+ ↓  ↕  \u{21BA}");
     try g.expectRow(1, "   ▼ a");
     try g.expectRow(3, "     | · c1");
     try g.expectRow(5, "     | | · d");
@@ -642,12 +628,13 @@ test "sections: the cursor bar on a focused header, the triangle indicator, the 
     const items = [_]Item{ section(0, "/w/", true), section(1, "mixr", false) };
     var f = try Fixture.init(30, 2);
     defer f.deinit();
-    _ = draw(f.ui(), f.full(), .{ .items = &items, .cursor = 1, .focused = true, .show_dots = true, .triangle = true });
-    try f.expectRow(0, " ▾ ● /w/       \u{EA80}  \u{EA7F}  \u{EB40}  \u{EAC5}  \u{EB37}");
-    try f.expectRow(1, "\u{258c}▸ ○ mixr");
+    f.triangle = true;
+    _ = draw(f.ui(), f.full(), .{ .items = &items, .cursor = 1, .focused = true, .show_dots = true });
+    try f.expectRow(0, " " ++ expander.open_triangle ++ " ● /w/       \u{EA80}  \u{EA7F}  \u{EB40}  \u{EAC5}  \u{EB37}");
+    try f.expectRow(1, "\u{258c}" ++ expander.closed_triangle ++ " ○ mixr");
     try testing.expect(vaxis.Color.eql(f.style(5, 1).bg, f.theme.palette.bg2));
     try testing.expect(vaxis.Color.eql(f.style(0, 1).bg, f.theme.palette.bg_darker));
-    inline for (.{ chevron_open_glyph, chevron_closed_glyph, cont_glyph, corner_glyph, new_folder_glyph, new_file_glyph, pull_glyph, collapse_all_glyph, expand_all_glyph, add_workspace_glyph }) |g| {
+    inline for (.{ cont_glyph, corner_glyph, new_folder_glyph, new_file_glyph, pull_glyph, collapse_all_glyph, expand_all_glyph, add_workspace_glyph }) |g| {
         try testing.expectEqual(@as(usize, 1), try std.unicode.utf8CountCodepoints(g));
     }
     for (std.enums.values(Chip)) |c| {

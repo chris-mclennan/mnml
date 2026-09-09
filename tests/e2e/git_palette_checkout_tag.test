@@ -13,7 +13,7 @@ write a.txt "two\n"
 shell git commit -q -am "second"
 command view.activity_git
 wait 1000
-expect screen contains "󰅀 󰓻 TAGS"
+expect screen contains " 󰓻 TAGS"
 expect screen contains "  󰓹 v1"
 click 6 18
 click 6 18

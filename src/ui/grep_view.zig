@@ -1,7 +1,7 @@
 //! The grep results pane (`Pane.grep`): a title row (`SEARCH · rg:
 //! "query" · N matches in M files · searching…`), a hint row, the `/`
 //! filter row while it is open, then the rows — a file header
-//! (`▾ src/a.zig (3)`) per file and `  12:5  the line` per hit with
+//! (the expander, `src/a.zig (3)`) per file and `  12:5  the line` per hit with
 //! the match highlighted and a disabled hit dimmed. Hit ids are
 //! `grep.zig`'s. A scrollbar takes the last column when there is room.
 
@@ -13,6 +13,7 @@ const ids = @import("../core/ids.zig");
 const grep = @import("../app/grep.zig");
 const text_field = @import("text_field.zig");
 const scrollbar = @import("scrollbar.zig");
+const expander = @import("expander.zig");
 const vaxis = @import("vaxis");
 
 pub const PaneId = ids.PaneId;
@@ -101,9 +102,10 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
         switch (p.rows.items[i]) {
             .file => |g| {
                 const grp = p.groups.items[g];
-                const chevron: []const u8 = if (grp.collapsed) (if (ui.ascii) ">" else "▸") else (if (ui.ascii) "v" else "▾");
-                const line = ui.fmt("{s} {s} ({d})", .{ chevron, grp.rel, grp.count });
-                _ = ui.putStr(tr.x, tr.y, tr.w, ui.clipStr(line, tr.w), Theme.onBg(th.accent, bg));
+                // The expander in its colour, the group's path in the accent.
+                const chev = ui.putStr(tr.x, tr.y, tr.w, expander.slot(ui, !grp.collapsed), expander.style(ui, .{ .bg = bg }));
+                const line = ui.fmt("{s} ({d})", .{ grp.rel, grp.count });
+                _ = ui.putStr(tr.x + chev, tr.y, tr.w -| chev, ui.clipStr(line, tr.w -| chev), Theme.onBg(th.accent, bg));
             },
             .hit => |h| paintHit(ui, tr, p.hits.items[h], p.isDisabled(h), bg),
         }
