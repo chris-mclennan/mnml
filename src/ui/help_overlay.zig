@@ -230,7 +230,8 @@ pub fn draw(ui: Ui, screen: Rect, s: *State, rows: []const Row) void {
     const max_scroll = lines.items.len -| body_h;
     if (s.scroll > max_scroll) s.scroll = max_scroll;
     const needs_bar = lines.items.len > body_h;
-    const body_w = if (needs_bar) inner.w -| 1 else inner.w;
+    // The bar's column, and a cell of air before it.
+    const body_w = if (needs_bar) inner.w -| 2 else inner.w;
     var header_style = Theme.onBg(t.muted, bg);
     header_style.bold = true;
     header_style.dim = true;
@@ -384,4 +385,22 @@ test "a long list scrolls by key and shows a bar; tiny screens do not panic" {
         draw(g.ui(), g.full(), &s, many);
         for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
     }
+}
+
+test "a cell of air before the bar: a long title is cut a cell short of it on every body row" {
+    var f = try Fixture.init(60, 16);
+    defer f.deinit();
+    const arena = f.arena_state.allocator();
+    const many = try arena.alloc(Row, 40);
+    many[0] = .{ .section = "big" };
+    for (many[1..], 1..) |*r, i| r.* = .{ .binding = .{ .keys = try std.fmt.allocPrint(arena, "f{d}", .{i}), .title = "a" ** 100 } };
+    var s: State = .{};
+    defer s.deinit(testing.allocator);
+    draw(f.ui(), f.full(), &s, many);
+    const bar = for (f.hits.items.items) |e| {
+        if (e.target == .scrollbar) break e.rect;
+    } else return error.TestNoBar;
+    try f.expectAirBeforeBar(bar.y, bar.y + bar.h, bar.x);
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, f.row(bar.y + 1, &buf), "aaa █│"));
 }
