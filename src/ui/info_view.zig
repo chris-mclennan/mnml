@@ -112,46 +112,23 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         out.kebab = kr;
     }
     if (area.h <= 2) return out;
-    // Rows 2..: the lines, wrapped to the width less the gutters.
-    const content_w = area.w -| 2;
-    const arena = ui.arena;
-    var lines: std.ArrayListUnmanaged(Line) = .empty;
-    const fg = Theme.onBg(t.fg, body_bg);
-    var aside_style = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
-    aside_style.italic = true;
-    var chord_style = Theme.onBg(Theme.withFg(t.fg, pal.cyan), body_bg);
-    chord_style.bold = true;
-    var link_style = Theme.onBg(Theme.withFg(t.fg, pal.green), body_bg);
-    link_style.bold = true;
-    link_style.ul_style = .single;
-    lines.append(arena, .{ .segs = &.{} }) catch return out;
-    for (wrapWords(arena, p.copy.body, content_w) catch return out) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return out }) catch return out;
-    if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return out) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return out }) catch return out;
-    const max_body_rows: usize = area.h -| 3;
-    var rows_left = max_body_rows -| lines.items.len;
-    if (rows_left > 0 and p.copy.shortcuts.len > 0) {
-        lines.append(arena, .{ .segs = &.{} }) catch return out;
-        for (p.copy.shortcuts[0..@min(p.copy.shortcuts.len, rows_left -| 1)]) |s| {
-            const segs = arena.alloc(vaxis.Segment, 2) catch return out;
-            segs[0] = .{ .text = ui.fmt("[{s}]", .{s.chord}), .style = chord_style };
-            segs[1] = .{ .text = ui.fmt(" {s}", .{s.label}), .style = fg };
-            lines.append(arena, .{ .segs = segs }) catch return out;
-        }
-    }
-    rows_left = max_body_rows -| lines.items.len;
-    if (rows_left > 0 and p.copy.try_it.len > 0) {
-        lines.append(arena, .{ .segs = &.{} }) catch return out;
-        for (p.copy.try_it[0..@min(p.copy.try_it.len, rows_left -| 1)], 0..) |l, i| {
-            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ if (ui.ascii) "->" else "→", l.label }), link_style) catch return out, .link = @intCast(i) }) catch return out;
-        }
-    }
+    // Rows 2..: the lines, wrapped to the width less the gutters — and
+    // a cell narrower when they overflow, so the text stops a cell
+    // short of the bar.
     const body = Rect.init(area.x, area.y + 2, area.w, area.h -| 3);
     const cap: usize = body.h;
+    const max_body_rows: usize = area.h -| 3;
+    var content_w = area.w -| 2;
+    var lines = buildLines(ui, p, content_w, max_body_rows) orelse return out;
+    if (lines.items.len > cap and content_w > 1) {
+        content_w -= 1;
+        lines = buildLines(ui, p, content_w, max_body_rows) orelse return out;
+    }
     const total = lines.items.len;
     const overflow = total > cap;
     out.max_scroll = @intCast(total -| cap);
     const scroll: usize = @min(p.scroll, out.max_scroll);
-    const text_w = body.w -| @as(u16, if (overflow) 1 else 0);
+    const text_w = body.w -| @as(u16, if (overflow) 2 else 0);
     for (lines.items[scroll..@min(total, scroll + cap)], 0..) |line, i| {
         const y: u16 = body.y + @as(u16, @intCast(i));
         var lx = body.x + 1;
@@ -171,6 +148,46 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         }
     }
     return out;
+}
+
+/// The body's lines at `content_w`: a blank, the body and the aside
+/// wrapped, then the shortcuts and the try-it links as far as
+/// `max_body_rows` allows. Null on OOM.
+fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.ArrayListUnmanaged(Line) {
+    const arena = ui.arena;
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
+    const t = ui.theme;
+    const pal = t.palette;
+    const body_bg = pal.bg_darker;
+    const fg = Theme.onBg(t.fg, body_bg);
+    var aside_style = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
+    aside_style.italic = true;
+    var chord_style = Theme.onBg(Theme.withFg(t.fg, pal.cyan), body_bg);
+    chord_style.bold = true;
+    var link_style = Theme.onBg(Theme.withFg(t.fg, pal.green), body_bg);
+    link_style.bold = true;
+    link_style.ul_style = .single;
+    lines.append(arena, .{ .segs = &.{} }) catch return null;
+    for (wrapWords(arena, p.copy.body, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return null }) catch return null;
+    if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
+    var rows_left = max_body_rows -| lines.items.len;
+    if (rows_left > 0 and p.copy.shortcuts.len > 0) {
+        lines.append(arena, .{ .segs = &.{} }) catch return null;
+        for (p.copy.shortcuts[0..@min(p.copy.shortcuts.len, rows_left -| 1)]) |s| {
+            const segs = arena.alloc(vaxis.Segment, 2) catch return null;
+            segs[0] = .{ .text = ui.fmt("[{s}]", .{s.chord}), .style = chord_style };
+            segs[1] = .{ .text = ui.fmt(" {s}", .{s.label}), .style = fg };
+            lines.append(arena, .{ .segs = segs }) catch return null;
+        }
+    }
+    rows_left = max_body_rows -| lines.items.len;
+    if (rows_left > 0 and p.copy.try_it.len > 0) {
+        lines.append(arena, .{ .segs = &.{} }) catch return null;
+        for (p.copy.try_it[0..@min(p.copy.try_it.len, rows_left -| 1)], 0..) |l, i| {
+            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ if (ui.ascii) "->" else "→", l.label }), link_style) catch return null, .link = @intCast(i) }) catch return null;
+        }
+    }
+    return lines;
 }
 
 fn seg1(arena: std.mem.Allocator, text: []const u8, style: Style) std.mem.Allocator.Error![]const vaxis.Segment {
@@ -318,7 +335,7 @@ test "overflow: a scrollbar in the last column, the scroll clamped to what still
     _ = draw(g.ui(), g.full(), .{ .copy = copy, .scroll = 0 });
     try g.expectLacks("fourteen");
     try g.expectRow(2, "                   ┃");
-    try g.expectRow(3, " one two three four│");
+    try g.expectRow(3, " one two three     │");
 }
 
 test "wrapWords: greedy on whitespace, a long word broken, empty is one line" {
