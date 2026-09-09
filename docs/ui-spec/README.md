@@ -412,6 +412,15 @@ the dump is the same on every machine. The `↑ Update` chip at the
 right of the Symbols row is macOS-only (`font_scan.updateCommand`); a
 dump cut on Linux or Windows shows the yellow version alone.
 
+- `zig-launchers-120x40.txt` — `steps-launchers.jsonl` through
+  `tools/zig-spec.sh launchers` (`env-launchers` points
+  `MNML_MARKETPLACE_LOCAL` at the repo's `launchers/`): the Marketplace
+  tab listing the four launchers as `[launcher] <name>  ✓ Official
+  (local)` rows over their descriptions, btop installed by `i` and
+  greyed `[installed]`, and btop's chip pinned on the rail — the
+  `󰫯` on row 24, after the SCRIPTS row, where Rust paints its
+  `LauncherIcon` slots. Zig-authored (the Rust dump was cut on the
+  author's own pins); the shape is `rust-integrations-mkt-120x40.txt`'s.
 ## Menus (2026-09-07)
 
 - `rust-menu-file-120x40.txt` — `steps-menu-file.jsonl`: a click on the

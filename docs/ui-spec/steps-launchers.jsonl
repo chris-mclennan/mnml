@@ -1,0 +1,12 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"integrations.show_marketplace"}
+{"cmd":"wait_ms","ms":1500}
+{"cmd":"key","key":"i"}
+{"cmd":"wait_ms","ms":1500}
+{"cmd":"run-command","id":"integrations.show_installed"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"run-command","id":"integrations.pin_to_activity_bar"}
+{"cmd":"wait_ms","ms":500}
+{"cmd":"run-command","id":"integrations.show_marketplace"}
+{"cmd":"wait_ms","ms":800}

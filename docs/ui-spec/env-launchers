@@ -1,0 +1,4 @@
+# Sourced by tools/zig-spec.sh for steps-launchers.jsonl: the repo's own
+# launchers/ is the marketplace's one source, so the Marketplace tab
+# lists the four launchers as ✓ Official rows.
+export MNML_MARKETPLACE_LOCAL="$ROOT/launchers"
