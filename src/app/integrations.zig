@@ -57,12 +57,14 @@ const font_scan = @import("font_scan.zig");
 const fonts_section = @import("../ui/fonts_section.zig");
 const side = @import("side.zig");
 const auto_refresh = @import("auto_refresh.zig");
+const settings = @import("settings.zig");
 const hit = @import("../ui/hit.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const view = @import("../ui/integrations_view.zig");
 const config = @import("../config/root.zig");
+const launchers = @import("launchers.zig");
 
 pub const settings_file = "integration-settings.zon";
 pub const Tab = view.Tab;
@@ -89,18 +91,27 @@ pub const Installed = struct {
     }
 };
 
-/// One folder of a dev root. Borrows `State.dev_snapshot`.
+/// One folder of a dev root — or one launcher file lying in a root
+/// (`launcher`): a manifest with no binary, so nothing to build and
+/// Install is a copy. Borrows `State.dev_snapshot`.
 pub const DevEntry = struct {
-    /// Absolute.
+    /// Absolute: the folder, or the root a launcher file lies in.
     dir: []const u8,
-    /// The root it was found under, as the config named it (or `integrations`).
+    /// The root it was found under, as the config named it (or `integrations` / `launchers`).
     root: []const u8,
-    /// `<dir>/manifest.zon`.
+    /// `<dir>/manifest.zon`, or the launcher's own `<root>/<id>.zon`.
     manifest_path: []const u8,
     manifest: Manifest,
+    launcher: bool = false,
 
     pub fn id(self: *const DevEntry) []const u8 {
         return self.manifest.id;
+    }
+
+    /// What names the entry to the detail pane and the menus: the
+    /// folder, or the launcher's file.
+    pub fn key(self: *const DevEntry) []const u8 {
+        return if (self.launcher) self.manifest_path else self.dir;
     }
 };
 
@@ -112,11 +123,17 @@ pub const Chip = struct {
     color: []const u8,
     tooltip: []const u8,
     enabled: bool,
+    /// On the palette bar's strip (`chips`), or only pinnable / listed.
+    in_palette_bar: bool = true,
     /// What a click runs.
     action: union(enum) { dyn: u32, named: []const u8, none },
     /// The row in `State.list`, for the context menu.
     installed: ?usize,
 };
+
+/// A pinned activity-bar icon: the chip an id of
+/// `ui.activity_bar_pinned_integrations` names.
+pub const Pinned = struct { chip: Chip };
 
 /// The Installed tab's orders. The chip cycles them; the menu lists
 /// them through `ListSort` (`name` / `name_desc` / `newest` = enabled
@@ -254,6 +271,13 @@ pub const State = struct {
     /// The row a context menu was opened on: a tab and an index into
     /// that tab's underlying list.
     menu_row: ?struct { tab: Tab, idx: usize } = null,
+    /// The chip a chip / pinned-icon menu was opened on (its id,
+    /// gpa-owned): what `integrations.pin_to_activity_bar` and its
+    /// twin act on first.
+    menu_chip: ?[]u8 = null,
+    /// `ui.activity_bar_pinned_integrations` after a pin / unpin: the
+    /// config field points here until the next reload.
+    pins_owned: ?[][]u8 = null,
     scanned: bool = false,
     /// The last scan's problems, one line each (snapshot arena).
     problems: [][]const u8 = &.{},
@@ -295,6 +319,8 @@ pub const State = struct {
         self.settings.deinit(gpa);
         for (self.segment_ids.items) |s| gpa.free(s);
         self.segment_ids.deinit(gpa);
+        if (self.menu_chip) |c| gpa.free(c);
+        self.freePins(gpa);
         self.panel.deinit(gpa);
         if (self.job) |*j| j.deinit(gpa);
         self.dev_snapshot.deinit();
@@ -306,8 +332,20 @@ pub const State = struct {
         return null;
     }
 
-    pub fn findDev(self: *const State, dir: []const u8) ?usize {
-        for (self.dev, 0..) |*d, idx| if (std.mem.eql(u8, d.dir, dir)) return idx;
+    fn freePins(self: *State, gpa: Allocator) void {
+        const owned = self.pins_owned orelse return;
+        for (owned) |p| gpa.free(p);
+        gpa.free(owned);
+        self.pins_owned = null;
+    }
+
+    fn setMenuChip(self: *State, gpa: Allocator, id: ?[]const u8) Allocator.Error!void {
+        if (self.menu_chip) |c| gpa.free(c);
+        self.menu_chip = if (id) |i| try gpa.dupe(u8, i) else null;
+    }
+
+    pub fn findDev(self: *const State, key: []const u8) ?usize {
+        for (self.dev, 0..) |*d, idx| if (std.mem.eql(u8, d.key(), key)) return idx;
         return null;
     }
 };
@@ -323,7 +361,7 @@ pub const IntegrationsPane = struct {
         installed: []u8,
         /// A marketplace entry id.
         marketplace: []u8,
-        /// A dev folder (absolute).
+        /// A dev folder (absolute), or a launcher file in a dev root.
         dev: []u8,
 
         fn key(self: Target) []const u8 {
@@ -377,6 +415,9 @@ pub const table = .{
     .@"integrations.dev_build" = &devBuildCmd,
     .@"integrations.dev_install" = &devInstallCmd,
     .@"integrations.dev_rebuild" = &devRebuildCmd,
+    .@"integrations.pin_to_activity_bar" = &pinCmd,
+    .@"integrations.unpin_from_activity_bar" = &unpinCmd,
+    .@"integrations.toggle_palette_bar" = &togglePaletteBar,
 };
 
 // ─── discovery ──────────────────────────────────────────────────────────
@@ -450,12 +491,15 @@ fn scanDir(app: *App, arena: Allocator, dir_path: []const u8, source: Source, fo
         const m = readManifest(app, arena, dir, entry.name, path, problems) orelse continue;
         // A workspace manifest replaces a home one with the same id.
         var replaced = false;
+        // A launcher has no binary to find; its lines check their own
+        // program when they fire.
+        const have = m.isLauncher() or binaryFound(app, arena, m.binary);
         for (found.items) |*prev| if (std.mem.eql(u8, prev.id(), m.id)) {
-            prev.* = .{ .manifest = m, .path = path, .source = source, .binary_found = binaryFound(app, arena, m.binary), .slots = &.{} };
+            prev.* = .{ .manifest = m, .path = path, .source = source, .binary_found = have, .slots = &.{} };
             replaced = true;
         };
         if (replaced) continue;
-        try found.append(arena, .{ .manifest = m, .path = path, .source = source, .binary_found = binaryFound(app, arena, m.binary), .slots = &.{} });
+        try found.append(arena, .{ .manifest = m, .path = path, .source = source, .binary_found = have, .slots = &.{} });
     }
 }
 
@@ -474,6 +518,17 @@ fn readManifest(app: *App, arena: Allocator, dir: Io.Dir, name: []const u8, path
             return null;
         },
     };
+}
+
+/// The glyph a manifest chip paints: `chip.glyph`, else its pinned
+/// `glyph_codepoint` decoded onto `arena`, else nothing.
+pub fn chipGlyph(arena: Allocator, chip: ?manifest_mod.Chip) Allocator.Error![]const u8 {
+    const c = chip orelse return "";
+    if (c.glyph.len > 0) return c.glyph;
+    var buf: [4]u8 = undefined;
+    const g = c.glyphText(&buf);
+    if (g.len == 0) return "";
+    return try arena.dupe(u8, g);
 }
 
 /// Absolute → exists; bare → somewhere on PATH.
@@ -524,7 +579,9 @@ fn registerCommands(app: *App, arena: Allocator, inst: *Installed) Allocator.Err
     var n: usize = 0;
     for (m.commands) |c| {
         const args = try std.mem.concat(arena, []const u8, &.{ m.args, c.args });
-        const runner: command.DynInit.Runner = if (c.ex) |line|
+        // A `run` / `ex` line runs through `launchers.fire` (its tokens
+        // expanded); anything else opens the binary.
+        const runner: command.DynInit.Runner = if (c.line()) |line|
             .{ .ex = line }
         else
             .{ .mount = .{ .binary = m.binary, .args = args, .pty = m.mode == .pty, .label = m.label } };
@@ -606,12 +663,15 @@ pub fn devRoots(app: *App, arena: Allocator) Allocator.Error![]const []const u8 
     }
     const sdk = try std.fs.path.join(arena, &.{ app.workspace, "sdk", "mnml-sdk" });
     if (isDir(app.io, sdk)) {
-        const own = try std.fs.path.join(arena, &.{ app.workspace, "integrations" });
-        var seen = false;
-        for (out.items) |r| if (std.mem.eql(u8, r, own)) {
-            seen = true;
-        };
-        if (!seen) try out.append(arena, own);
+        // …and its `launchers/`, the manifests with no binary.
+        for ([_][]const u8{ "integrations", "launchers" }) |name| {
+            const own = try std.fs.path.join(arena, &.{ app.workspace, name });
+            var seen = false;
+            for (out.items) |r| if (std.mem.eql(u8, r, own)) {
+                seen = true;
+            };
+            if (!seen) try out.append(arena, own);
+        }
     }
     return out.toOwnedSlice(arena);
 }
@@ -627,7 +687,8 @@ fn isFile(io: Io, path: []const u8) bool {
 }
 
 /// Scan the dev roots: every folder with a `build.zig` and a
-/// `manifest.zon` is an entry, sorted by label.
+/// `manifest.zon` is an entry, and so is every launcher `*.zon` lying
+/// in a root; sorted by label.
 pub fn scanDev(app: *App) Allocator.Error!void {
     const st = &app.integrations;
     st.dev_snapshot.reset();
@@ -645,8 +706,18 @@ pub fn scanDev(app: *App) Allocator.Error!void {
         defer dir.close(app.io);
         var it = dir.iterate();
         while (it.next(app.io) catch null) |entry| {
-            if (entry.kind != .directory and entry.kind != .sym_link) continue;
             if (entry.name.len == 0 or entry.name[0] == '.') continue;
+            if ((entry.kind == .file or entry.kind == .sym_link) and std.mem.endsWith(u8, entry.name, ".zon")) {
+                const file_path = try std.fs.path.join(arena, &.{ root, entry.name });
+                const m = readManifest(app, arena, dir, entry.name, file_path, &problems) orelse continue;
+                if (!m.isLauncher()) {
+                    try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: names a binary — a bare manifest in a dev root is a launcher; a binary lives in a folder with its build.zig", .{app.relPath(file_path)}));
+                    continue;
+                }
+                try found.append(arena, .{ .dir = root, .root = std.fs.path.basename(root), .manifest_path = file_path, .manifest = m, .launcher = true });
+                continue;
+            }
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
             const sub = try std.fs.path.join(arena, &.{ root, entry.name });
             const build_path = try std.fs.path.join(arena, &.{ sub, "build.zig" });
             const manifest_path = try std.fs.path.join(arena, &.{ sub, "manifest.zon" });
@@ -699,6 +770,7 @@ fn devEntryAt(app: *App, idx: usize) CommandError!*DevEntry {
 /// `integrations.dev_build`: `zig build` in the folder, as a task pane.
 pub fn devBuild(app: *App, idx: usize) CommandError!void {
     const d = try devEntryAt(app, idx);
+    if (d.launcher) return app.diag.fail(app.frame.allocator(), "integrations: {s} is a launcher — nothing to build; Install copies the manifest", .{d.id()});
     if (!pty_pane.supported) return app.diag.fail(app.frame.allocator(), "integrations: a task pane is not available on this platform", .{});
     if (!runners.onPath(app, "zig")) return app.diag.fail(app.frame.allocator(), "integrations: zig is not on PATH", .{});
     const label = try std.fmt.allocPrint(app.frame.allocator(), "{s}: zig build", .{d.id()});
@@ -713,6 +785,8 @@ pub fn devInstall(app: *App, idx: usize, rebuild: bool) CommandError!void {
     const st = &app.integrations;
     const arena = app.frame.allocator();
     const d = try devEntryAt(app, idx);
+    // A launcher: the file is the whole install.
+    if (d.launcher) return launchers.installFile(app, d.manifest_path);
     if (st.job != null) return app.diag.fail(arena, "integrations: an install is already running", .{});
     if (!pty_pane.supported) return app.diag.fail(arena, "integrations: a task pane is not available on this platform", .{});
     if (app.data_root.len == 0) return app.diag.fail(arena, "integrations: no data root to install into", .{});
@@ -878,12 +952,13 @@ fn openRow(app: *App, idx: usize) CommandError!void {
 
 // ─── chips ──────────────────────────────────────────────────────────────
 
-/// The palette-bar chips: config icons and installed manifests with a
-/// chip, in `ui.integration_icon_order` first, then by label.
-pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
+/// Every chip there is — config icons and installed manifests with a
+/// chip, on the bar or not — in `ui.integration_icon_order` first,
+/// then by id. `chips` is the strip's subset.
+pub fn allChips(app: *App, arena: Allocator) Allocator.Error![]Chip {
     var out: std.ArrayListUnmanaged(Chip) = .empty;
     for (app.cfg.ui.integration_icons) |icon| {
-        if (!icon.in_palette_bar or icon.id.len == 0) continue;
+        if (icon.id.len == 0) continue;
         try out.append(arena, .{
             .id = icon.id,
             .glyph = icon.glyph,
@@ -891,20 +966,21 @@ pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
             .color = icon.color,
             .tooltip = icon.label orelse icon.id,
             .enabled = icon.enabled,
+            .in_palette_bar = icon.in_palette_bar,
             .action = if (icon.command.len > 0) .{ .named = icon.command } else .none,
             .installed = null,
         });
     }
     for (app.integrations.list, 0..) |*inst, i| {
         const c = inst.manifest.chip orelse continue;
-        if (!c.in_palette_bar) continue;
         try out.append(arena, .{
             .id = inst.id(),
-            .glyph = c.glyph,
+            .glyph = try chipGlyph(arena, c),
             .fallback = c.fallback,
             .color = c.color,
             .tooltip = if (c.tooltip.len > 0) c.tooltip else inst.manifest.label,
             .enabled = c.enabled and inst.binary_found,
+            .in_palette_bar = c.in_palette_bar,
             .action = if (inst.slots.len > 0) .{ .dyn = inst.slots[0] } else .none,
             .installed = i,
         });
@@ -927,6 +1003,20 @@ pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
     return out.toOwnedSlice(arena);
 }
 
+/// The palette-bar chips: `allChips` less the ones kept off the bar.
+pub fn chips(app: *App, arena: Allocator) Allocator.Error![]Chip {
+    const all = try allChips(app, arena);
+    var out: std.ArrayListUnmanaged(Chip) = .empty;
+    for (all) |c| if (c.in_palette_bar) try out.append(arena, c);
+    return out.toOwnedSlice(arena);
+}
+
+/// The chip with `id`, on the bar or not.
+pub fn findChip(app: *App, arena: Allocator, id: []const u8) Allocator.Error!?Chip {
+    for (try allChips(app, arena)) |c| if (std.mem.eql(u8, c.id, id)) return c;
+    return null;
+}
+
 /// A press on chip `idx` of the strip as `chips` ordered it.
 pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
     const list = try chips(app, app.frame.allocator());
@@ -937,8 +1027,13 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
         // The AI chips: their launch profiles.
         if (std.mem.eql(u8, chip.id, "claude_code")) return launch_profiles.openChipMenu(app, .claude, m.x, m.y);
         if (std.mem.eql(u8, chip.id, "codex")) return launch_profiles.openChipMenu(app, .codex, m.x, m.y);
-        return;
+        return openIconMenu(app, chip, m.x, m.y);
     }
+    return runChip(app, chip);
+}
+
+/// What a left press on a chip does, wherever the chip is painted.
+fn runChip(app: *App, chip: Chip) Allocator.Error!void {
     if (!chip.enabled) {
         app.toast("{s} is disabled — right-click to enable", .{chip.tooltip});
         return;
@@ -954,6 +1049,177 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
         },
         .none => app.toast("{s}: nothing to run", .{chip.tooltip}),
     }
+}
+
+// ─── the pinned activity-bar icons ──────────────────────────────────────
+
+/// The chips `ui.activity_bar_pinned_integrations` names, in that
+/// order; an id no chip answers to is skipped.
+pub fn pinnedChips(app: *App, arena: Allocator) Allocator.Error![]Pinned {
+    const all = try allChips(app, arena);
+    var out: std.ArrayListUnmanaged(Pinned) = .empty;
+    for (app.cfg.ui.activity_bar_pinned_integrations) |id| {
+        for (all) |c| if (std.mem.eql(u8, c.id, id)) {
+            try out.append(arena, .{ .chip = c });
+            break;
+        };
+    }
+    return out.toOwnedSlice(arena);
+}
+
+pub fn isPinned(app: *App, id: []const u8) bool {
+    for (app.cfg.ui.activity_bar_pinned_integrations) |p| if (std.mem.eql(u8, p, id)) return true;
+    return false;
+}
+
+/// A left press on the `i`-th pinned icon: the chip's command, as the
+/// chip on the bar would run it.
+pub fn pinClick(app: *App, i: usize) Allocator.Error!void {
+    const pins = try pinnedChips(app, app.frame.allocator());
+    if (i >= pins.len) return;
+    try runChip(app, pins[i].chip);
+}
+
+/// The right click on a pinned icon: the chip's menu — Enable / Disable
+/// and the palette-bar row for an installed manifest, Remove from
+/// activity bar, Copy id.
+pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    const pins = try pinnedChips(app, app.frame.allocator());
+    if (i >= pins.len) return;
+    const chip = pins[i].chip;
+    try st.setMenuChip(app.gpa, chip.id);
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    if (chip.installed) |row| {
+        st.menu_row = .{ .tab = .installed, .idx = row };
+        const inst = &st.list[row];
+        const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else true;
+        try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
+        try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
+        try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
+        try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } });
+    } else {
+        try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
+        try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
+    }
+    try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The right click on a config icon's chip (not a manifest's, not an
+/// AI chip): Add / Remove from activity bar when its command is a
+/// `term` line — the only kind a pinned icon can run without a side
+/// panel, Rust's rule — and Copy id.
+fn openIconMenu(app: *App, chip: Chip, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    try st.setMenuChip(app.gpa, chip.id);
+    st.menu_row = null;
+    var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    const term_line = switch (chip.action) {
+        .named => |cmd| launchers.termProgram(cmd) != null,
+        .dyn => true,
+        .none => false,
+    };
+    if (term_line) {
+        if (isPinned(app, chip.id))
+            try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } })
+        else
+            try items.append(app.gpa, .{ .label = "Add to activity bar", .action = .{ .command = .@"integrations.pin_to_activity_bar" } });
+    }
+    try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
+    try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The id a pin / unpin acts on: the chip a menu was opened on, else
+/// the focused Installed row's, else null (a picker opens).
+fn pinTarget(app: *App) Allocator.Error!?[]const u8 {
+    const st = &app.integrations;
+    if (st.menu_chip) |c| {
+        const copy = try app.frame.allocator().dupe(u8, c);
+        try st.setMenuChip(app.gpa, null);
+        st.menu_row = null;
+        return copy;
+    }
+    if (try focusedRow(app)) |r| return st.list[r].id();
+    return null;
+}
+
+fn pinCmd(app: *App) CommandError!void {
+    if (try pinTarget(app)) |id| return pinId(app, id);
+    return pickRow(app, .integrations_pin, "Add to activity bar");
+}
+
+fn unpinCmd(app: *App) CommandError!void {
+    if (try pinTarget(app)) |id| return unpinId(app, id);
+    return pickRow(app, .integrations_unpin, "Remove from activity bar");
+}
+
+/// Append `id` to `ui.activity_bar_pinned_integrations` and write it home.
+pub fn pinId(app: *App, id: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (isPinned(app, id)) {
+        app.toast("{s} is already on the activity bar", .{id});
+        return;
+    }
+    if ((try findChip(app, arena, id)) == null) return app.diag.fail(arena, "integrations: {s} has no chip to pin", .{id});
+    const old = app.cfg.ui.activity_bar_pinned_integrations;
+    const next = try arena.alloc([]const u8, old.len + 1);
+    @memcpy(next[0..old.len], old);
+    next[old.len] = id;
+    try setPinned(app, next);
+    app.toast("{s}: added to the activity bar", .{id});
+}
+
+/// Drop `id` from `ui.activity_bar_pinned_integrations` and write it home.
+pub fn unpinId(app: *App, id: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (!isPinned(app, id)) {
+        app.toast("{s} is not on the activity bar", .{id});
+        return;
+    }
+    const old = app.cfg.ui.activity_bar_pinned_integrations;
+    var next: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (old) |p| if (!std.mem.eql(u8, p, id)) try next.append(arena, p);
+    try setPinned(app, next.items);
+    app.toast("{s}: removed from the activity bar", .{id});
+}
+
+/// The new list, gpa-owned by the state and named by the config field,
+/// persisted to the home config.
+pub fn setPinned(app: *App, ids: []const []const u8) Allocator.Error!void {
+    const st = &app.integrations;
+    const gpa = app.gpa;
+    const owned = try gpa.alloc([]u8, ids.len);
+    var n: usize = 0;
+    errdefer {
+        for (owned[0..n]) |p| gpa.free(p);
+        gpa.free(owned);
+    }
+    for (ids) |id| {
+        owned[n] = try gpa.dupe(u8, id);
+        n += 1;
+    }
+    st.freePins(gpa);
+    st.pins_owned = owned;
+    app.cfg.ui.activity_bar_pinned_integrations = @ptrCast(owned);
+    _ = try settings.persist(app, .home, &.{ "ui", "activity_bar_pinned_integrations" }, app.cfg.ui.activity_bar_pinned_integrations);
+    app.needs_render = true;
+}
+
+/// `integrations.toggle_palette_bar`: flip the chip's `in_palette_bar`
+/// and write the manifest back.
+fn togglePaletteBar(app: *App) CommandError!void {
+    const st = &app.integrations;
+    if (st.menu_chip) |c| {
+        const row = st.find(c);
+        try st.setMenuChip(app.gpa, null);
+        st.menu_row = null;
+        if (row) |r| return toggleChipField(app, r, .in_palette_bar);
+        return app.diag.fail(app.frame.allocator(), "integrations: only a manifest's chip can leave the bar — a config icon's `in_palette_bar` lives in config.zon", .{});
+    }
+    if (try focusedRow(app)) |r| return toggleChipField(app, r, .in_palette_bar);
+    return pickRow(app, .integrations_toggle_bar, "Show / hide on the palette bar");
 }
 
 // ─── the section ────────────────────────────────────────────────────────
@@ -1183,7 +1449,7 @@ fn activate(app: *App, visible_idx: usize) CommandError!void {
     switch (st.tab) {
         .installed => return openRow(app, idx),
         .marketplace => return openDetail(app, .{ .marketplace = app.marketplace.entries[idx].id }),
-        .dev => return openDetail(app, .{ .dev = st.dev[idx].dir }),
+        .dev => return openDetail(app, .{ .dev = st.dev[idx].key() }),
     }
 }
 
@@ -1412,14 +1678,21 @@ fn openInstalledMenu(app: *App, row: usize, x: u16, y: u16) Allocator.Error!void
     const st = &app.integrations;
     if (row >= st.list.len) return;
     st.menu_row = .{ .tab = .installed, .idx = row };
-    const enabled = st.list[row].enabled();
+    try st.setMenuChip(app.gpa, null);
+    const inst = &st.list[row];
+    const enabled = inst.enabled();
+    const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
+    const pinned = isPinned(app, inst.id());
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" } },
         .{ .label = if (enabled) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } },
-        .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" } },
+        .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } },
+        .{ .label = if (pinned) "Remove from activity bar" else "Add to activity bar", .action = .{ .command = if (pinned) .@"integrations.unpin_from_activity_bar" else .@"integrations.pin_to_activity_bar" } },
+        .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" }, .separator_before = true },
         .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
         .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" }, .separator_before = true },
     });
+
     errdefer app.gpa.free(items);
     try app.openMenu(st.list[row].manifest.label, items, x, y);
 }
@@ -1486,7 +1759,7 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
             const inst = &st.list[idx];
             const m = inst.manifest;
             return .{
-                .glyph = if (m.chip) |c| c.glyph else "",
+                .glyph = try chipGlyph(arena, m.chip),
                 .fallback = if (m.chip) |c| c.fallback else "",
                 .color = if (m.chip) |c| c.color else "",
                 .kind = .installed,
@@ -1521,7 +1794,7 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
             const m = d.manifest;
             const installed = st.find(m.id) != null;
             return .{
-                .glyph = if (m.chip) |c| c.glyph else "",
+                .glyph = try chipGlyph(arena, m.chip),
                 .fallback = if (m.chip) |c| c.fallback else "",
                 .color = if (m.chip) |c| c.color else "",
                 .kind = .dev,
@@ -1529,7 +1802,7 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
                 .version = m.version,
                 .badge = if (installed) .installed_here else .not_installed,
                 .source = d.root,
-                .line2 = try arena.dupe(u8, app.relPath(d.dir)),
+                .line2 = try arena.dupe(u8, app.relPath(if (d.launcher) d.manifest_path else d.dir)),
                 .installing = if (st.job) |j| std.mem.eql(u8, j.dir, d.dir) else false,
             };
         },
@@ -1624,6 +1897,9 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize) Allocator.Err
         .integrations_toggle => toggleAt(app, i),
         .integrations_remove => removeAt(app, i),
         .integrations_copy_id => copyIdAt(app, i),
+        .integrations_pin => if (i < app.integrations.list.len) pinId(app, app.integrations.list[i].id()) else {},
+        .integrations_unpin => if (i < app.integrations.list.len) unpinId(app, app.integrations.list[i].id()) else {},
+        .integrations_toggle_bar => toggleChipField(app, i, .in_palette_bar),
         else => {},
     };
     result catch |err| switch (err) {
@@ -1638,10 +1914,10 @@ fn showDetails(app: *App) CommandError!void {
     // the cursor (or the menu's row) — installed or not.
     if (st.menu_row) |r| if (r.tab == .dev and r.idx < st.dev.len) {
         st.menu_row = null;
-        return openDetail(app, .{ .dev = st.dev[r.idx].dir });
+        return openDetail(app, .{ .dev = st.dev[r.idx].key() });
     };
     if (app.focus == .panel and app.focus.panel == .integrations) switch (st.tab) {
-        .dev => if (try cursorEntry(app)) |i| return openDetail(app, .{ .dev = st.dev[i].dir }),
+        .dev => if (try cursorEntry(app)) |i| return openDetail(app, .{ .dev = st.dev[i].key() }),
         .marketplace => if (try cursorEntry(app)) |i| return openDetail(app, .{ .marketplace = app.marketplace.entries[i].id }),
         .installed => {},
     };
@@ -1694,12 +1970,23 @@ fn toggleEnabled(app: *App) CommandError!void {
 
 /// Flip `chip.enabled` and write the manifest back.
 fn toggleAt(app: *App, i: usize) CommandError!void {
+    return toggleChipField(app, i, .enabled);
+}
+
+const ChipFlag = enum { enabled, in_palette_bar };
+
+/// Flip one of the chip's two user-preference flags and write the
+/// manifest back; the list follows.
+fn toggleChipField(app: *App, i: usize, flag: ChipFlag) CommandError!void {
     const st = &app.integrations;
     if (i >= st.list.len) return;
     const inst = &st.list[i];
     var m = inst.manifest;
     var chip: manifest_mod.Chip = m.chip orelse .{};
-    chip.enabled = !chip.enabled;
+    switch (flag) {
+        .enabled => chip.enabled = !chip.enabled,
+        .in_palette_bar => chip.in_palette_bar = !chip.in_palette_bar,
+    }
     m.chip = chip;
     const text = try manifest_mod.render(app.gpa, m);
     defer app.gpa.free(text);
@@ -1707,9 +1994,15 @@ fn toggleAt(app: *App, i: usize) CommandError!void {
         return app.diag.fail(app.frame.allocator(), "cannot write {s}: {s}", .{ app.relPath(inst.path), @errorName(err) });
     };
     const id = try app.frame.allocator().dupe(u8, inst.id());
-    const now_enabled = chip.enabled;
+    const now = switch (flag) {
+        .enabled => chip.enabled,
+        .in_palette_bar => chip.in_palette_bar,
+    };
     try refresh(app);
-    app.toast("{s}: {s}", .{ id, if (now_enabled) "enabled" else "disabled" });
+    switch (flag) {
+        .enabled => app.toast("{s}: {s}", .{ id, if (now) "enabled" else "disabled" }),
+        .in_palette_bar => app.toast("{s}: {s} the palette bar", .{ id, if (now) "shown on" else "hidden from" }),
+    }
 }
 
 fn removeCmd(app: *App) CommandError!void {
@@ -1813,7 +2106,13 @@ fn buttonsFor(app: *App, p: *const IntegrationsPane) []const Button {
     return switch (p.target) {
         .installed => &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall },
         .marketplace => |id| if (st.find(id) != null) &.{ .reinstall, .copy_id, .refresh } else &.{ .install, .copy_id, .refresh },
-        .dev => |dir| if (st.findDev(dir)) |i| (if (st.find(st.dev[i].id()) != null) &.{ .build, .reinstall, .rebuild, .open, .edit_manifest, .copy_id } else &.{ .build, .install, .rebuild, .edit_manifest, .copy_id }) else &.{.refresh},
+        .dev => |key| if (st.findDev(key)) |i| blk: {
+            const d = &st.dev[i];
+            const have = st.find(d.id()) != null;
+            // A launcher has nothing to build: Install is a copy.
+            if (d.launcher) break :blk if (have) &.{ .reinstall, .open, .edit_manifest, .copy_id } else &.{ .install, .edit_manifest, .copy_id };
+            break :blk if (have) &.{ .build, .reinstall, .rebuild, .open, .edit_manifest, .copy_id } else &.{ .build, .install, .rebuild, .edit_manifest, .copy_id };
+        } else &.{.refresh},
     };
 }
 
@@ -1825,7 +2124,7 @@ fn fireButton(app: *App, p: *IntegrationsPane) CommandError!void {
     switch (buttons[p.cursor]) {
         .open => switch (p.target) {
             .installed => |id| if (st.find(id)) |i| return openRow(app, i),
-            .dev => |dir| if (st.findDev(dir)) |d| if (st.find(st.dev[d].id())) |i| return openRow(app, i),
+            .dev => |key| if (st.findDev(key)) |d| if (st.find(st.dev[d].id())) |i| return openRow(app, i),
             .marketplace => {},
         },
         .toggle => if (try focusedRow(app)) |i| return toggleAt(app, i),
@@ -1897,7 +2196,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) All
     switch (p.target) {
         .installed => |mid| if (st.find(mid)) |i| {
             const inst = &st.list[i];
-            fillManifest(&props, inst.manifest);
+            fillManifest(ui.arena, &props, inst.manifest);
             props.origin = ui.fmt("installed · {s}", .{app.relPath(inst.path)});
             props.status = if (!inst.binary_found) "binary missing" else if (!inst.enabled()) "disabled" else null;
         } else {
@@ -1915,7 +2214,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) All
             props.origin = ui.fmt("marketplace · {s} ({s}){s}", .{ e.source, @tagName(e.kind), if (e.private) " · private" else if (e.official) " · official" else "" });
             props.binary = e.url;
             if (st.find(mid)) |k| {
-                fillManifest(&props, st.list[k].manifest);
+                fillManifest(ui.arena, &props, st.list[k].manifest);
                 props.status = "installed";
             }
             if (app.marketplace.installing) |cur| if (std.mem.eql(u8, cur, mid)) {
@@ -1925,30 +2224,36 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) All
             props.label = mid;
             props.description = "not listed — refresh the marketplace";
         },
-        .dev => |dir| if (st.findDev(dir)) |i| {
+        .dev => |key| if (st.findDev(key)) |i| {
             const d = &st.dev[i];
-            fillManifest(&props, d.manifest);
-            props.origin = ui.fmt("dev · {s} · {s}", .{ d.root, app.relPath(d.dir) });
-            const built = try devBuiltBinary(app, ui.arena, d);
-            props.status = if (st.job != null and std.mem.eql(u8, st.job.?.dir, dir)) (if (ui.ascii) "installing..." else "installing…") else if (st.find(d.id()) != null) "installed from here" else if (isFile(app.io, built)) "built, not installed" else "not built";
+            fillManifest(ui.arena, &props, d.manifest);
+            props.origin = ui.fmt("dev · {s} · {s}", .{ d.root, app.relPath(if (d.launcher) d.manifest_path else d.dir) });
+            if (d.launcher) {
+                props.status = if (st.find(d.id()) != null) "installed from here" else "not installed";
+            } else {
+                const built = try devBuiltBinary(app, ui.arena, d);
+                props.status = if (st.job != null and std.mem.eql(u8, st.job.?.dir, d.dir)) (if (ui.ascii) "installing..." else "installing…") else if (st.find(d.id()) != null) "installed from here" else if (isFile(app.io, built)) "built, not installed" else "not built";
+            }
         } else {
-            props.label = std.fs.path.basename(dir);
+            props.label = std.fs.path.basename(key);
             props.description = "not a dev folder any more — refresh";
         },
     }
     view.drawDetail(ui, id, rect, props);
 }
 
-fn fillManifest(props: *view.DetailProps, m: Manifest) void {
+fn fillManifest(arena: Allocator, props: *view.DetailProps, m: Manifest) void {
     props.label = m.label;
     props.id = m.id;
     props.version = m.version;
     props.category = m.category;
     props.description = m.description;
-    props.binary = m.binary;
-    props.mode = @tagName(m.mode);
+    props.binary = if (m.isLauncher()) "(a launcher — no binary; its commands run their lines)" else m.binary;
+    props.mode = if (m.isLauncher()) "" else @tagName(m.mode);
     if (m.chip) |c| {
-        props.glyph = c.glyph;
+        var gbuf: [4]u8 = undefined;
+        // A pinned codepoint is decoded into the frame's own bytes.
+        props.glyph = if (c.glyph.len > 0) c.glyph else (arena.dupe(u8, c.glyphText(&gbuf)) catch "");
         props.fallback = c.fallback;
         props.color = c.color;
     }
@@ -2295,6 +2600,11 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/integrations/sample/manifest.zon", .data = ".{ .id = \"sample\", .label = \"Sample\", .binary = \"mnml-sample\", .description = \"A counter\" }" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "elsewhere/other/build.zig", .data = "" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "elsewhere/other/manifest.zon", .data = ".{ .id = \"other\", .label = \"Other\", .binary = \"mnml-other\" }" });
+    // The checkout's launchers/: a bare manifest is a launcher entry; one
+    // naming a binary is a problem, not a row.
+    try tmp.dir.createDirPath(testing.io, "ws/launchers");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/launchers/htop.zon", .data = ".{ .id = \"htop\", .label = \"htop\", .description = \"Process viewer\", .chip = .{ .glyph_codepoint = \"F1D00\", .fallback = \"H\" }, .commands = .{ .{ .id = \"htop.open\", .title = \"htop: open\", .run = \":term htop\" } } }" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/launchers/stray.zon", .data = ".{ .id = \"stray\", .label = \"Stray\", .binary = \"mnml-stray\" }" });
     const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
     defer testing.allocator.free(ws);
     var cfg: config.Config = .{};
@@ -2307,24 +2617,56 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     try testing.expect(!st.dev_scanned);
     try command.run(&app, .{ .static = .@"integrations.show_installed" });
     try testing.expect(st.dev_scanned);
-    try testing.expectEqual(@as(usize, 2), st.dev.len);
-    try testing.expectEqualStrings("other", st.dev[0].id());
-    try testing.expectEqualStrings("elsewhere", st.dev[0].root);
-    try testing.expectEqualStrings("sample", st.dev[1].id());
-    try testing.expectEqualStrings("integrations", st.dev[1].root);
+    try testing.expectEqual(@as(usize, 3), st.dev.len);
+    try testing.expectEqualStrings("htop", st.dev[0].id());
+    try testing.expectEqualStrings("launchers", st.dev[0].root);
+    try testing.expect(st.dev[0].launcher);
+    try testing.expect(std.mem.endsWith(u8, st.dev[0].key(), "launchers/htop.zon"));
+    try testing.expectEqualStrings("other", st.dev[1].id());
+    try testing.expectEqualStrings("elsewhere", st.dev[1].root);
+    try testing.expectEqualStrings("sample", st.dev[2].id());
+    try testing.expectEqualStrings("integrations", st.dev[2].root);
+    try testing.expectEqual(@as(usize, 1), st.dev_problems.len);
+    try testing.expect(std.mem.indexOf(u8, st.dev_problems[0], "stray.zon: names a binary") != null);
     try testing.expect(showDev(&app));
     // The Dev tab paints them with their state.
     app.tree.width = 60;
     try command.run(&app, .{ .static = .@"integrations.show_in_dev" });
     try testing.expectEqual(Tab.dev, st.tab);
-    const txt = try screenText(&app);
+    var txt = try screenText(&app);
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Other  not installed  (elsewhere)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Sample  not installed  (integrations)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "integrations/sample") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F1D00}  [dev] htop  not installed  (launchers)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "launchers/htop.zon") != null);
     // Nothing built: the built binary is the folder's zig-out.
-    const built = try devBuiltBinary(&app, app.frame.allocator(), &st.dev[1]);
+    const built = try devBuiltBinary(&app, app.frame.allocator(), &st.dev[2]);
     try testing.expect(std.mem.endsWith(u8, built, "integrations/sample/zig-out/bin/mnml-sample"));
+    // `i` on the launcher row: no build, no task pane — the file is
+    // copied into the data root and the row says so.
+    st.panel.cursor = 0;
+    try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'i' } }));
+    try testing.expect(st.job == null);
+    try testing.expectEqual(@as(usize, 0), app.panes.count());
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "installed htop") != null);
+    try testing.expectEqual(@as(usize, 1), st.list.len);
+    try testing.expect(st.list[0].manifest.isLauncher());
+    try tmp.dir.access(testing.io, "integrations/htop.zon", .{});
+    testing.allocator.free(txt);
+    txt = try screenText(&app);
+    try testing.expect(std.mem.indexOf(u8, txt, "[dev] htop  installed from here  (launchers)") != null);
+    // Build has nothing to do for a launcher.
+    try testing.expectError(error.Failed, devBuild(&app, 0));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "nothing to build") != null);
+    // Its detail pane: Reinstall, no Build; the binary line says what it is.
+    try openDetail(&app, .{ .dev = st.dev[0].key() });
+    testing.allocator.free(txt);
+    txt = try screenText(&app);
+    try testing.expect(std.mem.indexOf(u8, txt, "[ Reinstall ]  [ Open ]") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[ Build ]") == null);
+    try testing.expect(std.mem.indexOf(u8, txt, "installed from here") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "a launcher — no binary") != null);
 }
 
 /// Poll `tick` until `pred` holds or `ms` elapse.
@@ -2428,4 +2770,30 @@ test "a workspace manifest waits for trust: skipped while the workspace is untru
     const facts_names = try @import("../config/trust.zig").manifestNames(app.frame.allocator(), app.io, ws);
     try testing.expectEqual(@as(usize, 1), facts_names.len);
     try testing.expectEqualStrings("wsonly.zon", facts_names[0]);
+}
+
+test "a workspace launcher waits for trust too: a cloned repo's `run` line is not registered until the workspace is trusted, and never fires before" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "ws/.mnml/integrations");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/.mnml/integrations/evil.zon", .data = ".{ .id = \"evil\", .label = \"Evil\", .commands = .{ .{ .id = \"evil.run\", .title = \"Evil: run\", .keys = .{ \"ctrl+k e\" }, .run = \":term /tmp/evil.sh {{workspace}}\" } } }" });
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 20, .workspace_trusted = false });
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 0), app.integrations.list.len);
+    try testing.expect(command.resolve(&app, "evil.run") == null);
+    try testing.expectError(error.Failed, command.runNamed(&app, "evil.run"));
+    try testing.expectEqual(@as(usize, 0), app.panes.count());
+    try testing.expectEqual(@as(usize, 0), (try chips(&app, app.frame.allocator())).len - 1); // the browser icon only
+    // Trusted: the launcher registers, its chord binds.
+    app.workspace_trusted = true;
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 1), app.integrations.list.len);
+    try testing.expect(app.integrations.list[0].manifest.isLauncher());
+    try testing.expectEqual(Source.workspace, app.integrations.list[0].source);
+    try testing.expect(command.resolve(&app, "evil.run") != null);
 }

@@ -203,9 +203,9 @@ What mnml does with each field:
 | field | effect |
 |---|---|
 | `id`, `label`, `description`, `version`, `category` | the INTEGRATIONS section's row (`label` over the first command's id) and the detail pane |
-| `binary`, `args`, `mode` | what a command opens: `mode = .mount` (default) hosts it over the socket; `.pty` opens it as a terminal pane |
-| `chip` | a button on the palette bar: `glyph` (Nerd Font), `fallback` (plain), `color` (a theme name — `red orange yellow green blue cyan teal purple pink comment fg` — or `#rrggbb`), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / manifest / remove |
-| `commands[]` | each is a palette command with `keys`; it opens the binary (with `args`) unless `ex` names an ex line to run instead. The first one is what the chip and Enter do |
+| `binary`, `args`, `mode` | what a command opens: `mode = .mount` (default) hosts it over the socket; `.pty` opens it as a terminal pane. Leave `binary` out and the manifest is a **launcher** — no program of its own; every command then needs a `run` line (`validate` refuses one without) |
+| `chip` | a button on the palette bar: `glyph` (Nerd Font) — or `glyph_codepoint` (`F1D00`, painted verbatim when `glyph` is empty, for a mark in mnml's own font block), `fallback` (plain, always), `color` (a theme name — `red orange yellow green blue cyan teal purple pink comment fg` — or `#rrggbb`), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / show or hide on the bar / add to the activity bar / manifest / remove |
+| `commands[]` | each is a palette command with `keys`; it opens the binary (with `args`) unless `run` (or `ex`, the same field) names an ex line to run instead — `term mnml-hello --pty`, `:term code --goto {{current_file_abs}}:{{cursor_line}}:{{cursor_col}}`; mnml expands `{{workspace}}` `{{workspace_name}}` `{{current_file}}` `{{current_file_abs}}` `{{current_file_dir}}` `{{cursor_line}}` `{{cursor_col}}` `{{selection}}` when it fires and leaves an unknown token as written (`launchers/README.md`). The first one is what the chip, Enter and a pinned activity-bar icon do |
 | `settings[]` | a row in mnml's settings overlay under *Integrations* (discrete choices); the chosen value reaches the binary as `MNML_SETTING_<KEY>` |
 | `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest |
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
@@ -214,6 +214,11 @@ What mnml does with each field:
 `binary` may be `$NAME` (or `$NAME/rest`): the variable's value is the
 path. `<data root>/bin/<binary>` is tried before PATH — that is where an
 install from the Dev tab or the marketplace links the built binary.
+
+`sdk.manifest.validate(m, &why)` is the rule both readers apply — the
+id is a file name; a manifest without a `binary` has a command, and
+every such command a `run` line — so `--install` and mnml's scan refuse
+the same files. mnml's own launchers live in the repo's `launchers/`.
 
 `sdk.manifest.write` picks the data root the way mnml does
 (`MNML_DATA_ROOT`, `XDG_CONFIG_HOME/mnml`, `HOME/.config/mnml`) and

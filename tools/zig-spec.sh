@@ -34,6 +34,10 @@ printf 'let x = 1\nlet p = struct{a=1,b="two"}\nprint "hello"\nx = x + 1\nfn f\n
 # needs the environment set ships docs/ui-spec/env-<NAME>, sourced here
 # with $ROOT in scope (the FONTS section's fixture fonts, say).
 [ -d "$ROOT/docs/ui-spec/seed-$NAME" ] && cp -R "$ROOT/docs/ui-spec/seed-$NAME/." "$WS/"
+# A spec that needs the environment set ships docs/ui-spec/env-<NAME>,
+# sourced here with $ROOT in scope and exported to the run (the fonts
+# spec seeds MNML_FONT_DIRS; the launchers spec points
+# MNML_MARKETPLACE_LOCAL at the repo's launchers/).
 if [ -f "$ROOT/docs/ui-spec/env-$NAME" ]; then set -a; . "$ROOT/docs/ui-spec/env-$NAME"; set +a; fi
 cat >"$DATA/config.zon" <<'EOF'
 .{

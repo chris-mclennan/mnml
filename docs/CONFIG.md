@@ -125,7 +125,7 @@ otherwise. Copy what you need; leave the rest out.
         .clock = true,
         .stress_meter = false,
         .check_updates = true, // ask GitHub for the newest release once per launch; MNML_NO_UPDATE_CHECK=1 also skips it
-        .activity_bar_pinned_integrations = .{}, // integration ids
+        .activity_bar_pinned_integrations = .{}, // chip ids painted as launcher icons after the rail's sections; "Add to activity bar" on a row / chip menu writes here
         .plus_menu_pinned = .{},
         .plus_menu_hidden = .{},
         .auto_refresh_off = .{}, // panel ids whose auto-refresh is off
@@ -434,11 +434,13 @@ otherwise. Copy what you need; leave the rest out.
             .{ .github_launcher_folder = .{ .id = "me/launchers", .repo = "me/launchers", .path = "launchers" } },
             .{ .github_monorepo_apps = .{ .id = "me/apps", .repo = "me/mono", .apps_dir = "apps" } },
             // A folder on this machine or a mounted share — the private
-            // path: every *.zon in it is a manifest to install as-is,
-            // every subfolder with a build.zig and a manifest.zon a Zig
-            // integration built in place. Relative to the workspace,
-            // `~` expanded. `MNML_MARKETPLACE_LOCAL=<folder>` in the
-            // environment makes such a folder the only source.
+            // path: every *.zon in it is a manifest to install as-is (a
+            // launcher), every subfolder with a build.zig and a
+            // manifest.zon a Zig integration built in place. Relative to
+            // the workspace, `~` expanded. `MNML_MARKETPLACE_LOCAL=<folder>`
+            // in the environment makes such a folder the only source.
+            // The repo's own launchers/ lists as ✓ Official, not Private:
+            // it is the official set.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
         },
         .show_dev_tab = false,
@@ -528,6 +530,58 @@ workspace layer and everything else still applies:
 
 (`.tasks.<name>` bodies are not in the table: a task only runs when you
 ask for it by name.)
+
+## Launchers and integration manifests
+
+An integration is a manifest at `<data root>/integrations/<id>.zon`
+(or `<ws>/.mnml/integrations/<id>.zon` for one project); the schema is
+`sdk/mnml-sdk/src/manifest.zig` and `docs/SDK.md`. A manifest without a
+`binary` is a **launcher**: it ships no program, and each of its
+commands carries a `run` line — an ex line, usually `:term <tool> …` —
+that mnml expands and runs when the command fires:
+
+```zig
+.{
+    .id = "htop",
+    .label = "htop",
+    .description = "Interactive process viewer",
+    .chip = .{ .glyph_codepoint = "F1D00", .fallback = "H", .color = "green", .in_palette_bar = false },
+    .commands = .{
+        .{ .id = "htop.open", .title = "htop: open", .keys = .{"space i H"}, .run = ":term htop" },
+    },
+}
+```
+
+- `run` (or `ex`) may name mnml's context: `{{workspace}}`,
+  `{{workspace_name}}`, `{{current_file}}` (workspace-relative),
+  `{{current_file_abs}}`, `{{current_file_dir}}`, `{{cursor_line}}`,
+  `{{cursor_col}}` (1-based), `{{selection}}` (its first line). An
+  unknown `{{token}}` stays as written. A `term <prog>` line whose
+  program is not on PATH toasts the install hint instead of opening a
+  pane.
+- `chip.glyph` is a Nerd Font glyph; `chip.glyph_codepoint` (`F1D00`)
+  paints a codepoint verbatim when `glyph` is empty — for a mark in
+  mnml's own font block; `chip.fallback` is what paints without the
+  font. `chip.in_palette_bar` puts the chip on the palette bar; the
+  row's and the chip's right-click menus toggle it (*Hide from top bar*
+  / *Show on top bar*).
+- A launcher needs at least one command and every command a `run`
+  line; a manifest with no `binary` and no command is refused, by
+  `--install` and by mnml's scan alike.
+
+Where one comes from: the Marketplace tab (a `github_launcher_folder`
+or `local_folder` source — the four in `launchers/` of the mnml-zig
+repo are the official set), the Dev tab (an SDK checkout lists its
+`launchers/` beside its `integrations/`), or `launcher.add_local` (a
+prompt for a `.zon` path). Install is the file appearing in the data
+root; uninstall is deleting it.
+
+**Pinned icons.** `.ui.activity_bar_pinned_integrations = .{ "htop" }`
+paints the named chips after the activity bar's sections, each the
+chip's glyph in its colour; a click runs the chip's command (a pty
+pane, no side panel), a right click opens the chip's menu. *Add to
+activity bar* / *Remove from activity bar* on an Installed row's menu,
+a chip's menu or the icon's own writes the list to the home config.
 
 ## Where the home file lives
 

@@ -37,6 +37,7 @@ const settings = @import("settings.zig");
 const side = @import("side.zig");
 const git_palette = @import("git_palette.zig");
 const http_panel = @import("http_panel.zig");
+const integrations = @import("integrations.zig");
 
 pub const Section = rail.Section;
 pub const Part = rail.Part;
@@ -133,13 +134,16 @@ pub fn enter(app: *App, s: Section) void {
     if (s != .http) http_panel.leave(app) catch {};
 }
 
-/// What the painter needs this frame.
-pub fn props(app: *App) rail.Props {
+/// What the painter needs this frame. The pins are the chips
+/// `ui.activity_bar_pinned_integrations` names, in that order, on the
+/// frame arena; an id no chip answers to is skipped, as Rust skips it.
+pub fn props(app: *App, arena: Allocator) Allocator.Error!rail.Props {
+    const pinned = try integrations.pinnedChips(app, arena);
+    const pins = try arena.alloc(rail.Pin, pinned.len);
+    for (pinned, 0..) |pc, i| pins[i] = .{ .glyph = pc.chip.glyph, .fallback = pc.chip.fallback, .color = pc.chip.color };
     var p: rail.Props = .{
         .active = active(app),
-        // The pinned launcher slots are not painted (they need the
-        // integrations), but Rust's density rule counts them.
-        .extra_items = app.cfg.ui.activity_bar_pinned_integrations.len,
+        .pins = pins,
         .show_counts = @mod(app.now_ms, pulse_period_ms) >= pulse_icon_ms,
     };
     for (Section.all) |s| p.badges[@intFromEnum(s)] = app.ipc_fx.badge(s.badgeKey());
@@ -147,7 +151,8 @@ pub fn props(app: *App) rail.Props {
 }
 
 /// A press on the rail: left shows the section (the gear opens
-/// Settings), right opens its menu. Wheel and motion do nothing.
+/// Settings; a pinned icon fires its chip's command), right opens its
+/// menu. Wheel and motion do nothing.
 pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (part) {
@@ -159,6 +164,11 @@ pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
         .gear => switch (m.button) {
             .left => try run(app, .@"view.settings"),
             .right => try context_menus.openGearMenu(app, m.x, m.y),
+            else => {},
+        },
+        .pin => |i| switch (m.button) {
+            .left => try integrations.pinClick(app, i),
+            .right => try integrations.openPinMenu(app, i, m.x, m.y),
             else => {},
         },
     }
@@ -175,10 +185,23 @@ fn run(app: *App, id: command.CommandId) Allocator.Error!void {
     };
 }
 
+/// `describe` with the app at hand: a pinned icon's tip names its chip.
+pub fn describeIn(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip.Tip {
+    switch (part) {
+        .pin => |i| {
+            const pins = try integrations.pinnedChips(app, arena);
+            if (i >= pins.len) return .{ .title = "Pinned launcher", .detail = "click runs it · right-click: menu" };
+            return .{ .title = pins[i].chip.tooltip, .detail = "click runs the integration's command · right-click: menu" };
+        },
+        else => return describe(part),
+    }
+}
+
 /// The hover copy (Rust `ui/tooltip.rs`): what a click shows, and what
 /// the section holds.
 pub fn describe(part: Part) tooltip.Tip {
     return switch (part) {
+        .pin => .{ .title = "Pinned launcher", .detail = "click runs it · right-click: menu" },
         .gear => .{ .title = "Settings", .detail = "click opens Settings · right-click: Settings / Command Palette / Cheatsheet / Themes / About" },
         .section => |s| .{ .title = s.meta().label, .detail = switch (s) {
             .explorer => "click: Files rail · workspace file tree · new file / folder · right-click: menu",
@@ -389,4 +412,75 @@ test "describe: every rail part has words, and the section's says what a click s
         try t.expect(std.mem.startsWith(u8, tip.detail.?, "click: "));
     }
     try t.expectEqualStrings("Settings", describe(.gear).title);
+    try t.expectEqualStrings("Pinned launcher", describe(.{ .pin = 0 }).title);
+}
+
+test "pinned icons: pinning an installed launcher paints its chip after the sections and persists; a click fires its command; the right click opens its menu; Remove clears it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "integrations");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/htop.zon", .data = ".{ .id = \"htop\", .label = \"htop\", .chip = .{ .glyph_codepoint = \"F1D00\", .fallback = \"H\", .color = \"green\", .in_palette_bar = false }, .commands = .{ .{ .id = \"htop.open\", .title = \"htop: open\", .run = \":term htop\" } } }" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/definitely/not/a/dir");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40, .env = &env });
+    defer app.deinit();
+    try app.render();
+    // Nothing pinned: no pin hit anywhere on the rail.
+    for (app.hits.items.items) |e| if (e.target == .rail) try t.expect(e.target.rail != .pin);
+    // Pin from the Installed row (the row menu's "Add to activity bar" names the same command).
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    try command.run(&app, .{ .static = .@"integrations.pin_to_activity_bar" });
+    try t.expectEqual(@as(usize, 1), app.cfg.ui.activity_bar_pinned_integrations.len);
+    try t.expectEqualStrings("htop", app.cfg.ui.activity_bar_pinned_integrations[0]);
+    const home = (try settings.configPath(&app, .home)).?;
+    const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".activity_bar_pinned_integrations = .{\"htop\"}") != null);
+    // Painted after SCRIPTS on the rail's step, in green, with a pin hit.
+    try app.render();
+    const lay = rail.layout(railRect(&app), 1);
+    const y = lay.pinY(0).?;
+    try t.expectEqual(lay.sectionY(.scripts).? + lay.step, y);
+    try t.expectEqualStrings("\u{F1D00}", app.screen.readCell(1, y).?.char.grapheme);
+    try t.expectEqual(app.theme.palette.green, app.screen.readCell(1, y).?.style.fg);
+    try t.expectEqual(@as(u16, 0), app.hits.at(1, y).?.rail.pin);
+    try t.expectEqualStrings("htop", (try describeIn(&app, app.frame.allocator(), .{ .pin = 0 })).title);
+    // Pinning again is a no-op toast, not a second row.
+    try command.run(&app, .{ .static = .@"integrations.pin_to_activity_bar" });
+    try t.expectEqual(@as(usize, 1), app.cfg.ui.activity_bar_pinned_integrations.len);
+    // A click fires htop.open: htop is not on this PATH, so the hint toasts and no pane opens.
+    try press(&app, 1, y, .left);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "htop is not on PATH") != null);
+    try t.expectEqual(@as(usize, 0), app.panes.count());
+    // The right click: the chip's menu, its four rows.
+    try press(&app, 1, y, .right);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("htop", app.overlay.menu.title);
+    try t.expectEqualStrings("Disable", app.overlay.menu.items[0].label);
+    try t.expectEqualStrings("Show on top bar", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("Remove from activity bar", app.overlay.menu.items[2].label);
+    try t.expectEqualStrings("Copy id", app.overlay.menu.items[3].label);
+    try t.expectEqual(command.CommandId.@"integrations.unpin_from_activity_bar", app.overlay.menu.items[2].action.command);
+    // Choose Remove: the pin goes from the config, the file and the rail.
+    var steps: usize = 0;
+    while (!std.mem.eql(u8, app.overlay.menu.items[app.overlay.menu.cursor].label, "Remove from activity bar") or !app.overlay.menu.highlight) : (steps += 1) {
+        try t.expect(steps < 6);
+        try app.handle(.{ .key = app_mod.Key.named(.down) });
+    }
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(@as(usize, 0), app.cfg.ui.activity_bar_pinned_integrations.len);
+    const after = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(after);
+    try t.expect(std.mem.indexOf(u8, after, ".activity_bar_pinned_integrations = .{}") != null);
+    try app.render();
+    try t.expect(app.hits.at(1, y) == null or app.hits.at(1, y).? != .rail or app.hits.at(1, y).?.rail != .pin);
+    // A pinned id that no chip answers to paints nothing and breaks nothing.
+    app.cfg.ui.activity_bar_pinned_integrations = &.{"vanished"};
+    try app.render();
+    try t.expectEqual(@as(usize, 0), (try props(&app, app.frame.allocator())).pins.len);
 }

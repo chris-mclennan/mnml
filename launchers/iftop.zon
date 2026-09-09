@@ -1,0 +1,22 @@
+// iftop — interactive bandwidth monitor.
+//
+// A launcher: no binary of its own. `iftop.open` runs `:term iftop` in
+// a pty pane. iftop needs raw-socket privileges on macOS / Linux; when it
+// dies inside the pane that is the system's permission, not mnml's.
+.{
+    .id = "iftop",
+    .label = "iftop",
+    .description = "Interactive bandwidth monitor",
+    .category = "system",
+    .chip = .{
+        // nf-md-network.
+        .glyph = "\u{F06F3}",
+        .fallback = "N",
+        .color = "cyan",
+        .enabled = true,
+        .in_palette_bar = false,
+    },
+    .commands = .{
+        .{ .id = "iftop.open", .title = "iftop: open", .group = "system", .keys = .{"space i I"}, .run = ":term iftop" },
+    },
+}

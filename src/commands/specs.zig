@@ -807,6 +807,11 @@ pub const specs = [_]Spec{
     .{ .id = "coverage.chip_show_code", .title = "Coverage chip: show Code (Istanbul) only", .group = "view" },
     .{ .id = "coverage.chip_show_ticker", .title = "Coverage chip: ticker (auto-cycle F ↔ C)", .group = "view" },
     .{ .id = "launcher.add_local", .title = "Launcher: add a local chip (glyph / label / :term <cmd>)", .group = "integrations" },
+    // Zig-only (launchers): the pinned activity-bar icons and the chip's
+    // place on the palette bar, from the row / chip / icon menus.
+    .{ .id = "integrations.pin_to_activity_bar", .title = "Integrations: add the chip to the activity bar (a pinned launcher icon)", .group = "integrations" },
+    .{ .id = "integrations.unpin_from_activity_bar", .title = "Integrations: remove the chip from the activity bar", .group = "integrations" },
+    .{ .id = "integrations.toggle_palette_bar", .title = "Integrations: show / hide the chip on the palette bar", .group = "integrations" },
     .{ .id = "term.rename", .title = "Terminal: rename this session (shown in the tab)", .group = "term" },
     .{ .id = "dock.new_text", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
     .{ .id = "dock.new_text_br", .title = "Dock: new text widget (bottom-right)", .group = "dock" },
@@ -1102,7 +1107,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1031 specs, unique ids" {
+test "1034 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1117,7 +1122,7 @@ test "1031 specs, unique ids" {
     // rebase-plan / amend / reset commands.
     // + four diff-any-two-refs commands + eight branch verbs + seven
     // stash commands + two command-log commands + two detail-row
-    // commands (git-more2).
-    try std.testing.expectEqual(@as(usize, 1031), specs.len);
+    // commands (git-more2) + three launcher-pin commands.
+    try std.testing.expectEqual(@as(usize, 1034), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

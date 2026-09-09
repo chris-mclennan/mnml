@@ -14,12 +14,17 @@
 //! The rows: the sections start one row down and step by two when they
 //! fit, by one when they do not (a short terminal gets a denser rail,
 //! never a shorter one); the gear sits on `bottom - 2`; the sections stop
-//! three rows above the bottom so they never run into it.
+//! three rows above the bottom so they never run into it. The pinned
+//! launcher icons (`ui.activity_bar_pinned_integrations`, Rust's
+//! `LauncherIcon` rows) follow the sections on the same step, each an
+//! integration chip's glyph in the chip's colour; a click fires the
+//! chip's command and a right click opens the chip's menu.
 
 const std = @import("std");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const paletteColor = @import("integrations_view.zig").paletteColor;
 const Style = Ui.Style;
 
 /// Padding, glyph, padding.
@@ -97,6 +102,16 @@ const badge_one_ascii = "*";
 pub const Part = union(enum) {
     section: Section,
     gear,
+    /// The `i`-th pinned launcher icon, in `Props.pins` order.
+    pin: u16,
+};
+
+/// A pinned launcher icon: an integration chip's glyph, its ASCII twin
+/// and its colour name (`paletteColor`).
+pub const Pin = struct {
+    glyph: []const u8,
+    fallback: []const u8,
+    color: []const u8 = "",
 };
 
 pub const Props = struct {
@@ -105,10 +120,10 @@ pub const Props = struct {
     badges: [Section.all.len]u32 = @splat(0),
     /// The pulse: this frame paints the counts over their glyphs.
     show_counts: bool = false,
-    /// Rows Rust's rail spends after the sections (the pinned launcher
-    /// slots, not painted here). The density rule counts them so a
-    /// config that packs the Rust rail packs this one the same way.
-    extra_items: usize = 0,
+    /// The pinned launcher icons, painted after the sections; the
+    /// density rule counts them, so a config that packs the Rust rail
+    /// packs this one the same way.
+    pins: []const Pin = &.{},
 };
 
 /// Where the sections and the gear land in `area` — shared by `draw`
@@ -124,6 +139,12 @@ pub const Layout = struct {
 
     pub fn sectionY(l: Layout, s: Section) ?u16 {
         const y = l.first_y + l.step * @as(u16, @intFromEnum(s));
+        return if (y < l.end_y) y else null;
+    }
+
+    /// The `i`-th pinned icon's row: after the last section, on the same step.
+    pub fn pinY(l: Layout, i: usize) ?u16 {
+        const y = l.first_y + l.step * @as(u16, @intCast(Section.rail.len + i));
         return if (y < l.end_y) y else null;
     }
 };
@@ -152,7 +173,7 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
     ui.fill(area, Theme.onBg(th.fg, bg));
     const glyph_x = area.x + 1;
     const glyph_w = area.w -| 1;
-    const lay = layout(area, props.extra_items);
+    const lay = layout(area, props.pins.len);
     if (lay.gear_y) |gy| {
         const row = Rect.init(area.x, gy, area.w, 1);
         _ = ui.putStr(glyph_x, gy, glyph_w, if (ui.ascii) gear_ascii else gear_nerd, muted);
@@ -173,6 +194,16 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
             _ = ui.putStr(glyph_x, y, glyph_w, text, badge);
         }
         ui.hit(row, .{ .rail = .{ .section = s } });
+    }
+    // The pinned launcher icons: the chip's glyph in the chip's colour,
+    // at the rail's weight (dim, like an unmarked section).
+    for (props.pins, 0..) |p, i| {
+        const y = lay.pinY(i) orelse break;
+        const row = Rect.init(area.x, y, area.w, 1);
+        const glyph = if (ui.ascii or !ui.nerd_font or p.glyph.len == 0) p.fallback else p.glyph;
+        if (glyph.len == 0) continue;
+        _ = ui.putStr(glyph_x, y, glyph_w, glyph, dim(Theme.withFg(Theme.onBg(th.fg, bg), paletteColor(th, p.color))));
+        ui.hit(row, .{ .rail = .{ .pin = @intCast(i) } });
     }
 }
 
@@ -289,4 +320,50 @@ test "draw: the indicator sits beside the active glyph, every section and the ge
     try t.expectEqualStrings(indicator_ascii, fx.cell(0, lay.sectionY(.explorer).?).char.grapheme);
     try t.expectEqualStrings("E", fx.cell(1, lay.sectionY(.explorer).?).char.grapheme);
     try t.expectEqualStrings(gear_ascii, fx.cell(1, lay.gear_y.?).char.grapheme);
+}
+
+test "draw: the pinned icons follow the sections on the same step, each a hit, in the chip's colour; the density rule counts them; ASCII paints the twins" {
+    var fx = try test_fixture.init(10, 40);
+    defer fx.deinit();
+    const pins = [_]Pin{
+        .{ .glyph = "\u{F1D00}", .fallback = "H", .color = "green" },
+        .{ .glyph = "\u{F0AEF}", .fallback = "B", .color = "red" },
+    };
+    const area = Rect.init(0, 1, width, 37);
+    draw(fx.ui(), area, .{ .active = .explorer, .pins = &pins });
+    const lay = layout(area, pins.len);
+    try t.expectEqual(@as(u16, 2), lay.step);
+    try t.expectEqual(@as(u16, 24), lay.pinY(0).?);
+    try t.expectEqual(@as(u16, 26), lay.pinY(1).?);
+    try t.expectEqualStrings("\u{F1D00}", fx.cell(1, 24).char.grapheme);
+    try t.expectEqualStrings("\u{F0AEF}", fx.cell(1, 26).char.grapheme);
+    try t.expectEqual(fx.theme.palette.green, fx.cell(1, 24).style.fg);
+    try t.expectEqual(fx.theme.palette.red, fx.cell(1, 26).style.fg);
+    try t.expectEqual(@as(u16, 0), fx.hits.at(0, 24).?.rail.pin);
+    try t.expectEqual(@as(u16, 1), fx.hits.at(2, 26).?.rail.pin);
+    try t.expect(fx.hits.at(1, 28) == null);
+    try t.expect(fx.hits.at(1, lay.gear_y.?).?.rail == .gear);
+    // Six pins pack the rail: sections one row apart, pins right after.
+    var six: [6]Pin = undefined;
+    for (&six) |*p| p.* = pins[0];
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .active = .explorer, .pins = &six });
+    const dense = layout(area, six.len);
+    try t.expectEqual(@as(u16, 1), dense.step);
+    try t.expectEqual(@as(u16, 13), dense.pinY(0).?);
+    try t.expectEqual(@as(u16, 18), dense.pinY(5).?);
+    try t.expectEqual(@as(u16, 5), fx.hits.at(1, 18).?.rail.pin);
+    // ASCII: the twins.
+    fx.hits.reset();
+    var ui = fx.ui();
+    ui.ascii = true;
+    draw(ui, area, .{ .active = .explorer, .pins = &pins });
+    try t.expectEqualStrings("H", fx.cell(1, 24).char.grapheme);
+    try t.expectEqualStrings("B", fx.cell(1, 26).char.grapheme);
+    // A short rail drops the pins before the gear.
+    var short = try test_fixture.init(10, 14);
+    defer short.deinit();
+    draw(short.ui(), Rect.init(0, 1, width, 11), .{ .active = .explorer, .pins = &pins });
+    try t.expect(layout(Rect.init(0, 1, width, 11), pins.len).pinY(0) == null);
+    try t.expect(short.hits.at(1, 10).?.rail == .gear);
 }

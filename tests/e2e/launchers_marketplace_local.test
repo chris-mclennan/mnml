@@ -1,0 +1,31 @@
+# env: MNML_MARKETPLACE_LOCAL=${MNML_LAUNCHERS}
+# The repo's own launchers/ as the marketplace's one source
+# ($MNML_LAUNCHERS is the folder, exported by `mnml-zig test`): the four
+# list as `[launcher] <name>  ✓ Official  (local)` rows — the official
+# set — with the description on the second line; `i` installs the
+# focused one by copying its manifest into the data root, no build, and
+# the Installed tab lists it with its first command. A launcher has no
+# binary, so the row never says "not installed".
+command integrations.show_marketplace
+expect screen contains "Mkt (4)"
+drag 30 5 60 5
+expect screen contains "[launcher] btop  ✓ Official  (local)"
+expect screen contains "Resource monitor (cpu / mem / disk / net)"
+expect screen contains "[launcher] htop  ✓ Official  (local)"
+expect screen contains "Interactive process viewer"
+expect screen contains "[launcher] iftop  ✓ Official  (local)"
+expect screen contains "[launcher] VSCode  ✓ Official  (local)"
+expect screen lacks "Private"
+# i installs the focused entry (btop, first by name); the row greys.
+key i
+expect screen contains "installed btop"
+expect screen contains "[installed] btop"
+command integrations.show_installed
+expect screen contains "Installed (1)"
+expect screen contains "btop.open"
+expect screen lacks "not installed"
+# Uninstall, so the size sweep (one data root for every size) starts clean.
+key x
+expect screen contains "Remove btop?"
+key r
+expect screen contains "removed btop"

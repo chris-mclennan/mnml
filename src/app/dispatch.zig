@@ -94,6 +94,7 @@ const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
+const launchers = @import("launchers.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
 const cmd_browser = @import("cmd_browser.zig");
@@ -1141,6 +1142,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .move_paths => |ps| try files_pane.acceptMoveTo(app, @ptrCast(ps), text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
+        .launcher_add_local => try toastOnFail(app, launchers.addLocalAccept(app, text)),
         .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
         .ai_ask => try toastOnFail(app, ai_app.askAccept(app, text)),
         .ai_chat => try toastOnFail(app, ai_app.chatAccept(app, text)),

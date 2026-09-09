@@ -1,0 +1,24 @@
+// htop — interactive process viewer.
+//
+// A launcher: no binary of its own. `htop.open` runs `:term htop` in a
+// pty pane; htop must be on PATH, and mnml says so when it is not.
+.{
+    .id = "htop",
+    .label = "htop",
+    .description = "Interactive process viewer",
+    .category = "system",
+    .chip = .{
+        // The chip glyph is pinned by codepoint rather than pasted: U+F1D00
+        // is the htop mark baked into mnml's own font block (MnmlSymbols,
+        // U+F1B00–U+F20FF), the same cell the 0.2 launcher painted. A
+        // terminal without that font shows the fallback.
+        .glyph_codepoint = "F1D00",
+        .fallback = "H",
+        .color = "green",
+        .enabled = true,
+        .in_palette_bar = false,
+    },
+    .commands = .{
+        .{ .id = "htop.open", .title = "htop: open", .group = "system", .keys = .{"space i H"}, .run = ":term htop" },
+    },
+}

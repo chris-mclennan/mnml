@@ -154,6 +154,7 @@ const runner_tables = .{
     @import("../app/mount_pane.zig"),
     @import("../app/integrations.zig"),
     @import("../app/marketplace.zig"),
+    @import("../app/launchers.zig"),
     @import("../app/files_pane.zig"),
     @import("../app/file_clipboard.zig"),
     @import("../app/trash.zig"),
@@ -526,7 +527,8 @@ pub fn runNamed(app: *App, id: []const u8) CommandError!void {
 fn runDyn(app: *App, slot: u32) CommandError!void {
     const c = app.dyn_commands.at(slot) orelse return app.diag.fail(app.frame.allocator(), "command slot {d} was unregistered", .{slot});
     switch (c.runner) {
-        .ex => |line| return app.runEx(line),
+        // A manifest line: `{{tokens}}` expanded, a missing program toasted.
+        .ex => |line| return @import("../app/launchers.zig").fire(app, line),
         .ipc => return app.ackPluginCommand(c.id),
         .lua => |r| return app.script().callCommand(r),
         .mount => |r| return @import("../app/integrations.zig").runMount(app, .{
@@ -667,7 +669,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1031), count);
+    try std.testing.expectEqual(@as(usize, 1034), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

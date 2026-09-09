@@ -562,6 +562,11 @@ pub fn build(b: *std.Build) void {
     // PATH with `# env: PATH=${MNML_SHIMS}:${PATH}`; `mnml-zig test`
     // exports the directory as `$MNML_SHIMS`.
     build_options.addOption([]const u8, "shims_dir", b.pathFromRoot("tools/shims"));
+    // `launchers/`: mnml's own launcher manifests. The unit test in
+    // `src/app/launchers.zig` parses every file; `mnml-zig test` exports
+    // the folder as `$MNML_LAUNCHERS` so a `.test` can point
+    // `MNML_MARKETPLACE_LOCAL` at it.
+    build_options.addOption([]const u8, "launchers_dir", b.pathFromRoot("launchers"));
     tests_run.step.dependOn(&fake_dap_install.step);
     e2e_run.step.dependOn(&fake_dap_install.step);
     gate_in_test.step.dependOn(&fake_dap_install.step);

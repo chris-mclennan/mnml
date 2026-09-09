@@ -5,7 +5,12 @@
 //!
 //! `Manifest` is the ZON schema on both sides: the SDK serialises it
 //! with `std.zon.stringify`, mnml parses it with `std.zon.parse`. Only
-//! `id`, `label` and `binary` are required; the rest default.
+//! `id` and `label` are required; the rest default. A manifest without
+//! a `binary` is a *launcher*: it has no program of its own, and every
+//! command carries a `run` line — an ex line, usually `:term <tool>` —
+//! that mnml expands (`{{workspace}}`, `{{current_file}}`, …) and runs.
+//! `validate` is the one rule both readers apply: a manifest needs a
+//! binary or a runnable command, and a launcher's commands all need one.
 //!
 //! The data root is mnml's: `$MNML_DATA_ROOT`, else
 //! `$XDG_CONFIG_HOME/mnml`, else `$HOME/.config/mnml`.
@@ -21,8 +26,13 @@ pub const Mode = enum { mount, pty };
 /// The rail / palette-bar chip. Display strings live on the manifest;
 /// the chip is about rendering.
 pub const Chip = struct {
-    /// A Nerd Font glyph (or any short string).
+    /// A Nerd Font glyph (or any short string). Wins over `glyph_codepoint`.
     glyph: []const u8 = "",
+    /// A codepoint in hex (`F1D00`, `U+F1D00`) painted verbatim when
+    /// `glyph` is empty — for a glyph baked into mnml's own font block
+    /// (U+F1B00–U+F20FF) rather than a Nerd Font one. `glyphText` reads
+    /// the two together.
+    glyph_codepoint: []const u8 = "",
     /// What paints when the glyph cannot: 1–3 plain characters.
     fallback: []const u8 = "",
     /// A theme colour name: red, orange, yellow, green, blue, cyan,
@@ -31,7 +41,27 @@ pub const Chip = struct {
     tooltip: []const u8 = "",
     enabled: bool = true,
     in_palette_bar: bool = true,
+
+    /// The glyph to paint: `glyph`, else `glyph_codepoint` decoded into
+    /// `buf` (a `U+` / `0x` prefix is allowed), else empty.
+    pub fn glyphText(c: Chip, buf: *[4]u8) []const u8 {
+        if (c.glyph.len > 0) return c.glyph;
+        const cp = parseCodepoint(c.glyph_codepoint) orelse return "";
+        const n = std.unicode.utf8Encode(cp, buf) catch return "";
+        return buf[0..n];
+    }
 };
+
+/// `F1D00` / `U+F1D00` / `0xF1D00` as a codepoint; null when it is not one.
+pub fn parseCodepoint(hex_in: []const u8) ?u21 {
+    var hex = std.mem.trim(u8, hex_in, " \t");
+    if (std.mem.startsWith(u8, hex, "U+") or std.mem.startsWith(u8, hex, "u+")) hex = hex[2..];
+    if (std.mem.startsWith(u8, hex, "0x") or std.mem.startsWith(u8, hex, "0X")) hex = hex[2..];
+    if (hex.len == 0 or hex.len > 6) return null;
+    const cp = std.fmt.parseInt(u21, hex, 16) catch return null;
+    if (cp > 0x10ffff or (cp >= 0xd800 and cp <= 0xdfff)) return null;
+    return cp;
+}
 
 pub const Command = struct {
     /// `<integration>.<verb>`; must not shadow a built-in.
@@ -41,9 +71,21 @@ pub const Command = struct {
     /// Chords in mnml's spec grammar (`ctrl+k j`, `space i j`).
     keys: []const []const u8 = &.{},
     /// An ex line to run instead of opening the binary (`term foo --x`).
+    /// `run` is the launcher spelling of the same thing — the two are
+    /// one field to mnml (`line`); a leading `:` is fine. mnml expands
+    /// `{{workspace}}`, `{{workspace_name}}`, `{{current_file}}`,
+    /// `{{current_file_abs}}`, `{{current_file_dir}}`, `{{cursor_line}}`,
+    /// `{{cursor_col}}` and `{{selection}}` when the command fires;
+    /// an unknown `{{token}}` stays as written.
     ex: ?[]const u8 = null,
+    run: ?[]const u8 = null,
     /// Extra argv when the command opens the binary.
     args: []const []const u8 = &.{},
+
+    /// The line the command runs, if it has one: `run`, else `ex`.
+    pub fn line(c: Command) ?[]const u8 {
+        return c.run orelse c.ex;
+    }
 };
 
 pub const ContextMenuEntry = struct {
@@ -101,8 +143,9 @@ pub const Manifest = struct {
     label: []const u8,
     description: []const u8 = "",
     version: []const u8 = "",
-    /// On PATH, or absolute.
-    binary: []const u8,
+    /// On PATH, or absolute. Empty (left out) makes the manifest a
+    /// launcher: no program of its own, every command a `run` line.
+    binary: []const u8 = "",
     /// msg / forge / tracker / aws / db / …
     category: []const u8 = "",
     mode: Mode = .mount,
@@ -118,9 +161,36 @@ pub const Manifest = struct {
     requires: []const []const u8 = &.{},
     auth: []const AuthField = &.{},
     values_sources: []const ValuesSource = &.{},
+
+    /// No binary: the commands' `run` lines are all there is.
+    pub fn isLauncher(m: Manifest) bool {
+        return m.binary.len == 0;
+    }
 };
 
 pub const IdError = error{InvalidId};
+
+pub const ValidateError = error{ InvalidId, NoBinaryNoCommand, LauncherCommandWithoutRun };
+
+/// The rule both readers apply after the id: a manifest with no
+/// `binary` needs at least one command, and every command of such a
+/// launcher needs a `run` (or `ex`) line — there is nothing else to
+/// open. `why` gets the reason a toast can show.
+pub fn validate(m: Manifest, why: *[]const u8) ValidateError!void {
+    validateId(m.id) catch {
+        why.* = "id must be a file name ([A-Za-z0-9_.-])";
+        return error.InvalidId;
+    };
+    if (!m.isLauncher()) return;
+    if (m.commands.len == 0) {
+        why.* = "no binary and no command: a launcher needs a command with a run line";
+        return error.NoBinaryNoCommand;
+    }
+    for (m.commands) |c| if (c.line() == null) {
+        why.* = "a launcher command needs a run line (there is no binary to open)";
+        return error.LauncherCommandWithoutRun;
+    };
+}
 
 /// `[A-Za-z0-9_.-]+` — an id is a file name.
 pub fn validateId(id: []const u8) IdError!void {
@@ -169,9 +239,13 @@ pub fn pathUnder(gpa: Allocator, root: []const u8, id: []const u8) PathError![]u
 pub fn render(gpa: Allocator, m: Manifest) Allocator.Error![]u8 {
     var out: Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    out.writer.writeAll("// Written by `") catch return error.OutOfMemory;
-    out.writer.writeAll(m.binary) catch return error.OutOfMemory;
-    out.writer.writeAll(" --install`; mnml reads it at startup and on integrations.refresh.\n") catch return error.OutOfMemory;
+    if (m.isLauncher()) {
+        out.writer.writeAll("// A launcher manifest (no binary of its own); mnml reads it at startup and on integrations.refresh.\n") catch return error.OutOfMemory;
+    } else {
+        out.writer.writeAll("// Written by `") catch return error.OutOfMemory;
+        out.writer.writeAll(m.binary) catch return error.OutOfMemory;
+        out.writer.writeAll(" --install`; mnml reads it at startup and on integrations.refresh.\n") catch return error.OutOfMemory;
+    }
     std.zon.stringify.serialize(m, .{ .emit_default_optional_fields = false }, &out.writer) catch return error.OutOfMemory;
     out.writer.writeByte('\n') catch return error.OutOfMemory;
     return out.toOwnedSlice();
@@ -218,6 +292,37 @@ test "ids are file names" {
     try testing.expectError(error.InvalidId, validateId("a/b"));
     try testing.expectError(error.InvalidId, validateId(".."));
     try testing.expectError(error.InvalidId, validateId("sp ace"));
+}
+
+test "validate: a binary needs nothing more; a launcher needs commands, each with a run (or ex) line; the line is one field" {
+    var why: []const u8 = "";
+    try validate(.{ .id = "jira", .label = "Jira", .binary = "mnml-jira" }, &why);
+    const htop: Manifest = .{ .id = "htop", .label = "htop", .commands = &.{.{ .id = "htop.open", .title = "htop: open", .run = ":term htop" }} };
+    try testing.expect(htop.isLauncher());
+    try validate(htop, &why);
+    try testing.expectEqualStrings(":term htop", htop.commands[0].line().?);
+    const via_ex: Manifest = .{ .id = "x", .label = "x", .commands = &.{.{ .id = "x.o", .title = "o", .ex = "term x" }} };
+    try validate(via_ex, &why);
+    try testing.expectError(error.NoBinaryNoCommand, validate(.{ .id = "e", .label = "e" }, &why));
+    try testing.expect(std.mem.indexOf(u8, why, "no binary and no command") != null);
+    try testing.expectError(error.LauncherCommandWithoutRun, validate(.{ .id = "e", .label = "e", .commands = &.{.{ .id = "e.o", .title = "o" }} }, &why));
+    try testing.expect(std.mem.indexOf(u8, why, "run line") != null);
+    try testing.expectError(error.InvalidId, validate(.{ .id = "a/b", .label = "x", .binary = "y" }, &why));
+    // `run` wins over `ex` when a manifest carries both.
+    try testing.expectEqualStrings("term a", (Command{ .id = "c", .title = "c", .run = "term a", .ex = "term b" }).line().?);
+    try testing.expect((Command{ .id = "c", .title = "c" }).line() == null);
+}
+
+test "a chip's glyph: the literal first, else the pinned codepoint decoded, else nothing" {
+    var buf: [4]u8 = undefined;
+    try testing.expectEqualStrings("H", (Chip{ .glyph = "H", .glyph_codepoint = "F1D00" }).glyphText(&buf));
+    try testing.expectEqualStrings("\u{F1D00}", (Chip{ .glyph_codepoint = "F1D00" }).glyphText(&buf));
+    try testing.expectEqualStrings("\u{F1D00}", (Chip{ .glyph_codepoint = "U+F1D00" }).glyphText(&buf));
+    try testing.expectEqualStrings("\u{E8DA}", (Chip{ .glyph_codepoint = "0xe8da" }).glyphText(&buf));
+    try testing.expectEqualStrings("", (Chip{}).glyphText(&buf));
+    try testing.expectEqualStrings("", (Chip{ .glyph_codepoint = "not hex" }).glyphText(&buf));
+    try testing.expectEqualStrings("", (Chip{ .glyph_codepoint = "D800" }).glyphText(&buf));
+    try testing.expect(parseCodepoint("1234567") == null);
 }
 
 test "the data root follows MNML_DATA_ROOT, XDG, HOME" {
@@ -288,4 +393,19 @@ test "write renders ZON that parses back with the same shape" {
     try env.put("MNML_DATA_ROOT", root);
     try testing.expect(try remove(testing.allocator, testing.io, &env, "hello"));
     try testing.expect(!try remove(testing.allocator, testing.io, &env, "hello"));
+    // A launcher renders without a `.binary` and says what it is.
+    const launcher: Manifest = .{ .id = "htop", .label = "htop", .chip = .{ .glyph_codepoint = "F1D00", .fallback = "H" }, .commands = &.{.{ .id = "htop.open", .title = "htop: open", .run = ":term htop" }} };
+    const lp = try writeUnder(testing.allocator, testing.io, root, launcher);
+    defer testing.allocator.free(lp);
+    const ltext = try Io.Dir.cwd().readFileAllocOptions(testing.io, lp, testing.allocator, .unlimited, .of(u8), 0);
+    defer testing.allocator.free(ltext);
+    try testing.expect(std.mem.startsWith(u8, ltext, "// A launcher manifest"));
+    try testing.expect(std.mem.indexOf(u8, ltext, ".binary") == null);
+    try testing.expect(std.mem.indexOf(u8, ltext, ".run = \":term htop\"") != null);
+    try testing.expect(std.mem.indexOf(u8, ltext, ".glyph_codepoint = \"F1D00\"") != null);
+    var ldiag: std.zon.parse.Diagnostics = .{};
+    defer ldiag.deinit(arena_state.allocator());
+    const lback = try std.zon.parse.fromSliceAlloc(Manifest, arena_state.allocator(), ltext, &ldiag, .{ .free_on_error = false });
+    try testing.expect(lback.isLauncher());
+    try testing.expectEqualStrings(":term htop", lback.commands[0].line().?);
 }

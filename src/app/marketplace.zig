@@ -35,7 +35,10 @@
 //! point it at a local server). `MNML_MARKETPLACE_LOCAL=<folder>` makes
 //! that folder the only source — a `local_folder` named `local`,
 //! relative to the workspace — for an offline or private setup and for
-//! the corpus, which cannot write config.
+//! the corpus, which cannot write config. A local folder that is this
+//! build's own `launchers/` (the repo's, `build_options.launchers_dir`)
+//! lists as `✓ Official` rather than `Private`: it is the official set,
+//! the one the default source will name once it ships.
 
 const std = @import("std");
 const Io = std.Io;
@@ -51,6 +54,7 @@ const http_client = @import("../http/client.zig");
 const http_parse = @import("../http/parse.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
 const integrations = @import("integrations.zig");
+const build_options = @import("build_options");
 
 pub const default_api = "https://api.github.com";
 pub const max_body = 4 * 1024 * 1024;
@@ -161,7 +165,9 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
         out.deinit(gpa);
     }
     if (app.env.get("MNML_MARKETPLACE_LOCAL")) |folder| if (folder.len > 0) {
-        try out.append(gpa, try specOf(app, gpa, .{ .local_folder = .{ .id = "local", .path = folder } }));
+        var spec = try specOf(app, gpa, .{ .local_folder = .{ .id = "local", .path = folder } });
+        spec.official = officialLocal(app, spec.path);
+        try out.append(gpa, spec);
         return out.toOwnedSlice(gpa);
     };
     if (app.cfg.marketplace.use_defaults) for (Config.default_marketplace_sources) |s| {
@@ -169,8 +175,25 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
         spec.official = true;
         try out.append(gpa, spec);
     };
-    for (app.cfg.marketplace.sources) |s| try out.append(gpa, try specOf(app, gpa, s));
+    for (app.cfg.marketplace.sources) |s| {
+        var spec = try specOf(app, gpa, s);
+        if (spec.kind == .local_folder) spec.official = officialLocal(app, spec.path);
+        try out.append(gpa, spec);
+    }
     return out.toOwnedSlice(gpa);
+}
+
+/// Whether a local folder is mnml's own `launchers/` — the official
+/// launcher set, listed as such. Compared by real path, so a relative
+/// `MNML_MARKETPLACE_LOCAL=launchers` from the checkout counts.
+pub fn officialLocal(app: *App, abs: []const u8) bool {
+    const own = build_options.launchers_dir;
+    if (std.mem.eql(u8, abs, own)) return true;
+    var a_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var b_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const a_n = Io.Dir.cwd().realPathFile(app.io, abs, &a_buf) catch return false;
+    const b_n = Io.Dir.cwd().realPathFile(app.io, own, &b_buf) catch return false;
+    return std.mem.eql(u8, a_buf[0..a_n], b_buf[0..b_n]);
 }
 
 /// How many sources `sources` would list, without building them: the
@@ -368,7 +391,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
                     .version = m.version,
                     .url = dl,
                     .official = s.official,
-                    .glyph = if (m.chip) |c| c.glyph else "",
+                    .glyph = try integrations.chipGlyph(arena, m.chip),
                     .fallback = if (m.chip) |c| c.fallback else "",
                     .color = if (m.chip) |c| c.color else "",
                 });
@@ -436,8 +459,9 @@ fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnm
             .description = m.description,
             .version = m.version,
             .url = full,
-            .private = true,
-            .glyph = if (m.chip) |c| c.glyph else "",
+            .official = s.official,
+            .private = !s.official,
+            .glyph = try integrations.chipGlyph(arena, m.chip),
             .fallback = if (m.chip) |c| c.fallback else "",
             .color = if (m.chip) |c| c.color else "",
         });
@@ -837,6 +861,67 @@ test "the shipped defaults list no source: nothing from the 0.2 monorepo, launch
     try testing.expect(std.mem.indexOf(u8, text, "No sources yet") != null);
     try testing.expect(!app.marketplace.fetching);
     try testing.expect(std.mem.indexOf(u8, text, "run `marketplace.refresh`") == null);
+}
+
+test "the repo's launchers/ as MNML_MARKETPLACE_LOCAL: four ✓ Official launcher rows with their glyphs; Install copies the file into the data root" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_MARKETPLACE_LOCAL", build_options.launchers_dir);
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 24, .env = &env });
+    defer app.deinit();
+    app.tree.visible = false;
+    try testing.expectEqual(@as(usize, 1), sourceCount(&app));
+    try command.run(&app, .{ .static = .@"integrations.show_marketplace" });
+    var waited: u32 = 0;
+    while (app.marketplace.fetching and waited < 10_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    const st = &app.marketplace;
+    try testing.expectEqual(@as(usize, 4), st.entries.len);
+    try testing.expectEqual(@as(usize, 0), st.problems.len);
+    var htop: ?Entry = null;
+    for (st.entries) |e| {
+        try testing.expectEqual(Kind.launcher, e.kind);
+        try testing.expect(e.official and !e.private);
+        if (std.mem.eql(u8, e.id, "htop")) htop = e;
+    }
+    // htop's chip is pinned by codepoint; the entry carries it decoded.
+    try testing.expectEqualStrings("\u{F1D00}", htop.?.glyph);
+    try testing.expectEqualStrings("H", htop.?.fallback);
+    app.tree.width = 60;
+    try app.render();
+    const txt = try screen_mod.toTestText(gpa, &app.screen);
+    defer gpa.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "Marketplace (4)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[launcher] btop  \u{2713} Official  (local)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Resource monitor (cpu / mem / disk / net)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[launcher] htop  \u{2713} Official  (local)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Interactive process viewer") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Private") == null);
+    // Install btop (the first row): the file lands and the Installed list has it.
+    const btop = find(&app, "btop").?;
+    try install(&app, btop);
+    waited = 0;
+    while (st.installing != null and waited < 10_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    const written = try tmp.dir.readFileAlloc(io, "integrations/btop.zon", gpa, .unlimited);
+    defer gpa.free(written);
+    try testing.expect(std.mem.indexOf(u8, written, ".run = \":term btop\"") != null);
+    try testing.expectEqual(@as(usize, 1), app.integrations.list.len);
+    try testing.expect(app.integrations.list[0].manifest.isLauncher());
+    try testing.expect(app.integrations.list[0].binary_found);
+    try testing.expect(command.resolve(&app, "btop.open") != null);
+    // A folder that is not the repo's stays Private.
+    try testing.expect(!officialLocal(&app, root));
 }
 
 test "parseContents keeps the shape GitHub sends; safeName is the path guard" {
