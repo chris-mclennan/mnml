@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /pri…            │  git status 󰅖   󰈙 c.t 󰐕  󰅁  󰅂         │ 󰈙 c.txt 󰅖   󰹾 conflict 󰐕  󰅁  󰅂        
-▌ │      .gitignore         │ c.txt                                      │     󰕌 Undo   󰑎 Redo    Pull    Push
+▌ │▌     .gitignore         │ c.txt                                      │     󰕌 Undo   󰑎 Redo    Pull    Push
    │     󰈙 c.txt            ! │   1 one                                    │  Hunk   Inline   Split  │  Wrap         ×
  󰍉 │                          │     ⚠ conflict 1/2  Ours  Theirs  Both  Edi│  @@ -1,10 +1,10 @@  c.txt
    │         󰐙 Add workspace  │   2▎<<<<<<< HEAD                           │   1   one           │    1   one
@@ -12,17 +12,17 @@
    │                          │   8 four                                   │   7   seven         │    7   seven       ▎
  󰎒 │                          │   9 five                                   │   8   eight         │    8   eight       ▎
    │                          │  10 six                                    │   9 - nine-ours     │    9 + nine-theirs
- 󰚩 │                          │  11 seven                                  │  10   ten           │   10   ten
+  │                          │  11 seven                                  │  10   ten           │   10   ten
    │                          │  12 eight                                  │
- 󰅣 │                          │     ⚠ conflict 2/2  Ours  Theirs  Both  Edi│
+  │                          │     ⚠ conflict 2/2  Ours  Theirs  Both  Edi│
    │                          │  13▎<<<<<<< HEAD                           │
-  │                          │  14 nine-ours                              │
+  │                          │  14 nine-ours                              │
    │                          │  15▎=======                                │
-  │                          │  16▎nine-theirs                            │
+ 󱘣 │                          │  16▎nine-theirs                            │
    │                          │  17▎>>>>>>> feature                        │
-  │                          │  18 ten                                    │
+ 󰢱 │                          │  18 ten                                    │
    │                          │                                            │
- 󱘣 │                          │                                            │
+   │                          │                                            │
    │                          │                                            │
    │                          │                                            │
    │                          │                                            │
@@ -36,5 +36,5 @@
    │ Code actions · [Ctrl+P]  │                                            │
   │ Files                    │                                            │
    │                          │                                            │
- EDIT   main  ⚠1  󰈙 c.txt                            F 57% ▲1.0  󱼀 󰐎  156B  Ln 2/18 Col 1    00:05  ws   txt
+ EDIT   main | MERGE  ⚠1  󰈙 c.txt                    F 57% ▲1.0  󱼀 󰐎  156B  Ln 2/18 Col 1    23:06  ws   txt
 

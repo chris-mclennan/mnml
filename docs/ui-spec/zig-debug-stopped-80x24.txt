@@ -11,7 +11,7 @@
   │     x: int = │Locals · debugger value · right-click the gutter: breakpoin…│
  󱘣 │   ▸ p: struct╰────────────────────────────────────────────────────────────╯
  󰢱 │ ▾ WATCH (0)             █│   9 call f             │
-   │     no watches — w adds…█│  10 print x            │
+   │     no watches — w add… █│  10 print x            │
    │──────────────────────────│                        │
    │ x: int = 1             ⋮ │                        │
    │                          │                        │
@@ -20,5 +20,5 @@
    │ gutter: breakpoints      │                        │
   │                          │                        │
    │                          │                        │ > expression — Tab comp
- VIEW  [no file]                      F 57% ▲1.0  󱼀 󰐎    20:12  ws   —
+ VIEW  [no file]                      F 57% ▲1.0  󱼀 󰐎    23:05  ws   —
 
