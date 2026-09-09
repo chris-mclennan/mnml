@@ -19,7 +19,10 @@
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
 //! shifted right so they meet the chevron above), the chevrons the
 //! Octicons pair, the file icons `icons.zig`. Every glyph has its
-//! `ui.ascii_icons` twin beside it.
+//! `ui.ascii_icons` twin beside it. The cursor row carries the list
+//! panels' marker (`▌`, the accent when the tree has the keys, muted
+//! otherwise) in its leading cell — the cell that otherwise keeps the
+//! rail's ground on every row.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -29,6 +32,7 @@ const Theme = @import("theme.zig");
 const icons = @import("icons.zig");
 const chip_mod = @import("chip.zig");
 const scrollbar = @import("scrollbar.zig");
+const list_panel = @import("list_panel.zig");
 
 const Style = vaxis.Style;
 
@@ -232,6 +236,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
             .blank => {},
             .add_workspace => drawAddRow(ui, r),
         }
+        if (is_cursor) drawMarker(ui, r, p.focused);
     }
     out.painted = i - p.scroll;
     // right-click: the rows below the last item belong to the last
@@ -240,6 +245,16 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     if (y < area.h) ui.hit(Rect.init(area.x, area.y + y, area.w -| sb_w, area.h - y), .{ .tree_empty = lastRoot(p.items, i) });
     if (out.overflow) scrollbar.drawVertical(ui, Rect.init(area.right() - 1, area.y, 1, area.h), .tree, contentLen(p.items), area.h, p.scroll);
     return out;
+}
+
+/// The cursor row's marker in the leading cell: the list panels' `▌`,
+/// the accent when the tree is focused, muted otherwise. The cell
+/// keeps the rail's ground under it (a row's highlight still starts at
+/// the second cell); only the cursor row gets the glyph.
+fn drawMarker(ui: Ui, r: Rect, focused: bool) void {
+    const t = ui.theme;
+    const marker = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+    _ = ui.putStr(r.x, r.y, 1, marker, Theme.onBg(Theme.withFg(t.fg, if (focused) t.accent.fg else t.muted.fg), t.palette.bg_darker));
 }
 
 /// The root of the last section at or before item `end`.
@@ -441,7 +456,7 @@ test "the spec's rows at 26 columns: header, chips at 17/20/23/26, icons, connec
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
     try f.expectRow(0, " \u{F47C} /pri…      \u{EA80}  \u{EA7F}  \u{EB40}  \u{EB37}");
-    try f.expectRow(1, "   \u{F47C} \u{F07C} src");
+    try f.expectRow(1, "\u{258c}  \u{F47C} \u{F07C} src");
     try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
     try f.expectRow(3, "     \u{E702} .gitignore       ?");
     try f.expectRow(4, "     \u{E71E} package.json");
@@ -638,4 +653,34 @@ test "sections: the cursor bar on a focused header, the triangle indicator, the 
     try testing.expectEqualStrings("expand all", Chip.collapse.label(true));
     try testing.expectEqualStrings(expand_all_glyph, Chip.collapse.glyph(true, false));
     _ = draw(f.ui(), Rect.empty, .{ .items = &items });
+}
+
+test "the cursor row's marker: the list panels' bar in the leading cell, the accent when focused and muted when not, on an entry and on a section header alike, nowhere else" {
+    var f = try Fixture.init(26, 10);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 2, .focused = true });
+    try f.expectRow(2, "\u{258c}    \u{F1F05} \u{E68B} main.rs");
+    try f.expectRow(1, "   \u{F47C} \u{F07C} src");
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 2).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, f.theme.accent.fg));
+    // The leading cell keeps the rail's ground under the marker.
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).bg, f.theme.palette.bg_darker));
+    try testing.expect(vaxis.Color.eql(f.style(1, 2).bg, f.theme.palette.bg2));
+    // Unfocused: the same glyph, muted.
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 2, .focused = false });
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 2).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, f.theme.muted.fg));
+    try testing.expect(!vaxis.Color.eql(f.style(0, 2).fg, f.theme.accent.fg));
+    // On a section header, and only there.
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 7, .focused = true });
+    try f.expectRow(7, "\u{258c}\u{F460} mixr");
+    try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
+    // No cursor: no marker anywhere; ascii has its twin.
+    _ = draw(f.ui(), f.full(), .{ .items = &fixture_items });
+    var y: u16 = 0;
+    while (y < 10) : (y += 1) try testing.expectEqualStrings(" ", f.cell(0, y).char.grapheme);
+    var ui = f.ui();
+    ui.ascii = true;
+    _ = draw(ui, f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
+    try testing.expectEqualStrings(list_panel.marker_ascii, f.cell(0, 1).char.grapheme);
 }
