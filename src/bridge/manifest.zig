@@ -15,6 +15,8 @@ pub const Command = manifest.Command;
 pub const Setting = manifest.Setting;
 pub const subdir = manifest.subdir;
 pub const validateId = manifest.validateId;
+pub const validate = manifest.validate;
+pub const parseCodepoint = manifest.parseCodepoint;
 pub const render = manifest.render;
 pub const writeUnder = manifest.writeUnder;
 
@@ -33,14 +35,8 @@ pub fn parse(arena: Allocator, text: [:0]const u8, why: *[]const u8) ParseError!
             return error.BadManifest;
         },
     };
-    validateId(m.id) catch {
-        why.* = "id must be a file name ([A-Za-z0-9_.-])";
-        return error.BadManifest;
-    };
-    if (m.binary.len == 0) {
-        why.* = "binary is empty";
-        return error.BadManifest;
-    }
+    // The SDK's rule, so `--install` and the scan refuse the same files.
+    validate(m, why) catch return error.BadManifest;
     return m;
 }
 
@@ -57,4 +53,20 @@ test "parse: a manifest with defaults, a bad one with a diagnostic" {
     try std.testing.expect(std.mem.indexOf(u8, why, "file name") != null);
     try std.testing.expectError(error.BadManifest, parse(arena, ".{ .id = ", &why));
     try std.testing.expect(why.len > 0);
+}
+
+test "parse: a launcher has no binary and a run line per command; neither is refused with the SDK's reason" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var why: []const u8 = "";
+    const m = try parse(arena, ".{ .id = \"htop\", .label = \"htop\", .chip = .{ .glyph_codepoint = \"F1D00\", .fallback = \"H\" }, .commands = .{ .{ .id = \"htop.open\", .title = \"htop: open\", .run = \":term htop\" } } }", &why);
+    try std.testing.expect(m.isLauncher());
+    try std.testing.expectEqualStrings(":term htop", m.commands[0].line().?);
+    var buf: [4]u8 = undefined;
+    try std.testing.expectEqualStrings("\u{F1D00}", m.chip.?.glyphText(&buf));
+    try std.testing.expectError(error.BadManifest, parse(arena, ".{ .id = \"e\", .label = \"e\" }", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "no binary and no command") != null);
+    try std.testing.expectError(error.BadManifest, parse(arena, ".{ .id = \"e\", .label = \"e\", .commands = .{ .{ .id = \"e.o\", .title = \"o\" } } }", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "run line") != null);
 }
