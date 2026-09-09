@@ -115,6 +115,45 @@ pub fn addLocalAccept(app: *App, text: []const u8) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const build_options = @import("build_options");
+
+test "launchers: every file in launchers/ is a launcher named for its file, with a fallback on its chip, a run line per command, and tokens the engine knows" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var dir = try Io.Dir.cwd().openDir(t.io, build_options.launchers_dir, .{ .iterate = true });
+    defer dir.close(t.io);
+    var seen: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(t.io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zon")) continue;
+        const text = try dir.readFileAllocOptions(t.io, entry.name, arena, .limited(1 << 20), .of(u8), 0);
+        var why: []const u8 = "";
+        const m = manifest_mod.parse(arena, text, &why) catch {
+            std.debug.print("launchers/{s}: {s}\n", .{ entry.name, why });
+            return error.TestUnexpectedResult;
+        };
+        try t.expect(m.isLauncher());
+        try t.expectEqualStrings(entry.name[0 .. entry.name.len - ".zon".len], m.id);
+        try t.expect(m.label.len > 0 and m.description.len > 0);
+        const chip = m.chip orelse return error.TestUnexpectedResult;
+        try t.expect(chip.fallback.len >= 1 and chip.fallback.len <= 3);
+        var gbuf: [4]u8 = undefined;
+        try t.expect(chip.glyphText(&gbuf).len > 0);
+        try t.expect(chip.color.len > 0);
+        try t.expect(m.commands.len > 0);
+        for (m.commands) |c| {
+            const line = c.line() orelse return error.TestUnexpectedResult;
+            try t.expect(std.mem.startsWith(u8, c.id, m.id));
+            try t.expect(std.mem.startsWith(u8, line, ":term "));
+            // Every `{{token}}` is one the engine expands.
+            const expanded = try launcher_template.expand(arena, line, .{ .workspace = "/w", .current_file = "/w/f", .cursor_line = 1, .cursor_col = 1, .selection = "s" });
+            try t.expect(std.mem.indexOf(u8, expanded, "{{") == null);
+        }
+        seen += 1;
+    }
+    try t.expectEqual(@as(usize, 4), seen);
+}
 
 test "termProgram: the bare program of a term line, with or without the colon; not a path, a variable, an assignment, another verb" {
     try t.expectEqualStrings("htop", termProgram(":term htop").?);

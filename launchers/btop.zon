@@ -1,0 +1,23 @@
+// btop — resource monitor: cpu / mem / disk / net in one pane.
+//
+// A launcher: no binary of its own. `btop.open` runs `:term btop` in a
+// pty pane; btop itself comes from the package manager (`btop` or
+// `btop++`), and mnml says so when it is not on PATH.
+.{
+    .id = "btop",
+    .label = "btop",
+    .description = "Resource monitor (cpu / mem / disk / net)",
+    .category = "system",
+    .chip = .{
+        // nf-md-alpha_b: a letter B drawn to fill the cell, unlike a
+        // plain B from the text font.
+        .glyph = "\u{F0AEF}",
+        .fallback = "B",
+        .color = "red",
+        .enabled = true,
+        .in_palette_bar = false,
+    },
+    .commands = .{
+        .{ .id = "btop.open", .title = "btop: open", .group = "system", .keys = .{"space i B"}, .run = ":term btop" },
+    },
+}

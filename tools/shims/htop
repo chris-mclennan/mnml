@@ -1,0 +1,8 @@
+#!/bin/sh
+# tools/shims/htop — the `htop` the .test corpus sees when a script puts
+# `$MNML_SHIMS` first on PATH (`# env: PATH=${MNML_SHIMS}:${PATH}`). The
+# real htop is a full-screen program; the launcher scripts only need to
+# see that `htop.open` reached a pty pane with this on PATH, so it
+# prints one line and exits 0.
+echo "htop (shim): pid $$ in $PWD"
+exit 0

@@ -377,6 +377,13 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try env.put("MNML_SHIMS", build_options.shims_dir);
         } else |_| {}
     }
+    // `$MNML_LAUNCHERS`: the repo's `launchers/`, for the `launchers_*`
+    // scripts (`# env: MNML_MARKETPLACE_LOCAL=${MNML_LAUNCHERS}`).
+    if (env.get("MNML_LAUNCHERS") == null) {
+        if (Io.Dir.cwd().access(io, build_options.launchers_dir, .{})) |_| {
+            try env.put("MNML_LAUNCHERS", build_options.launchers_dir);
+        } else |_| {}
+    }
     // `$MNML_FAKE_LSP` the same way, for the `lsp_fake_*` scripts.
     if (env.get("MNML_FAKE_LSP") == null) {
         if (try fakeLspPath(gpa, io)) |p| {

@@ -1,0 +1,27 @@
+// The `code` CLI — the editor that ships it, and every fork that keeps
+// the flag set. The reference launcher for templated actions: each
+// command's `run` names mnml's context with `{{tokens}}` (see
+// launchers/README.md), expanded when the command fires.
+//
+// `code` opens a GUI window, so these run it through `:term` only for
+// the launch chatter it prints before the window takes over; the pane
+// closes when it exits.
+.{
+    .id = "vscode",
+    .label = "VSCode",
+    .description = "Visual Studio Code (or fork)",
+    .category = "editor",
+    .chip = .{
+        // nf-dev-vscode.
+        .glyph = "\u{E8DA}",
+        .fallback = "VS",
+        .color = "blue",
+        .enabled = true,
+        .in_palette_bar = false,
+    },
+    .commands = .{
+        .{ .id = "vscode.open_workspace", .title = "VSCode: open workspace", .group = "editor", .keys = .{"space i v"}, .run = ":term code {{workspace}}" },
+        .{ .id = "vscode.open_current_file", .title = "VSCode: open current file at cursor", .group = "editor", .keys = .{"space i V"}, .run = ":term code --goto {{current_file_abs}}:{{cursor_line}}:{{cursor_col}}" },
+        .{ .id = "vscode.open_current_dir", .title = "VSCode: open current file's directory", .group = "editor", .run = ":term code {{current_file_dir}}" },
+    },
+}
