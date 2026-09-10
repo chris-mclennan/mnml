@@ -1253,7 +1253,7 @@ fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!voi
     result catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => {},
-        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{command.reason(err)}),
     };
 }
 

@@ -16,6 +16,7 @@ const layout_mod = @import("layout.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
 const http_panel = @import("http_panel.zig");
+const http_app = @import("http.zig");
 const git_palette = @import("git_palette.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
@@ -306,21 +307,45 @@ fn activityGit(app: *App) CommandError!void {
 
 // ─── splits ─────────────────────────────────────────────────────────────
 
-/// A new leaf beside the active one. `pane` fills it; null duplicates
-/// the active editor so both halves start with the same context (vim
-/// `:split`).
+/// A new leaf beside the active one. `pane` fills it; null puts a
+/// companion of the active pane there (`splitCompanion`), so every
+/// pane kind splits (vim `:split`; Rust's `split_active`).
 pub fn splitWith(app: *App, dir: layout_mod.SplitDir, pane: ?PaneId) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     if (layout.leafOf(cur) == null) return error.NoActivePane;
-    const id: PaneId = pane orelse app.duplicatePane(cur) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.NotAnEditor,
-    };
-    if (pane != null) _ = layout.removePane(id);
+    const id: PaneId = pane orelse try splitCompanion(app, cur);
+    // A companion that was shown on its way in leaves the leaf it
+    // landed in; the split puts it in the new one.
+    _ = layout.removePane(id);
     _ = try layout.split(cur, dir, id);
     app.afterSplitChange();
     app.setActive(id);
+}
+
+/// What the other half of a split starts as, by the active pane's
+/// kind — Rust's `split_active`: an editor is duplicated (the same
+/// document, its own cursor); a markdown preview opens its file as an
+/// editor; a request pane gets a blank request beside it, the caret on
+/// the URL; anything else (a terminal, a graph, a list…) gets a scratch
+/// editor, so the split is never refused.
+fn splitCompanion(app: *App, cur: PaneId) CommandError!PaneId {
+    const p = app.panes.get(cur) orelse return error.NoActivePane;
+    switch (p.*) {
+        .editor => return app.duplicatePane(cur) catch |err| splitFail(app, err),
+        .md_preview => |*m| {
+            const path = try app.frame.allocator().dupe(u8, m.path);
+            return app.openPath(path) catch |err| splitFail(app, err);
+        },
+        .request => return http_app.openBlank(app),
+        else => return app.openScratch() catch |err| splitFail(app, err),
+    }
+}
+
+/// The companion could not be made: the reason as a sentence.
+fn splitFail(app: *App, err: anyerror) CommandError {
+    if (err == error.OutOfMemory) return error.OutOfMemory;
+    return app.diag.fail(app.frame.allocator(), "split: {s}", .{command.reason(err)});
 }
 
 /// `view.toggle_auto_equalize_splits`: flip `ui.auto_equalize_splits`,
@@ -1634,4 +1659,30 @@ test "view.commands_reference opens the generated page as a scratch buffer" {
     const want = try std.fmt.allocPrint(t.allocator, "commands reference: {d} commands", .{command.count});
     defer t.allocator.free(want);
     try t.expectEqualStrings(want, app.lastToast().?);
+}
+
+test "every pane kind splits: a request pane gets a blank request beside it, a cheatsheet a scratch editor, and no toast names an error tag" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const req = try http_app.openBlank(&app);
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const layout = app.layouts.current();
+    try t.expect(app.active.? != req);
+    try t.expect(app.panes.get(app.active.?).?.* == .request);
+    try t.expect(layout.leafOf(req).? != layout.leafOf(app.active.?).?);
+    try t.expect(app.lastToast() == null or std.mem.indexOf(u8, app.lastToast().?, "NotAnEditor") == null);
+    // A pane with no document of its own: a scratch editor beside it.
+    try command.run(&app, .{ .static = .@"view.cheatsheet" });
+    const sheet = app.active.?;
+    try t.expect(app.panes.get(sheet).?.* == .cheatsheet);
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    try t.expect(app.panes.get(app.active.?).?.* == .editor);
+    try t.expect(layout.leafOf(sheet).? != layout.leafOf(app.active.?).?);
+    try t.expect(app.lastToast() == null or std.mem.indexOf(u8, app.lastToast().?, "NotAnEditor") == null);
+    // A command that needs an editor, run on the cheatsheet: a sentence, not a tag.
+    app.setActive(sheet);
+    try t.expectError(error.NotAnEditor, command.run(&app, .{ .static = .@"editor.goto_line" }));
+    try t.expect(std.mem.endsWith(u8, app.lastToast().?, ": needs an editor pane"));
+    try t.expectEqualStrings("needs an editor pane", command.reason(error.NotAnEditor));
 }
