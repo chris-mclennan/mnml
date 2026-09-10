@@ -1,0 +1,21 @@
+# vim `gi` — back to where the last change ended, in Insert.
+write code.txt "alpha\nbravo\ncharlie"
+open code.txt
+command editor.use_vim
+
+# `iX<esc>` on line 1.
+key i
+type X
+key escape
+expect screen contains "Xalpha"
+
+# Move to the last line, then `gi`: the cursor is back after the X, in
+# Insert, so the typed Y lands there.
+key G
+key 0
+key g
+key i
+type Y
+key escape
+expect screen contains "XYalpha"
+expect screen lacks "Ycharlie"

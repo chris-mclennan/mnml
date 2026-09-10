@@ -61,9 +61,11 @@ pub const table = .{
     .@"vim.dot_repeat" = &dotRepeat,
     .@"vim.macro_toggle" = &macroToggle,
     .@"vim.macro_replay" = &macroReplay,
+    .@"vim.go_to_last_insert" = &goToLastInsert,
     .@"editor.repeat_last_substitute" = &repeatLastSubstitute,
     .@"editor.insert_alt_filename" = &insertAltFilename,
     .@"editor.insert_last_search" = &insertLastSearch,
+    .@"editor.insert_last_inserted" = &insertLastInserted,
     .@"editor.input_mode_menu" = &inputModeMenu,
 };
 
@@ -546,6 +548,22 @@ fn macroReplay(app: *App) CommandError!void {
     try dispatch.runBufferApp(app, a.id, a.e, .{ .macro_replay_from = .{ .reg = '@', .count = 1 } });
 }
 
+/// `gi`: back to where the last change ended, in Insert.
+fn goToLastInsert(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const list = e.buf.doc.change_list.items;
+    if (list.len == 0) {
+        app.toast("no recent edit", .{});
+        return;
+    }
+    const pos = list[list.len - 1];
+    const ed = e.buf.editor;
+    ed.placeCursor(@min(pos.row, ed.lineCount() - 1), pos.col);
+    ed.anchor = null;
+    e.buf.input.requestInsertMode();
+    app.needs_render = true;
+}
+
 /// `&`: the last `:s` again on the cursor's line.
 fn repeatLastSubstitute(app: *App) CommandError!void {
     return ex_verbs.ampersand(app, null, "", false);
@@ -585,6 +603,15 @@ fn insertLastSearch(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const q: []const u8 = if (e.find.query.items.len > 0) e.find.query.items else app.find_history.getLastOrNull() orelse return app.diag.fail(arena, "no previous search", .{});
     return insertText(app, e, try arena.dupe(u8, q));
+}
+
+/// `Ctrl+R .`: what the last Insert session typed.
+fn insertLastInserted(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const arena = app.frame.allocator();
+    const text = e.buf.lastInserted() orelse "";
+    if (text.len == 0) return app.diag.fail(arena, "nothing inserted yet", .{});
+    return insertText(app, e, try arena.dupe(u8, text));
 }
 
 // ─── the statusline mode chip's menu ────────────────────────────────────
@@ -835,6 +862,19 @@ test "Ctrl+R / inserts the live query, else the last accepted search; none fails
     try t.expectEqualStrings("oldlivetext", e.buf.editor.bytes());
 }
 
+test "Ctrl+R . inserts what the last Insert session typed; none fails" {
+    var app = try appWith("alpha\nbravo");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"editor.insert_last_inserted" }));
+    try t.expectEqualStrings("nothing inserted yet", app.lastToast().?);
+    try feed(&app, "iab<bs>c<esc>jA");
+    try command.run(&app, .{ .static = .@"editor.insert_last_inserted" });
+    try feed(&app, "<esc>");
+    try t.expectEqualStrings("acalpha\nbravoac", e.buf.editor.bytes());
+}
+
 test "editor.input_mode_menu opens the keymap menu one row above the mode chip, at the origin before a frame" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
     defer app.deinit();
@@ -856,4 +896,24 @@ test "editor.input_mode_menu opens the keymap menu one row above the mode chip, 
     try t.expect(app.overlay == .menu);
     try t.expectEqual(chip.?.x, app.overlay.menu.x);
     try t.expectEqual(chip.?.y - 1, app.overlay.menu.y);
+}
+
+test "gi returns to where the last change ended, in Insert; nothing yet toasts" {
+    var app = try appWith("alpha\nbravo\ncharlie");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    try command.run(&app, .{ .static = .@"vim.go_to_last_insert" });
+    try t.expectEqualStrings("no recent edit", app.lastToast().?);
+    try feed(&app, "iX<esc>G0");
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"vim.go_to_last_insert" });
+    try t.expect(e.buf.input.mode() == .insert);
+    try t.expectEqual(@as(usize, 0), e.buf.editor.currentLine());
+    try t.expectEqual(@as(usize, 1), e.buf.editor.colAtByte(e.buf.editor.cursor));
+    try feed(&app, "Y<esc>");
+    try t.expectEqualStrings("XYalpha\nbravo\ncharlie", e.buf.editor.bytes());
+    // The handler's own `gi` runs the same runner.
+    try feed(&app, "G0giZ<esc>");
+    try t.expectEqualStrings("XYZalpha\nbravo\ncharlie", e.buf.editor.bytes());
 }
