@@ -2433,6 +2433,7 @@ test {
     _ = @import("ui/spend_view.zig");
     _ = @import("app/ai_apply.zig");
     _ = @import("app/launch_profiles.zig");
+    _ = @import("app/session_worktree.zig");
     _ = @import("app/tests_pane.zig");
     _ = @import("app/flaky.zig");
     _ = @import("ui/tests_view.zig");

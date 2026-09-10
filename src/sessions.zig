@@ -63,6 +63,7 @@ const pty_pane = @import("app/pty_pane.zig");
 const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
+const session_worktree = @import("app/session_worktree.zig");
 
 pub const Source = agents.Source;
 pub const AgentState = agents.AgentState;
@@ -266,6 +267,10 @@ pub const State = struct {
     /// // changed (colors): accent colours by session id (`name` is the
     /// palette name), saved with the session file. Owned.
     colors: std.ArrayListUnmanaged(Alias) = .empty,
+    /// // changed (sessions-worktree): the trees mnml made for sessions,
+    /// by path, the session id learned from the scan; saved with the
+    /// session file (`app/session_worktree.zig`). Owned.
+    worktrees: session_worktree.Registry = .{},
     generation: u32 = 0,
     scanning: bool = false,
     scanned_once: bool = false,
@@ -304,6 +309,7 @@ pub const State = struct {
             gpa.free(c.name);
         }
         self.colors.deinit(gpa);
+        self.worktrees.deinit(gpa);
         if (self.home) |h| gpa.free(h);
         if (self.cloud) |*c| c.deinit(gpa);
         self.filtered.deinit(gpa);
