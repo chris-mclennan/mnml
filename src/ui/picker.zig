@@ -448,6 +448,13 @@ test "a long list scrolls with the cursor, pages, wheels, and shows a bar" {
     try testing.expectEqual(@as(usize, 0), s.cursor);
     wheel(&s, 100, many.len);
     try testing.expectEqual(@as(usize, 39), s.cursor);
+    // The window follows the wheel: the last page, the marker on its last row.
+    f.hits.reset();
+    _ = draw(f.ui(), f.full(), &s, many);
+    try testing.expectEqual(@as(usize, 31), s.scroll);
+    try f.expectContains("item 39");
+    try f.expectLacks("item 30");
+    try testing.expectEqual(@as(u32, 39), f.hits.at(10, 12).?.overlay_item);
     _ = try handleKey(&s, testing.allocator, Key.ctrl('u'), many.len);
     _ = try handleKey(&s, testing.allocator, Key.ctrl('u'), many.len);
     _ = try handleKey(&s, testing.allocator, Key.ctrl('u'), many.len);

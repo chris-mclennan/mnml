@@ -3649,6 +3649,97 @@ test "the wheel over the hover box scrolls its lines two an event, never the edi
     try std.testing.expect(app.lsp.hover == null);
 }
 
+test "a picker click opens the row under the pointer — at index 0 and after the cursor moved" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
+    for ([_][]const u8{ "alpha.txt", "bravo.txt", "charlie.txt", "delta.txt" }) |name| try tmp.dir.writeFile(std.testing.io, .{ .sub_path = name, .data = "x\n" });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try app.render();
+    try std.testing.expect(app.overlay == .picker);
+    // Index 0 with the cursor there.
+    var row: ?Rect = null;
+    for (app.hits.items.items) |e| if (e.target == .overlay_item and e.target.overlay_item == 0) {
+        row = e.rect;
+    };
+    const first = try app.frame.allocator().dupe(u8, app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
+    try press(&app, row.?.x + 3, row.?.y, .left);
+    try release(&app, row.?.x + 3, row.?.y);
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(std.mem.endsWith(u8, app.panes.get(app.active.?).?.editor.buf.doc.path.?, first));
+    // After Down (and the preview it drives), the third row is still the third.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.render();
+    row = null;
+    for (app.hits.items.items) |e| if (e.target == .overlay_item and e.target.overlay_item == 2) {
+        row = e.rect;
+    };
+    const third = try app.frame.allocator().dupe(u8, app.overlay.picker.labels[app.overlay.picker.filtered.items[2]]);
+    try std.testing.expect(!std.mem.eql(u8, first, third));
+    try press(&app, row.?.x + 3, row.?.y, .left);
+    try release(&app, row.?.x + 3, row.?.y);
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(std.mem.endsWith(u8, app.panes.get(app.active.?).?.editor.buf.doc.path.?, third));
+}
+
+test "a click on a soft-wrapped continuation row lands on that row's chars, on the first screen and scrolled" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    app.activeEditor().?.wrap = true;
+    const ed = app.activeEditor().?.buf.editor;
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (0..40) |i| {
+        try text.print(std.testing.allocator, "line{d:0>3}", .{i + 1});
+        // Lines 3 and 30 wrap: a space, then 20 `wrapme_` with no break in them.
+        if (i == 2 or i == 29) {
+            try text.appendSlice(std.testing.allocator, " ");
+            for (0..20) |_| try text.appendSlice(std.testing.allocator, "wrapme_");
+        }
+        try text.appendSlice(std.testing.allocator, "\n");
+    }
+    try ed.setText(text.items);
+    try app.render();
+    // Line 3's number row holds `line003 ` (bytes 0–7); the row under it
+    // starts at byte 8, the one under that a text width later.
+    const num = cellOf(&app, 2, 0).?;
+    const row1 = app.hits.at(num.x, num.y + 1).?.editor_cell;
+    try std.testing.expectEqual(@as(u32, 2), row1.line);
+    try std.testing.expectEqual(@as(u32, 8), row1.col);
+    try press(&app, num.x + 4, num.y + 1, .left);
+    try release(&app, num.x + 4, num.y + 1);
+    try std.testing.expectEqual(ed.lineStart(2) + 12, ed.cursor);
+    const row2 = app.hits.at(num.x, num.y + 2).?.editor_cell;
+    try std.testing.expectEqual(@as(u32, 2), row2.line);
+    const width = row2.col - 8;
+    try std.testing.expect(width > 20);
+    try press(&app, num.x + 4, num.y + 2, .left);
+    try release(&app, num.x + 4, num.y + 2);
+    try std.testing.expectEqual(ed.lineStart(2) + 8 + width + 4, ed.cursor);
+    // Past the text of a wrapped row: that row's end, not the next row's chars.
+    try press(&app, num.x + 30, num.y, .left);
+    try release(&app, num.x + 30, num.y);
+    try std.testing.expectEqual(ed.lineStart(2) + 8, ed.cursor);
+    // Scrolled so line 30 sits above the cursor's line 32: the same shape.
+    ed.placeCursor(31, 0);
+    try app.render();
+    try std.testing.expect(app.activeEditor().?.view.scroll_line > 10);
+    const num30 = cellOf(&app, 29, 0).?;
+    const r30 = app.hits.at(num30.x, num30.y + 2).?.editor_cell;
+    try std.testing.expectEqual(@as(u32, 29), r30.line);
+    try std.testing.expectEqual(@as(u32, 8 + width), r30.col);
+    try press(&app, num30.x + 4, num30.y + 2, .left);
+    try release(&app, num30.x + 4, num30.y + 2);
+    try std.testing.expectEqual(ed.lineStart(29) + 8 + width + 4, ed.cursor);
+}
+
 test "wheel: a burst folds into one batch per tick; standard pins the view, vim moves the cursor" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
