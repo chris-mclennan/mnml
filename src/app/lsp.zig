@@ -26,6 +26,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const hooks = @import("../core/hooks.zig");
 const key_mod = @import("../core/key.zig");
+const EditingMode = @import("../input/mod.zig").EditingMode;
 const Key = key_mod.Key;
 const Mouse = key_mod.Mouse;
 const alloc = @import("../core/alloc.zig");
@@ -1679,8 +1680,17 @@ const manual_flag: u32 = 0x8000_0000;
 /// Typing in an editor: a trigger character or an identifier of two
 /// characters opens the popup; a cursor that left the word closes it.
 /// An on-type formatting trigger asks the server for its edits.
-pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!void {
+///
+/// `mode` is the editing mode the key landed in. Only a key typed into
+/// the text counts: a NORMAL-mode `u` / `x` / `r` also changes the
+/// buffer and is also a key, but nobody is completing a word there —
+/// the popup it opened lingered over NORMAL mode and, once the cursor
+/// moved left of its anchor, crashed the render (hunt-vim-2026-09-09).
+/// An undo, a workspace edit and a format never come through here at
+/// all: they are not keys.
+pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key, mode: EditingMode) Allocator.Error!void {
     const c = k.typed() orelse return;
+    if (!isTyping(mode)) return;
     const path = e.buf.doc.path orelse return;
     // // changed (lua-track): in a script the app completes its own API
     // first; a server, when there is one, gets the rest of the file.
@@ -1707,6 +1717,25 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
     };
+}
+
+/// The modes a key types into the text: vim's INSERT / REPLACE, and
+/// the modeless standard handler.
+fn isTyping(mode: EditingMode) bool {
+    return switch (mode) {
+        .insert, .replace, .none => true,
+        .normal, .visual, .visual_line, .visual_block => false,
+    };
+}
+
+/// After any key the editor took (typed or not): a cursor that moved
+/// left of the popup's anchor — `h`, `0`, `5G`, a `u` that shrank the
+/// text — closes it, so no stale popup waits for the render to slice
+/// backwards.
+pub fn afterKey(app: *App, pane: PaneId, e: *EditorPane) void {
+    const comp = &(app.lsp.completion orelse return);
+    if (comp.pane != pane) return;
+    if (e.buf.editor.cursor < comp.start) closeCompletion(app);
 }
 
 fn openCompletion(app: *App, s: *Server, ctx: Ctx, result: ?Value, msg: *jsonrpc.Incoming) Allocator.Error!bool {
@@ -1771,9 +1800,20 @@ pub fn closeCompletion(app: *App) void {
 /// Frame arena; indices into `comp.items`.
 pub fn visibleCompletions(app: *App, arena: Allocator) Allocator.Error![]u32 {
     const comp = &(app.lsp.completion orelse return &.{});
-    const e = app.panes.editor(comp.pane) orelse return &.{};
+    // A popup whose pane is gone, or whose anchor the cursor has left
+    // behind, has nothing to filter by: it closes instead of slicing
+    // `text[start..cursor]` with the cursor before the start.
+    const e = app.panes.editor(comp.pane) orelse {
+        closeCompletion(app);
+        return &.{};
+    };
     const text = e.buf.editor.bytes();
-    const word = text[@min(comp.start, text.len)..@min(e.buf.editor.cursor, text.len)];
+    const cursor = @min(e.buf.editor.cursor, text.len);
+    if (comp.start > cursor) {
+        closeCompletion(app);
+        return &.{};
+    }
+    const word = text[comp.start..cursor];
     const Scored = struct { idx: u32, score: u32, sort: []const u8 };
     var scored: std.ArrayListUnmanaged(Scored) = .empty;
     for (comp.items, 0..) |it, i| {
@@ -1844,6 +1884,7 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
         return false;
     }
     const vis = try visibleCompletions(app, app.frame.allocator());
+    if (app.lsp.completion == null) return false; // closed itself: the key is the editor's
     const n = vis.len;
     if (n == 0 and !comp.manual) {
         closeCompletion(app);
@@ -2017,7 +2058,10 @@ fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Er
 }
 
 /// Apply `edits` to one pane, last first so earlier offsets stay valid.
-/// One undo step; the cursor keeps its byte where it can.
+/// One undo step — every splice's checkpoint collapses into the one
+/// opened here, so a rename's three edits undo with one `u` and redo
+/// with one `ctrl+r`, as Neovim applies a WorkspaceEdit. The cursor
+/// keeps its byte where it can.
 pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextEdit, enc: types.Encoding) Allocator.Error!void {
     const arena = app.frame.allocator();
     const edits = try arena.dupe(types.TextEdit, edits_in);
@@ -2029,6 +2073,8 @@ pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextE
     }.lt);
     const ed = e.buf.editor;
     const cursor = ed.cursor;
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
     for (edits) |te| {
         const text = ed.bytes();
         const start = types.byteOf(text, te.range.start, enc);
@@ -3162,6 +3208,191 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     live = false;
     app.deinit();
     try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
+}
+
+/// Tick and render for `ms`, for a test that asserts nothing arrived.
+fn pumpQuiet(app: *App, ms: u32) !void {
+    var spent: u32 = 0;
+    while (spent < ms) : (spent += 10) {
+        try testing.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+        try app.render();
+    }
+}
+
+test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one ctrl+r; the undo opens no popup; a motion left of the last edit still renders (hunt-vim-2026-09-09 #1, #2)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const text = "fn foo() {\n  let x = 1;\n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n";
+    const after = "fn qux() {\n  let x = 1;\n  qux(x); // TODO later\n}\nfn bar() { qux(); }\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.fk", .data = text });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" } } } }" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items;
+            return s.len == 1 and s[0].ready and s[0].docs.count() == 1;
+        }
+        fn renamed(a: *App) bool {
+            const ed = a.activeEditor() orelse return false;
+            return std.mem.indexOf(u8, ed.buf.editor.bytes(), "fn bar() { qux(); }") != null;
+        }
+    };
+    try pumpUntil(&app, &app, Cond.ready, 5000);
+    const e = app.activeEditor().?;
+    const ed = e.buf.editor;
+    try testing.expectEqual(.normal, e.buf.input.mode());
+    // Line 3, inside `foo`: the finding's `5G 4l f2`.
+    ed.setCursor(std.mem.indexOf(u8, text, "foo(x)").? + 1);
+    const undo_before = ed.doc.history.undoLen();
+    try acceptRename(&app, "qux");
+    try pumpUntil(&app, &app, Cond.renamed, 5000);
+    try testing.expectEqualStrings(after, ed.bytes());
+    // Three edits, one checkpoint.
+    try testing.expectEqual(undo_before + 1, ed.doc.history.undoLen());
+
+    // One `u`: every occurrence is back. The undo is a NORMAL-mode key
+    // that changed the buffer — not typing, so no completion request
+    // goes out and no popup opens.
+    try app.handle(.{ .key = Key.char('u') });
+    try testing.expectEqualStrings(text, ed.bytes());
+    try testing.expectEqual(.normal, e.buf.input.mode());
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+
+    // The finding's `5G`: a motion left of the last edit. The render
+    // that panicked (`text[comp.start..cursor]`, cursor < start) paints.
+    try app.handle(.{ .key = Key.char('g') });
+    try app.handle(.{ .key = Key.char('g') });
+    try testing.expectEqual(@as(usize, 0), ed.cursor);
+    try app.render();
+    try testing.expect(app.lsp.completion == null);
+
+    // One ctrl+r: every occurrence renamed again, still no popup.
+    try app.handle(.{ .key = Key.ctrl('r') });
+    try testing.expectEqualStrings(after, ed.bytes());
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+}
+
+test "a completion popup whose anchor is past the cursor closes instead of slicing backwards; so does one whose pane is gone; a motion left of the anchor closes it on the key" {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const pane = app.active.?;
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("fn foo() {}\nfooqux(x);\n");
+    const items = [_]types.CompletionItem{.{ .label = "fooqux", .kind = 6, .detail = "identifier", .documentation = null, .insert_text = "fooqux", .format = .plain, .edit_range = null, .sort_text = null, .filter_text = null, .raw = .null }};
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    // Anchored after `fn foo() {}\n` (byte 12), cursor at its end (18): the row shows.
+    e.buf.editor.setCursor(18);
+    try openLocalCompletion(&app, pane, 12, &items, false);
+    try testing.expectEqual(@as(usize, 1), (try visibleCompletions(&app, arena.allocator())).len);
+    // The finding: the cursor moved left of the anchor (`5G`) with the
+    // popup still open. The slice `text[12..0]` panicked; now the popup
+    // closes and the render paints.
+    e.buf.editor.setCursor(0);
+    try testing.expectEqual(@as(usize, 0), (try visibleCompletions(&app, arena.allocator())).len);
+    try testing.expect(app.lsp.completion == null);
+    try app.render();
+
+    // The key path: a popup anchored after `foo` (byte 15); `home` in
+    // the standard profile moves to the line start, left of the anchor,
+    // and the key itself closes the popup — before any render asks.
+    e.buf.editor.setCursor(18);
+    try openLocalCompletion(&app, pane, 15, &items, false);
+    try testing.expectEqual(@as(usize, 1), (try visibleCompletions(&app, arena.allocator())).len);
+    try app.handle(.{ .key = Key.named(.home) });
+    try testing.expectEqual(@as(usize, 12), e.buf.editor.cursor);
+    try testing.expect(app.lsp.completion == null);
+
+    // A popup whose pane closed under it.
+    e.buf.editor.setCursor(18);
+    try openLocalCompletion(&app, pane, 12, &items, false);
+    try app.forceClosePane(pane);
+    try testing.expect(app.panes.editor(pane) == null);
+    try testing.expectEqual(@as(usize, 0), (try visibleCompletions(&app, arena.allocator())).len);
+    try testing.expect(app.lsp.completion == null);
+    try app.render();
+}
+
+test "the completion auto-trigger: typing in INSERT opens the popup; `u` and `x` in NORMAL change the buffer but open nothing" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    const e = try TestRig.openFile(&app, TestRig.file, "let x = 1;\nconst foo = 2;\nfoo.\n");
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items[0];
+            return s.ready and s.isOpen(TestRig.file);
+        }
+        fn comp(a: *App) bool {
+            return a.lsp.completion != null;
+        }
+    };
+    try TestRig.pump(&app, &app, Cond.ready, 5000);
+    const ed = e.buf.editor;
+    try testing.expectEqual(.normal, e.buf.input.mode());
+
+    // INSERT at the end of `foo.`: the second identifier character asks
+    // (`al` matches the scripted server's `alphaOne` / `alphaTwo`).
+    ed.setCursor(ed.len() - 1);
+    try app.handle(.{ .key = Key.char('i') });
+    try testing.expectEqual(.insert, e.buf.input.mode());
+    try app.handle(.{ .key = Key.char('a') });
+    try app.handle(.{ .key = Key.char('l') });
+    try testing.expectEqualStrings("let x = 1;\nconst foo = 2;\nfoo.al\n", ed.bytes());
+    try testing.expect(app.lsp.completion_req != null);
+    try TestRig.pump(&app, &app, Cond.comp, 5000);
+    // Esc closes the popup; a second leaves INSERT.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.lsp.completion == null);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expectEqual(.normal, e.buf.input.mode());
+
+    // `u` takes the typed `al` back: a buffer change from a key, but
+    // not typing — nothing is asked, nothing opens.
+    try app.handle(.{ .key = Key.char('u') });
+    try testing.expectEqualStrings("let x = 1;\nconst foo = 2;\nfoo.\n", ed.bytes());
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+    // `x` on the `.` after `foo`: the same.
+    ed.setCursor(std.mem.indexOf(u8, ed.bytes(), "foo.\n").? + 3);
+    try app.handle(.{ .key = Key.char('x') });
+    try testing.expect(std.mem.indexOf(u8, ed.bytes(), "\nfoo\n") != null);
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+
+    try rig.stop(&app);
 }
 
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {

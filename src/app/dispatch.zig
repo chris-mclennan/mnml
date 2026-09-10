@@ -495,7 +495,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
             if (trigger) try expandAbbreviation(app, e);
-            try lsp.onTyped(app, pane_id, e, k);
+            try lsp.onTyped(app, pane_id, e, k, before_mode);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
     }
@@ -503,6 +503,8 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // the store and moves every pane): `e` is stale from here. Look the
     // pane up again, and stop if it is gone.
     const still = app.panes.editor(pane_id) orelse return true;
+    // A motion that left the completion popup's word closes it.
+    lsp.afterKey(app, pane_id, still);
     // A recording that just stopped is on the clipboard: persist it.
     if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
     // Local marks toast from here: the buffer handles them silently.
