@@ -1323,6 +1323,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             if (mv.copy) try tree_mod.acceptCopy(app, mv.from, mv.into) else try tree_mod.acceptMove(app, mv.from, mv.into);
         },
         .delete_session => |path| if (choice == 0) try sessions.acceptDelete(app, path),
+        .session_worktree_merge => |path| if (choice == 0) try toastOnFail(app, @import("session_worktree.zig").acceptMerge(app, path)),
+        .session_worktree_remove => |r| if (choice == 0) try toastOnFail(app, @import("session_worktree.zig").acceptRemove(app, r.path, r.force)),
         .http_delete_request => |t| if (choice == 0) try @import("http_ops.zig").acceptDelete(app, t),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .font_update => |idx| try toastOnFail(app, font_scan.updateAccept(app, idx, choice)),

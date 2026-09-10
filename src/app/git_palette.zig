@@ -984,7 +984,7 @@ fn checkoutTracking(app: *App, full: []const u8) CommandError!void {
 /// (unless it is one, or the workspace itself), the repos are
 /// rediscovered so it has a graph tab, and that tab becomes the active
 /// one — the palette then lists that tree's refs.
-fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
+pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
     const st = &app.git_palette;
     const gs = &app.git;
     const arena = app.frame.allocator();

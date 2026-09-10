@@ -100,6 +100,9 @@ pub const ItemView = struct {
     pinned: bool,
     /// // changed (colors): the session's accent, a palette name.
     color: ?[]const u8 = null,
+    /// // changed (sessions-worktree): the session worktree's name — a
+    /// muted `⑂ <name>` after the label.
+    worktree: ?[]const u8 = null,
 };
 
 /// What `ListPanel` paints: a group header or a session.
@@ -694,6 +697,7 @@ fn openRowMenu(app: *App, tp: *TablePane, x: u16, y: u16) Allocator.Error!void {
             const items = try app.gpa.dupe(command.MenuItem, &.{
                 .{ .label = if (folded) "Expand" else "Collapse", .action = .{ .command = .@"sessions.toggle_group" } },
                 .{ .label = "New local session", .action = .{ .command = .@"ai.claude_code_new" }, .separator_before = true },
+                .{ .label = "New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
             });
             errdefer app.gpa.free(items);
             try app.openMenu(tp.groups.items[g].label, items, x, y);
@@ -787,6 +791,7 @@ fn itemView(app: *App, it: Item) Allocator.Error!ItemView {
         .active = if (sessions.ptyPaneOf(app, it.session_id)) |pid| app.active == pid else false,
         .pinned = app.sessions.isPinned(it.session_id),
         .color = sessions.colorNameOf(app, it.session_id),
+        .worktree = if (sessions.worktreeOf(app, it)) |e| e.name else null,
     };
 }
 

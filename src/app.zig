@@ -347,6 +347,11 @@ pub const ConfirmPurpose = union(enum) {
     remove_integration: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
+    /// // changed (sessions-worktree): merge the session worktree at
+    /// this path into the main tree (owned); remove it (and its
+    /// branch), `force` past an unmerged branch (`session_worktree.zig`).
+    session_worktree_merge: []u8,
+    session_worktree_remove: SessionWorktreeRemove,
     /// `http.delete_request`: the file or block to delete (owned).
     http_delete_request: @import("app/http_ops.zig").Target,
     /// `:s///c`: one match's yes / no / all / quit / last (`ex_verbs.zig`).
@@ -357,10 +362,12 @@ pub const ConfirmPurpose = union(enum) {
     reset_to_defaults,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
+    pub const SessionWorktreeRemove = struct { path: []u8, force: bool };
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration, .delete_session => |s| gpa.free(s),
+            .delete_path, .remove_integration, .delete_session, .session_worktree_merge => |s| gpa.free(s),
+            .session_worktree_remove => |r| gpa.free(r.path),
             .http_delete_request => |t| t.deinit(gpa),
             .delete_paths => |d| {
                 for (d.paths) |p| gpa.free(p);

@@ -183,6 +183,9 @@ pub const RowView = struct {
     /// for the session, else its open pane's; null paints the cursor /
     /// active cue.
     color: ?[]const u8 = null,
+    /// // changed (sessions-worktree): the session worktree's name — the
+    /// `⑂ <name>` tag after the label.
+    worktree: ?[]const u8 = null,
 };
 
 pub const Summary = enum { exited, none, text };
@@ -231,6 +234,9 @@ pub const table = .{
     .@"sessions.export" = &exportCmd,
     .@"sessions.kill" = &killCmd,
     .@"sessions.new_menu" = &newMenuCmd,
+    .@"sessions.open_worktree_in_tree" = &openWorktreeInTreeCmd,
+    .@"sessions.merge_worktree" = &mergeWorktreeCmd,
+    .@"sessions.remove_worktree" = &removeWorktreeCmd,
     // The dashboard's ids keep resolving (corpus scripts name them).
     .@"agents.refresh" = &refreshCmd,
     .@"ai.dashboard.open_transcript" = &openTranscriptCmd,
@@ -507,6 +513,8 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
     const items = try arena.alloc(Item, result.items.len);
     for (result.items, 0..) |it, i| items[i] = try dupeItem(arena, it);
     st.items = items;
+    // A session listed on one of the worktrees takes the tree's row.
+    for (st.items) |it| _ = try st.worktrees.learn(app.gpa, it.session_id, it.cwd);
     try refilter(app);
     // The selection follows its session across a rescan.
     if (keep) |sid| for (st.filtered.items, 0..) |idx, vi| if (std.mem.eql(u8, st.items[idx].session_id, sid)) {
@@ -549,7 +557,30 @@ fn announceEdges(app: *App, edges: []const Edge) Allocator.Error!void {
             .failed => try app.toastLevel(.err, "session failed: {s}", .{displayName(app, it)}),
             else => {},
         }
+        if (e.to.ended() and !e.from.ended()) try announceWorktreeEnded(app, it);
     }
+}
+
+/// A session that ends with its worktree still there says so once:
+/// the commits waiting on the branch, and where the verbs are.
+fn announceWorktreeEnded(app: *App, it: Item) Allocator.Error!void {
+    const e = worktreeOf(app, it) orelse return;
+    if (!session_worktree.exists(app.io, e.path)) return;
+    const arena = app.frame.allocator();
+    const name = try arena.dupe(u8, e.name);
+    const n = session_worktree.commitsAhead(app, arena, e.repo, e.branch) catch null;
+    if (n) |count| {
+        try app.toastLevel(.warn, "session {s} ended — its worktree {s} has {d} commit{s}: merge / remove / keep (row menu)", .{ displayName(app, it), name, count, if (count == 1) "" else "s" });
+    } else {
+        try app.toastLevel(.warn, "session {s} ended — its worktree {s} is still there: merge / remove / keep (row menu)", .{ displayName(app, it), name });
+    }
+}
+
+/// The worktree mnml made for this session, if any: by its id, else
+/// by its cwd (`app/session_worktree.zig`).
+pub fn worktreeOf(app: *App, it: Item) ?*const session_worktree.Entry {
+    if (it.where == .cloud) return null;
+    return app.sessions.worktrees.of(it.session_id, it.cwd);
 }
 
 /// Wall-clock seconds now, the clock `Item.last_activity_s` is on: the
@@ -582,7 +613,7 @@ pub fn refilter(app: *App) Allocator.Error!void {
     const q = st.list.filterText();
     const ws_name = std.fs.path.basename(app.workspace);
     for (st.items, 0..) |it, i| {
-        if (!st.all_workspaces and !inWorkspace(it, app.workspace, ws_name)) continue;
+        if (!st.all_workspaces and !inWorkspaceOrTree(app, it, app.workspace, ws_name)) continue;
         if (st.state_filter) |s| if (it.state != s) continue;
         if (q.len > 0 and !matches(app, it, q)) continue;
         try st.filtered.append(app.gpa, @intCast(i));
@@ -620,6 +651,12 @@ pub fn refilter(app: *App) Allocator.Error!void {
 fn inWorkspace(it: Item, workspace: []const u8, ws_name: []const u8) bool {
     if (it.cwd) |c| if (std.mem.startsWith(u8, c, workspace)) return true;
     return std.mem.eql(u8, it.workspace, ws_name);
+}
+
+/// `inWorkspace`, or on a worktree mnml made for a session here.
+fn inWorkspaceOrTree(app: *App, it: Item, workspace: []const u8, ws_name: []const u8) bool {
+    if (inWorkspace(it, workspace, ws_name)) return true;
+    return worktreeOf(app, it) != null;
 }
 
 fn matches(app: *App, it: Item, q: []const u8) bool {
@@ -878,6 +915,31 @@ pub fn acceptRename(app: *App, id: []const u8, text: []const u8) Allocator.Error
     try refilter(app);
     try sessions_table.onSnapshot(app);
     app.needs_render = true;
+}
+
+/// The row menu's *Open worktree in tree*: the tree joins the file
+/// tree as a workspace root and its repo becomes the active one
+/// (`git_palette.openWorktree`).
+fn openWorktreeInTreeCmd(app: *App) CommandError!void {
+    const it = try currentOrFail(app);
+    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
+    const arena = app.frame.allocator();
+    return @import("app/git_palette.zig").openWorktree(app, .{ .path = try arena.dupe(u8, e.path), .branch = try arena.dupe(u8, e.branch) });
+}
+
+/// *Merge into <branch>…*: a named confirm, then `session_worktree.merge`.
+fn mergeWorktreeCmd(app: *App) CommandError!void {
+    const it = try currentOrFail(app);
+    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
+    return session_worktree.confirmMerge(app, e.*);
+}
+
+/// *Remove worktree…*: a named confirm, then `session_worktree.remove`
+/// (a second confirm forces past an unmerged branch).
+fn removeWorktreeCmd(app: *App) CommandError!void {
+    const it = try currentOrFail(app);
+    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
+    return session_worktree.confirmRemove(app, e.*, false);
 }
 
 fn copyIdCmd(app: *App) CommandError!void {
@@ -1286,6 +1348,13 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
         try items.append(app.gpa, .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } });
         try items.append(app.gpa, .{ .label = "Copy working directory", .action = .{ .command = .@"sessions.copy_cwd" } });
         try items.append(app.gpa, .{ .label = "Export as markdown…", .action = .{ .command = .@"sessions.export" } });
+        // sessions-worktree: the tree's verbs, when the session has one.
+        if (it) |i| if (worktreeOf(app, i)) |e| {
+            try items.append(app.gpa, .{ .label = "Open worktree in tree", .action = .{ .command = .@"sessions.open_worktree_in_tree" }, .separator_before = true });
+            const into = session_worktree.currentBranch(app, arena, e.repo) catch "HEAD";
+            try items.append(app.gpa, .{ .label = try std.fmt.allocPrint(arena, "Merge into {s}…", .{into}), .action = .{ .command = .@"sessions.merge_worktree" } });
+            try items.append(app.gpa, .{ .label = "Remove worktree…", .action = .{ .command = .@"sessions.remove_worktree" } });
+        };
         if (live) try items.append(app.gpa, .{ .label = "Kill session…", .action = .{ .command = .@"sessions.kill" }, .separator_before = true });
         try items.append(app.gpa, .{ .label = "Delete transcript…", .action = .{ .command = .@"sessions.delete" }, .separator_before = !live });
     }
@@ -1341,7 +1410,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     for (st.filtered.items, 0..) |idx, i| rows[i] = try rowView(app, ui.arena, st.items[idx]);
     var in_ws: usize = 0;
     const ws_name = std.fs.path.basename(app.workspace);
-    for (st.items) |it| if (st.all_workspaces or inWorkspace(it, app.workspace, ws_name)) {
+    for (st.items) |it| if (st.all_workspaces or inWorkspaceOrTree(app, it, app.workspace, ws_name)) {
         in_ws += 1;
     };
     const narrowed = st.list.filterText().len > 0 or st.state_filter != null;
@@ -1409,7 +1478,14 @@ pub fn rowView(app: *App, arena: Allocator, it: Item) Allocator.Error!RowView {
         .kind = kind,
         .ticket = if (aliased) null else detectTicket(app.cfg.ui.ticket_prefixes, &.{name}),
         .color = colorNameOf(app, it.session_id),
+        .worktree = if (worktreeOf(app, it)) |e| try arena.dupe(u8, e.name) else null,
     };
+}
+
+/// The `⑂ <name>` tag a session worktree paints after the row's label;
+/// `wt:<name>` in ASCII.
+pub fn worktreeTag(arena: Allocator, name: []const u8, ascii: bool) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}{s}", .{ if (ascii) "wt:" else "\u{2442} ", name });
 }
 
 /// Newlines and runs of whitespace collapsed to one space, as Rust keeps
@@ -1485,7 +1561,12 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     if (row.pinned) x += ui.putStr(x, r.y, end -| x, if (ui.ascii) "📌 " else "\u{F0403} ", Theme.withFg(bg, t.palette.orange));
     var name_style = Theme.withFg(bg, t.fg.fg);
     name_style.bold = row.active;
-    _ = ui.putStr(x, r.y, end -| x, row.name, name_style);
+    x += ui.putStr(x, r.y, end -| x, row.name, name_style);
+    if (row.worktree) |wt| {
+        const tag = worktreeTag(ui.arena, wt, ui.ascii) catch "";
+        x += ui.putStr(x, r.y, end -| x, " ", bg);
+        _ = ui.putStr(x, r.y, end -| x, tag, Theme.withFg(bg, t.palette.cyan));
+    }
     const max_cells: u16 = @max(4, r.w -| 6);
     const color = switch (row.kind) {
         .exited => t.palette.red,
@@ -2005,16 +2086,19 @@ test "pins lead the list on either axis; p toggles and follows the session; the 
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new", new_command);
     try f.app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 6), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 7), f.app.overlay.menu.items.len);
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new", f.app.overlay.menu.items[0].action.command);
-    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x8", f.app.overlay.menu.items[3].action.command);
-    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run", f.app.overlay.menu.items[4].action.command);
-    try testing.expect(std.mem.indexOf(u8, f.app.overlay.menu.items[4].label, "not configured") != null);
-    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run_wizard", f.app.overlay.menu.items[5].action.command);
+    // sessions-worktree: the second row starts the session in a tree.
+    try testing.expectEqual(command.CommandId.@"ai.new_session_worktree", f.app.overlay.menu.items[1].action.command);
+    try testing.expectEqualStrings("New session in a worktree…", f.app.overlay.menu.items[1].label);
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x8", f.app.overlay.menu.items[4].action.command);
+    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run", f.app.overlay.menu.items[5].action.command);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.menu.items[5].label, "not configured") != null);
+    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run_wizard", f.app.overlay.menu.items[6].action.command);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try f.app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .left } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 6), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 7), f.app.overlay.menu.items.len);
     try f.app.handle(.{ .key = Key.named(.esc) });
 }
 
@@ -2096,6 +2180,76 @@ test "Move to top / bottom lead or end the manual order under the pins; a cloud 
         try testing.expect(std.mem.endsWith(u8, mi.action.open_url, "?account=123456789012"));
     };
     try testing.expect(saw_cw);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "a session on one of the workspace's worktrees: the card and the table row carry the ⑂ tag (wt: in ASCII), the row menu offers the tree's verbs, it counts as this workspace's" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    const app = &f.app;
+    app.tree.visible = false;
+    // A tree the workspace's path is no prefix of (an override root), so
+    // only the registry can make it this workspace's.
+    const wt = try std.fs.path.join(testing.allocator, &.{ std.fs.path.dirname(f.root).?, "x-worktrees", "feat" });
+    defer testing.allocator.free(wt);
+    try testing.expect(!std.mem.startsWith(u8, wt, f.root));
+    try app.sessions.worktrees.add(testing.allocator, wt, "feat", "feat", f.root, null);
+    const r = try ScanResult.create(testing.allocator, 1);
+    const items = try r.arena.allocator().alloc(Item, 2);
+    items[0] = item("tree-1", .streaming, 30, "feat", "ship it");
+    items[0].cwd = try r.arena.allocator().dupe(u8, wt);
+    items[1] = item("plain-2", .idle, 20, std.fs.path.basename(f.root), "fix");
+    r.items = items;
+    app.sessions.generation = 1;
+    try handle(app, r);
+    // The scan paired the tree with its session; both rows are the workspace's.
+    try testing.expectEqualStrings("tree-1", app.sessions.worktrees.byPath(wt).?.session_id.?);
+    try testing.expect(!app.sessions.all_workspaces);
+    try testing.expectEqual(@as(usize, 2), app.sessions.filtered.items.len);
+    try testing.expect(worktreeOf(app, items[0]) != null);
+    try testing.expect(worktreeOf(app, items[1]) == null);
+    try command.run(app, .{ .static = .@"view.activity_sessions" });
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "ship it \u{2442} feat") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "fix \u{2442}") == null);
+    // The table row too.
+    try command.run(app, .{ .static = .@"sessions.table" });
+    try sessions_table.onSnapshot(app);
+    const txt2 = try f.screen();
+    defer testing.allocator.free(txt2);
+    // The table row is the badge, the name, the tag (the card, still
+    // in its column, has no badge before the name).
+    try testing.expect(std.mem.indexOf(u8, txt2, "live ship it \u{2442} feat") != null);
+    // ASCII: the wt: twin, in both.
+    app.cfg.ui.ascii_icons = true;
+    const txt3 = try f.screen();
+    defer testing.allocator.free(txt3);
+    try testing.expect(std.mem.indexOf(u8, txt3, "live ship it wt:feat") != null);
+    try testing.expect(std.mem.indexOf(u8, txt3, "\u{2442}") == null);
+    app.cfg.ui.ascii_icons = false;
+    // The row menu on the tree's session has the three verbs; the plain one has none.
+    focusPanel(app);
+    app.sessions.list.cursor = 0;
+    try testing.expectEqualStrings("tree-1", current(app).?.session_id);
+    try openRowMenuFor(app, .section, 0, 0);
+    var labels: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer labels.deinit(testing.allocator);
+    for (app.overlay.menu.items) |mi| try labels.append(testing.allocator, mi.label);
+    var saw_open = false;
+    var saw_merge = false;
+    var saw_remove = false;
+    for (labels.items) |l| {
+        if (std.mem.eql(u8, l, "Open worktree in tree")) saw_open = true;
+        if (std.mem.startsWith(u8, l, "Merge into ")) saw_merge = true;
+        if (std.mem.eql(u8, l, "Remove worktree…")) saw_remove = true;
+    }
+    try testing.expect(saw_open and saw_merge and saw_remove);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    app.sessions.list.cursor = 1;
+    try testing.expectEqualStrings("plain-2", current(app).?.session_id);
+    try openRowMenuFor(app, .section, 0, 0);
+    for (app.overlay.menu.items) |mi| try testing.expect(!std.mem.eql(u8, mi.label, "Remove worktree…"));
     try f.app.handle(.{ .key = Key.named(.esc) });
 }
 

@@ -253,7 +253,16 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             var name_style = Theme.withFg(style, th.fg.fg);
             name_style.bold = v.active;
             const name_w = num_x -| x -| 1;
-            _ = ui.putStr(x, r.y, name_w, ui.clipStr(v.name, name_w), name_style);
+            x += ui.putStr(x, r.y, name_w, ui.clipStr(v.name, name_w), name_style);
+            // sessions-worktree: the tree's name, muted, in what is left.
+            if (v.worktree) |wt| {
+                const tag = sessions.worktreeTag(ui.arena, wt, ui.ascii) catch "";
+                const left = num_x -| x -| 1;
+                if (left > 2) {
+                    x += ui.putStr(x, r.y, left, " ", style);
+                    _ = ui.putStr(x, r.y, left -| 1, ui.clipStr(tag, left -| 1), Theme.withFg(style, th.muted.fg));
+                }
+            }
             var cx = num_x;
             const num_style = Theme.withFg(style, th.muted.fg);
             if (cols.id) cx += ui.putStr(cx, r.y, col_id, ui.fmt("{s:>9}", .{it.session_id[0..@min(8, it.session_id.len)]}), num_style);

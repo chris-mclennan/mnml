@@ -516,6 +516,9 @@ pub const specs = [_]Spec{
     .{ .id = "sessions.table_sort", .title = "Sessions table: cycle the sort within a group (state / tokens / cost / recent)", .group = "sessions" },
     .{ .id = "sessions.kill", .title = "Sessions: SIGTERM the selected session (or every ticked one) after a confirm", .group = "sessions" },
     .{ .id = "sessions.copy_cwd", .title = "Sessions: copy the selected session's working directory", .group = "sessions" },
+    .{ .id = "sessions.open_worktree_in_tree", .title = "Sessions: open the selected session's worktree in the file tree (an extra workspace root)", .group = "sessions" },
+    .{ .id = "sessions.merge_worktree", .title = "Sessions: merge the selected session's worktree branch into the main tree (confirm)", .group = "sessions" },
+    .{ .id = "sessions.remove_worktree", .title = "Sessions: remove the selected session's worktree and its branch (confirm)", .group = "sessions" },
     .{ .id = "sessions.export", .title = "Sessions: export the selected transcript as markdown", .group = "sessions" },
     .{ .id = "sessions.new_menu", .title = "Sessions: the + New session choices (local / cloud)", .group = "sessions" },
     .{ .id = "sessions.cloud_open", .title = "Sessions: open the selected cloud run (its task, in a terminal)", .group = "sessions" },
@@ -1109,7 +1112,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1036 specs, unique ids" {
+test "1039 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1125,7 +1128,8 @@ test "1036 specs, unique ids" {
     // + four diff-any-two-refs commands + eight branch verbs + seven
     // stash commands + two command-log commands + two detail-row
     // commands (git-more2) + three launcher-pin commands
-    // + `view.reset_layout` + the session-worktree launch.
-    try std.testing.expectEqual(@as(usize, 1036), specs.len);
+    // + `view.reset_layout` + the session-worktree launch and its three
+    // row verbs (open in tree / merge / remove).
+    try std.testing.expectEqual(@as(usize, 1039), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

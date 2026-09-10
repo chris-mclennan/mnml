@@ -458,6 +458,64 @@ pub fn acceptNameCmd(app: *App, product: Config.AiProduct, profile: []const u8, 
     _ = try acceptName(app, product, profile, text);
 }
 
+// ─── merge / remove, behind a named confirm ─────────────────────────────
+
+pub const merge_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'm', .label = "Merge" }, .{ .key = 'c', .label = "Cancel" } };
+pub const remove_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'r', .label = "Remove" }, .{ .key = 'c', .label = "Cancel" } };
+pub const force_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'f', .label = "Force" }, .{ .key = 'c', .label = "Cancel" } };
+
+fn openConfirm(app: *App, title: []const u8, msg: []u8, choices: []const app_mod.Confirm.Choice, purpose: app_mod.ConfirmPurpose) void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = title, .message = msg, .choices = choices },
+        .purpose = purpose,
+        .message = msg,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// *Merge into <branch>…*: `  Merge feat into main? (N commits)`.
+pub fn confirmMerge(app: *App, e: Entry) CommandError!void {
+    const arena = app.frame.allocator();
+    if (!exists(app.io, e.path) and !(try branchExists(app, arena, e.repo, e.branch))) return app.diag.fail(arena, "merge {s}: the worktree and its branch are gone", .{e.name});
+    const into = try currentBranch(app, arena, e.repo);
+    const n = (try commitsAhead(app, arena, e.repo, e.branch)) orelse 0;
+    const path = try app.gpa.dupe(u8, e.path);
+    errdefer app.gpa.free(path);
+    const msg = try std.fmt.allocPrint(app.gpa, "  Merge {s} into {s}? ({d} commit{s})", .{ e.branch, into, n, if (n == 1) "" else "s" });
+    errdefer app.gpa.free(msg);
+    openConfirm(app, "Merge worktree", msg, &merge_choices, .{ .session_worktree_merge = path });
+}
+
+pub fn acceptMerge(app: *App, path: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = app.sessions.worktrees.byPath(path) orelse return app.diag.fail(arena, "merge: {s} is no session worktree any more", .{path});
+    return merge(app, arena, e.*);
+}
+
+/// *Remove worktree…*: `  Remove worktree feat and branch feat?`; with
+/// `force`, the second confirm past an unmerged branch.
+pub fn confirmRemove(app: *App, e: Entry, force: bool) CommandError!void {
+    const path = try app.gpa.dupe(u8, e.path);
+    errdefer app.gpa.free(path);
+    const msg = if (force)
+        try std.fmt.allocPrint(app.gpa, "  Branch {s} is not merged — remove worktree {s} and delete the branch anyway?", .{ e.branch, e.name })
+    else
+        try std.fmt.allocPrint(app.gpa, "  Remove worktree {s} and branch {s}?", .{ e.name, e.branch });
+    errdefer app.gpa.free(msg);
+    openConfirm(app, if (force) "Remove unmerged worktree" else "Remove worktree", msg, if (force) &force_choices else &remove_choices, .{ .session_worktree_remove = .{ .path = path, .force = force } });
+}
+
+/// The confirm's yes. An unmerged branch on the plain remove asks
+/// once more, with force.
+pub fn acceptRemove(app: *App, path: []const u8, force: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = app.sessions.worktrees.byPath(path) orelse return app.diag.fail(arena, "remove: {s} is no session worktree any more", .{path});
+    if (!force and exists(app.io, e.path) and !(try isMerged(app, arena, e.repo, e.branch))) return confirmRemove(app, e.*, true);
+    return remove(app, arena, e.*, force);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -754,4 +812,96 @@ test "a profile with .worktree opens the name prompt from openSessionWith; the c
     defer bare.deinit();
     try t.expectError(error.Failed, openNamePrompt(&bare, .claude, launch_profiles.builtin_name));
     try t.expect(std.mem.indexOf(u8, bare.diag.msg.?, "not in a git repository") != null);
+}
+
+test "merge / remove go through a named confirm; an unmerged branch asks a second time with Force" {
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const path = try create(app, a, f.repo, "feat");
+    try app.sessions.worktrees.add(app.gpa, path, "feat", "feat", f.repo, "sid-1");
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ path, "wt.txt" }), .data = "x\n" });
+    try f.sh(path, &.{ "add", "wt.txt" });
+    try f.sh(path, &.{ "commit", "-q", "-m", "one" });
+    const e = app.sessions.worktrees.byPath(path).?.*;
+    // Remove, unmerged: the first confirm, then the Force one.
+    try confirmRemove(app, e, false);
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqualStrings("Remove worktree", app.overlay.confirm.state.title);
+    try t.expectEqualStrings("  Remove worktree feat and branch feat?", app.overlay.confirm.message);
+    try t.expect(!app.overlay.confirm.purpose.session_worktree_remove.force);
+    try acceptRemove(app, path, false);
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqualStrings("Remove unmerged worktree", app.overlay.confirm.state.title);
+    try t.expect(app.overlay.confirm.purpose.session_worktree_remove.force);
+    try t.expectEqualStrings("Force", app.overlay.confirm.state.choices[0].label);
+    try t.expect(exists(t.io, path));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Merge: the confirm counts the commits; its yes lands them.
+    try confirmMerge(app, e);
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqualStrings("  Merge feat into main? (1 commit)", app.overlay.confirm.message);
+    try t.expectEqualStrings(path, app.overlay.confirm.purpose.session_worktree_merge);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try acceptMerge(app, path);
+    try t.expectEqualStrings("merged feat into main", app.lastToast().?);
+    try t.expect(try isMerged(app, a, f.repo, "feat"));
+    // Merged: the plain remove goes straight through.
+    try acceptRemove(app, path, false);
+    try t.expect(app.overlay != .confirm);
+    try t.expect(!exists(t.io, path));
+    try t.expect(app.sessions.worktrees.byPath(path) == null);
+    try t.expectError(error.Failed, acceptMerge(app, path));
+}
+
+test "a session that ends with its worktree still there toasts once with the commit count; a tree that is gone, or a live session, toasts nothing" {
+    const sessions = @import("../sessions.zig");
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const path = try create(app, a, f.repo, "feat");
+    try app.sessions.worktrees.add(app.gpa, path, "feat", "feat", f.repo, null);
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ path, "wt.txt" }), .data = "x\n" });
+    try f.sh(path, &.{ "add", "wt.txt" });
+    try f.sh(path, &.{ "commit", "-q", "-m", "one" });
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ path, "wt2.txt" }), .data = "y\n" });
+    try f.sh(path, &.{ "add", "wt2.txt" });
+    try f.sh(path, &.{ "commit", "-q", "-m", "two" });
+    const listing = struct {
+        fn post(fx: *RepoFixture, wt: []const u8, state: @import("agents.zig").AgentState, gen: u32) !void {
+            const r = try sessions.ScanResult.create(t.allocator, gen);
+            const items = try r.arena.allocator().alloc(sessions.Item, 1);
+            items[0] = sessions.testItem("sid-1", state, 30, "feat", "ship it");
+            items[0].cwd = try r.arena.allocator().dupe(u8, wt);
+            r.items = items;
+            fx.app.sessions.generation = gen;
+            try sessions.handle(&fx.app, r);
+        }
+    };
+    const msgs = &app.messages.items;
+    try listing.post(&f, path, .streaming, 1);
+    const before = msgs.items.len;
+    try listing.post(&f, path, .idle, 2);
+    try t.expectEqual(before, msgs.items.len);
+    try listing.post(&f, path, .done, 3);
+    try t.expectEqual(before + 1, msgs.items.len);
+    try t.expectEqualStrings("session ship it ended — its worktree feat has 2 commits: merge / remove / keep (row menu)", msgs.items[msgs.items.len - 1].text);
+    try t.expectEqual(app_mod.ToastLevel.warn, msgs.items[msgs.items.len - 1].level);
+    // The same listing again: quiet. Back to live and ended again: once more.
+    try listing.post(&f, path, .done, 4);
+    try t.expectEqual(before + 1, msgs.items.len);
+    try listing.post(&f, path, .streaming, 5);
+    try listing.post(&f, path, .failed, 6);
+    try t.expectEqual(before + 3, msgs.items.len); // the failed toast, then the worktree's
+    try t.expect(std.mem.indexOf(u8, msgs.items[msgs.items.len - 1].text, "its worktree feat") != null);
+    // The tree removed: an ended session says nothing about it.
+    try remove(app, a, app.sessions.worktrees.byPath(path).?.*, true);
+    const after_remove = msgs.items.len;
+    try listing.post(&f, path, .streaming, 7);
+    try listing.post(&f, path, .done, 8);
+    try t.expectEqual(after_remove, msgs.items.len);
 }
