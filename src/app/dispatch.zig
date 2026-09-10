@@ -38,6 +38,7 @@ const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const icon_picker = @import("icon_picker.zig");
 const script_diag = @import("../scripting/diag.zig");
 const scripts_panel = @import("scripts_panel.zig");
 const settings_app = @import("settings.zig");
@@ -1034,7 +1035,8 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         },
         .picker => |*p| switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
             .consumed => cmd_picker.preview(app),
-            .ignored => try widgetFallthrough(app, k),
+            // The icon picker's Ctrl+C (the codepoint) before the keymap.
+            .ignored => if (!(p.kind == .icon_glyphs and try icon_picker.chord(app, k))) try widgetFallthrough(app, k),
             .cancel => {
                 cmd_picker.cancel(app);
                 closeOverlay(app);
@@ -1112,8 +1114,15 @@ pub fn refilterPicker(app: *App) Allocator.Error!void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const items = try arena.alloc(Picker.Item, p.labels.len);
-    for (p.labels, 0..) |label, i| items[i] = .{ .label = label };
-    const ids: []const []const u8 = if (p.kind == .commands) try cmd_picker.commandIds(app, arena) else &.{};
+    // The icon picker matches the detail too (Rust's `refilter` for its
+    // glyph rows): `cod-repo_pull` and `repo pull` land on the same row.
+    for (p.labels, 0..) |label, i| items[i] = .{ .label = if (p.kind == .icon_glyphs and i < p.details.len) try std.mem.concat(arena, u8, &.{ label, "  ", p.details[i] }) else label };
+    const ids: []const []const u8 = switch (p.kind) {
+        .commands => try cmd_picker.commandIds(app, arena),
+        // A typed codepoint pins its row (Rust's hex query).
+        .icon_glyphs => try icon_picker.hexIds(app, arena),
+        else => &.{},
+    };
     const order = try Picker.rank(arena, p.state.query.items, items, .{ .priority = p.priority, .score_bonus = p.score_bonus, .ids = ids });
     try p.filtered.ensureTotalCapacity(app.gpa, order.len);
     for (order) |i| p.filtered.appendAssumeCapacity(@intCast(i));
@@ -1674,7 +1683,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (m.kind != .press) return;
             // // changed (lua-track): right-click on a palette row — Run,
             // Bind in init.lua…, Copy id.
-            if (m.button == .right and app.overlay == .picker and app.overlay.picker.kind == .commands) return cmd_picker.openRowMenu(app, i, m.x, m.y);
+            if (m.button == .right and app.overlay == .picker) switch (app.overlay.picker.kind) {
+                .commands => return cmd_picker.openRowMenu(app, i, m.x, m.y),
+                .icon_glyphs => return icon_picker.openRowMenu(app, i, m.x, m.y),
+                else => {},
+            };
             switch (app.overlay) {
                 .confirm => |*c| {
                     const purpose = c.purpose;

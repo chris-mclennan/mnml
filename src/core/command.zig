@@ -101,6 +101,7 @@ const runner_tables = .{
     @import("../app/cmd_find.zig"),
     @import("../app/cmd_view.zig"),
     @import("../app/cmd_picker.zig"),
+    @import("../app/icon_picker.zig"),
     @import("../app/cmd_app.zig"),
     @import("../app/cmd_tab.zig"),
     @import("../app/tree.zig"),

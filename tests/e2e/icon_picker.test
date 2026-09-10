@@ -1,0 +1,15 @@
+# integrations.icon_picker (src/app/icon_picker.zig): every Nerd Font
+# glyph from the embedded catalog in the picker — the glyph, its human
+# name, the category chip and the codepoint on the row, the nf- name
+# and the \u{…} escape as the detail. Typing the canonical name finds
+# the row (the detail is matched too); Enter copies the glyph and the
+# toast says how to paste it either way.
+command integrations.icon_picker
+expect screen contains "Pick glyph (Enter copies it)"
+expect screen contains "power  [iec]  U+23FB"
+type cod-repo_pull
+expect screen contains "▌  repo pull  [cod]  U+EB40"
+expect screen contains "nf-cod-repo_pull"
+key enter
+expect screen lacks "Pick glyph"
+expect screen contains "icon copied — paste:  or \u{EB40}"

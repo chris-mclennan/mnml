@@ -554,6 +554,7 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
+        .icon_glyphs => try @import("icon_picker.zig").accept(app, i),
         .custom => {
             const f = p.on_accept orelse {
                 app.overlay.deinit(app.gpa);
