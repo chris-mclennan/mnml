@@ -124,14 +124,14 @@ function keys. The F-keys are `both`, so a vim user keeps them too.
 | `dap.toggle_breakpoint` | `<leader>db` | `F9` |
 | `dap.toggle_breakpoint_conditional` | `<leader>dB` | `Shift+F9` |
 | `dap.set_breakpoint_log_message` | `<leader>dl` | — |
-| `dap.run` | — | `F5` |
-| `dap.continue` (starts a session when there is none) | `<leader>dc` | `Shift+F5` |
+| `dap.run` (the explicit start) | — | — (palette) |
+| `dap.continue` (starts a session when there is none) | `<leader>dc` | `F5` |
 | `dap.next` | `<leader>do` | `F10` |
 | `dap.step_in` | `<leader>di` | `F11` |
 | `dap.step_out` | `<leader>dO` | `Shift+F11` |
 | `dap.pause` | `<leader>dp` | — |
-| `dap.restart` | `<leader>dR` | — |
-| `dap.terminate` | `<leader>dt` | — |
+| `dap.restart` | `<leader>dR` | `Ctrl+Shift+F5` |
+| `dap.terminate` | `<leader>dt` | `Shift+F5` |
 | `dap.repl` (focus the debug console) | `<leader>dr` | — |
 | `dap.add_watch` | `<leader>dw` | — |
 | `dap.toggle_panel` (the DEBUG section) | `<leader>du` | `Ctrl+Shift+D` (`view.activity_debug`) |
