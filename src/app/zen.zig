@@ -18,10 +18,13 @@ const App = app_mod.App;
 const Key = app_mod.Key;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
+const side = @import("side.zig");
+const settings = @import("settings.zig");
 
 pub const table = .{
     .@"view.fullscreen" = &toggle,
     .@"view.toggle_zoom" = &toggleZoom,
+    .@"view.reset_layout" = &resetLayout,
 };
 
 /// The toast ids: the enter reminder and the Esc hint replace their
@@ -80,6 +83,32 @@ fn toggleZoom(app: *App) CommandError!void {
         return;
     };
     app.zoomed_leaf = if (app.zoomed_leaf == active) null else active;
+    app.needs_render = true;
+}
+
+/// `view.reset_layout` (`:resetview`, the View menu's last row): the
+/// frame as it starts — full screen and the zoom off, the tree shown
+/// on its side at the config's width, the menu bar and the activity
+/// bar painted when they were hidden (persisted, as their cycle
+/// commands do), every split back to equal halves (`Ctrl+W _` / `|`
+/// undone), the keyboard on the active pane. The open panes stay.
+fn resetLayout(app: *App) CommandError!void {
+    set(app, false);
+    app.dismissToast(esc_toast_id);
+    app.zoomed_leaf = null;
+    side.place(app, .explorer, false);
+    app.tree.width = app.cfg.ui.tree_width;
+    if (app.cfg.ui.menu_bar == .hidden) {
+        app.cfg.ui.menu_bar = .always;
+        _ = try settings.persist(app, .home, &.{ "ui", "menu_bar" }, app.cfg.ui.menu_bar);
+    }
+    if (app.cfg.ui.activity_bar == .hidden) {
+        app.cfg.ui.activity_bar = .always;
+        _ = try settings.persist(app, .home, &.{ "ui", "activity_bar" }, app.cfg.ui.activity_bar);
+    }
+    app.layouts.current().equalize();
+    if (app.active) |a| app.focus = .{ .pane = a };
+    app.toast("view reset to default", .{});
     app.needs_render = true;
 }
 
@@ -293,4 +322,56 @@ test "zoom: the active leaf alone paints over the body; again restores; another 
     try t.expect(app.zoomed_leaf == null);
     try app.render();
     try t.expectEqual(@as(usize, 1), panesPainted(&app));
+}
+
+test "reset_layout: leaves full screen and the zoom, shows the tree at the config width, brings hidden bars back, equalizes, keeps the panes; `:resetview` is it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.loaded = true;
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    // Everything the user could have hidden or stretched, at once.
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try command.run(&app, .{ .static = .@"view.maximize_width" });
+    app.tree.width = 55;
+    app.tree.visible = false;
+    app.side.open.set(.left, null);
+    app.cfg.ui.menu_bar = .hidden;
+    app.cfg.ui.activity_bar = .hidden;
+    try t.expect(app.zen);
+    try t.expect(app.zoomed_leaf != null);
+    try command.run(&app, .{ .static = .@"view.reset_layout" });
+    try t.expect(!app.zen);
+    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.tree.visible);
+    try t.expect(side.shown(&app, .left) == .explorer);
+    try t.expectEqual(app.cfg.ui.tree_width, app.tree.width);
+    try t.expectEqual(app_mod.Config.MenuBar.always, app.cfg.ui.menu_bar);
+    try t.expectEqual(app_mod.Config.ActivityBar.always, app.cfg.ui.activity_bar);
+    try t.expect(app.focus == .pane);
+    try t.expectEqualStrings("view reset to default", lastToast(&app));
+    // The two panes are still open, side by side, at equal widths.
+    try t.expect(app.panes.get(a) != null and app.panes.get(b) != null);
+    try app.render();
+    try t.expectEqual(@as(usize, 2), panesPainted(&app));
+    const wa = paneRect(&app, a).?.w;
+    const wb = paneRect(&app, b).?.w;
+    try t.expect(wa + 1 >= wb and wb + 1 >= wa);
+    // The persisted bars.
+    const home = (try settings.configPath(&app, .home)).?;
+    const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".menu_bar = .always") != null);
+    try t.expect(std.mem.indexOf(u8, text, ".activity_bar = .always") != null);
+    // The `:` door.
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try @import("ex.zig").run(&app, "resetview");
+    try t.expect(!app.zen);
 }

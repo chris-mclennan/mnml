@@ -194,6 +194,9 @@ const view_rows = [_]MenuItem{
     .{ .icon = "\u{F0130}", .icon_ascii = "o", .label = "Toggle workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" } },
     sep(.{ .icon = "\u{F1FC}", .icon_ascii = "p", .label = "Pick theme…", .action = .{ .command = .@"theme.pick" } }),
     .{ .icon = "\u{F042}", .icon_ascii = "t", .label = "Toggle theme", .action = .{ .command = .@"theme.toggle" } },
+    // The way back when the frame has been hidden piece by piece: full
+    // screen, the zoom, the tree, the bars, the split sizes.
+    sep(.{ .icon = "\u{F0E2}", .icon_ascii = "0", .label = "Reset view to default", .action = .{ .command = .@"view.reset_layout" } }),
 };
 
 const go_rows = [_]MenuItem{
@@ -514,7 +517,7 @@ fn forEachRow(comptime f: fn (Menu, MenuItem) anyerror!void) !void {
 
 test "menu rows: ten menus with Rust's row counts; every row is a registered command with a runner, or the recent-files parent" {
     try t.expectEqual(@as(usize, 10), Menu.count);
-    const counts = [Menu.count]usize{ 3, 10, 6, 7, 12, 6, 6, 3, 15, 3 };
+    const counts = [Menu.count]usize{ 3, 10, 6, 7, 13, 6, 6, 3, 15, 3 };
     for (Menu.all, counts) |m, n| try t.expectEqual(n, rowsOf(m).len);
     const Check = struct {
         var missing: usize = 0;

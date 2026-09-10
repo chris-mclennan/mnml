@@ -167,6 +167,9 @@ pub const root: Node = .{
                 cmd('H', .@"view.toggle_hidden_all", "hidden files (all)"),
                 cmd('w', .@"view.toggle_wrap", "wrap"),
                 cmd('n', .@"view.toggle_line_numbers", "line numbers"),
+                cmd('f', .@"view.fullscreen", "full screen (Esc Esc leaves)"),
+                cmd('z', .@"view.toggle_zoom", "zoom this pane / restore"),
+                cmd('0', .@"view.reset_layout", "reset view to default"),
             }),
             group('h', "+http", &.{
                 cmd('s', .@"http.send", "send request"),
@@ -355,6 +358,9 @@ test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves 
     try t.expectEqual(CommandId.@"view.toggle_hidden_all", lookup("tH").?.cmd.id);
     try t.expectEqual(CommandId.@"editor.toggle_keymap", lookup("tk").?.cmd.id);
     try t.expectEqual(CommandId.@"theme.pick", lookup("tt").?.cmd.id);
+    try t.expectEqual(CommandId.@"view.fullscreen", lookup("tf").?.cmd.id);
+    try t.expectEqual(CommandId.@"view.toggle_zoom", lookup("tz").?.cmd.id);
+    try t.expectEqual(CommandId.@"view.reset_layout", lookup("t0").?.cmd.id);
     // Rust's root leaves: e / q / w read as its popup does; x is not one.
     try t.expectEqual(CommandId.@"buffer.close", lookup("q").?.cmd.id);
     try t.expectEqualStrings("explorer", lookup("e").?.label());
