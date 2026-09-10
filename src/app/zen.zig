@@ -375,3 +375,44 @@ test "reset_layout: leaves full screen and the zoom, shows the tree at the confi
     try @import("ex.zig").run(&app, "resetview");
     try t.expect(!app.zen);
 }
+
+test "zen: from a request pane and a terminal, `Ctrl+K Z` reaches the app (the `z` never lands in the URL field) and Esc Esc leaves" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try app.setInputStyle(.standard);
+    app.now_ms = 10_000;
+    // A blank request pane, the URL field focused.
+    const req = try @import("http.zig").openBlank(&app);
+    try t.expectEqual(req, app.active.?);
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try t.expect(app.zen);
+    try app.handle(.{ .key = Key.ctrl('k') });
+    try t.expectEqual(@as(usize, 1), app.chord.len); // armed, not swallowed
+    try app.handle(.{ .key = Key.char('z') });
+    try t.expect(!app.zen);
+    try t.expectEqualStrings("", app.panes.get(req).?.request.url.items);
+    try t.expectEqual(@as(usize, 0), app.chord.len);
+    // Esc Esc from the request pane.
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.zen);
+    try t.expectEqualStrings("Esc again leaves full screen · :fullscreen · Ctrl+K Z", lastToast(&app));
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(!app.zen);
+    // A terminal pane: the chord and Esc Esc both work there too.
+    const pty_pane = @import("pty_pane.zig");
+    if (!pty_pane.supported) return;
+    const term = try pty_pane.open(&app, .{ .argv = &.{"/bin/cat"}, .label = "cat", .kind = .command });
+    try t.expectEqual(term, app.active.?);
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try app.handle(.{ .key = Key.ctrl('k') });
+    try app.handle(.{ .key = Key.char('z') });
+    try t.expect(!app.zen);
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.zen);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(!app.zen);
+}

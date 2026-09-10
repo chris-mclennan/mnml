@@ -153,6 +153,19 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         };
         return;
     }
+    // Full screen's way out, ahead of every pane and panel: a lone Esc
+    // that nothing above wanted arms (and goes on to whatever Esc does
+    // in the pane — a terminal gets it too); the second within the
+    // chord timeout leaves (`zen.escKey`).
+    if (zen.escKey(app, k)) return;
+    // A pending chord owns the next key outright, whatever has the
+    // keyboard — the `z` of `Ctrl+K Z` is the chain's, never a request
+    // pane's URL field's or a panel's (the editor path and `ptyKey`
+    // apply the same rule).
+    if (app.chord.len > 0) {
+        _ = try chordChain(app, k);
+        return;
+    }
     if (app.focus == .tree and app.tree.visible) {
         if (try app.tree.handleKey(app, k)) return;
         _ = try chordChain(app, k);
@@ -346,10 +359,6 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // the `e` of `<leader>e` is the chain's, not the end-of-word motion
     // (the same rule `ptyKey` applies).
     const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
-    // Full screen's Esc Esc, when the editor takes Esc outright (vim's
-    // Normal mode) and the chord chain never sees it; every other path
-    // reaches `zen.escKey` through `chordChain`.
-    if (editor_first and zen.escKey(app, k)) return;
     if (!editor_first and app.chord.len == 0 and ed == null) {
         // No pane: only chords do anything.
         _ = try chordChain(app, k);
@@ -611,8 +620,6 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
                 try runTarget(app, fb);
                 fired = true;
             }
-            // A lone Esc nothing bound: full screen's way out (`zen.escKey`).
-            if (was_first and k.code == .esc and zen.escKey(app, k)) return true;
             if (was_first) return false;
             // A chain that bottomed out: retry the current key alone —
             // but only a char could start a fresh chain; a navigation
