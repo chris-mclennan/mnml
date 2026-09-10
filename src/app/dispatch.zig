@@ -479,28 +479,20 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.doc.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
-    const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
-    cmd_find.seedCtxMatches(e);
-    app.attachSeams(e);
+    const wrap_width = beforeBufferInput(app, e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
-    if (e.buf.last_unsupported) |name| {
-        app.toast("{s}: not supported yet", .{name});
-        e.buf.last_unsupported = null;
-    }
     switch (ev) {
-        .unhandled => return false,
-        .noop => {},
-        .redraw => {},
+        .unhandled => {
+            try afterBufferEvent(app, pane_id, e, ev, was_recording);
+            return false;
+        },
         .edited => {
-            e.syntax.dirty = true;
-            flash.cancel(app);
-            snippets.afterEdit(app, pane_id, e);
-            ai_app.noteEdit(app);
+            try afterBufferEvent(app, pane_id, e, ev, was_recording);
             if (trigger) try expandAbbreviation(app, e);
             try lsp.onTyped(app, pane_id, e, k, before_mode);
         },
-        .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
+        else => try afterBufferEvent(app, pane_id, e, ev, was_recording),
     }
     // An app command may have opened or closed panes (`:e b.txt` grows
     // the store and moves every pane): `e` is stale from here. Look the
@@ -508,8 +500,6 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const still = app.panes.editor(pane_id) orelse return true;
     // A motion that left the completion popup's word closes it.
     lsp.afterKey(app, pane_id, still);
-    // A recording that just stopped is on the clipboard: persist it.
-    if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
     // Local marks toast from here: the buffer handles them silently.
     // Global (uppercase) ones toast in `marks_store`, which also knows
     // whether the set was refused.
@@ -531,6 +521,53 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     if (after_mode != .visual_block) still.block_anchor = null;
     try finishDeferredInserts(app);
     return true;
+}
+
+/// What the buffer needs from the app before a key or a runner's app
+/// command reaches it: the `gn` matches, the text-object seam, and the
+/// wrap width for page motions.
+fn beforeBufferInput(app: *App, e: *EditorPane) ?usize {
+    cmd_find.seedCtxMatches(e);
+    app.attachSeams(e);
+    return if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
+}
+
+/// What a buffer event means to the app, whether a key or a runner
+/// caused it: an edit dirties the syntax and wakes the seams, an app
+/// command runs, a recording that just stopped is persisted. A key's
+/// own extras (abbreviations, the LSP's typed hook) stay with
+/// `feedEditor`. `e` is stale after an app command; look the pane up
+/// again before touching it.
+fn afterBufferEvent(app: *App, pane_id: PaneId, e: *EditorPane, ev: input.BufferEvent, was_recording: bool) Allocator.Error!void {
+    if (e.buf.last_unsupported) |name| {
+        app.toast("{s}: not supported yet", .{name});
+        e.buf.last_unsupported = null;
+    }
+    switch (ev) {
+        .unhandled, .noop, .redraw => {},
+        .edited => {
+            e.syntax.dirty = true;
+            flash.cancel(app);
+            snippets.afterEdit(app, pane_id, e);
+            ai_app.noteEdit(app);
+        },
+        .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
+    }
+    const still = app.panes.editor(pane_id) orelse return;
+    // A recording that just stopped is on the clipboard: persist it.
+    if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
+}
+
+/// A runner's app command for the buffer (`vim.dot_repeat`, the macro
+/// chip): the same road a key's `.app` result takes, without a key.
+pub fn runBufferApp(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.AppCommand) Allocator.Error!void {
+    const was_recording = e.buf.isRecording();
+    const wrap_width = beforeBufferInput(app, e);
+    const ev = try e.buf.runApp(cmd, &app.clipboard, app.pane_rows, wrap_width, app.frame.allocator());
+    try afterBufferEvent(app, pane_id, e, ev, was_recording);
+    if (app.panes.editor(pane_id)) |still| still.buf.input.setMacroRecording(still.buf.isRecording());
+    try finishDeferredInserts(app);
+    app.needs_render = true;
 }
 
 const MarkPrefix = enum { set, jump };
