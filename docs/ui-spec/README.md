@@ -446,3 +446,35 @@ the section's, `unsaved` in the crumb row), and the tag picker open on
 `md_preview_engine`. Zig-authored — the Rust side has no such pane, so
 the dump is the spec. A `seed-<NAME>/` beside a steps file is copied
 into the spec's workspace by `tools/zig-spec.sh`.
+
+## The navigation harness (2026-09-09)
+
+`tools/compare.sh NAME [COLSxROWS]` is `ui-diff` for *navigation*: the
+same private copy of the chrome fixture and the same two binaries, but
+one large file (`src/large.rs`, 6000 lines written into the copy by
+`tools/gen-large-fixture.py` — deterministic, gitignored at 314 KB), a
+`steps-compare-NAME.jsonl`, and a screen plus `status.json` kept after
+**every** step. `steps-compare-keys` is the vim motions (`PageDown`,
+`Ctrl+D`, `G`, `gg`, `50%`, `/needle`, `n`, `w`, `b`, `}`, `$`, `0`,
+`zz` / `zt` / `zb`, `Ctrl+E` / `Ctrl+Y`), `steps-compare-keys-standard`
+the standard profile's (arrows, page keys, `Ctrl+Home/End`, word steps,
+`Ctrl+F`, `Ctrl+G`), `steps-compare-mouse` clicks in the text, the
+gutter, a tab and the tree, wheel runs of 1 / 3 / 10 / 30, a drag and a
+double-click — every verb one both IPCs accept. The profile follows the
+name (`standard` / `mouse` → `--input standard`, else vim; `MNML_INPUT`
+overrides). Output is `docs/research/compare/NAME[-COLSxROWS]/`:
+`step-NNN.{rust,zig}.txt` and `.status.json` (ignored), `diff.md` — per
+step the rows differing beyond the rail, the **`text`** count (body
+rows still differing once the tree's cursor cell, the last column,
+a wide glyph's spacer cell and trailing blanks are dropped — the number
+to read), each side's cursor `line:col` and mode from `status.json`,
+the top visible line read off the gutter (`+N` pinned scope rows above
+it; neither side's `status.json` has a scroll offset), and a first-guess
+class — and `timing.md`: start event and first frame after spawn, peak
+RSS (`ps -o rss` every 50 ms), and per step the ms from the command's
+append to its ack in `events.jsonl` and to the next `screen.txt` write
+after it (1 ms polls; both editors dump every frame, so the ack is what
+anchors a step). The Rust binary is `target/release/mnml` when present,
+else `debug`, else built; `timing.md` names it. Both editors are killed
+on exit; `KEEP=1` keeps the copy. The reading of the first four runs is
+`docs/research/rust-vs-zig-navigation.md`.
