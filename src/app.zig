@@ -419,6 +419,8 @@ pub const PickerKind = enum {
     browser_url_history,
     /// `integrations.icon_picker`: the Nerd Font catalog (`app/icon_picker.zig`).
     icon_glyphs,
+    /// `bookmarks.open`: the label rows, the URL as the detail.
+    bookmarks,
     /// A picker whose accept is the opener's own function
     /// (`Overlay.picker.on_accept`): messages, harpoon, the startup picker.
     custom,
@@ -2360,6 +2362,7 @@ test {
     _ = @import("app/integrations_tools.zig");
     _ = @import("app/setup.zig");
     _ = @import("app/markdown_links.zig");
+    _ = @import("app/bookmarks.zig");
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");

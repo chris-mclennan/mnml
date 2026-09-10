@@ -604,6 +604,43 @@ pane, no side panel), a right click opens the chip's menu. *Add to
 activity bar* / *Remove from activity bar* on an Installed row's menu,
 a chip's menu or the icon's own writes the list to the home config.
 
+## Bookmarks
+
+`bookmarks.open` is a picker over your web bookmarks, grouped by
+environment — `dev  ·  ADX Admin`, the URL as the row's detail; Enter
+hands the URL to the browser (`.ui.external_browser`, or the OS
+default). The mechanism is mnml's; the URLs are yours, in two files
+that both load and add up — a repo's file extends your own set rather
+than hiding it:
+
+1. `<data root>/bookmarks.zon`
+2. `<workspace>/.mnml/bookmarks.zon`
+
+```zig
+.{
+    .sites = .{
+        // One destination in several environments: dev / staging /
+        // prod as fields, any other name under .envs.
+        .{
+            .name = "ADX Admin",
+            .dev = "https://adx.dev.example.net/admin",
+            .staging = "https://adx.staging.example.net/admin",
+            .prod = "https://adx.example.com/admin",
+            .envs = .{ .{ .env = "uat", .url = "https://adx.uat.example.net/admin" } },
+        },
+    },
+    .bookmarks = .{
+        // A one-off; .env defaults to "other".
+        .{ .label = "Metabase", .url = "https://metabase.example.net", .env = "prod" },
+    },
+}
+```
+
+A site expands to one row per environment it names, in the order dev,
+staging, prod, then `.envs` as written; an empty URL is skipped. A
+malformed file is skipped rather than fatal. With neither file the
+command toasts the path to write.
+
 ## Where the home file lives
 
 1. `$MNML_DATA_ROOT/config.zon` when the variable is set
