@@ -1,0 +1,22 @@
+# The graph's hash-typing chip (src/app/git.zig hashFilterKey, Rust's
+# hash_filter_mode): `/` arms the header — `/_` takes the COMMIT MESSAGE
+# label's place — each hex digit jumps to the first commit it prefixes,
+# a miss toasts `no commit ~`, Esc clears and puts the label back.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+command view.toggle_tree
+command git.graph
+wait 800
+expect screen contains "COMMIT MESSAGE"
+key /
+expect screen contains "/_"
+expect screen lacks "COMMIT MESSAGE"
+# `z` is not hex: swallowed, the chip unchanged.
+key z
+expect screen contains "/_"
+key esc
+expect screen contains "COMMIT MESSAGE"

@@ -229,6 +229,9 @@ pub const Confirm = union(enum) {
 pub const AiWait = struct {
     pane: PaneId,
     what: enum { commit, recompose },
+    /// The graph pane whose commit box takes the answer (its WIP row was
+    /// selected when the job was asked for); null = the prompt.
+    wip: ?PaneId = null,
 };
 
 /// Blame for one editor pane: the worker's arena, adopted.
@@ -347,6 +350,12 @@ pub const GraphPane = struct {
     wip_cursor: usize = 0,
     wip_focused: bool = false,
     wip_ai: bool = false,
+    /// `/`: the hash prefix typed into the header chip (Rust's
+    /// `hash_filter`); every hex digit jumps to the first commit it
+    /// prefixes. A full SHA is 40 hex digits.
+    hash_filter: [40]u8 = undefined,
+    hash_filter_len: u8 = 0,
+    hash_filter_mode: bool = false,
     /// A drag override of the panel's width.
     detail_w: ?u16 = null,
     /// The working-tree row is shown (the status has changes).
@@ -416,6 +425,10 @@ pub const GraphPane = struct {
 
     pub fn totalRows(self: *const GraphPane) usize {
         return self.commits.len + self.wipRows();
+    }
+
+    pub fn hashFilter(self: *const GraphPane) []const u8 {
+        return self.hash_filter[0..self.hash_filter_len];
     }
 
     pub fn wipSelected(self: *const GraphPane) bool {
@@ -520,6 +533,10 @@ pub const State = struct {
     provider: remote_mod.Provider = .none,
     /// The AI commit-message job whose pane `tick` watches.
     ai_wait: ?AiWait = null,
+    /// Set by `askAi` while the repo reads the diff: the graph pane whose
+    /// commit box is waiting (`wip_ai`), handed to `AiWait` when the job
+    /// starts.
+    ai_wip_target: ?PaneId = null,
     ai_product: ai_app.Product = .claude,
     /// A message body the AI returned, appended to the prompt's subject
     /// line at accept. Owned.
@@ -965,6 +982,13 @@ pub fn askAi(app: *App, what: client.AiContext, product: ai_app.Product) Command
         .cli => {},
     }
     st.ai_product = product;
+    // Rust routes the answer into the graph's commit box when its WIP
+    // row is selected; the prompt otherwise.
+    st.ai_wip_target = null;
+    if (what == .staged) if (activeGraph(app)) |g| if (g.wipSelected()) {
+        st.ai_wip_target = app.active;
+        g.wip_ai = true;
+    };
     try submit(app, repo, .{ .ai_context = what });
     app.toast("{s}: reading the {s}…", .{ if (product == .claude) "claude" else "codex", if (what == .staged) "staged diff" else "HEAD patch" });
 }
@@ -974,7 +998,10 @@ const ai_diff_cap: usize = 24_000;
 fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: []const u8, message: []const u8) Allocator.Error!void {
     const st = &app.git;
     const arena = app.frame.allocator();
+    const wip_target = st.ai_wip_target;
+    st.ai_wip_target = null;
     if (std.mem.trim(u8, diff, " \t\r\n").len == 0) {
+        clearWipAi(app, wip_target);
         app.toast("{s}", .{if (what == .staged) "nothing staged — stage some changes first" else "HEAD has no patch to summarise"});
         return;
     }
@@ -988,10 +1015,66 @@ fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: [
     const title: []const u8 = if (what == .staged) "ai: commit message" else "ai: recompose HEAD";
     const pane = ai_app.askProduct(app, st.ai_product, title, prompt, .git, null) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
+        clearWipAi(app, wip_target);
         runToast(app, err);
         return;
     };
-    st.ai_wait = .{ .pane = pane, .what = if (what == .staged) .commit else .recompose };
+    st.ai_wait = .{ .pane = pane, .what = if (what == .staged) .commit else .recompose, .wip = wip_target };
+}
+
+/// The commit box stops waiting (the job never started, or ended).
+fn clearWipAi(app: *App, target: ?PaneId) void {
+    const id = target orelse return;
+    const pane = app.panes.get(id) orelse return;
+    if (pane.* == .git_graph) pane.git_graph.wip_ai = false;
+}
+
+/// The graph pane a waiting job's answer goes to, when it still exists
+/// and still has a working-tree row to put it under.
+fn wipTarget(app: *App, w: AiWait) ?*GraphPane {
+    const id = w.wip orelse return null;
+    const pane = app.panes.get(id) orelse return null;
+    if (pane.* != .git_graph) return null;
+    return &pane.git_graph;
+}
+
+/// The AI's answer lands: in the graph's commit box when the job was
+/// asked from its WIP row (Rust `set_text` + focus — the box then reads
+/// as typed, `c` commits it), else in the commit / amend prompt with
+/// the body kept for the accept.
+pub fn deliverAiAnswer(app: *App, w: AiWait, text: []const u8) Allocator.Error!void {
+    const st = &app.git;
+    const msg = cleanCommitMessage(text);
+    if (wipTarget(app, w)) |g| {
+        g.wip_ai = false;
+        if (msg.subject.len == 0) {
+            app.toast("AI returned an empty commit message", .{});
+            return;
+        }
+        g.wip_text.clearRetainingCapacity();
+        try g.wip_text.appendSlice(app.gpa, msg.subject);
+        if (msg.body.len > 0) {
+            try g.wip_text.appendSlice(app.gpa, "\n\n");
+            try g.wip_text.appendSlice(app.gpa, msg.body);
+        }
+        g.wip_cursor = g.wip_text.items.len;
+        g.wip_focused = true;
+        app.needs_render = true;
+        return;
+    }
+    if (msg.subject.len == 0) {
+        app.toast("AI returned an empty message", .{});
+        return;
+    }
+    if (st.ai_body) |b| app.gpa.free(b);
+    st.ai_body = if (msg.body.len > 0) try app.gpa.dupe(u8, msg.body) else null;
+    const kind: PromptKind = if (w.what == .commit) .commit else .amend;
+    const title: []const u8 = if (msg.body.len > 0)
+        (if (kind == .commit) "Commit message (AI body attached)" else "Amend HEAD's message (AI body attached)")
+    else
+        (if (kind == .commit) "Commit message" else "Amend HEAD's message");
+    openPrompt(app, kind, title);
+    try app.overlay.prompt.state.setText(app.gpa, msg.subject);
 }
 
 /// The AI pane finished: its answer becomes the commit prompt's text
@@ -1015,6 +1098,7 @@ fn pollAiWait(app: *App) Allocator.Error!void {
         .running => return,
         .failed => {
             st.ai_wait = null;
+            clearWipAi(app, w.wip);
             try app.toastLevel(.err, "AI: {s}", .{ap.err orelse "the job failed"});
             try app.closePane(w.pane, true);
         },
@@ -1023,20 +1107,7 @@ fn pollAiWait(app: *App) Allocator.Error!void {
             const text = try app.gpa.dupe(u8, ap.answer.items);
             defer app.gpa.free(text);
             try app.closePane(w.pane, true);
-            const msg = cleanCommitMessage(text);
-            if (msg.subject.len == 0) {
-                app.toast("AI returned an empty message", .{});
-                return;
-            }
-            if (st.ai_body) |b| app.gpa.free(b);
-            st.ai_body = if (msg.body.len > 0) try app.gpa.dupe(u8, msg.body) else null;
-            const kind: PromptKind = if (w.what == .commit) .commit else .amend;
-            const title: []const u8 = if (msg.body.len > 0)
-                (if (kind == .commit) "Commit message (AI body attached)" else "Amend HEAD's message (AI body attached)")
-            else
-                (if (kind == .commit) "Commit message" else "Amend HEAD's message");
-            openPrompt(app, kind, title);
-            try app.overlay.prompt.state.setText(app.gpa, msg.subject);
+            try deliverAiAnswer(app, w, text);
         },
     }
 }
@@ -3160,6 +3231,7 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
     }
     if (g.detail_focus) return detailKey(app, id, g, k);
     if (g.plan != null) return planKey(app, g, k);
+    if (g.hash_filter_mode) return hashFilterKey(app, g, k);
     const n = g.totalRows();
     switch (k.code) {
         .up => moveGraphCursor(app, g, g.cursor -| 1),
@@ -3184,7 +3256,10 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
                 'd' => runToast(app, diffSelected(app, g)),
                 'W' => runToast(app, toggleCompareBase(app, g)),
                 's' => try setSort(app, g, .{ .col = g.sort.col.next(), .asc = false }),
-                '/' => openPrompt(app, .graph_hash, "Jump to commit (hash prefix)"),
+                '/' => {
+                    g.hash_filter_mode = true;
+                    g.hash_filter_len = 0;
+                },
                 'a' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.stage_all" })) else return false,
                 'A' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.amend" })) else runToast(app, command.run(app, .{ .static = .@"git.amend_to" })),
                 'U' => if (g.wipSelected()) runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })) else return false,
@@ -3209,6 +3284,42 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
         else => return false,
     }
     app.needs_render = true;
+    return true;
+}
+
+/// The header chip has the keys (Rust's `hash_filter_mode`): a hex digit
+/// joins the prefix and jumps to the first commit it names — none
+/// toasts; Backspace drops one and jumps again; Enter keeps the place
+/// and leaves; Esc clears and leaves. Everything else is swallowed.
+fn hashFilterKey(app: *App, g: *GraphPane, k: Key) Allocator.Error!bool {
+    switch (k.code) {
+        .esc => {
+            g.hash_filter_len = 0;
+            g.hash_filter_mode = false;
+        },
+        .enter => g.hash_filter_mode = false,
+        .backspace => {
+            g.hash_filter_len -|= 1;
+            if (g.hash_filter_len > 0) _ = jumpToHashPrefix(app, g);
+        },
+        .char => |c| if (c < 128 and std.ascii.isHex(@intCast(c)) and !k.mods.ctrl and !k.mods.alt and !k.mods.super) {
+            if (g.hash_filter_len < g.hash_filter.len) {
+                g.hash_filter[g.hash_filter_len] = std.ascii.toLower(@intCast(c));
+                g.hash_filter_len += 1;
+            }
+            if (!jumpToHashPrefix(app, g)) app.toast("no commit ~ {s}", .{g.hashFilter()});
+        },
+        else => {},
+    }
+    app.needs_render = true;
+    return true;
+}
+
+/// The cursor to the first commit the typed prefix names; false when none.
+fn jumpToHashPrefix(app: *App, g: *GraphPane) bool {
+    const idx = graph_view.findByHashPrefix(g.commits, g.hashFilter()) orelse return false;
+    g.cursor = g.rowOfCommit(idx);
+    if (!g.wipSelected()) requestDetail(app, g) catch {};
     return true;
 }
 
@@ -4195,6 +4306,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
         .now = now,
         .sort = g.sort,
         .filter_label = filterLabel(app, g) catch null,
+        .hash_filter = if (g.hash_filter_mode) g.hashFilter() else null,
         .has_wip = g.has_wip,
         .wip = wip,
         .detail = detail,
@@ -5668,4 +5780,120 @@ test "the detail rows' menu (audit #101): a working-tree row offers stage / disc
     const e = f.app.panes.editor(f.app.active.?) orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("one\n", e.buf.editor.bytes());
     try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "a.txt at"));
+}
+
+test "the hash-typing chip: `/` arms the header, each hex digit jumps to the first commit it prefixes and paints `/<prefix>_`, a miss toasts, Backspace steps back, Esc clears and leaves, Enter keeps the place" {
+    var f = try Fixture.init(140, 24);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first commit" });
+    try f.write("a.txt", "two\n");
+    try f.sh(&.{ "commit", "-q", "-am", "second commit" });
+    try f.write("b.txt", "new\n");
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    f.app.focus = .{ .pane = f.app.active.? };
+    const g = activeGraph(&f.app).?;
+    try testing.expect(g.wipSelected());
+    try testing.expectEqual(@as(usize, 2), g.commits.len);
+    // The oldest commit is the one to reach: its first hex digit.
+    const target = g.commits[g.order[g.order.len - 1]].hash;
+    try f.app.handle(.{ .key = Key.char('/') });
+    try testing.expect(g.hash_filter_mode);
+    var txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "/_") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "COMMIT MESSAGE") == null);
+    // A non-hex key is swallowed, not a jump and not a graph chord.
+    try f.app.handle(.{ .key = Key.char('q') });
+    try testing.expect(activeGraph(&f.app) != null);
+    try testing.expectEqual(@as(u8, 0), g.hash_filter_len);
+    // Enough of the target's hash to name it alone.
+    var typed: usize = 0;
+    while (typed < target.len) : (typed += 1) {
+        try f.app.handle(.{ .key = Key.char(std.ascii.toUpper(target[typed])) });
+        if (graph_view.findByHashPrefix(g.commits, g.hashFilter()).? == g.order[g.order.len - 1]) break;
+    }
+    try testing.expectEqualStrings(target[0 .. typed + 1], g.hashFilter());
+    try testing.expectEqual(g.rowOfCommit(g.order[g.order.len - 1]), g.cursor);
+    testing.allocator.free(txt);
+    txt = try f.screen();
+    const typed_chip = try std.fmt.allocPrint(testing.allocator, "/{s}_", .{g.hashFilter()});
+    defer testing.allocator.free(typed_chip);
+    try testing.expect(std.mem.indexOf(u8, txt, typed_chip) != null);
+    // A digit no hash continues with: the prefix grows, the toast says so.
+    const before = g.cursor;
+    try f.app.handle(.{ .key = Key.char('z') });
+    try testing.expectEqual(before, g.cursor);
+    var miss: u8 = 0;
+    for ("0123456789abcdef") |h| {
+        var probe: [41]u8 = undefined;
+        @memcpy(probe[0..g.hash_filter_len], g.hashFilter());
+        probe[g.hash_filter_len] = h;
+        if (graph_view.findByHashPrefix(g.commits, probe[0 .. g.hash_filter_len + 1]) == null) {
+            miss = h;
+            break;
+        }
+    }
+    try f.app.handle(.{ .key = Key.char(miss) });
+    try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "no commit ~ "));
+    // Backspace drops it; Esc clears and leaves; the header is back.
+    try f.app.handle(.{ .key = Key.named(.backspace) });
+    try testing.expectEqualStrings(target[0 .. typed + 1], g.hashFilter());
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(!g.hash_filter_mode);
+    try testing.expectEqual(@as(u8, 0), g.hash_filter_len);
+    try testing.expect(activeGraph(&f.app) != null);
+    testing.allocator.free(txt);
+    txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "COMMIT MESSAGE") != null);
+    // Enter keeps the prefix's place and leaves the mode.
+    try f.app.handle(.{ .key = Key.char('/') });
+    try f.app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(!g.hash_filter_mode);
+}
+
+test "the AI answer lands in the graph's commit box when its WIP row asked: the box reads subject and body, focused, the wait flag cleared; without a target it is the prompt as before" {
+    var f = try Fixture.init(140, 24);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first commit" });
+    try f.write("b.txt", "new\n");
+    try f.sh(&.{ "add", "b.txt" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    f.app.focus = .{ .pane = f.app.active.? };
+    const id = f.app.active.?;
+    const g = activeGraph(&f.app).?;
+    try testing.expect(g.wipSelected());
+    g.wip_ai = true;
+    try deliverAiAnswer(&f.app, .{ .pane = id, .what = .commit, .wip = id }, "```\nfeat: add b\n\nThe body line.\n```\n");
+    try testing.expect(!g.wip_ai);
+    try testing.expect(g.wip_focused);
+    try testing.expectEqualStrings("feat: add b\n\nThe body line.", g.wip_text.items);
+    try testing.expectEqual(g.wip_text.items.len, g.wip_cursor);
+    try testing.expect(f.app.overlay == .none);
+    // The box paints it; `c` commits it (the trailing dot is the body's).
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "feat: add b") != null);
+    // An empty answer clears the wait and says so, the box untouched.
+    g.wip_ai = true;
+    try deliverAiAnswer(&f.app, .{ .pane = id, .what = .commit, .wip = id }, "   \n");
+    try testing.expect(!g.wip_ai);
+    try testing.expectEqualStrings("feat: add b\n\nThe body line.", g.wip_text.items);
+    try testing.expectEqualStrings("AI returned an empty commit message", f.app.lastToast().?);
+    // No target: the prompt opens with the subject, the body kept.
+    try deliverAiAnswer(&f.app, .{ .pane = id, .what = .commit }, "fix: thing\n\nwhy");
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expectEqualStrings("fix: thing", f.app.overlay.prompt.state.text());
+    try testing.expectEqualStrings("why", f.app.git.ai_body.?);
 }

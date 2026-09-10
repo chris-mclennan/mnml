@@ -1,0 +1,22 @@
+# The wizard's Keyboard section, Space: the one fix mnml applies itself
+# (src/app/key_doctor.zig). In ghostty on macOS, with no Option/Alt
+# chord ticked, Space writes `macos-option-as-alt = true` to ghostty's
+# config under HOME — here the run's own workspace, so nothing real is
+# touched — and the row under the probes says what happened. The row
+# also carries the Space hint in every terminal (the dump does not
+# depend on where it was cut). Elsewhere (Linux, Windows) Space says
+# there is no auto-fix.
+# env: HOME=${MNML_E2E_WORKSPACE}/home
+# env: TERM_PROGRAM=ghostty
+# env: XDG_CONFIG_HOME=
+
+write home/.config/ghostty/config "font-family = X\nmacos-option-as-alt = false\n"
+command first_launch.show
+expect screen contains "First-launch setup"
+key down
+expect screen contains "Keyboard"
+expect screen contains "Space — fix Option-as-Alt"
+key space
+expect screen contains "macos-option-as-alt"
+key esc
+expect file home/.config/ghostty/config contains "macos-option-as-alt = true"

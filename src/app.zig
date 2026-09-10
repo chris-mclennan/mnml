@@ -413,6 +413,8 @@ pub const PickerKind = enum {
     browser_device,
     browser_throttle,
     browser_url_history,
+    /// `integrations.icon_picker`: the Nerd Font catalog (`app/icon_picker.zig`).
+    icon_glyphs,
     /// A picker whose accept is the opener's own function
     /// (`Overlay.picker.on_accept`): messages, harpoon, the startup picker.
     custom,
@@ -2227,6 +2229,8 @@ test {
     _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
     _ = @import("app/first_launch.zig");
+    _ = @import("app/key_doctor.zig");
+    _ = @import("app/icon_picker.zig");
     _ = @import("app/pane.zig");
     _ = @import("app/outline.zig");
     _ = @import("app/md_preview.zig");

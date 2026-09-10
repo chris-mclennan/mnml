@@ -15,26 +15,26 @@
   │            │  ·  Option/Alt+→  word right (macOS Option)                                          │
    │            │  ·  Option/Alt+←  word left (macOS Option)                                           │
   │            │  Press each chord; a tick means it reached mnml.                                     │
-   │            │                                                                                      │
-  │            │  ── 3 · Input style ──                                                               │
-   │            │  (•) standard — VS Code keys, modeless                                               │
- 󱘣 │            │  ( ) vim — Neovim + NvChad chords                                                    │
-   │            │                                                                                      │
- 󰢱 │            │  ── 4 · Claude Code + Codex ──                                                       │
+   │            │  Space — fix Option-as-Alt: ghostty gets its config written, others the steps.       │
+  │            │                                                                                      │
+   │            │  ── 3 · Input style ──                                                               │
+ 󱘣 │            │  (•) standard — VS Code keys, modeless                                               │
+   │            │  ( ) vim — Neovim + NvChad chords                                                    │
+ 󰢱 │            │                                                                                      │
+   │            │  ── 4 · Claude Code + Codex ──                                                       │
    │            │  Claude Code CLI (`claude`)    [ not installed — Space to install ]                  │
    │            │  Codex CLI (`codex`)           [ not installed — Space to install ]                  │
    │            │  Space runs the missing one's installer in a pane.                                   │
    │            │  The chip in the top-right appears when the CLI is found.                            │
    │            │                                                                                      │
    │            │  ── 5 · AI billing preference ──                                                     │
-   │            │    Claude Code:  [Auto]   Sub    API    Off                                          │
-   │────────────│    Codex:        [Auto]   Sub    API    Off                                          │
-   │ Sidebar    │  Auto follows your login · Sub: the subscription · API: the key · Tab switches rows  │
-   │            │                                                                                      │
-   │ Arrows or j│  ── 6 · AI ghost-text ──                                                             │
-   │ Enter opens│  (•) On — inline suggestions as you type                                             │
-   │ selection. │  ( ) Off                                                                             │
-  │ opens the p│                                                                                      │
+   │────────────│    Claude Code:  [Auto]   Sub    API    Off                                          │
+   │ Sidebar    │    Codex:        [Auto]   Sub    API    Off                                          │
+   │            │  Auto follows your login · Sub: the subscription · API: the key · Tab switches rows  │
+   │ Arrows or j│                                                                                      │
+   │ Enter opens│  ── 6 · AI ghost-text ──                                                             │
+   │ selection. │  (•) On — inline suggestions as you type                                             │
+  │ opens the p│  ( ) Off                                                                             │
    │            │ [↑↓] section · [←→] choose · [Space] install · [Enter] Finish · [Esc] Ask me later   │
- TREE  [no file╰──────────────────────────────────────────────────────────────────────────────────────╯2:06  ws   —
+ TREE  [no file╰──────────────────────────────────────────────────────────────────────────────────────╯2:44  ws   —
 
