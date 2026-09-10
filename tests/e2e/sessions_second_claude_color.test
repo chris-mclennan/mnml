@@ -1,0 +1,55 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# colors (src/app/pty_pane.zig `assignAutoAccent`): a new Claude session
+# takes the next palette slot — the first green, the second blue — and
+# the pane's right-click menu lists `Color: …` rows with the current one
+# ticked and `Color: Auto` last. A fake `claude` on PATH (a script that
+# sleeps) stands in for the CLI; the second session splits to the right,
+# so a right-click at (100, 20) lands on it. The Color row is the
+# thirteenth of the pane menu; → opens its rows.
+write bin/claude #!/bin/sh\nsleep 30
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 300
+command ai.claude_code_new
+wait 300
+rightclick 100 20
+expect screen contains "Color"
+expect screen contains "Close pane"
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key right
+expect screen contains "Color: Green"
+expect screen contains "✓ Color: Blue"
+expect screen contains "Color: Pink"
+expect screen contains "Color: Auto"
+key esc
+key esc
+# The first session's menu ticks green.
+rightclick 40 20
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key right
+expect screen contains "✓ Color: Green"
+expect screen lacks "✓ Color: Blue"
+key esc
+key esc

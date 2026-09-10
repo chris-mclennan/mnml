@@ -856,7 +856,7 @@ fn dirtyInEditor(app: *App, abs: []const u8) bool {
 /// repos gets the repo glyph; the active repo is the lit one.
 fn repoMark(app: *App, abs: []const u8) ?tree_view.RepoMark {
     if (app.git.repos.items.len < 2) return null;
-    for (app.git.repos.items, 0..) |r, i| if (std.mem.eql(u8, r.path, abs)) return .{ .active = app.git.active == i };
+    for (app.git.repos.items, 0..) |r, i| if (std.mem.eql(u8, r.path, abs)) return .{ .active = app.git.active == i, .accent = @import("git_palette.zig").repoAccent(app, r.id) };
     return null;
 }
 

@@ -936,6 +936,9 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .set_coverage_mode => |m| try coverage.setMode(app, m),
         .menu_bar => |i| try menu_bar.openIndex(app, i),
         .git_palette => |a| try git_palette.menuAction(app, a),
+        // colors: the `Color: …` rows — a session's, a repo's.
+        .session_color => |a| try sessions.setColorAction(app, a),
+        .repo_color => |a| try git_palette.setRepoColor(app, a.idx, a.name),
         // right-click: the string-carrying rows, on the copy taken above.
         .copy_text => {
             try app.clipboard.set(text.?, false);

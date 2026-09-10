@@ -28,6 +28,9 @@ const Mouse = key_mod.Mouse;
 const layout_mod = @import("layout.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
+const launch_profiles = @import("launch_profiles.zig");
+const accent_color = @import("../ui/accent_color.zig");
+const Theme = @import("../ui/theme.zig");
 
 /// Every target has a pty backend now (openpty on POSIX, ConPTY on
 /// Windows — `src/pty/root.zig`); the flag stays for the callers that
@@ -74,6 +77,9 @@ pub const OpenOptions = struct {
     placement: Placement = .below,
     kind: Kind = .shell,
     after_exit: ?AfterExit = null,
+    /// // changed (colors): a user-chosen accent to open with — a
+    /// resumed session's remembered colour. Null takes the auto slot.
+    accent_color: ?[]const u8 = null,
 };
 
 /// The reader thread's way into the app: posts `.pty_readable{pane}`
@@ -108,6 +114,12 @@ pub const PtyPane = struct {
     /// (`sessions.zig` sets it on the edge); the tab shows a badge until
     /// the pane is looked at.
     attention: bool = false,
+    /// // changed (colors): the identity strip's colour — a palette name
+    /// (`ui/accent_color.zig`): the user's pick, or the auto slot a new
+    /// Claude session takes (Rust `PtySession.accent_color`). Owned;
+    /// null on a shell and on every pane the user cleared to Auto that
+    /// has no slot.
+    accent_color: ?[]u8 = null,
     /// The grid size the session was last fitted to.
     cols: u16,
     rows: u16,
@@ -118,6 +130,7 @@ pub const PtyPane = struct {
             self.grid.deinit(gpa);
         }
         gpa.destroy(self.wire);
+        if (self.accent_color) |c| gpa.free(c);
         gpa.free(self.label);
         for (self.argv) |a| gpa.free(a);
         gpa.free(self.argv);
@@ -250,6 +263,8 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         else => return app.diag.fail(app.frame.allocator(), "{s}: {s}", .{ label, @errorName(err) }),
     };
     errdefer session.deinit();
+    const accent: ?[]u8 = if (opts.accent_color) |c| (if (accent_color.canonical(c)) |name| try gpa.dupe(u8, name) else null) else null;
+    errdefer if (accent) |c| gpa.free(c);
 
     const got = try app.panes.add(.{ .pty = .{
         .session = session,
@@ -259,6 +274,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .cwd = cwd,
         .kind = opts.kind,
         .after_exit = opts.after_exit,
+        .accent_color = accent,
         .cols = size.cols,
         .rows = size.rows,
     } });
@@ -267,8 +283,85 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         app.panes.remove(id);
         return err;
     };
+    try assignAutoAccent(app, id);
     app.needs_render = true;
     return id;
+}
+
+// ─── the accent (colors) ────────────────────────────────────────────────
+
+/// The AI product this pane runs, by its command's first word (the bare
+/// binary or one of its profile shims) — what the accent rules key on,
+/// as Rust's `integration_id` did. Null for a shell and every other
+/// command.
+pub fn productOf(app: *const App, p: *const PtyPane) ?launch_profiles.Product {
+    if (p.argv.len == 0) return null;
+    for (std.enums.values(launch_profiles.Product)) |product| {
+        if (launch_profiles.isProductArgv(app, p.argv[0], product)) return product;
+    }
+    return null;
+}
+
+/// How many Claude panes sit before `id` in the store (Rust's
+/// `assign_auto_accent_color` counts every existing one when a pane
+/// opens; `set_session_color("none")` counts those before it).
+fn claudePanesBefore(app: *const App, id: PaneId) usize {
+    var n: usize = 0;
+    for (app.panes.slots.items, 0..) |*slot, i| {
+        if (i == id) break;
+        if (slot.*) |*pane| switch (pane.*) {
+            .pty => |*p| if (productOf(app, p) == .claude) {
+                n += 1;
+            },
+            else => {},
+        };
+    }
+    return n;
+}
+
+/// A new Claude session with no colour takes the palette slot of its
+/// position among the Claude panes open, wrapping (Rust
+/// `assign_auto_accent_color`). Every other pane keeps what it has.
+pub fn assignAutoAccent(app: *App, id: PaneId) Allocator.Error!void {
+    const p = app.panes.pty(id) orelse return;
+    if (p.accent_color != null) return;
+    if (productOf(app, p) != .claude) return;
+    p.accent_color = try app.gpa.dupe(u8, accent_color.auto(claudePanesBefore(app, id)));
+}
+
+/// `name` becomes the pane's accent; the `none` sentinel clears it and a
+/// Claude pane re-derives its slot (Rust `set_session_color`). An
+/// unknown name is ignored.
+pub fn setAccent(app: *App, id: PaneId, name: []const u8) Allocator.Error!void {
+    const p = app.panes.pty(id) orelse return;
+    if (accent_color.isNone(name)) {
+        if (p.accent_color) |c| app.gpa.free(c);
+        p.accent_color = null;
+        try assignAutoAccent(app, id);
+    } else {
+        const canon = accent_color.canonical(name) orelse return;
+        const fresh = try app.gpa.dupe(u8, canon);
+        if (p.accent_color) |c| app.gpa.free(c);
+        p.accent_color = fresh;
+    }
+    app.needs_render = true;
+}
+
+/// Anthropic's coral — the Claude Code brand, as Rust's
+/// `brand_color_for_builtin` paints it.
+pub const claude_brand = Theme.rgb(0xD16D51);
+
+/// The colour of the pane's identity strip and tab glyph, in Rust's
+/// precedence (`accent_color_for_pty`): the pane's own name first,
+/// then the product's brand (Claude's coral, Codex in the theme's
+/// cyan); null for a shell and every other command, which get no
+/// strip.
+pub fn accentOf(app: *const App, p: *const PtyPane, theme: *const Theme) ?Theme.Color {
+    if (p.accent_color) |name| if (accent_color.resolve(name, theme)) |c| return c;
+    return switch (productOf(app, p) orelse return null) {
+        .claude => claude_brand,
+        .codex => theme.palette.cyan,
+    };
 }
 
 fn labelFor(app: *App, opts: OpenOptions) Allocator.Error![]u8 {
@@ -819,4 +912,138 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     const text = try app.gpa.dupe(u8, "ab");
     try app.handle(.{ .paste = text });
     try t.expect(try tickUntilScreen(&app, "2   0   0   ~   a   b", 5000));
+}
+
+// ─── the accent (colors) ───────────────────────────────────────────────
+
+const Config = @import("../config/Config.zig");
+const TestRect = @import("../ui/rect.zig");
+var color_profiles = [_]Config.LaunchProfile{.{ .name = "t", .product = .claude, .binary = "claude" }};
+
+/// A Claude launch-profile shim on disk — `mnml-ai-t`, a script that
+/// sleeps — so a pane opened on it is a Claude session to
+/// `isProductArgv` without a real `claude` on PATH.
+fn writeClaudeShim(dir: std.Io.Dir, root: []const u8) ![]u8 {
+    try dir.writeFile(t.io, .{ .sub_path = "mnml-ai-t", .data = "#!/bin/sh\nsleep 30\n" });
+    const path = try std.fs.path.join(t.allocator, &.{ root, "mnml-ai-t" });
+    errdefer t.allocator.free(path);
+    const res = try std.process.run(t.allocator, t.io, .{ .argv = &.{ "chmod", "+x", path } });
+    t.allocator.free(res.stdout);
+    t.allocator.free(res.stderr);
+    return path;
+}
+
+/// The pane's rect and its tab's, from the hit map of the last frame.
+const Rects = struct { pane: ?TestRect = null, tab: ?TestRect = null };
+
+fn rectsOf(app: *App, id: PaneId) Rects {
+    var out: Rects = .{};
+    for (app.hits.items.items) |h| switch (h.target) {
+        .pane => |p| if (p == id) {
+            out.pane = h.rect;
+        },
+        .tab => |tb| {
+            const leaf = app.layouts.current().leaf(tb.leaf) orelse continue;
+            if (tb.idx < leaf.tabs.items.len and leaf.tabs.items[tb.idx] == id) out.tab = h.rect;
+        },
+        else => {},
+    };
+    return out;
+}
+
+test "the accent: a new Claude session takes the next palette slot, a shell none; the user's pick wins, Auto re-derives, an unknown name is ignored" {
+    // A POSIX shell script stands in for the CLI.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const shim = try writeClaudeShim(tmp.dir, root);
+    defer t.allocator.free(shim);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.cfg.ai.launch_profiles = &color_profiles;
+    app.tree.visible = false;
+    const c1 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    const c2 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    const sh = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command, .placement = .tab });
+    const c3 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    // The auto slots, in the palette's order; the shell has none.
+    try t.expectEqualStrings("green", app.panes.pty(c1).?.accent_color.?);
+    try t.expectEqualStrings("blue", app.panes.pty(c2).?.accent_color.?);
+    try t.expect(app.panes.pty(sh).?.accent_color == null);
+    try t.expectEqualStrings("yellow", app.panes.pty(c3).?.accent_color.?);
+    try t.expect(productOf(&app, app.panes.pty(c1).?) == .claude);
+    try t.expect(productOf(&app, app.panes.pty(sh).?) == null);
+    try t.expect(accentOf(&app, app.panes.pty(sh).?, &app.theme) == null);
+    try t.expect(Theme.Color.eql(accentOf(&app, app.panes.pty(c2).?, &app.theme).?, app.theme.palette.blue));
+    // The user's pick wins; Auto re-derives the slot from the position;
+    // an unknown name changes nothing.
+    try setAccent(&app, c2, "red");
+    try t.expectEqualStrings("red", app.panes.pty(c2).?.accent_color.?);
+    try t.expect(Theme.Color.eql(accentOf(&app, app.panes.pty(c2).?, &app.theme).?, app.theme.palette.red));
+    try setAccent(&app, c2, "mauve");
+    try t.expectEqualStrings("red", app.panes.pty(c2).?.accent_color.?);
+    try setAccent(&app, c2, accent_color.none);
+    try t.expectEqualStrings("blue", app.panes.pty(c2).?.accent_color.?);
+    // A shell given a colour keeps it (Rust lets any pty be coloured);
+    // Auto on a shell is nothing, not a slot.
+    try setAccent(&app, sh, "pink");
+    try t.expectEqualStrings("pink", app.panes.pty(sh).?.accent_color.?);
+    try setAccent(&app, sh, accent_color.none);
+    try t.expect(app.panes.pty(sh).?.accent_color == null);
+    // Opening with a remembered colour keeps it over the auto slot; a
+    // bogus one falls back to the slot.
+    const c4 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab, .accent_color = "purple" });
+    try t.expectEqualStrings("purple", app.panes.pty(c4).?.accent_color.?);
+    const c5 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab, .accent_color = "bogus" });
+    try t.expectEqualStrings("red", app.panes.pty(c5).?.accent_color.?);
+}
+
+test "the identity strip: a Claude pane's left column is the `▌` in its accent and its tab glyph is the same colour; a shell's grid starts at the edge" {
+    // A POSIX shell script stands in for the CLI.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const shim = try writeClaudeShim(tmp.dir, root);
+    defer t.allocator.free(shim);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.cfg.ai.launch_profiles = &color_profiles;
+    app.tree.visible = false;
+    const c1 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    try setAccent(&app, c1, "blue");
+    try app.render();
+    const r1 = rectsOf(&app, c1);
+    const pane = r1.pane orelse return error.TestUnexpectedResult;
+    // The pane's hit covers its tab strip too: the strip's first row is
+    // the body's first, and it runs to the pane's last.
+    const bar = app.screen.readCell(pane.x, pane.y + 1).?;
+    try t.expectEqualStrings("\u{258c}", bar.char.grapheme);
+    try t.expect(Theme.Color.eql(bar.style.fg, app.theme.palette.blue));
+    const bar_low = app.screen.readCell(pane.x, pane.y + pane.h - 1).?;
+    try t.expectEqualStrings("\u{258c}", bar_low.char.grapheme);
+    try t.expect(Theme.Color.eql(bar_low.style.fg, app.theme.palette.blue));
+    // The child's grid is one cell narrower than the pane.
+    try t.expectEqual(pane.w - 1, app.panes.pty(c1).?.cols);
+    // The tab's glyph, at the chip's second cell, carries the accent.
+    const tab = r1.tab orelse return error.TestUnexpectedResult;
+    const glyph = app.screen.readCell(tab.x + 1, tab.y).?;
+    try t.expect(Theme.Color.eql(glyph.style.fg, app.theme.palette.blue));
+    // A shell: no strip, the grid at the edge, the glyph in its stock colour.
+    const sh = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command, .placement = .tab });
+    try app.render();
+    const r2 = rectsOf(&app, sh);
+    const pane2 = r2.pane orelse return error.TestUnexpectedResult;
+    var yy: u16 = pane2.y;
+    while (yy < pane2.y + pane2.h) : (yy += 1) {
+        const edge = app.screen.readCell(pane2.x, yy).?;
+        try t.expect(!std.mem.eql(u8, edge.char.grapheme, "\u{258c}"));
+    }
+    try t.expectEqual(pane2.w, app.panes.pty(sh).?.cols);
+    const tab2 = r2.tab orelse return error.TestUnexpectedResult;
+    const glyph2 = app.screen.readCell(tab2.x + 1, tab2.y).?;
+    try t.expect(!Theme.Color.eql(glyph2.style.fg, app.theme.palette.blue));
 }

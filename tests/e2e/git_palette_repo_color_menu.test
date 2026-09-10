@@ -1,0 +1,48 @@
+# colors (src/app/git_palette.zig `openRepoColorMenu`): with two repos,
+# a right-click on the repo pill lists `Color: …` per palette entry
+# with the one in effect ticked — alpha, first in discovery order, took
+# the green slot on first sight and keeps it — and picking one ticks it
+# on the next open; `Color: Auto` is ticked only once chosen. The pill
+# is row 4 of the 120x40 sidebar (the palette snaps to 24 cells);
+# `Color: Blue` is the menu's second row.
+shell mkdir -p alpha beta
+shell git -C alpha init -q -b main
+shell git -C alpha config user.email "test@mnml.dev"
+shell git -C alpha config user.name "mnml test"
+write alpha/a.txt "one\n"
+shell git -C alpha add a.txt
+shell git -C alpha commit -q -m "init"
+shell git -C beta init -q -b dev
+shell git -C beta config user.email "test@mnml.dev"
+shell git -C beta config user.name "mnml test"
+write beta/b.txt "two\n"
+shell git -C beta add b.txt
+shell git -C beta commit -q -m "init"
+command view.activity_git
+wait 1000
+expect screen contains " alpha 󰅀"
+rightclick 8 4
+expect screen contains "alpha · color"
+expect screen contains "Color: Green"
+expect screen contains "Color: Pink"
+expect screen contains "✓ Color: Green"
+expect screen contains "Color: Auto"
+expect screen lacks "✓ Color: Auto"
+key down
+key enter
+rightclick 8 4
+expect screen contains "✓ Color: Blue"
+expect screen lacks "✓ Color: Auto"
+key esc
+# Under All repos the right-click is the repos menu, as before.
+command git.palette_all
+wait 800
+expect screen contains " All repos 󰅀"
+rightclick 8 4
+expect screen contains "Repos"
+expect screen contains "Add workspace"
+expect screen lacks "Color: Blue"
+key esc
+command git.palette_all
+wait 300
+command view.activity_explorer
