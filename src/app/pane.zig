@@ -15,6 +15,7 @@ const buffer_mod = @import("../editor/buffer.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const find = @import("find.zig");
 const syntax = @import("syntax.zig");
+const sticky = @import("sticky.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const image_pane = @import("image_pane.zig");
@@ -75,8 +76,12 @@ pub const EditorPane = struct {
     /// a pin glyph and survives close-others / close-right / close-all.
     /// Saved with the session.
     pinned: bool = false,
+    /// The sticky context's chain for the last top line / text / parse
+    /// (`sticky.headerLines`).
+    sticky: sticky.Cache = .{},
 
     pub fn deinit(self: *EditorPane) void {
+        self.sticky.deinit(self.buf.gpa);
         ListPane.freeEntries(self.buf.gpa, self.loclist.items);
         self.loclist.deinit(self.buf.gpa);
         self.find.deinit();

@@ -210,9 +210,23 @@ pub const Syntax = struct {
     /// outermost first — the sticky context header rows.
     pub fn scopeChain(self: *Syntax, ed: *const Editor, arena: Allocator, line: u32) Allocator.Error![]u32 {
         const root = self.fresh(ed) orelse return &.{};
+        return scopeChainOf(self, root, ed, arena, line);
+    }
+
+    /// `scopeChain` on a root the caller already holds (the kept tree).
+    pub fn scopeChainOf(self: *const Syntax, root: ts.Node, ed: *const Editor, arena: Allocator, line: u32) Allocator.Error![]u32 {
+        _ = self;
         const l = @min(line, @as(u32, @intCast(ed.lineCount() - 1)));
         const at: u32 = @intCast(ed.lineStart(l));
         return structure.scopeChain(arena, root, at, line);
+    }
+
+    /// The kept tree's root as it is — told about every edit (`absorb`)
+    /// but possibly not reparsed since — or null when there is none yet.
+    /// Never parses: the sticky context reads this so a frame stays
+    /// cheap while a large file waits for its first parse.
+    pub fn keptRoot(self: *const Syntax) ?ts.Node {
+        return self.hl.rootNode();
     }
 
     /// Every definition in the file, for the outline. Null when the file

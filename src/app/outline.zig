@@ -455,7 +455,7 @@ fn identAt(s: []const u8) ?[]const u8 {
     return s[start..i];
 }
 
-fn indentDepth(line: []const u8) u8 {
+pub fn indentDepth(line: []const u8) u8 {
     var tabs: usize = 0;
     var spaces: usize = 0;
     for (line) |c| switch (c) {
