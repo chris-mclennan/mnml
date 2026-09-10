@@ -998,6 +998,38 @@ test "view.tab_bar_ai_* and view.cluster_mode_* set the key, persist it to the h
     try std.testing.expectEqual(Config.TopBarClusterMode.auto, app.cfg.ui.top_bar_cluster_mode);
 }
 
+// ─── opening on a section ────────────────────────────────────────────────
+
+/// `open`, then the cursor on `section`'s first row — what
+/// `integrations.configure_picker` wants: the overlay scrolled to the
+/// rows the installed manifests declare.
+pub fn openAt(app: *App, section: Section) Allocator.Error!void {
+    try open(app);
+    const list = try items(app, app.frame.allocator());
+    const st = &app.overlay.settings;
+    for (list, 0..) |it, i| switch (it) {
+        .section => |name| if (std.mem.eql(u8, name, section.label())) {
+            st.ui.cursor = i + 1;
+            st.ui.settle(list);
+            return;
+        },
+        else => {},
+    };
+}
+
+test "openAt lands the cursor on the section's first row" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try openAt(&app, .editor);
+    try t.expect(app.overlay == .settings);
+    const list = try items(&app, app.frame.allocator());
+    const cur = app.overlay.settings.ui.cursor;
+    try t.expect(list[cur] == .row);
+    try t.expect(list[cur - 1] == .section);
+    try t.expectEqualStrings("Editor", list[cur - 1].section);
+    try t.expect(rows[list[cur].row.id].section == .editor);
+}
+
 test "view.toggle_picker_position flips center ⇄ top, writes it to the home config and toasts; view.ai_layout_* set the mode" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

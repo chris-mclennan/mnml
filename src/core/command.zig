@@ -154,6 +154,7 @@ const runner_tables = .{
     @import("../app/startup_picker.zig"),
     @import("../app/mount_pane.zig"),
     @import("../app/integrations.zig"),
+    @import("../app/integrations_tools.zig"),
     @import("../app/marketplace.zig"),
     @import("../app/launchers.zig"),
     @import("../app/files_pane.zig"),

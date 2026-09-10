@@ -2353,6 +2353,7 @@ test {
     _ = @import("app/cmd_term.zig");
     _ = @import("app/mount_pane.zig");
     _ = @import("app/integrations.zig");
+    _ = @import("app/integrations_tools.zig");
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");
