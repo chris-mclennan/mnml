@@ -3725,3 +3725,127 @@ test "right-click: armSource finds an arm by its exact tag and stops at the next
     try std.testing.expect(std.mem.indexOf(u8, armSource(body, "tab_close").?, ".right") != null);
     try std.testing.expect(armSource(body, "nope") == null);
 }
+
+test "wheel over the tree: a batch is a notch and moves one row; a batch inside the 60 ms window is the same notch; accel on takes the factor's rows" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = try std.testing.allocator.dupe(u8, buf[0..n]);
+    defer std.testing.allocator.free(root);
+    for (0..12) |i| {
+        var name: [12]u8 = undefined;
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = try std.fmt.bufPrint(&name, "f{d:0>2}.txt", .{i}), .data = "x" });
+    }
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .cols = 80, .rows = 30 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    try std.testing.expect(app.tree.rows.items.len >= 12);
+    app.cfg.editor.scroll_accel = .off;
+    try app.render();
+    var row: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .tree_node and h.target.tree_node == 0) {
+        row = h.rect;
+    };
+    const r = row.?;
+    const at = struct {
+        fn wheel(a: *App, rr: Rect, kind: key_mod.MouseKind) !void {
+            try a.handle(.{ .mouse = .{ .x = rr.x + 2, .y = rr.y, .kind = kind } });
+        }
+    };
+    // Three events in one batch — a ghostty detent — step one row.
+    app.now_ms += 1000;
+    for (0..3) |_| try at.wheel(&app, r, .scroll_down);
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 1), app.tree.cursor);
+    // 20 ms on: the same notch, nothing more.
+    app.now_ms += 20;
+    try at.wheel(&app, r, .scroll_down);
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 1), app.tree.cursor);
+    // 60 ms on: the next notch.
+    app.now_ms += 60;
+    try at.wheel(&app, r, .scroll_down);
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 2), app.tree.cursor);
+    // Accel on: a slow notch is a row; a fast follow-up earns the factor
+    // (2.5 at normal — two rows, then the carried half makes three).
+    app.cfg.editor.scroll_accel = .normal;
+    app.now_ms += 1000;
+    try at.wheel(&app, r, .scroll_down);
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 3), app.tree.cursor);
+    app.now_ms += 8;
+    try at.wheel(&app, r, .scroll_down);
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 5), app.tree.cursor);
+    app.now_ms += 8;
+    try at.wheel(&app, r, .scroll_down);
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 8), app.tree.cursor);
+}
+
+test "a context menu taller than the screen: the wheel scrolls it a row per event, the border says which way the rest lies, End reaches the last row, a scrolled row's hit names its item" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 14 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.render();
+    // The editor body's menu has more rows than a 14-row screen holds.
+    try press(&app, 20, 5, .right);
+    try release(&app, 20, 5);
+    try std.testing.expect(app.overlay == .menu);
+    const total = app.overlay.menu.items.len;
+    try std.testing.expect(total > 12);
+    try app.render();
+    const rowOf = struct {
+        fn f(a: *App, idx: usize) ?Rect {
+            for (a.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 0 and h.target.menu_item.idx == idx) return h.rect;
+            return null;
+        }
+    };
+    const screen_mod = @import("../ipc/screen.zig");
+    try std.testing.expect(rowOf.f(&app, 0) != null);
+    try std.testing.expect(rowOf.f(&app, total - 1) == null);
+    var text = try screen_mod.toTestText(std.testing.allocator, &app.screen);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\u{2193}") != null);
+    std.testing.allocator.free(text);
+    // Two wheel events over a row: two items off the top.
+    const first = rowOf.f(&app, 0).?;
+    app.now_ms += 1000;
+    for (0..2) |_| try app.handle(.{ .mouse = .{ .x = first.x + 2, .y = first.y + 1, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 2), app.overlay.menu.scroll);
+    try app.render();
+    try std.testing.expect(rowOf.f(&app, 0) == null);
+    try std.testing.expect(rowOf.f(&app, 2) != null);
+    text = try screen_mod.toTestText(std.testing.allocator, &app.screen);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\u{2195}") != null);
+    std.testing.allocator.free(text);
+    // End: the cursor on the last row, the window pulled after it.
+    try app.handle(.{ .key = Key.named(.end) });
+    try app.render();
+    try std.testing.expectEqual(total - 1, app.overlay.menu.cursor);
+    const last = rowOf.f(&app, total - 1).?;
+    try std.testing.expect(app.hits.at(last.x + 1, last.y).?.menu_item.idx == total - 1);
+    text = try screen_mod.toTestText(std.testing.allocator, &app.screen);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\u{2191}") != null);
+    std.testing.allocator.free(text);
+}
+
+test "a scrollbar drag keeps steering off the bar until the release: the help box" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"view.help" });
+    try app.render();
+    const track = scrollbarTrackOf(&app, .{ .pane = HelpUi.scrollbar_owner }).?;
+    try press(&app, track.x, track.y + track.h - 1, .left);
+    try std.testing.expect(app.overlay.help.scroll > 0);
+    try std.testing.expect(app.drag != null and app.drag.? == .bar);
+    // The pointer wanders off the bar; the drag still lands the view by its row.
+    try dragTo(&app, track.x -| 5, track.y);
+    try std.testing.expectEqual(@as(usize, 0), app.overlay.help.scroll);
+    try release(&app, track.x -| 5, track.y);
+    try std.testing.expect(app.drag == null);
+}

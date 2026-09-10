@@ -1,0 +1,35 @@
+# The wheel over a terminal pane whose child is not tracking the mouse
+# scrolls the scrollback a line per notch (Rust's `scroll_history`):
+# two hundred lines from `seq`, the pane the whole screen, showing the
+# tail; ten notches up bring line 200 off and the lines above in; ten
+# down bring it back. (A child that tracks the mouse gets the reports
+# instead — `src/app/pty_pane.zig`'s wheel test covers that.)
+command view.toggle_tree
+ex term seq 1 200; sleep 30
+# The tab is titled by the command line, which names 200 itself.
+ex rename tail
+wait 1500
+expect screen contains "200"
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+scroll 20 20 up
+expect screen lacks "200"
+expect screen contains "185"
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+expect screen contains "200"

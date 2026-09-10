@@ -704,8 +704,8 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             continue;
         }
         var one: [1]Size = undefined;
-        const sizes: []const Size = if (header.width) |w| blk: {
-            one[0] = .{ .cols = w, .rows = content_size.rows };
+        const sizes: []const Size = if (header.width != null or header.height != null) blk: {
+            one[0] = .{ .cols = header.width orelse content_size.cols, .rows = header.height orelse content_size.rows };
             break :blk &one;
         } else opts.sizes;
         for (sizes) |size| {
