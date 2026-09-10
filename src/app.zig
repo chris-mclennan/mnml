@@ -2359,6 +2359,7 @@ test {
     _ = @import("app/integrations.zig");
     _ = @import("app/integrations_tools.zig");
     _ = @import("app/setup.zig");
+    _ = @import("app/markdown_links.zig");
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");

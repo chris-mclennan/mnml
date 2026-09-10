@@ -156,6 +156,7 @@ const runner_tables = .{
     @import("../app/integrations.zig"),
     @import("../app/integrations_tools.zig"),
     @import("../app/setup.zig"),
+    @import("../app/markdown_links.zig"),
     @import("../app/marketplace.zig"),
     @import("../app/launchers.zig"),
     @import("../app/files_pane.zig"),
