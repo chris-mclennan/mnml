@@ -37,7 +37,7 @@ pub fn main(init: std.process.Init) !u8 {
     const arena = arena_state.allocator();
     const args = try init.minimal.args.toSlice(arena);
     var stdout_buf: [8192]u8 = undefined;
-    var stdout_file: Io.File.Writer = .init(.stdout(), init.io, &stdout_buf);
+    var stdout_file: Io.File.Writer = .initStreaming(.stdout(), init.io, &stdout_buf);
     const w = &stdout_file.interface;
     defer w.flush() catch {};
     if (args.len >= 4 and std.mem.eql(u8, args[1], "bake")) {

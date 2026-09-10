@@ -492,14 +492,14 @@ pub fn main(init: std.process.Init) !u8 {
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--version")) {
             var buf: [128]u8 = undefined;
-            var w: Io.File.Writer = .init(.stdout(), io, &buf);
+            var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
             try w.interface.print("mnml-fake-dap {s}\n", .{version});
             try w.interface.flush();
             return 0;
         }
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
-            var w: Io.File.Writer = .init(.stdout(), io, &buf);
+            var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
             try w.interface.writeAll("mnml-fake-dap: a deterministic Debug Adapter over stdio (see tools/fake_dap/README.md)\n");
             try w.interface.flush();
             return 0;

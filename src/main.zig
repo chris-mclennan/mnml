@@ -34,7 +34,7 @@ pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(arena_state.allocator());
 
     var out_buf: [4096]u8 = undefined;
-    var out: Io.File.Writer = .init(.stdout(), io, &out_buf);
+    var out: Io.File.Writer = .initStreaming(.stdout(), io, &out_buf);
     const w = &out.interface;
 
     // The git worker's editor child modes (`src/git/sequence_editor.zig`):
@@ -42,7 +42,7 @@ pub fn main(init: std.process.Init) !u8 {
     // <queue> <target>` and reads only the exit code.
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "--rebase-todo") or std.mem.eql(u8, args[1], "--commit-msg"))) {
         var err_buf: [1024]u8 = undefined;
-        var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
+        var err_w: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
         const mode: sequence_editor.Mode = if (std.mem.eql(u8, args[1], "--rebase-todo")) .todo else .commit_msg;
         const code = sequence_editor.childMain(io, gpa, mode, args[2..], &err_w.interface);
         err_w.interface.flush() catch {};
@@ -214,7 +214,7 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
 /// The HTTP client's subcommands, when `verb` is one of them.
 fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: []const u8, rest: []const [:0]const u8, w: *Io.Writer) ?u8 {
     var err_buf: [4096]u8 = undefined;
-    var err_file: Io.File.Writer = .init(.stderr(), io, &err_buf);
+    var err_file: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
     const std_: http_cli.Std = .{ .out = w, .err = &err_file.interface };
     var argv_buf: [64][]const u8 = undefined;
     const n = @min(rest.len, argv_buf.len);

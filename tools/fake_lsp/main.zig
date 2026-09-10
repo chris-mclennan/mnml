@@ -601,14 +601,14 @@ pub fn main(init: std.process.Init) !u8 {
         const a = args[i];
         if (std.mem.eql(u8, a, "--version")) {
             var buf: [128]u8 = undefined;
-            var w: Io.File.Writer = .init(.stdout(), io, &buf);
+            var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
             try w.interface.print("mnml-fake-lsp {s}\n", .{version});
             try w.interface.flush();
             return 0;
         }
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
-            var w: Io.File.Writer = .init(.stdout(), io, &buf);
+            var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
             try w.interface.writeAll("mnml-fake-lsp [--log PATH]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
             try w.interface.flush();
             return 0;
