@@ -1352,12 +1352,14 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // Highlighting: every frame folds the edits since the last one into
     // the tree and slides the cached spans along, so what is painted
     // lines up with the text; the reparse itself waits for the idle
-    // gate — or runs at once for a first parse or a lost log.
+    // gate (`Syntax.parseDue`) — a small file's first parse runs at
+    // once, a large file's first frame paints unhighlighted rather than
+    // wait on it. A structural query that already parsed the current
+    // text (the outline, a text object) leaves nothing to do.
     if (e.syntax.dirty and e.syntax.since_ms == null) e.syntax.since_ms = app.now_ms;
-    const lost = e.syntax.absorb(ed);
-    const due = e.syntax.dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.syntax.since_ms.? >= syntax.idle_ms);
-    if (due) {
-        try e.syntax.refresh(ed);
+    _ = e.syntax.absorb(ed);
+    if (e.syntax.dirty and (e.syntax.isCurrent() or e.syntax.parseDue(app.now_ms, ed.len()))) {
+        if (!e.syntax.isCurrent()) try e.syntax.refresh(ed);
         e.syntax.dirty = false;
         e.syntax.since_ms = null;
     }
