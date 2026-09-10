@@ -1217,10 +1217,16 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 if (idx < rows.len) try openRow(app, rows[idx]);
             }
         },
-        .scroll_up => st.panel.cursor -|= 3,
-        .scroll_down => st.panel.cursor += 3,
         else => {},
     }
+}
+
+/// The wheel over the list moves the cursor `rows` rows.
+pub fn wheel(app: *App, down: bool, rows: usize) Allocator.Error!void {
+    const st = &app.lsp;
+    const n = (try panelRows(app, app.frame.allocator())).len;
+    st.panel.cursor = if (down) @min(st.panel.cursor + rows, n -| 1) else st.panel.cursor -| rows;
+    app.needs_render = true;
 }
 
 /// The severity chip: a click cycles the filter; a right-click lists

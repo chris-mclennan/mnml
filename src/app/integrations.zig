@@ -1565,10 +1565,16 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 runToast(app, activate(app, idx));
             }
         },
-        .scroll_up => st.panel.cursor -|= 1,
-        .scroll_down => st.panel.cursor = @min(st.panel.cursor + 1, st.panel.total -| 1),
         else => {},
     }
+    app.needs_render = true;
+}
+
+/// The wheel over the list moves the cursor `rows` entries (Rust
+/// scrolls three cells per unit — one entry).
+pub fn wheel(app: *App, down: bool, rows: usize) void {
+    const st = &app.integrations;
+    st.panel.cursor = if (down) @min(st.panel.cursor + rows, st.panel.total -| 1) else st.panel.cursor -| rows;
     app.needs_render = true;
 }
 

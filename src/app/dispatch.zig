@@ -70,6 +70,8 @@ const statusline_app = @import("statusline.zig");
 const layout_mod = @import("layout.zig");
 const select = @import("../editor/select.zig");
 const scrollbar = @import("../ui/scrollbar.zig");
+const scroll_mod = @import("scroll.zig");
+const hit_mod = @import("../ui/hit.zig");
 const statusline = @import("../ui/statusline.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const cmd_term = @import("cmd_term.zig");
@@ -830,6 +832,7 @@ fn menuHover(app: *App, m: Mouse) Allocator.Error!void {
 fn menuMove(m: *app_mod.MenuState, delta: i32) void {
     const last: i64 = @as(i64, @intCast(m.items.len)) - 1;
     if (last < 0) return;
+    m.follow = .cursor;
     if (!m.highlight) {
         m.highlight = true;
         return;
@@ -842,6 +845,7 @@ fn menuMove(m: *app_mod.MenuState, delta: i32) void {
 fn subMove(sub: *app_mod.MenuState.SubMenu, delta: i32) void {
     const last: i64 = @as(i64, @intCast(sub.items.len)) - 1;
     if (last < 0) return;
+    sub.follow = .cursor;
     if (!sub.highlight) {
         sub.highlight = true;
         return;
@@ -1409,12 +1413,45 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         }
     }
     const wheel = m.kind == .scroll_up or m.kind == .scroll_down;
+    const down = m.kind == .scroll_down;
     // A notch on a pane's tab-strip row (a gap between tabs falls through
     // to the pane) scrolls the strip, not the buffer.
     if (wheel and target == .pane) {
         if (!app.zen) if (hitRect(app, m.x, m.y)) |r| if (r.h >= 2 and m.y == r.y) {
-            if (app.layouts.current().leafOf(target.pane)) |lid| return tabStripStepLid(app, lid, if (m.kind == .scroll_down) 1 else -1);
+            if (wheelLines(app, count) == 0) return;
+            if (app.layouts.current().leafOf(target.pane)) |lid| return tabStripStepLid(app, lid, if (down) 1 else -1);
         };
+    }
+    // The wheel over a surface that scrolls as one list — a panel's
+    // rows, kebabs and bar, the tree's bar, the git rail's parts, an
+    // open menu's rows — is routed here, so every way into a surface
+    // moves it the same and the batch is budgeted once.
+    if (wheel) {
+        switch (target) {
+            .row => |pr| return panelWheel(app, pr.panel, down, count),
+            .kebab => |pr| return panelWheel(app, pr.panel, down, count),
+            .git_palette => return panelWheel(app, .git, down, count),
+            .scrollbar => |sb| switch (sb.owner) {
+                .panel => |p| return panelWheel(app, p, down, count),
+                .tree => return treeWheel(app, m, count),
+                .pane => |id| {
+                    // The help box's and the picker's bars take the wheel
+                    // as their rows do; any other pane's bar scrolls the pane.
+                    if (id == HelpUi.scrollbar_owner and app.overlay == .help) return help_app.wheel(app, signed(down, count));
+                    if (id == Picker.scrollbar_owner and app.overlay == .picker) {
+                        const p = &app.overlay.picker;
+                        Picker.wheel(&p.state, signed(down, app.cfg.ui.wheel_lines * count), p.filtered.items.len);
+                        return cmd_picker.preview(app);
+                    }
+                    return wheelOnPane(app, id, m, count);
+                },
+            },
+            // An open menu takes the wheel before anything under it (Rust
+            // 1ef21198): a row per event; the paint clamps and pulls the
+            // cursor along.
+            .menu_item => |mi| if (app.overlay == .menu) return menuWheel(app, mi.menu, down, count),
+            else => {},
+        }
     }
     switch (target) {
         // The list panels (D6): one prong per hit kind, routed by panel.
@@ -1469,54 +1506,23 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .scripts => scripts_panel.filterMouse(app, m),
             .outline => {},
         },
-        .scrollbar => |sb| switch (sb.owner) {
-            .panel => |p| switch (p) {
-                .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
-                .notes => if (hitRect(app, m.x, m.y)) |r| notes.scrollbarMouse(app, r, m),
-                .findings => if (hitRect(app, m.x, m.y)) |r| findings.scrollbarMouse(app, r, m),
-                .debug => if (hitRect(app, m.x, m.y)) |r| debug_panel.scrollbarMouse(app, r, m),
-                .sessions => if (hitRect(app, m.x, m.y)) |r| sessions.scrollbarMouse(app, r, m),
-                .git => if (hitRect(app, m.x, m.y)) |r| git_palette.scrollbarMouse(app, r, m),
-                .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
-                .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
-                .integrations => if (hitRect(app, m.x, m.y)) |r| integrations.scrollbarMouse(app, r, m),
-                .scripts => if (hitRect(app, m.x, m.y)) |r| scripts_panel.scrollbarMouse(app, r, m),
-                .outline => {},
-            },
-            .pane => |id| {
-                // The picker's bar: the wheel walks the cursor, a press
-                // on the track jumps the list to that fraction.
-                if (id == HelpUi.scrollbar_owner and app.overlay == .help) {
-                    if (wheel) {
-                        const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
-                        help_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
-                    } else if (m.kind == .press and m.button == .left) {
-                        const track = hitRect(app, m.x, m.y) orelse return;
-                        const h = &app.overlay.help;
-                        if (track.h > 0) h.scroll = @min((@as(usize, m.y - track.y) * h.line_count) / track.h, h.line_count -| h.body_rows);
-                        app.needs_render = true;
-                    }
-                    return;
-                }
-                if (id == Picker.scrollbar_owner and app.overlay == .picker) {
-                    const p = &app.overlay.picker;
-                    if (wheel) {
-                        const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
-                        Picker.wheel(&p.state, if (m.kind == .scroll_down) lines else -lines, p.filtered.items.len);
-                    } else if (m.kind == .press and m.button == .left) {
-                        const track = hitRect(app, m.x, m.y) orelse return;
-                        const n = p.filtered.items.len;
-                        if (track.h > 0 and n > 0) p.state.cursor = @min((@as(usize, m.y - track.y) * n) / track.h, n - 1);
-                    }
-                    cmd_picker.preview(app);
-                    return;
-                }
-                if (wheel) return wheelOnPane(app, id, m, count);
-                if (m.kind != .press or m.button != .left) return;
-                const track = hitRect(app, m.x, m.y) orelse return;
-                try beginScrollbarDrag(app, id, track, m.y);
-            },
-            .tree => if (hitRect(app, m.x, m.y)) |r| app.tree.scrollbarMouse(app, r, m),
+        .scrollbar => |sb| {
+            // A press on a bar lands the view at the pointer's row and
+            // starts a drag that keeps steering it off the bar until
+            // the release (`Drag.bar`); the editor's thumb keeps the
+            // row it was grabbed by instead.
+            const track = hitRect(app, m.x, m.y) orelse return;
+            const grab = m.kind == .press and m.button == .left;
+            switch (sb.owner) {
+                .panel => |p| panelScrollbar(app, p, track, m),
+                .tree => app.tree.scrollbarMouse(app, track, m),
+                .pane => |id| {
+                    if (!grab) return;
+                    if (app.panes.editor(id) != null) return beginScrollbarDrag(app, id, track, m.y);
+                    try paneBarJump(app, id, track, m.y);
+                },
+            }
+            if (grab) app.drag = .{ .bar = sb.owner };
         },
         // A section header folds on a press; Alt folds or opens every
         // directory inside the primary with it (Rust `tree_toggle`).
@@ -1553,7 +1559,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .info_view => |part| {
             if (m.kind == .press and app.overlay != .none and part != .kebab) closeOverlay(app);
-            try info_view_app.mouse(app, part, m);
+            try info_view_app.mouse(app, part, m, count);
         },
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
@@ -1669,20 +1675,17 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .overlay_item => |i| {
             // The wheel over the Settings box scrolls its list; over the
             // picker it walks the cursor, as Rust's does.
-            if (wheel and app.overlay == .settings) {
-                const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
-                return settings_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
-            }
+            // A row per wheel event for the Settings and help boxes,
+            // `wheel_lines` rows per event for the picker (Rust's three)
+            // — none budgeted: a detent on ghostty is three events, and
+            // that is the motion Rust's users have.
+            if (wheel and app.overlay == .settings) return settings_app.wheel(app, signed(down, count));
             if (wheel and app.overlay == .picker) {
-                const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
-                Picker.wheel(&app.overlay.picker.state, if (m.kind == .scroll_down) lines else -lines, app.overlay.picker.filtered.items.len);
+                Picker.wheel(&app.overlay.picker.state, signed(down, app.cfg.ui.wheel_lines * count), app.overlay.picker.filtered.items.len);
                 cmd_picker.preview(app);
                 return;
             }
-            if (wheel and app.overlay == .help) {
-                const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
-                return help_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
-            }
+            if (wheel and app.overlay == .help) return help_app.wheel(app, signed(down, count));
             if (m.kind != .press) return;
             // // changed (lua-track): right-click on a palette row — Run,
             // Bind in init.lua…, Copy id.
@@ -1732,7 +1735,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 }
                 const r = hitRect(app, m.x, m.y) orelse return;
                 const strip: u16 = if (r.h >= 2) 1 else 0;
-                pty_pane.mouse(app, p, m, .{ .x = r.x, .y = r.y + strip });
+                // A wheel batch reaches the child as the reports it was
+                // — one per event, never budgeted: the child owns its
+                // scrolling and asked for every report.
+                var reps: u16 = if (wheel) @max(count, 1) else 1;
+                while (reps > 0) : (reps -= 1) pty_pane.mouse(app, p, m, .{ .x = r.x, .y = r.y + strip });
                 return;
             }
             if (wheel) return wheelOnPane(app, id, m, count);
@@ -1752,7 +1759,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // A mount forwards the wheel and the pointer; the rest of
             // the panes only hear presses.
             if (app.panes.get(sh.pane)) |mp_pane| if (mp_pane.asMount()) |mp| {
-                if (wheel) return mount_pane.wheel(mp, sh.id, m, hitRect(app, m.x, m.y), count);
+                if (wheel) {
+                    const lines = wheelLines(app, count);
+                    if (lines == 0) return;
+                    return mount_pane.wheel(mp, sh.id, m, hitRect(app, m.x, m.y), lines);
+                }
                 if (m.kind == .motion) return mount_pane.hover(mp, sh.id, m, hitRect(app, m.x, m.y));
             };
             if (wheel) return wheelOnPane(app, sh.pane, m, count);
@@ -2189,36 +2200,59 @@ fn extendSelection(app: *App, sel: anytype, x: u16, y: u16) void {
 
 // ── wheel ──
 
-/// The wheel scrolls the pane under the pointer, `wheel_lines` per
-/// notch: vim moves the cursor (the view follows), standard moves the
-/// viewport and pins it there until the cursor moves. Shift scrolls
-/// sideways.
+/// The lines the batch under dispatch may move: the count through the
+/// accel curve and the bucket (`scroll.Accel`), spent once per
+/// dispatch — a second ask in the same dispatch reads the answer.
+/// Zero is a dry bucket at `scroll_accel = off`; the arm moves nothing.
+fn wheelLines(app: *App, count: u16) u16 {
+    if (app.wheel_budget) |b| return b;
+    const b = app.accel.apply(app.cfg.editor.scroll_accel, @max(count, 1), app.now_ms);
+    app.wheel_budget = b;
+    return b;
+}
+
+fn signed(down: bool, n: u16) isize {
+    const v: isize = @intCast(n);
+    return if (down) v else -v;
+}
+
+/// The wheel scrolls the pane under the pointer. A text body — the
+/// editor, a markdown preview, a diff — moves `wheel_lines` lines per
+/// budgeted event (Rust's editor gain of three); every list moves a
+/// row per event. In the editor `wheel_moves_cursor` decides: the
+/// cursor moves and the view follows, or the view moves and pins
+/// until the cursor does. Shift scrolls sideways.
 fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void {
     const pane = app.panes.get(id) orelse return;
-    const n: usize = @as(usize, app.cfg.ui.wheel_lines) * @max(count, 1);
+    const lines = wheelLines(app, count);
+    if (lines == 0) return;
+    const n: usize = lines;
+    const gain: usize = @max(app.cfg.ui.wheel_lines, 1);
     const down = m.kind == .scroll_down;
     switch (pane.*) {
         .editor => |*e| {
             const ed = e.buf.editor;
+            const ln = n * gain;
             if (m.mods.shift) {
                 const cur: usize = e.view.scroll_col;
-                e.view.scroll_col = @intCast(if (down) cur + n else cur -| n);
+                e.view.scroll_col = @intCast(if (down) cur + ln else cur -| ln);
                 e.view.pinAt(ed.cursor);
                 return;
             }
-            if (e.buf.input.mode() != .none) {
+            if (app.cursorFollowsWheel()) {
                 var i: usize = 0;
-                while (i < n) : (i += 1) _ = try app.applyOps(e, &.{if (down) .move_down else .move_up});
+                while (i < ln) : (i += 1) _ = try app.applyOps(e, &.{if (down) .move_down else .move_up});
                 return;
             }
             const max: i64 = @intCast(ed.lineCount() -| 1);
             const cur: i64 = e.view.scroll_line;
-            const delta: i64 = @intCast(n);
+            const delta: i64 = @intCast(ln);
             e.view.scroll_line = @intCast(std.math.clamp(if (down) cur + delta else cur - delta, 0, max));
             e.view.pinAt(ed.cursor);
         },
+        // Rust's cheatsheet steps one row a batch.
         .cheatsheet => |*c| {
-            c.selected = if (down) c.selected + n else c.selected -| n;
+            c.selected = if (down) c.selected + 1 else c.selected -| 1;
         },
         .script => |*s| script_pane.wheel(app, s, down, n),
         .list => |*l| {
@@ -2228,11 +2262,11 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .outline => |*o| {
             o.cursor = if (down) @min(o.cursor + n, o.items.items.len -| 1) else o.cursor -| n;
         },
-        .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .md_preview => |*mp| md_preview.scrollBy(app, mp, signed(down, @intCast(n * gain))),
         .zon => |*z| zon_pane.wheel(app, z, down, n),
-        .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .pty => |*p| p.scrollBy(signed(down, @intCast(n))),
         .git_status => |*s| git_app.statusPaneWheel(app, s, down, n),
-        .diff => |*d| git_app.stepDiff(d, if (down) @as(isize, @intCast(n)) else -@as(isize, @intCast(n))),
+        .diff => |*d| git_app.stepDiff(d, signed(down, @intCast(n * gain))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.totalRows() -| 1) else g.cursor -| n,
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .sessions_table => |*tp| sessions_table.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
@@ -2249,9 +2283,135 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
-        .files => |*f| files_pane.scrollBy(f, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .files => |*f| files_pane.scrollBy(f, signed(down, scroll_mod.listStep(lines, app.cfg.editor.scroll_accel))),
         .image => {},
     }
+}
+
+/// The wheel over a panel: the budgeted count, clamped to the list
+/// cap for the setting (Rust `list_scroll_clamp_scaled`), moves the
+/// panel's cursor or window that many rows.
+fn panelWheel(app: *App, panel: hit_mod.PanelId, down: bool, count: u16) Allocator.Error!void {
+    const lines = wheelLines(app, count);
+    if (lines == 0) return;
+    const rows: usize = scroll_mod.listStep(lines, app.cfg.editor.scroll_accel);
+    switch (panel) {
+        .todos => todos.wheel(app, down, rows),
+        .notes => notes.wheel(app, down, rows),
+        .findings => findings.wheel(app, down, rows),
+        .sessions => sessions.wheel(app, down, rows),
+        .debug => debug_panel.wheel(app, down, rows),
+        .git => git_palette.wheel(app, down, rows),
+        // Rust's diagnostics pane moves the selection by the budgeted
+        // count, unclamped.
+        .diagnostics => try lsp.wheel(app, down, lines),
+        .http => http_panel.wheel(app, down, rows),
+        .integrations => integrations.wheel(app, down, rows),
+        .scripts => try scripts_panel.wheel(app, down, rows),
+        .outline => if (app.outline_panel) |id| try wheelOnPane(app, id, .{ .x = 0, .y = 0, .kind = if (down) .scroll_down else .scroll_up }, count),
+    }
+}
+
+/// A press or drag on a panel's scrollbar: the panel lands its cursor
+/// at the pointer's fraction of the track.
+fn panelScrollbar(app: *App, panel: hit_mod.PanelId, track: Rect, m: Mouse) void {
+    switch (panel) {
+        .todos => todos.scrollbarMouse(app, track, m),
+        .notes => notes.scrollbarMouse(app, track, m),
+        .findings => findings.scrollbarMouse(app, track, m),
+        .debug => debug_panel.scrollbarMouse(app, track, m),
+        .sessions => sessions.scrollbarMouse(app, track, m),
+        .git => git_palette.scrollbarMouse(app, track, m),
+        .diagnostics => lsp.scrollbarMouse(app, track, m),
+        .http => http_panel.scrollbarMouse(app, track, m),
+        .integrations => integrations.scrollbarMouse(app, track, m),
+        .scripts => scripts_panel.scrollbarMouse(app, track, m),
+        .outline => {},
+    }
+}
+
+/// A press or drag on a pane's scrollbar (not the editor's, which has
+/// its thumb grab): the pointer's row on the track, as a fraction of
+/// the content, becomes the view's position — the cursor for a list
+/// that derives its window from it (Rust's `set_pane_scroll`), the
+/// scroll for a text body.
+fn paneBarJump(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Error!void {
+    if (track.h == 0) return;
+    const off: usize = y -| track.y;
+    const h: usize = track.h;
+    if (id == HelpUi.scrollbar_owner and app.overlay == .help) {
+        const st = &app.overlay.help;
+        st.scroll = @min((off * st.line_count) / h, st.line_count -| st.body_rows);
+        app.needs_render = true;
+        return;
+    }
+    if (id == Picker.scrollbar_owner and app.overlay == .picker) {
+        const p = &app.overlay.picker;
+        const n = p.filtered.items.len;
+        if (n > 0) p.state.cursor = @min((off * n) / h, n - 1);
+        cmd_picker.preview(app);
+        return;
+    }
+    const pane = app.panes.get(id) orelse return;
+    switch (pane.*) {
+        .outline => |*o| {
+            const n = o.items.items.len;
+            if (n > 0) o.cursor = @min((off * n) / h, n - 1);
+        },
+        .md_preview => |*mp| {
+            const total = mp.total_rows;
+            mp.scroll = @min((off * total) / h, total -| @max(app.pane_rows, 1));
+        },
+        .zon => |*z| {
+            const total = z.rows.len;
+            z.scroll = @min((off * total) / h, total -| @max(z.rows_h, 1));
+        },
+        .git_status => |*s| {
+            const n = git_app.statusFlatLen(app);
+            if (n == 0) return;
+            const target: isize = @intCast(@min((off * n) / h, n - 1));
+            git_app.moveStatusCursor(s, n, target - @as(isize, @intCast(s.cursor)));
+        },
+        .grep => |*g| {
+            const n = g.rows.items.len;
+            if (n == 0) return;
+            const target: i64 = @intCast(@min((off * n) / h, n - 1));
+            grep.scrollBy(g, target - @as(i64, @intCast(g.cursor)));
+        },
+        else => {},
+    }
+    if (app.active != id) app.showPane(id);
+    app.needs_render = true;
+}
+
+/// A drag that started on a bar keeps steering it: the pointer's row
+/// against the bar's track (wherever the pointer is now).
+fn barDrag(app: *App, owner: hit_mod.Owner, m: Mouse) Allocator.Error!void {
+    if (m.kind != .drag) return;
+    const track = scrollbarTrackOf(app, owner) orelse return;
+    switch (owner) {
+        .panel => |p| panelScrollbar(app, p, track, m),
+        .tree => app.tree.scrollbarMouse(app, track, m),
+        .pane => |id| try paneBarJump(app, id, track, m.y),
+    }
+}
+
+/// The wheel over an open menu's rows: `count` rows (a row per event);
+/// the paint clamps the window to the list and pulls the cursor along.
+fn menuWheel(app: *App, menu_id: u32, down: bool, count: u16) void {
+    const menu = &app.overlay.menu;
+    const n: usize = @max(count, 1);
+    switch (menu_id) {
+        1, 3 => if (menu.sub) |*sub| {
+            sub.scroll = if (down) sub.scroll + n else sub.scroll -| n;
+            sub.follow = .window;
+        },
+        else => {
+            menu.scroll = if (down) menu.scroll + n else menu.scroll -| n;
+            menu.follow = .window;
+        },
+    }
+    app.needs_render = true;
 }
 
 // ── gestures ──
@@ -2279,13 +2439,15 @@ fn beginScrollbarDrag(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Erro
     const grab: u16 = if (th) |tt| (if (rel >= tt.start and rel < tt.start + tt.len) rel - tt.start else tt.len / 2) else 0;
     app.drag = .{ .scrollbar = .{ .pane = id, .grab = grab } };
     if (app.active != id) app.showPane(id);
-    dragScrollbar(app, id, grab, y);
+    try dragScrollbar(app, id, grab, y);
 }
 
-/// The thumb follows the pointer; the cursor stays where it is.
-fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) void {
+/// The thumb follows the pointer. Under `wheel_moves_cursor` the
+/// cursor goes to the row the thumb names (as the wheel would move
+/// it); otherwise the view moves and pins, the cursor stays.
+fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) Allocator.Error!void {
     const e = app.panes.editor(id) orelse return;
-    const track = scrollbarTrack(app, id) orelse return;
+    const track = scrollbarTrackOf(app, .{ .pane = id }) orelse return;
     const total = e.buf.editor.lineCount();
     const viewport = @max(app.pane_rows, 1);
     if (total <= viewport) return;
@@ -2293,25 +2455,38 @@ fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) void {
     const max_start = track.h - th.len;
     const start: u16 = @min((y -| track.y) -| grab, max_start);
     const max_scroll = total - viewport;
-    e.view.scroll_line = @intCast(if (max_start == 0) 0 else (@as(usize, start) * max_scroll) / max_start);
+    const line: usize = if (max_start == 0) 0 else (@as(usize, start) * max_scroll) / max_start;
+    if (app.cursorFollowsWheel()) {
+        e.view.pin = null;
+        _ = try app.applyOps(e, &.{.{ .move_to_line = @intCast(line + 1) }});
+        return;
+    }
+    e.view.scroll_line = @intCast(line);
     e.view.pinAt(e.buf.editor.cursor);
 }
 
-/// The wheel over the tree steps its cursor.
+/// The wheel over the tree steps its cursor one row per NOTCH: with
+/// acceleration off, a batch inside the 60 ms window of the last step
+/// is the same notch (ghostty reports a detent as three events) and
+/// moves nothing more; with it on, the rows come from the factor the
+/// batch earned (`scroll.Accel.treeRows`).
 fn treeWheel(app: *App, m: Mouse, count: u16) void {
+    if (m.kind != .scroll_up and m.kind != .scroll_down) return;
+    if (wheelLines(app, count) == 0) return;
+    const rows: usize = app.accel.treeRows(app.cfg.editor.scroll_accel, app.now_ms);
+    if (rows == 0) return;
     switch (m.kind) {
-        .scroll_up => app.tree.cursor -|= app.cfg.ui.wheel_lines * count,
-        .scroll_down => app.tree.cursor = @min(app.tree.cursor + app.cfg.ui.wheel_lines * count, app.tree.rows.items.len -| 1),
+        .scroll_up => app.tree.cursor -|= rows,
+        .scroll_down => app.tree.cursor = @min(app.tree.cursor + rows, app.tree.rows.items.len -| 1),
         else => {},
     }
+    app.needs_render = true;
 }
 
-fn scrollbarTrack(app: *App, id: PaneId) ?Rect {
+/// The vertical track the last frame painted for `owner`.
+fn scrollbarTrackOf(app: *App, owner: hit_mod.Owner) ?Rect {
     for (app.hits.items.items) |h| switch (h.target) {
-        .scrollbar => |sb| switch (sb.owner) {
-            .pane => |p| if (p == id and sb.axis == .v) return h.rect,
-            .panel, .tree => {},
-        },
+        .scrollbar => |sb| if (sb.axis == .v and std.meta.eql(sb.owner, owner)) return h.rect,
         else => {},
     };
     return null;
@@ -2347,7 +2522,8 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
                 if (e.buf.editor.anchor != null and e.buf.editor.anchor.? == e.buf.editor.cursor) e.buf.editor.anchor = null;
             };
         },
-        .scrollbar => |sb| dragScrollbar(app, sb.pane, sb.grab, m.y),
+        .scrollbar => |sb| try dragScrollbar(app, sb.pane, sb.grab, m.y),
+        .bar => |owner| try barDrag(app, owner, m),
         .dock => |*dd| return dock.continueDrag(app, dd, m),
         .tab => |*tb| {
             if (m.kind == .drag) {
@@ -3222,16 +3398,97 @@ test "wheel: a burst folds into one batch per tick; standard pins the view, vim 
     try app.render();
     try std.testing.expectEqual(@as(u32, 1), app.activeEditor().?.view.scroll_line);
     // A click between wheel events flushes the batch first, in order.
+    // (400 ms on: a fresh gesture, one notch, `wheel_lines` lines.)
+    app.now_ms += 400;
     try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
     try press(&app, 10, 3, .left);
     try std.testing.expect(app.wheel.pending == null);
     try std.testing.expectEqual(@as(u32, 4), app.activeEditor().?.view.scroll_line);
-    // vim: the cursor follows.
+    // vim: the cursor follows (`wheel_moves_cursor = auto`).
     try command.run(&app, .{ .static = .@"editor.use_vim" });
     try app.render();
+    app.now_ms += 400;
     try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
     try app.tick(app.now_ms);
     try std.testing.expectEqual(@as(usize, 8), app.activeEditor().?.buf.editor.currentLine());
+    // A turn the other way flushes the batch in front of it and is not
+    // dispatched raw: it starts the next batch, flushed at the tick.
+    app.now_ms += 400;
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_up } });
+    try std.testing.expectEqual(@as(usize, 11), app.activeEditor().?.buf.editor.currentLine());
+    try std.testing.expect(app.wheel.pending.?.mouse.kind == .scroll_up);
+    app.now_ms += 400;
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 8), app.activeEditor().?.buf.editor.currentLine());
+}
+
+test "wheel: the batch is budgeted through scroll_accel — a fast second notch travels further under normal, 1:1 under off" {
+    for ([_]app_mod.Config.ScrollAccel{ .normal, .off }, [_]u32{ 6, 3 }) |setting, second| {
+        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+        defer app.deinit();
+        app.tree.visible = false;
+        app.cfg.editor.scroll_accel = setting;
+        _ = try app.openScratch();
+        var text: std.ArrayListUnmanaged(u8) = .empty;
+        defer text.deinit(std.testing.allocator);
+        for (0..100) |i| try text.print(std.testing.allocator, "L{d}\n", .{i});
+        try app.activeEditor().?.buf.editor.setText(text.items);
+        try app.render();
+        // The first notch of a gesture is 1:1 at every setting.
+        app.now_ms += 1000;
+        try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+        try app.tick(app.now_ms);
+        try std.testing.expectEqual(@as(u32, 3), app.activeEditor().?.view.scroll_line);
+        // 8 ms on (≈125 events/s): normal's factor is 2.5 — two lines
+        // (the half carries), times the editor gain of three.
+        app.now_ms += 8;
+        try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+        try app.tick(app.now_ms);
+        try std.testing.expectEqual(3 + second, app.activeEditor().?.view.scroll_line);
+    }
+}
+
+test "wheel_moves_cursor: always moves the cursor in standard, never pins the view in vim; a scrollbar drag follows the same rule" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (0..100) |i| try text.print(std.testing.allocator, "L{d}\n", .{i});
+    try app.activeEditor().?.buf.editor.setText(text.items);
+    try app.render();
+    // Standard + always: the cursor rides the wheel.
+    app.cfg.editor.wheel_moves_cursor = .always;
+    app.now_ms += 1000;
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 3), app.activeEditor().?.buf.editor.currentLine());
+    try std.testing.expect(app.activeEditor().?.view.pin == null);
+    // vim + never: the view moves and pins, the cursor stays.
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    app.cfg.editor.wheel_moves_cursor = .never;
+    try app.render();
+    app.now_ms += 1000;
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 3), app.activeEditor().?.buf.editor.currentLine());
+    try std.testing.expectEqual(@as(u32, 3), app.activeEditor().?.view.scroll_line);
+    try std.testing.expect(app.activeEditor().?.view.pin != null);
+    // The scrollbar: a press half-way down the track under `never`
+    // moves the view, not the cursor; under `always` the cursor goes.
+    try app.render();
+    const track = scrollbarTrackOf(&app, .{ .pane = app.active.? }).?;
+    try press(&app, track.x, track.y + track.h / 2, .left);
+    try std.testing.expectEqual(@as(usize, 3), app.activeEditor().?.buf.editor.currentLine());
+    try std.testing.expect(app.activeEditor().?.view.scroll_line > 20);
+    try release(&app, track.x, track.y + track.h / 2);
+    app.cfg.editor.wheel_moves_cursor = .always;
+    try app.render();
+    try press(&app, track.x, track.y + track.h / 2, .left);
+    try std.testing.expect(app.activeEditor().?.buf.editor.currentLine() > 20);
+    try release(&app, track.x, track.y + track.h / 2);
 }
 
 test "editor clicks: one places the cursor, two select the word, three the line; shift extends; drag selects" {

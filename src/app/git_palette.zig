@@ -1233,8 +1233,6 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 else => {},
             }
         },
-        .scroll_up => st.scroll -|= 3,
-        .scroll_down => st.scroll = @min(st.scroll + 3, st.total -| st.visible),
         else => {},
     }
     app.needs_render = true;
@@ -1291,8 +1289,6 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
             // The cursor follows so the paint's clamp keeps the scroll.
             st.cursor = @min(@max(st.cursor, st.scroll), st.scroll + st.visible -| 1);
         },
-        .scroll_up => st.scroll -|= 3,
-        .scroll_down => st.scroll = @min(st.scroll + 3, max),
         else => {},
     }
     app.needs_render = true;
@@ -1300,9 +1296,9 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
 
 /// The wheel anywhere over the palette. The cursor stays inside the
 /// window so the paint's clamp does not pull the scroll back.
-pub fn wheel(app: *App, down: bool) void {
+pub fn wheel(app: *App, down: bool, n: usize) void {
     const st = &app.git_palette;
-    if (down) st.scroll = @min(st.scroll + 3, st.total -| st.visible) else st.scroll -|= 3;
+    if (down) st.scroll = @min(st.scroll + n, st.total -| st.visible) else st.scroll -|= n;
     st.cursor = @min(@max(st.cursor, st.scroll), st.scroll + st.visible -| 1);
     app.needs_render = true;
 }

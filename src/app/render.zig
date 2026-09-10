@@ -1615,12 +1615,14 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
     if (inner.isEmpty()) return;
     const parent_row = paintMenuRows(ui, inner, .{
         .items = m.items,
-        .cursor = if (m.highlight) m.cursor else null,
+        .cursor = if (m.highlight) &m.cursor else null,
+        .scroll = &m.scroll,
+        .follow = m.follow,
         .menu_id = 0,
         .kebab = m.curatable and m.sub == null,
         .dropdown = m.dropdown,
     });
-    const sub = &(m.sub orelse return);
+    const sub = if (m.sub) |*s| s else return;
     // The child: a context menu's hangs from the parent row (its first
     // row one below it), a dropdown's lines its first row up with it.
     const child = menuSize(ui, null, sub.items, m.dropdown);
@@ -1636,7 +1638,9 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
     if (cinner.isEmpty()) return;
     _ = paintMenuRows(ui, cinner, .{
         .items = sub.items,
-        .cursor = if (sub.highlight) sub.cursor else null,
+        .cursor = if (sub.highlight) &sub.cursor else null,
+        .scroll = &sub.scroll,
+        .follow = sub.follow,
         .menu_id = 1,
         .kebab = m.curatable,
         .dropdown = m.dropdown,
@@ -1699,15 +1703,79 @@ fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, dropdow
 const RowsProps = struct {
     items: []const command.MenuItem,
     /// The highlighted row; null paints every row plain.
-    cursor: ?usize,
+    cursor: ?*usize,
+    /// The first item painted; clamped here so the window is never
+    /// short of rows while rows are left, then reconciled with the
+    /// cursor per `follow`.
+    scroll: *usize,
+    follow: app_mod.MenuFollow,
     menu_id: u32,
     /// Paint the curation kebab on the highlighted leaf row.
     kebab: bool,
     dropdown: bool,
 };
 
+/// The rows item `i` takes when it is painted: its own and its rule.
+fn menuItemRows(it: command.MenuItem) u16 {
+    return if (it.separator_before) 2 else 1;
+}
+
+/// How many items from `start` fit in `h` rows.
+fn menuItemsFitting(items: []const command.MenuItem, start: usize, h: u16) usize {
+    var used: u16 = 0;
+    var i = start;
+    while (i < items.len) : (i += 1) {
+        used += menuItemRows(items[i]);
+        if (used > h) break;
+    }
+    return i - start;
+}
+
+/// The largest first item that still fills the window (Rust's
+/// `len - rows` with rows that are not all one cell tall).
+fn menuMaxScroll(items: []const command.MenuItem, h: u16) usize {
+    var used: u16 = 0;
+    var i = items.len;
+    while (i > 0) : (i -= 1) {
+        const rows = menuItemRows(items[i - 1]);
+        if (used + rows > h) break;
+        used += rows;
+    }
+    return i;
+}
+
+/// Where the window starts for `p` in `h` rows: clamped to the list,
+/// then the cursor pulled into it (the wheel moved the window) or it
+/// pulled after the cursor (a key moved the cursor). Rust 1ef21198:
+/// a menu taller than the screen painted what fit and dropped the
+/// rest, so the rows a right-click exists for were unreachable.
+fn menuWindow(p: RowsProps, h: u16) usize {
+    var scroll = @min(p.scroll.*, menuMaxScroll(p.items, h));
+    if (p.cursor) |cur| {
+        const c = @min(cur.*, p.items.len -| 1);
+        switch (p.follow) {
+            .cursor => {
+                if (c < scroll) scroll = c;
+                while (c >= scroll + menuItemsFitting(p.items, scroll, h) and scroll < c) scroll += 1;
+            },
+            .window => {
+                const fit = menuItemsFitting(p.items, scroll, h);
+                if (c < scroll) {
+                    cur.* = scroll;
+                } else if (fit > 0 and c >= scroll + fit) {
+                    cur.* = scroll + fit - 1;
+                }
+            },
+        }
+    }
+    p.scroll.* = scroll;
+    return scroll;
+}
+
 /// Paints the rows into `inner`, registering `.menu_item{menu_id, i}`,
-/// and returns each item's row offset (for anchoring a child).
+/// and returns each item's row offset (for anchoring a child). Rows
+/// off the window are not painted; the bottom border's last cell says
+/// which way the rest lies (`↑` / `↓` / `↕`).
 fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usize, u16) {
     const th = ui.theme;
     const pal = th.palette;
@@ -1721,8 +1789,17 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
         any_icon = true;
     };
     const icon_col: u16 = if (p.dropdown and !any_icon) 0 else menu_glyph.width;
+    const scroll = menuWindow(p, inner.h);
+    const painted = menuItemsFitting(p.items, scroll, inner.h);
+    const more_above = scroll > 0;
+    const more_below = scroll + painted < p.items.len;
+    if (more_above or more_below) {
+        const glyph: []const u8 = if (more_above and more_below) (if (ui.ascii) "|" else "\u{2195}") else if (more_above) (if (ui.ascii) "^" else "\u{2191}") else (if (ui.ascii) "v" else "\u{2193}");
+        _ = ui.putStr(inner.right() -| 1, inner.bottom(), 1, glyph, rule);
+    }
     var row: u16 = 0;
-    for (p.items, 0..) |it, i| {
+    for (p.items[scroll..], scroll..) |it, i| {
+        const selected = p.cursor != null and i == p.cursor.?.*;
         if (it.separator_before and row < inner.h) {
             const r = inner.row(row);
             var xx: u16 = r.x;
@@ -1732,7 +1809,6 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
         if (row >= inner.h) break;
         const r = inner.row(row);
         offsets.put(ui.arena, i, row) catch {};
-        const selected = p.cursor != null and i == p.cursor.?;
         const style = if (selected) highlight else plain;
         ui.fill(r, style);
         var xx = r.x;

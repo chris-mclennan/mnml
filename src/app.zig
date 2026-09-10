@@ -535,6 +535,8 @@ pub const Overlay = union(enum) {
 /// A context menu: rows the opener built (gpa-owned slice, literal
 /// labels), anchored at the cell that was clicked. `MenuAction` names a
 /// static command by enum, so a row cannot point at a missing id.
+pub const MenuFollow = enum { cursor, window };
+
 pub const MenuState = struct {
     /// gpa-owned: `openMenu` copies what the opener passed, so a title
     /// built in the frame arena (a SEARCH row's `path:line`) or a
@@ -544,6 +546,12 @@ pub const MenuState = struct {
     x: u16,
     y: u16,
     cursor: usize = 0,
+    /// The first row painted when the menu is taller than the screen;
+    /// the paint clamps it and, per `follow`, pulls it after the cursor
+    /// (a key moved the cursor) or the cursor after it (the wheel
+    /// moved the window).
+    scroll: usize = 0,
+    follow: MenuFollow = .cursor,
     /// Where the keyboard goes back to when the menu closes.
     return_focus: FocusId,
     /// The `+` menu: rows can be pinned / hidden (`→` on a leaf row
@@ -568,6 +576,8 @@ pub const MenuState = struct {
         parent: usize,
         items: []command.MenuItem,
         cursor: usize = 0,
+        scroll: usize = 0,
+        follow: MenuFollow = .cursor,
         /// A fresh child paints no highlight until it is hovered or
         /// arrowed (Rust's child `ContextMenu` starts un-`interacted`).
         highlight: bool = false,
@@ -651,6 +661,10 @@ pub const Drag = union(enum) {
     /// The editor scrollbar thumb; `grab` is the row inside the thumb
     /// the pointer took hold of.
     scrollbar: struct { pane: PaneId, grab: u16 },
+    /// Any other scrollbar (a panel's, the tree's, a list pane's, the
+    /// picker's): the pointer's row on the track lands the view
+    /// proportionally until the release, wherever the pointer goes.
+    bar: hit.Owner,
     /// A dock widget's title bar; `moved` once the pointer left the cell.
     dock: DockDrag,
     /// A graph pane's detail divider.
@@ -832,6 +846,12 @@ pub const App = struct {
     last_click: ?LastClick = null,
     /// Wheel events folded until the next tick (`scroll.zig`).
     wheel: scroll_mod.Coalescer = .{},
+    /// The wheel's acceleration state (`scroll.zig`).
+    accel: scroll_mod.Accel = .{},
+    /// The lines the batch being dispatched may move once budgeted
+    /// (`dispatch.wheelLines`); null until an arm asks, cleared per
+    /// dispatch so the budget is spent once.
+    wheel_budget: ?u16 = null,
     /// The split tree's area at the last render — what a divider drag
     /// and the focus motions measure against.
     panes_area: Rect = .{},
@@ -2003,9 +2023,15 @@ pub const App = struct {
 
     pub fn handle(self: *App, ev: AppEvent) Allocator.Error!void {
         // A wheel burst folds into one motion; anything else flushes
-        // what is pending first so order is kept (`scroll.zig`).
-        if (ev == .mouse and self.wheel.offer(ev.mouse)) return;
-        try self.flushWheel();
+        // what is pending first so order is kept (`scroll.zig`). A
+        // wheel event the batch would not take — the other direction,
+        // another cell, the cap — starts the next batch after the
+        // flush rather than landing raw ahead of it.
+        if (ev == .mouse) {
+            if (self.wheel.offer(ev.mouse)) return;
+            try self.flushWheel();
+            if (self.wheel.offer(ev.mouse)) return;
+        } else try self.flushWheel();
         switch (ev) {
             .key => |k| try dispatch.key(self, k),
             .mouse => |m| try self.routeMouse(m, 1),
@@ -2072,7 +2098,21 @@ pub const App = struct {
     /// previous frame registered cannot route a click on this one.
     fn routeMouse(self: *App, m: key_mod.Mouse, count: u16) Allocator.Error!void {
         if (self.needs_render) try self.render();
+        self.wheel_budget = null;
         try dispatch.mouse(self, m, count);
+    }
+
+    /// `[editor] wheel_moves_cursor`: whether the wheel and a scrollbar
+    /// drag carry the cursor with the view. `always` / `never` say so;
+    /// `auto` follows the input style — vim's Ctrl-E / Ctrl-Y canon
+    /// moves the cursor, the standard editors pin the view and leave
+    /// the cursor where it was.
+    pub fn cursorFollowsWheel(self: *const App) bool {
+        return switch (self.cfg.editor.wheel_moves_cursor) {
+            .always => true,
+            .never => false,
+            .auto => self.input_style == .vim,
+        };
     }
 
     /// Drain the inbound queue without blocking. The terminal loop does

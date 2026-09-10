@@ -599,8 +599,6 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 },
             }
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, st.list.total -| 1),
         else => {},
     }
     app.needs_render = true;
@@ -637,6 +635,13 @@ pub fn filterMouse(app: *App, m: Mouse) void {
     if (m.kind != .press) return;
     focusPanel(app);
     app.debug_panel.list.filter_focused = true;
+}
+
+/// The wheel over the list moves the cursor `rows` rows.
+pub fn wheel(app: *App, down: bool, step: usize) void {
+    const st = &app.debug_panel;
+    st.list.cursor = if (down) @min(st.list.cursor + step, st.list.total -| 1) else st.list.cursor -| step;
+    app.needs_render = true;
 }
 
 pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {

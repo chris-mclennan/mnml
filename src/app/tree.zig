@@ -755,7 +755,8 @@ pub const Tree = struct {
     }
 
     /// The scrollbar in the tree's last column: a press or drag lands
-    /// the cursor proportionally; the wheel steps it.
+    /// the cursor proportionally (the wheel over it is the tree's,
+    /// `dispatch.treeWheel`).
     pub fn scrollbarMouse(self: *Tree, app: *App, bar: Rect, m: Mouse) void {
         const n = self.rows.items.len;
         if (n == 0 or bar.h == 0) return;
@@ -766,8 +767,6 @@ pub const Tree = struct {
                 const off: usize = m.y -| bar.y;
                 self.cursor = @min(off * n / bar.h, n - 1);
             },
-            .scroll_up => self.cursor -|= 3,
-            .scroll_down => self.cursor = @min(self.cursor + 3, n - 1),
             else => {},
         }
         app.needs_render = true;

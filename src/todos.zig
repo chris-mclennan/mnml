@@ -815,10 +815,17 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 runToast(app, openSelected(app));
             }
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, st.filtered.items.len -| 1),
         else => {},
     }
+}
+
+/// The wheel over the list: `rows` rows (the batch, budgeted and
+/// clamped by `dispatch.panelWheel`); the window follows the cursor.
+pub fn wheel(app: *App, down: bool, rows: usize) void {
+    const st = &app.todos;
+    const total = st.filtered.items.len;
+    st.list.cursor = if (down) @min(st.list.cursor + rows, total -| 1) else st.list.cursor -| rows;
+    app.needs_render = true;
 }
 
 pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
@@ -858,8 +865,6 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
             const off: usize = m.y -| bar.y;
             st.list.cursor = @min(off * total / bar.h, total - 1);
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, total - 1),
         else => {},
     }
 }
