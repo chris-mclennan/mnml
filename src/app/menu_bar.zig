@@ -31,6 +31,7 @@ const render = @import("render.zig");
 const Rect = @import("../ui/rect.zig");
 const side = @import("side.zig");
 const search_glyph = @import("../ui/menu_bar.zig").search_glyph;
+const zen = @import("zen.zig");
 
 pub const table = .{
     .@"view.menu_bar_cycle" = &cycleCmd,
@@ -145,6 +146,9 @@ const brand_rows = [_]MenuItem{
 /// The "Open recent file" row is index `file_recent_row`: its submenu
 /// is built per open from `app.recent`.
 const file_recent_row = 3;
+/// The View menu's full-screen row is index `view_fullscreen_row`: its
+/// label reads the way out while inside (`zen.title`).
+const view_fullscreen_row = 7;
 const file_rows = [_]MenuItem{
     .{ .icon = "\u{F0224}", .icon_ascii = "+", .label = "New file", .action = .{ .command = .@"file.new" } },
     .{ .icon = "\u{F115}", .icon_ascii = "/", .label = "Open file…", .action = .{ .command = .@"picker.files" } },
@@ -189,11 +193,14 @@ const view_rows = [_]MenuItem{
     .{ .icon = "\u{EC00}", .icon_ascii = "|", .label = "Toggle right panel", .action = .{ .command = .@"view.toggle_right_panel" } },
     .{ .icon = "\u{F0C9}", .icon_ascii = "=", .label = "Cycle menu bar (always / auto / hidden)", .action = .{ .command = .@"view.menu_bar_cycle" } },
     .{ .icon = "\u{EB80}", .icon_ascii = "~", .label = "Toggle line wrap", .action = .{ .command = .@"view.toggle_wrap" } },
-    .{ .icon = "\u{F06E}", .icon_ascii = "o", .label = "Toggle full screen", .action = .{ .command = .@"view.fullscreen" } },
+    .{ .icon = "\u{F06E}", .icon_ascii = "o", .label = "Enter full screen", .action = .{ .command = .@"view.fullscreen" } },
     .{ .icon = "\u{F02D6}", .icon_ascii = "?", .label = "Toggle hover-help", .action = .{ .command = .@"view.toggle_hover_help" } },
     .{ .icon = "\u{F0130}", .icon_ascii = "o", .label = "Toggle workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" } },
     sep(.{ .icon = "\u{F1FC}", .icon_ascii = "p", .label = "Pick theme…", .action = .{ .command = .@"theme.pick" } }),
     .{ .icon = "\u{F042}", .icon_ascii = "t", .label = "Toggle theme", .action = .{ .command = .@"theme.toggle" } },
+    // The way back when the frame has been hidden piece by piece: full
+    // screen, the zoom, the tree, the bars, the split sizes.
+    sep(.{ .icon = "\u{F0E2}", .icon_ascii = "0", .label = "Reset view to default", .action = .{ .command = .@"view.reset_layout" } }),
 };
 
 const go_rows = [_]MenuItem{
@@ -300,6 +307,7 @@ fn buildRows(app: *App, m: Menu) Allocator.Error![]MenuItem {
     const rows = try app.gpa.dupe(MenuItem, rowsOf(m));
     errdefer app.gpa.free(rows);
     if (m == .file) rows[file_recent_row].submenu = try recentRows(app, arena);
+    if (m == .view) rows[view_fullscreen_row].label = zen.title(app);
     return rows;
 }
 
@@ -493,6 +501,7 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         .split_right => .{ .title = "Split right", .detail = "click: side by side (view.split_right)" },
         .split_down => .{ .title = "Split down", .detail = "click: stacked (view.split_down)" },
         .split_max => .{ .title = "Maximize", .detail = "click: this pane alone, full screen (view.fullscreen)" },
+        .fullscreen_exit => .{ .title = "Exit full screen", .detail = "click: the frame comes back (view.fullscreen) · Esc Esc" },
         .hidden_tabs => .{ .title = "Hidden tabs", .detail = "click: the buffer picker lists every tab, shown or not (picker.buffers)" },
         .ai_claude => .{ .title = "Claude Code", .detail = "click opens the session (ai.claude_code)" },
         .ai_codex => .{ .title = "Codex", .detail = "click opens the session (ai.codex)" },
@@ -514,7 +523,7 @@ fn forEachRow(comptime f: fn (Menu, MenuItem) anyerror!void) !void {
 
 test "menu rows: ten menus with Rust's row counts; every row is a registered command with a runner, or the recent-files parent" {
     try t.expectEqual(@as(usize, 10), Menu.count);
-    const counts = [Menu.count]usize{ 3, 10, 6, 7, 12, 6, 6, 3, 15, 3 };
+    const counts = [Menu.count]usize{ 3, 10, 6, 7, 13, 6, 6, 3, 15, 3 };
     for (Menu.all, counts) |m, n| try t.expectEqual(n, rowsOf(m).len);
     const Check = struct {
         var missing: usize = 0;
@@ -540,6 +549,21 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
     try t.expectEqual(@as(u8, 'f'), Menu.file.accelerator());
     try t.expectEqual(@as(u8, 'w'), Menu.window.accelerator());
     try t.expectEqualStrings("mnml", Menu.brand.title());
+    try t.expectEqual(command.CommandId.@"view.fullscreen", view_rows[view_fullscreen_row].action.command);
+}
+
+test "menu bar: the View menu's full-screen row reads the way in outside and the way out inside" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try openIndex(&app, @intFromEnum(Menu.view));
+    try t.expectEqualStrings("Enter full screen", app.overlay.menu.items[view_fullscreen_row].label);
+    try t.expectEqualStrings("Reset view to default", app.overlay.menu.items[app.overlay.menu.items.len - 1].label);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try openIndex(&app, @intFromEnum(Menu.view));
+    try t.expectEqualStrings("Exit full screen", app.overlay.menu.items[view_fullscreen_row].label);
+    try t.expectEqual(command.CommandId.@"view.fullscreen", app.overlay.menu.items[view_fullscreen_row].action.command);
 }
 
 test "menu bar: a click drops the menu in Rust's dropdown shape with the recent submenu; hover lights and switches; » lists the hidden menus; F10 / Alt / arrows; auto follows the menu; cycle persists" {

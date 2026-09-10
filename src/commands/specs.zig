@@ -61,6 +61,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_hidden", .title = "Toggle hidden files in focused tree section", .group = "view" },
     .{ .id = "view.toggle_hidden_all", .title = "Toggle hidden files across every workspace section", .group = "view" },
     .{ .id = "view.fullscreen", .title = "Toggle full screen (hide tree + bufferline + statusline)", .group = "view", .keys = .{ .standard = &.{"ctrl+k z"} } },
+    .{ .id = "view.reset_layout", .title = "Reset view to default (leave full screen and zoom, show the tree, menu bar, statusline and bufferline, tree width to default)", .group = "view" },
     .{ .id = "editor.redo", .title = "Redo (Ctrl+Shift+Z / Ctrl+Y)", .group = "editor", .keys = .{ .both = &.{"ctrl+shift+z"} } },
     .{ .id = "editor.undo", .title = "Undo (Ctrl+Z)", .group = "editor" },
     .{ .id = "editor.cut", .title = "Cut (Ctrl+X) — selection or current line", .group = "editor" },
@@ -1107,7 +1108,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1034 specs, unique ids" {
+test "1035 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1122,7 +1123,8 @@ test "1034 specs, unique ids" {
     // rebase-plan / amend / reset commands.
     // + four diff-any-two-refs commands + eight branch verbs + seven
     // stash commands + two command-log commands + two detail-row
-    // commands (git-more2) + three launcher-pin commands.
-    try std.testing.expectEqual(@as(usize, 1034), specs.len);
+    // commands (git-more2) + three launcher-pin commands
+    // + `view.reset_layout`.
+    try std.testing.expectEqual(@as(usize, 1035), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

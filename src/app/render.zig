@@ -166,6 +166,9 @@ pub const Button = enum(u32) {
     right_close = 18,
     right_tab = 19,
     right_new = 20,
+    /// Full screen's corner mark: the one cell of chrome kept, at the
+    /// body's top-right; a click leaves (`drawFullscreenMark`).
+    fullscreen_exit = 21,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -429,6 +432,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     if (!app.zen) panes_area = dock.bodyAfterStrips(dock_area, dock.strips(dock_area, app.dock.widgets.items, app.dock.hidden));
     app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
+    if (app.zen) try drawFullscreenMark(app, ui, panes_area);
     if (!app.zen) try dock.draw(app, ui, dock_area);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
@@ -451,6 +455,23 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // line, whatever it was anchored in.
     if (app.overlay == .menu) drawMenu(ui, Rect.init(full.x, full.y, full.w, fr.upper.bottom() -| full.y), &app.overlay.menu);
     try discovery.drawTooltip(app, ui, full);
+}
+
+// ── full screen's corner mark ──
+
+/// The one cell of chrome full screen keeps: the strip's restore glyph
+/// (its ASCII twin under `--ascii`), muted, at the body's top-right —
+/// lit while the pointer rests on it — registered as the button whose
+/// click leaves. The statusline that would show the way is not
+/// painted, so this is where the mouse finds it (Rust repurposes the
+/// strip's maximize button the same way).
+fn drawFullscreenMark(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
+    if (body.isEmpty()) return;
+    const cell = Rect.init(body.right() - 1, body.y, 1, 1);
+    const pal = app.theme.palette;
+    const style: Theme.Style = if (ui.hovered(cell)) app.theme.accent else .{ .fg = pal.comment, .bg = pal.bg };
+    _ = ui.putStr(cell.x, cell.y, 1, if (ui.ascii) bufferline.restore_ascii else bufferline.restore_glyph, style);
+    try ui.hits.add(ui.arena, cell, .{ .button = @intFromEnum(Button.fullscreen_exit) });
 }
 
 // ── palette bar ──
@@ -807,7 +828,10 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
         .split = try splitIds(app, ui),
         .mode_chip = modeChip(app, ui, leaf.active),
         .hidden_button = @intFromEnum(Button.hidden_tabs),
-        .zoomed = app.zen,
+        // The maximize button reads restore while this leaf is zoomed —
+        // or in full screen, where the zoom is moot and the button is
+        // the way out (Rust `ui/mod.rs`).
+        .zoomed = app.zen or (app.zoomed_leaf != null and layout.leafOf(app.zoomed_leaf.?) == lid),
     };
     if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
         opts.first = bufferline.fitActive(ui, strip, tabs, leaf.strip_first, opts);
@@ -955,7 +979,21 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         drawWelcome(app, ui, if (body.h >= 2) body.splitTop(1).rest else Rect.empty);
         return;
     }
-    const rects = try layout.computeRects(body, ui.arena);
+    var rects = try layout.computeRects(body, ui.arena);
+    // `view.toggle_zoom`: the zoomed pane's leaf alone, over the whole
+    // body, at its own strip ordinal (the strip's buttons name the leaf
+    // by paint index); no dividers. The split tree underneath is what
+    // the mouse and `Ctrl+W` still see (`zen.zig`).
+    var leaf_index: usize = 0;
+    if (app.zoomed_leaf) |zid| if (layout.leafOf(zid)) |zlid| {
+        for (rects.panes, 0..) |pr, i| if (pr.leaf == zlid) {
+            const one = try ui.arena.alloc(layout_mod.PaneRect, 1);
+            one[0] = .{ .pane = pr.pane, .rect = body, .leaf = zlid };
+            rects = .{ .panes = one, .dividers = &.{} };
+            leaf_index = i;
+            break;
+        };
+    };
     for (rects.dividers, 0..) |d, i| {
         const dragging = if (app.drag) |dr| dr == .divider and dr.divider.split == d.split else false;
         const style = if (dragging or ui.hovered(d.rect)) app.theme.accent else app.theme.border;
@@ -968,7 +1006,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         }
         try ui.hits.add(ui.arena, d.rect, .{ .divider = @intCast(i) });
     }
-    for (rects.panes, 0..) |pr, li| {
+    for (rects.panes, leaf_index..) |pr, li| {
         const pane = app.panes.get(pr.pane) orelse continue;
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
         var rect = pr.rect;

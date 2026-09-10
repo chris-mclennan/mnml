@@ -744,6 +744,13 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         try t.expectEqual(@as(u16, 44), app.tree.width);
         try t.expect(!app.tree.visible);
         try t.expect(app.zen);
+        // A session that comes back in full screen says how to leave
+        // (the chrome that would show the way is not painted).
+        var reminded = false;
+        for (app.toasts.items) |tt| if (std.mem.indexOf(u8, tt.text, "Full screen · Esc Esc") != null) {
+            reminded = true;
+        };
+        try t.expect(reminded);
         try t.expectEqualStrings(a, app.harpoon.paths[2].?);
         try t.expectEqualStrings("set wrap", app.cmd_history.items[0]);
         try t.expect(app.recent.items.len >= 2);

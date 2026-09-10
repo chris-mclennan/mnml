@@ -15,6 +15,7 @@ const Picker = app_mod.Picker;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const dispatch = @import("dispatch.zig");
+const zen = @import("zen.zig");
 const keymap = @import("../core/keymap.zig");
 const cmd_tab = @import("cmd_tab.zig");
 const runners = @import("runners.zig");
@@ -322,7 +323,9 @@ fn palette(app: *App) CommandError!void {
     var i: usize = 0;
     while (i < command.count) : (i += 1) {
         const id: command.CommandId = @enumFromInt(i);
-        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}  ·  {s}", .{ command.group(id), command.title(id), command.name(id) }));
+        // A stateful row reads its state: full screen's title is the way out while inside.
+        const title_text: []const u8 = if (id == .@"view.fullscreen") zen.title(app) else command.title(id);
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}  ·  {s}", .{ command.group(id), title_text, command.name(id) }));
         try details.append(gpa, try chordHint(app, gpa, command.spec(id).keys));
         try bonus.append(gpa, if (inNamespaces(command.name(id), namespaces)) 20 else 0);
     }

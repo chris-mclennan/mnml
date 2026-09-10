@@ -58,6 +58,7 @@ const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
+const zen = @import("zen.zig");
 const zon_pane = @import("zon_pane.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
@@ -129,6 +130,8 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
 
 fn keyInner(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
+    // Esc Esc leaves full screen: any other key in between disarms.
+    if (k.code != .esc) app.zen_esc_ms = null;
     switch (app.overlay) {
         .none => {},
         else => return overlayKey(app, k),
@@ -148,6 +151,19 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         if (seq_before) |before| if (app.activeEditor()) |e| {
             if (e.buf.doc.edits.head() != before and e.buf.editor.ghost_suggestion != null) try e.buf.editor.setGhostSuggestion(null);
         };
+        return;
+    }
+    // Full screen's way out, ahead of every pane and panel: a lone Esc
+    // that nothing above wanted arms (and goes on to whatever Esc does
+    // in the pane — a terminal gets it too); the second within the
+    // chord timeout leaves (`zen.escKey`).
+    if (zen.escKey(app, k)) return;
+    // A pending chord owns the next key outright, whatever has the
+    // keyboard — the `z` of `Ctrl+K Z` is the chain's, never a request
+    // pane's URL field's or a panel's (the editor path and `ptyKey`
+    // apply the same rule).
+    if (app.chord.len > 0) {
+        _ = try chordChain(app, k);
         return;
     }
     if (app.focus == .tree and app.tree.visible) {
@@ -2017,6 +2033,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     focusLeafAt(app, m.x, m.y);
                     try runCmd(app, .@"view.fullscreen");
                 },
+                // Full screen's corner mark: the click leaves.
+                .fullscreen_exit => try runCmd(app, .@"view.fullscreen"),
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
                 .ai_claude => try runCmd(app, .@"ai.claude_code"),
                 .ai_codex => try runCmd(app, .@"ai.codex"),
