@@ -479,7 +479,7 @@ trust sink. Each row names its file and its test.
 | `{{variable}}` templating | done | `src/http/env.zig` | |
 | Environments | done | `env.zig`, `http.pick_env` / `new_env` / `reset_env` | |
 | Pre / post-request scripts | done | `src/http/script.zig`, `runScript` in `cmd_http.zig` | `@set-*` before the send, `@assert` / `@capture` after, per chain step |
-| Request pane — form edit | done | `src/app/request_pane.zig`, `src/ui/request_view.zig` | |
+| Request pane — form edit | done | `src/app/request_pane.zig`, `src/ui/request_view.zig` | the response strip's chips (` — ▼ `, ` copy `, ` wrap `, ` ⚡ AI `) never paint over its labels: on a strip too narrow for both they drop from the left of their row inward, Rust's `fit_row` rule (2026-09-10; `tests/e2e/http_response_strip_narrow.test`) |
 | Re-send / copy-as-curl / write-back | done | `http.send` / `copy_curl` / `save` | |
 | Tabbed Edit view | done | `EditTab` in `request_view.zig` (six tabs) | |
 | `Ctrl+]` / `Ctrl+[`, `Ctrl+1..5` | done | `request_pane.zig` | |
