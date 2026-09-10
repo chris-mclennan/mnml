@@ -260,6 +260,9 @@ pub const State = struct {
     /// out, `documentSymbol` follows once the typing pauses (owned keys,
     /// the value the due time).
     symbols_due: std.StringHashMapUnmanaged(i64) = .empty,
+    /// Bumped when a server's symbol list lands; the outline pane
+    /// compares it with the one it last read from (`OutlinePane.symbols_gen`).
+    symbols_gen: u64 = 0,
     completion: ?Completion = null,
     hover: ?Hover = null,
     peek: ?Peek = null,
@@ -2323,13 +2326,10 @@ fn storeSymbols(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
     const syms = try types.readSymbols(a, result);
     for (syms) |*s| s.name = try a.dupe(u8, s.name);
     set.items = syms;
-    // The outline watching this file repaints from the new list.
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*ed| if (ed.buf.doc.path) |pp| if (std.mem.eql(u8, pp, path)) {
-            ed.syntax.dirty = true;
-        },
-        else => {},
-    };
+    // The outline watching this file repaints from the new list. This
+    // used to mark the syntax dirty, which cost a full reparse of a text
+    // that had not changed — 185 ms on a 314 KB file — for a repaint.
+    app.lsp.symbols_gen +%= 1;
     app.needs_render = true;
 }
 
@@ -2795,6 +2795,34 @@ test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file
     try testing.expectEqualStrings("csharp", spec.name);
     try testing.expectEqualStrings("csharp-ls", spec.cmd);
     try testing.expectEqual(@as(usize, 3), spec.root_markers.len);
+}
+
+test "a symbols reply refreshes the outline without marking the syntax dirty (no reparse for a repaint)" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const src = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/code.rs");
+    e.syntax.setLanguage("/tmp/code.rs", "");
+    try e.buf.editor.setText("fn alpha() {}\n\nfn beta() {}\n");
+    try command.run(&app, .{ .static = .@"outline.show" });
+    const oid = app.active.?;
+    try app.render();
+    const o = app.panes.get(oid).?.asOutline().?;
+    try testing.expectEqual(@as(usize, 2), o.items.items.len);
+    try testing.expect(!e.syntax.dirty);
+    const gen = app.lsp.symbols_gen;
+    var parsed = try std.json.parseFromSlice(Value, testing.allocator, "[{\"name\":\"gamma\",\"kind\":12,\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":5}}}]", .{});
+    defer parsed.deinit();
+    try storeSymbols(&app, .{ .pane = src }, parsed.value);
+    try testing.expect(!e.syntax.dirty);
+    try testing.expectEqual(gen + 1, app.lsp.symbols_gen);
+    try app.render();
+    try testing.expect(!e.syntax.dirty);
+    try testing.expectEqual(@as(usize, 1), o.items.items.len);
+    try testing.expectEqualStrings("gamma", o.items.items[0].name);
+    try testing.expectEqual(app.lsp.symbols_gen, o.symbols_gen);
 }
 
 test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the statusline chip, next/prev" {
