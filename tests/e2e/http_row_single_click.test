@@ -1,0 +1,12 @@
+# HTTP COLLECTIONS: one left press on a request row opens it, as a file
+# in the tree does (Rust opens on the first click; the second press
+# this once waited for left the two trees disagreeing). At 120x40 the
+# section's rows start at row 4: COLLECTIONS, the folder, the file,
+# then a row per block — GET on row 7, POST on row 8.
+write requests/demo.http "GET https://httpbin.org/get\n\n###\n\nPOST https://httpbin.org/post\nContent-Type: application/json\n\n{\"a\":1}\n"
+open requests/demo.http
+command view.activity_http
+expect screen contains "COLLECTIONS (1)"
+expect screen contains "POST httpbin.org/"
+click 12 8
+expect pane "POST  httpbin.org/post"
