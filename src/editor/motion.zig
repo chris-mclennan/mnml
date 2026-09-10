@@ -30,18 +30,16 @@ pub fn leftNoCrossLine(ed: *Editor) void {
     if (ed.cursor > bol) ed.cursor = ed.prevBoundary(ed.cursor);
 }
 
-/// One line up (`dir < 0`) or down, keeping the goal column. On the last
-/// line, down clamps to that line's end rather than a phantom line.
+/// One line up (`dir < 0`) or down, keeping the goal column. On the
+/// first / last line nothing moves (`:help j`; `vim -es`: `G$j` stays
+/// at 13:22) — a phantom line below the last is never a target.
 pub fn vertical(ed: *Editor, dir: i2) void {
     const line = ed.currentLine();
     const target = if (dir < 0) blk: {
         if (line == 0) return;
         break :blk line - 1;
     } else blk: {
-        if (line + 1 >= ed.lineCount()) {
-            ed.cursor = ed.lineEnd(ed.lineCount() - 1);
-            return;
-        }
+        if (line + 1 >= ed.lineCount()) return;
         break :blk line + 1;
     };
     const gc = ed.goalCol();
@@ -323,46 +321,50 @@ pub fn upFirstNonWs(ed: *Editor) void {
 
 // ─── paragraph / sentence ───────────────────────────────────────────────
 
+/// `}` / `{` (`:help }`): the next / previous EMPTY line — a line of
+/// only blanks is not a paragraph boundary (vim's `startPS`; `vim -es`:
+/// with line 3 = `"  "`, `2G}` → 6) — after at least one non-empty line
+/// has been passed, the cursor's own line included: from the line just
+/// above an empty one `}` lands on that empty line (`5G}` → 6, not the
+/// next gap). With no boundary left, forward goes to the END of the
+/// last line (`9G}` → 13:22), backward to the buffer start.
 pub fn paragraph(ed: *Editor, forward: bool) void {
     const cur = ed.currentLine();
     const count = ed.lineCount();
-    var target: usize = undefined;
     if (forward) {
-        var skipped_current = false;
+        var passed_text = !lineIsEmpty(ed, cur);
         var row = cur + 1;
-        var found: ?usize = null;
         while (row < count) : (row += 1) {
-            if (ed.lineIsBlank(row)) {
-                if (skipped_current) {
-                    found = row;
-                    break;
+            if (lineIsEmpty(ed, row)) {
+                if (passed_text) {
+                    ed.cursor = ed.lineStart(row);
+                    return;
                 }
-                continue;
-            }
-            skipped_current = true;
+            } else passed_text = true;
         }
-        target = found orelse count - 1;
+        ed.cursor = ed.lineEnd(count - 1);
     } else {
         if (cur == 0) {
-            target = 0;
-        } else {
-            var skipped_current = false;
-            var row = cur - 1;
-            var found: ?usize = null;
-            while (true) {
-                if (ed.lineIsBlank(row)) {
-                    if (skipped_current) {
-                        found = row;
-                        break;
-                    }
-                } else skipped_current = true;
-                if (row == 0) break;
-                row -= 1;
-            }
-            target = found orelse 0;
+            ed.cursor = 0;
+            return;
         }
+        var passed_text = !lineIsEmpty(ed, cur);
+        var row = cur;
+        while (row > 0) {
+            row -= 1;
+            if (lineIsEmpty(ed, row)) {
+                if (passed_text) {
+                    ed.cursor = ed.lineStart(row);
+                    return;
+                }
+            } else passed_text = true;
+        }
+        ed.cursor = 0;
     }
-    ed.cursor = ed.lineStart(target);
+}
+
+fn lineIsEmpty(ed: *const Editor, row: usize) bool {
+    return ed.lineStart(row) == ed.lineEnd(row);
 }
 
 /// Sentence boundary = `.` `!` `?` followed by whitespace, or a blank

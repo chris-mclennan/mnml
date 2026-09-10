@@ -1,0 +1,35 @@
+# `}` from the line just above an empty line lands on that empty line
+# (`vim -es -u NONE`: `5G}` → 6, not the gap after the next paragraph);
+# a line of only blanks is not a paragraph boundary (`2G}` → 6 past a
+# `"  "` line 3, `:help }`). Ctrl-F onto the last line keeps a NORMAL
+# cursor on a character — `G$<C-f>` stays at the last char, never one
+# past it (`:help ve`).
+write notes.txt "alpha bravo charlie\nline two here\n  \nfour\nfive here now\n\nseven\n  indented line\n\n\n\neleven\ntwelve is the last one\n"
+open notes.txt
+command editor.use_vim
+
+key 5
+key G
+key }
+expect screen contains "Ln 6/13"
+key 2
+key G
+key }
+expect screen contains "Ln 6/13"
+key 9
+key G
+key }
+expect screen contains "Ln 13/13 Col 22"
+key G
+key $
+expect screen contains "Ln 13/13 Col 22"
+key ctrl+f
+expect screen contains "Ln 13/13 Col 22"
+key k
+expect screen contains "Ln 12/13 Col 6"
+key j
+expect screen contains "Ln 13/13 Col 22"
+key 6
+key G
+key ctrl+f
+expect screen contains "Ln 13/13 Col 1"
