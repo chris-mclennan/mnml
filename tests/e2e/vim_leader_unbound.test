@@ -1,0 +1,31 @@
+# An unbound leader chord is swallowed whole, as NvChad's which-key
+# does: `<leader>ca` is not `a` (append → INSERT), `<leader>fo` not `o`
+# (open a line), `<leader>gt` not `gt` (next tab page). The runner
+# settles between keys, so the leader expires into the popup and the
+# tail key is the popup's to drop.
+write a.txt "alpha\nbravo\n"
+open a.txt
+command editor.use_vim
+ex tabnew
+ex tabprev
+expect screen contains "NORMAL"
+
+key space
+key c
+key a
+expect screen contains "NORMAL"
+expect screen lacks "INSERT"
+expect screen contains "Ln 1/2 Col 1"
+
+key space
+key f
+key o
+expect screen contains "NORMAL"
+expect screen contains "Ln 1/2 Col 1"
+expect dirty false
+
+key space
+key g
+key t
+expect screen contains "Ln 1/2 Col 1"
+expect pane "a.txt"

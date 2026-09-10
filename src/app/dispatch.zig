@@ -3458,6 +3458,43 @@ test "leader chain: the second key of `space e` is the chord's, not the editor's
     try std.testing.expect(app.overlay == .none);
 }
 
+test "leader chain: an unbound chord is swallowed whole — its tail key never reaches the vim handler, typed fast or through the popup" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"tab.new" });
+    try command.run(&app, .{ .static = .@"tab.prev" });
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("alpha\nbravo\n");
+    e.buf.editor.setCursor(0);
+    const Case = struct { a: u21, b: u21 };
+    // `<leader>ca` is not `a` (append), `<leader>fo` not `o` (open a
+    // line), `<leader>gt` not `gt` (next tab page): NvChad's which-key
+    // drops an unbound chord.
+    for ([_]Case{ .{ .a = 'c', .b = 'a' }, .{ .a = 'f', .b = 'o' }, .{ .a = 'g', .b = 't' } }) |c| {
+        try key(&app, Key.char(' '));
+        try key(&app, Key.char(c.a));
+        try key(&app, Key.char(c.b));
+        try std.testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+        try std.testing.expectEqualStrings("alpha\nbravo\n", e.buf.editor.bytes());
+        try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+        try std.testing.expectEqual(@as(usize, 0), app.layouts.active);
+        try std.testing.expect(app.chord.len == 0 and app.overlay == .none);
+    }
+    // Slowly: the leader expires into the popup, `c` descends, `a` is
+    // nothing there — the popup closes and the key is gone.
+    try key(&app, Key.char(' '));
+    try expireChords(&app);
+    try std.testing.expect(app.overlay == .which_key);
+    try key(&app, Key.char('c'));
+    try std.testing.expect(app.overlay == .which_key);
+    try key(&app, Key.char('a'));
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+    try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+}
+
 fn press(app: *App, x: u16, y: u16, button: key_mod.MouseButton) !void {
     try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = button } });
 }
