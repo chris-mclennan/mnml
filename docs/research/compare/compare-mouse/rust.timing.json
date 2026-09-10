@@ -1,0 +1,342 @@
+{
+ "side": "rust",
+ "bin": "/Users/chrismclennan/Projects/mnml/target/release/mnml",
+ "pid": 64073,
+ "steps": [
+  {
+   "i": 0,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"esc\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 16.7,
+   "dump_ms": 17.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"esc\"}"
+  },
+  {
+   "i": 1,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"esc\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.8,
+   "dump_ms": 109.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"esc\"}"
+  },
+  {
+   "i": 2,
+   "cmd": "{\"cmd\":\"open\",\"path\":\"src/large.rs\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 122.9,
+   "dump_ms": 126.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"open\",\"path\":\"/private/var/folders/md/rtcqqnkn661bgwnl4h__tgz80000gn/T/tmp.2qOZQYBPjh/ws/src/large.rs\"}"
+  },
+  {
+   "i": 3,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":800}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 814.2,
+   "dump_ms": 815.9,
+   "wait_ms": 800,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"800\"}"
+  },
+  {
+   "i": 4,
+   "cmd": "{\"cmd\":\"click\",\"col\":50,\"row\":10}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 10.8,
+   "dump_ms": 12.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"click\",\"button\":\"Left\",\"col\":\"50\",\"row\":\"10\"}"
+  },
+  {
+   "i": 5,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 167.2,
+   "dump_ms": 168.6,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 6,
+   "cmd": "{\"cmd\":\"click\",\"col\":32,\"row\":20}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 12.9,
+   "dump_ms": 14.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"click\",\"button\":\"Left\",\"col\":\"32\",\"row\":\"20\"}"
+  },
+  {
+   "i": 7,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 166.6,
+   "dump_ms": 168.2,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 8,
+   "cmd": "{\"cmd\":\"click\",\"col\":15,\"row\":5}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 9.6,
+   "dump_ms": 11.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"click\",\"button\":\"Left\",\"col\":\"15\",\"row\":\"5\"}"
+  },
+  {
+   "i": 9,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":400}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 458.0,
+   "dump_ms": 459.8,
+   "wait_ms": 400,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"400\"}"
+  },
+  {
+   "i": 10,
+   "cmd": "{\"cmd\":\"click\",\"col\":33,\"row\":1}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 225.9,
+   "dump_ms": 227.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"click\",\"button\":\"Left\",\"col\":\"33\",\"row\":\"1\"}"
+  },
+  {
+   "i": 11,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":300}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 323.0,
+   "dump_ms": 324.2,
+   "wait_ms": 300,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"300\"}"
+  },
+  {
+   "i": 12,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":-1}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 17.1,
+   "dump_ms": 65.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"-1\"}"
+  },
+  {
+   "i": 13,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 212.7,
+   "dump_ms": 214.3,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 14,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":-3}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 10.4,
+   "dump_ms": 11.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"-3\"}"
+  },
+  {
+   "i": 15,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 215.4,
+   "dump_ms": 218.6,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 16,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":-10}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.7,
+   "dump_ms": 71.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"-10\"}"
+  },
+  {
+   "i": 17,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 227.2,
+   "dump_ms": 228.8,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 18,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":-30}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 12.3,
+   "dump_ms": 14.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"-30\"}"
+  },
+  {
+   "i": 19,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 216.8,
+   "dump_ms": 218.1,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 20,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":1}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 16.6,
+   "dump_ms": 64.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"1\"}"
+  },
+  {
+   "i": 21,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 222.8,
+   "dump_ms": 418.5,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 22,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":3}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 49.1,
+   "dump_ms": 101.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"3\"}"
+  },
+  {
+   "i": 23,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 212.3,
+   "dump_ms": 213.8,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 24,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":10}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.7,
+   "dump_ms": 58.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"10\"}"
+  },
+  {
+   "i": 25,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 209.4,
+   "dump_ms": 258.0,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 26,
+   "cmd": "{\"cmd\":\"scroll\",\"col\":60,\"row\":15,\"dy\":30}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.9,
+   "dump_ms": 59.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"scroll\",\"col\":\"60\",\"row\":\"15\",\"dy\":\"30\"}"
+  },
+  {
+   "i": 27,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":200}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 208.7,
+   "dump_ms": 211.6,
+   "wait_ms": 200,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"200\"}"
+  },
+  {
+   "i": 28,
+   "cmd": "{\"cmd\":\"drag\",\"from_col\":40,\"from_row\":6,\"col\":60,\"row\":8}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 12.6,
+   "dump_ms": 14.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"drag\",\"from\":\"40,6\",\"to\":\"60,8\",\"steps\":\"20\"}"
+  },
+  {
+   "i": 29,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 170.0,
+   "dump_ms": 171.5,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 30,
+   "cmd": "{\"cmd\":\"click\",\"col\":45,\"row\":12}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 13.5,
+   "dump_ms": 59.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"click\",\"button\":\"Left\",\"col\":\"45\",\"row\":\"12\"}"
+  },
+  {
+   "i": 31,
+   "cmd": "{\"cmd\":\"click\",\"col\":45,\"row\":12}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 3.9,
+   "dump_ms": 5.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"click\",\"button\":\"Left\",\"col\":\"45\",\"row\":\"12\"}"
+  },
+  {
+   "i": 32,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":300}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 315.3,
+   "dump_ms": 316.9,
+   "wait_ms": 300,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"300\"}"
+  }
+ ],
+ "start_event_ms": 2032.7,
+ "first_frame_ms": 2039.4,
+ "exit_code": 0,
+ "peak_rss_kb": 114368,
+ "rss_samples": 187
+}
