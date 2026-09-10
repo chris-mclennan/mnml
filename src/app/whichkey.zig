@@ -60,7 +60,7 @@ pub const root: Node = .{
             }),
             cmd('/', .@"editor.toggle_line_comment", "toggle comment"),
             cmd('n', .@"view.toggle_line_numbers", "line numbers"),
-            cmd('e', .@"view.toggle_tree", "explorer"),
+            cmd('e', .@"view.focus_tree", "explorer"),
             cmd('w', .@"file.save", "write/save"),
             cmd('q', .@"buffer.close", "close buffer"),
             group('c', "+nvchad", &.{

@@ -1399,12 +1399,20 @@ pub fn acceptDelete(app: *App, rel: []const u8) Allocator.Error!void {
     try trash.deletePaths(app, &.{abs}, false);
 }
 
-/// `view.toggle_tree` (Ctrl+B): the left column — whatever section it
-/// shows — closes, or comes back on what it showed last.
+/// `view.toggle_tree` (Ctrl+B / vim's Ctrl+N): the left column —
+/// whatever section it shows — closes, or comes back on what it showed
+/// last. Under vim the tree that comes back takes the keys, as
+/// NvChad's `<C-n>` (`NvimTreeToggle`) does; VS Code's Ctrl+B leaves
+/// the focus where it was.
 fn toggle(app: *App) CommandError!void {
-    return side.toggleColumn(app, .left);
+    const opening = side.shown(app, .left) == null;
+    try side.toggleColumn(app, .left);
+    if (opening and app.input_style == .vim and app.tree.visible) side.focusSection(app, .explorer);
 }
 
+/// `view.focus_tree` (Ctrl+Shift+E / vim's `<leader>e`): the tree takes
+/// the keys, opened first when it was hidden — NvChad's `<leader>e`
+/// (`NvimTreeFocus`) — never hidden.
 fn focus(app: *App) CommandError!void {
     side.place(app, .explorer, true);
 }
@@ -1976,6 +1984,47 @@ test "view.reveal_in_tree opens the section and every folder above the active fi
     try t.expect(app.panes.get(app.active.?).?.* == .md_preview);
     try command.run(&app, .{ .static = .@"view.reveal_in_tree" });
     try t.expectEqual(app.tree.rowOf("notes.md").?, app.tree.cursor);
+}
+
+test "vim: <leader>e focuses the tree (opening it), <C-n> toggles it and focuses on open; standard Ctrl+B toggles without focus" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    const pane = app.active.?;
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try std.testing.expect(app.tree.visible);
+    app.focus = .{ .pane = pane };
+    // `<leader>e` on a visible tree: focus, not hide.
+    try app.handle(.{ .key = Key.char(' ') });
+    try app.handle(.{ .key = Key.char('e') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .tree);
+    // `j` now moves the tree cursor, not the editor's.
+    const before = app.activeEditor().?.buf.editor.cursor;
+    try app.handle(.{ .key = Key.char('j') });
+    try std.testing.expectEqual(before, app.activeEditor().?.buf.editor.cursor);
+    // `<C-n>` toggles: hidden, focus back on the pane; again: shown AND focused.
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try std.testing.expect(!app.tree.visible);
+    try std.testing.expect(app.focus == .pane);
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .tree);
+    // `<leader>e` on a hidden tree opens it and focuses it.
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try std.testing.expect(!app.tree.visible);
+    try app.handle(.{ .key = Key.char(' ') });
+    try app.handle(.{ .key = Key.char('e') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .tree);
+    // Standard: Ctrl+B shows the column and the focus stays in the pane.
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    app.focus = .{ .pane = pane };
+    try app.handle(.{ .key = Key.ctrl('b') });
+    try std.testing.expect(!app.tree.visible);
+    try app.handle(.{ .key = Key.ctrl('b') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .pane);
 }
 
 test "view.toggle_tree_section folds the primary section to its header and opens it again with the tree focused" {

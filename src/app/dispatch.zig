@@ -3422,15 +3422,15 @@ test "leader chain: the second key of `space e` is the chord's, not the editor's
     const e = app.activeEditor().?;
     try e.buf.editor.setText("const std = @import(\"std\");\n");
     e.buf.editor.setCursor(0);
-    const was = app.tree.visible;
     try key(&app, Key.char(' '));
     try std.testing.expect(app.chord.len == 1);
     try key(&app, Key.char('e'));
-    try std.testing.expect(app.tree.visible != was);
+    try std.testing.expect(app.tree.visible and app.focus == .tree);
     try std.testing.expect(app.chord.len == 0);
     try std.testing.expect(app.overlay == .none);
     // `e` did not run as a motion.
     try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+    app.focus = .{ .pane = app.active.? };
     // `space f f` reaches the file picker with nothing in between.
     try key(&app, Key.char(' '));
     try key(&app, Key.char('f'));

@@ -66,7 +66,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `find.grep` | `space f w` | (new) | vim | NvChad <leader>fw |
 | `picker.buffers` | `space f b` | both | both | NvChad <leader>fb (already the Rust default) |
 | `view.toggle_tree` | `ctrl+n` | (new) | vim | NvChad <C-n> |
-| `view.toggle_tree` | `space e` | (new) | vim | NvChad <leader>e |
+| `view.focus_tree` | `space e` | (new) | vim | NvChad <leader>e is `NvimTreeFocus`: the tree takes the keys, opened first when hidden — never hidden. `<C-n>` (`NvimTreeToggle`) toggles, and the tree it opens is focused; VS Code's Ctrl+B leaves the focus in the editor |
 | `buffer.close` | `space x` | (new) | vim | NvChad <leader>x |
 | `term.shell_bottom` | `space h` | (new) | vim | NvChad <leader>h horizontal term |
 | `term.shell_right` | `space v` | (new) | vim | NvChad <leader>v vertical term |
