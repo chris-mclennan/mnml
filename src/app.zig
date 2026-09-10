@@ -948,6 +948,9 @@ pub const App = struct {
     messages: messages.State = .{},
     /// Zen: the editor and the `:` line, nothing else painted.
     zen: bool = false,
+    /// When a plain Esc last armed the way out of full screen; a
+    /// second within the chord timeout leaves (`zen.escKey`).
+    zen_esc_ms: ?i64 = null,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
     /// Render durations for the statusline stress meter.

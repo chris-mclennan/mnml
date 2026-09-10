@@ -58,6 +58,7 @@ const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
+const zen = @import("zen.zig");
 const zon_pane = @import("zon_pane.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
@@ -129,6 +130,8 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
 
 fn keyInner(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
+    // Esc Esc leaves full screen: any other key in between disarms.
+    if (k.code != .esc) app.zen_esc_ms = null;
     switch (app.overlay) {
         .none => {},
         else => return overlayKey(app, k),
@@ -343,6 +346,10 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // the `e` of `<leader>e` is the chain's, not the end-of-word motion
     // (the same rule `ptyKey` applies).
     const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
+    // Full screen's Esc Esc, when the editor takes Esc outright (vim's
+    // Normal mode) and the chord chain never sees it; every other path
+    // reaches `zen.escKey` through `chordChain`.
+    if (editor_first and zen.escKey(app, k)) return;
     if (!editor_first and app.chord.len == 0 and ed == null) {
         // No pane: only chords do anything.
         _ = try chordChain(app, k);
@@ -604,6 +611,8 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
                 try runTarget(app, fb);
                 fired = true;
             }
+            // A lone Esc nothing bound: full screen's way out (`zen.escKey`).
+            if (was_first and k.code == .esc and zen.escKey(app, k)) return true;
             if (was_first) return false;
             // A chain that bottomed out: retry the current key alone —
             // but only a char could start a fresh chain; a navigation

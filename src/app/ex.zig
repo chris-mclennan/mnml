@@ -167,6 +167,9 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
     if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
     if (eqAny(verb, &.{"sidebar"})) return sidebar(app, args);
+    // Full screen's `:` doors: it hides the chrome, so the `:` line is
+    // the vim profile's way in and out (`app/zen.zig`).
+    if (eqAny(verb, &.{ "fullscreen", "zen" })) return command.run(app, .{ .static = .@"view.fullscreen" });
     if (eqAny(verb, &.{ "mes", "messages", "Messages" })) {
         if (bang) return @import("messages.zig").dump(app);
         return command.run(app, .{ .static = .@"messages.show" });
