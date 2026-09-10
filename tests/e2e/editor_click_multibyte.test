@@ -1,0 +1,24 @@
+# A click lands on the glyph under the pointer on a line of multi-byte
+# characters: the hit map carries byte offsets and the click reads them
+# as bytes — no char count, no cell delta. Tree off at 120x40: the
+# gutter is columns 0–4, the text starts at column 5, the body at row 2
+# (row 0 the palette bar, row 1 the bufferline).
+write uni.txt "/// plain ascii line\n/// Ünïcödé in a comment\n日本語の text here\nemoji 🎉 party 🎉 end\nend\n"
+open uni.txt
+command view.toggle_tree
+expect screen contains "Ln 1/5 Col 1"
+# Line 2: `ö` is the ninth char (cell 8 → column 13); Rust reads 2:9 too.
+click 13 3
+expect screen contains "Ln 2/5 Col 9"
+# Line 3: four two-cell CJK glyphs, a space, then `t` at cell 9 → char 6.
+click 14 4
+expect screen contains "Ln 3/5 Col 6"
+# The second cell of `本` (cell 3) is `本` (char 2), not the glyph after it.
+click 8 4
+expect screen contains "Ln 3/5 Col 2"
+# Line 4: the emoji takes two cells and four bytes; `p` is cell 9 → char 9.
+click 14 5
+expect screen contains "Ln 4/5 Col 9"
+# Past the end of a line: its last column.
+click 60 5
+expect screen contains "Ln 4/5 Col 20"

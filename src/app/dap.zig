@@ -251,7 +251,29 @@ pub fn toggleBreakpointAt(app: *App, path: []const u8, line: u32) CommandError!v
     syncBreakpoints(app, path);
 }
 
-/// The gutter's sign cell: flip the breakpoint on `line` of the pane's file.
+/// Whether a left press anywhere in the gutter flips a breakpoint: the
+/// file already carries breakpoints, or an adapter answers to it — the
+/// config's `.dap` table (re-read on a miss, as `dap.run` does, so an
+/// adapter written after launch counts) or a built-in one (a `.cs`
+/// beside its csproj). A file nothing can debug keeps the line-numbers
+/// click — F9 and the gutter menu still set breakpoints on it.
+pub fn gutterToggles(app: *App, e: *const EditorPane) Allocator.Error!bool {
+    const path = e.buf.doc.path orelse return false;
+    if (app.dap.bpsFor(path).len > 0) return true;
+    if (adapterFor(app, path) != null) return true;
+    try refreshAdapters(app);
+    if (adapterFor(app, path) != null) return true;
+    const built_in = builtinAdapterFor(app, path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => blk: {
+            app.diag.clear();
+            break :blk null;
+        },
+    };
+    return built_in != null;
+}
+
+/// The gutter: flip the breakpoint on `line` of the pane's file.
 pub fn gutterToggle(app: *App, pane: PaneId, line: u32) Allocator.Error!void {
     const e = app.panes.editor(pane) orelse return;
     const path = e.buf.doc.path orelse {

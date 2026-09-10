@@ -1,0 +1,19 @@
+# A left press anywhere in the gutter of a file nothing can debug — the
+# line number, not only the sign cell — selects that line and parks the
+# cursor at its column 1 (the line-numbers convention; Rust's gutter
+# press fires SelectLineToEnd). Tree off at 120x40: the gutter is
+# columns 0–4, the body starts at row 2.
+write doc.txt "ED01\nED02\nED03\nED04\nED05\n"
+open doc.txt
+command view.toggle_tree
+expect screen contains "Ln 1/5 Col 1"
+# The number cell of line 3 (row 4).
+click 3 4
+expect screen contains "Ln 3/5 Col 1"
+expect screen contains "Sel 5"
+# The sign cell of line 5 does the same on a .txt.
+click 0 6
+expect screen contains "Ln 5/5 Col 1"
+expect screen contains "Sel 5"
+# No breakpoint was set by either press.
+expect screen lacks "breakpoint set"
