@@ -389,6 +389,11 @@ pub const Doc = struct {
     sort: Sort = .{},
     /// The active filters, chipped over the subject header; null = none.
     filter_label: ?[]const u8 = null,
+    /// `/` is typing a hash prefix: painted `/<prefix>_` over the subject
+    /// header, before the filter chip (Rust `hash_filter`); null = not
+    /// typing. // changed: Rust paints it only once a digit is typed;
+    /// the empty `/_` shows the mode is on.
+    hash_filter: ?[]const u8 = null,
     has_wip: bool = false,
     /// The working tree, painted in the detail column on the WIP row.
     wip: ?WipDoc = null,
@@ -1005,7 +1010,12 @@ fn drawHeader(ui: Ui, pane: PaneId, area: Rect, doc: Doc, cols: Cols, graph_w: u
     const branch_section: usize = if (cols.branch > 0) cols.branch + 3 else 2;
     const fixed_used = 1 + 2 + branch_section + graph_w + 3 + (if (cols.author > 0) cols.author + 3 else 0) + (if (cols.age > 0) cols.age + 3 else 0) + (if (cols.sha > 0) cols.sha + 3 else 0) + sha_right_pad;
     const subject_w = @as(usize, area.w) -| fixed_used;
-    if (doc.filter_label) |chip| {
+    if (doc.hash_filter) |typed| {
+        // The hash-typing chip wins (the active keyboard interaction).
+        var s = Theme.withFg(bg, pal.yellow);
+        s.bold = true;
+        pen.put(padOrTruncate(arena, std.fmt.allocPrint(arena, "/{s}_", .{typed}) catch "", subject_w, ui.ascii) catch "", s);
+    } else if (doc.filter_label) |chip| {
         var s = Theme.onBg(Theme.withFg(bg, pal.bg_darker), pal.yellow);
         s.bold = true;
         pen.put(padOrTruncate(arena, chip, subject_w, ui.ascii) catch "", s);
