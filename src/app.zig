@@ -2453,6 +2453,8 @@ test {
     // row, the chips) were never reachable from a test block — a file
     // only container-imported contributes no tests.
     _ = @import("app/statusline.zig");
+    // The info view's copy tests were container-imported too (2026-09-10).
+    _ = @import("app/info_view.zig");
     _ = @import("app/cmd_lsp.zig");
     _ = @import("ui/completion_view.zig");
     _ = @import("ui/hover_view.zig");

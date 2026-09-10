@@ -254,7 +254,8 @@ trust sink. Each row names its file and its test.
 | Marks picker | done | `picker.marks` in `src/app/cmd_app.zig` | lists the global marks too |
 | Clipboard / register picker | done | `picker.clipboard` in `cmd_app.zig` | Enter inserts |
 | Recent-commands picker | done | `picker.recent_commands` in `cmd_app.zig` (+ `view.cmdline_history`) | |
-| Which-key leader popup | done | `src/app/whichkey.zig`, `src/ui/which_key.zig` | every group row below is done |
+| Which-key leader popup | done | `src/app/whichkey.zig`, `src/ui/which_key.zig` | every group row below is done; the popup's `<leader>` title is Rust's in both profiles (`rust-whichkey-120x40.txt` is the standard profile) |
+| Info-box copy per profile | done | `chordOf` / `chordLine` in `src/app/info_view.zig` | the editor summary's chords come from the spec table under the active profile (D4b, 2026-09-10): `[gd] Definition · [K] Hover` for vim, `[F12] Definition · [Ctrl+K Ctrl+I] Hover` for standard — Rust's `hover_help.rs` hard-codes the vim spelling; the file's tests were container-imported and never ran until `app.zig`'s test block named it |
 | Which-key `f` find | done | `whichkey.zig` | `f g` → `find.grep` |
 | Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` has the NvChad leaves — explorer, right panel (+ next / prev / close tab), keymap, theme, hidden files (focused / all) — plus wrap / numbers; `s H` / `s L` move the focused section to the other column; `g` and `a` carry the Rust leaves (`a M` mixr is cut) |
 | Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e/whichkey_groups.test` | `P` (+pr) is there with two `dead` leaves (`whichkey.Node.dead` — a row for a command neither editor has; a press says so), as Rust shows it; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
