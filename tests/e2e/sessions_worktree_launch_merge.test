@@ -1,0 +1,59 @@
+# env: HOME=${MNML_E2E_WORKSPACE}/home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# A session in a worktree of its own (src/app/session_worktree.zig):
+# ai.new_session_worktree prompts for a branch name seeded `session-1`,
+# Enter makes `<ws>-worktrees/session-1` on branch session-1 beside the
+# repository and opens the session there. The fake `claude` on PATH
+# writes its transcript for that cwd, commits one file in the tree and
+# stays up as `claude --resume <sid>` (what the scan pairs through ps).
+# The git panel lists the tree under WORKTREES, the SESSIONS card tags
+# the row `⑂ session-1` (the prompt is short — the column is 18 cells
+# beside the pane); S ends the session and the rescan toasts the commit
+# waiting; the row's merge lands it on main; the row's remove takes the
+# tree and the branch.
+shell git init -q -b main && git config user.email t@mnml.dev && git config user.name t
+write .gitignore ".mnml/\nbin/\nhome/\n"
+write a.txt "one\n"
+shell git add -A && git commit -q -m first
+write bin/claude #!/bin/bash\nif [ "$1" = "--resume" ]; then i=0; while [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done; exit 0; fi\nSID=e2e00009-0000-4000-8000-000000009001\nENC=$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')\nmkdir -p "$HOME/.claude/projects/$ENC"\nprintf '{"type":"user","cwd":"%s","message":{"role":"user","content":"job"}}\\n{"type":"assistant","cwd":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Committed it."}]}}\\n' "$PWD" "$PWD" > "$HOME/.claude/projects/$ENC/$SID.jsonl"\nprintf 'from the worktree\\n' > wt.txt\ngit add wt.txt && git -c user.email=t@mnml.dev -c user.name=t commit -q -m "from the worktree"\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done' --resume "$SID"
+shell chmod +x bin/claude
+command ai.new_session_worktree
+expect screen contains "New session in a worktree"
+expect screen contains "session-1"
+key enter
+wait 1500
+expect screen contains "worktree session-1:"
+expect screen contains "claude @ session-1"
+# The tree is a WORKTREES row of the git panel.
+command view.activity_git
+wait 1500
+expect screen contains " 󰐅 WORKTREES"
+expect screen contains "󰐅 session-1"
+# The session's card carries the tag; it is this workspace's session.
+command view.activity_sessions
+wait 1500
+expect screen contains "▌ job ⑂ session-1"
+# S ends it; the rescan sees it go and says what the tree holds.
+key S
+expect screen contains "SIGTERM 1 session?"
+key enter
+wait 800
+command sessions.refresh
+wait 1500
+expect screen contains "its worktree session-1 has 1 commit"
+# Merge into main, behind the named confirm: the commit is on main.
+command sessions.merge_worktree
+expect screen contains "Merge session-1 into main? (1 commit)"
+key enter
+wait 1000
+expect screen contains "merged session-1 into main"
+shell git merge-base --is-ancestor session-1 main
+shell git log --oneline main | grep -q "from the worktree"
+# Remove, behind its confirm: the tree and the branch are gone.
+command sessions.remove_worktree
+expect screen contains "Remove worktree session-1 and branch session-1?"
+key enter
+wait 1000
+expect screen contains "removed worktree session-1"
+shell test ! -d "../$(basename "$PWD")-worktrees/session-1"
+shell test -z "$(git branch --list session-1)"
