@@ -196,7 +196,7 @@ trust sink. Each row names its file and its test.
 |---|---|---|---|
 | Recursive binary split tree | done | `src/app/layout.zig` | |
 | Every tool view a `Pane` | done | `src/app/pane.zig` — 26 variants | `Pane.dap_repl` folded into `Pane.debug` (the toolbar over the Debug Console) on 2026-09-07 |
-| Split side-by-side / stacked | done | `view.split_right` / `split_down`, `:sp` / `:vs` | |
+| Split side-by-side / stacked | done | `view.split_right` / `split_down`, `:sp` / `:vs`; `splitCompanion` in `src/app/cmd_view.zig` | every pane kind splits (2026-09-10, Rust's `split_active`): an editor duplicates, a preview opens its file, a request pane gets a blank request, anything else a scratch editor; `command.reason` spells the shared error tags as sentences (`needs an editor pane`), so no toast reads `NotAnEditor`; `tests/e2e/split_any_pane.test` |
 | `Ctrl-W` focus `h j k l w` | done | `src/input/vim.zig` `.window` | |
 | `Ctrl-W` split / close / only `s v q c o` | done | same | |
 | `Ctrl-W` move `H J K L` | done | `moveToEdge` in `src/app/layout.zig`, `view.move_split_*` in `src/app/cmd_view.zig`, the `.window` prong | the leaf re-hangs as one half of a new root split |
@@ -206,7 +206,7 @@ trust sink. Each row names its file and its test.
 | Mouse click-to-focus | done | `src/app/dispatch.zig`, `src/ui/hit.zig` | *2026-09-10 (mouse-fixes):* a click and a drag resolve an `.editor_cell` hit as the byte offset it carries (`cellByte`) — the second cell of a wide glyph is that glyph, the EOL space the line's end; `ö` clicked reads 10:9 on both sides of `tools/compare.sh compare-mouse` (was 10:11: the handler added the cell delta and counted chars). A gutter press on a file nothing can debug selects the line with the cursor at its column 1, Shift extending (Rust's `SelectLineToEnd`); `tests/e2e/editor_click_multibyte.test`, `gutter_click_selects_line.test` |
 | Mouse drag-to-resize dividers | done | `dispatch.zig` `.divider` drag | |
 | Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e/buffer_pin_reopen.test` |
-| Bufferline tab strip | done | `src/ui/bufferline.zig`, per-leaf strips in `render.zig` | |
+| Bufferline tab strip | done | `src/ui/bufferline.zig`, per-leaf strips in `render.zig` | the ` +N hidden ` chip counts the tabs off either edge of the window plus the filtered ones (2026-09-10, Rust's `tabs.len() - painted_count`); a click opens the buffer picker; `tests/e2e/tabs_hidden_chip.test` |
 | Tab pages session-persisted | done | `src/app/session.zig` `tabs` / `active_tab` | |
 | Tabline of open buffers | done | `src/ui/bufferline.zig`, `view.focus_tab_1–8` / `focus_tab_last` in `cmd_view.zig` | |
 | MRU buffer switching | done | `App.pane_mru` (`setActive` fronts, `forceClosePane` drops); `buffer.last` / `clear_mru` / `pin_toggle` in `src/app/cmd_buffer.zig` | `buffer.last` reads the MRU past a closed alternate; a pinned tab fronts its strip with the pin glyph (`bufferline.pin_glyph`, `^` ascii), survives `buffer.close_others` / `close_right` / `view.close_others`, rides in `session.zon`; the tab menu's *Pin tab* row; `buffer.next_dirty` / `prev_dirty` landed earlier |

@@ -360,8 +360,13 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
             after_plus = plus_x + plus_w;
         }
     }
-    // ` +N hidden `: the tabs that are still there.
-    const hidden_total = hidden_right + opts.hidden_extra;
+    // ` +N hidden `: the tabs that are still there — off either edge of
+    // the window (Rust's `tabs.len() - painted_count`, which counts the
+    // scrolled-off left as well as the right) and the ones the caller
+    // kept off the strip. The chip needs room after the `+`, so it shows
+    // once the strip is scrolled to a tail that fits whole, not while a
+    // cut chip runs to the edge.
+    const hidden_total = first + hidden_right + opts.hidden_extra;
     if (hidden_total > 0) {
         const label = ui.fmt(" +{d} hidden ", .{hidden_total});
         const w = ui.width(label);
@@ -774,6 +779,38 @@ test "an overflowing strip: the offset clamps to what fills it, the chevrons lig
     _ = draw(e.ui(), e.full(), &.{}, .{ .new_tab = 1 });
     try e.expectRow(0, " " ++ plus_glyph);
     _ = draw(e.ui(), Rect.empty, &.{}, .{ .new_tab = 1 });
+}
+
+test "the hidden chip counts the tabs scrolled off the left edge too, and clicks through to its button" {
+    // Five tabs, the strip scrolled to its tail: 66 cells hold the last
+    // three chips whole (the clamp pulls a stale offset back to them),
+    // two sit off the left edge and the chip says so where Rust's does —
+    // after the `+`.
+    var f = try Fixture.init(66, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{
+        .{ .id = 1, .title = "one.txt", .glyph = "x" },
+        .{ .id = 2, .title = "two.txt", .glyph = "x" },
+        .{ .id = 3, .title = "three.txt", .glyph = "x" },
+        .{ .id = 4, .title = "four.txt", .glyph = "x" },
+        .{ .id = 5, .title = "five.txt", .glyph = "x", .active = true },
+    };
+    const w = draw(f.ui(), f.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .hidden_button = 8, .first = 3 });
+    try testing.expectEqual(@as(usize, 2), w.first);
+    try testing.expectEqual(@as(usize, 2), w.hidden_left);
+    try testing.expectEqual(@as(usize, 0), w.hidden_right);
+    try f.expectContains(plus_glyph ++ "  +2 hidden ");
+    try testing.expectEqual(@as(u32, 8), f.hits.at(50, 0).?.button);
+    // The filtered-out tabs add to the same count.
+    var g = try Fixture.init(66, 1);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8, .hidden_extra = 2, .first = 3 });
+    try g.expectContains(" +4 hidden ");
+    // Nothing hidden: no chip.
+    var k = try Fixture.init(90, 1);
+    defer k.deinit();
+    _ = draw(k.ui(), k.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8 });
+    try testing.expect(!hasButton(&k, 8));
 }
 
 test "the hidden chip counts the filtered tabs; the mode chip sits before the cluster; AI chips drop first" {
