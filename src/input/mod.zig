@@ -274,6 +274,14 @@ pub const InputHandler = union(enum) {
         }
     }
 
+    /// A recording the app started or stopped without a key (the
+    /// statusline's macro chip): the handler's own `q` bookkeeping follows.
+    pub fn setMacroRecording(h: *InputHandler, on: bool) void {
+        switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "setMacroRecording")) impl.setMacroRecording(on),
+        }
+    }
+
     pub fn requestVisualMode(h: *InputHandler) void {
         switch (h.*) {
             inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "requestVisualMode")) impl.requestVisualMode(),

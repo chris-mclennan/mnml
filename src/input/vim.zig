@@ -218,6 +218,10 @@ pub const Vim = struct {
         self.enterInsert();
     }
 
+    pub fn setMacroRecording(self: *Vim, on: bool) void {
+        self.is_recording_macro = on;
+    }
+
     pub fn requestVisualMode(self: *Vim) void {
         self.vmode = .visual;
         self.prefix = .none;
