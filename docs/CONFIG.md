@@ -285,9 +285,13 @@ otherwise. Copy what you need; leave the rest out.
                 .args = .{},
                 .env = .{ "KEY=VALUE" },
                 .cwd_mode = .workspace, // .workspace | .home | .file_dir
+                .worktree = false, // true: every session of this profile starts in a git worktree of its own
             },
         },
         .default_profile = .{ .claude = null, .codex = null }, // a profile name per product; null = the built-in
+        // Where a session worktree goes. null = `<repo>-worktrees` beside the
+        // repository; `~` expands, a relative path sits under the repository.
+        .default_worktree_root = null,
         .inline_suggestions = true,
         .claude_show_all_accounts = false,
         .claude_meter_mode = .compact, // .off | .compact | .ticker
@@ -545,7 +549,7 @@ workspace layer and everything else still applies:
 | `.dap.<name>` | when you start a debug session |
 | `.startup.layout[]` with `.kind = .pty` | immediately, on open |
 | `.startup.tasks` | immediately, on open |
-| `.ai.launch_profiles[]` (`.binary` / `.args` / `.env`) and `.ai.default_profile` | when you start a Claude / Codex session |
+| `.ai.launch_profiles[]` (`.binary` / `.args` / `.env` / `.worktree`) and `.ai.default_profile` | when you start a Claude / Codex session |
 | `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
 | `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
 

@@ -452,6 +452,11 @@ pub const LaunchProfile = struct {
     /// `KEY=VALUE` lines, exported by the shim.
     env: []const []const u8 = &.{},
     cwd_mode: CwdMode = .workspace,
+    /// Every session of this profile starts in a git worktree of its
+    /// own (`app/session_worktree.zig`): the launch prompts for a name,
+    /// `git worktree add -b <name>` makes `<root>/<name>` and the
+    /// session runs there. `cwd_mode` is then moot.
+    worktree: bool = false,
 };
 
 /// The persisted default per product; null (or a name that is not
@@ -468,6 +473,10 @@ pub const Ai = struct {
     // changed: launch profiles and their per-product default.
     launch_profiles: []const LaunchProfile = &.{},
     default_profile: DefaultProfile = .{},
+    /// Where a session worktree goes: null is `<repo>-worktrees` beside
+    /// the repository; a path (`~` expanded, a relative one under the
+    /// repository) overrides it. The worktree itself is `<root>/<name>`.
+    default_worktree_root: ?[]const u8 = null,
     inline_suggestions: bool = true,
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,

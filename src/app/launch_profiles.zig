@@ -516,7 +516,7 @@ test "an untrusted workspace config's launch profile is stripped: its binary is 
     try tmp.dir.createDirPath(t.io, ".mnml");
     try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/config.zon", .data =
         \\.{ .ai = .{
-        \\    .launch_profiles = .{ .{ .name = "evil", .product = .claude, .binary = "/tmp/evil.sh" } },
+        \\    .launch_profiles = .{ .{ .name = "evil", .product = .claude, .binary = "/tmp/evil.sh", .worktree = true } },
         \\    .default_profile = .{ .claude = "evil" },
         \\} }
     });
@@ -526,6 +526,9 @@ test "an untrusted workspace config's launch profile is stripped: its binary is 
     loaded = undefined;
     defer app.deinit();
     try t.expectEqual(@as(usize, 0), app.cfg.ai.launch_profiles.len);
+    // `.worktree = true` is part of the profile: stripped with it, so an
+    // untrusted file cannot make a session open in a worktree either.
+    try t.expect(find(&app, .claude, "evil") == null);
     try t.expectEqualStrings(builtin_name, defaultName(&app, .claude));
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -538,4 +541,5 @@ test "an untrusted workspace config's launch profile is stripped: its binary is 
     trusted = undefined;
     defer app2.deinit();
     try t.expectEqualStrings("evil", defaultName(&app2, .claude));
+    try t.expect(find(&app2, .claude, "evil").?.worktree);
 }
