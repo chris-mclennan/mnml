@@ -1233,12 +1233,22 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2gUU", "a|bc\nde\nfg", "A|BC\nDE\nfg");
     try vim("3guu", "|AB\nCD\nEF\nGH", "|ab\ncd\nef\nGH");
     try vim("g~iw", "a|Bc d", "|AbC d");
-    try vim(">>", "|a\nb", " |   a\nb"); // cursor keeps its column (Rust parity)
-    try vim("<<", "    a|b\nc", "ab|\nc");
-    try vim(">j", "|a\nb\nc", "    a\n |   b\nc");
-    try vim("2>>", "|a\nb\nc", "    a\n |   b\nc");
-    try vim("<j", "    |a\n    b\nc", "a\nb|\nc");
-    try vim("<k", "    a\n    |b\nc", "a|\nb\nc");
+    // `>` / `<` end on the range's first line, first non-blank
+    // (`:help >>`; `vim -es`: `gg3>>` → 1:2 with a tab, `gg3>>j.` → 2:3)
+    // — never the last line's end, so `.` shifts the same lines again.
+    try vim(">>", "|a\nb", "    |a\nb");
+    try vim("<<", "    a|b\nc", "|ab\nc");
+    try vim(">j", "|a\nb\nc", "    |a\n    b\nc");
+    try vim("2>>", "|a\nb\nc", "    |a\n    b\nc");
+    try vim("3>>", "|a\nb\nc\nd\ne", "    |a\n    b\n    c\nd\ne");
+    try vim("3>>.", "|a\nb\nc\nd\ne", "        |a\n        b\n        c\nd\ne");
+    try vim("3>>j.", "|a\nb\nc\nd\ne", "    a\n        |b\n        c\n    d\ne");
+    try vim("Vj>", "|a\nb\nc", "    |a\n    b\nc");
+    try vim("Vj>.", "|a\nb\nc", "        |a\n        b\nc");
+    try vim(">ip", "a\n|b\nc\n\nd", "    |a\n    b\n    c\n\nd");
+    try vim("<j", "    |a\n    b\nc", "|a\nb\nc");
+    try vim("<k", "    a\n    |b\nc", "|a\nb\nc");
+    try vim(">>", "  |a\nb", "      |a\nb");
     // `=` re-indents by the braces above: one line, a motion, the file, a selection.
     try vim("==", "f() {\n|x;\n}", "f() {\n    |x;\n}");
     try vim("gg=G", "f() {\nx;\n  if (a) {\n  y;\n}\n|}", "|f() {\n    x;\n    if (a) {\n        y;\n    }\n}");

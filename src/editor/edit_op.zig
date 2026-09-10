@@ -154,6 +154,11 @@ pub const EditOp = union(enum) {
     // ── line ops ──
     indent,
     outdent,
+    /// vim `>` / `<`: the selected lines (or the cursor's) shifted, the
+    /// cursor on the range's first line at its first non-blank
+    /// (`:help >>`) — where `indent` keeps the cursor's (row, col).
+    indent_to_first_non_blank,
+    outdent_to_first_non_blank,
     /// `=`: the selected lines (or the cursor's) re-indented by the
     /// buffer's brace rules.
     reindent,
@@ -191,7 +196,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 139);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 141);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).

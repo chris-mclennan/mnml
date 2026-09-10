@@ -825,11 +825,11 @@ pub const Vim = struct {
                 self.vmode = .insert;
             },
             .indent => {
-                try b.push(.indent);
+                try b.push(.indent_to_first_non_blank);
                 try b.push(.select_clear);
             },
             .outdent => {
-                try b.push(.outdent);
+                try b.push(.outdent_to_first_non_blank);
                 try b.push(.select_clear);
             },
             .reindent => {
@@ -1733,8 +1733,8 @@ pub const Vim = struct {
                     for (1..n) |_| try b.push(.move_down);
                     try b.push(.move_line_end);
                     try b.push(switch (op) {
-                        .indent => .indent,
-                        .outdent => .outdent,
+                        .indent => .indent_to_first_non_blank,
+                        .outdent => .outdent_to_first_non_blank,
                         else => .reindent,
                     });
                     try b.push(.select_clear);
@@ -2078,8 +2078,8 @@ pub const Vim = struct {
             '>', '<', '=' => {
                 self.enterNormal();
                 const op: EditOp = switch (c) {
-                    '>' => .indent,
-                    '<' => .outdent,
+                    '>' => .indent_to_first_non_blank,
+                    '<' => .outdent_to_first_non_blank,
                     else => .reindent,
                 };
                 if (linewise) return ops(arena, &.{ .normalize_linewise_selection, op, .select_clear });

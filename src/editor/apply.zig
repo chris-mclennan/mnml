@@ -202,6 +202,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         // ── line ops ──
         .indent => try line.indent(ed, out),
         .outdent => try line.outdent(ed, out),
+        .indent_to_first_non_blank => try line.shiftToFirstNonBlank(ed, false, out),
+        .outdent_to_first_non_blank => try line.shiftToFirstNonBlank(ed, true, out),
         .reindent => try line.reindent(ed, out),
         .toggle_line_comment => try line.toggleLineComment(ed, out),
         .move_line_up => try line.moveLine(ed, -1, out),

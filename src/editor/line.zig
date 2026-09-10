@@ -106,6 +106,17 @@ pub fn outdent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     }
 }
 
+/// vim's `>` / `<` (`:help >>`): the range shifted as `indent` /
+/// `outdent` do, then the cursor on the range's FIRST line at its first
+/// non-blank — so `3>>` and `V…>` end where they began and a `.` after
+/// them shifts the same lines again, not the ones below.
+pub fn shiftToFirstNonBlank(ed: *Editor, out_: bool, out: *EditOutcome) Allocator.Error!void {
+    const first = selectedLineRange(ed)[0];
+    if (out_) try outdent(ed, out) else try indent(ed, out);
+    ed.cursor = ed.firstNonWs(@min(first, ed.lineCount() - 1));
+    ed.anchor = null;
+}
+
 /// `=`: each line of the range gets the indent the lines above call
 /// for — vim's `=` without an `indentexpr`, reduced to the brace rules
 /// that fit every C-shaped language: a line takes the indent of the
