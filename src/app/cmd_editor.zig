@@ -67,6 +67,8 @@ pub const table = .{
     .@"editor.insert_last_search" = &insertLastSearch,
     .@"editor.insert_last_inserted" = &insertLastInserted,
     .@"editor.input_mode_menu" = &inputModeMenu,
+    .@"editor.keyword_complete" = &keywordComplete,
+    .@"editor.keyword_complete_back" = &keywordCompleteBack,
 };
 
 fn one(app: *App, op: EditOp) CommandError!void {
@@ -628,6 +630,110 @@ fn inputModeMenu(app: *App) CommandError!void {
     try context_menus.openModeMenu(app, x, y);
 }
 
+// ─── insert-mode `Ctrl+N` / `Ctrl+P`: keyword completion ────────────────
+
+fn keywordComplete(app: *App) CommandError!void {
+    return keywordCycle(app, false);
+}
+fn keywordCompleteBack(app: *App) CommandError!void {
+    return keywordCycle(app, true);
+}
+
+/// A keyword byte: ASCII alphanumerics, `_`, and anything non-ASCII.
+fn isWordByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_' or c >= 0x80;
+}
+
+fn addDistinct(gpa: Allocator, list: *std.ArrayListUnmanaged([]u8), word: []const u8) Allocator.Error!void {
+    for (list.items) |w| if (std.mem.eql(u8, w, word)) return;
+    const owned = try gpa.dupe(u8, word);
+    errdefer gpa.free(owned);
+    try list.append(gpa, owned);
+}
+
+/// The first press completes the keyword before the cursor with the
+/// nearest word extending it — after the cursor first for `Ctrl+N`,
+/// before it for `Ctrl+P`, wrapping round the buffer. A press that
+/// finds the buffer where the last one left it steps to the next
+/// candidate, `Ctrl+P` back, and past the last one to the bare prefix.
+fn keywordCycle(app: *App, back: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = try app.requireEditor();
+    const id = app.active orelse return error.NoActivePane;
+    const ed = e.buf.editor;
+    if (app.keyword_complete) |*st| {
+        if (st.pane == id and st.cursor == ed.cursor and st.len == ed.len()) {
+            const n = st.candidates.len + 1;
+            st.idx = (st.idx + if (back == st.back) 1 else n - 1) % n;
+            const from = st.prefix[1];
+            const tail: []const u8 = if (st.idx < st.candidates.len) st.candidates[st.idx][st.prefix[1] - st.prefix[0] ..] else "";
+            try app.splice(e, from, from + st.inserted, tail);
+            st.inserted = tail.len;
+            st.cursor = ed.cursor;
+            st.len = ed.len();
+            if (st.idx < st.candidates.len) app.toast("{s} ({d}/{d})", .{ st.candidates[st.idx], st.idx + 1, st.candidates.len }) else app.toast("back to original", .{});
+            return;
+        }
+        st.deinit(app.gpa);
+        app.keyword_complete = null;
+    }
+    const text = ed.bytes();
+    const cur = ed.cursor;
+    var start = cur;
+    while (start > 0 and isWordByte(text[start - 1])) start -= 1;
+    if (start == cur) return app.diag.fail(arena, "no keyword before the cursor", .{});
+    const prefix = text[start..cur];
+    // The words extending the prefix, in text order, split at the cursor.
+    var before: std.ArrayListUnmanaged([]const u8) = .empty;
+    var after: std.ArrayListUnmanaged([]const u8) = .empty;
+    var i: usize = 0;
+    while (i < text.len) {
+        if (!isWordByte(text[i])) {
+            i += 1;
+            continue;
+        }
+        const s = i;
+        while (i < text.len and isWordByte(text[i])) i += 1;
+        // The word being typed is not its own completion.
+        if (s == start) continue;
+        const w = text[s..i];
+        if (w.len <= prefix.len or !std.mem.startsWith(u8, w, prefix)) continue;
+        try (if (s < start) &before else &after).append(arena, w);
+    }
+    var ordered: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (ordered.items) |w| app.gpa.free(w);
+        ordered.deinit(app.gpa);
+    }
+    if (back) {
+        var k = before.items.len;
+        while (k > 0) : (k -= 1) try addDistinct(app.gpa, &ordered, before.items[k - 1]);
+        k = after.items.len;
+        while (k > 0) : (k -= 1) try addDistinct(app.gpa, &ordered, after.items[k - 1]);
+    } else {
+        for (after.items) |w| try addDistinct(app.gpa, &ordered, w);
+        for (before.items) |w| try addDistinct(app.gpa, &ordered, w);
+    }
+    if (ordered.items.len == 0) {
+        app.toast("no match", .{});
+        return;
+    }
+    const prefix_len = prefix.len;
+    const first = ordered.items[0][prefix_len..];
+    try app.splice(e, cur, cur, first);
+    app.keyword_complete = .{
+        .pane = id,
+        .prefix = .{ start, cur },
+        .candidates = try ordered.toOwnedSlice(app.gpa),
+        .idx = 0,
+        .inserted = first.len,
+        .back = back,
+        .cursor = ed.cursor,
+        .len = ed.len(),
+    };
+    app.toast("{s} (1/{d})", .{ app.keyword_complete.?.candidates[0], app.keyword_complete.?.candidates.len });
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -916,4 +1022,50 @@ test "gi returns to where the last change ended, in Insert; nothing yet toasts" 
     // The handler's own `gi` runs the same runner.
     try feed(&app, "G0giZ<esc>");
     try t.expectEqualStrings("XYZalpha\nbravo\ncharlie", e.buf.editor.bytes());
+}
+
+test "keyword completion cycles the nearest words extending the prefix, wraps to the bare prefix, and starts over after another edit" {
+    var app = try appWith("alphabet\nalpine\nx\nal");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    const ed = e.buf.editor;
+    ed.setCursor(ed.len());
+    try command.run(&app, .{ .static = .@"editor.keyword_complete" });
+    try t.expectEqualStrings("alphabet\nalpine\nx\nalphabet", ed.bytes());
+    try t.expectEqualStrings("alphabet (1/2)", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.keyword_complete" });
+    try t.expectEqualStrings("alphabet\nalpine\nx\nalpine", ed.bytes());
+    try command.run(&app, .{ .static = .@"editor.keyword_complete" });
+    try t.expectEqualStrings("alphabet\nalpine\nx\nal", ed.bytes());
+    try t.expectEqualStrings("back to original", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.keyword_complete" });
+    try t.expectEqualStrings("alphabet\nalpine\nx\nalphabet", ed.bytes());
+    // `Ctrl+P` inside the cycle steps back.
+    try command.run(&app, .{ .static = .@"editor.keyword_complete_back" });
+    try t.expectEqualStrings("alphabet\nalpine\nx\nal", ed.bytes());
+    try command.run(&app, .{ .static = .@"editor.keyword_complete_back" });
+    try t.expectEqualStrings("alphabet\nalpine\nx\nalpine", ed.bytes());
+    // Any other edit ends the cycle: the next press reads the buffer afresh.
+    try app.splice(e, ed.cursor, ed.cursor, "!");
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"editor.keyword_complete" }));
+    try t.expectEqualStrings("no keyword before the cursor", app.lastToast().?);
+    try t.expect(app.keyword_complete == null);
+    // A first `Ctrl+P` looks backward: nearest above first, then round from the bottom.
+    try ed.setText("al\nalpine\nalphabet\nalp");
+    ed.setCursor(2);
+    try command.run(&app, .{ .static = .@"editor.keyword_complete_back" });
+    try t.expectEqualStrings("alp\nalpine\nalphabet\nalp", ed.bytes());
+    try command.run(&app, .{ .static = .@"editor.keyword_complete_back" });
+    try t.expectEqualStrings("alphabet\nalpine\nalphabet\nalp", ed.bytes());
+    // The same buffer, `Ctrl+N` first: the nearest below.
+    try ed.setText("al\nalpine\nalphabet");
+    ed.setCursor(2);
+    try command.run(&app, .{ .static = .@"editor.keyword_complete" });
+    try t.expectEqualStrings("alpine\nalpine\nalphabet", ed.bytes());
+    // No word extends the prefix.
+    try ed.setText("zzz\nal");
+    ed.setCursor(ed.len());
+    try command.run(&app, .{ .static = .@"editor.keyword_complete" });
+    try t.expectEqualStrings("no match", app.lastToast().?);
+    try t.expect(app.keyword_complete == null);
 }

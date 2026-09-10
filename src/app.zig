@@ -684,6 +684,32 @@ pub const double_click_ms: i64 = 450;
 /// grew since (a fresh edit restarts from the newest entry).
 pub const ChangeNav = struct { idx: usize, len: usize };
 
+/// An insert-mode `Ctrl+N` / `Ctrl+P` cycle in progress
+/// (`cmd_editor.zig`). A press that finds the buffer where the last
+/// one left it steps to the next candidate; anything else starts over.
+pub const KeywordComplete = struct {
+    pane: PaneId,
+    /// The byte range of the prefix typed before the first press.
+    prefix: [2]usize,
+    /// Distinct words extending the prefix, in the first press's order
+    /// (nearest first, wrapping). gpa-owned.
+    candidates: [][]u8,
+    /// The candidate in the buffer now; `candidates.len` is the bare prefix.
+    idx: usize,
+    /// Bytes sitting after the prefix right now.
+    inserted: usize,
+    /// The first press was `Ctrl+P`.
+    back: bool,
+    /// The buffer after our last edit; a drift means another edit happened.
+    cursor: usize,
+    len: usize,
+
+    pub fn deinit(self: *KeywordComplete, gpa: Allocator) void {
+        for (self.candidates) |w| gpa.free(w);
+        gpa.free(self.candidates);
+    }
+};
+
 pub const ChordChain = struct {
     seq: [keymap.max_seq]key_mod.Chord = undefined,
     len: usize = 0,
@@ -950,6 +976,8 @@ pub const App = struct {
     search_case: ?bool = null,
     /// `g;` / `g,` position in the active editor's change list.
     change_nav: ?ChangeNav = null,
+    /// The insert-mode keyword completion being cycled, if any.
+    keyword_complete: ?KeywordComplete = null,
     /// `:command` definitions, name → expansion (both owned); persisted
     /// at `<data root>/commands.zon` (`ex_verbs.zig`).
     user_commands: std.StringHashMapUnmanaged([]u8) = .empty,
@@ -1302,6 +1330,7 @@ pub const App = struct {
         for (self.find_history.items) |q| gpa.free(q);
         self.find_history.deinit(gpa);
         self.pane_mru.deinit(gpa);
+        if (self.keyword_complete) |*k| k.deinit(gpa);
         for (self.closed_tabs.items) |*c| c.deinit(gpa);
         self.closed_tabs.deinit(gpa);
         var it = self.abbrevs.iterator();
