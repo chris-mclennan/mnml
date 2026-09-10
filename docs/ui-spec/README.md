@@ -77,6 +77,21 @@ on the branch base `c0b67b0`). A workspace with one repo paints no
 gutter and no pill accent, so a fixture without the extra roots would
 read as before.
 
+## Context menus: the row above the bottom border (2026-09-10)
+
+Every titled popup — a rail menu, a tree row's, the `+` chip's
+`Create…` — paints one blank row between its last item and the bottom
+border. That row is Rust's: `ui/context_menu.rs` sizes a titled menu
+as `items + 1 + 2` and paints the title in the top border, so the
+reserved row stays empty (`rust-menu-plus-120x40.txt`, and a
+right-click on the Explorer rail or a tree row, cut with
+`tools/ui-diff.sh` on the fixture, show the same blank row on both
+sides). `menuSize` in `src/app/render.zig` keeps it so the boxes match
+cell for cell; a hunt that reads it as a bug should diff against Rust
+first. The one Zig-only popup, the ` » ` list of the menus that did
+not fit the bar, is painted in the dropdown shape instead (no title,
+the `▸ ` marker column) so an arrow lights a visible cursor.
+
 ## Scrollbars: the cell of air (2026-09-08)
 
 Text never touches a vertical scrollbar. Wherever a bar is painted —
