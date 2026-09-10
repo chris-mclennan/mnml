@@ -26,6 +26,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const hooks = @import("../core/hooks.zig");
 const key_mod = @import("../core/key.zig");
+const EditingMode = @import("../input/mod.zig").EditingMode;
 const Key = key_mod.Key;
 const Mouse = key_mod.Mouse;
 const alloc = @import("../core/alloc.zig");
@@ -1679,8 +1680,17 @@ const manual_flag: u32 = 0x8000_0000;
 /// Typing in an editor: a trigger character or an identifier of two
 /// characters opens the popup; a cursor that left the word closes it.
 /// An on-type formatting trigger asks the server for its edits.
-pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!void {
+///
+/// `mode` is the editing mode the key landed in. Only a key typed into
+/// the text counts: a NORMAL-mode `u` / `x` / `r` also changes the
+/// buffer and is also a key, but nobody is completing a word there —
+/// the popup it opened lingered over NORMAL mode and, once the cursor
+/// moved left of its anchor, crashed the render (hunt-vim-2026-09-09).
+/// An undo, a workspace edit and a format never come through here at
+/// all: they are not keys.
+pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key, mode: EditingMode) Allocator.Error!void {
     const c = k.typed() orelse return;
+    if (!isTyping(mode)) return;
     const path = e.buf.doc.path orelse return;
     // // changed (lua-track): in a script the app completes its own API
     // first; a server, when there is one, gets the rest of the file.
@@ -1706,6 +1716,15 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!
     requestCompletion(app, t, false, if (is_trigger) @intCast(c) else null) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
+    };
+}
+
+/// The modes a key types into the text: vim's INSERT / REPLACE, and
+/// the modeless standard handler.
+fn isTyping(mode: EditingMode) bool {
+    return switch (mode) {
+        .insert, .replace, .none => true,
+        .normal, .visual, .visual_line, .visual_block => false,
     };
 }
 
@@ -3186,6 +3205,16 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
 }
 
+/// Tick and render for `ms`, for a test that asserts nothing arrived.
+fn pumpQuiet(app: *App, ms: u32) !void {
+    var spent: u32 = 0;
+    while (spent < ms) : (spent += 10) {
+        try testing.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+        try app.render();
+    }
+}
+
 test "a completion popup whose anchor is past the cursor closes instead of slicing backwards; so does one whose pane is gone; a motion left of the anchor closes it on the key" {
     const gpa = testing.allocator;
     var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
@@ -3229,6 +3258,63 @@ test "a completion popup whose anchor is past the cursor closes instead of slici
     try testing.expectEqual(@as(usize, 0), (try visibleCompletions(&app, arena.allocator())).len);
     try testing.expect(app.lsp.completion == null);
     try app.render();
+}
+
+test "the completion auto-trigger: typing in INSERT opens the popup; `u` and `x` in NORMAL change the buffer but open nothing" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    const e = try TestRig.openFile(&app, TestRig.file, "let x = 1;\nconst foo = 2;\nfoo.\n");
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items[0];
+            return s.ready and s.isOpen(TestRig.file);
+        }
+        fn comp(a: *App) bool {
+            return a.lsp.completion != null;
+        }
+    };
+    try TestRig.pump(&app, &app, Cond.ready, 5000);
+    const ed = e.buf.editor;
+    try testing.expectEqual(.normal, e.buf.input.mode());
+
+    // INSERT at the end of `foo.`: the second identifier character asks
+    // (`al` matches the scripted server's `alphaOne` / `alphaTwo`).
+    ed.setCursor(ed.len() - 1);
+    try app.handle(.{ .key = Key.char('i') });
+    try testing.expectEqual(.insert, e.buf.input.mode());
+    try app.handle(.{ .key = Key.char('a') });
+    try app.handle(.{ .key = Key.char('l') });
+    try testing.expectEqualStrings("let x = 1;\nconst foo = 2;\nfoo.al\n", ed.bytes());
+    try testing.expect(app.lsp.completion_req != null);
+    try TestRig.pump(&app, &app, Cond.comp, 5000);
+    // Esc closes the popup; a second leaves INSERT.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.lsp.completion == null);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expectEqual(.normal, e.buf.input.mode());
+
+    // `u` takes the typed `al` back: a buffer change from a key, but
+    // not typing — nothing is asked, nothing opens.
+    try app.handle(.{ .key = Key.char('u') });
+    try testing.expectEqualStrings("let x = 1;\nconst foo = 2;\nfoo.\n", ed.bytes());
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+    // `x` on the `.` after `foo`: the same.
+    ed.setCursor(std.mem.indexOf(u8, ed.bytes(), "foo.\n").? + 3);
+    try app.handle(.{ .key = Key.char('x') });
+    try testing.expect(std.mem.indexOf(u8, ed.bytes(), "\nfoo\n") != null);
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+
+    try rig.stop(&app);
 }
 
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {

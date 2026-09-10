@@ -479,7 +479,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
             if (trigger) try expandAbbreviation(app, e);
-            try lsp.onTyped(app, pane_id, e, k);
+            try lsp.onTyped(app, pane_id, e, k, before_mode);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
     }
