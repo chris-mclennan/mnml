@@ -2127,8 +2127,20 @@ pub const Vim = struct {
                 return runCmd(.@"find.selection_backward");
             },
             ':' => {
+                // `:` ends Visual on the spot (`:help v_:`): the `'<,'>`
+                // marks take the whole range — a linewise one widened
+                // first, so `'>` is the cursor's line and not the one
+                // above it — the selection goes, and the cursor stays
+                // where Visual left it (`vim -es`: `2GV2j` → `'<`=2,
+                // `'>`=4). Esc on the line then finds Normal, not V-LINE.
                 try self.openCmdline("'<,'>");
-                return ops(arena, &.{.remember_selection});
+                self.vmode = .normal;
+                var b = Builder.init(arena);
+                if (linewise) try b.push(.normalize_linewise_selection);
+                try b.push(.remember_selection);
+                try b.push(.select_clear);
+                try b.push(.{ .set_cursor_byte = ctx.cursor });
+                return b.finish();
             },
             'S' => {
                 // vim-surround: wrap the selection with the next char.
@@ -2202,8 +2214,11 @@ pub const Vim = struct {
                 return .{ .app = .block_change_start };
             },
             ':' => {
+                // As in the other Visual modes: the marks are set and
+                // the block is gone before the `:` line takes a key.
                 try self.openCmdline("'<,'>");
-                return ops(arena, &.{.remember_selection});
+                self.vmode = .normal;
+                return ops(arena, &.{ .remember_selection, .block_select_clear });
             },
             'r' => {
                 self.prefix = .block_replace_char;
@@ -2402,6 +2417,37 @@ test "gt / gT run tab.next / tab.prev; with a count they name the page (3gt) or 
     _ = try v.handleKey(Key.char('g'), .{}, a);
     r = try v.handleKey(Key.char('t'), .{}, a);
     try testing.expectEqual(CommandId.@"tab.next", r.app.run_command);
+}
+
+test "visual `:` opens the line on '<,'>, leaves Visual at once, and widens a linewise range before remembering it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char('V'), .{}, a);
+    _ = try v.handleKey(Key.char('j'), .{}, a);
+    const r = try v.handleKey(Key.char(':'), .{ .cursor = 7 }, a);
+    try testing.expect(v.isCmdlineOpen());
+    try testing.expectEqualStrings("'<,'>", v.cmdlineGet().?);
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
+    try testing.expectEqualSlices(EditOp, &.{ .normalize_linewise_selection, .remember_selection, .select_clear, .{ .set_cursor_byte = 7 } }, r.ops);
+    // Esc on the line: Normal, nothing pending; `gv` still knows the shape.
+    _ = try v.handleKey(Key.named(.esc), .{}, a);
+    try testing.expect(!v.isCmdlineOpen());
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
+    try testing.expectEqual(VimMode.visual_line, v.last_visual);
+    // Charwise: no widening.
+    _ = try v.handleKey(Key.char('v'), .{}, a);
+    const c = try v.handleKey(Key.char(':'), .{ .cursor = 3 }, a);
+    try testing.expectEqualSlices(EditOp, &.{ .remember_selection, .select_clear, .{ .set_cursor_byte = 3 } }, c.ops);
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
+    _ = try v.handleKey(Key.named(.esc), .{}, a);
+    // Block: the block anchor goes with it.
+    _ = try v.handleKey(Key.ctrl('v'), .{}, a);
+    const bl = try v.handleKey(Key.char(':'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{ .remember_selection, .block_select_clear }, bl.ops);
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
 }
 
 test "pending display shows register, count, operator and prefix" {
