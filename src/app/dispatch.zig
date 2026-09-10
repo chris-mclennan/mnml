@@ -1403,6 +1403,16 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
 // release completes; the hit under the release decides where a tab or
 // a tree file lands. `count` is the wheel batch (`scroll.zig`).
 
+/// `debug.toggle_click_inspector`: `click @12,3 → statusline_seg:2`,
+/// or `nothing` where no target was painted.
+fn inspectClick(app: *App, m: Mouse) Allocator.Error!void {
+    var label: std.Io.Writer.Allocating = .init(app.frame.allocator());
+    if (app.hits.at(m.x, m.y)) |target| {
+        target.writeLabel(&label.writer) catch return error.OutOfMemory;
+    } else label.writer.writeAll("nothing") catch return error.OutOfMemory;
+    app.toast("{s} @{d},{d} → {s}", .{ if (m.button == .right) "right-click" else "click", m.x, m.y, label.written() });
+}
+
 pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
@@ -1416,6 +1426,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     }
     // A press anywhere puts flash's labels away.
     if (m.kind == .press) flash.cancel(app);
+    // The click inspector: what the press landed on, by the hit map's
+    // label, before anything acts on it.
+    if (m.kind == .press and app.debug_click_inspector and (m.button == .left or m.button == .right)) try inspectClick(app, m);
     // The click-discovery panel: a press on one of its rows flashes the
     // family it names; a press anywhere else closes it (Rust).
     if (m.kind == .press and app.overlay == .discovery) {

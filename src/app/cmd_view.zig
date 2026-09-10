@@ -114,7 +114,82 @@ pub const table = .{
     .@"theme.reset" = &resetTheme,
     .@"theme.auto_system" = &autoSystemTheme,
     .@"theme.auto_system_off" = &autoSystemThemeOff,
+    .@"view.reveal_active" = &revealActive,
+    .@"view.toggle_integrations_section" = &toggleIntegrationsSection,
+    .@"view.workspace_menu" = &workspaceMenu,
+    .@"view.commands_reference" = &commandsReference,
+    // The click inspector reads the hit map the mouse dispatch reads;
+    // the toggle lives here with the other view debugging toggles.
+    .@"debug.toggle_click_inspector" = &toggleClickInspector,
 };
+
+// ─── reveal / sections / menus ──────────────────────────────────────────
+
+/// The argv that shows `path` in the OS file manager: macOS `open -R`,
+/// Windows `explorer /select,`, elsewhere `xdg-open` on the parent —
+/// the nearest portable form, no desktop-agnostic "select this file"
+/// gesture existing there.
+pub fn revealArgv(arena: std.mem.Allocator, path: []const u8, os: std.Target.Os.Tag) std.mem.Allocator.Error![]const []const u8 {
+    return switch (os) {
+        .macos => try arena.dupe([]const u8, &.{ "open", "-R", path }),
+        .windows => try arena.dupe([]const u8, &.{ "explorer", try std.fmt.allocPrint(arena, "/select,{s}", .{path}) }),
+        else => try arena.dupe([]const u8, &.{ "xdg-open", std.fs.path.dirname(path) orelse path }),
+    };
+}
+
+/// `view.reveal_active`: the active pane's file in the OS file manager
+/// (`view.reveal_in_tree` is the in-app counterpart).
+fn revealActive(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = app.active orelse return app.diag.fail(arena, "no file to reveal", .{});
+    const p = app.panes.get(id) orelse return app.diag.fail(arena, "no file to reveal", .{});
+    const path: ?[]const u8 = switch (p.*) {
+        .editor => |*e| e.buf.doc.path,
+        .md_preview => |*m| m.path,
+        else => null,
+    };
+    const abs = path orelse return app.diag.fail(arena, "no file to reveal", .{});
+    @import("git.zig").runArgv(app, try revealArgv(arena, abs, builtin.os.tag), "the file manager");
+}
+
+/// `view.toggle_integrations_section`: the INTEGRATIONS column closes
+/// or opens, the keys staying where they are (Rust toggles silently).
+fn toggleIntegrationsSection(app: *App) CommandError!void {
+    if (side.isShown(app, .integrations)) return side.hide(app, .integrations);
+    try side.open(app, .integrations, false);
+}
+
+/// `view.workspace_menu`: the statusline workspace chip's menu, anchored
+/// on the chip as the last frame painted it (the row above it, as a
+/// right-click opens it), or at the origin when the chip is off screen.
+fn workspaceMenu(app: *App) CommandError!void {
+    const statusline_app = @import("statusline.zig");
+    var x: u16 = 0;
+    var y: u16 = 0;
+    for (app.hits.items.items) |e| if (e.target == .statusline_seg and e.target.statusline_seg == statusline_app.SegId.workspace.raw()) {
+        x = e.rect.x;
+        y = e.rect.y -| 1;
+    };
+    try @import("context_menus.zig").openWorkspaceChipMenu(app, x, y);
+}
+
+/// `view.commands_reference`: the page `zig build docs` writes, as a
+/// scratch buffer.
+fn commandsReference(app: *App) CommandError!void {
+    const reference = @import("../commands/reference.zig");
+    const arena = app.frame.allocator();
+    var out: std.Io.Writer.Allocating = .init(arena);
+    reference.render(arena, &out.writer) catch return error.OutOfMemory;
+    _ = app.openScratchWith(out.written()) catch return error.OutOfMemory;
+    app.toast("commands reference: {d} commands", .{command.count});
+}
+
+/// `debug.toggle_click_inspector`: the next presses toast what they
+/// land on (`dispatch.inspectClick`).
+fn toggleClickInspector(app: *App) CommandError!void {
+    app.debug_click_inspector = !app.debug_click_inspector;
+    app.toast("{s}", .{if (app.debug_click_inspector) "click inspector: ON — next click toasts the hit target" else "click inspector: OFF"});
+}
 
 fn toggleWrap(app: *App) CommandError!void {
     if (app.activeEditor()) |e| {
@@ -1456,4 +1531,107 @@ test "layout.merge_to_tabs folds the page's leaves into one strip, the active pa
     try t.expectEqual(@as(usize, 4), (try layout.leaves(app.frame.allocator())).len);
     try t.expectEqual(c, app.active.?);
     try t.expectEqual(@as(usize, 1), layout.leaf(layout.leafOf(a).?).?.tabs.items.len);
+}
+
+test "revealArgv: open -R on macOS, explorer /select, on Windows, xdg-open on the parent elsewhere; view.reveal_active refuses a scratch" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const mac = try revealArgv(a, "/ws/src/main.zig", .macos);
+    try t.expectEqual(@as(usize, 3), mac.len);
+    try t.expectEqualStrings("open", mac[0]);
+    try t.expectEqualStrings("-R", mac[1]);
+    try t.expectEqualStrings("/ws/src/main.zig", mac[2]);
+    const win = try revealArgv(a, "C:\\ws\\main.zig", .windows);
+    try t.expectEqual(@as(usize, 2), win.len);
+    try t.expectEqualStrings("explorer", win[0]);
+    try t.expectEqualStrings("/select,C:\\ws\\main.zig", win[1]);
+    const lin = try revealArgv(a, "/ws/src/main.zig", .linux);
+    try t.expectEqual(@as(usize, 2), lin.len);
+    try t.expectEqualStrings("xdg-open", lin[0]);
+    try t.expectEqualStrings("/ws/src", lin[1]);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.reveal_active" }));
+    try t.expectEqualStrings("no file to reveal", app.lastToast().?);
+}
+
+test "view.toggle_integrations_section opens the INTEGRATIONS column without taking the keys, and closes it again" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try t.expect(!side.isShown(&app, .integrations));
+    try command.run(&app, .{ .static = .@"view.toggle_integrations_section" });
+    try t.expect(side.isShown(&app, .integrations));
+    try t.expect(app.focus == .pane and app.focus.pane == a);
+    try command.run(&app, .{ .static = .@"view.toggle_integrations_section" });
+    try t.expect(!side.isShown(&app, .integrations));
+    try t.expect(side.shown(&app, .left) == null);
+}
+
+test "view.workspace_menu opens the workspace chip's menu on the chip the last frame painted; with no frame it opens at the origin" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.workspace_menu" });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqual(@as(u16, 0), app.overlay.menu.x);
+    try t.expectEqual(@as(u16, 0), app.overlay.menu.y);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.focus = .{ .pane = app.active.? };
+    try app.render();
+    var chip: ?Rect = null;
+    for (app.hits.items.items) |e| if (e.target == .statusline_seg and e.target.statusline_seg == @import("statusline.zig").SegId.workspace.raw()) {
+        chip = e.rect;
+    };
+    try t.expect(chip != null);
+    try t.expect(chip.?.y > 0);
+    try command.run(&app, .{ .static = .@"view.workspace_menu" });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqual(chip.?.x, app.overlay.menu.x);
+    try t.expectEqual(chip.?.y - 1, app.overlay.menu.y);
+    var has_switch = false;
+    for (app.overlay.menu.items) |it| if (std.mem.eql(u8, it.label, "Switch workspace…")) {
+        has_switch = true;
+    };
+    try t.expect(has_switch);
+}
+
+test "debug.toggle_click_inspector: on, a press toasts its hit target with the cell; off, it does not" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try app.render();
+    try command.run(&app, .{ .static = .@"debug.toggle_click_inspector" });
+    try t.expect(app.debug_click_inspector);
+    try t.expectEqualStrings("click inspector: ON — next click toasts the hit target", app.lastToast().?);
+    try @import("dispatch.zig").mouse(&app, .{ .x = 60, .y = 10, .kind = .press, .button = .left }, 1);
+    var seen = false;
+    for (app.toasts.items) |toast| if (std.mem.startsWith(u8, toast.text, "click @60,10 → pane:")) {
+        seen = true;
+    };
+    try t.expect(seen);
+    try @import("dispatch.zig").mouse(&app, .{ .x = 60, .y = 10, .kind = .press, .button = .right }, 1);
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "right-click @60,10 → "));
+    try command.run(&app, .{ .static = .@"debug.toggle_click_inspector" });
+    try t.expectEqualStrings("click inspector: OFF", app.lastToast().?);
+    app.dismissToasts();
+    try @import("dispatch.zig").mouse(&app, .{ .x = 60, .y = 10, .kind = .press, .button = .left }, 1);
+    try t.expect(app.lastToast() == null or !std.mem.startsWith(u8, app.lastToast().?, "click @"));
+}
+
+test "view.commands_reference opens the generated page as a scratch buffer" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.commands_reference" });
+    const e = app.activeEditor().?;
+    try t.expect(e.buf.doc.path == null);
+    const text = e.buf.editor.bytes();
+    try t.expect(std.mem.startsWith(u8, text, "# Commands\n"));
+    try t.expect(std.mem.indexOf(u8, text, "| `app.quit` |") != null);
+    const want = try std.fmt.allocPrint(t.allocator, "commands reference: {d} commands", .{command.count});
+    defer t.allocator.free(want);
+    try t.expectEqualStrings(want, app.lastToast().?);
 }

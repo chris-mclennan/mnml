@@ -42,6 +42,10 @@ pub const State = struct {
 
 pub const table = .{
     .@"coverage.toast" = &toastCmd,
+    .@"coverage.chip_show_both" = modeRunner(.both, "coverage chip: showing Feature + Code"),
+    .@"coverage.chip_show_feature" = modeRunner(.feature, "coverage chip: showing Feature only"),
+    .@"coverage.chip_show_code" = modeRunner(.code, "coverage chip: showing Code only"),
+    .@"coverage.chip_show_ticker" = modeRunner(.ticker, "coverage chip: ticker (F ⇄ C)"),
 };
 
 // ─── the files ───────────────────────────────────────────────────────────
@@ -334,7 +338,12 @@ pub fn openModeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
             .both => "Both",
             .ticker => "Ticker (F ⇄ C)",
         },
-        .action = .{ .set_coverage_mode = m },
+        .action = .{ .command = switch (m) {
+            .both => .@"coverage.chip_show_both",
+            .feature => .@"coverage.chip_show_feature",
+            .code => .@"coverage.chip_show_code",
+            .ticker => .@"coverage.chip_show_ticker",
+        } },
         .checked = app.cfg.ui.coverage_chip_mode == m,
     };
     try app.openMenu("Coverage chip", rows, x, y);
@@ -345,6 +354,17 @@ pub fn setMode(app: *App, mode: Config.CoverageChipMode) Allocator.Error!void {
     app.cfg.ui.coverage_chip_mode = mode;
     _ = try settings.persist(app, .home, &.{ "ui", "coverage_chip_mode" }, mode);
     app.needs_render = true;
+}
+
+/// `coverage.chip_show_*`: the mode menu's rows and the palette's names
+/// for `setMode`, each saying what the chip shows now.
+fn modeRunner(comptime mode: Config.CoverageChipMode, comptime label: []const u8) command.CommandFn {
+    return &struct {
+        fn run(app: *App) command.CommandError!void {
+            try setMode(app, mode);
+            app.toast(label, .{});
+        }
+    }.run;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -454,4 +474,35 @@ test "the chip's numbers round as Rust's `{:.0}` / `{:.1}` do: the exact value, 
     try t.expectEqualStrings(" ▲0.2", (try delta(a, .{ .now = 10.25, .prev = 10.0 })).text);
     try t.expectEqualStrings(" ▼43.8", (try delta(a, .{ .now = 35.4, .prev = 79.2 })).text);
     try t.expectEqualStrings(" ▲12.0", (try delta(a, .{ .now = 62.0, .prev = 50.0 })).text);
+}
+
+test "coverage.chip_show_* set the chip mode, write it to the home config and say so; the mode menu's rows fire them" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"coverage.chip_show_code" });
+    try std.testing.expectEqual(Config.CoverageChipMode.code, app.cfg.ui.coverage_chip_mode);
+    try std.testing.expectEqualStrings("coverage chip: showing Code only", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"coverage.chip_show_both" });
+    try std.testing.expectEqual(Config.CoverageChipMode.both, app.cfg.ui.coverage_chip_mode);
+    try std.testing.expectEqualStrings("coverage chip: showing Feature + Code", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"coverage.chip_show_ticker" });
+    try std.testing.expectEqual(Config.CoverageChipMode.ticker, app.cfg.ui.coverage_chip_mode);
+    try std.testing.expectEqualStrings("coverage chip: ticker (F ⇄ C)", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"coverage.chip_show_feature" });
+    try std.testing.expectEqual(Config.CoverageChipMode.feature, app.cfg.ui.coverage_chip_mode);
+    try std.testing.expectEqualStrings("coverage chip: showing Feature only", app.lastToast().?);
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, try std.fs.path.join(app.frame.allocator(), &.{ root, "config.zon" }), std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".coverage_chip_mode = .feature") != null);
+    // The menu: one row per mode, each a command, the current one checked.
+    try openModeMenu(&app, 3, 4);
+    try std.testing.expect(app.overlay == .menu);
+    try std.testing.expectEqual(@as(usize, 4), app.overlay.menu.items.len);
+    try std.testing.expectEqual(command.CommandId.@"coverage.chip_show_ticker", app.overlay.menu.items[3].action.command);
+    try std.testing.expect(app.overlay.menu.items[1].checked);
 }

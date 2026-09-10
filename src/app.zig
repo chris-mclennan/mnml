@@ -923,6 +923,9 @@ pub const App = struct {
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
     click_echo: ?ClickEcho = null,
+    /// `debug.toggle_click_inspector`: every press toasts the hit target
+    /// under the pointer before it is handled.
+    debug_click_inspector: bool = false,
     /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
     auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).initEmpty(),
     /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /

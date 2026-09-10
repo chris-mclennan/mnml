@@ -29,7 +29,24 @@ const image = @import("../image/root.zig");
 pub const table = .{
     .@"markdown.preview" = &previewCmd,
     .@"markdown.edit_raw" = &editRawCmd,
+    .@"markdown.cycle_engine" = &cycleEngine,
 };
+
+/// `markdown.cycle_engine`: `builtin → glow → pandoc → builtin`; a
+/// `.custom` command goes back to `builtin` (the easy reset). Written
+/// to the home config as `ui.md_preview_engine`.
+fn cycleEngine(app: *App) CommandError!void {
+    const Config = app_mod.Config;
+    const next: Config.MdEngine = switch (app.cfg.ui.md_preview_engine) {
+        .builtin => .glow,
+        .glow => .pandoc,
+        .pandoc, .custom => .builtin,
+    };
+    app.cfg.ui.md_preview_engine = next;
+    _ = try @import("settings.zig").persist(app, .home, &.{ "ui", "md_preview_engine" }, next);
+    app.toast("markdown engine: {s}", .{@tagName(next)});
+    app.needs_render = true;
+}
 
 /// The bufferline chips: `✏ Edit` on a preview, ` Preview` on a
 /// markdown editor.
@@ -440,4 +457,29 @@ test "preview tabs: a glance at another .md replaces the glanced tab in place; t
     try testing.expect(!app.panes.get(rid).?.request.edited);
     try app.handle(.{ .key = Key.char('x') });
     try testing.expect(app.panes.get(rid).?.request.edited);
+}
+
+test "markdown.cycle_engine walks builtin → glow → pandoc → builtin, a custom command back to builtin, writing the home config each time" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    const Config = app_mod.Config;
+    try command.run(&app, .{ .static = .@"markdown.cycle_engine" });
+    try std.testing.expectEqual(Config.MdEngine.glow, app.cfg.ui.md_preview_engine);
+    try std.testing.expectEqualStrings("markdown engine: glow", app.lastToast().?);
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, try std.fs.path.join(app.frame.allocator(), &.{ root, "config.zon" }), std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".md_preview_engine = .glow") != null);
+    try command.run(&app, .{ .static = .@"markdown.cycle_engine" });
+    try std.testing.expectEqual(Config.MdEngine.pandoc, app.cfg.ui.md_preview_engine);
+    try command.run(&app, .{ .static = .@"markdown.cycle_engine" });
+    try std.testing.expectEqual(Config.MdEngine.builtin, app.cfg.ui.md_preview_engine);
+    app.cfg.ui.md_preview_engine = .{ .custom = "glow -s dark" };
+    try command.run(&app, .{ .static = .@"markdown.cycle_engine" });
+    try std.testing.expectEqual(Config.MdEngine.builtin, app.cfg.ui.md_preview_engine);
+    try std.testing.expectEqualStrings("markdown engine: builtin", app.lastToast().?);
 }

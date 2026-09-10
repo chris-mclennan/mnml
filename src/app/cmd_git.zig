@@ -20,6 +20,7 @@ const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 
 pub const table = .{
+    .@"view.git_commit_focus" = &commitFocus,
     .@"git.status_pane" = &statusPane,
     .@"git.refresh" = &refresh,
     .@"git.diff_file" = &diffFile,
@@ -165,6 +166,25 @@ fn statusPane(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     _ = try git.openStatusPane(app, repo);
     try git.requestStatus(app);
+}
+
+/// `view.git_commit_focus`: the commit textarea lives on the graph
+/// pane's working-tree row, so that pane opens (the status refresh with
+/// it) and the box takes the keys, as a click on it does.
+fn commitFocus(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    const id = try git.openGraph(app, repo);
+    try git.requestStatus(app);
+    const p = app.panes.get(id) orelse return error.NoActivePane;
+    switch (p.*) {
+        .git_graph => |*g| {
+            g.wip_focused = true;
+            g.detail_focus = false;
+        },
+        else => return error.NoActivePane,
+    }
+    app.focus = .{ .pane = id };
+    app.needs_render = true;
 }
 
 fn refresh(app: *App) CommandError!void {
@@ -1098,4 +1118,31 @@ fn worktrees(app: *App) CommandError!void {
         return app.diag.fail(arena(app), "no worktrees (not a git repo?)", .{});
     };
     try git.askList(app, repo, .worktrees, .worktree_shell);
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+test "view.git_commit_focus opens the repo's graph pane with the commit box focused" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    // The temp dir sits inside this repo's tree, so a repo of its own
+    // is made for it: the graph must be the fixture's, not the parent's.
+    const res = try std.process.run(t.allocator, t.io, .{ .argv = &.{ "git", "init", "-q" }, .cwd = .{ .path = root } });
+    t.allocator.free(res.stdout);
+    t.allocator.free(res.stderr);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.git_commit_focus" });
+    try t.expectEqualStrings(root, app.git.activeRepo().?.path);
+    const p = app.panes.get(app.active.?).?;
+    try t.expect(p.* == .git_graph);
+    try t.expect(p.git_graph.wip_focused);
+    try t.expect(!p.git_graph.detail_focus);
+    try t.expect(app.focus == .pane and app.focus.pane == app.active.?);
 }
