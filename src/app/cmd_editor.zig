@@ -1,6 +1,8 @@
 //! `editor.*` runners: the go-to-line prompt, bracket folds, bracket
-//! match, the change-list jumps, the input style switch, and the plain
-//! ops that only forward an `EditOp` to the active buffer.
+//! match, the change-list jumps, the input style switch, the plain
+//! ops that only forward an `EditOp` to the active buffer, the
+//! buffer-level vim commands a runner can reach (`.`, `q`, `@@`, `gi`),
+//! the insert-mode `Ctrl+R` registers and keyword completion.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -12,6 +14,11 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const EditOp = @import("../editor/edit_op.zig").EditOp;
 const Editor = @import("../editor/editor.zig").Editor;
+const PaneId = app_mod.PaneId;
+const dispatch = @import("dispatch.zig");
+const ex_verbs = @import("ex_verbs.zig");
+const context_menus = @import("context_menus.zig");
+const statusline = @import("../ui/statusline.zig");
 
 pub const table = .{
     .@"editor.goto_line" = &gotoLine,
@@ -51,6 +58,13 @@ pub const table = .{
     .@"editor.method_prev" = &methodPrev,
     .@"project.next_todo" = &nextTodo,
     .@"project.prev_todo" = &prevTodo,
+    .@"vim.dot_repeat" = &dotRepeat,
+    .@"vim.macro_toggle" = &macroToggle,
+    .@"vim.macro_replay" = &macroReplay,
+    .@"editor.repeat_last_substitute" = &repeatLastSubstitute,
+    .@"editor.insert_alt_filename" = &insertAltFilename,
+    .@"editor.insert_last_search" = &insertLastSearch,
+    .@"editor.input_mode_menu" = &inputModeMenu,
 };
 
 fn one(app: *App, op: EditOp) CommandError!void {
@@ -490,6 +504,103 @@ fn jumpNextEdit(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+// ─── `.` / `q` / `@@` / `gi` from a runner ──────────────────────────────
+
+/// The active editor with its pane id, for the buffer-level commands.
+fn activeWithId(app: *App) CommandError!struct { id: PaneId, e: *EditorPane } {
+    const e = try app.requireEditor();
+    const id = app.active orelse return error.NoActivePane;
+    return .{ .id = id, .e = e };
+}
+
+/// `vim.dot_repeat`: the buffer replays its last change, as `.` does.
+fn dotRepeat(app: *App) CommandError!void {
+    const a = try activeWithId(app);
+    if (a.e.buf.dot == null) {
+        app.toast("nothing to repeat", .{});
+        return;
+    }
+    try dispatch.runBufferApp(app, a.id, a.e, .{ .dot_repeat = 0 });
+}
+
+/// `vim.macro_toggle` (the statusline's macro chip): idle ⇒ record into
+/// the anonymous register; recording ⇒ stop and keep it.
+fn macroToggle(app: *App) CommandError!void {
+    const a = try activeWithId(app);
+    const was = a.e.buf.isRecording();
+    try dispatch.runBufferApp(app, a.id, a.e, .{ .macro_record_into = '@' });
+    if (was) app.toast("macro recorded", .{}) else app.toast("recording macro · q to stop", .{});
+}
+
+/// `vim.macro_replay`: the last recorded macro, once.
+fn macroReplay(app: *App) CommandError!void {
+    const a = try activeWithId(app);
+    const reg = app.clipboard.last_macro orelse {
+        app.toast("no macro to replay", .{});
+        return;
+    };
+    if (app.clipboard.macro(reg) == null) {
+        app.toast("no macro to replay", .{});
+        return;
+    }
+    try dispatch.runBufferApp(app, a.id, a.e, .{ .macro_replay_from = .{ .reg = '@', .count = 1 } });
+}
+
+/// `&`: the last `:s` again on the cursor's line.
+fn repeatLastSubstitute(app: *App) CommandError!void {
+    return ex_verbs.ampersand(app, null, "", false);
+}
+
+// ─── insert-mode `Ctrl+R #` / `/` / `.` ─────────────────────────────────
+
+/// The `ctrl+r`-family inserts: into the `:` line while it is open,
+/// otherwise into the buffer at the cursor (`cmd_app.zig` has the
+/// same seam for `%`, `:` and the word registers).
+fn insertText(app: *App, e: *EditorPane, text: []const u8) CommandError!void {
+    if (e.buf.input.isCmdlineOpen()) return dispatch.cmdlineInsert(app, e, text);
+    try app.splice(e, e.buf.editor.cursor, e.buf.editor.cursor, text);
+}
+
+/// The alternate file (`:b#`'s pane): the most recently used other
+/// pane that is an editor with a path.
+fn alternatePath(app: *App) ?[]const u8 {
+    for (app.pane_mru.items) |id| {
+        if (app.active == id) continue;
+        const other = app.panes.editor(id) orelse continue;
+        if (other.buf.doc.path) |p| return p;
+    }
+    return null;
+}
+
+fn insertAltFilename(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const arena = app.frame.allocator();
+    const path = alternatePath(app) orelse return app.diag.fail(arena, "E23: no alternate file", .{});
+    return insertText(app, e, try arena.dupe(u8, app.relPath(path)));
+}
+
+/// `Ctrl+R /`: the editor's live query, else the last accepted one.
+fn insertLastSearch(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const arena = app.frame.allocator();
+    const q: []const u8 = if (e.find.query.items.len > 0) e.find.query.items else app.find_history.getLastOrNull() orelse return app.diag.fail(arena, "no previous search", .{});
+    return insertText(app, e, try arena.dupe(u8, q));
+}
+
+// ─── the statusline mode chip's menu ────────────────────────────────────
+
+/// `editor.input_mode_menu`: the keymap menu, one row above the mode
+/// chip; at the origin before the first frame has placed it.
+fn inputModeMenu(app: *App) CommandError!void {
+    var x: u16 = 0;
+    var y: u16 = 0;
+    for (app.hits.items.items) |h| if (h.target == .statusline_seg and h.target.statusline_seg == statusline.seg_mode) {
+        x = h.rect.x;
+        y = h.rect.y -| 1;
+    };
+    try context_menus.openModeMenu(app, x, y);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -623,4 +734,126 @@ test "goto_line opens the prompt titled exactly `Go to line`" {
     try t.expect(app.overlay == .prompt);
     try t.expectEqualStrings("Go to line  (currently 1)", app.overlay.prompt.state.title);
     try t.expect(app.focus == .overlay);
+}
+
+const buffer_mod = @import("../editor/buffer.zig");
+const Key = app_mod.Key;
+
+/// Keys in `buffer.parseKeys` notation, through the app's own dispatch.
+fn feed(app: *App, spec: []const u8) !void {
+    const keys = try buffer_mod.parseKeys(t.allocator, spec);
+    defer t.allocator.free(keys);
+    for (keys) |k| try dispatch.key(app, k);
+}
+
+fn realRoot(tmp: *std.testing.TmpDir, gpa: std.mem.Allocator) ![]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    return gpa.dupe(u8, buf[0..n]);
+}
+
+test "vim.dot_repeat, vim.macro_toggle and vim.macro_replay reach the buffer from a runner, and the handler's `q` stays in step" {
+    var app = try appWith("alpha\nbravo\ncharlie");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    try command.run(&app, .{ .static = .@"vim.dot_repeat" });
+    try t.expectEqualStrings("nothing to repeat", app.lastToast().?);
+    try feed(&app, "iX<esc>j0");
+    try command.run(&app, .{ .static = .@"vim.dot_repeat" });
+    try t.expectEqualStrings("Xalpha\nXbravo\ncharlie", e.buf.editor.bytes());
+    // A macro started and stopped by the runner keeps every key typed
+    // between (no `q` to drop), and replays from the runner.
+    try command.run(&app, .{ .static = .@"vim.macro_replay" });
+    try t.expectEqualStrings("no macro to replay", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"vim.macro_toggle" });
+    try t.expectEqualStrings("recording macro · q to stop", app.lastToast().?);
+    try t.expect(e.buf.isRecording());
+    try feed(&app, "A!<esc>j0");
+    try command.run(&app, .{ .static = .@"vim.macro_toggle" });
+    try t.expectEqualStrings("macro recorded", app.lastToast().?);
+    try t.expect(!e.buf.isRecording());
+    try t.expectEqualStrings("A!<esc>j0", app.clipboard.macro('@').?);
+    try command.run(&app, .{ .static = .@"vim.macro_replay" });
+    try t.expectEqualStrings("Xalpha\nXbravo!\ncharlie!", e.buf.editor.bytes());
+    // The handler's own `q` stops a runner-started recording.
+    try command.run(&app, .{ .static = .@"vim.macro_toggle" });
+    try feed(&app, "xq");
+    try t.expect(!e.buf.isRecording());
+    try t.expectEqualStrings("x", app.clipboard.macro('@').?);
+}
+
+test "& repeats the last :s on the cursor's line; nothing to repeat is E35" {
+    var app = try appWith("aa\naa");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"editor.repeat_last_substitute" }));
+    try t.expectEqualStrings(":& — E35: no previous substitute", app.lastToast().?);
+    try dispatch.runExLine(&app, "s/a/b/");
+    try t.expectEqualStrings("ba\naa", e.buf.editor.bytes());
+    e.buf.editor.placeCursor(1, 0);
+    try command.run(&app, .{ .static = .@"editor.repeat_last_substitute" });
+    try t.expectEqualStrings("ba\nba", e.buf.editor.bytes());
+}
+
+test "Ctrl+R # inserts the alternate file's workspace-relative path, into the : line while it is open; none is E23" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"editor.insert_alt_filename" }));
+    try t.expectEqualStrings("E23: no alternate file", app.lastToast().?);
+    for ([_][]const u8{ "a.txt", "b.txt" }) |name| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = name[0..1] });
+        const path = try std.fs.path.join(t.allocator, &.{ root, name });
+        defer t.allocator.free(path);
+        _ = try app.openPath(path);
+    }
+    try command.run(&app, .{ .static = .@"editor.insert_alt_filename" });
+    try t.expectEqualStrings("a.txtb", app.activeEditor().?.buf.editor.bytes());
+    try feed(&app, ":");
+    try command.run(&app, .{ .static = .@"editor.insert_alt_filename" });
+    try t.expectEqualStrings("a.txt", app.activeEditor().?.buf.input.cmdlineGet().?);
+    try t.expectEqualStrings("a.txtb", app.activeEditor().?.buf.editor.bytes());
+}
+
+test "Ctrl+R / inserts the live query, else the last accepted search; none fails" {
+    var app = try appWith("text");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"editor.insert_last_search" }));
+    try t.expectEqualStrings("no previous search", app.lastToast().?);
+    try app.find_history.append(app.gpa, try app.gpa.dupe(u8, "old"));
+    try command.run(&app, .{ .static = .@"editor.insert_last_search" });
+    try t.expectEqualStrings("oldtext", e.buf.editor.bytes());
+    try e.find.setQuery("live", e.buf.editor.bytes(), null);
+    try command.run(&app, .{ .static = .@"editor.insert_last_search" });
+    try t.expectEqualStrings("oldlivetext", e.buf.editor.bytes());
+}
+
+test "editor.input_mode_menu opens the keymap menu one row above the mode chip, at the origin before a frame" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.input_mode_menu" });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Keymap", app.overlay.menu.title);
+    try t.expectEqual(@as(u16, 0), app.overlay.menu.x);
+    try t.expectEqual(@as(u16, 0), app.overlay.menu.y);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try app.render();
+    var chip: ?@import("../ui/rect.zig") = null;
+    for (app.hits.items.items) |h| if (h.target == .statusline_seg and h.target.statusline_seg == statusline.seg_mode) {
+        chip = h.rect;
+    };
+    try t.expect(chip.?.y > 0);
+    try command.run(&app, .{ .static = .@"editor.input_mode_menu" });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqual(chip.?.x, app.overlay.menu.x);
+    try t.expectEqual(chip.?.y - 1, app.overlay.menu.y);
 }
