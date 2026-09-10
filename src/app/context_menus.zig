@@ -1714,7 +1714,8 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     const want = [_]struct { label: []const u8, icon: []const u8, n: usize }{
         .{ .label = "New", .icon = icon_new_nerd, .n = 6 },
         .{ .label = "Open", .icon = icon_open_nerd, .n = 5 },
-        .{ .label = "AI", .icon = icon_ai_nerd, .n = 2 },
+        // sessions-worktree: the AI child gained New session in a worktree….
+        .{ .label = "AI", .icon = icon_ai_nerd, .n = 3 },
         .{ .label = "Dock", .icon = icon_dock_nerd, .n = 2 },
     };
     try t.expectEqual(want.len, m.items.len);
@@ -1729,8 +1730,9 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
         .{ "Shell", .@"term.shell" },           .{ "Browser tab", .@"browser.open" },               .{ "Tab page", .@"tab.new" },
         .{ "File…", .@"picker.files" },
         .{ "Recent files", .@"picker.recent" }, .{ "File browser", .@"files.open" },                .{ "Dual file panes (commander)", .@"files.open_split" },
-        .{ "Trash", .@"files.trash" },          .{ "Claude Code session", .@"ai.claude_code_new" }, .{ "Codex session", .@"ai.codex_new" },
-        .{ "Note", .@"dock.new_text" },         .{ "Log tail", .@"dock.new_log_tail" },
+        .{ "Trash", .@"files.trash" },          .{ "Claude Code session", .@"ai.claude_code_new" },
+        .{ "New session in a worktree…", .@"ai.new_session_worktree" },
+        .{ "Codex session", .@"ai.codex_new" }, .{ "Note", .@"dock.new_text" },                     .{ "Log tail", .@"dock.new_log_tail" },
     };
     var k: usize = 0;
     for (m.items) |it| for (it.submenu) |leaf| {
