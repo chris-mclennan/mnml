@@ -1815,11 +1815,18 @@ test "gutter: the sign glyphs per breakpoint kind, a disabled or unverified one 
     try app.handle(.{ .mouse = .{ .x = g.x, .y = g.y, .kind = .release, .button = .left } });
     try testing.expectEqualStrings("breakpoint set: line 4", app.lastToast().?);
     try testing.expectEqual(@as(usize, 4), app.dap.bpsFor("/tmp/g.py").len);
-    // A press on the number cell only moves the cursor.
+    // The number cell is the margin too on a file that carries
+    // breakpoints (`gutterToggles`): line 3's clears, the cursor parks
+    // at its column 1; a second press sets it again.
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .release, .button = .left } });
+    try testing.expectEqual(@as(usize, 3), app.dap.bpsFor("/tmp/g.py").len);
+    try testing.expectEqualStrings("breakpoint cleared: line 3", app.lastToast().?);
+    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try testing.expectEqual(@as(usize, 0), e.buf.editor.rowCol().col);
     try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .press, .button = .left } });
     try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .release, .button = .left } });
     try testing.expectEqual(@as(usize, 4), app.dap.bpsFor("/tmp/g.py").len);
-    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
     // A right press opens the breakpoint menu for that line.
     try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
