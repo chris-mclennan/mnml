@@ -1,0 +1,10 @@
+# `app.choose_data_layout` asks before writing anything: the box names
+# both layouts; Esc leaves the layout as it is.
+command app.choose_data_layout
+expect screen contains "Data layout"
+expect screen contains "Portable = mnml-data/ next to the binary"
+expect screen contains "Use Portable?"
+expect screen contains "[Y]es"
+expect screen contains "[N]o"
+key escape
+expect screen lacks "Use Portable?"

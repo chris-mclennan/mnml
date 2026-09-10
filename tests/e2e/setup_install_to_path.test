@@ -1,0 +1,9 @@
+# `setup.install_to_path` with HOME and PATH pointed inside the temp
+# workspace: the executable is linked into ~/.local/bin (created), and
+# since that directory is not on PATH the toast says to add it.
+# env: HOME=${MNML_E2E_WORKSPACE}/home
+# env: PATH=${MNML_E2E_WORKSPACE}/empty
+write home/.keep ""
+write empty/.keep ""
+command setup.install_to_path
+expect screen contains "linked ~/.local/bin/mnml-zig → "

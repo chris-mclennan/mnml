@@ -342,6 +342,10 @@ pub const ConfirmPurpose = union(enum) {
     http_delete_request: @import("app/http_ops.zig").Target,
     /// `:s///c`: one match's yes / no / all / quit / last (`ex_verbs.zig`).
     replace_confirm,
+    /// `app.choose_data_layout`: Yes = portable, No = normal (`setup.zig`).
+    choose_data_layout,
+    /// `app.reset_to_defaults`: Reset renames the home config and restarts.
+    reset_to_defaults,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
 
@@ -2354,6 +2358,7 @@ test {
     _ = @import("app/mount_pane.zig");
     _ = @import("app/integrations.zig");
     _ = @import("app/integrations_tools.zig");
+    _ = @import("app/setup.zig");
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");

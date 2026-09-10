@@ -1325,6 +1325,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .kill_pids => |pids| if (choice == 0) try sessions.killAccept(app, pids),
         .cloud_cancel => |arn| if (choice == 0) try cloud_agents.cancelAccept(app, arn),
         .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
+        .choose_data_layout => try toastOnFail(app, @import("setup.zig").acceptDataLayout(app, choice)),
+        .reset_to_defaults => try toastOnFail(app, @import("setup.zig").acceptReset(app, choice)),
     }
 }
 
