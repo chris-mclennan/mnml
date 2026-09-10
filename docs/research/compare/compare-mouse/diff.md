@@ -7,15 +7,15 @@
 | 0 | `{"cmd":"key","key":"esc"}` | 4 | 1 | 0:0 | 0:0 | ?+35 | ?+35 | none | highlight/other |
 | 1 | `{"cmd":"key","key":"esc"}` | 4 | 1 | 0:0 | 0:0 | ?+35 | ?+35 | none | highlight/other |
 | 2 | `{"cmd":"open","path":"src/large.rs"}` | 38 | 9 | 1:1 | 1:1 | 1 | 1 | none | wrap, gutter |
-| 3 | `{"cmd":"wait_ms","ms":800}` | 37 | 6 | 1:1 | 1:1 | 1 | 1 | none | wrap |
-| 4 | `{"cmd":"click","col":50,"row":10}` | 37 | 7 | 8:14 | 8:14 | 1 | 1 | none | wrap, gutter |
+| 3 | `{"cmd":"wait_ms","ms":800}` | 38 | 6 | 1:1 | 1:1 | 1 | 1 | none | wrap |
+| 4 | `{"cmd":"click","col":50,"row":10}` | 38 | 7 | 8:14 | 8:14 | 1 | 1 | none | wrap, gutter |
 | 5 | `{"cmd":"wait_ms","ms":150}` | 37 | 9 | 8:14 | 8:14 | 1 | 1 | none | wrap, gutter |
 | 6 | `{"cmd":"click","col":32,"row":20}` | 38 | 9 | 19:1 | 18:2 | 1 | 1 | none | cursor placement, wrap, gutter |
 | 7 | `{"cmd":"wait_ms","ms":150}` | 38 | 6 | 19:1 | 18:2 | 1 | 1 | none | cursor placement, wrap |
 | 8 | `{"cmd":"click","col":15,"row":5}` | 7 | 4 | 1:1 | 1:1 | 1 | 1 | none | gutter |
 | 9 | `{"cmd":"wait_ms","ms":400}` | 12 | 9 | 1:1 | 1:1 | 1 | 1 | none | gutter |
 | 10 | `{"cmd":"click","col":33,"row":1}` | 37 | 12 | 19:1 | 18:2 | 1 | 1 | none | cursor placement, wrap, gutter |
-| 11 | `{"cmd":"wait_ms","ms":300}` | 37 | 13 | 19:1 | 18:2 | 1 | 1 | none | cursor placement, wrap, gutter |
+| 11 | `{"cmd":"wait_ms","ms":300}` | 37 | 12 | 19:1 | 18:2 | 1 | 1 | none | cursor placement, wrap, gutter |
 | 12 | `{"cmd":"scroll","col":60,"row":15,"dy":-1}` | 37 | 15 | 19:1 | 18:2 | 4 | 4 | none | cursor placement, wrap, gutter |
 | 13 | `{"cmd":"wait_ms","ms":200}` | 37 | 15 | 19:1 | 18:2 | 4 | 4 | none | cursor placement, wrap, gutter |
 | 14 | `{"cmd":"scroll","col":60,"row":15,"dy":-3}` | 37 | 18 | 19:1 | 18:2 | 22+1 | 22 | none | cursor placement, wrap, gutter |
@@ -36,7 +36,7 @@
 | 29 | `{"cmd":"wait_ms","ms":150}` | 37 | 6 | 6:17 | 6:17 | 1 | 1 | none | wrap |
 | 30 | `{"cmd":"click","col":45,"row":12}` | 37 | 7 | 10:9 | 10:11 | 1 | 1 | none | cursor placement, wrap, gutter |
 | 31 | `{"cmd":"click","col":45,"row":12}` | 37 | 7 | 10:12 | 10:12 | 1 | 1 | none | wrap, gutter |
-| 32 | `{"cmd":"wait_ms","ms":300}` | 36 | 6 | 10:12 | 10:12 | 1 | 1 | none | wrap |
+| 32 | `{"cmd":"wait_ms","ms":300}` | 37 | 6 | 10:12 | 10:12 | 1 | 1 | none | wrap |
 
 ## Worst three steps by `text` (excerpts)
 
