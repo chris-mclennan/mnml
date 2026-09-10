@@ -77,6 +77,14 @@ on the branch base `c0b67b0`). A workspace with one repo paints no
 gutter and no pill accent, so a fixture without the extra roots would
 read as before.
 
+*// changed 2026-09-10 (std-fixes):* the info box's editor summary
+spells its chords for the active profile (D4b), so on `steps-editor`
+its four copy rows read `[F12] Definition · [Shift+F12] References ·
+[Ctrl+K Ctrl+I] Hover · [F2] Rename` where Rust's `hover_help.rs`
+hard-codes `[gd] … [K]` — editor 2 → 6 beyond the rail, the four rows
+deliberate. esc 3, menu-file 3, menu-plus 8, http 3 are unchanged (the
+statusline's coverage-ticker phase flickers one more row in some runs).
+
 ## Context menus: the row above the bottom border (2026-09-10)
 
 Every titled popup — a rail menu, a tree row's, the `+` chip's
