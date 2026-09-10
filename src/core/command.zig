@@ -571,7 +571,10 @@ fn runDyn(app: *App, slot: u32) CommandError!void {
 /// cannot name an id that does not exist.
 /// A row of the AI chip's profile menu (`app/launch_profiles.zig`):
 /// `index` 0 is the built-in profile, else the product's `index - 1`th.
-pub const AiProfileAction = struct { product: @import("../config/Config.zig").AiProduct, index: u16, set_default: bool };
+/// `worktree`: the *New session in a worktree…* row — the session of
+/// that profile starts in a git worktree of its own after a name prompt
+/// (`app/session_worktree.zig`).
+pub const AiProfileAction = struct { product: @import("../config/Config.zig").AiProduct, index: u16, set_default: bool, worktree: bool = false };
 
 pub const MenuAction = union(enum) {
     command: CommandId,
@@ -708,7 +711,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1035), count);
+    try std.testing.expectEqual(@as(usize, 1036), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

@@ -32,6 +32,9 @@ const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const git = @import("git.zig");
+const launch_profiles = @import("launch_profiles.zig");
+const pty_pane = @import("pty_pane.zig");
+const Config = @import("../config/Config.zig");
 
 /// The registry's row: a tree mnml made for a session.
 pub const Entry = struct {
@@ -399,6 +402,62 @@ fn refreshRepo(app: *App, path: []const u8) void {
     };
 }
 
+// ─── the launch: a name prompt, then the tree and the session ───────────
+
+pub const prompt_title = "New session in a worktree — the branch name";
+
+/// The name prompt for a session of `product` under launch profile
+/// `profile`, seeded with `session-<n>` (`<profile>-<n>` for a named
+/// one) — the first such directory that does not exist. Refused when
+/// the workspace is in no repository.
+pub fn openNamePrompt(app: *App, product: Config.AiProduct, profile: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = (try repoRoot(app, arena, app.workspace)) orelse return app.diag.fail(arena, "worktree: {s} is not in a git repository", .{app.workspace});
+    const root = try rootOf(app, arena, repo);
+    const base: []const u8 = if (std.mem.eql(u8, profile, launch_profiles.builtin_name)) "session" else profile;
+    const seed = try suggestName(arena, app.io, root, base);
+    const owned = try app.gpa.dupe(u8, profile);
+    errdefer app.gpa.free(owned);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, prompt_title), .purpose = .{ .session_worktree_name = .{ .product = product, .profile = owned } } } };
+    app.overlay.prompt.state.setText(app.gpa, seed) catch return error.OutOfMemory;
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The prompt's accept: the tree at `<root>/<name>` on branch `<name>`
+/// from the workspace repository's `HEAD`, then the session there —
+/// its cwd the tree, `MNML_WORKSPACE` pointing at it, the tab labelled
+/// `<product> @ <name>` — and the registry row. The pane id.
+pub fn acceptName(app: *App, product: Config.AiProduct, profile: []const u8, text: []const u8) CommandError!app_mod.PaneId {
+    const arena = app.frame.allocator();
+    const name = std.mem.trim(u8, text, " \t\r\n");
+    if (name.len == 0) return app.diag.fail(arena, "worktree: a name is needed", .{});
+    const repo = (try repoRoot(app, arena, app.workspace)) orelse return app.diag.fail(arena, "worktree: {s} is not in a git repository", .{app.workspace});
+    const l = try launch_profiles.launch(app, arena, product, profile);
+    const path = try create(app, arena, repo, name);
+    const id = pty_pane.open(app, .{
+        .argv = l.argv,
+        .cwd = path,
+        .label = try std.fmt.allocPrint(arena, "{s} @ {s}", .{ l.label, name }),
+        .placement = .right,
+        .kind = .command,
+        .env_extra = &.{try std.fmt.allocPrint(arena, "MNML_WORKSPACE={s}", .{path})},
+    }) catch |err| {
+        // The tree stays (it is a plain worktree the user can see in
+        // the git panel); the reason is the spawn's.
+        return err;
+    };
+    try app.sessions.worktrees.add(app.gpa, path, name, name, repo, null);
+    app.toast("worktree {s}: {s} on branch {s}", .{ name, path, name });
+    return id;
+}
+
+/// `acceptName` for the prompt's dispatch (no id to keep).
+pub fn acceptNameCmd(app: *App, product: Config.AiProduct, profile: []const u8, text: []const u8) CommandError!void {
+    _ = try acceptName(app, product, profile, text);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -490,7 +549,7 @@ const RepoFixture = struct {
         const repo = try std.fs.path.join(t.allocator, &.{ root, "repo" });
         errdefer t.allocator.free(repo);
         try tmp.dir.createDirPath(t.io, "repo");
-        var app = try App.initWith(t.allocator, t.io, .{ .workspace = repo, .cols = 100, .rows = 30 });
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = repo, .data_root = root, .cols = 100, .rows = 30 });
         errdefer app.deinit();
         var f: RepoFixture = .{ .tmp = tmp, .root = root, .repo = repo, .app = app };
         try f.sh(repo, &.{ "init", "-q", "-b", "main" });
@@ -616,4 +675,83 @@ test "merge refuses a dirty main tree, then lands the worktree's commit on main;
     };
     try t.expect(log_pane);
     try f.sh(f.repo, &.{ "merge", "--abort" });
+}
+
+test "the launch: the prompt is seeded with the first free session-<n>; accept makes the tree and opens the session there with MNML_WORKSPACE set" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    // A profile whose "claude" is a shell printing the workspace it was given.
+    const profiles = [_]Config.LaunchProfile{.{ .name = "sh", .binary = "/bin/sh", .args = &.{ "-c", "if [ \"$MNML_WORKSPACE\" = \"$PWD\" ]; then echo WS=cwd; else echo WS=other; fi; sleep 30" } }};
+    app.cfg.ai.launch_profiles = &profiles;
+    try openNamePrompt(app, .claude, launch_profiles.builtin_name);
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings(prompt_title, app.overlay.prompt.state.title);
+    try t.expectEqualStrings("session-1", app.overlay.prompt.state.buf.items);
+    try t.expect(app.overlay.prompt.purpose == .session_worktree_name);
+    try t.expectEqualStrings(launch_profiles.builtin_name, app.overlay.prompt.purpose.session_worktree_name.profile);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // A named profile seeds with its name.
+    try openNamePrompt(app, .claude, "sh");
+    try t.expectEqualStrings("sh-1", app.overlay.prompt.state.buf.items);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+
+    const id = try acceptName(app, .claude, "sh", " feat ");
+    const wt = try std.fs.path.join(app.frame.allocator(), &.{ f.root, "repo-worktrees", "feat" });
+    const pane = app.panes.pty(id).?;
+    try t.expectEqualStrings(wt, pane.cwd.?);
+    try t.expectEqualStrings("claude (sh) @ feat", pane.label);
+    try t.expectEqualStrings("feat", app.sessions.worktrees.byPath(wt).?.name);
+    try t.expectEqualStrings(f.repo, app.sessions.worktrees.byPath(wt).?.repo);
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "worktree feat: "));
+    // The child ran in the tree with MNML_WORKSPACE naming that very
+    // directory (the shell compares the two; a long tmp path would wrap).
+    try t.expect(try pty_pane.tickUntilScreen(app, "WS=cwd", 4000));
+    // A second accept with the same name is refused, the tree untouched.
+    try t.expectError(error.Failed, acceptName(app, .claude, "sh", "feat"));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "exists already") != null);
+    try t.expectError(error.Failed, acceptName(app, .claude, "sh", "  "));
+}
+
+test "a profile with .worktree opens the name prompt from openSessionWith; the chip's worktree row does the same" {
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const profiles = [_]Config.LaunchProfile{.{ .name = "trees", .binary = "claude", .worktree = true }};
+    app.cfg.ai.launch_profiles = &profiles;
+    try t.expect((try launch_profiles.openSessionWith(app, .claude, "trees", .right)) == null);
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("trees-1", app.overlay.prompt.state.buf.items);
+    try t.expectEqualStrings("trees", app.overlay.prompt.purpose.session_worktree_name.profile);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    const items = try launch_profiles.menuItems(app, t.allocator, .claude);
+    defer {
+        for (items) |it| t.allocator.free(it.label);
+        t.allocator.free(items);
+    }
+    var row: ?command.AiProfileAction = null;
+    for (items) |it| if (std.mem.eql(u8, it.label, launch_profiles.worktree_label)) {
+        row = it.action.ai_profile;
+    };
+    try t.expect(row.?.worktree);
+    try launch_profiles.menuAction(app, row.?);
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("session-1", app.overlay.prompt.state.buf.items);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Where there is no work tree (a bare repository stands in for a
+    // directory outside every repo — the test's tmp dir is under this
+    // checkout) the prompt is refused with the reason.
+    try f.tmp.dir.createDirPath(t.io, "bare.git");
+    const bare_path = try std.fs.path.join(t.allocator, &.{ f.root, "bare.git" });
+    defer t.allocator.free(bare_path);
+    try f.sh(bare_path, &.{ "init", "-q", "--bare" });
+    var bare = try App.initWith(t.allocator, t.io, .{ .workspace = bare_path, .cols = 80, .rows = 20 });
+    defer bare.deinit();
+    try t.expectError(error.Failed, openNamePrompt(&bare, .claude, launch_profiles.builtin_name));
+    try t.expect(std.mem.indexOf(u8, bare.diag.msg.?, "not in a git repository") != null);
 }

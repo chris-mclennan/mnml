@@ -80,6 +80,10 @@ pub const OpenOptions = struct {
     /// // changed (colors): a user-chosen accent to open with — a
     /// resumed session's remembered colour. Null takes the auto slot.
     accent_color: ?[]const u8 = null,
+    /// // changed (sessions-worktree): `KEY=VALUE` lines laid over the
+    /// app's environment for this child only (`MNML_WORKSPACE` pointing
+    /// at a session worktree).
+    env_extra: []const []const u8 = &.{},
 };
 
 /// The reader thread's way into the app: posts `.pty_readable{pane}`
@@ -250,10 +254,17 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     errdefer gpa.destroy(wire);
     wire.* = .{ .events = &app.events, .io = app.io, .pane = id };
 
+    // The child's environment: the app's, or a copy with the extras.
+    var env_copy: ?std.process.Environ.Map = if (opts.env_extra.len > 0) try app.env.clone(gpa) else null;
+    defer if (env_copy) |*m| m.deinit();
+    if (env_copy) |*m| for (opts.env_extra) |kv| {
+        const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
+        try m.put(kv[0..eq], kv[eq + 1 ..]);
+    };
     const session = pty.Session.spawn(gpa, app.io, .{
         .cols = size.cols,
         .rows = size.rows,
-        .env = &app.env,
+        .env = if (env_copy) |*m| m else &app.env,
         .argv = if (argv.len == 0) null else @ptrCast(argv),
         .cwd = cwd orelse app.workspace,
         .notify = .{ .ctx = wire, .fn_ptr = &Wire.readable },

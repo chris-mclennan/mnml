@@ -374,6 +374,7 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
         },
         .sessions => &.{
             .{ .label = "+ New Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
+            .{ .label = "+ New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
             .{ .label = "+ New Codex session", .action = .{ .command = .@"ai.codex_new" } },
             .{ .label = "+ New cloud run…", .action = .{ .command = .@"cloud_agents.new_run" } },
             .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" } },
@@ -460,6 +461,7 @@ pub const plus_tree = [_]MenuItem{
     } },
     .{ .label = "AI", .action = .none, .icon = icon_ai_nerd, .icon_ascii = icon_ai_ascii, .submenu = &.{
         .{ .label = "Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
+        .{ .label = "New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
         .{ .label = "Codex session", .action = .{ .command = .@"ai.codex_new" } },
     } },
     .{ .label = "Dock", .action = .none, .icon = icon_dock_nerd, .icon_ascii = icon_dock_ascii, .submenu = &.{

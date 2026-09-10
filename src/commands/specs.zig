@@ -840,6 +840,7 @@ pub const specs = [_]Spec{
     .{ .id = "ai.claude_code_focus", .title = "AI: focus the running Claude Code session (start one if none)", .group = "ai" },
     .{ .id = "ai.chat", .title = "AI: Claude chat — prompt + file/selection context", .group = "ai" },
     .{ .id = "ai.claude_code_new", .title = "AI: open a NEW Claude Code session (multi-session)", .group = "ai" },
+    .{ .id = "ai.new_session_worktree", .title = "AI: open a NEW Claude Code session in a git worktree of its own (prompts for a branch name)", .group = "ai" },
     .{ .id = "ai.claude_code_new_x2", .title = "AI: open 2 new Claude Code sessions", .group = "ai" },
     .{ .id = "ai.claude_code_new_x4", .title = "AI: open 4 new Claude Code sessions", .group = "ai" },
     .{ .id = "ai.claude_code_new_x8", .title = "AI: open 8 new Claude Code sessions", .group = "ai" },
@@ -1108,7 +1109,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1035 specs, unique ids" {
+test "1036 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1124,7 +1125,7 @@ test "1035 specs, unique ids" {
     // + four diff-any-two-refs commands + eight branch verbs + seven
     // stash commands + two command-log commands + two detail-row
     // commands (git-more2) + three launcher-pin commands
-    // + `view.reset_layout`.
-    try std.testing.expectEqual(@as(usize, 1035), specs.len);
+    // + `view.reset_layout` + the session-worktree launch.
+    try std.testing.expectEqual(@as(usize, 1036), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

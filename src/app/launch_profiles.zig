@@ -32,6 +32,7 @@ const CommandError = command.CommandError;
 const settings = @import("settings.zig");
 const pty_pane = @import("pty_pane.zig");
 const cli = @import("../ai/cli.zig");
+const session_worktree = @import("session_worktree.zig");
 
 pub const Product = Config.AiProduct;
 pub const Profile = Config.LaunchProfile;
@@ -209,10 +210,17 @@ pub fn isProductArgv(app: *const App, argv0: []const u8, product: Product) bool 
     return find(app, product, name) != null;
 }
 
-/// Open one session with `name`'s profile, beside the active pane.
-pub fn openSessionWith(app: *App, product: Product, name: []const u8, placement: pty_pane.Placement) CommandError!PaneId {
+/// Open one session with `name`'s profile, beside the active pane. A
+/// profile with `.worktree` opens the name prompt instead and returns
+/// null: the session starts once the worktree exists
+/// (`session_worktree.acceptName`).
+pub fn openSessionWith(app: *App, product: Product, name: []const u8, placement: pty_pane.Placement) CommandError!?PaneId {
+    if (find(app, product, name)) |p| if (p.worktree) {
+        try session_worktree.openNamePrompt(app, product, name);
+        return null;
+    };
     const l = try launch(app, app.frame.allocator(), product, name);
-    return pty_pane.open(app, .{ .argv = l.argv, .cwd = l.cwd, .label = l.label, .placement = placement, .kind = .command });
+    return try pty_pane.open(app, .{ .argv = l.argv, .cwd = l.cwd, .label = l.label, .placement = placement, .kind = .command });
 }
 
 /// Persist `name` as the product's default (`.ai.default_profile.<product>`).
@@ -237,8 +245,9 @@ pub fn setDefault(app: *App, product: Product, name: []const u8) CommandError!vo
 // ─── the chip menu ──────────────────────────────────────────────────────
 
 /// The rows the chip's right-click shows: a *New session* per profile
-/// (the built-in first), then a *Default* per profile with the current
-/// one checked. One profile or none: only the built-in rows.
+/// (the built-in first), *New session in a worktree…* for the default
+/// one, then a *Default* per profile with the current one checked. One
+/// profile or none: only the built-in rows.
 pub fn menuItems(app: *const App, gpa: Allocator, product: Product) Allocator.Error![]command.MenuItem {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -258,6 +267,16 @@ pub fn menuItems(app: *const App, gpa: Allocator, product: Product) Allocator.Er
             .action = .{ .ai_profile = .{ .product = product, .index = i, .set_default = false } },
         });
     }
+    // The worktree lane: the default profile's session in a tree of
+    // its own (`session_worktree.zig`).
+    var default_index: u16 = 0;
+    for (profiles, 0..) |p, pi| if (std.mem.eql(u8, p.name, current)) {
+        default_index = @intCast(pi + 1);
+    };
+    try items.append(gpa, .{
+        .label = try gpa.dupe(u8, worktree_label),
+        .action = .{ .ai_profile = .{ .product = product, .index = default_index, .set_default = false, .worktree = true } },
+    });
     i = 0;
     while (i < n) : (i += 1) {
         const name = if (i == 0) builtin_name else profiles[i - 1].name;
@@ -279,6 +298,7 @@ pub fn menuItems(app: *const App, gpa: Allocator, product: Product) Allocator.Er
     return items.toOwnedSlice(gpa);
 }
 
+pub const worktree_label = "New session in a worktree…";
 pub const legacy_label = "Set launcher script…";
 /// `AiProfileAction.index` of the legacy row.
 pub const legacy_index: u16 = std.math.maxInt(u16);
@@ -345,6 +365,7 @@ pub fn menuAction(app: *App, a: command.AiProfileAction) CommandError!void {
     const profiles = try list(app, arena, a.product);
     const name: []const u8 = if (a.index == 0) builtin_name else (if (a.index - 1 < profiles.len) profiles[a.index - 1].name else return app.diag.fail(arena, "that profile is gone", .{}));
     if (a.set_default) return setDefault(app, a.product, name);
+    if (a.worktree) return session_worktree.openNamePrompt(app, a.product, name);
     _ = try openSessionWith(app, a.product, name, .right);
 }
 
@@ -438,17 +459,20 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
         for (items) |it| t.allocator.free(it.label);
         t.allocator.free(items);
     }
-    try t.expectEqual(@as(usize, 5), items.len);
+    try t.expectEqual(@as(usize, 6), items.len);
     try t.expectEqualStrings("New session: default", items[0].label);
-    try t.expectEqualStrings(legacy_label, items[4].label);
-    try t.expect(items[4].separator_before and items[4].action.ai_profile.index == legacy_index);
+    try t.expectEqualStrings(legacy_label, items[5].label);
+    try t.expect(items[5].separator_before and items[5].action.ai_profile.index == legacy_index);
     try t.expectEqualStrings("New session: multi-repo", items[1].label);
-    try t.expectEqualStrings("Default: default", items[2].label);
-    try t.expect(items[2].separator_before and !items[2].checked);
-    try t.expectEqualStrings("Default: multi-repo", items[3].label);
-    try t.expect(items[3].checked);
-    try t.expect(items[1].action.ai_profile.index == 1 and !items[1].action.ai_profile.set_default);
-    try t.expect(items[3].action.ai_profile.set_default);
+    // The worktree row names the default profile (multi-repo, index 1).
+    try t.expectEqualStrings(worktree_label, items[2].label);
+    try t.expect(items[2].action.ai_profile.worktree and items[2].action.ai_profile.index == 1 and !items[2].action.ai_profile.set_default);
+    try t.expectEqualStrings("Default: default", items[3].label);
+    try t.expect(items[3].separator_before and !items[3].checked);
+    try t.expectEqualStrings("Default: multi-repo", items[4].label);
+    try t.expect(items[4].checked);
+    try t.expect(items[1].action.ai_profile.index == 1 and !items[1].action.ai_profile.set_default and !items[1].action.ai_profile.worktree);
+    try t.expect(items[4].action.ai_profile.set_default);
 
     // Codex has one profile: two rows per lane as well.
     const cx = try menuItems(&app, t.allocator, .codex);
@@ -456,8 +480,11 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
         for (cx) |it| t.allocator.free(it.label);
         t.allocator.free(cx);
     }
-    try t.expectEqual(@as(usize, 5), cx.len);
+    try t.expectEqual(@as(usize, 6), cx.len);
     try t.expectEqualStrings("New session: fast", cx[1].label);
+    // Codex's default is the built-in: its worktree row says index 0.
+    try t.expectEqualStrings(worktree_label, cx[2].label);
+    try t.expect(cx[2].action.ai_profile.worktree and cx[2].action.ai_profile.index == 0);
 }
 
 test "the legacy launcher-script row ends the chip menu and opens the profile picker with the migration note" {
@@ -470,11 +497,11 @@ test "the legacy launcher-script row ends the chip menu and opens the profile pi
         for (items) |it| t.allocator.free(it.label);
         t.allocator.free(items);
     }
-    try t.expectEqual(@as(usize, 5), items.len);
-    try t.expectEqualStrings(legacy_label, items[4].label);
-    try t.expect(items[4].separator_before);
-    try t.expectEqual(legacy_index, items[4].action.ai_profile.index);
-    try menuAction(&app, items[4].action.ai_profile);
+    try t.expectEqual(@as(usize, 6), items.len);
+    try t.expectEqualStrings(legacy_label, items[5].label);
+    try t.expect(items[5].separator_before);
+    try t.expectEqual(legacy_index, items[5].action.ai_profile.index);
+    try menuAction(&app, items[5].action.ai_profile);
     try t.expect(app.overlay == .picker);
     try t.expectEqual(app_mod.PickerKind.custom, app.overlay.picker.kind);
     try t.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);

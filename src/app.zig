@@ -205,6 +205,10 @@ pub const PromptPurpose = union(enum) {
     new_finding: []u8,
     /// SESSIONS: the alias for this session id (owned).
     sessions_rename: []u8,
+    /// // changed (sessions-worktree): the branch name of a new session
+    /// worktree; the payload names the product and the launch profile
+    /// (owned) the session then starts with.
+    session_worktree_name: SessionWorktreeName,
     /// A cloud run's ticket; the wizard's first step; its second, the
     /// model, carrying the ticket (owned).
     cloud_run_ticket,
@@ -285,10 +289,12 @@ pub const PromptPurpose = union(enum) {
     add_workspace,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
+    pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
             .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param => |s| gpa.free(s),
+            .session_worktree_name => |w| gpa.free(w.profile),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);

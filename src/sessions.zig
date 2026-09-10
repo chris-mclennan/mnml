@@ -1304,6 +1304,7 @@ pub fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const cloud_ok = cloud_agents.configured(&app.cfg.cloud_agents, &app.env);
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "New local session", .action = .{ .command = .@"ai.claude_code_new" } },
+        .{ .label = "New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
         .{ .label = "Open ×2", .action = .{ .command = .@"ai.claude_code_new_x2" } },
         .{ .label = "Open ×4", .action = .{ .command = .@"ai.claude_code_new_x4" } },
         .{ .label = "Open ×8", .action = .{ .command = .@"ai.claude_code_new_x8" } },
