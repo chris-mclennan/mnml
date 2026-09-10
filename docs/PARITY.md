@@ -48,7 +48,7 @@ table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
 and bridge v2 — the last two beyond the Rust list.
 
-Ids: 1034 in `src/commands/specs.zig`; 1034 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), 2 have none — `view.toggle_zoom` (landing on the fullscreen track as `zen.zig` runners) and `integrations.icon_picker` (the leftovers track). `zig build -Dpartial=false` refuses the build on exactly those two (checked on the merged `runners` branch with a temporary patch that collects every missing id instead of stopping at the first); the counts are the runner tables `src/core/command.zig` merges, diffed against the spec ids. The `runners` track (2026-09-10) gave the other 53 of the former 55 a runner or a `cutRunner` — none of them was the only door to a row marked `done` above. The CI step `zig build -Dpartial=false` sits commented in `.github/workflows/ci.yml` until those two land.
+Ids: 1034 in `src/commands/specs.zig`; 1034 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
 
 ## Landed since the first ledger
 
