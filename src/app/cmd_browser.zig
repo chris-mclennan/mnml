@@ -19,7 +19,7 @@ const cdp = @import("../cdp/client.zig");
 const history = @import("../http/history.zig");
 
 pub const table = .{
-    .@"browser.open" = &openCmd,
+    .@"browser.open" = &openBlankCmd,
     .@"browser.open_url" = &openCmd,
     .@"browser.navigate" = &navigateCmd,
     .@"browser.reload" = &reloadCmd,
@@ -76,8 +76,17 @@ fn openPrompt(app: *App, title: []const u8, purpose: app_mod.PromptPurpose, seed
     app.needs_render = true;
 }
 
+/// `browser.open_url`: prompt for a URL, then launch Chrome on it.
 fn openCmd(app: *App) CommandError!void {
     try openPrompt(app, "Open URL in Chrome", .browser_url, null);
+}
+
+/// `browser.open` — the palette bar's globe: no prompt, straight to
+/// `about:blank` (Rust: the rail chip's default skips the prompt). A
+/// missing Chrome fails with the pane's own diag, which the chip's
+/// press toasts.
+fn openBlankCmd(app: *App) CommandError!void {
+    _ = try browser.open(app, "about:blank");
 }
 
 fn navigateCmd(app: *App) CommandError!void {
@@ -407,4 +416,23 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
         },
         else => {},
     }
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "browser.open goes straight to a pane (no prompt) and says so when Chrome is missing; browser.open_url asks for the URL" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    browser.test_no_chrome = true;
+    defer browser.test_no_chrome = false;
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"browser.open" }));
+    try testing.expect(app.overlay == .none);
+    try testing.expect(std.mem.startsWith(u8, app.diag.msg.?, "no Chrome found"));
+    try testing.expectEqual(@as(usize, 0), app.panes.count());
+    app.diag.clear();
+    try command.run(&app, .{ .static = .@"browser.open_url" });
+    try testing.expect(app.overlay == .prompt);
+    try testing.expectEqualStrings("Open URL in Chrome", app.overlay.prompt.state.title);
 }

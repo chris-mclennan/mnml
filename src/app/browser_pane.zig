@@ -8,6 +8,7 @@
 //! to the socket; the reply is matched by id to what it was for.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -289,9 +290,14 @@ pub fn countBrowsers(app: *App) usize {
 }
 
 /// Launch Chrome at `url` in a new pane beside the active one.
+/// Tests: pretend no Chrome is installed, so `open` fails with its diag
+/// instead of launching the one on this machine.
+pub var test_no_chrome: bool = false;
+
 pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     const gpa = app.gpa;
-    if (!cdp.available(gpa, app.io, &app.env)) return app.diag.fail(app.frame.allocator(), "no Chrome found — run `:browser.install_cft` to install Chrome for Testing", .{});
+    const no_chrome = (builtin.is_test and test_no_chrome) or !cdp.available(gpa, app.io, &app.env);
+    if (no_chrome) return app.diag.fail(app.frame.allocator(), "no Chrome found — run `:browser.install_cft` to install Chrome for Testing", .{});
     const url = std.mem.trim(u8, url_in, " \t");
     const shared = try gpa.create(Shared);
     errdefer gpa.destroy(shared);
