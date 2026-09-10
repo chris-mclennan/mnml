@@ -2058,7 +2058,10 @@ fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Er
 }
 
 /// Apply `edits` to one pane, last first so earlier offsets stay valid.
-/// One undo step; the cursor keeps its byte where it can.
+/// One undo step — every splice's checkpoint collapses into the one
+/// opened here, so a rename's three edits undo with one `u` and redo
+/// with one `ctrl+r`, as Neovim applies a WorkspaceEdit. The cursor
+/// keeps its byte where it can.
 pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextEdit, enc: types.Encoding) Allocator.Error!void {
     const arena = app.frame.allocator();
     const edits = try arena.dupe(types.TextEdit, edits_in);
@@ -2070,6 +2073,8 @@ pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextE
     }.lt);
     const ed = e.buf.editor;
     const cursor = ed.cursor;
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
     for (edits) |te| {
         const text = ed.bytes();
         const start = types.byteOf(text, te.range.start, enc);
@@ -3213,6 +3218,79 @@ fn pumpQuiet(app: *App, ms: u32) !void {
         try app.tick(App.nowMs(app.io));
         try app.render();
     }
+}
+
+test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one ctrl+r; the undo opens no popup; a motion left of the last edit still renders (hunt-vim-2026-09-09 #1, #2)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const text = "fn foo() {\n  let x = 1;\n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n";
+    const after = "fn qux() {\n  let x = 1;\n  qux(x); // TODO later\n}\nfn bar() { qux(); }\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.fk", .data = text });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" } } } }" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items;
+            return s.len == 1 and s[0].ready and s[0].docs.count() == 1;
+        }
+        fn renamed(a: *App) bool {
+            const ed = a.activeEditor() orelse return false;
+            return std.mem.indexOf(u8, ed.buf.editor.bytes(), "fn bar() { qux(); }") != null;
+        }
+    };
+    try pumpUntil(&app, &app, Cond.ready, 5000);
+    const e = app.activeEditor().?;
+    const ed = e.buf.editor;
+    try testing.expectEqual(.normal, e.buf.input.mode());
+    // Line 3, inside `foo`: the finding's `5G 4l f2`.
+    ed.setCursor(std.mem.indexOf(u8, text, "foo(x)").? + 1);
+    const undo_before = ed.doc.history.undoLen();
+    try acceptRename(&app, "qux");
+    try pumpUntil(&app, &app, Cond.renamed, 5000);
+    try testing.expectEqualStrings(after, ed.bytes());
+    // Three edits, one checkpoint.
+    try testing.expectEqual(undo_before + 1, ed.doc.history.undoLen());
+
+    // One `u`: every occurrence is back. The undo is a NORMAL-mode key
+    // that changed the buffer — not typing, so no completion request
+    // goes out and no popup opens.
+    try app.handle(.{ .key = Key.char('u') });
+    try testing.expectEqualStrings(text, ed.bytes());
+    try testing.expectEqual(.normal, e.buf.input.mode());
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
+
+    // The finding's `5G`: a motion left of the last edit. The render
+    // that panicked (`text[comp.start..cursor]`, cursor < start) paints.
+    try app.handle(.{ .key = Key.char('g') });
+    try app.handle(.{ .key = Key.char('g') });
+    try testing.expectEqual(@as(usize, 0), ed.cursor);
+    try app.render();
+    try testing.expect(app.lsp.completion == null);
+
+    // One ctrl+r: every occurrence renamed again, still no popup.
+    try app.handle(.{ .key = Key.ctrl('r') });
+    try testing.expectEqualStrings(after, ed.bytes());
+    try testing.expect(app.lsp.completion_req == null);
+    try pumpQuiet(&app, 300);
+    try testing.expect(app.lsp.completion == null);
 }
 
 test "a completion popup whose anchor is past the cursor closes instead of slicing backwards; so does one whose pane is gone; a motion left of the anchor closes it on the key" {

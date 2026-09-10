@@ -1,0 +1,48 @@
+# A rename through the fake server is ONE undo step (Neovim applies a
+# WorkspaceEdit as one block): `u` reverts every occurrence at once and
+# `ctrl+r` puts them all back (hunt-vim-2026-09-09 finding 2). The
+# motion to the left of the last edit afterwards is finding 1's crash:
+# `visibleCompletions` sliced `text[comp.start..cursor]` with the cursor
+# before the start of a popup the undo had opened. That the undo opens
+# no popup at all is the auto-trigger's unit test in `src/app/lsp.zig`.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+command editor.use_vim
+# Line 3, on `foo`.
+key 3
+key G
+key 2
+key l
+command lsp.rename
+expect screen contains "Rename symbol"
+key backspace
+key backspace
+key backspace
+type "quux"
+key enter
+expect screen contains "LSP rename · applied 3 edit(s)"
+expect screen contains "fn quux() {"
+expect screen contains "quux(x); // TODO later"
+expect screen contains "fn bar() { quux(); }"
+# One `u`: all three occurrences are back, and no popup opened.
+key u
+expect screen contains "fn foo() {"
+expect screen contains "foo(x); // TODO later"
+expect screen contains "fn bar() { foo(); }"
+expect screen lacks "identifier"
+expect screen lacks "quux"
+# A motion to the left of the last edit still renders.
+key 1
+key G
+key 0
+expect screen contains "fn foo() {"
+expect screen lacks "identifier"
+# One `ctrl+r`: all three are renamed again.
+key ctrl+r
+expect screen contains "fn quux() {"
+expect screen contains "quux(x); // TODO later"
+expect screen contains "fn bar() { quux(); }"
+expect screen lacks "identifier"
