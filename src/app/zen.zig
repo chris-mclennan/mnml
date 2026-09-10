@@ -416,3 +416,16 @@ test "zen: from a request pane and a terminal, `Ctrl+K Z` reaches the app (the `
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expect(!app.zen);
 }
+
+test "zen: the palette's full-screen row reads Enter outside and Exit inside" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const row = @intFromEnum(command.CommandId.@"view.fullscreen");
+    try command.run(&app, .{ .static = .palette });
+    try t.expectEqualStrings("view  ·  Enter full screen  ·  view.fullscreen", app.overlay.picker.labels[row]);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try command.run(&app, .{ .static = .palette });
+    try t.expectEqualStrings("view  ·  Exit full screen  ·  view.fullscreen", app.overlay.picker.labels[row]);
+}
