@@ -11,7 +11,7 @@
 //!
 //! Enter copies the glyph itself to the clipboard (the title says so)
 //! and toasts the escape beside it; a right-click on a row — or Ctrl+C
-//! on the cursor's — offers the codepoint (`\u{EB40}`) and the `nf-`
+//! on the cursor's — offers the codepoint escape (`\u{…}`) and the `nf-`
 //! name as well. // changed: Rust's accept copies a three-part line
 //! (`<glyph>  \u{…}  (<label>)`); a pasted glyph is what the config's
 //! `.glyph` field wants, so the glyph alone goes, and the codepoint has
