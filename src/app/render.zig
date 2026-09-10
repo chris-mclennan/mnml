@@ -85,6 +85,7 @@ const cheatsheet = @import("cheatsheet.zig");
 const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
+const list_panel = @import("../ui/list_panel.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
 const ai_app = @import("ai.zig");
@@ -764,7 +765,12 @@ pub fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId
                 diag_text = if (ui.ascii) "!" else "⚠";
             }
         }
-        const icon = paneIcon(app, p, ui.ascii);
+        var icon = paneIcon(app, p, ui.ascii);
+        // colors: a pty tab's glyph in the pane's accent (Rust's
+        // `pty_icon` applies the session colour after the match).
+        if (p.* == .pty) if (pty_pane.accentOf(app, &p.pty, ui.theme)) |accent| {
+            icon.color = accent;
+        };
         var title = p.title();
         var verb: ?[]const u8 = null;
         if (p.* == .request) if (std.mem.indexOfScalar(u8, title, ' ')) |sp| {
@@ -1089,16 +1095,27 @@ fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
 fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allocator.Error!void {
     if (!pty_pane.supported) return;
     const focused = app.active == id and app.focus == .pane;
-    p.fit(rect.w, rect.h);
-    try p.grid.update(app.gpa, p.session.terminal());
     const exit_label: ?[]const u8 = if (p.exit) |e| switch (e) {
         .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
         .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
     } else null;
-    const cursor = pty_view.draw(ui, rect, &p.grid, .{ .focused = focused, .exit_label = exit_label });
+    // colors: the identity strip — a one-cell `▌` down the left edge in
+    // the pane's accent (Rust `pty_view.rs` #1133); a shell has none.
+    var body = rect;
+    if (pty_pane.accentOf(app, p, ui.theme)) |accent| if (rect.w >= 2) {
+        const bar = Rect.init(rect.x, rect.y, 1, rect.h);
+        ui.fill(bar, ui.theme.bg);
+        const glyph = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+        var y: u16 = 0;
+        while (y < rect.h) : (y += 1) _ = ui.putStr(rect.x, rect.y + y, 1, glyph, Theme.withFg(ui.theme.bg, accent));
+        body = Rect.init(rect.x + 1, rect.y, rect.w - 1, rect.h);
+    };
+    p.fit(body.w, body.h);
+    try p.grid.update(app.gpa, p.session.terminal());
+    const cursor = pty_view.draw(ui, body, &p.grid, .{ .focused = focused, .exit_label = exit_label });
     if (app.active == id) {
-        app.pane_rows = @max(rect.h, 1);
-        app.pane_cols = @max(rect.w, 1);
+        app.pane_rows = @max(body.h, 1);
+        app.pane_cols = @max(body.w, 1);
         if (focused) if (cursor) |c| {
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         };

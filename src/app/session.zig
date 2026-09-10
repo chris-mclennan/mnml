@@ -66,6 +66,8 @@ pub const Pane = struct {
     argv: []const []const u8 = &.{},
     cwd: ?[]const u8 = null,
     label: ?[]const u8 = null,
+    /// pty: the identity strip's colour, a palette name (`colors`).
+    accent: ?[]const u8 = null,
 };
 
 /// The split tree as the node pool it is in memory: leaves name pane
@@ -79,6 +81,8 @@ pub const Closed = struct { path: []const u8 = "", cursor: usize = 0 };
 pub const Message = struct { level: Level = .info, age_ms: i64 = 0, text: []const u8 = "" };
 /// SESSIONS: a display name for a session id.
 pub const SessionAlias = struct { id: []const u8 = "", name: []const u8 = "" };
+/// SESSIONS: a chosen accent colour for a session id (`colors`).
+pub const SessionColor = struct { id: []const u8 = "", color: []const u8 = "" };
 
 pub const Saved = struct {
     version: u32 = format_version,
@@ -114,6 +118,8 @@ pub const Saved = struct {
     /// SESSIONS: the manual order (session ids, first on top) and the aliases.
     sessions_order: []const []const u8 = &.{},
     sessions_aliases: []const SessionAlias = &.{},
+    /// // changed (colors): the per-session colour overrides, by id.
+    sessions_colors: []const SessionColor = &.{},
     /// The dock widgets and whether the dock is hidden.
     dock: []const dock.SavedWidget = &.{},
     dock_hidden: bool = false,
@@ -222,7 +228,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                 if (pt.kind != .shell and pt.kind != .command) break :blk null;
                 const argv = try arena.alloc([]const u8, pt.argv.len);
                 for (pt.argv, 0..) |a, k| argv[k] = a;
-                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label };
+                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color };
             },
             else => null,
         };
@@ -284,6 +290,9 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     const aliases = try arena.alloc(SessionAlias, app.sessions.aliases.items.len);
     for (app.sessions.aliases.items, 0..) |a, i| aliases[i] = .{ .id = a.id, .name = a.name };
     saved.sessions_aliases = aliases;
+    const colors = try arena.alloc(SessionColor, app.sessions.colors.items.len);
+    for (app.sessions.colors.items, 0..) |c, i| colors[i] = .{ .id = c.id, .color = c.name };
+    saved.sessions_colors = colors;
     saved.dock = try dock.capture(app, arena);
     saved.dock_hidden = app.dock.hidden;
     return saved;
@@ -490,6 +499,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
         try app.sessions.order.append(gpa, owned);
     }
     for (saved.sessions_aliases) |a| if (a.id.len > 0) try app.sessions.setAlias(gpa, a.id, a.name);
+    for (saved.sessions_colors) |c| if (c.id.len > 0) try app.sessions.setColor(gpa, c.id, c.color);
     try dock.apply(app, saved.dock, saved.dock_hidden);
     for (saved.recent) |p| try app.noteRecent(p);
     for (saved.closed) |c| {
@@ -561,6 +571,7 @@ fn openSaved(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
                 .label = sp.label,
                 .placement = .tab,
                 .kind = if (sp.argv.len == 0) .shell else .command,
+                .accent_color = sp.accent,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
@@ -871,4 +882,34 @@ test "session: clear deletes the file and stops the autosave; the timer writes e
     try t.expectError(error.FileNotFound, f.tmp.dir.statFile(t.io, rel_path, .{}));
     try saveCmd(&app);
     _ = try f.tmp.dir.statFile(t.io, rel_path, .{});
+}
+
+test "session: the session colours and a pty pane's accent ride in the file and come back" {
+    // A POSIX shell script drives the pty.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try app.sessions.setColor(t.allocator, "sid-1", "blue");
+        try app.sessions.setColor(t.allocator, "sid-2", "pink");
+        const id = try pty_pane.open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command, .placement = .tab });
+        try pty_pane.setAccent(&app, id, "red");
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        try t.expectEqualStrings("blue", app.sessions.color("sid-1").?);
+        try t.expectEqualStrings("pink", app.sessions.color("sid-2").?);
+        var found: ?[]const u8 = null;
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .pty => |*pt| found = pt.accent_color,
+            else => {},
+        };
+        try t.expectEqualStrings("red", found orelse return error.TestUnexpectedResult);
+    }
 }

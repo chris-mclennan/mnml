@@ -23,6 +23,7 @@ const header = @import("header.zig");
 const ids = @import("../core/ids.zig");
 const table = @import("../app/sessions_table.zig");
 const transcript = @import("../ai/transcript.zig");
+const accent_color = @import("accent_color.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Caret = text_field.Caret;
@@ -223,7 +224,19 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
         .item => |v| {
             const it = v.it;
             var x = r.x;
-            x += ui.putStr(x, r.y, r.right() -| x, if (v.ticked) (if (ui.ascii) "[x]" else "☑ ") else "  ", Theme.withFg(style, th.accent.fg));
+            // colors: the session's accent in the row's first cell, as
+            // the card's `▌`; a tick takes both cells over it.
+            if (v.ticked) {
+                x += ui.putStr(x, r.y, r.right() -| x, if (ui.ascii) "[x]" else "☑ ", Theme.withFg(style, th.accent.fg));
+            } else {
+                const chosen: ?vaxis.Color = if (v.color) |c| accent_color.resolve(c, th) else null;
+                if (chosen) |c| {
+                    x += ui.putStr(x, r.y, r.right() -| x, if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph, Theme.withFg(style, c));
+                    x += ui.putStr(x, r.y, r.right() -| x, " ", style);
+                } else {
+                    x += ui.putStr(x, r.y, r.right() -| x, "  ", style);
+                }
+            }
             x += ui.putStr(x, r.y, r.right() -| x, it.source.glyph(ui.ascii), Theme.withFg(style, th.accent.fg));
             x += ui.putStr(x, r.y, r.right() -| x, " ", style);
             const badge_style = switch (it.state) {
@@ -430,4 +443,33 @@ test "a group row carries the captions over the numbers; a session row is the ba
     try testing.expect(std.mem.indexOf(u8, s, "2m") != null);
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, s, " "), "●3"));
     try testing.expect(std.mem.indexOf(u8, s, "Running") == null);
+}
+
+test "colors: a session row's first cell is the `▌` in its accent; a tick takes the cells over it; no colour is air" {
+    var f = try Fixture.init(90, 3);
+    defer f.deinit();
+    setClock(1_000_000 * 1000);
+    ui_now_s = 1_000_000;
+    const it = sessions.testItem("aaaaaaaa-1111", .idle, 1_000_000 - 120, "mnml", "fix the tests");
+    const rows = [_]Row{
+        .{ .item = .{ .it = it, .name = "fix the tests", .ticked = false, .active = false, .pinned = false, .color = "red" } },
+        .{ .item = .{ .it = it, .name = "fix the tests", .ticked = true, .active = false, .pinned = false, .color = "red" } },
+        .{ .item = .{ .it = it, .name = "fix the tests", .ticked = false, .active = false, .pinned = false } },
+    };
+    for (rows, 0..) |r, i| paintRow(f.ui(), Rect.init(0, @intCast(i), 90, 1), r, false);
+    const bar = f.screen.readCell(0, 0).?;
+    try testing.expectEqualStrings("\u{258c}", bar.char.grapheme);
+    try testing.expect(vaxis.Color.eql(bar.style.fg, f.theme.palette.red));
+    try testing.expectEqualStrings("☑", f.screen.readCell(0, 1).?.char.grapheme);
+    try testing.expectEqualStrings(" ", f.screen.readCell(0, 2).?.char.grapheme);
+    // The name sits at the same cell on every row (the row text is
+    // bytes, so the column is the width of what precedes the name).
+    var buf: [128]u8 = undefined;
+    var col: ?u16 = null;
+    for (0..3) |y| {
+        const line = f.row(@intCast(y), &buf);
+        const at = std.mem.indexOf(u8, line, "fix the tests") orelse return error.TestUnexpectedResult;
+        const c = f.ui().width(line[0..at]);
+        if (col) |want| try testing.expectEqual(want, c) else col = c;
+    }
 }

@@ -62,6 +62,7 @@ const cli = @import("ai/cli.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
+const accent_color = @import("ui/accent_color.zig");
 
 pub const Source = agents.Source;
 pub const AgentState = agents.AgentState;
@@ -177,6 +178,10 @@ pub const RowView = struct {
     lines: []const []const u8 = &.{},
     kind: Summary = .none,
     ticket: ?[]const u8 = null,
+    /// // changed (colors): the accent's palette name — the user's pick
+    /// for the session, else its open pane's; null paints the cursor /
+    /// active cue.
+    color: ?[]const u8 = null,
 };
 
 pub const Summary = enum { exited, none, text };
@@ -258,6 +263,9 @@ pub const State = struct {
     aliases: std.ArrayListUnmanaged(Alias) = .empty,
     /// Pinned session ids, in memory for this launch (as Rust's). Owned.
     pinned: std.ArrayListUnmanaged([]u8) = .empty,
+    /// // changed (colors): accent colours by session id (`name` is the
+    /// palette name), saved with the session file. Owned.
+    colors: std.ArrayListUnmanaged(Alias) = .empty,
     generation: u32 = 0,
     scanning: bool = false,
     scanned_once: bool = false,
@@ -291,6 +299,11 @@ pub const State = struct {
         self.aliases.deinit(gpa);
         for (self.pinned.items) |id| gpa.free(id);
         self.pinned.deinit(gpa);
+        for (self.colors.items) |c| {
+            gpa.free(c.id);
+            gpa.free(c.name);
+        }
+        self.colors.deinit(gpa);
         if (self.home) |h| gpa.free(h);
         if (self.cloud) |*c| c.deinit(gpa);
         self.filtered.deinit(gpa);
@@ -328,6 +341,35 @@ pub const State = struct {
         const name_owned = try gpa.dupe(u8, name);
         errdefer gpa.free(name_owned);
         try self.aliases.append(gpa, .{ .id = id_owned, .name = name_owned });
+    }
+
+    /// The accent chosen for `id`, a palette name.
+    pub fn color(self: *const State, id: []const u8) ?[]const u8 {
+        for (self.colors.items) |c| if (std.mem.eql(u8, c.id, id)) return c.name;
+        return null;
+    }
+
+    /// Set, replace, or (`none` / empty / unknown) drop the colour for `id`.
+    pub fn setColor(self: *State, gpa: Allocator, id: []const u8, name: []const u8) Allocator.Error!void {
+        const canon = accent_color.canonical(name);
+        for (self.colors.items, 0..) |*c, i| if (std.mem.eql(u8, c.id, id)) {
+            if (canon == null) {
+                const gone = self.colors.orderedRemove(i);
+                gpa.free(gone.id);
+                gpa.free(gone.name);
+                return;
+            }
+            const fresh = try gpa.dupe(u8, canon.?);
+            gpa.free(c.name);
+            c.name = fresh;
+            return;
+        };
+        const want = canon orelse return;
+        const id_owned = try gpa.dupe(u8, id);
+        errdefer gpa.free(id_owned);
+        const name_owned = try gpa.dupe(u8, want);
+        errdefer gpa.free(name_owned);
+        try self.colors.append(gpa, .{ .id = id_owned, .name = name_owned });
     }
 
     pub fn orderIndex(self: *const State, id: []const u8) ?usize {
@@ -742,7 +784,61 @@ fn openCmd(app: *App) CommandError!void {
         .codex => &.{cli.codex_binary},
     };
     const cwd: ?[]const u8 = if (it.cwd) |c| try arena.dupe(u8, c) else null;
-    _ = try pty_pane.open(app, .{ .argv = argv, .cwd = cwd, .label = it.source.label(), .placement = .right, .kind = .command });
+    // The session's chosen colour follows it into the pane.
+    _ = try pty_pane.open(app, .{ .argv = argv, .cwd = cwd, .label = it.source.label(), .placement = .right, .kind = .command, .accent_color = app.sessions.color(it.session_id) });
+}
+
+// ─── the accent (colors) ────────────────────────────────────────────────
+
+/// The palette name a session's surfaces paint: the user's pick for the
+/// id first, else its open pane's accent (a new session's auto slot);
+/// null when neither.
+pub fn colorNameOf(app: *App, sid: []const u8) ?[]const u8 {
+    if (app.sessions.color(sid)) |c| return c;
+    const pid = ptyPaneOf(app, sid) orelse return null;
+    const p = app.panes.pty(pid) orelse return null;
+    return p.accent_color;
+}
+
+/// The `Color: …` rows of a session's menu (Rust's
+/// `session_color_menu_items_with_active`): one per palette entry in
+/// the palette's order, then `Color: Auto`, the current one checked.
+/// On `arena` — the menu's own.
+pub fn colorMenuRows(arena: Allocator, target: command.SessionColorAct, active: ?[]const u8) Allocator.Error![]command.MenuItem {
+    const rows = try arena.alloc(command.MenuItem, accent_color.palette.len + 1);
+    for (accent_color.palette, 0..) |name, i| rows[i] = .{
+        .label = accent_color.label(name),
+        .action = .{ .session_color = .{ .target = target.target, .name = name } },
+        .checked = if (active) |c| std.mem.eql(u8, c, name) else false,
+    };
+    rows[accent_color.palette.len] = .{
+        .label = accent_color.label(accent_color.none),
+        .action = .{ .session_color = .{ .target = target.target, .name = accent_color.none } },
+        .checked = active == null,
+        .separator_before = true,
+    };
+    return rows;
+}
+
+/// A `Color: …` row was chosen: the SESSIONS row under the cursor keeps
+/// the colour by its id and its open pane takes it; a pane takes it,
+/// and its session id keeps it when the command names one.
+pub fn setColorAction(app: *App, a: command.SessionColorAct) Allocator.Error!void {
+    switch (a.target) {
+        .row => {
+            const it = current(app) orelse return;
+            try app.sessions.setColor(app.gpa, it.session_id, a.name);
+            if (ptyPaneOf(app, it.session_id)) |pid| try pty_pane.setAccent(app, pid, a.name);
+        },
+        .pane => |pid| {
+            try pty_pane.setAccent(app, pid, a.name);
+            const p = app.panes.pty(pid) orelse return;
+            for (app.sessions.items) |it| for (p.argv) |arg| if (std.mem.eql(u8, arg, it.session_id)) {
+                try app.sessions.setColor(app.gpa, it.session_id, a.name);
+            };
+        },
+    }
+    app.needs_render = true;
 }
 
 /// The transcript itself, in an editor.
@@ -1152,6 +1248,12 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
         try items.append(app.gpa, .{ .label = "Auto sort", .action = .{ .command = .@"sessions.sort_auto" }, .checked = app.sessions.sort == .auto });
     }
     try items.append(app.gpa, .{ .label = "Rename…", .action = .{ .command = .@"sessions.rename" } });
+    // colors: the accent, as Rust's rail row menu offers it.
+    if (it) |i| if (i.where != .cloud) try items.append(app.gpa, .{
+        .label = "Color",
+        .action = .none,
+        .submenu = try colorMenuRows(arena, .{ .target = .row, .name = accent_color.none }, colorNameOf(app, i.session_id)),
+    });
     var title: []const u8 = "Session";
     if (cloud) {
         const i = it.?;
@@ -1294,6 +1396,7 @@ pub fn rowView(app: *App, arena: Allocator, it: Item) Allocator.Error!RowView {
         .lines = lines.items,
         .kind = kind,
         .ticket = if (aliased) null else detectTicket(app.cfg.ui.ticket_prefixes, &.{name}),
+        .color = colorNameOf(app, it.session_id),
     };
 }
 
@@ -1348,9 +1451,9 @@ pub fn detectTicket(prefixes: []const []const u8, candidates: []const []const u8
 }
 
 /// Rust's card, cell for cell (`sessions_panel.rs`): the accent `▌` down
-/// `x + 1` — cyan on the cursor's card while the panel has focus, green
-/// on the card whose pty pane is the active one, else the ground (Rust
-/// paints a user colour first; there is none here) — then at `x + 3`
+/// `x + 1` — the session's chosen colour first (`RowView.color`), else
+/// cyan on the cursor's card while the panel has focus, green on the
+/// card whose pty pane is the active one, else the ground — then at `x + 3`
 /// the name after a pin `󰐃 ` (bold when active, clipped hard at the
 /// edge), and up to three summary rows clipped to `width − 6` with `…`,
 /// the first with ` · TICKET` when one was detected. No bell, no ports.
@@ -1359,7 +1462,8 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     const bg = t.panel_bg;
     if (r.w < 3 or r.h == 0) return;
     const focused = ui.isFocused(.{ .panel = .sessions });
-    const accent = if (selected and focused) t.palette.cyan else if (row.active) t.palette.green else bg.bg;
+    const chosen: ?vaxis.Color = if (row.color) |c| accent_color.resolve(c, t) else null;
+    const accent = chosen orelse if (selected and focused) t.palette.cyan else if (row.active) t.palette.green else bg.bg;
     const bar = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
     var y: u16 = 0;
     while (y < r.h) : (y += 1) _ = ui.putStr(r.x + 1, r.y + y, 1, bar, Theme.withFg(bg, accent));
@@ -1584,9 +1688,31 @@ test "headless: the panel lists every workspace's sessions after w, J adopts the
     try testing.expect(row0 != null and sort_chip != null);
     try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 14), f.app.overlay.menu.items.len);
-    for (f.app.overlay.menu.items) |it| try testing.expect(it.action == .command);
-    try testing.expectEqualStrings("Open as a table", f.app.overlay.menu.items[13].label);
+    try testing.expectEqual(@as(usize, 15), f.app.overlay.menu.items.len);
+    // colors: every row is a command but the Color parent, whose nine
+    // children each name a palette entry (or the sentinel) that resolves.
+    var color_rows: usize = 0;
+    for (f.app.overlay.menu.items) |it| {
+        if (it.submenu.len > 0) {
+            try testing.expectEqualStrings("Color", it.label);
+            try testing.expectEqual(accent_color.palette.len + 1, it.submenu.len);
+            for (it.submenu, 0..) |row, i| {
+                try testing.expect(row.action == .session_color);
+                try testing.expect(row.action.session_color.target == .row);
+                if (i < accent_color.palette.len) {
+                    try testing.expectEqualStrings(accent_color.palette[i], row.action.session_color.name);
+                    try testing.expect(accent_color.resolve(row.action.session_color.name, &f.app.theme) != null);
+                } else {
+                    try testing.expectEqualStrings(accent_color.none, row.action.session_color.name);
+                    try testing.expect(row.checked);
+                }
+                try testing.expectEqualStrings(accent_color.label(row.action.session_color.name), row.label);
+            }
+            color_rows += 1;
+        } else try testing.expect(it.action == .command);
+    }
+    try testing.expectEqual(@as(usize, 1), color_rows);
+    try testing.expectEqualStrings("Open as a table", f.app.overlay.menu.items[14].label);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try f.app.handle(.{ .mouse = .{ .x = sort_chip.?.x + 1, .y = sort_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(f.app.overlay == .menu);
@@ -2025,4 +2151,51 @@ test "a relative HOME is under the workspace: what a .test file seeds" {
     try testing.expectEqualStrings("home", std.fs.path.basename(home));
     try testing.expect(std.mem.startsWith(u8, home, root));
     try testing.expectEqualStrings(home, app.sessions.home.?);
+}
+
+test "colors: a card's `▌` takes the session's chosen colour over the cursor and active cues; the row menu's Color rows resolve" {
+    var f = try UiFixture.init(26, 20);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    var rows = specCards();
+    rows[1].color = "blue";
+    rows[1].active = true;
+    rows[2].color = "bogus";
+    _ = Panel.draw(&st, f.ui(), f.full(), cardProps(&rows));
+    // Card 0 (no colour, not active, the cursor's while a pane has
+    // focus): the ground. Card 1: blue, though active. Card 2: an
+    // unknown name is no colour.
+    try testing.expect(vaxis.Color.eql(f.style(1, 5).fg, f.theme.panel_bg.bg));
+    try testing.expect(vaxis.Color.eql(f.style(1, 10).fg, f.theme.palette.blue));
+    try testing.expect(vaxis.Color.eql(f.style(1, 13).fg, f.theme.palette.blue));
+    try testing.expect(vaxis.Color.eql(f.style(1, 15).fg, f.theme.panel_bg.bg));
+    // The rows a menu shows: the palette in order, then Auto, one checked.
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const items = try colorMenuRows(mem.allocator(), .{ .target = .row, .name = "" }, "yellow");
+    try testing.expectEqual(accent_color.palette.len + 1, items.len);
+    try testing.expectEqualStrings("Color: Green", items[0].label);
+    try testing.expect(items[2].checked and !items[0].checked and !items[items.len - 1].checked);
+    try testing.expectEqualStrings("Color: Auto", items[items.len - 1].label);
+    try testing.expectEqualStrings(accent_color.none, items[items.len - 1].action.session_color.name);
+}
+
+test "colors: the state keeps a colour per session id — set, replace, none drops, unknown drops" {
+    var f = try Fixture.init(40, 10);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    try st.setColor(testing.allocator, "s1", "green");
+    try st.setColor(testing.allocator, "s2", "pink");
+    try testing.expectEqualStrings("green", st.color("s1").?);
+    try testing.expectEqualStrings("pink", st.color("s2").?);
+    try st.setColor(testing.allocator, "s1", "red");
+    try testing.expectEqualStrings("red", st.color("s1").?);
+    try st.setColor(testing.allocator, "s2", accent_color.none);
+    try testing.expect(st.color("s2") == null);
+    try st.setColor(testing.allocator, "s3", "mauve");
+    try testing.expect(st.color("s3") == null);
+    try testing.expectEqual(@as(usize, 1), st.colors.items.len);
+    try testing.expectEqualStrings("red", colorNameOf(&f.app, "s1").?);
+    try testing.expect(colorNameOf(&f.app, "s2") == null);
 }

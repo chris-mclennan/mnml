@@ -21,6 +21,7 @@ const MenuItem = command.MenuItem;
 const Mouse = @import("../core/key.zig").Mouse;
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
+const sessions = @import("../sessions.zig");
 
 pub const table = .{
     .@"buffer.close_others" = &closeOthers,
@@ -167,15 +168,22 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
     try rows.append(app.gpa, .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = file_path == null });
     // right-click: a pty tab's session verbs (Rust's Rename / Restart /
     // Clear rows on a Pty tab).
-    if (app.panes.pty(pane) != null) try rows.appendSlice(app.gpa, &.{
-        .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
-        .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
-        .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
-    });
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    if (app.panes.pty(pane)) |pt| {
+        try rows.appendSlice(app.gpa, &.{
+            .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
+            .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
+            .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
+        });
+        // colors: the accent, on the tab as on the SESSIONS row.
+        try rows.append(app.gpa, .{ .label = "Color", .action = .none, .submenu = try sessions.colorMenuRows(mem.allocator(), .{ .target = .{ .pane = pane }, .name = "" }, pt.accent_color) });
+    }
     if (app.zen) try rows.append(app.gpa, exit_fullscreen_row);
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
     try app.openMenu(p.title(), owned, x, y);
+    app.overlay.menu.mem = mem;
 }
 
 /// A tree row: the file verbs act on the tree cursor, which the opener
@@ -1130,6 +1138,9 @@ pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Er
 pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
     const p = app.panes.get(pane) orelse return;
     app.showPane(pane);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const current: ?[]const u8 = if (app.panes.pty(pane)) |pt| pt.accent_color else null;
     const rows = try items(app, &.{
         .{ .label = "Paste", .action = .{ .command = .@"term.paste" } },
         .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
@@ -1143,10 +1154,13 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
         .{ .label = "Full screen", .action = .{ .command = .@"view.fullscreen" } },
         .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" } },
         .{ .label = "Rename…", .action = .{ .command = .@"term.rename" }, .separator_before = true },
+        // colors: the accent, on the pane body as on the tab.
+        .{ .label = "Color", .action = .none, .submenu = try sessions.colorMenuRows(mem.allocator(), .{ .target = .{ .pane = pane }, .name = "" }, current) },
         .{ .label = "Close pane", .action = .{ .command = .@"buffer.close" } },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu(p.title(), rows, x, y);
+    app.overlay.menu.mem = mem;
 }
 
 /// An AI pane's body (Rust `open_ai_pane_context_menu`): re-ask,

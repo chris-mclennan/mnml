@@ -599,7 +599,21 @@ pub const MenuAction = union(enum) {
     /// — the binary's name; the menu's `mem` arena owns the bytes
     /// (`app/runners.zig`'s `installBin`).
     lsp_install: []const u8,
+    /// // changed (colors): a `Color: …` row on a session's menus — the
+    /// SESSIONS card / table row, a pty tab, a pty pane body. `name` is
+    /// one of `ui/accent_color.zig`'s literals or its `none` sentinel
+    /// (Rust `SessionSetColor`; `src/sessions.zig` `setColorAction`).
+    session_color: SessionColorAct,
     none,
+};
+
+/// Which session a `Color: …` row recolours: the SESSIONS row under the
+/// cursor (its transcript id keeps the colour, and its open pane if
+/// any), or one pty pane (its session id too, when its command names
+/// one).
+pub const SessionColorAct = struct {
+    target: union(enum) { row, pane: u32 },
+    name: []const u8,
 };
 
 /// What a git palette menu row does, with the index of the row it

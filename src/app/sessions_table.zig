@@ -98,6 +98,8 @@ pub const ItemView = struct {
     /// Its pty pane is the active one.
     active: bool,
     pinned: bool,
+    /// // changed (colors): the session's accent, a palette name.
+    color: ?[]const u8 = null,
 };
 
 /// What `ListPanel` paints: a group header or a session.
@@ -784,6 +786,7 @@ fn itemView(app: *App, it: Item) Allocator.Error!ItemView {
         .ticked = if (tp_multi) |tp| tp.multi.contains(it.session_id) else false,
         .active = if (sessions.ptyPaneOf(app, it.session_id)) |pid| app.active == pid else false,
         .pinned = app.sessions.isPinned(it.session_id),
+        .color = sessions.colorNameOf(app, it.session_id),
     };
 }
 
