@@ -101,7 +101,10 @@ re-aimed at a deliberate change says so in the commit.
 - Two optimize modes: `zig build test -Doptimize=Debug` and
   `-Doptimize=ReleaseSafe` (what ships). A test that passes in one and
   not the other is a bug in the code, not the test.
-- `-Dtest-filter=<substring>` runs the matching tests only.
+- `zig build unit` runs every unit test binary and nothing else; `test`
+  is `unit` plus the e2e gate.
+- One test: `MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace`
+  — see "Running one test" below for why not `-Dtest-filter`.
 - `zig build test --summary all` prints one line per test binary; the
   total is 1205 tests (1203 pass, 2 skip) at the time of writing.
 - `docs/CONFIG.md`'s `zon` block is decoded by a test
@@ -117,19 +120,54 @@ really landed — a `zig fmt` reflow has moved the line under a sed
 expression before, and the "failing" test was then passing against
 untouched code.
 
-`tools/break-check.sh` does this mechanically and refuses the two false
+`tools/break-check.sh` does this mechanically and refuses the four false
 passes:
 
 ```sh
 tools/break-check.sh "isNewer" src/app/update.zig 's/\.eq => l\.pre and !r\.pre,/.eq => false,/'
 ```
 
-It applies the break to a scratch copy, swaps it in, runs the named test,
-asserts the run fails, and restores the file on every exit path. Exit 2
-means the sed expression changed nothing; exit 3 means the broken copy
-did not compile (a compile error is not the test failing); exit 4 means
-no test matched the name. Put the invocation, or its output, in the
-commit body or the PR.
+It applies the break to a scratch copy, swaps it in, runs the named
+tests (`MNML_TEST_FILTER=<name> zig build unit -Dtest-trace`), asserts
+the run fails, restores the file on every exit path, and runs the same
+tests once more to see them pass on the untouched file. Exit 2 means
+the sed expression changed nothing; exit 3 means the broken copy did
+not compile (a compile error is not the test failing); exit 4 means the
+filter matched no named test — "filter matched no test — vacuous" — in
+either run; exit 5 means the test fails on the restored file too. It
+reads the runner's `filter <name>: K of M tests matched` lines and
+needs K to reach 1 across the binaries, plus at least one named test
+printed, before it believes a run. Put the invocation, or its output,
+in the commit body or the PR. `tools/break-check-selftest.sh` replays
+canned runner output through a fake `zig` and checks every verdict.
+
+## Running one test
+
+```sh
+MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace
+```
+
+`-Dtest-trace` swaps in `tools/test_runner.zig`, which prints each
+test's name before it runs and filters at run time: the substring is
+matched against the fully qualified name, `<module>.test.<name>` —
+`app.update.test.isNewer: semver order …` — so a module or file name
+narrows it as well as words from the test's name. Every test binary
+prints `filter <substring>: K of M tests matched`; a `K` of 0 in all
+of them is a filter that hit nothing, not a pass.
+
+Do not reach for `-Dtest-filter=<substring>` to run one test. It is
+the compiler's own filter and it is applied while files are scanned,
+and the compiler only scans a file something references: with no
+filter, every test's body is analysed and the files they use come
+along, but under a filter the analysis roots shrink to the unnamed
+`test { _ = @import(…); }` reference blocks plus the tests that
+matched. A test in a file no reference block names — `app/git_palette.zig`,
+`ui/git_palette.zig`, `ui/help_overlay.zig` are three — is then never
+scanned, its name is never compared, and the run reports the reference
+blocks alone as passing. That is why `-Dtest-filter="colors on screen"`
+ran nothing while `-Dtest-filter=colors` found the same test: other
+matching tests happened to pull its file in. `-Dtest-filter` still
+narrows the e2e corpus by file name, which is what it is for.
 
 ## Running it
 
