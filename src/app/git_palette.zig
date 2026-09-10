@@ -47,6 +47,8 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
 const PaneId = app_mod.PaneId;
+const Io = std.Io;
+const dispatch = @import("dispatch.zig");
 const Mouse = @import("../core/key.zig").Mouse;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
@@ -67,6 +69,9 @@ const graph_view = @import("../ui/git_graph_view.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const pty_pane = @import("pty_pane.zig");
 const remote_mod = @import("../git/remote.zig");
+const settings = @import("settings.zig");
+const accent_color = @import("../ui/accent_color.zig");
+const Theme = @import("../ui/theme.zig");
 
 pub const Section = view.Section;
 pub const Row = view.Row;
@@ -101,11 +106,20 @@ pub const State = struct {
     /// What the last paint measured: rows of room, rows in all.
     visible: usize = 0,
     total: usize = 0,
+    /// // changed (colors): the repo accents by name — what the home
+    /// config's `git.repo_colors` holds plus this run's assignments,
+    /// `none` for an auto slot. Owned.
+    colors: std.ArrayListUnmanaged(RepoColor) = .empty,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.pre) |*p| p.layout.deinit();
         for (self.closed.items) |c| gpa.free(c);
         self.closed.deinit(gpa);
+        for (self.colors.items) |c| {
+            gpa.free(c.name);
+            gpa.free(c.color);
+        }
+        self.colors.deinit(gpa);
         self.filter.deinit(gpa);
         if (self.selected) |s| gpa.free(s);
         self.* = .{};
@@ -116,6 +130,119 @@ pub const State = struct {
         return false;
     }
 };
+
+pub const RepoColor = struct { name: []u8, color: []u8 };
+
+// ─── the accent (colors) ────────────────────────────────────────────────
+
+/// Repo accents tell repos apart, so a workspace with one repo shows
+/// none — as the tree marks repo rows only past one.
+pub fn colorsShown(app: *const App) bool {
+    return app.git.repos.items.len >= 2;
+}
+
+fn storedColor(app: *const App, name: []const u8) ?[]const u8 {
+    for (app.git_palette.colors.items) |c| if (std.mem.eql(u8, c.name, name)) return c.color;
+    return app.cfg.git.repo_colors.get(name);
+}
+
+/// The palette name repo `idx` paints with: the stored one (this run's
+/// or the home config's), else its slot in discovery order; null with
+/// fewer than two repos, or past the list.
+pub fn repoColorName(app: *const App, idx: usize) ?[]const u8 {
+    if (!colorsShown(app)) return null;
+    if (idx >= app.git.repos.items.len) return null;
+    const r = app.git.repos.items[idx];
+    if (storedColor(app, r.name)) |c| if (accent_color.canonical(c)) |canon| return canon;
+    return accent_color.auto(idx);
+}
+
+/// The accent of the repo with `id`, resolved on the theme.
+pub fn repoAccent(app: *const App, id: u32) ?Theme.Color {
+    const idx = app.git.indexOfId(id) orelse return null;
+    const name = repoColorName(app, idx) orelse return null;
+    return accent_color.resolve(name, &app.theme);
+}
+
+fn rememberColor(app: *App, name: []const u8, color: []const u8) Allocator.Error!void {
+    const st = &app.git_palette;
+    const fresh = try app.gpa.dupe(u8, color);
+    errdefer app.gpa.free(fresh);
+    for (st.colors.items) |*c| if (std.mem.eql(u8, c.name, name)) {
+        app.gpa.free(c.color);
+        c.color = fresh;
+        return;
+    };
+    const owned = try app.gpa.dupe(u8, name);
+    errdefer app.gpa.free(owned);
+    try st.colors.append(app.gpa, .{ .name = owned, .color = fresh });
+}
+
+/// Every repo without a stored colour takes its slot, written to the
+/// home config's `git.repo_colors` so it holds across restarts (the
+/// first assignment wins); nothing with fewer than two repos. Cheap
+/// once every repo is known.
+pub fn ensureRepoColors(app: *App) Allocator.Error!void {
+    if (!colorsShown(app)) return;
+    for (app.git.repos.items, 0..) |r, i| {
+        if (storedColor(app, r.name) != null) continue;
+        const slot = accent_color.auto(i);
+        try rememberColor(app, r.name, slot);
+        if ((try settings.configPath(app, .home)) != null) _ = try settings.persist(app, .home, &.{ "git", "repo_colors", r.name }, slot);
+    }
+}
+
+/// A `Color: …` row on the pill's menu: `name` becomes repo `idx`'s
+/// accent, `none` puts it back on its slot; both persist home.
+pub fn setRepoColor(app: *App, idx: u32, name: []const u8) Allocator.Error!void {
+    if (idx >= app.git.repos.items.len) return;
+    const r = app.git.repos.items[idx];
+    const value: []const u8 = accent_color.canonical(name) orelse accent_color.none;
+    try rememberColor(app, r.name, value);
+    if ((try settings.configPath(app, .home)) != null) _ = try settings.persist(app, .home, &.{ "git", "repo_colors", r.name }, value);
+    app.needs_render = true;
+}
+
+/// The pill's right-click: `Color: …` per palette entry in order, then
+/// `Color: Auto`, the current one ticked — for the active repo (All
+/// repos has none).
+pub fn openRepoColorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const gs = &app.git;
+    const idx = gs.active orelse return;
+    if (idx >= gs.repos.items.len or !colorsShown(app)) return;
+    const stored = storedColor(app, gs.repos.items[idx].name);
+    const override: ?[]const u8 = if (stored) |s| accent_color.canonical(s) else null;
+    var items: std.ArrayListUnmanaged(MenuItem) = .empty;
+    errdefer items.deinit(app.gpa);
+    for (accent_color.palette) |name| try items.append(app.gpa, .{
+        .label = accent_color.label(name),
+        .action = .{ .repo_color = .{ .idx = @intCast(idx), .name = name } },
+        .checked = if (override) |o| std.mem.eql(u8, o, name) else false,
+    });
+    try items.append(app.gpa, .{
+        .label = accent_color.label(accent_color.none),
+        .action = .{ .repo_color = .{ .idx = @intCast(idx), .name = accent_color.none } },
+        .checked = override == null,
+        .separator_before = true,
+    });
+    const title = try std.fmt.allocPrint(app.frame.allocator(), "{s} · color", .{gs.repos.items[idx].name});
+    try app.openMenu(title, try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The repo's gutter on a pane that belongs to it — a one-cell `▌`
+/// down the left edge in the repo's accent, as the pty identity strip
+/// — and the rect left for the pane's own painter. `area` itself when
+/// the repo has no accent.
+pub fn repoGutter(app: *const App, ui: Ui, repo_id: u32, area: Rect) Rect {
+    const accent = repoAccent(app, repo_id) orelse return area;
+    if (area.w < 2 or area.h == 0) return area;
+    const bar = Rect.init(area.x, area.y, 1, area.h);
+    ui.fill(bar, ui.theme.bg);
+    const glyph = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+    var y: u16 = 0;
+    while (y < area.h) : (y += 1) _ = ui.putStr(area.x, area.y + y, 1, glyph, Theme.withFg(ui.theme.bg, accent));
+    return Rect.init(area.x + 1, area.y, area.w - 1, area.h);
+}
 
 // ─── entering and leaving ───────────────────────────────────────────────
 
@@ -626,7 +753,7 @@ pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
             };
             if (st.all) {
                 if (mine.items.len == 0 and filter.len > 0) continue;
-                try items.append(arena, .{ .repo = .{ .idx = v.repo_idx, .name = v.name } });
+                try items.append(arena, .{ .repo = .{ .idx = v.repo_idx, .name = v.name, .accent = repoAccent(app, app.git.repos.items[v.repo_idx].id) } });
             }
             try items.appendSlice(arena, mine.items);
         }
@@ -650,6 +777,8 @@ pub fn viewing(list: []const Row) usize {
 // ─── draw (D6) ──────────────────────────────────────────────────────────
 
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    // colors: every repo has its accent before the pill paints.
+    try ensureRepoColors(app);
     const st = &app.git_palette;
     const gs = &app.git;
     if (!gs.discovered) git.discover(app) catch {};
@@ -669,6 +798,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .cursor = st.cursor,
         .scroll = st.scroll,
         .repo_count = gs.repos.items.len,
+        .accent = if (st.all) null else (if (gs.activeRepo()) |r| repoAccent(app, r.id) else null),
         .grouped = st.all,
     });
     st.scroll = painted.scroll;
@@ -1115,7 +1245,8 @@ pub fn partMouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
     app.git_palette.filter_focused = false;
     focusPalette(app);
     switch (part) {
-        .repo => try openReposMenu(app, m.x, m.y + 1),
+        // colors: the right button lists the active repo's colours.
+        .repo => if (m.button == .right and !app.git_palette.all and colorsShown(app)) try openRepoColorMenu(app, m.x, m.y + 1) else try openReposMenu(app, m.x, m.y + 1),
         .repo_prev => git.runToast(app, stepRepo(app, false)),
         .repo_next => git.runToast(app, stepRepo(app, true)),
     }
@@ -1706,4 +1837,196 @@ test "every row menu names actions that resolve, and each menu action reaches th
     try testing.expectEqualStrings("v2.0", app.clipboard.text());
     try menuAction(app, .{ .what = .worktree_copy_path, .idx = 1 });
     try testing.expectEqualStrings("/repo/wt-fix", app.clipboard.text());
+}
+
+// ─── the accent (colors) ───────────────────────────────────────────────
+
+const load_mod = @import("../config/load.zig");
+
+/// The pane rect of `id` from the last frame's hit map.
+fn paneRect(app: *App, id: PaneId) ?Rect {
+    for (app.hits.items.items) |h| switch (h.target) {
+        .pane => |p| if (p == id) return h.rect,
+        else => {},
+    };
+    return null;
+}
+
+fn rowRect(app: *App, idx: u32) ?Rect {
+    for (app.hits.items.items) |h| switch (h.target) {
+        .row => |r| if (r.panel == .git and r.idx == idx) return h.rect,
+        else => {},
+    };
+    return null;
+}
+
+fn pillRect(app: *App) ?Rect {
+    for (app.hits.items.items) |h| switch (h.target) {
+        .git_palette => |part| if (part == .repo) return h.rect,
+        else => {},
+    };
+    return null;
+}
+
+test "colors: two repos take the palette in discovery order and one repo none; a pick persists home and wins on a reload, the slot written on first sight holds, Auto goes back to the slot" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try ensureRepoColors(app);
+    try testing.expectEqualStrings("green", repoColorName(app, 0).?);
+    try testing.expectEqualStrings("blue", repoColorName(app, 1).?);
+    try testing.expect(repoColorName(app, 2) == null);
+    try testing.expect(Theme.Color.eql(repoAccent(app, app.git.repos.items[1].id).?, app.theme.palette.blue));
+    try setRepoColor(app, 1, "red");
+    try testing.expectEqualStrings("red", repoColorName(app, 1).?);
+    try setRepoColor(app, 1, "mauve");
+    try testing.expectEqualStrings("blue", repoColorName(app, 1).?);
+    try setRepoColor(app, 1, "red");
+    // The home config holds both: alpha's slot, beta's pick.
+    const path = try std.fs.path.join(testing.allocator, &.{ t.root, "config.zon" });
+    defer testing.allocator.free(path);
+    const text = try Io.Dir.cwd().readFileAlloc(testing.io, path, testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, ".alpha = \"green\"") != null);
+    try testing.expect(std.mem.indexOf(u8, text, ".beta = \"red\"") != null);
+    // A fresh app on that config: beta's pick wins over its slot, and
+    // alpha keeps green even after a repo sorted before it joins.
+    try t.tmp.dir.createDirPath(testing.io, "aardvark");
+    {
+        const dir = try std.fs.path.join(testing.allocator, &.{ t.root, "aardvark" });
+        defer testing.allocator.free(dir);
+        try TestApp.gitInit(dir);
+    }
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const loaded = try load_mod.load(testing.allocator, testing.io, .{ .explicit = path, .workspace = t.root, .trust = .trusted, .env = .{ .vars = &env } });
+    var app2 = try App.initWith(testing.allocator, testing.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = t.root, .data_root = t.root, .cols = 120, .rows = 40 });
+    defer app2.deinit();
+    try git.discover(&app2);
+    try ensureRepoColors(&app2);
+    try testing.expectEqualStrings("aardvark", app2.git.repos.items[0].name);
+    try testing.expectEqualStrings("green", repoColorName(&app2, 0).?);
+    try testing.expectEqualStrings("green", repoColorName(&app2, 1).?);
+    try testing.expectEqualStrings("red", repoColorName(&app2, 2).?);
+    // Auto: back on the slot, persisted as `none`.
+    try setRepoColor(&app2, 2, accent_color.none);
+    try testing.expectEqualStrings("yellow", repoColorName(&app2, 2).?);
+}
+
+test "one repo: no accent anywhere — the pill, the panes and the tree paint as before, and the pill's right-click is the repos menu" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    try app.render();
+    try testing.expect(repoColorName(app, 0) == null);
+    const pill = pillRect(app) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings(" ", app.screen.readCell(pill.x - 1, pill.y).?.char.grapheme);
+    const pane = paneRect(app, app.active.?) orelse return error.TestUnexpectedResult;
+    try testing.expect(!std.mem.eql(u8, app.screen.readCell(pane.x, pane.y + 1).?.char.grapheme, "\u{258c}"));
+    try app.handle(.{ .mouse = .{ .x = pill.x + 1, .y = pill.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Repos", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "colors on screen: the pill's column 0, the All-repos sub-headers' gutters, the graph and status panes' left edge and their tab glyphs carry each repo's accent; the pill's right-click lists the colours" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    try seedBeta(app);
+    try app.render();
+    const green = app.theme.palette.green;
+    const blue = app.theme.palette.blue;
+    // The pill: alpha is active, its `▌` at the column before the pill.
+    const pill = pillRect(app) orelse return error.TestUnexpectedResult;
+    const pill_cell = app.screen.readCell(pill.x - 1, pill.y).?;
+    try testing.expectEqualStrings("\u{258c}", pill_cell.char.grapheme);
+    try testing.expect(Theme.Color.eql(pill_cell.style.fg, green));
+    // The graph pane: the strip row, then the bar down the body.
+    const graph_id = app.active.?;
+    const pane = paneRect(app, graph_id) orelse return error.TestUnexpectedResult;
+    const bar = app.screen.readCell(pane.x, pane.y + 1).?;
+    try testing.expectEqualStrings("\u{258c}", bar.char.grapheme);
+    try testing.expect(Theme.Color.eql(bar.style.fg, green));
+    try testing.expectEqualStrings("\u{258c}", app.screen.readCell(pane.x, pane.y + pane.h - 1).?.char.grapheme);
+    // The tab's glyph, at the chip's second cell.
+    var tab_x: ?u16 = null;
+    for (app.hits.items.items) |h| switch (h.target) {
+        .tab => |tb| {
+            const leaf = app.layouts.current().leaf(tb.leaf) orelse continue;
+            if (tb.idx < leaf.tabs.items.len and leaf.tabs.items[tb.idx] == graph_id) tab_x = h.rect.x;
+        },
+        else => {},
+    };
+    try testing.expect(Theme.Color.eql(app.screen.readCell(tab_x.? + 1, pane.y).?.style.fg, green));
+    // Beta's turn: `]` switches, everything follows in blue.
+    try stepRepo(app, true);
+    try app.render();
+    const pill2 = pillRect(app) orelse return error.TestUnexpectedResult;
+    try testing.expect(Theme.Color.eql(app.screen.readCell(pill2.x - 1, pill2.y).?.style.fg, blue));
+    const beta_graph = app.active.?;
+    const pane2 = paneRect(app, beta_graph) orelse return error.TestUnexpectedResult;
+    try testing.expect(Theme.Color.eql(app.screen.readCell(pane2.x, pane2.y + 1).?.style.fg, blue));
+    // The status pane of beta carries blue too.
+    const status_id = try git.openStatusPane(app, app.git.repos.items[1]);
+    try app.render();
+    const pane3 = paneRect(app, status_id) orelse return error.TestUnexpectedResult;
+    const sbar = app.screen.readCell(pane3.x, pane3.y + 1).?;
+    try testing.expectEqualStrings("\u{258c}", sbar.char.grapheme);
+    try testing.expect(Theme.Color.eql(sbar.style.fg, blue));
+    // All repos: no pill accent; each sub-header's gutter in its repo's.
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    try app.render();
+    const pill3 = pillRect(app) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings(" ", app.screen.readCell(pill3.x - 1, pill3.y).?.char.grapheme);
+    const alpha_row = rowRect(app, 1) orelse return error.TestUnexpectedResult;
+    const beta_row = rowRect(app, 4) orelse return error.TestUnexpectedResult;
+    const ag = app.screen.readCell(alpha_row.x, alpha_row.y).?;
+    const bg_ = app.screen.readCell(beta_row.x, beta_row.y).?;
+    try testing.expectEqualStrings("\u{258c}", ag.char.grapheme);
+    try testing.expect(Theme.Color.eql(ag.style.fg, green));
+    try testing.expectEqualStrings("\u{258c}", bg_.char.grapheme);
+    try testing.expect(Theme.Color.eql(bg_.style.fg, blue));
+    // Under All the pill's right-click is still the repos menu.
+    try app.handle(.{ .mouse = .{ .x = pill3.x + 1, .y = pill3.y, .kind = .press, .button = .right } });
+    try testing.expectEqualStrings("Repos", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    try app.render();
+    // One repo again, alpha: the right-click lists the colours with the
+    // stored slot ticked (Auto only once chosen); choosing one ticks it
+    // and recolours the pill.
+    try selectRepo(app, 0);
+    try app.render();
+    const pill4 = pillRect(app) orelse return error.TestUnexpectedResult;
+    try app.handle(.{ .mouse = .{ .x = pill4.x + 1, .y = pill4.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay == .menu);
+    const items = app.overlay.menu.items;
+    try testing.expectEqual(accent_color.palette.len + 1, items.len);
+    for (items, 0..) |it, i| {
+        try testing.expect(it.action == .repo_color);
+        try testing.expectEqualStrings(accent_color.label(it.action.repo_color.name), it.label);
+        if (i < accent_color.palette.len) try testing.expect(accent_color.resolve(it.action.repo_color.name, &app.theme) != null);
+    }
+    try testing.expect(items[0].checked and !items[items.len - 1].checked);
+    try dispatch.runMenuActionForTest(app, items[4].action); // red
+    try app.render();
+    const pill5 = pillRect(app) orelse return error.TestUnexpectedResult;
+    try testing.expect(Theme.Color.eql(app.screen.readCell(pill5.x - 1, pill5.y).?.style.fg, app.theme.palette.red));
+    try app.handle(.{ .mouse = .{ .x = pill5.x + 1, .y = pill5.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay.menu.items[4].checked and !app.overlay.menu.items[0].checked);
+    try dispatch.runMenuActionForTest(app, app.overlay.menu.items[items.len - 1].action); // Auto
+    try app.render();
+    const pill6 = pillRect(app) orelse return error.TestUnexpectedResult;
+    try testing.expect(Theme.Color.eql(app.screen.readCell(pill6.x - 1, pill6.y).?.style.fg, green));
+    try app.handle(.{ .mouse = .{ .x = pill6.x + 1, .y = pill6.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay.menu.items[items.len - 1].checked and !app.overlay.menu.items[4].checked);
+    try app.handle(.{ .key = Key.named(.esc) });
 }

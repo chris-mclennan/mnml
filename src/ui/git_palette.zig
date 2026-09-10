@@ -116,7 +116,8 @@ pub const Row = union(enum) {
     tag: struct { idx: u32, name: []const u8 },
     /// All repos: the sub-header a section holds per repo (`idx` is the
     /// repo's index in discovery order); the rows under it are its.
-    repo: struct { idx: u32, name: []const u8 },
+    /// `accent` is the repo's colour, its `▌` in the gutter.
+    repo: struct { idx: u32, name: []const u8, accent: ?Color = null },
     gap,
 
     /// An item row — what `Viewing N` counts and Enter acts on.
@@ -150,6 +151,9 @@ pub const Props = struct {
     /// All repos: the item rows sit under `.repo` sub-headers, one
     /// level further in.
     grouped: bool = false,
+    /// // changed (colors): the pill's repo accent — its `▌` in column
+    /// 0 of the pill row; null under All repos and with one repo.
+    accent: ?Color = null,
 };
 
 pub const Painted = struct {
@@ -284,6 +288,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         style.bold = true;
         const pill_w = ui.putStr(x0 + 1, y, room, ui.clipStr(text, room), style);
         ui.hit(Rect.init(x0 + 1, y, pill_w, 1), .{ .git_palette = .repo });
+        if (p.accent) |accent| _ = ui.putStr(x0, y, 1, if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph, Theme.withFg(bg, accent));
         if (arrows_fit) {
             const on = p.repo_count > 1;
             const pair = [_]struct { glyph: []const u8, ascii: []const u8, part: Part }{
@@ -339,10 +344,14 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         const muted = Theme.withFg(ground, t.muted.fg);
         const accent = Theme.withFg(ground, t.accent.fg);
 
-        // The gutter: a check, a lock, or the cursor's marker.
+        // The gutter: a check, a lock, a repo's accent, or the cursor's marker.
         var gutter: ?[]const u8 = null;
         var gutter_style = ground;
         switch (row) {
+            .repo => |rp| if (rp.accent) |repo_accent| {
+                gutter = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+                gutter_style = Theme.withFg(ground, repo_accent);
+            },
             .branch => |b| if (b.current) {
                 gutter = g(ui, check_nerd, check_ascii);
                 gutter_style = Theme.withFg(ground, pal.green);

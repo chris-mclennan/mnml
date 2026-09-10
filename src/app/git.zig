@@ -4150,8 +4150,10 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 // ─── draw (D6) ──────────────────────────────────────────────────────────
 
 /// `Pane.git_status`.
-pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect) Allocator.Error!void {
+pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, full: Rect) Allocator.Error!void {
     const st = &app.git;
+    // colors: the repo's gutter down the left edge.
+    const area = git_palette.repoGutter(app, ui, sp.repo, full);
     if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
     const files = try statusFiles(app, ui.arena);
     if (files.len() > 0) sp.cursor = @min(sp.cursor, files.len() - 1);
@@ -4166,8 +4168,10 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect
 }
 
 /// `Pane.diff`.
-pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) void {
+pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, full: Rect) void {
     const focused = app.active == id and app.focus == .pane;
+    // colors: the repo's gutter down the left edge.
+    const area = git_palette.repoGutter(app, ui, dp.repo, full);
     // Rust's `chip_actions_for_scope`: a worktree / file / HEAD diff
     // stages or discards, a staged one unstages, a commit's shows none.
     const actions: diff_view.Actions = switch (dp.scope) {
@@ -4243,8 +4247,10 @@ pub fn inProgressOf(app: *App, id: u32) parse.InProgress {
 }
 
 /// `Pane.git_graph`.
-pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) void {
+pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, full: Rect) void {
     const st = &app.git;
+    // colors: the repo's gutter down the left edge.
+    const area = git_palette.repoGutter(app, ui, g.repo, full);
     syncWip(app, g);
     if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
     const focused = app.active == id and app.focus == .pane;

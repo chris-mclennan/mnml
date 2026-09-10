@@ -36,6 +36,7 @@ http: Http = .{},
 ws: Ws = .{},
 sonos: Sonos = .{},
 git_graph: GitGraph = .{},
+git: Git = .{},
 tasks: Map(Task) = .empty,
 startup: Startup = .{},
 snippets: Map(Map([]const u8)) = .empty,
@@ -517,6 +518,15 @@ pub const Sonos = struct {
 };
 
 pub const GitGraph = struct { lane_spacing: u16 = 1 };
+
+/// // changed (colors): the git panel's per-repo accents.
+pub const Git = struct {
+    /// Repo name → a palette name (`ui/accent_color.zig`), or `none`
+    /// for the auto slot. Written by the app on a repo's first sighting
+    /// in a multi-repo workspace and by the pill's Color menu; the
+    /// first assignment wins across restarts.
+    repo_colors: Map([]const u8) = .empty,
+};
 
 // ─── startup ─────────────────────────────────────────────────────────────
 

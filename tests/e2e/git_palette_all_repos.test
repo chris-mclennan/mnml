@@ -24,8 +24,9 @@ command git.palette_all
 wait 1200
 expect screen contains " All repos 󰅀"
 expect screen contains " 󰌢 LOCAL"
-expect screen contains "  alpha"
-expect screen contains "  beta"
+# colors (2026-09-10): a sub-header carries its repo's `▌` in the gutter.
+expect screen contains "▌ alpha"
+expect screen contains "▌ beta"
 expect screen contains "󰄬   󰘬 main"
 expect screen contains "󰄬   󰘬 dev"
 expect screen contains "Viewing 4"

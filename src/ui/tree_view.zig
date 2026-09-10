@@ -125,7 +125,9 @@ const add_label = " Add workspace";
 /// A file's git state (Rust `FileState`), for the badge and the name's colour.
 pub const GitState = enum { modified, staged, untracked, conflicted };
 
-pub const RepoMark = struct { active: bool };
+/// A repo row's marker: lit when the repo is the active one; `accent` —
+/// the repo's colour (`app/git_palette.zig`) — paints the dot when set.
+pub const RepoMark = struct { active: bool, accent: ?vaxis.Color = null };
 
 /// A workspace section's header row.
 pub const Section = struct {
@@ -385,7 +387,7 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     x += ui.putStr(x, r.y, right -| x, ui.fmt("{s} ", .{icon.glyph}), Theme.onBg(Theme.withFg(t.fg, icon_fg), bg));
     if (e.repo) |rp| if (p.show_dots) {
         const marker: []const u8 = if (rp.active) (if (ui.ascii) "* " else "● ") else (if (ui.ascii) "o " else "○ ");
-        x += ui.putStr(x, r.y, right -| x, marker, Theme.onBg(Theme.withFg(t.fg, if (rp.active) pal.green else pal.comment), bg));
+        x += ui.putStr(x, r.y, right -| x, marker, Theme.onBg(Theme.withFg(t.fg, rp.accent orelse (if (rp.active) pal.green else pal.comment)), bg));
     };
     // The name.
     const name_fg = if (e.repo != null) pal.yellow else if (e.is_dir) pal.blue else if (e.git) |g| switch (g) {
@@ -698,4 +700,21 @@ test "a cell of air before the bar: a long name is cut a cell short of it, an ex
     _ = draw(g.ui(), g.full(), .{ .items = &items });
     try g.expectRow(1, "     \u{F0219} a-long-file-name-th");
     try g.expectRow(8, " \u{F460} a-very-long-workspace…");
+}
+
+test "colors: a repo row's marker dot takes the repo's accent when it has one, active or not; without one the stock green / grey" {
+    const items = [_]Item{
+        section(0, "/w/", true),
+        .{ .entry = .{ .idx = 0, .name = "alpha", .depth = 0, .is_dir = true, .repo = .{ .active = true, .accent = Theme.default.palette.red } } },
+        .{ .entry = .{ .idx = 1, .name = "beta", .depth = 0, .is_dir = true, .repo = .{ .active = false, .accent = Theme.default.palette.blue } } },
+        .{ .entry = .{ .idx = 2, .name = "gamma", .depth = 0, .is_dir = true, .repo = .{ .active = false } } },
+    };
+    var f = try Fixture.init(20, 4);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .items = &items, .show_dots = true });
+    try f.expectRow(1, "   \u{F460} \u{E702} ● alpha");
+    try f.expectRow(2, "   \u{F460} \u{E702} ○ beta");
+    try testing.expect(vaxis.Color.eql(f.style(7, 1).fg, f.theme.palette.red));
+    try testing.expect(vaxis.Color.eql(f.style(7, 2).fg, f.theme.palette.blue));
+    try testing.expect(vaxis.Color.eql(f.style(7, 3).fg, f.theme.palette.comment));
 }

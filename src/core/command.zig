@@ -604,6 +604,10 @@ pub const MenuAction = union(enum) {
     /// one of `ui/accent_color.zig`'s literals or its `none` sentinel
     /// (Rust `SessionSetColor`; `src/sessions.zig` `setColorAction`).
     session_color: SessionColorAct,
+    /// // changed (colors): a `Color: …` row on the repo pill's menu —
+    /// the repo's index in discovery order (`app/git_palette.zig`
+    /// `setRepoColor`).
+    repo_color: struct { idx: u32, name: []const u8 },
     none,
 };
 

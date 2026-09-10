@@ -771,6 +771,16 @@ pub fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId
         if (p.* == .pty) if (pty_pane.accentOf(app, &p.pty, ui.theme)) |accent| {
             icon.color = accent;
         };
+        // colors: a repo-owned pane's glyph in its repo's accent.
+        const repo_of: ?u32 = switch (p.*) {
+            .git_status => |*s| s.repo,
+            .diff => |*d| d.repo,
+            .git_graph => |*g| g.repo,
+            else => null,
+        };
+        if (repo_of) |rid| if (git_palette.repoAccent(app, rid)) |accent| {
+            icon.color = accent;
+        };
         var title = p.title();
         var verb: ?[]const u8 = null;
         if (p.* == .request) if (std.mem.indexOfScalar(u8, title, ' ')) |sp| {

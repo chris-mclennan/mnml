@@ -170,7 +170,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .open_url => if (ascii) "w" else "\u{f0ac}", // fa-globe
         .open_path => if (ascii) "o" else "\u{f07c}", // fa-folder_open
         // colors: a `Color: …` row, the theme pill's brush.
-        .set_theme, .session_color => if (ascii) "t" else "\u{f1fc}", // fa-paint_brush
+        .set_theme, .session_color, .repo_color => if (ascii) "t" else "\u{f1fc}", // fa-paint_brush
         // // changed (lua-track): the row openers, the filter, the bind.
         .diag_row_open, .script_row_open => if (ascii) "o" else "\u{f07c}", // fa-folder_open
         .set_severity_filter => if (ascii) "~" else "\u{f0b0}", // fa-filter
