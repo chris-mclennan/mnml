@@ -44,6 +44,8 @@ pub const table = .{
     .@"view.toggle_auto_equalize_splits" = &toggleAutoEqualize,
     .@"view.only" = &only,
     .@"view.equalize_splits" = &equalizeSplits,
+    .@"layout.merge_to_tabs" = &mergeToTabs,
+    .@"layout.spread_to_splits" = &spreadToSplits,
     .@"view.focus_pane" = &focusPane,
     .@"view.cursor_to_center" = &cursorToCenter,
     .@"view.cursor_to_top" = &cursorToTop,
@@ -437,6 +439,40 @@ fn closeOthers(app: *App) CommandError!void {
 
 fn equalizeSplits(app: *App) CommandError!void {
     app.layouts.current().equalize();
+    app.needs_render = true;
+}
+
+/// `layout.merge_to_tabs`: every pane of this page's split tree becomes
+/// a tab of one leaf (`Layout.mergeToTabs`); the active pane keeps the
+/// focus. One pane, or one leaf already, is nothing to do.
+fn mergeToTabs(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const layout = app.layouts.current();
+    const panes = try layout.allPanes(arena);
+    if (panes.len <= 1) return app.diag.fail(arena, "layout: nothing to merge", .{});
+    const leaves = try layout.leaves(arena);
+    if (leaves.len <= 1) return app.diag.fail(arena, "layout: already a single leaf", .{});
+    const keep = app.active orelse panes[0];
+    const merged = try layout.mergeToTabs(arena, keep);
+    app.setActive(layout.leaf(layout.root.?).?.active);
+    app.toast("layout: merged {d} splits into {d} tabs", .{ merged, panes.len });
+    app.needs_render = true;
+}
+
+/// `layout.spread_to_splits`: the inverse — this page must be one leaf
+/// with two or more tabs; each tab gets a split of its own
+/// (`Layout.spreadToSplits`), the active pane keeping the focus.
+fn spreadToSplits(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const layout = app.layouts.current();
+    const leaves = try layout.leaves(arena);
+    if (leaves.len > 1) return app.diag.fail(arena, "layout: already has splits; merge to tabs first", .{});
+    const tabs: usize = if (leaves.len == 1) layout.leaf(leaves[0]).?.tabs.items.len else 0;
+    if (tabs <= 1) return app.diag.fail(arena, "layout: nothing to spread", .{});
+    const keep = app.active;
+    const made = try layout.spreadToSplits(arena);
+    if (keep) |k| if (layout.leafOf(k) != null) app.setActive(k);
+    app.toast("layout: spread {d} tabs into {d} splits", .{ tabs, made });
     app.needs_render = true;
 }
 
@@ -1381,4 +1417,43 @@ test "ui.auto_equalize_splits: a split or a close evens the ratios; off leaves t
     layout.setRatio(split_id, 30);
     try command.run(&app, .{ .static = .@"view.close_split" });
     try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
+}
+
+test "layout.merge_to_tabs folds the page's leaves into one strip, the active pane focused; spread_to_splits puts each tab back in a split; each refuses the other's shape and a lone pane" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try app.openScratch();
+    // One pane: nothing to merge; one leaf with one tab: nothing to spread.
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"layout.merge_to_tabs" }));
+    try t.expectEqualStrings("layout: nothing to merge", app.lastToast().?);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"layout.spread_to_splits" }));
+    try t.expectEqualStrings("layout: nothing to spread", app.lastToast().?);
+    // Two tabs in one leaf, no split: merge has nothing to fold.
+    const b = try app.openScratch();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"layout.merge_to_tabs" }));
+    try t.expectEqualStrings("layout: already a single leaf", app.lastToast().?);
+    // Split twice: three leaves, four panes; the active one is the last split's.
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const c = app.active.?;
+    const layout = app.layouts.current();
+    try t.expectEqual(@as(usize, 3), (try layout.leaves(app.frame.allocator())).len);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"layout.spread_to_splits" }));
+    try t.expectEqualStrings("layout: already has splits; merge to tabs first", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"layout.merge_to_tabs" });
+    try t.expectEqualStrings("layout: merged 3 splits into 4 tabs", app.lastToast().?);
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try t.expectEqual(c, app.active.?);
+    const strip = layout.leaf(layout.root.?).?;
+    try t.expectEqual(@as(usize, 4), strip.tabs.items.len);
+    try t.expectEqual(a, strip.tabs.items[0]);
+    try t.expectEqual(b, strip.tabs.items[1]);
+    try t.expectEqual(c, strip.active);
+    // Spread: four leaves side by side, the focus still on `c`.
+    try command.run(&app, .{ .static = .@"layout.spread_to_splits" });
+    try t.expectEqualStrings("layout: spread 4 tabs into 4 splits", app.lastToast().?);
+    try t.expectEqual(@as(usize, 4), (try layout.leaves(app.frame.allocator())).len);
+    try t.expectEqual(c, app.active.?);
+    try t.expectEqual(@as(usize, 1), layout.leaf(layout.leafOf(a).?).?.tabs.items.len);
 }
