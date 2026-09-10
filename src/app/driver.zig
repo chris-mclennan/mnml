@@ -88,6 +88,7 @@ pub const AppDriver = struct {
         .ghost = vGhost,
         .tick = vTick,
         .expireChords = vExpireChords,
+        .wheelNotch = vWheelNotch,
         .render = vRender,
         .screen = vScreen,
         .status = vStatus,
@@ -117,12 +118,11 @@ pub const AppDriver = struct {
     }
 
     fn vMouse(p: *anyopaque, m: key_mod.Mouse) Error!void {
-        const app = &cast(p).app;
-        // A scripted notch is deliberate: a `.test` step or an IPC
-        // `scroll` is one gesture of its own, never a spin, so it
-        // moves its plain lines whatever the clock says.
-        if (m.kind == .scroll_up or m.kind == .scroll_down) app.accel.endGesture();
-        try app.handle(.{ .mouse = m });
+        try cast(p).app.handle(.{ .mouse = m });
+    }
+
+    fn vWheelNotch(p: *anyopaque) void {
+        cast(p).app.accel.endGesture();
     }
 
     /// An unknown id is the step's failure; a command that ran and

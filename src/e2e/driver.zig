@@ -79,6 +79,11 @@ pub const Driver = struct {
         tick: *const fn (*anyopaque) Error!void,
         /// Force an in-flight chord chain to time out now.
         expireChords: *const fn (*anyopaque) Error!void,
+        /// The next wheel event starts a gesture of its own: a script's
+        /// `scroll` step is one deliberate notch, never part of a spin,
+        /// so it moves its plain lines whatever the clock says (Rust's
+        /// runner sleeps 50 ms a step, under its accel floor).
+        wheelNotch: *const fn (*anyopaque) void,
         /// Draw a frame into the screen.
         render: *const fn (*anyopaque) Error!void,
         /// The screen the last `render` drew into.
@@ -129,6 +134,9 @@ pub const Driver = struct {
     }
     pub fn expireChords(d: Driver) Error!void {
         return d.vtable.expireChords(d.ptr);
+    }
+    pub fn wheelNotch(d: Driver) void {
+        d.vtable.wheelNotch(d.ptr);
     }
     pub fn render(d: Driver) Error!void {
         return d.vtable.render(d.ptr);
@@ -337,6 +345,7 @@ pub const Stub = struct {
         .ghost = vGhost,
         .tick = vTick,
         .expireChords = vExpireChords,
+        .wheelNotch = vWheelNotch,
         .render = vRender,
         .screen = vScreen,
         .status = vStatus,
@@ -384,6 +393,7 @@ pub const Stub = struct {
     fn vExpireChords(p: *anyopaque) Error!void {
         return cast(p).record("expire", .{});
     }
+    fn vWheelNotch(_: *anyopaque) void {}
     fn vRender(p: *anyopaque) Error!void {
         const self = cast(p);
         try self.record("render", .{});

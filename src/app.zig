@@ -852,6 +852,12 @@ pub const App = struct {
     /// (`dispatch.wheelLines`); null until an arm asks, cleared per
     /// dispatch so the budget is spent once.
     wheel_budget: ?u16 = null,
+    /// The last event dispatched was a wheel batch: nothing but a
+    /// scroll has changed since the frame that registered the hit map,
+    /// so the next batch routes against it without a render between —
+    /// as Rust's every wheel event routes against its last frame's
+    /// rects. Any other event clears it.
+    last_was_wheel: bool = false,
     /// The split tree's area at the last render — what a divider drag
     /// and the focus motions measure against.
     panes_area: Rect = .{},
@@ -2032,6 +2038,7 @@ pub const App = struct {
             try self.flushWheel();
             if (self.wheel.offer(ev.mouse)) return;
         } else try self.flushWheel();
+        self.last_was_wheel = false;
         switch (ev) {
             .key => |k| try dispatch.key(self, k),
             .mouse => |m| try self.routeMouse(m, 1),
@@ -2090,7 +2097,10 @@ pub const App = struct {
     /// The pending wheel batch, if any, lands as one scroll.
     pub fn flushWheel(self: *App) Allocator.Error!void {
         const batch = self.wheel.take() orelse return;
-        try self.routeMouse(batch.mouse, batch.count);
+        if (self.needs_render and !self.last_was_wheel) try self.render();
+        self.wheel_budget = null;
+        try dispatch.mouse(self, batch.mouse, batch.count);
+        self.last_was_wheel = true;
     }
 
     /// A mouse event against a fresh hit map: a frame that changed

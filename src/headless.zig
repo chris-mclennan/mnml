@@ -246,9 +246,16 @@ const Loop = struct {
                 });
             },
             .scroll => |s| {
+                // `dy` events, each dispatched before the next arrives
+                // (a tick flushes the batch), as the Rust host applies
+                // them — so a fast spin asked for by a host accelerates
+                // as one would at the terminal.
                 const kind: input.MouseKind = if (s.dy >= 0) .scroll_up else .scroll_down;
                 var n: u32 = @abs(s.dy);
-                while (n > 0) : (n -= 1) d.mouse(.{ .x = s.col, .y = s.row, .kind = kind }) catch {};
+                while (n > 0) : (n -= 1) {
+                    d.mouse(.{ .x = s.col, .y = s.row, .kind = kind }) catch {};
+                    d.tick() catch {};
+                }
                 return ev(arena, &.{ .{ "event", "scroll" }, .{ "col", try num(arena, s.col) }, .{ "row", try num(arena, s.row) }, .{ "dy", try num(arena, s.dy) } });
             },
             .snapshot => return ev(arena, &.{.{ "event", "snapshot" }}),

@@ -342,8 +342,15 @@ const Run = struct {
                         break :blk d.click(m.x, m.y, .left, .{});
                     },
                     .hover => d.mouse(.{ .x = m.x, .y = m.y, .kind = .motion }),
-                    .scroll_up => d.mouse(.{ .x = m.x, .y = m.y, .kind = .scroll_up }),
-                    .scroll_down => d.mouse(.{ .x = m.x, .y = m.y, .kind = .scroll_down }),
+                    // One deliberate notch per step (`Driver.wheelNotch`).
+                    .scroll_up => blk: {
+                        d.wheelNotch();
+                        break :blk d.mouse(.{ .x = m.x, .y = m.y, .kind = .scroll_up });
+                    },
+                    .scroll_down => blk: {
+                        d.wheelNotch();
+                        break :blk d.mouse(.{ .x = m.x, .y = m.y, .kind = .scroll_down });
+                    },
                 };
                 r catch |e| return self.errMsg("mouse: {s}", e);
             },
