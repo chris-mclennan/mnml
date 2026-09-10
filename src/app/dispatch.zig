@@ -1179,6 +1179,10 @@ pub fn refilterPicker(app: *App) Allocator.Error!void {
 
 fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) Allocator.Error!void {
     switch (purpose) {
+        .ex_line => {
+            const line = std.mem.trim(u8, text, " \t");
+            if (line.len > 0) try runExLine(app, std.mem.trimStart(u8, line, ":"));
+        },
         .goto_line => {
             const t = std.mem.trim(u8, text, " \t");
             if (t.len == 0) return;
@@ -2927,6 +2931,15 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
 }
 
 /// Run an ex line; a failure toasts the reason (or the error name).
+/// The ex line for a pane that has no `:` of its own (a request pane's
+/// `:` while browsing): a prompt whose Enter runs the line.
+pub fn openExLine(app: *App) Allocator.Error!void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = Prompt.init(app.gpa, "Ex command"), .purpose = .ex_line } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
 pub fn runExLine(app: *App, line: []const u8) Allocator.Error!void {
     try app.noteCmdLine(line);
     app.diag.clear();

@@ -178,6 +178,9 @@ pub const toast_ttl_ms: i64 = 4000;
 
 pub const PromptPurpose = union(enum) {
     goto_line,
+    /// `:` from a pane with no editor (a request pane): the line runs
+    /// as an ex command (Rust's `no_pane_cmdline`).
+    ex_line,
     /// The statusline indent chip: a new `editor.tab_width`.
     tab_width,
     /// `view.image_open`: a path to open as `Pane.image`.

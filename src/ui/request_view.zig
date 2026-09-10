@@ -313,6 +313,9 @@ pub const Model = struct {
     resp_view: *editor_view.ViewState,
     body_wrap: bool,
     focused: bool,
+    /// The focused text field is being edited: the caret shows. Off,
+    /// the pane is browsed and no caret paints (a draft row keeps its own).
+    editing: bool = true,
     source_path: ?[]const u8,
     /// `{{VAR}}` tokens per text field; `id`s index one flat list the
     /// app keeps beside the model.
@@ -520,6 +523,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
     drawResponseBox(ui, pane, z.response, m);
     drawAiBox(ui, pane, z.ai);
     if (!m.focused) return null;
+    if (!m.editing and m.draft == null) return null;
     // The URL box's caret wins when both are set (the pane's default
     // focus is the URL).
     return url_caret orelse edit_caret;

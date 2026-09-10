@@ -1,0 +1,34 @@
+# A request pane opened from a file is browsed, not typed into
+# (src/app/request_pane.zig `editing`): the panel's own `r` fires the
+# request instead of landing in the URL, `:` opens the ex line, Enter
+# starts editing the field and Esc leaves it. Under both profiles.
+write probe.http "GET http://127.0.0.1:19878/probe\n"
+open probe.http
+expect pane "GET  127.0.0.1:19878/probe"
+key r
+expect screen lacks "/prober"
+expect pane "GET  127.0.0.1:19878/probe"
+key :
+expect screen contains "Ex command"
+type fullscreen
+key enter
+expect screen contains "Full screen"
+command view.fullscreen
+expect screen lacks "/probe:"
+# Enter edits the URL, Esc leaves it.
+key enter
+type X
+expect screen contains "/probeX"
+key esc
+type Y
+expect screen lacks "/probeXY"
+# The vim profile: the same browse state, `r` fires, `:` opens the line.
+command editor.use_vim
+key r
+expect screen lacks "/probeXr"
+key :
+expect screen contains "Ex command"
+key esc
+key enter
+type Z
+expect screen contains "/probeXZ"
