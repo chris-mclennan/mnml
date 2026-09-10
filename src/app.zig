@@ -2053,6 +2053,18 @@ pub const App = struct {
 
     /// Open a context menu. Takes ownership of `items` (gpa); the labels
     /// must be literals or otherwise outlive the menu.
+    /// The open overlay's name for `rects.json` (`HitMap.writeRectsJson`):
+    /// its rows are labelled `<name>:<idx>` so a dump tells a picker's
+    /// rows from a settings row. The command palette is a picker of
+    /// commands and reads `palette`. Null with no overlay up.
+    pub fn overlayLabel(self: *const App) ?[]const u8 {
+        return switch (self.overlay) {
+            .none => null,
+            .picker => |*p| if (p.kind == .commands) "palette" else "picker",
+            inline else => |_, tag| @tagName(tag),
+        };
+    }
+
     pub fn openMenu(self: *App, title: []const u8, items: []command.MenuItem, x: u16, y: u16) Allocator.Error!void {
         const owned_title = try self.gpa.dupe(u8, title);
         errdefer self.gpa.free(owned_title);

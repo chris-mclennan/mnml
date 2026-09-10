@@ -720,7 +720,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
 | `--headless`, same App + draw path | done | `src/headless.zig`, `src/app/driver.zig` | |
-| File IPC `command` / `screen.txt` / `status.json` / `events.jsonl` | done | `src/ipc/channel.zig`, `src/ipc/screen.zig` | + `rects.json` |
+| File IPC `command` / `screen.txt` / `status.json` / `events.jsonl` | done | `src/ipc/channel.zig`, `src/ipc/screen.zig` | + `rects.json`: every registered hit, the open overlay's rows named after it (`picker:N`, `palette:N`, `settings:N`, `prompt:N`… — `App.overlayLabel`, 2026-09-10) rather than the generic `overlay_item:N` |
 | IPC command vocabulary | done | `src/ipc/command.zig` | |
 | Plugins register commands over IPC | done | `register_command`, `DynRegistry` in `src/core/command.zig` | owners: `integration` / `script` / `ipc` |
 | Registered commands in the palette | done | `cmd_picker.zig` walks `dyn_commands` | |

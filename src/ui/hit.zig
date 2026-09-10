@@ -239,14 +239,22 @@ pub const HitMap = struct {
     }
 
     /// `[{"label":"row:todos:3","x":1,"y":4,"w":28,"h":1},…]` in paint
-    /// order — the `rects.json` shape the IPC channel publishes.
-    pub fn writeRectsJson(h: *const HitMap, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    /// order — the `rects.json` shape the IPC channel publishes. Every
+    /// registered hit is listed, the overlays' rows included: an
+    /// `.overlay_item` is labelled with `overlay` — the open overlay's
+    /// name (`picker:3`, `palette:0`, `settings:12`) — when the caller
+    /// gives one, so a dump says which box a row belongs to rather than
+    /// the generic `overlay_item:3` (a hunt read that as the overlays
+    /// being missing from the file).
+    pub fn writeRectsJson(h: *const HitMap, w: *std.Io.Writer, overlay: ?[]const u8) std.Io.Writer.Error!void {
         try w.writeByte('[');
         for (h.items.items, 0..) |e, i| {
             if (i > 0) try w.writeByte(',');
             try w.writeAll("{\"label\":\"");
             var lw: LabelWriter = .{ .out = w };
-            try e.target.writeLabel(&lw.writer);
+            if (overlay != null and e.target == .overlay_item) {
+                try lw.writer.print("{s}:{d}", .{ overlay.?, e.target.overlay_item });
+            } else try e.target.writeLabel(&lw.writer);
             try lw.writer.flush();
             try w.print("\",\"x\":{d},\"y\":{d},\"w\":{d},\"h\":{d}}}", .{ e.rect.x, e.rect.y, e.rect.w, e.rect.h });
         }
@@ -371,7 +379,7 @@ test "rects.json shape, with a url that needs escaping" {
 
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     defer aw.deinit();
-    try h.writeRectsJson(&aw.writer);
+    try h.writeRectsJson(&aw.writer, null);
     try testing.expectEqualStrings(
         "[{\"label\":\"row:todos:3\",\"x\":1,\"y\":4,\"w\":28,\"h\":1}," ++
             "{\"label\":\"link:a\\\"b\\\\c\",\"x\":0,\"y\":0,\"w\":5,\"h\":1}]",
@@ -387,6 +395,28 @@ test "rects.json shape, with a url that needs escaping" {
     var empty: HitMap = .{};
     var ew: std.Io.Writer.Allocating = .init(testing.allocator);
     defer ew.deinit();
-    try empty.writeRectsJson(&ew.writer);
+    try empty.writeRectsJson(&ew.writer, null);
     try testing.expectEqualStrings("[]", ew.written());
+}
+
+test "rects.json names an overlay's rows after the overlay when one is open" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var h: HitMap = .{};
+    try h.add(arena, Rect.init(0, 0, 5, 1), .{ .pane = 1 });
+    try h.add(arena, Rect.init(2, 2, 20, 1), .{ .overlay_item = 3 });
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try h.writeRectsJson(&aw.writer, "picker");
+    try testing.expectEqualStrings(
+        "[{\"label\":\"pane:1\",\"x\":0,\"y\":0,\"w\":5,\"h\":1}," ++
+            "{\"label\":\"picker:3\",\"x\":2,\"y\":2,\"w\":20,\"h\":1}]",
+        aw.written(),
+    );
+    // No overlay: the generic label.
+    var bw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer bw.deinit();
+    try h.writeRectsJson(&bw.writer, null);
+    try testing.expect(std.mem.indexOf(u8, bw.written(), "\"overlay_item:3\"") != null);
 }
