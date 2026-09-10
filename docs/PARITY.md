@@ -27,7 +27,7 @@ line), not by hand.
 | File manager | 22 | 0 | 0 | 0 | 22 |
 | Navigation & search | 31 | 0 | 0 | 0 | 31 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
-| Git | 46 | 1 | 2 | 0 | 49 |
+| Git | 47 | 0 | 2 | 0 | 49 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
 | AI | 26 | 0 | 1 | 0 | 27 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
@@ -36,11 +36,11 @@ line), not by hand.
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 25 | 0 | 0 | 0 | 25 |
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
-| UI & theming | 75 | 1 | 3 | 1 | 80 |
+| UI & theming | 77 | 0 | 3 | 0 | 80 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 46 | 1 | 2 | 2 | 51 |
+| Headless, IPC & extensibility | 49 | 0 | 2 | 0 | 51 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **521** | **3** | **9** | **3** | **536** |
+| **total** | **527** | **0** | **9** | **0** | **536** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -48,7 +48,7 @@ table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
 and bridge v2 — the last two beyond the Rust list.
 
-Ids: 1034 in `src/commands/specs.zig` (the launchers track added three and gave `launcher.add_local` its runner); 979 have runners (34 of them the deliberate `cutRunner` / `notInBuild` stubs), 55 have none. `zig build -Dpartial=false` stops at the first of them (`app.reset_to_defaults`); the counts are the runner tables `src/core/command.zig` merges, diffed against the spec ids. The 56 are listed under Remaining — none of them is the only door to a row marked `done` above.
+Ids: 1034 in `src/commands/specs.zig` (the launchers track added three and gave `launcher.add_local` its runner); 980 have runners (34 of them the deliberate `cutRunner` / `notInBuild` stubs), 54 have none — `integrations.icon_picker` got its runner on 2026-09-09. `zig build -Dpartial=false` stops at the first of them (`app.reset_to_defaults`); the counts are the runner tables `src/core/command.zig` merges, diffed against the spec ids. The 54 are listed under Remaining — none of them is the only door to a row marked `done` above.
 
 ## Landed since the first ledger
 
@@ -109,9 +109,7 @@ the tree. Nothing left is larger than M.
 
 | item | size | section |
 |---|---|---|
-| The palette bar's green `+` (→ Marketplace) and the row-0 stress copy: the chrome row is Rust's `rust-120x40.txt` cell for cell now and shows neither; `integrations.show_marketplace` is reached from the `+` menu's Integrations submenu and `M` in the integrations pane, the stress meter from the statusline | S | UI & theming |
-| The status pane's clickable provider badge: the glyph paints in the statusline's branch and PR chips (`providerGlyph` / `hostTag` in `src/app/statusline.zig`), but no badge is a click target for `git.browse_commit` since the pane was re-cut to the Rust spec | S | Git |
-| 54 spec ids without a runner (`zig build -Dpartial=false` refuses the build): `app.choose_data_layout` `app.reset_to_defaults` `bookmarks.open` `coverage.chip_show_*` (4) `debug.toggle_click_inspector` `editor.input_mode_menu` `editor.insert_alt_filename` `editor.insert_last_inserted` `editor.insert_last_search` `editor.keyword_complete` / `_back` `editor.repeat_last_substitute` `integrations.audit_shadowed_binaries` `integrations.check_updates_now` `integrations.configure_picker` `integrations.diag` `integrations.edit_claude_glyph` / `edit_codex_glyph` `integrations.fire_auto_updates_now` `integrations.icon_picker` `keys.doctor` `layout.merge_to_tabs` / `spread_to_splits` `markdown.cycle_engine` `markdown.link_check` `mounts.refresh` `noop` `palette` `search.toggle_case_sensitive` / `toggle_whole_word` `setup.install_to_path` `view.ai_layout_grid` / `_tabs` `view.commands_reference` `view.git_commit_focus` `view.host_active_in_bottom_panel` `view.manage_workspaces` `view.move_to_new_tab` `view.open_default_workspace` `view.remove_workspace` `view.reveal_active` `view.reveal_in_tree` `view.toggle_bottom_panel` `view.toggle_integrations_section` `view.toggle_picker_position` `view.toggle_tree_section` `view.workspace_menu` `vim.dot_repeat` `vim.go_to_last_insert` `vim.macro_replay` / `macro_toggle`. Several are Rust ids whose feature lives under another door here (the `vim.*` verbs are the handler's); each still needs a runner or a `cutRunner` before `-Dpartial` can go | M | Headless, IPC & extensibility |
+| 54 spec ids without a runner (`zig build -Dpartial=false` refuses the build): `app.choose_data_layout` `app.reset_to_defaults` `bookmarks.open` `coverage.chip_show_*` (4) `debug.toggle_click_inspector` `editor.input_mode_menu` `editor.insert_alt_filename` `editor.insert_last_inserted` `editor.insert_last_search` `editor.keyword_complete` / `_back` `editor.repeat_last_substitute` `integrations.audit_shadowed_binaries` `integrations.check_updates_now` `integrations.configure_picker` `integrations.diag` `integrations.edit_claude_glyph` / `edit_codex_glyph` `integrations.fire_auto_updates_now` `keys.doctor` `layout.merge_to_tabs` / `spread_to_splits` `markdown.cycle_engine` `markdown.link_check` `mounts.refresh` `noop` `palette` `search.toggle_case_sensitive` / `toggle_whole_word` `setup.install_to_path` `view.ai_layout_grid` / `_tabs` `view.commands_reference` `view.git_commit_focus` `view.host_active_in_bottom_panel` `view.manage_workspaces` `view.move_to_new_tab` `view.open_default_workspace` `view.remove_workspace` `view.reveal_active` `view.reveal_in_tree` `view.toggle_bottom_panel` `view.toggle_integrations_section` `view.toggle_picker_position` `view.toggle_tree_section` `view.toggle_zoom` `view.workspace_menu` `vim.dot_repeat` `vim.go_to_last_insert` `vim.macro_replay` / `macro_toggle`. Several are Rust ids whose feature lives under another door here (the `vim.*` verbs are the handler's); each still needs a runner or a `cutRunner` before `-Dpartial` can go | M | Headless, IPC & extensibility |
 
 Everything else the first Remaining list named landed on the `remaining`
 branch (2026-09-05; the corpus was 351/352 then — the one failure asserted TOML; it asserts ZON since 2026-09-07 and the corpus is 393/393): MRU buffers, pins and `tab.reopen`; the symbol,
@@ -314,7 +312,7 @@ trust sink. Each row names its file and its test.
 | On-type formatting | done | `onTyped` in `lsp_format.zig` | the server's trigger characters, behind `editor.format_on_type` |
 | `willSaveWaitUntil` | done | `onSavePre` / `handleResponse` in `lsp_format.zig` | behind `editor.will_save_wait_until`; the reply's edits are applied and the buffer written again (D3) |
 | External formatters | done | `src/lsp/tools.zig`, `formatExternalPane` in `lsp_format.zig`, `editor.format_external` | stdin → stdout, or `in_place` on `{file}`; `lsp.format` prefers the server and falls back |
-| Tools picker (installer) | done | `tools.installer` in `src/app/runners.zig` | 18 tools |
+| Tools picker (installer) | done | `tools.installer` / `known_tools` in `src/app/runners.zig` | 24 tools (12 servers, 3 formatters, 4 linters, 5 runners); `tests/e2e/tools_installer.test` |
 | Document highlight, selection range, folding range, executeCommand | done | `lsp.zig` | beyond the Rust list |
 
 ## Git
@@ -323,7 +321,7 @@ trust sink. Each row names its file and its test.
 |---|---|---|---|
 | Gutter signs | done | `marksFor` in `src/app/git.zig` | |
 | Branch chip with ahead / behind / counts | done | `SegId.branch` in `src/app/statusline.zig` (`⇡N ⇣N` + the NvChad file counts, the provider glyph); the palette's `⎇` row with `↑n ↓n` in `src/ui/git_palette.zig` | a click opens the status pane, a right-click the branch menu (`dispatch.zig`); `git.tick` discovers on the first tick so the chip shows before any git pane opens |
-| Clickable provider badge | partial | `git.State.provider`; `providerGlyph` / `hostTag` in `src/app/statusline.zig` | the glyph paints in the branch chip and the PR chip (a click on the PR chip opens it in the browser); the status pane's header badge went with the pane's re-cut to `rust-git-status-120x40.txt` (2026-09-07), so nothing clicks through to `git.browse_commit` — the command stays in the palette |
+| Clickable provider badge | done (by spec) | `git.State.provider`; `providerGlyph` / `hostTag` in `src/app/statusline.zig`; `git.browse` / `git.browse_file` / `git.browse_commit` in `cmd_git.zig` | the glyph paints in the branch chip and the PR chip (a click on the PR chip opens it in the browser). *2026-09-09 (leftovers):* Rust has no status-pane badge to click — `provider_icon` is read in one place, `ui/statusline.rs:903` (the branch chip), `ui/git_status_view.rs` never mentions a provider, and the pane's header in `rust-git-status-120x40.txt` is `  on main   2 unstaged · 0 staged`; `git.browse_commit` is not a Rust id at all (Rust's `:GBrowse <commit>` and `git.browse`). The three browse commands have runners here (the commit under the graph cursor / the diff pane's rev) and the branch chip's right-click menu carries the browse rows; adding a badge would put a cell on the status pane the Rust screen does not show |
 | Diff pane — Hunk view | done | `src/ui/diff_view.zig`, `openDiff` | |
 | Diff pane — Inline view | done | `Mode.flat`, `drawUnified` in `diff_view.zig`, `git.diff_toggle_view` | the whole file, one number column, changed rows tinted |
 | Diff pane — Split view | done | `pairs` / `drawSplit` in `diff_view.zig`; the diff toolbar `Hunk   Inline   Split` | removed runs zipped with added runs, a header across both, a `·` filler; `rust-diff-120x40.txt`; `// changed:` the draggable split divider (`App.git_divider`) went with the re-cut to the Rust spec |
@@ -635,7 +633,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Palette bar — sidebar + panel toggles + palette chip | done | `drawPaletteBar` in `render.zig` over `src/ui/menu_bar.zig` (`rust_row_120` / `rust_row_80` pin row 0) | the centred 48-cell nav cluster — sidebar toggle · ` ← ` ` → ` · the workspace chip `  󰍉  <name>  ` · ` ▾ ` · right-panel toggle — then Rust's right cluster from `bufferline.zig` (` + `, ` TABS `, a chip per tab page, the theme pill, the ` × ` that quits; `ui.top_bar_cluster_mode`) |
 | Menu bar — the ten menus | done | `src/app/menu_bar.zig`, `src/ui/menu_bar.zig`, `ui.menu_bar` (always / auto / hidden), `view.menu_bar_open` / `menu_bar_cycle`; `tests/e2e/menu_bar_top_row.test` | ` ❯_  mnml ` then File / Edit / Selection / View / Go / Run / Terminal / Window / Help; every row a registered command (an enum) with its chord under the active profile and Rust's glyph; F10 opens File, Alt+letter a menu, ← / → step; words that do not fit collapse behind ` » ` |
 | Palette bar — integration chips | done | `chips` in `src/app/integrations.zig`, `drawGapChips` in `render.zig` (`integrations.chipClick`) | the enabled icons on Rust's 5-cell stride in the gap between the sidebar toggle and the cluster (the browser globe by default), in `ui.integration_icon_order`; an installed manifest's chip joins them (`allChips` / `chips`), and a chip's right click offers Add / Remove from activity bar and Hide from / Show on top bar |
-| Palette bar — `+` add-integration | partial | `integrations.show_marketplace` from the `+` menu's Integrations submenu (`context_menus.zig`) and `M` in the integrations pane | the bar's green `+` chip is not painted: row 0 is `rust-120x40.txt` cell for cell (menu-bar track, 2026-09-06) and the Rust row shows no such chip; see Remaining |
+| Palette bar — `+` add-integration | done (by spec) | `integrations.show_marketplace` from the `+` menu's Integrations submenu (`context_menus.zig`) and `M` in the integrations pane | *2026-09-09 (leftovers), verified against the dump:* `rust-120x40.txt` row 0 ends `󰐕  ●━  󰅖` — the `󰐕` is Rust's `bufferline_new_tab_button` (`ui/bufferline.rs:774`, "`+` new-tab button"), `●━` the theme-toggle pill (`:920`), `󰅖` the close; no green `+` is in the row, and row 1's `󰐕` is the empty strip's `+` (`bufferline_empty_plus`, `:483`) whose menu has the Integrations submenu. Not painted, by the spec |
 | Palette bar — narrow drops TABS | done | the hidden-word rule in `src/ui/menu_bar.zig` (`rust_row_80`), `pickCluster` in `bufferline.zig` | Rust's rule: a 50-cell cluster estimate bounds the menu words, a 3-cell slot is kept for the ` » ` while words remain; at 80 columns only the brand menu fits, the gap chip drops and the right cluster is the compact one (`rust-80x24.txt`); the chip alone below 48 columns |
 | Menu glyphs | done | `src/ui/menu_glyph.zig`, `paintMenuRows` in `render.zig` | one glyph per command group; `MenuItem.icon` overrides |
 | `ascii_icons` blanks glyphs | done | `forItem(it, ascii)` in `menu_glyph.zig` | every group glyph has a one-character ASCII twin |
@@ -667,7 +665,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Idle `♪` chip, `preferred_music_app` | cut | same; config keys accepted and ignored | |
 | Mixr panel size chips | cut | same | |
 | Stress meter — statusline bar | done | `src/app/stress.zig`, `render.zig` | p95 of a 120-sample ring |
-| Stress meter — bufferline copy | missing | — | the row-0 copy went with the chrome row's re-cut to `rust-120x40.txt` (menu-bar track): the Rust row shows none; the statusline meter, its tooltip and its menu stay |
+| Stress meter — bufferline copy | done (by spec) | the statusline meter, its tooltip and its menu | *2026-09-09 (leftovers), verified against the dump:* `rust-120x40.txt` row 0 shows no meter, and `ui/bufferline.rs:894` says why — the top-right mirror was added and removed on 2026-07-12 ("the statusline meter is enough"), `palette_stress_chip = None`, "paint nothing". Not painted, by the spec |
 | Stress meter — hover numbers | done | `describeSegment(.stress)` in `discovery.zig` | p50 / p95 / max / n in the tooltip |
 | Stress meter — right-click Reset / Copy / Toast | done | `openStressMenu` in `context_menus.zig`, `perf.copy_stress` | |
 | Stress meter — hidden when idle, 120 samples | done | `stress.zig` | |
@@ -729,7 +727,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | `.ui.integration_icons` config | done | read by `chips` in `integrations.zig` | |
 | Launcher-icon strip | done | `drawGapChips` in `render.zig` over `integrations.chips` | the enabled config icons and installed manifests' chips (`in_palette_bar`) in the bar's gap on Rust's stride |
 | Integration-icon rail | done (by spec) | the palette-bar chips (`in_palette_bar`, `src/app/integrations.zig` `barChips`) and the activity-bar pins (`ui.activity_bar_pinned_integrations`, `src/app/activity_bar.zig`, the launchers track) | *2026-09-09 (leftovers):* the Rust tree paints no integration icons — `ui/tree_view.rs` hard-codes `integration_height = 0u16` (the 2026-06-30 note: the INTEGRATIONS and GIT tree sections were zeroed when both got activity-bar panels), so `draw_integration_section` returns at its first line and `IntegrationIcon` has no `in_tree_rail` field to read. The icons Rust does place — the palette bar's chips and the rail's pinned launcher slots — are here, painted, clicked and menued |
-| `+` add-integration → Marketplace | partial | `integrations.show_marketplace` from the `+` menu's Integrations submenu and the integrations pane's `M` | the bar chip is not painted (the Rust row 0 shows none); see the UI section and Remaining |
+| `+` add-integration → Marketplace | done (by spec) | `integrations.show_marketplace` from the `+` menu's Integrations submenu and the integrations pane's `M` | the bar chip is not painted: Rust's row-0 `󰐕` is the new-tab button and row 1's is the empty strip's `+` menu (the UI section's row has the line numbers) |
 | Marketplace | done | `src/app/marketplace.zig`, `Pane.marketplace`, `src/ui/marketplace_view.zig`, `marketplace.*` | `github_launcher_folder` and `github_monorepo_apps` sources; a `crates_keyword` source lists nothing |
 | `integrations.toggle_enabled`, `<leader>iE` | done | `toggleEnabled` in `integrations.zig` (a picker); the `i` group in `whichkey.zig` | `i d` details, `i h` / `i I` / `i r` the tool panes |
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
