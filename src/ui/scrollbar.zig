@@ -2,7 +2,9 @@
 //! the one-row horizontal strip under wide content. Track and thumb are
 //! the same glyph in two colors, so the column reads as a recessed
 //! strip with a brighter thumb rather than a thin line running through
-//! a block (the Rust mnml mixed `│` and `█` and users saw the seam).
+//! a block (the Rust mnml mixed `│` and `█` and users saw the seam);
+//! the editor's bar is the `.solid` look — styled cells, no glyph — as
+//! Rust's editor paints it.
 //!
 //! `thumb` is the geometry alone, so a drag router and a test can ask
 //! where the thumb is without painting. Every painted bar registers a
@@ -42,9 +44,16 @@ pub fn thumbStyle(t: *const Theme) Style {
     return .{ .fg = t.muted.fg, .bg = t.chip.bg };
 }
 
-fn glyph(ui: Ui, axis: Axis, is_thumb: bool) []const u8 {
+/// How a vertical bar paints. `.glyph` is the list panels' bar — `█` in
+/// two colours, Rust's `paint_simple_scrollbar`. `.solid` is Rust's
+/// editor bar (`editor_view.rs`): a styled space per cell, the track's
+/// and the thumb's grounds telling them apart, so a screen dump shows
+/// a blank column where Rust's does. Both keep the ASCII twins.
+pub const Look = enum { glyph, solid };
+
+fn glyph(ui: Ui, axis: Axis, is_thumb: bool, look: Look) []const u8 {
     if (!ui.ascii) return switch (axis) {
-        .v => "█",
+        .v => if (look == .solid) " " else "█",
         .h => if (is_thumb) "━" else "─",
     };
     return switch (axis) {
@@ -53,19 +62,34 @@ fn glyph(ui: Ui, axis: Axis, is_thumb: bool) []const u8 {
     };
 }
 
+/// The solid look's cells carry the colour in their ground.
+fn solidTrackStyle(t: *const Theme) Style {
+    return .{ .bg = t.chip.bg };
+}
+
+fn solidThumbStyle(t: *const Theme) Style {
+    return .{ .bg = t.muted.fg };
+}
+
 /// Paints a vertical bar down `area` (any width; one cell is the norm)
-/// and registers the hit. No-op when `area` is empty.
+/// in the `.glyph` look and registers the hit. No-op when `area` is empty.
 pub fn drawVertical(ui: Ui, area: Rect, owner: Owner, total: usize, viewport: usize, scroll: usize) void {
+    drawVerticalLook(ui, area, owner, total, viewport, scroll, .glyph);
+}
+
+/// `drawVertical` in either look.
+pub fn drawVerticalLook(ui: Ui, area: Rect, owner: Owner, total: usize, viewport: usize, scroll: usize, look: Look) void {
     if (area.isEmpty()) return;
     const t = ui.theme;
     const th = thumb(area.h, total, viewport, scroll);
+    const solid = look == .solid and !ui.ascii;
     var y: u16 = 0;
     while (y < area.h) : (y += 1) {
         const in_thumb = if (th) |tt| y >= tt.start and y < tt.start + tt.len else false;
-        const style = if (in_thumb) thumbStyle(t) else trackStyle(t);
+        const style = if (solid) (if (in_thumb) solidThumbStyle(t) else solidTrackStyle(t)) else (if (in_thumb) thumbStyle(t) else trackStyle(t));
         var x: u16 = 0;
         while (x < area.w) : (x += 1) {
-            ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = glyph(ui, .v, in_thumb), .width = 1 }, .style = style });
+            ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = glyph(ui, .v, in_thumb, look), .width = 1 }, .style = style });
         }
     }
     ui.hit(area, .{ .scrollbar = .{ .owner = owner, .axis = .v } });
@@ -82,7 +106,7 @@ pub fn drawHorizontal(ui: Ui, area: Rect, owner: Owner, total: usize, viewport: 
         const style = if (in_thumb) thumbStyle(t) else trackStyle(t);
         var y: u16 = 0;
         while (y < area.h) : (y += 1) {
-            ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = glyph(ui, .h, in_thumb), .width = 1 }, .style = style });
+            ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = glyph(ui, .h, in_thumb, .glyph), .width = 1 }, .style = style });
         }
     }
     ui.hit(area, .{ .scrollbar = .{ .owner = owner, .axis = .h } });
@@ -130,6 +154,26 @@ test "vertical bar paints track and thumb and registers one hit over the track" 
     while (y < 6) : (y += 1) try testing.expect(vaxis.Color.eql(f.style(3, y).fg, f.theme.chip.bg));
     try testing.expectEqual(@as(u32, 1), f.hits.at(3, 5).?.scrollbar.owner.pane);
     drawVertical(ui, Rect.empty, .{ .pane = 1 }, 3, 6, 0);
+}
+
+test "the solid look paints styled spaces — track and thumb grounds apart, the hit the same — and keeps the ascii twins" {
+    var f = try Fixture.init(4, 6);
+    defer f.deinit();
+    var ui = f.ui();
+    const bar = Rect.init(3, 0, 1, 6);
+    drawVerticalLook(ui, bar, .{ .pane = 7 }, 12, 6, 6, .solid);
+    var y: u16 = 0;
+    while (y < 6) : (y += 1) {
+        try testing.expectEqualStrings(" ", f.cell(3, y).char.grapheme);
+        const is_thumb = y >= 3;
+        try testing.expect(vaxis.Color.eql(f.style(3, y).bg, if (is_thumb) f.theme.muted.fg else f.theme.chip.bg));
+    }
+    try testing.expectEqual(@as(u32, 7), f.hits.at(3, 4).?.scrollbar.owner.pane);
+    // ASCII keeps the glyph twins: a track `|`, a thumb `#`.
+    ui.ascii = true;
+    drawVerticalLook(ui, bar, .{ .pane = 7 }, 12, 6, 6, .solid);
+    try testing.expectEqualStrings("|", f.cell(3, 0).char.grapheme);
+    try testing.expectEqualStrings("#", f.cell(3, 5).char.grapheme);
 }
 
 test "horizontal bar and the ascii glyph set" {

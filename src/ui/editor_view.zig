@@ -996,7 +996,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             y += 1;
         }
     }
-    if (bar) scrollbar.drawVertical(ui, Rect.init(area.right() - scrollbar_w, area.y, scrollbar_w, area.h), .{ .pane = pane }, total, text_h, view.scroll_line);
+    if (bar) scrollbar.drawVerticalLook(ui, Rect.init(area.right() - scrollbar_w, area.y, scrollbar_w, area.h), .{ .pane = pane }, total, text_h, view.scroll_line, .solid);
     return found;
 }
 
@@ -1873,9 +1873,14 @@ test "the scrollbar takes the last column and a cell of air before it; without i
     d.line_numbers = false;
     d.scrollbar = true;
     _ = draw(f.ui(), 0, f.full(), &view, d);
-    try f.expectRow(0, "a" ** 18 ++ " █");
-    try f.expectRow(1, "b" ** 18 ++ " █");
-    try f.expectAirBeforeBar(0, 4, 19);
+    // The bar is Rust's editor bar: a styled cell, no glyph — the thumb
+    // (rows 0–1 of 4 for 10 lines) on the muted ground, the track on the
+    // chip's; the cell before it is air.
+    try f.expectRow(0, "a" ** 18);
+    try f.expectRow(1, "b" ** 18);
+    try testing.expectEqualStrings(" ", f.cell(19, 0).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.style(19, 0).bg, f.theme.muted.fg));
+    try testing.expect(vaxis.Color.eql(f.style(19, 3).bg, f.theme.chip.bg));
     try testing.expect(f.hits.at(19, 0).? == .scrollbar);
     d.scrollbar = false;
     _ = draw(f.ui(), 0, f.full(), &view, d);
