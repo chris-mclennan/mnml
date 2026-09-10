@@ -1709,6 +1709,16 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!
     };
 }
 
+/// After any key the editor took (typed or not): a cursor that moved
+/// left of the popup's anchor — `h`, `0`, `5G`, a `u` that shrank the
+/// text — closes it, so no stale popup waits for the render to slice
+/// backwards.
+pub fn afterKey(app: *App, pane: PaneId, e: *EditorPane) void {
+    const comp = &(app.lsp.completion orelse return);
+    if (comp.pane != pane) return;
+    if (e.buf.editor.cursor < comp.start) closeCompletion(app);
+}
+
 fn openCompletion(app: *App, s: *Server, ctx: Ctx, result: ?Value, msg: *jsonrpc.Incoming) Allocator.Error!bool {
     app.lsp.completion_req = null;
     const manual = ctx.extra & manual_flag != 0;
@@ -1771,9 +1781,20 @@ pub fn closeCompletion(app: *App) void {
 /// Frame arena; indices into `comp.items`.
 pub fn visibleCompletions(app: *App, arena: Allocator) Allocator.Error![]u32 {
     const comp = &(app.lsp.completion orelse return &.{});
-    const e = app.panes.editor(comp.pane) orelse return &.{};
+    // A popup whose pane is gone, or whose anchor the cursor has left
+    // behind, has nothing to filter by: it closes instead of slicing
+    // `text[start..cursor]` with the cursor before the start.
+    const e = app.panes.editor(comp.pane) orelse {
+        closeCompletion(app);
+        return &.{};
+    };
     const text = e.buf.editor.bytes();
-    const word = text[@min(comp.start, text.len)..@min(e.buf.editor.cursor, text.len)];
+    const cursor = @min(e.buf.editor.cursor, text.len);
+    if (comp.start > cursor) {
+        closeCompletion(app);
+        return &.{};
+    }
+    const word = text[comp.start..cursor];
     const Scored = struct { idx: u32, score: u32, sort: []const u8 };
     var scored: std.ArrayListUnmanaged(Scored) = .empty;
     for (comp.items, 0..) |it, i| {
@@ -1844,6 +1865,7 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
         return false;
     }
     const vis = try visibleCompletions(app, app.frame.allocator());
+    if (app.lsp.completion == null) return false; // closed itself: the key is the editor's
     const n = vis.len;
     if (n == 0 and !comp.manual) {
         closeCompletion(app);
@@ -3162,6 +3184,51 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     live = false;
     app.deinit();
     try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
+}
+
+test "a completion popup whose anchor is past the cursor closes instead of slicing backwards; so does one whose pane is gone; a motion left of the anchor closes it on the key" {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const pane = app.active.?;
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("fn foo() {}\nfooqux(x);\n");
+    const items = [_]types.CompletionItem{.{ .label = "fooqux", .kind = 6, .detail = "identifier", .documentation = null, .insert_text = "fooqux", .format = .plain, .edit_range = null, .sort_text = null, .filter_text = null, .raw = .null }};
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    // Anchored after `fn foo() {}\n` (byte 12), cursor at its end (18): the row shows.
+    e.buf.editor.setCursor(18);
+    try openLocalCompletion(&app, pane, 12, &items, false);
+    try testing.expectEqual(@as(usize, 1), (try visibleCompletions(&app, arena.allocator())).len);
+    // The finding: the cursor moved left of the anchor (`5G`) with the
+    // popup still open. The slice `text[12..0]` panicked; now the popup
+    // closes and the render paints.
+    e.buf.editor.setCursor(0);
+    try testing.expectEqual(@as(usize, 0), (try visibleCompletions(&app, arena.allocator())).len);
+    try testing.expect(app.lsp.completion == null);
+    try app.render();
+
+    // The key path: a popup anchored after `foo` (byte 15); `home` in
+    // the standard profile moves to the line start, left of the anchor,
+    // and the key itself closes the popup — before any render asks.
+    e.buf.editor.setCursor(18);
+    try openLocalCompletion(&app, pane, 15, &items, false);
+    try testing.expectEqual(@as(usize, 1), (try visibleCompletions(&app, arena.allocator())).len);
+    try app.handle(.{ .key = Key.named(.home) });
+    try testing.expectEqual(@as(usize, 12), e.buf.editor.cursor);
+    try testing.expect(app.lsp.completion == null);
+
+    // A popup whose pane closed under it.
+    e.buf.editor.setCursor(18);
+    try openLocalCompletion(&app, pane, 12, &items, false);
+    try app.forceClosePane(pane);
+    try testing.expect(app.panes.editor(pane) == null);
+    try testing.expectEqual(@as(usize, 0), (try visibleCompletions(&app, arena.allocator())).len);
+    try testing.expect(app.lsp.completion == null);
+    try app.render();
 }
 
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {
