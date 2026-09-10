@@ -72,7 +72,17 @@ otherwise. Copy what you need; leave the rest out.
         .text_width = 80,
         .ensure_trailing_newline = true,
         .chord_timeout_ms = 500, // vim's timeoutlen; clamped to 100..5000
+        // The wheel (and a scrollbar drag) in the editor: .always carries the
+        // cursor with the view (vim's Ctrl-E canon), .never moves the view
+        // and pins it until the cursor moves (VS Code / Sublime), .auto
+        // picks by input_style (vim → always, standard → never).
         .wheel_moves_cursor = .auto, // .auto | .always | .never
+        // How much further a hard spin travels than a slow one: the
+        // multiplier ramps on the wheel's rate (events per second) from
+        // 1.0 under 45/s to the ceiling at 120/s — gentle ×1.5, normal
+        // ×2.5, fast ×4 — so a single notch is always 1:1; a decaying wheel
+        // (a free spin) is never amplified; .off is a plain 1:1 with a 40-line
+        // flick bucket. docs/research/scroll-tuning.md has the numbers.
         .scroll_accel = .normal, // .off | .gentle | .normal | .fast
         .persistent_undo = false, // keep each file's undo + redo stacks in <data root>/undo/ across launches
         .clipboard = .auto, // .auto | .os | .internal — what `"+` / `"*` / Ctrl+C reach
@@ -120,7 +130,7 @@ otherwise. Copy what you need; leave the rest out.
         .tree_preview_on_arrow = true,
         .syntax = true,
         .scrollbar = true,
-        .wheel_lines = 3, // lines per wheel notch
+        .wheel_lines = 3, // lines per wheel EVENT in a text body (the editor, a markdown preview, a diff — Rust's editor gain); lists move a row an event; ghostty reports a notched detent as three events
         .highlight_trailing_ws = false,
         .clock = true,
         .stress_meter = false,

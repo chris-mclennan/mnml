@@ -162,11 +162,16 @@ wheel runs).
 | 30 | click (45,12) — the `ö` of `Ünïcödé` | **10:9** | **10:11** | cursor placement: Zig lands two chars right — one per multi-byte char before the cell |
 | 31 | click (45,12) again (double) | 10:12 | 10:12 | same: both select the word |
 
-Wheel numbers, for the record: Rust moves 4 / 18 / 69 / 219 lines for
+Wheel numbers, for the record: Rust moves 3 / 18 / 69 / 219 lines for
 1 / 3 / 10 / 30 notches down (acceleration — `[editor] scroll_accel`,
-`src/app/dispatch.rs:1176–1232` in mnml) and 1 / 20 / 69 / 220 up;
-Zig moves 3 per notch flat (`ui.wheel_lines = 3`,
-`src/app/dispatch.zig:2160–2162`): 3 / 9 / 30 / 90.
+`src/app/dispatch.rs:1176–1232` in mnml) and 3 / 18 / 69 / 219 up;
+Zig moved 3 per notch flat (`ui.wheel_lines = 3`): 3 / 9 / 30 / 90.
+
+*Since the scroll branch (2026-09-10):* Zig carries the same curve
+(`src/app/scroll.zig`, `docs/research/scroll-tuning.md`) and the
+re-run reads the same top line on both sides at every wheel step —
+4 / 22 / 91 / 310 down, 307 / 289 / 220 / 1 back up; the rows that
+still differ are the pinned-scope `+N` (the sticky track).
 
 ## Timing
 
@@ -273,11 +278,12 @@ headless harness.
    The 80 steps in the 200×60 run's `highlight/other` bucket differ
    for this alone. Not a navigation
    bug; the largest remaining same-look gap on an open file.
-8. **Wheel scroll — known, a separate track.** Rust accelerates a fast
-   spin up to 2.5× on `normal` (`src/app/dispatch.rs:1176–1232`,
-   `budgeted_scroll` at `:1232`); Zig moves `wheel_lines` per notch
-   (`src/app/dispatch.zig:2160–2162`, `src/config/Config.zig:210`).
-   The numbers are in the mouse table above.
+8. **Wheel scroll — closed by the scroll branch.** Rust accelerates a
+   fast spin up to 2.5× on `normal` (`src/app/dispatch.rs:1176–1232`,
+   `budgeted_scroll` at `:1232`); Zig now runs the same arithmetic
+   (`Accel` in `src/app/scroll.zig`, `wheelLines` in
+   `src/app/dispatch.zig`) and the mouse table's wheel rows read the
+   same on both sides — `docs/research/scroll-tuning.md`.
 9. **Zig — the editor scrollbar paints `█` for both track and thumb**
    (`src/ui/scrollbar.zig:45–49`; the thumb differs only by style), so
    the dump — and a monochrome or high-contrast theme — shows a solid
