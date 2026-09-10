@@ -172,7 +172,19 @@ fn tabReopen(app: *App) CommandError!void {
     app.toastReplace(tab_toast, "tab reopened · {d}/{d} ({d} file{s})", .{ ls.active + 1, ls.layouts.items.len, opened, if (opened == 1) "" else "s" });
 }
 
-/// A page's panes when the page goes: clean ones close, dirty ones
+/// True when a page other than `gone` still shows `id` — vim's one
+/// buffer, N windows: closing a tab page drops only the windows on
+/// that page, never a buffer another page shows (`:help :tabclose`).
+fn shownElsewhere(app: *App, gone: *const Layout, id: PaneId) bool {
+    for (app.layouts.layouts.items) |*l| {
+        if (l == gone) continue;
+        if (l.leafOf(id) != null) return true;
+    }
+    return false;
+}
+
+/// A page's panes when the page goes: one another page still shows is
+/// left to that page; of the rest, clean ones close and dirty ones
 /// become background tabs of `home` (the page that stays).
 fn retirePage(app: *App, gone: *Layout, home: *Layout) CommandError!void {
     const arena = app.frame.allocator();
@@ -180,6 +192,7 @@ fn retirePage(app: *App, gone: *Layout, home: *Layout) CommandError!void {
     const panes = try gone.allPanes(arena);
     for (panes) |id| {
         const p = app.panes.get(id) orelse continue;
+        if (shownElsewhere(app, gone, id)) continue;
         if (p.dirty()) {
             _ = home.showIn(home.firstLeaf(), id) catch {};
             if (home.firstLeaf()) |l| {
@@ -419,6 +432,35 @@ test "tab pages: new / goto / move / close re-homes a dirty pane and closes a cl
     try command.run(&app, .{ .static = .@"tab.picker" });
     try t.expect(app.overlay == .picker);
     try t.expectEqual(app_mod.PickerKind.tabs, app.overlay.picker.kind);
+}
+
+test "tab.close keeps a pane another page still shows; only the panes no page shows retire" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    // Page 1: a and b. Page 2: c, then b shown there too.
+    const a = try app.openScratch();
+    const b = try app.openScratch();
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const c = app.active.?;
+    app.showPane(b);
+    try t.expectEqual(@as(usize, 2), app.layouts.layouts.items.len);
+    try t.expect(app.layouts.layouts.items[0].leafOf(b) != null);
+    try t.expect(app.layouts.layouts.items[1].leafOf(b) != null);
+    try command.run(&app, .{ .static = .@"tab.close" });
+    try t.expectEqual(@as(usize, 1), app.layouts.layouts.items.len);
+    // b lives on in page 1 beside a; c, shown nowhere else, is gone.
+    try t.expect(app.panes.get(b) != null);
+    try t.expect(app.panes.get(a) != null);
+    try t.expect(app.panes.get(c) == null);
+    const layout = app.layouts.current();
+    try t.expectEqualSlices(app_mod.PaneId, &.{ a, b }, try layout.allPanes(app.frame.allocator()));
+    try t.expect(layout.leafOf(b) != null);
+    // `tab.only` from a page that shares a pane keeps it too.
+    try command.run(&app, .{ .static = .@"tab.new" });
+    app.showPane(a);
+    try command.run(&app, .{ .static = .@"tab.only" });
+    try t.expect(app.panes.get(a) != null);
+    try t.expect(app.panes.get(b) == null);
 }
 
 test "tab.reopen brings a closed page's files back as a new page after this one, the active one focused; nothing left toasts" {
