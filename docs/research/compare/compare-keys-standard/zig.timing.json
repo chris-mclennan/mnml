@@ -1,0 +1,1832 @@
+{
+ "side": "zig",
+ "bin": "/Users/chrismclennan/Projects/mnml-zig-worktrees/compare/zig-out/bin/mnml-zig",
+ "pid": 5033,
+ "steps": [
+  {
+   "i": 0,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"esc\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 48.5,
+   "dump_ms": 93.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"esc\"}"
+  },
+  {
+   "i": 1,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"esc\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 12.8,
+   "dump_ms": 14.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"esc\"}"
+  },
+  {
+   "i": 2,
+   "cmd": "{\"cmd\":\"open\",\"path\":\"src/large.rs\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 40.5,
+   "dump_ms": 1322.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"open\",\"path\":\"/private/var/folders/md/rtcqqnkn661bgwnl4h__tgz80000gn/T/tmp.i0kA92NSD1/ws/src/large.rs\"}"
+  },
+  {
+   "i": 3,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":800}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 851.5,
+   "dump_ms": 862.0,
+   "wait_ms": 800,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"800\"}"
+  },
+  {
+   "i": 4,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pagedown\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 488.0,
+   "dump_ms": 494.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pagedown\"}"
+  },
+  {
+   "i": 5,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 180.5,
+   "dump_ms": 185.0,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 6,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pagedown\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 32.5,
+   "dump_ms": 57.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pagedown\"}"
+  },
+  {
+   "i": 7,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 193.3,
+   "dump_ms": 198.7,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 8,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pagedown\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 41.3,
+   "dump_ms": 47.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pagedown\"}"
+  },
+  {
+   "i": 9,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 202.7,
+   "dump_ms": 205.5,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 10,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pagedown\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 17.5,
+   "dump_ms": 22.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pagedown\"}"
+  },
+  {
+   "i": 11,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 189.0,
+   "dump_ms": 196.2,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 12,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pagedown\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 28.3,
+   "dump_ms": 34.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pagedown\"}"
+  },
+  {
+   "i": 13,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 176.9,
+   "dump_ms": 183.1,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 14,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pageup\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 16.0,
+   "dump_ms": 20.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pageup\"}"
+  },
+  {
+   "i": 15,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 174.7,
+   "dump_ms": 181.3,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 16,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"pageup\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 21.2,
+   "dump_ms": 27.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"pageup\"}"
+  },
+  {
+   "i": 17,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 176.1,
+   "dump_ms": 180.7,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 18,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+end\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 27.4,
+   "dump_ms": 67.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+end\"}"
+  },
+  {
+   "i": 19,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 180.1,
+   "dump_ms": 184.8,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 20,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+home\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 40.1,
+   "dump_ms": 44.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+home\"}"
+  },
+  {
+   "i": 21,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 182.7,
+   "dump_ms": 187.4,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 22,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 25.2,
+   "dump_ms": 29.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 23,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 134.1,
+   "dump_ms": 138.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 24,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 44.2,
+   "dump_ms": 48.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 25,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 135.9,
+   "dump_ms": 142.1,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 26,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 30.7,
+   "dump_ms": 35.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 27,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 128.2,
+   "dump_ms": 134.5,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 28,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.8,
+   "dump_ms": 35.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 29,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.4,
+   "dump_ms": 128.5,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 30,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 27.8,
+   "dump_ms": 30.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 31,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.0,
+   "dump_ms": 129.5,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 32,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 28.6,
+   "dump_ms": 33.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 33,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.0,
+   "dump_ms": 131.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 34,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 18.3,
+   "dump_ms": 21.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 35,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 129.6,
+   "dump_ms": 132.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 36,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.9,
+   "dump_ms": 36.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 37,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 132.6,
+   "dump_ms": 135.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 38,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 24.1,
+   "dump_ms": 27.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 39,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 126.3,
+   "dump_ms": 130.9,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 40,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 22.4,
+   "dump_ms": 27.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 41,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 110.3,
+   "dump_ms": 115.0,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 42,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 24.4,
+   "dump_ms": 29.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 43,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 118.3,
+   "dump_ms": 121.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 44,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 30.3,
+   "dump_ms": 34.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 45,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.9,
+   "dump_ms": 133.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 46,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 22.1,
+   "dump_ms": 25.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 47,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.7,
+   "dump_ms": 132.3,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 48,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 29.8,
+   "dump_ms": 34.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 49,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 124.7,
+   "dump_ms": 129.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 50,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 26.7,
+   "dump_ms": 31.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 51,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 116.2,
+   "dump_ms": 120.9,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 52,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 30.1,
+   "dump_ms": 34.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 53,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 115.8,
+   "dump_ms": 119.6,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 54,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.8,
+   "dump_ms": 28.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 55,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 132.7,
+   "dump_ms": 137.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 56,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 30.5,
+   "dump_ms": 36.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 57,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.0,
+   "dump_ms": 131.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 58,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 24.8,
+   "dump_ms": 29.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 59,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 129.8,
+   "dump_ms": 134.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 60,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 20.4,
+   "dump_ms": 24.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"down\"}"
+  },
+  {
+   "i": 61,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 132.7,
+   "dump_ms": 136.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 62,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 20.5,
+   "dump_ms": 23.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 63,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 131.8,
+   "dump_ms": 136.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 64,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.7,
+   "dump_ms": 36.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 65,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 135.8,
+   "dump_ms": 140.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 66,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 18.0,
+   "dump_ms": 22.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 67,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 147.3,
+   "dump_ms": 153.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 68,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.6,
+   "dump_ms": 36.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 69,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 134.2,
+   "dump_ms": 140.3,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 70,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 17.6,
+   "dump_ms": 20.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 71,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 131.9,
+   "dump_ms": 137.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 72,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 37.0,
+   "dump_ms": 42.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 73,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 124.9,
+   "dump_ms": 131.0,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 74,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 41.0,
+   "dump_ms": 47.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 75,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.9,
+   "dump_ms": 132.5,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 76,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 36.4,
+   "dump_ms": 39.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 77,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 136.8,
+   "dump_ms": 141.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 78,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 26.9,
+   "dump_ms": 30.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 79,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 124.8,
+   "dump_ms": 129.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 80,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.6,
+   "dump_ms": 28.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 81,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 133.7,
+   "dump_ms": 138.3,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 82,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 24.0,
+   "dump_ms": 27.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 83,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 118.0,
+   "dump_ms": 122.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 84,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 25.8,
+   "dump_ms": 30.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 85,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.9,
+   "dump_ms": 129.0,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 86,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 21.8,
+   "dump_ms": 27.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 87,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 131.4,
+   "dump_ms": 135.9,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 88,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 18.8,
+   "dump_ms": 23.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 89,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 121.8,
+   "dump_ms": 125.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 90,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 27.2,
+   "dump_ms": 31.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 91,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 132.8,
+   "dump_ms": 135.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 92,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.8,
+   "dump_ms": 20.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 93,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 114.9,
+   "dump_ms": 117.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 94,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.4,
+   "dump_ms": 26.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 95,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.0,
+   "dump_ms": 129.6,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 96,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.7,
+   "dump_ms": 35.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 97,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 121.2,
+   "dump_ms": 125.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 98,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 13.6,
+   "dump_ms": 18.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 99,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 129.1,
+   "dump_ms": 132.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 100,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 33.1,
+   "dump_ms": 37.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"right\"}"
+  },
+  {
+   "i": 101,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 135.7,
+   "dump_ms": 140.3,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 102,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"end\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.6,
+   "dump_ms": 20.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"end\"}"
+  },
+  {
+   "i": 103,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 174.0,
+   "dump_ms": 177.4,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 104,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"home\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.9,
+   "dump_ms": 35.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"home\"}"
+  },
+  {
+   "i": 105,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 177.3,
+   "dump_ms": 180.2,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 106,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 36.7,
+   "dump_ms": 39.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 107,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 116.9,
+   "dump_ms": 121.6,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 108,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 22.6,
+   "dump_ms": 27.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 109,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 119.6,
+   "dump_ms": 124.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 110,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.6,
+   "dump_ms": 20.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 111,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.9,
+   "dump_ms": 130.5,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 112,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 14.3,
+   "dump_ms": 18.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 113,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 130.5,
+   "dump_ms": 133.6,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 114,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 18.6,
+   "dump_ms": 23.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 115,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 133.9,
+   "dump_ms": 138.5,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 116,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 18.5,
+   "dump_ms": 21.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 117,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 128.0,
+   "dump_ms": 131.1,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 118,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.3,
+   "dump_ms": 28.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 119,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 133.4,
+   "dump_ms": 138.0,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 120,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 16.5,
+   "dump_ms": 22.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 121,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 116.8,
+   "dump_ms": 121.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 122,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 27.7,
+   "dump_ms": 32.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 123,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.2,
+   "dump_ms": 131.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 124,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+right\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 14.5,
+   "dump_ms": 19.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+right\"}"
+  },
+  {
+   "i": 125,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 129.8,
+   "dump_ms": 132.9,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 126,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+left\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 30.1,
+   "dump_ms": 35.1,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+left\"}"
+  },
+  {
+   "i": 127,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 135.5,
+   "dump_ms": 140.1,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 128,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+left\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 28.9,
+   "dump_ms": 33.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+left\"}"
+  },
+  {
+   "i": 129,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 135.6,
+   "dump_ms": 140.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 130,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+left\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 18.5,
+   "dump_ms": 21.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+left\"}"
+  },
+  {
+   "i": 131,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.6,
+   "dump_ms": 128.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 132,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+left\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 20.9,
+   "dump_ms": 25.5,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+left\"}"
+  },
+  {
+   "i": 133,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 129.8,
+   "dump_ms": 134.1,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 134,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+left\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.0,
+   "dump_ms": 35.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+left\"}"
+  },
+  {
+   "i": 135,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.2,
+   "dump_ms": 130.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 136,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+f\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.4,
+   "dump_ms": 29.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+f\"}"
+  },
+  {
+   "i": 137,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":300}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 321.1,
+   "dump_ms": 326.3,
+   "wait_ms": 300,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"300\"}"
+  },
+  {
+   "i": 138,
+   "cmd": "{\"cmd\":\"type\",\"text\":\"needle\\n\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 56.5,
+   "dump_ms": 61.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"type\",\"text\":\"needle\\n\"}"
+  },
+  {
+   "i": 139,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":300}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 334.1,
+   "dump_ms": 338.7,
+   "wait_ms": 300,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"300\"}"
+  },
+  {
+   "i": 140,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"enter\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 38.0,
+   "dump_ms": 45.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"enter\"}"
+  },
+  {
+   "i": 141,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 171.9,
+   "dump_ms": 174.9,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 142,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"enter\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 27.1,
+   "dump_ms": 31.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"enter\"}"
+  },
+  {
+   "i": 143,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 181.3,
+   "dump_ms": 185.9,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 144,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"enter\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 31.7,
+   "dump_ms": 36.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"enter\"}"
+  },
+  {
+   "i": 145,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 166.1,
+   "dump_ms": 169.2,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 146,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"esc\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 17.3,
+   "dump_ms": 22.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"esc\"}"
+  },
+  {
+   "i": 147,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":150}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 173.3,
+   "dump_ms": 177.9,
+   "wait_ms": 150,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"150\"}"
+  },
+  {
+   "i": 148,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+g\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 20.3,
+   "dump_ms": 24.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+g\"}"
+  },
+  {
+   "i": 149,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":300}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 330.9,
+   "dump_ms": 335.5,
+   "wait_ms": 300,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"300\"}"
+  },
+  {
+   "i": 150,
+   "cmd": "{\"cmd\":\"type\",\"text\":\"3000\\n\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 28.4,
+   "dump_ms": 48.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"type\",\"text\":\"3000\\n\"}"
+  },
+  {
+   "i": 151,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":300}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 328.8,
+   "dump_ms": 334.5,
+   "wait_ms": 300,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"300\"}"
+  },
+  {
+   "i": 152,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 34.1,
+   "dump_ms": 37.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 153,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.0,
+   "dump_ms": 129.6,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 154,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 22.1,
+   "dump_ms": 26.7,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 155,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 128.2,
+   "dump_ms": 133.0,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 156,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 29.3,
+   "dump_ms": 34.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 157,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 129.0,
+   "dump_ms": 133.6,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 158,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.8,
+   "dump_ms": 20.4,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 159,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 122.9,
+   "dump_ms": 126.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 160,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 23.6,
+   "dump_ms": 27.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 161,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 120.1,
+   "dump_ms": 124.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 162,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 19.3,
+   "dump_ms": 23.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 163,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 132.8,
+   "dump_ms": 137.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 164,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 26.4,
+   "dump_ms": 31.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 165,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.1,
+   "dump_ms": 128.3,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 166,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 19.6,
+   "dump_ms": 23.8,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 167,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 125.6,
+   "dump_ms": 129.8,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 168,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 15.5,
+   "dump_ms": 21.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 169,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 136.1,
+   "dump_ms": 141.0,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 170,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+down\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 33.2,
+   "dump_ms": 39.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+down\"}"
+  },
+  {
+   "i": 171,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 132.4,
+   "dump_ms": 137.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 172,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+up\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 28.0,
+   "dump_ms": 31.0,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+up\"}"
+  },
+  {
+   "i": 173,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 127.1,
+   "dump_ms": 133.2,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 174,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+up\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 38.3,
+   "dump_ms": 42.9,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+up\"}"
+  },
+  {
+   "i": 175,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 135.7,
+   "dump_ms": 141.9,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 176,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+up\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 20.1,
+   "dump_ms": 26.3,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+up\"}"
+  },
+  {
+   "i": 177,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 134.7,
+   "dump_ms": 140.7,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 178,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+up\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 35.7,
+   "dump_ms": 40.2,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+up\"}"
+  },
+  {
+   "i": 179,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 124.7,
+   "dump_ms": 128.9,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  },
+  {
+   "i": 180,
+   "cmd": "{\"cmd\":\"key\",\"key\":\"ctrl+up\"}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 40.0,
+   "dump_ms": 44.6,
+   "wait_ms": 0,
+   "ack": "{\"event\":\"key\",\"key\":\"ctrl+up\"}"
+  },
+  {
+   "i": 181,
+   "cmd": "{\"cmd\":\"wait_ms\",\"ms\":100}",
+   "acked": true,
+   "dumped": true,
+   "ack_ms": 137.4,
+   "dump_ms": 140.4,
+   "wait_ms": 100,
+   "ack": "{\"event\":\"wait_ms\",\"ms\":\"100\"}"
+  }
+ ],
+ "start_event_ms": 302.2,
+ "first_frame_ms": 332.2,
+ "exit_code": 0,
+ "peak_rss_kb": 69824,
+ "rss_samples": 721
+}
