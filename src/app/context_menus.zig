@@ -41,10 +41,19 @@ fn items(app: *App, rows: []const MenuItem) Allocator.Error![]MenuItem {
     return app.gpa.dupe(MenuItem, rows);
 }
 
+/// Full screen hides every other way back, so a pane's menu ends
+/// with one while inside (the tab menu and the editor menu).
+const exit_fullscreen_row: MenuItem = .{ .label = "Exit full screen", .action = .{ .command = .@"view.fullscreen" }, .separator_before = true };
+
+fn itemsWithExit(app: *App, rows: []const MenuItem) Allocator.Error![]MenuItem {
+    if (!app.zen) return items(app, rows);
+    return std.mem.concat(app.gpa, MenuItem, &.{ rows, &.{exit_fullscreen_row} });
+}
+
 /// The editor body: clipboard, undo, selection, the LSP verbs and the
 /// fold, then Save.
 pub fn openEditorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const rows = try items(app, &.{
+    const rows = try itemsWithExit(app, &.{
         .{ .label = "Cut", .action = .{ .command = .@"editor.cut" } },
         .{ .label = "Copy", .action = .{ .command = .@"editor.copy" } },
         .{ .label = "Paste", .action = .{ .command = .@"editor.paste" } },
@@ -163,6 +172,7 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
         .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
     });
+    if (app.zen) try rows.append(app.gpa, exit_fullscreen_row);
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
     try app.openMenu(p.title(), owned, x, y);

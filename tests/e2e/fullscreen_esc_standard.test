@@ -1,0 +1,32 @@
+# width: 120
+# Full screen under the standard profile (src/app/zen.zig): the way out
+# is toasted going in; a lone Esc hints (naming the profile's chord);
+# Esc Esc leaves; the corner mark at the body's top-right is a click
+# target that leaves too; reset view brings the frame back. The
+# statusline's EDIT chip is the frame's witness. Entering is by the
+# command: the runner expires pending chords after every `key` step, so
+# `Ctrl+K Z` cannot be typed here — `zen.zig`'s unit test types it
+# through `App.handle` from an editor, a request pane and a terminal.
+write a.txt "hello\nworld\n"
+open a.txt
+expect screen contains "EDIT"
+command view.fullscreen
+expect screen lacks "EDIT"
+expect screen contains "Full screen · Esc Esc or Ctrl+K Z leaves"
+key esc
+expect screen contains "Esc again leaves full screen · :fullscreen · Ctrl+K Z"
+key esc
+expect screen contains "EDIT"
+expect screen contains "full screen off"
+# The corner mark: in, then out by a click on the top-right cell.
+command view.fullscreen
+expect screen lacks "EDIT"
+click 119 0
+expect screen contains "EDIT"
+# Reset view from the palette id, after hiding the frame piece by piece.
+command view.fullscreen
+command view.toggle_zoom
+command view.reset_layout
+expect screen contains "EDIT"
+expect screen contains "view reset to default"
+expect screen contains "a.txt"

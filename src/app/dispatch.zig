@@ -2033,6 +2033,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     focusLeafAt(app, m.x, m.y);
                     try runCmd(app, .@"view.fullscreen");
                 },
+                // Full screen's corner mark: the click leaves.
+                .fullscreen_exit => try runCmd(app, .@"view.fullscreen"),
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
                 .ai_claude => try runCmd(app, .@"ai.claude_code"),
                 .ai_codex => try runCmd(app, .@"ai.codex"),

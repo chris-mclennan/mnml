@@ -1,0 +1,33 @@
+# width: 120
+# Full screen under the vim profile (src/app/zen.zig): `:fullscreen`
+# enters and the toast names the `:` door; a lone Esc in Normal mode
+# hints (the vim profile has no chord); Esc Esc leaves; `:zen` toggles
+# too and `:resetview` brings the frame back. NORMAL is the frame's
+# witness (the statusline's mode chip).
+command editor.use_vim
+write a.txt "hello\nworld\n"
+open a.txt
+expect screen contains "NORMAL"
+ex fullscreen
+expect screen lacks "NORMAL"
+expect screen contains "Full screen · Esc Esc or :fullscreen leaves"
+key esc
+expect screen contains "Esc again leaves full screen · :fullscreen"
+expect screen lacks "Ctrl+K Z"
+key esc
+expect screen contains "NORMAL"
+expect screen contains "full screen off"
+ex zen
+expect screen lacks "NORMAL"
+ex resetview
+expect screen contains "NORMAL"
+expect screen contains "view reset to default"
+# Insert mode keeps its Esc: the first leaves insert, the next two leave.
+ex fullscreen
+key i
+key esc
+expect screen lacks "Esc again"
+key esc
+expect screen contains "Esc again leaves full screen"
+key esc
+expect screen contains "NORMAL"

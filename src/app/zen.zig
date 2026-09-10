@@ -429,3 +429,55 @@ test "zen: the palette's full-screen row reads Enter outside and Exit inside" {
     try command.run(&app, .{ .static = .palette });
     try t.expectEqualStrings("view  ·  Exit full screen  ·  view.fullscreen", app.overlay.picker.labels[row]);
 }
+
+test "zen: the corner mark paints at the body's top-right while inside, is a button whose click leaves, and is gone outside" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const render = @import("render.zig");
+    const bufferline = @import("../ui/bufferline.zig");
+    try app.render();
+    try t.expect(if (app.hits.at(99, 0)) |h| (h != .button or h.button != @intFromEnum(render.Button.fullscreen_exit)) else true);
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try app.render();
+    const cell = app.screen.readCell(99, 0).?;
+    try t.expectEqualStrings(bufferline.restore_glyph, cell.char.grapheme);
+    try t.expectEqual(@as(u32, @intFromEnum(render.Button.fullscreen_exit)), app.hits.at(99, 0).?.button);
+    // `--ascii`: the twin.
+    app.cfg.ui.ascii_icons = true;
+    try app.render();
+    try t.expectEqualStrings(bufferline.restore_ascii, app.screen.readCell(99, 0).?.char.grapheme);
+    // The click leaves; the mark and its hit go with the frame's return.
+    try app.handle(.{ .mouse = .{ .x = 99, .y = 0, .kind = .press, .button = .left } });
+    try t.expect(!app.zen);
+    try app.render();
+    try t.expect(if (app.hits.at(99, 0)) |h| (h != .button or h.button != @intFromEnum(render.Button.fullscreen_exit)) else true);
+}
+
+test "zen: the editor and tab context menus end with Exit full screen while inside, not outside" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try app.openScratch();
+    const context_menus = @import("context_menus.zig");
+    try context_menus.openEditorMenu(&app, 5, 5);
+    var last = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try t.expectEqualStrings("Save", last.label);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try context_menus.openEditorMenu(&app, 5, 5);
+    last = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try t.expectEqualStrings("Exit full screen", last.label);
+    try t.expectEqual(command.CommandId.@"view.fullscreen", last.action.command);
+    try t.expect(last.separator_before);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try context_menus.openTabMenu(&app, id, 5, 5);
+    last = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try t.expectEqualStrings("Exit full screen", last.label);
+    // Its row runs the command: the menu's last row, Enter.
+    app.overlay.menu.cursor = app.overlay.menu.items.len - 1;
+    app.overlay.menu.highlight = true;
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(!app.zen);
+}

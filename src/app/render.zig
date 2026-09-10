@@ -166,6 +166,9 @@ pub const Button = enum(u32) {
     right_close = 18,
     right_tab = 19,
     right_new = 20,
+    /// Full screen's corner mark: the one cell of chrome kept, at the
+    /// body's top-right; a click leaves (`drawFullscreenMark`).
+    fullscreen_exit = 21,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -429,6 +432,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     if (!app.zen) panes_area = dock.bodyAfterStrips(dock_area, dock.strips(dock_area, app.dock.widgets.items, app.dock.hidden));
     app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
+    if (app.zen) try drawFullscreenMark(app, ui, panes_area);
     if (!app.zen) try dock.draw(app, ui, dock_area);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
@@ -451,6 +455,23 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // line, whatever it was anchored in.
     if (app.overlay == .menu) drawMenu(ui, Rect.init(full.x, full.y, full.w, fr.upper.bottom() -| full.y), &app.overlay.menu);
     try discovery.drawTooltip(app, ui, full);
+}
+
+// ── full screen's corner mark ──
+
+/// The one cell of chrome full screen keeps: the strip's restore glyph
+/// (its ASCII twin under `--ascii`), muted, at the body's top-right —
+/// lit while the pointer rests on it — registered as the button whose
+/// click leaves. The statusline that would show the way is not
+/// painted, so this is where the mouse finds it (Rust repurposes the
+/// strip's maximize button the same way).
+fn drawFullscreenMark(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
+    if (body.isEmpty()) return;
+    const cell = Rect.init(body.right() - 1, body.y, 1, 1);
+    const pal = app.theme.palette;
+    const style: Theme.Style = if (ui.hovered(cell)) app.theme.accent else .{ .fg = pal.comment, .bg = pal.bg };
+    _ = ui.putStr(cell.x, cell.y, 1, if (ui.ascii) bufferline.restore_ascii else bufferline.restore_glyph, style);
+    try ui.hits.add(ui.arena, cell, .{ .button = @intFromEnum(Button.fullscreen_exit) });
 }
 
 // ── palette bar ──
