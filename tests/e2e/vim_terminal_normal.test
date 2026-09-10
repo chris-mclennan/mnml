@@ -1,0 +1,20 @@
+# Neovim's terminal modes under the vim profile: a shell pane takes every
+# key (TERMINAL); `<C-\><C-n>` (`:help CTRL-\_CTRL-N`) — or NvChad's
+# `<C-x>` — enters terminal-normal (T-NORMAL), where the leader and the
+# window chords are the app's; `i` goes back in.
+write a.txt "alpha\n"
+open a.txt
+command editor.use_vim
+command term.shell_bottom
+wait 800
+expect screen contains "TERMINAL"
+key ctrl+backslash
+key ctrl+n
+expect screen contains "T-NORMAL"
+key i
+expect screen contains "TERMINAL"
+key ctrl+x
+expect screen contains "T-NORMAL"
+key ctrl+k
+expect screen contains "NORMAL"
+expect screen lacks "T-NORMAL"

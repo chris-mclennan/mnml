@@ -27,6 +27,8 @@ const Key = key_mod.Key;
 const Mouse = key_mod.Mouse;
 const layout_mod = @import("layout.zig");
 const command = @import("../core/command.zig");
+const side = @import("side.zig");
+const statusline = @import("statusline.zig");
 const CommandError = command.CommandError;
 const launch_profiles = @import("launch_profiles.zig");
 const accent_color = @import("../ui/accent_color.zig");
@@ -118,6 +120,15 @@ pub const PtyPane = struct {
     /// (`sessions.zig` sets it on the edge); the tab shows a badge until
     /// the pane is looked at.
     attention: bool = false,
+    /// Neovim's terminal-normal mode (`:help CTRL-\_CTRL-N`): the keys
+    /// are the app's — the leader, the `Ctrl-W` family, `i` / `a` back
+    /// to the child — and nothing reaches the child. vim profile only.
+    term_normal: bool = false,
+    /// A `Ctrl-\` just arrived and may be the first half of
+    /// `<C-\><C-n>`; any other key sends it on to the child first.
+    ctrl_backslash_pending: bool = false,
+    /// `Ctrl-W` in terminal-normal: the next key names the window verb.
+    ctrl_w_pending: bool = false,
     /// // changed (colors): the identity strip's colour — a palette name
     /// (`ui/accent_color.zig`): the user's pick, or the auto slot a new
     /// Claude session takes (Rust `PtySession.accent_color`). Owned;
@@ -509,6 +520,74 @@ pub fn childOwned(k: Key) bool {
         else => return false,
     };
     return c == 'c' or c == 'd' or c == 'z' or c == 'l';
+}
+
+/// Terminal mode's way out (`:help CTRL-\_CTRL-N`; NvChad also maps
+/// `<C-x>` in terminal mode to it — mappings.lua "terminal escape
+/// terminal mode"). Returns true when the key was taken: `Ctrl-\`
+/// arms, `Ctrl-N` after it (or `Ctrl-X` alone) enters terminal-normal;
+/// any other key after `Ctrl-\` sends the `Ctrl-\` on and is not taken.
+pub fn escapeKey(app: *App, p: *PtyPane, k: Key) bool {
+    if (app.input_style != .vim) return false;
+    const ctrl_only = k.mods.ctrl and !k.mods.alt and !k.mods.super and !k.mods.shift;
+    const c: u21 = switch (k.code) {
+        .char => |c| if (c < 0x80) std.ascii.toLower(@intCast(c)) else c,
+        else => 0,
+    };
+    if (p.ctrl_backslash_pending) {
+        p.ctrl_backslash_pending = false;
+        if (ctrl_only and c == 'n') {
+            enterTermNormal(app, p);
+            return true;
+        }
+        feedKey(app, p, Key.ctrl('\\'));
+        return false;
+    }
+    if (ctrl_only and c == '\\') {
+        p.ctrl_backslash_pending = true;
+        return true;
+    }
+    if (ctrl_only and c == 'x') {
+        enterTermNormal(app, p);
+        return true;
+    }
+    return false;
+}
+
+fn enterTermNormal(app: *App, p: *PtyPane) void {
+    p.term_normal = true;
+    p.ctrl_w_pending = false;
+    app.needs_render = true;
+}
+
+/// Terminal-normal mode's own keys: `i` / `a` / `I` / `A` back to the
+/// child (`:help t_i`), the `Ctrl-W` family as any window has it.
+/// Returns false for a key the chord chain should see.
+pub fn termNormalKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
+    if (p.ctrl_w_pending) {
+        p.ctrl_w_pending = false;
+        if (side.ctrlWCommand(k)) |id| command.run(app, .{ .static = id }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        };
+        return true;
+    }
+    if (side.isCtrlW(app, k)) {
+        p.ctrl_w_pending = true;
+        return true;
+    }
+    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    switch (k.code) {
+        .char => |c| switch (c) {
+            'i', 'a', 'I', 'A' => {
+                p.term_normal = false;
+                app.needs_render = true;
+                return true;
+            },
+            else => return false,
+        },
+        else => return false,
+    }
 }
 
 /// A key for the child. Shift+PageUp/PageDown/Home/End scroll the
@@ -907,6 +986,67 @@ test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
     try app.handle(.{ .key = Key.ctrl('d') });
     try t.expect(try tickUntilScreen(&app, "[exited 0]", 5000));
     try t.expect(app.panes.pty(id).?.exit.?.ok());
+}
+
+test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader and Ctrl-W work and i returns; <C-x> too; a lone <C-\\> reaches the child" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    // `-isig`: a `Ctrl-\` that reaches the child is a byte, not SIGQUIT;
+    // `tr` paints it as `#`.
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -isig; cat | tr '\\034a-z' '#A-Z'" }, .label = "cat" });
+    app.io.sleep(.fromMilliseconds(200), .awake) catch {};
+    const p = app.panes.pty(id).?;
+    // Terminal mode: `space v` is the child's, not the leader's.
+    for (" v") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(try tickUntilScreen(&app, " V", 5000));
+    try t.expectEqual(@as(usize, 1), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    // `<C-\><C-n>`: terminal-normal. Nothing typed reaches the child now.
+    try app.handle(.{ .key = Key.ctrl('\\') });
+    try t.expect(p.ctrl_backslash_pending and !p.term_normal);
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try t.expect(p.term_normal);
+    try t.expectEqualStrings("T-NORMAL", statusline.modeOf(&app).label);
+    for ("xyz") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(!(try tickUntilScreen(&app, "XYZ", 300)));
+    // The leader works: `space v` splits a second shell to the right.
+    try app.handle(.{ .key = Key.char(' ') });
+    try app.handle(.{ .key = Key.char('v') });
+    try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    // The new shell opens in terminal mode (as Neovim's does): NvChad's
+    // `<C-x>` escapes it, then `Ctrl-W h` goes back to the cat pane;
+    // `i` there re-enters terminal mode.
+    try t.expect(app.active.? != id);
+    try app.handle(.{ .key = Key.ctrl('x') });
+    try t.expect(app.panes.pty(app.active.?).?.term_normal);
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('h') });
+    try t.expectEqual(id, app.active.?);
+    try app.handle(.{ .key = Key.char('i') });
+    try t.expect(!p.term_normal);
+    try t.expectEqualStrings("TERMINAL", statusline.modeOf(&app).label);
+    for ("abc") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(try tickUntilScreen(&app, "ABC", 5000));
+    // NvChad's `<C-x>` is the same door; `a` is the way back too.
+    try app.handle(.{ .key = Key.ctrl('x') });
+    try t.expect(p.term_normal);
+    try app.handle(.{ .key = Key.char('a') });
+    try t.expect(!p.term_normal);
+    // A `Ctrl-\` followed by anything else is sent on to the child
+    // with that key: the child sees both bytes (`#`, then `Q`).
+    try app.handle(.{ .key = Key.ctrl('\\') });
+    try t.expect(p.ctrl_backslash_pending);
+    try app.handle(.{ .key = Key.char('q') });
+    try t.expect(!p.ctrl_backslash_pending and !p.term_normal);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(try tickUntilScreen(&app, "#Q", 5000));
 }
 
 test "paste is bracketed only when the child asked; a newline becomes a carriage return otherwise" {

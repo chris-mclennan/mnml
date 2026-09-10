@@ -466,6 +466,15 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
         try app.forceClosePane(id);
         return;
     }
+    // vim: `<C-\><C-n>` (NvChad's `<C-x>` too) leaves the child for
+    // terminal-normal mode, where every key is the app's — the leader,
+    // the `Ctrl-W` family, `i` / `a` back in — and none is the child's.
+    if (p.term_normal) {
+        if (try pty_pane.termNormalKey(app, p, k)) return;
+        _ = try chordChain(app, k);
+        return;
+    }
+    if (pty_pane.escapeKey(app, p, k)) return;
     if (modified and !pty_pane.childOwned(k)) {
         const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;
         if (bound and try chordChain(app, k)) return;
