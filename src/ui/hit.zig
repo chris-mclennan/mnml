@@ -140,6 +140,9 @@ pub const HitTarget = union(enum) {
     /// icon, or the settings gear at the bottom.
     rail: activity_bar.Part,
     welcome: WelcomeRow,
+    /// The LSP hover / signature box (`ui/hover_view.zig`): the wheel
+    /// scrolls its lines two at a time, a press puts it away.
+    hover_popup,
     /// The git palette's repo pill and branch row (`ui/git_palette.zig`);
     /// its list rows are `.row{ .git }`.
     git_palette: git_palette.Part,
@@ -158,6 +161,7 @@ pub const HitTarget = union(enum) {
         switch (t) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
             .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
+            .hover_popup => {},
             .font_update => |n| try w.print(":{d}", .{n}),
             .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
             .info_view => |p| switch (p) {

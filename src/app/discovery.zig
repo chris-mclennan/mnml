@@ -102,6 +102,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .detail = "type to narrow the rows · Esc clears",
         },
         .scrollbar => .{ .title = "Scrollbar", .detail = "drag the thumb · wheel scrolls" },
+        .hover_popup => .{ .title = "Hover", .detail = "wheel scrolls two lines · click closes" },
         .button => |id| try describeButton(app, arena, id),
         .link => |l| .{ .title = try f.fmt(arena, "Link: {s}", .{l.url}), .detail = "click opens it" },
         .menu_item => |mi| blk: {

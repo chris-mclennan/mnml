@@ -1665,6 +1665,19 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .editor_cell => |cell| return editorCellMouse(app, cell, m, count, wheel),
+        // The hover box: the wheel scrolls its lines two an event (Rust),
+        // the box clamping at draw; a press puts it away, as a press
+        // anywhere does.
+        .hover_popup => {
+            if (app.lsp.hover) |*h| {
+                if (wheel) {
+                    const step: usize = 2 * @as(usize, count);
+                    h.scroll = if (m.kind == .scroll_down) h.scroll + step else h.scroll -| step;
+                    return;
+                }
+                if (m.kind == .press) lsp.closeHover(app);
+            }
+        },
         // The gutter, the whole margin — the sign cell and the line
         // number alike. A right press opens the breakpoint menu on that
         // line. A left press on a debuggable file (`dap.gutterToggles`)
@@ -3589,6 +3602,53 @@ test "a gutter press selects the line with the cursor at column 1 and Shift exte
     try std.testing.expectEqualStrings("breakpoint cleared: line 3", app.lastToast().?);
 }
 
+/// The first cell of the hover box, or null when none is painted.
+fn hoverBoxAt(app: *App) ?struct { x: u16, y: u16 } {
+    for (app.hits.items.items) |e| if (e.target == .hover_popup) return .{ .x = e.rect.x + 1, .y = e.rect.y + 1 };
+    return null;
+}
+
+test "the wheel over the hover box scrolls its lines two an event, never the editor under it; a press puts it away" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try app.openScratch();
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (0..100) |i| try text.print(std.testing.allocator, "L{d}\n", .{i});
+    try app.activeEditor().?.buf.editor.setText(text.items);
+    // Thirty lines of hover, as `showPages` would build them.
+    var h: lsp.Hover = .{ .pane = id, .arena = @import("../core/alloc.zig").SnapshotArena.init(app.gpa), .pages = &.{}, .active = 0, .at = 0 };
+    const a = h.arena.allocator();
+    const page = try a.alloc([]const u8, 30);
+    for (page, 0..) |*l, i| l.* = try std.fmt.allocPrint(a, "hover line {d}", .{i});
+    const pages = try a.alloc([]const []const u8, 1);
+    pages[0] = page;
+    h.pages = pages;
+    app.lsp.hover = h;
+    try app.render();
+    const box = hoverBoxAt(&app).?;
+    // One event: two lines. Three events in a batch: six more.
+    try app.handle(.{ .mouse = .{ .x = box.x, .y = box.y, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 2), app.lsp.hover.?.scroll);
+    for (0..3) |_| try app.handle(.{ .mouse = .{ .x = box.x, .y = box.y, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 8), app.lsp.hover.?.scroll);
+    try app.handle(.{ .mouse = .{ .x = box.x, .y = box.y, .kind = .scroll_up } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 6), app.lsp.hover.?.scroll);
+    // The editor under the box did not move.
+    try std.testing.expectEqual(@as(u32, 0), app.activeEditor().?.view.scroll_line);
+    // The draw clamps a scroll past the last page of lines.
+    app.lsp.hover.?.scroll = 99;
+    try app.render();
+    try std.testing.expect(app.lsp.hover.?.scroll < 30);
+    try press(&app, box.x, box.y, .left);
+    try release(&app, box.x, box.y);
+    try std.testing.expect(app.lsp.hover == null);
+}
+
 test "wheel: a burst folds into one batch per tick; standard pins the view, vim moves the cursor" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
@@ -3891,6 +3951,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .info_view = .{ .delegated = "info_view_app.mouse" },
     .script_hit = .here,
     .editor_cell = .{ .delegated = "editorCellMouse" },
+    .hover_popup = .{ .none = "dismisses" },
     .gutter = .here,
     .overlay_item = .here,
     .dock = .{ .delegated = "dock.mouse" },

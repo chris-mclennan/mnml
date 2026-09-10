@@ -1,7 +1,9 @@
 //! The hover box — also signature help, which is the same box with a
 //! page counter (`2/3` overloads). A bordered box just under the cursor
 //! cell (above when it will not fit), the lines clipped to the width;
-//! `scroll` is the first line shown.
+//! `scroll` is the first line shown. The box registers `.hover_popup`
+//! over itself, so the wheel over it reaches its lines (Rust: two a
+//! notch) instead of the editor under it.
 
 const std = @import("std");
 const Rect = @import("rect.zig");
@@ -32,7 +34,9 @@ pub fn draw(ui: Ui, screen: Rect, cursor: ?editor_view.Cursor, scroll: *usize, p
     const y: u16 = if (below + h <= screen.bottom()) below else if (c.y >= screen.y + h) c.y - h else screen.y;
     const x: u16 = @max(@min(c.x, screen.right() -| w), screen.x);
     const title: ?[]const u8 = if (p.pages > 1) ui.fmt("{d}/{d}", .{ p.page + 1, p.pages }) else null;
-    const inner = overlay.frame(ui, Rect.init(x, y, w, h), title);
+    const box = Rect.init(x, y, w, h);
+    const inner = overlay.frame(ui, box, title);
+    ui.hit(box, .hover_popup);
     if (inner.isEmpty()) return;
     scroll.* = @min(scroll.*, p.lines.len -| inner_rows);
     var i: usize = 0;
@@ -44,6 +48,22 @@ pub fn draw(ui: Ui, screen: Rect, cursor: ?editor_view.Cursor, scroll: *usize, p
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
+
+test "the box registers `.hover_popup` over itself and nothing outside it" {
+    var f = try Fixture.init(40, 12);
+    defer f.deinit();
+    const lines = [_][]const u8{ "fn foo()", "", "docs", "more", "and more" };
+    var scroll: usize = 0;
+    draw(f.ui(), f.full(), .{ .x = 4, .y = 1 }, &scroll, .{ .lines = &lines, .page = 0, .pages = 1 });
+    // The box: from row 2 under the cursor, 7 rows (5 lines + the frame),
+    // 10 wide (8 + the frame) from column 4.
+    try testing.expect(f.hits.at(4, 2).? == .hover_popup);
+    try testing.expect(f.hits.at(13, 8).? == .hover_popup);
+    try testing.expect(f.hits.at(8, 5).? == .hover_popup);
+    try testing.expect(f.hits.at(14, 5) == null);
+    try testing.expect(f.hits.at(8, 1) == null);
+    try testing.expect(f.hits.at(8, 9) == null);
+}
 
 test "a box under the cursor with the lines; scroll clamps" {
     var f = try Fixture.init(30, 8);
