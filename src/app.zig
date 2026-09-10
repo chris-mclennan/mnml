@@ -951,6 +951,11 @@ pub const App = struct {
     /// When a plain Esc last armed the way out of full screen; a
     /// second within the chord timeout leaves (`zen.escKey`).
     zen_esc_ms: ?i64 = null,
+    /// `view.toggle_zoom`: the pane whose leaf alone paints, over the
+    /// whole body, while the split tree underneath is untouched (Rust's
+    /// `zoomed_leaf`). Closing the pane clears it; a pane no longer in
+    /// the active layout is ignored by the painter.
+    zoomed_leaf: ?PaneId = null,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
     /// Render durations for the statusline stress meter.
@@ -1796,6 +1801,9 @@ pub const App = struct {
 
     pub fn forceClosePane(self: *App, id: PaneId) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
+        // The zoomed pane going means the zoom goes: a synthetic leaf
+        // holding a pane that is no longer in the layout paints nothing.
+        if (self.zoomed_leaf == id) self.zoomed_leaf = null;
         // A graph tab closed is a repo hidden for the session (Rust `close_pane`).
         if (pane.* == .git_graph) if (self.git.repoById(pane.git_graph.repo)) |r| try git_palette_app.noteClosed(self, r.path);
         // Editors and markdown previews are files: they can come back —

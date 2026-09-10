@@ -21,6 +21,7 @@ const CommandError = command.CommandError;
 
 pub const table = .{
     .@"view.fullscreen" = &toggle,
+    .@"view.toggle_zoom" = &toggleZoom,
 };
 
 /// The toast ids: the enter reminder and the Esc hint replace their
@@ -65,6 +66,20 @@ pub fn set(app: *App, on: bool) void {
             @as([]const u8, if (app.input_style == .vim) ":fullscreen" else "Ctrl+K Z"),
         });
     } else app.dismissToast(enter_toast_id);
+    app.needs_render = true;
+}
+
+/// `view.toggle_zoom` (`space z z`, the strip's maximize button's
+/// menu): the active pane's leaf alone fills the body; the same call
+/// on it restores; on another leaf the zoom moves there (Rust's
+/// `toggle_zoom_active_leaf`). The split tree is untouched, so
+/// `Ctrl+W` and the dividers still address the real layout.
+fn toggleZoom(app: *App) CommandError!void {
+    const active = app.active orelse {
+        app.toast("nothing to maximize — open a pane first", .{});
+        return;
+    };
+    app.zoomed_leaf = if (app.zoomed_leaf == active) null else active;
     app.needs_render = true;
 }
 
@@ -219,4 +234,63 @@ test "zen: `:fullscreen` and `:zen` toggle it from the `:` line" {
     try t.expect(app.zen);
     try @import("ex.zig").run(&app, "zen");
     try t.expect(!app.zen);
+}
+
+/// The `.pane` hits of the last frame, and the rect of `id`'s.
+fn panesPainted(app: *App) usize {
+    var n: usize = 0;
+    for (app.hits.items.items) |e| if (e.target == .pane) {
+        n += 1;
+    };
+    return n;
+}
+
+fn paneRect(app: *App, id: app_mod.PaneId) ?@import("../ui/rect.zig") {
+    for (app.hits.items.items) |e| if (e.target == .pane and e.target.pane == id) return e.rect;
+    return null;
+}
+
+test "zoom: the active leaf alone paints over the body; again restores; another leaf moves it; the split tree is untouched; closing the pane clears it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.tree.loaded = true;
+    // No pane: a word, nothing set.
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expect(app.zoomed_leaf == null);
+    try t.expectEqualStrings("nothing to maximize — open a pane first", lastToast(&app));
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try t.expect(a != b);
+    try app.render();
+    try t.expectEqual(@as(usize, 2), panesPainted(&app));
+    try t.expect(paneRect(&app, b).?.w < app.panes_area.w);
+    // Zoom: one pane, the whole body; the tree underneath keeps two leaves.
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expectEqual(b, app.zoomed_leaf.?);
+    try app.render();
+    try t.expectEqual(@as(usize, 1), panesPainted(&app));
+    try t.expect(paneRect(&app, a) == null);
+    try t.expectEqual(app.panes_area.w, paneRect(&app, b).?.w);
+    try t.expectEqual(app.panes_area.h, paneRect(&app, b).?.h);
+    try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    // Again restores.
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expect(app.zoomed_leaf == null);
+    try app.render();
+    try t.expectEqual(@as(usize, 2), panesPainted(&app));
+    // Zoomed on `a`, the call from `b` moves the zoom rather than
+    // asking for an un-zoom of a hidden leaf first.
+    app.setActive(a);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expectEqual(a, app.zoomed_leaf.?);
+    app.setActive(b);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expectEqual(b, app.zoomed_leaf.?);
+    // The zoomed pane closing clears the zoom.
+    try app.forceClosePane(b);
+    try t.expect(app.zoomed_leaf == null);
+    try app.render();
+    try t.expectEqual(@as(usize, 1), panesPainted(&app));
 }
