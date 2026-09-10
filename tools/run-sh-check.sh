@@ -166,5 +166,14 @@ else
   echo "  skip pty: no python3"
 fi
 
+# ── 7. the break-check's usage path ────────────────────────────────────
+# Not a run.sh verb, but it rides the same harness: a break-check that
+# cannot print its usage cannot be trusted to restore a file. Its
+# verdicts have their own fake-zig check, tools/break-check-selftest.sh.
+"$ROOT/tools/break-check.sh" --help >/dev/null 2>&1; rc=$?
+check "break-check: --help exits 0" '[ $rc -eq 0 ]'
+"$ROOT/tools/break-check.sh" >/dev/null 2>&1; rc=$?
+check "break-check: no arguments exits 64" '[ $rc -eq 64 ]'
+
 echo "run-sh-check: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
