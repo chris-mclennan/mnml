@@ -268,9 +268,27 @@ pub const InputHandler = union(enum) {
         };
     }
 
+    /// A key the handler must see before the chord chain, whatever the
+    /// keymap binds it to: vim's Insert owns `Ctrl+N` / `Ctrl+P`
+    /// (keyword completion) and `Ctrl+O` (one-shot Normal), which the
+    /// vim profile binds to the tree and the file picker for Normal.
+    pub fn reservesKey(h: *const InputHandler, k: Key) bool {
+        return switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "reservesKey")) impl.reservesKey(k) else false,
+        };
+    }
+
     pub fn requestInsertMode(h: *InputHandler) void {
         switch (h.*) {
             inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "requestInsertMode")) impl.requestInsertMode(),
+        }
+    }
+
+    /// A recording the app started or stopped without a key (the
+    /// statusline's macro chip): the handler's own `q` bookkeeping follows.
+    pub fn setMacroRecording(h: *InputHandler, on: bool) void {
+        switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "setMacroRecording")) impl.setMacroRecording(on),
         }
     }
 

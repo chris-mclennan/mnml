@@ -1,0 +1,9 @@
+# `view.commands_reference` opens the generated commands page — the
+# same text `zig build docs` writes — as a scratch buffer.
+write a.txt "alpha\n"
+open a.txt
+command view.commands_reference
+expect pane "[scratch]"
+expect screen contains "# Commands"
+expect screen contains "commands reference: "
+expect screen contains " commands"

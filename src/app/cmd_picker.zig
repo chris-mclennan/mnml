@@ -555,6 +555,12 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             };
         },
         .icon_glyphs => try @import("icon_picker.zig").accept(app, i),
+        .bookmarks => {
+            const url = try app.frame.allocator().dupe(u8, if (i < p.details.len) p.details[i] else "");
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            @import("git.zig").openExternal(app, url);
+        },
         .custom => {
             const f = p.on_accept orelse {
                 app.overlay.deinit(app.gpa);

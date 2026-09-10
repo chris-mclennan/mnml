@@ -1,0 +1,10 @@
+# `markdown.link_check` walks the workspace's markdown and lists every
+# `[label](target)` whose target is a path that names no file in the
+# quickfix pane; a URL, an anchor and a resolving path are not listed.
+write README.md "# Hi\n\nSee [the guide](docs/guide.md), [gone](docs/missing.md#top) and [web](https://example.com).\n"
+write docs/guide.md "# Guide\n\n[back](../README.md) [nowhere](nope.md)\n"
+command markdown.link_check
+expect screen contains "broken link → docs/missing.md#top"
+expect screen contains "broken link → nope.md"
+expect screen lacks "broken link → docs/guide.md"
+expect screen lacks "broken link → https://example.com"

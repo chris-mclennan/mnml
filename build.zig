@@ -245,12 +245,12 @@ pub fn build(b: *std.Build) void {
     // table (E8). `zig build check` is the CI gate (E7): fmt, the unit
     // tests in Debug and ReleaseSafe, the Phase-0 e2e gate, the same gate
     // swept at 80x24 / 120x40 / 200x60, and defaults.test.
-    const specs_mod = b.createModule(.{ .root_source_file = b.path("src/commands/specs.zig"), .target = target, .optimize = optimize });
+    const reference_mod = b.createModule(.{ .root_source_file = b.path("src/commands/reference.zig"), .target = target, .optimize = optimize });
     const gen_mod = b.createModule(.{
         .root_source_file = b.path("tools/gen_commands.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "specs", .module = specs_mod }},
+        .imports = &.{.{ .name = "reference", .module = reference_mod }},
     });
     const gen = b.addExecutable(.{ .name = "gen-commands", .root_module = gen_mod });
     const gen_run = b.addRunArtifact(gen);

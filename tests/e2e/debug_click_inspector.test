@@ -1,0 +1,14 @@
+# `debug.toggle_click_inspector`: while it is on, every press toasts
+# the hit target under the pointer with its cell before the press is
+# handled; off, presses are quiet again.
+write a.txt "alpha\n"
+open a.txt
+command debug.toggle_click_inspector
+expect screen contains "click inspector: ON"
+click 60 10
+expect screen contains "click @60,10 → pane:"
+rightclick 60 10
+expect screen contains "right-click @60,10 → "
+key esc
+command debug.toggle_click_inspector
+expect screen contains "click inspector: OFF"

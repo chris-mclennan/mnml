@@ -35,6 +35,11 @@ const Mouse = @import("../core/key.zig").Mouse;
 pub const table = .{
     .@"view.add_workspace" = &addWorkspace,
     .@"view.switch_workspace" = &switchWorkspace,
+    .@"view.remove_workspace" = &removeWorkspace,
+    .@"view.open_default_workspace" = &openDefaultWorkspace,
+    .@"view.manage_workspaces" = &manageWorkspaces,
+    .@"view.reveal_in_tree" = &revealInTree,
+    .@"view.toggle_tree_section" = &toggleTreeSection,
     .@"view.toggle_tree" = &toggle,
     .@"view.focus_tree" = &focus,
     .@"view.toggle_hidden" = &toggleHidden,
@@ -167,9 +172,9 @@ pub const Tree = struct {
 
     pub const AddError = error{ NotADirectory, AlreadyOpen } || Allocator.Error;
 
-    /// Add `path_in` as an extra root (collapsed). Returns its index.
-    pub fn addRoot(self: *Tree, app: *App, path_in: []const u8, name_in: ?[]const u8) AddError!usize {
-        const gpa = self.gpa;
+    /// `path_in` as a root path: `~` and workspace-relative forms
+    /// expanded, then the directory's canonical path (frame arena).
+    pub fn canonicalRoot(app: *App, path_in: []const u8) error{ NotADirectory, OutOfMemory }![]const u8 {
         const arena = app.frame.allocator();
         var path = path_in;
         if (path.len > 0 and path[0] == '~') {
@@ -182,9 +187,22 @@ pub const Tree = struct {
         defer dir.close(app.io);
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const n = dir.realPath(app.io, &buf) catch return error.NotADirectory;
-        const canon = buf[0..n];
-        if (std.mem.eql(u8, canon, app.workspace)) return error.AlreadyOpen;
-        for (self.roots.items) |r| if (std.mem.eql(u8, r.path, canon)) return error.AlreadyOpen;
+        return try arena.dupe(u8, buf[0..n]);
+    }
+
+    /// The section a canonical path is the root of: 0 the workspace,
+    /// i + 1 the i-th extra root, null when it is neither.
+    pub fn indexOfRoot(self: *const Tree, app: *const App, canon: []const u8) ?usize {
+        if (std.mem.eql(u8, canon, app.workspace)) return 0;
+        for (self.roots.items, 0..) |r, i| if (std.mem.eql(u8, r.path, canon)) return i + 1;
+        return null;
+    }
+
+    /// Add `path_in` as an extra root (collapsed). Returns its index.
+    pub fn addRoot(self: *Tree, app: *App, path_in: []const u8, name_in: ?[]const u8) AddError!usize {
+        const gpa = self.gpa;
+        const canon = try canonicalRoot(app, path_in);
+        if (self.indexOfRoot(app, canon) != null) return error.AlreadyOpen;
         const owned_path = try gpa.dupe(u8, canon);
         errdefer gpa.free(owned_path);
         const base = std.fs.path.basename(canon);
@@ -211,6 +229,67 @@ pub const Tree = struct {
         if (app.activeBuffer()) |b| b.input.onBlur();
         self.visible = true;
         app.focus = .tree;
+        app.needs_render = true;
+    }
+
+    /// `view.remove_workspace`'s pick: extra root `idx` (0-based into
+    /// `roots`) leaves the tree with the folds under it; the rows are
+    /// read again and the cursor stays in range.
+    pub fn removeRoot(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
+        if (idx >= self.roots.items.len) return;
+        const gone = self.roots.orderedRemove(idx);
+        defer {
+            self.gpa.free(gone.name);
+            self.gpa.free(gone.path);
+        }
+        // Rows under an extra root are absolute, so its folds are the
+        // expanded keys that start with its path.
+        var doomed: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer doomed.deinit(self.gpa);
+        var it = self.expanded.keyIterator();
+        while (it.next()) |k| if (underRoot(gone.path, k.*) != null) try doomed.append(self.gpa, k.*);
+        for (doomed.items) |k| try self.setExpanded(k, false);
+        try self.refresh(app);
+        if (self.cursor >= self.rows.items.len) self.cursor = self.rows.items.len -| 1;
+        app.needs_render = true;
+    }
+
+    /// `view.reveal_in_tree`: the tree comes up focused with `abs`'s
+    /// section and every directory above the file open, the cursor on
+    /// its row (`draw` scrolls it into view). A file under no root, or
+    /// one the listing leaves out (ignored, hidden), is a failure.
+    pub fn revealPath(self: *Tree, app: *App, abs: []const u8) CommandError!void {
+        const arena = app.frame.allocator();
+        try self.syncRoots(app);
+        var root: u8 = 0;
+        var rel: []const u8 = undefined;
+        var base: []const u8 = app.workspace;
+        if (underRoot(app.workspace, abs)) |r| {
+            rel = r;
+        } else {
+            var found = false;
+            for (self.roots.items, 0..) |r, i| if (underRoot(r.path, abs) != null) {
+                root = @intCast(i + 1);
+                rel = abs;
+                base = r.path;
+                found = true;
+                break;
+            };
+            if (!found) return app.diag.fail(arena, "{s}: not under a workspace root", .{std.fs.path.basename(abs)});
+        }
+        side.place(app, .explorer, true);
+        try self.setRootExpanded(root, true);
+        // Every directory between the root and the file — the order
+        // does not matter to the set, only that each one is in it
+        // before the rows are read.
+        var dir = std.fs.path.dirname(rel);
+        while (dir) |d| : (dir = std.fs.path.dirname(d)) {
+            if (d.len == 0 or (root != 0 and d.len <= base.len)) break;
+            try self.setExpanded(d, true);
+        }
+        try self.refresh(app);
+        const row = self.rowOf(rel) orelse return app.diag.fail(arena, "{s} is not in the file tree", .{app.relPath(abs)});
+        self.cursor = row;
         app.needs_render = true;
     }
 
@@ -867,6 +946,12 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
     };
 }
 
+/// `path` relative to `base` when it lies under it, else null.
+fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
+    if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
+    return null;
+}
+
 fn isNoisy(name: []const u8) bool {
     for (noisy_dirs) |nd| if (std.mem.eql(u8, name, nd)) return true;
     return false;
@@ -981,6 +1066,103 @@ fn acceptSwitch(app: *App, idx: usize, label: []const u8) Allocator.Error!void {
     _ = label;
     if (idx > app.tree.roots.items.len) return;
     try app.tree.switchTo(app, idx);
+}
+
+/// `view.remove_workspace`: a picker over the extra roots (never the
+/// primary); the pick drops that root for this run — `workspaces` in
+/// `config.zon` is where it is kept.
+fn removeWorkspace(app: *App) CommandError!void {
+    try app.tree.syncRoots(app);
+    const gpa = app.gpa;
+    if (app.tree.roots.items.len == 0) return app.diag.fail(app.frame.allocator(), "no extra workspace to remove", .{});
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
+    }
+    for (app.tree.roots.items) |r| {
+        try labels.append(gpa, try gpa.dupe(u8, r.name));
+        try details.append(gpa, try gpa.dupe(u8, r.path));
+    }
+    const cmd_picker = @import("cmd_picker.zig");
+    try cmd_picker.openPickerWith(app, "Remove workspace", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(app_mod.PaneId, 0), try details.toOwnedSlice(gpa), &.{});
+    app.overlay.picker.on_accept = &acceptRemove;
+}
+
+fn acceptRemove(app: *App, idx: usize, label: []const u8) Allocator.Error!void {
+    if (idx >= app.tree.roots.items.len) return;
+    const name = try app.frame.allocator().dupe(u8, label);
+    try app.tree.removeRoot(app, idx);
+    // Its repos leave the switcher with it.
+    try @import("git.zig").discover(app);
+    app.toast("workspace removed: {s} (drop it from `workspaces` in config.zon to persist)", .{name});
+}
+
+/// `view.open_default_workspace`: `.startup.default_workspace` opens
+/// as the tree's section — added as an extra root when it is new,
+/// switched to when it is the workspace or a root already.
+fn openDefaultWorkspace(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const path = app.cfg.startup.default_workspace orelse return app.diag.fail(arena, "no default_workspace configured (set `.startup.default_workspace` in config.zon)", .{});
+    try app.tree.syncRoots(app);
+    const canon = Tree.canonicalRoot(app, path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.NotADirectory => return app.diag.fail(arena, "can't open workspace: {s} is not a directory", .{path}),
+    };
+    const idx = app.tree.indexOfRoot(app, canon) orelse blk: {
+        const i = app.tree.addRoot(app, canon, null) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.NotADirectory => return app.diag.fail(arena, "can't open workspace: {s} is not a directory", .{path}),
+            error.AlreadyOpen => unreachable,
+        };
+        try @import("git.zig").discover(app);
+        break :blk i + 1;
+    };
+    try app.tree.switchTo(app, idx);
+}
+
+/// `view.manage_workspaces`: the roots are the `.workspaces` list of
+/// the home config (the settings overlay never edits a list), so this
+/// opens that file and puts the cursor on the list when it has one.
+fn manageWorkspaces(app: *App) CommandError!void {
+    try command.run(app, .{ .static = .@"file.open_settings" });
+    if (app.activeEditor()) |e| {
+        const text = e.buf.editor.bytes();
+        if (std.mem.indexOf(u8, text, ".workspaces")) |pos| {
+            const line = std.mem.count(u8, text[0..pos], "\n");
+            e.buf.editor.placeCursor(line, 0);
+        }
+    }
+    app.toast("workspaces are the `.workspaces` list in config.zon", .{});
+    app.needs_render = true;
+}
+
+/// `view.reveal_in_tree`: the active pane's file — an editor with a
+/// path, or a preview — selected in the tree (`Tree.revealPath`).
+fn revealInTree(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = app.active orelse return app.diag.fail(arena, "no file to reveal", .{});
+    const p = app.panes.get(id) orelse return app.diag.fail(arena, "no file to reveal", .{});
+    const path: ?[]const u8 = switch (p.*) {
+        .editor => |*e| e.buf.doc.path,
+        .md_preview => |*m| m.path,
+        else => null,
+    };
+    const abs = try arena.dupe(u8, path orelse return app.diag.fail(arena, "no file to reveal", .{}));
+    try app.tree.revealPath(app, abs);
+}
+
+/// `view.toggle_tree_section`: the primary section folds or opens;
+/// opening puts the keys in the tree (Rust `toggle_tree_root_expanded`).
+fn toggleTreeSection(app: *App) CommandError!void {
+    const open = !app.tree.primary_expanded;
+    app.tree.primary_expanded = open;
+    if (open) side.place(app, .explorer, true);
+    try app.tree.refresh(app);
+    app.needs_render = true;
 }
 
 fn openPathPrompt(app: *App, title: []const u8, purpose: app_mod.PromptPurpose, dir: []const u8) Allocator.Error!void {
@@ -1733,4 +1915,188 @@ test "an Alt-drag confirm copies the file into the folder, the original stays; `
     try command.run(&app, .{ .static = .@"file.move_to" });
     try t.expect(app.overlay == .prompt);
     try t.expectEqualStrings("lib/", app.overlay.prompt.state.text());
+}
+
+test "view.reveal_in_tree opens the section and every folder above the active file, puts the cursor on its row and the keys in the tree; a scratch, a file outside every root, and a preview each get their answer" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "ws/nest/hollow");
+    try tmp.dir.createDirPath(t.io, "extra/lib");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/nest/hollow/file.txt", .data = "deep" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/top.txt", .data = "top" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/notes.md", .data = "# hi" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "outside.txt", .data = "out" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "extra/lib/c.txt", .data = "c" });
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    const deep = try std.fs.path.join(t.allocator, &.{ ws, "nest", "hollow", "file.txt" });
+    defer t.allocator.free(deep);
+    _ = try app.openPath(deep);
+    try command.run(&app, .{ .static = .@"tree.collapse_all" });
+    try t.expect(app.tree.rowOf("nest/hollow") == null);
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"view.reveal_in_tree" });
+    try t.expect(app.tree.visible);
+    try t.expectEqual(app_mod.FocusId.tree, app.focus);
+    try t.expect(app.tree.isExpanded("nest"));
+    try t.expect(app.tree.isExpanded("nest/hollow"));
+    try t.expectEqual(app.tree.rowOf("nest/hollow/file.txt").?, app.tree.cursor);
+    // A scratch buffer has no file.
+    _ = try app.openScratch();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.reveal_in_tree" }));
+    try t.expectEqualStrings("no file to reveal", app.lastToast().?);
+    // A file under no root.
+    const outside = try std.fs.path.join(t.allocator, &.{ root, "outside.txt" });
+    defer t.allocator.free(outside);
+    _ = try app.openPath(outside);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.reveal_in_tree" }));
+    try t.expectEqualStrings("outside.txt: not under a workspace root", app.lastToast().?);
+    // Under an extra root: the root's section opens and the row is the
+    // absolute path.
+    const extra = try std.fs.path.join(t.allocator, &.{ root, "extra" });
+    defer t.allocator.free(extra);
+    _ = try app.tree.addRoot(&app, extra, null);
+    const c = try std.fs.path.join(t.allocator, &.{ root, "extra", "lib", "c.txt" });
+    defer t.allocator.free(c);
+    _ = try app.openPath(c);
+    try command.run(&app, .{ .static = .@"view.reveal_in_tree" });
+    try t.expect(app.tree.roots.items[0].expanded);
+    try t.expectEqual(app.tree.rowOf(c).?, app.tree.cursor);
+    // A markdown preview is the file it stands for.
+    const md = try std.fs.path.join(t.allocator, &.{ ws, "notes.md" });
+    defer t.allocator.free(md);
+    _ = try app.openPath(md);
+    try t.expect(app.panes.get(app.active.?).?.* == .md_preview);
+    try command.run(&app, .{ .static = .@"view.reveal_in_tree" });
+    try t.expectEqual(app.tree.rowOf("notes.md").?, app.tree.cursor);
+}
+
+test "view.toggle_tree_section folds the primary section to its header and opens it again with the tree focused" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    _ = try app.openScratch();
+    try t.expect(app.tree.rowOf("a.txt") != null);
+    try command.run(&app, .{ .static = .@"view.toggle_tree_section" });
+    try t.expect(!app.tree.primary_expanded);
+    try t.expectEqual(@as(usize, 0), app.tree.rows.items.len);
+    try t.expect(app.focus == .pane);
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"view.toggle_tree_section" });
+    try t.expect(app.tree.primary_expanded);
+    try t.expect(app.tree.visible);
+    try t.expectEqual(app_mod.FocusId.tree, app.focus);
+    try t.expect(app.tree.rowOf("a.txt") != null);
+}
+
+test "view.remove_workspace lists the extra roots, the pick drops that one with its folds; with none it says so" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "ws");
+    try tmp.dir.createDirPath(t.io, "one/sub");
+    try tmp.dir.createDirPath(t.io, "two");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws });
+    defer app.deinit();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.remove_workspace" }));
+    try t.expectEqualStrings("no extra workspace to remove", app.lastToast().?);
+    const one = try std.fs.path.join(t.allocator, &.{ root, "one" });
+    defer t.allocator.free(one);
+    const two = try std.fs.path.join(t.allocator, &.{ root, "two" });
+    defer t.allocator.free(two);
+    _ = try app.tree.addRoot(&app, one, null);
+    _ = try app.tree.addRoot(&app, two, null);
+    const sub = try std.fs.path.join(t.allocator, &.{ root, "one", "sub" });
+    defer t.allocator.free(sub);
+    try app.tree.setExpanded(sub, true);
+    app.tree.roots.items[0].expanded = true;
+    try app.tree.refresh(&app);
+    try t.expect(app.tree.rowOf(sub) != null);
+    try command.run(&app, .{ .static = .@"view.remove_workspace" });
+    try t.expect(app.overlay == .picker);
+    try t.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    try t.expectEqualStrings("one", app.overlay.picker.labels[0]);
+    try app.overlay.picker.on_accept.?(&app, 0, "one");
+    try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
+    try t.expectEqualStrings("two", app.tree.roots.items[0].name);
+    try t.expect(!app.tree.isExpanded(sub));
+    try t.expect(app.tree.rowOf(sub) == null);
+    try t.expect(app.tree.cursor < app.tree.rows.items.len);
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "workspace removed: one"));
+}
+
+test "view.open_default_workspace adds and opens the configured folder, switches to it when it is open already, and names the missing key" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "ws");
+    try tmp.dir.createDirPath(t.io, "home/proj");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws });
+    defer app.deinit();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.open_default_workspace" }));
+    try t.expectEqualStrings("no default_workspace configured (set `.startup.default_workspace` in config.zon)", app.lastToast().?);
+    const proj = try std.fs.path.join(t.allocator, &.{ root, "home", "proj" });
+    defer t.allocator.free(proj);
+    app.cfg.startup.default_workspace = proj;
+    try command.run(&app, .{ .static = .@"view.open_default_workspace" });
+    try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
+    try t.expect(app.tree.roots.items[0].expanded);
+    try t.expect(!app.tree.primary_expanded);
+    try t.expectEqual(app_mod.FocusId.tree, app.focus);
+    // Open already: no second root, just the switch.
+    app.tree.primary_expanded = true;
+    app.tree.roots.items[0].expanded = false;
+    try command.run(&app, .{ .static = .@"view.open_default_workspace" });
+    try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
+    try t.expect(app.tree.roots.items[0].expanded);
+    // The workspace itself: the primary section.
+    app.cfg.startup.default_workspace = ws;
+    try command.run(&app, .{ .static = .@"view.open_default_workspace" });
+    try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
+    try t.expect(app.tree.primary_expanded);
+    try t.expect(!app.tree.roots.items[0].expanded);
+    // A folder that is not there.
+    const missing = try std.fs.path.join(t.allocator, &.{ root, "nope" });
+    defer t.allocator.free(missing);
+    app.cfg.startup.default_workspace = missing;
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.open_default_workspace" }));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "not a directory") != null);
+}
+
+test "view.manage_workspaces opens the home config on its .workspaces line and says where the list lives" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "config.zon", .data = ".{\n    .ui = .{},\n    .workspaces = .{},\n}\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.manage_workspaces" });
+    const e = app.activeEditor().?;
+    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, "config.zon"));
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try t.expectEqualStrings("workspaces are the `.workspaces` list in config.zon", app.lastToast().?);
 }

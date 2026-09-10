@@ -1,0 +1,8 @@
+# `app.reset_to_defaults` asks first — the box says what the reset does
+# and Cancel is the default button; Esc changes nothing.
+command app.reset_to_defaults
+expect screen contains "Reset to defaults"
+expect screen contains "Reset mnml to factory defaults?"
+expect screen contains "renamed to a .bak"
+key escape
+expect screen lacks "Reset mnml to factory defaults?"

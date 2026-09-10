@@ -361,7 +361,10 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // A pending chord owns the next key outright: `space` is armed, so
     // the `e` of `<leader>e` is the chain's, not the end-of-word motion
     // (the same rule `ptyKey` applies).
-    const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
+    // A key the handler reserves (vim Insert's completion pair) goes
+    // to it even though the keymap binds it for Normal.
+    const reserved = if (ed) |e| e.buf.input.reservesKey(k) else false;
+    const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or reserved or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
     if (!editor_first and app.chord.len == 0 and ed == null) {
         // No pane: only chords do anything.
         _ = try chordChain(app, k);
@@ -479,28 +482,20 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.doc.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
-    const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
-    cmd_find.seedCtxMatches(e);
-    app.attachSeams(e);
+    const wrap_width = beforeBufferInput(app, e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
-    if (e.buf.last_unsupported) |name| {
-        app.toast("{s}: not supported yet", .{name});
-        e.buf.last_unsupported = null;
-    }
     switch (ev) {
-        .unhandled => return false,
-        .noop => {},
-        .redraw => {},
+        .unhandled => {
+            try afterBufferEvent(app, pane_id, e, ev, was_recording);
+            return false;
+        },
         .edited => {
-            e.syntax.dirty = true;
-            flash.cancel(app);
-            snippets.afterEdit(app, pane_id, e);
-            ai_app.noteEdit(app);
+            try afterBufferEvent(app, pane_id, e, ev, was_recording);
             if (trigger) try expandAbbreviation(app, e);
             try lsp.onTyped(app, pane_id, e, k, before_mode);
         },
-        .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
+        else => try afterBufferEvent(app, pane_id, e, ev, was_recording),
     }
     // An app command may have opened or closed panes (`:e b.txt` grows
     // the store and moves every pane): `e` is stale from here. Look the
@@ -508,8 +503,6 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const still = app.panes.editor(pane_id) orelse return true;
     // A motion that left the completion popup's word closes it.
     lsp.afterKey(app, pane_id, still);
-    // A recording that just stopped is on the clipboard: persist it.
-    if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
     // Local marks toast from here: the buffer handles them silently.
     // Global (uppercase) ones toast in `marks_store`, which also knows
     // whether the set was refused.
@@ -531,6 +524,53 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     if (after_mode != .visual_block) still.block_anchor = null;
     try finishDeferredInserts(app);
     return true;
+}
+
+/// What the buffer needs from the app before a key or a runner's app
+/// command reaches it: the `gn` matches, the text-object seam, and the
+/// wrap width for page motions.
+fn beforeBufferInput(app: *App, e: *EditorPane) ?usize {
+    cmd_find.seedCtxMatches(e);
+    app.attachSeams(e);
+    return if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
+}
+
+/// What a buffer event means to the app, whether a key or a runner
+/// caused it: an edit dirties the syntax and wakes the seams, an app
+/// command runs, a recording that just stopped is persisted. A key's
+/// own extras (abbreviations, the LSP's typed hook) stay with
+/// `feedEditor`. `e` is stale after an app command; look the pane up
+/// again before touching it.
+fn afterBufferEvent(app: *App, pane_id: PaneId, e: *EditorPane, ev: input.BufferEvent, was_recording: bool) Allocator.Error!void {
+    if (e.buf.last_unsupported) |name| {
+        app.toast("{s}: not supported yet", .{name});
+        e.buf.last_unsupported = null;
+    }
+    switch (ev) {
+        .unhandled, .noop, .redraw => {},
+        .edited => {
+            e.syntax.dirty = true;
+            flash.cancel(app);
+            snippets.afterEdit(app, pane_id, e);
+            ai_app.noteEdit(app);
+        },
+        .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
+    }
+    const still = app.panes.editor(pane_id) orelse return;
+    // A recording that just stopped is on the clipboard: persist it.
+    if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
+}
+
+/// A runner's app command for the buffer (`vim.dot_repeat`, the macro
+/// chip): the same road a key's `.app` result takes, without a key.
+pub fn runBufferApp(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.AppCommand) Allocator.Error!void {
+    const was_recording = e.buf.isRecording();
+    const wrap_width = beforeBufferInput(app, e);
+    const ev = try e.buf.runApp(cmd, &app.clipboard, app.pane_rows, wrap_width, app.frame.allocator());
+    try afterBufferEvent(app, pane_id, e, ev, was_recording);
+    if (app.panes.editor(pane_id)) |still| still.buf.input.setMacroRecording(still.buf.isRecording());
+    try finishDeferredInserts(app);
+    app.needs_render = true;
 }
 
 const MarkPrefix = enum { set, jump };
@@ -1285,6 +1325,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .kill_pids => |pids| if (choice == 0) try sessions.killAccept(app, pids),
         .cloud_cancel => |arn| if (choice == 0) try cloud_agents.cancelAccept(app, arn),
         .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
+        .choose_data_layout => try toastOnFail(app, @import("setup.zig").acceptDataLayout(app, choice)),
+        .reset_to_defaults => try toastOnFail(app, @import("setup.zig").acceptReset(app, choice)),
     }
 }
 
@@ -1363,6 +1405,16 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
 // release completes; the hit under the release decides where a tab or
 // a tree file lands. `count` is the wheel batch (`scroll.zig`).
 
+/// `debug.toggle_click_inspector`: `click @12,3 → statusline_seg:2`,
+/// or `nothing` where no target was painted.
+fn inspectClick(app: *App, m: Mouse) Allocator.Error!void {
+    var label: std.Io.Writer.Allocating = .init(app.frame.allocator());
+    if (app.hits.at(m.x, m.y)) |target| {
+        target.writeLabel(&label.writer) catch return error.OutOfMemory;
+    } else label.writer.writeAll("nothing") catch return error.OutOfMemory;
+    app.toast("{s} @{d},{d} → {s}", .{ if (m.button == .right) "right-click" else "click", m.x, m.y, label.written() });
+}
+
 pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
@@ -1376,6 +1428,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     }
     // A press anywhere puts flash's labels away.
     if (m.kind == .press) flash.cancel(app);
+    // The click inspector: what the press landed on, by the hit map's
+    // label, before anything acts on it.
+    if (m.kind == .press and app.debug_click_inspector and (m.button == .left or m.button == .right)) try inspectClick(app, m);
     // The click-discovery panel: a press on one of its rows flashes the
     // family it names; a press anywhere else closes it (Rust).
     if (m.kind == .press and app.overlay == .discovery) {

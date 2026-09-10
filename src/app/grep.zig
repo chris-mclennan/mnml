@@ -35,6 +35,8 @@ const EditOp = @import("../editor/edit_op.zig").EditOp;
 
 pub const table = .{
     .@"search.toggle_regex" = &toggleRegexCmd,
+    .@"search.toggle_case_sensitive" = &toggleCaseCmd,
+    .@"search.toggle_whole_word" = &toggleWholeWordCmd,
     .@"find.grep" = &grepCmd,
     .@"find.grep_replace" = &grepReplaceCmd,
     .@"view.activity_search" = &activitySearch,
@@ -335,6 +337,34 @@ fn toggleRegexCmd(app: *App) CommandError!void {
     const pane = app.panes.get(id) orelse return error.Failed;
     pane.grep.flags.regex = !pane.grep.flags.regex;
     app.toast("search regex: {s}", .{if (pane.grep.flags.regex) "on" else "off"});
+    try refresh(app, id);
+}
+
+/// `search.toggle_case_sensitive`: flip the Search pane's flag and
+/// rerun; `app.search_case` follows it so the find bar and `:s` agree
+/// (`:set ic` / `noic` write the same slot). With no Search pane the
+/// editor-wide flag alone flips — smart case (null) counts as off.
+fn toggleCaseCmd(app: *App) CommandError!void {
+    const on = !(app.search_case orelse false);
+    app.search_case = on;
+    if (find(app)) |id| {
+        const pane = app.panes.get(id) orelse return error.Failed;
+        pane.grep.flags.case_sensitive = on;
+        app.toast("search: case-sensitive {s}", .{if (on) "on" else "off"});
+        return refresh(app, id);
+    }
+    app.toast("search: case-sensitive {s}", .{if (on) "on" else "off"});
+}
+
+/// `search.toggle_whole_word`: the Search pane's whole-word flag,
+/// rerun. Nothing else holds the flag, so no pane is a failure — as
+/// `search.toggle_regex`.
+fn toggleWholeWordCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = find(app) orelse return app.diag.fail(arena, "no Search pane — find.grep opens one", .{});
+    const pane = app.panes.get(id) orelse return error.Failed;
+    pane.grep.flags.whole_word = !pane.grep.flags.whole_word;
+    app.toast("search: whole-word {s}", .{if (pane.grep.flags.whole_word) "on" else "off"});
     try refresh(app, id);
 }
 
@@ -1603,6 +1633,45 @@ test "grep replace: a vim-pattern query expands group references" {
     defer t.allocator.free(a_disk);
     try t.expectEqualStrings("const pha-al = 1;\nconst beta = pha-al + pha-al;\n", a_disk);
     try f.settle(id, 400);
+}
+
+test "search toggles: whole-word needs the pane; case-sensitive flips the pane's flag and app.search_case together, or the latter alone" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    // No pane: whole-word fails, case flips the editor-wide flag only.
+    try t.expectError(error.Failed, command.run(app, .{ .static = .@"search.toggle_whole_word" }));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "no Search pane") != null);
+    try t.expect(app.search_case == null);
+    try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
+    try t.expectEqual(@as(?bool, true), app.search_case);
+    try t.expectEqualStrings("search: case-sensitive on", app.lastToast().?);
+    try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
+    try t.expectEqual(@as(?bool, false), app.search_case);
+    try t.expectEqualStrings("search: case-sensitive off", app.lastToast().?);
+    // With the pane: `alpha` matches 5 (smart case); case-sensitive drops the `Alpha`.
+    _ = try app.openScratch();
+    try runGrep(app, "alpha");
+    const id = find(app).?;
+    try f.settle(id, 400);
+    try t.expectEqual(@as(usize, 5), app.panes.get(id).?.grep.hits.items.len);
+    try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
+    try t.expectEqualStrings("search: case-sensitive on", app.lastToast().?);
+    try t.expect(app.panes.get(id).?.grep.flags.case_sensitive);
+    try t.expectEqual(@as(?bool, true), app.search_case);
+    try f.settle(id, 400);
+    try t.expectEqual(@as(usize, 4), app.panes.get(id).?.grep.hits.items.len);
+    // Whole word: `alph` matched as a substring before, nothing after.
+    try runGrep(app, "alph");
+    try f.settle(id, 400);
+    try t.expectEqual(@as(usize, 4), app.panes.get(id).?.grep.hits.items.len);
+    try command.run(app, .{ .static = .@"search.toggle_whole_word" });
+    try t.expectEqualStrings("search: whole-word on", app.lastToast().?);
+    try t.expect(app.panes.get(id).?.grep.flags.whole_word);
+    try f.settle(id, 400);
+    try t.expectEqual(@as(usize, 0), app.panes.get(id).?.grep.hits.items.len);
+    try command.run(app, .{ .static = .@"search.toggle_whole_word" });
+    try t.expectEqualStrings("search: whole-word off", app.lastToast().?);
 }
 
 test "grep: a stale batch is dropped; the pane's deinit cancels a worker mid-run" {

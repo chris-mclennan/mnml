@@ -1,0 +1,38 @@
+# `layout.merge_to_tabs` folds every split of the page into one tab
+# strip (the focused pane stays focused); `layout.spread_to_splits` is
+# the inverse for a page that is one leaf with several tabs. Each
+# refuses the other's shape by name, so a wrong-shape press explains
+# itself instead of doing nothing.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+write c.txt "charlie\n"
+open a.txt
+command view.split_right
+open b.txt
+command view.split_down
+open c.txt
+expect pane c.txt
+
+# Three leaves already: spread has nothing to do.
+command layout.spread_to_splits
+expect screen contains "layout: already has splits; merge to tabs first"
+
+# Merge: a.txt, its split twin, b.txt, c.txt's twin and c.txt — five
+# tabs in one leaf, c.txt still the focus.
+command layout.merge_to_tabs
+expect screen contains "layout: merged 3 splits into 5 tabs"
+expect pane c.txt
+
+# Merging again is a no-op with a reason.
+command layout.merge_to_tabs
+expect screen contains "layout: already a single leaf"
+
+# Spread: every tab back in a split of its own, the focus kept.
+command layout.spread_to_splits
+expect screen contains "layout: spread 5 tabs into 5 splits"
+expect pane c.txt
+
+# And back once more: the round trip is stable.
+command layout.merge_to_tabs
+expect screen contains "layout: merged 5 splits into 5 tabs"
+expect pane c.txt

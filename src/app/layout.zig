@@ -397,6 +397,62 @@ pub const Layout = struct {
         }
         return out.items;
     }
+
+    /// `layout.merge_to_tabs`: every pane of the split tree becomes a
+    /// tab of ONE leaf, in `allPanes` order; `active` stays the active
+    /// tab when it is one of them (else the first). Returns how many
+    /// leaves were merged; a single leaf (or an empty layout) is left
+    /// as it is and reports its own count.
+    pub fn mergeToTabs(self: *Layout, arena: Allocator, active: PaneId) Allocator.Error!usize {
+        const ls = try self.leaves(arena);
+        if (ls.len < 2) return ls.len;
+        const panes = try arena.dupe(PaneId, try self.allPanes(arena));
+        const shown: PaneId = if (std.mem.indexOfScalar(PaneId, panes, active) != null) active else panes[0];
+        // The merged leaf is filled before anything is torn down, so a
+        // failed allocation leaves the tree as it was.
+        var merged: Leaf = .{ .active = shown };
+        errdefer merged.tabs.deinit(self.gpa);
+        try merged.tabs.appendSlice(self.gpa, panes);
+        for (self.nodes.items) |*n| switch (n.*) {
+            .leaf => |*l| l.tabs.deinit(self.gpa),
+            else => {},
+        };
+        self.nodes.clearRetainingCapacity();
+        self.root = null;
+        self.root = try self.alloc(.{ .leaf = merged });
+        return ls.len;
+    }
+
+    /// `layout.spread_to_splits`: the inverse — a single leaf's tabs
+    /// each get a leaf of their own, side by side in tab order (a
+    /// chain of splits whose ratios give every leaf the same width).
+    /// Returns the number of leaves made; a layout with splits, or a
+    /// leaf with one tab, is left alone and reports 0.
+    pub fn spreadToSplits(self: *Layout, arena: Allocator) Allocator.Error!usize {
+        const root = self.root orelse return 0;
+        const l = self.leaf(root) orelse return 0;
+        if (l.tabs.items.len < 2) return 0;
+        const tabs = try arena.dupe(PaneId, l.tabs.items);
+        const first = tabs[0];
+        l.tabs.shrinkRetainingCapacity(1);
+        l.active = first;
+        var prev = first;
+        for (tabs[1..]) |t| {
+            _ = try self.split(prev, .horizontal, t);
+            prev = t;
+        }
+        // a | (b | (c | d)): the i-th split's first half is one of the
+        // `n - i` leaves left, so its share is 1/(n - i).
+        var remaining: u16 = @intCast(tabs.len);
+        var id = self.root.?;
+        while (self.nodes.items[id] == .split) {
+            const s = &self.nodes.items[id].split;
+            s.ratio = @max(100 / remaining, 1);
+            remaining -= 1;
+            id = s.second;
+        }
+        return tabs.len;
+    }
 };
 
 // ─── drop zones ─────────────────────────────────────────────────────────
@@ -701,6 +757,77 @@ test "layout: moveToEdge on a pane sharing its leaf moves only that tab; a singl
     try std.testing.expectEqual(area.right(), r1.right());
     try std.testing.expectEqual(area.h, r1.h);
     try std.testing.expectEqualSlices(PaneId, &.{ 0, 7, 1 }, try l.allPanes(a));
+}
+
+test "layout: mergeToTabs folds every leaf's tabs into one leaf in tree order, the active pane kept; spreadToSplits gives each tab an equal-width leaf; each refuses the other's shape" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const area = Rect.init(0, 1, 120, 40);
+    // 0,1 | (2 / 3): three leaves, four panes, pane 3 in the bottom-right.
+    const leaf0 = try l.showIn(null, 0);
+    _ = try l.showIn(leaf0, 1);
+    _ = try l.split(1, .horizontal, 2);
+    _ = try l.split(2, .vertical, 3);
+    try std.testing.expectEqual(@as(usize, 3), (try l.leaves(a)).len);
+    // A single-leaf layout has nothing to spread.
+    try std.testing.expectEqual(@as(usize, 0), try l.spreadToSplits(a));
+    try std.testing.expectEqual(@as(usize, 3), (try l.leaves(a)).len);
+    try std.testing.expectEqual(@as(usize, 3), try l.mergeToTabs(a, 3));
+    const ls = try l.leaves(a);
+    try std.testing.expectEqual(@as(usize, 1), ls.len);
+    try std.testing.expectEqual(ls[0], l.root.?);
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 1, 2, 3 }, l.leaf(ls[0]).?.tabs.items);
+    try std.testing.expectEqual(@as(PaneId, 3), l.leaf(ls[0]).?.active);
+    // No node outside the tree survived: one live slot.
+    var live: usize = 0;
+    for (l.nodes.items) |n| if (n != .free) {
+        live += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), live);
+    // Merging a single leaf is a no-op that reports one leaf; an active
+    // hint that is no tab falls back to the first.
+    try std.testing.expectEqual(@as(usize, 1), try l.mergeToTabs(a, 3));
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 1, 2, 3 }, l.leaf(l.root.?).?.tabs.items);
+    // Spread: four leaves side by side, tab order left to right, each
+    // a quarter of the width (within a cell).
+    try std.testing.expectEqual(@as(usize, 4), try l.spreadToSplits(a));
+    const spread = try l.leaves(a);
+    try std.testing.expectEqual(@as(usize, 4), spread.len);
+    for (spread, 0..) |lid, i| {
+        try std.testing.expectEqualSlices(PaneId, &.{@as(PaneId, @intCast(i))}, l.leaf(lid).?.tabs.items);
+    }
+    const rects = try l.computeRects(area, a);
+    try std.testing.expectEqual(@as(usize, 4), rects.panes.len);
+    var prev_x: u16 = 0;
+    for (rects.panes, 0..) |pr, i| {
+        try std.testing.expectEqual(@as(PaneId, @intCast(i)), pr.pane);
+        try std.testing.expect(pr.rect.x >= prev_x);
+        prev_x = pr.rect.x;
+        // 120 columns less three dividers: 29 or 30 each.
+        try std.testing.expect(pr.rect.w >= 28 and pr.rect.w <= 30);
+    }
+    // A layout with splits refuses to spread; a leaf with one tab too.
+    try std.testing.expectEqual(@as(usize, 0), try l.spreadToSplits(a));
+    _ = try l.mergeToTabs(a, 0);
+    _ = l.removePane(1);
+    _ = l.removePane(2);
+    _ = l.removePane(3);
+    try std.testing.expectEqual(@as(usize, 0), try l.spreadToSplits(a));
+    // Round trip on the merged leaf's active tab: it stays the focus.
+    var m = Layout.init(gpa);
+    defer m.deinit();
+    const only = try m.showIn(null, 5);
+    _ = try m.showIn(only, 6);
+    _ = try m.showIn(only, 7);
+    m.leaf(only).?.active = 6;
+    try std.testing.expectEqual(@as(usize, 3), try m.spreadToSplits(a));
+    try std.testing.expectEqual(@as(usize, 3), try m.mergeToTabs(a, 6));
+    try std.testing.expectEqual(@as(PaneId, 6), m.leaf(m.root.?).?.active);
+    try std.testing.expectEqualSlices(PaneId, &.{ 5, 6, 7 }, m.leaf(m.root.?).?.tabs.items);
 }
 
 test "drop zones: the middle third is the centre, otherwise the nearest edge" {

@@ -1,0 +1,20 @@
+# `view.reveal_in_tree` selects the active file in the tree: the
+# folders above it open, the row is on screen and the keys are in the
+# tree. The harness config has no breadcrumb, so the folder's name can
+# only come from the tree.
+write nest/hollow/file.txt "deep\n"
+write top.txt "top\n"
+open nest/hollow/file.txt
+# The first listing opens the top folders; fold everything after it.
+expect screen contains "hollow"
+command tree.collapse_all
+expect screen lacks "hollow"
+command view.reveal_in_tree
+expect screen lacks "not in the file tree"
+expect screen contains "hollow"
+expect screen contains "file.txt"
+# The tree has the keys: vim's `yy` chord starts with a "press again"
+# toast that only the tree gives.
+command editor.use_vim
+key y
+expect screen contains "press again to copy"

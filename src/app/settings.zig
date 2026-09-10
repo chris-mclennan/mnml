@@ -63,7 +63,20 @@ pub const table = .{
     .@"view.cluster_mode_expanded" = setRunner("ui.top_bar_cluster_mode", .expanded, "top-bar cluster: expanded"),
     .@"view.cluster_mode_compact" = setRunner("ui.top_bar_cluster_mode", .compact, "top-bar cluster: compact"),
     .@"view.cluster_mode_auto" = setRunner("ui.top_bar_cluster_mode", .auto, "top-bar cluster: auto"),
+    .@"view.ai_layout_grid" = setRunner("ui.ai_layout_mode", .grid, "AI layout: grid"),
+    .@"view.ai_layout_tabs" = setRunner("ui.ai_layout_mode", .tabs, "AI layout: tabs"),
+    .@"view.toggle_picker_position" = &togglePickerPosition,
 };
+
+/// `view.toggle_picker_position`: `center` ⇄ `top`, written to the home
+/// config like the setters above.
+fn togglePickerPosition(app: *App) command.CommandError!void {
+    const next: Config.PickerPosition = if (app.cfg.ui.picker_position == .top) .center else .top;
+    app.cfg.ui.picker_position = next;
+    _ = try persist(app, .home, &.{ "ui", "picker_position" }, next);
+    app.toast("picker position: {s}", .{@tagName(next)});
+    app.needs_render = true;
+}
 
 /// A runner that sets `path` to `value`, persists it to the home
 /// config, and toasts `label`.
@@ -983,4 +996,65 @@ test "view.tab_bar_ai_* and view.cluster_mode_* set the key, persist it to the h
     try command.run(&app, .{ .static = .@"view.cluster_mode_auto" });
     try std.testing.expectEqual(Config.TabBarAiIcon.codex, app.cfg.ui.tab_bar_ai_icon);
     try std.testing.expectEqual(Config.TopBarClusterMode.auto, app.cfg.ui.top_bar_cluster_mode);
+}
+
+// ─── opening on a section ────────────────────────────────────────────────
+
+/// `open`, then the cursor on `section`'s first row — what
+/// `integrations.configure_picker` wants: the overlay scrolled to the
+/// rows the installed manifests declare.
+pub fn openAt(app: *App, section: Section) Allocator.Error!void {
+    try open(app);
+    const list = try items(app, app.frame.allocator());
+    const st = &app.overlay.settings;
+    for (list, 0..) |it, i| switch (it) {
+        .section => |name| if (std.mem.eql(u8, name, section.label())) {
+            st.ui.cursor = i + 1;
+            st.ui.settle(list);
+            return;
+        },
+        else => {},
+    };
+}
+
+test "openAt lands the cursor on the section's first row" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try openAt(&app, .editor);
+    try t.expect(app.overlay == .settings);
+    const list = try items(&app, app.frame.allocator());
+    const cur = app.overlay.settings.ui.cursor;
+    try t.expect(list[cur] == .row);
+    try t.expect(list[cur - 1] == .section);
+    try t.expectEqualStrings("Editor", list[cur - 1].section);
+    try t.expect(rows[list[cur].row.id].section == .editor);
+}
+
+test "view.toggle_picker_position flips center ⇄ top, writes it to the home config and toasts; view.ai_layout_* set the mode" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    try std.testing.expectEqual(Config.PickerPosition.center, app.cfg.ui.picker_position);
+    try command.run(&app, .{ .static = .@"view.toggle_picker_position" });
+    try std.testing.expectEqual(Config.PickerPosition.top, app.cfg.ui.picker_position);
+    try std.testing.expectEqualStrings("picker position: top", app.lastToast().?);
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, try std.fs.path.join(app.frame.allocator(), &.{ root, "config.zon" }), std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".picker_position = .top") != null);
+    try command.run(&app, .{ .static = .@"view.toggle_picker_position" });
+    try std.testing.expectEqual(Config.PickerPosition.center, app.cfg.ui.picker_position);
+    try std.testing.expectEqualStrings("picker position: center", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"view.ai_layout_tabs" });
+    try std.testing.expectEqual(Config.AiLayoutMode.tabs, app.cfg.ui.ai_layout_mode);
+    try std.testing.expectEqualStrings("AI layout: tabs", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"view.ai_layout_grid" });
+    try std.testing.expectEqual(Config.AiLayoutMode.grid, app.cfg.ui.ai_layout_mode);
+    try std.testing.expectEqualStrings("AI layout: grid", app.lastToast().?);
+    const again = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, try std.fs.path.join(app.frame.allocator(), &.{ root, "config.zon" }), std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(again);
+    try std.testing.expect(std.mem.indexOf(u8, again, ".ai_layout_mode = .grid") != null);
 }

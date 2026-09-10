@@ -1,0 +1,21 @@
+# `view.move_to_new_tab` (vim `Ctrl+W T`): the focused split leaves the
+# page for a new tab page of its own, right after this one; the page it
+# left keeps the other pane. A pane alone on its page is refused.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open a.txt
+command view.move_to_new_tab
+expect screen contains "already alone on this page"
+command view.split_right
+open b.txt
+expect pane b.txt
+command view.move_to_new_tab
+expect screen contains "moved to tab 2/2"
+expect pane b.txt
+# Page 1 still shows a.txt; b.txt is not on it.
+command tab.prev
+expect screen contains "tab 1/2"
+expect pane a.txt
+expect screen lacks "b.txt"
+command tab.next
+expect pane b.txt

@@ -1,0 +1,28 @@
+# insert-mode Ctrl+N / Ctrl+P — complete the keyword before the cursor
+# from the buffer's own words.
+write code.txt "alphabet\nalpine\nend"
+open code.txt
+command editor.use_vim
+
+# Append " al" to the last line. Ctrl+N looks forward: nothing after
+# the cursor, so it wraps to the top — alphabet first, then alpine.
+key G
+key A
+type " al"
+key ctrl+n
+expect screen contains "end alphabet"
+key ctrl+n
+expect screen contains "end alpine"
+
+# Past the last candidate: the bare prefix again.
+key ctrl+n
+type "!"
+expect screen contains "end al!"
+
+# A fresh prefix with Ctrl+P looks upward: the nearest word above first.
+type " al"
+key ctrl+p
+expect screen contains "end al! alpine"
+key ctrl+p
+expect screen contains "end al! alphabet"
+key escape

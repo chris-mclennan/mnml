@@ -71,6 +71,11 @@ pub const Buffer = struct {
     recording: ?Recording = null,
     replay_depth: u8 = 0,
 
+    /// vim's `".` register: what the last Insert session typed, derived
+    /// from its ops when it closed (a backspace takes a char back).
+    /// gpa-owned.
+    last_inserted: ?[]u8 = null,
+
     pub const max_replay_depth = 8;
 
     /// A window on a fresh document holding `text`; the config's tab
@@ -108,6 +113,7 @@ pub const Buffer = struct {
         for (self.dot_pending.items) |o| o.free(gpa);
         self.dot_pending.deinit(gpa);
         if (self.recording) |*r| r.keys.deinit(gpa);
+        if (self.last_inserted) |s| gpa.free(s);
     }
 
     fn freeOps(gpa: Allocator, list: []EditOp) void {
@@ -604,7 +610,10 @@ pub const Buffer = struct {
         };
         if (self.dot_collecting) {
             try self.appendDot(list);
-            if (!in_insert) try self.finishDot();
+            if (!in_insert) {
+                try self.noteInserted();
+                try self.finishDot();
+            }
             return;
         }
         var mutates = false;
@@ -638,6 +647,41 @@ pub const Buffer = struct {
         self.dot_collecting = false;
         if (self.dot) |d| freeOps(self.gpa, d);
         self.dot = try self.dot_pending.toOwnedSlice(self.gpa);
+    }
+
+    /// The Insert session just closed: what it typed, from the pending
+    /// dot record, becomes `last_inserted`.
+    fn noteInserted(self: *Buffer) Allocator.Error!void {
+        var typed: std.ArrayList(u8) = .empty;
+        errdefer typed.deinit(self.gpa);
+        for (self.dot_pending.items) |o| try collectTyped(&typed, self.gpa, o);
+        if (self.last_inserted) |s| self.gpa.free(s);
+        self.last_inserted = try typed.toOwnedSlice(self.gpa);
+    }
+
+    fn collectTyped(typed: *std.ArrayList(u8), gpa: Allocator, op: EditOp) Allocator.Error!void {
+        switch (op) {
+            .insert_char => |c| {
+                var buf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(c, &buf) catch return;
+                try typed.appendSlice(gpa, buf[0..n]);
+            },
+            .insert_str => |s| try typed.appendSlice(gpa, s),
+            .insert_newline => try typed.append(gpa, '\n'),
+            .backspace => {
+                // One char back, whatever its byte length.
+                while (typed.pop()) |b| if (b & 0xC0 != 0x80) break;
+            },
+            .repeat => |r| for (0..r.count) |_| try collectTyped(typed, gpa, r.inner.*),
+            .atomic => |list| for (list) |o| try collectTyped(typed, gpa, o),
+            else => {},
+        }
+    }
+
+    /// What the last Insert session typed (vim's `".`), null before
+    /// the first one.
+    pub fn lastInserted(self: *const Buffer) ?[]const u8 {
+        return self.last_inserted;
     }
 
     /// `.` (`count` = 0) or `{count}.`: a count replaces the count of
@@ -675,10 +719,12 @@ pub const Buffer = struct {
 
     // ─── macros ───
 
-    fn macroToggle(self: *Buffer, reg: u8, clip: *Clipboard) Allocator.Error!BufferEvent {
+    /// `drop_stop_key`: the `q` that stops a recording was itself recorded
+    /// (`feedKey` appends before the handler runs) and is dropped; a stop
+    /// that came from a runner (`runApp`) recorded no key.
+    fn macroToggle(self: *Buffer, reg: u8, clip: *Clipboard, drop_stop_key: bool) Allocator.Error!BufferEvent {
         if (self.recording) |*r| {
-            // The `q` that stopped us was recorded too — drop it.
-            _ = r.keys.pop();
+            if (drop_stop_key) _ = r.keys.pop();
             const spec = try keysToSpec(self.gpa, r.keys.items);
             defer self.gpa.free(spec);
             if (r.append and clip.macro(r.reg) != null) {
@@ -730,6 +776,18 @@ pub const Buffer = struct {
 
     // ─── app commands handled here ───
 
+    /// An `AppCommand` from a runner rather than a key (the palette's
+    /// `vim.dot_repeat`, the statusline's macro chip): handled exactly
+    /// as one the handler returned, minus the key that would have been
+    /// recorded. A read-only document does nothing.
+    pub fn runApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
+        if (self.doc.read_only) return .noop;
+        return switch (cmd) {
+            .macro_record_into => |reg| self.macroToggle(reg, clip, false),
+            else => self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
+        };
+    }
+
     fn handleApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         switch (cmd) {
             .dot_repeat => |n| return self.dotRepeat(n, clip, viewport_rows, arena),
@@ -753,7 +811,7 @@ pub const Buffer = struct {
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },
-            .macro_record_into => |reg| return self.macroToggle(reg, clip),
+            .macro_record_into => |reg| return self.macroToggle(reg, clip, true),
             .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, clip, viewport_rows, wrap_width, arena),
             .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
             else => return .{ .app = cmd },
@@ -1951,4 +2009,33 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\n");
     defer gpa.free(norm);
     try testing.expectEqualStrings("a\nb\nc\n", norm);
+}
+
+test "buffer: the `\".` register is what the last Insert session typed, a backspace taken back; a runner's app command reaches the buffer" {
+    var h = try Harness.init(testing.allocator, .vim, "|x");
+    defer h.deinit();
+    try testing.expect(h.buf.lastInserted() == null);
+    try h.feed("iab<bs>c<esc>");
+    try testing.expectEqualStrings("ac", h.buf.lastInserted().?);
+    // A change with no Insert leaves it alone; the next session replaces it.
+    try h.feed("dd");
+    try testing.expectEqualStrings("ac", h.buf.lastInserted().?);
+    try h.feed("ié<cr><esc>");
+    try testing.expectEqualStrings("é\n", h.buf.lastInserted().?);
+    // `runApp` is the runner's door: `.` replays the last change here.
+    _ = h.arena.reset(.retain_capacity);
+    const ev = try h.buf.runApp(.{ .dot_repeat = 0 }, &h.clip, 10, null, h.arena.allocator());
+    try testing.expect(ev == .edited);
+    try testing.expectEqualStrings("é\né\n", h.buf.editor.bytes());
+}
+
+test "buffer: a runner-stopped recording keeps its last key (no `q` to drop)" {
+    var h = try Harness.init(testing.allocator, .vim, "|one\ntwo");
+    defer h.deinit();
+    _ = try h.buf.runApp(.{ .macro_record_into = '@' }, &h.clip, 10, null, h.arena.allocator());
+    try testing.expect(h.buf.isRecording());
+    try h.feed("A!<esc>");
+    _ = try h.buf.runApp(.{ .macro_record_into = '@' }, &h.clip, 10, null, h.arena.allocator());
+    try testing.expect(!h.buf.isRecording());
+    try testing.expectEqualStrings("A!<esc>", h.clip.macro('@').?);
 }

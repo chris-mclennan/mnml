@@ -28,6 +28,7 @@ pub const table = .{
     .@"tab.picker" = &tabPicker,
     .@"tab.move_left" = &tabMoveLeft,
     .@"tab.move_right" = &tabMoveRight,
+    .@"view.move_to_new_tab" = &moveToNewTab,
     .@"tab.goto_1" = &goto1,
     .@"tab.goto_2" = &goto2,
     .@"tab.goto_3" = &goto3,
@@ -46,6 +47,32 @@ fn tabNew(app: *App) CommandError!void {
     ls.active = ls.layouts.items.len - 1;
     _ = app.openScratch() catch return error.OutOfMemory;
     app.toastReplace(tab_toast, "tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
+}
+
+/// `view.move_to_new_tab` (vim `Ctrl+W T`): the active pane leaves this
+/// page's split tree for a new page of its own, inserted right after
+/// this one and made current. A pane alone on its page has nowhere to
+/// go — the page would be left empty — so that is refused.
+fn moveToNewTab(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const cur = app.active orelse return error.NoActivePane;
+    const ls = &app.layouts;
+    const layout = ls.current();
+    if (layout.leafOf(cur) == null) return error.NoActivePane;
+    const panes = try layout.allPanes(arena);
+    if (panes.len <= 1) return app.diag.fail(arena, "already alone on this page", .{});
+    // The page list grows before the pane leaves, so a failed insert
+    // changes nothing.
+    try ls.layouts.insert(ls.gpa, ls.active + 1, Layout.init(ls.gpa));
+    app.setActive(null);
+    _ = ls.layouts.items[ls.active].removePane(cur);
+    app.afterSplitChange();
+    ls.active += 1;
+    _ = try ls.current().showIn(null, cur);
+    app.setActive(cur);
+    app.focus = .{ .pane = cur };
+    app.toastReplace(tab_toast, "moved to tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
+    app.needs_render = true;
 }
 
 /// Show page `idx`; the page's first leaf's active pane takes focus.
@@ -425,4 +452,40 @@ test "tab.reopen brings a closed page's files back as a new page after this one,
     try t.expectEqual(@as(usize, 2), layout.leaf(layout.leafOf(app.active.?).?).?.tabs.items.len);
     try t.expectEqual(@as(usize, 0), app.closed_tabs.items.len);
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"tab.reopen" }));
+}
+
+test "view.move_to_new_tab pulls the active split out into a new page after this one; the old page keeps its other panes; alone on a page it refuses" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.move_to_new_tab" }));
+    try t.expectEqualStrings("already alone on this page", app.lastToast().?);
+    try t.expectEqual(@as(usize, 1), app.layouts.layouts.items.len);
+    // A third page after this one, so the new page lands between.
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const z = app.active.?;
+    try command.run(&app, .{ .static = .@"tab.goto_1" });
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    try command.run(&app, .{ .static = .@"view.move_to_new_tab" });
+    try t.expectEqual(@as(usize, 3), app.layouts.layouts.items.len);
+    try t.expectEqual(@as(usize, 1), app.layouts.active);
+    try t.expectEqual(b, app.active.?);
+    try t.expect(app.focus == .pane and app.focus.pane == b);
+    try t.expectEqualStrings("moved to tab 2/3", app.lastToast().?);
+    // The new page holds `b` alone; page 1 kept `a` as its only leaf.
+    const page = app.layouts.current();
+    try t.expectEqualSlices(app_mod.PaneId, &.{b}, try page.allPanes(app.frame.allocator()));
+    try t.expectEqualSlices(app_mod.PaneId, &.{a}, try app.layouts.layouts.items[0].allPanes(app.frame.allocator()));
+    try t.expectEqual(@as(usize, 1), (try app.layouts.layouts.items[0].leaves(app.frame.allocator())).len);
+    try t.expectEqualSlices(app_mod.PaneId, &.{z}, try app.layouts.layouts.items[2].allPanes(app.frame.allocator()));
+    // A background tab counts as company: the active tab of a two-tab
+    // leaf moves out and the other stays.
+    try command.run(&app, .{ .static = .@"tab.goto_1" });
+    const c = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.move_to_new_tab" });
+    try t.expectEqual(@as(usize, 4), app.layouts.layouts.items.len);
+    try t.expectEqual(c, app.active.?);
+    try t.expectEqualSlices(app_mod.PaneId, &.{a}, try app.layouts.layouts.items[0].allPanes(app.frame.allocator()));
 }

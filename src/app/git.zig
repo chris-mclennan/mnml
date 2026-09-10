@@ -959,8 +959,15 @@ pub fn openExternal(app: *App, url: []const u8) void {
     }
     // `ui.external_browser` names the application (trust-stripped upstream).
     const argv = @import("browser_open.zig").argv(app, app.frame.allocator(), url) catch return;
+    runArgv(app, argv, "a browser");
+}
+
+/// Hand `argv` to the OS the way `openExternal` does — `open` and its
+/// kin return at once, so the wait is short; a failure to start it is
+/// toasted as "could not open <what>".
+pub fn runArgv(app: *App, argv: []const []const u8, what: []const u8) void {
     const res = std.process.run(app.gpa, app.io, .{ .argv = argv, .cwd = .{ .path = app.workspace }, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) }) catch |err| {
-        app.toast("could not open a browser: {s}", .{@errorName(err)});
+        app.toast("could not open {s}: {s}", .{ what, @errorName(err) });
         return;
     };
     app.gpa.free(res.stdout);
