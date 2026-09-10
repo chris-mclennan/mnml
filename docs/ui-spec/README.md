@@ -66,6 +66,17 @@ findings 13 → 13 — the statusline's battery / clock chips flicker a
 row in and out between runs; the todos / notes / findings columns
 have no tree and no bar, so they did not move).
 
+*// changed 2026-09-10 (colors):* the fixture's `zig-data/config.zon`
+lists two more workspace roots, so git discovery finds several repos
+and the `ws` repo has an accent: on `steps-graph2` the graph pane's
+left edge is its one-cell `▌` gutter and the pill's column 0 its `▌`,
+so the graph's columns sit one cell to the right of Rust's — graph2
+reads 37 beyond the rail (was 38; the rows already differed). esc 3,
+editor 3, status 3, diff 14 are unchanged (measured before / after
+on the branch base `c0b67b0`). A workspace with one repo paints no
+gutter and no pill accent, so a fixture without the extra roots would
+read as before.
+
 ## Scrollbars: the cell of air (2026-09-08)
 
 Text never touches a vertical scrollbar. Wherever a bar is painted —
@@ -258,6 +269,10 @@ spec, so there is nothing to diff against:
   rows sorted by state — waiting, live, idle — with the id, tokens,
   cost, age and dirty columns, and the summary block: the counts per
   state, the hidden count, and the selected row's last exchange.
+  Re-cut 2026-09-10 after the session accents: a row's first cell is
+  the session's `▌` in its colour — colour only, so the text is the
+  same bar the clock, the fake's pid and the strip's Claude chip
+  (`󱸀`, painted when a `claude` is on PATH — the fake is).
 
 ## Conflict resolution (Zig-authored, 2026-09-08)
 
@@ -321,6 +336,13 @@ is never touched.
   with that repo's rows one level further in, its count the sum, the
   check on each repo's own branch and main tree; a repo with nothing
   under a section keeps its sub-header (`beta` under REMOTE).
+  Re-cut 2026-09-10 with the repo accents (colour is not in the dump;
+  alpha is green, beta blue — the slots in discovery order): every
+  sub-header carries its repo's `▌` in the gutter, the pill under All
+  repos has none, and the graph pane's left edge is the active repo's
+  `▌` bar, so the graph's columns start a cell later and the COMMIT
+  MESSAGE column is a cell narrower. The single-repo dumps do not
+  change: one repo paints no accent anywhere.
   cells, labels and names clip with `…` before the counts and the
   right-edge cells, the list scrolls with the scrollbar in its last
   column, nothing overflows.

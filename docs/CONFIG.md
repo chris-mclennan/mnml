@@ -326,6 +326,17 @@ otherwise. Copy what you need; leave the rest out.
     // ── git_graph ──────────────────────────────────────────────────────
     .git_graph = .{ .lane_spacing = 1 },
 
+    // ── git ────────────────────────────────────────────────────────────
+    // Repo accents, by repo name: one of green blue yellow orange red
+    // purple cyan pink (`src/ui/accent_color.zig`, the same palette the
+    // sessions use), or "none" for the auto slot. With two or more repos
+    // in the workspace the app writes each repo's slot here the first
+    // time it sees it (the first assignment wins across restarts) and the
+    // repo pill's right-click Color menu writes a pick; one repo shows no
+    // accent. Home layer only — a workspace file's entries are read but
+    // the app writes home.
+    .git = .{ .repo_colors = .{ .mnml = "green", .@"mnml-zig" = "blue" } },
+
     // ── tasks / startup ────────────────────────────────────────────────
     .tasks = .{
         .build = .{ .cmd = "zig build", .cwd = null },
