@@ -36,11 +36,11 @@ line), not by hand.
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 25 | 0 | 0 | 0 | 25 |
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
-| UI & theming | 77 | 0 | 3 | 0 | 80 |
+| UI & theming | 84 | 0 | 3 | 0 | 87 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
 | Headless, IPC & extensibility | 49 | 0 | 2 | 0 | 51 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **527** | **0** | **9** | **0** | **536** |
+| **total** | **534** | **0** | **9** | **0** | **543** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -389,7 +389,7 @@ trust sink. Each row names its file and its test.
 | `notes.refresh` / `findings.refresh` | done | `refresh` in each | scan workers on the todos shape |
 | Caps header with live count | done | `src/ui/header.zig`, `src/ui/list_panel.zig` | |
 | `/`-focus filter row | done | `src/ui/filter_input.zig` | |
-| Accent bar, scrollbar, wheel / drag scroll | done | `src/ui/list_panel.zig` | |
+| Accent bar, scrollbar, wheel / drag scroll | done | `src/ui/list_panel.zig`; `wheel(app, down, rows)` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig`, `dispatch.panelWheel` / `panelScrollbar` / `Drag.bar` | the wheel over the rows, the kebabs and the bar moves the cursor by the budgeted batch clamped to the list cap (Rust `list_scroll_clamp_scaled`: 8 rows at `off`, scaled with the setting); a press on the bar lands the cursor at the pointer's fraction and the drag keeps steering it off the bar; `tests/e2e/wheel_list_panel.test` |
 | `⟳` chip right-click menu + auto-refresh | done | `src/app/auto_refresh.zig` (`openRefreshMenu`, `on`, `toggle`, `seed`); the `.refresh` prong of `chipMouse` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | *Refresh now* + a ✓ *Auto-refresh* row; off stops TODOS' save / watcher rescan, NOTES' / FINDINGS' path hooks and SESSIONS' cadence; `ui.auto_refresh_off` seeds the set and the toggle persists it to the workspace config; `tests/e2e/refresh_chip_row_menus.test` |
 | Sort chip — click cycles, right-click lists | done | `openSortMenu` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | every list panel |
 | Narrow-panel icon-only chip | done | the ladder in `src/ui/header.zig` | full + count → icon + count → full → icon; tested at 26 / 30 / 34 / 40 / 50 |
@@ -651,6 +651,13 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Click-discovery panel | done | `Overlay.discovery`, `discovery.Category` / `App.discovery_flash` in `src/app/discovery.zig`, `view.discovery` (unbound, as in Rust) | eleven rows with the frame's hit counts; a row press flashes that family for two seconds; F1 / Esc / a press elsewhere close; `rust-discovery-120x40.txt`; `// changed:` the old label-every-hit overlay is gone |
 | Hover tooltips on chips | done | `describe` in `discovery.zig`, `src/ui/tooltip.zig` | `ui.hover_tooltip` popup and the `ui.hover_help` rail box; wake on motion only |
 | Right-click menus throughout | done | `src/app/context_menus.zig` — editor / tab / tree / mode / `+` / request / todos / stress / branch / diagnostics / bell / toast | |
+| Context menus taller than the screen scroll | done | `MenuState.scroll` / `SubMenu.scroll` / `MenuFollow` in `src/app.zig`, `menuWindow` / `paintMenuRows` in `src/app/render.zig`, `menuWheel` in `dispatch.zig`; `tests/e2e/wheel_context_menu.test` | Rust 1ef21198: the window is clamped to the list and pulled after a key's cursor or, after the wheel, the cursor after it; the bottom border's last cell says `↑` / `↓` / `↕`; a row's hit names its item, not its screen row; a menu that fits is untouched |
+| Wheel acceleration — `[editor] scroll_accel` | done | `Accel` / `ceiling` / `listStep` in `src/app/scroll.zig`, `dispatch.wheelLines`; `docs/research/scroll-tuning.md` | Rust's `budgeted_scroll_at` with its arithmetic kept: the multiplier ramps on the wheel's rate, a 250 ms gap is a new gesture, a decaying wheel is never amplified, the sub-line remainder carries, a 40 × ceiling bucket refilled at 60/s, at least one line an event; a unit test pins the line counts per setting for the same event runs; `tools/compare.sh compare-mouse` reads the same top line as Rust after 1 / 3 / 10 / 30 notches |
+| `[editor] wheel_moves_cursor` — auto / always / never | done | `App.cursorFollowsWheel`, the editor arm of `wheelOnPane` and `dragScrollbar` in `dispatch.zig`; `tests/e2e/mouse_wheel_moves_cursor.test` | the wheel and the editor's scrollbar drag agree: `always` moves the cursor (the view follows), `never` moves the view and pins it until the cursor moves, `auto` is the input style |
+| Wheel coalescing + the click after a flick | done | `Coalescer` in `src/app/scroll.zig`, `App.handle` / `flushWheel` | a tick's burst is one batch (cap 40); a turn the other way starts the next batch after the flush; a click flushes the batch first; a batch after a batch routes against the frame's hit map without a render |
+| Every scrollbar drags and its track jumps | done | the `.scrollbar` prong, `paneBarJump`, `barDrag`, `scrollbarTrackOf` in `dispatch.zig`, `Drag.bar` | the editor's thumb keeps its grab row and follows `wheel_moves_cursor`; the panels, the tree, the picker, the help box and the outline / markdown / ZON / git-status / grep panes land at the pointer's fraction of the track and keep steering off the bar until the release |
+| Tree wheel — one row per notch | done | `treeWheel` in `dispatch.zig`, `Accel.treeRows` | with accel off a batch inside 60 ms of the last step is the same notch (ghostty reports a detent as three events); with it on the rows come from the factor, accumulated (2.5 alternates 2 and 3) |
+| Pty wheel — pass-through vs scrollback | done | the `.pane` prong for a pty in `dispatch.zig`; the wheel test in `src/app/pty_pane.zig`, `tests/e2e/wheel_pty_pane.test` | a child tracking the mouse gets every event of a batch as its report, unbudgeted; one that does not scrolls the scrollback a line per event |
 | Welcome pane (no pane open) | done | `src/ui/welcome.zig`, the `// ── welcome ──` block in `src/app/render.zig` | logo · workspace · branch · Recent Files · Shortcuts · version; rows 10–28 of `docs/ui-spec/rust-120x40.txt` match |
 | First-launch welcome | done | `src/app/first_launch.zig`, `src/ui/wizard.zig`, `src/app/first_launch_install.zig` | seven sections; Space installs — the Nerd Font once "boxes" is answered (`brew install --cask font-symbols-only-nerd-font` / the NerdFontsSymbolsOnly zip into `~/.local/share/fonts` + `fc-cache -f` / PowerShell into the per-user font dir with an HKCU registration; a toast at nerdfonts.com elsewhere), the AI CLIs, the `code` shim (`sudo ln -sf` of the VS Code bundle's `code` into `/usr/local/bin`, macOS) — in an `install: …` pane; the wizard closes for it keeping its answers and returns on the pane's exit; the terminal hint (ghostty / iTerm2 / Terminal.app / WezTerm / Windows Terminal, off `TERM_PROGRAM`) toasts on exit 0 only; `docs/ui-spec/zig-wizard-120x40.txt`; `first_launch_nerd_font_install.test`. Not carried: Rust's Keyboard-section Space (the ghostty `macos-option-as-alt` auto-fix) — the probes tick, no fix is written |
 | About & Settings overlays | done | `view.about` / `view.welcome`, `src/app/settings.zig` | |

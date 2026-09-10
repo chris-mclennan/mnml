@@ -815,10 +815,17 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 runToast(app, openSelected(app));
             }
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, st.filtered.items.len -| 1),
         else => {},
     }
+}
+
+/// The wheel over the list: `rows` rows (the batch, budgeted and
+/// clamped by `dispatch.panelWheel`); the window follows the cursor.
+pub fn wheel(app: *App, down: bool, rows: usize) void {
+    const st = &app.todos;
+    const total = st.filtered.items.len;
+    st.list.cursor = if (down) @min(st.list.cursor + rows, total -| 1) else st.list.cursor -| rows;
+    app.needs_render = true;
 }
 
 pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
@@ -858,8 +865,6 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
             const off: usize = m.y -| bar.y;
             st.list.cursor = @min(off * total / bar.h, total - 1);
         },
-        .scroll_up => st.list.cursor -|= 3,
-        .scroll_down => st.list.cursor = @min(st.list.cursor + 3, total - 1),
         else => {},
     }
 }
@@ -1456,4 +1461,58 @@ test "mark done rewrites the file and the row disappears on the rescan; the row 
     try f.tmp.dir.createDirPath(testing.io, ".claude");
     try testing.expect(hasClaudeDir(&f.app));
     try testing.expectEqual(Agent.claude, pickAgent(&f.app).?);
+}
+
+test "wheel over the panel: a row per event, a burst clamped to the list cap; the bar's wheel is the same; a press on the bar lands the cursor and the drag steers off it" {
+    var f = try Fixture.init(100, 20);
+    defer f.deinit();
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    for (0..40) |i| try text.print(testing.allocator, "// TODO: item {d}\n", .{i});
+    try f.write("a.zig", text.items);
+    f.app.tree.visible = false;
+    f.app.side.of.set(.todos, .right);
+    f.app.side.right_width = 40;
+    try command.run(&f.app, .{ .static = .@"view.activity_todos" });
+    try f.app.render();
+    try f.settle(2000);
+    try f.app.render();
+    try testing.expectEqual(@as(usize, 40), f.app.todos.filtered.items.len);
+    var row0: ?Rect = null;
+    var bar: ?Rect = null;
+    for (f.app.hits.items.items) |h| switch (h.target) {
+        .row => |r| if (r.idx == 0) {
+            row0 = h.rect;
+        },
+        .scrollbar => |sb| if (sb.owner == .panel and sb.owner.panel == .todos) {
+            bar = h.rect;
+        },
+        else => {},
+    };
+    const r = row0.?;
+    const b = bar.?;
+    // One event: one row.
+    f.app.now_ms += 1000;
+    try f.app.handle(.{ .mouse = .{ .x = r.x + 1, .y = r.y, .kind = .scroll_down } });
+    try f.app.tick(f.app.now_ms);
+    try testing.expectEqual(@as(usize, 1), f.app.todos.list.cursor);
+    // Thirty in one batch: the list cap at `normal` is twenty rows.
+    f.app.now_ms += 1000;
+    for (0..30) |_| try f.app.handle(.{ .mouse = .{ .x = r.x + 1, .y = r.y, .kind = .scroll_down } });
+    try f.app.tick(f.app.now_ms);
+    try testing.expectEqual(@as(usize, 21), f.app.todos.list.cursor);
+    // The bar's wheel is the same surface.
+    f.app.now_ms += 1000;
+    try f.app.handle(.{ .mouse = .{ .x = b.x, .y = b.y + 1, .kind = .scroll_up } });
+    try f.app.tick(f.app.now_ms);
+    try testing.expectEqual(@as(usize, 20), f.app.todos.list.cursor);
+    // A press at the bar's foot lands the cursor near the end; a drag
+    // off the bar to its top row brings it back; the release ends it.
+    try f.app.handle(.{ .mouse = .{ .x = b.x, .y = b.y + b.h - 1, .kind = .press, .button = .left } });
+    try testing.expect(f.app.todos.list.cursor >= 30);
+    try testing.expect(f.app.drag != null and f.app.drag.? == .bar);
+    try f.app.handle(.{ .mouse = .{ .x = b.x -| 3, .y = b.y, .kind = .drag, .button = .left } });
+    try testing.expectEqual(@as(usize, 0), f.app.todos.list.cursor);
+    try f.app.handle(.{ .mouse = .{ .x = b.x -| 3, .y = b.y, .kind = .release, .button = .left } });
+    try testing.expect(f.app.drag == null);
 }

@@ -1,0 +1,25 @@
+# height: 14
+# A context menu taller than the screen scrolls (Rust 1ef21198): the
+# editor body's menu has more rows than a 14-row screen holds, so its
+# bottom border says `↓`; the wheel over it moves the window a row per
+# notch and the border says `↕`; End reaches the last row (`↑`).
+write a.txt "hello\n"
+open a.txt
+command view.toggle_tree
+rightclick 20 5
+expect screen contains "Cut"
+expect screen contains "↓"
+expect screen lacks "Open on remote"
+scroll 20 6 down
+scroll 20 6 down
+scroll 20 6 down
+scroll 20 6 down
+scroll 20 6 down
+scroll 20 6 down
+expect screen contains "↕"
+expect screen lacks "Cut"
+key end
+expect screen contains "Open on remote"
+expect screen contains "↑"
+key esc
+expect screen lacks "Open on remote"

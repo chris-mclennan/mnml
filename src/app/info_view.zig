@@ -403,11 +403,12 @@ pub fn chipCopy(app: *App, c: tree_view.Chip) Copy {
 
 /// A press or wheel on the box: the kebab drops its menu, a link row
 /// runs its command, the wheel scrolls, anything else is swallowed.
-pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
+pub fn mouse(app: *App, part: Part, m: Mouse, count: u16) Allocator.Error!void {
     const st = &app.info_view;
     switch (m.kind) {
-        .scroll_up => st.scroll -|= app.cfg.ui.wheel_lines,
-        .scroll_down => st.scroll = @min(st.scroll + app.cfg.ui.wheel_lines, st.max_scroll),
+        // A row per wheel event, as Rust's hover-help strip.
+        .scroll_up => st.scroll -|= @max(count, 1),
+        .scroll_down => st.scroll = @min(st.scroll + @max(count, 1), st.max_scroll),
         .press => {
             // right-click: the kebab's menu on either button.
             if (m.button == .right and part == .kebab) return openKebabMenu(app, m.x, m.y + 1);
@@ -628,23 +629,24 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
     try t.expectEqualStrings("New file", hovered.title);
     try t.expectEqual(command.CommandId.@"file.new", app.info_view.links[0].?);
     // The link row runs it: a prompt opens.
-    try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left });
+    try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
     try t.expect(app.overlay == .prompt);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
     // The kebab.
-    try mouse(&app, .kebab, .{ .x = 5, .y = 5, .kind = .press, .button = .left });
+    try mouse(&app, .kebab, .{ .x = 5, .y = 5, .kind = .press, .button = .left }, 1);
     try t.expect(app.overlay == .menu);
     try t.expectEqualStrings("Turn off info panel (Settings → UI to bring back)", app.overlay.menu.items[0].label);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
     // The wheel.
+    // A row per wheel event (the batch's count), clamped to the paint's bound.
     app.info_view.max_scroll = 4;
-    try mouse(&app, .body, .{ .x = 5, .y = 5, .kind = .scroll_down, .button = .none });
-    try t.expectEqual(@as(u16, 3), app.info_view.scroll);
-    try mouse(&app, .body, .{ .x = 5, .y = 5, .kind = .scroll_down, .button = .none });
+    try mouse(&app, .body, .{ .x = 5, .y = 5, .kind = .scroll_down, .button = .none }, 1);
+    try t.expectEqual(@as(u16, 1), app.info_view.scroll);
+    try mouse(&app, .body, .{ .x = 5, .y = 5, .kind = .scroll_down, .button = .none }, 5);
     try t.expectEqual(@as(u16, 4), app.info_view.scroll);
-    try mouse(&app, .body, .{ .x = 5, .y = 5, .kind = .scroll_up, .button = .none });
+    try mouse(&app, .body, .{ .x = 5, .y = 5, .kind = .scroll_up, .button = .none }, 3);
     try t.expectEqual(@as(u16, 1), app.info_view.scroll);
     // A new topic scrolls back to the top.
     app.hover_live = false;

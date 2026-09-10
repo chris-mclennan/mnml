@@ -1008,16 +1008,17 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 runToast(app, activate(app, row));
             }
         },
-        .scroll_up => {
-            st.list.cursor -|= 3;
-            settle(st, false);
-        },
-        .scroll_down => {
-            st.list.cursor = @min(st.list.cursor + 3, st.rows.items.len -| 1);
-            settle(st, true);
-        },
         else => {},
     }
+}
+
+/// The wheel over the list moves the cursor `rows` rows and settles it
+/// on a stop.
+pub fn wheel(app: *App, down: bool, rows: usize) void {
+    const st = &app.http_panel;
+    st.list.cursor = if (down) @min(st.list.cursor + rows, st.rows.items.len -| 1) else st.list.cursor -| rows;
+    settle(st, down);
+    app.needs_render = true;
 }
 
 pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {

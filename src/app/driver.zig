@@ -88,6 +88,7 @@ pub const AppDriver = struct {
         .ghost = vGhost,
         .tick = vTick,
         .expireChords = vExpireChords,
+        .wheelNotch = vWheelNotch,
         .render = vRender,
         .screen = vScreen,
         .status = vStatus,
@@ -118,6 +119,10 @@ pub const AppDriver = struct {
 
     fn vMouse(p: *anyopaque, m: key_mod.Mouse) Error!void {
         try cast(p).app.handle(.{ .mouse = m });
+    }
+
+    fn vWheelNotch(p: *anyopaque) void {
+        cast(p).app.accel.endGesture();
     }
 
     /// An unknown id is the step's failure; a command that ran and

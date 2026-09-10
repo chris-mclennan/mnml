@@ -1,0 +1,74 @@
+# The wheel over a list panel moves its cursor a row per notch and the
+# window follows (Rust 7cf4f932: the panels' wheel and bar). Forty
+# TODOs in a panel that shows twenty-four: thirty notches down carry
+# the first row off and the thirty-first into view; thirty back bring
+# it home.
+write a.zig "// TODO: item 0\n// TODO: item 1\n// TODO: item 2\n// TODO: item 3\n// TODO: item 4\n// TODO: item 5\n// TODO: item 6\n// TODO: item 7\n// TODO: item 8\n// TODO: item 9\n// TODO: item 10\n// TODO: item 11\n// TODO: item 12\n// TODO: item 13\n// TODO: item 14\n// TODO: item 15\n// TODO: item 16\n// TODO: item 17\n// TODO: item 18\n// TODO: item 19\n// TODO: item 20\n// TODO: item 21\n// TODO: item 22\n// TODO: item 23\n// TODO: item 24\n// TODO: item 25\n// TODO: item 26\n// TODO: item 27\n// TODO: item 28\n// TODO: item 29\n// TODO: item 30\n// TODO: item 31\n// TODO: item 32\n// TODO: item 33\n// TODO: item 34\n// TODO: item 35\n// TODO: item 36\n// TODO: item 37\n// TODO: item 38\n// TODO: item 39\n"
+command view.activity_todos
+# The sidebar's 26 cells clip the rows; widen it so a row reads in full.
+drag 30 5 60 5
+wait 500
+expect screen contains "item 0"
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+scroll 10 8 down
+expect screen lacks "item 0 "
+expect screen contains "item 30"
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+scroll 10 8 up
+expect screen contains "item 0 "

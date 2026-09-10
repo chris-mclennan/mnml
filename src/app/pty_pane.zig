@@ -823,6 +823,7 @@ test "childOwned: ctrl+c/d/z/l only" {
 // ─── the pane end to end ───────────────────────────────────────────────
 
 const screen_mod = @import("../ipc/screen.zig");
+const Rect = @import("../ui/rect.zig");
 
 /// Tick + render until `needle` is on screen or `ms` elapse.
 pub fn tickUntilScreen(app: *App, needle: []const u8, ms: u32) !bool {
@@ -912,6 +913,52 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     const text = try app.gpa.dupe(u8, "ab");
     try app.handle(.{ .paste = text });
     try t.expect(try tickUntilScreen(&app, "2   0   0   ~   a   b", 5000));
+}
+
+test "the wheel over a pty: a child tracking the mouse gets every event of a batch as its report; one that is not scrolls the scrollback a line per event" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // The child asks for every motion (1003) in SGR form; the tty's
+    // echo (ECHOCTL) then paints what the child is sent, so the
+    // reports read back on the screen as `^[[<65;…`.
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf '\\033[?1003h\\033[?1006h'; echo ready; sleep 30" }, .label = "track" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
+    try t.expect(app.panes.pty(id).?.encoding().mouse == .any);
+    var rect: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .pane and h.target.pane == id) {
+        rect = h.rect;
+    };
+    const r = rect.?;
+    app.now_ms += 1000;
+    for (0..3) |_| try app.handle(.{ .mouse = .{ .x = r.x + 5, .y = r.y + 3, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try t.expect(try tickUntilScreen(&app, "<65;", 3000));
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expectEqual(@as(usize, 3), std.mem.count(u8, txt, "<65;"));
+    // A child that does not track: the wheel scrolls the scrollback,
+    // a line per event — five events up show five earlier lines.
+    const id2 = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "seq 1 100; sleep 30" }, .label = "seq" });
+    try t.expect(try tickUntilScreen(&app, "100", 5000));
+    try t.expect(app.panes.pty(id2).?.encoding().mouse == .none);
+    var rect2: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .pane and h.target.pane == id2) {
+        rect2 = h.rect;
+    };
+    const r2 = rect2.?;
+    app.now_ms += 1000;
+    for (0..5) |_| try app.handle(.{ .mouse = .{ .x = r2.x + 5, .y = r2.y + 3, .kind = .scroll_up } });
+    try app.tick(app.now_ms);
+    try app.render();
+    const txt2 = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt2);
+    // The split's three rows held 98..100; five lines up they hold 93..95.
+    try t.expect(std.mem.indexOf(u8, txt2, "100") == null);
+    try t.expect(std.mem.indexOf(u8, txt2, "95") != null);
 }
 
 // ─── the accent (colors) ───────────────────────────────────────────────

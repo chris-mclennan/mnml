@@ -1,5 +1,5 @@
 # The mouse wheel scrolls the Settings list — the box is 35 rows tall for
-# a 60-row list. A notch down moves the top of the list away; the cursor
+# a long list. A notch down moves the top of the list away; the cursor
 # follows the window (the row it marks is always visible), and a notch
 # up brings the top back.
 command view.settings
@@ -8,6 +8,39 @@ scroll 60 20 down
 expect screen lacks "── UI ──"
 scroll 60 20 up
 expect screen contains "── UI ──"
+# A row per notch (Rust's `settings_move_row(±1)` an event): forty
+# notches carry the 43-row UI section past and the Editor header in,
+# at the box's height on any screen the suite runs at.
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down

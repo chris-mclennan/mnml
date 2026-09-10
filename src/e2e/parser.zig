@@ -40,7 +40,8 @@
 //!
 //! The leading comment block may carry runner directives:
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
-//! at that width only), `# env: NAME=value` (set in the App's environment
+//! at that width only), `# height: 14` (that height only — a menu taller
+//! than the screen needs a short one), `# env: NAME=value` (set in the App's environment
 //! for this file — `MNML_NOW_PLAYING` for the statusline's cluster).
 
 const std = @import("std");
@@ -91,6 +92,7 @@ pub const Line = struct {
 pub const Header = struct {
     requires_network: bool = false,
     width: ?u16 = null,
+    height: ?u16 = null,
     /// `# env: NAME=value` lines, in order; slices of the text parsed.
     env: [max_env]EnvPair = undefined,
     env_len: usize = 0,
@@ -337,6 +339,9 @@ pub fn parseHeader(text: []const u8) Header {
         if (line[0] != '#') break;
         const after_hash = trim(std.mem.trimStart(u8, line, "#"));
         if (std.ascii.eqlIgnoreCase(after_hash, "requires: network")) h.requires_network = true;
+        if (std.ascii.startsWithIgnoreCase(after_hash, "height:")) {
+            h.height = std.fmt.parseInt(u16, trim(after_hash["height:".len..]), 10) catch null;
+        }
         if (std.ascii.startsWithIgnoreCase(after_hash, "width:")) {
             h.width = std.fmt.parseInt(u16, trim(after_hash["width:".len..]), 10) catch null;
         }
@@ -549,6 +554,9 @@ test "header directives come only from the leading comment block" {
     try t.expect(!parseHeader("open x\n# requires: network\n").requires_network);
     try t.expectEqual(@as(?u16, 120), parseHeader("# width: 120\n").width);
     try t.expectEqual(@as(?u16, null), parseHeader("# width: wide\n").width);
+    try t.expectEqual(@as(?u16, 14), parseHeader("# height: 14\n").height);
+    try t.expectEqual(@as(?u16, null), parseHeader("# height: tall\n").height);
+    try t.expectEqual(@as(?u16, null), parseHeader("# height: 14\n").width);
     const env = parseHeader("# env: MNML_NOW_PLAYING=Song|playing|spotify\n# env: EMPTY=\n# env: nokey\n# env: =x\nopen x\n");
     try t.expectEqual(@as(usize, 2), env.envPairs().len);
     try t.expectEqualStrings("MNML_NOW_PLAYING", env.envPairs()[0].key);

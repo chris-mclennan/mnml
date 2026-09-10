@@ -233,10 +233,16 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
                 if (idx < list.len) try openRow(app, list[idx]);
             }
         },
-        .scroll_up => st.panel.cursor -|= 3,
-        .scroll_down => st.panel.cursor += 3,
         else => {},
     }
+}
+
+/// The wheel over the list moves the cursor `rows` rows.
+pub fn wheel(app: *App, down: bool, step: usize) Allocator.Error!void {
+    const st = &app.scripts_panel;
+    const n = (try rows(app, app.frame.allocator())).len;
+    st.panel.cursor = if (down) @min(st.panel.cursor + step, n -| 1) else st.panel.cursor -| step;
+    app.needs_render = true;
 }
 
 /// The row's `⋮`: the same menu as a right-click.

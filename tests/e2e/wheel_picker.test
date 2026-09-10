@@ -1,0 +1,34 @@
+# The wheel over the picker walks its cursor `wheel_lines` rows per
+# notch (Rust's three), the marker `▌` showing where it is; the list
+# scrolls after it.
+write f00.txt "x\n"
+write f01.txt "x\n"
+write f02.txt "x\n"
+write f03.txt "x\n"
+write f04.txt "x\n"
+write f05.txt "x\n"
+write f06.txt "x\n"
+write f07.txt "x\n"
+write f08.txt "x\n"
+write f09.txt "x\n"
+write f10.txt "x\n"
+write f11.txt "x\n"
+write f12.txt "x\n"
+write f13.txt "x\n"
+write f14.txt "x\n"
+write f15.txt "x\n"
+write f16.txt "x\n"
+write f17.txt "x\n"
+write f18.txt "x\n"
+write f19.txt "x\n"
+key ctrl+p
+expect screen contains "┌ Open file "
+expect screen contains "▌f00.txt"
+scroll 40 15 down
+expect screen contains "▌f03.txt"
+scroll 40 15 down
+expect screen contains "▌f06.txt"
+scroll 40 15 up
+expect screen contains "▌f03.txt"
+key esc
+expect screen lacks "┌ Open file "
