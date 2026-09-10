@@ -57,6 +57,11 @@ pub const probes = [_]Probe{
     .{ .label = "Option/Alt+←", .purpose = "word left (macOS Option)", .key = .{ .code = .left, .mods = .{ .alt = true } } },
 };
 
+/// The Keyboard section's Space line — the same words in every
+/// terminal, so the dump does not depend on where it was cut; what
+/// Space does is the terminal's (`app/key_doctor.zig`).
+pub const keyboard_space_hint = "  Space — fix Option-as-Alt: ghostty gets its config written, others the steps.";
+
 pub const Route = enum { auto, sub, api, off };
 pub const route_labels = [_][]const u8{ "Auto", "Sub", "API", "Off" };
 
@@ -81,6 +86,9 @@ pub const Model = struct {
     nerd_note: []const u8 = "",
     /// What Space does on the `code` shim section, in one line.
     code_shim_note: []const u8 = "",
+    /// What Space did on the Keyboard section (`key_doctor.fixNote`);
+    /// empty until it is pressed.
+    keyboard_note: []const u8 = "",
 };
 
 pub const State = struct {
@@ -229,6 +237,8 @@ pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
                     lines.append(ui.arena, .{ .text = ui.fmt("  {s}  {s:<14}  {s}", .{ mark, p.label, p.purpose }), .style = if (seen) good else muted }) catch return;
                 }
                 lines.append(ui.arena, .{ .text = "  Press each chord; a tick means it reached mnml.", .style = muted }) catch return;
+                lines.append(ui.arena, .{ .text = keyboard_space_hint, .style = muted }) catch return;
+                noteLines(ui, &lines, m.keyboard_note, good) catch return;
             },
             .input_style => {
                 lines.append(ui.arena, .{ .text = radio(ui, !m.vim, "standard — VS Code keys, modeless"), .style = body, .hit = chipHit(sec, 0) }) catch return;

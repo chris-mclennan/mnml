@@ -2227,6 +2227,7 @@ test {
     _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
     _ = @import("app/first_launch.zig");
+    _ = @import("app/key_doctor.zig");
     _ = @import("app/pane.zig");
     _ = @import("app/outline.zig");
     _ = @import("app/md_preview.zig");

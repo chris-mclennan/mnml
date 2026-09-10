@@ -30,6 +30,7 @@ const input = @import("../input/mod.zig");
 const wizard = @import("../ui/wizard.zig");
 const settings = @import("settings.zig");
 const install = @import("first_launch_install.zig");
+const key_doctor = @import("key_doctor.zig");
 
 pub const Section = wizard.Section;
 
@@ -49,6 +50,15 @@ pub const State = struct {
     claude_installed: bool = false,
     codex_installed: bool = false,
     code_shim_ok: bool = false,
+    /// What Space did on the Keyboard section, for the row under it.
+    kb_note: [note_cap]u8 = undefined,
+    kb_note_len: u8 = 0,
+
+    pub const note_cap = 200;
+
+    pub fn keyboardNote(st: *const State) []const u8 {
+        return st.kb_note[0..st.kb_note_len];
+    }
 };
 
 fn routeOf(backend: ?Config.AiBackend) wizard.Route {
@@ -107,6 +117,7 @@ pub fn model(app: *App) wizard.Model {
     const macos_note = "macOS 26: use this — dragging the .ttf into Font Book looks like it works,\nbut CoreText silently skips unsigned Nerd Fonts. The cask registers.";
     return .{
         .code_shim_ok = st.code_shim_ok,
+        .keyboard_note = st.keyboardNote(),
         .nerd_install = install.nerdFontSummary(install.host_os),
         .nerd_note = if (install.host_os == .macos) macos_note else "",
         .code_shim_note = switch (install.host_os) {
@@ -149,9 +160,32 @@ fn action(app: *App, section: wizard.Section) Allocator.Error!void {
         .nerd_font => if (st.nerd_font_icons == false) try toastOnFail(app, install.installNerdFont(app)) else answer(app, section, false),
         .claude_codex => try toastOnFail(app, install.installAiClis(app)),
         .vscode_shim => try toastOnFail(app, install.installCodeShim(app)),
-        .keyboard => {},
+        .keyboard => try applyKeyboardFix(app),
         .input_style, .ai_routing, .ai_ghost_text => adjust(app, section, 1),
     }
+}
+
+/// Space on the Keyboard section: the one fix mnml applies itself —
+/// `macos-option-as-alt = true` in ghostty's config when an Option/Alt
+/// chord has not ticked (`key_doctor`) — with what happened as the note
+/// under the row and a toast. Any other terminal gets its steps as a
+/// toast; nothing is written. An Option chord that already arrived
+/// means nothing to fix, and says so.
+fn applyKeyboardFix(app: *App) Allocator.Error!void {
+    const st = &app.overlay.wizard;
+    const term = key_doctor.detectTerminal(&app.env);
+    const macos = key_doctor.host_is_macos;
+    const alt_seen = st.keys_seen[2] or st.keys_seen[3];
+    var applied: ?key_doctor.Applied = null;
+    if (!alt_seen and key_doctor.remedy(.alt_right, term, macos).fix == .ghostty_option_as_alt) {
+        if (try key_doctor.ghosttyConfigPath(app.frame.allocator(), app.io, &app.env)) |path| {
+            applied = .{ .path = path, .outcome = key_doctor.applyGhosttyOptionAsAlt(app.gpa, app.io, path) };
+        }
+    }
+    const note = key_doctor.fixNote(&st.kb_note, alt_seen, term, macos, applied);
+    st.kb_note_len = @intCast(note.len);
+    if (term == .ghostty or alt_seen) app.toast("{s}", .{note}) else app.toast("{s}", .{key_doctor.remedy(.alt_right, term, macos).text});
+    app.needs_render = true;
 }
 
 /// A pane that could not open says why; the wizard stays.
@@ -554,4 +588,60 @@ test "code shim: on PATH already is a toast, never a pane" {
     try t.expect(app.overlay == .wizard);
     try t.expectEqualStrings("`code` is already on PATH.", app.lastToast().?);
     try t.expect(installPane(&app, install.code_shim_label) == null);
+}
+
+test "Space on Keyboard: in ghostty on macOS with no Option chord seen the fix is written under HOME and the row says so; another terminal only gets its steps as a toast; a seen Option chord means nothing to fix" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", root);
+    try env.put("TERM_PROGRAM", "iterm.app");
+    {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40, .env = &env });
+        defer app.deinit();
+        try command.run(&app, .{ .static = .@"first_launch.show" });
+        try app.handle(.{ .key = Key.named(.down) });
+        try t.expect(app.overlay.wizard.ui.section == .keyboard);
+        try app.handle(.{ .key = Key.char(' ') });
+        // Not ghostty: the steps, nothing on disk, the note says no auto-fix.
+        try t.expect(std.mem.indexOf(u8, app.lastToast().?, "Esc+") != null);
+        try t.expectError(error.FileNotFound, tmp.dir.access(t.io, ".config/ghostty/config", .{}));
+        try t.expect(std.mem.startsWith(u8, app.overlay.wizard.keyboardNote(), "No auto-fix for iTerm2"));
+    }
+    try env.put("TERM_PROGRAM", "ghostty");
+    {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40, .env = &env });
+        defer app.deinit();
+        try command.run(&app, .{ .static = .@"first_launch.show" });
+        try app.handle(.{ .key = Key.named(.down) });
+        try app.handle(.{ .key = Key.char(' ') });
+        const note = app.overlay.wizard.keyboardNote();
+        if (key_doctor.host_is_macos) {
+            try t.expect(std.mem.startsWith(u8, note, "Added macos-option-as-alt = true to "));
+            try t.expect(std.mem.endsWith(u8, note, "Restart ghostty."));
+            const text = try tmp.dir.readFileAlloc(t.io, ".config/ghostty/config", t.allocator, .limited(65536));
+            defer t.allocator.free(text);
+            try t.expect(std.mem.endsWith(u8, text, "macos-option-as-alt = true\n"));
+            try t.expectEqualStrings(note, app.lastToast().?);
+            // The row shows the note.
+            try app.render();
+            const screen = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+            defer t.allocator.free(screen);
+            try t.expect(std.mem.indexOf(u8, screen, "Added macos-option-as-alt = true") != null);
+            // Second press: already set, still nothing more written.
+            try app.handle(.{ .key = Key.char(' ') });
+            try t.expect(std.mem.indexOf(u8, app.overlay.wizard.keyboardNote(), "already has macos-option-as-alt = true") != null);
+        } else {
+            try t.expect(std.mem.startsWith(u8, note, "No auto-fix for ghostty"));
+        }
+        // An Option chord that ticked: nothing to fix.
+        try app.handle(.{ .key = .{ .code = .right, .mods = .{ .alt = true } } });
+        try t.expect(app.overlay.wizard.keys_seen[2]);
+        try app.handle(.{ .key = Key.char(' ') });
+        try t.expectEqualStrings("Option+→ already arrives — nothing to fix.", app.overlay.wizard.keyboardNote());
+    }
 }
