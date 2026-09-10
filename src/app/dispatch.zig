@@ -361,7 +361,10 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // A pending chord owns the next key outright: `space` is armed, so
     // the `e` of `<leader>e` is the chain's, not the end-of-word motion
     // (the same rule `ptyKey` applies).
-    const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
+    // A key the handler reserves (vim Insert's completion pair) goes
+    // to it even though the keymap binds it for Normal.
+    const reserved = if (ed) |e| e.buf.input.reservesKey(k) else false;
+    const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or reserved or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
     if (!editor_first and app.chord.len == 0 and ed == null) {
         // No pane: only chords do anything.
         _ = try chordChain(app, k);

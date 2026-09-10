@@ -214,6 +214,16 @@ pub const Vim = struct {
         self.enterNormal();
     }
 
+    /// Insert-mode `Ctrl+N` / `Ctrl+P` / `Ctrl+O` are vim's before they
+    /// are the keymap's (lowercase only: `Ctrl+Shift+P` stays the palette).
+    pub fn reservesKey(self: *const Vim, k: Key) bool {
+        if (self.vmode != .insert or !k.mods.ctrl or k.mods.alt or k.mods.super or k.mods.shift) return false;
+        return switch (k.code) {
+            .char => |c| c == 'n' or c == 'p' or c == 'o',
+            else => false,
+        };
+    }
+
     pub fn requestInsertMode(self: *Vim) void {
         self.enterInsert();
     }

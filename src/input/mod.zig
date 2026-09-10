@@ -268,6 +268,16 @@ pub const InputHandler = union(enum) {
         };
     }
 
+    /// A key the handler must see before the chord chain, whatever the
+    /// keymap binds it to: vim's Insert owns `Ctrl+N` / `Ctrl+P`
+    /// (keyword completion) and `Ctrl+O` (one-shot Normal), which the
+    /// vim profile binds to the tree and the file picker for Normal.
+    pub fn reservesKey(h: *const InputHandler, k: Key) bool {
+        return switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "reservesKey")) impl.reservesKey(k) else false,
+        };
+    }
+
     pub fn requestInsertMode(h: *InputHandler) void {
         switch (h.*) {
             inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "requestInsertMode")) impl.requestInsertMode(),

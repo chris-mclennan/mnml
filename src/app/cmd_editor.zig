@@ -1069,3 +1069,20 @@ test "keyword completion cycles the nearest words extending the prefix, wraps to
     try t.expectEqualStrings("no match", app.lastToast().?);
     try t.expect(app.keyword_complete == null);
 }
+
+test "insert-mode Ctrl+N / Ctrl+P reach the handler's completion ahead of the vim keymap's tree toggle and file picker; Normal keeps them" {
+    var app = try appWith("alphabet\nal");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    e.buf.editor.setCursor(e.buf.editor.len());
+    const tree_before = app.tree.visible;
+    try feed(&app, "a<c-n>");
+    try t.expectEqualStrings("alphabet\nalphabet", e.buf.editor.bytes());
+    try t.expectEqual(tree_before, app.tree.visible);
+    try feed(&app, "<c-p>");
+    try t.expectEqualStrings("alphabet\nal", e.buf.editor.bytes());
+    try t.expect(app.overlay != .picker);
+    try feed(&app, "<esc><c-n>");
+    try t.expectEqual(!tree_before, app.tree.visible);
+}
