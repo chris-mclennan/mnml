@@ -29,7 +29,7 @@ line), not by hand.
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
 | Git | 47 | 0 | 2 | 0 | 49 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
-| AI | 26 | 0 | 1 | 0 | 27 |
+| AI | 27 | 0 | 1 | 0 | 28 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
 | HTTP request client | 48 | 0 | 1 | 0 | 49 |
@@ -40,7 +40,7 @@ line), not by hand.
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
 | Headless, IPC & extensibility | 49 | 0 | 2 | 0 | 51 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **534** | **0** | **9** | **0** | **543** |
+| **total** | **535** | **0** | **9** | **0** | **544** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -48,7 +48,7 @@ table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
 and bridge v2 — the last two beyond the Rust list.
 
-Ids: 1034 in `src/commands/specs.zig`; 1034 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
+Ids: 1039 in `src/commands/specs.zig` (the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1039 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
 
 ## Landed since the first ledger
 
@@ -102,6 +102,8 @@ source on 2026-09-07; the rows they touched carry the new pointers.
 | `wizard` | 2026-09-08 | the first-launch wizard's installs (`src/app/first_launch_install.zig`): Space runs the Nerd Font install (brew cask / zip + fc-cache / PowerShell per OS), the vendors' `curl \| sh` lines for a missing `claude` / `codex`, the `code` shim symlink — each in an `install: …` pane whose exit 0 toasts the terminal hint and re-detects; the AI chips show a CLI found on PATH; `view.tab_bar_ai_*` / `view.cluster_mode_*` got runners; `ai.launch_profiles` / `default_profile` are exec-bearing; `zig-wizard-120x40.txt`. *2026-09-09 (leftovers):* Space on the Keyboard section is Rust's `wizard_apply_keyboard_fix` — in ghostty on macOS, with no Option/Alt chord ticked, `macos-option-as-alt = true` is written to ghostty's config (flipped in place or appended after a breadcrumb, the original backed up beside it) and the row says which; any other terminal gets its steps as a toast. The probe/fix logic is `src/app/key_doctor.zig` (`detectTerminal`, `remedy`, `ghosttyConfigPath`, `applyGhosttyOptionAsAlt`, `fixNote`), the same API a `keys.doctor` runner reads; `tests/e2e/first_launch_keyboard_fix.test` |
 | `http-hooks` | 2026-09-07 | `docs/research/http-vs-posting.md` §3 rows 1–2: the `http_request` / `http_response` hooks with `mnml.http.set_var` / `send` (beyond the Rust list), and the Headers tab as a key / value table whose name and value cells complete — from the last response first, the workspace's `.http` files next, the bundled table last |
 | `colors` | 2026-09-10 | one palette for sessions and repos (`src/ui/accent_color.zig`, Rust's `session_color.rs` list in its order); a new Claude pane takes the next slot and paints its `▌` identity strip, tab glyph, SESSIONS card and table row in it; with two or more repos each takes a slot on first sight (home `git.repo_colors`) and paints the pill's column 0, the All-repos sub-headers' gutter, a `▌` down its graph / status / diff panes, their tab glyphs and the tree's repo dot; right-click on any of them → `Color: …` with the current ticked, `Color: Auto` last |
+
+| `sessions-worktree` | 2026-09-10 | a Claude / Codex session in a git worktree of its own, opt-in per launch or per profile (`src/app/session_worktree.zig`): *New session in a worktree…* on the AI chip's menu, the `+` menus and `+ New session`, `ai.new_session_worktree`, `LaunchProfile.worktree`; a branch-name prompt, `<repo>-worktrees/<name>` (`ai.default_worktree_root` overrides) from `HEAD`, the session's cwd there with `MNML_WORKSPACE`; the SESSIONS card / table row tagged `⑂ <name>`, the row menu's *Open worktree in tree* / *Merge into <branch>…* / *Remove worktree…* behind named confirms, the git panel's WORKTREES row in the session's accent with the same verbs, and one toast when the session ends with commits waiting; `session.zon` `sessions_worktrees` |
 
 ## Remaining — what is still `missing` or `partial`, with an estimate
 
@@ -441,6 +443,7 @@ trust sink. Each row names its file and its test.
 | Pty — claude / Codex | done | `ai.zig` | |
 | Pty — any task / command | done | `termEx` (`:term <cmd>`), `src/app/tasks.zig` | |
 | Multi-session tab strip | done | `Tab.kind` in `src/ui/bufferline.zig` | pty tabs marked in the strip |
+| Session worktrees — a session in a git worktree of its own | done (Zig-authored) | `src/app/session_worktree.zig` (`validName`, `rootFor`, `create` / `merge` / `remove`, `openNamePrompt` / `acceptName`, `confirmMerge` / `confirmRemove`), `Registry` on `sessions.State.worktrees`, `worktreeOf` / `announceWorktreeEnded` in `src/sessions.zig`, `sessionAccent` in `src/app/git_palette.zig`, `Config.LaunchProfile.worktree`, `Config.Ai.default_worktree_root`; `tests/e2e/sessions_worktree_launch_merge.test` | Zig-authored — the Rust editor has no such thing. Opt-in and off by default: *New session in a worktree…* on the AI chip's right-click (the default profile), the SESSIONS rail `+` menu, the `+` tab menu's AI rows, `+ New session` (section, table, the table's group row) and `ai.new_session_worktree`; a profile with `.worktree = true` always goes this way. The prompt is seeded `session-<n>` / `<profile>-<n>` (the first free directory) and validated as a branch name; `git worktree add -b <name> <repo>-worktrees/<name> HEAD` (`ai.default_worktree_root` overrides the root: `~` expands, a relative path sits under the repo), refused with the reason when the directory or the branch exists; the session's cwd is the tree, `MNML_WORKSPACE` names it, the tab reads `claude @ <name>`. The registry (`session.zon` `sessions_worktrees`) pairs the tree with its session by path, then by the id the scan lists; the card paints ` ⑂ <name>` after the label, the table row a muted one (`wt:<name>` in ASCII); the row menu offers *Open worktree in tree* (an extra workspace root, the repo switched to), *Merge into <branch>…* (`--no-ff`; refused while the main tree has uncommitted changes; a failed merge opens the command log) and *Remove worktree…* (`worktree remove` + `branch -d`; an unmerged branch asks once more with Force); the git panel's WORKTREES row paints the session's `▌` and carries the same two verbs; a session whose row goes ended with its tree still there toasts once — `session <name> ended — its worktree <wt> has N commits: merge / remove / keep (row menu)`. Every git child of these verbs runs synchronously and lands in the command log |
 | Session accents — a slot per new Claude pane, the Color menu | done | `assignAutoAccent` / `accentOf` in `src/app/pty_pane.zig`, `setColorAction` in `src/sessions.zig`, `src/ui/accent_color.zig`; `tests/e2e/sessions_second_claude_color.test` | Rust's `session_color.rs` palette in its order (the auto-cycle order is the menu order); a new Claude pane takes the next slot, a shell none; the pty pane's one-cell `▌` identity strip, its tab glyph, the SESSIONS card's `▌` and the table row's first cell paint it; right-click on the card, the table row, the pty tab or the pane body → `Color: …` with the current ticked, `Color: Auto` last; overrides persist by session id (`session.zon` `sessions_colors`) and on the saved pane, and a resumed session opens in its colour |
 | `:rename` | done | `rename` in `cmd_term.zig`, `term.rename` | |
 | `$` suffix on pty tabs | done | `bufferline.zig` | |
