@@ -90,6 +90,12 @@ pub const table = .{
     .@"pr.refresh" = cutRunner(cut_forge),
     .@"integrations.glyph_builder" = cutRunner(cut_glyph_svg),
     .@"integrations.patch_nerd_font_svg" = cutRunner(cut_glyph_svg),
+    .@"integrations.edit_claude_glyph" = cutRunner(cut_glyph_svg),
+    .@"integrations.edit_codex_glyph" = cutRunner(cut_glyph_svg),
+    .@"view.toggle_bottom_panel" = cutRunner(cut_bottom_panel),
+    .@"view.host_active_in_bottom_panel" = cutRunner(cut_bottom_panel),
+    .@"integrations.check_updates_now" = cutRunner(cut_integration_updates),
+    .@"integrations.fire_auto_updates_now" = cutRunner(cut_integration_updates),
     .@"audio.airplay_music" = cutRunner(cut_audio),
     .@"audio.restore_output" = cutRunner(cut_audio),
     .@"mixr.play_now" = cutRunner(cut_audio),
@@ -120,6 +126,8 @@ pub const table = .{
 const cut_forge = "the cross-host PR picker returns with the Zig forge integrations (docs/PARITY.md § Git)";
 const cut_glyph_svg = "the glyph builder's SVG preview and font patching are cut (docs/PARITY.md § Headless, IPC & extensibility)";
 const cut_audio = "now-playing, Sonos and mixr control are cut from mnml-zig (docs/PARITY.md § UI & theming)";
+const cut_bottom_panel = "mnml-zig has no bottom panel — the split tree and the terminal scratch (`term.scratch_toggle`) are where a docked pane lives (docs/PARITY.md § Panes, splits & tab pages)";
+const cut_integration_updates = "the cargo / git integration auto-updater is not in mnml-zig — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
 
 /// A command that was cut on purpose: the reason, and where the ledger
 /// records it, as one toast. Fails so a keybinding does not look like it
@@ -733,6 +741,25 @@ pub fn onPath(app: *App, bin: []const u8) bool {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "the glyph editors, the bottom panel and the integration auto-updater are cut: each fails with the ledger toast" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const ids = [_]command.CommandId{
+        .@"integrations.edit_claude_glyph",
+        .@"integrations.edit_codex_glyph",
+        .@"view.toggle_bottom_panel",
+        .@"view.host_active_in_bottom_panel",
+        .@"integrations.check_updates_now",
+        .@"integrations.fire_auto_updates_now",
+    };
+    for (ids) |id| {
+        try t.expectError(error.Failed, command.run(&app, .{ .static = id }));
+        try t.expect(std.mem.startsWith(u8, app.lastToast().?, "not in mnml-zig: "));
+        try t.expect(std.mem.indexOf(u8, app.lastToast().?, "docs/PARITY.md") != null);
+    }
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "auto_update_*") != null);
+}
 
 test "small commands: recent jumps, scratch from the register, fold navigation, gf, char info, the registers picker, tools on PATH" {
     var tmp = t.tmpDir(.{});
