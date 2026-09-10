@@ -71,6 +71,8 @@ const pty_pane = @import("pty_pane.zig");
 const remote_mod = @import("../git/remote.zig");
 const settings = @import("settings.zig");
 const accent_color = @import("../ui/accent_color.zig");
+const sessions = @import("../sessions.zig");
+const session_worktree = @import("session_worktree.zig");
 const Theme = @import("../ui/theme.zig");
 
 pub const Section = view.Section;
@@ -701,9 +703,33 @@ fn worktreeRows(app: *App, arena: Allocator, v: RailView, filter: []const u8, ou
             .dirty = w.dirty,
             .ahead = if (b) |x| x.ahead else 0,
             .behind = if (b) |x| x.behind else 0,
+            .accent = sessionAccent(app, w.path),
+            .session = app.sessions.worktrees.byPath(w.path) != null,
         } });
     }
     return count;
+}
+
+/// The accent of the session whose worktree `path` is
+/// (sessions-worktree): the session's colour by its id, else its open
+/// pane's — as the SESSIONS card paints it. Null for a tree that is no
+/// session's, or one whose session has no colour yet.
+pub fn sessionAccent(app: *App, path: []const u8) ?Theme.Color {
+    const e = app.sessions.worktrees.byPath(path) orelse return null;
+    const by_id: ?[]const u8 = if (e.session_id) |sid| sessions.colorNameOf(app, sid) else null;
+    const name = by_id orelse paneAccentByCwd(app, path) orelse return null;
+    return accent_color.resolve(name, &app.theme);
+}
+
+/// The accent of the pty pane running in `cwd`, if one is.
+fn paneAccentByCwd(app: *App, cwd: []const u8) ?[]const u8 {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .pty => |*pt| if (pt.cwd) |c| if (std.mem.eql(u8, c, cwd)) {
+            if (pt.accent_color) |a| return a;
+        },
+        else => {},
+    };
+    return null;
 }
 
 // STASHES — newest first, as `stash list` prints them.
@@ -1081,7 +1107,13 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try items.append(gpa, .{ .label = "Open shell here", .action = .{ .git_palette = .{ .what = .worktree_shell, .idx = w.idx } } });
             try items.append(gpa, .{ .label = "Copy path", .action = .{ .git_palette = .{ .what = .worktree_copy_path, .idx = w.idx } } });
             try items.append(gpa, .{ .label = "New worktree\u{2026}", .action = .{ .command = .@"git.worktree_add" } });
-            if (!w.main and !w.current) try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_remove, .idx = w.idx } } });
+            // sessions-worktree: a session's tree merges and removes
+            // through the session verbs (the branch goes with it).
+            if (app.sessions.worktrees.byPath(wt.path)) |e| {
+                const into = session_worktree.currentBranch(app, arena, e.repo) catch "HEAD";
+                try items.append(gpa, .{ .label = try std.fmt.allocPrint(arena, "Merge into {s}\u{2026}", .{into}), .action = .{ .git_palette = .{ .what = .session_merge, .idx = w.idx } }, .separator_before = true });
+                try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .session_remove, .idx = w.idx } } });
+            } else if (!w.main and !w.current) try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_remove, .idx = w.idx } } });
             try app.openMenu(try std.fmt.allocPrint(arena, "{s}  {s}", .{ wt.label(), wt.path }), try items.toOwnedSlice(gpa), x, y);
         },
         .stash => |s| {
@@ -1133,11 +1165,15 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 app.toast("copied {s}", .{url});
                 break :blk;
             },
-            .worktree_open, .worktree_shell, .worktree_copy_path, .worktree_remove => {
+            .worktree_open, .worktree_shell, .worktree_copy_path, .worktree_remove, .session_merge, .session_remove => {
                 if (a.idx >= gs.rail_worktrees.len) break :blk;
                 const wt = gs.rail_worktrees[a.idx];
                 switch (a.what) {
                     .worktree_open => break :blk openWorktree(app, wt),
+                    .session_merge, .session_remove => {
+                        const e = app.sessions.worktrees.byPath(wt.path) orelse break :blk app.diag.fail(arena, "{s} is no session worktree", .{wt.path});
+                        break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*, false);
+                    },
                     .worktree_copy_path => {
                         try app.clipboard.setYank(wt.path, false);
                         app.toast("copied {s}", .{wt.path});
@@ -1699,6 +1735,30 @@ test "rows: the five sections in order with their counts; LOCAL A–Z with the c
     try testing.expectEqual(@as(u32, 1), list[11].worktree.ahead);
     try testing.expectEqualStrings("fix (wt-fix)", list[12].worktree.shown);
     try testing.expect(list[12].worktree.locked and list[12].worktree.dirty and !list[12].worktree.main);
+    // sessions-worktree: neither tree is a session's yet.
+    try testing.expect(!list[11].worktree.session and list[11].worktree.accent == null);
+    try testing.expect(!list[12].worktree.session and list[12].worktree.accent == null);
+    try openRowMenu(app, 12, 0, 0);
+    for (app.overlay.menu.items) |mi| try testing.expect(!std.mem.startsWith(u8, mi.label, "Merge into "));
+    try app.handle(.{ .key = Key.named(.esc) });
+    // The registry names wt-fix as sid-1's tree and sid-1 is pink: the
+    // row carries the accent, and its menu the session verbs.
+    try app.sessions.worktrees.add(app.gpa, "/repo/wt-fix", "wt-fix", "fix", app.workspace, "sid-1");
+    try app.sessions.setColor(app.gpa, "sid-1", "pink");
+    const list2 = try rows(app, arena);
+    try testing.expect(list2[12].worktree.session);
+    try testing.expect(Theme.Color.eql(list2[12].worktree.accent.?, app.theme.palette.pink));
+    try testing.expect(list2[11].worktree.accent == null);
+    try openRowMenu(app, 12, 0, 0);
+    var merge_row: ?command.GitPaletteAct = null;
+    var remove_row: ?command.GitPaletteAct = null;
+    for (app.overlay.menu.items) |mi| {
+        if (std.mem.startsWith(u8, mi.label, "Merge into ")) merge_row = mi.action.git_palette;
+        if (std.mem.eql(u8, mi.label, "Remove worktree\u{2026}")) remove_row = mi.action.git_palette;
+    }
+    try testing.expect(merge_row.?.what == .session_merge and merge_row.?.idx == 1);
+    try testing.expect(remove_row.?.what == .session_remove);
+    try app.handle(.{ .key = Key.named(.esc) });
     try testing.expectEqual(Section.stashes, list[14].section.s);
     try testing.expectEqualStrings("ab12cd3", list[15].stash.sha);
     try testing.expectEqualStrings("On main: half done", list[15].stash.message);

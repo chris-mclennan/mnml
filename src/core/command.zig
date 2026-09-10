@@ -660,6 +660,11 @@ pub const GitPaletteAct = struct {
         worktree_shell,
         worktree_copy_path,
         worktree_remove,
+        /// // changed (sessions-worktree): a session-owned worktree's
+        /// merge into the main tree / remove with its branch
+        /// (`app/session_worktree.zig`, behind a named confirm).
+        session_merge,
+        session_remove,
         stash_apply,
         stash_pop,
         stash_drop,
