@@ -455,6 +455,11 @@ test "preview tabs: a glance at another .md replaces the glanced tab in place; t
     const rid = try http_app.openFile(&app, r, true);
     try testing.expect(app.panes.get(rid).?.request.is_preview);
     try testing.expect(!app.panes.get(rid).?.request.edited);
+    // A glanced pane is browsed: a bare key never edits it (`x` goes to
+    // the chord chain); Enter enters the URL field, then the key lands.
+    try app.handle(.{ .key = Key.char('x') });
+    try testing.expect(!app.panes.get(rid).?.request.edited);
+    try app.handle(.{ .key = Key.named(.enter) });
     try app.handle(.{ .key = Key.char('x') });
     try testing.expect(app.panes.get(rid).?.request.edited);
 }
