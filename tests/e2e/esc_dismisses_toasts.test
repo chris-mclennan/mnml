@@ -1,0 +1,11 @@
+# Esc puts the transient toasts away (Rust clears its toast stack on every
+# Esc). Two pickers that have nothing to show each leave a toast; one Esc
+# clears both. They used to stack until their TTL ran out (walkthrough 1.11).
+command picker.recent
+expect screen contains "no recent files"
+command picker.clipboard
+expect screen contains "no registers hold anything yet"
+expect screen contains "no recent files"
+key esc
+expect screen lacks "no recent files"
+expect screen lacks "no registers hold anything yet"

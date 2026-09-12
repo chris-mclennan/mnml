@@ -138,6 +138,12 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
     // Esc Esc leaves full screen: any other key in between disarms.
     if (k.code != .esc) app.zen_esc_ms = null;
+    // Esc puts every transient toast away, whatever else it is about
+    // to do — an overlay closes, visual mode ends, the pane gets it —
+    // as Rust's key handler does before anything else sees the key
+    // (walkthrough 1.11: the picker's `no recent files` boxes stacked
+    // three deep because nothing ever cleared them).
+    if (k.code == .esc) app.dismissTransientToasts();
     switch (app.overlay) {
         .none => {},
         else => return overlayKey(app, k),
@@ -4380,4 +4386,36 @@ test "a submenu's first arrow moves as well as lights: New ▸ then two downs an
     try app.handle(.{ .key = key_mod.Key.named(.enter) });
     try std.testing.expect(app.overlay == .none);
     try std.testing.expectEqualStrings("a.txt", app.panes.get(app.active.?).?.title());
+}
+
+test "toasts: the transient stack keeps five and drops the oldest, a repeat coalesces, a sticky one is not counted, and Esc clears the transient ones even with an overlay open" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.toastPersistent("job", "indexing…", .info);
+    var i: usize = 0;
+    while (i < 7) : (i += 1) app.toast("toast {d}", .{i});
+    // Five transient plus the sticky one; 0 and 1 were the oldest.
+    try std.testing.expectEqual(@as(usize, 6), app.toasts.items.len);
+    try std.testing.expectEqualStrings("indexing…", app.toasts.items[0].text);
+    try std.testing.expectEqualStrings("toast 2", app.toasts.items[1].text);
+    try std.testing.expectEqualStrings("toast 6", app.lastToast().?);
+    // The same text again bumps its box instead of stacking a twin.
+    app.toast("toast 4", .{});
+    try std.testing.expectEqual(@as(usize, 6), app.toasts.items.len);
+    try std.testing.expectEqualStrings("toast 4", app.lastToast().?);
+    try std.testing.expectEqual(@as(u32, 2), app.toasts.items[app.toasts.items.len - 1].repeats);
+    // Esc with the palette open closes the palette AND the toasts; the
+    // sticky one stays until its owner dismisses it.
+    try command.run(&app, .{ .static = .palette });
+    try std.testing.expect(app.overlay == .picker);
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    try std.testing.expectEqualStrings("indexing…", app.toasts.items[0].text);
+    app.dismissToast("job");
+    try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+    // And with nothing open at all.
+    app.toast("later", .{});
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
 }

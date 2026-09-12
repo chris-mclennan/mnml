@@ -1067,7 +1067,12 @@ pub const App = struct {
     /// `nav.back` / `nav.forward`: where the cursor was before big jumps.
     jumplist: jumplist.State = .{},
 
+    /// Every toast, sticky ones included — a guard, not a policy.
     pub const max_toasts = 32;
+    /// Rust's `TOAST_STACK_MAX`: the transient stack keeps the five
+    /// newest and drops the oldest, so a burst never queues up behind
+    /// the `+K more…` chip for the next twenty seconds.
+    pub const max_transient_toasts = 5;
     pub const max_closed = 32;
     pub const max_closed_tabs = 8;
     pub const max_recent = 50;
@@ -1487,9 +1492,45 @@ pub const App = struct {
             self.needs_render = true;
             return;
         };
-        if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
+        self.capTransient();
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms });
         self.needs_render = true;
+    }
+
+    /// A toast that expires — everything but the sticky ones an owner
+    /// dismisses by id.
+    fn isTransient(t: Toast) bool {
+        return t.expires_ms != std.math.maxInt(i64);
+    }
+
+    /// Room for one more transient toast: the oldest transient ones go
+    /// while `max_transient_toasts` are up (Rust pops the back of its
+    /// stack). Sticky toasts are not counted and never dropped here.
+    fn capTransient(self: *App) void {
+        var n: usize = 0;
+        for (self.toasts.items) |t| if (isTransient(t)) {
+            n += 1;
+        };
+        var i: usize = 0;
+        while (n >= max_transient_toasts and i < self.toasts.items.len) {
+            if (isTransient(self.toasts.items[i])) {
+                freeToast(self.gpa, self.toasts.orderedRemove(i));
+                n -= 1;
+            } else i += 1;
+        }
+    }
+
+    /// Esc: every transient toast goes at once — the user said "go
+    /// away" to whatever is on screen (Rust clears `toast_stack` on
+    /// every Esc, before the overlays see the key). Sticky ones stay.
+    pub fn dismissTransientToasts(self: *App) void {
+        var i: usize = 0;
+        while (i < self.toasts.items.len) {
+            if (isTransient(self.toasts.items[i])) {
+                freeToast(self.gpa, self.toasts.orderedRemove(i));
+                self.needs_render = true;
+            } else i += 1;
+        }
     }
 
     /// A toast that replaces its predecessor of the same `id` instead of
@@ -1506,7 +1547,7 @@ pub const App = struct {
             return;
         };
         self.messages.record(self.gpa, s, .info, self.now_ms) catch {};
-        if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
+        self.capTransient();
         self.toasts.append(self.gpa, .{ .text = s, .level = .info, .expires_ms = self.now_ms + toast_ttl_ms, .id = owned_id }) catch {
             self.gpa.free(s);
             self.gpa.free(owned_id);
