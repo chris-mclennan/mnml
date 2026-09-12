@@ -1,0 +1,31 @@
+# `>>` / `{count}>>` / `V…>` leave the cursor on the FIRST line of the
+# range at its first non-blank (`:help >>`; `vim -es`: `gg3>>` → 1:2
+# with a tab, `gg3>>j.` → 2:3) — not on the last line's end. So `.`
+# after `3>>` shifts the same three lines again, not the three below.
+write a.txt "alpha\nbravo\ncharlie\ndelta\necho\n"
+open a.txt
+command editor.use_vim
+
+key >
+key >
+expect screen contains "Ln 1/5 Col 5"
+key u
+key 3
+key >
+key >
+expect screen contains "Ln 1/5 Col 5"
+key .
+command file.save
+expect file a.txt contains "        alpha\n        bravo\n        charlie\ndelta\necho\n"
+
+# `V j >` ends on the range's first line too; `<<` mirrors `>>`.
+key G
+key V
+key k
+key >
+expect screen contains "Ln 4/5 Col 5"
+key <
+key <
+expect screen contains "Ln 4/5 Col 1"
+command file.save
+expect file a.txt contains "charlie\ndelta\n    echo\n"

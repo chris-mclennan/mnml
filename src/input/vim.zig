@@ -825,11 +825,11 @@ pub const Vim = struct {
                 self.vmode = .insert;
             },
             .indent => {
-                try b.push(.indent);
+                try b.push(.indent_to_first_non_blank);
                 try b.push(.select_clear);
             },
             .outdent => {
-                try b.push(.outdent);
+                try b.push(.outdent_to_first_non_blank);
                 try b.push(.select_clear);
             },
             .reindent => {
@@ -885,6 +885,7 @@ pub const Vim = struct {
             '"', '\'', '`' => if (around) .{ .select_around_quote = c } else .{ .select_inner_quote = c },
             'q' => if (around) .select_around_smart_quote else .select_inner_smart_quote,
             'p' => if (around) .select_around_paragraph else .select_inner_paragraph,
+            's' => if (around) .select_around_sentence else .select_inner_sentence,
             'f' => if (around) .select_around_function else .select_inner_function,
             'c' => if (around) .select_around_class else .select_inner_class,
             'a', ',' => if (around) .select_around_argument else .select_inner_argument,
@@ -1135,6 +1136,9 @@ pub const Vim = struct {
                 }
                 return switch (c) {
                     'w' => runCmd(.@"view.focus_next_split"),
+                    't' => runCmd(.@"view.focus_top"),
+                    'b' => runCmd(.@"view.focus_bottom"),
+                    'p' => runCmd(.@"view.focus_previous"),
                     'q', 'c' => runCmd(.@"view.close_split"),
                     's' => runCmd(.@"view.split_down"),
                     'v' => runCmd(.@"view.split_right"),
@@ -1733,8 +1737,8 @@ pub const Vim = struct {
                     for (1..n) |_| try b.push(.move_down);
                     try b.push(.move_line_end);
                     try b.push(switch (op) {
-                        .indent => .indent,
-                        .outdent => .outdent,
+                        .indent => .indent_to_first_non_blank,
+                        .outdent => .outdent_to_first_non_blank,
                         else => .reindent,
                     });
                     try b.push(.select_clear);
@@ -2078,8 +2082,8 @@ pub const Vim = struct {
             '>', '<', '=' => {
                 self.enterNormal();
                 const op: EditOp = switch (c) {
-                    '>' => .indent,
-                    '<' => .outdent,
+                    '>' => .indent_to_first_non_blank,
+                    '<' => .outdent_to_first_non_blank,
                     else => .reindent,
                 };
                 if (linewise) return ops(arena, &.{ .normalize_linewise_selection, op, .select_clear });
@@ -2127,8 +2131,20 @@ pub const Vim = struct {
                 return runCmd(.@"find.selection_backward");
             },
             ':' => {
+                // `:` ends Visual on the spot (`:help v_:`): the `'<,'>`
+                // marks take the whole range — a linewise one widened
+                // first, so `'>` is the cursor's line and not the one
+                // above it — the selection goes, and the cursor stays
+                // where Visual left it (`vim -es`: `2GV2j` → `'<`=2,
+                // `'>`=4). Esc on the line then finds Normal, not V-LINE.
                 try self.openCmdline("'<,'>");
-                return ops(arena, &.{.remember_selection});
+                self.vmode = .normal;
+                var b = Builder.init(arena);
+                if (linewise) try b.push(.normalize_linewise_selection);
+                try b.push(.remember_selection);
+                try b.push(.select_clear);
+                try b.push(.{ .set_cursor_byte = ctx.cursor });
+                return b.finish();
             },
             'S' => {
                 // vim-surround: wrap the selection with the next char.
@@ -2202,8 +2218,11 @@ pub const Vim = struct {
                 return .{ .app = .block_change_start };
             },
             ':' => {
+                // As in the other Visual modes: the marks are set and
+                // the block is gone before the `:` line takes a key.
                 try self.openCmdline("'<,'>");
-                return ops(arena, &.{.remember_selection});
+                self.vmode = .normal;
+                return ops(arena, &.{ .remember_selection, .block_select_clear });
             },
             'r' => {
                 self.prefix = .block_replace_char;
@@ -2362,6 +2381,9 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their run
         .{ .key = 'h', .id = .@"view.focus_left" },
         .{ .key = 'd', .id = .@"view.split_goto_definition" },
         .{ .key = 'f', .id = .@"view.split_open_file_under_cursor" },
+        .{ .key = 't', .id = .@"view.focus_top" },
+        .{ .key = 'b', .id = .@"view.focus_bottom" },
+        .{ .key = 'p', .id = .@"view.focus_previous" },
     };
     for (cases) |c| {
         try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
@@ -2402,6 +2424,37 @@ test "gt / gT run tab.next / tab.prev; with a count they name the page (3gt) or 
     _ = try v.handleKey(Key.char('g'), .{}, a);
     r = try v.handleKey(Key.char('t'), .{}, a);
     try testing.expectEqual(CommandId.@"tab.next", r.app.run_command);
+}
+
+test "visual `:` opens the line on '<,'>, leaves Visual at once, and widens a linewise range before remembering it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char('V'), .{}, a);
+    _ = try v.handleKey(Key.char('j'), .{}, a);
+    const r = try v.handleKey(Key.char(':'), .{ .cursor = 7 }, a);
+    try testing.expect(v.isCmdlineOpen());
+    try testing.expectEqualStrings("'<,'>", v.cmdlineGet().?);
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
+    try testing.expectEqualSlices(EditOp, &.{ .normalize_linewise_selection, .remember_selection, .select_clear, .{ .set_cursor_byte = 7 } }, r.ops);
+    // Esc on the line: Normal, nothing pending; `gv` still knows the shape.
+    _ = try v.handleKey(Key.named(.esc), .{}, a);
+    try testing.expect(!v.isCmdlineOpen());
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
+    try testing.expectEqual(VimMode.visual_line, v.last_visual);
+    // Charwise: no widening.
+    _ = try v.handleKey(Key.char('v'), .{}, a);
+    const c = try v.handleKey(Key.char(':'), .{ .cursor = 3 }, a);
+    try testing.expectEqualSlices(EditOp, &.{ .remember_selection, .select_clear, .{ .set_cursor_byte = 3 } }, c.ops);
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
+    _ = try v.handleKey(Key.named(.esc), .{}, a);
+    // Block: the block anchor goes with it.
+    _ = try v.handleKey(Key.ctrl('v'), .{}, a);
+    const bl = try v.handleKey(Key.char(':'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{ .remember_selection, .block_select_clear }, bl.ops);
+    try testing.expectEqual(input.EditingMode.normal, v.mode());
 }
 
 test "pending display shows register, count, operator and prefix" {

@@ -232,6 +232,65 @@ pub fn paragraphBounds(ed: *const Editor, around: bool) [2]usize {
     return .{ ed.lineStart(start), ed.lineEnd(end) };
 }
 
+/// `is` / `as` (`:help is`): the sentence under the cursor. A sentence
+/// runs from the start of the paragraph, or the first non-blank after a
+/// terminator (`.` `!` `?` followed by white space or a line end), to
+/// the terminator inclusive — or to the paragraph's end when none
+/// follows, so a paragraph with no full stop is one sentence and `dis`
+/// takes it whole. `as` adds the white space after the sentence, or
+/// the white space before it when none follows.
+pub fn sentenceBounds(ed: *const Editor, around: bool) [2]usize {
+    const t = ed.bytes();
+    const para = paragraphBounds(ed, false);
+    const ps = para[0];
+    const pe = @min(para[1], t.len);
+    const cur = @min(ed.cursor, pe);
+    // Start: after the last terminator+space run before the cursor.
+    var start = ps;
+    var i = ps;
+    while (i < cur) : (i += 1) {
+        if (isTerminator(t[i]) and i + 1 <= pe and (i + 1 == pe or isWhite(t[i + 1]))) {
+            var j = i + 1;
+            while (j < pe and isWhite(t[j])) j += 1;
+            if (j <= cur) start = j;
+        }
+    }
+    // End: the first terminator+space at or after the cursor.
+    var end = pe;
+    var k = cur;
+    while (k < pe) : (k += 1) {
+        if (isTerminator(t[k]) and (k + 1 == pe or isWhite(t[k + 1]))) {
+            end = k + 1;
+            break;
+        }
+    }
+    // A sentence that runs to the paragraph's end takes its line break
+    // too (`vim -es`: `dis` on `alpha bravo\ncharlie\n\ndelta` from line
+    // 1 leaves `\ndelta`).
+    if (end == pe and pe < t.len and t[pe] == '\n') end = pe + 1;
+    if (!around) return .{ start, end };
+    var e2 = end;
+    while (e2 < pe and isWhite(t[e2])) e2 += 1;
+    if (e2 > end) return .{ start, e2 };
+    var s2 = start;
+    while (s2 > ps and isWhite(t[s2 - 1])) s2 -= 1;
+    return .{ s2, end };
+}
+
+fn isTerminator(b: u8) bool {
+    return b == '.' or b == '!' or b == '?';
+}
+
+fn isWhite(b: u8) bool {
+    return b == ' ' or b == '\t' or b == '\n';
+}
+
+pub fn sentence(ed: *Editor, around: bool) void {
+    const b = sentenceBounds(ed, around);
+    ed.anchor = b[0];
+    ed.cursor = b[1];
+}
+
 pub fn paragraph(ed: *Editor, around: bool) void {
     const b = paragraphBounds(ed, around);
     ed.anchor = b[0];

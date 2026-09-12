@@ -1,0 +1,25 @@
+# nvim-tree's default keys in the tree under vim: `E` expand all, `W`
+# collapse all, `a` create (a prompt), `r` rename (a prompt seeded with
+# the name). A fresh top-level folder opens on its own (`openNewTopDirs`),
+# so the fold check is on a nested one.
+write sub/inner/dd.txt "dd"
+write aa.txt "aa"
+open aa.txt
+command editor.use_vim
+key space
+key e
+expect screen contains "TREE"
+key E
+expect screen contains "dd.txt"
+key W
+expect screen lacks "dd.txt"
+key a
+expect screen contains "New file"
+type bb.txt
+key enter
+expect pane "bb.txt"
+key space
+key e
+key r
+expect screen contains "Rename"
+key esc

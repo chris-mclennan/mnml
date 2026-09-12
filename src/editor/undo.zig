@@ -130,6 +130,21 @@ pub const History = struct {
         self.redo.clear(self.gpa);
     }
 
+    /// Re-stamp the cursor of undo entry `index` (oldest first). The
+    /// buffer uses it once per key: the snapshot an op took mid-way —
+    /// after the handler's own motions — remembers the cursor the key
+    /// started from, vim's `uh_cursor`.
+    /// The text undo entry `index` (oldest first) would restore.
+    pub fn undoTextAt(self: *const History, index: usize) ?[]const u8 {
+        const at = self.undo.head + index;
+        return if (at < self.undo.items.items.len) self.undo.items.items[at].text else null;
+    }
+
+    pub fn setUndoCursor(self: *History, index: usize, cursor: usize) void {
+        const at = self.undo.head + index;
+        if (at < self.undo.items.items.len) self.undo.items.items[at].cursor = cursor;
+    }
+
     pub fn undoLen(self: *const History) usize {
         return self.undo.len();
     }
@@ -149,7 +164,10 @@ pub fn undoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const s = ed.doc.history.popUndo() orelse return;
     defer ed.doc.history.freeSnapshot(s);
     try ed.doc.history.pushRedo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
+    const before = try ed.gpa.dupe(u8, ed.doc.text.items);
+    defer ed.gpa.free(before);
     try ed.restore(s);
+    placeAfterHistoryHop(ed, before, s.cursor);
     ed.extra_cursors.clearRetainingCapacity();
     ed.extra_anchors.clearRetainingCapacity();
     out.buffer_changed = true;
@@ -159,10 +177,41 @@ pub fn redoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const s = ed.doc.history.popRedo() orelse return;
     defer ed.doc.history.freeSnapshot(s);
     try ed.doc.history.pushUndo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
+    const before = try ed.gpa.dupe(u8, ed.doc.text.items);
+    defer ed.gpa.free(before);
     try ed.restore(s);
+    placeAfterHistoryHop(ed, before, s.cursor);
     ed.extra_cursors.clearRetainingCapacity();
     ed.extra_anchors.clearRetainingCapacity();
     out.buffer_changed = true;
+}
+
+/// Where `u` / `Ctrl-R` leave the cursor (vim's `u_undoredo`, probed
+/// with `vim -es`): the snapshot's own cursor when its line lies within
+/// the changed block — the line above the first change through the line
+/// below the last (`4Gddu` → 4:1, `12Gddggu` → 12:1) — else the first
+/// changed line's first non-blank (`:'a,'bd` from line 24, then `u` →
+/// line 5). `before` is the text the hop replaced; the block is the
+/// lines where it and the restored text differ.
+fn placeAfterHistoryHop(ed: *Editor, before: []const u8, saved_cursor: usize) void {
+    const after = ed.bytes();
+    const n = @min(before.len, after.len);
+    var prefix: usize = 0;
+    while (prefix < n and before[prefix] == after[prefix]) prefix += 1;
+    if (prefix == before.len and prefix == after.len) return;
+    var suffix: usize = 0;
+    while (suffix < n - @min(prefix, n) and before[before.len - 1 - suffix] == after[after.len - 1 - suffix]) suffix += 1;
+    const first_line = ed.lineOfByte(@min(prefix, after.len));
+    const changed_end = after.len - @min(suffix, after.len);
+    const last_line = ed.lineOfByte(@max(changed_end, @min(prefix, after.len)));
+    const saved_line = ed.lineOfByte(@min(saved_cursor, after.len));
+    const lo = first_line -| 1;
+    const hi = last_line + 1;
+    if (saved_line >= lo and saved_line <= hi) {
+        ed.cursor = ed.snapBoundary(@min(saved_cursor, after.len));
+        return;
+    }
+    ed.cursor = ed.firstNonWs(@min(first_line, ed.lineCount() - 1));
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

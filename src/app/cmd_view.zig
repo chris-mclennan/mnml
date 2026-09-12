@@ -40,6 +40,9 @@ pub const table = .{
     .@"view.focus_up" = &focusUp,
     .@"view.focus_down" = &focusDown,
     .@"view.focus_next_split" = &focusNextSplit,
+    .@"view.focus_top" = &focusTop,
+    .@"view.focus_bottom" = &focusBottom,
+    .@"view.focus_previous" = &focusPrevious,
     .@"view.close_split" = &closeSplit,
     .@"view.close_others" = &closeOthers,
     .@"view.toggle_auto_equalize_splits" = &toggleAutoEqualize,
@@ -463,6 +466,55 @@ fn focusNextSplit(app: *App) CommandError!void {
     if (leaves.len < 2) return;
     const next = leaves[(idx + 1) % leaves.len];
     app.setActive(layout.leaf(next).?.active);
+}
+
+/// `Ctrl-W t` / `Ctrl-W b` (`:help CTRL-W_t`): the first / last leaf in
+/// layout order — the top-left / bottom-right window.
+fn focusEdge(app: *App, last: bool) CommandError!void {
+    const layout = app.layouts.current();
+    const leaves = try layout.leaves(app.frame.allocator());
+    if (leaves.len == 0) return error.NoActivePane;
+    const lid = if (last) leaves[leaves.len - 1] else leaves[0];
+    const id = layout.leaf(lid).?.active;
+    app.setActive(id);
+    app.focus = .{ .pane = id };
+    app.needs_render = true;
+}
+
+fn focusTop(app: *App) CommandError!void {
+    return focusEdge(app, false);
+}
+
+fn focusBottom(app: *App) CommandError!void {
+    return focusEdge(app, true);
+}
+
+/// `Ctrl-W p` (`:help CTRL-W_p`): the window that had the keys before
+/// this one — from the sidebar, the active pane; from a pane, the most
+/// recently active other pane on this page, else the sidebar when it
+/// is open.
+fn focusPrevious(app: *App) CommandError!void {
+    const layout = app.layouts.current();
+    if (app.focus != .pane) {
+        const id = app.active orelse return error.NoActivePane;
+        app.focus = .{ .pane = id };
+        app.needs_render = true;
+        return;
+    }
+    const cur = app.active orelse return error.NoActivePane;
+    for (app.pane_mru.items) |id| {
+        if (id == cur or app.panes.get(id) == null or layout.leafOf(id) == null) continue;
+        app.setActive(id);
+        app.focus = .{ .pane = id };
+        app.needs_render = true;
+        return;
+    }
+    if (app.tree.visible) {
+        app.focus = .tree;
+        app.needs_render = true;
+        return;
+    }
+    return app.diag.fail(app.frame.allocator(), "no previous window", .{});
 }
 
 /// True when another open pane shows the same document — the pane is
@@ -1659,6 +1711,31 @@ test "view.commands_reference opens the generated page as a scratch buffer" {
     const want = try std.fmt.allocPrint(t.allocator, "commands reference: {d} commands", .{command.count});
     defer t.allocator.free(want);
     try t.expectEqualStrings(want, app.lastToast().?);
+}
+
+test "Ctrl-W t / b / p: the top and bottom windows, and the one that had the keys before — from the tree too" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const c = app.active.?;
+    try command.run(&app, .{ .static = .@"view.focus_top" });
+    try std.testing.expectEqual(a, app.active.?);
+    try command.run(&app, .{ .static = .@"view.focus_bottom" });
+    try std.testing.expectEqual(c, app.active.?);
+    // Previous: c came from a; then a from c.
+    try command.run(&app, .{ .static = .@"view.focus_previous" });
+    try std.testing.expectEqual(a, app.active.?);
+    try command.run(&app, .{ .static = .@"view.focus_previous" });
+    try std.testing.expectEqual(c, app.active.?);
+    // Into the tree and back with Ctrl-W p, the pane untouched.
+    app.tree.visible = true;
+    app.focus = .tree;
+    try command.run(&app, .{ .static = .@"view.focus_previous" });
+    try std.testing.expect(app.focus == .pane and app.focus.pane == c);
+    _ = b;
 }
 
 test "every pane kind splits: a request pane gets a blank request beside it, a cheatsheet a scratch editor, and no toast names an error tag" {

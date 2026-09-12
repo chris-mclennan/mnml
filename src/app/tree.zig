@@ -18,6 +18,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
+const KeyCode = @import("../core/key.zig").KeyCode;
 const command = @import("../core/command.zig");
 const side = @import("side.zig");
 const CommandError = command.CommandError;
@@ -538,7 +539,13 @@ pub const Tree = struct {
             return false;
         }
         const n = self.rows.items.len;
-        switch (k.code) {
+        // A shifted letter arrives as `W` from one parser and as
+        // `shift+w` from another: one spelling here.
+        const code: KeyCode = switch (k.code) {
+            .char => |c| if (k.mods.shift and c >= 'a' and c <= 'z') .{ .char = c - ('a' - 'A') } else .{ .char = c },
+            else => |other| other,
+        };
+        switch (code) {
             .down => {
                 self.cursor = @min(self.cursor + 1, n -| 1);
                 try self.previewCursor(app);
@@ -602,19 +609,48 @@ pub const Tree = struct {
                 'l', ' ' => try self.expandOrOpen(app),
                 'h' => try self.collapseOrParent(app),
                 'o' => try self.activate(app, self.cursor),
-                'r' => try self.refresh(app),
+                // nvim-tree's verbs under vim (its default `on_attach`:
+                // `a` create, `r` rename, `d` delete, `x` cut, `R`
+                // refresh, `E` expand all, `W` collapse all); `r` stays
+                // refresh for the standard profile.
+                'r' => if (app.input_style == .vim) try runCmd(app, .@"file.rename") else try self.refresh(app),
+                'a' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"file.new");
+                },
+                'R' => {
+                    if (app.input_style != .vim) return false;
+                    try self.refresh(app);
+                },
+                'x' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"file.cut");
+                },
+                'E' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"tree.expand_all");
+                },
+                'W' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"tree.collapse_all");
+                },
                 'H' => {
                     self.show_hidden = !self.show_hidden;
                     try self.refresh(app);
                 },
                 'D' => try runCmd(app, .@"file.duplicate"),
-                'y', 'd' => {
+                'd' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"file.delete");
+                },
+                'y' => {
+                    // ranger's `yy`: two keys so a stray press copies nothing.
                     if (app.input_style != .vim) return false;
                     if (pending != null and pending.? == c) {
-                        try runCmd(app, if (c == 'y') .@"file.copy" else .@"file.cut");
+                        try runCmd(app, .@"file.copy");
                     } else {
                         self.pending = @intCast(c);
-                        app.toast("{c} — press again to {s}", .{ @as(u8, @intCast(c)), if (c == 'y') "copy" else "cut" });
+                        app.toast("y — press again to copy", .{});
                     }
                 },
                 'P' => {
@@ -1399,12 +1435,20 @@ pub fn acceptDelete(app: *App, rel: []const u8) Allocator.Error!void {
     try trash.deletePaths(app, &.{abs}, false);
 }
 
-/// `view.toggle_tree` (Ctrl+B): the left column — whatever section it
-/// shows — closes, or comes back on what it showed last.
+/// `view.toggle_tree` (Ctrl+B / vim's Ctrl+N): the left column —
+/// whatever section it shows — closes, or comes back on what it showed
+/// last. Under vim the tree that comes back takes the keys, as
+/// NvChad's `<C-n>` (`NvimTreeToggle`) does; VS Code's Ctrl+B leaves
+/// the focus where it was.
 fn toggle(app: *App) CommandError!void {
-    return side.toggleColumn(app, .left);
+    const opening = side.shown(app, .left) == null;
+    try side.toggleColumn(app, .left);
+    if (opening and app.input_style == .vim and app.tree.visible) side.focusSection(app, .explorer);
 }
 
+/// `view.focus_tree` (Ctrl+Shift+E / vim's `<leader>e`): the tree takes
+/// the keys, opened first when it was hidden — NvChad's `<leader>e`
+/// (`NvimTreeFocus`) — never hidden.
 fn focus(app: *App) CommandError!void {
     side.place(app, .explorer, true);
 }
@@ -1493,6 +1537,65 @@ test "tree: lists dirs first, expands on Enter, opens a file, shows dot entries 
     try t.expect(!try app.tree.handleKey(&app, Key.ctrl('p')));
     try command.run(&app, .{ .static = .@"tree.collapse_all" });
     try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
+}
+
+test "tree, vim profile: nvim-tree's a / r / d / x / R / E / W — create, rename, delete (confirmed), cut, refresh, expand all, collapse all" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.createDirPath(t.io, "sub");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/cc.txt", .data = "cc" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "aa.txt", .data = "aa" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    // `E` expands every folder, `W` folds them back.
+    try command.run(&app, .{ .static = .@"tree.collapse_all" });
+    try t.expect(app.tree.rowOf("sub/cc.txt") == null);
+    try app.handle(.{ .key = Key.char('E') });
+    try t.expect(app.tree.rowOf("sub/cc.txt") != null);
+    try app.handle(.{ .key = Key.char('W') });
+    try t.expect(app.tree.rowOf("sub/cc.txt") == null);
+    // `a` prompts for a new file; typing a name and Enter creates it.
+    app.tree.cursor = app.tree.rowOf("aa.txt").?;
+    try app.handle(.{ .key = Key.char('a') });
+    try t.expect(app.overlay == .prompt);
+    for ("bb.txt") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(app.tree.rowOf("bb.txt") != null);
+    // `r` is rename (the standard profile's `r` refreshes); `R` refreshes.
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rowOf("bb.txt").?;
+    try app.handle(.{ .key = Key.char('r') });
+    try t.expect(app.overlay == .prompt);
+    try t.expect(std.mem.indexOf(u8, app.overlay.prompt.state.buf.items, "bb.txt") != null);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "zz.txt", .data = "zz" });
+    try t.expect(app.tree.rowOf("zz.txt") == null);
+    app.focus = .tree;
+    try app.handle(.{ .key = Key.char('R') });
+    try t.expect(app.tree.rowOf("zz.txt") != null);
+    // `x` cuts (one key, nvim-tree's); `d` asks before deleting.
+    app.tree.cursor = app.tree.rowOf("zz.txt").?;
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expect(app.file_clipboard.cut);
+    try t.expectEqual(@as(usize, 1), app.file_clipboard.paths.items.len);
+    try app.handle(.{ .key = Key.char('d') });
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.tree.rowOf("zz.txt") != null);
+    // Standard profile: `a` / `x` / `E` are not the tree's, `r` refreshes.
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    app.focus = .tree;
+    try t.expect(!try app.tree.handleKey(&app, Key.char('a')));
+    try t.expect(!try app.tree.handleKey(&app, Key.char('x')));
+    try t.expect(!try app.tree.handleKey(&app, Key.char('E')));
+    try t.expect(try app.tree.handleKey(&app, Key.char('r')));
+    try t.expect(app.overlay == .none);
 }
 
 test "tree file verbs: new file, new folder, rename into a folder, move by drag-confirm, delete" {
@@ -1976,6 +2079,47 @@ test "view.reveal_in_tree opens the section and every folder above the active fi
     try t.expect(app.panes.get(app.active.?).?.* == .md_preview);
     try command.run(&app, .{ .static = .@"view.reveal_in_tree" });
     try t.expectEqual(app.tree.rowOf("notes.md").?, app.tree.cursor);
+}
+
+test "vim: <leader>e focuses the tree (opening it), <C-n> toggles it and focuses on open; standard Ctrl+B toggles without focus" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    const pane = app.active.?;
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try std.testing.expect(app.tree.visible);
+    app.focus = .{ .pane = pane };
+    // `<leader>e` on a visible tree: focus, not hide.
+    try app.handle(.{ .key = Key.char(' ') });
+    try app.handle(.{ .key = Key.char('e') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .tree);
+    // `j` now moves the tree cursor, not the editor's.
+    const before = app.activeEditor().?.buf.editor.cursor;
+    try app.handle(.{ .key = Key.char('j') });
+    try std.testing.expectEqual(before, app.activeEditor().?.buf.editor.cursor);
+    // `<C-n>` toggles: hidden, focus back on the pane; again: shown AND focused.
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try std.testing.expect(!app.tree.visible);
+    try std.testing.expect(app.focus == .pane);
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .tree);
+    // `<leader>e` on a hidden tree opens it and focuses it.
+    try app.handle(.{ .key = Key.ctrl('n') });
+    try std.testing.expect(!app.tree.visible);
+    try app.handle(.{ .key = Key.char(' ') });
+    try app.handle(.{ .key = Key.char('e') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .tree);
+    // Standard: Ctrl+B shows the column and the focus stays in the pane.
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    app.focus = .{ .pane = pane };
+    try app.handle(.{ .key = Key.ctrl('b') });
+    try std.testing.expect(!app.tree.visible);
+    try app.handle(.{ .key = Key.ctrl('b') });
+    try std.testing.expect(app.tree.visible);
+    try std.testing.expect(app.focus == .pane);
 }
 
 test "view.toggle_tree_section folds the primary section to its header and opens it again with the tree focused" {

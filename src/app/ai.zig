@@ -280,6 +280,15 @@ pub fn noteEdit(app: *App) void {
 /// true when the key was consumed.
 pub fn interceptKey(app: *App, e: *EditorPane, k: Key) Allocator.Error!bool {
     const ghost = e.buf.editor.ghost_suggestion orelse return false;
+    // A ghost is Insert's (or the modeless standard editor's): in vim's
+    // Normal / Visual, or with the `:` line open, Tab is the mode's own
+    // key and the ghost just goes — it must never land three lines of
+    // text into a buffer nobody was typing in.
+    if (!acceptsGhost(e)) {
+        try e.buf.editor.setGhostSuggestion(null);
+        app.needs_render = true;
+        return false;
+    }
     const plain = !k.mods.ctrl and !k.mods.alt and !k.mods.super and !k.mods.shift;
     const ctrl_only = k.mods.ctrl and !k.mods.alt and !k.mods.super and !k.mods.shift;
     if (k.code == .tab and plain) return acceptGhost(app, e, ghost.len);
@@ -288,6 +297,16 @@ pub fn interceptKey(app: *App, e: *EditorPane, k: Key) Allocator.Error!bool {
     try e.buf.editor.setGhostSuggestion(null);
     app.needs_render = true;
     return false;
+}
+
+/// Whether a ghost may be fetched for or accepted into `e` right now:
+/// a typing mode with the `:` line closed.
+fn acceptsGhost(e: *const EditorPane) bool {
+    if (e.buf.input.isCmdlineOpen()) return false;
+    return switch (e.buf.input.mode()) {
+        .none, .insert, .replace => true,
+        .normal, .visual, .visual_line, .visual_block => false,
+    };
 }
 
 /// Insert the first `take` bytes at the cursor; the rest stays a ghost.
@@ -332,6 +351,7 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     const id = app.active orelse return st.debounce.cancel();
     const e = app.panes.editor(id) orelse return st.debounce.cancel();
     if (e.buf.editor.ghost_suggestion != null) return st.debounce.cancel();
+    if (!acceptsGhost(e)) return st.debounce.cancel();
     const backend = suggestBackend(app);
     switch (backend) {
         .unset => {
@@ -1778,4 +1798,38 @@ test "safeRel keeps paths inside the workspace" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     try t.expectEqualStrings("-Users-me-Projects-mnml-zig", try encodeWorkspace(arena.allocator(), "/Users/me/Projects/mnml.zig"));
+}
+
+test "a ghost is Insert's: in vim Normal a Tab drops it and edits nothing; with the : line open too; in Insert it lands" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("banana\n");
+    e.buf.editor.setCursor(0);
+    // Normal mode: Tab is `buffer.next`'s, the ghost goes.
+    try e.buf.editor.setGhostSuggestion("elderberry\nfig\n");
+    try app.handle(.{ .key = Key.named(.tab) });
+    try t.expectEqualStrings("banana\n", e.buf.editor.bytes());
+    try t.expect(e.buf.editor.ghost_suggestion == null);
+    // The `:` line open: same.
+    try app.handle(.{ .key = Key.char(':') });
+    try e.buf.editor.setGhostSuggestion("grape");
+    try app.handle(.{ .key = Key.named(.tab) });
+    try t.expectEqualStrings("banana\n", e.buf.editor.bytes());
+    try t.expect(e.buf.editor.ghost_suggestion == null);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // Insert: Tab accepts.
+    try app.handle(.{ .key = Key.char('i') });
+    try e.buf.editor.setGhostSuggestion("apple ");
+    try app.handle(.{ .key = Key.named(.tab) });
+    try t.expectEqualStrings("apple banana\n", e.buf.editor.bytes());
+    // The clock never fires a request outside a typing mode either.
+    try app.handle(.{ .key = Key.named(.esc) });
+    app.cfg.ai.inline_suggestions = true;
+    app.ai.debounce.noteEdit(app.now_ms);
+    try app.tick(app.now_ms + 10_000);
+    try t.expect(app.ai.debounce.deadline() == null);
 }

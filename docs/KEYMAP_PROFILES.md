@@ -66,7 +66,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `find.grep` | `space f w` | (new) | vim | NvChad <leader>fw |
 | `picker.buffers` | `space f b` | both | both | NvChad <leader>fb (already the Rust default) |
 | `view.toggle_tree` | `ctrl+n` | (new) | vim | NvChad <C-n> |
-| `view.toggle_tree` | `space e` | (new) | vim | NvChad <leader>e |
+| `view.focus_tree` | `space e` | (new) | vim | NvChad <leader>e is `NvimTreeFocus`: the tree takes the keys, opened first when hidden — never hidden. `<C-n>` (`NvimTreeToggle`) toggles, and the tree it opens is focused; VS Code's Ctrl+B leaves the focus in the editor |
 | `buffer.close` | `space x` | (new) | vim | NvChad <leader>x |
 | `term.shell_bottom` | `space h` | (new) | vim | NvChad <leader>h horizontal term |
 | `term.shell_right` | `space v` | (new) | vim | NvChad <leader>v vertical term |
@@ -80,6 +80,8 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `lsp.format` | `space f m` | (new) | vim | NvChad <leader>fm |
 | `view.cheatsheet` | `space c h` | (new) | vim | NvChad <leader>ch |
 | `whichkey.leader` | `space w K` | (new) | vim | NvChad <leader>wK |
+| `lsp.rename` / `lsp.code_action` / `git.status_pane` / `git.graph` / `picker.recent` / `find.find` | `space r a` / `space c a` / `space g t` / `space c m` / `space f o` / `space f z` | (new) | vim | NvChad mappings.lua: `<leader>ra` LSP renamer, `<leader>ca` code action, `<leader>gt` git status, `<leader>cm` git commits, `<leader>fo` oldfiles, `<leader>fz` find in current buffer. `<leader>th` (themes) stays `theme.pick` under `space t t`: `t h` is the Rust popup's hidden-files toggle |
+| `view.focus_top` / `view.focus_bottom` / `view.focus_previous` | `ctrl+w t` / `ctrl+w b` / `ctrl+w p` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_t` / `CTRL-W_b` / `CTRL-W_p`; from the tree `Ctrl-W p` returns to the window that was left |
 | `lsp.goto_definition` | `g d` | (new) | vim | Neovim gd |
 | `lsp.goto_declaration` | `g D` | (new) | vim | Neovim gD |
 | `lsp.references` | `g r` | (new) | vim | Neovim gr |
@@ -87,7 +89,8 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `lsp.prev_diagnostic` | `[ d` | (new) | vim | Neovim [d |
 | `lsp.next_diagnostic` | `] d` | (new) | vim | Neovim ]d |
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
-| `file.copy` / `file.cut` / `file.paste` | `y y` / `d d` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot move a file (the property `ctrl+v` lacks); a stray key between the two cancels. `D` duplicates in both profiles |
+| `file.copy` / `file.paste` | `y y` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot copy a file; a stray key between the two cancels. `D` duplicates in both profiles |
+| `file.new` / `file.rename` / `file.delete` / `file.cut` / `tree.refresh` / `tree.expand_all` / `tree.collapse_all` | `a` / `r` / `d` / `x` / `R` / `E` / `W` | (new) | vim, tree focus only | nvim-tree's default `on_attach` verbs (create, rename, delete — a confirm box — cut, refresh, expand all, collapse all); `d d` cut gave way to `d` delete. The standard profile keeps `r` = refresh and none of the others |
 
 ## Sections and columns
 

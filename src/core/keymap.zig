@@ -510,6 +510,32 @@ test "space is the leader and a prefix; space f is pending" {
     try std.testing.expect(km.resolveSeq(parseKeySeqBuf("space q q q", &buf).?) == .none);
 }
 
+test "the NvChad leader chords ra / ca / gt / cm / fo / fz resolve in the vim profile and nowhere else" {
+    const gpa = std.testing.allocator;
+    var vim = try Keymap.build(gpa, .vim, .{});
+    defer vim.deinit();
+    var standard = try Keymap.build(gpa, .standard, .{});
+    defer standard.deinit();
+    var buf: [max_seq]Chord = undefined;
+    const Case = struct { spec: []const u8, id: command.CommandId };
+    // NvChad mappings.lua: `<leader>ra` "LSP renamer", `<leader>ca`
+    // "LSP code action", `<leader>gt` "telescope git status",
+    // `<leader>cm` "telescope git commits", `<leader>fo` "telescope
+    // find oldfiles", `<leader>fz` "telescope find in current buffer".
+    for ([_]Case{
+        .{ .spec = "space r a", .id = .@"lsp.rename" },
+        .{ .spec = "space c a", .id = .@"lsp.code_action" },
+        .{ .spec = "space g t", .id = .@"git.status_pane" },
+        .{ .spec = "space c m", .id = .@"git.graph" },
+        .{ .spec = "space f o", .id = .@"picker.recent" },
+        .{ .spec = "space f z", .id = .@"find.find" },
+    }) |c| {
+        const seq = parseKeySeqBuf(c.spec, &buf).?;
+        try std.testing.expectEqual(c.id, vim.resolveSeq(seq).run.static);
+        try std.testing.expect(standard.resolveSeq(seq) == .none);
+    }
+}
+
 test "config overlays: global applies to both, profile overlays its own, none unbinds" {
     const gpa = std.testing.allocator;
     const cfg: KeysConfig = .{

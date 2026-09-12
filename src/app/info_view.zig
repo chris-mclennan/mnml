@@ -655,7 +655,7 @@ test "the ladder under an overlay: the surface beneath, as Rust's focus never le
     try t.expectEqualStrings("[F12] Definition · [Shift+F12] References · [Ctrl+K Ctrl+I] Hover · [F2] Rename", at_rest.body);
     // The vim profile reads its own chords.
     try app.setInputStyle(.vim);
-    try t.expectEqualStrings("[gd] Definition · [gr] References · [K] Hover · [F2] Rename", (try pick(&app, arena)).body);
+    try t.expectEqualStrings("[gd] Definition · [gr] References · [K] Hover · [Space r a] Rename", (try pick(&app, arena)).body);
     try app.setInputStyle(.standard);
     app.tree.cursor = app.tree.rowOf("src/main.rs") orelse app.tree.rowOf("main.rs").?;
     try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);

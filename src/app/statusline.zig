@@ -221,6 +221,10 @@ pub fn modeOf(app: *App) Mode {
             .none => unreachable,
         }, .vim = true };
     }
+    // A terminal under vim reads as Neovim's two terminal modes.
+    if (focus == .pane and app.input_style == .vim) if (app.active) |id| if (app.panes.pty(id)) |p| {
+        return if (p.term_normal) .{ .label = "T-NORMAL", .kind = .normal, .vim = true } else .{ .label = "TERMINAL", .kind = .insert, .vim = true };
+    };
     return switch (focus) {
         .tree => .{ .label = "TREE", .kind = .tree, .vim = false },
         // A left-column section is Rust's sidebar: its chip reads TREE.

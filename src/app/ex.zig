@@ -24,6 +24,7 @@ const regex = @import("../regex/regex.zig");
 const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
+const dispatch = @import("dispatch.zig");
 const Config = app_mod.Config;
 const ex_verbs = @import("ex_verbs.zig");
 const loclist = @import("loclist.zig");
@@ -1332,6 +1333,56 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
     try f.ex("$");
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+}
+
+test "ex: a Visual `:` range covers the cursor's line and the command leaves Visual behind" {
+    var f = try Fixture.init("banana\napple\ncherry\ndate\napple\nzebra");
+    defer f.deinit();
+    try command.run(&f.app, .{ .static = .@"editor.use_vim" });
+    const Key = @import("../core/key.zig").Key;
+    const e = f.app.activeEditor().?;
+    e.buf.editor.setCursor(0);
+    // `V4j:sort⏎` sorts all five selected lines — `'>` is the cursor's
+    // line (`vim -es`: `2GV2j` → `'<`=2, `'>`=4) — and Normal resumes.
+    for ([_]Key{ Key.char('V'), Key.char('4'), Key.char('j'), Key.char(':') }) |k| try dispatch.key(&f.app, k);
+    try testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+    try testing.expectEqualStrings("'<,'>", e.buf.input.cmdlineGet().?);
+    for ("sort") |c| try dispatch.key(&f.app, Key.char(c));
+    try dispatch.key(&f.app, Key.named(.enter));
+    try testing.expectEqualStrings("apple\napple\nbanana\ncherry\ndate\nzebra", f.text());
+    try testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+    // A `u` afterwards is undo, not visual-lowercase.
+    try dispatch.key(&f.app, Key.char('u'));
+    try testing.expectEqualStrings("banana\napple\ncherry\ndate\napple\nzebra", f.text());
+    // `V j :s/a/A/g` reaches both lines; Esc on the `:` line lands in Normal.
+    e.buf.editor.setCursor(0);
+    for ([_]Key{ Key.char('V'), Key.char('j'), Key.char(':') }) |k| try dispatch.key(&f.app, k);
+    for ("s/a/A/g") |c| try dispatch.key(&f.app, Key.char(c));
+    try dispatch.key(&f.app, Key.named(.enter));
+    try testing.expectEqualStrings("bAnAnA\nApple\ncherry\ndate\napple\nzebra", f.text());
+    for ([_]Key{ Key.char('v'), Key.char(':'), Key.named(.esc) }) |k| try dispatch.key(&f.app, k);
+    try testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+    try testing.expect(e.buf.editor.anchor == null);
+}
+
+test "ex: u after a ranged :d from far away lands on the restored lines, not where the cursor was" {
+    var f = try Fixture.init("one\ntwo\nthree\nfour\nfive\nsix\nseven");
+    defer f.deinit();
+    try command.run(&f.app, .{ .static = .@"editor.use_vim" });
+    const Key = @import("../core/key.zig").Key;
+    const e = f.app.activeEditor().?;
+    try e.buf.doc.setMarkPos('a', .{ .row = 1, .col = 0 });
+    try e.buf.doc.setMarkPos('b', .{ .row = 3, .col = 0 });
+    try dispatch.key(&f.app, Key.char('G'));
+    try f.ex("'a,'bd");
+    try testing.expectEqualStrings("one\nfive\nsix\nseven", f.text());
+    // The saved cursor (line 7) is outside the changed block: `u` goes
+    // to the first restored line's first non-blank (vim: `:'a,'bd` from
+    // line 24, then `u` → line 5).
+    try dispatch.key(&f.app, Key.char('u'));
+    try testing.expectEqualStrings("one\ntwo\nthree\nfour\nfive\nsix\nseven", f.text());
+    try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+    try testing.expectEqual(@as(usize, 4), e.buf.editor.cursor);
 }
 
 test "ex: write, abbreviations, set, registers, unknown verbs" {

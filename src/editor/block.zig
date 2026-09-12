@@ -22,9 +22,12 @@ pub fn rect(ed: *const Editor) ?Rect {
 /// One `[start, end)` per row, top to bottom; clamped to each line —
 /// to each line's end under `block_eol`.
 pub fn ranges(ed: *const Editor, r: Rect, gpa: Allocator) Allocator.Error![][2]usize {
+    // A rect whose rows outran the text (a stale anchor) still names at
+    // least its last row: no caller can take an empty list.
     const last = @min(r.r1, ed.lineCount() - 1);
-    const out = try gpa.alloc([2]usize, last + 1 - r.r0);
-    for (out, r.r0..) |*o, row| {
+    const first = @min(r.r0, last);
+    const out = try gpa.alloc([2]usize, last + 1 - first);
+    for (out, first..) |*o, row| {
         const s = ed.byteAtCol(row, r.c0);
         const e = if (ed.block_eol) ed.lineEnd(row) else ed.byteAtCol(row, r.c1 + 1);
         o.* = .{ s, @max(e, s) };

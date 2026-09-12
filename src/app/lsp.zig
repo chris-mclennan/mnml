@@ -1512,6 +1512,9 @@ fn locationsPicker(app: *App, title: []const u8, locs: []const types.Location, e
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
     };
+    // NvChad's user reaches a reference with `j` / `k` before typing a
+    // filter (finding 14): the list is places, not names.
+    if (app.input_style == .vim and app.overlay == .picker) app.overlay.picker.state.list_keys_when_empty = true;
 }
 
 /// The text of a location's line: from an open buffer, else the file.

@@ -1,0 +1,18 @@
+# `:tabclose` drops only the windows of that page: a buffer another page
+# still shows stays open (`:help :tabclose` — a tab page is windows, the
+# buffers are shared). Page 1 = a.txt + b.txt; page 2 = [scratch] + a.txt;
+# closing page 2 must leave page 1 with both files.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open a.txt
+open b.txt
+command editor.use_vim
+ex tabnew
+ex e a.txt
+expect pane "a.txt"
+ex tabclose
+expect screen contains "a.txt"
+expect screen contains "b.txt"
+ex tabs
+expect screen contains "▸1:"
+expect screen lacks "  2:"

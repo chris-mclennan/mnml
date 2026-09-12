@@ -336,6 +336,7 @@ pub const Buffer = struct {
         // A session the app ended without a key (a blur) closes before
         // this key's own snapshot lands.
         const undo_before = self.editor.doc.history.undoLen();
+        const cursor_before = self.editor.cursor;
         self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
@@ -344,8 +345,57 @@ pub const Buffer = struct {
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
+        self.stampUndoCursor(undo_before, cursor_before);
         self.syncInsertSession(undo_before);
+        self.clampNormalCursor();
         return ev;
+    }
+
+    /// The undo entry a key pushed remembers where the change began:
+    /// the cursor the key started from, or the first changed byte when
+    /// that lies before it — vim's `uh_cursor` is taken after an operator
+    /// has moved to its area's start (`vim -es`: `Vjygvdu` → 1:1 though
+    /// `gv` left the cursor on line 2) — not where the op's own
+    /// checkpoint found it after the handler's motions. So `u` after
+    /// `3>>`, `dd` or `gvd` lands where the change began
+    /// (`undo.placeAfterHistoryHop`).
+    fn stampUndoCursor(self: *Buffer, undo_before: usize, cursor_before: usize) void {
+        const h = &self.editor.doc.history;
+        if (h.undoLen() <= undo_before) return;
+        var at = cursor_before;
+        if (h.undoTextAt(undo_before)) |old| {
+            const now = self.editor.bytes();
+            const n = @min(old.len, now.len);
+            var prefix: usize = 0;
+            while (prefix < n and old[prefix] == now[prefix]) prefix += 1;
+            // A change that starts at a line's `\n` (a deleted last
+            // line) begins on the line after it, where the cursor was.
+            const changed = if (prefix < old.len and old[prefix] == '\n') prefix + 1 else prefix;
+            const changed_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(changed, old.len)], '\n')) |i| i + 1 else 0;
+            const cursor_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(cursor_before, old.len)], '\n')) |i| i + 1 else 0;
+            if (changed_line_start < cursor_line_start) at = changed_line_start;
+        }
+        h.setUndoCursor(undo_before, at);
+    }
+
+    /// vim's Normal mode keeps the cursor ON a character: a motion or an
+    /// edit that lands one past a non-empty line's last char (`k` from a
+    /// longer line, `Ctrl-F` onto the last line, `D`, `x` on the last
+    /// char) steps back onto it (`:help ve`; `vim -es`: `G$k` → 12:6 on
+    /// `eleven`). The goal column is untouched, so the next `j` / `k`
+    /// still reaches the remembered column. Insert's one-shot `Ctrl-O`
+    /// is exempt: there the cursor may sit past the end (`:help i_CTRL-O`).
+    fn clampNormalCursor(self: *Buffer) void {
+        const v = switch (self.input) {
+            .vim => |*v| v,
+            .standard => return,
+        };
+        if (v.vmode != .normal or v.insert_oneshot_normal) return;
+        const ed = self.editor;
+        if (ed.anchor != null or ed.block_anchor != null) return;
+        const line = ed.currentLine();
+        const bol = ed.lineStart(line);
+        if (ed.cursor > bol and ed.cursor == ed.lineEnd(line)) ed.cursor = ed.prevBoundary(ed.cursor);
     }
 
     /// A handler's op list: applied fold-aware, then recorded for `.`.
@@ -782,10 +832,15 @@ pub const Buffer = struct {
     /// recorded. A read-only document does nothing.
     pub fn runApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         if (self.doc.read_only) return .noop;
-        return switch (cmd) {
-            .macro_record_into => |reg| self.macroToggle(reg, clip, false),
-            else => self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
+        const undo_before = self.editor.doc.history.undoLen();
+        const cursor_before = self.editor.cursor;
+        const ev = switch (cmd) {
+            .macro_record_into => |reg| try self.macroToggle(reg, clip, false),
+            else => try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
+        self.stampUndoCursor(undo_before, cursor_before);
+        self.clampNormalCursor();
+        return ev;
     }
 
     fn handleApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
@@ -1108,7 +1163,29 @@ test "vim motions" {
     try vim("2G", "|a\nb\nc", "a\n|b\nc");
     try vim("3gg", "|a\nb\nc", "a\nb\n|c");
     try vim("jj", "ab|c\nd\nefgh", "abc\nd\nef|gh");
-    try vim("k", "a\nb|c", "a|\nbc");
+    // `j` on the last line and `k` on the first stay put (`vim -es`: `G$j` → 13:22).
+    try vim("j", "a\nb|c", "a\nb|c");
+    try vim("$j", "abc\n|xy", "abc\nx|y");
+    try vim("k", "|a\nb", "|a\nb");
+    // A shorter line clamps onto its last char; the goal column survives.
+    try vim("$k", "ab\n|abcdef", "a|b\nabcdef");
+    try vim("$kj", "ab\n|abcdef", "ab\nabcde|f");
+    // Ctrl-F onto the last line: on a char, at the goal column (`G$<C-f>` → 13:22).
+    try vim("G$<c-f>", "|alpha\nbeta\ngamma", "alpha\nbeta\ngamm|a");
+    try vim("<c-f>", "|alpha\nbeta\ngamma", "alpha\nbeta\n|gamma");
+    // `}` / `{`: the next EMPTY line after some text — the line just
+    // below counts (`5G}` → 6), a blank-only line does not (`2G}` → 6
+    // past a `"  "` line 3); at the end, the last line's last char.
+    try vim("}", "|a\n\nb\n\nc", "a\n|\nb\n\nc");
+    try vim("}", "a\n|b\n\nc", "a\nb\n|\nc");
+    try vim("}", "|a\n  \nb\n\nc", "a\n  \nb\n|\nc");
+    try vim("}", "a\n|\n\nb\nc", "a\n\n\nb\n|c");
+    try vim("}}", "|a\n\nb\n\nc", "a\n\nb\n|\nc");
+    try vim("{", "a\n\nb\n|c", "a\n|\nb\nc");
+    try vim("{", "a\n\n|b\nc", "a\n|\nb\nc");
+    try vim("{", "a\n  \nb\n|c", "|a\n  \nb\nc");
+    try vim("d}", "a\n|b\nc", "a\n|");
+    try vim("k", "a\nb|c", "|a\nbc"); // onto the last char, never past it (`:help ve`)
     try vim("l", "|ab", "a|b");
     try vim("h", "a|b", "|ab");
     try vim("3l", "|abcd", "abc|d");
@@ -1168,14 +1245,14 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2x", "|abc", "|c");
     try vim("X", "ab|c", "a|c");
     try vim("dw", "|hello world", "|world");
-    try vim("dw", "hello |world\nx", "hello |\nx");
+    try vim("dw", "hello |world\nx", "hello| \nx"); // Normal: onto the last char, never past it
     try vim("d2w", "|a b c d", "|c d");
     try vim("2dw", "|a b c d", "|c d");
     try vim("d3w", "|a b\nc d", "|d");
     try vim("de", "|hello world", "| world");
     try vim("db", "hello |world", "|world");
-    try vim("d$", "a|bcd\nx", "a|\nx");
-    try vim("D", "a|bcd\nx", "a|\nx");
+    try vim("d$", "a|bcd\nx", "|a\nx");
+    try vim("D", "a|bcd\nx", "|a\nx");
     try vim("d0", "abc|d", "|d");
     try vim("dd", "a\n|b\nc", "a\n|c");
     try vim("2dd", "|a\nb\nc", "|c");
@@ -1188,7 +1265,7 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("diw", "hello wo|rld!", "hello |!");
     try vim("daw", "hello wo|rld foo", "hello |foo");
     try vim("di(", "f(a, |b)", "f(|)");
-    try vim("da(", "f(a, |b)", "f|");
+    try vim("da(", "f(a, |b)", "|f");
     try vim("dib", "f(a, |b)", "f(|)");
     try vim("di\"", "x \"a |b\" y", "x \"|\" y");
     try vim("da\"", "x \"a |b\" y", "x | y");
@@ -1215,7 +1292,7 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("3rX", "|abcd", "XX|Xd");
     try vim("rX", "|\nb", "|\nb");
     try vim("~", "|abc", "A|bc");
-    try vim("3~", "|abc", "ABC|");
+    try vim("3~", "|abc", "AB|C");
     try vim("J", "|a\n  b", "a| b");
     try vim("3J", "|a\nb\nc\nd", "a b| c\nd");
     try vim("gJ", "|a\n  b", "a|  b");
@@ -1233,12 +1310,44 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2gUU", "a|bc\nde\nfg", "A|BC\nDE\nfg");
     try vim("3guu", "|AB\nCD\nEF\nGH", "|ab\ncd\nef\nGH");
     try vim("g~iw", "a|Bc d", "|AbC d");
-    try vim(">>", "|a\nb", " |   a\nb"); // cursor keeps its column (Rust parity)
-    try vim("<<", "    a|b\nc", "ab|\nc");
-    try vim(">j", "|a\nb\nc", "    a\n |   b\nc");
-    try vim("2>>", "|a\nb\nc", "    a\n |   b\nc");
-    try vim("<j", "    |a\n    b\nc", "a\nb|\nc");
-    try vim("<k", "    a\n    |b\nc", "a|\nb\nc");
+    // `u` lands on the restored text (vim `u_undoredo`, `vim -es`):
+    // the saved cursor when its line is within the changed block
+    // (`4Gddu` → 4:1), else the first changed line's first non-blank.
+    try vim("ddu", "a\nb\nc\n|d\ne", "a\nb\nc\n|d\ne");
+    try vim("ddggu", "a\nb\nc\n|d\ne", "a\nb\nc\n|d\ne");
+    try vim("3>>Gu", "|a\nb\nc\nd", "|a\nb\nc\nd");
+    try vim("xggu", "a\nb\n  c|d\ne", "a\nb\n  c|d\ne");
+    try vim("Gddggu", "a\nb\nc\n|d", "a\nb\nc\n|d");
+    try vim("ddu<c-r>", "a\n|b\nc", "a\n|c");
+    try vim("A!<esc>ggu", "a\n|b\nc", "a\n|b\nc");
+    // A Visual operator's change begins at the area's start, wherever
+    // the cursor sat in it (`vim -es`: `ggVjygvdu` → 1:1).
+    try vim("Vjygvdu", "|a\nb\nc\nd", "|a\nb\nc\nd");
+    try vim("jdkuu", "a\n|b\nc", "a\n|b\nc"); // `dk` is two entries here; the second `u` lands on the area's start
+    // `is` / `as` (`:help is`): a sentence ends at `.` `!` `?` + white
+    // space or at the paragraph's edge; `as` takes the space after it.
+    try vim("dis", "One two. Th|ree four. Five", "One two. | Five"); // `is` keeps the space after (`vim -es`)
+    try vim("das", "One two. Th|ree four. Five", "One two. |Five");
+    try vim("das", "One two. Th|ree four.", "One two|.");
+    try vim("dis", "a|lpha bravo\ncharlie\n\ndelta", "|\ndelta"); // no full stop: the paragraph is the sentence, line break included
+    try vim("vis" ++ "y", "One. T|wo? Three", "One. |Two? Three");
+    try vim("cis" ++ "X<esc>", "One. T|wo! Three", "One. |X Three");
+    // `>` / `<` end on the range's first line, first non-blank
+    // (`:help >>`; `vim -es`: `gg3>>` → 1:2 with a tab, `gg3>>j.` → 2:3)
+    // — never the last line's end, so `.` shifts the same lines again.
+    try vim(">>", "|a\nb", "    |a\nb");
+    try vim("<<", "    a|b\nc", "|ab\nc");
+    try vim(">j", "|a\nb\nc", "    |a\n    b\nc");
+    try vim("2>>", "|a\nb\nc", "    |a\n    b\nc");
+    try vim("3>>", "|a\nb\nc\nd\ne", "    |a\n    b\n    c\nd\ne");
+    try vim("3>>.", "|a\nb\nc\nd\ne", "        |a\n        b\n        c\nd\ne");
+    try vim("3>>j.", "|a\nb\nc\nd\ne", "    a\n        |b\n        c\n    d\ne");
+    try vim("Vj>", "|a\nb\nc", "    |a\n    b\nc");
+    try vim("Vj>.", "|a\nb\nc", "        |a\n        b\nc");
+    try vim(">ip", "a\n|b\nc\n\nd", "    |a\n    b\n    c\n\nd");
+    try vim("<j", "    |a\n    b\nc", "|a\nb\nc");
+    try vim("<k", "    a\n    |b\nc", "|a\nb\nc");
+    try vim(">>", "  |a\nb", "      |a\nb");
     // `=` re-indents by the braces above: one line, a motion, the file, a selection.
     try vim("==", "f() {\n|x;\n}", "f() {\n    |x;\n}");
     try vim("gg=G", "f() {\nx;\n  if (a) {\n  y;\n}\n|}", "|f() {\n    x;\n    if (a) {\n        y;\n    }\n}");
@@ -1252,12 +1361,12 @@ test "vim registers, yank and put" {
     try vim("yyp", "|a\nb", "a\n|a\nb");
     try vim("yyP", "|a\nb", "|a\na\nb");
     try vim("yyjp", "|a\nb", "a\nb\n|a");
-    try vim("yljp", "|ab\n\nc", "ab\na|\nc"); // charwise p on an empty line puts on that line
-    try vim("yljP", "|ab\n\nc", "ab\na|\nc");
+    try vim("yljp", "|ab\n\nc", "ab\n|a\nc"); // charwise p on an empty line puts on that line
+    try vim("yljP", "|ab\n\nc", "ab\n|a\nc");
     try vim("2yyGp", "|a\nb\nc", "a\nb\nc\n|a\nb");
     try vim("ywP", "|ab cd", "ab |ab cd");
-    try vim("yw$p", "|ab cd", "ab cdab |");
-    try vim("yiwwviwp", "|ab cd", "ab ab|");
+    try vim("yw$p", "|ab cd", "ab cdab| "); // `p` ends on the put text's last char
+    try vim("yiwwviwp", "|ab cd", "ab a|b");
     try vim("ddp", "|a\nb", "b\n|a");
     try vim("dwwP", "|a b c", "b a |c");
     try vim("\"ayyj\"ap", "|a\nb", "a\nb\n|a");
@@ -1266,8 +1375,8 @@ test "vim registers, yank and put" {
     try vim("yyjdd\"0p", "|a\nb\nc", "a\nc\n|a");
     try vim("ddjdd\"2p", "|a\nb\nc\nd", "b\nd\n|a");
     try vim("dddd\"1p\"2p", "|a\nb\nc", "c\nb\n|a");
-    try vim("Yp", "a|b\nc", "abb|\nc"); // Rust mnml `Y` yanks cursor→EOL charwise
-    try vim("yl$p", "|abc", "abca|");
+    try vim("Yp", "a|b\nc", "ab|b\nc"); // Rust mnml `Y` yanks cursor→EOL charwise
+    try vim("yl$p", "|abc", "abc|a");
     try vim("\"qyy\"qp", "|z", "z\n|z");
     try vim("ylgp", "|abc", "aa|bc");
     try vim("ylgP", "|abc", "a|abc");
@@ -1376,33 +1485,33 @@ test "vim marks, macros and visual mode" {
     try vim("lmajj`a", "|ab\nb\nc", "a|b\nb\nc");
     try vim("majj'z", "|a\nb\nc", "a\nb\n|c");
     try vim("majj'a", "  |a\nb\nc", "  |a\nb\nc");
-    try vim("qaA!<esc>jq@a", "|a\nb\nc", "a!\nb!\nc|");
-    try vim("qaA!<esc>jq@a@@", "|a\nb\nc", "a!\nb!\nc!|");
-    try vim("qqA!<esc>jq@@", "|a\nb\nc", "a!\nb!\nc|");
+    try vim("qaA!<esc>jq@a", "|a\nb\nc", "a!\nb!\n|c");
+    try vim("qaA!<esc>jq@a@@", "|a\nb\nc", "a!\nb!\nc|!");
+    try vim("qqA!<esc>jq@@", "|a\nb\nc", "a!\nb!\n|c");
     try vim("qaxq2@a", "|abcd", "|d");
-    try vim("qaIX<esc>jqqbA!<esc>jq@a@b", "|a\nb\nc\nd", "Xa\nb!\nXc\nd!|");
+    try vim("qaIX<esc>jqqbA!<esc>jq@a@b", "|a\nb\nc\nd", "Xa\nb!\nXc\nd|!");
     try vim("@z", "|a", "|a");
     // A macro is its register: `"ap` pastes the keys, `"ay$` re-records, `:reg`-style read-back.
-    try vim("qaA!<esc>q\"ap", "|a", "a!A!<esc>|"); // charwise, like any recorded register
+    try vim("qaA!<esc>q\"ap", "|a", "a!A!<esc|>"); // charwise, like any recorded register
     try vim("qaA!<esc>qj0\"ay$dd@a", "|a\nA?<esc>", "a!|?"); // an edited register replays
     try vim("qaxqj\"ayygg@a", "|abc\nd\ne", "|e"); // `"ayy` holds `d<CR>`: the newline replays as Enter, so `@a` is `dj`
-    try vim("\"axjA!<esc>\"ap", "|ab\nc", "b\nc!a|"); // `"ax` fills a named register too
+    try vim("\"axjA!<esc>\"ap", "|ab\nc", "b\nc!|a"); // `"ax` fills a named register too
     try vim("vwd", "|hello world", "|orld");
-    try vim("vwy$p", "|hello world", "hello worldhello w|");
-    try vim("v$d", "a|bc\nd", "a|\nd");
+    try vim("vwy$p", "|hello world", "hello worldhello |w");
+    try vim("v$d", "a|bc\nd", "|a\nd");
     try vim("vlly", "|abc", "|abc");
     try vim("vllcZ<esc>", "|abcd", "|Zd");
     try vim("Vjd", "|a\nb\nc", "|c");
     try vim("Vjy$p", "|a\nb\nc", "a\n|a\nb\nb\nc");
     try vim("VjyGp", "|a\nb\nc", "a\nb\nc\n|a\nb");
     try vim("Vx", "a\n|b\nc", "a\n|c");
-    try vim("V>", "|a\nb", "    a\n|b");
-    try vim("Vj<lt>", "    |a\n    b\nc", "a\nb\n|c");
+    try vim("V>", "|a\nb", "    |a\nb");
+    try vim("Vj<lt>", "    |a\n    b\nc", "|a\nb\nc");
     try vim("vU", "|abc", "|Abc");
     try vim("v~", "|abc", "|Abc");
     try vim("vlu", "|ABC", "|abC");
     try vim("viwd", "hel|lo world", "| world");
-    try vim("viwy$p", "hel|lo world", "hello worldhello|");
+    try vim("viwy$p", "hel|lo world", "hello worldhell|o");
     try vim("viwlld", "|ab cd", "|"); // a motion after the object widens again
     try vim("vipd", "|a\nb\n\nc", "|\nc"); // `vip` is linewise (`:help v_ip`); Rust left an empty line
     try vim("vi(d", "f(a|b)", "f(|)");
@@ -1420,8 +1529,8 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
     try vim("<c-v>jld", "a|bcd\nefgh\nij", "a|d\neh\nij");
     try vim("<c-v>jlx", "a|bcd\nefgh", "a|d\neh");
-    try vim("<c-v>jldp", "a|bcd\nefgh", "adbc\nfg|\neh"); // the block is in the register charwise (Rust parity)
-    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcdbc\nfg|\nefgh");
+    try vim("<c-v>jldp", "a|bcd\nefgh", "adbc\nf|g\neh"); // the block is in the register charwise (Rust parity)
+    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcdbc\nf|g\nefgh");
     try vim("<c-v>jlyP", "a|bcd\nefgh", "abc\nfg|bcd\nefgh"); // `y` parks at the rectangle's top-left; `P` lands after the text
     try vim("<c-v>jl<esc>x", "a|bcd\nefgh", "abcd\nef|h");
     try vim("<c-v>kd", "ab\n|cd", "|b\nd"); // the rectangle is anchor→cursor in either direction
@@ -1429,7 +1538,7 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jvd", "|ab\ncd", "ab\n|d"); // `v` / `V` from V-BLOCK re-anchor at the cursor (Rust parity; vim keeps the anchor)
     try vim("<c-v>jVd", "a|b\ncd\ne", "ab\n|e");
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
-    try vim("<c-v>jdu", "|ab\ncd", "ab\n|cd"); // one undo step; the snapshot cursor comes back
+    try vim("<c-v>jdu", "|ab\ncd", "|ab\ncd"); // `u` lands at the block's top-left, where the change began (`vim -es`)
 }
 
 test "macro registers are shared through the clipboard: `qa` in one buffer, `@a` in another" {

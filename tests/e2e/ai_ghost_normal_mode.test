@@ -1,0 +1,24 @@
+# A ghost suggestion belongs to a typing mode. In vim's NORMAL mode a
+# bare Tab is `buffer.next`, not "accept": the ghost is dropped and the
+# buffer is untouched — the hunt once saw three list items land in a
+# file nobody was typing in, with the `:` line open. In INSERT it lands.
+write a.txt "banana\n"
+open a.txt
+command editor.use_vim
+expect screen contains "NORMAL"
+ghost "elderberry\nfig\ngrape"
+key tab
+expect screen lacks "elderberry"
+expect dirty false
+key :
+ghost GHOSTED
+key tab
+expect dirty false
+key esc
+key i
+expect screen contains "INSERT"
+ghost "apple "
+key tab
+expect dirty true
+command file.save
+expect file a.txt contains "apple banana"

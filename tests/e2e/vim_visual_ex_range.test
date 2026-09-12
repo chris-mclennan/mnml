@@ -1,0 +1,33 @@
+# A Visual `:` fills the line with `'<,'>` covering every selected line —
+# the cursor's included (`vim -es -u NONE`: `2GV2j` → `'<`=2, `'>`=4) —
+# and leaves Visual the moment `:` is typed (`:help v_:`), so the mode
+# chip reads NORMAL while the line is open and a `u` afterwards is undo.
+write fruit.txt "banana\napple\ncherry\ndate\napple\nzebra\n"
+open fruit.txt
+command editor.use_vim
+
+key V
+key 4
+key j
+expect screen contains "V-LINE"
+key :
+expect screen contains "NORMAL"
+type sort
+key enter
+command file.save
+expect file fruit.txt contains "apple\napple\nbanana\ncherry\ndate\nzebra\n"
+expect screen contains "NORMAL"
+key u
+command file.save
+expect file fruit.txt contains "banana\napple\ncherry\ndate\napple\nzebra\n"
+
+# `V j :s/a/A/g` changes both lines, not just the first.
+key g
+key g
+key V
+key j
+key :
+type s/a/A/g
+key enter
+command file.save
+expect file fruit.txt contains "bAnAnA\nApple\ncherry\n"

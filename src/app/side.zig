@@ -374,7 +374,10 @@ pub fn snapGit(app: *App) void {
 pub fn ctrlWCommand(k: Key) ?command.CommandId {
     return switch (k.code) {
         .char => |c| switch (if (k.mods.ctrl and c < 0x80) @as(u21, std.ascii.toLower(@intCast(c))) else c) {
-            'w', 'p' => .@"view.focus_next_split",
+            'w' => .@"view.focus_next_split",
+            'p' => .@"view.focus_previous",
+            't' => .@"view.focus_top",
+            'b' => .@"view.focus_bottom",
             'l' => .@"view.focus_right",
             'h' => .@"view.focus_left",
             'j' => .@"view.focus_down",

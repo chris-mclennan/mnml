@@ -149,6 +149,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_around_tag => select.tag(ed, true),
         .select_inner_paragraph => select.paragraph(ed, false),
         .select_around_paragraph => select.paragraph(ed, true),
+        .select_inner_sentence => select.sentence(ed, false),
+        .select_around_sentence => select.sentence(ed, true),
         .select_inner_function => select.object(ed, .function, false),
         .select_around_function => select.object(ed, .function, true),
         .select_inner_class => select.object(ed, .class, false),
@@ -202,6 +204,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         // ── line ops ──
         .indent => try line.indent(ed, out),
         .outdent => try line.outdent(ed, out),
+        .indent_to_first_non_blank => try line.shiftToFirstNonBlank(ed, false, out),
+        .outdent_to_first_non_blank => try line.shiftToFirstNonBlank(ed, true, out),
         .reindent => try line.reindent(ed, out),
         .toggle_line_comment => try line.toggleLineComment(ed, out),
         .move_line_up => try line.moveLine(ed, -1, out),

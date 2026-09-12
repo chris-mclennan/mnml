@@ -46,3 +46,17 @@ expect screen contains ":e apple.md"
 key tab
 expect screen contains ":e apricot.md"
 key escape
+
+# A single directory match: the next Tab descends into it and cycles its
+# entries (vim `wildmode=full`: `:e sr<Tab>` → `src/`, Tab → `src/app.zig`).
+write src/app.zig "a"
+write src/main.rs "b"
+key :
+type "e sr"
+key tab
+expect screen contains ":e src/"
+key tab
+expect screen contains ":e src/app.zig"
+key tab
+expect screen contains ":e src/main.rs"
+key escape

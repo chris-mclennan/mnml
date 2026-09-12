@@ -13,6 +13,10 @@ key right
 key right
 key right
 command lsp.hover
-expect screen contains "**foo**"
-key esc
+# The server answers `**foo**`; the box paints foo bold with the
+# markers dropped, inside its border.
+expect screen contains "╭────────╮"
+expect screen contains "│foo"
 expect screen lacks "**foo**"
+key esc
+expect screen lacks "╭────────╮"

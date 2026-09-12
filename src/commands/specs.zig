@@ -44,7 +44,7 @@ pub const specs = [_]Spec{
     .{ .id = "app.restart", .title = "Restart mnml (rebuild + relaunch via run.sh)", .group = "app" },
     .{ .id = "app.reset_to_defaults", .title = "Reset mnml to factory defaults (backup + relaunch)", .group = "app" },
     .{ .id = "app.choose_data_layout", .title = "Choose data layout — Portable (mnml-data/) or Normal (~/.config/mnml/)", .group = "app" },
-    .{ .id = "view.toggle_tree", .title = "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)", .group = "view", .keys = .{ .vim = &.{ "ctrl+n", "space e" }, .standard = &.{"ctrl+b"} } },
+    .{ .id = "view.toggle_tree", .title = "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)", .group = "view", .keys = .{ .vim = &.{"ctrl+n"}, .standard = &.{"ctrl+b"} } },
     .{ .id = "view.reset_tree_width", .title = "Reset file tree width to the config default", .group = "view" },
     .{ .id = "view.discovery", .title = "Click-discovery overlay (highlight what's clickable)", .group = "view" },
     .{ .id = "view.welcome", .title = "Welcome overlay (shortcuts cheatsheet)", .group = "view" },
@@ -56,7 +56,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.help", .title = "Keybindings & help — help overlay (auto-generated keymap reference)", .group = "view", .keys = .{ .both = &.{"f1"} } },
     .{ .id = "view.settings", .title = "Settings overlay (keyboard-driven schema editor)", .group = "view", .keys = .{ .both = &.{"ctrl+,"} } },
     .{ .id = "view.toggle_picker_position", .title = "Picker: toggle position (center ⇄ top)", .group = "view" },
-    .{ .id = "view.focus_tree", .title = "Focus the file tree (without toggling)", .group = "view", .keys = .{ .both = &.{ "ctrl+shift+e", "ctrl+0" } } },
+    .{ .id = "view.focus_tree", .title = "Focus the file tree (opening it when closed)", .group = "view", .keys = .{ .vim = &.{"space e"}, .both = &.{ "ctrl+shift+e", "ctrl+0" } } },
     .{ .id = "view.toggle_tree_section", .title = "Toggle workspace section (collapse/expand the file list)", .group = "view" },
     .{ .id = "view.toggle_hidden", .title = "Toggle hidden files in focused tree section", .group = "view" },
     .{ .id = "view.toggle_hidden_all", .title = "Toggle hidden files across every workspace section", .group = "view" },
@@ -92,7 +92,7 @@ pub const specs = [_]Spec{
     .{ .id = "project.prev_todo", .title = "Jump to previous TODO / FIXME / HACK / XXX (vim [t)", .group = "project" },
     .{ .id = "view.cmdline_history", .title = "Open cmdline-history pane (vim q:)", .group = "view" },
     .{ .id = "browser.toggle_headless", .title = "Toggle CDP headless launch (takes effect on next browser.open)", .group = "browser" },
-    .{ .id = "find.find", .title = "Find in buffer", .group = "find", .keys = .{ .standard = &.{"ctrl+f"} } },
+    .{ .id = "find.find", .title = "Find in buffer", .group = "find", .keys = .{ .vim = &.{"space f z"}, .standard = &.{"ctrl+f"} } },
     .{ .id = "find.next", .title = "Find: next match", .group = "find", .keys = .{ .both = &.{"f3"} } },
     .{ .id = "find.prev", .title = "Find: previous match", .group = "find", .keys = .{ .both = &.{"shift+f3"} } },
     .{ .id = "find.toggle_regex", .title = "Find: toggle regex mode (sticky)", .group = "find", .keys = .{ .both = &.{"alt+r"} } },
@@ -298,7 +298,7 @@ pub const specs = [_]Spec{
     .{ .id = "focus.cycle", .title = "Cycle focus (tree ⇄ editor)", .group = "view", .keys = .{ .both = &.{"f6"} } },
     .{ .id = "file.save", .title = "Save file", .group = "file", .keys = .{ .both = &.{"ctrl+s"} } },
     .{ .id = "file.save_all", .title = "Save all files", .group = "file" },
-    .{ .id = "picker.recent", .title = "Recent files", .group = "picker", .keys = .{ .standard = &.{"ctrl+r"} } },
+    .{ .id = "picker.recent", .title = "Recent files", .group = "picker", .keys = .{ .vim = &.{"space f o"}, .standard = &.{"ctrl+r"} } },
     .{ .id = "file.clear_recent", .title = "Clear recent files list", .group = "file" },
     .{ .id = "file.open_recent_0", .title = "Open recent file #1", .group = "file" },
     .{ .id = "file.open_recent_1", .title = "Open recent file #2", .group = "file" },
@@ -559,7 +559,7 @@ pub const specs = [_]Spec{
     .{ .id = "git.reflog", .title = "Git: reflog (HEAD history; pick to open commit diff)", .group = "git" },
     .{ .id = "git.undo", .title = "Git: undo last commit (reset --soft HEAD~1)", .group = "git" },
     .{ .id = "git.redo", .title = "Git: redo the last undone commit", .group = "git" },
-    .{ .id = "git.graph", .title = "Git: commit graph (DAG browser)", .group = "git" },
+    .{ .id = "git.graph", .title = "Git: commit graph (DAG browser)", .group = "git", .keys = .{ .vim = &.{"space c m"} } },
     .{ .id = "git.graph_filter_branch", .title = "Graph: filter by branch…", .group = "git" },
     .{ .id = "git.graph_filter_clear", .title = "Graph: clear branch filter (show all)", .group = "git" },
     .{ .id = "git.graph_filter_date", .title = "Graph: filter by date range…", .group = "git" },
@@ -573,7 +573,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.reveal_in_tree", .title = "Reveal active file in the file tree", .group = "view" },
     .{ .id = "project.todos", .title = "Project: scan for TODO / FIXME / HACK / XXX comments", .group = "project" },
     .{ .id = "find.find_backward", .title = "Find (reverse — vim ?)", .group = "find" },
-    .{ .id = "git.status_pane", .title = "Git: status / staging view", .group = "git" },
+    .{ .id = "git.status_pane", .title = "Git: status / staging view", .group = "git", .keys = .{ .vim = &.{"space g t"} } },
     .{ .id = "git.ai_commit", .title = "Git: write a commit message with Claude (from the staged diff)", .group = "git" },
     .{ .id = "git.codex_commit", .title = "Git: write a commit message with Codex (from the staged diff)", .group = "git" },
     .{ .id = "git.ai_recompose", .title = "Git: rewrite HEAD's message with Claude (--amend)", .group = "git" },
@@ -603,7 +603,7 @@ pub const specs = [_]Spec{
     .{ .id = "lsp.signature_help", .title = "LSP: signature help (param info popup at cursor)", .group = "lsp", .keys = .{ .both = &.{"ctrl+shift+space"} } },
     .{ .id = "lsp.signature_next", .title = "LSP: next signature (overload)", .group = "lsp" },
     .{ .id = "lsp.signature_prev", .title = "LSP: previous signature (overload)", .group = "lsp" },
-    .{ .id = "lsp.rename", .title = "LSP: rename symbol (F2 in an editor; the tree's F2 renames the file)", .group = "lsp", .keys = .{ .both = &.{"f2"} } },
+    .{ .id = "lsp.rename", .title = "LSP: rename symbol (F2 in an editor; the tree's F2 renames the file)", .group = "lsp", .keys = .{ .vim = &.{"space r a"}, .both = &.{"f2"} } },
     .{ .id = "lsp.format", .title = "LSP: format document", .group = "lsp", .keys = .{ .vim = &.{"space f m"}, .both = &.{"ctrl+shift+i"} } },
     .{ .id = "lsp.format_selection", .title = "LSP: format selection (range formatting)", .group = "lsp" },
     .{ .id = "lsp.code_lens_run", .title = "LSP: run the code lens above the cursor's line", .group = "lsp" },
@@ -652,7 +652,7 @@ pub const specs = [_]Spec{
     .{ .id = "dap.disable_all_breakpoints", .title = "DAP: disable every breakpoint", .group = "dap" },
     .{ .id = "dap.clear_console", .title = "DAP: clear the debug console", .group = "dap" },
     .{ .id = "dap.evaluate_hover", .title = "DAP: evaluate the word under the cursor into the hover box", .group = "dap", .keys = .{ .vim = &.{"space d h"} } },
-    .{ .id = "lsp.code_action", .title = "LSP: code actions at cursor (→ picker)", .group = "lsp", .keys = .{ .both = &.{"ctrl+."} } },
+    .{ .id = "lsp.code_action", .title = "LSP: code actions at cursor (→ picker)", .group = "lsp", .keys = .{ .vim = &.{"space c a"}, .both = &.{"ctrl+."} } },
     .{ .id = "lsp.quick_fix", .title = "LSP: quick fix (auto-apply first code action)", .group = "lsp", .keys = .{ .both = &.{"alt+enter"} } },
     .{ .id = "lsp.organize_imports", .title = "LSP: organize imports", .group = "lsp", .keys = .{ .both = &.{"alt+shift+o"} } },
     .{ .id = "lsp.symbols", .title = "LSP: symbols in this file (→ picker)", .group = "lsp", .keys = .{ .both = &.{"ctrl+shift+o"} } },
@@ -974,6 +974,9 @@ pub const specs = [_]Spec{
     .{ .id = "view.focus_up", .title = "Focus split up", .group = "view", .keys = .{ .vim = &.{"ctrl+k"}, .standard = &.{"ctrl+k ctrl+up"} } },
     .{ .id = "view.focus_down", .title = "Focus split down", .group = "view", .keys = .{ .vim = &.{"ctrl+j"}, .standard = &.{"ctrl+k ctrl+down"} } },
     .{ .id = "view.focus_next_split", .title = "Focus next split", .group = "view" },
+    .{ .id = "view.focus_top", .title = "Focus the top split (vim Ctrl-W t)", .group = "view" },
+    .{ .id = "view.focus_bottom", .title = "Focus the bottom split (vim Ctrl-W b)", .group = "view" },
+    .{ .id = "view.focus_previous", .title = "Focus the previously focused window (vim Ctrl-W p)", .group = "view" },
     .{ .id = "view.close_split", .title = "Close split / buffer", .group = "view" },
     .{ .id = "layout.merge_to_tabs", .title = "Layout: merge splits into tabs (splits→tabs)", .group = "view" },
     .{ .id = "layout.spread_to_splits", .title = "Layout: spread tabs into splits (tabs→splits)", .group = "view" },
@@ -1112,7 +1115,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1039 specs, unique ids" {
+test "1042 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1129,7 +1132,8 @@ test "1039 specs, unique ids" {
     // stash commands + two command-log commands + two detail-row
     // commands (git-more2) + three launcher-pin commands
     // + `view.reset_layout` + the session-worktree launch and its three
-    // row verbs (open in tree / merge / remove).
-    try std.testing.expectEqual(@as(usize, 1039), specs.len);
+    // row verbs (open in tree / merge / remove) + `view.focus_top` /
+    // `focus_bottom` / `focus_previous` (vim Ctrl-W t / b / p).
+    try std.testing.expectEqual(@as(usize, 1042), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

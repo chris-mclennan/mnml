@@ -466,6 +466,15 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
         try app.forceClosePane(id);
         return;
     }
+    // vim: `<C-\><C-n>` (NvChad's `<C-x>` too) leaves the child for
+    // terminal-normal mode, where every key is the app's — the leader,
+    // the `Ctrl-W` family, `i` / `a` back in — and none is the child's.
+    if (p.term_normal) {
+        if (try pty_pane.termNormalKey(app, p, k)) return;
+        _ = try chordChain(app, k);
+        return;
+    }
+    if (pty_pane.escapeKey(app, p, k)) return;
     if (modified and !pty_pane.childOwned(k)) {
         const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;
         if (bound and try chordChain(app, k)) return;
@@ -3213,7 +3222,11 @@ const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "
 fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
     const line = e.buf.input.cmdlineGet() orelse return;
     if (app.cmd_complete) |*c| {
-        if (std.mem.eql(u8, c.prefix, line) or (c.candidates.len > 0 and std.mem.eql(u8, c.candidates[c.idx], line))) {
+        // The one match was a directory and the line is it now: the next
+        // Tab lists what is inside (vim's `wildmode=full` on `:e src/`),
+        // rather than cycling a list of one.
+        const descend = c.candidates.len == 1 and std.mem.eql(u8, c.candidates[0], line) and std.mem.endsWith(u8, line, "/");
+        if (!descend and (std.mem.eql(u8, c.prefix, line) or (c.candidates.len > 0 and std.mem.eql(u8, c.candidates[c.idx], line)))) {
             return cmdlineCycle(app, e, 1);
         }
         c.deinit(app.gpa);
@@ -3422,15 +3435,15 @@ test "leader chain: the second key of `space e` is the chord's, not the editor's
     const e = app.activeEditor().?;
     try e.buf.editor.setText("const std = @import(\"std\");\n");
     e.buf.editor.setCursor(0);
-    const was = app.tree.visible;
     try key(&app, Key.char(' '));
     try std.testing.expect(app.chord.len == 1);
     try key(&app, Key.char('e'));
-    try std.testing.expect(app.tree.visible != was);
+    try std.testing.expect(app.tree.visible and app.focus == .tree);
     try std.testing.expect(app.chord.len == 0);
     try std.testing.expect(app.overlay == .none);
     // `e` did not run as a motion.
     try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+    app.focus = .{ .pane = app.active.? };
     // `space f f` reaches the file picker with nothing in between.
     try key(&app, Key.char(' '));
     try key(&app, Key.char('f'));
@@ -3447,6 +3460,44 @@ test "leader chain: the second key of `space e` is the chord's, not the editor's
     try std.testing.expect(app.overlay == .none);
     try expireChords(&app);
     try std.testing.expect(app.overlay == .none);
+}
+
+test "leader chain: an unbound chord is swallowed whole — its tail key never reaches the vim handler, typed fast or through the popup" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"tab.new" });
+    try command.run(&app, .{ .static = .@"tab.prev" });
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("alpha\nbravo\n");
+    e.buf.editor.setCursor(0);
+    const Case = struct { a: u21, b: u21 };
+    // `<leader>cx` is not `x` (delete a char), `<leader>fx` / `<leader>bx`
+    // neither: NvChad's which-key drops an unbound chord whole. (The
+    // hunt's `ca` / `fo` / `gt` are bound now — `keymap.zig`.)
+    for ([_]Case{ .{ .a = 'c', .b = 'x' }, .{ .a = 'f', .b = 'x' }, .{ .a = 'b', .b = 'x' } }) |c| {
+        try key(&app, Key.char(' '));
+        try key(&app, Key.char(c.a));
+        try key(&app, Key.char(c.b));
+        try std.testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+        try std.testing.expectEqualStrings("alpha\nbravo\n", e.buf.editor.bytes());
+        try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+        try std.testing.expectEqual(@as(usize, 0), app.layouts.active);
+        try std.testing.expect(app.chord.len == 0 and app.overlay == .none);
+    }
+    // Slowly: the leader expires into the popup, `c` descends, `a` is
+    // nothing there — the popup closes and the key is gone.
+    try key(&app, Key.char(' '));
+    try expireChords(&app);
+    try std.testing.expect(app.overlay == .which_key);
+    try key(&app, Key.char('c'));
+    try std.testing.expect(app.overlay == .which_key);
+    try key(&app, Key.char('x'));
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqualStrings("alpha\nbravo\n", e.buf.editor.bytes());
+    try std.testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
+    try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
 }
 
 fn press(app: *App, x: u16, y: u16, button: key_mod.MouseButton) !void {
