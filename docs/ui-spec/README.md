@@ -33,6 +33,25 @@ statement that paints it, and add nothing the Rust screen does not show.
 
 `rust-git-120x40.txt` / `rust-git-80x24.txt` are git mode (`steps-graph2.jsonl`).
 
+`zig-search-120x40.txt` is the SEARCH section (`steps-search.jsonl`
+through `tools/zig-spec-git.sh search` — the branches fixture's repo,
+the query `t`, the cursor on the first hit): Rust's
+`draw_search_section` shape row for row — the header with the
+`Aa \b .*` flags, a blank row, ` / t█`, `2 hits (git grep)`, a blank
+row, the file header, `  2:1  two`. The Rust side has no dump of its
+own; the walkthrough's `docs/ui-spec/walk/steps-search.jsonl` on the
+chrome fixture is the comparison (`rg` off the PATH, so both sides
+answer with `git grep`): `tools/ui-diff.sh` read 33 rows beyond the
+rail before the section (the grep pane in the body, the tree still in
+the sidebar; 38 with a query that hits) and 23 after — the body's
+welcome screen, which every section shares. The sidebar's own columns
+(4–30) went from 20 differing rows to 1 (2 with a hit): the header
+row — Rust has no refresh chip there, so its flags sit four cells
+further right — and the `▌` marker on the selected hit, the list
+panels' one departure. Rust's Enter on a hit does nothing (walkthrough
+finding 1.2); here it opens the file at the line, as Rust's own hint
+promises.
+
 `rust-git-status-120x40.txt` / `rust-git-status-80x24.txt` are the
 staging pane (`steps-status.jsonl`: `git.status_pane` from the resting
 screen), re-cut 2026-09-07 on the fixture's two untracked entries
