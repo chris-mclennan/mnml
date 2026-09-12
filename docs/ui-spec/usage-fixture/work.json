@@ -1,0 +1,1 @@
+{"five_hour":{"utilization":24.0,"resets_at":"2026-09-12T23:05:00+00:00"},"seven_day":{"utilization":71.0,"resets_at":"2026-09-16T09:00:00+00:00"},"limits":[{"kind":"session","percent":24,"resets_at":"2026-09-12T23:05:00+00:00"},{"kind":"weekly_all","percent":71,"resets_at":"2026-09-16T09:00:00+00:00"}]}

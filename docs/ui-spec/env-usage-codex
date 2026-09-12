@@ -1,0 +1,4 @@
+# The usage pane's seed (`tools/zig-spec.sh usage`): three synthetic
+# accounts, a fixed clock and a UTC zone, so the dump never touches the
+# wire and reads the same on every machine.
+MNML_CLAUDE_USAGE_FIXTURE=$ROOT/docs/ui-spec/usage-fixture

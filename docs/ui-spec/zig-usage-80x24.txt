@@ -1,0 +1,24 @@
+ ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
+   │  ● /pri…            │ 󱸀 Claude usage 󰅖   󰐕              󱸀        
+▌ │▌    .mnml              │ Claude usage · r refresh · L claude login · R ca
+ 󰍉 │       ipc-zig          │
+ 󰊢 │      prog.dbg           │▌(active) personal · sam@example.com · sam@exampl
+  │                          │▌
+ 󰐱 │         󰐙 Add workspace  │▌Current session
+ 󰎒 │                          │▌                                      95% used
+  │                          │▌  Resets 8:20pm
+  │                          │▌
+  │                          │▌Current week (all models)
+ 󱘣 │                          │▌                                      52% used
+ 󰢱 │                          │▌  Resets Sep 19 at 5am
+   │                          │▌
+   │──────────────────────────│▌Current week (Fable)
+   │ Claude usage           ⋮ │▌                                      55% used
+   │                          │▌  Resets Sep 19 at 5am
+   │                          │▌
+   │                          │
+   │                          │▌work · sam@work.example · Example Co
+  │                          │▌
+   │                          │▌Current session
+ VIEW  [no file]                      F 59% ▼0.4  󱼀 󰐎    16:56  ws   —
+

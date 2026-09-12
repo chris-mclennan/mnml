@@ -1,0 +1,52 @@
+# The quota pane and the spare Codex pane off the usage reader
+# (src/ai/usage.zig), on a fixture directory instead of the wire:
+# `ai.claude_usage` opens the Claude usage pane — the session and weekly
+# windows per account with their reset clocks, a throttled sibling's
+# 429 — not the spend report with an apology toast; `ai.codex_usage`
+# opens the Codex pane with today's tokens. The fixture's clock is
+# 2026-09-12T20:00:32Z at UTC, so the clocks read the same everywhere.
+# env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
+
+write fixture/accounts *personal\nwork
+write fixture/now 1789243232
+write fixture/tz_offset 0
+write fixture/personal.json {"five_hour":{"utilization":95.0,"resets_at":"2026-09-12T20:20:00.280504+00:00"},"seven_day":{"utilization":52.0,"resets_at":"2026-09-19T05:00:00.280523+00:00"},"limits":[{"kind":"session","percent":95,"resets_at":"2026-09-12T20:20:00.280504+00:00"},{"kind":"weekly_all","percent":52,"resets_at":"2026-09-19T05:00:00.280523+00:00"},{"kind":"weekly_scoped","percent":55,"resets_at":"2026-09-19T05:00:00.280703+00:00","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}]}
+write fixture/personal.profile.json {"account":{"email":"sam@example.com"},"organization":{"name":"Example Org"}}
+write fixture/work.error HTTP 429 retry-after=3150
+write fixture/codex.json {"tokens_today":1234567,"sessions_today":3}
+write placeholder.txt x
+open placeholder.txt
+
+command ai.claude_usage
+wait 800
+expect screen lacks "not in this build"
+expect screen lacks "AI spend"
+expect pane "Claude usage"
+expect screen contains "Claude usage · r refresh · L claude login · R capture · esc close"
+expect screen contains "(active) personal · sam@example.com · Example Org"
+expect screen contains "Current session"
+expect screen contains "95% used"
+expect screen contains "Resets 8:20pm"
+expect screen contains "Current week (all models)"
+expect screen contains "52% used"
+expect screen contains "Resets Sep 19 at 5am"
+expect screen contains "Current week (Fable)"
+expect screen contains "55% used"
+
+# The throttled sibling sits below; G scrolls to it.
+key G
+expect screen contains "Anthropic asked us to retry in 3150s (429)"
+expect screen contains "no data yet · last error: HTTP 429 retry-after=3150"
+
+# q closes the pane; the Codex pane is the spare one.
+key q
+expect screen lacks "Claude usage ·"
+command ai.codex_usage
+wait 800
+expect pane "Codex usage"
+expect screen contains "Tokens today"
+expect screen contains "1,234,567"
+expect screen contains "3 sessions"
+expect screen contains "Last scan: 8pm"
+key q
+expect screen lacks "Codex usage ·"
