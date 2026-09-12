@@ -885,6 +885,7 @@ pub const Vim = struct {
             '"', '\'', '`' => if (around) .{ .select_around_quote = c } else .{ .select_inner_quote = c },
             'q' => if (around) .select_around_smart_quote else .select_inner_smart_quote,
             'p' => if (around) .select_around_paragraph else .select_inner_paragraph,
+            's' => if (around) .select_around_sentence else .select_inner_sentence,
             'f' => if (around) .select_around_function else .select_inner_function,
             'c' => if (around) .select_around_class else .select_inner_class,
             'a', ',' => if (around) .select_around_argument else .select_inner_argument,

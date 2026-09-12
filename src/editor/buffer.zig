@@ -1278,6 +1278,14 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2gUU", "a|bc\nde\nfg", "A|BC\nDE\nfg");
     try vim("3guu", "|AB\nCD\nEF\nGH", "|ab\ncd\nef\nGH");
     try vim("g~iw", "a|Bc d", "|AbC d");
+    // `is` / `as` (`:help is`): a sentence ends at `.` `!` `?` + white
+    // space or at the paragraph's edge; `as` takes the space after it.
+    try vim("dis", "One two. Th|ree four. Five", "One two. | Five"); // `is` keeps the space after (`vim -es`)
+    try vim("das", "One two. Th|ree four. Five", "One two. |Five");
+    try vim("das", "One two. Th|ree four.", "One two|.");
+    try vim("dis", "a|lpha bravo\ncharlie\n\ndelta", "|\ndelta"); // no full stop: the paragraph is the sentence, line break included
+    try vim("vis" ++ "y", "One. T|wo? Three", "One. |Two? Three");
+    try vim("cis" ++ "X<esc>", "One. T|wo! Three", "One. |X Three");
     // `>` / `<` end on the range's first line, first non-blank
     // (`:help >>`; `vim -es`: `gg3>>` → 1:2 with a tab, `gg3>>j.` → 2:3)
     // — never the last line's end, so `.` shifts the same lines again.
