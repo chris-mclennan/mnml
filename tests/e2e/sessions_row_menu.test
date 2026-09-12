@@ -1,14 +1,18 @@
 # env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
 # The row menu, as Rust's: Pin first, Move up / down / to top / to
-# bottom, the Auto sort tick, Rename…, then this panel's transcript rows.
-# Enter on Pin pins the card — the 󰐃 before its name — and the menu then
-# offers Unpin.
+# bottom, the Auto sort tick, Rename…, Color, then Focus session and
+# this panel's transcript rows. Enter on Pin pins the card — the 󰐃
+# before its name — and the menu then offers Unpin.
 
-write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
-write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '\\033]0;\\342\\234\\263 fix the failing tests\\007'\nprintf 'Claude Code v9 (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 300
+command ai.claude_code_new
+wait 300
 command view.activity_sessions
-key w
-wait 500
+wait 300
 rightclick 10 6
 expect screen contains "Pin"
 expect screen contains "Move up"
@@ -16,8 +20,9 @@ expect screen contains "Move to top"
 expect screen contains "Move to bottom"
 expect screen contains "✓ Auto sort"
 expect screen contains "Rename…"
-expect screen contains "Resume in a terminal"
+expect screen contains "Focus session"
 expect screen contains "Delete transcript…"
+expect screen lacks "Resume in a terminal"
 key enter
 expect screen contains "󰐃 "
 rightclick 10 6

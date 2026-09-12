@@ -135,6 +135,13 @@ pub const PtyPane = struct {
     /// null on a shell and on every pane the user cleared to Auto that
     /// has no slot.
     accent_color: ?[]u8 = null,
+    /// // changed (sessions-card): bumped every time `pump` feeds bytes
+    /// — the SESSIONS card's cache key (Rust keyed its summary and sort
+    /// caches on `bytes_processed`).
+    fed_gen: u64 = 0,
+    /// // changed (sessions-card): the awake clock when the exit was
+    /// noticed; the card's grace window counts from here.
+    exited_at_ms: ?i64 = null,
     /// The grid size the session was last fitted to.
     cols: u16,
     rows: u16,
@@ -157,11 +164,23 @@ pub const PtyPane = struct {
     pub fn pump(self: *PtyPane, app: *App) void {
         if (!supported) return;
         const fed = self.session.pump();
+        if (fed) self.fed_gen +%= 1;
         if (self.exit == null) {
             self.exit = exitOf(self.session.exited());
-            if (self.exit != null) self.noticeExit(app);
+            if (self.exit != null) {
+                self.exited_at_ms = app.now_ms;
+                self.noticeExit(app);
+            }
         }
         if (fed or self.exit != null) app.needs_render = true;
+    }
+
+    /// The Claude session this pane runs, off its command line: the
+    /// `--session-id <id>` a new session is started with, or the
+    /// `--resume <id>` of a resumed one. Null for a shell, Codex, and
+    /// a bare `claude`.
+    pub fn sessionId(self: *const PtyPane) ?[]const u8 {
+        return sessionIdOfArgv(self.argv);
     }
 
     /// The exit just landed: run the follow-up, once.
@@ -459,6 +478,9 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
         .pty => |*p| p,
         else => return error.NotAnEditor,
     };
+    // A Claude session started with `--session-id` cannot be started
+    // twice under that id: the restart resumes it.
+    try resumeInPlace(app.gpa, p.argv);
     const fresh = pty.Session.spawn(app.gpa, app.io, .{
         .cols = p.cols,
         .rows = p.rows,
@@ -482,6 +504,34 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
 // ─── the event side ─────────────────────────────────────────────────────
 
 /// `.pty_readable{id}` landed: pump that pane.
+/// `--session-id <id>` / `--resume <id>` in a command line, if either.
+pub fn sessionIdOfArgv(argv: []const []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i + 1 < argv.len) : (i += 1) {
+        if (std.mem.eql(u8, argv[i], "--session-id") or std.mem.eql(u8, argv[i], "--resume")) return argv[i + 1];
+    }
+    return null;
+}
+
+/// `--session-id` → `--resume` in place, so a saved or restarted Claude
+/// command line continues the session instead of failing to start a
+/// second one under the same id. The flag's cell is replaced on `gpa`.
+pub fn resumeInPlace(gpa: Allocator, argv: [][]u8) Allocator.Error!void {
+    for (argv) |*a| if (std.mem.eql(u8, a.*, "--session-id")) {
+        const fresh = try gpa.dupe(u8, "--resume");
+        gpa.free(a.*);
+        a.* = fresh;
+    };
+}
+
+/// `argv` with `--session-id` spelled `--resume`, on `arena` (the
+/// session file's copy).
+pub fn resumeArgv(arena: Allocator, argv: []const []const u8) Allocator.Error![]const []const u8 {
+    const out = try arena.alloc([]const u8, argv.len);
+    for (argv, 0..) |a, i| out[i] = if (std.mem.eql(u8, a, "--session-id")) "--resume" else a;
+    return out;
+}
+
 pub fn onReadable(app: *App, id: PaneId) void {
     const pane = app.panes.get(id) orelse return;
     switch (pane.*) {
@@ -501,6 +551,7 @@ pub fn tickAll(app: *App) void {
                 p.pump(app);
             } else if (p.session.exited()) |e| {
                 p.exit = PtyPane.exitOf(e);
+                p.exited_at_ms = app.now_ms;
                 p.noticeExit(app);
                 app.needs_render = true;
             }
@@ -900,6 +951,28 @@ test "mouse reports: SGR press/release/drag/wheel, modes gate motion, x10 bytes"
     const x10: Encoding = .{ .mouse = .normal };
     try t.expectEqualStrings("\x1b[M\x20\x21\x21", encodeMouse(.{ .x = 0, .y = 0, .kind = .press, .button = .left }, 0, 0, x10, &buf));
     try t.expectEqualStrings("\x1b[M\x23\x21\x21", encodeMouse(.{ .x = 0, .y = 0, .kind = .release, .button = .left }, 0, 0, x10, &buf));
+}
+
+test "sessionIdOfArgv reads --session-id and --resume; resumeArgv / resumeInPlace turn the first into the second" {
+    try t.expectEqualStrings("abc", sessionIdOfArgv(&.{ "claude", "--session-id", "abc" }).?);
+    try t.expectEqualStrings("r1", sessionIdOfArgv(&.{ "claude", "--resume", "r1" }).?);
+    try t.expect(sessionIdOfArgv(&.{"claude"}) == null);
+    try t.expect(sessionIdOfArgv(&.{ "claude", "--session-id" }) == null);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const saved = try resumeArgv(arena_state.allocator(), &.{ "claude", "--session-id", "abc" });
+    try t.expectEqualStrings("--resume", saved[1]);
+    try t.expectEqualStrings("abc", saved[2]);
+    const argv = try t.allocator.alloc([]u8, 3);
+    defer {
+        for (argv) |a| t.allocator.free(a);
+        t.allocator.free(argv);
+    }
+    argv[0] = try t.allocator.dupe(u8, "claude");
+    argv[1] = try t.allocator.dupe(u8, "--session-id");
+    argv[2] = try t.allocator.dupe(u8, "abc");
+    try resumeInPlace(t.allocator, argv);
+    try t.expectEqualStrings("--resume", argv[1]);
 }
 
 test "childOwned: ctrl+c/d/z/l only" {

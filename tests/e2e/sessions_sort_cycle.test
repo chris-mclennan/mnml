@@ -1,13 +1,17 @@
 # env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
 # s flips SESSIONS' own axis — State / Manual — says so and persists it
 # (the sort chip's click does the same); J adopts the visible order as
 # the manual list and lands on Manual by itself.
 
-write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
-write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000002.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '\\033]0;\\342\\234\\263 fix the failing tests\\007'\nprintf 'Claude Code v9 (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 300
+command ai.claude_code_new
+wait 300
 command view.activity_sessions
-key w
-wait 500
+wait 300
 key s
 expect screen contains "sessions: Manual"
 key s

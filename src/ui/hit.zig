@@ -26,7 +26,10 @@ const Allocator = std.mem.Allocator;
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel.PanelId;
 
-pub const ChipKind = enum { sort, refresh, new, view };
+/// // changed (sessions-card): `history` is the SESSIONS section's
+/// ended-sessions chip (click toggles them in, right-click lists the
+/// verbs).
+pub const ChipKind = enum { sort, refresh, new, view, history };
 
 /// // changed (sessions-merge): the ids a pane-hosted `ListPanel`
 /// registers its parts under (`.script_hit{ pane, id }`): a row is

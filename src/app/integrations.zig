@@ -1592,7 +1592,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, cycleSort(app)),
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .integrations, m.x, m.y) else runToast(app, refreshTab(app)),
-        .new, .view => {},
+        .new, .view, .history => {},
     }
 }
 

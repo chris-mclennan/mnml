@@ -11,7 +11,9 @@ wait 400
 command view.activity_sessions
 key w
 wait 1000
-expect screen contains "fix the failing tests"
+# No pane here owns it: an EXTERNAL row (no branch in the transcript).
+expect screen contains "EXTERNAL"
+expect screen contains "  —  (e2e00006)"
 expect screen lacks "needs input"
 # The next turn is a tool use nobody answers, five minutes ago (the
 # written transcript has no trailing newline; the append supplies it).

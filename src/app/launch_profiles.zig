@@ -172,7 +172,7 @@ pub const Launch = struct {
 /// the profile's `cwd_mode`; null is the workspace.
 pub fn launch(app: *App, arena: Allocator, product: Product, name: []const u8) CommandError!Launch {
     if (std.mem.eql(u8, name, builtin_name)) {
-        return .{ .argv = try arena.dupe([]const u8, &.{binaryOf(product)}), .cwd = null, .label = @tagName(product) };
+        return .{ .argv = try withSessionId(app, arena, product, binaryOf(product)), .cwd = null, .label = @tagName(product) };
     }
     const p = find(app, product, name) orelse return app.diag.fail(arena, "launch profile `{s}` is not configured for {s}", .{ name, @tagName(product) });
     if (!validName(p.name)) return app.diag.fail(arena, "launch profile `{s}`: the name must be letters, digits, `-`, `_` or `.`", .{p.name});
@@ -193,10 +193,22 @@ pub fn launch(app: *App, arena: Allocator, product: Product, name: []const u8) C
         },
     };
     return .{
-        .argv = try arena.dupe([]const u8, &.{shim}),
+        .argv = try withSessionId(app, arena, product, shim),
         .cwd = cwd,
         .label = try std.fmt.allocPrint(arena, "{s} ({s})", .{ @tagName(product), p.name }),
     };
+}
+
+/// // changed (sessions-card): a Claude session starts with a
+/// `--session-id <uuid>` of mnml's own, as Rust's `claude_code` profile
+/// does, so the pane knows its transcript from the first frame — the
+/// SESSIONS card reads the exchange under that id and the scan pairs
+/// the process with it. Codex has no such flag. The shim passes `"$@"`
+/// on, so a profile gets the flag too.
+fn withSessionId(app: *App, arena: Allocator, product: Product, argv0: []const u8) Allocator.Error![]const []const u8 {
+    if (product != .claude) return arena.dupe([]const u8, &.{argv0});
+    const sid = try arena.dupe(u8, &cli.genSessionId(app.io));
+    return arena.dupe([]const u8, &.{ argv0, "--session-id", sid });
 }
 
 /// Whether `argv0` is `product` — its bare binary, or a shim of one of

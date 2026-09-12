@@ -360,7 +360,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .scripts, m.x, m.y) else runToast(app, command.run(app, .{ .static = .@"script.reload" })),
-        .sort, .new, .view => {},
+        .sort, .new, .view, .history => {},
     }
 }
 

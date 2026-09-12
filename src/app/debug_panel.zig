@@ -627,7 +627,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .new => runToast(app, dap.addWatchPrompt(app)),
-        .sort, .refresh, .view => {},
+        .sort, .refresh, .view, .history => {},
     }
 }
 

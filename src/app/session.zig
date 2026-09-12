@@ -125,6 +125,9 @@ pub const Saved = struct {
     sessions_colors: []const SessionColor = &.{},
     /// // changed (sessions-worktree): the session worktrees, by path.
     sessions_worktrees: []const SessionWorktree = &.{},
+    /// // changed (sessions-card): the history chip's toggle — the ended
+    /// sessions listed under ENDED.
+    sessions_show_ended: bool = false,
     /// The dock widgets and whether the dock is hidden.
     dock: []const dock.SavedWidget = &.{},
     dock_hidden: bool = false,
@@ -231,8 +234,9 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
             .pty => |*pt| blk: {
                 // Runner and task ptys are re-created by their owners.
                 if (pt.kind != .shell and pt.kind != .command) break :blk null;
-                const argv = try arena.alloc([]const u8, pt.argv.len);
-                for (pt.argv, 0..) |a, k| argv[k] = a;
+                // A Claude session started under `--session-id` comes
+                // back with `--resume`: the id is taken once.
+                const argv = try pty_pane.resumeArgv(arena, pt.argv);
                 break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color };
             },
             else => null,
@@ -301,6 +305,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     const trees = try arena.alloc(SessionWorktree, app.sessions.worktrees.items.items.len);
     for (app.sessions.worktrees.items.items, 0..) |w, i| trees[i] = .{ .id = w.session_id orelse "", .path = w.path, .name = w.name, .branch = w.branch, .repo = w.repo };
     saved.sessions_worktrees = trees;
+    saved.sessions_show_ended = app.sessions.show_ended;
     saved.dock = try dock.capture(app, arena);
     saved.dock_hidden = app.dock.hidden;
     return saved;
@@ -509,6 +514,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     for (saved.sessions_aliases) |a| if (a.id.len > 0) try app.sessions.setAlias(gpa, a.id, a.name);
     for (saved.sessions_colors) |c| if (c.id.len > 0) try app.sessions.setColor(gpa, c.id, c.color);
     for (saved.sessions_worktrees) |w| if (w.path.len > 0 and w.name.len > 0) try app.sessions.worktrees.add(gpa, w.path, w.name, if (w.branch.len > 0) w.branch else w.name, w.repo, w.id);
+    app.sessions.show_ended = saved.sessions_show_ended;
     try dock.apply(app, saved.dock, saved.dock_hidden);
     for (saved.recent) |p| try app.noteRecent(p);
     for (saved.closed) |c| {

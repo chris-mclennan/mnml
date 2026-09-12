@@ -11,7 +11,8 @@
 //! ex <cmdline>                   # run an ex command — `ex bd!` runs `:bd!`
 //! wait  <ms>                     # sleep while ticking (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry
-//! shell <cmd>                    # `$SHELL -c` in the workspace; non-zero exit fails
+//! shell <cmd>                    # `$SHELL -c` in the workspace with the file's env
+//!                                #   (`# env:`, `$MNML_E2E_WORKSPACE`); non-zero exit fails
 //! serve <port> <status> [delay=<ms>] <text>  # an HTTP server on 127.0.0.1:<port> for this file:
 //!                                #   <text> is "Name: value\n…\n\n<body>" (headers, a blank
 //!                                #   line, the body) or just the body; delay= waits before

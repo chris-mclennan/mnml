@@ -134,6 +134,11 @@ const Run = struct {
     name: []u8,
     workspace: []u8 = "",
     driver: ?Driver = null,
+    /// // changed (sessions-card): the file's environment — the run's
+    /// plus `MNML_E2E_WORKSPACE` and the `# env:` lines — for its
+    /// `shell` steps too, so a step can name the workspace the App sees
+    /// (`$MNML_E2E_WORKSPACE`, the path a transcript's `cwd` must match).
+    shell_env: ?*const std.process.Environ.Map = null,
     /// `serve` steps' servers, stopped after the script; their canned
     /// answers live on `serve_arena`.
     servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
@@ -174,25 +179,23 @@ const Run = struct {
         // value can name a directory inside it (`HOME=`, a PATH entry a
         // shim's "installer" drops a fake binary into).
         const header = parser.parseHeader(text);
-        var file_env: ?std.process.Environ.Map = null;
-        defer if (file_env) |*m| m.deinit();
-        if (header.env_len > 0) {
-            var m = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
-            m.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
-            for (header.envPairs()) |pair| {
-                const value = expandEnv(gpa, pair.value, &m) catch return self.fail("out of memory", .{});
-                defer gpa.free(value);
-                m.put(pair.key, value) catch return self.fail("out of memory", .{});
-            }
-            file_env = m;
+        var file_env: std.process.Environ.Map = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
+        defer file_env.deinit();
+        file_env.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
+        for (header.envPairs()) |pair| {
+            const value = expandEnv(gpa, pair.value, &file_env) catch return self.fail("out of memory", .{});
+            defer gpa.free(value);
+            file_env.put(pair.key, value) catch return self.fail("out of memory", .{});
         }
+        self.shell_env = &file_env;
+        defer self.shell_env = null;
         const outcome = blk: {
             const d = self.factory.make(dbg.allocator(), io, .{
                 .workspace = self.workspace,
                 .data_root = self.opts.data_root,
                 .cols = self.size.cols,
                 .rows = self.size.rows,
-                .env = if (file_env) |*m| m else self.opts.env,
+                .env = &file_env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
             const result = self.runScript(&script);
@@ -430,6 +433,7 @@ const Run = struct {
         const result = std.process.run(gpa, self.io, .{
             .argv = &.{ self.opts.shell, "-c", cmd },
             .cwd = .{ .path = self.workspace },
+            .environ_map = self.shell_env,
         }) catch |e| return std.fmt.allocPrint(gpa, "shell spawn: {s}", .{@errorName(e)}) catch null;
         defer gpa.free(result.stdout);
         defer gpa.free(result.stderr);

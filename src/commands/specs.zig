@@ -508,6 +508,9 @@ pub const specs = [_]Spec{
     // // changed (sessions-merge): the table and the cloud rows.
     .{ .id = "sessions.table", .title = "Sessions: open every session on this machine as a table (grouped by workspace)", .group = "sessions" },
     .{ .id = "sessions.show_ended", .title = "Sessions table: show / hide ended sessions older than a day", .group = "sessions" },
+    // // changed (sessions-card): the section's history chip.
+    .{ .id = "sessions.toggle_ended", .title = "Sessions: show / hide the ended sessions (the history chip, E)", .group = "sessions" },
+    .{ .id = "sessions.clear_ended", .title = "Sessions: clear the ended sessions from the list (the history chip's menu)", .group = "sessions" },
     .{ .id = "sessions.pause", .title = "Sessions table: pause / resume the live tail", .group = "sessions" },
     .{ .id = "sessions.select", .title = "Sessions table: tick the row for a batch action", .group = "sessions" },
     .{ .id = "sessions.select_clear", .title = "Sessions table: clear the ticks", .group = "sessions" },
@@ -1115,7 +1118,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1042 specs, unique ids" {
+test "1044 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1133,7 +1136,8 @@ test "1042 specs, unique ids" {
     // commands (git-more2) + three launcher-pin commands
     // + `view.reset_layout` + the session-worktree launch and its three
     // row verbs (open in tree / merge / remove) + `view.focus_top` /
-    // `focus_bottom` / `focus_previous` (vim Ctrl-W t / b / p).
-    try std.testing.expectEqual(@as(usize, 1042), specs.len);
+    // `focus_bottom` / `focus_previous` (vim Ctrl-W t / b / p)
+    // + the SESSIONS history chip's two verbs (sessions-card).
+    try std.testing.expectEqual(@as(usize, 1044), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

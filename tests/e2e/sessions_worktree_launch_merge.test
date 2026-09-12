@@ -4,8 +4,10 @@
 # ai.new_session_worktree prompts for a branch name seeded `session-1`,
 # Enter makes `<ws>-worktrees/session-1` on branch session-1 beside the
 # repository and opens the session there. The fake `claude` on PATH
-# writes its transcript for that cwd, commits one file in the tree and
-# stays up as `claude --resume <sid>` (what the scan pairs through ps).
+# takes the session id mnml starts it with (`--session-id`, what the
+# card owns), titles its window `job`, writes its transcript for that
+# cwd, commits one file in the tree and stays up as `claude --resume
+# <sid>` (what the scan pairs through ps).
 # The git panel lists the tree under WORKTREES, the SESSIONS card tags
 # the row `⑂ session-1` (the prompt is short — the column is 18 cells
 # beside the pane); S ends the session and the rescan toasts the commit
@@ -15,7 +17,7 @@ shell git init -q -b main && git config user.email t@mnml.dev && git config user
 write .gitignore ".mnml/\nbin/\nhome/\n"
 write a.txt "one\n"
 shell git add -A && git commit -q -m first
-write bin/claude #!/bin/bash\nif [ "$1" = "--resume" ]; then i=0; while [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done; exit 0; fi\nSID=e2e00009-0000-4000-8000-000000009001\nENC=$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')\nmkdir -p "$HOME/.claude/projects/$ENC"\nprintf '{"type":"user","cwd":"%s","message":{"role":"user","content":"job"}}\\n{"type":"assistant","cwd":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Committed it."}]}}\\n' "$PWD" "$PWD" > "$HOME/.claude/projects/$ENC/$SID.jsonl"\nprintf 'from the worktree\\n' > wt.txt\ngit add wt.txt && git -c user.email=t@mnml.dev -c user.name=t commit -q -m "from the worktree"\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done' --resume "$SID"
+write bin/claude #!/bin/bash\nif [ "$1" = "--resume" ]; then i=0; while [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done; exit 0; fi\nSID=$2\nprintf '\\033]0;\\342\\234\\263 job\\007'\nENC=$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')\nmkdir -p "$HOME/.claude/projects/$ENC"\nprintf '{"type":"user","cwd":"%s","message":{"role":"user","content":"job"}}\\n{"type":"assistant","cwd":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Committed it."}]}}\\n' "$PWD" "$PWD" > "$HOME/.claude/projects/$ENC/$SID.jsonl"\nprintf 'from the worktree\\n' > wt.txt\ngit add wt.txt && git -c user.email=t@mnml.dev -c user.name=t commit -q -m "from the worktree"\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done' --resume "$SID"
 shell chmod +x bin/claude
 command ai.new_session_worktree
 expect screen contains "New session in a worktree"

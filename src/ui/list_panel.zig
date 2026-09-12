@@ -136,6 +136,10 @@ pub fn ListPanel(comptime Row: type) type {
             total: usize = 0,
             /// Set by `draw`: the panel paints a New row this frame.
             has_new: bool = false,
+            /// // changed (sessions-card): set by `draw` — the screen row
+            /// after the last painted item (or after the empty state and
+            /// a blank), where a panel's own footer starts.
+            end_y: u16 = 0,
 
             pub fn deinit(s: *State, gpa: Allocator) void {
                 s.filter.deinit(gpa);
@@ -198,6 +202,10 @@ pub fn ListPanel(comptime Row: type) type {
             extra_chips: []const header.ExtraChip = &.{},
             /// Null reads `ui.isFocused(.{ .panel })`.
             focused: ?bool = null,
+            /// // changed (sessions-card): rows kept free under the list
+            /// for the panel's own footer (SESSIONS' EXTERNAL / ENDED
+            /// groups); the page counts items over the rest.
+            reserve_bottom: u16 = 0,
         };
 
         pub const PaneId = hit.PaneId;
@@ -285,17 +293,20 @@ pub fn ListPanel(comptime Row: type) type {
 
             // Rows.
             st.total = p.rows.len;
+            st.end_y = rest.y;
             if (st.cursor >= p.rows.len) st.cursor = p.rows.len -| 1;
             if (p.rows.len == 0) {
                 st.visible = 0;
                 st.scroll = 0;
-                _ = empty_state.draw(ui, rest, p.empty, t.panel_bg);
+                const used = empty_state.draw(ui, rest, p.empty, t.panel_bg);
+                st.end_y = @min(rest.y + used + 1, rest.bottom());
                 return caret;
             }
             // Items per page: a trailing gap is not needed for the last
             // item, so `h + gap` over the stride.
             const stride: u16 = @max(1, p.row_h) + p.row_gap;
-            const per_page: usize = (rest.h + p.row_gap) / stride;
+            const list_h: u16 = rest.h -| p.reserve_bottom;
+            const per_page: usize = (list_h + p.row_gap) / stride;
             const win = scrollWindow(&st.scroll, st.cursor, p.rows.len, per_page);
             st.visible = per_page;
             var list = rest;
@@ -311,6 +322,7 @@ pub fn ListPanel(comptime Row: type) type {
                 scrollbar.drawVertical(ui, split.rest, owner, p.rows.len, per_page, st.scroll);
             }
             if (list.w <= marker_w) return caret;
+            st.end_y = @min(list.y + @as(u16, @intCast(win.visible)) * stride, rest.bottom());
 
             var i: usize = 0;
             while (i < win.visible) : (i += 1) {

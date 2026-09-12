@@ -26,9 +26,11 @@
 # with a summary of the conversation), prints a line, and stays up —
 # except the ended session's, which exits at once. Rust spawns it for
 # every entry of `claude_sessions` in `WS/.mnml/session.json` (the
-# script adds the three); Zig reads the transcripts and pairs the two
-# background copies this script starts (`ps` shows `claude … --resume
-# <sid>`) with them. Run the harness with `HOME=HOME_DIR`,
+# script adds the three); Zig restores the three as pty panes from
+# `WS/.mnml/session.zon` (written here when absent) — its cards are the
+# app's panes — and the scan pairs the two background copies this
+# script starts (`ps` shows `claude … --resume <sid>`) with the
+# transcripts. Run the harness with `HOME=HOME_DIR`,
 # `PATH=HOME_DIR/bin:$PATH` and `--no-copy` (the transcripts name WS;
 # Rust finds none under a private copy's path); `stop` when done.
 set -eu
@@ -100,11 +102,28 @@ d["claude_sessions"] = [
 ]
 json.dump(d, open(p, "w"), indent=2)
 EOF
-# Zig keeps the alias in the session file (`src/app/session.zig`).
+# Zig restores the three sessions as pty panes from its session file
+# (`src/app/session.zig`) — the SESSIONS cards are this app's panes
+# (`src/sessions.zig`), as Rust's are its `claude_sessions` — with the
+# alias and the accents Rust's entries carry. Written only when the
+# workspace has no session file yet.
 Z="$WS/.mnml/session.zon"
 mkdir -p "$WS/.mnml"
-[ -f "$Z" ] || printf '.{\n}\n' >"$Z"
-grep -q sessions_aliases "$Z" || sed -i '' "s|^}|    .sessions_aliases = .{ .{ .id = \"$S2\", .name = \"release train\" } },\n}|" "$Z"
+[ -f "$Z" ] || cat >"$Z" <<EOF
+.{
+    .version = 1,
+    .workspace = "$WS",
+    .panes = .{
+        .{ .kind = .pty, .argv = .{ "claude", "--resume", "$S1" }, .cwd = "$WS", .label = "claude", .accent = "orange" },
+        .{ .kind = .pty, .argv = .{ "claude", "--resume", "$S2" }, .cwd = "$WS", .label = "claude", .accent = "blue" },
+        .{ .kind = .pty, .argv = .{ "claude", "--resume", "$S3" }, .cwd = "$WS", .label = "claude", .accent = "green" },
+    },
+    .tabs = .{ .{ .nodes = .{ .{ .leaf = .{ .active = 0, .tabs = .{ 0, 1, 2 } } } }, .root = 0 } },
+    .active = 0,
+    .sessions_aliases = .{ .{ .id = "$S2", .name = "release train" } },
+    .sessions_colors = .{ .{ .id = "$S1", .color = "orange" }, .{ .id = "$S2", .color = "blue" }, .{ .id = "$S3", .color = "green" } },
+}
+EOF
 # The processes Zig pairs with the live and the idle session (and the
 # waiting one).
 : >"$H/pids"

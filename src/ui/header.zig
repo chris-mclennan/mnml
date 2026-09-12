@@ -53,18 +53,22 @@ pub const Props = struct {
     /// pane's `.script_hit` (`hit.chipTarget`), and `extra` paints.
     pane: ?PaneId = null,
     /// Extra chips left of the mode chip, laid right to left, each
-    /// dropped whole when it does not fit before the title. Pane-hosted
-    /// panels only (a panel has no target for them).
+    /// dropped whole when it does not fit before the title. On a panel
+    /// (no pane) only the chips that name a `kind` paint.
     extra: []const ExtraChip = &.{},
 };
 
 pub const ExtraChip = struct {
     /// Painted as given — pad it yourself (` ended: hidden `).
     text: []const u8,
-    /// The `.script_hit` id.
+    /// The `.script_hit` id (pane-hosted).
     id: u32,
     /// Null paints in the mode chip's style.
     style: ?Style = null,
+    /// // changed (sessions-card): on a panel (no pane) the chip's
+    /// target is `.chip{ panel, kind }`; a chip with no kind is dropped
+    /// there, as before.
+    kind: ?ChipKind = null,
 };
 
 pub const PaneId = hit.PaneId;
@@ -170,6 +174,17 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     const gap: u16 = if (p.show_refresh or p.new_chip) 1 else 0;
     const mode_x = refresh_x -| (mode_w + gap);
     const title_end = if (mode_text != null) mode_x else refresh_x;
+    // // changed (sessions-card): the extra chips are laid before the
+    // title is painted, so the subtitle can give way to them — the
+    // count is nice, a chip is a button (the ladder's rule 2).
+    var extra_total: u16 = 0;
+    for (p.extra) |e| if (p.pane != null or e.kind != null) {
+        extra_total += ui.width(e.text) + 1;
+    };
+    if (sub != null and extra_total > 0 and title_end < area.x + label_w + sub_w + 2 + extra_total) {
+        sub = null;
+        sub_w = 0;
+    }
 
     var x = area.x + 1;
     x += ui.putStr(x, y, title_end -| x, p.label, labelStyle(t, p.bg));
@@ -188,14 +203,20 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     }
     // The extra chips: right to left from the mode chip, one cell of
     // air between, each dropped whole once it would cross the title.
-    if (p.pane) |pane_id| {
+    {
         const title_w = label_w + sub_w + 2;
         var ex = title_end;
         for (p.extra) |e| {
+            const target: hit.HitTarget = if (p.pane) |pane_id|
+                .{ .script_hit = .{ .pane = pane_id, .id = e.id } }
+            else if (e.kind) |k|
+                .{ .chip = .{ .panel = p.panel, .kind = k } }
+            else
+                continue;
             const ew = ui.width(e.text);
             if (ex < area.x + title_w + ew + 1) break;
             ex -= ew + 1;
-            _ = chip.paintTarget(ui, ex, y, ew, e.text, e.style orelse chip.modeStyle(t), .{ .script_hit = .{ .pane = pane_id, .id = e.id } });
+            _ = chip.paintTarget(ui, ex, y, ew, e.text, e.style orelse chip.modeStyle(t), target);
         }
     }
     return out;

@@ -225,6 +225,11 @@ pub const Ui = struct {
     /// // changed (sessions-merge): ring the terminal bell when a session
     /// starts waiting for input.
     session_bell: bool = false,
+    /// // changed (sessions-card): a session that ended within this many
+    /// minutes stays listed (its card, or an ENDED row) before the
+    /// history chip hides it — so the ended toast and a worktree offer
+    /// are not lost. 0 hides at once.
+    session_ended_grace_min: u16 = 10,
     todos_sort: ListSort = .newest,
     notes_sort: ListSort = .newest,
     findings_sort: ListSort = .newest,
@@ -663,6 +668,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(usize, 5), c.ui.todo_keywords.len);
     try std.testing.expectEqualStrings("REVIEW", c.ui.todo_keywords[4]);
     try std.testing.expectEqual(SessionsSort.auto, c.ui.sessions_sort);
+    try std.testing.expectEqual(@as(u16, 10), c.ui.session_ended_grace_min);
     try std.testing.expectEqual(PickerPosition.center, c.ui.picker_position);
     try std.testing.expectEqual(NowPlayingSource.mixr, c.ui.now_playing_source);
     try std.testing.expectEqual(MenuBar.always, c.ui.menu_bar);

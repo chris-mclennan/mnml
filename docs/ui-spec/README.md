@@ -246,10 +246,27 @@ workspace at 120×40:
   spacing, the filter pill, the info box's copy, the version line, the
   statusline chips, the panes on the right, and — Zig's — the
   scrollbar column when the cards overflow. `src/sessions.zig`'s unit
-  test embeds the 120×40 dump and holds rows 3–18 to it cell for cell;
-  `tests/e2e/sessions_*.test` seed their own home (`# env: HOME=home`,
-  a relative HOME is under the workspace) and need no fake `claude`
-  beyond the one script that starts a sleeping process for a live card.
+  test embeds the 120×40 dump and holds rows 3–18 to it cell for cell.
+  *// changed 2026-09-12 (sessions-card):* the cards are the app's AI
+  pty panes, as Rust's are (`src/sessions.zig`, the PARITY row), so the
+  seed writes `WS/.mnml/session.zon` too — the three sessions as pty
+  panes (`claude --resume <sid>`, the accents orange / blue / green,
+  the alias) that Zig restores at startup, the way Rust resumes its
+  `claude_sessions`. `zig-sessions-120x40.txt` (`tools/zig-spec-
+  sessions.sh sessions`, the same steps file, the seed's `--waiting`
+  fourth session) is the Zig dump: the fake `claude` titles each pane
+  by its prompt, the card at rest reads the transcript's `you:` /
+  `claude:` lines off the scan, the ended one `exited`, the pin lands
+  on the same click, and the waiting session — a process no pane owns
+  — is the `EXTERNAL` row under the cards, `main  (5e551011)`. The
+  panes are tabs of one leaf rather than Rust's three splits (not part
+  of the spec). `tests/e2e/sessions_*.test` seed their own home
+  (`# env: HOME=home`, a relative HOME is under the workspace) and a
+  fake `claude` on PATH that takes the pane's `--session-id`, titles
+  its window, writes a transcript for its cwd and stays up; a `shell`
+  step names the workspace the App sees as `$MNML_E2E_WORKSPACE` (a
+  transcript's `cwd` must match it — `$PWD` resolves the symlinked
+  temp dir and does not).
 - `outline` — `src/main.rs` open, `view.toggle_right_panel`,
   `outline.show`: the outline in the right panel at Rust's 32 cells (the
   divider at 87), a strip row above it (`main.rs ⌥1   󰐕 … ×`,
