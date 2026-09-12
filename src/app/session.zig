@@ -332,6 +332,9 @@ fn captureLayout(arena: Allocator, l: *const Layout, index_of: []const ?u32) All
     var nodes: std.ArrayListUnmanaged(Node) = .empty;
     for (l.nodes.items) |n| switch (n) {
         .free => {},
+        // The AI grid's placeholder: a leaf of no tabs, which the
+        // restore sweeps like a pane that did not come back.
+        .empty => try nodes.append(arena, .{ .leaf = .{} }),
         .leaf => |lf| {
             var tabs: std.ArrayListUnmanaged(u32) = .empty;
             var active: ?u32 = null;

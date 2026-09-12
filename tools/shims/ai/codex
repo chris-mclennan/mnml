@@ -1,0 +1,13 @@
+#!/bin/sh
+# tools/shims/ai/codex — the `codex` the .test corpus and the unit tests
+# see: a session that stays open. `mnml-zig test` exports `MNML_SHIMS`
+# (the parent directory); a script that opens sessions puts this one
+# first on PATH with
+#
+#   # env: PATH=${MNML_SHIMS}/ai:${PATH}
+#
+# It lives a level down so `${MNML_SHIMS}` alone still has no CLI on
+# it — the first-launch wizard's script counts on that.
+# and gets a pane that sleeps instead of the CLI (as `claude` beside it). It prints nothing,
+# so a screen assertion is about the chrome, never about a transcript.
+exec sleep 30

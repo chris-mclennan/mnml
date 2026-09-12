@@ -1555,20 +1555,23 @@ test "ui.auto_equalize_splits: a split or a close evens the ratios; off leaves t
     layout.setRatio(split_id, 20);
     try command.run(&app, .{ .static = .@"view.split_right" });
     try std.testing.expectEqual(@as(u16, 20), layout.node(split_id).split.ratio);
-    // The toggle: on, persisted to the workspace config, and even at once.
+    // The toggle: on, persisted to the workspace config, and even at
+    // once — every leaf an equal share, so the first split's left leaf
+    // is one of three.
     try command.run(&app, .{ .static = .@"view.toggle_auto_equalize_splits" });
     try std.testing.expect(app.cfg.ui.auto_equalize_splits);
-    try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
+    try std.testing.expectEqual(@as(u16, 33), layout.node(split_id).split.ratio);
     const text = try tmp.dir.readFileAlloc(std.testing.io, ".mnml/config.zon", std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, ".auto_equalize_splits = true") != null);
-    // On: a skew is undone by the next split, and by a close.
+    // On: a skew is undone by the next split (one leaf of four), and by
+    // a close (one of three again).
     layout.setRatio(split_id, 30);
     try command.run(&app, .{ .static = .@"view.split_down" });
-    try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
+    try std.testing.expectEqual(@as(u16, 25), layout.node(split_id).split.ratio);
     layout.setRatio(split_id, 30);
     try command.run(&app, .{ .static = .@"view.close_split" });
-    try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
+    try std.testing.expectEqual(@as(u16, 33), layout.node(split_id).split.ratio);
 }
 
 test "layout.merge_to_tabs folds the page's leaves into one strip, the active pane focused; spread_to_splits puts each tab back in a split; each refuses the other's shape and a lone pane" {

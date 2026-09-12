@@ -43,6 +43,12 @@ pub const Leaf = struct {
 pub const Node = union(enum) {
     leaf: Leaf,
     split: struct { dir: SplitDir, ratio: u16, first: NodeId, second: NodeId },
+    /// A slot kept open in the tree: the AI grid's placeholder
+    /// quadrant. It is laid out like a leaf (it gets a rect and a
+    /// share of its split) but shows no pane; `fillFirstEmpty` turns
+    /// it into a leaf, and it goes with its split when the sibling is
+    /// removed, as an emptied leaf does.
+    empty,
     /// A freed slot.
     free,
 };
@@ -51,7 +57,9 @@ pub const PaneRect = struct { pane: PaneId, rect: Rect, leaf: NodeId };
 /// A divider between the two halves of `split`, which was laid out in
 /// `area` — what a drag needs to turn a pointer cell into a new ratio.
 pub const DividerRect = struct { rect: Rect, split: NodeId, dir: SplitDir, area: Rect };
-pub const Rects = struct { panes: []PaneRect, dividers: []DividerRect };
+/// An `.empty` node's rect — what the placeholder card paints into.
+pub const EmptyRect = struct { rect: Rect, node: NodeId };
+pub const Rects = struct { panes: []PaneRect, dividers: []DividerRect, empties: []EmptyRect = &.{} };
 
 /// The smallest a half may be dragged to: a pane keeps a gutter and a
 /// few text columns, a stacked pane keeps its strip and a couple of rows.
@@ -160,16 +168,20 @@ pub const Layout = struct {
                 try self.collectLeaves(s.first, arena, out);
                 try self.collectLeaves(s.second, arena, out);
             },
-            .free => {},
+            .empty, .free => {},
         }
     }
 
+    /// The first leaf in tree order — past any `.empty` slot.
     pub fn firstLeaf(self: *const Layout) ?NodeId {
-        var id = self.root orelse return null;
-        while (true) switch (self.nodes.items[id]) {
-            .leaf => return id,
-            .split => |s| id = s.first,
-            .free => return null,
+        return self.firstLeafUnder(self.root orelse return null);
+    }
+
+    fn firstLeafUnder(self: *const Layout, id: NodeId) ?NodeId {
+        return switch (self.nodes.items[id]) {
+            .leaf => id,
+            .split => |s| self.firstLeafUnder(s.first) orelse self.firstLeafUnder(s.second),
+            .empty, .free => null,
         };
     }
 
@@ -206,7 +218,7 @@ pub const Layout = struct {
         const idx = std.mem.indexOfScalar(PaneId, l.tabs.items, pane) orelse return null;
         _ = l.tabs.orderedRemove(idx);
         if (l.tabs.items.len == 0) {
-            self.removeLeaf(lid);
+            self.removeNode(lid);
             return null;
         }
         if (l.active == pane) l.active = l.tabs.items[@min(idx, l.tabs.items.len - 1)];
@@ -221,22 +233,25 @@ pub const Layout = struct {
         return null;
     }
 
-    /// The sibling takes the split's place in the grandparent (or as
-    /// the root); its own id stays, so a `NodeId` a caller is holding
-    /// for it — `showIn`'s target while it drops a tab elsewhere — is
-    /// still that leaf.
-    fn removeLeaf(self: *Layout, lid: NodeId) void {
-        if (self.parentOf(lid)) |pid| {
+    /// Take a leaf or an `.empty` slot out of the tree. The sibling
+    /// takes the split's place in the grandparent (or as the root); its
+    /// own id stays, so a `NodeId` a caller is holding for it —
+    /// `showIn`'s target while it drops a tab elsewhere — is still that
+    /// leaf. A sibling that is itself `.empty` goes too: a split of
+    /// nothing but a placeholder has no reason to stay.
+    fn removeNode(self: *Layout, id: NodeId) void {
+        if (self.parentOf(id)) |pid| {
             const s = self.nodes.items[pid].split;
-            const sibling = if (s.first == lid) s.second else s.first;
+            const sibling = if (s.first == id) s.second else s.first;
             if (self.parentOf(pid)) |gp| {
                 const g = &self.nodes.items[gp].split;
                 if (g.first == pid) g.first = sibling else g.second = sibling;
             } else self.root = sibling;
             self.nodes.items[pid] = .free;
-            self.release(lid);
+            self.release(id);
+            if (self.nodes.items[sibling] == .empty) self.removeNode(sibling);
         } else {
-            self.release(lid);
+            self.release(id);
             self.root = null;
         }
     }
@@ -331,11 +346,24 @@ pub const Layout = struct {
         }
     }
 
-    /// Every split back to 50/50 (vim `Ctrl+W =`).
+    /// Every slot an equal share (vim `Ctrl+W =`): a split's ratio is
+    /// the count of leaves (and `.empty` slots) under its first half
+    /// over the count under both, so a row of three is 33 / 33 / 33
+    /// and not 50 / 25 / 25. Clamped to 10..90 like a drag.
     pub fn equalize(self: *Layout) void {
-        for (self.nodes.items) |*n| switch (n.*) {
-            .split => |*s| s.ratio = 50,
-            else => {},
+        if (self.root) |r| _ = self.equalizeUnder(r);
+    }
+
+    fn equalizeUnder(self: *Layout, id: NodeId) u32 {
+        return switch (self.nodes.items[id]) {
+            .leaf, .empty => 1,
+            .split => |*s| blk: {
+                const first = self.equalizeUnder(s.first);
+                const total = first + self.equalizeUnder(s.second);
+                if (total > 0) s.ratio = @intCast(std.math.clamp(first * 100 / total, 10, 90));
+                break :blk total;
+            },
+            .free => 0,
         };
     }
 
@@ -352,13 +380,21 @@ pub const Layout = struct {
 
     /// Every pane rect plus divider rects for `area`.
     pub fn computeRects(self: *const Layout, area: Rect, arena: Allocator) Allocator.Error!Rects {
-        var panes: std.ArrayListUnmanaged(PaneRect) = .empty;
-        var dividers: std.ArrayListUnmanaged(DividerRect) = .empty;
-        if (self.root) |r| try self.rectsFor(r, area, arena, &panes, &dividers);
-        return .{ .panes = panes.items, .dividers = dividers.items };
+        var out: RectLists = .{};
+        if (self.root) |r| try self.rectsFor(r, area, arena, &out);
+        return .{ .panes = out.panes.items, .dividers = out.dividers.items, .empties = out.empties.items };
     }
 
-    fn rectsFor(self: *const Layout, id: NodeId, area: Rect, arena: Allocator, panes: *std.ArrayListUnmanaged(PaneRect), dividers: *std.ArrayListUnmanaged(DividerRect)) Allocator.Error!void {
+    const RectLists = struct {
+        panes: std.ArrayListUnmanaged(PaneRect) = .empty,
+        dividers: std.ArrayListUnmanaged(DividerRect) = .empty,
+        empties: std.ArrayListUnmanaged(EmptyRect) = .empty,
+    };
+
+    fn rectsFor(self: *const Layout, id: NodeId, area: Rect, arena: Allocator, out: *RectLists) Allocator.Error!void {
+        const panes = &out.panes;
+        const dividers = &out.dividers;
+        const empties = &out.empties;
         switch (self.nodes.items[id]) {
             .leaf => |l| try panes.append(arena, .{ .pane = l.active, .rect = area, .leaf = id }),
             .split => |s| {
@@ -367,18 +403,19 @@ pub const Layout = struct {
                         const a = area.splitLeft(firstLen(area.w, s.ratio, min_pane_w));
                         const div = a.rest.splitLeft(1);
                         try dividers.append(arena, .{ .rect = div.left, .split = id, .dir = s.dir, .area = area });
-                        try self.rectsFor(s.first, a.left, arena, panes, dividers);
-                        try self.rectsFor(s.second, div.rest, arena, panes, dividers);
+                        try self.rectsFor(s.first, a.left, arena, out);
+                        try self.rectsFor(s.second, div.rest, arena, out);
                     },
                     .vertical => {
                         const a = area.splitTop(firstLen(area.h, s.ratio, min_pane_h));
                         const div = a.rest.splitTop(1);
                         try dividers.append(arena, .{ .rect = div.top, .split = id, .dir = s.dir, .area = area });
-                        try self.rectsFor(s.first, a.top, arena, panes, dividers);
-                        try self.rectsFor(s.second, div.rest, arena, panes, dividers);
+                        try self.rectsFor(s.first, a.top, arena, out);
+                        try self.rectsFor(s.second, div.rest, arena, out);
                     },
                 }
             },
+            .empty => try empties.append(arena, .{ .rect = area, .node = id }),
             .free => {},
         }
     }
@@ -452,6 +489,198 @@ pub const Layout = struct {
             id = s.second;
         }
         return tabs.len;
+    }
+
+    // ─── the AI grid's slots ────────────────────────────────────────────
+
+    /// Whether the tree holds an `.empty` slot.
+    pub fn containsEmpty(self: *const Layout) bool {
+        for (self.nodes.items) |n| if (n == .empty) return true;
+        return false;
+    }
+
+    /// The first `.empty` slot in tree order becomes a leaf showing
+    /// `pane`; returns that leaf, or null when there is no slot.
+    pub fn fillFirstEmpty(self: *Layout, pane: PaneId) Allocator.Error!?NodeId {
+        const id = self.firstEmptyUnder(self.root orelse return null) orelse return null;
+        var l: Leaf = .{ .active = pane };
+        try l.tabs.append(self.gpa, pane);
+        self.nodes.items[id] = .{ .leaf = l };
+        return id;
+    }
+
+    fn firstEmptyUnder(self: *const Layout, id: NodeId) ?NodeId {
+        return switch (self.nodes.items[id]) {
+            .empty => id,
+            .split => |s| self.firstEmptyUnder(s.first) orelse self.firstEmptyUnder(s.second),
+            .leaf, .free => null,
+        };
+    }
+
+    pub const PairSplit = struct { split: NodeId, dir: SplitDir };
+
+    /// The split whose two halves are single-tab leaves of `a` and `b`
+    /// (either order), if the tree has one — the shape the third AI
+    /// session grows into a grid. A nested pair, a leaf with more tabs,
+    /// or the two apart is null.
+    pub fn findLeafPairSplit(self: *const Layout, a: PaneId, b: PaneId) ?PairSplit {
+        for (self.nodes.items, 0..) |n, i| switch (n) {
+            .split => |s| {
+                if ((self.isSingleLeafOf(s.first, a) and self.isSingleLeafOf(s.second, b)) or
+                    (self.isSingleLeafOf(s.first, b) and self.isSingleLeafOf(s.second, a)))
+                    return .{ .split = @intCast(i), .dir = s.dir };
+            },
+            else => {},
+        };
+        return null;
+    }
+
+    fn isSingleLeafOf(self: *const Layout, id: NodeId, pane: PaneId) bool {
+        return switch (self.nodes.items[id]) {
+            .leaf => |l| l.tabs.items.len == 1 and l.tabs.items[0] == pane,
+            else => false,
+        };
+    }
+
+    /// The smallest subtree whose panes are exactly `set` — tabs
+    /// included, `.empty` slots allowed — or null when the set is spread
+    /// over unrelated parts of the tree or shares a subtree with other
+    /// panes. The AI grid grows only such a cluster: anything else is a
+    /// layout the user arranged, and is left alone.
+    pub fn findPureCluster(self: *const Layout, arena: Allocator, set: []const PaneId) Allocator.Error!?NodeId {
+        var id = self.root orelse return null;
+        if (!try self.holdsAll(id, arena, set)) return null;
+        // Descend while a child still holds the whole set.
+        while (true) switch (self.nodes.items[id]) {
+            .split => |s| {
+                if (try self.holdsAll(s.first, arena, set)) {
+                    id = s.first;
+                } else if (try self.holdsAll(s.second, arena, set)) {
+                    id = s.second;
+                } else break;
+            },
+            else => break,
+        };
+        const under = try self.panesUnder(id, arena);
+        if (under.len != set.len) return null;
+        for (under) |p| if (std.mem.indexOfScalar(PaneId, set, p) == null) return null;
+        return id;
+    }
+
+    fn holdsAll(self: *const Layout, id: NodeId, arena: Allocator, set: []const PaneId) Allocator.Error!bool {
+        const under = try self.panesUnder(id, arena);
+        for (set) |p| if (std.mem.indexOfScalar(PaneId, under, p) == null) return false;
+        return true;
+    }
+
+    /// Every pane in every leaf under `id`, tabs included.
+    fn panesUnder(self: *const Layout, id: NodeId, arena: Allocator) Allocator.Error![]PaneId {
+        var out: std.ArrayListUnmanaged(PaneId) = .empty;
+        try self.collectPanesUnder(id, arena, &out);
+        return out.items;
+    }
+
+    fn collectPanesUnder(self: *const Layout, id: NodeId, arena: Allocator, out: *std.ArrayListUnmanaged(PaneId)) Allocator.Error!void {
+        switch (self.nodes.items[id]) {
+            .leaf => |l| try out.appendSlice(arena, l.tabs.items),
+            .split => |s| {
+                try self.collectPanesUnder(s.first, arena, out);
+                try self.collectPanesUnder(s.second, arena, out);
+            },
+            .empty, .free => {},
+        }
+    }
+
+    fn collectSubtree(self: *const Layout, id: NodeId, arena: Allocator, out: *std.ArrayListUnmanaged(NodeId)) Allocator.Error!void {
+        try out.append(arena, id);
+        switch (self.nodes.items[id]) {
+            .split => |s| {
+                try self.collectSubtree(s.first, arena, out);
+                try self.collectSubtree(s.second, arena, out);
+            },
+            else => {},
+        }
+    }
+
+    /// Rewrite the subtree at `root` as a grid: one row per entry of
+    /// `rows`, stacked top to bottom; each row's slots side by side,
+    /// left to right; a null slot an `.empty` placeholder. Every split
+    /// gets an equal share (a row of three is 33 / 33 / 33). A pane
+    /// already alone in a leaf of the subtree keeps that leaf, its id
+    /// and its strip state; any other pane gets a fresh leaf. The node
+    /// at `root` stays `root`, so a split above it still points at it;
+    /// every other node of the old subtree is released — a pane of the
+    /// subtree that `rows` does not name leaves the tree. A pane in a
+    /// leaf outside the subtree is not allowed. Every allocation
+    /// happens before the first mutation.
+    pub fn buildGrid(self: *Layout, root: NodeId, rows: []const []const ?PaneId) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(self.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        var old: std.ArrayListUnmanaged(NodeId) = .empty;
+        try self.collectSubtree(root, arena, &old);
+        var fresh: std.ArrayListUnmanaged(NodeId) = .empty;
+        errdefer for (fresh.items) |id| self.release(id);
+        var kept: std.ArrayListUnmanaged(NodeId) = .empty;
+        // The slots: a reused leaf, a fresh leaf, or a fresh empty.
+        const slots = try arena.alloc([]NodeId, rows.len);
+        var count: usize = 0;
+        for (rows, 0..) |row, ri| {
+            slots[ri] = try arena.alloc(NodeId, row.len);
+            for (row, 0..) |slot, ci| {
+                count += 1;
+                slots[ri][ci] = if (slot) |pane| blk: {
+                    if (self.leafOf(pane)) |lid| {
+                        std.debug.assert(std.mem.indexOfScalar(NodeId, old.items, lid) != null);
+                        if (lid != root and self.nodes.items[lid].leaf.tabs.items.len == 1) {
+                            try kept.append(arena, lid);
+                            break :blk lid;
+                        }
+                    }
+                    var nl: Leaf = .{ .active = pane };
+                    try nl.tabs.append(self.gpa, pane);
+                    errdefer nl.tabs.deinit(self.gpa);
+                    const id = try self.alloc(.{ .leaf = nl });
+                    try fresh.append(arena, id);
+                    break :blk id;
+                } else blk: {
+                    const id = try self.alloc(.empty);
+                    try fresh.append(arena, id);
+                    break :blk id;
+                };
+            }
+        }
+        std.debug.assert(count >= 2);
+        // The rows, then the column of rows.
+        const row_nodes = try arena.alloc(NodeId, rows.len);
+        for (slots, 0..) |row, ri| row_nodes[ri] = try self.chain(row, .horizontal, arena, &fresh);
+        const top = try self.chain(row_nodes, .vertical, arena, &fresh);
+        // Mutation: the old subtree goes, `root` takes the new top.
+        for (old.items) |id| {
+            if (id == root or std.mem.indexOfScalar(NodeId, kept.items, id) != null) continue;
+            self.release(id);
+        }
+        switch (self.nodes.items[root]) {
+            .leaf => |*l| l.tabs.deinit(self.gpa),
+            else => {},
+        }
+        self.nodes.items[root] = self.nodes.items[top];
+        self.nodes.items[top] = .free;
+    }
+
+    /// `a | (b | (c | d))`: the i-th split's first half is one of the
+    /// `n - i` items left, so its share is 1/(n - i). One item is itself.
+    fn chain(self: *Layout, items: []const NodeId, dir: SplitDir, arena: Allocator, fresh: *std.ArrayListUnmanaged(NodeId)) Allocator.Error!NodeId {
+        var i = items.len - 1;
+        var acc = items[i];
+        while (i > 0) {
+            i -= 1;
+            const remaining: u16 = @intCast(items.len - i);
+            const id = try self.alloc(.{ .split = .{ .dir = dir, .ratio = @max(100 / remaining, 1), .first = items[i], .second = acc } });
+            try fresh.append(arena, id);
+            acc = id;
+        }
+        return acc;
     }
 };
 
@@ -842,4 +1071,165 @@ test "drop zones: the middle third is the centre, otherwise the nearest edge" {
     try std.testing.expect(zoneRect(r, .center).eql(Rect.init(20, 11, 10, 6)));
     // A degenerate rect never divides by zero.
     _ = zoneFor(Rect.empty, 0, 0);
+}
+
+test "grid: a pair split of two lone leaves is found in either order, not a nested or multi-tab one" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    _ = try l.showIn(null, 0);
+    _ = try l.split(0, .horizontal, 1);
+    const pair = l.findLeafPairSplit(0, 1).?;
+    try std.testing.expectEqual(SplitDir.horizontal, pair.dir);
+    try std.testing.expectEqual(l.root.?, pair.split);
+    try std.testing.expectEqual(pair.split, l.findLeafPairSplit(1, 0).?.split);
+    try std.testing.expect(l.findLeafPairSplit(0, 7) == null);
+    // A third leaf under pane 1: {0, {1, 2}} — 0 and 1 are no pair now.
+    _ = try l.split(1, .vertical, 2);
+    try std.testing.expect(l.findLeafPairSplit(0, 1) == null);
+    const inner = l.findLeafPairSplit(1, 2).?;
+    try std.testing.expectEqual(SplitDir.vertical, inner.dir);
+    // A second tab on pane 2's leaf breaks the pair.
+    _ = try l.showIn(l.leafOf(2).?, 3);
+    try std.testing.expect(l.findLeafPairSplit(1, 2) == null);
+}
+
+test "grid: buildGrid makes a 2×2 with an empty slot; the empty is laid out, filled, and collapses with its split" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const area = Rect.init(0, 1, 100, 41);
+    _ = try l.showIn(null, 0);
+    _ = try l.split(0, .horizontal, 1);
+    const leaf0 = l.leafOf(0).?;
+    const leaf1 = l.leafOf(1).?;
+    const root = l.root.?;
+    try std.testing.expect(!l.containsEmpty());
+    // {0, 1} on top, {2, empty} below.
+    try l.buildGrid(root, &.{ &.{ 0, 1 }, &.{ 2, null } });
+    try std.testing.expectEqual(root, l.root.?);
+    try std.testing.expect(l.containsEmpty());
+    // The old leaves kept their ids; pane 2 got a fresh one.
+    try std.testing.expectEqual(leaf0, l.leafOf(0).?);
+    try std.testing.expectEqual(leaf1, l.leafOf(1).?);
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 1, 2 }, try l.allPanes(a));
+    const rects = try l.computeRects(area, a);
+    try std.testing.expectEqual(@as(usize, 3), rects.panes.len);
+    try std.testing.expectEqual(@as(usize, 1), rects.empties.len);
+    try std.testing.expectEqual(@as(usize, 3), rects.dividers.len);
+    // Four equal quadrants: the empty is the bottom-right one.
+    const r0 = (try rectOf(&l, area, a, 0)).?;
+    const r1 = (try rectOf(&l, area, a, 1)).?;
+    const r2 = (try rectOf(&l, area, a, 2)).?;
+    const e = rects.empties[0].rect;
+    try std.testing.expectEqual(r0.y, r1.y);
+    try std.testing.expectEqual(r2.y, e.y);
+    try std.testing.expect(r2.y > r0.y);
+    try std.testing.expectEqual(r0.x, r2.x);
+    try std.testing.expectEqual(r1.x, e.x);
+    try std.testing.expectEqual(r0.w, r1.w + 1);
+    try std.testing.expectEqual(r0.h, r2.h);
+    try std.testing.expectEqual(@as(u16, 20), r0.h);
+    // Filling the slot: the fourth pane lands in it, same node id.
+    const filled = (try l.fillFirstEmpty(3)).?;
+    try std.testing.expectEqual(rects.empties[0].node, filled);
+    try std.testing.expect(!l.containsEmpty());
+    try std.testing.expect((try l.fillFirstEmpty(9)) == null);
+    try std.testing.expect((try rectOf(&l, area, a, 3)).?.eql(e));
+    try std.testing.expectEqual(@as(usize, 0), (try l.computeRects(area, a)).empties.len);
+    // No node outside the tree survived: 4 leaves + 3 splits.
+    var live: usize = 0;
+    for (l.nodes.items) |n| if (n != .free) {
+        live += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 7), live);
+    // Back to a placeholder, then closing its sibling takes both: the
+    // top row is the whole tree again.
+    _ = l.removePane(3);
+    try l.buildGrid(l.root.?, &.{ &.{ 0, 1 }, &.{ 2, null } });
+    try std.testing.expect(l.containsEmpty());
+    try std.testing.expect(l.removePane(2) == null);
+    try std.testing.expect(!l.containsEmpty());
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 1 }, try l.allPanes(a));
+    try std.testing.expectEqual(@as(u16, 41), (try rectOf(&l, area, a, 0)).?.h);
+    // A placeholder alone at the root goes with the last pane.
+    try l.buildGrid(l.root.?, &.{ &.{ 0, null }, &.{ 1, null } });
+    _ = l.removePane(0);
+    _ = l.removePane(1);
+    try std.testing.expect(l.isEmpty());
+    try std.testing.expect(!l.containsEmpty());
+    try std.testing.expect(l.firstLeaf() == null);
+}
+
+test "grid: findPureCluster is the smallest subtree of exactly the set, empties allowed; buildGrid grows it to 3×2 with equal thirds" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const area = Rect.init(0, 1, 121, 41);
+    // An editor (pane 9) on the left; the cluster {0, 1, 2, empty} on the right.
+    _ = try l.showIn(null, 9);
+    _ = try l.split(9, .horizontal, 0);
+    _ = try l.split(0, .horizontal, 1);
+    const cluster = l.parentOf(l.leafOf(0).?).?;
+    try l.buildGrid(cluster, &.{ &.{ 0, 1 }, &.{ 2, null } });
+    try std.testing.expectEqual(cluster, (try l.findPureCluster(a, &.{ 0, 1, 2 })).?);
+    try std.testing.expectEqual(cluster, (try l.findPureCluster(a, &.{ 2, 0, 1 })).?);
+    // A pane that is not there: no cluster. The top row is the cluster
+    // of {0, 1} — the smallest subtree wins. The whole tree is the
+    // cluster of everything — until a tab beside the editor (pane 8)
+    // is left out of the set.
+    try std.testing.expect((try l.findPureCluster(a, &.{ 0, 1, 7 })) == null);
+    try std.testing.expectEqual(l.parentOf(l.leafOf(0).?).?, (try l.findPureCluster(a, &.{ 0, 1 })).?);
+    try std.testing.expectEqual(l.root.?, (try l.findPureCluster(a, &.{ 9, 0, 1, 2 })).?);
+    _ = try l.showIn(l.leafOf(9).?, 8);
+    try std.testing.expect((try l.findPureCluster(a, &.{ 0, 1, 2, 9 })) == null);
+    try std.testing.expectEqual(cluster, (try l.findPureCluster(a, &.{ 0, 1, 2 })).?);
+    // Fill the slot, then grow to 3×2: 0 1 2 on top, 3 4 empty below.
+    _ = try l.fillFirstEmpty(3);
+    try l.buildGrid(cluster, &.{ &.{ 0, 1, 2 }, &.{ 3, 4, null } });
+    try std.testing.expectEqualSlices(PaneId, &.{ 9, 8, 0, 1, 2, 3, 4 }, try l.allPanes(a));
+    try std.testing.expectEqual(cluster, (try l.findPureCluster(a, &.{ 0, 1, 2, 3, 4 })).?);
+    const rects = try l.computeRects(area, a);
+    try std.testing.expectEqual(@as(usize, 1), rects.empties.len);
+    // The cluster's 60 columns less two dividers: 19 or 20 each.
+    const r0 = (try rectOf(&l, area, a, 0)).?;
+    const r1 = (try rectOf(&l, area, a, 1)).?;
+    const r2 = (try rectOf(&l, area, a, 2)).?;
+    const r4 = (try rectOf(&l, area, a, 4)).?;
+    try std.testing.expect(r0.w >= 18 and r0.w <= 20);
+    try std.testing.expect(r1.w >= 18 and r1.w <= 20);
+    try std.testing.expect(r2.w >= 18 and r2.w <= 20);
+    try std.testing.expectEqual(r1.x, r4.x);
+    try std.testing.expectEqual(r1.w, r4.w);
+    try std.testing.expectEqual(r2.x, rects.empties[0].rect.x);
+    try std.testing.expect(r4.y > r1.y);
+    // `equalize` gives every slot the same share, empties counted: the
+    // editor's leaf is one slot of seven (14 % of 121 columns), the
+    // cluster's three columns stay within a cell of each other.
+    l.setRatio(cluster, 80);
+    l.equalize();
+    try std.testing.expectEqual(@as(u16, 16), (try rectOf(&l, area, a, 8)).?.w); // the leaf shows tab 8
+    const q0 = (try rectOf(&l, area, a, 0)).?.w;
+    const q1 = (try rectOf(&l, area, a, 1)).?.w;
+    const q2 = (try rectOf(&l, area, a, 2)).?.w;
+    try std.testing.expect(@max(q0, q1) - @min(q0, q1) <= 1);
+    try std.testing.expect(@max(q1, q2) - @min(q1, q2) <= 1);
+    try std.testing.expect(q0 > r0.w);
+    // A cluster held as tabs of one leaf still matches, and the grid
+    // gives each tab a leaf of its own.
+    var m = Layout.init(gpa);
+    defer m.deinit();
+    const only = try m.showIn(null, 5);
+    _ = try m.showIn(only, 6);
+    try std.testing.expectEqual(only, (try m.findPureCluster(a, &.{ 5, 6 })).?);
+    try m.buildGrid(only, &.{ &.{ 5, 6 }, &.{ 7, null } });
+    try std.testing.expectEqual(only, m.root.?);
+    try std.testing.expectEqual(@as(usize, 3), (try m.leaves(a)).len);
+    try std.testing.expectEqual(@as(usize, 1), m.leaf(m.leafOf(5).?).?.tabs.items.len);
 }
