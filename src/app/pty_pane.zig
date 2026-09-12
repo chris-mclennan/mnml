@@ -65,8 +65,10 @@ pub const Kind = enum { shell, command, runner, task, scratch };
 /// must not open or close panes: it runs from inside the pane walk.
 pub const AfterExit = enum { nerd_font_install, ai_cli_install, code_shim_install };
 
-/// Where a new pane lands relative to the active one.
-pub const Placement = enum { below, right, above, left, tab };
+/// Where a new pane lands relative to the active one. `.detached`
+/// opens the pane in no leaf at all: the caller hangs it in the tree
+/// itself (the AI grid rewrites a cluster around it).
+pub const Placement = enum { below, right, above, left, tab, detached };
 
 pub const OpenOptions = struct {
     /// Empty → the user's login shell. Otherwise run as given (a bare
@@ -423,11 +425,11 @@ fn initialSize(app: *App, placement: Placement) struct { cols: u16, rows: u16 } 
     const body_w = app.screen.width -| (if (app.tree.visible) app.tree.width + 1 else 0);
     const body_h = app.screen.height -| 2;
     const cols: u16 = switch (placement) {
-        .right, .left => body_w / 2,
+        .right, .left, .detached => body_w / 2,
         else => body_w,
     };
     const rows: u16 = switch (placement) {
-        .below, .above => body_h / 2,
+        .below, .above, .detached => body_h / 2,
         else => body_h,
     };
     return .{ .cols = @max(cols, 2), .rows = @max(rows, 1) };
@@ -437,6 +439,7 @@ fn initialSize(app: *App, placement: Placement) struct { cols: u16, rows: u16 } 
 /// becomes the only one. Public for the scratch strip, which hides a
 /// live pane and later puts it back below the active one.
 pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
+    if (placement == .detached) return;
     const layout = app.layouts.current();
     const anchor: ?PaneId = if (app.active) |a| (if (layout.leafOf(a) != null) a else null) else null;
     if (anchor == null or placement == .tab) {
@@ -446,7 +449,7 @@ pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
     const dir: layout_mod.SplitDir = switch (placement) {
         .below, .above => .vertical,
         .right, .left => .horizontal,
-        .tab => unreachable,
+        .tab, .detached => unreachable,
     };
     defer app.afterSplitChange();
     const new_leaf = (try layout.split(anchor.?, dir, id)) orelse {

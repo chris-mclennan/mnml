@@ -49,6 +49,18 @@ fn tabNew(app: *App) CommandError!void {
     app.toastReplace(tab_toast, "tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
 }
 
+/// A fresh, empty page right after this one, made current, for a spawn
+/// that will populate it — the AI grid spilling past its cap. No
+/// scratch buffer and no toast: the spawn's own follow.
+pub fn tabNewEmpty(app: *App) std.mem.Allocator.Error!void {
+    const ls = &app.layouts;
+    const at = ls.active + 1;
+    try ls.layouts.insert(ls.gpa, at, Layout.init(ls.gpa));
+    app.setActive(null);
+    ls.active = at;
+    app.needs_render = true;
+}
+
 /// `view.move_to_new_tab` (vim `Ctrl+W T`): the active pane leaves this
 /// page's split tree for a new page of its own, inserted right after
 /// this one and made current. A pane alone on its page has nowhere to

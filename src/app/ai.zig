@@ -38,6 +38,7 @@ const spend = @import("spend.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
+const ai_grid = @import("ai_grid.zig");
 
 pub const table = .{
     .@"ai.ask" = &askCmd,
@@ -152,6 +153,9 @@ pub const State = struct {
     owned_default: ?[]u8 = null,
     /// The workers posting `.spend` for the meter (no pane).
     spend_group: Io.Group = .init,
+    /// The grid's open slot is live: an `.empty` node the next Claude
+    /// session fills (`ai_grid.zig`). Cleared when the tree has none.
+    placeholder: bool = false,
 
     /// Cancels every worker and waits: they borrow `app.env`,
     /// `app.workspace` and post into `app.events`.
@@ -1128,16 +1132,24 @@ pub const Product = launch_profiles.Product;
 
 /// Open an interactive session with the product's default launch
 /// profile (`launch_profiles.zig`). `ai_layout_mode = "tabs"` puts
-/// every new session on the active leaf's strip; the default splits.
-/// Null: the profile starts its sessions in a worktree, and the name
-/// prompt opened instead (`session_worktree.zig`).
+/// every new session on the active leaf's strip; the default is the
+/// grid for Claude (`ai_grid.zig`: side by side, then 2×2, 3×2, 4×2,
+/// a new page past eight) and a split to the right for Codex. A named
+/// placement is that placement. Null: the profile starts its sessions
+/// in a worktree, and the name prompt opened instead
+/// (`session_worktree.zig`).
 fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!?PaneId {
     if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in [ai.routing]", .{@tagName(product)});
-    // changed (ui-polish): `ui.ai_layout_mode` is the typed field; the
-    // `[ai] layout_mode` extra still overrides it.
-    const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else app.cfg.ui.ai_layout_mode == .tabs;
-    const where: pty_pane.Placement = placement orelse (if (tabs) .tab else .right);
+    if (placement == null and product == .claude and !tabsMode(app)) return ai_grid.open(app);
+    const where: pty_pane.Placement = placement orelse (if (tabsMode(app)) .tab else .right);
     return launch_profiles.openSessionWith(app, product, launch_profiles.defaultName(app, product), where);
+}
+
+/// `ui.ai_layout_mode = .tabs`; the `[ai] layout_mode` extra still
+/// overrides the typed field.
+pub fn tabsMode(app: *App) bool {
+    if (extraString(app, "layout_mode")) |m| return std.ascii.eqlIgnoreCase(m, "tabs");
+    return app.cfg.ui.ai_layout_mode == .tabs;
 }
 
 /// The live session pane of `product`, if one is open — the bare
@@ -1171,28 +1183,24 @@ fn newSessionWorktree(app: *App) CommandError!void {
     try @import("session_worktree.zig").openNamePrompt(app, .claude, launch_profiles.defaultName(app, .claude));
 }
 
-/// N sessions: a grid (split right, then each column split down) or
-/// N tabs, per `ai_layout_mode`.
-fn openBatch(app: *App, product: Product, n: usize) CommandError!void {
-    // changed (ui-polish): `ui.ai_layout_mode` is the typed field; the
-    // `[ai] layout_mode` extra still overrides it.
-    const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else app.cfg.ui.ai_layout_mode == .tabs;
+/// N Claude sessions: N tabs in tabs mode, else the grid — with a new
+/// page every eight (`ai_grid.openBatch`).
+fn openBatch(app: *App, n: usize) CommandError!void {
+    if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in [ai.routing]", .{});
+    if (!tabsMode(app)) return ai_grid.openBatch(app, n);
     var i: usize = 0;
-    while (i < n) : (i += 1) {
-        const placement: pty_pane.Placement = if (tabs) .tab else if (i == 0) .right else if (i % 2 == 1) .below else .right;
-        _ = try openSession(app, product, placement);
-    }
-    app.toast("opened {d} {s} session{s}", .{ n, @tagName(product), if (n == 1) "" else "s" });
+    while (i < n) : (i += 1) _ = (try openSession(app, .claude, .tab)) orelse break;
+    app.toast("opened {d} Claude session{s}", .{ n, if (n == 1) "" else "s" });
 }
 
 fn claudeCodeNewX2(app: *App) CommandError!void {
-    return openBatch(app, .claude, 2);
+    return openBatch(app, 2);
 }
 fn claudeCodeNewX4(app: *App) CommandError!void {
-    return openBatch(app, .claude, 4);
+    return openBatch(app, 4);
 }
 fn claudeCodeNewX8(app: *App) CommandError!void {
-    return openBatch(app, .claude, 8);
+    return openBatch(app, 8);
 }
 fn claudeCodeNewLeft(app: *App) CommandError!void {
     _ = try openSession(app, .claude, .left);

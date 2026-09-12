@@ -1,0 +1,11 @@
+#!/bin/sh
+# tools/shims/claude — the `claude` the .test corpus and the unit tests
+# see: a session that stays open. `mnml-zig test` exports `MNML_SHIMS`
+# (this directory); a script that opens Claude sessions puts it first
+# on PATH with
+#
+#   # env: PATH=${MNML_SHIMS}:${PATH}
+#
+# and gets a pane that sleeps instead of the CLI. It prints nothing,
+# so a screen assertion is about the chrome, never about a transcript.
+exec sleep 30
