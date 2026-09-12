@@ -231,8 +231,9 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
             .pty => |*pt| blk: {
                 // Runner and task ptys are re-created by their owners.
                 if (pt.kind != .shell and pt.kind != .command) break :blk null;
-                const argv = try arena.alloc([]const u8, pt.argv.len);
-                for (pt.argv, 0..) |a, k| argv[k] = a;
+                // A Claude session started under `--session-id` comes
+                // back with `--resume`: the id is taken once.
+                const argv = try pty_pane.resumeArgv(arena, pt.argv);
                 break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color };
             },
             else => null,
