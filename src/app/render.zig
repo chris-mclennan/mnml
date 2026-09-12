@@ -2354,7 +2354,7 @@ test "ui.click_echo: a left press underlines the word under it for 120 ms; off, 
     try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
 }
 
-test "welcome: the shortcut rows follow the profile — standard's six, vim's four" {
+test "welcome: the shortcut rows follow the profile — standard's six, vim's five" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
@@ -2370,9 +2370,10 @@ test "welcome: the shortcut rows follow the profile — standard's six, vim's fo
     var vim = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer vim.deinit();
     const vim_rows = try welcomeShortcuts(&vim, arena.allocator());
-    try t.expectEqual(@as(usize, 4), vim_rows.len);
-    const vim_chords = [_][]const u8{ "^P", "SPC", "^N", "^Q" };
-    const vim_labels = [_][]const u8{ "find file", "which-key menu", "toggle tree", "quit" };
+    // NvChad's `<leader>fo` (oldfiles) gives vim a recent-files row too.
+    try t.expectEqual(@as(usize, 5), vim_rows.len);
+    const vim_chords = [_][]const u8{ "^P", "SPC f o", "SPC", "^N", "^Q" };
+    const vim_labels = [_][]const u8{ "find file", "recent files", "which-key menu", "toggle tree", "quit" };
     for (vim_rows, vim_chords, vim_labels) |row, chord, label| {
         try t.expectEqualStrings(chord, row.chord);
         try t.expectEqualStrings(label, row.label);
@@ -2381,7 +2382,7 @@ test "welcome: the shortcut rows follow the profile — standard's six, vim's fo
     const txt = try screenText(&vim);
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, "SPC     which-key menu") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "recent files") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "SPC f o     recent files") != null);
 }
 
 test "welcome: a recent file is a row that opens on a press; a shortcut row runs its command" {

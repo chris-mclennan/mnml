@@ -3473,10 +3473,10 @@ test "leader chain: an unbound chord is swallowed whole — its tail key never r
     try e.buf.editor.setText("alpha\nbravo\n");
     e.buf.editor.setCursor(0);
     const Case = struct { a: u21, b: u21 };
-    // `<leader>ca` is not `a` (append), `<leader>fo` not `o` (open a
-    // line), `<leader>gt` not `gt` (next tab page): NvChad's which-key
-    // drops an unbound chord.
-    for ([_]Case{ .{ .a = 'c', .b = 'a' }, .{ .a = 'f', .b = 'o' }, .{ .a = 'g', .b = 't' } }) |c| {
+    // `<leader>cx` is not `x` (delete a char), `<leader>fx` / `<leader>bx`
+    // neither: NvChad's which-key drops an unbound chord whole. (The
+    // hunt's `ca` / `fo` / `gt` are bound now — `keymap.zig`.)
+    for ([_]Case{ .{ .a = 'c', .b = 'x' }, .{ .a = 'f', .b = 'x' }, .{ .a = 'b', .b = 'x' } }) |c| {
         try key(&app, Key.char(' '));
         try key(&app, Key.char(c.a));
         try key(&app, Key.char(c.b));
@@ -3493,8 +3493,9 @@ test "leader chain: an unbound chord is swallowed whole — its tail key never r
     try std.testing.expect(app.overlay == .which_key);
     try key(&app, Key.char('c'));
     try std.testing.expect(app.overlay == .which_key);
-    try key(&app, Key.char('a'));
+    try key(&app, Key.char('x'));
     try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqualStrings("alpha\nbravo\n", e.buf.editor.bytes());
     try std.testing.expectEqual(input.EditingMode.normal, e.buf.input.mode());
     try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
 }

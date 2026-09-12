@@ -201,7 +201,6 @@ trust sink. Each row names its file and its test.
 | Recursive binary split tree | done | `src/app/layout.zig` | |
 | Every tool view a `Pane` | done | `src/app/pane.zig` — 26 variants | `Pane.dap_repl` folded into `Pane.debug` (the toolbar over the Debug Console) on 2026-09-07 |
 | Split side-by-side / stacked | done | `view.split_right` / `split_down`, `:sp` / `:vs`; `splitCompanion` in `src/app/cmd_view.zig` | every pane kind splits (2026-09-10, Rust's `split_active`): an editor duplicates, a preview opens its file, a request pane gets a blank request, anything else a scratch editor; `command.reason` spells the shared error tags as sentences (`needs an editor pane`), so no toast reads `NotAnEditor`; `tests/e2e/split_any_pane.test` |
-| `Ctrl-W` focus `h j k l w` | done | `src/input/vim.zig` `.window` | |
 | `Ctrl-W` focus `h j k l w t b p` | done | `src/input/vim.zig` `.window`; `view.focus_top` / `focus_bottom` / `focus_previous` in `cmd_view.zig` | `t` / `b` the first / last leaf, `p` the window that had the keys before (from the tree too) |
 | `Ctrl-W` split / close / only `s v q c o` | done | same | |
 | `Ctrl-W` move `H J K L` | done | `moveToEdge` in `src/app/layout.zig`, `view.move_split_*` in `src/app/cmd_view.zig`, the `.window` prong | the leaf re-hangs as one half of a new root split |
