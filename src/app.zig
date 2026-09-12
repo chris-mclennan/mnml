@@ -178,6 +178,9 @@ pub const toast_ttl_ms: i64 = 4000;
 
 pub const PromptPurpose = union(enum) {
     goto_line,
+    /// `:` from a pane with no editor (a request pane): the line runs
+    /// as an ex command (Rust's `no_pane_cmdline`).
+    ex_line,
     /// The statusline indent chip: a new `editor.tab_width`.
     tab_width,
     /// `view.image_open`: a path to open as `Pane.image`.
@@ -2053,6 +2056,18 @@ pub const App = struct {
 
     /// Open a context menu. Takes ownership of `items` (gpa); the labels
     /// must be literals or otherwise outlive the menu.
+    /// The open overlay's name for `rects.json` (`HitMap.writeRectsJson`):
+    /// its rows are labelled `<name>:<idx>` so a dump tells a picker's
+    /// rows from a settings row. The command palette is a picker of
+    /// commands and reads `palette`. Null with no overlay up.
+    pub fn overlayLabel(self: *const App) ?[]const u8 {
+        return switch (self.overlay) {
+            .none => null,
+            .picker => |*p| if (p.kind == .commands) "palette" else "picker",
+            inline else => |_, tag| @tagName(tag),
+        };
+    }
+
     pub fn openMenu(self: *App, title: []const u8, items: []command.MenuItem, x: u16, y: u16) Allocator.Error!void {
         const owned_title = try self.gpa.dupe(u8, title);
         errdefer self.gpa.free(owned_title);
@@ -2453,6 +2468,8 @@ test {
     // row, the chips) were never reachable from a test block — a file
     // only container-imported contributes no tests.
     _ = @import("app/statusline.zig");
+    // The info view's copy tests were container-imported too (2026-09-10).
+    _ = @import("app/info_view.zig");
     _ = @import("app/cmd_lsp.zig");
     _ = @import("ui/completion_view.zig");
     _ = @import("ui/hover_view.zig");

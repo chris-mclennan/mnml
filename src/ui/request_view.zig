@@ -313,6 +313,9 @@ pub const Model = struct {
     resp_view: *editor_view.ViewState,
     body_wrap: bool,
     focused: bool,
+    /// The focused text field is being edited: the caret shows. Off,
+    /// the pane is browsed and no caret paints (a draft row keeps its own).
+    editing: bool = true,
     source_path: ?[]const u8,
     /// `{{VAR}}` tokens per text field; `id`s index one flat list the
     /// app keeps beside the model.
@@ -520,6 +523,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
     drawResponseBox(ui, pane, z.response, m);
     drawAiBox(ui, pane, z.ai);
     if (!m.focused) return null;
+    if (!m.editing and m.draft == null) return null;
     // The URL box's caret wins when both are set (the pane's default
     // focus is the URL).
     return url_caret orelse edit_caret;
@@ -1465,6 +1469,11 @@ fn drawResponseStrip(ui: Ui, pane: PaneId, inner: Rect, m: Model) void {
         ui.hit(Rect.init(x, label_y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_resp_tab_base + @as(u32, @intCast(i)) } });
         x += w + 2;
     }
+    // Where the labels end: a chip never paints over them. On a strip
+    // too narrow for both, the chips go first, from the left of their
+    // row inward (Rust's `fit_row`: the row compacts before it clips),
+    // so a 47-cell pane keeps `Body … Tests` whole and drops ` — ▼ `.
+    const labels_end = x -| 2;
     // The chips, right to left, one cell of strip between.
     var right_edge = inner.right() - 1;
     const Chip = struct { text: []const u8, style: Style, id: u32 };
@@ -1482,6 +1491,7 @@ fn drawResponseStrip(ui: Ui, pane: PaneId, inner: Rect, m: Model) void {
         const w: u16 = @intCast(std.unicode.utf8CountCodepoints(c.text) catch c.text.len);
         if (right_edge <= inner.x + w + 2) break;
         const cx = right_edge - w;
+        if (cx < labels_end + 1) break;
         _ = ui.putStr(cx, label_y, w, c.text, c.style);
         ui.hit(Rect.init(cx, label_y, w, 1), .{ .script_hit = .{ .pane = pane, .id = c.id } });
         right_edge = cx - 1;
@@ -2228,4 +2238,46 @@ test "the description row: under the top bar when the block has a description or
     try testing.expect(std.mem.indexOf(u8, txt, "#users  #smoke") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "List the users") == null);
     try testing.expect(zones(Rect.init(0, 0, 89, 11), m).desc == null);
+}
+
+test "a narrow response strip keeps its labels whole and drops the chips that would paint over them" {
+    // The hunt's 80×24 pane: 47 cells. The five labels take 41 of the
+    // 45 inside the border; no chip fits after them.
+    var fx = try fixture.init(47, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    m.failed = "not sent yet";
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    var found = false;
+    var y: u16 = 0;
+    while (y < 36) : (y += 1) {
+        var buf: [256]u8 = undefined;
+        const row = fx.row(y, &buf);
+        if (std.mem.indexOf(u8, row, "Cookies") == null) continue;
+        found = true;
+        try testing.expect(std.mem.indexOf(u8, row, "Body  Headers  Cookies  Timeline  Tests") != null);
+        try testing.expect(std.mem.indexOf(u8, row, "\u{25BC}") == null);
+        try testing.expect(std.mem.indexOf(u8, row, "AI") == null);
+        try testing.expect(std.mem.indexOf(u8, row, "wrap") == null);
+    }
+    try testing.expect(found);
+    // Wider: the chips come back from the right as room allows — the
+    // type chip first, then copy, wrap, and the ⚡ AI chip last.
+    var wide = try fixture.init(66, 36);
+    defer wide.deinit();
+    const wui = wide.ui();
+    _ = draw(wui, 3, wui.canvas.full(), m);
+    y = 0;
+    while (y < 36) : (y += 1) {
+        var buf: [256]u8 = undefined;
+        const row = wide.row(y, &buf);
+        if (std.mem.indexOf(u8, row, "Cookies") == null) continue;
+        try testing.expect(std.mem.indexOf(u8, row, "Body  Headers  Cookies  Timeline  Tests") != null);
+        try testing.expect(std.mem.indexOf(u8, row, "\u{2014} \u{25BC}") != null);
+        try testing.expect(std.mem.indexOf(u8, row, "copy") != null);
+        try testing.expect(std.mem.indexOf(u8, row, "AI") == null);
+    }
 }

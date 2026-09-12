@@ -80,19 +80,22 @@ fn attach(app: *App) CommandError!void {
 }
 
 /// The two profiles' doors, pinned (`docs/KEYMAP_PROFILES.md` → Debugger).
+/// The F-keys are VS Code's: F5 starts or continues, Shift+F5 stops,
+/// Ctrl+Shift+F5 restarts, F10 / F11 / Shift+F11 step; `dap.run` is
+/// the palette's explicit start.
 const Door = struct { id: []const u8, vim: ?[]const u8, both: ?[]const u8 };
 const doors = [_]Door{
     .{ .id = "dap.toggle_breakpoint", .vim = "space d b", .both = "f9" },
     .{ .id = "dap.toggle_breakpoint_conditional", .vim = "space d B", .both = "shift+f9" },
     .{ .id = "dap.set_breakpoint_log_message", .vim = "space d l", .both = null },
-    .{ .id = "dap.run", .vim = null, .both = "f5" },
-    .{ .id = "dap.continue", .vim = "space d c", .both = "shift+f5" },
+    .{ .id = "dap.run", .vim = null, .both = null },
+    .{ .id = "dap.continue", .vim = "space d c", .both = "f5" },
     .{ .id = "dap.next", .vim = "space d o", .both = "f10" },
     .{ .id = "dap.step_in", .vim = "space d i", .both = "f11" },
     .{ .id = "dap.step_out", .vim = "space d O", .both = "shift+f11" },
     .{ .id = "dap.pause", .vim = "space d p", .both = null },
-    .{ .id = "dap.restart", .vim = "space d R", .both = null },
-    .{ .id = "dap.terminate", .vim = "space d t", .both = null },
+    .{ .id = "dap.restart", .vim = "space d R", .both = "ctrl+shift+f5" },
+    .{ .id = "dap.terminate", .vim = "space d t", .both = "shift+f5" },
     .{ .id = "dap.repl", .vim = "space d r", .both = null },
     .{ .id = "dap.add_watch", .vim = "space d w", .both = null },
     .{ .id = "dap.toggle_panel", .vim = "space d u", .both = null },

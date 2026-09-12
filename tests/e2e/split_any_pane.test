@@ -1,0 +1,19 @@
+# Every pane kind splits (src/app/cmd_view.zig `splitCompanion`, Rust's
+# `split_active`): the split chips on a request pane put a blank request
+# beside it, on a cheatsheet a scratch editor — never the raw error tag
+# a toast used to spell (`Split editor right (side by side): NotAnEditor`).
+command http.new
+expect screen contains "Enter request URL"
+command view.split_right
+expect screen lacks "NotAnEditor"
+expect screen contains "┌ Method ────┐┌ URL"
+# Two request panes side by side: two Send boxes on the same row.
+expect screen contains "▶ Send │"
+command view.cheatsheet
+command view.split_down
+expect screen lacks "NotAnEditor"
+expect screen lacks "needs an editor pane"
+# A command that needs an editor, run from the cheatsheet: a sentence.
+command view.close_split
+command editor.goto_line
+expect screen contains "needs an editor pane"

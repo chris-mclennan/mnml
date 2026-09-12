@@ -209,7 +209,8 @@ pub const AppDriver = struct {
     fn vRectsJson(p: *anyopaque, a: Allocator) Error![]u8 {
         var out: Io.Writer.Allocating = .init(a);
         errdefer out.deinit();
-        cast(p).app.hits.writeRectsJson(&out.writer) catch return error.OutOfMemory;
+        const app = cast(p).app;
+        app.hits.writeRectsJson(&out.writer, app.overlayLabel()) catch return error.OutOfMemory;
         return out.toOwnedSlice();
     }
 
@@ -363,6 +364,20 @@ test "driver: open, type, status, dirty, title, rects, quit — the runner's con
     const rects = try d.rectsJson(arena.allocator());
     try t.expect(std.mem.indexOf(u8, rects, "\"label\":\"pane:0\"") != null);
     try t.expect(std.mem.indexOf(u8, rects, "editor_cell:0:0:0") != null);
+    try t.expect(std.mem.indexOf(u8, rects, "picker:") == null);
+    // An overlay's rows are in the dump too, named after the overlay:
+    // the file picker's rows read `picker:N`, the palette's `palette:N`.
+    try d.command("picker.files");
+    try d.render();
+    const picker_rects = try d.rectsJson(arena.allocator());
+    try t.expect(std.mem.indexOf(u8, picker_rects, "\"label\":\"picker:0\"") != null);
+    try t.expect(std.mem.indexOf(u8, picker_rects, "overlay_item:") == null);
+    try d.key(key_mod.Key.named(.esc));
+    try d.command("palette");
+    try d.render();
+    const palette_rects = try d.rectsJson(arena.allocator());
+    try t.expect(std.mem.indexOf(u8, palette_rects, "\"label\":\"palette:0\"") != null);
+    try d.key(key_mod.Key.named(.esc));
     try d.ex("set input=vim");
     const st2 = try d.status(arena.allocator());
     try t.expectEqualStrings("NORMAL", st2.mode);

@@ -1,0 +1,18 @@
+# width: 120
+# A tab dragged into a pane body (src/app/dispatch.zig `dropTab` →
+# `dropIntoLeaf`): the right edge zone splits the leaf and the tab moves
+# into the new half; dragged back onto another leaf's centre it joins
+# that leaf's strip. The pane starts at column 31; a.txt's chip
+# (` 󰈙 a.txt 󰅖 `) is 31–41, b.txt's 43–53.
+write a.txt "aaa\n"
+write b.txt "bbb\n"
+open a.txt
+open b.txt
+expect screen contains "a.txt 󰅖   󰈙 b.txt"
+drag 48 1 112 15
+expect screen contains "a.txt 󰅖   󰐕"
+expect screen contains "b.txt 󰅖   󰐕"
+expect screen lacks "a.txt 󰅖   󰈙 b.txt"
+# The right half holds b.txt; drag its tab into the left half's centre.
+drag 80 1 50 20
+expect screen contains "a.txt 󰅖   󰈙 b.txt"

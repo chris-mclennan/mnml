@@ -918,6 +918,7 @@ pub fn openBlank(app: *App) CommandError!PaneId {
     errdefer rp.deinit();
     rp.block = .request;
     rp.field = .url;
+    rp.editing = true;
     const id = try app.panes.add(.{ .request = rp });
     app.showPane(id);
     return id;

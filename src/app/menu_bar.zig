@@ -353,7 +353,12 @@ pub fn step(app: *App, delta: i8) Allocator.Error!void {
     try openIndexAs(app, next, true);
 }
 
-/// The ` » ` chip's menu: the words that did not fit, each opening its menu.
+/// The ` » ` chip's menu: the words that did not fit, each opening its
+/// menu. It hangs from the bar in the dropdown shape the words' own
+/// menus use — the `▸ ` marker column, no title row — so an arrow key
+/// lights a visible cursor, as it does in File or Edit (a context menu
+/// marks its row by colour alone, which the text dump cannot show and a
+/// hover-less keyboard user could not see).
 pub fn openOverflow(app: *App, x: u16, y: u16) Allocator.Error!void {
     const first = app.menu_bar.first_hidden orelse return;
     const n = Menu.count - first;
@@ -361,6 +366,8 @@ pub fn openOverflow(app: *App, x: u16, y: u16) Allocator.Error!void {
     errdefer app.gpa.free(rows);
     for (rows, first..) |*r, i| r.* = .{ .label = labels[i], .action = .{ .menu_bar = @intCast(i) }, .icon = "\u{F0C9}", .icon_ascii = "=" };
     try app.openMenu("Menus", rows, x, y);
+    app.overlay.menu.dropdown = true;
+    app.overlay.menu.highlight = false;
     app.menu_bar.open = null;
     app.menu_bar.overflow_open = true;
 }
@@ -757,4 +764,49 @@ test "menu bar: a click drops the menu in Rust's dropdown shape with the recent 
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".menu_bar = .always") != null);
+}
+
+test "the » list is a dropdown: no title row, no blank row above the bottom border, and the first arrow paints the ▸ cursor" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const screen = @import("../ipc/screen.zig");
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = 23, .y = 0, .kind = .press, .button = .left } });
+    try t.expect(app.overlay == .menu);
+    try t.expect(app.overlay.menu.dropdown);
+    try t.expect(!app.overlay.menu.highlight);
+    try app.render();
+    const plain = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(plain);
+    // Seven rows between the borders — Selection … Help — and nothing else.
+    try t.expect(std.mem.indexOf(u8, plain, "Menus") == null);
+    try t.expect(std.mem.indexOf(u8, plain, "\u{25b8} ") == null);
+    var rows = std.mem.splitScalar(u8, plain, '\n');
+    var top: ?usize = null;
+    var bottom: ?usize = null;
+    var i: usize = 0;
+    while (rows.next()) |row| : (i += 1) {
+        if (std.mem.indexOf(u8, row, "\u{250c}") != null and top == null and i > 0) top = i;
+        if (std.mem.indexOf(u8, row, "\u{2514}") != null and bottom == null and i > 0) bottom = i;
+    }
+    try t.expectEqual(@as(usize, 7 + 1), bottom.? - top.?);
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try t.expect(app.overlay.menu.highlight);
+    try app.render();
+    const lit = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(lit);
+    try t.expect(std.mem.indexOf(u8, lit, "\u{25b8} ") != null);
+    // The marker sits on the Selection row: `▸ <icon>  Selection`.
+    var lit_rows = std.mem.splitScalar(u8, lit, '\n');
+    var marked = false;
+    while (lit_rows.next()) |row| if (std.mem.indexOf(u8, row, "Selection") != null and std.mem.indexOf(u8, row, "\u{25b8} ") != null) {
+        marked = true;
+    };
+    try t.expect(marked);
 }

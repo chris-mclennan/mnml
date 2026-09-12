@@ -146,7 +146,7 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
     const id = app.active orelse return null;
     const p = app.panes.get(id) orelse return null;
     return switch (p.*) {
-        .editor => |*e| try editorCopy(arena, p, e),
+        .editor => |*e| try editorCopy(app, arena, p, e),
         .request => .{ .title = p.title(), .body = "Request pane — Enter to send, Ctrl+S saves as .http/.curl." },
         .pty => .{ .title = p.title(), .body = "Terminal pane — Ctrl+Alt+H to detach, Ctrl+Alt+K to kill." },
         .md_preview => .{ .title = p.title(), .body = "Rendered markdown preview — click header chip to jump back to source." },
@@ -166,8 +166,10 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
 }
 
 /// `name  ·  LANG  ·  L:C  ·  N lines` with the editor's chords; the
-/// identifier under the cursor first when there is one.
-fn editorCopy(arena: Allocator, p: *const app_mod.Pane, e: *const app_mod.EditorPane) Allocator.Error!Copy {
+/// identifier under the cursor first when there is one. The chords are
+/// the active profile's (D4b): `[gd] Definition · [K] Hover` for vim,
+/// `[F12] Definition · [Ctrl+K Ctrl+I] Hover` for standard.
+fn editorCopy(app: *App, arena: Allocator, p: *const app_mod.Pane, e: *const app_mod.EditorPane) Allocator.Error!Copy {
     const ed = e.buf.editor;
     const pos = ed.rowCol();
     const title = p.title();
@@ -176,13 +178,94 @@ fn editorCopy(arena: Allocator, p: *const app_mod.Pane, e: *const app_mod.Editor
     const sym = wordUnderCursor(ed.doc.bytes(), ed.cursor);
     if (sym.len > 0 and sym.len <= 48) return .{
         .title = try std.fmt.allocPrint(arena, "{s}  ·  {s}  ·  {s}  ·  L{d}:{d}", .{ sym, lang, title, pos.row + 1, pos.col + 1 }),
-        .body = "[gd] Definition · [gr] References · [K] Hover · [F2] Rename",
+        .body = try chordLine(app, arena, &.{
+            .{ .id = .@"lsp.goto_definition", .label = "Definition" },
+            .{ .id = .@"lsp.references", .label = "References" },
+            .{ .id = .@"lsp.hover", .label = "Hover" },
+            .{ .id = .@"lsp.rename", .label = "Rename" },
+        }),
     };
     const lines = @max(ed.lineCount(), 1);
     return .{
         .title = try std.fmt.allocPrint(arena, "{s}  ·  {s}  ·  L{d}:{d}  ·  {d} lines{s}", .{ title, lang, pos.row + 1, pos.col + 1, lines, if (p.dirty()) " · unsaved" else "" }),
-        .body = if (e.pinned) "Pinned — stays at the front of the bufferline." else "[gd] Definition · [gr] References · [Ctrl+.] Code actions · [Ctrl+P] Files",
+        .body = if (e.pinned) "Pinned — stays at the front of the bufferline." else try chordLine(app, arena, &.{
+            .{ .id = .@"lsp.goto_definition", .label = "Definition" },
+            .{ .id = .@"lsp.references", .label = "References" },
+            .{ .id = .@"lsp.code_action", .label = "Code actions" },
+            .{ .id = .@"picker.files", .label = "Files" },
+        }),
     };
+}
+
+const ChordRow = struct { id: command.CommandId, label: []const u8 };
+
+/// `[chord] label · [chord] label …` — each command's chord under the
+/// active profile in the copy's spelling; a command the profile leaves
+/// unbound contributes its label alone.
+fn chordLine(app: *const App, arena: Allocator, rows: []const ChordRow) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (rows, 0..) |row, i| {
+        if (i > 0) try out.appendSlice(arena, " \u{00B7} ");
+        if (try chordOf(app, arena, row.id)) |c| {
+            try out.append(arena, '[');
+            try out.appendSlice(arena, c);
+            try out.appendSlice(arena, "] ");
+        }
+        try out.appendSlice(arena, row.label);
+    }
+    return out.items;
+}
+
+/// The chord the copy shows for `id` under the active profile, spelled
+/// for prose: `g d` → `gd`, `f12` → `F12`, `ctrl+k ctrl+i` → `Ctrl+K
+/// Ctrl+I`. The vim profile's own chords come before the shared ones
+/// (`gd` over `F12`, the idiom a vim user knows); the standard profile
+/// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`).
+pub fn chordOf(app: *const App, arena: Allocator, id: command.CommandId) Allocator.Error!?[]const u8 {
+    const keys = command.spec(id).keys;
+    const lists: [2][]const []const u8 = switch (App.profileOf(app.input_style)) {
+        .vim => .{ keys.vim, keys.both },
+        .standard => .{ keys.both, keys.standard },
+    };
+    for (lists) |list| if (list.len > 0) return try chordDisplay(arena, list[0]);
+    return null;
+}
+
+/// A key spec in the copy's spelling.
+fn chordDisplay(arena: Allocator, spec: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    // A run of bare keys (`g d`) reads as one word; anything with a
+    // modifier keeps a space between chords.
+    var bare_run = true;
+    var probe = std.mem.splitScalar(u8, spec, ' ');
+    while (probe.next()) |c| if (c.len != 1) {
+        bare_run = false;
+    };
+    var it = std.mem.splitScalar(u8, spec, ' ');
+    var first = true;
+    while (it.next()) |chord| {
+        if (chord.len == 0) continue;
+        if (!first and !bare_run) try out.append(arena, ' ');
+        first = false;
+        var parts = std.mem.splitScalar(u8, chord, '+');
+        var first_part = true;
+        var modified = false;
+        while (parts.next()) |part| {
+            if (part.len == 0) continue;
+            if (!first_part) try out.append(arena, '+');
+            first_part = false;
+            const is_mod = std.mem.eql(u8, part, "ctrl") or std.mem.eql(u8, part, "shift") or std.mem.eql(u8, part, "alt") or std.mem.eql(u8, part, "super");
+            if (is_mod) modified = true;
+            const named = is_mod or (part.len > 1 and (part[0] == 'f' and std.ascii.isDigit(part[1]))) or std.mem.eql(u8, part, "space") or std.mem.eql(u8, part, "enter") or std.mem.eql(u8, part, "esc") or std.mem.eql(u8, part, "tab");
+            if (named) {
+                try out.append(arena, std.ascii.toUpper(part[0]));
+                try out.appendSlice(arena, part[1..]);
+            } else if (part.len == 1 and modified) {
+                try out.append(arena, std.ascii.toUpper(part[0]));
+            } else try out.appendSlice(arena, part);
+        }
+    }
+    return out.items;
 }
 
 /// The identifier the cursor is in or on; empty between tokens.
@@ -488,7 +571,9 @@ test "the ladder: Sidebar at rest, the row past the first when the tree walks, t
     const scratch = try pick(&app, arena);
     try t.expect(std.mem.indexOf(u8, scratch.title, "L1:1") != null);
     try t.expect(std.mem.indexOf(u8, scratch.title, "1 lines") != null);
-    try t.expect(std.mem.indexOf(u8, scratch.body, "[gd] Definition") != null);
+    try t.expect(std.mem.indexOf(u8, scratch.body, "[F12] Definition") != null);
+    try t.expect(std.mem.indexOf(u8, scratch.body, "[Ctrl+.] Code actions") != null);
+    try t.expect(std.mem.indexOf(u8, scratch.body, "[Ctrl+P] Files") != null);
 }
 
 test "the ladder under an overlay: the surface beneath, as Rust's focus never leaves it — the picker over the tree says Sidebar, the delete box keeps the row, a menu from the tree too; the git palette says Sidebar; a hovered chip beats them all" {
@@ -567,7 +652,11 @@ test "the ladder under an overlay: the surface beneath, as Rust's focus never le
     app.tree.cursor = 0;
     const at_rest = try pick(&app, arena);
     try t.expect(std.mem.startsWith(u8, at_rest.title, "fn  ·  RS  ·  main.rs"));
-    try t.expectEqualStrings("[gd] Definition · [gr] References · [K] Hover · [F2] Rename", at_rest.body);
+    try t.expectEqualStrings("[F12] Definition · [Shift+F12] References · [Ctrl+K Ctrl+I] Hover · [F2] Rename", at_rest.body);
+    // The vim profile reads its own chords.
+    try app.setInputStyle(.vim);
+    try t.expectEqualStrings("[gd] Definition · [gr] References · [K] Hover · [F2] Rename", (try pick(&app, arena)).body);
+    try app.setInputStyle(.standard);
     app.tree.cursor = app.tree.rowOf("src/main.rs") orelse app.tree.rowOf("main.rs").?;
     try t.expectEqualStrings("main.rs — Rust source", (try pick(&app, arena)).title);
     // The picker over that: its way back is the pane, so the summary.
@@ -652,4 +741,26 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
     app.hover_live = false;
     _ = try pick(&app, arena);
     try t.expectEqual(@as(u16, 0), app.info_view.scroll);
+}
+
+test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try t.expectEqualStrings("gd", try chordDisplay(a, "g d"));
+    try t.expectEqualStrings("K", try chordDisplay(a, "K"));
+    try t.expectEqualStrings("F12", try chordDisplay(a, "f12"));
+    try t.expectEqualStrings("Shift+F12", try chordDisplay(a, "shift+f12"));
+    try t.expectEqualStrings("Ctrl+K Ctrl+I", try chordDisplay(a, "ctrl+k ctrl+i"));
+    try t.expectEqualStrings("Ctrl+.", try chordDisplay(a, "ctrl+."));
+    try t.expectEqualStrings("Space f f", try chordDisplay(a, "space f f"));
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try t.expectEqualStrings("F12", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
+    try t.expectEqualStrings("Ctrl+K Ctrl+I", (try chordOf(&app, a, .@"lsp.hover")).?);
+    try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
+    try app.setInputStyle(.vim);
+    try t.expectEqualStrings("gd", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
+    try t.expectEqualStrings("K", (try chordOf(&app, a, .@"lsp.hover")).?);
+    try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
 }

@@ -1,0 +1,12 @@
+# The info box's editor summary spells its chords for the active profile
+# (src/app/info_view.zig `chordOf`): the standard profile reads VS Code's
+# F12 / Shift+F12 / Ctrl+K Ctrl+I, the vim profile gd / gr / K. The box
+# wraps its body across the sidebar's rows, so each chord is checked on
+# its own.
+write hello.txt "word\n"
+open hello.txt
+expect screen contains "[F12] Definition"
+expect screen lacks "[gd] Definition"
+command editor.use_vim
+expect screen contains "[gd] Definition"
+expect screen lacks "[F12] Definition"

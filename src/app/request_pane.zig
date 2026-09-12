@@ -215,6 +215,15 @@ pub const RequestPane = struct {
     block: Block = .request,
     edit_tab: EditTab = .body,
     field: Field = .url,
+    /// The focused text field (the URL, the Body or Script tab) takes
+    /// printable keys only while this is set: Enter or a click on the
+    /// field enters it, Esc leaves it. Off, the pane is browsed — `r`
+    /// sends, `:` opens the ex line, the arrows walk the fields, and
+    /// every other key goes on to the chord chain (so the panel's own
+    /// "press `r` to fire" hint no longer types an `r` into the URL).
+    /// A blank pane (`http.openBlank`) and a Tab back from the response
+    /// start in it; a pane opened from a file starts browsing.
+    editing: bool = false,
     draft: ?Draft = null,
     /// The Headers tab's popup, while a draft cell is being typed.
     completion: ?Completion = null,
@@ -725,11 +734,22 @@ pub const RequestPane = struct {
         return n;
     }
 
-    /// Enter the Request block on the URL (a `Tab` from the response).
+    /// Enter the Request block on the URL, editing it (a `Tab` from the
+    /// response — Rust's `toggle_view` lands on the URL with the caret).
     pub fn focusUrl(self: *RequestPane) void {
         self.block = .request;
         self.field = .url;
         self.url_caret = self.url.items.len;
+        self.editing = true;
+    }
+
+    /// The focused field is a text buffer (not the method, not a table).
+    pub fn onTextField(self: *const RequestPane) bool {
+        return switch (self.field) {
+            .url => true,
+            .method => false,
+            .content => self.edit_tab == .body or self.edit_tab == .source,
+        };
     }
 
     pub fn startDraft(self: *RequestPane) Allocator.Error!void {
@@ -916,7 +936,6 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
         rp.moved_since_send = true;
     };
     app.needs_render = true;
-    const gpa = app.gpa;
     // An open `{{` popup owns its navigation and accept keys; every
     // other key edits the field and re-filters it.
     if (app.http.completion) |*c| if (c.pane == id) {
@@ -984,7 +1003,7 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
             return true;
         },
         .esc => {
-            // The popup first, then the draft under it.
+            // The popup first, then the draft under it, then the field.
             if (rp.completion != null) {
                 rp.closeCompletion();
                 return true;
@@ -993,13 +1012,66 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
                 rp.cancelDraft();
                 return true;
             }
+            if (rp.editing and rp.block == .request) {
+                rp.editing = false;
+                return true;
+            }
             return false;
         },
         else => {},
     }
     if (rp.block == .response) return responseKey(app, rp, k);
 
-    // ── the request block ──
+    // ── the request block, browsed ──
+    // Enter on a text field starts editing it; the tables and the method
+    // keep their row keys and take Enter as before.
+    if (!rp.editing and rp.onTextField()) {
+        switch (k.code) {
+            .enter => {
+                rp.editing = true;
+                return true;
+            },
+            // The caret still walks a browsed field (a quick fix reads
+            // the token under it); the up / down field motions below.
+            .left, .right, .home, .end, .up, .down => {},
+            else => return browseKey(app, id, rp, k),
+        }
+    }
+    const took = try requestBlockKey(app, id, rp, k);
+    if (took) return true;
+    // A key the table or the method left alone: the pane's own keys.
+    if (!rp.editing) return browseKey(app, id, rp, k);
+    return false;
+}
+
+/// The keys a browsed request pane answers whatever field is focused:
+/// `r` / `R` fire (the response block's `r` too), `:` opens the ex
+/// line. Anything else is the chord chain's.
+fn browseKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bool {
+    _ = rp;
+    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    switch (k.code) {
+        .char => |c| switch (c) {
+            'r', 'R' => {
+                http.fire(app, id) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
+                };
+                return true;
+            },
+            ':' => {
+                try @import("dispatch.zig").openExLine(app);
+                return true;
+            },
+            else => return false,
+        },
+        else => return false,
+    }
+}
+
+/// The request block's own keys: the method, the URL, the tab's content.
+fn requestBlockKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bool {
+    const gpa = app.gpa;
     switch (rp.field) {
         .method => {
             if (k.code == .enter or k.typed() == ' ') {
@@ -1486,7 +1558,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         view.hit_edit_area => {
             rp.block = .request;
             // The edit area's own field: the tab being edited.
-            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, if (rp.edit_tab == .headers) .headers else .body, m.x, m.y);
+            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, if (rp.edit_tab == .headers) .headers else .body, m.x, m.y) else if (rp.field == .content and rp.onTextField()) rp.editing = true;
             return;
         },
         else => {},
@@ -1606,6 +1678,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
                 try @import("context_menus.zig").openRequestFieldMenu(app, .url, m.x, m.y);
                 return;
             }
+            rp.editing = true;
             if (hit_rect) |r| {
                 // The box's text starts one cell in.
                 const col: usize = m.x -| (r.x + 1);
@@ -1633,7 +1706,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         view.hit_content => {
             rp.block = .request;
             rp.field = .content;
-            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, if (rp.edit_tab == .headers) .headers else .body, m.x, m.y);
+            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, if (rp.edit_tab == .headers) .headers else .body, m.x, m.y) else if (rp.onTextField()) rp.editing = true;
         },
         else => {},
     }
@@ -1780,6 +1853,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .resp_view = &rp.resp_view,
         .body_wrap = rp.body_wrap,
         .focused = focused,
+        .editing = rp.editing,
         .source_path = rp.source_path,
         .url_vars = toks.url,
         .body_vars = toks.body,
@@ -2173,4 +2247,81 @@ test "Params tab with path params: the cursor walks path rows then query rows, E
     try testing.expect(app.overlay == .prompt);
     try testing.expect(std.mem.indexOf(u8, app.overlay.prompt.state.title, "Value for :pid") != null);
     try app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "a pane from a file is browsed: `r` fires and `:` opens the ex line instead of typing; Enter edits the URL, Esc leaves it; Tab lands on the URL editing" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try keysTestRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "api.http", .data = "GET http://127.0.0.1:1/get\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "api.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openPath(path);
+    const id = app.active.?;
+    const rp = &app.panes.get(id).?.request;
+    try testing.expect(!rp.editing);
+    try testing.expectEqual(Block.request, rp.block);
+    try testing.expectEqual(Field.url, rp.field);
+    const url = "http://127.0.0.1:1/get";
+    // Browsing: printable keys never reach the URL — `r` fires the
+    // request, `:` opens the ex line, `x` is left to the chord chain.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('r')));
+    try testing.expectEqualStrings(url, rp.url.items);
+    try testing.expect(rp.state == .sending);
+    try testing.expect(!try handleKey(&app, id, rp, Key.char('x')));
+    try testing.expectEqualStrings(url, rp.url.items);
+    // The caret still walks the browsed field; Backspace does nothing.
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.home)));
+    try testing.expectEqual(@as(usize, 0), rp.url_caret);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.end)));
+    try testing.expectEqual(url.len, rp.url_caret);
+    try testing.expect(!try handleKey(&app, id, rp, Key.named(.backspace)));
+    try testing.expectEqualStrings(url, rp.url.items);
+    try testing.expect(!rp.editing);
+    try testing.expect(try handleKey(&app, id, rp, Key.char(':')));
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.overlay.prompt.purpose == .ex_line);
+    // The line runs on Enter: `:set input=vim` switches the keymap.
+    try app.handle(.{ .key = Key.char('s') });
+    for ("et input=vim") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(app.overlay == .none);
+    try testing.expect(app.input_style == .vim);
+    try testing.expectEqualStrings(url, rp.url.items);
+    // Enter edits the URL; typing lands; Esc leaves the field browsed.
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(rp.editing);
+    try typeText(&app, id, rp, "ab");
+    try testing.expectEqualStrings(url ++ "ab", rp.url.items);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.esc)));
+    try testing.expect(!rp.editing);
+    try testing.expect(!try handleKey(&app, id, rp, Key.char('c')));
+    try testing.expectEqualStrings(url ++ "ab", rp.url.items);
+    // The vim profile too: `r` fires from the browsed field, not `r<char>`.
+    try testing.expect(try handleKey(&app, id, rp, Key.char('r')));
+    try testing.expectEqualStrings(url ++ "ab", rp.url.items);
+    // Tab: the response block, then back on the URL editing (Rust's
+    // toggle_view lands the caret there).
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.tab)));
+    try testing.expectEqual(Block.response, rp.block);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.tab)));
+    try testing.expectEqual(Block.request, rp.block);
+    try testing.expect(rp.editing);
+    try typeText(&app, id, rp, "c");
+    try testing.expectEqualStrings(url ++ "abc", rp.url.items);
+    // The Body tab browsed: `r` fires, Enter edits, then Enter is a newline.
+    rp.editing = false;
+    rp.showTab(.body);
+    try testing.expect(try handleKey(&app, id, rp, Key.char('r')));
+    try testing.expectEqualStrings("", rp.body.items);
+    try testing.expect(try handleKey(&app, id, rp, Key.named(.enter)));
+    try testing.expect(rp.editing);
+    try typeText(&app, id, rp, "{}");
+    try testing.expectEqualStrings("{}", rp.body.items);
+    // A blank pane starts editing, the caret on the URL.
+    const blank = try http.openBlank(&app);
+    try testing.expect(app.panes.get(blank).?.request.editing);
 }

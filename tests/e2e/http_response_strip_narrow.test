@@ -1,0 +1,11 @@
+# width: 80
+# At 80 columns the request pane is 47 cells wide (the tree keeps 30).
+# The response strip (src/ui/request_view.zig `drawResponseStrip`) keeps
+# its five labels whole and drops the chips that would paint over them,
+# instead of painting `Coo ⚡  AIT wrap e copy s — ▼` on top of itself.
+write narrow.http "GET http://127.0.0.1:19877/x\n"
+open narrow.http
+expect screen contains "Body  Headers  Cookies  Timeline  Tests"
+expect screen lacks "Coo ⚡"
+expect screen lacks "AIT"
+expect screen lacks "wrap e"

@@ -511,10 +511,26 @@ pub fn run(app: *App, ref: CommandRef) CommandError!void {
                     .static => |id| title(id),
                     .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.title else "command",
                 };
-                app.toast("{s}: {s}", .{ t, @errorName(err) });
+                app.toast("{s}: {s}", .{ t, reason(err) });
             }
         }
         return err;
+    };
+}
+
+/// What a toast says for an error a command returned without a
+/// `diag` message: a sentence for the shared tags a user can act on,
+/// the tag's name for the rest (a `Failed` with no message is a bug
+/// worth seeing by name).
+pub fn reason(err: anyerror) []const u8 {
+    return switch (err) {
+        error.NotAnEditor => "needs an editor pane",
+        error.NoActivePane => "nothing is open",
+        error.NoWorkspace => "no workspace is open",
+        error.NoRepo => "not in a git repository",
+        error.NoSelection => "nothing is selected",
+        error.Unsupported => "not supported here",
+        else => @errorName(err),
     };
 }
 

@@ -1,0 +1,24 @@
+# width: 120
+# The tab strip's ` +N hidden ` chip (src/ui/bufferline.zig) counts the
+# tabs scrolled off the left edge as well as the right, as Rust's
+# `tabs.len() - painted_count` does. Five files whose chips are 17 cells
+# each: the last three fill the 68-cell tab room and the first two are
+# off the left edge, so the chip reads `+2 hidden` after the `+`. A click
+# on it opens the buffer picker, which lists every tab.
+write file-aaa.rs "a\n"
+write file-bbb.rs "b\n"
+write file-ccc.rs "c\n"
+write file-ddd.rs "d\n"
+write file-eee.rs "e\n"
+open file-aaa.rs
+open file-bbb.rs
+open file-ccc.rs
+open file-ddd.rs
+open file-eee.rs
+expect screen contains "file-eee.rs"
+expect screen contains "+2 hidden"
+expect screen lacks "file-aaa.rs 󰅖"
+# The chip sits after the `+`: click it.
+click 92 1
+expect screen contains "Buffers"
+expect screen contains "file-aaa.rs"
