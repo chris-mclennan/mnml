@@ -70,6 +70,8 @@ const list_panel = @import("../ui/list_panel.zig");
 const pty_pane = @import("pty_pane.zig");
 const remote_mod = @import("../git/remote.zig");
 const settings = @import("settings.zig");
+const alloc = @import("../core/alloc.zig");
+const context_menus = @import("context_menus.zig");
 const accent_color = @import("../ui/accent_color.zig");
 const sessions = @import("../sessions.zig");
 const session_worktree = @import("session_worktree.zig");
@@ -424,6 +426,13 @@ pub fn openReposMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const st = &app.git_palette;
     const gs = &app.git;
     const gpa = app.gpa;
+    // The labels outlive this frame — the menu stays open — so they
+    // live on an arena the menu owns, not the frame's (which the next
+    // frame reuses: every row past the first painted whatever the
+    // frame wrote there).
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    errdefer mem.deinit();
+    const a = mem.allocator();
     var items: std.ArrayListUnmanaged(MenuItem) = .empty;
     errdefer items.deinit(gpa);
     try items.append(gpa, .{
@@ -432,18 +441,18 @@ pub fn openReposMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     });
     for (gs.repos.items, 0..) |r, i| {
         try items.append(gpa, .{
-            .label = try std.fmt.allocPrint(app.frame.allocator(), "{s}{s}", .{ if (!st.all and gs.active != null and gs.active.? == i) "\u{25CF} " else "  ", r.name }),
+            .label = try std.fmt.allocPrint(a, "{s}{s}", .{ if (!st.all and gs.active != null and gs.active.? == i) "\u{25CF} " else "  ", r.name }),
             .action = .{ .git_palette = .{ .what = .switch_repo, .idx = @intCast(i) } },
         });
     }
     for (st.closed.items, 0..) |p, i| {
         try items.append(gpa, .{
-            .label = try std.fmt.allocPrint(app.frame.allocator(), "  Reopen: {s}", .{std.fs.path.basename(p)}),
+            .label = try std.fmt.allocPrint(a, "  Reopen: {s}", .{std.fs.path.basename(p)}),
             .action = .{ .git_palette = .{ .what = .reopen_repo, .idx = @intCast(i) } },
         });
     }
     try items.append(gpa, .{ .label = "  Add workspace\u{2026}", .action = .{ .command = .@"view.add_workspace" } });
-    try app.openMenu("Repos", try items.toOwnedSlice(gpa), x, y);
+    try context_menus.openOwned(app, "Repos", try items.toOwnedSlice(gpa), x, y, mem);
 }
 
 // ─── which repo ─────────────────────────────────────────────────────────
@@ -1968,6 +1977,36 @@ test "colors: two repos take the palette in discovery order and one repo none; a
     // Auto: back on the slot, persisted as `none`.
     try setRepoColor(&app2, 2, accent_color.none);
     try testing.expectEqualStrings("yellow", repoColorName(&app2, 2).?);
+}
+
+test "the repos menu keeps its labels while open: the frame arena's reuse cannot scribble them" {
+    // The frame arena over a fixed buffer: a reset hands the same bytes
+    // back, so the next frame's allocations land exactly where the
+    // last frame's did — which is what the app's allocator does in
+    // steady state, and what painted garbage in every row but the
+    // first when the labels lived there.
+    var frame_buf: [64 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    app.frame.deinit();
+    app.frame = alloc.FrameArena.init(fba.allocator());
+    try openReposMenu(app, 5, 5);
+    try testing.expect(app.overlay == .menu);
+    app.frame.begin();
+    for (0..1024) |_| {
+        const chunk = try app.frame.allocator().alloc(u8, 16);
+        @memset(chunk, 'X');
+    }
+    try testing.expect(std.mem.endsWith(u8, app.overlay.menu.items[1].label, "alpha"));
+    try testing.expect(std.mem.endsWith(u8, app.overlay.menu.items[2].label, "beta"));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Hand the app back a heap-backed frame before it tears down.
+    app.frame.deinit();
+    app.frame = alloc.FrameArena.init(app.gpa);
 }
 
 test "one repo: no accent anywhere — the pill, the panes and the tree paint as before, and the pill's right-click is the repos menu" {

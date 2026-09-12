@@ -277,18 +277,23 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         const y = area.y + 3;
         const text = ui.fmt(" {s} {s} ", .{ p.repo, g(ui, repo_chevron_nerd, repo_chevron_ascii) });
         const text_w = ui.width(text);
-        // The chevrons follow the pill after one cell of air — or, when
-        // that cell is the one too many (`All repos 󰅀` in the 20-cell
-        // column git mode snaps to), right against it: the pill's own
-        // trailing space and the slot's leading one keep the glyphs
-        // apart. A pill that leaves them no room even then paints
-        // alone, clipped.
-        const gap: u16 = if (text_w + 1 + 2 * arrow_w <= w -| 2) 1 else 0;
-        const arrows_fit = text_w + gap + 2 * arrow_w <= w -| 1;
-        const room: u16 = w -| 2;
+        // The chevrons sit at the column's right edge — the scrollbar's
+        // side — so they stay under the pointer while it steps through
+        // repos whose names differ in length (they used to follow the
+        // pill and slide with it). The pill takes what is left on the
+        // left, one cell of air before the chevrons; a column too
+        // narrow for both paints the pill alone, clipped. At the width
+        // git mode snaps to (20 cells, `All repos 󰅀`) the air goes and
+        // the pill's own trailing space is clipped instead: the slot's
+        // leading cell keeps the glyphs apart.
+        const arrows_fit = text_w + 2 * arrow_w <= w -| 1;
+        const room: u16 = if (arrows_fit) w -| (2 + 2 * arrow_w) else w -| 2;
+        // Tight by exactly the trailing space: drop the space rather
+        // than clip the name (which would eat the dropdown glyph).
+        const pill_text = if (text_w == room + 1) ui.fmt(" {s} {s}", .{ p.repo, g(ui, repo_chevron_nerd, repo_chevron_ascii) }) else text;
         var style = Theme.onBg(t.fg, pal.bg2);
         style.bold = true;
-        const pill_w = ui.putStr(x0 + 1, y, room, ui.clipStr(text, room), style);
+        const pill_w = ui.putStr(x0 + 1, y, room, ui.clipStr(pill_text, room), style);
         ui.hit(Rect.init(x0 + 1, y, pill_w, 1), .{ .git_palette = .repo });
         if (p.accent) |accent| _ = ui.putStr(x0, y, 1, if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph, Theme.withFg(bg, accent));
         if (arrows_fit) {
@@ -297,8 +302,9 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
                 .{ .glyph = bufferline.arrow_left_glyph, .ascii = bufferline.arrow_left_ascii, .part = .repo_prev },
                 .{ .glyph = bufferline.arrow_right_glyph, .ascii = bufferline.arrow_right_ascii, .part = .repo_next },
             };
+            const arrows_x = x0 + w -| (1 + 2 * arrow_w);
             for (pair, 0..) |a, slot| {
-                const ax = x0 + 1 + pill_w + gap + @as(u16, @intCast(slot)) * arrow_w;
+                const ax = arrows_x + @as(u16, @intCast(slot)) * arrow_w;
                 const r = Rect.init(ax, y, arrow_w, 1);
                 const astyle: Style = if (on) .{ .fg = pal.fg, .bg = pal.bg2 } else .{ .fg = pal.comment, .bg = pal.bg_darker, .dim = true };
                 ui.fill(r, astyle);
@@ -492,9 +498,15 @@ const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 /// The pill row of the spec: the name, the dropdown mark, the tab
 /// strip's two arrows after a cell of air (none at 20 cells).
-const pill_ws = "  ws " ++ repo_chevron_nerd ++ "   " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
-const pill_all = "  All repos " ++ repo_chevron_nerd ++ "   " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
-const pill_all_narrow = "  All repos " ++ repo_chevron_nerd ++ "  " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
+// The pill on the left, the chevrons anchored at the column's right
+// edge (26 cells: glyphs at x = 20 and 23, one blank cell after).
+const pill_ws = "  ws " ++ repo_chevron_nerd ++ "              " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
+const pill_all = "  All repos " ++ repo_chevron_nerd ++ "       " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
+// 20 cells: no air — the pill's trailing space is clipped, the chevrons
+// at the edge (glyphs at x = 14 and 17).
+const pill_all_narrow = "  All repos " ++ repo_chevron_nerd ++ " " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
+// 16 cells: the pill, then the chevrons at the edge (glyphs at x = 10 and 13).
+const pill_ws_16 = "  ws " ++ repo_chevron_nerd ++ "    " ++ bufferline.arrow_left_glyph ++ "  " ++ bufferline.arrow_right_glyph;
 
 /// The panel of the doc comment: two locals, one remote with three
 /// branches, two worktrees (one locked, one dirty), a stash, two tags.
@@ -569,10 +581,10 @@ test "the spec's column at 26 cells: the caps header with its refresh chip, the 
     try testing.expectEqual(PanelId.git, f.hits.at(10, 1).?.filter_input);
     try testing.expectEqual(Part.repo, f.hits.at(2, 3).?.git_palette);
     try testing.expect(f.hits.at(0, 3) == null);
-    try testing.expect(f.hits.at(9, 3) == null);
-    try testing.expect(f.hits.at(12, 3) == null);
-    try testing.expect(f.hits.at(24, 3) == null);
-    try testing.expect(f.style(9, 3).dim);
+    try testing.expect(f.hits.at(20, 3) == null);
+    try testing.expect(f.hits.at(23, 3) == null);
+    try testing.expect(f.hits.at(25, 3) == null);
+    try testing.expect(f.style(20, 3).dim);
     try testing.expectEqual(@as(u32, 0), f.hits.at(5, 6).?.row.idx);
     try testing.expectEqual(@as(u32, 1), f.hits.at(25, 7).?.row.idx);
     try testing.expect(f.hits.at(5, 9) == null);
@@ -601,22 +613,24 @@ test "the chevrons: lit and clickable with two repos (prev, next), dim and inert
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .repo_count = 2 });
     try f.expectRow(3, pill_ws);
-    try testing.expectEqual(Part.repo_prev, f.hits.at(8, 3).?.git_palette);
-    try testing.expectEqual(Part.repo_prev, f.hits.at(10, 3).?.git_palette);
-    try testing.expectEqual(Part.repo_next, f.hits.at(11, 3).?.git_palette);
-    try testing.expectEqual(Part.repo_next, f.hits.at(13, 3).?.git_palette);
-    try testing.expect(f.hits.at(7, 3) == null);
-    try testing.expect(f.hits.at(14, 3) == null);
-    try testing.expect(!f.style(9, 3).dim);
-    try testing.expect(f.bgEql(9, 3, .{ .bg = f.theme.palette.bg2 }));
+    // Anchored right: the slots are 19..21 and 22..24; the pill stops
+    // short of them, and the cell between is nobody's.
+    try testing.expectEqual(Part.repo_prev, f.hits.at(19, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_prev, f.hits.at(21, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_next, f.hits.at(22, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_next, f.hits.at(24, 3).?.git_palette);
+    try testing.expect(f.hits.at(18, 3) == null);
+    try testing.expect(f.hits.at(25, 3) == null);
+    try testing.expect(!f.style(20, 3).dim);
+    try testing.expect(f.bgEql(20, 3, .{ .bg = f.theme.palette.bg2 }));
     // One repo: the glyphs stay, dim, and take no click.
     var one = try Fixture.init(26, 8);
     defer one.deinit();
     _ = draw(one.ui(), one.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .repo_count = 1 });
     try one.expectRow(3, pill_ws);
-    try testing.expect(one.hits.at(9, 3) == null);
-    try testing.expect(one.hits.at(12, 3) == null);
-    try testing.expect(one.style(9, 3).dim);
+    try testing.expect(one.hits.at(20, 3) == null);
+    try testing.expect(one.hits.at(23, 3) == null);
+    try testing.expect(one.style(20, 3).dim);
     // A name that leaves no room: the pill alone, clipped one cell in.
     var long = try Fixture.init(26, 8);
     defer long.deinit();
@@ -662,9 +676,10 @@ test "all repos: a muted sub-header per repo under each section, the rows one le
     defer narrow.deinit();
     _ = draw(narrow.ui(), narrow.full(), .{ .rows = &grouped, .repo = "All repos", .viewing = 3, .repo_count = 2, .grouped = true });
     try narrow.expectRow(3, pill_all_narrow);
-    try testing.expectEqual(Part.repo_prev, narrow.hits.at(15, 3).?.git_palette);
-    try testing.expectEqual(Part.repo_next, narrow.hits.at(18, 3).?.git_palette);
-    try testing.expectEqual(Part.repo, narrow.hits.at(13, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_prev, narrow.hits.at(14, 3).?.git_palette);
+    try testing.expectEqual(Part.repo_next, narrow.hits.at(17, 3).?.git_palette);
+    try testing.expectEqual(Part.repo, narrow.hits.at(12, 3).?.git_palette);
+    try testing.expect(narrow.hits.at(19, 3) == null);
 }
 
 test "the cursor row takes the list panels' ground and marker, or keeps its gutter mark; the focused filter shows its caret; a folded section keeps only its header" {
@@ -747,10 +762,12 @@ test "narrow columns: at 16, 20 and 24 cells nothing paints past the edge, the c
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .rows = &long_rows, .repo = "ws", .viewing = 2, .repo_count = 2 });
     try f.expectRow(0, " GIT          \u{eb37}");
-    try f.expectRow(3, pill_ws);
+    try f.expectRow(3, pill_ws_16);
     try testing.expectEqual(@import("hit.zig").ChipKind.refresh, f.hits.at(14, 0).?.chip.kind);
-    try testing.expect(f.hits.at(14, 3) == null);
+    // 16 cells: prev over 9..11, next over 12..14, the edge cell free.
+    try testing.expectEqual(Part.repo_prev, f.hits.at(9, 3).?.git_palette);
     try testing.expectEqual(Part.repo_next, f.hits.at(12, 3).?.git_palette);
+    try testing.expect(f.hits.at(15, 3) == null);
     try f.expectRow(6, "\u{258c}\u{F47C} \u{F0405} WORKTR\u{2026} 12");
 }
 
@@ -762,7 +779,7 @@ test "ascii: every glyph has a one-cell twin and the row shapes hold" {
     _ = draw(ui, f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8 });
     try f.expectRow(0, " GIT                    \u{21ba}");
     try f.expectRow(1, "  / / filter");
-    try f.expectRow(3, "  ws v   <  >");
+    try f.expectRow(3, "  ws v              <  >");
     try f.expectRow(6, ">v % LOCAL              2");
     try f.expectRow(7, "* Y main            1^ 3v");
     try f.expectRow(11, "  G origin");
