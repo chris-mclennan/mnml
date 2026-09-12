@@ -183,7 +183,8 @@ const Fixture = struct {
     root: []u8,
     app: App,
 
-    /// A headless app whose `claude` is `tools/shims/claude` (it sleeps).
+    /// A headless app whose `claude` and `codex` are `tools/shims/ai/`'s
+    /// (they sleep).
     fn init() !Fixture {
         var tmp = t.tmpDir(.{});
         errdefer tmp.cleanup();
@@ -194,7 +195,7 @@ const Fixture = struct {
         var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 200, .rows = 60 });
         errdefer app.deinit();
         app.tree.visible = false;
-        const path = try std.fmt.allocPrint(t.allocator, "{s}:{s}", .{ build_options.shims_dir, app.env.get("PATH") orelse "/usr/bin:/bin" });
+        const path = try std.fmt.allocPrint(t.allocator, "{s}/ai:{s}", .{ build_options.shims_dir, app.env.get("PATH") orelse "/usr/bin:/bin" });
         defer t.allocator.free(path);
         try app.env.put("PATH", path);
         return .{ .tmp = tmp, .root = root, .app = app };

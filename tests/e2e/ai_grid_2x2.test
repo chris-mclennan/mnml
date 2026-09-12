@@ -1,8 +1,8 @@
-# env: PATH=${MNML_SHIMS}:${PATH}
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
 # The AI grid (src/app/ai_grid.zig): in grid mode the first two Claude
 # sessions sit side by side; the third turns the pair into a 2×2 with
 # an open slot bottom-right — the `+ Add Claude Code` card — and the
-# fourth fills it. `tools/shims/claude` stands in for the CLI (it
+# fourth fills it. `tools/shims/ai/claude` stands in for the CLI (it
 # sleeps), so every strip reads `claude`. At 120×40 with the tree the
 # body is 89 columns: two 43-column strips share a row with the
 # divider between them; the horizontal divider under the top row runs
