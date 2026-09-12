@@ -3,14 +3,15 @@
 # focus into the file tree, where `j` / `k` / `Enter` browse; `Ctrl-L`
 # from the tree comes back to the split. The tree gets a refresh first so
 # its rows exist (the files were written after the workspace was
-# scanned). `i` → INSERT → Esc proves the editor owns the keys before
+# scanned; under vim `r` is nvim-tree's rename, so the refresh is the
+# command). `i` → INSERT → Esc proves the editor owns the keys before
 # each inbound move: focus is not visible on its own.
 write a.txt "alpha\n"
 write b.txt "bravo\n"
 open a.txt
 command editor.use_vim
 command view.focus_tree
-key r
+command tree.refresh
 command view.focus_pane
 key i
 expect screen contains " INSERT "
