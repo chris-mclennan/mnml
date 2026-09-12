@@ -1,0 +1,11 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_scripts"}
+{"cmd": "wait_ms", "ms": 800}
+# zig-only
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 500}
+# enter
+{"cmd":"snapshot"}

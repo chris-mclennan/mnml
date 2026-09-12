@@ -1,0 +1,10 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": "walk-samples/sample.png"}
+{"cmd": "wait_ms", "ms": 2000}
+# image
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}

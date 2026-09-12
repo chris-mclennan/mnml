@@ -1,0 +1,63 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": "walk-samples/sample.rs"}
+{"cmd": "wait_ms", "ms": 1200}
+# normal
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "i"}
+{"cmd": "wait_ms", "ms": 100}
+# insert
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "walk "}
+{"cmd": "wait_ms", "ms": 100}
+# typed
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": "v"}
+{"cmd": "type", "text": "l"}
+{"cmd": "type", "text": "l"}
+{"cmd": "type", "text": "l"}
+# visual
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": "V"}
+# vline
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": ":"}
+{"cmd": "wait_ms", "ms": 200}
+# cmdline
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "q"}
+{"cmd": "wait_ms", "ms": 100}
+# cmdline-q
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "space"}
+{"cmd": "wait_ms", "ms": 400}
+# leader-space
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "f"}
+{"cmd": "wait_ms", "ms": 300}
+# leader-f
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": "gg"}
+{"cmd": "type", "text": "dd"}
+{"cmd": "wait_ms", "ms": 100}
+# dd
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "u"}
+{"cmd": "wait_ms", "ms": 100}
+# undo
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "/"}
+{"cmd": "type", "text": "Todo"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 200}
+# search
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "zc"}
+{"cmd": "wait_ms", "ms": 200}
+# fold
+{"cmd":"snapshot"}

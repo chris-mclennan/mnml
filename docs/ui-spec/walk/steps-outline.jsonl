@@ -1,0 +1,22 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": "walk-samples/sample.py"}
+{"cmd": "wait_ms", "ms": 1500}
+{"cmd": "run-command", "id": "view.toggle_right_panel"}
+{"cmd": "wait_ms", "ms": 300}
+{"cmd": "run-command", "id": "outline.show"}
+{"cmd": "wait_ms", "ms": 1500}
+# outline
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 400}
+# enter
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 95, "row": 4, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick
+{"cmd":"snapshot"}

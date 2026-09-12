@@ -1,0 +1,17 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "ctrl+k"}
+{"cmd": "wait_ms", "ms": 400}
+# leader
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "g"}
+{"cmd": "wait_ms", "ms": 300}
+# g-sub
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "ctrl+k"}
+{"cmd": "type", "text": "i"}
+{"cmd": "wait_ms", "ms": 300}
+# i-sub
+{"cmd":"snapshot"}

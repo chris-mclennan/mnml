@@ -1,0 +1,19 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "ctrl+shift+p"}
+{"cmd": "wait_ms", "ms": 400}
+# open
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "git"}
+{"cmd": "wait_ms", "ms": 300}
+# typed-git
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "picker.recent_commands"}
+{"cmd": "wait_ms", "ms": 400}
+# recent-commands
+{"cmd":"snapshot"}

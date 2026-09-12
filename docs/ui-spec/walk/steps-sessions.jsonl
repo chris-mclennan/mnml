@@ -1,0 +1,32 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_sessions"}
+{"cmd": "wait_ms", "ms": 2500}
+# section
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 10, "row": 6, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-card
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 1000}
+# enter-card
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "sessions.table"}
+{"cmd": "wait_ms", "ms": 2000}
+# table-zig-only
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.activity_agents"}
+{"cmd": "wait_ms", "ms": 2000}
+# agents
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.activity_cloud_agents"}
+{"cmd": "wait_ms", "ms": 2000}
+# cloud-agents
+{"cmd":"snapshot"}

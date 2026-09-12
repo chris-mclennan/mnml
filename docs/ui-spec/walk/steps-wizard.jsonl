@@ -1,0 +1,23 @@
+{"cmd": "wait_ms", "ms": 800}
+# fresh-rest
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "first_launch.show"}
+{"cmd": "wait_ms", "ms": 600}
+# show
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "n"}
+{"cmd": "wait_ms", "ms": 300}
+# n
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 300}
+# enter
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "wait_ms", "ms": 300}
+# esc
+{"cmd":"snapshot"}

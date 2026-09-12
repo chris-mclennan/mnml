@@ -1,0 +1,22 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "ai.claude_code"}
+{"cmd": "wait_ms", "ms": 2500}
+# claude-pane
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "hello"}
+{"cmd": "wait_ms", "ms": 300}
+# typed
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "ai.claude_code_new_x4"}
+{"cmd": "wait_ms", "ms": 2500}
+# grid-x4-known
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "ai.claude_usage"}
+{"cmd": "wait_ms", "ms": 1500}
+# usage
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "ai.show_config"}
+{"cmd": "wait_ms", "ms": 800}
+# show-config
+{"cmd":"snapshot"}

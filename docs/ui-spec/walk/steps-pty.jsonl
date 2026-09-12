@@ -1,0 +1,23 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open-pty", "command": ["/bin/sh", "-c", "echo walk pty; printf 'PS1> '; sleep 60"]}
+{"cmd": "wait_ms", "ms": 1200}
+# open-pty
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "ls -1"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 800}
+# typed
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "term.shell"}
+{"cmd": "wait_ms", "ms": 1500}
+# term-shell
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "term.shell_bottom"}
+{"cmd": "wait_ms", "ms": 1500}
+# term-bottom
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 60, "row": 10, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-pty
+{"cmd":"snapshot"}

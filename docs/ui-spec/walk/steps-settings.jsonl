@@ -1,0 +1,27 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.settings"}
+{"cmd": "wait_ms", "ms": 500}
+# open
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down3
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 200}
+# right-adjust
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "r"}
+{"cmd": "wait_ms", "ms": 200}
+# reset-row
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "pagedown"}
+{"cmd": "wait_ms", "ms": 200}
+# pagedown
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 60, "row": 10}
+{"cmd": "wait_ms", "ms": 200}
+# click-row
+{"cmd":"snapshot"}

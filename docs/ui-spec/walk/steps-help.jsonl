@@ -1,0 +1,19 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "f1"}
+{"cmd": "wait_ms", "ms": 600}
+# open
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down3
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "pagedown"}
+{"cmd": "wait_ms", "ms": 200}
+# pagedown
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "git"}
+{"cmd": "wait_ms", "ms": 300}
+# typed-git
+{"cmd":"snapshot"}

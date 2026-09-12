@@ -1,0 +1,37 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_integrations"}
+{"cmd": "wait_ms", "ms": 1500}
+# installed
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 800}
+# enter
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "integrations.show_marketplace"}
+{"cmd": "wait_ms", "ms": 2500}
+# marketplace
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# mkt-down3
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 10, "row": 7, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# mkt-rclick
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "integrations.show_in_dev"}
+{"cmd": "wait_ms", "ms": 1000}
+# dev
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "integrations.show_details"}
+{"cmd": "wait_ms", "ms": 800}
+# details
+{"cmd":"snapshot"}

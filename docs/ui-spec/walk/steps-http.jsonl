@@ -1,0 +1,32 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_http"}
+{"cmd": "wait_ms", "ms": 1500}
+# panel
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down3
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 800}
+# enter
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "requests/demo.http"}
+{"cmd": "wait_ms", "ms": 800}
+# request-pane
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "http.send"}
+{"cmd": "wait_ms", "ms": 4000}
+# send
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 10, "row": 5, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-row5
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "http.new_request"}
+{"cmd": "wait_ms", "ms": 500}
+# new-request
+{"cmd":"snapshot"}
