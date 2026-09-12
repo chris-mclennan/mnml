@@ -1,0 +1,21 @@
+# `u` lands on the restored text (vim's u_undoredo; `vim -es`): the
+# cursor the change started from when it lies within the changed block
+# (`4Gddu` → 4:1, `gg3>>u` → 1:1), else the first changed line.
+write a.txt "one\ntwo\nthree\nfour\nfive\nsix\n"
+open a.txt
+command editor.use_vim
+key 4
+key G
+key d
+key d
+key G
+key u
+expect screen contains "Ln 4/6 Col 1"
+key g
+key g
+key 3
+key >
+key >
+key G
+key u
+expect screen contains "Ln 1/6 Col 1"

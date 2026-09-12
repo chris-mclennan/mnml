@@ -336,6 +336,7 @@ pub const Buffer = struct {
         // A session the app ended without a key (a blur) closes before
         // this key's own snapshot lands.
         const undo_before = self.editor.doc.history.undoLen();
+        const cursor_before = self.editor.cursor;
         self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
@@ -344,9 +345,37 @@ pub const Buffer = struct {
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
+        self.stampUndoCursor(undo_before, cursor_before);
         self.syncInsertSession(undo_before);
         self.clampNormalCursor();
         return ev;
+    }
+
+    /// The undo entry a key pushed remembers where the change began:
+    /// the cursor the key started from, or the first changed byte when
+    /// that lies before it — vim's `uh_cursor` is taken after an operator
+    /// has moved to its area's start (`vim -es`: `Vjygvdu` → 1:1 though
+    /// `gv` left the cursor on line 2) — not where the op's own
+    /// checkpoint found it after the handler's motions. So `u` after
+    /// `3>>`, `dd` or `gvd` lands where the change began
+    /// (`undo.placeAfterHistoryHop`).
+    fn stampUndoCursor(self: *Buffer, undo_before: usize, cursor_before: usize) void {
+        const h = &self.editor.doc.history;
+        if (h.undoLen() <= undo_before) return;
+        var at = cursor_before;
+        if (h.undoTextAt(undo_before)) |old| {
+            const now = self.editor.bytes();
+            const n = @min(old.len, now.len);
+            var prefix: usize = 0;
+            while (prefix < n and old[prefix] == now[prefix]) prefix += 1;
+            // A change that starts at a line's `\n` (a deleted last
+            // line) begins on the line after it, where the cursor was.
+            const changed = if (prefix < old.len and old[prefix] == '\n') prefix + 1 else prefix;
+            const changed_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(changed, old.len)], '\n')) |i| i + 1 else 0;
+            const cursor_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(cursor_before, old.len)], '\n')) |i| i + 1 else 0;
+            if (changed_line_start < cursor_line_start) at = changed_line_start;
+        }
+        h.setUndoCursor(undo_before, at);
     }
 
     /// vim's Normal mode keeps the cursor ON a character: a motion or an
@@ -803,10 +832,13 @@ pub const Buffer = struct {
     /// recorded. A read-only document does nothing.
     pub fn runApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         if (self.doc.read_only) return .noop;
+        const undo_before = self.editor.doc.history.undoLen();
+        const cursor_before = self.editor.cursor;
         const ev = switch (cmd) {
             .macro_record_into => |reg| try self.macroToggle(reg, clip, false),
             else => try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
+        self.stampUndoCursor(undo_before, cursor_before);
         self.clampNormalCursor();
         return ev;
     }
@@ -1278,6 +1310,20 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2gUU", "a|bc\nde\nfg", "A|BC\nDE\nfg");
     try vim("3guu", "|AB\nCD\nEF\nGH", "|ab\ncd\nef\nGH");
     try vim("g~iw", "a|Bc d", "|AbC d");
+    // `u` lands on the restored text (vim `u_undoredo`, `vim -es`):
+    // the saved cursor when its line is within the changed block
+    // (`4Gddu` → 4:1), else the first changed line's first non-blank.
+    try vim("ddu", "a\nb\nc\n|d\ne", "a\nb\nc\n|d\ne");
+    try vim("ddggu", "a\nb\nc\n|d\ne", "a\nb\nc\n|d\ne");
+    try vim("3>>Gu", "|a\nb\nc\nd", "|a\nb\nc\nd");
+    try vim("xggu", "a\nb\n  c|d\ne", "a\nb\n  c|d\ne");
+    try vim("Gddggu", "a\nb\nc\n|d", "a\nb\nc\n|d");
+    try vim("ddu<c-r>", "a\n|b\nc", "a\n|c");
+    try vim("A!<esc>ggu", "a\n|b\nc", "a\n|b\nc");
+    // A Visual operator's change begins at the area's start, wherever
+    // the cursor sat in it (`vim -es`: `ggVjygvdu` → 1:1).
+    try vim("Vjygvdu", "|a\nb\nc\nd", "|a\nb\nc\nd");
+    try vim("jdkuu", "a\n|b\nc", "a\n|b\nc"); // `dk` is two entries here; the second `u` lands on the area's start
     // `is` / `as` (`:help is`): a sentence ends at `.` `!` `?` + white
     // space or at the paragraph's edge; `as` takes the space after it.
     try vim("dis", "One two. Th|ree four. Five", "One two. | Five"); // `is` keeps the space after (`vim -es`)
@@ -1492,7 +1538,7 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jvd", "|ab\ncd", "ab\n|d"); // `v` / `V` from V-BLOCK re-anchor at the cursor (Rust parity; vim keeps the anchor)
     try vim("<c-v>jVd", "a|b\ncd\ne", "ab\n|e");
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
-    try vim("<c-v>jdu", "|ab\ncd", "ab\n|cd"); // one undo step; the snapshot cursor comes back
+    try vim("<c-v>jdu", "|ab\ncd", "|ab\ncd"); // `u` lands at the block's top-left, where the change began (`vim -es`)
 }
 
 test "macro registers are shared through the clipboard: `qa` in one buffer, `@a` in another" {

@@ -1365,6 +1365,26 @@ test "ex: a Visual `:` range covers the cursor's line and the command leaves Vis
     try testing.expect(e.buf.editor.anchor == null);
 }
 
+test "ex: u after a ranged :d from far away lands on the restored lines, not where the cursor was" {
+    var f = try Fixture.init("one\ntwo\nthree\nfour\nfive\nsix\nseven");
+    defer f.deinit();
+    try command.run(&f.app, .{ .static = .@"editor.use_vim" });
+    const Key = @import("../core/key.zig").Key;
+    const e = f.app.activeEditor().?;
+    try e.buf.doc.setMarkPos('a', .{ .row = 1, .col = 0 });
+    try e.buf.doc.setMarkPos('b', .{ .row = 3, .col = 0 });
+    try dispatch.key(&f.app, Key.char('G'));
+    try f.ex("'a,'bd");
+    try testing.expectEqualStrings("one\nfive\nsix\nseven", f.text());
+    // The saved cursor (line 7) is outside the changed block: `u` goes
+    // to the first restored line's first non-blank (vim: `:'a,'bd` from
+    // line 24, then `u` → line 5).
+    try dispatch.key(&f.app, Key.char('u'));
+    try testing.expectEqualStrings("one\ntwo\nthree\nfour\nfive\nsix\nseven", f.text());
+    try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+    try testing.expectEqual(@as(usize, 4), e.buf.editor.cursor);
+}
+
 test "ex: write, abbreviations, set, registers, unknown verbs" {
     var f = try Fixture.init("hi");
     defer f.deinit();
