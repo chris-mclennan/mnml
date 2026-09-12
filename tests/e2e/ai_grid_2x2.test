@@ -1,0 +1,32 @@
+# env: PATH=${MNML_SHIMS}:${PATH}
+# The AI grid (src/app/ai_grid.zig): in grid mode the first two Claude
+# sessions sit side by side; the third turns the pair into a 2×2 with
+# an open slot bottom-right — the `+ Add Claude Code` card — and the
+# fourth fills it. `tools/shims/claude` stands in for the CLI (it
+# sleeps), so every strip reads `claude`. At 120×40 with the tree the
+# body is 89 columns: two 43-column strips share a row with the
+# divider between them; the horizontal divider under the top row runs
+# the body's width; the bottom row's strip sits beside the slot's blank
+# first row until the fourth session takes the slot.
+command ai.claude_code_new
+wait 300
+expect pane claude
+expect screen lacks "│                          │─────────────────────────────────────────────────────────────────────────────────────────"
+command ai.claude_code_new
+wait 300
+expect pane claude
+expect screen contains "claude 󰅖   󰐕               󱸀         │  claude 󰅖"
+expect screen lacks "│                          │─────────────────────────────────────────────────────────────────────────────────────────"
+expect screen lacks "Add Claude Code"
+command ai.claude_code_new
+wait 300
+expect screen contains "claude 󰅖   󰐕               󱸀         │  claude 󰅖"
+expect screen contains "│                          │─────────────────────────────────────────────────────────────────────────────────────────"
+expect screen contains "        │                                            "
+expect screen contains "│                          │▌                                           │             󰐕 Add Claude Code"
+command ai.claude_code_new
+wait 300
+expect pane claude
+expect screen lacks "Add Claude Code"
+expect screen lacks "        │                                            "
+expect screen contains "│                          │─────────────────────────────────────────────────────────────────────────────────────────"

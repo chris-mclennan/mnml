@@ -206,7 +206,7 @@ otherwise. Copy what you need; leave the rest out.
         // shows its chip, and a CLI found on PATH shows its chip when named
         // here (.claude_code | .codex | .both). view.tab_bar_ai_* set it.
         .tab_bar_ai_icon = .claude_code,
-        .ai_layout_mode = .grid, // .grid | .tabs
+        .ai_layout_mode = .grid, // .grid (Claude tiles 2×2 → 4×2, eight per screen) | .tabs
         .ai_chip_use_mnml_glyphs = false, // deprecated, read by nothing: the chips always paint mnml's baked marks
         .auto_show_sessions_on_ai_activate = true,
         .git_section_default_expanded = false,
