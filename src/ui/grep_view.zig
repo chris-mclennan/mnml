@@ -126,10 +126,17 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
 pub const context_cells: u16 = 40;
 
 fn paintHit(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype) void {
+    paintHitWith(ui, r, h, disabled, bg, "   ");
+}
+
+/// The same row with the caller's leading mark (the SEARCH section's
+/// two cells, after the list panel's marker column). A disabled hit
+/// paints its own mark whatever `mark` is.
+pub fn paintHitWith(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype, mark_in: []const u8) void {
     const th = ui.theme;
     const dim = Theme.onBg(th.muted, bg);
     const fg = if (disabled) dim else Theme.onBg(th.fg, bg);
-    const mark: []const u8 = if (disabled) (if (ui.ascii) " - " else " ○ ") else "   ";
+    const mark: []const u8 = if (disabled) (if (ui.ascii) " - " else " ○ ") else mark_in;
     var x = r.x;
     x += ui.putStr(x, r.y, r.w, mark, dim);
     const pos = ui.fmt("{d}:{d}  ", .{ h.line, h.col + 1 });
