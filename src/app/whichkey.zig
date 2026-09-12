@@ -57,6 +57,8 @@ pub const root: Node = .{
                 cmd('g', .@"find.grep", "grep"),
                 cmd('m', .@"lsp.format", "format buffer"),
                 cmd('r', .@"picker.recent", "recent"),
+                cmd('o', .@"picker.recent", "oldfiles"),
+                cmd('z', .@"find.find", "find in current buffer"),
             }),
             cmd('/', .@"editor.toggle_line_comment", "toggle comment"),
             cmd('n', .@"view.toggle_line_numbers", "line numbers"),
@@ -65,6 +67,11 @@ pub const root: Node = .{
             cmd('q', .@"buffer.close", "close buffer"),
             group('c', "+nvchad", &.{
                 cmd('h', .@"view.cheatsheet", "cheatsheet (all chords)"),
+                cmd('a', .@"lsp.code_action", "code action"),
+                cmd('m', .@"git.graph", "git commits"),
+            }),
+            group('r', "+lsp", &.{
+                cmd('a', .@"lsp.rename", "rename symbol"),
             }),
             group('b', "+buffer", &.{
                 cmd('n', .@"buffer.next", "next"),
@@ -130,6 +137,7 @@ pub const root: Node = .{
                 cmd('b', .@"git.blame_toggle", "blame toggle"),
                 cmd('l', .@"git.graph", "commit graph"),
                 cmd('s', .@"git.status_pane", "status / staging"),
+                cmd('t', .@"git.status_pane", "git status"),
                 cmd('m', .@"git.ai_commit", "ai (Claude) commit message"),
                 cmd('M', .@"git.ai_recompose", "ai rewrite HEAD msg"),
                 cmd('x', .@"git.codex_commit", "codex commit message"),
