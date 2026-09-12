@@ -1593,6 +1593,11 @@ pub const App = struct {
     /// repeats on every keystroke of a navigation (`tab 2/3`) so the
     /// column never fills with its history.
     pub fn toastReplace(self: *App, id: []const u8, comptime fmt: []const u8, args: anytype) void {
+        self.toastReplaceLevel(id, .info, fmt, args);
+    }
+
+    /// `toastReplace` at a level.
+    pub fn toastReplaceLevel(self: *App, id: []const u8, level: ToastLevel, comptime fmt: []const u8, args: anytype) void {
         if (self.in_global) return;
         self.dismissToast(id);
         const s = std.fmt.allocPrint(self.gpa, fmt, args) catch return;
@@ -1601,9 +1606,9 @@ pub const App = struct {
             self.gpa.free(s);
             return;
         };
-        self.messages.record(self.gpa, s, .info, self.now_ms) catch {};
+        self.messages.record(self.gpa, s, level, self.now_ms) catch {};
         self.capTransient();
-        self.toasts.append(self.gpa, .{ .text = s, .level = .info, .expires_ms = self.now_ms + toast_ttl_ms, .id = owned_id }) catch {
+        self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms, .id = owned_id }) catch {
             self.gpa.free(s);
             self.gpa.free(owned_id);
             return;

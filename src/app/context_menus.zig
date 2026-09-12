@@ -330,7 +330,14 @@ pub fn openToastMenu(app: *App, at: usize, x: u16, y: u16) Allocator.Error!void 
     app.toast_ctx = at;
     // // changed (git-more2): a failed git op's toast leads with the command log.
     const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, @import("git.zig").log_toast_id) else false;
-    const rows = if (is_git_log) try items(app, &.{
+    // The 0.2-manifests notice: *Don't show again* persists the flag.
+    const is_toml_notice = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, @import("integrations.zig").toml_toast_id) else false;
+    const rows = if (is_toml_notice) try items(app, &.{
+        .{ .label = "Don't show again", .action = .{ .command = .@"integrations.dismiss_toml_notice" } },
+        .{ .label = "Dismiss", .action = .{ .command = .@"toast.dismiss_clicked" }, .separator_before = true },
+        .{ .label = "Copy text", .action = .{ .command = .@"toast.copy_clicked" } },
+        .{ .label = "Dismiss all", .action = .{ .command = .@"toast.dismiss_all" }, .separator_before = true },
+    }) else if (is_git_log) try items(app, &.{
         .{ .label = "Show in the command log", .action = .{ .command = .@"git.command_log" } },
         .{ .label = "Dismiss", .action = .{ .command = .@"toast.dismiss_clicked" }, .separator_before = true },
         .{ .label = "Copy text", .action = .{ .command = .@"toast.copy_clicked" } },
