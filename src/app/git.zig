@@ -583,6 +583,8 @@ pub const State = struct {
     /// — and `switchTo` MOVES a rail between the two rather than
     /// copying, so the palette's rows stay valid across the switch.
     rails: std.AutoHashMapUnmanaged(u32, RepoRail) = .empty,
+    /// The commit prompt's title: the prompt keeps the slice.
+    commit_title: [64]u8 = undefined,
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .rail_snapshot = alloc.SnapshotArena.init(gpa) };
@@ -1588,7 +1590,33 @@ pub fn blameLabels(app: *App, pane: PaneId, arena: Allocator) Allocator.Error!?[
 
 // ─── panes: opening + refreshing ────────────────────────────────────────
 
+/// Where a new pane goes: a tab of the focused leaf (Rust
+/// `reveal_pane`), or a leaf of its own beside it (`split_leaf_with`).
+pub const Placement = enum { tab, beside };
+
+/// Rust `split_leaf_with`: a new pane opens in a leaf to the right of
+/// the active one, the active leaf's tabs staying on the left, when
+/// that leaf has the room — forty cells each — and as a tab of it when
+/// it has not. A pane already in the layout is revealed where it is;
+/// with no active leaf the pane is the layout.
+pub fn showBeside(app: *App, id: PaneId) void {
+    const layout = app.layouts.current();
+    if (layout.leafOf(id) != null) return app.showPane(id);
+    const cur = app.active orelse return app.showPane(id);
+    if (layout.leafOf(cur) == null or activePaneWidth(app) < 2 * min_split_w) return app.showPane(id);
+    _ = layout.split(cur, .horizontal, id) catch return app.showPane(id);
+    app.afterSplitChange();
+    app.setActive(id);
+}
+
+/// A half of a split needs this much: the graph's toolbar, a diff's hunk row.
+const min_split_w: usize = 40;
+
 pub fn openDiff(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]const u8, rev: ?[]const u8, text: ?[]const u8) CommandError!PaneId {
+    return openDiffPlaced(app, repo, scope, rel, rev, text, .tab);
+}
+
+pub fn openDiffPlaced(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]const u8, rev: ?[]const u8, text: ?[]const u8, placement: Placement) CommandError!PaneId {
     const gpa = app.gpa;
     // An open pane on the same diff is revealed and refreshed.
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
@@ -1625,7 +1653,10 @@ pub fn openDiff(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]
     if (rev) |v| dp.rev = try gpa.dupe(u8, v);
     const id = try app.panes.add(.{ .diff = dp });
     dp = undefined;
-    app.showPane(id);
+    switch (placement) {
+        .tab => app.showPane(id),
+        .beside => showBeside(app, id),
+    }
     const pane = app.panes.get(id).?;
     try refreshDiffWith(app, &pane.diff, text);
     return id;
@@ -1768,7 +1799,8 @@ pub fn openStatusPane(app: *App, repo: *client.Repo) CommandError!PaneId {
         else => {},
     };
     const id = try app.panes.add(.{ .git_status = .{ .repo = repo.id } });
-    app.showPane(id);
+    // Rust `open_git_status`: a split to the right of the focused leaf.
+    showBeside(app, id);
     return id;
 }
 
@@ -2177,6 +2209,38 @@ pub fn activeDiff(app: *App) ?*DiffPane {
 }
 
 // ─── prompts + confirms ─────────────────────────────────────────────────
+
+/// The graph paints its detail column — the commit box with it — from
+/// eighty cells (`git_graph_view.draw`); narrower, the box is nowhere
+/// to be typed into. Judged by the active repo's graph when it has been
+/// painted, else by the active pane's width.
+pub fn graphPaintsBox(app: *App) bool {
+    const repo = app.git.activeRepo() orelse return false;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .git_graph => |*g| if (g.repo == repo.id and g.body.w > 0) return g.body.w >= 80,
+        else => {},
+    };
+    return activePaneWidth(app) >= 80;
+}
+
+/// The active pane's painted width at the last render — the git panes
+/// keep their own rect; the rest is the editor's column count.
+fn activePaneWidth(app: *App) usize {
+    const id = app.active orelse return app.pane_cols;
+    const p = app.panes.get(id) orelse return app.pane_cols;
+    return switch (p.*) {
+        .git_graph => |*g| if (g.body.w > 0) g.body.w else app.pane_cols,
+        .diff => |*d| if (d.body.w > 0) d.body.w else app.pane_cols,
+        else => app.pane_cols,
+    };
+}
+
+/// Rust `open_commit_prompt`'s title: what is staged, or that nothing is.
+pub fn commitPromptTitle(app: *App) []const u8 {
+    const staged: u32 = if (app.git.status) |st| st.staged else 0;
+    if (staged == 0) return "Commit message (nothing staged \u{2014} stage hunks first)";
+    return std.fmt.bufPrint(&app.git.commit_title, "Commit message ({d} staged)", .{staged}) catch "Commit message";
+}
 
 pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.overlay.deinit(app.gpa);
@@ -3691,7 +3755,7 @@ pub fn commitFromTextarea(app: *App, g: *GraphPane) CommandError!void {
     if (g.wip_ai) return app.diag.fail(app.frame.allocator(), "AI message still streaming — wait for it to finish", .{});
     const text = std.mem.trim(u8, g.wip_text.items, " \t\r\n");
     if (text.len == 0) {
-        openPrompt(app, .commit, "Commit message");
+        openPrompt(app, .commit, commitPromptTitle(app));
         return;
     }
     const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
@@ -3881,7 +3945,8 @@ pub fn showSelectedCommit(app: *App, g: *GraphPane) CommandError!void {
     }
     const c = g.selected() orelse return app.diag.fail(app.frame.allocator(), "graph: no commit selected", .{});
     const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
-    _ = try openDiff(app, repo, .commit, null, c.hash, null);
+    // Rust `open_selected_commit_diff`: a split to the right of the graph.
+    _ = try openDiffPlaced(app, repo, .commit, null, c.hash, null, .beside);
 }
 
 /// A click in the graph pane (`.script_hit`): a toolbar button runs
@@ -4856,6 +4921,79 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     try testing.expectEqualStrings("blame: off", f.app.lastToast().?);
 }
 
+test "git.status_pane opens beside the graph — Rust's split to the right, the graph's tabs kept on the left — a second call reveals it there, a pane too narrow for two makes it a tab, and with nothing open it is the only leaf; git.diff_file from an editor splits the same way and the worktree diff stays a tab" {
+    var f = try Fixture.init(140, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first commit" });
+    try f.write("a.txt", "one\ntwo\n");
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(2000);
+    const graph_id = f.app.active.?;
+    testing.allocator.free(try f.screen());
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    const status_id = f.app.active.?;
+    try testing.expect(f.app.panes.get(status_id).?.* == .git_status);
+    const layout = f.app.layouts.current();
+    const graph_leaf = layout.leafOf(graph_id).?;
+    const status_leaf = layout.leafOf(status_id).?;
+    try testing.expect(graph_leaf != status_leaf);
+    const parent = layout.parentOf(status_leaf).?;
+    try testing.expectEqual(parent, layout.parentOf(graph_leaf).?);
+    const split = layout.nodes.items[parent].split;
+    try testing.expect(split.dir == .horizontal);
+    try testing.expectEqual(graph_leaf, split.first);
+    try testing.expectEqual(status_leaf, split.second);
+    try testing.expectEqual(graph_id, layout.leaf(graph_leaf).?.active);
+    // Again: revealed where it is, no second split.
+    f.app.setActive(graph_id);
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    try testing.expectEqual(status_id, f.app.active.?);
+    try testing.expectEqual(status_leaf, layout.leafOf(status_id).?);
+    // Too narrow for two: a tab of the graph's leaf.
+    try f.app.closePane(status_id, true);
+    f.app.setActive(graph_id);
+    activeGraph(&f.app).?.body.w = 60;
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    try testing.expectEqual(layout.leafOf(graph_id).?, layout.leafOf(f.app.active.?).?);
+    try testing.expect(f.app.panes.get(f.app.active.?).?.* == .git_status);
+
+    // Nothing open: the pane is the layout.
+    var f2 = try Fixture.init(140, 30);
+    defer f2.deinit();
+    try f2.sh(&.{ "init", "-q", "-b", "main" });
+    try f2.write("a.txt", "one\n");
+    try f2.sh(&.{ "add", "a.txt" });
+    try f2.sh(&.{ "commit", "-q", "-m", "first commit" });
+    try f2.write("a.txt", "one\ntwo\n");
+    f2.app.tree.visible = false;
+    try testing.expect(f2.app.active == null);
+    try command.run(&f2.app, .{ .static = .@"git.status_pane" });
+    const l2 = f2.app.layouts.current();
+    const only = l2.leafOf(f2.app.active.?).?;
+    try testing.expectEqual(only, l2.root.?);
+    try f2.app.closePane(f2.app.active.?, true);
+    // git.diff_file from the editor: a split beside it; git.diff stays a tab.
+    const abs = try std.fs.path.join(testing.allocator, &.{ f2.root, "a.txt" });
+    defer testing.allocator.free(abs);
+    const ed = try f2.app.openPath(abs);
+    testing.allocator.free(try f2.screen());
+    try command.run(&f2.app, .{ .static = .@"git.diff_file" });
+    try f2.settle(2000);
+    const df = f2.app.active.?;
+    try testing.expect(f2.app.panes.get(df).?.* == .diff);
+    try testing.expect(l2.leafOf(df).? != l2.leafOf(ed).?);
+    try testing.expectEqual(l2.parentOf(l2.leafOf(ed).?).?, l2.parentOf(l2.leafOf(df).?).?);
+    try command.run(&f2.app, .{ .static = .@"git.diff" });
+    try f2.settle(2000);
+    const wt = f2.app.active.?;
+    try testing.expect(wt != df);
+    try testing.expectEqual(l2.leafOf(df).?, l2.leafOf(wt).?);
+}
+
 test "the graph pane lays out the log, and enter opens the commit's diff" {
     var f = try Fixture.init(140, 30);
     defer f.deinit();
@@ -4902,6 +5040,82 @@ test "the graph pane lays out the log, and enter opens the commit's diff" {
     txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "+ two") != null);
     testing.allocator.free(txt);
+}
+
+test "git.commit in git mode lands on the graph's commit box — from an editor tab too — focused on the WIP row, and Ctrl+Enter sends the typed message to git commit -m; a box with a message commits it outright; outside git mode, or under eighty cells, it is the modal titled with the staged count" {
+    var f = try Fixture.init(140, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first commit" });
+    try f.write("a.txt", "one\ntwo\n");
+    try f.sh(&.{ "add", "a.txt" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    const graph_id = f.app.active.?;
+    testing.allocator.free(try f.screen());
+    // An editor tab beside the graph has the focus: the command still
+    // lands on the box, no modal.
+    const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "a.txt" });
+    defer testing.allocator.free(abs);
+    _ = try f.app.openPath(abs);
+    try testing.expect(f.app.active.? != graph_id);
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try testing.expect(f.app.overlay == .none);
+    try testing.expectEqual(graph_id, f.app.active.?);
+    const g = activeGraph(&f.app).?;
+    try testing.expect(g.wip_focused);
+    try testing.expect(g.wipSelected());
+    try testing.expect(f.app.focus == .pane and f.app.focus.pane == graph_id);
+    // The typed message goes to the box, and Ctrl+Enter to git.
+    for ("walk: test") |ch| try f.app.handle(.{ .key = Key.char(ch) });
+    try testing.expectEqualStrings("walk: test", g.wip_text.items);
+    try f.app.handle(.{ .key = .{ .code = .enter, .mods = .{ .ctrl = true } } });
+    try f.settle(2000);
+    try f.settle(2000);
+    const subject = try f.out(&.{ "log", "-1", "--format=%s" });
+    defer testing.allocator.free(subject);
+    try testing.expectEqualStrings("walk: test", subject);
+    try testing.expectEqualStrings("", g.wip_text.items);
+    // A box already holding a message: `git.commit` commits it (Rust
+    // `commit_from_active_wip_textarea_or_prompt`).
+    try f.write("a.txt", "one\ntwo\nthree\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    syncWip(&f.app, g);
+    g.cursor = 0;
+    try testing.expect(g.wipSelected());
+    try g.wip_text.appendSlice(testing.allocator, "second: typed");
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try f.settle(2000);
+    try f.settle(2000);
+    const second = try f.out(&.{ "log", "-1", "--format=%s" });
+    defer testing.allocator.free(second);
+    try testing.expectEqualStrings("second: typed", second);
+    // Under eighty cells the graph paints no detail column, so no box:
+    // the modal, titled with what is staged.
+    try f.write("a.txt", "one\ntwo\nthree\nfour\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    g.body.w = 70;
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expectEqualStrings("Commit message (1 staged)", f.app.overlay.prompt.state.title);
+    f.app.overlay.deinit(f.app.gpa);
+    f.app.overlay = .none;
+    try f.sh(&.{ "reset", "-q" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    // Outside git mode: the modal, nothing staged.
+    git_palette.leave(&f.app);
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expectEqualStrings("Commit message (nothing staged \u{2014} stage hunks first)", f.app.overlay.prompt.state.title);
 }
 
 test "the WIP row: a dirty tree puts it first, its buttons stage / unstage through the worker, and the cursor keeps its commit" {

@@ -859,9 +859,14 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
             pen.put(rightAlign(arena, c.author, cols.author, ui.ascii) catch "", Theme.withFg(base, pal.comment));
         }
         if (cols.age > 0) {
+            // The screen keeps the grapheme slices it is handed until
+            // the frame is flushed, so the date must live on the frame
+            // arena: `rightAlign` hands an 11-cell column the formatted
+            // text itself, and a stack buffer would be gone by then.
             var buf: [16]u8 = undefined;
+            const date = arena.dupe(u8, commitDateTime(&buf, c.time, offset_hours)) catch "";
             pen.put(" \u{2502} ", sep);
-            pen.put(rightAlign(arena, commitDateTime(&buf, c.time, offset_hours), cols.age, ui.ascii) catch "", Theme.withFg(base, pal.comment));
+            pen.put(rightAlign(arena, date, cols.age, ui.ascii) catch "", Theme.withFg(base, pal.comment));
         }
         if (cols.sha > 0) {
             pen.put(" \u{2502} ", sep);
@@ -1602,6 +1607,49 @@ test "the spec's rows at 95 wide: the toolbar, the column header, the WIP row, t
     try testing.expect(f.fgEql(52, 3, .{ .fg = f.theme.palette.orange }));
     try testing.expect(f.bgEql(10, 2, .{ .bg = f.theme.palette.bg2 }));
     try testing.expect(f.bgEql(10, 3, .{ .bg = f.theme.palette.bg_dark }));
+}
+
+/// Reuses the stack the frame just left: a slice a painter kept into
+/// its own frame reads as this junk afterwards.
+noinline fn clobberStack() void {
+    var junk: [64 * 1024]u8 = undefined;
+    @memset(&junk, 0xFF);
+    std.mem.doNotOptimizeAway(&junk);
+}
+
+test "the date column at the walk's pane widths — 96 cells (120 columns) and 56 (80 columns) — is the 11-cell form, and every date paints whole after the frame's stack is reused: no U+FFFD" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const cs = [_]parse.Commit{
+        .{ .hash = "7ce273514abc", .parents = &.{"34b03ced4abc"}, .author = "Chris", .time = 1757188800, .refs = "", .subject = "merge feature" },
+        .{ .hash = "34b03ced4abc", .parents = &.{}, .author = "Chris", .time = 1757130900, .refs = "", .subject = "init" },
+    };
+    // At 96 the detail column takes a third; eight lane cells leave the
+    // list exactly the room the walk's merge-heavy graph did. At 56
+    // there is no detail column and a linear history lands there.
+    const widths = [_]struct { w: u16, lanes: usize }{ .{ .w = 96, .lanes = 8 }, .{ .w = 56, .lanes = 1 } };
+    for (widths) |case| {
+        const cells = try arena.alloc(LaneCell, case.lanes);
+        @memset(cells, .{ .g = .node });
+        const lanes = [_]Lane{ .{ .lane = 0, .cells = cells }, .{ .lane = 0, .cells = cells } };
+        var f = try Fixture.init(case.w, 12);
+        defer f.deinit();
+        var st: State = .{};
+        _ = draw(f.ui(), 1, f.full(), &st, .{ .commits = &cs, .lanes = &lanes, .order = try identity(arena, 2), .cursor = 0, .focused = true, .now = 1757260800 });
+        clobberStack();
+        var buf: [1024]u8 = undefined;
+        const header = try arena.dupe(u8, f.row(1, &buf));
+        // The precondition: the 11-cell column, its header cut from the left.
+        try testing.expect(std.mem.indexOf(u8, header, "\u{2026}E / TIME") != null);
+        const r2 = try arena.dupe(u8, f.row(2, &buf));
+        const r3 = try arena.dupe(u8, f.row(3, &buf));
+        try testing.expect(std.unicode.utf8ValidateSlice(r2));
+        try testing.expect(std.unicode.utf8ValidateSlice(r3));
+        try testing.expect(std.mem.indexOf(u8, r2, "\u{FFFD}") == null);
+        try testing.expect(std.mem.indexOf(u8, r2, "09/06 20:00") != null);
+        try testing.expect(std.mem.indexOf(u8, r3, "09/06 03:55") != null);
+    }
 }
 
 test "the detail column's width: the drag override wins, then the config, else a third clamped to 28..60; under 80 there is none" {

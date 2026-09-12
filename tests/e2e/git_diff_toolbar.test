@@ -1,8 +1,10 @@
 # The diff pane's toolbars (src/ui/diff_view.zig, src/ui/git_toolbar.zig):
 # the banner's Stage chip stages the hunk, Discard asks first, the
 # toolbar's Wrap continues a long line on the next row, and its `×`
-# closes the pane. The pane sits at column 31 (the tree is 30 wide):
-# row 2 is the git toolbar, row 3 the diff toolbar, row 4 the banner.
+# closes the pane. `git.diff_file` opens the diff beside the editor
+# (Rust's `open_diff_file` split); `view.close_others` keeps the diff alone so
+# the pane sits at column 31 (the tree is 30 wide): row 2 is the git
+# toolbar, row 3 the diff toolbar, row 4 the banner.
 shell git init -q
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
@@ -14,6 +16,7 @@ shell printf "fn beta() {}\n" > code.rs
 shell printf "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL_MARKER_END\n" > long.txt
 open code.rs
 command git.diff_file
+command view.close_others
 expect screen contains "Hunk 1/1  code.rs"
 expect screen contains "Stage   Discard"
 # Discard asks first; esc keeps the hunk.
@@ -33,15 +36,15 @@ expect pane "diff: worktree"
 expect screen contains "Hunk 1/1  long.txt"
 expect screen lacks "fn beta"
 # The `×` closes the pane; the file diff is what is left, and its own
-# `×` leaves the editor.
+# `×` leaves nothing (the editor went with `view.close_others`).
 click 117 3
 expect pane "diff: code.rs"
 click 117 3
-expect pane code.rs
 expect screen lacks "Hunk   Inline"
 # Wrap on a long line: the tail is clipped until the toggle is on.
 open long.txt
 command git.diff_file
+command view.close_others
 expect screen contains "Hunk 1/1  long.txt"
 expect screen lacks "MARKER_END"
 click 60 3
