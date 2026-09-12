@@ -1,0 +1,72 @@
+# The SEARCH section (src/app/search_section.zig): the rail's Search
+# row opens Rust's sidebar section — a query field, `N hits (git grep)`
+# naming the backend, the hits by file under a fold header — Enter on a
+# hit opens the file at its line, the flags rerun, a right-click on a
+# row opens its menu, and Esc clears the query. `git grep` answers from
+# the tracked files only: the ignored log and the untracked scratch
+# file never show. The grep pane stays reachable as *Open as pane*.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write src/a.zig "const alpha = 1;\nconst beta = alpha + alpha;\n"
+write docs/b.txt "Alpha at the top\nnothing here\n"
+write .gitignore "*.log\n"
+shell git add .
+shell git commit -q -m "seed"
+write build/out.log "alpha alpha\n"
+write scratch.txt "alpha untracked\n"
+open src/a.zig
+command view.activity_search
+expect screen contains " SEARCH"
+expect screen contains "Aa \b .*"
+expect screen contains "Enter to run"
+type alpha
+key enter
+wait 1500
+expect screen contains "3 hits (git grep)"
+expect screen contains "src/a.zig"
+expect screen contains "docs/b.txt"
+expect screen contains "1:7  const alpha = 1;"
+expect screen lacks "out.log"
+expect screen lacks "scratch.txt"
+# ↓ from the query lands on the first hit (docs/b.txt:1 — git grep
+# orders by path); Enter with an empty query opens it — Esc clears first.
+key down
+key esc
+key enter
+expect screen contains "Ln 1/"
+expect pane b.txt
+# Back in the section (the query is empty: one Esc leaves it for the
+# rows): h folds the file, its hits leave the rows; l opens it.
+command view.activity_search
+key esc
+key g
+key down
+key h
+expect screen lacks "1:1  Alpha at the top"
+expect screen contains "docs/b.txt (1)"
+key l
+expect screen contains "1:1  Alpha at the top"
+# The whole-word flag reruns: `alph` inside `alpha` is no word.
+key /
+type alph
+key enter
+wait 1500
+expect screen contains "3 hits (git grep)"
+command search.toggle_whole_word
+wait 1500
+expect screen contains "0 hits (git grep)"
+command search.toggle_whole_word
+wait 1500
+expect screen contains "3 hits (git grep)"
+# A row's right-click: its menu, titled path:line.
+rightclick 12 7
+expect screen contains "Open to the side"
+expect screen contains "Copy path:line"
+expect screen contains "Open as pane"
+key esc
+# The pane door: the same query in a grep pane.
+command search.open_pane
+wait 1500
+expect screen contains "SEARCH · "
+expect screen contains "\"alph\""

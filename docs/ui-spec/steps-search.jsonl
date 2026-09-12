@@ -1,0 +1,5 @@
+{"cmd": "run-command", "id": "view.activity_search"}
+{"cmd": "wait_ms", "ms": 300}
+{"cmd": "type", "text": "t"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 1500}
