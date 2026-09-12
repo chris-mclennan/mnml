@@ -83,10 +83,13 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
                 .detail = "click shows · middle-click closes · right-click: tab menu · drag to move",
             };
         },
-        .row => |pr| .{
-            .title = try f.fmt(arena, "{s} row {d}", .{ upper(arena, @tagName(pr.panel)), pr.idx + 1 }),
-            .detail = "click selects · double-click / Enter opens · right-click: row menu",
-        },
+        .row => |pr| if (pr.panel == .sessions and try @import("../sessions.zig").hoverTip(app, arena, pr.idx) != null)
+            (try @import("../sessions.zig").hoverTip(app, arena, pr.idx)).?
+        else
+            .{
+                .title = try f.fmt(arena, "{s} row {d}", .{ upper(arena, @tagName(pr.panel)), pr.idx + 1 }),
+                .detail = "click selects · double-click / Enter opens · right-click: row menu",
+            },
         .kebab => |pr| .{
             .title = try f.fmt(arena, "{s} row menu", .{upper(arena, @tagName(pr.panel))}),
             .detail = "click opens the row's actions",

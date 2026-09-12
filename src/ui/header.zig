@@ -174,6 +174,17 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     const gap: u16 = if (p.show_refresh or p.new_chip) 1 else 0;
     const mode_x = refresh_x -| (mode_w + gap);
     const title_end = if (mode_text != null) mode_x else refresh_x;
+    // // changed (sessions-card): the extra chips are laid before the
+    // title is painted, so the subtitle can give way to them — the
+    // count is nice, a chip is a button (the ladder's rule 2).
+    var extra_total: u16 = 0;
+    for (p.extra) |e| if (p.pane != null or e.kind != null) {
+        extra_total += ui.width(e.text) + 1;
+    };
+    if (sub != null and extra_total > 0 and title_end < area.x + label_w + sub_w + 2 + extra_total) {
+        sub = null;
+        sub_w = 0;
+    }
 
     var x = area.x + 1;
     x += ui.putStr(x, y, title_end -| x, p.label, labelStyle(t, p.bg));
