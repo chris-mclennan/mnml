@@ -87,7 +87,8 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `lsp.prev_diagnostic` | `[ d` | (new) | vim | Neovim [d |
 | `lsp.next_diagnostic` | `] d` | (new) | vim | Neovim ]d |
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
-| `file.copy` / `file.cut` / `file.paste` | `y y` / `d d` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot move a file (the property `ctrl+v` lacks); a stray key between the two cancels. `D` duplicates in both profiles |
+| `file.copy` / `file.paste` | `y y` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot copy a file; a stray key between the two cancels. `D` duplicates in both profiles |
+| `file.new` / `file.rename` / `file.delete` / `file.cut` / `tree.refresh` / `tree.expand_all` / `tree.collapse_all` | `a` / `r` / `d` / `x` / `R` / `E` / `W` | (new) | vim, tree focus only | nvim-tree's default `on_attach` verbs (create, rename, delete — a confirm box — cut, refresh, expand all, collapse all); `d d` cut gave way to `d` delete. The standard profile keeps `r` = refresh and none of the others |
 
 ## Sections and columns
 

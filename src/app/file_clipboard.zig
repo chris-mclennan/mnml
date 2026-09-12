@@ -335,7 +335,7 @@ test "a Files pane's marks are the subject; the standard chords stage and paste;
     try t.expect(!app.file_clipboard.cut);
 }
 
-test "the tree: Ctrl+X/C/V fire in both profiles; vim's yy / dd / P are two-key, a stray key cancels the pending verb" {
+test "the tree: Ctrl+X/C/V fire in both profiles; vim's yy / P are two-key (a stray key cancels), x cuts as nvim-tree's does" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     const root = try realRoot(&tmp, t.allocator);
@@ -352,15 +352,14 @@ test "the tree: Ctrl+X/C/V fire in both profiles; vim's yy / dd / P are two-key,
     try app.handle(.{ .key = Key.ctrl('c') });
     try t.expectEqual(@as(usize, 1), app.file_clipboard.paths.items.len);
     try t.expect(!app.file_clipboard.cut);
-    // dd cuts; a stray key between the two d's cancels.
-    try app.handle(.{ .key = Key.char('d') });
-    try t.expectEqual(@as(u8, 'd'), app.tree.pending.?);
+    // yy copies; a stray key between the two y's cancels.
+    try app.handle(.{ .key = Key.char('y') });
+    try t.expectEqual(@as(u8, 'y'), app.tree.pending.?);
     try app.handle(.{ .key = Key.char('j') });
     try t.expect(app.tree.pending == null);
-    try t.expect(!app.file_clipboard.cut);
+    // `x` cuts (nvim-tree's key; `d` is its delete).
     app.tree.cursor = app.tree.rowOf("a.txt").?;
-    try app.handle(.{ .key = Key.char('d') });
-    try app.handle(.{ .key = Key.char('d') });
+    try app.handle(.{ .key = Key.char('x') });
     try t.expect(app.file_clipboard.cut);
     // P pastes into lib.
     app.tree.cursor = app.tree.rowOf("lib").?;
