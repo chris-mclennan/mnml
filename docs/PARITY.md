@@ -93,6 +93,7 @@ source on 2026-09-07; the rows they touched carry the new pointers.
 | `menu-bar` | 2026-09-06 | row 0 is Rust's `draw_palette_bar` cell for cell (`src/ui/menu_bar.zig`), the ten menus (`src/app/menu_bar.zig`), F10 / Alt+letter; the old bar's stress copy and green Marketplace `+` are gone — the Rust row shows neither |
 | `editor-panes` | 2026-09-06 | the bufferline chips, the breadcrumb row, the git toolbar (`src/ui/git_toolbar.zig`), the diff pane's three views, the request pane's boxes |
 | `git-mode` | 2026-09-07 | the Git section takes the sidebar as the git palette (`src/app/git_palette.zig`, `src/ui/git_palette.zig`), one graph tab per repo, the detail column always there with the WIP staging and the commit box; the right-panel GIT rail and its branch-rail rows are gone |
+| `vim-fixes` | 2026-09-12 | the vim-profile hunt (`hunt-vim-2026-09-09.md`): `>>` / `V>` end on the range's first line; `}` stops at the adjacent empty line and a Normal cursor never rests past the line end; a Visual `:` covers the cursor's line; `:tabclose` keeps shared panes; `<leader>e` focuses the tree, `<C-n>` toggles it; terminal-normal mode; the ghost is Insert's; unbound leader chords swallowed; nvim-tree's `a r d x R E W`; `is` / `as`; `u` lands on the restored text; `<leader>ra ca gt cm fo fz`; `Ctrl-W t b p`; `j` / `k` in the references list; hover markdown; `:e src/<Tab>` descends |
 | `overlays` | 2026-09-07 | prompt / confirm / picker / palette / which-key / help / discovery painted as Rust's; F1 is `view.help`; `ui/fuzzy.zig` is Rust's scorer |
 | `debug-mode` | 2026-09-07 | `mnml-fake-dap` (`tools/fake_dap/`), `$NAME` in an adapter's `cmd`, `dap.run` re-reads `.dap` |
 | `git-status` | 2026-09-07 | the staging pane is Rust's `git_status_view.rs` cell for cell; the provider badge and the grouped rail rows went with the old pane |
@@ -147,7 +148,7 @@ trust sink. Each row names its file and its test.
 | Fully remappable keymaps | done | `src/core/keymap.zig`, `Keys{vim,standard,both}` in `src/commands/specs.zig`, `Config.keys` | chord collisions are a compile error per profile |
 | Vim modes Normal / Insert / Visual / V-Line / V-Block / Replace | done | `src/input/vim.zig` `VimMode` | |
 | Operators + motions | done | `src/input/vim.zig`, `src/editor/motion.zig` | |
-| Text objects `iw` `ip` `i(` quotes tag argument | done | `src/editor/select.zig` | |
+| Text objects `iw` `ip` `is` `i(` quotes tag argument | done | `src/editor/select.zig` | `is` / `as` (`sentenceBounds`) landed 2026-09-12 on `vim-fixes`, probed with `vim -es` |
 | Tree-sitter objects `if` / `ic` / `ia` | done | `src/editor/select.zig` `object()`, provider at `src/app.zig` `objectLookup` | |
 | Indent objects | done | `src/editor/select.zig` | |
 | Registers — named, numbered ring, `0`, blackhole | done | `src/editor/clipboard.zig`, `:reg` in `ex.zig`, `picker.clipboard` in `src/app/cmd_app.zig` | `"+` / `"*` are the OS clipboard (below); a write lands in the unnamed register first, then the sink |
@@ -167,7 +168,7 @@ trust sink. Each row names its file and its test.
 | Flash-motion `s` + two chars, labels | done | `src/app/flash.zig` (`start`, `interceptKey`), `drawFlashCue` in `render.zig`, `Doc.labels` in `src/ui/editor_view.zig` | labels nearest-to-cursor first; a single match jumps at once |
 | Ex `:w` `:q` `:e` `:wq` `:x` `:qa` `:bd` `:enew` | done | `src/app/ex.zig` | `:qa` refuses mid-transfer; `:qa!` overrides |
 | Ex `:%s/old/new/flags` | done | `substitute` / `compilePattern` in `ex.zig`, `substituteConfirm` / `substituteCount` / `ampersand` in `src/app/ex_verbs.zig`, `src/regex/` | vim patterns; `g` `i` `c` `n`; `:&` / `:&&`; `&`, `\0`–`\9`, `\u \l \U \L \E` in the replacement |
-| Ex ranges + marks | done | `Parser.parseRange` / `parseAddr` in `ex.zig` | |
+| Ex ranges + marks | done | `Parser.parseRange` / `parseAddr` in `ex.zig` | a Visual `:` widens a linewise range before it remembers it, so `'>` is the cursor's line, and leaves Visual on the spot (`vim-fixes`) |
 | Ex `:g/` / `:v/` | done | `global` in `ex_verbs.zig` | targets remapped through the edit log after every command; `:g!` = `:v`; E147 on a nested `:g` |
 | Ex `:norm` | done | `normal` in `ex_verbs.zig` | keys through the active handler per line; `<esc>` / `<lt>` / `<c-x>` notation |
 | Ex `:!cmd`, `:r`, `:r !cmd`, `:<` / `:>` | done | `shell` / `read` / `shift` in `ex_verbs.zig` | `:!` into a reused `[scratch]` pane; `:[range]!` filters; `:!!` repeats |
@@ -178,7 +179,7 @@ trust sink. Each row names its file and its test.
 | `Ctrl-D` add next occurrence | done | `editor.add_cursor_at_next_word` in `src/app/cmd_editor.zig` | |
 | `Ctrl-Alt-↑/↓` column cursors | done | `editor.add_cursor_above` / `below` | |
 | `Ctrl-Shift-L` select all occurrences | done | `editor.select_all_occurrences` in `src/app/cmd_app.zig` | |
-| Undo / redo | done | `src/editor/undo.zig` | |
+| Undo / redo | done | `src/editor/undo.zig` | `u` / `Ctrl-R` land on the restored text, from the cursor the key began at (`placeAfterHistoryHop`, `Buffer.stampUndoCursor`; vim's `u_undoredo`) |
 | Persisted undo per file | done | `src/app/undo_store.zig` (`<data root>/undo/<hash>.zon`, behind `editor.persistent_undo`) | `// changed:` off by default, under the data root |
 | System clipboard | done | `src/core/clipboard_os.zig` (`Sink`, `probe`, `writeOsc52`, the tool pair), `attach` / `isOsRegister` in `src/editor/clipboard.zig`, `Config.Editor.clipboard` | `.auto` / `.os` / `.internal`; OSC 52 or pbcopy / wl-copy / xclip / xsel / clip.exe; headless and tests get `.none` |
 | Word-wrap | done | `view.toggle_wrap`, `:set wrap`, `EditorPane.wrap` | |
@@ -201,6 +202,7 @@ trust sink. Each row names its file and its test.
 | Every tool view a `Pane` | done | `src/app/pane.zig` — 26 variants | `Pane.dap_repl` folded into `Pane.debug` (the toolbar over the Debug Console) on 2026-09-07 |
 | Split side-by-side / stacked | done | `view.split_right` / `split_down`, `:sp` / `:vs`; `splitCompanion` in `src/app/cmd_view.zig` | every pane kind splits (2026-09-10, Rust's `split_active`): an editor duplicates, a preview opens its file, a request pane gets a blank request, anything else a scratch editor; `command.reason` spells the shared error tags as sentences (`needs an editor pane`), so no toast reads `NotAnEditor`; `tests/e2e/split_any_pane.test` |
 | `Ctrl-W` focus `h j k l w` | done | `src/input/vim.zig` `.window` | |
+| `Ctrl-W` focus `h j k l w t b p` | done | `src/input/vim.zig` `.window`; `view.focus_top` / `focus_bottom` / `focus_previous` in `cmd_view.zig` | `t` / `b` the first / last leaf, `p` the window that had the keys before (from the tree too) |
 | `Ctrl-W` split / close / only `s v q c o` | done | same | |
 | `Ctrl-W` move `H J K L` | done | `moveToEdge` in `src/app/layout.zig`, `view.move_split_*` in `src/app/cmd_view.zig`, the `.window` prong | the leaf re-hangs as one half of a new root split |
 | `Ctrl-W` resize `+ - < >`, `_` / `\|` maximize | done | `view.split_grow_*` / `shrink_*` / `maximize_*` in `src/app/cmd_view.zig`; bound in the `.window` prong (with `r n d f`) | ratio on the enclosing split |
@@ -209,7 +211,7 @@ trust sink. Each row names its file and its test.
 | Mouse click-to-focus | done | `src/app/dispatch.zig`, `src/ui/hit.zig` | *2026-09-10 (mouse-fixes):* a click and a drag resolve an `.editor_cell` hit as the byte offset it carries (`cellByte`) — the second cell of a wide glyph is that glyph, the EOL space the line's end; `ö` clicked reads 10:9 on both sides of `tools/compare.sh compare-mouse` (was 10:11: the handler added the cell delta and counted chars). A gutter press on a file nothing can debug selects the line with the cursor at its column 1, Shift extending (Rust's `SelectLineToEnd`); `tests/e2e/editor_click_multibyte.test`, `gutter_click_selects_line.test` |
 | Mouse drag-to-resize dividers | done | `dispatch.zig` `.divider` drag | |
 | Tab drag — reorder, into another leaf, into a split | done | `dropTab` / `dropIntoLeaf` in `dispatch.zig`, `layout.zoneFor` | a tab dropped on a strip reorders into that leaf; on a pane body's edge zone it splits the leaf and moves in, on the centre it joins the strip (the hunt's no-op was at `c0b67b0`; on main both work — `tests/e2e/tab_drag_into_split.test`, 2026-09-10) |
-| Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e/buffer_pin_reopen.test` |
+| Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e/buffer_pin_reopen.test` — `:tabclose` / `:tabonly` leave a pane another page still shows to that page (`shownElsewhere`); `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e/buffer_pin_reopen.test` |
 | Bufferline tab strip | done | `src/ui/bufferline.zig`, per-leaf strips in `render.zig` | the ` +N hidden ` chip counts the tabs off either edge of the window plus the filtered ones (2026-09-10, Rust's `tabs.len() - painted_count`); a click opens the buffer picker; `tests/e2e/tabs_hidden_chip.test` |
 | Tab pages session-persisted | done | `src/app/session.zig` `tabs` / `active_tab` | |
 | Tabline of open buffers | done | `src/ui/bufferline.zig`, `view.focus_tab_1–8` / `focus_tab_last` in `cmd_view.zig` | |
@@ -304,7 +306,7 @@ trust sink. Each row names its file and its test.
 | Organize imports | done | `lsp.zig` | |
 | Rename | done | `lsp.zig` → `applyWorkspaceEdit` | |
 | Rename — inline preview + confirmation pane | done | `src/app/lsp_rename.zig` | per-file toggles, hunk rows `Lnn  before → after`; a single-file rename applies at once |
-| Hover | done | `src/ui/hover_view.zig` | *2026-09-10 (mouse-fixes):* the box registers `.hover_popup` over itself; the wheel scrolls it two lines an event (Rust's ±2) instead of the editor under it, a press puts it away |
+| Hover | done | `src/ui/hover_view.zig` | *2026-09-10 (mouse-fixes):* the box registers `.hover_popup` over itself; the wheel scrolls it two lines an event (Rust's ±2) instead of the editor under it, a press puts it away — markdown emphasis and code spans paint as such through `md_view.inlineSegs`, the markers dropped |
 | Signature help | done | `lsp.signature_help*` | |
 | Inlay hints | done | `requestHints` / `virtualTextFor` in `src/app/lsp_decor.zig`, `Doc.virtual_text` in `editor_view.zig`, `lsp.inlay_hints_toggle` | visible window ±1 screen, idle-debounced; `editor.inlay_hints` |
 | Semantic tokens | done | `src/lsp/semantic.zig`, `src/app/lsp_semantic.zig`, `layerSpans` in `src/highlight/engine.zig` | full + `full/delta` (+ `range`); laid over the tree-sitter spans; `editor.semantic_tokens` |
@@ -441,6 +443,7 @@ trust sink. Each row names its file and its test.
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
 | Pty — shell | done | `src/app/cmd_term.zig`, `src/app/pty_pane.zig`, `src/pty/` | |
+| Terminal-normal mode (vim profile) | done (Zig-only) | `PtyPane.term_normal`, `escapeKey` / `termNormalKey` in `pty_pane.zig`, `ptyKey` in `dispatch.zig` | `<C-\><C-n>` (`:help CTRL-\_CTRL-N`) or NvChad's `<C-x>` leaves the child for the app's keys — the leader, the `Ctrl-W` family — and `i` / `a` return; the mode chip reads TERMINAL / T-NORMAL |
 | Pty — claude / Codex | done | `ai.zig` | |
 | Pty — any task / command | done | `termEx` (`:term <cmd>`), `src/app/tasks.zig` | |
 | Multi-session tab strip | done | `Tab.kind` in `src/ui/bufferline.zig` | pty tabs marked in the strip |
