@@ -152,6 +152,7 @@ pub const SectionSide = struct {
     todos: ?Side = null,
     findings: ?Side = null,
     scripts: ?Side = null,
+    search: ?Side = null,
     diagnostics: ?Side = null,
     outline: ?Side = null,
 };

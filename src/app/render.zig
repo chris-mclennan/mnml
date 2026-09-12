@@ -61,6 +61,7 @@ const info_view_ui = @import("../ui/info_view.zig");
 const image_pane = @import("image_pane.zig");
 const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
+const search_section = @import("search_section.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const debug_panel = @import("debug_panel.zig");
@@ -657,8 +658,8 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .integrations => try integrations.drawSection(app, ui, area),
         // // changed (lua-track): the SCRIPTS section.
         .scripts => try scripts_panel.draw(app, ui, area),
-        // Pane-backed sections never own a column (`side.surface`).
-        .search => unreachable,
+        // // changed (search-section): Rust's SEARCH sidebar section.
+        .search => try search_section.draw(app, ui, area),
     }
 }
 

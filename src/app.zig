@@ -102,6 +102,7 @@ const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
 const cmd_script = @import("app/cmd_script.zig");
 const scripts_panel = @import("app/scripts_panel.zig");
+const search_section = @import("app/search_section.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
@@ -849,6 +850,8 @@ pub const App = struct {
     sessions: sessions.State,
     /// // changed (lua-track): the SCRIPTS section's list state.
     scripts_panel: scripts_panel.State = .{},
+    /// // changed (search-section): the SEARCH section's query and hits.
+    search_section: search_section.State,
     dock: dock.State = .{},
     /// The editor body before the dock's inline strips came off it.
     dock_area: Rect = .{},
@@ -1102,6 +1105,7 @@ pub const App = struct {
             .tree = tree_mod.Tree.init(gpa),
             .side = side_mod.State.init(&opts.cfg),
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
+            .search_section = try search_section.State.init(gpa),
             .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
             .findings = findings.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.findings_sort)),
             .sessions = sessions.State.init(gpa, opts.cfg.ui.sessions_sort),
@@ -1311,6 +1315,7 @@ pub const App = struct {
         self.ai.deinit(gpa, self.io);
         self.now_playing.deinit(self.io);
         self.todos.deinit(gpa, self.io);
+        self.search_section.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
         self.scripts_panel.deinit(gpa);
@@ -2506,6 +2511,8 @@ test {
     _ = @import("app/cmd_script.zig");
     _ = @import("app/scripts_panel.zig");
     _ = @import("ui/scripts_panel.zig");
+    _ = @import("app/search_section.zig");
+    _ = @import("ui/search_section_view.zig");
     _ = @import("ui/script_view.zig");
     _ = @import("app/messages.zig");
     _ = @import("app/zen.zig");

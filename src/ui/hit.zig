@@ -20,6 +20,7 @@ const activity_bar = @import("activity_bar.zig");
 const tree_view = @import("tree_view.zig");
 const git_palette = @import("git_palette.zig");
 const http_panel = @import("http_panel.zig");
+const search_section_view = @import("search_section_view.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -160,6 +161,9 @@ pub const HitTarget = union(enum) {
     /// node: the `+ Add Claude Code` card; a press opens the next
     /// session there.
     ai_placeholder: u32,
+    /// One of the SEARCH section's header flags — `Aa` / `\b` / `.*`
+    /// (`ui/search_section_view.zig`); a press toggles it and reruns.
+    search_chip: search_section_view.Flag,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -170,6 +174,7 @@ pub const HitTarget = union(enum) {
             .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
             .hover_popup => {},
             .font_update, .ai_placeholder => |n| try w.print(":{d}", .{n}),
+            .search_chip => |f| try w.print(":{s}", .{@tagName(f)}),
             .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
             .info_view => |p| switch (p) {
                 .try_it => |i| try w.print(":try_it:{d}", .{i}),

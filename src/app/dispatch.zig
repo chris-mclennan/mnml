@@ -49,6 +49,7 @@ const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
+const search_section = @import("search_section.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const debug_panel = @import("debug_panel.zig");
@@ -199,6 +200,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .sessions => try sessions.handleKey(app, k),
             .integrations => try integrations.handleKey(app, k),
             .scripts => try scripts_panel.handleKey(app, k),
+            .search => try search_section.handleKey(app, k),
             .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
         };
         if (took) return;
@@ -976,7 +978,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1538,6 +1540,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => try http_panel.rowMouse(app, pr.idx, m),
             .integrations => try integrations.rowMouse(app, pr.idx, m),
             .scripts => try scripts_panel.rowMouse(app, pr.idx, m),
+            .search => try search_section.rowMouse(app, pr.idx, m),
             .outline => {},
         },
         .kebab => |pr| switch (pr.panel) {
@@ -1550,6 +1553,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => try http_panel.kebabMouse(app, pr.idx, m),
             .integrations => try integrations.kebabMouse(app, pr.idx, m),
             .scripts => try scripts_panel.kebabMouse(app, pr.idx, m),
+            .search => try search_section.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline => {},
         },
         .chip => |c| switch (c.panel) {
@@ -1563,6 +1567,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => try http_panel.chipMouse(app, c.kind, m),
             .integrations => try integrations.chipMouse(app, c.kind, m),
             .scripts => try scripts_panel.chipMouse(app, c.kind, m),
+            .search => try search_section.chipMouse(app, c.kind, m),
             .outline => {},
         },
         .filter_input => |p| switch (p) {
@@ -1576,6 +1581,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => http_panel.filterMouse(app, m),
             .integrations => integrations.filterMouse(app, m),
             .scripts => scripts_panel.filterMouse(app, m),
+            .search => search_section.filterMouse(app, m),
             .outline => {},
         },
         .scrollbar => |sb| {
@@ -1632,6 +1638,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .info_view => |part| {
             if (m.kind == .press and app.overlay != .none and part != .kebab) closeOverlay(app);
             try info_view_app.mouse(app, part, m, count);
+        },
+        // // changed (search-section): a SEARCH header flag — one verb.
+        .search_chip => |flag| {
+            if (wheel) return panelWheel(app, .search, down, count);
+            if (m.kind != .press or m.button != .left) return;
+            if (app.overlay != .none) closeOverlay(app);
+            try search_section.flagMouse(app, flag);
         },
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
@@ -2431,6 +2444,7 @@ fn panelWheel(app: *App, panel: hit_mod.PanelId, down: bool, count: u16) Allocat
         .http => http_panel.wheel(app, down, rows),
         .integrations => integrations.wheel(app, down, rows),
         .scripts => try scripts_panel.wheel(app, down, rows),
+        .search => search_section.wheel(app, down, rows),
         .outline => if (app.outline_panel) |id| try wheelOnPane(app, id, .{ .x = 0, .y = 0, .kind = if (down) .scroll_down else .scroll_up }, count),
     }
 }
@@ -2449,6 +2463,7 @@ fn panelScrollbar(app: *App, panel: hit_mod.PanelId, track: Rect, m: Mouse) void
         .http => http_panel.scrollbarMouse(app, track, m),
         .integrations => integrations.scrollbarMouse(app, track, m),
         .scripts => scripts_panel.scrollbarMouse(app, track, m),
+        .search => search_section.scrollbarMouse(app, track, m),
         .outline => {},
     }
 }
@@ -4124,6 +4139,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .http = .{ .delegated = "http_panel.partMouse" },
     .font_update = .{ .none = "one-verb" },
     .ai_placeholder = .{ .none = "one-verb" },
+    .search_chip = .{ .none = "one-verb" },
 });
 
 /// The source of `mouse`'s arm for `tag`: from `        .tag => ` (the

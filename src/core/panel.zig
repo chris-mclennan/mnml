@@ -16,7 +16,9 @@ const ConfigSort = @import("../config/Config.zig").ListSort;
 /// call stack, breakpoints) is a column surface like the rest.
 /// // changed (lua-track): `scripts` — the SCRIPTS section, a column
 /// surface listing what the Lua scripts registered.
-pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug, integrations, scripts };
+/// // changed (search-section): `search` — Rust's SEARCH sidebar
+/// section (the query, the hits by file), a column surface.
+pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug, integrations, scripts, search };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the
