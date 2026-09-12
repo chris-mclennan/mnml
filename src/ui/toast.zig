@@ -1,8 +1,9 @@
 //! Toasts — the notification stack in the bottom-right corner, each a
 //! one-row bordered box, the newest against the statusline, as Rust's
 //! `toast_stack` paints them: a square frame with ` × ` set into its top
-//! edge (click anywhere on the box to dismiss), the text clipped to one
-//! row with an ellipsis rather than wrapped; a message that repeats
+//! edge (click anywhere on the box to dismiss), the text wrapped to
+//! the box up to `max_lines` rows (Rust clips at one; see `wrap`) and
+//! ellipsised past that; a message that repeats
 //! while its box is up bumps that box instead of stacking a twin (the
 //! app coalesces). The border carries the level: info and warn in the calm
 //! muted color, an error in red so a failure stands out. At most five
@@ -47,47 +48,85 @@ pub fn borderStyle(t: *const Theme, level: Level) Style {
     };
 }
 
-/// Rust's cap is in chars, not cells (`chars().count()` against
-/// `MAX_WIDTH - 4`): past it the first `max_text - 1` chars and an
-/// ellipsis. A newline inside the text — rust-analyzer's `Failed to
-/// discover workspace.\nConsider…` — costs a char and paints nothing,
-/// exactly as under Rust, so the two screens clip at the same letter.
-fn clipChars(ui: Ui, s: []const u8) []const u8 {
-    const n = std.unicode.utf8CountCodepoints(s) catch s.len;
-    if (n <= max_text) return s;
+/// How many rows a toast may take before it is cut: the message
+/// wraps (a word at a time, a newline where the text has one) up to
+/// this many lines, and a text still longer ends its last line in an
+/// ellipsis. Rust clips at one row; a one-row box lost the instruction
+/// behind a long path (`config: /private/tmp/…/config.toml: mnml-…`).
+pub const max_lines: usize = 4;
+
+/// The chars of `s`, by codepoint, as Rust's cap counts them.
+fn charCount(s: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(s) catch s.len;
+}
+
+/// The byte offset after the first `n` chars of `s`.
+fn byteAt(s: []const u8, n: usize) usize {
     var it = std.unicode.Utf8View.initUnchecked(s).iterator();
     var taken: usize = 0;
     var end: usize = 0;
-    while (taken + 1 < max_text) : (taken += 1) {
+    while (taken < n) : (taken += 1) {
         const cp = it.nextCodepointSlice() orelse break;
         end += cp.len;
     }
-    return ui.fmt("{s}{s}", .{ s[0..end], if (ui.ascii) "..." else "…" });
+    return end;
 }
 
-/// `s` without its line breaks: the row is one line.
-fn oneRow(ui: Ui, s: []const u8) []const u8 {
-    if (std.mem.indexOfAny(u8, s, "\r\n") == null) return s;
-    const out = ui.arena.alloc(u8, s.len) catch return s;
-    var n: usize = 0;
-    for (s) |c| if (c != '\n' and c != '\r') {
-        out[n] = c;
-        n += 1;
-    };
-    return out[0..n];
+/// `s` as at most `max_lines` lines of at most `cap` chars: a line
+/// breaks at the last space that fits, else mid-word; a `\n` (or
+/// `\r\n`) breaks one; what does not fit in the last line is an
+/// ellipsis in its last char. Trailing spaces are not carried over.
+pub fn wrap(ui: Ui, s: []const u8, cap_in: u16) []const []const u8 {
+    const cap: usize = @max(cap_in, 1);
+    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    var rest = s;
+    var cut = false;
+    while (rest.len > 0 and lines.items.len < max_lines) {
+        var seg = rest;
+        var after: []const u8 = "";
+        if (std.mem.indexOfAny(u8, rest, "\r\n")) |nl| {
+            seg = rest[0..nl];
+            after = rest[nl + 1 ..];
+            if (rest[nl] == '\r' and after.len > 0 and after[0] == '\n') after = after[1..];
+        }
+        var line = seg;
+        if (charCount(seg) > cap) {
+            const hard = byteAt(seg, cap);
+            const space = std.mem.lastIndexOfScalar(u8, seg[0..hard], ' ');
+            // `hard` itself may sit on a space: the word fit exactly.
+            const at: usize = if (hard < seg.len and seg[hard] == ' ') hard else if (space) |sp| (if (sp == 0) hard else sp) else hard;
+            line = seg[0..at];
+            after = std.mem.concat(ui.arena, u8, &.{ std.mem.trimStart(u8, seg[at..], " "), if (after.len > 0) "\n" else "", after }) catch after;
+        }
+        lines.append(ui.arena, std.mem.trimEnd(u8, line, " ")) catch break;
+        rest = after;
+        cut = rest.len > 0;
+    }
+    if (cut and lines.items.len > 0) {
+        // The last line ends in the ellipsis, inside the cap.
+        const last = lines.items[lines.items.len - 1];
+        const keep = @min(charCount(last), cap - 1);
+        lines.items[lines.items.len - 1] = ui.fmt("{s}{s}", .{ last[0..byteAt(last, keep)], if (ui.ascii) "..." else "…" });
+    }
+    if (lines.items.len == 0) lines.append(ui.arena, "") catch {};
+    return lines.items;
 }
 
 /// Paints one box whose bottom edge is `bottom` (exclusive), returns
-/// its rect, or null when it does not fit above `top`. The text is one
-/// row, clipped at `max_text` chars; the box is as wide as the text
-/// and its pads, at most `max_width`, at most the area less two.
+/// its rect, or null when it does not fit above `top`. The text wraps
+/// at the box's inner width (`max_text` chars, less on a narrow
+/// screen) up to `max_lines` rows; the box is as wide as its longest
+/// line and the pads, at most `max_width`, at most the area less two.
 fn paintBox(ui: Ui, area: Rect, bottom: u16, text_in: []const u8, border: Style, hit_id: ?u32) ?Rect {
     const t = ui.theme;
-    const text = clipChars(ui, text_in);
-    const chars: u16 = @intCast(@min(std.unicode.utf8CountCodepoints(text) catch text.len, max_text));
-    const w = @min(chars + 4, @min(max_width, area.w -| 2));
+    const cap: u16 = @min(max_text, (area.w -| 2) -| 4);
+    if (cap < 2) return null;
+    const lines = wrap(ui, text_in, cap);
+    var longest: u16 = 0;
+    for (lines) |l| longest = @max(longest, @as(u16, @intCast(@min(charCount(l), cap))));
+    const w = @min(longest + 4, @min(max_width, area.w -| 2));
     if (w < 6) return null;
-    const h: u16 = 3;
+    const h: u16 = @intCast(lines.len + 2);
     if (bottom < area.y + h) return null;
     const r = Rect.init(area.right() - right_margin - w, bottom - h, w, h);
     ui.fill(r, t.overlay_bg);
@@ -96,7 +135,7 @@ fn paintBox(ui: Ui, area: Rect, bottom: u16, text_in: []const u8, border: Style,
     // The close mark sits in the top edge, three cells before the corner.
     if (w >= 8) _ = ui.putStr(r.right() - 4, r.y, 3, if (ui.ascii) " x " else " × ", border);
     const fg = Theme.onBg(t.fg, t.overlay_bg.bg);
-    _ = ui.putStr(inner.x + 1, inner.y, inner.w -| 1, oneRow(ui, text), fg);
+    for (lines, 0..) |line, i| _ = ui.putStr(inner.x + 1, inner.y + @as(u16, @intCast(i)), inner.w -| 1, line, fg);
     if (hit_id) |id| ui.hit(r, .{ .button = id });
     return r;
 }
@@ -187,29 +226,51 @@ test "toasts stack from the bottom right, newest lowest, with dismiss hits and l
     try testing.expect(f.bgEql(50, 10, f.theme.overlay_bg));
 }
 
-test "a long text is one row clipped with an ellipsis at Rust's cap; a burst collapses into +K more" {
+test "a long text wraps to the box, a newline breaks a line, past four lines it ends in an ellipsis; a burst collapses into +K more" {
     var f = try Fixture.init(80, 20);
     defer f.deinit();
-    // rust-analyzer's own text, newline included: 59 chars and the
-    // ellipsis, one pad each side, the frame — 64, and the newline
-    // paints as nothing, so the row reads `Car…  │` as Rust's does.
+    // rust-analyzer's own text: the newline is a line break, the box
+    // is as wide as the longer line (49 chars) and its pads.
     const long = [_]Toast{.{ .text = "LSP: Failed to discover workspace.\nConsider adding the `Cargo.toml` of the workspace" }};
     draw(f.ui(), f.full(), &long);
     var buf: [512]u8 = undefined;
-    try testing.expectEqualStrings("┌─────────────────────────────────────────────────────────── × ┐", std.mem.trimStart(u8, f.row(17, &buf), " "));
-    try testing.expectEqualStrings("│ LSP: Failed to discover workspace.Consider adding the `Car…  │", std.mem.trimStart(u8, f.row(18, &buf), " "));
+    try testing.expectEqualStrings("┌──────────────────────────────────────────────── × ┐", std.mem.trimStart(u8, f.row(16, &buf), " "));
+    try testing.expectEqualStrings("│ LSP: Failed to discover workspace.                │", std.mem.trimStart(u8, f.row(17, &buf), " "));
+    try testing.expectEqualStrings("│ Consider adding the `Cargo.toml` of the workspace │", std.mem.trimStart(u8, f.row(18, &buf), " "));
+    try testing.expectEqualStrings("└───────────────────────────────────────────────────┘", std.mem.trimStart(u8, f.row(19, &buf), " "));
     const r = f.hits.items.items[0].rect;
-    try testing.expectEqual(@as(u16, 3), r.h);
-    try testing.expectEqual(@as(u16, 64), r.w);
-    try testing.expectEqual(@as(u16, 15), r.x);
+    try testing.expectEqual(@as(u16, 4), r.h);
+    try testing.expectEqual(@as(u16, 53), r.w);
+    try testing.expectEqual(@as(u16, 26), r.x);
     f.hits.reset();
-    // Narrow: the box is the area less two, the text clipped inside it.
-    var n = try Fixture.init(40, 6);
+    // A path-first message: the instruction after the path is on the
+    // rows below it instead of behind an ellipsis at char 59.
+    const cfg = [_]Toast{.{ .text = "config: /private/tmp/walk/slot1/ws/.mnml/config.toml: mnml-zig reads config.zon, not TOML — run `mnml export-config-zon` (0.2.22) to convert this file" }};
+    draw(f.ui(), f.full(), &cfg);
+    try f.expectContains("export-config-zon");
+    try f.expectContains("to convert this file");
+    try testing.expectEqual(@as(u16, 5), f.hits.items.items[0].rect.h);
+    f.hits.reset();
+    // Past four lines the fourth ends in an ellipsis, inside the cap.
+    const words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu " ** 3;
+    draw(f.ui(), f.full(), &.{.{ .text = words }});
+    const rr = f.hits.items.items[0].rect;
+    try testing.expectEqual(@as(u16, 6), rr.h);
+    // Word-wrapped lines fall short of the cap by a word's tail.
+    try testing.expect(rr.w > 50 and rr.w <= 64);
+    try testing.expect(std.mem.indexOf(u8, f.row(rr.y + 4, &buf), "…") != null);
+    try testing.expect(std.mem.indexOf(u8, f.row(rr.y + 3, &buf), "…") == null);
+    try f.expectLacks("zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu");
+    f.hits.reset();
+    // Narrow: the box is the area less two, the text wrapped inside it.
+    var n = try Fixture.init(40, 8);
     defer n.deinit();
     draw(n.ui(), n.full(), &long);
     try testing.expectEqual(@as(u16, 38), n.hits.items.items[0].rect.w);
+    try testing.expectEqual(@as(u16, 5), n.hits.items.items[0].rect.h);
     try n.expectContains("LSP: Failed to discover workspace.");
-    f.hits.reset();
+    try n.expectContains("Consider adding the `Cargo.toml`");
+    try n.expectContains("of the workspace");
     var burst: [8]Toast = undefined;
     for (&burst, 0..) |*b, i| b.* = .{ .text = if (i == 0) "eight" else "older" };
     draw(f.ui(), f.full(), &burst);
@@ -220,6 +281,27 @@ test "a long text is one row clipped with an ellipsis at Rust's cap; a burst col
     draw(ui, f.full(), &burst);
     try f.expectContains("+4 more...");
     try f.expectContains(" x +");
+}
+
+test "wrap: words, a hard cut of a long word, the newline, the ellipsis in the cap" {
+    var f = try Fixture.init(40, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    const a = wrap(ui, "one two three four", 10);
+    try testing.expectEqual(@as(usize, 2), a.len);
+    try testing.expectEqualStrings("one two", a[0]);
+    try testing.expectEqualStrings("three four", a[1]);
+    const b = wrap(ui, "abcdefghijkl", 5);
+    try testing.expectEqualStrings("abcde", b[0]);
+    try testing.expectEqualStrings("fghij", b[1]);
+    try testing.expectEqualStrings("kl", b[2]);
+    const c = wrap(ui, "a\r\nb\nc", 10);
+    try testing.expectEqual(@as(usize, 3), c.len);
+    try testing.expectEqualStrings("b", c[1]);
+    const d = wrap(ui, "1 2 3 4 5 6 7 8 9", 3);
+    try testing.expectEqual(max_lines, d.len);
+    try testing.expectEqualStrings("7 …", d[3]);
+    try testing.expectEqualStrings("", wrap(ui, "", 10)[0]);
 }
 
 test "no room, no paint" {

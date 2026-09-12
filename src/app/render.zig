@@ -5,7 +5,7 @@
 //! (`app/side.zig`: every section has a side). Every
 //! leaf of the split tree carries its own tab strip on its first row —
 //! a tab is dragged between leaves, so the strip belongs to the leaf,
-//! not to the frame. Then the overlay and the toasts, in that order, so
+//! not to the frame. Then the toasts and the overlay, in that order, so
 //! the hit map's back-to-front scan gives the overlay the mouse.
 //!
 //! // changed: DESIGN said "row 0 is the bufferline, the last row the
@@ -440,12 +440,14 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     if (!app.zen) try dock.draw(app, ui, dock_area);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
-    try drawOverlay(app, ui, panes_area);
-    try lsp.drawPopups(app, ui, panes_area);
     // The stack sits on the panes' last row, against the statusline, as
     // Rust's does. The Undo chip takes that row when it is up, and so
     // does the flash cue (`drawFlashCue`, right-aligned there): the
-    // stack moves up one so neither is covered.
+    // stack moves up one so neither is covered. It paints BEFORE the
+    // overlays, as Rust's `toast_stack::draw` runs before its picker /
+    // palette / which-key pass: a toast never covers the last rows of
+    // the palette or the which-key menu (walkthrough 1.10) — the
+    // overlay is what the user is looking at, the toast waits under it.
     var toast_area = panes_area;
     if (app.undo_chip) |u| {
         toast_mod.drawUndo(ui, panes_area, u.label);
@@ -454,6 +456,8 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         toast_area.h -|= 1;
     }
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
+    try drawOverlay(app, ui, panes_area);
+    try lsp.drawPopups(app, ui, panes_area);
     // A context menu is the topmost layer — over the toasts too, whose
     // own menu it is — and it stays above the statusline and the `:`
     // line, whatever it was anchored in.
