@@ -974,6 +974,9 @@ pub const specs = [_]Spec{
     .{ .id = "view.focus_up", .title = "Focus split up", .group = "view", .keys = .{ .vim = &.{"ctrl+k"}, .standard = &.{"ctrl+k ctrl+up"} } },
     .{ .id = "view.focus_down", .title = "Focus split down", .group = "view", .keys = .{ .vim = &.{"ctrl+j"}, .standard = &.{"ctrl+k ctrl+down"} } },
     .{ .id = "view.focus_next_split", .title = "Focus next split", .group = "view" },
+    .{ .id = "view.focus_top", .title = "Focus the top split (vim Ctrl-W t)", .group = "view" },
+    .{ .id = "view.focus_bottom", .title = "Focus the bottom split (vim Ctrl-W b)", .group = "view" },
+    .{ .id = "view.focus_previous", .title = "Focus the previously focused window (vim Ctrl-W p)", .group = "view" },
     .{ .id = "view.close_split", .title = "Close split / buffer", .group = "view" },
     .{ .id = "layout.merge_to_tabs", .title = "Layout: merge splits into tabs (splits→tabs)", .group = "view" },
     .{ .id = "layout.spread_to_splits", .title = "Layout: spread tabs into splits (tabs→splits)", .group = "view" },
@@ -1112,7 +1115,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1039 specs, unique ids" {
+test "1042 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1129,7 +1132,8 @@ test "1039 specs, unique ids" {
     // stash commands + two command-log commands + two detail-row
     // commands (git-more2) + three launcher-pin commands
     // + `view.reset_layout` + the session-worktree launch and its three
-    // row verbs (open in tree / merge / remove).
-    try std.testing.expectEqual(@as(usize, 1039), specs.len);
+    // row verbs (open in tree / merge / remove) + `view.focus_top` /
+    // `focus_bottom` / `focus_previous` (vim Ctrl-W t / b / p).
+    try std.testing.expectEqual(@as(usize, 1042), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

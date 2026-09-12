@@ -1136,6 +1136,9 @@ pub const Vim = struct {
                 }
                 return switch (c) {
                     'w' => runCmd(.@"view.focus_next_split"),
+                    't' => runCmd(.@"view.focus_top"),
+                    'b' => runCmd(.@"view.focus_bottom"),
+                    'p' => runCmd(.@"view.focus_previous"),
                     'q', 'c' => runCmd(.@"view.close_split"),
                     's' => runCmd(.@"view.split_down"),
                     'v' => runCmd(.@"view.split_right"),
@@ -2378,6 +2381,9 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their run
         .{ .key = 'h', .id = .@"view.focus_left" },
         .{ .key = 'd', .id = .@"view.split_goto_definition" },
         .{ .key = 'f', .id = .@"view.split_open_file_under_cursor" },
+        .{ .key = 't', .id = .@"view.focus_top" },
+        .{ .key = 'b', .id = .@"view.focus_bottom" },
+        .{ .key = 'p', .id = .@"view.focus_previous" },
     };
     for (cases) |c| {
         try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);

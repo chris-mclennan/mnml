@@ -81,6 +81,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `view.cheatsheet` | `space c h` | (new) | vim | NvChad <leader>ch |
 | `whichkey.leader` | `space w K` | (new) | vim | NvChad <leader>wK |
 | `lsp.rename` / `lsp.code_action` / `git.status_pane` / `git.graph` / `picker.recent` / `find.find` | `space r a` / `space c a` / `space g t` / `space c m` / `space f o` / `space f z` | (new) | vim | NvChad mappings.lua: `<leader>ra` LSP renamer, `<leader>ca` code action, `<leader>gt` git status, `<leader>cm` git commits, `<leader>fo` oldfiles, `<leader>fz` find in current buffer. `<leader>th` (themes) stays `theme.pick` under `space t t`: `t h` is the Rust popup's hidden-files toggle |
+| `view.focus_top` / `view.focus_bottom` / `view.focus_previous` | `ctrl+w t` / `ctrl+w b` / `ctrl+w p` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_t` / `CTRL-W_b` / `CTRL-W_p`; from the tree `Ctrl-W p` returns to the window that was left |
 | `lsp.goto_definition` | `g d` | (new) | vim | Neovim gd |
 | `lsp.goto_declaration` | `g D` | (new) | vim | Neovim gD |
 | `lsp.references` | `g r` | (new) | vim | Neovim gr |
