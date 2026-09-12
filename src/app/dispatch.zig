@@ -2185,6 +2185,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.overlay != .none) closeOverlay(app);
             try context_menus.openLinkMenu(app, l.url, m.x, m.y);
         },
+        // The AI grid's open slot: a press opens the next session in it.
+        .ai_placeholder => if (m.kind == .press and m.button == .left) {
+            if (app.overlay != .none) closeOverlay(app);
+            try runCmd(app, .@"ai.claude_code_new");
+        },
     }
 }
 
@@ -4118,6 +4123,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .git_palette = .{ .delegated = "git_palette.partMouse" },
     .http = .{ .delegated = "http_panel.partMouse" },
     .font_update = .{ .none = "one-verb" },
+    .ai_placeholder = .{ .none = "one-verb" },
 });
 
 /// The source of `mouse`'s arm for `tag`: from `        .tag => ` (the

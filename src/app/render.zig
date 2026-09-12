@@ -1022,6 +1022,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         }
         try ui.hits.add(ui.arena, d.rect, .{ .divider = @intCast(i) });
     }
+    if (app.ai.placeholder) for (rects.empties) |e| try drawAiPlaceholder(app, ui, e);
     for (rects.panes, leaf_index..) |pr, li| {
         const pane = app.panes.get(pr.pane) orelse continue;
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
@@ -1077,6 +1078,29 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 
 /// While a tab or a tree file is being dragged over a pane, the zone
 /// it would land in is tinted.
+/// The AI grid's open slot: the pane ground with a `+ Add Claude Code`
+/// chip in the middle (`+ Claude` when the slot is narrow), the whole
+/// slot a press target for the next session.
+fn drawAiPlaceholder(app: *App, ui: Ui, e: layout_mod.EmptyRect) Allocator.Error!void {
+    const r = e.rect;
+    ui.canvas.fill(r, app.theme.bg);
+    try ui.hits.add(ui.arena, r, .{ .ai_placeholder = e.node });
+    if (r.w < 8 or r.h < 3) return;
+    const plus: []const u8 = if (ui.ascii or !ui.nerd_font) "+" else bufferline.plus_glyph;
+    const full = " Add Claude Code";
+    const short = " Claude";
+    const label: []const u8 = if (r.w >= 1 + full.len + 4) full else short;
+    const chip_w: u16 = @intCast(1 + label.len + 2);
+    if (r.w < chip_w) return;
+    const chip = Rect.init(r.x + (r.w - chip_w) / 2, r.y + r.h / 2, chip_w, 1);
+    const ground = app.theme.chip;
+    ui.canvas.fill(chip, ground);
+    var plus_style = Theme.withFg(ground, app.theme.palette.green);
+    plus_style.bold = true;
+    _ = ui.putStr(chip.x + 1, chip.y, 1, plus, plus_style);
+    _ = ui.putStr(chip.x + 2, chip.y, chip_w - 3, label, ground);
+}
+
 fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
     const d = app.drag orelse return;
     switch (d) {

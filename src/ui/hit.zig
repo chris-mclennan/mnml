@@ -156,6 +156,10 @@ pub const HitTarget = union(enum) {
     /// The `↑ Update` chip of a FONTS row (`ui/fonts_section.zig`), by
     /// the row's index into the scanned families.
     font_update: u16,
+    /// The AI grid's open slot (`app/ai_grid.zig`), by its layout
+    /// node: the `+ Add Claude Code` card; a press opens the next
+    /// session there.
+    ai_placeholder: u32,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -165,7 +169,7 @@ pub const HitTarget = union(enum) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
             .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
             .hover_popup => {},
-            .font_update => |n| try w.print(":{d}", .{n}),
+            .font_update, .ai_placeholder => |n| try w.print(":{d}", .{n}),
             .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
             .info_view => |p| switch (p) {
                 .try_it => |i| try w.print(":try_it:{d}", .{i}),

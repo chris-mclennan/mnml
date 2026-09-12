@@ -174,6 +174,8 @@ const t = std.testing;
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const Rect = @import("../ui/rect.zig");
+const screen_mod = @import("../ipc/screen.zig");
+const dispatch = @import("dispatch.zig");
 
 const Fixture = struct {
     tmp: t.TmpDir,
@@ -411,4 +413,33 @@ test "the grid: tabs mode stacks every session on one strip; the batch spills to
     try t.expectEqual(@as(usize, 8), g.claudesOn(0));
     try t.expectEqual(@as(usize, 4), g.claudesOn(1));
     try t.expectEqual(@as(usize, 0), try g.empties());
+}
+
+test "the grid: the open slot paints the Add Claude Code card over the whole quadrant, and a press on it opens the fourth session there" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    _ = try f.open();
+    _ = try f.open();
+    _ = try f.open();
+    try app.render();
+    const before = try screen_mod.toTestText(app.gpa, &app.screen);
+    defer app.gpa.free(before);
+    try t.expect(std.mem.indexOf(u8, before, "Add Claude Code") != null);
+    // The hit covers the slot's rect, not just the chip.
+    const slot = (try app.layouts.current().computeRects(app.panes_area, app.frame.allocator())).empties[0].rect;
+    var hit: ?Rect = null;
+    for (app.hits.items.items) |e| if (e.target == .ai_placeholder) {
+        hit = e.rect;
+    };
+    try t.expect(hit.?.eql(slot));
+    try dispatch.mouse(app, .{ .x = slot.x + 2, .y = slot.y + 1, .kind = .press, .button = .left }, 1);
+    try t.expectEqual(@as(usize, 4), countOnPage(app));
+    try t.expectEqual(@as(usize, 0), try f.empties());
+    try t.expect((try app.layouts.current().computeRects(app.panes_area, app.frame.allocator())).panes[3].rect.eql(slot));
+    try app.render();
+    const after = try screen_mod.toTestText(app.gpa, &app.screen);
+    defer app.gpa.free(after);
+    try t.expect(std.mem.indexOf(u8, after, "Add Claude Code") == null);
 }
