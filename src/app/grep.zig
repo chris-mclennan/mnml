@@ -652,6 +652,38 @@ fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError
 
 const GitOutcome = enum { ran, no_git };
 
+/// Whether `root` is a repository `git grep` would search: a `.git`
+/// entry at the root (a directory, or a worktree's file), else — a
+/// directory inside a repository — one `git check-ignore` says it is
+/// not ignored (a scratch directory under an ignored `.zig-cache/`
+/// would otherwise "run" with nothing, and the next backend never
+/// answer). Exit 128 is no repository at all.
+fn inRepo(c: *Ctx, root: []const u8) WorkerError!bool {
+    const io = c.io;
+    var dir = Io.Dir.cwd().openDir(io, root, .{}) catch |err| {
+        if (err == error.Canceled) return error.Canceled;
+        return false;
+    };
+    defer dir.close(io);
+    if (dir.statFile(io, ".git", .{})) |_| return true else |err| if (err == error.Canceled) return error.Canceled;
+    var child = std.process.spawn(io, .{
+        .argv = &.{ c.git_bin, "check-ignore", "-q", "." },
+        .cwd = .{ .path = root },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    const term = child.wait(io) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return false,
+    };
+    return term == .exited and term.exited == 1;
+}
+
 /// Spawn `git grep -n --column -z` in `root`. `.no_git` when git is
 /// missing or the directory is no repository (exit 128), so the next
 /// backend answers instead. One hit per line (the first match, as
@@ -661,6 +693,7 @@ const GitOutcome = enum { ran, no_git };
 fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError!GitOutcome {
     const io = c.io;
     const gpa = c.gpa;
+    if (!(try inRepo(c, root))) return .no_git;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     defer argv.deinit(gpa);
     try argv.appendSlice(gpa, &.{ c.git_bin, "grep", "-n", "--column", "-z", "-I", "--no-color" });

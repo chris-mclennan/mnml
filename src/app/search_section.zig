@@ -801,6 +801,14 @@ test "view.activity_search: the section takes the column with the query focused;
     try command.run(app, .{ .static = .@"search.open_pane" });
     const id = grep.find(app).?;
     try t.expectEqualStrings("alpha", app.panes.get(id).?.grep.query);
+    // Let the pane's run land before the app goes: a batch posted
+    // while the queue closes is a leak the full run reports.
+    var i: usize = 0;
+    while (i < 400 and app.panes.get(id).?.grep.loading) : (i += 1) {
+        try app.tick(App.nowMs(t.io));
+        t.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try t.expect(!app.panes.get(id).?.grep.loading);
 }
 
 test "the walk parity: the same seed without a repository answers through the walk with the .gitignore honoured, and the header says so" {
