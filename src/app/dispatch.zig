@@ -899,15 +899,17 @@ fn menuMove(m: *app_mod.MenuState, delta: i32) void {
     m.cursor = @intCast(@max(0, @min(want, last)));
 }
 
-/// `menuMove` for the open child: its first arrow lights its cursor row.
+/// `menuMove` for the open child, except that its first arrow moves as
+/// well as lights: Rust's child `ContextMenu` (and the menu bar's
+/// submenu) starts un-interacted on row 0 and `move_down` steps to
+/// row 1 at once. Eating the first arrow put every later key one row
+/// above where the screen said it was — `→` curated the row above,
+/// Enter pinned instead of creating (walkthrough 2.2).
 fn subMove(sub: *app_mod.MenuState.SubMenu, delta: i32) void {
     const last: i64 = @as(i64, @intCast(sub.items.len)) - 1;
     if (last < 0) return;
     sub.follow = .cursor;
-    if (!sub.highlight) {
-        sub.highlight = true;
-        return;
-    }
+    sub.highlight = true;
     const want = @as(i64, @intCast(sub.cursor)) + delta;
     sub.cursor = @intCast(@max(0, @min(want, last)));
 }
@@ -4314,4 +4316,68 @@ test "a scrollbar drag keeps steering off the bar until the release: the help bo
     try std.testing.expectEqual(@as(usize, 0), app.overlay.help.scroll);
     try release(&app, track.x -| 5, track.y);
     try std.testing.expect(app.drag == null);
+}
+
+test "a submenu's first arrow moves as well as lights: New ▸ then two downs and Enter opens the HTTP request; the File menu's recent list the same" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &pbuf);
+    const root = pbuf[0..n];
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "a\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "b.txt", .data = "b\n" });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.render();
+    // The `+` opens Create…; the pointer resting on New opens its child
+    // un-highlighted on row 0 (Rust's child starts un-interacted).
+    var plus: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .button and h.target.button == render.Button.newTab(0)) {
+        plus = h.rect;
+    };
+    try press(&app, plus.?.x + 1, plus.?.y, .left);
+    try std.testing.expect(app.overlay == .menu);
+    try std.testing.expectEqualStrings("Create…", app.overlay.menu.title);
+    try app.render();
+    var new_row: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 0 and h.target.menu_item.idx == 0) {
+        new_row = h.rect;
+    };
+    try app.handle(.{ .mouse = .{ .x = new_row.?.x + 3, .y = new_row.?.y, .kind = .motion } });
+    try std.testing.expect(app.overlay.menu.sub != null);
+    try std.testing.expectEqualStrings("Scratch buffer", app.overlay.menu.sub.?.items[0].label);
+    try std.testing.expect(!app.overlay.menu.sub.?.highlight);
+    // Two downs land on the third row, as Rust's `move_down` does from
+    // row 0; Enter runs it.
+    try app.handle(.{ .key = key_mod.Key.named(.down) });
+    try std.testing.expect(app.overlay.menu.sub.?.highlight);
+    try std.testing.expectEqual(@as(usize, 1), app.overlay.menu.sub.?.cursor);
+    try app.handle(.{ .key = key_mod.Key.named(.down) });
+    try std.testing.expectEqual(@as(usize, 2), app.overlay.menu.sub.?.cursor);
+    try std.testing.expectEqualStrings("HTTP request", app.overlay.menu.sub.?.items[2].label);
+    try app.handle(.{ .key = key_mod.Key.named(.enter) });
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqualStrings("GET  new request", app.panes.get(app.active.?).?.title());
+    // The menu bar's one submenu, keyboard-opened: → on "Open recent
+    // file" opens the list on row 0; one down is the second-newest file.
+    const a = try std.fs.path.join(std.testing.allocator, &.{ root, "a.txt" });
+    defer std.testing.allocator.free(a);
+    const b = try std.fs.path.join(std.testing.allocator, &.{ root, "b.txt" });
+    defer std.testing.allocator.free(b);
+    _ = try app.openPath(a);
+    _ = try app.openPath(b);
+    try menu_bar.openIndex(&app, 1);
+    try std.testing.expect(app.overlay == .menu);
+    try std.testing.expectEqualStrings("File", app.overlay.menu.title);
+    var i: usize = 0;
+    while (i < app.overlay.menu.items.len and app.overlay.menu.items[i].submenu.len == 0) : (i += 1) {}
+    app.overlay.menu.cursor = i;
+    try app.handle(.{ .key = key_mod.Key.named(.right) });
+    try std.testing.expect(app.overlay.menu.sub != null);
+    try std.testing.expectEqualStrings("b.txt", app.overlay.menu.sub.?.items[0].label);
+    try app.handle(.{ .key = key_mod.Key.named(.down) });
+    try std.testing.expectEqual(@as(usize, 1), app.overlay.menu.sub.?.cursor);
+    try app.handle(.{ .key = key_mod.Key.named(.enter) });
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqualStrings("a.txt", app.panes.get(app.active.?).?.title());
 }
