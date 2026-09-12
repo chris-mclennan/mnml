@@ -364,15 +364,45 @@ pub fn rebuildTabs(app: *App) CommandError!void {
     }
     var first: ?PaneId = null;
     var want: ?PaneId = null;
+    var active_tab: ?PaneId = null;
     var leaf: ?layout_mod.NodeId = null;
     for (repos.items) |r| {
         const id = try git.ensureGraphPane(app, r);
         leaf = try layout.showIn(leaf, id);
         if (first == null) first = id;
         if (prev_repo != null and prev_repo.? == r.id) want = id;
+        if (gs.activeRepo()) |ar| if (ar.id == r.id) {
+            active_tab = id;
+        };
     }
-    app.setActive(want orelse first);
+    // The tab shown: the graph that was active, else the ACTIVE repo's
+    // (the workspace root's, unless the panel switched) — Rust's
+    // `open_git_graph` — and only then the first.
+    app.setActive(want orelse active_tab orelse first);
     app.afterSplitChange();
+}
+
+/// A repo a closed tab hid comes back when a command asks for it by
+/// name. True when it was hidden.
+pub fn unclose(app: *App, path: []const u8) bool {
+    const st = &app.git_palette;
+    for (st.closed.items, 0..) |c, i| if (std.mem.eql(u8, c, path)) {
+        app.gpa.free(st.closed.orderedRemove(i));
+        return true;
+    };
+    return false;
+}
+
+/// The ACTIVE repo's graph is the tab shown — `git.graph` and the
+/// commit box land there, never on whichever repo's tab was first —
+/// reopened when an `esc` on it had closed it (the close hides the
+/// repo for the session; asking for its graph un-hides it).
+pub fn showActiveGraph(app: *App) CommandError!PaneId {
+    const repo = try git.requireRepo(app);
+    if (unclose(app, repo.path) and app.git_palette.active) try rebuildTabs(app);
+    const id = try git.ensureGraphPane(app, repo);
+    app.showPane(id);
+    return id;
 }
 
 /// A graph tab closed: its repo stays out until reopened.
@@ -1571,6 +1601,36 @@ fn unseed(app: *App) void {
         r.tags = &.{};
         r.prs = &.{};
     }
+}
+
+test "git.graph shows the ACTIVE repo's graph: with two discovered repos the first's tab comes back after a close hid it, and the other's is the one shown only once the panel switched to it" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"git.graph" });
+    const alpha = app.git.repos.items[0];
+    const beta = app.git.repos.items[1];
+    try testing.expectEqual(alpha.id, app.git.activeRepo().?.id);
+    try testing.expectEqual(alpha.id, git.activeGraph(app).?.repo);
+    // Esc on the graph closes the tab and hides the repo for the
+    // session; the other repo's tab is what is left on screen.
+    try app.closePane(app.active.?, true);
+    try testing.expect(app.git_palette.isClosed(alpha.path));
+    try testing.expectEqual(beta.id, git.activeGraph(app).?.repo);
+    // `git.graph` asks for the ACTIVE repo's graph: alpha's, reopened —
+    // not whichever tab the layout had first.
+    try command.run(app, .{ .static = .@"git.graph" });
+    try testing.expectEqual(alpha.id, git.activeGraph(app).?.repo);
+    try testing.expect(!app.git_palette.isClosed(alpha.path));
+    const tabs = try app.layouts.current().allPanes(app.frame.allocator());
+    try testing.expectEqual(@as(usize, 2), tabs.len);
+    // The panel switched to beta: its graph is where `git.graph` lands.
+    try git.switchTo(app, 1);
+    try command.run(app, .{ .static = .@"git.graph" });
+    try testing.expectEqual(beta.id, app.git.activeRepo().?.id);
+    try testing.expectEqual(beta.id, git.activeGraph(app).?.repo);
+    try testing.expect(app.focus == .pane and app.focus.pane == app.active.?);
 }
 
 test "the chevrons and `[` / `]` step through the repos in discovery order and wrap, the graph tab following; the rail moves with the switch; one repo leaves them inert" {

@@ -930,6 +930,7 @@ fn pushForce(app: *App) CommandError!void {
 fn graph(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     try git_palette.enter(app);
+    _ = try git_palette.showActiveGraph(app);
 }
 
 fn reopenRepo(app: *App) CommandError!void {
