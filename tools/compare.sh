@@ -34,8 +34,9 @@
 #
 # Env: MNML_INPUT=vim|standard (default: standard when NAME contains
 # `standard` or `mouse`, else vim), MNML_RUST_BIN / MNML_ZIG_BIN,
-# FIXTURE, KEEP=1 keeps the private copy. Every spawned binary is killed
-# on exit.
+# FIXTURE, FIXTURE_LINES=N (the fixture's line count, default 6000; the
+# output dir gains a `-Nl` suffix), KEEP=1 keeps the private copy. Every
+# spawned binary is killed on exit.
 set -u
 [ $# -ge 1 ] || { echo "usage: compare.sh NAME [COLSxROWS]" >&2; exit 64; }
 NAME=$1; SIZE=${2:-120x40}
@@ -67,8 +68,10 @@ else
 fi
 [ -x "$RUST" ] || { echo "compare: no Rust binary: $RUST" >&2; exit 64; }
 
+LINES=${FIXTURE_LINES:-6000}
 OUT=$ROOT/docs/research/compare/$NAME
 [ "$SIZE" = 120x40 ] || OUT=$OUT-$SIZE
+[ "$LINES" = 6000 ] || OUT=$OUT-${LINES}l
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 real() { (cd "$1" && pwd -P); }
@@ -108,7 +111,7 @@ for p in "$SRC_WS" "$ALT_WS" "$SRC_RS" "$ALT_RS" "$SRC_ZG" "$ALT_ZG"; do
   [ -z "$left" ] || { echo "compare: source path $p still named in:" >&2; echo "$left" | sed 's/^/  /' >&2; exit 70; }
 done
 mkdir -p "$WS/src"
-python3 "$ROOT/tools/gen-large-fixture.py" "$WS/src/large.rs" >"$OUT/fixture.txt" || exit 70
+python3 "$ROOT/tools/gen-large-fixture.py" "$WS/src/large.rs" --lines "$LINES" >"$OUT/fixture.txt" || exit 70
 echo "== private copy: $COPY_DIR   fixture: $(cat "$OUT/fixture.txt" | sed 's|^[^:]*/||')"
 echo "== rust: $RUST"
 echo "== zig:  $ZIG"

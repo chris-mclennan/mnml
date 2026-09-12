@@ -544,5 +544,7 @@ append to its ack in `events.jsonl` and to the next `screen.txt` write
 after it (1 ms polls; both editors dump every frame, so the ack is what
 anchors a step). The Rust binary is `target/release/mnml` when present,
 else `debug`, else built; `timing.md` names it. Both editors are killed
-on exit; `KEEP=1` keeps the copy. The reading of the first four runs is
-`docs/research/rust-vs-zig-navigation.md`.
+on exit; `KEEP=1` keeps the copy; `FIXTURE_LINES=30000` writes a
+larger fixture (the output dir gains `-30000l`). The reading of the
+first four runs is `docs/research/rust-vs-zig-navigation.md`, with a
+dated addendum for the open-path work that followed.
