@@ -1,16 +1,26 @@
 # env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
 # The green + New session row sits under the filter with a blank row on
 # either side; k from the first card climbs onto it and its marker
-# shows; j drops back. It runs ai.claude_code_new — not pressed here,
-# the real claude would start.
+# shows; j drops back. It runs ai.claude_code_new — pressed here against
+# a fake `claude` on PATH, it opens a second card.
 
-write home/.claude/projects/-tmp-ws/e2e00000-0000-4000-8000-000000000001.jsonl {"type":"user","message":{"role":"user","content":"write the release notes"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '\\033]0;\\342\\234\\263 fix the failing tests\\007'\nprintf 'Claude Code v9 (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 300
 command view.activity_sessions
-key w
-wait 500
+wait 300
 expect screen contains "+ New session"
-expect screen contains "write the release notes"
+expect screen contains "SESSIONS (1)"
 key k
 expect screen contains "▌ + New session"
 key j
 expect screen lacks "▌ + New session"
+key k
+key enter
+expect screen contains "New local session"
+key enter
+wait 300
+command view.activity_sessions
+expect screen contains "SESSIONS (2)"
