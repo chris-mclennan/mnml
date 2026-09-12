@@ -1,5 +1,5 @@
  ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
-   │ GIT       │ 󰊢 ws 󰅖   󰐕                                               
+   │ GIT       │ 󰊢 ws 󰅖   󰐕                                      󱸀        
   │  󰍉 / filt  │    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch
  󰍉 │            │     G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA
 ▌󰊢 │  ws 󰅀      │▌▶   ●─╮ │ On main: half done     │   09/06 20:00 │ fa2107d76
@@ -20,5 +20,5 @@
    │ rows.     ││
   │ Enter     ││
    │            │
- VIEW   main  ⇡1  [no file]         F 57% ▲1.0  󱼀 󰐎    00:53  ws   —
+ VIEW   main  ⇡1  [no file]         F 59% ▲0.4  󱼀 󰐎    10:57  ws   —
 
