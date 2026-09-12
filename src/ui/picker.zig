@@ -60,6 +60,10 @@ pub const State = struct {
     rows: usize = 0,
     /// `ui.picker_position`: `.top` or `.center`.
     anchor: overlay.Anchor = .center,
+    /// A location list under the vim profile: while the filter is
+    /// empty, `j` / `k` move the cursor (the rows are places, not names
+    /// a `j` would start) and `g` / `G` jump; any other char filters.
+    list_keys_when_empty: bool = false,
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         s.query.deinit(gpa);
@@ -105,6 +109,12 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key, count: usize) Allocator.Er
             'n', 'j' => s.cursor = @min(s.cursor + 1, last),
             'u' => s.cursor -|= page,
             'd' => s.cursor = @min(s.cursor + page, last),
+            else => return editKey(s, gpa, key),
+        } else if (s.list_keys_when_empty and s.query.items.len == 0 and !key.mods.alt and !key.mods.super) switch (c) {
+            'j' => s.cursor = @min(s.cursor + 1, last),
+            'k' => s.cursor -|= 1,
+            'g' => s.cursor = 0,
+            'G' => s.cursor = last,
             else => return editKey(s, gpa, key),
         } else return editKey(s, gpa, key),
         else => return editKey(s, gpa, key),
@@ -514,4 +524,27 @@ test "a cell of air before the bar: a hint without a detail owes the edge the ce
     try f.expectAirBeforeBar(bar.y, bar.y + bar.h, bar.x);
     var buf: [256]u8 = undefined;
     try testing.expect(std.mem.endsWith(u8, f.row(bar.y, &buf), "… █│"));
+}
+
+test "list keys: with the flag and an empty query j / k / g / G move; a typed char filters and j types after it" {
+    const gpa = std.testing.allocator;
+    var s: State = .{ .title = "References", .list_keys_when_empty = true };
+    defer s.deinit(gpa);
+    try std.testing.expect((try handleKey(&s, gpa, Key.char('j'), 3)) == .consumed);
+    try std.testing.expectEqual(@as(usize, 1), s.cursor);
+    try std.testing.expect((try handleKey(&s, gpa, Key.char('G'), 3)) == .consumed);
+    try std.testing.expectEqual(@as(usize, 2), s.cursor);
+    try std.testing.expect((try handleKey(&s, gpa, Key.char('k'), 3)) == .consumed);
+    try std.testing.expectEqual(@as(usize, 1), s.cursor);
+    try std.testing.expect((try handleKey(&s, gpa, Key.char('g'), 3)) == .consumed);
+    try std.testing.expectEqual(@as(usize, 0), s.cursor);
+    try std.testing.expectEqualStrings("", s.queryText());
+    try std.testing.expect((try handleKey(&s, gpa, Key.char('a'), 3)) == .changed);
+    try std.testing.expect((try handleKey(&s, gpa, Key.char('j'), 3)) == .changed);
+    try std.testing.expectEqualStrings("aj", s.queryText());
+    // Without the flag `j` types from the start.
+    var plain: State = .{ .title = "Files" };
+    defer plain.deinit(gpa);
+    try std.testing.expect((try handleKey(&plain, gpa, Key.char('j'), 3)) == .changed);
+    try std.testing.expectEqualStrings("j", plain.queryText());
 }
