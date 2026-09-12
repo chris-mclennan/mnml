@@ -114,6 +114,7 @@ const ai_app = @import("ai.zig");
 const sessions_table = @import("sessions_table.zig");
 const cloud_agents = @import("cloud_agents.zig");
 const spend = @import("spend.zig");
+const usage_pane = @import("usage_pane.zig");
 const grep = @import("grep.zig");
 const jumplist = @import("jumplist.zig");
 const dap = @import("dap.zig");
@@ -269,6 +270,11 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .spend_report => |*s| {
             if (try spend.handleKey(app, id, s, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .ai_usage => |*u| {
+            if (try usage_pane.handleKey(app, id, u, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1912,6 +1918,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git_graph => |*g| try git_app.graphClick(app, sh.pane, g, sh.id, m),
                 .sessions_table => |*tp| try sessions_table.click(app, sh.pane, tp, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
+                .ai_usage => {},
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
@@ -1995,7 +2002,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         app.setActive(id_pane);
                         app.focus = .{ .pane = id_pane };
                     },
-                    .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y) else try runCmd(app, .@"ai.spend_today"),
+                    .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y) else try runCmd(app, if (id == .ai_codex) .@"ai.codex_usage" else .@"ai.claude_usage"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.
@@ -2407,6 +2414,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .sessions_table => |*tp| sessions_table.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .ai_usage => |*u| usage_pane.scrollBy(u, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .grep => |*g| grep.scrollBy(g, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .debug => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),

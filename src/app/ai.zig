@@ -35,6 +35,7 @@ const cmd_view = @import("cmd_view.zig");
 const settings = @import("settings.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
+const usage_pane = @import("usage_pane.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
@@ -158,12 +159,16 @@ pub const State = struct {
     /// The grid's open slot is live: an `.empty` node the next Claude
     /// session fills (`ai_grid.zig`). Cleared when the tree has none.
     placeholder: bool = false,
+    /// The quota reader's state: the per-account snapshots the chip and
+    /// the usage panes read (`app/usage_pane.zig`).
+    usage: usage_pane.State = .{},
 
     /// Cancels every worker and waits: they borrow `app.env`,
     /// `app.workspace` and post into `app.events`.
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
         self.spend_group.cancel(io);
+        self.usage.deinit(gpa, io);
         for (self.jobs.items) |j| gpa.destroy(j);
         self.jobs.deinit(gpa);
         if (self.owned_default) |d| gpa.free(d);
@@ -343,11 +348,14 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
 /// Every tick: fire the request once the clock is due.
 pub fn tick(app: *App) Allocator.Error!void {
     if (app.ai.debounce.due(app.now_ms)) try fireSuggestion(app);
+    try usage_pane.tick(app);
+    usage_pane.pollTicker(app);
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     var next: ?i64 = app.ai.debounce.deadline();
     if (spend.anyLoading(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 120);
+    if (usage_pane.tickerActive(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 1000);
     return next;
 }
 
@@ -1472,7 +1480,7 @@ fn notInBuildCmd(app: *App) CommandError!void {
 }
 
 fn showLastResponse(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "the quota endpoint is not in this build; ai.spend_today reads the local transcripts", .{});
+    return usage_pane.showLastResponse(app);
 }
 
 // ─── commands: git prompts ──────────────────────────────────────────────
@@ -1549,18 +1557,20 @@ pub fn tokenAccept(app: *App, token_in: []const u8) CommandError!void {
     app.toast("Claude token linked ({s})", .{app.relPath(path)});
 }
 
+/// The quota pane: the session and weekly windows per account, off
+/// the reader in `src/ai/usage.zig` — the numbers the chip shows.
 fn claudeUsage(app: *App) CommandError!void {
-    app.toast("Claude usage: the quota endpoint is not in this build — showing the local 24h spend", .{});
-    return spend.open(app);
+    return usage_pane.open(app, .claude);
 }
 
 fn codexUsage(app: *App) CommandError!void {
-    app.toast("Codex usage: the local 24h spend includes ~/.codex/sessions", .{});
-    return spend.open(app);
+    return usage_pane.open(app, .codex);
 }
 
+/// `ai.refresh_usage`: every account and the Codex scan, now.
 fn refreshUsage(app: *App) CommandError!void {
-    return spend.refreshMeter(app);
+    try usage_pane.refreshAll(app);
+    app.toast("refreshing usage…", .{});
 }
 
 fn chipShowSession(app: *App) CommandError!void {

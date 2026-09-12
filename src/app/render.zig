@@ -94,6 +94,7 @@ const sessions_table = @import("sessions_table.zig");
 const spend = @import("spend.zig");
 const ai_view = @import("../ui/ai_view.zig");
 const spend_view = @import("../ui/spend_view.zig");
+const usage_pane = @import("usage_pane.zig");
 const ai_apply_view = @import("../ui/ai_apply_view.zig");
 const ai_apply = @import("ai_apply.zig");
 const tests_pane = @import("tests_pane.zig");
@@ -699,6 +700,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .sessions_table => kindIcon(ascii, "\u{25C6}", "\u{F0392}", p.purple),
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
         .spend_report => kindIcon(ascii, "$", "\u{F01C2}", p.orange),
+        .ai_usage => |*u| if (u.product == .claude) kindIcon(ascii, "\u{2733}", "\u{F1E00}", p.orange) else kindIcon(ascii, "\u{25c8}", "\u{F1E01}", p.cyan),
         .mount => kindIcon(ascii, "M", "\u{F0BD3}", p.cyan),
         .integrations => kindIcon(ascii, "\u{25C8}", "\u{F0431}", p.cyan),
     };
@@ -1053,6 +1055,10 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .spend_report => |*s| {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
                 spend_view.draw(ui, pr.pane, rect, s, app.active == pr.pane and app.focus == .pane);
+            },
+            .ai_usage => |*u| {
+                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
+                try usage_pane.draw(app, ui, pr.pane, u, rect);
             },
             .grep => |*g| {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);

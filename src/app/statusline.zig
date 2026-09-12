@@ -42,7 +42,7 @@ const ipc = @import("../ipc/root.zig");
 const remote = @import("../git/remote.zig");
 const parse = @import("../git/parse.zig");
 const lsp = @import("lsp.zig");
-const transcript = @import("../ai/transcript.zig");
+const usage_pane = @import("usage_pane.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
 const transfers = @import("transfers.zig");
@@ -482,26 +482,19 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
         else => {},
     };
-    // The AI meters, each while its integration is on. Zig's meter is
-    // the local 24h spend (`ai.refresh_usage`); the quota percent the
-    // Rust chip showed needs an endpoint this build does not call.
+    // The AI meters, each while its integration is on: the quota the
+    // usage reader holds (`app/usage_pane.zig`, the same snapshots the
+    // usage pane shows) — Claude's session / weekly percent, near-black
+    // on the brand coral whatever the tier; Codex's tokens today.
     if (enabledIcon(app, "claude_code")) |ic| {
         const glyph = if (ui.ascii) sl.claude_ascii else sl.claude_glyph;
-        var buf: [16]u8 = undefined;
-        const text: ?[]const u8 = if (app.ai.meter) |m| switch (app.cfg.ai.claude_meter_mode) {
-            .off => null,
-            .compact => ui.fmt(" {s} ${d:.2} ", .{ glyph, m.cost_usd }),
-            .ticker => ui.fmt(" {s} {s} · ${d:.2} ", .{ glyph, transcript.fmtTokens(&buf, m.tokens), m.cost_usd }),
-        } else ui.fmt(" {s} … ", .{glyph});
-        if (text) |txt| try push(&right, arena, Seg.init(txt, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw()));
+        const text = try usage_pane.claudeChip(app, arena, glyph);
+        try push(&right, arena, Seg.init(text, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw()));
     }
     if (enabledIcon(app, "codex")) |_| {
         const glyph = if (ui.ascii) sl.codex_ascii else sl.codex_glyph;
-        var buf: [16]u8 = undefined;
-        const seg = if (app.ai.meter) |m|
-            Seg.init(ui.fmt(" {s} {s} ", .{ glyph, transcript.fmtTokens(&buf, m.tokens) }), p.bg_darker, p.cyan)
-        else
-            Seg.init(ui.fmt(" {s} … ", .{glyph}), p.comment, p.cyan);
+        const chip = try usage_pane.codexChip(app, arena, glyph);
+        const seg = Seg.init(chip.text, if (chip.has_data) p.bg_darker else p.comment, p.cyan);
         try push(&right, arena, seg.withHit(SegId.ai_codex.raw()));
     }
     if (coverage.shown(app)) |shown| {
