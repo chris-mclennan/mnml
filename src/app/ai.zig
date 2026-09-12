@@ -39,6 +39,8 @@ const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const ai_grid = @import("ai_grid.zig");
+const activity_bar = @import("activity_bar.zig");
+const side = @import("side.zig");
 
 pub const table = .{
     .@"ai.ask" = &askCmd,
@@ -1140,9 +1142,19 @@ pub const Product = launch_profiles.Product;
 /// (`session_worktree.zig`).
 fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!?PaneId {
     if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in [ai.routing]", .{@tagName(product)});
+    showSessionsSection(app);
     if (placement == null and product == .claude and !tabsMode(app)) return ai_grid.open(app);
     const where: pty_pane.Placement = placement orelse (if (tabsMode(app)) .tab else .right);
     return launch_profiles.openSessionWith(app, product, launch_profiles.defaultName(app, product), where);
+}
+
+/// `ui.auto_show_sessions_on_ai_activate`: a new session shows the
+/// SESSIONS section — where AI panes are listed — in its column; the
+/// keys stay with the pane about to open.
+fn showSessionsSection(app: *App) void {
+    if (!app.cfg.ui.auto_show_sessions_on_ai_activate) return;
+    activity_bar.enter(app, .sessions);
+    side.place(app, .sessions, false);
 }
 
 /// `ui.ai_layout_mode = .tabs`; the `[ai] layout_mode` extra still
@@ -1187,6 +1199,7 @@ fn newSessionWorktree(app: *App) CommandError!void {
 /// page every eight (`ai_grid.openBatch`).
 fn openBatch(app: *App, n: usize) CommandError!void {
     if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in [ai.routing]", .{});
+    showSessionsSection(app);
     if (!tabsMode(app)) return ai_grid.openBatch(app, n);
     var i: usize = 0;
     while (i < n) : (i += 1) _ = (try openSession(app, .claude, .tab)) orelse break;

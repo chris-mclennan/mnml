@@ -176,6 +176,7 @@ const build_options = @import("build_options");
 const Rect = @import("../ui/rect.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const dispatch = @import("dispatch.zig");
+const side = @import("side.zig");
 
 const Fixture = struct {
     tmp: t.TmpDir,
@@ -442,4 +443,35 @@ test "the grid: the open slot paints the Add Claude Code card over the whole qua
     const after = try screen_mod.toTestText(app.gpa, &app.screen);
     defer app.gpa.free(after);
     try t.expect(std.mem.indexOf(u8, after, "Add Claude Code") == null);
+}
+
+test "ui.auto_show_sessions_on_ai_activate: a new Claude or Codex session, single or batch, shows SESSIONS and keeps the keys on the pane; off, the column is left alone" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try t.expect(!side.isShown(&f.app, .sessions));
+    try command.run(&f.app, .{ .static = .@"ai.claude_code" });
+    try t.expect(side.isShown(&f.app, .sessions));
+    try t.expect(f.app.focus == .pane);
+    try t.expectEqual(f.app.active.?, f.app.focus.pane);
+    // Codex, and the batch, the same.
+    var g = try Fixture.init();
+    defer g.deinit();
+    try command.run(&g.app, .{ .static = .@"ai.codex_new" });
+    try t.expect(side.isShown(&g.app, .sessions));
+    var h = try Fixture.init();
+    defer h.deinit();
+    try command.run(&h.app, .{ .static = .@"ai.claude_code_new_x2" });
+    try t.expect(side.isShown(&h.app, .sessions));
+    try t.expectEqual(@as(usize, 2), countOnPage(&h.app));
+    // Off: the column stays as it was.
+    var k = try Fixture.init();
+    defer k.deinit();
+    k.app.cfg.ui.auto_show_sessions_on_ai_activate = false;
+    try command.run(&k.app, .{ .static = .@"ai.claude_code_new" });
+    try t.expect(!side.isShown(&k.app, .sessions));
+    try command.run(&k.app, .{ .static = .@"ai.codex_new" });
+    try t.expect(!side.isShown(&k.app, .sessions));
+    try command.run(&k.app, .{ .static = .@"ai.claude_code_new_x2" });
+    try t.expect(!side.isShown(&k.app, .sessions));
 }
