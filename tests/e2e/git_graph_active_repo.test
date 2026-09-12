@@ -1,0 +1,30 @@
+# Walkthrough finding 1.4: `git.graph` showed a foreign repo's graph once
+# an esc on the workspace repo's tab had closed it. The command lands on
+# the ACTIVE repo's graph — the first discovered here, `alpha` — and
+# brings its tab back; the other repo's graph only once the panel
+# switched to it.
+shell mkdir -p alpha beta
+shell git -C alpha init -q -b main
+shell git -C alpha -c user.email=t@mnml.dev -c user.name=t commit -q --allow-empty -m "alpha init"
+shell git -C beta init -q -b main
+shell git -C beta -c user.email=t@mnml.dev -c user.name=t commit -q --allow-empty -m "beta init"
+command git.graph
+wait 1500
+expect pane "alpha"
+expect screen contains "alpha init"
+# esc closes the tab; beta's graph is what is left.
+key esc
+wait 300
+expect pane "beta"
+expect screen contains "beta init"
+command git.graph
+wait 1500
+expect pane "alpha"
+expect screen contains "alpha init"
+# The panel's `]` switches the active repo: its graph is where the command lands.
+command git.next_repo
+wait 1500
+command git.graph
+wait 1000
+expect pane "beta"
+expect screen contains "beta init"

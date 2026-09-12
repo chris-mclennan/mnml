@@ -1,0 +1,23 @@
+# Walkthrough finding 1.6: `git.status_pane` replaced the graph where
+# Rust splits beside it. Both the graph's column header and the status
+# pane's list are on screen at once; the worktree diff is a tab, as
+# Rust's reveal_pane places it.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write a.txt "one\ntwo\n"
+command git.graph
+wait 1500
+expect screen contains "COMMIT MESSAGE"
+command git.status_pane
+wait 1000
+expect pane "git status"
+expect screen contains "Unstaged changes (1)"
+expect screen contains "COMMIT MESSAGE"
+command git.diff
+wait 1000
+expect pane "diff: worktree"
+expect screen contains "COMMIT MESSAGE"

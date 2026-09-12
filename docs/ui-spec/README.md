@@ -193,6 +193,19 @@ after — for a fixture you own alone. `tools/zig-spec.sh` and
 `tools/zig-spec-git.sh` seed their own throwaway workspace and data
 root under `mktemp -d` and read nothing shared.
 
+*// changed 2026-09-12 (git-walk):* `steps-graph2` reads 38 beyond the
+rail against `rust-git-120x40.txt` (37 on 2026-09-10): the extra row is
+row 1, the tab strip's chevrons and AI chip, not the graph. The
+`git.graph` the steps send twice now lands on the ACTIVE repo's tab
+(the same `ws` tab as before on this fixture); a second `git.graph` on
+a graph an `esc` has closed brings it back instead of showing the next
+repo's. `zig-git-palette-{120x40,80x24}.txt` / `-all-120x40.txt` were
+re-cut: only the clock and the detail header's age moved. The walk's
+own steps (`docs/ui-spec/walk/steps-git.jsonl`) reproduce findings
+1.3–1.6 on a private copy; `tests/e2e/git_graph_dates.test`,
+`git_graph_active_repo.test`, `git_commit_box.test` and
+`git_status_beside.test` drive the same sequences in the corpus.
+
 ## Sections and their sides (2026-09-07)
 
 Every activity section has a side (`src/app/side.zig`); these are the

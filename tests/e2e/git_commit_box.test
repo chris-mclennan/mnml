@@ -1,0 +1,36 @@
+# Walkthrough finding 1.5 (the walk's own sequence): an editor tab beside
+# the graph, its worktree diff opened and closed with esc, then
+# `git.commit` — the typed message must land in the graph's commit box,
+# and Ctrl+Enter must reach `git commit -m`.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write a.txt "one\ntwo\n"
+shell git add a.txt
+command git.graph
+wait 1500
+expect screen contains "1 change(s) · 1 staged"
+open a.txt
+wait 300
+expect pane "a.txt"
+command git.diff_all
+wait 1000
+expect pane "diff: HEAD"
+key esc
+wait 300
+command git.commit
+wait 800
+# The graph's box, not the modal: its header and hint row are on screen.
+expect screen lacks "Commit message"
+expect screen contains "▾ Commit"
+expect screen contains "Esc unfocus"
+type walk: test
+wait 300
+expect screen contains "walk: test"
+key ctrl+enter
+wait 2000
+shell test "$(git log -1 --format=%s)" = "walk: test"
+expect screen lacks "1 change(s)"
