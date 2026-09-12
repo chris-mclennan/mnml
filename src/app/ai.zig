@@ -54,6 +54,7 @@ pub const table = .{
     .@"ai.claude_code" = &claudeCode,
     .@"ai.claude_code_focus" = &claudeCodeFocus,
     .@"ai.claude_code_new" = &claudeCodeNew,
+    .@"ai.new_session_worktree" = &newSessionWorktree,
     .@"ai.claude_code_new_x2" = &claudeCodeNewX2,
     .@"ai.claude_code_new_x4" = &claudeCodeNewX4,
     .@"ai.claude_code_new_x8" = &claudeCodeNewX8,
@@ -1108,7 +1109,9 @@ pub const Product = launch_profiles.Product;
 /// Open an interactive session with the product's default launch
 /// profile (`launch_profiles.zig`). `ai_layout_mode = "tabs"` puts
 /// every new session on the active leaf's strip; the default splits.
-fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!PaneId {
+/// Null: the profile starts its sessions in a worktree, and the name
+/// prompt opened instead (`session_worktree.zig`).
+fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!?PaneId {
     if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in [ai.routing]", .{@tagName(product)});
     // changed (ui-polish): `ui.ai_layout_mode` is the typed field; the
     // `[ai] layout_mode` extra still overrides it.
@@ -1139,6 +1142,13 @@ fn claudeCodeFocus(app: *App) CommandError!void {
 
 fn claudeCodeNew(app: *App) CommandError!void {
     _ = try openSession(app, .claude, null);
+}
+
+/// `ai.new_session_worktree`: the default profile's session in a
+/// worktree of its own — the name prompt first.
+fn newSessionWorktree(app: *App) CommandError!void {
+    if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in [ai.routing]", .{});
+    try @import("session_worktree.zig").openNamePrompt(app, .claude, launch_profiles.defaultName(app, .claude));
 }
 
 /// N sessions: a grid (split right, then each column split down) or

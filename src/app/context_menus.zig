@@ -374,6 +374,7 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
         },
         .sessions => &.{
             .{ .label = "+ New Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
+            .{ .label = "+ New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
             .{ .label = "+ New Codex session", .action = .{ .command = .@"ai.codex_new" } },
             .{ .label = "+ New cloud run…", .action = .{ .command = .@"cloud_agents.new_run" } },
             .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" } },
@@ -460,6 +461,7 @@ pub const plus_tree = [_]MenuItem{
     } },
     .{ .label = "AI", .action = .none, .icon = icon_ai_nerd, .icon_ascii = icon_ai_ascii, .submenu = &.{
         .{ .label = "Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
+        .{ .label = "New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
         .{ .label = "Codex session", .action = .{ .command = .@"ai.codex_new" } },
     } },
     .{ .label = "Dock", .action = .none, .icon = icon_dock_nerd, .icon_ascii = icon_dock_ascii, .submenu = &.{
@@ -1712,7 +1714,8 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     const want = [_]struct { label: []const u8, icon: []const u8, n: usize }{
         .{ .label = "New", .icon = icon_new_nerd, .n = 6 },
         .{ .label = "Open", .icon = icon_open_nerd, .n = 5 },
-        .{ .label = "AI", .icon = icon_ai_nerd, .n = 2 },
+        // sessions-worktree: the AI child gained New session in a worktree….
+        .{ .label = "AI", .icon = icon_ai_nerd, .n = 3 },
         .{ .label = "Dock", .icon = icon_dock_nerd, .n = 2 },
     };
     try t.expectEqual(want.len, m.items.len);
@@ -1727,8 +1730,9 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
         .{ "Shell", .@"term.shell" },           .{ "Browser tab", .@"browser.open" },               .{ "Tab page", .@"tab.new" },
         .{ "File…", .@"picker.files" },
         .{ "Recent files", .@"picker.recent" }, .{ "File browser", .@"files.open" },                .{ "Dual file panes (commander)", .@"files.open_split" },
-        .{ "Trash", .@"files.trash" },          .{ "Claude Code session", .@"ai.claude_code_new" }, .{ "Codex session", .@"ai.codex_new" },
-        .{ "Note", .@"dock.new_text" },         .{ "Log tail", .@"dock.new_log_tail" },
+        .{ "Trash", .@"files.trash" },          .{ "Claude Code session", .@"ai.claude_code_new" },
+        .{ "New session in a worktree…", .@"ai.new_session_worktree" },
+        .{ "Codex session", .@"ai.codex_new" }, .{ "Note", .@"dock.new_text" },                     .{ "Log tail", .@"dock.new_log_tail" },
     };
     var k: usize = 0;
     for (m.items) |it| for (it.submenu) |leaf| {

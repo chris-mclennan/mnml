@@ -205,6 +205,10 @@ pub const PromptPurpose = union(enum) {
     new_finding: []u8,
     /// SESSIONS: the alias for this session id (owned).
     sessions_rename: []u8,
+    /// // changed (sessions-worktree): the branch name of a new session
+    /// worktree; the payload names the product and the launch profile
+    /// (owned) the session then starts with.
+    session_worktree_name: SessionWorktreeName,
     /// A cloud run's ticket; the wizard's first step; its second, the
     /// model, carrying the ticket (owned).
     cloud_run_ticket,
@@ -285,10 +289,12 @@ pub const PromptPurpose = union(enum) {
     add_workspace,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
+    pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
             .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param => |s| gpa.free(s),
+            .session_worktree_name => |w| gpa.free(w.profile),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);
@@ -341,6 +347,11 @@ pub const ConfirmPurpose = union(enum) {
     remove_integration: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
+    /// // changed (sessions-worktree): merge the session worktree at
+    /// this path into the main tree (owned); remove it (and its
+    /// branch), `force` past an unmerged branch (`session_worktree.zig`).
+    session_worktree_merge: []u8,
+    session_worktree_remove: SessionWorktreeRemove,
     /// `http.delete_request`: the file or block to delete (owned).
     http_delete_request: @import("app/http_ops.zig").Target,
     /// `:s///c`: one match's yes / no / all / quit / last (`ex_verbs.zig`).
@@ -351,10 +362,12 @@ pub const ConfirmPurpose = union(enum) {
     reset_to_defaults,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
+    pub const SessionWorktreeRemove = struct { path: []u8, force: bool };
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration, .delete_session => |s| gpa.free(s),
+            .delete_path, .remove_integration, .delete_session, .session_worktree_merge => |s| gpa.free(s),
+            .session_worktree_remove => |r| gpa.free(r.path),
             .http_delete_request => |t| t.deinit(gpa),
             .delete_paths => |d| {
                 for (d.paths) |p| gpa.free(p);
@@ -2433,6 +2446,7 @@ test {
     _ = @import("ui/spend_view.zig");
     _ = @import("app/ai_apply.zig");
     _ = @import("app/launch_profiles.zig");
+    _ = @import("app/session_worktree.zig");
     _ = @import("app/tests_pane.zig");
     _ = @import("app/flaky.zig");
     _ = @import("ui/tests_view.zig");

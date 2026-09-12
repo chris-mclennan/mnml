@@ -83,6 +83,9 @@ pub const Message = struct { level: Level = .info, age_ms: i64 = 0, text: []cons
 pub const SessionAlias = struct { id: []const u8 = "", name: []const u8 = "" };
 /// SESSIONS: a chosen accent colour for a session id (`colors`).
 pub const SessionColor = struct { id: []const u8 = "", color: []const u8 = "" };
+/// SESSIONS: a worktree mnml made for a session (`worktrees`); `id` is
+/// the session's transcript id once known, else empty.
+pub const SessionWorktree = struct { id: []const u8 = "", path: []const u8 = "", name: []const u8 = "", branch: []const u8 = "", repo: []const u8 = "" };
 
 pub const Saved = struct {
     version: u32 = format_version,
@@ -120,6 +123,8 @@ pub const Saved = struct {
     sessions_aliases: []const SessionAlias = &.{},
     /// // changed (colors): the per-session colour overrides, by id.
     sessions_colors: []const SessionColor = &.{},
+    /// // changed (sessions-worktree): the session worktrees, by path.
+    sessions_worktrees: []const SessionWorktree = &.{},
     /// The dock widgets and whether the dock is hidden.
     dock: []const dock.SavedWidget = &.{},
     dock_hidden: bool = false,
@@ -293,6 +298,9 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     const colors = try arena.alloc(SessionColor, app.sessions.colors.items.len);
     for (app.sessions.colors.items, 0..) |c, i| colors[i] = .{ .id = c.id, .color = c.name };
     saved.sessions_colors = colors;
+    const trees = try arena.alloc(SessionWorktree, app.sessions.worktrees.items.items.len);
+    for (app.sessions.worktrees.items.items, 0..) |w, i| trees[i] = .{ .id = w.session_id orelse "", .path = w.path, .name = w.name, .branch = w.branch, .repo = w.repo };
+    saved.sessions_worktrees = trees;
     saved.dock = try dock.capture(app, arena);
     saved.dock_hidden = app.dock.hidden;
     return saved;
@@ -500,6 +508,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     }
     for (saved.sessions_aliases) |a| if (a.id.len > 0) try app.sessions.setAlias(gpa, a.id, a.name);
     for (saved.sessions_colors) |c| if (c.id.len > 0) try app.sessions.setColor(gpa, c.id, c.color);
+    for (saved.sessions_worktrees) |w| if (w.path.len > 0 and w.name.len > 0) try app.sessions.worktrees.add(gpa, w.path, w.name, if (w.branch.len > 0) w.branch else w.name, w.repo, w.id);
     try dock.apply(app, saved.dock, saved.dock_hidden);
     for (saved.recent) |p| try app.noteRecent(p);
     for (saved.closed) |c| {
@@ -882,6 +891,30 @@ test "session: clear deletes the file and stops the autosave; the timer writes e
     try t.expectError(error.FileNotFound, f.tmp.dir.statFile(t.io, rel_path, .{}));
     try saveCmd(&app);
     _ = try f.tmp.dir.statFile(t.io, rel_path, .{});
+}
+
+test "session: the session worktrees ride in the file by path, the learned id with them, and come back" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try app.sessions.worktrees.add(t.allocator, "/w-worktrees/feat", "feat", "feat", "/w", null);
+        try app.sessions.worktrees.add(t.allocator, "/w-worktrees/fix", "fix", "fix", "/w", "sid-7");
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        try t.expectEqual(@as(usize, 2), app.sessions.worktrees.items.items.len);
+        const feat = app.sessions.worktrees.byPath("/w-worktrees/feat").?;
+        try t.expectEqualStrings("feat", feat.name);
+        try t.expectEqualStrings("/w", feat.repo);
+        try t.expect(feat.session_id == null);
+        try t.expectEqualStrings("/w-worktrees/fix", app.sessions.worktrees.bySession("sid-7").?.path);
+    }
 }
 
 test "session: the session colours and a pty pane's accent ride in the file and come back" {

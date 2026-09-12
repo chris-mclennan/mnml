@@ -90,7 +90,7 @@ pub const exec_bearing = [_]Rule{
     .{ .path = "dap.<name>", .sink = .debug_adapter },
     .{ .path = "startup.layout[] with .kind = .pty", .sink = .startup_pty },
     .{ .path = "startup.tasks", .sink = .startup_task },
-    .{ .path = "ai.launch_profiles[] .binary / .args / .env", .sink = .launch_profile },
+    .{ .path = "ai.launch_profiles[] .binary / .args / .env / .worktree", .sink = .launch_profile },
     .{ .path = "ai.default_profile", .sink = .launch_profile },
     .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
     .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },

@@ -2511,7 +2511,7 @@ pub fn openCommandLog(app: *App, at: ?u32) CommandError!void {
 
 /// An open log pane takes the ring as it is now; the cursor stays on
 /// its entry (or lands on `at`).
-fn refillLogPane(app: *App, at: ?u32) Allocator.Error!void {
+pub fn refillLogPane(app: *App, at: ?u32) Allocator.Error!void {
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
         .list => |*l| if (l.kind == .git_log) {
             const arena = app.frame.allocator();

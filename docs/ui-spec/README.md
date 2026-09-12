@@ -310,6 +310,16 @@ spec, so there is nothing to diff against:
   same bar the clock, the fake's pid and the strip's Claude chip
   (`󱸀`, painted when a `claude` is on PATH — the fake is).
 
+Session worktrees (2026-09-10, `src/app/session_worktree.zig`): a row
+whose session runs in a worktree mnml made for it carries ` ⑂ <name>`
+after its label — the card in cyan, the table row muted after the
+name in what is left before the number columns, `wt:<name>` under
+`ui.ascii_icons`. The columns and the rest of the row are unchanged,
+and the seeded home has no such session, so the dumps above stand as
+cut; the tag is asserted by `tests/e2e/sessions_worktree_launch_merge.test`
+(the card, beside a pane, in an 18-cell column) and the unit test in
+`src/sessions.zig` (both views, both glyph sets).
+
 ## Conflict resolution (Zig-authored, 2026-09-08)
 
 `tools/zig-spec-conflict.sh git-conflict [COLSxROWS]` seeds a throwaway

@@ -1,6 +1,7 @@
 # env: HOME=home
 # The table's `+ New session` chip (and `sessions.new_menu`) is the
-# choice menu: a local session, the ×2 / ×4 / ×8 batches, and the two
+# choice menu: a local session, one in a worktree of its own, the ×2 /
+# ×4 / ×8 batches, and the two
 # cloud wizards — which say so when the API is not configured rather
 # than hide.
 
@@ -9,6 +10,7 @@ command sessions.table
 wait 800
 command sessions.new_menu
 expect screen contains "New local session"
+expect screen contains "New session in a worktree…"
 expect screen contains "Open ×2"
 expect screen contains "Open ×8"
 expect screen contains "New cloud run… (not configured)"

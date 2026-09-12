@@ -285,9 +285,13 @@ otherwise. Copy what you need; leave the rest out.
                 .args = .{},
                 .env = .{ "KEY=VALUE" },
                 .cwd_mode = .workspace, // .workspace | .home | .file_dir
+                .worktree = false, // true: every session of this profile starts in a git worktree of its own
             },
         },
         .default_profile = .{ .claude = null, .codex = null }, // a profile name per product; null = the built-in
+        // Where a session worktree goes. null = `<repo>-worktrees` beside the
+        // repository; `~` expands, a relative path sits under the repository.
+        .default_worktree_root = null,
         .inline_suggestions = true,
         .claude_show_all_accounts = false,
         .claude_meter_mode = .compact, // .off | .compact | .ticker
@@ -545,7 +549,7 @@ workspace layer and everything else still applies:
 | `.dap.<name>` | when you start a debug session |
 | `.startup.layout[]` with `.kind = .pty` | immediately, on open |
 | `.startup.tasks` | immediately, on open |
-| `.ai.launch_profiles[]` (`.binary` / `.args` / `.env`) and `.ai.default_profile` | when you start a Claude / Codex session |
+| `.ai.launch_profiles[]` (`.binary` / `.args` / `.env` / `.worktree`) and `.ai.default_profile` | when you start a Claude / Codex session |
 | `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
 | `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
 
@@ -603,6 +607,35 @@ chip's glyph in its colour; a click runs the chip's command (a pty
 pane, no side panel), a right click opens the chip's menu. *Add to
 activity bar* / *Remove from activity bar* on an Installed row's menu,
 a chip's menu or the icon's own writes the list to the home config.
+
+## Session worktrees
+
+A Claude / Codex session can start in a git worktree of its own —
+opt-in, off by default (`src/app/session_worktree.zig`). Per launch:
+*New session in a worktree…* on the AI chip's right-click, the `+`
+menus and `+ New session`, or `ai.new_session_worktree`. Per profile:
+`.ai.launch_profiles[].worktree = true` sends every session of that
+profile this way. Either prompts for a branch name (seeded
+`session-<n>`, or `<profile>-<n>`), runs `git worktree add -b <name>
+<root>/<name> HEAD` in the workspace's repository and opens the session
+in the tree with `MNML_WORKSPACE` pointing at it.
+
+`<root>` is `<repo>-worktrees` beside the repository (this project's
+own convention: `mnml-zig-worktrees/<track>`) unless
+`.ai.default_worktree_root` names another — `~` expands, a relative
+path sits under the repository, an absolute one is taken as is. The
+name is validated as a branch name; an existing directory or branch is
+refused with the reason.
+
+The SESSIONS row tags the session `⑂ <name>`; its menu offers *Open
+worktree in tree*, *Merge into <branch>…* (`--no-ff`, refused while
+the main tree has uncommitted changes) and *Remove worktree…*
+(`worktree remove` + `branch -d`; an unmerged branch asks once more
+with Force). The git panel's WORKTREES row paints the session's accent
+and carries the same two verbs. The trees mnml made are remembered in
+`.mnml/session.zon` (`sessions_worktrees`). `.worktree` on a profile
+is stripped with the profile from an untrusted workspace config
+(Workspace trust above).
 
 ## Bookmarks
 

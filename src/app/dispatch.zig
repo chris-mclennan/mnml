@@ -1210,6 +1210,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),
+        .session_worktree_name => |w| try toastOnFail(app, @import("session_worktree.zig").acceptNameCmd(app, w.product, w.profile, text)),
         .cloud_run_ticket => try cloud_agents.acceptRun(app, text, null),
         .cloud_run_wizard_ticket => try cloud_agents.acceptWizardTicket(app, text),
         .cloud_run_model => |ticket| try cloud_agents.acceptRun(app, ticket, text),
@@ -1322,6 +1323,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             if (mv.copy) try tree_mod.acceptCopy(app, mv.from, mv.into) else try tree_mod.acceptMove(app, mv.from, mv.into);
         },
         .delete_session => |path| if (choice == 0) try sessions.acceptDelete(app, path),
+        .session_worktree_merge => |path| if (choice == 0) try toastOnFail(app, @import("session_worktree.zig").acceptMerge(app, path)),
+        .session_worktree_remove => |r| if (choice == 0) try toastOnFail(app, @import("session_worktree.zig").acceptRemove(app, r.path, r.force)),
         .http_delete_request => |t| if (choice == 0) try @import("http_ops.zig").acceptDelete(app, t),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .font_update => |idx| try toastOnFail(app, font_scan.updateAccept(app, idx, choice)),

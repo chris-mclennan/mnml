@@ -111,7 +111,9 @@ pub const Row = union(enum) {
     remote: struct { idx: u32, name: []const u8, github: bool },
     /// A remote branch, shown without the `remote/` prefix.
     remote_branch: struct { idx: u32, name: []const u8, shown: []const u8 },
-    worktree: struct { idx: u32, shown: []const u8, main: bool, current: bool, locked: bool, dirty: bool, ahead: u32 = 0, behind: u32 = 0 },
+    /// `accent` is a session's colour when mnml made the tree for one
+    /// (sessions-worktree): its `▌` in the gutter; `session` says so.
+    worktree: struct { idx: u32, shown: []const u8, main: bool, current: bool, locked: bool, dirty: bool, ahead: u32 = 0, behind: u32 = 0, accent: ?Color = null, session: bool = false },
     stash: struct { idx: u32, sha: []const u8, message: []const u8 },
     tag: struct { idx: u32, name: []const u8 },
     /// All repos: the sub-header a section holds per repo (`idx` is the
@@ -362,6 +364,9 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
             } else if (wt.current) {
                 gutter = g(ui, check_nerd, check_ascii);
                 gutter_style = Theme.withFg(ground, pal.green);
+            } else if (wt.accent) |session_accent| {
+                gutter = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
+                gutter_style = Theme.withFg(ground, session_accent);
             },
             else => {},
         }
