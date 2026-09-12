@@ -15,6 +15,9 @@ shell git commit -q -m "initial"
 shell printf "fn beta() {}\nfn two() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\nfn nine() {}\nfn omega() {}\n" > code.rs
 open code.rs
 command git.diff_file
+# The diff opens beside the editor (Rust's split); alone in the layout
+# it has the width the three views are read at.
+command view.only
 # Inline: the toolbars, the banner, the whole file, no hunk header.
 expect screen contains "Hunk   Inline   Split"
 expect screen contains "Hunk 1/1  code.rs"
