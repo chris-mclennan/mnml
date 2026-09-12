@@ -1,0 +1,45 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_notes"}
+{"cmd": "wait_ms", "ms": 1200}
+# section
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "a"}
+{"cmd": "wait_ms", "ms": 200}
+# typed-a
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": "/"}
+{"cmd": "type", "text": "t"}
+{"cmd": "wait_ms", "ms": 200}
+# slash-t
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "notes.new"}
+{"cmd": "wait_ms", "ms": 500}
+# new
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "walk item"}
+{"cmd": "wait_ms", "ms": 100}
+# new-typed
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 10, "row": 5, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-row5
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "notes.sort"}
+{"cmd": "wait_ms", "ms": 300}
+# sort
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 500}
+# enter
+{"cmd":"snapshot"}

@@ -1,0 +1,36 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "ctrl+p"}
+{"cmd": "wait_ms", "ms": 400}
+# open
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "sam"}
+{"cmd": "wait_ms", "ms": 300}
+# typed-sam
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+# down
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 800}
+# enter
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "ctrl+r"}
+{"cmd": "wait_ms", "ms": 400}
+# recent
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "picker.buffers"}
+{"cmd": "wait_ms", "ms": 400}
+# buffers
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "picker.marks"}
+{"cmd": "wait_ms", "ms": 400}
+# marks
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "picker.clipboard"}
+{"cmd": "wait_ms", "ms": 400}
+# clipboard
+{"cmd":"snapshot"}

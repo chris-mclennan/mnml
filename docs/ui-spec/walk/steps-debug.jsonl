@@ -1,0 +1,18 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_debug"}
+{"cmd": "wait_ms", "ms": 600}
+# section
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "dap.show"}
+{"cmd": "wait_ms", "ms": 800}
+# dap-show
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 10, "row": 4, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick
+{"cmd":"snapshot"}

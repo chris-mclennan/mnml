@@ -1,0 +1,20 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": "walk-samples/sample.md"}
+{"cmd": "wait_ms", "ms": 900}
+{"cmd": "run-command", "id": "markdown.preview"}
+{"cmd": "wait_ms", "ms": 1200}
+# preview
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "markdown.cycle_engine"}
+{"cmd": "wait_ms", "ms": 1000}
+# cycle-engine
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "markdown.edit_raw"}
+{"cmd": "wait_ms", "ms": 600}
+# edit-raw
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.toggle_auto_md_preview"}
+{"cmd": "wait_ms", "ms": 400}
+# auto-toggle
+{"cmd":"snapshot"}

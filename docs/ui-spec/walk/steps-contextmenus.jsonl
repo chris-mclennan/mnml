@@ -1,0 +1,46 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 10, "row": 4, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# tree-row
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 1, "row": 2, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rail-explorer
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 10, "row": 1, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# tree-header
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 60, "row": 20, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# empty-strip
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 8, "row": 39, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# statusline-branch
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 110, "row": 39, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# statusline-right
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 97, "row": 1, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# top-right-plus
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 97, "row": 1}
+{"cmd": "wait_ms", "ms": 400}
+# top-right-plus-left
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 105, "row": 1}
+{"cmd": "wait_ms", "ms": 400}
+# top-right-x
+{"cmd":"snapshot"}

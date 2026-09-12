@@ -1,0 +1,16 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.discovery"}
+{"cmd": "wait_ms", "ms": 600}
+# open
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "debug.toggle_click_inspector"}
+{"cmd": "wait_ms", "ms": 300}
+{"cmd": "click", "col": 12, "row": 5}
+{"cmd": "wait_ms", "ms": 300}
+# click-inspector
+{"cmd":"snapshot"}

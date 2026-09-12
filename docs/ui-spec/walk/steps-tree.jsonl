@@ -1,0 +1,33 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+# rest
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down3
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# right-expand
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "left"}
+# left-collapse
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 10, "row": 4, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-row4
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 12, "row": 13}
+{"cmd": "wait_ms", "ms": 300}
+# click-mnml
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 300}
+# enter-row
+{"cmd":"snapshot"}
+{"cmd": "scroll", "col": 12, "row": 10, "dy": -3}
+{"cmd": "wait_ms", "ms": 200}
+# wheel-down3
+{"cmd":"snapshot"}

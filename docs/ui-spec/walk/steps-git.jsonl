@@ -1,0 +1,51 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.activity_git"}
+{"cmd": "wait_ms", "ms": 1500}
+# branches
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# down2
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 10, "row": 5, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-row5
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "git.status_pane"}
+{"cmd": "wait_ms", "ms": 1500}
+# status-pane
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 800}
+# status-enter
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "git.graph"}
+{"cmd": "wait_ms", "ms": 2000}
+# graph
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "enter"}
+{"cmd": "wait_ms", "ms": 1000}
+# graph-enter
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": ".claude/settings.json"}
+{"cmd": "wait_ms", "ms": 600}
+{"cmd": "run-command", "id": "git.diff"}
+{"cmd": "wait_ms", "ms": 1500}
+# diff
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "git.commit"}
+{"cmd": "wait_ms", "ms": 800}
+# commit-box
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "walk: test"}
+{"cmd": "wait_ms", "ms": 200}
+# commit-typed
+{"cmd":"snapshot"}

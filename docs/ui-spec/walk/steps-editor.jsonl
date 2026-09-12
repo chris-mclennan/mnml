@@ -1,0 +1,60 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": "walk-samples/sample.ts"}
+{"cmd": "wait_ms", "ms": 900}
+# ts
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.py"}
+{"cmd": "wait_ms", "ms": 900}
+# py
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.go"}
+{"cmd": "wait_ms", "ms": 900}
+# go
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.rs"}
+{"cmd": "wait_ms", "ms": 900}
+# rs
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.md"}
+{"cmd": "wait_ms", "ms": 900}
+# md
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.json"}
+{"cmd": "wait_ms", "ms": 900}
+# json
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.zon"}
+{"cmd": "wait_ms", "ms": 900}
+# zon
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.lua"}
+{"cmd": "wait_ms", "ms": 900}
+# lua
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.toml"}
+{"cmd": "wait_ms", "ms": 900}
+# toml
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.yml"}
+{"cmd": "wait_ms", "ms": 900}
+# yml
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 60, "row": 10}
+{"cmd": "wait_ms", "ms": 200}
+# click-text
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 45, "row": 1, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-tab
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 60, "row": 8, "button": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# rclick-editor
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "buffer.close"}
+{"cmd": "wait_ms", "ms": 300}
+# close-one
+{"cmd":"snapshot"}

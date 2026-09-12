@@ -1,0 +1,16 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "open", "path": "walk-samples/sample.ts"}
+{"cmd": "wait_ms", "ms": 1500}
+{"cmd": "run-command", "id": "lsp.diagnostics"}
+{"cmd": "wait_ms", "ms": 1000}
+# diagnostics
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.toggle_bottom_panel"}
+{"cmd": "wait_ms", "ms": 400}
+# bottom-panel
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "lsp.diagnostics_filter"}
+{"cmd": "wait_ms", "ms": 400}
+# filter
+{"cmd":"snapshot"}

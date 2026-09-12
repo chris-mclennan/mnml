@@ -1,0 +1,45 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 12, "row": 0}
+{"cmd": "wait_ms", "ms": 500}
+# file
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "down"}
+{"cmd": "key", "key": "down"}
+# file-down2
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# right-edit
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# right-3
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# right-4
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# right-5
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "right"}
+{"cmd": "wait_ms", "ms": 300}
+# right-6
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 24, "row": 0}
+{"cmd": "wait_ms", "ms": 400}
+# chevron
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 5, "row": 0}
+{"cmd": "wait_ms", "ms": 400}
+# brand
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "run-command", "id": "view.menu_bar_cycle"}
+{"cmd": "wait_ms", "ms": 300}
+# cycle
+{"cmd":"snapshot"}

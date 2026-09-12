@@ -1,0 +1,36 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+# no-file
+{"cmd":"snapshot"}
+{"cmd": "open", "path": "walk-samples/sample.rs"}
+{"cmd": "wait_ms", "ms": 1200}
+# file
+{"cmd":"snapshot"}
+{"cmd": "click", "col": 60, "row": 12}
+{"cmd": "type", "text": "x"}
+{"cmd": "wait_ms", "ms": 200}
+# modified
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "ctrl+z"}
+{"cmd": "wait_ms", "ms": 200}
+# undo
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.toggle_wrap"}
+{"cmd": "wait_ms", "ms": 200}
+# wrap-off
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.toggle_zoom"}
+{"cmd": "wait_ms", "ms": 300}
+# zoom
+{"cmd":"snapshot"}
+{"cmd": "run-command", "id": "view.toggle_zoom"}
+{"cmd": "wait_ms", "ms": 300}
+{"cmd": "click", "col": 8, "row": 38}
+{"cmd": "wait_ms", "ms": 400}
+# click-branch
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "click", "col": 30, "row": 38}
+{"cmd": "wait_ms", "ms": 400}
+# click-diag
+{"cmd":"snapshot"}

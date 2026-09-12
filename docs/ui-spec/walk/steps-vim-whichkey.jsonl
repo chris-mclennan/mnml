@@ -1,0 +1,22 @@
+{"cmd": "key", "key": "esc"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": " "}
+{"cmd": "wait_ms", "ms": 400}
+# leader
+{"cmd":"snapshot"}
+{"cmd": "type", "text": "g"}
+{"cmd": "wait_ms", "ms": 300}
+# g
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": " "}
+{"cmd": "type", "text": "t"}
+{"cmd": "wait_ms", "ms": 300}
+# t
+{"cmd":"snapshot"}
+{"cmd": "key", "key": "esc"}
+{"cmd": "type", "text": " "}
+{"cmd": "type", "text": "l"}
+{"cmd": "wait_ms", "ms": 300}
+# l
+{"cmd":"snapshot"}
