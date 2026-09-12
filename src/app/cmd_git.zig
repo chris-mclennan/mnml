@@ -172,12 +172,16 @@ fn statusPane(app: *App) CommandError!void {
 /// pane's working-tree row, so that pane opens (the status refresh with
 /// it) and the box takes the keys, as a click on it does.
 fn commitFocus(app: *App) CommandError!void {
-    const repo = try git.requireRepo(app);
-    const id = try git.openGraph(app, repo);
+    _ = try git.requireRepo(app);
+    const id = try git_palette.showActiveGraph(app);
     try git.requestStatus(app);
     const p = app.panes.get(id) orelse return error.NoActivePane;
     switch (p.*) {
         .git_graph => |*g| {
+            // The box takes the keys only with the WIP row selected:
+            // the cursor goes to the top row, which is that row on a
+            // dirty tree.
+            g.cursor = 0;
             g.wip_focused = true;
             g.detail_focus = false;
         },
@@ -443,9 +447,18 @@ fn unstageAll(app: *App) CommandError!void {
     try git.submitOp(app, repo, .unstage_all);
 }
 
+/// `git.commit`. A graph whose commit box holds a message commits it
+/// (Rust `commit_from_active_wip_textarea_or_prompt`). Otherwise, in
+/// git mode, the box IS the commit UI: the active repo's graph opens
+/// with the box focused on the WIP row, from an editor tab or a diff
+/// as much as from the graph — the keys are the box's (Ctrl+Enter
+/// commits, Esc leaves it), on its hint row. Outside git mode the modal
+/// prompt, titled with the staged count as Rust titles it.
 fn commit(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
-    git.openPrompt(app, .commit, "Commit message");
+    if (git.activeGraph(app)) |g| if (g.wipSelected() and std.mem.trim(u8, g.wip_text.items, " \t\r\n").len > 0) return git.commitFromTextarea(app, g);
+    if (app.git_palette.active and git.graphPaintsBox(app)) return commitFocus(app);
+    git.openPrompt(app, .commit, git.commitPromptTitle(app));
 }
 
 // ─── AI commit messages ─────────────────────────────────────────────────

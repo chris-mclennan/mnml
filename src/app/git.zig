@@ -583,6 +583,8 @@ pub const State = struct {
     /// — and `switchTo` MOVES a rail between the two rather than
     /// copying, so the palette's rows stay valid across the switch.
     rails: std.AutoHashMapUnmanaged(u32, RepoRail) = .empty,
+    /// The commit prompt's title: the prompt keeps the slice.
+    commit_title: [64]u8 = undefined,
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .rail_snapshot = alloc.SnapshotArena.init(gpa) };
@@ -2208,6 +2210,38 @@ pub fn activeDiff(app: *App) ?*DiffPane {
 
 // ─── prompts + confirms ─────────────────────────────────────────────────
 
+/// The graph paints its detail column — the commit box with it — from
+/// eighty cells (`git_graph_view.draw`); narrower, the box is nowhere
+/// to be typed into. Judged by the active repo's graph when it has been
+/// painted, else by the active pane's width.
+pub fn graphPaintsBox(app: *App) bool {
+    const repo = app.git.activeRepo() orelse return false;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .git_graph => |*g| if (g.repo == repo.id and g.body.w > 0) return g.body.w >= 80,
+        else => {},
+    };
+    return activePaneWidth(app) >= 80;
+}
+
+/// The active pane's painted width at the last render — the git panes
+/// keep their own rect; the rest is the editor's column count.
+fn activePaneWidth(app: *App) usize {
+    const id = app.active orelse return app.pane_cols;
+    const p = app.panes.get(id) orelse return app.pane_cols;
+    return switch (p.*) {
+        .git_graph => |*g| if (g.body.w > 0) g.body.w else app.pane_cols,
+        .diff => |*d| if (d.body.w > 0) d.body.w else app.pane_cols,
+        else => app.pane_cols,
+    };
+}
+
+/// Rust `open_commit_prompt`'s title: what is staged, or that nothing is.
+pub fn commitPromptTitle(app: *App) []const u8 {
+    const staged: u32 = if (app.git.status) |st| st.staged else 0;
+    if (staged == 0) return "Commit message (nothing staged \u{2014} stage hunks first)";
+    return std.fmt.bufPrint(&app.git.commit_title, "Commit message ({d} staged)", .{staged}) catch "Commit message";
+}
+
 pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.overlay.deinit(app.gpa);
     if (kind != .commit and kind != .amend) if (app.git.ai_body) |b| {
@@ -3721,7 +3755,7 @@ pub fn commitFromTextarea(app: *App, g: *GraphPane) CommandError!void {
     if (g.wip_ai) return app.diag.fail(app.frame.allocator(), "AI message still streaming — wait for it to finish", .{});
     const text = std.mem.trim(u8, g.wip_text.items, " \t\r\n");
     if (text.len == 0) {
-        openPrompt(app, .commit, "Commit message");
+        openPrompt(app, .commit, commitPromptTitle(app));
         return;
     }
     const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
@@ -5006,6 +5040,82 @@ test "the graph pane lays out the log, and enter opens the commit's diff" {
     txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "+ two") != null);
     testing.allocator.free(txt);
+}
+
+test "git.commit in git mode lands on the graph's commit box — from an editor tab too — focused on the WIP row, and Ctrl+Enter sends the typed message to git commit -m; a box with a message commits it outright; outside git mode, or under eighty cells, it is the modal titled with the staged count" {
+    var f = try Fixture.init(140, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first commit" });
+    try f.write("a.txt", "one\ntwo\n");
+    try f.sh(&.{ "add", "a.txt" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    const graph_id = f.app.active.?;
+    testing.allocator.free(try f.screen());
+    // An editor tab beside the graph has the focus: the command still
+    // lands on the box, no modal.
+    const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "a.txt" });
+    defer testing.allocator.free(abs);
+    _ = try f.app.openPath(abs);
+    try testing.expect(f.app.active.? != graph_id);
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try testing.expect(f.app.overlay == .none);
+    try testing.expectEqual(graph_id, f.app.active.?);
+    const g = activeGraph(&f.app).?;
+    try testing.expect(g.wip_focused);
+    try testing.expect(g.wipSelected());
+    try testing.expect(f.app.focus == .pane and f.app.focus.pane == graph_id);
+    // The typed message goes to the box, and Ctrl+Enter to git.
+    for ("walk: test") |ch| try f.app.handle(.{ .key = Key.char(ch) });
+    try testing.expectEqualStrings("walk: test", g.wip_text.items);
+    try f.app.handle(.{ .key = .{ .code = .enter, .mods = .{ .ctrl = true } } });
+    try f.settle(2000);
+    try f.settle(2000);
+    const subject = try f.out(&.{ "log", "-1", "--format=%s" });
+    defer testing.allocator.free(subject);
+    try testing.expectEqualStrings("walk: test", subject);
+    try testing.expectEqualStrings("", g.wip_text.items);
+    // A box already holding a message: `git.commit` commits it (Rust
+    // `commit_from_active_wip_textarea_or_prompt`).
+    try f.write("a.txt", "one\ntwo\nthree\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    syncWip(&f.app, g);
+    g.cursor = 0;
+    try testing.expect(g.wipSelected());
+    try g.wip_text.appendSlice(testing.allocator, "second: typed");
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try f.settle(2000);
+    try f.settle(2000);
+    const second = try f.out(&.{ "log", "-1", "--format=%s" });
+    defer testing.allocator.free(second);
+    try testing.expectEqualStrings("second: typed", second);
+    // Under eighty cells the graph paints no detail column, so no box:
+    // the modal, titled with what is staged.
+    try f.write("a.txt", "one\ntwo\nthree\nfour\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    g.body.w = 70;
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expectEqualStrings("Commit message (1 staged)", f.app.overlay.prompt.state.title);
+    f.app.overlay.deinit(f.app.gpa);
+    f.app.overlay = .none;
+    try f.sh(&.{ "reset", "-q" });
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    // Outside git mode: the modal, nothing staged.
+    git_palette.leave(&f.app);
+    try command.run(&f.app, .{ .static = .@"git.commit" });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expectEqualStrings("Commit message (nothing staged \u{2014} stage hunks first)", f.app.overlay.prompt.state.title);
 }
 
 test "the WIP row: a dirty tree puts it first, its buttons stage / unstage through the worker, and the cursor keeps its commit" {
