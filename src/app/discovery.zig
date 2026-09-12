@@ -96,6 +96,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .refresh => .{ .title = "Refresh", .detail = "click rescans the panel" },
             .new => .{ .title = "New", .detail = "click creates an item in this panel" },
             .view => .{ .title = "view: chip", .detail = "click cycles the row style" },
+            .history => .{ .title = "Ended sessions", .detail = "click shows / hides the ended sessions · right-click: show, hide, clear" },
         },
         .filter_input => |p| .{
             .title = try f.fmt(arena, "{s} filter", .{upper(arena, @tagName(p))}),

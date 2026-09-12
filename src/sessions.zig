@@ -1257,6 +1257,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, refresh(app)),
         .new => try openNewMenu(app, m.x, m.y + 1),
         .view => runToast(app, sessions_table.openCmd(app)),
+        .history => {},
     }
 }
 
