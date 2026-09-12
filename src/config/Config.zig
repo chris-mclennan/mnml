@@ -290,6 +290,14 @@ pub const Ui = struct {
     hover_tooltip: bool = false,
     click_echo: bool = false,
     first_launch_complete: bool = false,
+    /// The once-per-data-root notice about a 0.2 `config.toml` beside a
+    /// missing `config.zon` — a file mnml-zig never reads
+    /// (`App.noticeUnreadToml`); set the first time it is shown.
+    config_toml_notice_shown: bool = false,
+    /// The same for 0.2 `integrations/*.toml` manifests
+    /// (`integrations.refresh`); `integrations.dismiss_toml_notice`
+    /// sets it.
+    integrations_toml_notice_shown: bool = false,
     show_workspace_dots: bool = true,
     md_preview_engine: MdEngine = .builtin,
 };

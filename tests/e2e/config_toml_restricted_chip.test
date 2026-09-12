@@ -1,0 +1,14 @@
+# A workspace with a 0.2 `.mnml/config.toml` and no `.mnml/config.zon`: the
+# file is never read (E2), so the statusline shows RESTRICTED and a click on
+# the chip (`workspace.review_trust`) says how to convert it — a wrapped toast
+# whose instruction reads, not a path-first line clipped at one row on every
+# launch (walkthrough 1.10). The statusline chip is what Rust shows there.
+write .mnml/config.toml "[ui]\ntheme = \"gruvbox\"\n"
+expect screen lacks "RESTRICTED"
+command workspace.review_trust
+expect screen contains "RESTRICTED"
+expect screen contains "export-config-zon"
+expect screen contains "is not read"
+key esc
+expect screen lacks "export-config-zon"
+expect screen contains "RESTRICTED"

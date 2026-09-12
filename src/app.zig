@@ -1003,6 +1003,11 @@ pub const App = struct {
     lua: ?*scripting.Lua = null,
     /// Whether the workspace's exec-bearing config and `init.lua` apply.
     workspace_trusted: bool = false,
+    /// A 0.2 `.mnml/config.toml` in the workspace with no `config.zon`
+    /// beside it (gpa-owned path): never read, so the statusline's
+    /// RESTRICTED chip is up and `workspace.review_trust` says why.
+    /// `probeWorkspaceToml` keeps it current.
+    workspace_toml: ?[]u8 = null,
     block_insert: ?BlockInsert = null,
     repeat_insert: ?RepeatInsert = null,
     /// Flash-motion labels while armed (`s<a><b>` on several matches).
@@ -1200,6 +1205,7 @@ pub const App = struct {
         clock.seed(&app);
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
+        try app.noticeUnreadToml();
         try app.applyTheme();
         try trust_app.promptIfNeeded(&app);
         // D10: the scripts subscribe before the `startup` hook fires.
@@ -1238,6 +1244,7 @@ pub const App = struct {
         auto_refresh.seed(self);
         clock.seed(self);
         try self.toastConfigDiagnostics();
+        self.probeWorkspaceToml();
         try self.applyTheme();
         try script_api.rebind(self);
         // A workspace just trusted gets its `.mnml/init.lua` now, and
@@ -1275,6 +1282,53 @@ pub const App = struct {
     fn toastConfigDiagnostics(self: *App) Allocator.Error!void {
         const l = self.loaded orelse return;
         for (l.diagnostics.items.items) |d| try self.toastLevel(.warn, "config: {f}", .{d});
+    }
+
+    /// `workspace_toml` from the workspace as it is on disk now: a
+    /// `.mnml/config.toml` with no `.mnml/config.zon` beside it.
+    pub fn probeWorkspaceToml(self: *App) void {
+        if (self.workspace_toml) |p| self.gpa.free(p);
+        self.workspace_toml = null;
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const zon = std.fs.path.join(arena, &.{ self.workspace, ".mnml", config.data_root.config_file }) catch return;
+        const toml = (config.load.tomlBeside(arena, self.io, zon) catch return) orelse return;
+        self.workspace_toml = self.gpa.dupe(u8, toml) catch null;
+    }
+
+    /// What the notice says: the file is 0.2's and never read, and the
+    /// converter that turns it into the `.zon` this build reads.
+    pub fn unreadTomlText(self: *App, arena: Allocator, path: []const u8, workspace: bool) Allocator.Error![]const u8 {
+        if (workspace) return std.fmt.allocPrint(arena, "config: this workspace's .mnml/config.toml is mnml 0.2's and is not read — run `mnml export-config-zon --out .mnml/config.zon` (0.2.22) in {s} to convert it; RESTRICTED on the statusline says so", .{self.relPath(self.workspace)});
+        return std.fmt.allocPrint(arena, "config: {s} is mnml 0.2's and is not read — run `mnml export-config-zon` (0.2.22) to convert it", .{path});
+    }
+
+    /// The one thing mnml-zig says about a 0.2 `config.toml` it found
+    /// where a `config.zon` should be (E2: no TOML reader, ever): a
+    /// toast once per data root (`ui.config_toml_notice_shown`, written
+    /// the first time), `:messages` every launch, and for the workspace
+    /// file the RESTRICTED chip for as long as it stands. A diagnostic
+    /// toasted the path-first message on every launch, clipped so the
+    /// converter never showed (walkthrough 1.10).
+    fn noticeUnreadToml(self: *App) Allocator.Error!void {
+        self.probeWorkspaceToml();
+        const home: ?[]const u8 = if (self.loaded) |l| l.home_toml else null;
+        if (self.workspace_toml == null and home == null) return;
+        const arena = self.frame.allocator();
+        const show = !self.cfg.ui.config_toml_notice_shown;
+        if (home) |p| {
+            const text = try self.unreadTomlText(arena, p, false);
+            if (show) try self.toastLevel(.warn, "{s}", .{text}) else try self.messages.record(self.gpa, text, .warn, self.now_ms);
+        }
+        if (self.workspace_toml) |p| {
+            const text = try self.unreadTomlText(arena, p, true);
+            if (show) try self.toastLevel(.warn, "{s}", .{text}) else try self.messages.record(self.gpa, text, .warn, self.now_ms);
+        }
+        if (show) {
+            self.cfg.ui.config_toml_notice_shown = true;
+            _ = try settings_app.persist(self, .home, &.{ "ui", "config_toml_notice_shown" }, true);
+        }
     }
 
     /// `$HOME` as the loader saw it; null without a loaded config or a
@@ -1409,6 +1463,7 @@ pub const App = struct {
         if (self.lua) |l| l.destroy();
         self.script_tasks.deinit(self.io);
         self.script_decor.deinit(gpa);
+        if (self.workspace_toml) |p| gpa.free(p);
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
