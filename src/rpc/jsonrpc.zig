@@ -15,6 +15,14 @@
 //! interrupts the blocked pipe read (SPIKE_RESULTS: within a second on
 //! macOS + Linux), then kills the child — in that order, because the
 //! kill closes the pipes the reader is sitting on.
+//!
+//! Outbound frames go through a writer task too: `send` copies the body
+//! onto a queue and returns, so the UI thread never sits on the pipe —
+//! a full-text `didChange` of a large file to a server that reads
+//! slowly used to stall the frame that produced it. Frames leave in the
+//! order they were sent. `shutdown` closes the queue before cancelling
+//! (the D3 rule for a queue-fed worker) and gives the writer a moment
+//! to drain, so a goodbye sent just before it still reaches the child.
 
 const std = @import("std");
 const Io = std.Io;
@@ -85,8 +93,21 @@ pub const Transport = struct {
     started: bool = false,
     /// Set once the stream ended; sends refuse from then on.
     dead: std.atomic.Value(bool) = .init(false),
+    /// Outbound frames (gpa-owned bodies) for the writer task, and the
+    /// ring behind the queue.
+    out: Io.Queue([]u8),
+    out_ring: [][]u8,
+    /// Set by the writer once the closed queue is drained.
+    drained: std.atomic.Value(bool) = .init(false),
+    /// Frames the writer has put on the pipe (the tests read it).
+    frames_out: std.atomic.Value(u32) = .init(0),
 
     pub const SpawnError = std.process.SpawnError || Allocator.Error;
+
+    /// Frames that may wait for the writer before `send` blocks.
+    pub const out_capacity = 64;
+    /// How long `shutdown` waits for the writer to drain the queue.
+    pub const drain_grace_ms: u32 = 100;
 
     /// Start `argv` with piped stdio. `cwd` null inherits; `env` null
     /// inherits the process environment. A missing binary fails here,
@@ -102,7 +123,9 @@ pub const Transport = struct {
         });
         errdefer child.kill(io);
         const t = try gpa.create(Transport);
-        t.* = .{ .gpa = gpa, .io = io, .child = child, .stdin = child.stdin.?, .stdout = child.stdout.? };
+        errdefer gpa.destroy(t);
+        const ring = try gpa.alloc([]u8, out_capacity);
+        t.* = .{ .gpa = gpa, .io = io, .child = child, .stdin = child.stdin.?, .stdout = child.stdout.?, .out = .init(ring), .out_ring = ring };
         return t;
     }
 
@@ -111,23 +134,40 @@ pub const Transport = struct {
     /// `shutdown`.
     pub fn initFiles(gpa: Allocator, io: Io, stdin: Io.File, stdout: Io.File) Allocator.Error!*Transport {
         const t = try gpa.create(Transport);
-        t.* = .{ .gpa = gpa, .io = io, .child = null, .stdin = stdin, .stdout = stdout };
+        errdefer gpa.destroy(t);
+        const ring = try gpa.alloc([]u8, out_capacity);
+        t.* = .{ .gpa = gpa, .io = io, .child = null, .stdin = stdin, .stdout = stdout, .out = .init(ring), .out_ring = ring };
         return t;
     }
 
-    /// Start the reader task. `sink` outlives the transport.
+    /// Start the reader and writer tasks. `sink` outlives the transport.
     pub fn start(self: *Transport, sink: Sink) Io.ConcurrentError!void {
         std.debug.assert(!self.started);
         try self.group.concurrent(self.io, readerTask, .{ self, sink });
+        try self.group.concurrent(self.io, writerTask, .{self});
         self.started = true;
     }
 
-    /// End everything: interrupt the reader, kill the child, close the
-    /// pipes, drop the pending map, free the box. A client sends its
-    /// protocol goodbye (`shutdown`/`exit`, `disconnect`) before this.
+    /// End everything: close the queue and let the writer drain it,
+    /// interrupt the reader, kill the child, close the pipes, drop the
+    /// pending map, free the box. A client sends its protocol goodbye
+    /// (`shutdown`/`exit`, `disconnect`) before this.
     pub fn shutdown(self: *Transport) void {
         self.closing.store(true, .release);
+        self.out.close(self.io);
+        if (self.started) {
+            var waited: u32 = 0;
+            while (!self.drained.load(.acquire) and !self.dead.load(.acquire) and waited < drain_grace_ms) : (waited += 5) {
+                self.io.sleep(.fromMilliseconds(5), .awake) catch break;
+            }
+        }
         self.group.cancel(self.io);
+        // Whatever the writer did not get to.
+        while (true) {
+            const body = self.out.getOneUncancelable(self.io) catch break;
+            self.gpa.free(body);
+        }
+        self.gpa.free(self.out_ring);
         if (self.child) |*c| {
             // `kill` closes the three pipes itself.
             c.kill(self.io);
@@ -176,13 +216,46 @@ pub const Transport = struct {
 
     // ─── the wire ───
 
-    /// One frame out. Serialised: the UI thread and a worker may both
-    /// send. Refused once the stream is dead.
+    /// One frame out, queued for the writer task: returns once the body
+    /// is copied, blocking only when `out_capacity` frames already wait
+    /// (backpressure on a server that stopped reading). The UI thread
+    /// and a worker may both send. Refused once the stream is dead.
     pub fn send(self: *Transport, body: []const u8) SendError!void {
         if (self.dead.load(.acquire) or self.closing.load(.acquire)) return error.Closed;
+        const copy = self.gpa.dupe(u8, body) catch return error.WriteFailed;
+        self.out.putOneUncancelable(self.io, copy) catch {
+            self.gpa.free(copy);
+            return error.Closed;
+        };
+    }
+
+    /// Write the frame now, on the calling thread. Serialised with the
+    /// writer task; what the writer task itself calls.
+    fn writeNow(self: *Transport, body: []const u8) SendError!void {
         self.write_lock.lockUncancelable(self.io);
         defer self.write_lock.unlock(self.io);
         writeFrame(self.io, self.stdin, body) catch return error.WriteFailed;
+    }
+
+    fn writerTask(self: *Transport) Io.Cancelable!void {
+        var broken = false;
+        while (true) {
+            const body = self.out.getOne(self.io) catch |err| switch (err) {
+                error.Closed => break,
+                error.Canceled => return error.Canceled,
+            };
+            defer self.gpa.free(body);
+            if (broken) continue;
+            self.writeNow(body) catch {
+                // The child is gone (EPIPE): the reader reports it; the
+                // rest of the queue is dropped as `send` would refuse it.
+                broken = true;
+                self.dead.store(true, .release);
+                continue;
+            };
+            _ = self.frames_out.fetchAdd(1, .release);
+        }
+        self.drained.store(true, .release);
     }
 
     fn readerTask(self: *Transport, sink: Sink) Io.Cancelable!void {
@@ -444,11 +517,18 @@ const Collector = struct {
 /// with `result = {"echo": <method>}`, answers a `ping` notification
 /// with a `pong` notification, and leaves on `exit`.
 fn fakeEchoServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Cancelable!void {
+    return fakeEchoServerPaced(io, gpa, in, out, 0);
+}
+
+/// The same, taking `pause_ms` over each frame — a server that reads
+/// slower than the client sends.
+fn fakeEchoServerPaced(io: Io, gpa: Allocator, in: Io.File, out: Io.File, pause_ms: u64) Io.Cancelable!void {
     var buf: [4096]u8 = undefined;
     var fr = in.readerStreaming(io, &buf);
     while (true) {
         const body = readFrame(gpa, &fr.interface) catch return;
         defer gpa.free(body);
+        if (pause_ms > 0) try io.sleep(.fromMilliseconds(@intCast(pause_ms)), .awake);
         var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
         defer parsed.deinit();
         switch (classify(parsed.value)) {
@@ -504,6 +584,51 @@ test "transport over a pipe pair: requests are answered by id, notifications flo
     try testing.expect(t.isDead());
     try testing.expectError(error.Closed, t.send("{}"));
     t.shutdown();
+}
+
+test "the writer task: 200 frames leave in order and `send` never touches the pipe; a goodbye queued just before shutdown still lands" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const c2s = try pipeFiles();
+    const s2c = try pipeFiles();
+    var server_group: Io.Group = .init;
+    try server_group.concurrent(io, fakeEchoServerPaced, .{ io, gpa, c2s[0], s2c[1], 1 });
+    const t = try Transport.initFiles(gpa, io, c2s[1], s2c[0]);
+    var col: Collector = .{ .gpa = gpa };
+    defer col.deinit();
+    try t.start(col.sink());
+    // More frames than the ring holds, 1.6 MB against a server that
+    // takes a millisecond over each: `send` returns as the bodies are
+    // copied, and the loop is out while the writer task is still
+    // pushing them through — a synchronous send would have sat on the
+    // pipe until the server had read all but the last few.
+    const pad = try gpa.alloc(u8, 8 * 1024);
+    defer gpa.free(pad);
+    @memset(pad, 'x');
+    var ids: [200]i64 = undefined;
+    for (&ids) |*id| {
+        id.* = t.allocId();
+        try t.expect(id.*, .{ .kind = 1 });
+        const req = try std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"m{d}\",\"params\":{{\"pad\":\"{s}\"}}}}", .{ id.*, id.*, pad });
+        defer gpa.free(req);
+        try t.send(req);
+    }
+    try testing.expect(t.frames_out.load(.acquire) < ids.len);
+    var spins: usize = 0;
+    while (col.count() < ids.len and !col.closed.load(.acquire)) : (spins += 1) {
+        if (spins > 1000) return error.Timeout;
+        try io.sleep(.fromMilliseconds(10), .awake);
+    }
+    try testing.expectEqual(ids.len, col.count());
+    try testing.expectEqual(@as(u32, ids.len), t.frames_out.load(.acquire));
+    for (col.got.items, 0..) |m, i| try testing.expectEqual(ids[i], classify(m.root()).response.id);
+    // `exit` is queued and the transport shut down at once: the writer
+    // drains it before the cancel, and the server leaves on it.
+    try t.send("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    t.shutdown();
+    try server_group.await(io);
+    c2s[0].close(io);
+    s2c[1].close(io);
 }
 
 test "shutdown while the reader is blocked: no closed callback, no leak" {

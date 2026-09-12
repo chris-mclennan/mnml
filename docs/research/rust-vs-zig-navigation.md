@@ -314,3 +314,112 @@ selection. The scroll offset is inferred from the gutter. A change to
 the IPC protocol that exposed `scroll_line`, the selection range and
 the frame's paint time would make three columns of every table exact;
 this track did not change the protocol.
+
+## Addendum, 2026-09-12 — the open path after `zig-perf`
+
+*The same harness, `steps-compare-keys` at 120×40 and 200×60 and — new
+— `FIXTURE_LINES=30000` (1.56 MB) at 120×40; Rust `target/release/mnml`
+as above; Zig **ReleaseSafe** builds of `main` at `e99615bb` (before) and
+of `zig-perf` (after), plus one Debug run of each at 120×40 because the
+numbers in finding 2 were read off a Debug binary. One run per cell;
+rust-analyzer starts on every open (the default table has it, the
+fixture has no `Cargo.toml`), so a cell moves by tens of ms between
+runs.*
+
+### What the trace said (Debug, before)
+
+A frame-phase trace on the fixture put the open frame at 346 ms, of
+which 342 ms was `Syntax.refresh` — the tree-sitter parse plus the
+highlight query, run at once because `parsed_seq == null` bypassed the
+idle gate. The next slow frame, 189 ms, was a **second full reparse**
+of the unchanged text: `storeSymbols` marked the syntax dirty so the
+outline would repaint from the server's symbol list. The sticky rows
+cost 8–21 µs a frame (`fresh()` only reparses when the log moved), the
+language-server sync on the paint path 0–8 µs (the `didOpen` goes out
+from the `initialize` reply, not the frame), and the server's own
+messages 2–4.5 ms each. So finding 2's three suspects were one parse
+that should have waited, one that should never have happened, and two
+that were cheap but structurally wrong.
+
+### Before / after
+
+`open` is the step-2 dump; `next` the dump of the first key after the
+800 ms wait; `wait` the ack of that wait step (800 ms of sleep plus
+whatever frame ran before the command was read — where the deferred
+parse now lands); `mean` over the 68 non-wait steps; `pins` the steps
+whose top line carries a `+N`.
+
+| run | side | open | wait | next | mean | pins |
+|---|---|---:|---:|---:|---:|---:|
+| 6000 lines, 120×40, Debug | zig before | 393 ms | 848 | 31 ms | 36.0 ms | 114 |
+| | zig after | **30 ms** | 1253 | 38 ms | 37.2 ms | 106 |
+| | rust | 179 / 136 ms | 812 / 830 | 8 / 10 ms | 40.0 / 40.3 ms | 14 |
+| 6000 lines, 120×40, ReleaseSafe | zig before | 84 ms | 817 | 62 ms | 37.3 ms | 114 |
+| | zig after | **45 ms** | 1119 | 8 ms | 24.8 ms | 106 |
+| | rust | 111 / 150 ms | 817 / 807 | 16 / 8 ms | 40.2 / 30.0 ms | 14 |
+| 6000 lines, 200×60, ReleaseSafe | zig before | 117 ms | 823 | 13 ms | 32.3 ms | 84 |
+| | zig after | **9 ms** | 895 | 10 ms | 11.7 ms | 106 |
+| | rust | 133 / 137 ms | 820 / 809 | 18 / 50 ms | 33.2 / 17.7 ms | 2 |
+| 30 000 lines, 120×40, ReleaseSafe | zig before | 1655 ms | 814 | **1098 ms** | 116.5 ms | — |
+| | zig after | **51 ms** | 1217 | 21 ms | 17.6 ms | 96 |
+| | rust | 554 / 464 ms | 811 / 866 | 12 / 10 ms | 22.7 / 24.3 ms | — |
+
+Read across: the frame after `open` no longer waits on the parse at
+any size (30–51 ms, where Rust paints at 111–554 ms), and the key after
+it no longer waits on a second one (the 30 000-line `PageDown` went
+from 1098 ms to 21 ms). The parse itself still costs what it costs —
+it now lands on the idle gate, 120 ms after the first frame, and the
+`wait` column shows it: 300–450 ms of the 800 ms wait at 6000 lines on
+a Debug build, ~400 ms at 30 000 lines on ReleaseSafe. A key pressed in
+that window still waits behind it; moving the parse to a worker is the
+next step, not this one.
+
+The ReleaseSafe `before` row is worth keeping: on an optimised build
+the 6000-line open was already 84–117 ms against Rust's 111–133 — the
+3–20× of finding 2 was a Debug binary's. The 30 000-line row is where
+the same shape costs seconds either way.
+
+### What changed
+
+- **The first parse waits for the idle gate** (`Syntax.parseDue`,
+  `render.zig`). A file up to `sync_parse_max_bytes` (32 KiB) still
+  parses on the frame that first sees it — an ordinary source file
+  never flashes plain — and a larger one paints unhighlighted and
+  parses `idle_ms` later, the gate every later edit already waited on;
+  `nextDeadlineMs` wakes the terminal loop for it. A structural query
+  that parsed meanwhile (`isCurrent`) clears the flag without a second
+  parse.
+- **A symbols reply repaints the outline without a reparse**
+  (`app.lsp.symbols_gen`, `OutlinePane.symbols_gen`).
+- **The sticky chain is cached per pane** (`sticky.Cache`, keyed on the
+  top line, the edit seq, the parse seq and the grammar; `computed`
+  counts recomputes) **and never parses**: the kept tree answers when
+  it has one without errors, the outline's line patterns otherwise —
+  with each scope's end inferred from the first later line at the
+  header's indent — so a pinned header's scope starts above the top
+  line and ends at or below it.
+- **The transport writes from a task** (`rpc/jsonrpc.zig`): `send`
+  copies the frame onto a 64-slot `Io.Queue` and returns; `shutdown`
+  closes the queue before the cancel and gives the writer 100 ms to
+  drain a goodbye. The paint path still builds the `didChange` (a
+  millisecond for a 314 KB body) but never sits on the pipe.
+
+### Finding 5, re-read
+
+The fixture's generator drops the closing brace of every tab-indented
+inner block (`("\t" * depth) if tab else ("    " * depth) + "}"` — the
+`+ "}"` binds to the `else` arm), so a tab-indented fn never closes
+and the tree either loses it to an ERROR node (the chain inside
+`poll_span154` was empty) or nests the next item inside it. The
+fallback reads the headers off the lines and ends each scope at the
+first later line at its indent, so at the `zt` step (top line 3120,
+the blank after `split_needle155`'s `}` on 3119) Zig now pins
+**nothing** — and Rust's `split_needle155` there is its
+last-header-above-the-cursor heuristic, which knows no ends; neither
+of the two headers finding 5 compared encloses that top line. The
+pin counts stay apart for the same reason: Zig pins whenever the top
+line is inside a scope whose header scrolled off (treesitter-context's
+rule), Rust whenever the last header above the *cursor* is above the
+viewport; with 60 rows that is rarely true, with a 15-line fn above a
+40-row viewport it usually is. The number to read is not the count but
+that every `+N` row now names a scope the top line is inside.

@@ -65,6 +65,9 @@ pub const OutlinePane = struct {
     query: std.ArrayListUnmanaged(u8) = .empty,
     /// Keys build `query` instead of moving; `⏎` / `esc` leave it.
     filter_mode: bool = false,
+    /// `app.lsp.symbols_gen` as of the last refresh: a server's list
+    /// landing since then is a reason to refresh, a text change the other.
+    symbols_gen: u64 = 0,
 
     pub fn init(gpa: Allocator, source: PaneId, title: []const u8) Allocator.Error!OutlinePane {
         return .{ .gpa = gpa, .source = source, .title = try gpa.dupe(u8, title) };
@@ -242,6 +245,7 @@ pub fn refresh(app: *App, id: PaneId) Allocator.Error!void {
     defer arena.deinit();
     const a = arena.allocator();
     o.clear();
+    o.symbols_gen = app.lsp.symbols_gen;
     // A language server's symbols first; the tree-sitter walk otherwise.
     const from_server: ?[]const lsp_types.Symbol = if (src.buf.doc.path) |p| lsp.symbolsFor(app, p) else null;
     if (from_server) |syms| {
@@ -364,7 +368,7 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
 pub fn draw(app: *App, ui: Ui, id: PaneId, o: *OutlinePane, area: Rect, focused: bool) Allocator.Error!void {
     var current: ?usize = null;
     if (app.panes.editor(o.source)) |src| {
-        if (src.syntax.dirty or o.items.items.len == 0) try refresh(app, id);
+        if (src.syntax.dirty or o.items.items.len == 0 or o.symbols_gen != app.lsp.symbols_gen) try refresh(app, id);
         if (o.itemAt(@intCast(src.buf.editor.currentLine()))) |item| current = try o.visibleIndexOf(ui.arena, item);
         // Follow the source cursor when the outline is not being driven.
         if (!focused and !o.filter_mode) if (current) |c| {
@@ -451,7 +455,7 @@ fn identAt(s: []const u8) ?[]const u8 {
     return s[start..i];
 }
 
-fn indentDepth(line: []const u8) u8 {
+pub fn indentDepth(line: []const u8) u8 {
     var tabs: usize = 0;
     var spaces: usize = 0;
     for (line) |c| switch (c) {

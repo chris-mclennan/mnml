@@ -32,6 +32,11 @@ pub const Symbol = structure.Symbol;
 /// How long after the last observed edit a reparse waits.
 pub const idle_ms: i64 = 120;
 
+/// A file up to this size parses on the frame that first sees it; a
+/// larger one paints unhighlighted and parses once the idle gate opens,
+/// so the first frame after `open` never waits on a full parse.
+pub const sync_parse_max_bytes: usize = 32 * 1024;
+
 /// Table key for a file, or null when mnml-zig has no grammar for it.
 /// `text` supplies the shebang for extension-less scripts.
 pub fn keyFor(path: ?[]const u8, text: []const u8) ?[]const u8 {
@@ -143,6 +148,22 @@ pub const Syntax = struct {
         return false;
     }
 
+    /// The kept tree and spans describe the current text: a structural
+    /// query (`fresh`) parsed since the last edit, or nothing changed.
+    pub fn isCurrent(self: *const Syntax) bool {
+        return self.parsed_seq != null and self.parsed_seq.? == self.seen_seq;
+    }
+
+    /// Whether the frame at `now` reparses: a small file that was never
+    /// parsed (or lost its log) does so at once; anything else waits
+    /// `idle_ms` from the frame that first saw the text dirty.
+    pub fn parseDue(self: *const Syntax, now: i64, text_len: usize) bool {
+        if (!self.dirty) return false;
+        if (self.parsed_seq == null and text_len <= sync_parse_max_bytes) return true;
+        const since = self.since_ms orelse return false;
+        return now - since >= idle_ms;
+    }
+
     /// Reparse now (incrementally when the tree is current).
     pub fn refresh(self: *Syntax, ed: *const Editor) Allocator.Error!void {
         _ = self.absorb(ed);
@@ -189,9 +210,23 @@ pub const Syntax = struct {
     /// outermost first — the sticky context header rows.
     pub fn scopeChain(self: *Syntax, ed: *const Editor, arena: Allocator, line: u32) Allocator.Error![]u32 {
         const root = self.fresh(ed) orelse return &.{};
+        return scopeChainOf(self, root, ed, arena, line);
+    }
+
+    /// `scopeChain` on a root the caller already holds (the kept tree).
+    pub fn scopeChainOf(self: *const Syntax, root: ts.Node, ed: *const Editor, arena: Allocator, line: u32) Allocator.Error![]u32 {
+        _ = self;
         const l = @min(line, @as(u32, @intCast(ed.lineCount() - 1)));
         const at: u32 = @intCast(ed.lineStart(l));
         return structure.scopeChain(arena, root, at, line);
+    }
+
+    /// The kept tree's root as it is — told about every edit (`absorb`)
+    /// but possibly not reparsed since — or null when there is none yet.
+    /// Never parses: the sticky context reads this so a frame stays
+    /// cheap while a large file waits for its first parse.
+    pub fn keptRoot(self: *const Syntax) ?ts.Node {
+        return self.hl.rootNode();
     }
 
     /// Every definition in the file, for the outline. Null when the file
@@ -205,6 +240,8 @@ pub const Syntax = struct {
 // ── tests ──
 
 const testing = std.testing;
+const App = @import("../app.zig").App;
+const screen_mod = @import("../ipc/screen.zig");
 
 test "language detection: filename, extension (tsx is tsx), shebang" {
     try testing.expectEqualStrings("make", keyFor("/x/Makefile", "").?);
@@ -281,6 +318,73 @@ test "spans follow the text through the edit log: shifted at once, reparsed on r
     try testing.expectEqual(@as(usize, 0), s.hl.spans.items.len);
     try s.refresh(ed);
     try testing.expect(s.hl.spans.items.len > 0);
+}
+
+test "parseDue: a small file's first parse is at once, a large one's waits out the idle gate" {
+    var s = Syntax.init(testing.allocator);
+    defer s.deinit();
+    // Never parsed: small runs now, large waits.
+    try testing.expect(s.parseDue(0, sync_parse_max_bytes));
+    try testing.expect(!s.parseDue(0, sync_parse_max_bytes + 1));
+    s.since_ms = 1000;
+    try testing.expect(!s.parseDue(1000 + idle_ms - 1, sync_parse_max_bytes + 1));
+    try testing.expect(s.parseDue(1000 + idle_ms, sync_parse_max_bytes + 1));
+    // Parsed once: every size waits.
+    s.parsed_seq = 0;
+    try testing.expect(!s.parseDue(1000, 10));
+    try testing.expect(s.parseDue(1000 + idle_ms, 10));
+    s.dirty = false;
+    try testing.expect(!s.parseDue(1000 + idle_ms, 10));
+}
+
+test "the first frame after opening a 6000-line file paints without a parse; the parse lands on the idle gate" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/large.rs");
+    e.syntax.setLanguage("/tmp/large.rs", "");
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    for (0..6000) |i| {
+        const line = try std.fmt.allocPrint(testing.allocator, "fn f{d}(x: u32) -> u32 {{ let y = x + {d}; y }}\n", .{ i, i });
+        defer testing.allocator.free(line);
+        try text.appendSlice(testing.allocator, line);
+    }
+    try testing.expect(text.items.len > sync_parse_max_bytes);
+    try e.buf.editor.setText(text.items);
+    app.now_ms = 1000;
+    try app.render();
+    // Painted, but the tree is not there yet: the gate opened this frame.
+    try testing.expect(e.syntax.parsed_seq == null);
+    try testing.expect(e.syntax.hl.tree == null);
+    try testing.expectEqual(@as(usize, 0), e.syntax.hl.spans.items.len);
+    try testing.expect(e.syntax.dirty);
+    try testing.expectEqual(@as(?i64, 1000), e.syntax.since_ms);
+    try testing.expectEqual(@as(?i64, 1000 + idle_ms), app.nextDeadlineMs());
+    const plain = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(plain);
+    try testing.expect(std.mem.indexOf(u8, plain, "fn f0(x: u32)") != null);
+    // A frame inside the window still waits; the one at the gate parses.
+    app.now_ms = 1000 + idle_ms - 1;
+    try app.render();
+    try testing.expect(e.syntax.parsed_seq == null);
+    app.now_ms = 1000 + idle_ms;
+    try app.render();
+    try testing.expect(e.syntax.parsed_seq != null);
+    try testing.expect(!e.syntax.dirty);
+    try testing.expect(e.syntax.since_ms == null);
+    try testing.expect(e.syntax.hl.spans.items.len > 6000);
+    try testing.expect(app.nextDeadlineMs() == null or app.nextDeadlineMs().? > 1000 + idle_ms);
+    // A small file parses on its first frame (a replacement marks the
+    // syntax dirty as every text-changing path does).
+    try e.buf.editor.setText("fn small() {}\n");
+    e.syntax.dirty = true;
+    try app.render();
+    try testing.expect(e.syntax.parsed_seq != null);
+    try testing.expect(!e.syntax.dirty);
+    try testing.expect(e.syntax.hl.spans.items.len >= 3);
 }
 
 test "structural queries refresh the tree themselves" {
