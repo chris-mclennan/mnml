@@ -199,7 +199,7 @@ fn diffFile(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     if (try selectedRow(app)) |row| return git.actOnRow(app, row, .open);
     const rel = try activeRel(app, repo);
-    _ = try git.openDiff(app, repo, .file, rel, null, null);
+    _ = try git.openDiffPlaced(app, repo, .file, rel, null, null, .beside);
 }
 
 fn diffWorktree(app: *App) CommandError!void {
