@@ -69,6 +69,7 @@ const render = @import("render.zig");
 const statusline_app = @import("statusline.zig");
 const layout_mod = @import("layout.zig");
 const select = @import("../editor/select.zig");
+const Editor = @import("../editor/editor.zig").Editor;
 const scrollbar = @import("../ui/scrollbar.zig");
 const scroll_mod = @import("scroll.zig");
 const hit_mod = @import("../ui/hit.zig");
@@ -1664,24 +1665,61 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .editor_cell => |cell| return editorCellMouse(app, cell, m, count, wheel),
-        // The gutter: the sign cell toggles a breakpoint on a left press,
-        // a right press opens the breakpoint menu on that line; anything
-        // else is the editor cell at column 0 (the cursor moves, a drag
-        // selects).
+        // The hover box: the wheel scrolls its lines two an event (Rust),
+        // the box clamping at draw; a press puts it away, as a press
+        // anywhere does.
+        .hover_popup => {
+            if (app.lsp.hover) |*h| {
+                if (wheel) {
+                    const step: usize = 2 * @as(usize, count);
+                    h.scroll = if (m.kind == .scroll_down) h.scroll + step else h.scroll -| step;
+                    return;
+                }
+                if (m.kind == .press) lsp.closeHover(app);
+            }
+        },
+        // The gutter, the whole margin — the sign cell and the line
+        // number alike. A right press opens the breakpoint menu on that
+        // line. A left press on a debuggable file (`dap.gutterToggles`)
+        // flips the line's breakpoint — VS Code's glyph margin, which
+        // the testers expected of the numbers too; on any other file it
+        // is the line-numbers convention: the line selected, the cursor
+        // at its column 1 (Rust's gutter press fires `SelectLineToEnd`),
+        // Shift extending the selection to that line. Anything else is
+        // the editor cell at the line's start (the wheel, a drag).
         .gutter => |g| {
             if (m.kind == .press and (m.button == .right or m.button == .left)) {
                 if (app.panes.editor(g.pane)) |e| {
-                    const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
-                    if (m.button == .right or m.x == r.x) {
-                        if (app.overlay != .none) closeOverlay(app);
-                        if (app.active != g.pane) app.showPane(g.pane);
-                        const ed = e.buf.editor;
-                        const line = @min(g.line, ed.lineCount() -| 1);
+                    if (app.overlay != .none) closeOverlay(app);
+                    if (app.active != g.pane) app.showPane(g.pane);
+                    const ed = e.buf.editor;
+                    const line = @min(g.line, ed.lineCount() -| 1);
+                    if (m.button == .right or try dap.gutterToggles(app, e)) {
                         ed.anchor = null;
                         ed.placeCursor(line, 0);
                         if (m.button == .right) return context_menus.openGutterMenu(app, m.x, m.y);
                         return dap.gutterToggle(app, g.pane, line);
                     }
+                    const start = ed.lineStart(line);
+                    const stop = @min(ed.lineEnd(line) + 1, ed.len());
+                    if (m.mods.shift and ed.anchor != null) {
+                        // Extend the selection to cover that line too:
+                        // down from its low end, or up from its high end.
+                        const lo = @min(ed.anchor.?, ed.cursor);
+                        const hi = @max(ed.anchor.?, ed.cursor);
+                        if (start >= lo) {
+                            ed.anchor = lo;
+                            ed.setCursor(stop);
+                        } else {
+                            ed.anchor = hi;
+                            ed.setCursor(start);
+                        }
+                    } else {
+                        ed.anchor = stop;
+                        ed.setCursor(start);
+                    }
+                    e.buf.input.requestVisualMode();
+                    return;
                 }
             }
             return editorCellMouse(app, .{ .pane = g.pane, .line = g.line, .col = 0 }, m, count, wheel);
@@ -2210,15 +2248,24 @@ fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) A
 fn byteUnder(app: *App, pane: PaneId, x: u16, y: u16) ?usize {
     const e = app.panes.editor(pane) orelse return null;
     const ed = e.buf.editor;
-    const entry = app.hits.entryAt(x, y) orelse return null;
-    const cell = switch (entry.target) {
+    const cell = switch (app.hits.at(x, y) orelse return null) {
         .editor_cell => |c| c,
         else => return null,
     };
     if (cell.pane != pane) return null;
     const line = @min(cell.line, ed.lineCount() - 1);
-    const col = cell.col + (x - entry.rect.x);
-    return @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+    return cellByte(ed, line, cell.col);
+}
+
+/// The byte an `.editor_cell` hit names: `off` is the grapheme's byte
+/// offset within `line` (the line's length for the cells past its end),
+/// so the second cell of a wide glyph and every EOL cell resolve to
+/// their own grapheme. The hit map speaks bytes; nothing here counts
+/// chars or adds the pointer's cell delta — that pairing put the cursor
+/// one char right of the glyph per multi-byte char before it (`ö`
+/// clicked → the `d` after it).
+fn cellByte(ed: *const Editor, line: usize, off: u32) usize {
+    return @min(ed.lineStart(line) + off, ed.lineEnd(line));
 }
 
 fn extendSelection(app: *App, sel: anytype, x: u16, y: u16) void {
@@ -2758,10 +2805,7 @@ fn editorCellMouse(app: *App, cell: CellHit, m: Mouse, count: u16, wheel: bool) 
     const e = app.panes.editor(cell.pane) orelse return;
     const ed = e.buf.editor;
     const line = @min(cell.line, ed.lineCount() - 1);
-    // The column under the pointer: the hit's first column plus the offset.
-    const hit_rect = hitRect(app, m.x, m.y) orelse return;
-    const col = cell.col + (m.x - hit_rect.x);
-    const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+    const byte = cellByte(ed, line, cell.col);
     // `ui.click_echo`: the word under a left press underlines
     // for 120 ms — "did that click land?".
     if (m.button == .left and app.cfg.ui.click_echo) {
@@ -3427,6 +3471,275 @@ test "stale rects: a click after a layout change routes against a fresh frame, n
     try std.testing.expectEqual(b, app.active.?);
 }
 
+/// The screen cell whose hit names byte `off` of `line` — where that
+/// grapheme was painted (its first cell), or null when it is not on screen.
+fn cellOf(app: *App, line: u32, off: u32) ?struct { x: u16, y: u16 } {
+    var y: u16 = 0;
+    while (y < 40) : (y += 1) {
+        var x: u16 = 0;
+        while (x < 200) : (x += 1) {
+            const t = app.hits.at(x, y) orelse continue;
+            if (t == .editor_cell and t.editor_cell.line == line and t.editor_cell.col == off) return .{ .x = x, .y = y };
+        }
+    }
+    return null;
+}
+
+test "a click lands on the glyph under the pointer: bytes not chars, both cells of a wide glyph, the EOL space" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const ed = app.activeEditor().?.buf.editor;
+    // `ö` is char 8 / byte 10 (Ü and ï take two bytes); `t` after the
+    // four CJK glyphs is char 5 / byte 13 (three bytes, two cells each);
+    // `p` after the emoji is char 8 / byte 11 (four bytes, two cells).
+    try ed.setText("/// Ünïcödé in a comment\n日本語の text here\nemoji 🎉 party 🎉 end\n");
+    try app.render();
+    const cases = [_]struct { line: u32, off: u32, col: usize }{
+        .{ .line = 0, .off = 10, .col = 8 },
+        .{ .line = 1, .off = 13, .col = 5 },
+        .{ .line = 2, .off = 11, .col = 8 },
+    };
+    for (cases) |c| {
+        const cell = cellOf(&app, c.line, c.off).?;
+        try press(&app, cell.x, cell.y, .left);
+        try release(&app, cell.x, cell.y);
+        try std.testing.expectEqual(ed.lineStart(c.line) + c.off, ed.cursor);
+        try std.testing.expectEqual(c.col, ed.rowCol().col);
+    }
+    // The second cell of a wide glyph is that glyph, not the next one.
+    const hon = cellOf(&app, 1, 3).?; // 本
+    try press(&app, hon.x + 1, hon.y, .left);
+    try release(&app, hon.x + 1, hon.y);
+    try std.testing.expectEqual(ed.lineStart(1) + 3, ed.cursor);
+    try std.testing.expectEqual(@as(usize, 1), ed.rowCol().col);
+    // Anywhere in the EOL space is the line's end.
+    const eol_off: u32 = @intCast(ed.lineEnd(0) - ed.lineStart(0));
+    const eol = cellOf(&app, 0, eol_off).?;
+    try press(&app, eol.x + 6, eol.y, .left);
+    try release(&app, eol.x + 6, eol.y);
+    try std.testing.expectEqual(ed.lineEnd(0), ed.cursor);
+    // A drag from the CJK line to `ö` selects by the same bytes.
+    const oe = cellOf(&app, 0, 10).?;
+    try press(&app, hon.x, hon.y, .left);
+    try dragTo(&app, oe.x, oe.y);
+    try release(&app, oe.x, oe.y);
+    try std.testing.expectEqual([2]usize{ ed.lineStart(0) + 10, ed.lineStart(1) + 3 }, ed.selection().?);
+}
+
+/// The first cell of `line`'s gutter, or null when the line is off screen.
+fn gutterOf(app: *App, line: u32) ?struct { x: u16, y: u16 } {
+    var y: u16 = 0;
+    while (y < 40) : (y += 1) {
+        var x: u16 = 0;
+        while (x < 200) : (x += 1) {
+            const t = app.hits.at(x, y) orelse continue;
+            if (t == .gutter and t.gutter.line == line) return .{ .x = x, .y = y };
+        }
+    }
+    return null;
+}
+
+test "a gutter press selects the line with the cursor at column 1 and Shift extends; on a debuggable file the whole margin flips the breakpoint" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "notes.txt", .data = "one\ntwo\nthree\nfour\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "prog.dbg", .data = "let x = 1\nlet p = 2\nprint x\nx = x + 1\n" });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const notes_path = try std.fs.path.join(std.testing.allocator, &.{ root, "notes.txt" });
+    defer std.testing.allocator.free(notes_path);
+    _ = try app.openPath(notes_path);
+    try app.render();
+    const ed = app.activeEditor().?.buf.editor;
+    // The number cells, not only the sign cell: line 1 (`two`) selected
+    // whole, the cursor at its start, the buffer's mode visual.
+    const g1 = gutterOf(&app, 1).?;
+    try press(&app, g1.x + 2, g1.y, .left);
+    try release(&app, g1.x + 2, g1.y);
+    try std.testing.expectEqual(ed.lineStart(1), ed.cursor);
+    try std.testing.expectEqual(@as(usize, 0), ed.rowCol().col);
+    try std.testing.expectEqual([2]usize{ ed.lineStart(1), ed.lineStart(2) }, ed.selection().?);
+    // Shift on line 3 extends down over lines 1–3; Shift on line 0 then
+    // extends up so all four are selected.
+    const g3 = gutterOf(&app, 3).?;
+    try app.handle(.{ .mouse = .{ .x = g3.x + 1, .y = g3.y, .kind = .press, .button = .left, .mods = .{ .shift = true } } });
+    try release(&app, g3.x + 1, g3.y);
+    try std.testing.expectEqual([2]usize{ ed.lineStart(1), ed.len() }, ed.selection().?);
+    const g0 = gutterOf(&app, 0).?;
+    try app.handle(.{ .mouse = .{ .x = g0.x + 3, .y = g0.y, .kind = .press, .button = .left, .mods = .{ .shift = true } } });
+    try release(&app, g0.x + 3, g0.y);
+    try std.testing.expectEqual([2]usize{ 0, ed.len() }, ed.selection().?);
+    // No adapter for `.txt`: no breakpoint, no toast.
+    try std.testing.expectEqual(@as(usize, 0), app.dap.bpsFor(notes_path).len);
+    try std.testing.expect(app.lastToast() == null);
+    // A `.dbg` with an adapter: a press on the number cells flips the
+    // breakpoint and parks the cursor at column 1 with nothing selected;
+    // a second press clears it.
+    var cfg_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer cfg_arena.deinit();
+    try app.cfg.dap.put(cfg_arena.allocator(), "dbg", .{ .cmd = "not-a-real-adapter" });
+    const prog = try std.fs.path.join(std.testing.allocator, &.{ root, "prog.dbg" });
+    defer std.testing.allocator.free(prog);
+    _ = try app.openPath(prog);
+    try app.render();
+    const pd = app.activeEditor().?.buf.editor;
+    const g2 = gutterOf(&app, 2).?;
+    try press(&app, g2.x + 3, g2.y, .left);
+    try release(&app, g2.x + 3, g2.y);
+    try std.testing.expectEqual(@as(usize, 1), app.dap.bpsFor(prog).len);
+    try std.testing.expectEqual(@as(u32, 2), app.dap.bpsFor(prog)[0].line);
+    try std.testing.expectEqual(pd.lineStart(2), pd.cursor);
+    try std.testing.expect(pd.selection() == null);
+    try std.testing.expectEqualStrings("breakpoint set: line 3", app.lastToast().?);
+    try press(&app, g2.x + 1, g2.y, .left);
+    try release(&app, g2.x + 1, g2.y);
+    try std.testing.expectEqual(@as(usize, 0), app.dap.bpsFor(prog).len);
+    try std.testing.expectEqualStrings("breakpoint cleared: line 3", app.lastToast().?);
+}
+
+/// The first cell of the hover box, or null when none is painted.
+fn hoverBoxAt(app: *App) ?struct { x: u16, y: u16 } {
+    for (app.hits.items.items) |e| if (e.target == .hover_popup) return .{ .x = e.rect.x + 1, .y = e.rect.y + 1 };
+    return null;
+}
+
+test "the wheel over the hover box scrolls its lines two an event, never the editor under it; a press puts it away" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try app.openScratch();
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (0..100) |i| try text.print(std.testing.allocator, "L{d}\n", .{i});
+    try app.activeEditor().?.buf.editor.setText(text.items);
+    // Thirty lines of hover, as `showPages` would build them.
+    var h: lsp.Hover = .{ .pane = id, .arena = @import("../core/alloc.zig").SnapshotArena.init(app.gpa), .pages = &.{}, .active = 0, .at = 0 };
+    const a = h.arena.allocator();
+    const page = try a.alloc([]const u8, 30);
+    for (page, 0..) |*l, i| l.* = try std.fmt.allocPrint(a, "hover line {d}", .{i});
+    const pages = try a.alloc([]const []const u8, 1);
+    pages[0] = page;
+    h.pages = pages;
+    app.lsp.hover = h;
+    try app.render();
+    const box = hoverBoxAt(&app).?;
+    // One event: two lines. Three events in a batch: six more.
+    try app.handle(.{ .mouse = .{ .x = box.x, .y = box.y, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 2), app.lsp.hover.?.scroll);
+    for (0..3) |_| try app.handle(.{ .mouse = .{ .x = box.x, .y = box.y, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 8), app.lsp.hover.?.scroll);
+    try app.handle(.{ .mouse = .{ .x = box.x, .y = box.y, .kind = .scroll_up } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 6), app.lsp.hover.?.scroll);
+    // The editor under the box did not move.
+    try std.testing.expectEqual(@as(u32, 0), app.activeEditor().?.view.scroll_line);
+    // The draw clamps a scroll past the last page of lines.
+    app.lsp.hover.?.scroll = 99;
+    try app.render();
+    try std.testing.expect(app.lsp.hover.?.scroll < 30);
+    try press(&app, box.x, box.y, .left);
+    try release(&app, box.x, box.y);
+    try std.testing.expect(app.lsp.hover == null);
+}
+
+test "a picker click opens the row under the pointer — at index 0 and after the cursor moved" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
+    for ([_][]const u8{ "alpha.txt", "bravo.txt", "charlie.txt", "delta.txt" }) |name| try tmp.dir.writeFile(std.testing.io, .{ .sub_path = name, .data = "x\n" });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try app.render();
+    try std.testing.expect(app.overlay == .picker);
+    // Index 0 with the cursor there.
+    var row: ?Rect = null;
+    for (app.hits.items.items) |e| if (e.target == .overlay_item and e.target.overlay_item == 0) {
+        row = e.rect;
+    };
+    const first = try app.frame.allocator().dupe(u8, app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
+    try press(&app, row.?.x + 3, row.?.y, .left);
+    try release(&app, row.?.x + 3, row.?.y);
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(std.mem.endsWith(u8, app.panes.get(app.active.?).?.editor.buf.doc.path.?, first));
+    // After Down (and the preview it drives), the third row is still the third.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.render();
+    row = null;
+    for (app.hits.items.items) |e| if (e.target == .overlay_item and e.target.overlay_item == 2) {
+        row = e.rect;
+    };
+    const third = try app.frame.allocator().dupe(u8, app.overlay.picker.labels[app.overlay.picker.filtered.items[2]]);
+    try std.testing.expect(!std.mem.eql(u8, first, third));
+    try press(&app, row.?.x + 3, row.?.y, .left);
+    try release(&app, row.?.x + 3, row.?.y);
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(std.mem.endsWith(u8, app.panes.get(app.active.?).?.editor.buf.doc.path.?, third));
+}
+
+test "a click on a soft-wrapped continuation row lands on that row's chars, on the first screen and scrolled" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    app.activeEditor().?.wrap = true;
+    const ed = app.activeEditor().?.buf.editor;
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (0..40) |i| {
+        try text.print(std.testing.allocator, "line{d:0>3}", .{i + 1});
+        // Lines 3 and 30 wrap: a space, then 20 `wrapme_` with no break in them.
+        if (i == 2 or i == 29) {
+            try text.appendSlice(std.testing.allocator, " ");
+            for (0..20) |_| try text.appendSlice(std.testing.allocator, "wrapme_");
+        }
+        try text.appendSlice(std.testing.allocator, "\n");
+    }
+    try ed.setText(text.items);
+    try app.render();
+    // Line 3's number row holds `line003 ` (bytes 0–7); the row under it
+    // starts at byte 8, the one under that a text width later.
+    const num = cellOf(&app, 2, 0).?;
+    const row1 = app.hits.at(num.x, num.y + 1).?.editor_cell;
+    try std.testing.expectEqual(@as(u32, 2), row1.line);
+    try std.testing.expectEqual(@as(u32, 8), row1.col);
+    try press(&app, num.x + 4, num.y + 1, .left);
+    try release(&app, num.x + 4, num.y + 1);
+    try std.testing.expectEqual(ed.lineStart(2) + 12, ed.cursor);
+    const row2 = app.hits.at(num.x, num.y + 2).?.editor_cell;
+    try std.testing.expectEqual(@as(u32, 2), row2.line);
+    const width = row2.col - 8;
+    try std.testing.expect(width > 20);
+    try press(&app, num.x + 4, num.y + 2, .left);
+    try release(&app, num.x + 4, num.y + 2);
+    try std.testing.expectEqual(ed.lineStart(2) + 8 + width + 4, ed.cursor);
+    // Past the text of a wrapped row: that row's end, not the next row's chars.
+    try press(&app, num.x + 30, num.y, .left);
+    try release(&app, num.x + 30, num.y);
+    try std.testing.expectEqual(ed.lineStart(2) + 8, ed.cursor);
+    // Scrolled so line 30 sits above the cursor's line 32: the same shape.
+    ed.placeCursor(31, 0);
+    try app.render();
+    try std.testing.expect(app.activeEditor().?.view.scroll_line > 10);
+    const num30 = cellOf(&app, 29, 0).?;
+    const r30 = app.hits.at(num30.x, num30.y + 2).?.editor_cell;
+    try std.testing.expectEqual(@as(u32, 29), r30.line);
+    try std.testing.expectEqual(@as(u32, 8 + width), r30.col);
+    try press(&app, num30.x + 4, num30.y + 2, .left);
+    try release(&app, num30.x + 4, num30.y + 2);
+    try std.testing.expectEqual(ed.lineStart(29) + 8 + width + 4, ed.cursor);
+}
+
 test "wheel: a burst folds into one batch per tick; standard pins the view, vim moves the cursor" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
@@ -3729,6 +4042,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .info_view = .{ .delegated = "info_view_app.mouse" },
     .script_hit = .here,
     .editor_cell = .{ .delegated = "editorCellMouse" },
+    .hover_popup = .{ .none = "dismisses" },
     .gutter = .here,
     .overlay_item = .here,
     .dock = .{ .delegated = "dock.mouse" },

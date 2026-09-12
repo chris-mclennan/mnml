@@ -95,6 +95,19 @@ now reads `⏎ d █` here. The editor's text column also ends a cell
 short of its bar (Rust keeps a pad beside its change strip); the
 gutter does not move.
 
+*// changed 2026-09-10 (mouse-fixes):* the editor's bar no longer
+paints `█` — it is Rust's editor bar, a styled space per cell (the
+track on the chip ground, the thumb on the muted one), so a dump of a
+file taller than its pane shows the blank last column Rust's shows.
+The panels' bars are unchanged (Rust's `paint_simple_scrollbar` is `█`
+for both track and thumb, as here). None of the four gate screens
+scrolls an editor, so `tools/ui-diff.sh` reads the same before and
+after: esc 4, editor 3, picker 4, todos 12 beyond the rail (todos
+flickers 11–12 with the clock chip). The `zig-*.txt` dumps carry no
+editor bar (the `█` in `zig-debug-stopped-80x24.txt` is the DEBUG
+panel's), so none was re-cut. `tools/compare.sh compare-mouse` reads
+the `ö` click as 10:9 on both sides now (was 10:11).
+
 ## Overlays (2026-09-07)
 
 Each `rust-<name>-120x40.txt` below is the Rust screen after the

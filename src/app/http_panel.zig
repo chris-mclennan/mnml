@@ -71,7 +71,6 @@ pub const scan_cap: usize = 500;
 pub const recent_cap: usize = 50;
 const skip_dirs = [_][]const u8{ "node_modules", "target", "zig-out", "zig-cache", "dist", "build", "vendor" };
 /// A second click on the selected row within this window opens it.
-const double_click_ms: i64 = 500;
 /// Where `http.new_collection` puts a collection.
 pub const hidden_root = ".mnml/collections";
 
@@ -118,7 +117,6 @@ pub const State = struct {
     /// Folded collection folders, by relative directory (keys on the gpa).
     collapsed_dirs: std.StringArrayHashMapUnmanaged(void) = .empty,
     scanned_once: bool = false,
-    last_click: ?struct { idx: u32, at_ms: i64 } = null,
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa) };
@@ -973,10 +971,11 @@ fn runToast(app: *App, result: CommandError!void) void {
 
 // ─── mouse (D6) ─────────────────────────────────────────────────────────
 
-/// A row: a left press selects (a header or a folder toggles at once, a
-/// link acts, an item opens on a second press within `double_click_ms`);
-/// a right press selects and opens the row menu; the wheel moves the
-/// cursor three rows.
+/// A row: a left press selects and acts — a header or a folder toggles,
+/// a link acts, a request or a block opens (one press, as a file in the
+/// tree does; Rust opens on the first click too — the second press this
+/// once waited for left the two trees disagreeing); a right press
+/// selects and opens the row menu; the wheel moves the cursor three rows.
 pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     const st = &app.http_panel;
     switch (m.kind) {
@@ -989,23 +988,8 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
             if (m.button == .right) return openRowMenu(app, m.x, m.y);
             if (m.button != .left) return;
             switch (row.kind) {
-                .header, .folder => {
-                    st.last_click = null;
-                    runToast(app, activate(app, row));
-                    return;
-                },
-                .link => {
-                    st.last_click = null;
-                    runToast(app, linkAction(app, row.link, .{ .x = m.x, .y = m.y }));
-                    return;
-                },
-                else => {},
-            }
-            const again = if (st.last_click) |lc| lc.idx == idx and app.now_ms - lc.at_ms <= double_click_ms else false;
-            st.last_click = .{ .idx = idx, .at_ms = app.now_ms };
-            if (again) {
-                st.last_click = null;
-                runToast(app, activate(app, row));
+                .link => runToast(app, linkAction(app, row.link, .{ .x = m.x, .y = m.y })),
+                else => runToast(app, activate(app, row)),
             }
         },
         else => {},
@@ -1700,6 +1684,31 @@ test "clicks: a header chip acts (ENVS + opens the prompt, RECENT ✕ truncates 
     try testing.expect(found);
     try testing.expect(st.rows.items[folder_idx].collapsed);
     try testing.expect(st.collapsed_dirs.contains("api"));
+}
+
+test "one left press on a request row opens it, as a tree file does; a folder row folds on one press too" {
+    var f = try Fixture.init(100, 40);
+    defer f.deinit();
+    try f.seedAll();
+    f.app.tree.visible = false;
+    f.app.tree.width = 34;
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    try f.app.render();
+    const st = &f.app.http_panel;
+    const item_idx = f.rowOf(.collections, .item, "loose.http").?;
+    var y: u16 = 0;
+    var found = false;
+    while (y < 40 and !found) : (y += 1) {
+        if (f.app.hits.at(8, y)) |t| if (t == .row and t.row.panel == .http and t.row.idx == item_idx) {
+            found = true;
+            try f.app.handle(.{ .mouse = .{ .x = 8, .y = y, .kind = .press, .button = .left } });
+        };
+    }
+    try testing.expect(found);
+    // No second press waited for: the pane is open and it is the row's.
+    const rp = http.activeRequest(&f.app).?;
+    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/loose.http"));
+    try testing.expectEqual(item_idx, st.list.cursor);
 }
 
 test "every row menu names registered ids only; the header menus carry the section's verbs" {

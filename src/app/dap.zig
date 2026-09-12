@@ -251,7 +251,29 @@ pub fn toggleBreakpointAt(app: *App, path: []const u8, line: u32) CommandError!v
     syncBreakpoints(app, path);
 }
 
-/// The gutter's sign cell: flip the breakpoint on `line` of the pane's file.
+/// Whether a left press anywhere in the gutter flips a breakpoint: the
+/// file already carries breakpoints, or an adapter answers to it — the
+/// config's `.dap` table (re-read on a miss, as `dap.run` does, so an
+/// adapter written after launch counts) or a built-in one (a `.cs`
+/// beside its csproj). A file nothing can debug keeps the line-numbers
+/// click — F9 and the gutter menu still set breakpoints on it.
+pub fn gutterToggles(app: *App, e: *const EditorPane) Allocator.Error!bool {
+    const path = e.buf.doc.path orelse return false;
+    if (app.dap.bpsFor(path).len > 0) return true;
+    if (adapterFor(app, path) != null) return true;
+    try refreshAdapters(app);
+    if (adapterFor(app, path) != null) return true;
+    const built_in = builtinAdapterFor(app, path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => blk: {
+            app.diag.clear();
+            break :blk null;
+        },
+    };
+    return built_in != null;
+}
+
+/// The gutter: flip the breakpoint on `line` of the pane's file.
 pub fn gutterToggle(app: *App, pane: PaneId, line: u32) Allocator.Error!void {
     const e = app.panes.editor(pane) orelse return;
     const path = e.buf.doc.path orelse {
@@ -1793,11 +1815,18 @@ test "gutter: the sign glyphs per breakpoint kind, a disabled or unverified one 
     try app.handle(.{ .mouse = .{ .x = g.x, .y = g.y, .kind = .release, .button = .left } });
     try testing.expectEqualStrings("breakpoint set: line 4", app.lastToast().?);
     try testing.expectEqual(@as(usize, 4), app.dap.bpsFor("/tmp/g.py").len);
-    // A press on the number cell only moves the cursor.
+    // The number cell is the margin too on a file that carries
+    // breakpoints (`gutterToggles`): line 3's clears, the cursor parks
+    // at its column 1; a second press sets it again.
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .release, .button = .left } });
+    try testing.expectEqual(@as(usize, 3), app.dap.bpsFor("/tmp/g.py").len);
+    try testing.expectEqualStrings("breakpoint cleared: line 3", app.lastToast().?);
+    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try testing.expectEqual(@as(usize, 0), e.buf.editor.rowCol().col);
     try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .press, .button = .left } });
     try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y - 1, .kind = .release, .button = .left } });
     try testing.expectEqual(@as(usize, 4), app.dap.bpsFor("/tmp/g.py").len);
-    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
     // A right press opens the breakpoint menu for that line.
     try app.handle(.{ .mouse = .{ .x = g.x + 1, .y = g.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);

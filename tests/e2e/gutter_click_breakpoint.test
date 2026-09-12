@@ -1,0 +1,20 @@
+# On a file with a debug adapter (the workspace config names
+# mnml-fake-dap for `.dbg`), a left press anywhere in the gutter — the
+# line number as much as the sign cell — flips that line's breakpoint,
+# the cursor parked at its column 1. Tree off at 120x40: the gutter is
+# columns 0–4, the body starts at row 2.
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+open prog.dbg
+command view.toggle_tree
+expect screen contains "Ln 1/10 Col 1"
+# The number cells of line 4 (row 5): set, then clear.
+click 3 5
+expect screen contains "breakpoint set: line 4"
+expect screen contains "Ln 4/10 Col 1"
+click 2 5
+expect screen contains "breakpoint cleared: line 4"
+# The sign cell of line 6 (row 7) still works.
+click 0 7
+expect screen contains "breakpoint set: line 6"
+expect screen contains "Ln 6/10 Col 1"
