@@ -3222,7 +3222,11 @@ const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "
 fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
     const line = e.buf.input.cmdlineGet() orelse return;
     if (app.cmd_complete) |*c| {
-        if (std.mem.eql(u8, c.prefix, line) or (c.candidates.len > 0 and std.mem.eql(u8, c.candidates[c.idx], line))) {
+        // The one match was a directory and the line is it now: the next
+        // Tab lists what is inside (vim's `wildmode=full` on `:e src/`),
+        // rather than cycling a list of one.
+        const descend = c.candidates.len == 1 and std.mem.eql(u8, c.candidates[0], line) and std.mem.endsWith(u8, line, "/");
+        if (!descend and (std.mem.eql(u8, c.prefix, line) or (c.candidates.len > 0 and std.mem.eql(u8, c.candidates[c.idx], line)))) {
             return cmdlineCycle(app, e, 1);
         }
         c.deinit(app.gpa);
