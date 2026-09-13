@@ -853,17 +853,24 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try f.settle(400);
     const st = &app.search_section;
     try t.expectEqual(@as(usize, 7), st.rows.items.len);
-    // ↓ from the query moves the selection onto the first hit; Enter with a query runs again — Esc clears, then Enter opens.
-    try app.handle(.{ .key = Key.named(.down) });
+    // The selection starts on the first hit (row 1, under its file
+    // header — Rust's `search_selected = 0`); ↓ ↓ from the query moves
+    // it past the next file header onto the second hit (row 3). Enter
+    // with a query runs again — Esc clears, then Enter opens the
+    // selected hit at its line and column.
     try t.expectEqual(@as(usize, 1), st.list.cursor);
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try t.expectEqual(@as(usize, 3), st.list.cursor);
+    try t.expect(st.rows.items[3] == .hit);
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expectEqual(@as(usize, 0), st.query.items.len);
     try t.expect(st.query_focused);
     try app.handle(.{ .key = Key.named(.enter) });
     const e = app.activeEditor().?;
-    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, st.hits.items[0].rel));
-    try t.expectEqual(@as(usize, st.hits.items[0].line - 1), e.buf.editor.currentLine());
-    try t.expectEqual(@as(usize, st.hits.items[0].col), e.buf.editor.rowCol().col);
+    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, st.hits.items[1].rel));
+    try t.expectEqual(@as(usize, st.hits.items[1].line - 1), e.buf.editor.currentLine());
+    try t.expectEqual(@as(usize, st.hits.items[1].col), e.buf.editor.rowCol().col);
     try t.expect(app.focus == .pane);
     // Back in the section: a second Esc in the empty query goes to the rows; h folds the file, l opens it.
     side.focusSection(app, .search);
