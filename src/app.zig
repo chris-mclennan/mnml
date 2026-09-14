@@ -110,6 +110,7 @@ const scripts_panel = @import("app/scripts_panel.zig");
 const script_list = @import("app/script_list.zig");
 const script_section = @import("app/script_section.zig");
 const search_section = @import("app/search_section.zig");
+const grep_picker = @import("app/grep_picker.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
@@ -403,6 +404,9 @@ pub const PickerKind = enum {
     buffers,
     files,
     recent,
+    /// `find.live_grep`: the workspace grep behind the picker overlay —
+    /// the query is the pattern, not a filter (`app/grep_picker.zig`).
+    grep,
     commands,
     tabs,
     themes,
@@ -457,6 +461,10 @@ pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Al
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
 pub const InfoKind = enum { welcome, about };
+
+/// One row of the live-grep picker: where its hit is, so the preview
+/// column and the accept both know the file without re-parsing a label.
+pub const GrepRow = struct { path: []u8, line: u32, col: u32, len: u32 };
 
 pub const Overlay = union(enum) {
     none,
@@ -528,6 +536,9 @@ pub const Overlay = union(enum) {
         /// The cursor row's preview column, gpa-owned (its segment texts
         /// too), refilled when the cursor moves.
         preview: [][]Picker.PreviewSegment = &.{},
+        /// Parallel to `labels` on a `.grep` picker: the hit each row
+        /// points at. Empty for every other kind.
+        grep_hits: []GrepRow = &.{},
         /// A `.lua` source that answers again as the query changes: its
         /// id, and when the debounced re-run is due.
         lua_source: []u8 = &.{},
@@ -582,6 +593,8 @@ pub const Overlay = union(enum) {
                 gpa.free(p.icons);
                 gpa.free(p.marked);
                 freePreview(gpa, p.preview);
+                for (p.grep_hits) |h| gpa.free(h.path);
+                gpa.free(p.grep_hits);
                 gpa.free(p.lua_source);
                 gpa.free(p.priority);
                 gpa.free(p.score_bonus);
@@ -897,6 +910,8 @@ pub const App = struct {
     script_sections: script_section.Store = .{},
     /// // changed (search-section): the SEARCH section's query and hits.
     search_section: search_section.State,
+    /// The live-grep picker's worker (`app/grep_picker.zig`).
+    grep_picker: grep_picker.State,
     dock: dock.State = .{},
     /// The editor body before the dock's inline strips came off it.
     dock_area: Rect = .{},
@@ -1091,6 +1106,10 @@ pub const App = struct {
     last_watch_ms: i64 = 0,
     /// Frames since something changed; the loop skips idle renders.
     needs_render: bool = true,
+    /// The picker preview column's highlighter (`app/picker_preview.zig`).
+    /// One per app rather than one per build: it caches every grammar it
+    /// loads, so walking a list of Zig files compiles that query once.
+    preview_hl: ?@import("highlight").Highlighter = null,
     /// The toast history (`:messages`).
     messages: messages.State = .{},
     /// Zen: the editor and the `:` line, nothing else painted.
@@ -1175,6 +1194,7 @@ pub const App = struct {
             .side = side_mod.State.init(&opts.cfg),
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
             .search_section = try search_section.State.init(gpa),
+            .grep_picker = try grep_picker.State.init(gpa),
             .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
             .findings = findings.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.findings_sort)),
             .sessions = sessions.State.init(gpa, opts.cfg.ui.sessions_sort),
@@ -1434,6 +1454,7 @@ pub const App = struct {
         self.now_playing.deinit(self.io);
         self.todos.deinit(gpa, self.io);
         self.search_section.deinit(gpa, self.io);
+        self.grep_picker.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
         self.scripts_panel.deinit(gpa);
@@ -1493,6 +1514,7 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
+        if (self.preview_hl) |*h| h.deinit();
         if (self.flash) |*f| f.deinit(gpa);
         for (self.recent.items) |r| gpa.free(r);
         self.recent.deinit(gpa);
@@ -2547,6 +2569,7 @@ test {
     _ = @import("app/pane.zig");
     _ = @import("app/outline.zig");
     _ = @import("app/md_preview.zig");
+    _ = @import("app/picker_preview.zig");
     _ = @import("app/zon_pane.zig");
     _ = @import("app/image_pane.zig");
     _ = @import("app/discovery.zig");
@@ -2707,6 +2730,7 @@ test {
     _ = @import("app/scripts_panel.zig");
     _ = @import("ui/scripts_panel.zig");
     _ = @import("app/search_section.zig");
+    _ = @import("app/grep_picker.zig");
     _ = @import("ui/search_section_view.zig");
     _ = @import("ui/script_view.zig");
     _ = @import("ui/script_list.zig");

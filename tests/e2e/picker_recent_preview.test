@@ -1,0 +1,13 @@
+# `Recent files` previews the file under the cursor, as the file picker
+# does — the same column, the same numbering.
+write one.txt "first line\nsecond line\n"
+write two.txt "other file\n"
+open one.txt
+open two.txt
+
+command picker.recent
+expect screen contains "┌ Recent files "
+expect screen contains "▌one.txt"
+expect screen contains "   1 first line"
+expect screen contains "   2 second line"
+key esc

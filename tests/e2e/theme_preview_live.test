@@ -1,0 +1,36 @@
+# width: 120
+# height: 40
+# The theme browser previews on the WHOLE screen: moving through the
+# list repaints the editor body and the chrome in the highlighted
+# theme, Esc puts the one you came from back, Enter keeps the pick.
+# Colours are the only proof — the screen dump carries none, so this
+# asserts real cells (`expect color`).
+write x.txt "hello\n"
+open x.txt
+
+# onedark at rest: the editor body and the statusline are its ground.
+expect color 60 5 bg #1e222a
+expect color 10 39 bg #1e222a
+
+command theme.pick
+expect screen contains "┌ Themes "
+# The theme you came from is marked, whatever the cursor is painting.
+expect screen contains "current"
+
+# Narrowing the list previews the candidate: the whole frame is gruvbox.
+type gruvbox
+expect color 60 5 bg #282828
+expect color 10 39 bg #282828
+
+# Esc reverts — the picker is a preview, not a change.
+key esc
+expect screen lacks "┌ Themes "
+expect color 60 5 bg #1e222a
+expect color 10 39 bg #1e222a
+
+# Enter keeps it.
+command theme.pick
+type gruvbox
+key enter
+expect color 60 5 bg #282828
+expect color 10 39 bg #282828

@@ -24,6 +24,8 @@ const ai_app = @import("ai.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const context_menus = @import("context_menus.zig");
+const picker_preview = @import("picker_preview.zig");
+const grep_picker = @import("grep_picker.zig");
 const MenuItem = command.MenuItem;
 
 pub const table = .{
@@ -65,6 +67,8 @@ fn buffers(app: *App) CommandError!void {
     for (try @import("cmd_buffer.zig").listOrder(app, app.frame.allocator())) |id| try pushBuffer(app, &labels, &panes, id);
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no open buffers", .{});
     try openPicker(app, "Buffers", .buffers, try labels.toOwnedSlice(gpa), try panes.toOwnedSlice(gpa));
+    app.overlay.picker.state.has_preview = true;
+    preview(app);
 }
 
 fn pushBuffer(app: *App, labels: *std.ArrayListUnmanaged([]u8), panes: *std.ArrayListUnmanaged(PaneId), id: PaneId) CommandError!void {
@@ -139,7 +143,9 @@ fn files(app: *App) CommandError!void {
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no files under {s}", .{app.workspace});
     try openPickerWith(app, if (truncated) "Open file (first 5000)" else "Open file", .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.priority = try prio.toOwnedSlice(gpa);
+    app.overlay.picker.state.has_preview = true;
     try dispatch.refilterPicker(app);
+    preview(app);
 }
 
 fn pushFile(gpa: Allocator, labels: *std.ArrayListUnmanaged([]u8), details: *std.ArrayListUnmanaged([]u8), prio: *std.ArrayListUnmanaged(u8), rel: []const u8, tier: u8) Allocator.Error!void {
@@ -299,6 +305,8 @@ fn recent(app: *App) CommandError!void {
     }
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no recent files", .{});
     try openPicker(app, "Recent files", .recent, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+    app.overlay.picker.state.has_preview = true;
+    preview(app);
 }
 
 /// `Command palette` — every static command and every registered one
@@ -463,6 +471,15 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 return;
             };
         },
+        .grep => {
+            if (i >= p.grep_hits.len) return;
+            const row = p.grep_hits[i];
+            const owned: app_mod.GrepRow = .{ .path = try app.frame.allocator().dupe(u8, row.path), .line = row.line, .col = row.col, .len = row.len };
+            grep_picker.stop(app);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try grep_picker.accept(app, owned);
+        },
         .integrations_details, .integrations_manifest, .integrations_toggle, .integrations_remove, .integrations_copy_id, .integrations_pin, .integrations_unpin, .integrations_toggle_bar => |kind| {
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
@@ -625,12 +642,101 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
 }
 
 /// The cursor moved or the filter changed: a themes picker paints the
-/// candidate under the cursor. Other kinds have nothing to preview.
+/// candidate under the cursor; a picker with a preview column refills
+/// it. Other kinds have nothing to preview.
 pub fn preview(app: *App) void {
     if (app.overlay != .picker) return;
     if (app.overlay.picker.kind == .themes) return @import("cmd_view.zig").previewTheme(app);
     // A `.lua` source with a preview column: the cursor moved.
-    if (app.overlay.picker.kind == .lua) @import("../scripting/api.zig").refreshPreview(app) catch {};
+    if (app.overlay.picker.kind == .lua) return @import("../scripting/api.zig").refreshPreview(app) catch {};
+    fillPreview(app) catch {};
+}
+
+/// The preview column's rows for the cursor row, by kind: a file picker
+/// previews the file, a buffer picker the buffer's own bytes (dirty
+/// ones included — a preview shows what you would switch to, not what
+/// is on disk), a grep picker the file around the hit.
+fn fillPreview(app: *App) Allocator.Error!void {
+    const p = &app.overlay.picker;
+    if (!p.state.has_preview) return;
+    app_mod.Overlay.freePreview(app.gpa, p.preview);
+    p.preview = &.{};
+    p.state.preview_focus = null;
+    p.state.preview_scroll = 0;
+    app.needs_render = true;
+    if (p.state.cursor >= p.filtered.items.len) return;
+    const idx = p.filtered.items[p.state.cursor];
+    switch (p.kind) {
+        .buffers => {
+            const id = if (idx < p.panes.len) p.panes[idx] else return;
+            const pane = app.panes.get(id) orelse return;
+            switch (pane.*) {
+                .editor => |*e| {
+                    const built = try picker_preview.build(app, e.buf.editor.bytes(), e.buf.doc.path, null);
+                    p.preview = built.rows;
+                    p.state.preview_focus = built.focus;
+                },
+                else => p.preview = try picker_preview.note(app, "  (no preview)"),
+            }
+        },
+        .files, .recent, .grep => {
+            const path = try previewPath(app, p, idx) orelse return;
+            // An open buffer answers for its file: what you would see.
+            if (app.panes.findPath(path)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
+                .editor => |*e| {
+                    const built = try picker_preview.build(app, e.buf.editor.bytes(), path, hitOf(p, idx));
+                    p.preview = built.rows;
+                    p.state.preview_focus = built.focus;
+                    return;
+                },
+                else => {},
+            };
+            const text = (try readHead(app, path)) orelse {
+                p.preview = try picker_preview.note(app, "  (cannot read)");
+                return;
+            };
+            if (std.mem.indexOfScalar(u8, text, 0) != null) {
+                p.preview = try picker_preview.note(app, "  (binary)");
+                return;
+            }
+            const built = try picker_preview.build(app, text, path, hitOf(p, idx));
+            p.preview = built.rows;
+            p.state.preview_focus = built.focus;
+        },
+        else => {},
+    }
+}
+
+/// The absolute path row `idx` names. A workspace file's label is its
+/// relative path; a recent from elsewhere is a basename whose detail is
+/// the absolute directory.
+fn previewPath(app: *App, p: anytype, idx: usize) Allocator.Error!?[]const u8 {
+    if (p.kind == .grep) return if (idx < p.grep_hits.len) p.grep_hits[idx].path else null;
+    const label = p.labels[idx];
+    if (idx < p.details.len and p.details[idx].len > 0 and std.fs.path.isAbsolute(p.details[idx])) {
+        return try std.fs.path.join(app.frame.allocator(), &.{ p.details[idx], label });
+    }
+    return try app.absPath(label);
+}
+
+/// The line a grep row points at; null for every other kind.
+fn hitOf(p: anytype, idx: usize) ?picker_preview.Hit {
+    if (p.kind != .grep or idx >= p.grep_hits.len) return null;
+    const h = p.grep_hits[idx];
+    return .{ .line = h.line, .col = h.col, .len = h.len };
+}
+
+/// The first `picker_preview.max_bytes` of `path`, on the frame arena.
+/// A file too big to read whole is read short rather than refused.
+fn readHead(app: *App, path: []const u8) Allocator.Error!?[]const u8 {
+    var file = std.Io.Dir.cwd().openFile(app.io, path, .{}) catch return null;
+    defer file.close(app.io);
+    const arena = app.frame.allocator();
+    const buf = try arena.alloc(u8, picker_preview.max_bytes);
+    var rbuf: [4096]u8 = undefined;
+    var r = file.reader(app.io, &rbuf);
+    const n = r.interface.readSliceShort(buf) catch 0;
+    return buf[0..n];
 }
 
 /// Tab on a row of a multi-select picker: mark it, or unmark it.
@@ -650,16 +756,22 @@ pub fn toggleMark(app: *App, idx: usize) void {
 /// The live source's debounce (`App.tick`).
 pub fn tick(app: *App, now: i64) Allocator.Error!void {
     try @import("../scripting/api.zig").tickLivePicker(app, now);
+    try grep_picker.tick(app, now);
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
-    return @import("../scripting/api.zig").nextPickerDeadlineMs(app);
+    const lua = @import("../scripting/api.zig").nextPickerDeadlineMs(app);
+    const gp = grep_picker.nextDeadlineMs(app);
+    if (lua == null) return gp;
+    if (gp == null) return lua;
+    return @min(lua.?, gp.?);
 }
 
 /// The picker is closing without a pick: put a previewed theme back.
 pub fn cancel(app: *App) void {
     if (app.overlay != .picker) return;
     if (app.overlay.picker.restore_theme) |th| app.setTheme(th);
+    if (app.overlay.picker.kind == .grep) grep_picker.stop(app);
     if (app.overlay.picker.kind == .lua) app.script().pickerClosed();
 }
 

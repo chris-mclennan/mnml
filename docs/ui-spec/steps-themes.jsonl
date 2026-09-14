@@ -1,0 +1,6 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"theme.pick"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"type","text":"gruv"}
+{"cmd":"wait_ms","ms":600}

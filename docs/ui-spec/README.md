@@ -630,3 +630,27 @@ on exit; `KEEP=1` keeps the copy; `FIXTURE_LINES=30000` writes a
 larger fixture (the output dir gains `-30000l`). The reading of the
 first four runs is `docs/research/rust-vs-zig-navigation.md`, with a
 dated addendum for the open-path work that followed.
+
+`zig-picker-preview-120x40.txt` / `zig-grep-preview-120x40.txt` are the
+picker's preview column (`tools/zig-spec.sh picker-preview` /
+`grep-preview`, seeded from `seed-picker-preview/` and
+`seed-grep-preview/` — one Rust file with a `counts` map in it). This
+is the **one place the picker deliberately leaves the Rust screen**:
+Rust's picker has no preview column, so `steps-picker` reads 10 rows
+differing beyond the rail where it read 4. The reference for the column
+is the reference plugin, not the reference editor — results left, the
+cursor row's file right, a `│` rule between them, the count at the
+prompt's right edge, and the column dropped entirely below the picker's
+width floor. The grep dump shows the other half of the rule: the window
+is centred on the hit line, not the file's head.
+
+`zig-whichkey-120x40.txt` is the leader popup the standard profile
+shows (`tools/zig-spec.sh whichkey`), beside `rust-whichkey-120x40.txt`
+— the two agree row for row since the root's `r → +lsp` became
+`vim_only`.
+
+`zig-themes-120x40.txt` is the theme browser mid-preview
+(`tools/zig-spec.sh themes` — `theme.pick`, then `gruv` typed). The
+dump carries no colour, which is the point of the `expect color` verb:
+`tests/e2e/theme_preview_live.test` asserts the editor body and the
+statusline really repaint in the highlighted theme and revert on Esc.

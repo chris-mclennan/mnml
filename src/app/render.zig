@@ -1617,7 +1617,18 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     _ = body;
     const screen = ui.canvas.full();
     switch (app.overlay) {
-        .none => {},
+        // No overlay, but a vim operator is pending: the same popup
+        // lists what `g` / `z` / `ctrl+w` continue with, as the
+        // reference editor's does.
+        .none => if (if (app.activeEditor()) |e| e.buf.input.operatorMenuHint() else null) |hint| {
+            const entries = try ui.arena.alloc(which_key.Entry, hint.items.len);
+            for (hint.items, 0..) |it, i| {
+                var buf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(it.key, &buf) catch 1;
+                entries[i] = .{ .key = try ui.arena.dupe(u8, buf[0..n]), .label = it.label, .is_group = it.group };
+            }
+            which_key.draw(ui, screen, ui.fmt("Vim: {s}", .{hint.prefix}), entries);
+        },
         .prompt => |*p| if (prompt_mod.draw(ui, screen, &p.state)) |c| {
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
@@ -1646,7 +1657,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             for (kids, 0..) |k, i| {
                 const key = try ui.arena.alloc(u8, 1);
                 key[0] = k.key;
-                entries[i] = .{ .key = key, .label = k.node.label(), .is_group = k.node == .group };
+                entries[i] = .{ .key = key, .label = k.node.label(), .is_group = k.node == .group, .id = @intCast(i) };
             }
             which_key.draw(ui, screen, title, entries);
         },

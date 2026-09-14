@@ -890,6 +890,7 @@ fn grepFile(c: *Ctx, re: *regex.Regex, dir: Io.Dir, basename: []const u8, rel: [
 
 pub fn handle(app: *App, result: *Result) Allocator.Error!void {
     if (result.pane == section_target) return @import("search_section.zig").handle(app, result);
+    if (result.pane == @import("grep_picker.zig").target) return @import("grep_picker.zig").handle(app, result);
     defer result.destroy(app.gpa);
     const pane = app.panes.get(result.pane) orelse return;
     const p = switch (pane.*) {

@@ -70,7 +70,10 @@ pub const root: Node = .{
                 cmd('a', .@"lsp.code_action", "code action"),
                 cmd('m', .@"git.graph", "git commits"),
             }),
-            group('r', "+lsp", &.{
+            // NvChad's `<leader>ra`, which the reference editor's own
+            // popup does not carry: vim-only, as `+debug` is, so the
+            // standard profile's Ctrl+K popup keeps the reference rows.
+            groupVim('r', "+lsp", &.{
                 cmd('a', .@"lsp.rename", "rename symbol"),
             }),
             group('b', "+buffer", &.{
@@ -332,15 +335,20 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expect(lookup("svx") == null);
     try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 12);
     try std.testing.expect(continuations(std.testing.allocator, "sv", true).len == 0);
-    // The +debug group is the vim profile's; the standard popup keeps Rust's rows.
+    // `+debug` and `+lsp` on `r` are the vim profile's — nvim-dap's
+    // door and NvChad's `<leader>ra`; the standard popup keeps the
+    // reference editor's rows, which carry neither.
     try std.testing.expect(lookupIn("d", true) != null);
     try std.testing.expect(lookupIn("d", false) == null);
     try std.testing.expect(lookupIn("db", false) == null);
+    try std.testing.expect(lookupIn("r", true) != null);
+    try std.testing.expect(lookupIn("r", false) == null);
+    try std.testing.expectEqual(CommandId.@"lsp.rename", lookupIn("ra", true).?.cmd.id);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const std_root = continuations(arena_state.allocator(), "", false);
-    for (std_root) |e| try std.testing.expect(e.key != 'd');
-    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 1, std_root.len);
+    for (std_root) |e| try std.testing.expect(e.key != 'd' and e.key != 'r');
+    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 2, std_root.len);
 }
 
 test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves ? B m p o, tr, iE and the t leaves" {
@@ -399,4 +407,34 @@ fn expectUniqueKeys(n: *const Node) !void {
             }
         },
     }
+}
+
+test "the popup: backspace goes up a level, a non-character key leaves it open, a dead end says so" {
+    const t = std.testing;
+    const app_mod = @import("../app.zig");
+    var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try t.expect(app.overlay == .which_key);
+    // Down into `+find`.
+    try app.handle(.{ .key = app_mod.Key.char('f') });
+    try t.expect(app.overlay == .which_key);
+    try t.expectEqualStrings("f", app.overlay.which_key.slice());
+    // An arrow is not a leader key: the popup stays where it is rather
+    // than being dismissed by a stray press.
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try t.expect(app.overlay == .which_key);
+    try t.expectEqualStrings("f", app.overlay.which_key.slice());
+    // Backspace climbs back to the root, and closes from there.
+    try app.handle(.{ .key = app_mod.Key.named(.backspace) });
+    try t.expect(app.overlay == .which_key);
+    try t.expectEqualStrings("", app.overlay.which_key.slice());
+    try app.handle(.{ .key = app_mod.Key.named(.backspace) });
+    try t.expect(app.overlay == .none);
+    // A key no row carries says so instead of vanishing silently.
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try app.handle(.{ .key = app_mod.Key.char('\\') });
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("no leader mapping: <leader>\\", app.lastToast().?);
 }

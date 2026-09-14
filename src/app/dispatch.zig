@@ -1100,13 +1100,30 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         },
         .which_key => |*w| {
             if (k.code == .esc) return closeOverlay(app);
-            const c = k.typed() orelse return closeOverlay(app);
+            // Backspace walks back up the tree, as the reference plugin
+            // does; at the root there is nowhere to go, so it closes.
+            if (k.code == .backspace) {
+                if (w.len == 0) return closeOverlay(app);
+                w.len -= 1;
+                app.needs_render = true;
+                return;
+            }
+            // Anything that is not a character — an arrow, Enter, a
+            // function key — leaves the popup where it is rather than
+            // dismissing it on a stray press.
+            const c = k.typed() orelse return;
             if (c >= 128 or w.len >= whichkey.max_depth) return closeOverlay(app);
             w.path[w.len] = @intCast(c);
             w.len += 1;
-            const node = whichkey.lookupIn(w.slice(), app.input_style == .vim) orelse return closeOverlay(app);
+            const node = whichkey.lookupIn(w.slice(), app.input_style == .vim) orelse {
+                // A dead end says so rather than vanishing.
+                const path = app.frame.allocator().dupe(u8, w.slice()) catch "";
+                closeOverlay(app);
+                app.toast("no leader mapping: <leader>{s}", .{path});
+                return;
+            };
             switch (node.*) {
-                .group => {},
+                .group => app.needs_render = true,
                 .dead => |d| {
                     closeOverlay(app);
                     app.toast("{s}: not a command in this build", .{d.id});
@@ -1131,6 +1148,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .changed => {
                 try refilterPicker(app);
                 @import("../scripting/api.zig").noteQueryChanged(app, app.now_ms);
+                @import("grep_picker.zig").noteQueryChanged(app, app.now_ms);
                 cmd_picker.preview(app);
             },
             .accept => |i| try cmd_picker.accept(app, i),
@@ -1199,6 +1217,15 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
 pub fn refilterPicker(app: *App) Allocator.Error!void {
     const p = &app.overlay.picker;
     p.filtered.clearRetainingCapacity();
+    // The live-grep picker's query IS the pattern: the rows came back
+    // already matching it, so a second, fuzzy pass over them would only
+    // throw hits away. Keep the worker's order.
+    if (p.kind == .grep) {
+        try p.filtered.ensureTotalCapacity(app.gpa, p.labels.len);
+        for (0..p.labels.len) |i| p.filtered.appendAssumeCapacity(@intCast(i));
+        if (p.state.cursor >= p.filtered.items.len) p.state.cursor = 0;
+        return;
+    }
     var arena_state = std.heap.ArenaAllocator.init(app.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
