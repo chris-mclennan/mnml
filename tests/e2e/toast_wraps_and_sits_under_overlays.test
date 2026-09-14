@@ -1,0 +1,14 @@
+# A toast longer than its box wraps to the box (up to four rows) instead of
+# being clipped at one row behind an ellipsis, so the instruction at the end
+# of a long message reads; and while an overlay is open the toast paints
+# beneath it — the which-key box above the statusline covers it, as Rust
+# paints toast_stack before its overlays (walkthrough 1.10).
+command editor.suspend_hint
+expect screen contains "mnml does not suspend"
+expect screen contains "quit with ctrl+q"
+key ctrl+k
+expect screen contains "+split"
+expect screen lacks "quit with ctrl+q"
+key esc
+expect screen lacks "+split"
+expect screen lacks "mnml does not suspend"

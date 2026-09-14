@@ -12,5 +12,6 @@ expect screen lacks "not installed"
 expect screen lacks "npm i -g"
 expect screen contains "LSP?"
 command lsp.status
-# The toast box clips its one row; the head is what the screen shows.
-expect screen contains "LSP: no servers running · missing: vscode-json-language-ser"
+# The toast wraps to its box, so the whole server name reads.
+expect screen contains "LSP: no servers running · missing:"
+expect screen contains "vscode-json-language-server"

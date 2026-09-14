@@ -281,6 +281,12 @@ pub const State = struct {
     scanned: bool = false,
     /// The last scan's problems, one line each (snapshot arena).
     problems: [][]const u8 = &.{},
+    /// 0.2 `*.toml` manifests the scan walked past (never read — E2):
+    /// the once-per-launch notice and the Installed tab's empty-state
+    /// line count them.
+    toml_count: usize = 0,
+    /// The notice toasted this launch.
+    toml_noticed: bool = false,
     generation: u32 = 0,
     /// The statusline segments the manifests set, gpa-owned ids.
     segment_ids: std.ArrayListUnmanaged([]u8) = .empty,
@@ -399,6 +405,7 @@ pub const IntegrationsPane = struct {
 pub const table = .{
     .@"integrations.refresh" = &refreshCmd,
     .@"integrations.refresh_binary_cache" = &refreshCmd,
+    .@"integrations.dismiss_toml_notice" = &dismissTomlNotice,
     .@"integrations.show_installed" = &showInstalled,
     .@"view.activity_integrations" = &showInstalled,
     .@"integrations.show_marketplace" = &showMarketplace,
@@ -447,6 +454,7 @@ pub fn refresh(app: *App) Allocator.Error!void {
     const arena = st.snapshot.allocator();
     st.list = &.{};
     st.problems = &.{};
+    st.toml_count = 0;
     st.generation +%= 1;
 
     var found: std.ArrayListUnmanaged(Installed) = .empty;
@@ -471,8 +479,47 @@ pub fn refresh(app: *App) Allocator.Error!void {
     try app.keymap.rebuildPrefixes();
     try setSegments(app);
     for (st.problems) |p| try app.toastLevel(.warn, "integrations: {s}", .{p});
+    try noticeToml(app);
     if (st.panel.cursor >= st.list.len) st.panel.cursor = st.list.len -| 1;
     app.needs_render = true;
+}
+
+/// The id of the 0.2-manifests notice toast: its right-click menu
+/// carries *Don't show again* (`integrations.dismiss_toml_notice`).
+pub const toml_toast_id = "integrations-toml";
+
+/// `N integrations from mnml 0.2 are not loaded — …`: the one thing
+/// said about the `.toml` manifests, which are never read (E2).
+pub fn tomlNoticeText(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    const n = app.integrations.toml_count;
+    return std.fmt.allocPrint(arena, "{d} integration{s} from mnml 0.2 {s} not loaded — 0.3 integrations install from the Marketplace", .{ n, if (n == 1) "" else "s", if (n == 1) "is" else "are" });
+}
+
+/// Whether the Installed tab's empty state and the toast mention the
+/// 0.2 manifests: some were found and the user has not said no.
+fn tomlNoticeDue(app: *App) bool {
+    return app.integrations.toml_count > 0 and !app.cfg.ui.integrations_toml_notice_shown;
+}
+
+/// The first scan of a launch that walks past 0.2 manifests toasts the
+/// count once (walkthrough 1.1: a data root full of them read
+/// `Inst (0)` and said nothing). The files are never deleted or
+/// renamed; the toast's menu offers *Don't show again*.
+fn noticeToml(app: *App) Allocator.Error!void {
+    const st = &app.integrations;
+    if (!tomlNoticeDue(app) or st.toml_noticed) return;
+    st.toml_noticed = true;
+    app.toastReplaceLevel(toml_toast_id, .warn, "{s}", .{try tomlNoticeText(app, app.frame.allocator())});
+}
+
+/// `integrations.dismiss_toml_notice`: *Don't show again* —
+/// `ui.integrations_toml_notice_shown = true` in the home config, the
+/// toast and the empty-state line gone.
+fn dismissTomlNotice(app: *App) CommandError!void {
+    app.cfg.ui.integrations_toml_notice_shown = true;
+    _ = try settings.persist(app, .home, &.{ "ui", "integrations_toml_notice_shown" }, true);
+    app.dismissToast(toml_toast_id);
+    app.toast("the mnml 0.2 manifests will not be mentioned again (ui.integrations_toml_notice_shown)", .{});
 }
 
 fn byLabel(_: void, a: Installed, b: Installed) bool {
@@ -486,6 +533,11 @@ fn scanDir(app: *App, arena: Allocator, dir_path: []const u8, source: Source, fo
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .file and entry.kind != .sym_link) continue;
+        // A 0.2 manifest: counted for the notice, never opened.
+        if (std.mem.endsWith(u8, entry.name, ".toml")) {
+            app.integrations.toml_count += 1;
+            continue;
+        }
         if (!std.mem.endsWith(u8, entry.name, ".zon")) continue;
         const path = try std.fs.path.join(arena, &.{ dir_path, entry.name });
         const m = readManifest(app, arena, dir, entry.name, path, problems) orelse continue;
@@ -1724,7 +1776,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const empty: list_panel.EmptyState = if (q.len > 0)
         .{ .message = ui.fmt("No matches for \"{s}\" — Esc clears", .{q}) }
     else switch (st.tab) {
-        .installed => .{ .message = "Nothing installed yet — try the Marketplace tab", .hint = "or a Dev folder: Install runs <binary> --install" },
+        .installed => .{ .message = "Nothing installed yet — try the Marketplace tab", .hint = if (tomlNoticeDue(app)) try tomlNoticeText(app, ui.arena) else "or a Dev folder: Install runs <binary> --install" },
         .marketplace => if (marketplace.sourceCount(app) == 0)
             .{ .message = "No sources yet — the official set comes with the first Zig integrations", .hint = "marketplace.sources in config.zon adds one" }
         else if (app.marketplace.fetching)
@@ -2668,6 +2720,9 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     // Its detail pane: Reinstall, no Build; the binary line says what it is.
     try openDetail(&app, .{ .dev = st.dev[0].key() });
     testing.allocator.free(txt);
+    // The scan's problem toast (a long path, wrapped) would cover the
+    // detail pane's last rows: read the pane without it.
+    app.dismissToasts();
     txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "[ Reinstall ]  [ Open ]") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "[ Build ]") == null);
@@ -2802,4 +2857,54 @@ test "a workspace launcher waits for trust too: a cloned repo's `run` line is no
     try testing.expect(app.integrations.list[0].manifest.isLauncher());
     try testing.expectEqual(Source.workspace, app.integrations.list[0].source);
     try testing.expect(command.resolve(&app, "evil.run") != null);
+}
+
+test "0.2 .toml manifests: counted, never read, one notice toast per launch, the Installed empty state names them; Don't show again persists ui.integrations_toml_notice_shown and the files stay" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/amplify.toml", .data = "[integration]\nid = \"amplify\"\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/codex.override.toml", .data = "[integration]\nid = \"codex\"\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/amplify.toml.bak-1", .data = "" });
+    try tmp.dir.createDirPath(testing.io, "ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 24 });
+    defer app.deinit();
+    try refresh(&app);
+    const st = &app.integrations;
+    try testing.expectEqual(@as(usize, 0), st.list.len);
+    try testing.expectEqual(@as(usize, 2), st.toml_count); // the .bak is not a manifest
+    const first = app.lastToast() orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("2 integrations from mnml 0.2 are not loaded — 0.3 integrations install from the Marketplace", first);
+    try testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    // The Installed tab's empty state carries the same line.
+    try showInstalled(&app);
+    const text = try screenText(&app);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "Nothing installed yet") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "2 integrations from mnml 0.2") != null);
+    // A second scan this launch says nothing more.
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    // Don't show again: the flag written, the toast gone, the line gone,
+    // the files untouched.
+    try command.run(&app, .{ .static = .@"integrations.dismiss_toml_notice" });
+    try testing.expect(app.cfg.ui.integrations_toml_notice_shown);
+    for (app.toasts.items) |t| try testing.expect(t.id == null or !std.mem.eql(u8, t.id.?, toml_toast_id));
+    const home = try tmp.dir.readFileAlloc(testing.io, "config.zon", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(home);
+    try testing.expect(std.mem.indexOf(u8, home, "integrations_toml_notice_shown = true") != null);
+    const after = try screenText(&app);
+    defer testing.allocator.free(after);
+    try testing.expect(std.mem.indexOf(u8, after, "from mnml 0.2") == null);
+    try tmp.dir.access(testing.io, "integrations/amplify.toml", .{});
+    try tmp.dir.access(testing.io, "integrations/codex.override.toml", .{});
+    // A fresh launch on this data root: nothing said.
+    app.integrations.toml_noticed = false;
+    app.dismissToasts();
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 0), app.toasts.items.len);
 }

@@ -16,7 +16,8 @@ expect screen contains "[dev] Sample  not installed  (integrations)"
 expect screen contains "integrations/sample"
 # i installs: the task pane runs --install, the link lands, the scan follows.
 key i
-expect screen contains "installed sample from integrations"
+expect screen contains "installed sample from"
+expect screen contains "integrations/sample"
 expect screen contains "[dev] Sample  installed from here  (integrations)"
 # The Installed tab lists it with its version and first command.
 command integrations.show_installed

@@ -1,0 +1,14 @@
+# A 0.2 `.toml` manifest is never read (E2) — the failure was the silence:
+# a data root full of them read `Inst (0)` and said nothing (walkthrough 1.1).
+# The scan now counts them, toasts once per launch, and the Installed tab's
+# empty state names them; `integrations.dismiss_toml_notice` ("Don't show
+# again" on the toast's menu) writes ui.integrations_toml_notice_shown.
+write .mnml/integrations/old.toml "[integration]\nid = \"old\"\nlabel = \"Old\"\n"
+command integrations.refresh
+expect screen contains "1 integration from mnml 0.2 is not loaded"
+command view.activity_integrations
+expect screen contains "Nothing installed yet"
+expect screen contains "1 integration from mnml"
+command integrations.dismiss_toml_notice
+expect screen lacks "from mnml"
+expect file .mnml/integrations/old.toml contains "id = \"old\""

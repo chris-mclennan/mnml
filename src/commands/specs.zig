@@ -223,6 +223,7 @@ pub const specs = [_]Spec{
     .{ .id = "pr.picker", .title = "PRs: cross-host fuzzy picker (Enter ⇒ URL · Tab ⇒ pipeline)", .group = "pr" },
     .{ .id = "pr.refresh", .title = "PRs: refresh cross-host cache (background)", .group = "pr" },
     .{ .id = "integrations.refresh_binary_cache", .title = "Integrations: refresh installed-binary detection", .group = "integrations" },
+    .{ .id = "integrations.dismiss_toml_notice", .title = "Integrations: don't show the mnml 0.2 manifests notice again", .group = "integrations" },
     .{ .id = "integrations.audit_shadowed_binaries", .title = "Integrations: audit + fix shadowed integration binaries (PATH order)", .group = "integrations" },
     .{ .id = "integrations.audit_glyphs", .title = "Integrations: audit glyphs (report drift, no changes)", .group = "integrations" },
     .{ .id = "view.toggle_integrations_section", .title = "Toggle the integrations section in the rail (collapse/expand)", .group = "view" },
@@ -1126,7 +1127,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1050 specs, unique ids" {
+test "1051 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1147,7 +1148,8 @@ test "1050 specs, unique ids" {
     // `focus_bottom` / `focus_previous` (vim Ctrl-W t / b / p)
     // + the SESSIONS history chip's two verbs (sessions-card)
     // + six SEARCH section commands (refresh / open / open_split /
-    // copy_path / copy_line / open_pane).
-    try std.testing.expectEqual(@as(usize, 1050), specs.len);
+    // copy_path / copy_line / open_pane)
+    // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice).
+    try std.testing.expectEqual(@as(usize, 1051), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

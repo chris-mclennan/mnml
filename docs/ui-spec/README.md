@@ -112,6 +112,21 @@ hard-codes `[gd] … [K]` — editor 2 → 6 beyond the rail, the four rows
 deliberate. esc 3, menu-file 3, menu-plus 8, http 3 are unchanged (the
 statusline's coverage-ticker phase flickers one more row in some runs).
 
+## The chrome walk (2026-09-14)
+
+`zig-esc-120x40.txt` (`steps-esc.jsonl`, the resting screen),
+`zig-menu-plus-120x40.txt` (`steps-menu-plus.jsonl`, the `+` chip's
+`Create…` with the pointer on `New ▸`) and `zig-status-120x40.txt`
+(`steps-status.jsonl`) were cut on `tools/zig-spec.sh`'s throwaway
+workspace after the walkthrough's chrome findings landed
+(`docs/PARITY.md` `walkthrough-chrome`): a child menu's first arrow
+moves as well as lights, Esc clears the
+toast stack, a long toast wraps to four rows and the stack paints
+beneath the overlays, a 0.2 `config.toml` is one notice per data root
+and the `RESTRICTED` chip. `tools/ui-diff.sh` on the chrome fixture
+before / after (main `6a13786` / this branch, Rust `target/release`):
+esc 4 → 4, status 8 → 3, menu-plus 11 → 8 beyond the rail.
+
 ## Context menus: the row above the bottom border (2026-09-10)
 
 Every titled popup — a rail menu, a tree row's, the `+` chip's

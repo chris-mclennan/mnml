@@ -23,6 +23,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const config = @import("../config/root.zig");
 const trust_app = @import("trust.zig");
+const canvas = @import("../ui/canvas.zig");
 
 pub const table = .{
     .@"workspace.review_trust" = &reviewTrust,
@@ -50,6 +51,15 @@ fn currentClaims(app: *App, arena: Allocator) Allocator.Error![]const config.tru
 
 fn reviewTrust(app: *App) CommandError!void {
     const arena = app.frame.allocator();
+    // A 0.2 `.mnml/config.toml` with no `.zon` beside it: nothing to
+    // trust or forget — the whole file is unread, and the chip's click
+    // says how to convert it (the notice itself shows once per data
+    // root, `App.noticeUnreadToml`).
+    app.probeWorkspaceToml();
+    if (app.workspace_toml) |p| if (app.loaded == null or app.loaded.?.trust_prompt == null) {
+        try app.toastLevel(.warn, "{s}", .{try app.unreadTomlText(arena, p, true)});
+        return;
+    };
     const l = app.loaded orelse return app.diag.fail(arena, "no workspace config loaded", .{});
     if (l.trust_prompt != null) return trust_app.promptIfNeeded(app);
     const claims = try currentClaims(app, arena);
@@ -205,4 +215,68 @@ test "removeEntry keeps the other lines and the comments" {
     const text = try tmp.dir.readFileAlloc(t.io, "store.zon", t.allocator, .unlimited);
     defer t.allocator.free(text);
     try t.expectEqualStrings("// mine\n.{\n    .@\"/w/ab\" = \"2\",\n}\n", text);
+}
+
+test "a 0.2 .mnml/config.toml with no .zon: RESTRICTED on the statusline, the converter toasted once per data root (ui.config_toml_notice_shown), :messages every launch, the chip's click says why" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "data");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/.mnml/config.toml", .data = "[ui]\ntheme = \"gruvbox\"\n" });
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", data);
+    const opts: config.load.Options = .{ .workspace = ws, .trust = .ask, .data_root = data, .env = .{ .vars = &vars } };
+    // First launch on this data root: the toast, the flag written, the chip.
+    {
+        const loaded = try config.load.load(t.allocator, t.io, opts);
+        try t.expect(loaded.workspace_toml != null);
+        try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
+        var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = ws, .data_root = data, .cols = 120, .rows = 40 });
+        defer app.deinit();
+        try t.expect(app.workspace_toml != null);
+        try t.expect(app.overlay == .none); // nothing to trust: no dialog
+        const first = app.lastToast() orelse return error.TestUnexpectedResult;
+        try t.expect(std.mem.indexOf(u8, first, "export-config-zon --out .mnml/config.zon") != null);
+        try t.expect(app.cfg.ui.config_toml_notice_shown);
+        const home = try tmp.dir.readFileAlloc(t.io, "data/config.zon", t.allocator, .limited(1 << 20));
+        defer t.allocator.free(home);
+        try t.expect(std.mem.indexOf(u8, home, "config_toml_notice_shown = true") != null);
+        try app.render();
+        var rbuf: [1024]u8 = undefined;
+        try t.expect(std.mem.indexOf(u8, canvas.rowText(&app.screen, 38, &rbuf), "RESTRICTED") != null);
+    }
+    // Every later launch: no toast, the message logged, the chip still up,
+    // and the chip's click (workspace.review_trust) toasts the converter.
+    {
+        const loaded = try config.load.load(t.allocator, t.io, opts);
+        try t.expect(loaded.config.ui.config_toml_notice_shown);
+        var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = ws, .data_root = data, .cols = 120, .rows = 40 });
+        defer app.deinit();
+        try t.expectEqual(@as(usize, 0), app.toasts.items.len);
+        var logged = false;
+        for (app.messages.items.items) |m| if (std.mem.indexOf(u8, m.text, "export-config-zon") != null) {
+            logged = true;
+        };
+        try t.expect(logged);
+        try app.render();
+        var rbuf: [1024]u8 = undefined;
+        try t.expect(std.mem.indexOf(u8, canvas.rowText(&app.screen, 38, &rbuf), "RESTRICTED") != null);
+        try command.run(&app, .{ .static = .@"workspace.review_trust" });
+        const clicked = app.lastToast() orelse return error.TestUnexpectedResult;
+        try t.expect(std.mem.indexOf(u8, clicked, "export-config-zon") != null);
+        // Converted (a .zon beside it): the chip goes on the next probe.
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{}" });
+        app.probeWorkspaceToml();
+        try t.expect(app.workspace_toml == null);
+        try app.render();
+        try t.expect(std.mem.indexOf(u8, canvas.rowText(&app.screen, 38, &rbuf), "RESTRICTED") == null);
+    }
 }

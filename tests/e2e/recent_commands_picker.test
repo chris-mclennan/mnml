@@ -1,0 +1,24 @@
+# `picker.recent_commands` lists the commands that RAN (palette, keymap, `:`
+# and menu runs alike), newest first, and Enter runs the row again; the empty
+# palette pins the same recents first with a ★. It used to read the `:`
+# line's history and say `no : lines yet` (walkthrough 1.12).
+command picker.recent_commands
+expect screen contains "no recent commands yet"
+key esc
+command editor.suspend_hint
+expect screen contains "mnml does not suspend"
+key esc
+expect screen lacks "mnml does not suspend"
+command view.toggle_line_numbers
+command picker.recent_commands
+expect screen contains "Recent commands"
+expect screen contains "Toggle line-number gutter"
+expect screen contains "Ctrl+Z suspend not supported"
+key esc
+command palette
+expect screen contains "★ view  ·  Toggle line-number gutter"
+key esc
+command picker.recent_commands
+key down
+key enter
+expect screen contains "mnml does not suspend"

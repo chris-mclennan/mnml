@@ -427,7 +427,8 @@ test "zen: the palette's full-screen row reads Enter outside and Exit inside" {
     try app.handle(.{ .key = Key.named(.esc) });
     try command.run(&app, .{ .static = .@"view.fullscreen" });
     try command.run(&app, .{ .static = .palette });
-    try t.expectEqualStrings("view  ·  Exit full screen  ·  view.fullscreen", app.overlay.picker.labels[row]);
+    // `view.fullscreen` just ran, so its row is a ★-marked recent.
+    try t.expectEqualStrings("★ view  ·  Exit full screen  ·  view.fullscreen", app.overlay.picker.labels[row]);
 }
 
 test "zen: the corner mark paints at the body's top-right while inside, is a button whose click leaves, and is gone outside" {

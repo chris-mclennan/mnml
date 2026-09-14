@@ -305,44 +305,56 @@ fn recent(app: *App) CommandError!void {
 /// as Rust lists them: the row is `group  ·  title  ·  id` (the id in
 /// the row is what lets a typed id find it), the detail its default
 /// chords joined by ` / `. Commands of the active pane's family score
-/// twenty more, Rust's pane-scoped nudge. The pick's index maps back
-/// through `commandAt`.
+/// twenty more, Rust's pane-scoped nudge; the recently-run ones
+/// (`App.recent_commands`) fifty more and a `★` on the label, and on
+/// an empty query they head the list newest first (Rust's recents >
+/// pane-scoped > the rest). The pick's index maps back through
+/// `commandAt`.
 fn palette(app: *App) CommandError!void {
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
     var details: std.ArrayListUnmanaged([]u8) = .empty;
     var bonus: std.ArrayListUnmanaged(i64) = .empty;
+    var order: std.ArrayListUnmanaged(u32) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
         for (details.items) |d| gpa.free(d);
         details.deinit(gpa);
         bonus.deinit(gpa);
+        order.deinit(gpa);
     }
     const namespaces = paneNamespaces(app);
+    const star: []const u8 = if (app.cfg.ui.ascii_icons) "* " else "★ ";
     var i: usize = 0;
     while (i < command.count) : (i += 1) {
         const id: command.CommandId = @enumFromInt(i);
         // A stateful row reads its state: full screen's title is the way out while inside.
         const title_text: []const u8 = if (id == .@"view.fullscreen") zen.title(app) else command.title(id);
-        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}  ·  {s}", .{ command.group(id), title_text, command.name(id) }));
+        const rank = app.recentCommandRank(command.name(id));
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}{s}  ·  {s}  ·  {s}", .{ if (rank != null) star else "", command.group(id), title_text, command.name(id) }));
         try details.append(gpa, try chordHint(app, gpa, command.spec(id).keys));
-        try bonus.append(gpa, if (inNamespaces(command.name(id), namespaces)) 20 else 0);
+        const scoped: i64 = if (inNamespaces(command.name(id), namespaces)) 20 else 0;
+        try bonus.append(gpa, if (rank != null) @max(scoped, 50) else scoped);
+        try order.append(gpa, if (rank) |r| @intCast(r) else std.math.maxInt(u32));
     }
     for (app.dyn_commands.list.items, app.dyn_commands.live.items) |c, alive| {
         if (!alive) continue;
-        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}", .{ c.group, c.title }));
+        const rank = app.recentCommandRank(c.id);
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}{s}  ·  {s}", .{ if (rank != null) star else "", c.group, c.title }));
         try details.append(gpa, try std.mem.join(gpa, " / ", c.keys));
-        try bonus.append(gpa, 0);
+        try bonus.append(gpa, if (rank != null) 50 else 0);
+        try order.append(gpa, if (rank) |r| @intCast(r) else std.math.maxInt(u32));
     }
     try openPickerWith(app, "Command palette", .commands, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.score_bonus = try bonus.toOwnedSlice(gpa);
+    app.overlay.picker.order = try order.toOwnedSlice(gpa);
     try dispatch.refilterPicker(app);
 }
 
 /// The default chords of a spec under the active profile (`both` and
 /// the profile's own), joined by ` / ` — Rust's `key_hint`.
-fn chordHint(app: *App, gpa: Allocator, keys: command.Keys) Allocator.Error![]u8 {
+pub fn chordHint(app: *App, gpa: Allocator, keys: command.Keys) Allocator.Error![]u8 {
     const own = switch (App.profileOf(app.input_style)) {
         .vim => keys.vim,
         .standard => keys.standard,
@@ -744,4 +756,32 @@ fn realRoot(tmp: *std.testing.TmpDir, gpa: std.mem.Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const n = try tmp.dir.realPath(std.testing.io, &buf);
     return gpa.dupe(u8, buf[0..n]);
+}
+
+test "the empty palette pins the recently-run commands first, newest first and ★-marked; a query still ranks by match" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .noop });
+    try command.run(&app, .{ .static = .@"view.toggle_line_numbers" });
+    try command.run(&app, .{ .static = .noop });
+    try std.testing.expectEqual(@as(usize, 2), app.recent_commands.items.len);
+    try std.testing.expectEqualStrings("noop", app.recent_commands.items[0]);
+    try std.testing.expectEqualStrings("view.toggle_line_numbers", app.recent_commands.items[1]);
+    try command.run(&app, .{ .static = .palette });
+    const p = &app.overlay.picker;
+    try std.testing.expectEqualStrings("Command palette", p.state.title);
+    const first = p.labels[p.filtered.items[0]];
+    const second = p.labels[p.filtered.items[1]];
+    const third = p.labels[p.filtered.items[2]];
+    try std.testing.expect(std.mem.startsWith(u8, first, "★ "));
+    try std.testing.expect(std.mem.endsWith(u8, first, "  ·  noop"));
+    try std.testing.expect(std.mem.startsWith(u8, second, "★ "));
+    try std.testing.expect(std.mem.endsWith(u8, second, "  ·  view.toggle_line_numbers"));
+    try std.testing.expect(!std.mem.startsWith(u8, third, "★ "));
+    // `palette` itself is not a recent; the picker's own run is not either.
+    try std.testing.expect(app.recentCommandRank("palette") == null);
+    // A typed id still wins on its match.
+    try p.state.query.appendSlice(std.testing.allocator, "app.quit");
+    try dispatch.refilterPicker(&app);
+    try std.testing.expect(std.mem.endsWith(u8, p.labels[p.filtered.items[0]], "  ·  app.quit"));
 }

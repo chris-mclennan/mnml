@@ -159,13 +159,17 @@ pub const RankOpts = struct {
     score_bonus: []const i64 = &.{},
     /// The command ids, for the palette's boosts; empty otherwise.
     ids: []const []const u8 = &.{},
+    /// Parallel to `items` (or empty): the tie-break before index —
+    /// the palette's recents keep their newest-first order on an empty
+    /// query, where every score is the same (`maxInt` for the rest).
+    order: []const u32 = &.{},
 };
 
 /// Indices into `items` that match `query`, best first: priority desc,
 /// score desc, index asc — Rust's `refilter`. An empty query keeps
 /// every item, ordered by priority and bonus alone.
 pub fn rank(arena: Allocator, query: []const u8, items: []const Item, opts: RankOpts) Allocator.Error![]const usize {
-    const Scored = struct { prio: u8, score: i64, idx: usize };
+    const Scored = struct { prio: u8, score: i64, order: u32, idx: usize };
     var scored: std.ArrayListUnmanaged(Scored) = .empty;
     var qlower_buf: [256]u8 = undefined;
     const q = std.ascii.lowerString(qlower_buf[0..@min(query.len, qlower_buf.len)], query[0..@min(query.len, qlower_buf.len)]);
@@ -184,12 +188,13 @@ pub fn rank(arena: Allocator, query: []const u8, items: []const Item, opts: Rank
                 sc += 100;
             }
         }
-        try scored.append(arena, .{ .prio = prio, .score = sc, .idx = i });
+        try scored.append(arena, .{ .prio = prio, .score = sc, .order = if (i < opts.order.len) opts.order[i] else std.math.maxInt(u32), .idx = i });
     }
     std.mem.sort(Scored, scored.items, {}, struct {
         fn less(_: void, a: Scored, b: Scored) bool {
             if (a.prio != b.prio) return a.prio > b.prio;
             if (a.score != b.score) return a.score > b.score;
+            if (a.order != b.order) return a.order < b.order;
             return a.idx < b.idx;
         }
     }.less);

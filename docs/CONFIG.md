@@ -216,6 +216,8 @@ otherwise. Copy what you need; leave the rest out.
         .hover_tooltip = false,
         .click_echo = false,
         .first_launch_complete = false, // set by the first-launch flow
+        .config_toml_notice_shown = false, // set once the 0.2 config.toml notice has shown on this data root (see "Coming from 0.2.x")
+        .integrations_toml_notice_shown = false, // set by `integrations.dismiss_toml_notice` — the 0.2 manifests notice, "Don't show again"
         .show_workspace_dots = true,
         // .builtin | .glow | .pandoc | .{ .custom = "cmd" } (exec-bearing)
         .md_preview_engine = .builtin,
@@ -813,6 +815,29 @@ workspace's `.mnml/config.toml` (from inside that workspace, with
 from the schema's own doc table, and every key it could not place lands
 verbatim in a trailing `// unmigrated:` block so nothing is lost
 silently. The TOML file is left where it was; mnml-zig ignores it.
+
+What mnml-zig says about a `config.toml` it finds where a `config.zon`
+should be (and only then — a `.toml` beside a `.zon` is nothing):
+
+- **Once per data root, a toast** naming the file and the converter
+  line above. `ui.config_toml_notice_shown = true` is written to the
+  home config the first time; after that the same line is in
+  `:messages` on every launch and nowhere else.
+- **For a workspace file, `RESTRICTED` on the statusline** for as long
+  as the file stands with no `.zon` beside it — the workspace's whole
+  config is not in effect, which is what the chip means. Its hover says
+  so and a click (`workspace.review_trust`) repeats the converter line.
+  Converting the file (the `.zon` appears) clears the chip on the next
+  launch or `workspace.review_trust`.
+
+The 0.2 integration manifests (`<data root>/integrations/*.toml`,
+`<workspace>/.mnml/integrations/*.toml`) are the same decision: never
+read, never deleted or renamed. The INTEGRATIONS section says once per
+launch, and on the Installed tab's empty state, that `N integrations
+from mnml 0.2 are not loaded — 0.3 integrations install from the
+Marketplace`; *Don't show again* on that toast's right-click menu (or
+`integrations.dismiss_toml_notice`) writes
+`ui.integrations_toml_notice_shown = true`.
 
 What changes shape on the way:
 

@@ -506,6 +506,9 @@ pub const Overlay = union(enum) {
         /// Parallel to `labels` (or empty): Rust's `score_bonus`, added
         /// to the fuzzy score (the palette's pane-scoped +20).
         score_bonus: []i64 = &.{},
+        /// Parallel to `labels` (or empty): the tie-break before index
+        /// (the palette's recents, newest first; `Picker.RankOpts.order`).
+        order: []u32 = &.{},
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
         /// The themes picker previews as the cursor moves; Esc puts
@@ -552,6 +555,7 @@ pub const Overlay = union(enum) {
                 gpa.free(p.hints);
                 gpa.free(p.priority);
                 gpa.free(p.score_bonus);
+                gpa.free(p.order);
                 p.filtered.deinit(gpa);
             },
         }
@@ -927,6 +931,12 @@ pub const App = struct {
     recent: std.ArrayListUnmanaged([]u8) = .empty,
     /// The `:` lines run, oldest first (`q:`). Owned.
     cmd_history: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The ids of the commands that ran, newest first, de-duplicated,
+    /// at most `max_recent_commands` (Rust's `recent_commands`):
+    /// `picker.recent_commands` lists them and the empty palette pins
+    /// them first, `★`-marked. `command.run` notes each success;
+    /// `session.zon` keeps the list.
+    recent_commands: std.ArrayListUnmanaged([]u8) = .empty,
     screen: vaxis.Screen,
     /// Rows / text columns of the active pane at the last render; they
     /// size page motions and the wrap width.
@@ -1003,6 +1013,11 @@ pub const App = struct {
     lua: ?*scripting.Lua = null,
     /// Whether the workspace's exec-bearing config and `init.lua` apply.
     workspace_trusted: bool = false,
+    /// A 0.2 `.mnml/config.toml` in the workspace with no `config.zon`
+    /// beside it (gpa-owned path): never read, so the statusline's
+    /// RESTRICTED chip is up and `workspace.review_trust` says why.
+    /// `probeWorkspaceToml` keeps it current.
+    workspace_toml: ?[]u8 = null,
     block_insert: ?BlockInsert = null,
     repeat_insert: ?RepeatInsert = null,
     /// Flash-motion labels while armed (`s<a><b>` on several matches).
@@ -1067,11 +1082,17 @@ pub const App = struct {
     /// `nav.back` / `nav.forward`: where the cursor was before big jumps.
     jumplist: jumplist.State = .{},
 
+    /// Every toast, sticky ones included — a guard, not a policy.
     pub const max_toasts = 32;
+    /// Rust's `TOAST_STACK_MAX`: the transient stack keeps the five
+    /// newest and drops the oldest, so a burst never queues up behind
+    /// the `+K more…` chip for the next twenty seconds.
+    pub const max_transient_toasts = 5;
     pub const max_closed = 32;
     pub const max_closed_tabs = 8;
     pub const max_recent = 50;
     pub const max_cmd_history = 200;
+    pub const max_recent_commands = 50;
 
     /// An App on the defaults: 120×40, the standard keymap, workspace `.`.
     pub fn init(gpa: Allocator, io: Io) !App {
@@ -1195,6 +1216,7 @@ pub const App = struct {
         clock.seed(&app);
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
+        try app.noticeUnreadToml();
         try app.applyTheme();
         try trust_app.promptIfNeeded(&app);
         // D10: the scripts subscribe before the `startup` hook fires.
@@ -1233,6 +1255,7 @@ pub const App = struct {
         auto_refresh.seed(self);
         clock.seed(self);
         try self.toastConfigDiagnostics();
+        self.probeWorkspaceToml();
         try self.applyTheme();
         try script_api.rebind(self);
         // A workspace just trusted gets its `.mnml/init.lua` now, and
@@ -1270,6 +1293,53 @@ pub const App = struct {
     fn toastConfigDiagnostics(self: *App) Allocator.Error!void {
         const l = self.loaded orelse return;
         for (l.diagnostics.items.items) |d| try self.toastLevel(.warn, "config: {f}", .{d});
+    }
+
+    /// `workspace_toml` from the workspace as it is on disk now: a
+    /// `.mnml/config.toml` with no `.mnml/config.zon` beside it.
+    pub fn probeWorkspaceToml(self: *App) void {
+        if (self.workspace_toml) |p| self.gpa.free(p);
+        self.workspace_toml = null;
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const zon = std.fs.path.join(arena, &.{ self.workspace, ".mnml", config.data_root.config_file }) catch return;
+        const toml = (config.load.tomlBeside(arena, self.io, zon) catch return) orelse return;
+        self.workspace_toml = self.gpa.dupe(u8, toml) catch null;
+    }
+
+    /// What the notice says: the file is 0.2's and never read, and the
+    /// converter that turns it into the `.zon` this build reads.
+    pub fn unreadTomlText(self: *App, arena: Allocator, path: []const u8, workspace: bool) Allocator.Error![]const u8 {
+        if (workspace) return std.fmt.allocPrint(arena, "config: this workspace's .mnml/config.toml is mnml 0.2's and is not read — run `mnml export-config-zon --out .mnml/config.zon` (0.2.22) in {s} to convert it; RESTRICTED on the statusline says so", .{self.relPath(self.workspace)});
+        return std.fmt.allocPrint(arena, "config: {s} is mnml 0.2's and is not read — run `mnml export-config-zon` (0.2.22) to convert it", .{path});
+    }
+
+    /// The one thing mnml-zig says about a 0.2 `config.toml` it found
+    /// where a `config.zon` should be (E2: no TOML reader, ever): a
+    /// toast once per data root (`ui.config_toml_notice_shown`, written
+    /// the first time), `:messages` every launch, and for the workspace
+    /// file the RESTRICTED chip for as long as it stands. A diagnostic
+    /// toasted the path-first message on every launch, clipped so the
+    /// converter never showed (walkthrough 1.10).
+    fn noticeUnreadToml(self: *App) Allocator.Error!void {
+        self.probeWorkspaceToml();
+        const home: ?[]const u8 = if (self.loaded) |l| l.home_toml else null;
+        if (self.workspace_toml == null and home == null) return;
+        const arena = self.frame.allocator();
+        const show = !self.cfg.ui.config_toml_notice_shown;
+        if (home) |p| {
+            const text = try self.unreadTomlText(arena, p, false);
+            if (show) try self.toastLevel(.warn, "{s}", .{text}) else try self.messages.record(self.gpa, text, .warn, self.now_ms);
+        }
+        if (self.workspace_toml) |p| {
+            const text = try self.unreadTomlText(arena, p, true);
+            if (show) try self.toastLevel(.warn, "{s}", .{text}) else try self.messages.record(self.gpa, text, .warn, self.now_ms);
+        }
+        if (show) {
+            self.cfg.ui.config_toml_notice_shown = true;
+            _ = try settings_app.persist(self, .home, &.{ "ui", "config_toml_notice_shown" }, true);
+        }
     }
 
     /// `$HOME` as the loader saw it; null without a loaded config or a
@@ -1389,6 +1459,8 @@ pub const App = struct {
         self.recent.deinit(gpa);
         for (self.cmd_history.items) |c| gpa.free(c);
         self.cmd_history.deinit(gpa);
+        for (self.recent_commands.items) |c| gpa.free(c);
+        self.recent_commands.deinit(gpa);
         self.runners.deinit(gpa);
         self.tasks.deinit(gpa);
         self.chord.clear(gpa);
@@ -1404,6 +1476,7 @@ pub const App = struct {
         if (self.lua) |l| l.destroy();
         self.script_tasks.deinit(self.io);
         self.script_decor.deinit(gpa);
+        if (self.workspace_toml) |p| gpa.free(p);
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
@@ -1487,9 +1560,45 @@ pub const App = struct {
             self.needs_render = true;
             return;
         };
-        if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
+        self.capTransient();
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms });
         self.needs_render = true;
+    }
+
+    /// A toast that expires — everything but the sticky ones an owner
+    /// dismisses by id.
+    fn isTransient(t: Toast) bool {
+        return t.expires_ms != std.math.maxInt(i64);
+    }
+
+    /// Room for one more transient toast: the oldest transient ones go
+    /// while `max_transient_toasts` are up (Rust pops the back of its
+    /// stack). Sticky toasts are not counted and never dropped here.
+    fn capTransient(self: *App) void {
+        var n: usize = 0;
+        for (self.toasts.items) |t| if (isTransient(t)) {
+            n += 1;
+        };
+        var i: usize = 0;
+        while (n >= max_transient_toasts and i < self.toasts.items.len) {
+            if (isTransient(self.toasts.items[i])) {
+                freeToast(self.gpa, self.toasts.orderedRemove(i));
+                n -= 1;
+            } else i += 1;
+        }
+    }
+
+    /// Esc: every transient toast goes at once — the user said "go
+    /// away" to whatever is on screen (Rust clears `toast_stack` on
+    /// every Esc, before the overlays see the key). Sticky ones stay.
+    pub fn dismissTransientToasts(self: *App) void {
+        var i: usize = 0;
+        while (i < self.toasts.items.len) {
+            if (isTransient(self.toasts.items[i])) {
+                freeToast(self.gpa, self.toasts.orderedRemove(i));
+                self.needs_render = true;
+            } else i += 1;
+        }
     }
 
     /// A toast that replaces its predecessor of the same `id` instead of
@@ -1497,6 +1606,11 @@ pub const App = struct {
     /// repeats on every keystroke of a navigation (`tab 2/3`) so the
     /// column never fills with its history.
     pub fn toastReplace(self: *App, id: []const u8, comptime fmt: []const u8, args: anytype) void {
+        self.toastReplaceLevel(id, .info, fmt, args);
+    }
+
+    /// `toastReplace` at a level.
+    pub fn toastReplaceLevel(self: *App, id: []const u8, level: ToastLevel, comptime fmt: []const u8, args: anytype) void {
         if (self.in_global) return;
         self.dismissToast(id);
         const s = std.fmt.allocPrint(self.gpa, fmt, args) catch return;
@@ -1505,9 +1619,9 @@ pub const App = struct {
             self.gpa.free(s);
             return;
         };
-        self.messages.record(self.gpa, s, .info, self.now_ms) catch {};
-        if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
-        self.toasts.append(self.gpa, .{ .text = s, .level = .info, .expires_ms = self.now_ms + toast_ttl_ms, .id = owned_id }) catch {
+        self.messages.record(self.gpa, s, level, self.now_ms) catch {};
+        self.capTransient();
+        self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms, .id = owned_id }) catch {
             self.gpa.free(s);
             self.gpa.free(owned_id);
             return;
@@ -1753,6 +1867,26 @@ pub const App = struct {
     }
 
     /// A `:` line goes on the history `q:` lists (blanks and repeats skipped).
+    /// A command ran: to the front of `recent_commands`, once.
+    pub fn noteRecentCommand(self: *App, id: []const u8) Allocator.Error!void {
+        var i: usize = 0;
+        while (i < self.recent_commands.items.len) {
+            if (std.mem.eql(u8, self.recent_commands.items[i], id)) {
+                self.gpa.free(self.recent_commands.orderedRemove(i));
+            } else i += 1;
+        }
+        const copy = try self.gpa.dupe(u8, id);
+        errdefer self.gpa.free(copy);
+        while (self.recent_commands.items.len >= max_recent_commands) self.gpa.free(self.recent_commands.pop().?);
+        try self.recent_commands.insert(self.gpa, 0, copy);
+    }
+
+    /// Where `id` sits in `recent_commands` (0 = newest), or null.
+    pub fn recentCommandRank(self: *const App, id: []const u8) ?usize {
+        for (self.recent_commands.items, 0..) |c, i| if (std.mem.eql(u8, c, id)) return i;
+        return null;
+    }
+
     pub fn noteCmdLine(self: *App, line: []const u8) Allocator.Error!void {
         const t = std.mem.trim(u8, line, " \t");
         if (t.len == 0) return;

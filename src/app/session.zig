@@ -3,7 +3,8 @@
 //! panes (path, cursor, scroll, wrap, folds, marks; a pty's command
 //! line), every tab page's split tree, the active pane, the tree rail,
 //! the right panel, zen, the theme, the harpoon pins, the `:` history,
-//! the recent files, the closed-buffer list and the toast log.
+//! the recent files, the recent commands, the closed-buffer list and
+//! the toast log.
 //!
 //! Saved on quit (the `exit` hook) and every `autosave_ms` from `tick`;
 //! restored from the `startup` hook when `session.restore` is on. A
@@ -116,6 +117,8 @@ pub const Saved = struct {
     ex_history: []const []const u8 = &.{},
     /// Oldest first, as `App.recent`.
     recent: []const []const u8 = &.{},
+    /// Newest first, as `App.recent_commands`.
+    recent_commands: []const []const u8 = &.{},
     closed: []const Closed = &.{},
     messages: []const Message = &.{},
     /// SESSIONS: the manual order (session ids, first on top) and the aliases.
@@ -281,6 +284,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     saved.harpoon = pins;
     saved.ex_history = try dupeList(arena, app.cmd_history.items);
     saved.recent = try dupeList(arena, app.recent.items);
+    saved.recent_commands = try dupeList(arena, app.recent_commands.items);
     const closed = try arena.alloc(Closed, app.closed.items.len);
     for (app.closed.items, 0..) |c, i| closed[i] = .{ .path = c.path, .cursor = c.cursor };
     saved.closed = closed;
@@ -508,6 +512,10 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
         try app.harpoon.set(gpa, i, p);
     }
     for (saved.ex_history) |line| try app.noteCmdLine(line);
+    // Newest first in the file; noting each puts it in front, so the
+    // oldest goes first.
+    var rc = saved.recent_commands.len;
+    while (rc > 0) : (rc -= 1) if (saved.recent_commands[rc - 1].len > 0) try app.noteRecentCommand(saved.recent_commands[rc - 1]);
     for (saved.sessions_order) |id| {
         if (id.len == 0 or app.sessions.orderIndex(id) != null) continue;
         const owned = try gpa.dupe(u8, id);
@@ -736,6 +744,8 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         app.setActive(ida);
         try app.harpoon.set(t.allocator, 2, a);
         try app.noteCmdLine("set wrap");
+        try command.run(&app, .{ .static = .noop });
+        try command.run(&app, .{ .static = .@"view.toggle_line_numbers" });
         app.tree.width = 44;
         app.tree.visible = false;
         try app.toastLevel(.warn, "remember me", .{});
@@ -782,6 +792,10 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         try t.expect(reminded);
         try t.expectEqualStrings(a, app.harpoon.paths[2].?);
         try t.expectEqualStrings("set wrap", app.cmd_history.items[0]);
+        // The command MRU came back newest first (the restore's own
+        // commands are not in it: they ran before the file was read).
+        try t.expectEqualStrings("view.toggle_line_numbers", app.recent_commands.items[0]);
+        try t.expectEqualStrings("noop", app.recent_commands.items[1]);
         try t.expect(app.recent.items.len >= 2);
         var found = false;
         for (app.messages.items.items) |m| if (std.mem.eql(u8, m.text, "remember me")) {

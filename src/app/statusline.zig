@@ -550,7 +550,11 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     } else if (missing) {
         try push(&right, arena, Seg.init(" LSP? ", p.comment, p.bg2).withHit(SegId.lsp.raw()));
     }
-    if (app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null) {
+    // RESTRICTED: the workspace's exec-bearing settings are stripped
+    // until trusted — or its whole `.mnml/config.toml` is 0.2's and not
+    // read at all (`App.workspace_toml`); the click says which.
+    const stripped = app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null;
+    if (stripped or app.workspace_toml != null) {
         try push(&right, arena, Seg.init(if (nerd) " " ++ sl.restricted_glyph ++ " RESTRICTED " else " RESTRICTED ", p.bg_darker, p.yellow).withHit(sl.seg_restricted));
     }
     // WRAP: the active editor's own setting when it has one (a click

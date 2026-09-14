@@ -256,7 +256,10 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         statusline.seg_file => return .{ .title = "File", .detail = "the open file, ● when unsaved · right-click: copy the path / close the buffer" },
         statusline.seg_position => return .{ .title = "Position", .detail = "click: go to line" },
         statusline.seg_language => return .{ .title = "Language", .detail = "the file's language, by extension · click says so" },
-        statusline.seg_restricted => return .{
+        statusline.seg_restricted => return if (app.workspace_toml != null and (app.loaded == null or app.loaded.?.trust_prompt == null)) .{
+            .title = "RESTRICTED — this workspace's .mnml/config.toml is mnml 0.2's and is not read",
+            .detail = "run `mnml export-config-zon --out .mnml/config.zon` (0.2.22) in the workspace to convert it · click says so (workspace.review_trust)",
+        } else .{
             .title = "RESTRICTED — this workspace's exec-bearing settings are off",
             .detail = "click reviews what it wants to run (workspace.review_trust)",
         },

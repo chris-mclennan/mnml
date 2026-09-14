@@ -60,6 +60,12 @@ pub const Loaded = struct {
     trust_prompt: ?TrustPrompt = null,
     /// Whether the workspace layer applied in full.
     workspace_trusted: bool,
+    /// A 0.2 `config.toml` where the workspace's / the home `config.zon`
+    /// would be, with no `.zon` beside it — never read; the app shows
+    /// the pointer at the converter once per data root and the
+    /// statusline's RESTRICTED chip for the workspace one.
+    workspace_toml: ?[]const u8 = null,
+    home_toml: ?[]const u8 = null,
     /// The options this was loaded with, strings re-homed on the arena,
     /// so `reload` can run the same load with a different trust.
     opts: Options,
@@ -183,7 +189,9 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
     };
     if (loaded.home_path) |p| {
         if (try readLayer(arena, io, &loaded.diagnostics, p)) |patch| try apply(arena, &loaded.config, patch);
+        loaded.home_toml = try tomlBeside(arena, io, p);
     }
+    loaded.workspace_toml = try tomlBeside(arena, io, loaded.workspace_path);
     // `.mnml/init.lua` beside the config is an exec-bearing claim of its
     // own (D10): a workspace with the script and no config still needs
     // the trust decision.
@@ -216,20 +224,24 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
     return loaded;
 }
 
+/// The 0.2.x `config.toml` beside an absent `config.zon` at
+/// `zon_path`, or null. mnml-zig never reads it (E2); this is the one
+/// thing it will ever say about TOML, and the app says it once.
+pub fn tomlBeside(arena: Allocator, io: Io, zon_path: []const u8) Allocator.Error!?[]const u8 {
+    if (!std.mem.endsWith(u8, zon_path, ".zon")) return null;
+    if (Io.Dir.cwd().access(io, zon_path, .{})) |_| return null else |_| {}
+    const toml = try std.mem.concat(arena, u8, &.{ zon_path[0 .. zon_path.len - ".zon".len], ".toml" });
+    Io.Dir.cwd().access(io, toml, .{}) catch return null;
+    return toml;
+}
+
 /// One layer file as a patch; null when the file is absent (fine) or
-/// unreadable (a diagnostic). An absent `.zon` with a 0.2.x
-/// `config.toml` beside it gets a pointer at the converter — the one
-/// thing mnml-zig will ever say about TOML.
+/// unreadable (a diagnostic). A 0.2.x `config.toml` beside an absent
+/// `.zon` is `tomlBeside`'s to report, not a diagnostic: a diagnostic
+/// toasts on every launch.
 fn readLayer(arena: Allocator, io: Io, diags: *Diagnostics, path: []const u8) Allocator.Error!?Patch(Config) {
     const src = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(max_file_bytes), .of(u8), 0) catch |e| switch (e) {
-        error.FileNotFound => {
-            if (std.mem.endsWith(u8, path, ".zon")) {
-                const toml = try std.mem.concat(arena, u8, &.{ path[0 .. path.len - ".zon".len], ".toml" });
-                Io.Dir.cwd().access(io, toml, .{}) catch return null;
-                try diags.addFmt(toml, 0, 0, "mnml-zig reads config.zon, not TOML — run `mnml export-config-zon` (0.2.22) to convert this file", .{});
-            }
-            return null;
-        },
+        error.FileNotFound => return null,
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try diags.addFmt(path, 0, 0, "cannot read: {s}", .{@errorName(e)});
@@ -546,7 +558,9 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         try t.expectEqual(@as(u8, 2), loaded.config.editor.tab_width); // home still applies
         try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
     }
-    // a 0.2.x config.toml where the .zon would be: one pointer at the converter
+    // a 0.2.x config.toml where the .zon would be: not read, not a
+    // diagnostic (that toasted on every launch) — named for the app's
+    // once-per-data-root notice and the RESTRICTED chip
     {
         try tmp.dir.createDirPath(t.io, "old/.mnml");
         try tmp.dir.writeFile(t.io, .{ .sub_path = "old/.mnml/config.toml", .data = "[ui]\ntheme = \"gruvbox\"\n" });
@@ -555,9 +569,14 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         var loaded = try load(t.allocator, t.io, .{ .workspace = old, .env = .{ .vars = &vars } });
         defer loaded.deinit();
         try t.expectEqualStrings("onedark", loaded.config.ui.theme); // not read
-        try t.expectEqual(@as(usize, 1), loaded.diagnostics.count());
-        try t.expect(std.mem.indexOf(u8, loaded.diagnostics.items.items[0].msg, "export-config-zon") != null);
-        try t.expect(std.mem.endsWith(u8, loaded.diagnostics.items.items[0].file, "config.toml"));
+        try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
+        try t.expect(std.mem.endsWith(u8, loaded.workspace_toml.?, "old/.mnml/config.toml"));
+        try t.expect(loaded.home_toml == null); // the home .zon exists
+        // A .zon beside the .toml: the .toml is nothing.
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "old/.mnml/config.zon", .data = ".{}" });
+        var again = try load(t.allocator, t.io, .{ .workspace = old, .env = .{ .vars = &vars } });
+        defer again.deinit();
+        try t.expect(again.workspace_toml == null);
     }
 }
 
