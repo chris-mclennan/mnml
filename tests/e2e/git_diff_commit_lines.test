@@ -14,15 +14,15 @@ shell printf "keep\nstaged-line\n" > other.txt
 shell git add other.txt
 open code.txt
 command git.diff_file
+# The diff opens beside the editor now; alone in its leaf it keeps the
+# wide layout this file selects rows in.
+command view.only
 wait 800
 expect screen contains "+ four-x"
 key j
 key v
 key J
 command git.diff_commit_lines
-# The prompt opens after the worker reads the two lines back; under a
-# loaded box that took past the expect budget once in ~50 runs.
-wait 400
 expect screen contains "Commit message for the 2 lines of code.txt"
 type "just two"
 key enter
