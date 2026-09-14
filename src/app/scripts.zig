@@ -143,8 +143,13 @@ pub const Store = struct {
 
 // ─── paths ───────────────────────────────────────────────────────────────
 
-/// `<data root>/scripts`, on `arena`; null when there is no data root.
+/// Where installed scripts live: `MNML_SCRIPTS_ROOT` when it is set,
+/// else `<data root>/scripts`. On `arena`; null when neither is there.
+/// The environment wins so a run can keep its installs to itself — the
+/// corpus shares one data root across every file, and a script
+/// installed by one would otherwise load in all the rest.
 pub fn installRoot(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (app.env.get("MNML_SCRIPTS_ROOT")) |v| if (v.len > 0) return try resolveRoot(app, arena, v);
     if (app.data_root.len == 0) return null;
     return try std.fs.path.join(arena, &.{ app.data_root, manifest_mod.subdir });
 }
@@ -612,6 +617,8 @@ pub fn commit(app: *App, staged_dir: []const u8, name: []const u8, source: Sourc
     try stampSource(app, arena, dest, source, url);
     const e = (try adopt(app, dest, source)) orelse return error.Failed;
     try load(app, e);
+    // The Marketplace tab's rows carry "installed" — re-read them.
+    @import("scripts_panel.zig").refreshMarket(app) catch {};
     app.toast("scripts: installed {s}{s}", .{ name, if (e.err != null) " (it errored — see the SCRIPTS row)" else "" });
 }
 
@@ -772,11 +779,14 @@ fn removeFocused(app: *App) CommandError!void {
     if (e.source == .dev) return app.diag.fail(app.frame.allocator(), "scripts: {s} is a dev folder — remove it from scripts.dev_roots, not from here", .{e.name});
     const name = try app.gpa.dupe(u8, e.name);
     errdefer app.gpa.free(name);
-    const msg = try std.fmt.allocPrint(app.gpa, "{s} and everything in its folder is deleted.", .{e.dir});
+    // The message is gpa-owned (the overlay outlives the frame) and the
+    // title is a literal: a frame-arena string would dangle on the next
+    // paint.
+    const msg = try std.fmt.allocPrint(app.gpa, "{s} {s} and everything in {s} is deleted.", .{ e.name, e.version, e.dir });
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
-        .state = .{ .title = try std.fmt.allocPrint(app.frame.allocator(), "Remove {s}?", .{name}), .message = msg, .choices = &remove_choices, .selected = 1 },
+        .state = .{ .title = "Remove this script?", .message = msg, .choices = &remove_choices, .selected = 1 },
         .purpose = .{ .remove_script = name },
         .message = msg,
     } };
@@ -826,6 +836,7 @@ fn openReadme(app: *App) CommandError!void {
 
 fn rescan(app: *App) CommandError!void {
     try scan(app);
+    try @import("scripts_panel.zig").refreshMarket(app);
     app.toast("scripts: {d} installed", .{app.scripts.entries.items.len});
 }
 
@@ -1150,4 +1161,90 @@ test "install from an archive and from a local git repo; the manifest records wh
     try t.expectEqualStrings("cloned", app.lastToast().?);
     // `.git` never travels into the installed copy.
     try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "data/scripts/cloned/.git", .{}));
+}
+
+test "script.remove asks first, and the dialog it opens survives the frame it was opened in" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try writeScript(tmp.dir, t.io, "scripts", "doomed",
+        \\.{ .name = "doomed", .api = 1, .version = "1.0.0", .commands = .{ "user.doomed_go" } }
+    ,
+        \\mnml.command{ id = "doomed_go", run = function() end }
+    );
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const panel = @import("scripts_panel.zig");
+    try command.run(&app, .{ .static = .@"view.activity_scripts" });
+    const list = try panel.rows(&app, app.frame.allocator());
+    app.scripts_panel.panel.cursor = list.len - 1;
+    try command.run(&app, .{ .static = .@"script.remove" });
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .remove_script);
+    // Cancel is the focused choice.
+    try t.expectEqual(@as(usize, 1), app.overlay.confirm.state.selected);
+    // A render resets the frame arena: a title or a message borrowed
+    // from it would be gone by the paint after this one.
+    try app.render();
+    try app.render();
+    try t.expectEqualStrings("Remove this script?", app.overlay.confirm.state.title);
+    try t.expect(std.mem.startsWith(u8, app.overlay.confirm.message, "doomed 1.0.0"));
+    // Cancel keeps it.
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.scripts.find("doomed") != null);
+    // Remove takes the folder and the command with it.
+    try command.run(&app, .{ .static = .@"script.remove" });
+    try app.handle(.{ .key = app_mod.Key.char('r') });
+    try t.expect(app.scripts.find("doomed") == null);
+    try t.expect(app.dyn_commands.get("user.doomed_go") == null);
+    try t.expectEqualStrings("scripts: removed doomed", app.lastToast().?);
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "scripts/doomed/script.zon", .{}));
+}
+
+test "script.reload takes the installed scripts with init.lua, and a vim operator letter never outlives the App that claimed it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try writeScript(tmp.dir, t.io, "scripts", "surrounder",
+        \\.{ .name = "surrounder", .api = 1, .version = "1.0.0" }
+    ,
+        \\mnml.operator{ id = "wrap", keys = { vim = "gw" }, run = function() end }
+        \\mnml.command{ id = "wrap_cmd", run = function() mnml.toast("wrapped") end }
+    );
+    const script_ops = @import("../input/script_ops.zig");
+    {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
+        defer app.deinit();
+        const e = app.scripts.find("surrounder").?;
+        try t.expect(e.state != null);
+        // The letter is claimed by the SCRIPT's state, not `init.lua`'s.
+        try t.expectEqual(e.id, script_ops.lookup('w').?.state);
+        // `script.reload` reloads the installed scripts too, not just
+        // the `init.lua` files: the file on disk has changed, and the
+        // command that comes back is the new one.
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "scripts/surrounder/init.lua", .data = "mnml.operator{ id = 'wrap', keys = { vim = 'gw' }, run = function() end }\nmnml.command{ id = 'wrap_cmd_v2', run = function() mnml.toast('wrapped') end }\n" });
+        try command.run(&app, .{ .static = .@"script.reload" });
+        try t.expect(app.dyn_commands.get("user.wrap_cmd") == null);
+        try t.expect(app.dyn_commands.get("user.wrap_cmd_v2") != null);
+        try t.expect(std.mem.indexOf(u8, app.lastToast().?, "1 installed script") != null);
+        // Still one claim, and still that script's.
+        const after = app.scripts.find("surrounder").?;
+        try t.expectEqual(after.id, script_ops.lookup('w').?.state);
+        try command.runNamed(&app, "user.wrap_cmd_v2");
+        try t.expectEqualStrings("wrapped", app.lastToast().?);
+    }
+    // The first App is gone, and its script's claim went with the state
+    // that made it (`closeState` clears its own). A second App in the
+    // same process therefore starts with an empty table rather than a
+    // letter pointing at a stale operator index.
+    {
+        var app2 = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+        defer app2.deinit();
+        try t.expect(script_ops.lookup('w') == null);
+        try t.expectEqual(@as(usize, 0), script_ops.count());
+    }
 }

@@ -6,6 +6,9 @@
 # examples under docs/examples/scripts/ are what the real index will
 # hold. Installing from it badges the row `official`.
 # env: MNML_SCRIPTS_MARKETPLACE=index
+# `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own temp
+# workspace, out of the data root the whole corpus shares.
+# env: MNML_SCRIPTS_ROOT=installed
 shell mkdir -p index/tidy
 write index/tidy/script.zon ".{ .name = \"tidy\", .api = 1, .version = \"0.9.0\", .description = \"Tidies things\", .commands = .{ \"user.tidy\" }, .source = .marketplace }\n"
 write index/tidy/init.lua "mnml.command{ id = 'tidy', title = 'Tidy', run = function() mnml.toast('tidied') end }\n"

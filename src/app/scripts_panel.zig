@@ -88,12 +88,16 @@ pub const State = struct {
     /// `script.show_dev`'s answer for the session; null defers to the
     /// config and the roots.
     show_dev_override: ?bool = null,
-    /// The marketplace listing, read from the index folder (frame-free:
-    /// the rows are rebuilt on each draw, so nothing is owned here).
+    /// The marketplace listing, read from the index folder once and
+    /// kept: a `readdir` plus a manifest parse per frame would be a
+    /// file-system walk in the paint loop.
+    market: []MarketEntry = &.{},
+    market_arena: ?std.heap.ArenaAllocator = null,
     market_scanned: bool = false,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         self.panel.deinit(gpa);
+        if (self.market_arena) |*a| a.deinit();
     }
 };
 
@@ -138,6 +142,7 @@ fn activity(app: *App) CommandError!void {
     activity_bar.enter(app, .scripts);
     side.place(app, .scripts, true);
     if (!app.scripts.scanned) try scripts.scan(app);
+    if (!app.scripts_panel.market_scanned) try refreshMarket(app);
 }
 
 // ─── the rows ────────────────────────────────────────────────────────────
@@ -172,6 +177,26 @@ pub const MarketEntry = struct {
     commands: []const []const u8,
     hooks: []const []const u8,
 };
+
+/// The cached listing, read on first use and on every refresh.
+pub fn market(app: *App) []const MarketEntry {
+    const st = &app.scripts_panel;
+    if (!st.market_scanned) refreshMarket(app) catch {};
+    return st.market;
+}
+
+/// Read the index folder again. Cheap to call on entering the section,
+/// on a tab switch and on the refresh chip — never from a draw.
+pub fn refreshMarket(app: *App) Allocator.Error!void {
+    const st = &app.scripts_panel;
+    var fresh = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer fresh.deinit();
+    const rows_ = try marketRows(app, fresh.allocator());
+    if (st.market_arena) |*a| a.deinit();
+    st.market_arena = fresh;
+    st.market = rows_;
+    st.market_scanned = true;
+}
 
 /// Read the index folder. Empty when none is configured — the default
 /// `scripts.marketplace_url` names a repo that is not live yet.
@@ -263,7 +288,7 @@ pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
             }
         },
         .marketplace => {
-            for (try marketRows(app, arena), 0..) |m, i| {
+            for (market(app), 0..) |m, i| {
                 if (q.len > 0 and fuzzy.score(q, m.name) == null and fuzzy.score(q, m.description) == null) continue;
                 const installed = app.scripts.find(m.name) != null;
                 try out.append(arena, .{ .kind = .{ .market = i }, .entry = .{
@@ -369,7 +394,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     for (app.scripts.entries.items) |e| {
         if (e.source == .dev) dev_count += 1 else installed_count += 1;
     }
-    const market = try marketRows(app, ui.arena);
+    const listing = market(app);
     const empty: list_panel.EmptyState = if (q.len > 0)
         .{ .message = ui.fmt("No matches for \"{s}\" — Esc clears", .{q}) }
     else switch (st.tab) {
@@ -385,7 +410,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .label = "SCRIPTS",
         .tabs_at = view.script_tab_base,
         .tab = st.tab,
-        .counts = .{ installed_count, market.len, dev_count },
+        .counts = .{ installed_count, listing.len, dev_count },
         .show_dev = showDev(app),
         .filter = q,
         .filter_caret = st.panel.filter_caret,
@@ -419,6 +444,7 @@ pub fn setTab(app: *App, tab: Tab) void {
 pub fn showTab(app: *App, tab: Tab) CommandError!void {
     try activity(app);
     if (tab == .dev) app.scripts_panel.show_dev_override = true;
+    if (tab == .marketplace) try refreshMarket(app);
     setTab(app, tab);
     focusPanel(app);
 }
@@ -453,9 +479,10 @@ fn installFocusedMarket(app: *App) CommandError!void {
         .market => |i| i,
         else => return app.diag.fail(arena, "scripts: no marketplace row is focused", .{}),
     };
-    const market = try marketRows(app, arena);
-    if (idx >= market.len) return;
-    try scripts.promptTrust(app, market[idx].dir, .marketplace);
+    const listing = market(app);
+    if (idx >= listing.len) return;
+    const dir = try arena.dupe(u8, listing[idx].dir);
+    try scripts.promptTrust(app, dir, .marketplace);
 }
 
 // ─── keys and the mouse ──────────────────────────────────────────────────
@@ -552,6 +579,7 @@ fn refreshTab(app: *App) CommandError!void {
             try scripts.reloadAll(app);
         },
         .marketplace, .dev => {
+            try refreshMarket(app);
             try scripts.scan(app);
             app.toast("scripts: {d} installed", .{app.scripts.entries.items.len});
         },
@@ -944,10 +972,10 @@ test "SCRIPTS: three tabs — Installed lists init.lua and each script, Marketpl
     try t.expect(app.dyn_commands.get("user.tidy") != null);
     // And the Marketplace row now says it is installed: dimmed, with
     // `(installed)` after the badge.
-    const market = try rows(&app, app.frame.allocator());
-    try t.expectEqual(@as(usize, 1), market.len);
-    try t.expect(market[0].entry.dim);
-    try t.expectEqualStrings("installed", market[0].entry.source);
+    const mkt = try rows(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 1), mkt.len);
+    try t.expect(mkt[0].entry.dim);
+    try t.expectEqualStrings("installed", mkt[0].entry.source);
 }
 
 test "SCRIPTS: a row's menu enables, disables, reloads and jumps to what the script registered" {

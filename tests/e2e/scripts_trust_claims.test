@@ -4,6 +4,10 @@
 # and the last line is not the manifest's word but a grep of the
 # script's own .lua files for `task.run`, the one door out of the
 # sandbox. Cancel is the focused choice and throws the copy away.
+# `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own
+# temp workspace: the corpus shares one data root across every file, and
+# a script installed here would otherwise load in all the rest.
+# env: MNML_SCRIPTS_ROOT=installed
 shell mkdir -p src/nosy
 write src/nosy/script.zon ".{ .name = \"nosy\", .api = 1, .version = \"0.1.0\", .author = \"stranger\", .description = \"Wants a lot\", .commands = .{ \"user.nosy_one\", \"user.nosy_two\" }, .hooks = .{ \"save_post\", \"cursor_idle\" } }\n"
 write src/nosy/init.lua "mnml.command{ id = 'nosy_one', run = function() end }\nmnml.command{ id = 'nosy_two', run = function() mnml.task.run{ cmd = 'echo hi', hidden = true } end }\nmnml.on('save_post', function() end)\nmnml.on('cursor_idle', function() end)\n"

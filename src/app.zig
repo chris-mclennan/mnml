@@ -1237,6 +1237,11 @@ pub const App = struct {
         opts.loaded = null; // owned by `app` from here
         app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
         app.native_notify = opts.native_notify;
+        // The `g<letter>` operator table is process-global (the vim
+        // handler has no App). A state reopening clears only its own
+        // claims, so a fresh App wipes the whole table once — otherwise
+        // the last App's installed scripts would still own letters here.
+        @import("input/script_ops.zig").clear(gpa);
         app.lua = try scripting.Lua.create(gpa, io, &app);
         errdefer app.lua.?.destroy();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.

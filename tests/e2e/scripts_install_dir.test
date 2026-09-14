@@ -3,6 +3,10 @@
 # answered; Install lands it under the data root with its own Lua state,
 # and its command works. The SCRIPTS section's Installed tab shows the
 # row with its version, its badge and the command it adds.
+# `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own
+# temp workspace: the corpus shares one data root across every file, and
+# a script installed here would otherwise load in all the rest.
+# env: MNML_SCRIPTS_ROOT=installed
 shell mkdir -p src/greeter
 write src/greeter/script.zon ".{ .name = \"greeter\", .api = 1, .version = \"2.1.0\", .author = \"someone\", .description = \"Says hello\", .commands = .{ \"user.greet\" } }\n"
 write src/greeter/init.lua "mnml.command{ id = 'greet', title = 'Greet', run = function() mnml.toast('hello from greeter') end }\n"

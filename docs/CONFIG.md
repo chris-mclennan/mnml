@@ -508,6 +508,9 @@ otherwise. Copy what you need; leave the rest out.
     // decoration namespaces, its own require root. The SCRIPTS section
     // lists them on three tabs — installed · marketplace · dev — the way
     // INTEGRATIONS does.
+    // Installed scripts land in <data root>/scripts/ unless
+    // MNML_SCRIPTS_ROOT=<folder> names somewhere else — how the corpus
+    // keeps each file's installs to itself.
     .scripts = .{
         // Where the official (curated) set will be published. NOT LIVE
         // YET: out of the box the Marketplace tab says so. Point

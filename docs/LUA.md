@@ -155,6 +155,10 @@ away without running a line.
 Enabled / disabled is a `.disabled` marker file in the script's own
 folder: no config write, and it survives a restart.
 
+Installed scripts live under `<data root>/scripts/`;
+`MNML_SCRIPTS_ROOT=<folder>` puts them somewhere else, which is how the
+`.test` corpus keeps each file's installs to itself.
+
 ### Publishing a script
 
 Make the directory, fill in `script.zon` (name, version, `.api = 1`, and
