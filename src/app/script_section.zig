@@ -38,6 +38,9 @@ pub const Section = struct {
     /// The built-in rail section this one sits after; empty = last.
     after: []u8,
     list: u32,
+    /// The Lua state that registered it — a reload of one installed
+    /// script takes only its own sections.
+    state: u16 = 0,
 };
 
 pub const Store = struct {
@@ -51,15 +54,29 @@ pub const Store = struct {
     }
 
     pub fn clear(self: *Store, gpa: Allocator) void {
-        for (self.items.items) |*s| {
-            gpa.free(s.id);
-            gpa.free(s.title);
-            gpa.free(s.glyph);
-            gpa.free(s.ascii);
-            gpa.free(s.after);
-        }
+        for (self.items.items) |*s| freeSection(gpa, s);
         self.items.clearRetainingCapacity();
         self.active = 0;
+    }
+
+    /// Drop the sections ONE Lua state registered.
+    pub fn clearState(self: *Store, gpa: Allocator, state: u16) void {
+        var i: usize = 0;
+        while (i < self.items.items.len) {
+            if (self.items.items[i].state == state) {
+                freeSection(gpa, &self.items.items[i]);
+                _ = self.items.orderedRemove(i);
+            } else i += 1;
+        }
+        if (self.active >= self.items.items.len) self.active = 0;
+    }
+
+    fn freeSection(gpa: Allocator, s: *Section) void {
+        gpa.free(s.id);
+        gpa.free(s.title);
+        gpa.free(s.glyph);
+        gpa.free(s.ascii);
+        gpa.free(s.after);
     }
 };
 
@@ -71,6 +88,23 @@ pub fn reset(app: *App) Allocator.Error!void {
         if (shown == .script) side.remove(app, .script);
     };
     app.script_sections.clear(app.gpa);
+    app.needs_render = true;
+}
+
+/// One state's sections go; the others stay, and the column only
+/// closes when what it was showing was one of the ones that went.
+pub fn resetState(app: *App, state: u16) Allocator.Error!void {
+    var any = false;
+    for (app.script_sections.items.items) |s| any = any or s.state == state;
+    if (!any) return;
+    const shown_idx = app.script_sections.active;
+    const shown_state: ?u16 = if (shown_idx < app.script_sections.items.items.len) app.script_sections.items.items[shown_idx].state else null;
+    app.script_sections.clearState(app.gpa, state);
+    if (app.script_sections.items.items.len == 0 or (shown_state != null and shown_state.? == state)) {
+        for ([_]Config.Side{ .left, .right }) |s| if (app.side.open.get(s)) |shown| {
+            if (shown == .script) side.remove(app, .script);
+        };
+    }
     app.needs_render = true;
 }
 

@@ -88,7 +88,7 @@ pub fn install(app: *App, defs: []const Def, startup: []const []const u8) Alloca
         const id = try std.fmt.allocPrint(app.frame.allocator(), "task.{s}", .{name});
         const title = try std.fmt.allocPrint(app.frame.allocator(), "Task: {s} — {s}", .{ name, cmd });
         const line = try std.fmt.allocPrint(app.frame.allocator(), "task {s}", .{name});
-        _ = app.dyn_commands.register(.{ .id = id, .title = title, .group = "term", .runner = .{ .ex = line }, .owner = .script }) catch |err| switch (err) {
+        _ = app.dyn_commands.register(.{ .id = id, .title = title, .group = "term", .runner = .{ .ex = line }, .owner = .{ .script = 0 } }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.ShadowsBuiltin => app.toast("task `{s}` shadows a built-in command; use :task {s}", .{ name, name }),
         };

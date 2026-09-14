@@ -157,7 +157,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
     if (ascii) if (it.icon_ascii) |a| return a;
     return switch (it.action) {
         .command => |id| forCommand(id, ascii),
-        .set_panel_sort => if (ascii) "~" else "\u{f0dc}", // fa-sort
+        .set_panel_sort, .script_sort => if (ascii) "~" else "\u{f0dc}", // fa-sort
         .ai_profile => if (ascii) "!" else "\u{f0e7}", // fa-flash: a launch profile
         .dock_set => if (ascii) "%" else "\u{f013}", // fa-gear: a dock setting
         .toggle_auto_refresh => if (ascii) "@" else "\u{f021}", // fa-refresh

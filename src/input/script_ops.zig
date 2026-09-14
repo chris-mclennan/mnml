@@ -20,7 +20,13 @@ const std = @import("std");
 
 /// The letters after `g`, each with the operator's index in
 /// `Lua.operators`. Small and linear: a script registers a handful.
-pub const Claim = struct { letter: u8, index: u32 };
+pub const Claim = struct {
+    letter: u8,
+    /// Which Lua state owns the operator (`Lua.id`) — an installed
+    /// script's `g<letter>` reaches ITS state, not `init.lua`'s.
+    state: u16,
+    index: u32,
+};
 
 var claims: std.ArrayListUnmanaged(Claim) = .empty;
 
@@ -45,27 +51,39 @@ pub fn validVimSpec(spec: []const u8) bool {
 /// Claim `g<letter>` for the operator at `index`. A letter claimed
 /// twice keeps the newer claim — the same rule `mnml.command` follows
 /// when an id is registered again.
-pub fn register(gpa: std.mem.Allocator, spec: []const u8, index: u32) std.mem.Allocator.Error!void {
+pub fn register(gpa: std.mem.Allocator, spec: []const u8, state: u16, index: u32) std.mem.Allocator.Error!void {
     std.debug.assert(spec.len == 2 and spec[0] == 'g' and std.ascii.isAlphabetic(spec[1]));
     const letter = spec[1];
     for (claims.items) |*c| if (c.letter == letter) {
+        c.state = state;
         c.index = index;
         return;
     };
-    try claims.append(gpa, .{ .letter = letter, .index = index });
+    try claims.append(gpa, .{ .letter = letter, .state = state, .index = index });
 }
 
 /// The operator `g<letter>` names, or null when the letter is free —
 /// the whole of what the vim handler asks.
-pub fn lookup(letter: u21) ?u32 {
+pub fn lookup(letter: u21) ?Claim {
     if (letter > std.math.maxInt(u8)) return null;
-    for (claims.items) |c| if (c.letter == @as(u8, @intCast(letter))) return c.index;
+    for (claims.items) |c| if (c.letter == @as(u8, @intCast(letter))) return c;
     return null;
 }
 
 pub fn clear(gpa: std.mem.Allocator) void {
     claims.deinit(gpa);
     claims = .empty;
+}
+
+/// Drop one state's claims; every other script keeps its letters.
+pub fn clearState(gpa: std.mem.Allocator, state: u16) void {
+    var i: usize = 0;
+    while (i < claims.items.len) {
+        if (claims.items[i].state == state) {
+            _ = claims.orderedRemove(i);
+        } else i += 1;
+    }
+    if (claims.items.len == 0) clear(gpa);
 }
 
 pub fn count() usize {
@@ -88,15 +106,19 @@ test "only g<letter> is claimable; a second claim on a letter replaces the first
     try testing.expect(!validVimSpec("gd"));
     try testing.expect(!validVimSpec("gc"));
     try testing.expect(!validVimSpec("gU"));
-    try register(testing.allocator, "gs", 3);
-    try register(testing.allocator, "gZ", 4);
-    try testing.expectEqual(@as(?u32, 3), lookup('s'));
-    try testing.expectEqual(@as(?u32, 4), lookup('Z'));
+    try register(testing.allocator, "gs", 0, 3);
+    try register(testing.allocator, "gZ", 2, 4);
+    try testing.expectEqual(@as(u32, 3), lookup('s').?.index);
+    try testing.expectEqual(@as(u16, 2), lookup('Z').?.state);
     try testing.expect(lookup('q') == null);
     try testing.expect(lookup('é') == null);
-    try register(testing.allocator, "gs", 9);
+    try register(testing.allocator, "gs", 0, 9);
     try testing.expectEqual(@as(usize, 2), count());
-    try testing.expectEqual(@as(?u32, 9), lookup('s'));
+    try testing.expectEqual(@as(u32, 9), lookup('s').?.index);
+    // One state's claims go; the other keeps its letter.
+    clearState(testing.allocator, 0);
+    try testing.expect(lookup('s') == null);
+    try testing.expectEqual(@as(u32, 4), lookup('Z').?.index);
     clear(testing.allocator);
     try testing.expectEqual(@as(usize, 0), count());
     try testing.expect(lookup('s') == null);

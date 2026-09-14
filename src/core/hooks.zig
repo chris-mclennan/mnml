@@ -207,6 +207,22 @@ pub const Hooks = struct {
         return n;
     }
 
+    /// Drop the subscribers ONE Lua state made — a single installed
+    /// script reloading leaves every other script's hooks alone.
+    pub fn unsubscribeState(self: *Hooks, state: u16) usize {
+        var n: usize = 0;
+        for (&self.subs.values) |*list| {
+            var i: usize = 0;
+            while (i < list.items.len) {
+                if (list.items[i] == .lua and list.items[i].lua.state == state) {
+                    _ = list.swapRemove(i);
+                    n += 1;
+                } else i += 1;
+            }
+        }
+        return n;
+    }
+
     /// Deliver `args` to every subscriber of its hook, in subscription
     /// order. Never called under a lock or inside render.
     pub fn emit(self: *Hooks, app: *App, args: HookArgs) void {
@@ -217,7 +233,7 @@ pub const Hooks = struct {
         while (i < self.subs.get(hook).items.len) : (i += 1) {
             switch (self.subs.get(hook).items[i]) {
                 .zig => |f| f(app, args),
-                .lua => |r| app.script().callHook(r, args),
+                .lua => |r| if (app.luaState(r.state)) |l| l.callHook(r, args),
             }
         }
     }
@@ -255,7 +271,7 @@ test "emit delivers to the hook's subscribers only, in order, with the payload" 
     TestSink.opens = 0;
     try hooks.subscribe(.save_post, .{ .zig = &TestSink.onSave });
     try hooks.subscribe(.open, .{ .zig = &TestSink.onOpen });
-    try hooks.subscribe(.save_post, .{ .lua = 7 });
+    try hooks.subscribe(.save_post, .{ .lua = .{ .ref = 7 } });
     hooks.emit(&app, .{ .save_post = .{ .path = "src/main.zig", .pane = 0, .bytes = 42 } });
     try std.testing.expectEqual(@as(u32, 1), TestSink.saves);
     try std.testing.expectEqual(@as(u32, 0), TestSink.opens);

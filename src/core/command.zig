@@ -140,6 +140,8 @@ const runner_tables = .{
     @import("../app/cmd_browser.zig"),
     @import("../app/cmd_script.zig"),
     @import("../app/scripts_panel.zig"),
+    @import("../app/scripts.zig"),
+    @import("../app/script_doctor.zig"),
     @import("../app/messages.zig"),
     @import("../app/zen.zig"),
     @import("../app/cmd_harpoon.zig"),
@@ -263,13 +265,21 @@ comptime {
 
 // ─── dynamic commands (IPC / manifest / Lua) ────────────────────────────
 
-pub const LuaRef = u32;
+/// A value a script holds in its own state's registry. The `state` is
+/// which Lua state that is — 0 is the `init.lua` state every App has,
+/// 1.. an installed script's own (`app/scripts.zig`), so a ref never
+/// reaches the wrong registry.
+pub const LuaRef = struct {
+    state: u16 = 0,
+    ref: u32,
+};
 
 pub const Owner = union(enum) {
     /// Registered by an installed integration; the id is gpa-owned.
     integration: []u8,
-    /// Registered from a user script; bulk-unregistered on reload.
-    script,
+    /// Registered from a script; the Lua state that registered it, so
+    /// a reload of ONE installed script drops only its commands.
+    script: u16,
     /// Registered over the file-IPC channel.
     ipc,
 
@@ -342,7 +352,7 @@ pub const DynInit = struct {
     group: []const u8 = "plugin",
     keys: []const []const u8 = &.{},
     runner: Runner = .ipc,
-    owner: union(enum) { integration: []const u8, script, ipc } = .ipc,
+    owner: union(enum) { integration: []const u8, script: u16, ipc } = .ipc,
 
     pub const Runner = union(enum) {
         ex: []const u8,
@@ -423,7 +433,7 @@ pub const DynRegistry = struct {
         errdefer c.runner.deinit(gpa);
         c.owner = switch (init_.owner) {
             .integration => |id| .{ .integration = try gpa.dupe(u8, id) },
-            .script => .script,
+            .script => |id| .{ .script = id },
             .ipc => .ipc,
         };
         errdefer c.owner.deinit(gpa);
@@ -470,6 +480,20 @@ pub const DynRegistry = struct {
         var n: usize = 0;
         for (self.list.items, self.live.items, 0..) |*c, alive, i| {
             if (!alive or std.meta.activeTag(c.owner) != owner) continue;
+            _ = self.by_name.remove(c.id);
+            c.deinit(self.gpa);
+            self.live.items[i] = false;
+            n += 1;
+        }
+        return n;
+    }
+
+    /// Drop every command one Lua state registered — one installed
+    /// script reloading, or `init.lua`. Returns how many went.
+    pub fn unregisterScript(self: *DynRegistry, state: u16) usize {
+        var n: usize = 0;
+        for (self.list.items, self.live.items, 0..) |*c, alive, i| {
+            if (!alive or c.owner != .script or c.owner.script != state) continue;
             _ = self.by_name.remove(c.id);
             c.deinit(self.gpa);
             self.live.items[i] = false;
@@ -561,7 +585,10 @@ fn runDyn(app: *App, slot: u32) CommandError!void {
         // A manifest line: `{{tokens}}` expanded, a missing program toasted.
         .ex => |line| return @import("../app/launchers.zig").fire(app, line),
         .ipc => return app.ackPluginCommand(c.id),
-        .lua => |r| return app.script().callCommand(r),
+        .lua => |r| {
+            const l = app.luaState(r.state) orelse return app.diag.fail(app.frame.allocator(), "{s}: its script is not loaded", .{c.id});
+            return l.callCommand(r);
+        },
         .mount => |r| return @import("../app/integrations.zig").runMount(app, .{
             .id = switch (c.owner) {
                 .integration => |i| i,
@@ -625,6 +652,9 @@ pub const MenuAction = union(enum) {
     /// // changed (lua-track): a SCRIPTS row menu's "Open <file:line>" —
     /// the row's index (`app/scripts_panel.zig`).
     script_row_open: u32,
+    /// // changed (lua-install): the SCRIPTS sort chip's menu — a
+    /// `scripts_panel.Sort` as an integer.
+    script_sort: u8,
     /// // changed (lua-track): *Bind in init.lua…* — the command id; the
     /// menu's `mem` arena owns the bytes.
     lua_bind: []const u8,
@@ -734,7 +764,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1052), count);
+    try std.testing.expectEqual(@as(usize, 1068), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 
@@ -744,7 +774,7 @@ test "dyn registry: register / lookup / replace / unregister / owner sweep" {
     defer reg.deinit();
     try std.testing.expectError(error.ShadowsBuiltin, reg.register(.{ .id = "app.quit" }));
     const a = try reg.register(.{ .id = "jira.open", .title = "Open Jira", .keys = &.{"ctrl+k j"}, .owner = .{ .integration = "jira" } });
-    const b = try reg.register(.{ .id = "user.hello", .runner = .{ .ex = "echo hi" }, .owner = .script });
+    const b = try reg.register(.{ .id = "user.hello", .runner = .{ .ex = "echo hi" }, .owner = .{ .script = 0 } });
     try std.testing.expectEqual(a, reg.get("jira.open").?);
     try std.testing.expectEqualStrings("Open Jira", reg.at(a).?.title);
     // Re-register replaces in place, same slot.

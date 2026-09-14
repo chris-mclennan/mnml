@@ -49,6 +49,7 @@ ci: Ci = .{},
 integrations: Integrations = .{},
 workspaces: []const Workspace = &.{},
 marketplace: Marketplace = .{},
+scripts: Scripts = .{},
 
 // ─── editor ──────────────────────────────────────────────────────────────
 
@@ -616,6 +617,34 @@ pub const Integrations = struct {
     /// `integrations/` by itself.
     dev_roots: []const []const u8 = &.{},
 };
+
+/// // changed (lua-install): installed Lua scripts — the SCRIPTS
+/// section's three tabs, exactly as `marketplace` + `integrations`
+/// feed the INTEGRATIONS section's.
+pub const Scripts = struct {
+    /// The curated index the Marketplace tab lists. The default names
+    /// the repo the official set will live in; it is NOT live yet, so
+    /// out of the box the tab is empty unless `marketplace_local` (or
+    /// `MNML_SCRIPTS_MARKETPLACE`) points at a folder.
+    marketplace_url: []const u8 = default_scripts_marketplace_url,
+    /// A folder of script directories to list instead of the URL — the
+    /// offline and test path, and how the shipped examples are seeded.
+    /// Relative to the workspace, `~` expanded.
+    marketplace_local: []const u8 = "",
+    /// Folders of script directories the user maintains — a company
+    /// repo, a mounted share. Listed with the `private` badge.
+    private_sources: []const []const u8 = &.{},
+    /// Folders the SCRIPTS section's Dev tab scans: every subfolder
+    /// with a `script.zon` is a script in development, reloaded when
+    /// one of its files is saved.
+    dev_roots: []const []const u8 = &.{},
+    /// Show the Dev tab even with no `dev_roots`.
+    show_dev_tab: bool = false,
+};
+
+/// Where the official script set will be published. Documented as not
+/// yet live (`docs/LUA.md`, "Installing scripts").
+pub const default_scripts_marketplace_url = "https://github.com/chris-mclennan/mnml-scripts";
 
 pub const Workspace = struct {
     name: []const u8 = "",

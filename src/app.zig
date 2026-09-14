@@ -107,6 +107,7 @@ const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
 const cmd_script = @import("app/cmd_script.zig");
 const scripts_panel = @import("app/scripts_panel.zig");
+const scripts_mod = @import("app/scripts.zig");
 const script_list = @import("app/script_list.zig");
 const script_section = @import("app/script_section.zig");
 const search_section = @import("app/search_section.zig");
@@ -253,6 +254,10 @@ pub const PromptPurpose = union(enum) {
     dap_bp_log: BpTarget,
     /// LSP: the new name for the symbol at the cursor.
     lsp_rename,
+    /// // changed (lua-install): `script.install` — the git URL,
+    /// archive or folder to install from; the payload is the owned
+    /// prompt title (`app/scripts.zig`).
+    script_install: []u8,
     /// // changed (lua-track): *Bind in init.lua…* — the key spec for
     /// `id`; the prompt's title is `title` (both owned).
     lua_bind: LuaBind,
@@ -302,7 +307,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param, .script_install => |s| gpa.free(s),
             .session_worktree_name => |w| gpa.free(w.profile),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
@@ -369,13 +374,25 @@ pub const ConfirmPurpose = union(enum) {
     choose_data_layout,
     /// `app.reset_to_defaults`: Reset renames the home config and restarts.
     reset_to_defaults,
+    /// // changed (lua-install): `script.install` — the staged copy is
+    /// on disk and its claims are on screen; Install commits it, and
+    /// anything else throws the copy away (`app/scripts.zig`).
+    script_install: ScriptInstall,
+    /// // changed (lua-install): `script.remove` — the script's name.
+    remove_script: []u8,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
+    pub const ScriptInstall = struct { dir: []u8, name: []u8, url: []u8, source: @import("scripting/manifest.zig").Source };
     pub const SessionWorktreeRemove = struct { path: []u8, force: bool };
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration, .delete_session, .session_worktree_merge => |s| gpa.free(s),
+            .delete_path, .remove_integration, .delete_session, .session_worktree_merge, .remove_script => |s| gpa.free(s),
+            .script_install => |i| {
+                gpa.free(i.dir);
+                gpa.free(i.name);
+                gpa.free(i.url);
+            },
             .session_worktree_remove => |r| gpa.free(r.path),
             .http_delete_request => |t| t.deinit(gpa),
             .delete_paths => |d| {
@@ -540,8 +557,10 @@ pub const Overlay = union(enum) {
         /// points at. Empty for every other kind.
         grep_hits: []GrepRow = &.{},
         /// A `.lua` source that answers again as the query changes: its
-        /// id, and when the debounced re-run is due.
+        /// id, the Lua state that registered it, and when the debounced
+        /// re-run is due.
         lua_source: []u8 = &.{},
+        lua_state: u16 = 0,
         requery_at_ms: ?i64 = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
@@ -1060,9 +1079,13 @@ pub const App = struct {
     dyn_commands: command.DynRegistry,
     plugin_invocations: std.ArrayListUnmanaged([]u8) = .empty,
     hooks: hooks.Hooks,
-    /// The Lua state (D10). Reach it through `script()`, which points it
-    /// at this App — the struct moves after `initWith` returns.
+    /// The `init.lua` state (D10), id 0. Reach it through `script()`,
+    /// which points it at this App — the struct moves after `initWith`
+    /// returns. Installed scripts get their OWN states, in `scripts`.
     lua: ?*scripting.Lua = null,
+    /// // changed (lua-install): the installed scripts — one directory,
+    /// one manifest and one Lua state each (`app/scripts.zig`).
+    scripts: scripts_mod.Store = .{},
     /// Whether the workspace's exec-bearing config and `init.lua` apply.
     workspace_trusted: bool = false,
     /// A 0.2 `.mnml/config.toml` in the workspace with no `config.zon`
@@ -1231,8 +1254,10 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
-        // A saved `init.lua` reloads the scripts (`cmd_script.zig`).
+        // A saved `init.lua` reloads the scripts (`cmd_script.zig`);
+        // a save under a dev root reloads that one script.
         try app.hooks.subscribe(.save_post, .{ .zig = &cmd_script.onSavePost });
+        try app.hooks.subscribe(.save_post, .{ .zig = &scripts_mod.onSavePost });
         // The session comes back before anything else the startup hook
         // does, so the update toast and the picker land on the restored frame.
         try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
@@ -1278,14 +1303,40 @@ pub const App = struct {
         try trust_app.promptIfNeeded(&app);
         // D10: the scripts subscribe before the `startup` hook fires.
         try app.script().loadInitFiles();
+        // // changed (lua-install): then the installed scripts, each in
+        // its own state (`app/scripts.zig`).
+        try scripts_mod.scan(&app);
         return app;
     }
 
-    /// The Lua state, pointed at this App for the call about to happen.
+    /// The `init.lua` state, pointed at this App for the call about to
+    /// happen.
     pub fn script(self: *App) *scripting.Lua {
         const l = self.lua.?;
         l.app = self;
         return l;
+    }
+
+    /// The state a `LuaRef` belongs to: 0 is `init.lua`'s, 1.. an
+    /// installed script's. Null when that script is disabled, removed
+    /// or failed to load — the ref is stale and the caller does
+    /// nothing rather than reaching into another script's registry.
+    pub fn luaState(self: *App, id: u16) ?*scripting.Lua {
+        if (id == 0) return self.script();
+        const l = self.scripts.state(id) orelse return null;
+        l.app = self;
+        return l;
+    }
+
+    /// Every live Lua state, `init.lua`'s first, on `arena`.
+    pub fn luaStates(self: *App, arena: Allocator) Allocator.Error![]*scripting.Lua {
+        var out: std.ArrayListUnmanaged(*scripting.Lua) = .empty;
+        try out.append(arena, self.script());
+        for (self.scripts.entries.items) |*e| if (e.state) |l| {
+            l.app = self;
+            try out.append(arena, l);
+        };
+        return out.toOwnedSlice(arena);
     }
 
     /// Load the three layers again with `trust` and switch to the result:
@@ -1534,6 +1585,7 @@ pub const App = struct {
         self.tree.deinit();
         // Script panes unref'd into the state when the pane store went
         // (above, before the manifests); the state closes after them.
+        self.scripts.deinit(gpa);
         if (self.lua) |l| l.destroy();
         self.script_tasks.deinit(self.io);
         self.script_decor.deinit(gpa);
@@ -2729,6 +2781,8 @@ test {
     _ = @import("app/script_pane.zig");
     _ = @import("app/cmd_script.zig");
     _ = @import("app/scripts_panel.zig");
+    _ = @import("app/scripts.zig");
+    _ = @import("app/script_doctor.zig");
     _ = @import("ui/scripts_panel.zig");
     _ = @import("app/search_section.zig");
     _ = @import("app/grep_picker.zig");
@@ -2784,7 +2838,7 @@ test "run: an unimplemented command toasts and fails; a bad name toasts" {
     try std.testing.expectError(error.Failed, command.runNamed(&app, "nope.nope"));
     try std.testing.expectEqualStrings("no such command: nope.nope", app.lastToast().?);
     // A dyn command with an ex runner reaches the interpreter.
-    _ = try app.dyn_commands.register(.{ .id = "user.hi", .runner = .{ .ex = "frobnicate" }, .owner = .script });
+    _ = try app.dyn_commands.register(.{ .id = "user.hi", .runner = .{ .ex = "frobnicate" }, .owner = .{ .script = 0 } });
     try std.testing.expectError(error.Failed, command.runNamed(&app, "user.hi"));
     try std.testing.expectEqualStrings(":frobnicate — unknown command", app.lastToast().?);
     // An IPC runner is acknowledged through pluginInvocations.

@@ -257,7 +257,7 @@ fn registerLuaCommand(self: *Lua, full_id: []const u8, title: []const u8, group:
         .group = group,
         .keys = keys,
         .runner = .{ .lua = run_ref },
-        .owner = .script,
+        .owner = .{ .script = self.id },
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ShadowsBuiltin => {
@@ -742,7 +742,7 @@ fn operatorRegister(L: *State) !i32 {
         try c.self.operators.append(c.self.gpa, .{ .id = owned_id, .run = run_ref });
         break :blk @intCast(c.self.operators.items.len - 1);
     };
-    if (vim_owned) |v| try script_ops.register(c.self.gpa, v, index);
+    if (vim_owned) |v| try script_ops.register(c.self.gpa, v, c.self.id, index);
     // The standard road: a command with the chord, its runner a closure
     // over the index — `mnml.map(spec, "<id>")`'s trick.
     L.pushInteger(index);
@@ -1745,7 +1745,7 @@ fn decorNamespace(L: *State) !i32 {
     if (L.typeOf(1) != .string) L.argError(1, "mnml.decor.namespace(name) takes a name, a string");
     const name = L.toString(1) catch "";
     if (name.len == 0) L.argError(1, "a namespace name cannot be empty");
-    L.pushInteger(@intCast(try script_decor.namespace(c.app, name)));
+    L.pushInteger(@intCast(try script_decor.namespace(c.app, c.self.id, name)));
     return 1;
 }
 

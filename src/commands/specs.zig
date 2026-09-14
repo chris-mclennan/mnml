@@ -1096,6 +1096,23 @@ pub const specs = [_]Spec{
     .{ .id = "view.activity_scripts", .title = "Activity: show Scripts (what init.lua registered, with file:line)", .group = "view" },
     .{ .id = "script.new_init", .title = "Lua: create the workspace's .mnml/init.lua from the commented template and open it", .group = "script" },
     .{ .id = "script.run_selection", .title = "Lua: run the selected lines (or the cursor line) in the script state — the result is a toast", .group = "script", .keys = .{ .vim = &.{"space s r"}, .standard = &.{"ctrl+alt+enter"} } },
+    // Zig-only: installed scripts, the directory form (lua-install).
+    .{ .id = "script.install", .title = "Scripts: install a script from a git URL, an archive or a folder (asks trust first)", .group = "script" },
+    .{ .id = "script.enable", .title = "Scripts: enable the focused script", .group = "script" },
+    .{ .id = "script.disable", .title = "Scripts: disable the focused script (its state is dropped; nothing else is touched)", .group = "script" },
+    .{ .id = "script.toggle_enabled", .title = "Scripts: enable / disable the focused script", .group = "script" },
+    .{ .id = "script.remove", .title = "Scripts: remove the focused script and delete its folder", .group = "script" },
+    .{ .id = "script.update", .title = "Scripts: re-install the focused script from where it came (asks trust again)", .group = "script" },
+    .{ .id = "script.reload_one", .title = "Scripts: reload the focused script alone", .group = "script" },
+    .{ .id = "script.open_folder", .title = "Scripts: reveal the focused script's folder", .group = "script" },
+    .{ .id = "script.open_readme", .title = "Scripts: open the focused script's README", .group = "script" },
+    .{ .id = "script.rescan", .title = "Scripts: re-scan the installed, private and dev folders", .group = "script" },
+    .{ .id = "script.doctor", .title = "Scripts: the doctor pane — every script's api, source, state, budget overruns, hooks and namespaces", .group = "script" },
+    .{ .id = "script.marketplace_install", .title = "Scripts: install the focused Marketplace row", .group = "script" },
+    .{ .id = "script.show_installed", .title = "Scripts: show the Installed tab", .group = "view" },
+    .{ .id = "script.show_marketplace", .title = "Scripts: show the Marketplace tab", .group = "view" },
+    .{ .id = "script.show_dev", .title = "Scripts: show the Dev tab (author view)", .group = "view" },
+    .{ .id = "script.toggle_tab", .title = "Scripts: cycle tab (Installed / Marketplace / Dev)", .group = "view" },
     // ─── Zig-only ids (cutover prep) ───
     .{ .id = "session.save", .title = "Session: save the open panes, layout and history to .mnml/session.zon now", .group = "session" },
     .{ .id = "session.restore", .title = "Session: restore .mnml/session.zon", .group = "session" },
@@ -1128,7 +1145,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1052 specs, unique ids" {
+test "1068 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1151,6 +1168,6 @@ test "1052 specs, unique ids" {
     // + six SEARCH section commands (refresh / open / open_split /
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice).
-    try std.testing.expectEqual(@as(usize, 1052), specs.len);
+    try std.testing.expectEqual(@as(usize, 1068), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

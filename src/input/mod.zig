@@ -104,7 +104,7 @@ pub const AppCommand = union(enum) {
     /// (`input/script_ops.zig`): apply these ops — they select the
     /// range, exactly as a built-in operator's motion does — then hand
     /// the range to the operator at `index`. Frame arena.
-    script_operator: struct { ops: []const EditOp, index: u32, linewise: bool = false },
+    script_operator: struct { ops: []const EditOp, index: u32, state: u16 = 0, linewise: bool = false },
 
     comptime {
         std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 27);
