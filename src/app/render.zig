@@ -448,6 +448,10 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // palette / which-key pass: a toast never covers the last rows of
     // the palette or the which-key menu (walkthrough 1.10) — the
     // overlay is what the user is looking at, the toast waits under it.
+    // The one exception is the first-launch wizard: its own toasts —
+    // "Claude Code: found" when it comes back from an install pane,
+    // the font's terminal hint — are meant to be read with the wizard
+    // up, and its box would cover them, so it paints under the stack.
     var toast_area = panes_area;
     if (app.undo_chip) |u| {
         toast_mod.drawUndo(ui, panes_area, u.label);
@@ -455,8 +459,10 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     } else if (app.flash != null) {
         toast_area.h -|= 1;
     }
+    const wizard_up = app.overlay == .wizard;
+    if (wizard_up) try drawOverlay(app, ui, panes_area);
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
-    try drawOverlay(app, ui, panes_area);
+    if (!wizard_up) try drawOverlay(app, ui, panes_area);
     try lsp.drawPopups(app, ui, panes_area);
     // A context menu is the topmost layer — over the toasts too, whose
     // own menu it is — and it stays above the statusline and the `:`
