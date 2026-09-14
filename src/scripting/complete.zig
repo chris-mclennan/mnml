@@ -199,6 +199,7 @@ pub fn hookDoc(h: hooks.Hook) []const u8 {
         .save_pre => "{ path, pane } — before the bytes are written",
         .save_post => "{ path, pane, bytes } — after a save",
         .buffer_change => "{ pane, line_count } — 150 ms after the last edit",
+        .cursor_idle => "{ pane, line } — 300 ms after the cursor last moved, once per resting place",
         .diagnostics => "{ path, errors, warnings } — a language server published",
         .pane_focus => "{ pane } — focus moved (pane is nil when nothing has it)",
         .lsp_attach => "{ server, pane } — a server took a buffer",
