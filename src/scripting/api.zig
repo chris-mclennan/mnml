@@ -63,6 +63,7 @@ pub const root_fns = [_]Fn{
     fnOf("workspace", "mnml.workspace() → the absolute workspace path", workspace),
     fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
     fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
+    fnOf("operator", "mnml.operator{ id, keys = { vim = \"g<letter>\", standard = \"chord\" }, run = fn(range) } — operator-pending under vim, the selection or the cursor's word under standard", operatorRegister),
 };
 
 pub const tables = [_]Table{
@@ -674,6 +675,120 @@ fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: A
             // `u21` is an int; the char tags are read as `ch`.
             @compileError("unhandled payload for " ++ tag);
         },
+    }
+}
+
+// ─── mnml.operator ──────────────────────────────────────────────────────
+
+const script_ops = @import("../input/script_ops.zig");
+
+/// `mnml.operator{ id, keys = { vim = "gs", standard = "ctrl+shift+s" },
+/// run = fn(range) }`.
+///
+/// The two profiles reach it by their own road, and neither knows the
+/// operator came from a script. Under vim the `g<letter>` chord goes
+/// into `input/script_ops.zig` — the table the vim handler asks once
+/// its own `g` switch has fallen through — so `gs{motion}`, `gsiw` and
+/// `V…gs` all build the range the way `gU{motion}` does and hand it
+/// over. Under standard the chord is an ordinary `user.<id>` command
+/// (so it is in the palette and `mnml.run` too) whose runner takes the
+/// selection, or the word under the cursor when there is none.
+fn operatorRegister(L: *State) !i32 {
+    const c = ctx(L);
+    L.checkType(1, .table);
+    const id = needStr(L, 1, "id");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n.") != null) L.raiseErrorStr("mnml.operator: id must be a bare name (no spaces or dots)", .{});
+    // Everything is checked before anything is allocated or ref'd: a
+    // Lua error is a longjmp, and an `errdefer` below one never runs.
+    if (L.getField(1, "keys") != .table) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.operator: keys is a table: { vim = \"g<letter>\", standard = \"a chord spec\" } — at least one", .{});
+    }
+    const keys_at = L.getTop();
+    const vim_spec = strField(L, keys_at, "vim");
+    const std_spec = strField(L, keys_at, "standard");
+    if (vim_spec == null and std_spec == null) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.operator: keys needs a `vim` or a `standard` chord (or both)", .{});
+    }
+    if (vim_spec) |v| if (!script_ops.validVimSpec(v)) {
+        const owned = c.app.frame.allocator().dupeZ(u8, v) catch "?";
+        L.pop(1);
+        L.raiseErrorStr("mnml.operator: the vim chord is `g` and one letter vim does not already use (`%s` is not); vim's own are g%s", .{ owned.ptr, script_ops.reserved.ptr });
+    };
+    const arena = c.app.frame.allocator();
+    const full = try std.fmt.allocPrintSentinel(arena, "{s}{s}", .{ id_prefix, id }, 0);
+    const title = try arena.dupe(u8, strField(L, 1, "title") orelse id);
+    const vim_owned: ?[]const u8 = if (vim_spec) |v| try arena.dupe(u8, v) else null;
+    const std_owned: ?[]const u8 = if (std_spec) |v| try arena.dupe(u8, v) else null;
+    L.pop(1); // the keys table
+    const run_ref = needFn(c.self, 1, "run");
+    // The slot the vim handler and the standard command both name.
+    const index: u32 = blk: {
+        for (c.self.operators.items, 0..) |*o, i| if (std.mem.eql(u8, o.id, full)) {
+            c.self.unref(o.run);
+            o.run = run_ref;
+            break :blk @intCast(i);
+        };
+        const owned_id = c.self.gpa.dupe(u8, full) catch |err| {
+            c.self.unref(run_ref);
+            return err;
+        };
+        errdefer c.self.gpa.free(owned_id);
+        try c.self.operators.append(c.self.gpa, .{ .id = owned_id, .run = run_ref });
+        break :blk @intCast(c.self.operators.items.len - 1);
+    };
+    if (vim_owned) |v| try script_ops.register(c.self.gpa, v, index);
+    // The standard road: a command with the chord, its runner a closure
+    // over the index — `mnml.map(spec, "<id>")`'s trick.
+    L.pushInteger(index);
+    L.pushClosure(zlua.wrap(runOperatorCommand), 1);
+    const cmd_ref = c.self.ref();
+    const keys: []const []const u8 = if (std_owned) |k| try arena.dupe([]const u8, &.{k}) else &.{};
+    _ = registerLuaCommand(c.self, full, title, "user", keys, cmd_ref) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.ShadowsBuiltin => L.raiseErrorStr("mnml.operator: `%s` shadows a built-in command", .{full.ptr}),
+    };
+    try c.self.noteOrigin(.operator, full);
+    _ = L.pushString(full);
+    return 1;
+}
+
+/// The runner behind an operator's standard chord (and its palette
+/// row): the selection, or the word under the cursor when there is
+/// none — and nothing at all when the cursor is not in a word.
+fn runOperatorCommand(L: *State) !i32 {
+    const c = ctx(L);
+    const index: u32 = @intCast(L.toInteger(zlua.Lua.upvalueIndex(1)) catch 0);
+    const e = c.app.activeEditor() orelse return 0;
+    const sel = e.buf.editor.selection() orelse blk: {
+        const text = e.buf.editor.bytes();
+        const w = @import("../editor/select.zig").wordBoundsAt(e.buf.editor, @min(e.buf.editor.cursor, text.len));
+        if (w[1] <= w[0] or std.ascii.isWhitespace(text[w[0]])) return 0;
+        break :blk [2]usize{ w[0], w[1] };
+    };
+    try runOperator(c.app, c.self, index, e, sel[0], sel[1]);
+    return 0;
+}
+
+/// Run the operator at `index` over `[start, end)` as ONE undo step:
+/// whatever the script applies inside, one `undo` puts the text back the
+/// way it was before the chord.
+pub fn runOperator(app: *App, self: *Lua, index: u32, e: *EditorPane, start: usize, end: usize) Allocator.Error!void {
+    return runOperatorMode(app, self, index, e, start, end, selectionMode(e));
+}
+
+/// As `runOperator`, with the range's shape given rather than read off
+/// the handler — the vim road has already left Visual by then.
+pub fn runOperatorMode(app: *App, self: *Lua, index: u32, e: *EditorPane, start: usize, end: usize, mode: []const u8) Allocator.Error!void {
+    const pane_id = app.paneIdOf(e);
+    const before = e.buf.editor.doc.history.undoLen();
+    self.callOperator(index, start, end, mode);
+    // The pane may be gone (a script may close panes): look it up again.
+    const live = if (pane_id) |id| app.panes.editor(id) else null;
+    if (live) |ep| {
+        const after = ep.buf.editor.doc.history.undoLen();
+        if (after > before + 1) ep.buf.editor.doc.history.truncateUndo(before + 1);
     }
 }
 
@@ -1952,4 +2067,92 @@ test "mnml.buf.selection / range / word_at: the three modes, a clamped range, th
     try testing.expectError(error.Failed, lua.runString("mnml.buf.word_at('x')"));
     try testing.expectError(error.Failed, lua.runString("mnml.buf.selection(9999)"));
     try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "editor") != null);
+}
+
+test "mnml.operator: vim's g<letter> takes a motion, a text object and a visual selection; standard's chord takes the selection or the cursor's word; one undo step either way" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratch();
+    lua.runString(
+        \\ranges = {}
+        \\local id = mnml.operator{ id = "surround", keys = { vim = "gs", standard = "ctrl+shift+s" },
+        \\  run = function(r)
+        \\    ranges[#ranges + 1] = r.start .. ":" .. r["end"] .. ":" .. r.mode
+        \\    local text = mnml.buf.range(r.start, r["end"])
+        \\    mnml.buf.apply{ op = "replace_range", start = r.start, ["end"] = r["end"], text = "(" .. text .. ")" }
+        \\  end }
+        \\assert(id == "user.surround", id)
+        \\mnml.buf.apply{ op = "insert_str", text = "alpha beta\ngamma" }
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    const e = app.activeEditor().?;
+    // ── vim: a motion (`gsw`), then a text object (`gsiw`) ──
+    try app.setInputStyle(.vim);
+    _ = try app.applyOps(e, &.{.{ .set_cursor_byte = 0 }});
+    for ("gsw") |ch| try app.handle(.{ .key = .{ .code = .{ .char = ch } } });
+    try testing.expectEqualStrings("(alpha )beta\ngamma", e.buf.editor.bytes());
+    // One undo step: the whole operator goes in one `u`.
+    _ = try app.applyOps(e, &.{.undo});
+    try testing.expectEqualStrings("alpha beta\ngamma", e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{.{ .set_cursor_byte = 7 }});
+    for ("gsiw") |ch| try app.handle(.{ .key = .{ .code = .{ .char = ch } } });
+    try testing.expectEqualStrings("alpha (beta)\ngamma", e.buf.editor.bytes());
+    try testing.expect(e.buf.editor.selection() == null); // the operator clears it
+    _ = try app.applyOps(e, &.{.undo});
+    // ── vim: a visual selection (`V gs`) ──
+    _ = try app.applyOps(e, &.{.{ .set_cursor_byte = 12 }});
+    try app.handle(.{ .key = .{ .code = .{ .char = 'V' } } });
+    for ("gs") |ch| try app.handle(.{ .key = .{ .code = .{ .char = ch } } });
+    try testing.expectEqualStrings("alpha beta\n(gamma)", e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{.undo});
+    // ── standard: the chord over a selection, then over a bare cursor ──
+    try app.setInputStyle(.standard);
+    _ = try app.applyOps(e, &.{ .{ .set_cursor_byte = 0 }, .select_start, .{ .set_cursor_byte = 5 } });
+    try command.runNamed(&app, "user.surround");
+    try testing.expectEqualStrings("(alpha) beta\ngamma", e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{ .undo, .select_clear, .{ .set_cursor_byte = 7 } });
+    try app.handle(.{ .key = .{ .code = .{ .char = 's' }, .mods = .{ .ctrl = true, .shift = true } } });
+    try testing.expectEqualStrings("alpha (beta)\ngamma", e.buf.editor.bytes());
+    // The cursor in a run of whitespace is in no word: nothing happens.
+    _ = try app.applyOps(e, &.{ .undo, .select_clear, .{ .set_cursor_byte = 5 } });
+    try command.runNamed(&app, "user.surround");
+    try testing.expectEqualStrings("alpha beta\ngamma", e.buf.editor.bytes());
+    // Every road handed the same shape of range.
+    try lua.runString("assert(#ranges == 5, #ranges) assert(ranges[2] == '6:10:char', ranges[2]) assert(ranges[3] == '11:16:line', ranges[3])");
+    // A reload drops the claim: `gs` is an unclaimed `g` letter again.
+    try testing.expectEqual(@as(usize, 1), script_ops.count());
+    try lua.reset();
+    try testing.expectEqual(@as(usize, 0), script_ops.count());
+    try testing.expect(app.dyn_commands.get("user.surround") == null);
+}
+
+test "mnml.operator: the argument errors name the shape, and land before anything is registered" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a' }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "keys is a table") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = {}, run = function() end }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`vim` or a `standard`") != null);
+    // A `g` chord vim already uses is refused by name, not left dead.
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gd' }, run = function() end }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "one letter vim does not already use") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'zs' }, run = function() end }"));
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a.b', keys = { vim = 'gs' }, run = function() end }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "bare name") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' } }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`run` is required") != null);
+    // Nothing above registered anything.
+    try testing.expectEqual(@as(usize, 0), script_ops.count());
+    try testing.expectEqual(@as(usize, 0), lua.operators.items.len);
+    try testing.expect(app.dyn_commands.get("user.a") == null);
+    // Registering the same id again replaces the runner and keeps one slot.
+    try lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' }, run = function() end }");
+    try lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' }, run = function() end }");
+    try testing.expectEqual(@as(usize, 1), lua.operators.items.len);
+    try testing.expectEqual(@as(usize, 1), script_ops.count());
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }

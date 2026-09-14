@@ -281,6 +281,53 @@ Without a byte it asks about the cursor's.
 | `mnml.buf.range` | api 1, added |
 | `mnml.buf.word_at` | api 1, added |
 
+### Operators
+
+*(api 1, added)* A text operation the user reaches the way they reach a
+built-in one — `gs{motion}` under the vim profile, a chord under the
+standard one:
+
+```lua
+mnml.operator{ id = "surround", keys = { vim = "gs", standard = "ctrl+shift+s" },
+  run = function(range)
+    local text = mnml.buf.range(range.start, range["end"])
+    mnml.buf.apply{ op = "replace_range", start = range.start, ["end"] = range["end"], text = "(" .. text .. ")" }
+  end }                                         --> "user.surround"
+```
+
+`run` is handed the range in the shape `mnml.buf.selection()` answers —
+`{ start, ["end"], mode }`, bytes, `end` exclusive.
+
+**Under vim it is operator-pending.** `keys.vim` is `g` and one letter,
+and every road a built-in operator's range comes from is the same one
+here: a motion (`gsw`, `gs$`, `gsj`), a text object (`gsiw`, `gsi"`,
+`gsap`), a count (`3gsw`), a mark (`` gs`a ``), a find (`gsf,`), the
+doubled form for whole lines (`gss`, like `gUU`), and a live Visual
+selection (`viw` then `gs`, or `V` then `gs` — `mode` is `"line"`
+there). The operator clears the selection when it is done and Normal
+resumes, exactly as `gU{motion}` does.
+
+The letter must be one vim does not already use. `gd`, `gc`, `gU`, `gq`
+and the rest of vim's own `g` chords are refused by name at
+registration rather than registered and never reached; the free
+letters today are `b h l m o s w y z` and `B C F G H K L M O Q R S V W
+X Y Z`.
+
+**Under standard it is a command.** `keys.standard` is an ordinary
+chord spec, and the operator is a `user.<id>` command like any other —
+in the palette, in `mnml.run`, bindable in `.keys`. It takes the
+selection; with none, the word under the cursor (the `word_at` rule, so
+a cursor in a run of whitespace does nothing). The standard chord is
+bound under both profiles, so a vim user has both roads.
+
+**One undo step.** Whatever `run` applies — one `replace_range`, or
+several ops — a single `u` puts the text back the way it was before the
+chord.
+
+| function | changed in |
+|---|---|
+| `mnml.operator` | api 1, added |
+
 ### Toasts, the statusline
 
 ```lua

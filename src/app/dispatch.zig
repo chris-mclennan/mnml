@@ -2975,6 +2975,20 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
                 else => {},
             };
         },
+        // `gs{motion}`: the ops select the range the way a built-in
+        // operator's motion does, the script is handed it, and the
+        // selection goes — the shape `gU{motion}` has.
+        .script_operator => |so| {
+            _ = try app.applyOps(e, so.ops);
+            const sel = e.buf.editor.selection() orelse return;
+            // The handler says whether the range is whole lines: it has
+            // already left Visual by the time this runs, so the editing
+            // mode no longer carries the shape.
+            const api_mod = @import("../scripting/api.zig");
+            const mode: []const u8 = if (so.linewise) "line" else api_mod.selectionMode(e);
+            try api_mod.runOperatorMode(app, app.script(), so.index, e, sel[0], sel[1], mode);
+            if (app.panes.editor(pane_id)) |live| _ = try app.applyOps(live, &.{.select_clear});
+        },
     }
 }
 

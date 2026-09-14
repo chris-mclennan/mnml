@@ -66,6 +66,15 @@ pub const PickerItem = struct {
     on_accept: ?LuaRef,
 };
 
+/// `mnml.operator{ id, keys, run }` as the state keeps it. The vim
+/// chord lives in `input/script_ops.zig` (the handler's own table); the
+/// standard chord is an ordinary `user.<id>` command, so the palette,
+/// the which-key list and `mnml.run` all find it.
+pub const Operator = struct {
+    id: []u8,
+    run: LuaRef,
+};
+
 /// `mnml.task.run{ cmd, on_done }`: the pane to watch and what to call.
 pub const Task = struct {
     pane: PaneId,
@@ -86,6 +95,8 @@ pub const OriginKind = enum {
     hook,
     segment,
     source,
+    operator,
+    list,
 
     pub fn label(k: OriginKind) []const u8 {
         return switch (k) {
@@ -93,6 +104,8 @@ pub const OriginKind = enum {
             .hook => "hook",
             .segment => "segment",
             .source => "picker",
+            .operator => "operator",
+            .list => "list",
         };
     }
 };
@@ -119,6 +132,8 @@ pub const Summary = struct {
     hooks: u32 = 0,
     segments: u32 = 0,
     sources: u32 = 0,
+    operators: u32 = 0,
+    lists: u32 = 0,
 };
 
 pub const Lua = struct {
@@ -139,6 +154,9 @@ pub const Lua = struct {
     sources: std.ArrayList(PickerSource) = .empty,
     /// The `on_accept` refs of the picker that is open, by row.
     picker_items: std.ArrayList(PickerItem) = .empty,
+    /// `mnml.operator{}`, in registration order — the index is what
+    /// `input/script_ops.zig` and `AppCommand.script_operator` carry.
+    operators: std.ArrayList(Operator) = .empty,
     tasks: std.ArrayList(Task) = .empty,
     hidden_tasks: std.ArrayList(HiddenTask) = .empty,
     /// Everything registered since the last reset, in order.
@@ -171,6 +189,7 @@ pub const Lua = struct {
         self.segments.deinit(self.gpa);
         self.sources.deinit(self.gpa);
         self.picker_items.deinit(self.gpa);
+        self.operators.deinit(self.gpa);
         self.tasks.deinit(self.gpa);
         self.hidden_tasks.deinit(self.gpa);
         self.origins.deinit(self.gpa);
@@ -179,6 +198,10 @@ pub const Lua = struct {
     }
 
     fn openState(self: *Lua) Allocator.Error!void {
+        // The operator table is process-global (the vim handler has no
+        // App): a fresh state starts with an empty one, whatever the
+        // last App in this process left behind.
+        @import("../input/script_ops.zig").clear(self.gpa);
         const L = try State.init(self.gpa);
         self.L = L;
         attach(L, self);
@@ -210,6 +233,9 @@ pub const Lua = struct {
         }
         self.sources.clearRetainingCapacity();
         self.picker_items.clearRetainingCapacity();
+        for (self.operators.items) |o| self.gpa.free(o.id);
+        self.operators.clearRetainingCapacity();
+        @import("../input/script_ops.zig").clear(self.gpa);
         self.tasks.clearRetainingCapacity();
         // A hidden run keeps going; its events find no row and are
         // dropped (`app/script_task.zig`).
@@ -266,6 +292,8 @@ pub const Lua = struct {
             .hook => s.hooks += 1,
             .segment => s.segments += 1,
             .source => s.sources += 1,
+            .operator => s.operators += 1,
+            .list => s.lists += 1,
         };
         return s;
     }
@@ -724,6 +752,22 @@ pub const Lua = struct {
         self.pushRef(r);
         _ = self.L.pushString(label);
         self.pcall(1, 0) catch self.toastError("on_accept");
+    }
+
+    /// A script operator's `run(range)`: the range table is its one
+    /// argument, in the shape `mnml.buf.selection()` answers.
+    pub fn callOperator(self: *Lua, index: u32, start: usize, end: usize, mode: []const u8) void {
+        if (index >= self.operators.items.len) return;
+        const L = self.L;
+        self.pushRef(self.operators.items[index].run);
+        L.createTable(0, 3);
+        L.pushInteger(@intCast(start));
+        L.setField(-2, "start");
+        L.pushInteger(@intCast(end));
+        L.setField(-2, "end");
+        _ = L.pushString(mode);
+        L.setField(-2, "mode");
+        self.pcall(1, 0) catch self.toastError("operator");
     }
 
     /// The picker closed (or a new item list replaces the old): drop the
