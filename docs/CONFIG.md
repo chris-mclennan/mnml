@@ -309,7 +309,9 @@ otherwise. Copy what you need; leave the rest out.
         // in the pane) — `~` expands, a relative path sits under the data
         // root beside the default `ai_token`; `active` marks the one the
         // chip shows alone (the CLI's live login wins when the keychain
-        // names one). No entries = one `default` account on `ai_token`.
+        // names one). No entries = one `default` account on `ai_token` — or
+        // the 0.2.x `[[ai.claude.accounts]]` blocks, which the migration keeps
+        // verbatim as `.ai.claude.accounts` and the reader honours as-is.
         // MNML_CLAUDE_USAGE_FIXTURE=<dir> replaces the wire with files (the
         // tests, the spec dumps; see src/ai/usage.zig).
         .claude_accounts = .{

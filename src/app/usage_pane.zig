@@ -164,10 +164,40 @@ pub fn tzOffset(app: *App, secs: u64) i64 {
 }
 
 /// The configured accounts, resolved: the fixture's `accounts` file
-/// when it has one, else the config's list.
+/// when it has one, else `.ai.claude_accounts`, else the 0.2.x
+/// `[[ai.claude.accounts]]` blocks as the migration left them
+/// (`.ai.claude.accounts`, kept verbatim under `extra`).
 pub fn configured(app: *App, arena: Allocator) Allocator.Error![]usage.AccountCfg {
     if (fixtureDir(app)) |dir| if (try usage.fixtureAccounts(arena, app.io, dir)) |list| return list;
+    if (app.cfg.ai.claude_accounts.len == 0) if (try accountsFromExtra(arena, app.cfg.ai.extra)) |list| return usage.accountsFromConfig(arena, list, app.data_root, app.homeDir());
     return usage.accountsFromConfig(arena, app.cfg.ai.claude_accounts, app.data_root, app.homeDir());
+}
+
+/// `.ai.claude.accounts` off the verbatim tree: `name` / `token_path`
+/// strings, an `active` bool. Null when the tree has no such list.
+fn accountsFromExtra(arena: Allocator, extra: app_mod.Config.Dynamic) Allocator.Error!?[]app_mod.Config.ClaudeAccount {
+    const claude = extra.get("claude") orelse return null;
+    const accounts = claude.get("accounts") orelse return null;
+    const items = switch (accounts) {
+        .array => |a| a,
+        else => return null,
+    };
+    var out: std.ArrayListUnmanaged(app_mod.Config.ClaudeAccount) = .empty;
+    for (items) |it| {
+        if (it != .object) continue;
+        var acc: app_mod.Config.ClaudeAccount = .{};
+        if (it.get("name")) |n| if (n == .string) {
+            acc.name = n.string;
+        };
+        if (it.get("token_path")) |p| if (p == .string) {
+            acc.token_path = p.string;
+        };
+        if (it.get("active")) |a| if (a == .bool) {
+            acc.active = a.bool;
+        };
+        try out.append(arena, acc);
+    }
+    return if (out.items.len == 0) null else out.items;
 }
 
 fn iconEnabled(app: *const App, id: []const u8) bool {
@@ -851,6 +881,9 @@ test "the pane's states: fetching, not linked, needs re-auth with the guided ste
     txt = try screen_mod.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, "no data yet · last error: not linked") != null);
+    // Backed off on our side, not the server's: no 429 wording.
+    try t.expect(std.mem.indexOf(u8, txt, "next fetch in 600s") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "(429)") == null);
     try t.expect(std.mem.indexOf(u8, txt, "token expired — needs re-auth") != null);
     try t.expect(std.mem.indexOf(u8, txt, "1. press L to run `claude login` (as locked)") != null);
     try t.expect(std.mem.indexOf(u8, txt, "2. press R to capture it from the keychain") != null);
@@ -904,6 +937,30 @@ test "the chip reads the same accounts: single, compact and ticker, the detail a
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, " P 95% 52% ") != null);
     try t.expect(std.mem.indexOf(u8, txt, " 1.2M ") != null);
+}
+
+test "the 0.2.x [[ai.claude.accounts]] blocks, migrated verbatim under .ai.claude.accounts, are the account list" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/w", .data_root = "/data" });
+    defer app.deinit();
+    const D = app_mod.Config.Dynamic;
+    const personal = [_]D.Field{ .{ .name = "name", .value = .{ .string = "personal" } }, .{ .name = "token_path", .value = .{ .string = "ai_token.personal" } } };
+    const work = [_]D.Field{ .{ .name = "active", .value = .{ .bool = true } }, .{ .name = "name", .value = .{ .string = "work" } }, .{ .name = "token_path", .value = .{ .string = "~/.claude/work.json" } } };
+    const list = [_]D{ .{ .object = &personal }, .{ .object = &work } };
+    const accounts = [_]D.Field{.{ .name = "accounts", .value = .{ .array = &list } }};
+    const claude = [_]D.Field{.{ .name = "claude", .value = .{ .object = &accounts } }};
+    app.cfg.ai.extra = .{ .object = &claude };
+    const cfg = try configured(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 2), cfg.len);
+    try t.expectEqualStrings("personal", cfg[0].name);
+    try t.expectEqualStrings("/data/ai_token.personal", cfg[0].token_path);
+    try t.expect(!cfg[0].active and cfg[1].active);
+    try t.expectEqualStrings("work", cfg[1].name);
+    // The typed list wins when it is there.
+    const typed = [_]app_mod.Config.ClaudeAccount{.{ .name = "solo", .token_path = "tok", .active = true }};
+    app.cfg.ai.claude_accounts = &typed;
+    const cfg2 = try configured(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 1), cfg2.len);
+    try t.expectEqualStrings("solo", cfg2[0].name);
 }
 
 test "the cadence: one spawn per tick with the gap, the backed-off account skipped, a force spawns all" {

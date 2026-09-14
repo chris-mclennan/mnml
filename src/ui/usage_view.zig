@@ -167,8 +167,13 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
             if (sc.resets_at > 0) try rows.append(a, .{ .gutter = g, .body = .{ .spans = try resetRow(a, sc.resets_at, props.tz, true, muted) } });
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         }
+        // A 429 is the server's own cooldown; any other failure backs
+        // off on our side, and the row says which.
         if (u.retry_after_at > props.now) {
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Anthropic asked us to retry in {d}s (429)", .{u.retry_after_at - props.now}), .style = yellow }}) } });
+            const remaining = u.retry_after_at - props.now;
+            const throttled = if (u.last_error) |e| std.mem.startsWith(u8, e, "HTTP 429") else false;
+            const text = if (throttled) try std.fmt.allocPrint(a, "  Anthropic asked us to retry in {d}s (429)", .{remaining}) else try std.fmt.allocPrint(a, "  next fetch in {d}s", .{remaining});
+            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = text, .style = if (throttled) yellow else muted }}) } });
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         }
         if (u.needs_reauth) {
