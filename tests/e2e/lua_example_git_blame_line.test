@@ -1,0 +1,34 @@
+# Lua (D10): the shipped example
+# `docs/examples/scripts/git-blame-line.lua`, run as it is written —
+# the file is copied into the workspace's init.lua, so a change to the
+# example that breaks it fails here. `MNML_REPO` is the runner's own
+# cwd (a shell resets `PWD` to its own, so the header carries it in).
+#
+# The workspace is made a real repo with one commit, so `git blame`
+# has something to answer: the author's name and a relative date at
+# the end of the cursor's line, 300 ms after the cursor stops.
+# env: MNML_REPO=${PWD}
+# env: GIT_CONFIG_GLOBAL=/dev/null
+# env: GIT_CONFIG_SYSTEM=/dev/null
+shell printf 'alpha\nbeta\ngamma\n' > notes.txt
+shell git init -q -b main . && git config user.email tester@example.com && git config user.name "Tester Ttt" && git add notes.txt && git commit -qm first
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/git-blame-line.lua" .mnml/init.lua
+command script.reload
+expect screen contains "scripts: reloaded — 0 commands, 2 hooks"
+open notes.txt
+# `cursor_idle` fires 300 ms after the cursor stops; the blame lands
+# after git answers.
+wait 400
+expect screen contains "Tester Ttt"
+expect screen contains "seconds ago"
+# It follows the cursor: line 3 is blamed on the same commit, and the
+# label moves to it.
+key down
+key down
+wait 400
+expect screen contains "gamma   Tester Ttt"
+# A file git knows nothing about gets no label.
+write scratch.txt "nothing here\n"
+open scratch.txt
+wait 400
+expect screen lacks "Tester Ttt"

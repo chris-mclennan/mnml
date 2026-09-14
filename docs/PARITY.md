@@ -38,15 +38,17 @@ line), not by hand.
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
 | UI & theming | 84 | 0 | 3 | 0 | 87 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 49 | 0 | 2 | 0 | 51 |
+| Headless, IPC & extensibility | 51 | 0 | 2 | 0 | 53 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **535** | **0** | **9** | **0** | **544** |
+| **total** | **537** | **0** | **9** | **0** | **546** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
 table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
-and bridge v2 — the last two beyond the Rust list.
+and bridge v2 — the last two beyond the Rust list. Two more since: the
+Lua decorations + diagnostics sink and the idle hook / hidden task that
+the two shipped example scripts are written against, both Zig-authored.
 
 Ids: 1039 in `src/commands/specs.zig` (the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1039 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
 
@@ -786,6 +788,8 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | `zig build check` (E7 gates) | done | `build.zig`, `tools/break-check.sh`, `tests/e2e/defaults.test` | fmt → Debug tests → ReleaseSafe tests → the gate → the width sweep → `defaults.test` → the full corpus; Zig-only |
 | Session file `.mnml/session.zon` | done | `src/app/session.zig` | ZON, never JSON |
 | Lua scripting — `.mnml/init.lua`, the `mnml` table | done | `src/scripting/lua.zig`, `src/scripting/api.zig`, `script.reload` / `script.edit_init`, the `init_lua` trust sink | beyond the Rust list (D10); a 20 ms budget per entry |
+| Lua decorations + the diagnostics sink — `mnml.decor.*`, `mnml.diagnostics.*` | done | `src/app/script_decor.zig`, the `mnml.decor` / `mnml.diagnostics` blocks of `src/scripting/api.zig`, `applyLuaDiagnostics` in `src/app/lsp.zig`, `LineGround` / `VirtualLine.below` / `GutterMark.priority` in `src/ui/editor_view.zig` | Zig-authored — the Rust editor has no script decorations. Four decorations in a namespace the script owns (virtual text at `eol` / `above` / `below`, a gutter sign with a priority, a role over a byte range, a whole-row ground), anchored to bytes that follow every edit; a namespace goes with `script.reload`. The sink is a fourth source on the per-file diagnostics keyed by `(namespace, path)`, so the gutter, the squiggle, the statusline count, the DIAGNOSTICS panel and `]d` show a script's findings under its own `source`. `docs/LUA.md`; `tests/e2e/lua_decor.test`, `lua_diagnostics_sink.test` |
+| Lua `cursor_idle` hook; `mnml.task.run{ hidden, on_line }` | done | `src/app/idle.zig`, `src/app/script_task.zig`, `Hook.cursor_idle` in `src/core/hooks.zig` | Zig-authored. `cursor_idle` fires 300 ms after the cursor stops, once per resting place; `buffer_change`, documented since D10 and emitted nowhere, fires too. A `hidden` task has no pane and streams its output to `on_line` a line at a time (stderr merged in, 5000 lines of 4 KiB capped). The two shipped examples are the acceptance: `docs/examples/scripts/{git-blame-line,eslint}.lua`, `tests/e2e/lua_example_git_blame_line.test`, `lua_example_eslint.test` |
 | Bridge v2 — `Pane.mount` over a socket | done | `src/bridge/host.zig` / `wire.zig`, `src/app/mount_pane.zig`, `mount.open` | beyond the Rust list; the SDK is `sdk/mnml-sdk` |
 
 ## Languages

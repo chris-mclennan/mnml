@@ -1703,6 +1703,94 @@ test "the budget applies to a decoration set in a hot loop" {
     try testing.expect(app.script_decor.items.items.len <= script_decor.max_items);
 }
 
+test "docs/examples/scripts/git-blame-line.lua loads, asks git on cursor_idle and paints what comes back" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const lua = app.script();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/git-blame-line.lua", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(src);
+    lua.runString(src) catch |err| {
+        std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expectEqual(@as(usize, 1), app.hooks.count(.cursor_idle));
+    // A pane with no path (a scratch buffer) asks nothing and errors
+    // on nothing.
+    _ = try app.openScratchWith("alpha\nbeta\n");
+    app.hooks.emit(&app, .{ .cursor_idle = .{ .pane = app.active.?, .line = 1 } });
+    try testing.expectEqual(@as(usize, 0), app.script_decor.items.items.len);
+    try testing.expect(app.lastToast() == null);
+    // Feed the script the shape `git blame --date=relative` prints,
+    // through the same `on_line` / `on_done` the task would.
+    try lua.runString(
+        \\seen = nil
+        \\mnml.task.run = function(o)
+        \\  seen = o.cmd
+        \\  o.on_line("^0d9ac1f (Chris McLennan 3 days ago 1) alpha")
+        \\  o.on_done({ ok = true, code = 0 })
+        \\  return 1
+        \\end
+        \\mnml.buf.path = function() return "src/main.zig" end
+    );
+    app.hooks.emit(&app, .{ .cursor_idle = .{ .pane = app.active.?, .line = 2 } });
+    try lua.runString("assert(seen and seen:find('git blame %-L 2,2'), tostring(seen))");
+    try testing.expectEqual(@as(usize, 1), app.script_decor.items.items.len);
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "Chris McLennan 3 days ago") != null);
+    // The same line again asks nothing more.
+    try lua.runString("seen = nil");
+    app.hooks.emit(&app, .{ .cursor_idle = .{ .pane = app.active.?, .line = 2 } });
+    try lua.runString("assert(seen == nil, 'asked twice for one line')");
+}
+
+test "docs/examples/scripts/eslint.lua loads and turns compact output into diagnostics on save" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/eslint.lua", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(src);
+    lua.runString(src) catch |err| {
+        std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    // The task is faked so the test does not need eslint installed;
+    // the parsing and the sink are the example's own.
+    try lua.runString(
+        \\mnml.task.run = function(o)
+        \\  cmd = o.cmd
+        \\  o.on_line("app.js: line 3, col 5, Warning - 'x' is assigned but never used (no-unused-vars)")
+        \\  o.on_line("app.js: line 9, col 1, Error - 'y' is not defined (no-undef)")
+        \\  o.on_line("2 problems")
+        \\  o.on_done({ ok = false, code = 1 })
+        \\end
+    );
+    // A `.zig` save is not eslint's business.
+    app.hooks.emit(&app, .{ .save_post = .{ .path = "main.zig", .pane = 0, .bytes = 4 } });
+    try lua.runString("assert(cmd == nil)");
+    app.hooks.emit(&app, .{ .save_post = .{ .path = "app.js", .pane = 0, .bytes = 4 } });
+    try lua.runString("assert(cmd:find('eslint'), tostring(cmd))");
+    const list = lsp_app.diagnosticsFor(&app, "/tmp/app.js");
+    try testing.expectEqual(@as(usize, 2), list.len);
+    try testing.expectEqual(types.Severity.warning, list[0].severity);
+    try testing.expectEqual(@as(u32, 2), list[0].range.start.line);
+    try testing.expectEqual(@as(u32, 4), list[0].range.start.character);
+    try testing.expectEqualStrings("eslint", list[0].source.?);
+    try testing.expect(std.mem.indexOf(u8, list[0].message, "no-unused-vars") != null);
+    try testing.expectEqual(types.Severity.err, list[1].severity);
+    // A clean run replaces the list with nothing.
+    try lua.runString(
+        \\mnml.task.run = function(o) o.on_done({ ok = true, code = 0 }) end
+    );
+    app.hooks.emit(&app, .{ .save_post = .{ .path = "app.js", .pane = 0, .bytes = 4 } });
+    try testing.expectEqual(@as(usize, 0), lsp_app.diagnosticsFor(&app, "/tmp/app.js").len);
+}
+
 test "docs/examples/init.lua loads and its surfaces are all there" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
     defer app.deinit();

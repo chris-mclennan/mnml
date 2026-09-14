@@ -1,0 +1,33 @@
+# Lua (D10): the four decorations. A workspace init.lua — the runner's
+# temp workspace is trusted — paints virtual text at a line's end, a
+# virtual row above and one below, a gutter sign and a whole-row ground,
+# all in one namespace. They are anchored to the text: a line typed
+# above carries them down, and `script.reload` drops the namespace.
+write notes.txt "alpha\nbeta\ngamma\n"
+write .mnml/init.lua "mnml.command{ id = 'paint', run = function()\n  local ns = mnml.decor.namespace('demo')\n  local pane = mnml.pane.active()\n  mnml.decor.virtual_text(ns, pane, 1, { { text = '  <<eol', fg = 'muted' } })\n  mnml.decor.virtual_text(ns, pane, 2, 'ROW-ABOVE', { at = 'above' })\n  mnml.decor.virtual_text(ns, pane, 2, 'ROW-BELOW', { at = 'below' })\n  mnml.decor.gutter(ns, pane, 3, '!', { fg = 'accent' })\n  mnml.decor.line(ns, pane, 3, 'match')\n  mnml.decor.highlight(ns, pane, 0, 5, 'match')\nend }\nmnml.command{ id = 'wipe', run = function()\n  local n = mnml.decor.clear(mnml.decor.namespace('demo'))\n  mnml.toast('cleared ' .. n)\nend }\n"
+command script.reload
+open notes.txt
+command user.paint
+expect screen contains "alpha  <<eol"
+expect screen contains "ROW-ABOVE"
+expect screen contains "ROW-BELOW"
+expect screen contains "!  3 gamma"
+# Anchored, not line numbers: a line typed above line 1 takes every
+# decoration with its own text.
+key ctrl+home
+type "zero"
+key enter
+expect screen contains "alpha  <<eol"
+expect screen contains "ROW-ABOVE"
+expect screen contains "!  4 gamma"
+# The namespace's own clear takes all six.
+command user.wipe
+expect screen contains "cleared 6"
+expect screen lacks "<<eol"
+expect screen lacks "ROW-ABOVE"
+# And a reload drops the namespace with the Lua state.
+command user.paint
+expect screen contains "ROW-BELOW"
+command script.reload
+expect screen lacks "ROW-BELOW"
+expect screen lacks "<<eol"

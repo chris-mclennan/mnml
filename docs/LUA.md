@@ -101,8 +101,14 @@ buffer) and reloads the scripts, so the chord works at once.
 
 ## Reference
 
-Arguments are checked; a wrong shape raises a Lua error naming the field.
-`fn` is any Lua function. Strings are UTF-8 bytes.
+Arguments are checked; a wrong shape raises a Lua error naming the field
+and the shape it wanted. `fn` is any Lua function. Strings are UTF-8
+bytes.
+
+**Changed in.** `api = 1` is the contract, and it is still changing: a
+function or a field marked *(api 1, added)* arrived after the first `1`
+shipped. Nothing has been removed or changed in place; when `1` is
+frozen this page says so.
 
 ### Commands and keys
 
@@ -144,6 +150,7 @@ The payload `a` is a flat table with the hook's fields plus `hook = "<name>"`:
 | `save_pre` | `path`, `pane` | before the bytes are written |
 | `save_post` | `path`, `pane`, `bytes` | after |
 | `buffer_change` | `pane`, `line_count` | 150 ms after the last edit |
+| `cursor_idle` | `pane`, `line` (1-based) | 300 ms after the cursor last moved, once per resting place *(api 1, added)* |
 | `diagnostics` | `path`, `errors`, `warnings` | a language server published |
 | `pane_focus` | `pane` (nil when nothing is focused) | focus moved |
 | `lsp_attach` | `server`, `pane` | a server took a buffer |
@@ -300,12 +307,129 @@ The wheel arrives as `wheel_up` / `wheel_down`.
 ```lua
 mnml.task.run{ cmd = "zig build", cwd = "sub/dir", label = "build",
                on_done = function(r) … end }   --> the pane id
+mnml.task.run{ cmd = "eslint --format compact -- app.js", hidden = true,
+               on_line = function(text) … end,
+               on_done = function(r) … end }   --> the run's id
 ```
 
 The one way a script reaches the shell. `cmd` runs through `/bin/sh -c` in
 a task pane below the active one, at `cwd` (workspace-relative or absolute;
 the workspace by default). `on_done{ ok, code }` — or `{ ok = false,
 signal }` — fires from the app's tick once the child exits.
+
+**`hidden = true`** *(api 1, added)* runs it with **no pane at all** and
+hands its output to **`on_line(text)`** *(api 1, added)*, a line at a time
+as it arrives — the shape a tool wrapper wants, where the output is only
+ever parsed. A hidden run's stderr is merged into its stdout (there is no
+pane to read it in), its lines arrive stripped of the newline, and it is
+capped at 5000 lines of 4 KiB each; past that the run still finishes and
+still calls `on_done`. Each `on_line` is its own entry into the script, so
+the 20 ms budget applies per line, not per run. `on_line` without `hidden`
+is an error: a visible task's output is its pane.
+
+### Decorations
+
+*(api 1, added)* Everything visible a script adds to an editor is one of
+four decorations. They live in a **namespace** the script owns, so it can
+clear its own without touching anyone else's.
+
+```lua
+local ns = mnml.decor.namespace("blame")            -- one per concern
+mnml.decor.virtual_text(ns, pane, line, { { text = "  chris · 3d ago", fg = "muted" } }, { at = "eol" })
+mnml.decor.gutter(ns, pane, line, "▎", { fg = "accent", priority = 50 })
+mnml.decor.highlight(ns, pane, start_byte, end_byte, "match")
+mnml.decor.line(ns, pane, line, "cursor_line")
+mnml.decor.clear(ns, pane)        --> how many went; without a pane, all of them
+```
+
+`ns` is the handle `namespace(name)` answers with — the same name always
+gives the same handle until the next reload. `pane` is a pane id (as
+`mnml.pane.active()` returns) and must name an **editor**; nil means the
+active pane. `line` is 1-based, as `mnml.buf.line` and `mnml.buf.cursor`
+count; `start_byte` / `end_byte` are 0-based bytes, `end_byte` exclusive.
+A role is a theme role name — the same list script panes use, and an
+unknown one paints plain. A wrong argument raises an error naming the
+argument and the shape it wanted.
+
+`segments` is the script pane's segment shape: a string, or a list of
+strings and `{ text=, fg=, bg=, bold=, italic=, underline= }` tables.
+
+| function | changed in |
+|---|---|
+| `mnml.decor.namespace` | api 1, added |
+| `mnml.decor.virtual_text` | api 1, added |
+| `mnml.decor.gutter` | api 1, added |
+| `mnml.decor.highlight` | api 1, added |
+| `mnml.decor.line` | api 1, added |
+| `mnml.decor.clear` | api 1, added |
+
+`at` says where the text goes:
+
+| `at` | where |
+|---|---|
+| `"eol"` (the default) | after the line's last cell, clipped at the pane's right edge |
+| `"above"` | a virtual row above the line |
+| `"below"` | a virtual row below the line |
+
+A virtual row is counted by the scroll math and never carries the cursor:
+`j` / `k` move by text lines, so they step over it, exactly as they do
+over a code lens.
+
+**A decoration is data, not a callback.** The renderer reads what is
+there; Lua is never entered from the paint loop, which is why the 20 ms
+budget cannot be spent painting. Set your decorations from a hook
+(`cursor_idle`, `save_post`, a task's `on_done`) and leave them.
+
+**They follow the text.** Every decoration is anchored to a byte, not to
+a line number, and the anchor moves with each edit: a line inserted
+**above** a decorated line takes the decoration down with its own text,
+an edit that **deletes** the line the decoration named takes the
+decoration with it, and an **undo** — a change the edit log cannot
+describe — puts back what it removed, decorations included. A pane that
+opens another file drops what was painted about the old one.
+
+**The sign column is shared**, so a gutter mark carries a `priority`
+(0…255) and the highest wins the cell:
+
+| priority | who |
+|---|---|
+| 90 | the debugger's breakpoints and its ▶ stop marker |
+| 60 | a diagnostic's severity dot |
+| **50** | **`mnml.decor.gutter`'s default** |
+| 10 | git's change bars (which sit in the gutter's other column anyway) |
+
+A namespace holds at most 10000 decorations across the workspace; past
+that a set is an error naming the cap. `script.reload` drops every
+namespace with the Lua state.
+
+### Diagnostics
+
+*(api 1, added)* A script publishes findings the way a language server
+does, and the editor treats them identically — the gutter dot, the
+squiggle, the statusline count, the DIAGNOSTICS panel and `]d` / `[d`,
+with `source` as the origin:
+
+```lua
+mnml.diagnostics.set(ns, "src/app.js", {
+  { line = 12, col = 5, end_col = 9, severity = "warning", message = "unused", source = "eslint" },
+})
+mnml.diagnostics.clear(ns, "src/app.js")   -- without a path: every file's
+```
+
+`path` is workspace-relative (or absolute). `line` and `col` are 1-based;
+`end_col` defaults to one column past `col`. `severity` is `"error"`,
+`"warning"`, `"info"` or `"hint"` (`"error"` by default). `message` is
+required; `source` is what the panel and `]d` name as the origin.
+
+| function | changed in |
+|---|---|
+| `mnml.diagnostics.set` | api 1, added |
+| `mnml.diagnostics.clear` | api 1, added |
+
+The store is keyed by `(namespace, path)`: a set **replaces this
+namespace's list for that file** and leaves every other namespace's — and
+the language server's — alone. An empty list is how a run that found
+nothing clears what the last one found. A reload clears them all.
 
 ### The config, the workspace
 
@@ -325,6 +449,50 @@ become strings, optionals nil, lists 1-based. A path into a list uses a
 1-based index (`lsp.rust.extensions.2`). Nothing a script changes in the
 returned table reaches the config.
 
+## Recipes
+
+Two scripts that ship with mnml, each the whole of one shape. They live
+under `docs/examples/scripts/`; paste one into your `init.lua`
+(`script.edit_init`) and reload. Each is driven by a `.test` that runs
+the file as it is written, so a change that breaks one fails the suite.
+
+### `git-blame-line` — who last touched this line
+
+`docs/examples/scripts/git-blame-line.lua` (56 lines). Virtual text at
+the end of the cursor's line, refreshed when the cursor stops
+(`cursor_idle`) and when a pane takes focus (`pane_focus`), from a
+hidden `git blame` run:
+
+```
+   1 alpha   Tester Ttt 1 second ago
+   2 beta
+   3 gamma
+```
+
+The pieces worth stealing: one namespace per concern, so the clear is
+safe; `pcall` around `mnml.buf.path` because not every focused pane is
+an editor; and a `<path>:<line>` key so the same line is never asked
+about twice and two runs are never in flight at once.
+
+### `eslint` — a tool wrapper into the diagnostics sink
+
+`docs/examples/scripts/eslint.lua` (45 lines). On `save_post` for a
+`.js` / `.jsx` / `.ts` / `.tsx` file it runs `eslint --format compact`
+as a hidden task, turns each output line into a diagnostic and publishes
+the lot under its own namespace:
+
+```
+●  1 //const x = 1;                     │ DIAGNOSTICS (2)
+   2 const y = 2;                       │ ⚠ 'x' is assigned …  … app.js:1
+●  3 const z = 3;                       │ ✗ 'z' is not defin…  … app.js:3
+```
+
+`]d` then says `warning (eslint): 'x' is assigned a value but never
+used`. The pieces worth stealing: `hidden = true` because there is
+nothing to watch, a `on_line` parse that simply ignores what does not
+match (the tool's summary line), and a `set` on every run — including
+the empty one that clears a file the tool is now happy with.
+
 ## What is deliberately not there
 
 - No `os`, `io`, `package`, `debug`; no `require`, `dofile`, `loadfile`.
@@ -341,3 +509,15 @@ returned table reaches the config.
 contains …`. The `.test` runner's temp workspace is trusted, so the
 workspace file runs. Unit tests reach the state as `app.script()` and run
 chunks with `runString`.
+
+A test that drives a script **file** rather than an inline one copies it
+in with a `shell` step; the repo root reaches the step through the
+header, because a shell resets `PWD` to its own cwd:
+
+```
+# env: MNML_REPO=${PWD}
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint.lua" .mnml/init.lua
+```
+
+`tests/e2e/lua_example_eslint.test` and `lua_example_git_blame_line.test`
+do exactly that, which is what keeps the two recipes above true.
