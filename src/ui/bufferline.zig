@@ -153,6 +153,64 @@ pub const restore_glyph = "\u{F066}";
 pub const restore_ascii = "]";
 pub const dirty_dot = "\u{25CF}";
 
+// ─── the marks a pty tab wears ──────────────────────────────────────────
+
+/// The AI products' own marks — mnml's glyphs in its private block, the
+/// codepoints the Rust editor pins on the `claude_code` / `codex` rows
+/// (`config.rs`, which rewrites any other value on load). A pane
+/// running one of them wears its mark in the pane's accent; the ai
+/// usage pane wears the same pair.
+pub const claude_glyph = "\u{F1E00}";
+pub const claude_ascii = "\u{2733}";
+pub const codex_glyph = "\u{F1E01}";
+pub const codex_ascii = "\u{25C8}";
+
+/// The terminal mnml is running inside, for a shell pane's tab: the
+/// name it goes by and the mark it wears. Nerd Fonts carries no brand
+/// glyph for any terminal emulator, so each row takes the nearest mark
+/// the catalog does have — the ghost, the cat, Apple's apple — and
+/// every unknown one the plain codicon terminal.
+pub const Terminal = struct {
+    label: []const u8,
+    glyph: []const u8,
+    fallback: []const u8,
+};
+
+pub const terminal_generic: Terminal = .{ .label = "terminal", .glyph = term_glyph, .fallback = term_ascii };
+/// nf-cod-terminal_cmd. Windows Terminal sets no `TERM_PROGRAM` on
+/// older builds — `WT_SESSION` is the one it has always set.
+pub const terminal_windows: Terminal = .{ .label = "Windows Terminal", .glyph = "\u{EBC4}", .fallback = "$" };
+
+/// `$TERM_PROGRAM` as each terminal spells it, in the order a lookup
+/// walks (the first match wins; the compare ignores case).
+const terminals = [_]struct { program: []const u8, term: Terminal }{
+    // nf-md-ghost — Ghostty's ghost.
+    .{ .program = "ghostty", .term = .{ .label = "ghostty", .glyph = "\u{F02A0}", .fallback = "$" } },
+    // nf-fa-cat — kitty's cat.
+    .{ .program = "kitty", .term = .{ .label = "kitty", .glyph = "\u{EEED}", .fallback = "$" } },
+    // nf-dev-terminal.
+    .{ .program = "WezTerm", .term = .{ .label = "WezTerm", .glyph = "\u{E795}", .fallback = "$" } },
+    // nf-dev-apple.
+    .{ .program = "iTerm.app", .term = .{ .label = "iTerm", .glyph = "\u{E711}", .fallback = "$" } },
+    // nf-fa-apple.
+    .{ .program = "Apple_Terminal", .term = .{ .label = "Terminal", .glyph = "\u{F179}", .fallback = "$" } },
+    .{ .program = "WindowsTerminal", .term = terminal_windows },
+};
+
+/// The terminal `$TERM_PROGRAM` names. `WT_SESSION` stands in only
+/// where `TERM_PROGRAM` says nothing — a Windows Terminal old enough
+/// to set neither `TERM_PROGRAM` nor a shell that overrides it. A
+/// `TERM_PROGRAM` nobody here knows, and no variable at all, both
+/// leave the plain one.
+pub fn terminalFor(term_program: ?[]const u8, wt_session: ?[]const u8) Terminal {
+    if (term_program) |tp| if (tp.len > 0) {
+        for (&terminals) |row| if (std.ascii.eqlIgnoreCase(row.program, tp)) return row.term;
+        return terminal_generic;
+    };
+    if (wt_session != null) return terminal_windows;
+    return terminal_generic;
+}
+
 // ─── one chip ───────────────────────────────────────────────────────────
 
 /// The name as it will paint: cut to `name_cap`.
@@ -844,6 +902,42 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     try testing.expect(h.fgEql(10, 0, .{ .fg = h.theme.palette.cyan }));
     // The ASCII twins of the test glyphs are spelled beside them.
     try testing.expect(rust_ascii.len + diff_ascii.len + preview_ascii.len > 0);
+}
+
+test "the marks a pty tab wears: one per terminal `$TERM_PROGRAM` names, `WT_SESSION` for Windows Terminal, the codicon for the rest; every one has its `--ascii` twin" {
+    // The name and the mark, per terminal — each codepoint spelled on
+    // its own `expect` line, so the audit reads it as a test of a
+    // glyph and not as a second, twinless site for the same mark.
+    try testing.expectEqualStrings("ghostty", terminalFor("ghostty", null).label);
+    try testing.expectEqualStrings("\u{F02A0}", terminalFor("ghostty", null).glyph);
+    try testing.expectEqualStrings("kitty", terminalFor("kitty", null).label);
+    try testing.expectEqualStrings("\u{EEED}", terminalFor("kitty", null).glyph);
+    try testing.expectEqualStrings("WezTerm", terminalFor("WezTerm", null).label);
+    try testing.expectEqualStrings("\u{E795}", terminalFor("WezTerm", null).glyph);
+    try testing.expectEqualStrings("iTerm", terminalFor("iTerm.app", null).label);
+    try testing.expectEqualStrings("\u{E711}", terminalFor("iTerm.app", null).glyph);
+    try testing.expectEqualStrings("Terminal", terminalFor("Apple_Terminal", null).label);
+    try testing.expectEqualStrings("\u{F179}", terminalFor("Apple_Terminal", null).glyph);
+    try testing.expectEqualStrings("Windows Terminal", terminalFor("WindowsTerminal", null).label);
+    try testing.expectEqualStrings("\u{EBC4}", terminalFor("WindowsTerminal", null).glyph);
+    // No two terminals wear the same mark.
+    for (&terminals, 0..) |a, i| for (terminals[i + 1 ..]) |b| try testing.expect(!std.mem.eql(u8, a.term.glyph, b.term.glyph));
+    // The compare ignores case, as the variable's spelling drifts.
+    try testing.expectEqualStrings("ghostty", terminalFor("Ghostty", null).label);
+    try testing.expectEqualStrings("WezTerm", terminalFor("wezterm", null).label);
+    // Nothing known, and nothing at all: the plain codicon terminal.
+    try testing.expectEqualStrings("terminal", terminalFor("Hyper", null).label);
+    try testing.expectEqualStrings(term_glyph, terminalFor(null, null).glyph);
+    // Windows Terminal is the one that answers on a second variable —
+    // but only where `TERM_PROGRAM` says nothing at all.
+    try testing.expectEqualStrings("Windows Terminal", terminalFor(null, "abc-123").label);
+    try testing.expectEqualStrings("Windows Terminal", terminalFor("", "abc-123").label);
+    try testing.expectEqualStrings("terminal", terminalFor("Hyper", "abc-123").label);
+    // Every mark has a twin, and the products' marks are mnml's own.
+    for (&terminals) |row| try testing.expect(row.term.fallback.len > 0);
+    try testing.expectEqualStrings(term_ascii, terminal_generic.fallback);
+    try testing.expect(claude_ascii.len > 0 and codex_ascii.len > 0);
+    try testing.expect(!std.mem.eql(u8, claude_glyph, codex_glyph));
 }
 
 test "slots follow the painted order at natural widths" {
