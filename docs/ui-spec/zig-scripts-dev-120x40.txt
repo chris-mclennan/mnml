@@ -26,7 +26,7 @@
    │                          │                                    ^B     toggle tree
    │                          │                                        ^Q     quit
    │                          │
-   │                          │                              mnml 0.3.0-dev+g0bd09e5-dirty
+   │                          │                                 mnml 0.3.0-dev+gcd87ce6
    │                          │
    │──────────────────────────│
    │ Scripts                ⋮ │
@@ -36,5 +36,5 @@
    │ cycles focus.            │
   │                          │
    │                          │
- TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    18:25  ws   —
+ TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    19:40  ws   —
 
