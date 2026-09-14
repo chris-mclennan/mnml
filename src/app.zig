@@ -506,6 +506,9 @@ pub const Overlay = union(enum) {
         /// Parallel to `labels` (or empty): Rust's `score_bonus`, added
         /// to the fuzzy score (the palette's pane-scoped +20).
         score_bonus: []i64 = &.{},
+        /// Parallel to `labels` (or empty): the tie-break before index
+        /// (the palette's recents, newest first; `Picker.RankOpts.order`).
+        order: []u32 = &.{},
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
         /// The themes picker previews as the cursor moves; Esc puts
@@ -552,6 +555,7 @@ pub const Overlay = union(enum) {
                 gpa.free(p.hints);
                 gpa.free(p.priority);
                 gpa.free(p.score_bonus);
+                gpa.free(p.order);
                 p.filtered.deinit(gpa);
             },
         }
@@ -927,6 +931,12 @@ pub const App = struct {
     recent: std.ArrayListUnmanaged([]u8) = .empty,
     /// The `:` lines run, oldest first (`q:`). Owned.
     cmd_history: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The ids of the commands that ran, newest first, de-duplicated,
+    /// at most `max_recent_commands` (Rust's `recent_commands`):
+    /// `picker.recent_commands` lists them and the empty palette pins
+    /// them first, `★`-marked. `command.run` notes each success;
+    /// `session.zon` keeps the list.
+    recent_commands: std.ArrayListUnmanaged([]u8) = .empty,
     screen: vaxis.Screen,
     /// Rows / text columns of the active pane at the last render; they
     /// size page motions and the wrap width.
@@ -1082,6 +1092,7 @@ pub const App = struct {
     pub const max_closed_tabs = 8;
     pub const max_recent = 50;
     pub const max_cmd_history = 200;
+    pub const max_recent_commands = 50;
 
     /// An App on the defaults: 120×40, the standard keymap, workspace `.`.
     pub fn init(gpa: Allocator, io: Io) !App {
@@ -1448,6 +1459,8 @@ pub const App = struct {
         self.recent.deinit(gpa);
         for (self.cmd_history.items) |c| gpa.free(c);
         self.cmd_history.deinit(gpa);
+        for (self.recent_commands.items) |c| gpa.free(c);
+        self.recent_commands.deinit(gpa);
         self.runners.deinit(gpa);
         self.tasks.deinit(gpa);
         self.chord.clear(gpa);
@@ -1854,6 +1867,26 @@ pub const App = struct {
     }
 
     /// A `:` line goes on the history `q:` lists (blanks and repeats skipped).
+    /// A command ran: to the front of `recent_commands`, once.
+    pub fn noteRecentCommand(self: *App, id: []const u8) Allocator.Error!void {
+        var i: usize = 0;
+        while (i < self.recent_commands.items.len) {
+            if (std.mem.eql(u8, self.recent_commands.items[i], id)) {
+                self.gpa.free(self.recent_commands.orderedRemove(i));
+            } else i += 1;
+        }
+        const copy = try self.gpa.dupe(u8, id);
+        errdefer self.gpa.free(copy);
+        while (self.recent_commands.items.len >= max_recent_commands) self.gpa.free(self.recent_commands.pop().?);
+        try self.recent_commands.insert(self.gpa, 0, copy);
+    }
+
+    /// Where `id` sits in `recent_commands` (0 = newest), or null.
+    pub fn recentCommandRank(self: *const App, id: []const u8) ?usize {
+        for (self.recent_commands.items, 0..) |c, i| if (std.mem.eql(u8, c, id)) return i;
+        return null;
+    }
+
     pub fn noteCmdLine(self: *App, line: []const u8) Allocator.Error!void {
         const t = std.mem.trim(u8, line, " \t");
         if (t.len == 0) return;

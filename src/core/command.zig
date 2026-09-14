@@ -517,6 +517,14 @@ pub fn run(app: *App, ref: CommandRef) CommandError!void {
         }
         return err;
     };
+    // A success is a recent command (Rust's `note_recent_command`) —
+    // except the recents picker itself, which would head its own list,
+    // and the self-referential replays.
+    const id: []const u8 = switch (ref) {
+        .static => |s| if (s == .@"picker.recent_commands" or s == .@"vim.dot_repeat" or s == .@"vim.macro_replay" or s == .palette) return else name(s),
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.id else return,
+    };
+    try app.noteRecentCommand(id);
 }
 
 /// What a toast says for an error a command returned without a

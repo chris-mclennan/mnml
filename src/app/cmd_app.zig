@@ -684,28 +684,50 @@ fn acceptRegister(app: *App, _: usize, label: []const u8) Allocator.Error!void {
     try app.splice(e, e.buf.editor.cursor, e.buf.editor.cursor, copy);
 }
 
-/// The `:` history newest first; Enter runs the line again.
+/// `picker.recent_commands`: the commands that ran, newest first
+/// (`App.recent_commands` — palette, keymap, menu and `:` runs alike),
+/// each row `group  ·  title  ·  id` as the palette's, the chord as
+/// the detail; Enter runs it again. Rust's `open_recent_commands_picker`.
+/// (The `:` line's own history is `view.cmdline_history`.) An id no
+/// longer registered — an integration gone — is left out.
 fn pickRecentCommands(app: *App) CommandError!void {
     const gpa = app.gpa;
-    if (app.cmd_history.items.len == 0) return app.diag.fail(app.frame.allocator(), "no : lines yet", .{});
+    if (app.recent_commands.items.len == 0) return app.diag.fail(app.frame.allocator(), "no recent commands yet", .{});
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
     }
-    var i = app.cmd_history.items.len;
-    while (i > 0) {
-        i -= 1;
-        try labels.append(gpa, try gpa.dupe(u8, app.cmd_history.items[i]));
+    for (app.recent_commands.items) |id| {
+        const ref = command.resolve(app, id) orelse continue;
+        switch (ref) {
+            .static => |sid| {
+                try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}  ·  {s}", .{ command.group(sid), command.title(sid), id }));
+                try details.append(gpa, try cmd_picker.chordHint(app, gpa, command.spec(sid).keys));
+            },
+            .dyn => |slot| {
+                const c = app.dyn_commands.at(slot) orelse continue;
+                try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}  ·  {s}", .{ c.group, c.title, id }));
+                try details.append(gpa, try std.mem.join(gpa, " / ", c.keys));
+            },
+        }
     }
-    try cmd_picker.openPickerWith(app, "Recent commands", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try gpa.alloc([]u8, 0), &.{});
+    if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no recent commands resolvable", .{});
+    try cmd_picker.openPickerWith(app, "Recent commands", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.on_accept = &acceptRecentCommand;
 }
 
+/// The id is the row's last `  ·  ` segment.
 fn acceptRecentCommand(app: *App, _: usize, label: []const u8) Allocator.Error!void {
-    ex.run(app, label) catch |err| switch (err) {
+    const sep = "  \u{b7}  ";
+    const at = std.mem.lastIndexOf(u8, label, sep) orelse return;
+    const id = try app.frame.allocator().dupe(u8, label[at + sep.len ..]);
+    command.runNamed(app, id) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
+        else => {}, // toasted by `command.run`
     };
 }
 
@@ -848,12 +870,17 @@ test "small commands: recent jumps, scratch from the register, fold navigation, 
     try t.expect(!onPath(&app, "btop"));
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"tools.btop" }));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "btop is not on PATH") != null);
-    // Recent commands picker re-runs a line.
-    try app.noteCmdLine("set ui.line_numbers!");
+    // Recent commands picker re-runs the newest command; the picker
+    // itself is not in its own list.
+    try command.run(&app, .{ .static = .@"view.toggle_line_numbers" });
     const before = app.cfg.ui.line_numbers;
     try command.run(&app, .{ .static = .@"picker.recent_commands" });
+    try t.expectEqualStrings("Recent commands", app.overlay.picker.state.title);
+    try t.expect(std.mem.endsWith(u8, app.overlay.picker.labels[0], "  ·  view.toggle_line_numbers"));
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
     try t.expect(app.cfg.ui.line_numbers != before);
+    try t.expectEqualStrings("view.toggle_line_numbers", app.recent_commands.items[0]);
+    for (app.recent_commands.items) |id| try t.expect(!std.mem.eql(u8, id, "picker.recent_commands"));
     // A cut id says so, and names the ledger.
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"sonos.play_pause" }));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "docs/PARITY.md") != null);

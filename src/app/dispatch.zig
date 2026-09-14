@@ -1196,7 +1196,7 @@ pub fn refilterPicker(app: *App) Allocator.Error!void {
         .icon_glyphs => try icon_picker.hexIds(app, arena),
         else => &.{},
     };
-    const order = try Picker.rank(arena, p.state.query.items, items, .{ .priority = p.priority, .score_bonus = p.score_bonus, .ids = ids });
+    const order = try Picker.rank(arena, p.state.query.items, items, .{ .priority = p.priority, .score_bonus = p.score_bonus, .ids = ids, .order = p.order });
     try p.filtered.ensureTotalCapacity(app.gpa, order.len);
     for (order) |i| p.filtered.appendAssumeCapacity(@intCast(i));
     if (p.state.cursor >= p.filtered.items.len) p.state.cursor = 0;
