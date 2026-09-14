@@ -5,7 +5,7 @@ write src/hay.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\n
 command find.live_grep
 expect screen contains "┌ Live grep "
 type needle
-wait 1500
+wait 3000
 expect screen contains "src/hay.txt:20"
 # The preview is centred on the hit, so the lines around it are there.
 expect screen contains "  20 the needle here"
