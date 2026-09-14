@@ -358,7 +358,7 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
     const Section = activity_bar.Section;
     const show: MenuItem = .{ .label = switch (s) {
         inline else => |tag| comptime ("Show " ++ Section.meta(tag).label),
-    }, .action = .{ .command = activity_bar.commandOf(s) } };
+    }, .action = if (activity_bar.commandOf(s)) |id| .{ .command = id } else .{ .script_section_show = app.script_sections.active } };
     const verbs: []const MenuItem = switch (s) {
         .explorer => &.{
             .{ .label = "Reveal active file", .action = .{ .command = .@"view.reveal_in_tree" } },
@@ -404,6 +404,12 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
             .{ .label = "Reload init.lua", .action = .{ .command = .@"script.reload" } },
             .{ .label = "New workspace init.lua", .action = .{ .command = .@"script.new_init" } },
         },
+        // // changed (lua-plumbing): a script's section — the list's
+        // own Refresh, the same row its kebab carries.
+        .script => if (@import("script_section.zig").active(app)) |sec|
+            try items(app, &.{.{ .label = "Refresh", .action = .{ .script_list_refresh = sec.list } }})
+        else
+            &.{},
         .diagnostics, .outline => &.{},
     };
     // A section with a column surface can change sides (VS Code's
@@ -847,6 +853,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .debug => app.debug_panel.list.cursor,
                 .integrations => app.integrations.panel.cursor,
                 .search => app.search_section.list.cursor,
+                .script => if (@import("script_section.zig").activeList(app)) |l| l.panel.cursor else return app.diag.fail(arena, "no script section", .{}),
                 .notes, .findings, .sessions, .outline, .scripts => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
@@ -859,6 +866,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .diagnostics => try @import("lsp.zig").rowMouse(app, @intCast(cursor), .{ .x = r.x, .y = r.y, .kind = .press, .button = .right }),
                 .debug => try @import("debug_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .integrations => try @import("integrations.zig").kebabMouse(app, @intCast(cursor), m),
+                .script => try @import("script_section.zig").kebabMouse(app, @intCast(cursor), m),
                 .notes, .findings, .sessions, .outline, .scripts => {},
             }
         },

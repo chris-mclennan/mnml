@@ -35,6 +35,7 @@ const Dynamic = config.Dynamic;
 const script_pane = @import("../app/script_pane.zig");
 const cmd_picker = @import("../app/cmd_picker.zig");
 const runners = @import("../app/runners.zig");
+const Side = config.Side;
 
 /// The prefix every script command gets: `mnml.command{ id = "hello" }`
 /// is `user.hello` in the palette, `.keys`, `.test` and IPC.
@@ -63,6 +64,8 @@ pub const root_fns = [_]Fn{
     fnOf("workspace", "mnml.workspace() → the absolute workspace path", workspace),
     fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
     fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
+    fnOf("list", "mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? } → a list handle with :refresh(); host it with pane.open{ list = } or section{ list = }", listRegister),
+    fnOf("section", "mnml.section{ id, title, glyph?, ascii?, list, side?, after? } — a rail section of your own, with the caps header, filter, sort chip and folds every built-in has", sectionRegister),
     fnOf("operator", "mnml.operator{ id, keys = { vim = \"g<letter>\", standard = \"chord\" }, run = fn(range) } — operator-pending under vim, the selection or the cursor's word under standard", operatorRegister),
 };
 
@@ -86,7 +89,7 @@ pub const tables = [_]Table{
         fnOf("open", "mnml.picker.open(id, query?) — the picker over the source's items", pickerOpen),
     } },
     .{ .name = "pane", .doc = "mnml.pane — a pane the script renders itself", .fns = &.{
-        fnOf("open", "mnml.pane.open{ title, render = fn(w, h), on_hit?, on_key? } → the pane id; render returns rows of strings or { text=, fg=, bg=, bold=, hit= } segments", paneOpen),
+        fnOf("open", "mnml.pane.open{ title, render = fn(w, h), on_hit?, on_key? } — or { title, list = l } for a list in a pane → the pane id", paneOpen),
         fnOf("close", "mnml.pane.close(id) — close a script pane", paneClose),
         fnOf("active", "mnml.pane.active() → the focused pane's id, or nil", paneActive),
     } },
@@ -1023,13 +1026,20 @@ fn paneOpen(L: *State) !i32 {
     const c = ctx(L);
     L.checkType(1, .table);
     const title = strField(L, 1, "title") orelse "script";
+    // `{ list = l }`: the pane hosts a `mnml.list{}` through `ListPanel`
+    // instead of calling a `render`.
+    if (listField(L, c.app, 1)) |list_id| {
+        const id = try script_pane.open(c.app, c.self, title, null, null, null, list_id);
+        L.pushInteger(id);
+        return 1;
+    }
     const render = needFn(c.self, 1, "render");
     errdefer c.self.unref(render);
     const on_hit = fnField(c.self, 1, "on_hit");
     errdefer if (on_hit) |r| c.self.unref(r);
     const on_key = fnField(c.self, 1, "on_key");
     errdefer if (on_key) |r| c.self.unref(r);
-    const id = try script_pane.open(c.app, c.self, title, render, on_hit, on_key);
+    const id = try script_pane.open(c.app, c.self, title, render, on_hit, on_key, 0);
     L.pushInteger(id);
     return 1;
 }
@@ -1045,6 +1055,129 @@ fn paneClose(L: *State) !i32 {
 fn paneActive(L: *State) !i32 {
     const c = ctx(L);
     if (c.app.active) |id| L.pushInteger(id) else L.pushNil();
+    return 1;
+}
+
+// ─── mnml.list, mnml.section ────────────────────────────────────────────
+
+const script_list = @import("../app/script_list.zig");
+const script_section = @import("../app/script_section.zig");
+
+/// The `list` field of a table: the handle `mnml.list{}` answered with,
+/// as a table with an `id`, or the bare id. Null when the field is
+/// absent; an error when it is there but names no live list.
+fn listField(L: *State, app: *App, t: i32) ?u32 {
+    const at = L.absIndex(t);
+    defer L.pop(1);
+    switch (L.getField(at, "list")) {
+        .nil, .none => return null,
+        .number => {},
+        .table => {
+            _ = L.getField(-1, "id");
+            defer L.pop(1);
+            const n = L.toInteger(-1) catch L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with", .{});
+            const id: u32 = if (n > 0) @intCast(n) else 0;
+            if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list (a reload drops them)", .{});
+            return id;
+        },
+        else => L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with", .{}),
+    }
+    const n = L.toInteger(-1) catch 0;
+    const id: u32 = if (n > 0) @intCast(n) else 0;
+    if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list (a reload drops them)", .{});
+    return id;
+}
+
+/// `mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? }` →
+/// a table `{ id = n, refresh = fn }`. Everything around the rows — the
+/// header, the filter, the sort chip, the folds, the row menu — is
+/// `ListPanel`'s, the one TODOS uses.
+fn listRegister(L: *State) !i32 {
+    const c = ctx(L);
+    L.checkType(1, .table);
+    const title = needStr(L, 1, "title");
+    // Checked before the first allocation: a Lua error is a longjmp.
+    if (L.getField(1, "sort") != .nil and !L.isTable(-1)) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.list: sort is a table of mode names ({ \"State\", \"Name\" })", .{});
+    }
+    var sort_n: usize = 0;
+    if (L.isTable(-1)) sort_n = L.lenRaw(-1);
+    const gpa = c.self.gpa;
+    const sorts = try gpa.alloc([]u8, sort_n);
+    var made: usize = 0;
+    errdefer {
+        for (sorts[0..made]) |x| gpa.free(x);
+        gpa.free(sorts);
+    }
+    var i: usize = 1;
+    while (i <= sort_n) : (i += 1) {
+        _ = L.getIndex(-1, @intCast(i));
+        defer L.pop(1);
+        sorts[i - 1] = try gpa.dupe(u8, L.toString(-1) catch "");
+        made = i;
+    }
+    L.pop(1); // the sort table (or the nil)
+    const rows_fn = needFn(c.self, 1, "rows");
+    const on_enter = fnField(c.self, 1, "on_enter");
+    const on_menu = fnField(c.self, 1, "on_menu");
+    const owned_title = gpa.dupe(u8, title) catch |err| {
+        c.self.unref(rows_fn);
+        return err;
+    };
+    errdefer gpa.free(owned_title);
+    const id = try script_list.add(c.app, owned_title, rows_fn, on_enter, on_menu, sorts);
+    try c.self.noteOrigin(.list, title);
+    const l = script_list.find(c.app, id).?;
+    try script_list.refresh(c.app, l);
+    // The handle: `{ id = n, refresh = fn }`, so `l:refresh()` reads.
+    L.createTable(0, 2);
+    L.pushInteger(id);
+    L.setField(-2, "id");
+    L.pushInteger(id);
+    L.pushClosure(zlua.wrap(listRefresh), 1);
+    L.setField(-2, "refresh");
+    return 1;
+}
+
+/// `l:refresh()` — the id is the closure's upvalue, so the `self` a
+/// colon call passes is ignored.
+fn listRefresh(L: *State) !i32 {
+    const c = ctx(L);
+    const n = L.toInteger(zlua.Lua.upvalueIndex(1)) catch return 0;
+    const l = script_list.find(c.app, if (n > 0) @intCast(n) else 0) orelse return 0;
+    try script_list.refresh(c.app, l);
+    return 0;
+}
+
+/// `mnml.section{ id, title, glyph?, ascii?, list, side?, after? }` — a
+/// rail row and a column of the script's own.
+fn sectionRegister(L: *State) !i32 {
+    const c = ctx(L);
+    L.checkType(1, .table);
+    const id = needStr(L, 1, "id");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n") != null) L.raiseErrorStr("mnml.section: id must be a bare name", .{});
+    const title = strField(L, 1, "title") orelse id;
+    const glyph = strField(L, 1, "glyph") orelse "";
+    const ascii = strField(L, 1, "ascii") orelse "";
+    const after = strField(L, 1, "after") orelse "";
+    var at_side: Config.Side = .left;
+    if (strField(L, 1, "side")) |sd| at_side = std.meta.stringToEnum(Config.Side, sd) orelse L.raiseErrorStr("mnml.section: side is \"left\" or \"right\"", .{});
+    const list_id = listField(L, c.app, 1) orelse L.raiseErrorStr("mnml.section: `list` is required — what mnml.list{} answered with", .{});
+    const gpa = c.self.gpa;
+    const owned_id = try gpa.dupe(u8, id);
+    errdefer gpa.free(owned_id);
+    const owned_title = try gpa.dupe(u8, title);
+    errdefer gpa.free(owned_title);
+    const owned_glyph = try gpa.dupe(u8, if (glyph.len > 0) glyph else "\u{f0331}");
+    errdefer gpa.free(owned_glyph);
+    const owned_ascii = try gpa.dupe(u8, if (ascii.len > 0) ascii else "P");
+    errdefer gpa.free(owned_ascii);
+    const owned_after = try gpa.dupe(u8, after);
+    errdefer gpa.free(owned_after);
+    const idx = try script_section.add(c.app, owned_id, owned_title, owned_glyph, owned_ascii, owned_after, list_id, at_side);
+    try c.self.noteOrigin(.list, title);
+    L.pushInteger(idx);
     return 1;
 }
 

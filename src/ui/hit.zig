@@ -203,6 +203,7 @@ pub const HitTarget = union(enum) {
                 .section => |s| try w.print(":{s}", .{@tagName(s)}),
                 .gear => try w.writeAll(":gear"),
                 .pin => |i| try w.print(":pin:{d}", .{i}),
+                .script => |i| try w.print(":script:{d}", .{i}),
             },
             .welcome => |v| try w.print(":{s}:{d}", .{ @tagName(v.kind), v.idx }),
             .git_palette => |v| try w.print(":{s}", .{@tagName(v)}),

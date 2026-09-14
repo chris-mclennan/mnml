@@ -20,6 +20,8 @@ const Mouse = @import("../core/key.zig").Mouse;
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const script_view = @import("../ui/script_view.zig");
+const script_list = @import("script_list.zig");
+const hit_mod = @import("../ui/hit.zig");
 const lua_mod = @import("../scripting/lua.zig");
 const Lua = lua_mod.Lua;
 const LuaRef = lua_mod.LuaRef;
@@ -28,12 +30,18 @@ pub const ScriptPane = struct {
     lua: *Lua,
     /// Owned.
     title: []u8,
-    render: LuaRef,
+    /// Null when the pane hosts a list instead (`list`).
+    render: ?LuaRef,
     on_hit: ?LuaRef,
     on_key: ?LuaRef,
+    /// // changed (lua-plumbing): `mnml.pane.open{ list = l }` — the
+    /// pane paints that list through `ListPanel` instead of calling
+    /// `render`. 0 is "none". The list is the Lua state's, not the
+    /// pane's: closing the pane leaves it for a section to host.
+    list: u32 = 0,
 
     pub fn deinit(self: *ScriptPane, gpa: Allocator) void {
-        self.lua.unref(self.render);
+        if (self.render) |r| self.lua.unref(r);
         if (self.on_hit) |r| self.lua.unref(r);
         if (self.on_key) |r| self.lua.unref(r);
         gpa.free(self.title);
@@ -41,17 +49,23 @@ pub const ScriptPane = struct {
 };
 
 /// Open a script pane and focus it. Takes the refs.
-pub fn open(app: *App, lua: *Lua, title: []const u8, render: LuaRef, on_hit: ?LuaRef, on_key: ?LuaRef) Allocator.Error!PaneId {
+pub fn open(app: *App, lua: *Lua, title: []const u8, render: ?LuaRef, on_hit: ?LuaRef, on_key: ?LuaRef, list: u32) Allocator.Error!PaneId {
     const owned = try app.gpa.dupe(u8, title);
     errdefer app.gpa.free(owned);
-    const id = try app.panes.add(.{ .script = .{ .lua = lua, .title = owned, .render = render, .on_hit = on_hit, .on_key = on_key } });
+    const id = try app.panes.add(.{ .script = .{ .lua = lua, .title = owned, .render = render, .on_hit = on_hit, .on_key = on_key, .list = list } });
     app.showPane(id);
     return id;
 }
 
 pub fn draw(app: *App, ui: Ui, pane: PaneId, sp: *ScriptPane, area: Rect) Allocator.Error!void {
     if (app.active == pane) app.pane_rows = @max(area.h, 1);
-    const rows = try app.script().callRender(sp.render, area.w, area.h);
+    if (sp.list != 0) {
+        const l = script_list.find(app, sp.list) orelse return;
+        const caret = try script_list.draw(app, ui, area, l, .{ .panel = .todos, .pane = pane, .focused = app.active == pane and app.focus == .pane and app.focus.pane == pane });
+        if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
+        return;
+    }
+    const rows = try app.script().callRender(sp.render.?, area.w, area.h);
     script_view.draw(ui, pane, area, rows);
 }
 
@@ -61,14 +75,24 @@ fn keyName(arena: Allocator, k: Key) Allocator.Error![]const u8 {
 }
 
 /// Focused pane, a key: `on_key(name)`; true when the script took it.
+/// A list-backed pane gives the list's own keys the first turn.
 pub fn handleKey(app: *App, sp: *ScriptPane, k: Key) Allocator.Error!bool {
+    if (sp.list != 0) if (script_list.find(app, sp.list)) |l| {
+        if (try script_list.handleKey(app, l, k)) return true;
+    };
     const r = sp.on_key orelse return false;
     const name = try keyName(app.frame.allocator(), k);
     return app.script().callKey(r, name);
 }
 
-/// A click on a segment with a `hit`: `on_hit(id, button)`.
-pub fn click(app: *App, sp: *ScriptPane, id: u32, m: Mouse) void {
+/// A click on a segment with a `hit`: `on_hit(id, button)`. A
+/// list-backed pane reads the `ListHit` instead — its rows, kebabs,
+/// chips and filter are the panel's own targets.
+pub fn click(app: *App, pane: PaneId, sp: *ScriptPane, id: u32, m: Mouse) Allocator.Error!void {
+    if (sp.list != 0) {
+        const l = script_list.find(app, sp.list) orelse return;
+        return script_click(app, pane, l, id, m);
+    }
     const r = sp.on_hit orelse return;
     const button: []const u8 = switch (m.button) {
         .left => "left",
@@ -79,9 +103,44 @@ pub fn click(app: *App, sp: *ScriptPane, id: u32, m: Mouse) void {
     app.script().callHit(r, id, button);
 }
 
+/// The `ListHit` targets of a list-backed pane (or a rail section).
+pub fn script_click(app: *App, pane: ?PaneId, l: *script_list.List, hit_id: u32, m: Mouse) Allocator.Error!void {
+    _ = pane;
+    if (m.kind != .press) return;
+    app.needs_render = true;
+    if (hit_id >= hit_mod.ListHit.kebab_base) return script_list.openRowMenu(app, l, hit_id - hit_mod.ListHit.kebab_base, m.x, m.y);
+    if (hit_id >= hit_mod.ListHit.row_base) {
+        const idx = hit_id - hit_mod.ListHit.row_base;
+        const was = l.panel.cursor;
+        l.panel.cursor = idx;
+        l.panel.on_new = false;
+        if (m.button == .right) return script_list.openRowMenu(app, l, idx, m.x, m.y);
+        if (m.button != .left) return;
+        // A header folds on the first click; an item needs a second, the
+        // rule every list panel follows.
+        const rows = try script_list.visible(app, l, app.frame.allocator());
+        if (idx < rows.len and rows[idx].header) return script_list.toggleFold(app, l, rows[idx].label);
+        if (was == idx) try script_list.activate(app, l, idx);
+        return;
+    }
+    if (hit_id == hit_mod.ListHit.filter_id) {
+        l.panel.filter_focused = true;
+        return;
+    }
+    if (hit_mod.ListHit.chipOf(hit_id)) |kind| switch (kind) {
+        .sort => try script_list.cycleSort(app, l),
+        .refresh => try script_list.refresh(app, l),
+        else => {},
+    };
+}
+
 /// The wheel over the pane: `on_key("wheel_up" | "wheel_down")`, once
-/// per notch.
+/// per notch — or the list's scroll when a list hosts it.
 pub fn wheel(app: *App, sp: *ScriptPane, down: bool, n: usize) void {
+    if (sp.list != 0) {
+        if (script_list.find(app, sp.list)) |l| script_list.wheel(app, l, down, n) catch {};
+        return;
+    }
     const r = sp.on_key orelse return;
     var i: usize = 0;
     while (i < n) : (i += 1) _ = app.script().callKey(r, if (down) "wheel_down" else "wheel_up");

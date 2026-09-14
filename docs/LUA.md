@@ -440,6 +440,72 @@ key goes to `on_key(name)` first — `name` is the chord spec (`j`, `ctrl+p`,
 through to the chord chain (`space f f` still works from a script pane).
 The wheel arrives as `wheel_up` / `wheel_down`.
 
+### Lists and sections
+
+*(api 1, added)* `mnml.list{}` hands a script the panel every built-in
+section is — the caps header with the refresh and `sort:` chips, the
+filter pill, `j` / `k` / `g` / `G` / Enter, the fold headers, the
+scrollbar, the row menu, the hits — and asks only for rows:
+
+```lua
+local l = mnml.list{ title = "TODOS", sort = { "State", "Name" },
+  rows = function(sort) return rows end,
+  on_enter = function(row) … end,
+  on_menu = function(row) return { { label = "Open", run = function() … end } } end }
+
+mnml.pane.open{ title = "Todos", list = l }                       -- in a pane
+mnml.section{ id = "todos_lua", title = "TODOS", glyph = "󰄬", ascii = "T",
+              list = l, side = "left", after = "todos" }          -- on the rail
+l:refresh()                                                       -- ask rows() again
+```
+
+A row is a string, or one of two tables:
+
+| shape | fields |
+|---|---|
+| a fold header | `{ header = "src/app.zig", count = 3 }` |
+| an item | `{ label=, detail=, icon=, state= }` |
+
+`detail` is muted and right-aligned, clipped from the left so its tail
+(a line number, a file) survives; `icon` is one glyph in the accent
+before the label; `state` is a short word in a chip after it. A header
+folds on Enter (or a click) and hides its items until the next header;
+`E` opens every fold, `C` closes every one, and a fold survives a
+refresh that answers the same header.
+
+`rows(sort)` is called when the list is made, when `l:refresh()` runs,
+when the `⟳` chip is clicked and when the sort changes — never per
+frame, because Lua is never entered from the paint loop. `sort` is the
+current mode's name from your `sort` list (nil when you named none);
+the `sort:` chip cycles them, `s` does it from the keyboard. Sorting is
+yours: the names are labels, and `rows` answers in whatever order the
+mode means.
+
+`on_enter(row)` is Enter (and a second click) on an item; `on_menu(row)`
+answers with the row's menu — `{ { label = …, run = fn }, … }` — which
+the `⋮` and a right-click open, with the panel's own *Refresh* under it.
+`row` carries the fields you wrote plus `index`, its 1-based place in
+what `rows()` answered (a fold does not shift it).
+
+**A section is a real rail section.** `mnml.section{}` puts a row of its
+own on the activity bar — its `glyph` (and `ascii` twin for
+`ui.ascii_icons`), in the position `after` names (`after = "todos"`
+places it directly under the TODOs row; no `after` puts it last) — and
+its list in that side's column, with the caps header, the filter, the
+sort chip and the folds TODOS has. It appears in `rects.json` like any
+section (`rail:script:0`, `row:script:2`, `chip:script:refresh`), and a
+`script.reload` drops the section, its rail row and the list behind it.
+
+One column hosts them: several registered sections each get their own
+rail row, and the one whose row was clicked last is the one the column
+shows.
+
+| function | changed in |
+|---|---|
+| `mnml.list` | api 1, added |
+| `mnml.section` | api 1, added |
+| `mnml.pane.open` `list` | api 1, added |
+
 ### Tasks
 
 ```lua

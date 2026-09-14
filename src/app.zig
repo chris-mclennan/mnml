@@ -107,6 +107,8 @@ const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
 const cmd_script = @import("app/cmd_script.zig");
 const scripts_panel = @import("app/scripts_panel.zig");
+const script_list = @import("app/script_list.zig");
+const script_section = @import("app/script_section.zig");
 const search_section = @import("app/search_section.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
@@ -886,6 +888,13 @@ pub const App = struct {
     sessions: sessions.State,
     /// // changed (lua-track): the SCRIPTS section's list state.
     scripts_panel: scripts_panel.State = .{},
+    /// // changed (lua-plumbing): the lists `mnml.list{}` registered —
+    /// the pane form and the rail-section form both read them. Cleared
+    /// with the Lua state on `script.reload`.
+    script_lists: script_list.Store = .{},
+    /// // changed (lua-plumbing): the rail sections `mnml.section{}`
+    /// registered (`app/script_section.zig`).
+    script_sections: script_section.Store = .{},
     /// // changed (search-section): the SEARCH section's query and hits.
     search_section: search_section.State,
     dock: dock.State = .{},
@@ -1428,6 +1437,8 @@ pub const App = struct {
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
         self.scripts_panel.deinit(gpa);
+        self.script_lists.deinit(gpa);
+        self.script_sections.deinit(gpa);
         self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
         self.dock.deinit(gpa, self.io);
@@ -2698,6 +2709,10 @@ test {
     _ = @import("app/search_section.zig");
     _ = @import("ui/search_section_view.zig");
     _ = @import("ui/script_view.zig");
+    _ = @import("ui/script_list.zig");
+    _ = @import("app/script_list.zig");
+    _ = @import("app/script_section.zig");
+    _ = @import("input/script_ops.zig");
     _ = @import("app/messages.zig");
     _ = @import("app/zen.zig");
     _ = @import("app/harpoon.zig");

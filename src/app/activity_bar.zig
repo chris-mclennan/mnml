@@ -38,6 +38,7 @@ const side = @import("side.zig");
 const git_palette = @import("git_palette.zig");
 const http_panel = @import("http_panel.zig");
 const integrations = @import("integrations.zig");
+const script_section = @import("script_section.zig");
 
 pub const Section = rail.Section;
 pub const Part = rail.Part;
@@ -55,8 +56,11 @@ const pulse_period_ms: i64 = 5000;
 
 /// The section's palette command — what a click runs and what the
 /// right-click menu's first row names.
-pub fn commandOf(s: Section) command.CommandId {
+/// Null for a script's section: it has no static id — a click goes
+/// through `script_section.show` instead (`app/script_section.zig`).
+pub fn commandOf(s: Section) ?command.CommandId {
     return switch (s) {
+        .script => null,
         .explorer => .@"view.activity_explorer",
         .search => .@"view.activity_search",
         .git => .@"view.activity_git",
@@ -141,8 +145,15 @@ pub fn props(app: *App, arena: Allocator) Allocator.Error!rail.Props {
     const pinned = try integrations.pinnedChips(app, arena);
     const pins = try arena.alloc(rail.Pin, pinned.len);
     for (pinned, 0..) |pc, i| pins[i] = .{ .glyph = pc.chip.glyph, .fallback = pc.chip.fallback, .color = pc.chip.color };
+    // // changed (lua-plumbing): the script sections' own rail rows,
+    // spliced into the built-in order at the place their `after` names.
+    const scripts = try script_section.railRows(app, arena);
+    const rows = if (scripts.len == 0) &.{} else try rail.railOrder(arena, scripts);
     var p: rail.Props = .{
         .active = active(app),
+        .active_script = app.script_sections.active,
+        .scripts = scripts,
+        .rows = rows,
         .pins = pins,
         .show_counts = @mod(app.now_ms, pulse_period_ms) >= pulse_icon_ms,
     };
@@ -171,11 +182,21 @@ pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
             .right => try integrations.openPinMenu(app, i, m.x, m.y),
             else => {},
         },
+        // // changed (lua-plumbing): a script section's own rail row.
+        .script => |i| switch (m.button) {
+            .left => script_section.show(app, i, true),
+            .right => {
+                script_section.show(app, i, false);
+                try context_menus.openRailMenu(app, .script, m.x, m.y);
+            },
+            else => {},
+        },
     }
 }
 
 pub fn show(app: *App, s: Section) Allocator.Error!void {
-    try run(app, commandOf(s));
+    if (commandOf(s)) |id| return run(app, id);
+    script_section.show(app, app.script_sections.active, true);
 }
 
 fn run(app: *App, id: command.CommandId) Allocator.Error!void {
@@ -203,6 +224,7 @@ pub fn describe(part: Part) tooltip.Tip {
     return switch (part) {
         .pin => .{ .title = "Pinned launcher", .detail = "click runs it · right-click: menu" },
         .gear => .{ .title = "Settings", .detail = "click opens Settings · right-click: Settings / Command Palette / Cheatsheet / Themes / About" },
+        .script => .{ .title = "Script section", .detail = "click: the section a script registered · right-click: menu" },
         .section => |s| .{ .title = s.meta().label, .detail = switch (s) {
             .explorer => "click: Files rail · workspace file tree · new file / folder · right-click: menu",
             .search => "click: Search rail · ripgrep across the workspace · right-click: menu",
@@ -213,6 +235,7 @@ pub fn describe(part: Part) tooltip.Tip {
             .http => "click: HTTP rail · requests · recent · captured · envs · collections · right-click: menu",
             .notes => "click: Notes rail · .mnml/notes/*.md persistent scratch · right-click: menu",
             .todos => "click: TODOs rail · TODO / FIXME / XXX / HACK / REVIEW hits · right-click: menu",
+            .script => "click: this script's section · its rows, filter, sort and folds · right-click: menu",
             .findings => "click: Findings rail · .mnml/findings/*.md tester / review reports · right-click: menu",
             .scripts => "click: Scripts rail · what init.lua registered, with file:line · ⟳ reloads · right-click: menu",
             .diagnostics => "click: Diagnostics · the language servers' problems list",

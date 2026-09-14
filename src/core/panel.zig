@@ -18,7 +18,9 @@ const ConfigSort = @import("../config/Config.zig").ListSort;
 /// surface listing what the Lua scripts registered.
 /// // changed (search-section): `search` — Rust's SEARCH sidebar
 /// section (the query, the hits by file), a column surface.
-pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug, integrations, scripts, search };
+/// // changed (lua-plumbing): `script` — the column a script's rail
+/// section paints its `mnml.list{}` in (`app/script_section.zig`).
+pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline, debug, integrations, scripts, search, script };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

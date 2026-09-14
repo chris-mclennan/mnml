@@ -41,6 +41,8 @@ const cmd_picker = @import("cmd_picker.zig");
 const icon_picker = @import("icon_picker.zig");
 const script_diag = @import("../scripting/diag.zig");
 const scripts_panel = @import("scripts_panel.zig");
+const script_list = @import("script_list.zig");
+const script_section = @import("script_section.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
@@ -207,6 +209,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .sessions => try sessions.handleKey(app, k),
             .integrations => try integrations.handleKey(app, k),
             .scripts => try scripts_panel.handleKey(app, k),
+            .script => try script_section.handleKey(app, k),
             .search => try search_section.handleKey(app, k),
             .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
         };
@@ -992,7 +995,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search, .script => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1028,6 +1031,17 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .lua_bind => try scripts_panel.promptBind(app, text.?),
         // // changed (lsp-defaults): the LSP chip menu's Install row.
         .lsp_install => try toastOnFail(app, runners.installBin(app, text.?)),
+        // // changed (lua-plumbing): a script list's row menu.
+        .script_list_fold => |f| if (script_list.find(app, f.list)) |l| {
+            const rows = try script_list.visible(app, l, app.frame.allocator());
+            if (f.row < rows.len) try script_list.toggleFold(app, l, rows[f.row].label);
+        },
+        .script_list_menu => |m| if (script_list.find(app, m.list)) |l| {
+            _ = l;
+            app.script().runMenuItem(m.item);
+        },
+        .script_list_refresh => |id| if (script_list.find(app, id)) |l| try script_list.refresh(app, l),
+        .script_section_show => |i| script_section.show(app, i, true),
         .none => {},
     }
 }
@@ -1556,6 +1570,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => try http_panel.rowMouse(app, pr.idx, m),
             .integrations => try integrations.rowMouse(app, pr.idx, m),
             .scripts => try scripts_panel.rowMouse(app, pr.idx, m),
+            .script => try script_section.rowMouse(app, pr.idx, m),
             .search => try search_section.rowMouse(app, pr.idx, m),
             .outline => {},
         },
@@ -1569,6 +1584,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => try http_panel.kebabMouse(app, pr.idx, m),
             .integrations => try integrations.kebabMouse(app, pr.idx, m),
             .scripts => try scripts_panel.kebabMouse(app, pr.idx, m),
+            .script => try script_section.kebabMouse(app, pr.idx, m),
             .search => try search_section.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline => {},
         },
@@ -1583,6 +1599,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => try http_panel.chipMouse(app, c.kind, m),
             .integrations => try integrations.chipMouse(app, c.kind, m),
             .scripts => try scripts_panel.chipMouse(app, c.kind, m),
+            .script => try script_section.chip(app, c.kind, m),
             .search => try search_section.chipMouse(app, c.kind, m),
             .outline => {},
         },
@@ -1597,6 +1614,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .http => http_panel.filterMouse(app, m),
             .integrations => integrations.filterMouse(app, m),
             .scripts => scripts_panel.filterMouse(app, m),
+            .script => script_section.filterFocus(app),
             .search => search_section.filterMouse(app, m),
             .outline => {},
         },
@@ -1912,7 +1930,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             const pane = app.panes.get(sh.pane) orelse return;
             switch (pane.*) {
                 .cheatsheet => |*c| if (m.button == .left) try cheatsheet.click(app, c, sh.id),
-                .script => |*s| script_pane.click(app, s, sh.id, m),
+                .script => |*s| try script_pane.click(app, sh.pane, s, sh.id, m),
                 .list => |*l| {
                     if (sh.id >= try l.shownCount(app.frame.allocator())) return;
                     // // changed (git-more2): a right press opens the row's menu on the git kinds.
@@ -2462,6 +2480,7 @@ fn panelWheel(app: *App, panel: hit_mod.PanelId, down: bool, count: u16) Allocat
         .http => http_panel.wheel(app, down, rows),
         .integrations => integrations.wheel(app, down, rows),
         .scripts => try scripts_panel.wheel(app, down, rows),
+        .script => try script_section.wheel(app, down, rows),
         .search => search_section.wheel(app, down, rows),
         .outline => if (app.outline_panel) |id| try wheelOnPane(app, id, .{ .x = 0, .y = 0, .kind = if (down) .scroll_down else .scroll_up }, count),
     }
@@ -2481,6 +2500,7 @@ fn panelScrollbar(app: *App, panel: hit_mod.PanelId, track: Rect, m: Mouse) void
         .http => http_panel.scrollbarMouse(app, track, m),
         .integrations => integrations.scrollbarMouse(app, track, m),
         .scripts => scripts_panel.scrollbarMouse(app, track, m),
+        .script => {},
         .search => search_section.scrollbarMouse(app, track, m),
         .outline => {},
     }

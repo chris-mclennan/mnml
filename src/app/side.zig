@@ -70,6 +70,8 @@ pub fn surface(s: Section) ?Surface {
         // // changed (search-section): SEARCH is Rust's sidebar section
         // again — a column; the grep pane is its *Open as pane* door.
         .search => .{ .panel = .search },
+        // // changed (lua-plumbing): a script's rail section.
+        .script => .{ .panel = .script },
     };
 }
 
@@ -87,6 +89,7 @@ pub fn sectionOfPanel(p: PanelId) Section {
         .integrations => .integrations,
         .scripts => .scripts,
         .search => .search,
+        .script => .script,
     };
 }
 
@@ -262,7 +265,8 @@ pub fn show(app: *App, s: Section) CommandError!void {
     // `outline.show` splits while the column is closed (Rust's rule);
     // the column's own walk always wants the column.
     if (s == .outline) return @import("outline.zig").showInColumn(app, true);
-    return command.run(app, .{ .static = activity_bar.commandOf(s) });
+    if (activity_bar.commandOf(s)) |id| return command.run(app, .{ .static = id });
+    @import("script_section.zig").show(app, app.script_sections.active, true);
 }
 
 /// Open `s` in its column without taking the keys unless `focus` —

@@ -26,6 +26,7 @@ const hooks = @import("../core/hooks.zig");
 const script_view = @import("../ui/script_view.zig");
 const api = @import("api.zig");
 const diag = @import("diag.zig");
+const script_list = @import("../app/script_list.zig");
 
 pub const State = zlua.Lua;
 pub const LuaRef = command.LuaRef;
@@ -174,6 +175,8 @@ pub const Lua = struct {
     /// `mnml.operator{}`, in registration order — the index is what
     /// `input/script_ops.zig` and `AppCommand.script_operator` carry.
     operators: std.ArrayList(Operator) = .empty,
+    /// The `run` refs of the list row menu that is open, by row.
+    menu_items: std.ArrayList(LuaRef) = .empty,
     tasks: std.ArrayList(Task) = .empty,
     hidden_tasks: std.ArrayList(HiddenTask) = .empty,
     /// Everything registered since the last reset, in order.
@@ -207,6 +210,7 @@ pub const Lua = struct {
         self.sources.deinit(self.gpa);
         self.picker_items.deinit(self.gpa);
         self.operators.deinit(self.gpa);
+        self.menu_items.deinit(self.gpa);
         self.tasks.deinit(self.gpa);
         self.hidden_tasks.deinit(self.gpa);
         self.origins.deinit(self.gpa);
@@ -252,6 +256,7 @@ pub const Lua = struct {
         self.picker_items.clearRetainingCapacity();
         for (self.operators.items) |o| self.gpa.free(o.id);
         self.operators.clearRetainingCapacity();
+        self.menu_items.clearRetainingCapacity();
         @import("../input/script_ops.zig").clear(self.gpa);
         self.tasks.clearRetainingCapacity();
         // A hidden run keeps going; its events find no row and are
@@ -799,6 +804,136 @@ pub const Lua = struct {
         self.pcall(1, 0) catch self.toastError("operator");
     }
 
+    // ── mnml.list ──
+
+    /// A list's `rows(sort)` → the decoded rows on the gpa (the app
+    /// caches them across frames), or null when the call failed — the
+    /// panel then keeps the rows it had rather than blanking.
+    pub fn callListRows(self: *Lua, r: LuaRef, sort: ?[]const u8) Allocator.Error!?[]script_list.Row {
+        const L = self.L;
+        const gpa = self.gpa;
+        self.pushRef(r);
+        if (sort) |s| _ = L.pushString(s) else L.pushNil();
+        self.pcall(1, 1) catch {
+            self.toastError("list rows");
+            return null;
+        };
+        defer L.pop(1);
+        if (!L.isTable(-1)) return try gpa.alloc(script_list.Row, 0);
+        const n = L.lenRaw(-1);
+        var out: std.ArrayListUnmanaged(script_list.Row) = .empty;
+        errdefer {
+            @import("../app/script_list.zig").freeRows(gpa, out.items);
+            out = .empty;
+        }
+        try out.ensureTotalCapacity(gpa, n);
+        var i: usize = 1;
+        while (i <= n) : (i += 1) {
+            _ = L.getIndex(-1, @intCast(i));
+            defer L.pop(1);
+            var row: script_list.Row = .{ .index = @intCast(i - 1) };
+            if (L.isTable(-1)) {
+                if (stringField(L, -1, "header")) |h| {
+                    row.header = true;
+                    row.label = try gpa.dupe(u8, h);
+                } else row.label = try gpa.dupe(u8, stringField(L, -1, "label") orelse "");
+                errdefer gpa.free(row.label);
+                row.detail = try gpa.dupe(u8, stringField(L, -1, "detail") orelse "");
+                errdefer gpa.free(row.detail);
+                row.icon = try gpa.dupe(u8, stringField(L, -1, "icon") orelse "");
+                errdefer gpa.free(row.icon);
+                row.state = try gpa.dupe(u8, stringField(L, -1, "state") orelse "");
+                _ = L.getField(-1, "count");
+                row.count = if (L.toInteger(-1)) |c| @intCast(@max(c, 0)) else |_| 0;
+                L.pop(1);
+            } else {
+                row.label = try gpa.dupe(u8, L.toString(-1) catch "");
+                row.detail = try gpa.dupe(u8, "");
+                row.icon = try gpa.dupe(u8, "");
+                row.state = try gpa.dupe(u8, "");
+            }
+            try out.append(gpa, row);
+        }
+        return try out.toOwnedSlice(gpa);
+    }
+
+    /// Push row `index` of `l`'s last `rows()` answer as a table — what
+    /// `on_enter` and `on_menu` are handed.
+    fn pushListRow(self: *Lua, l: *const script_list.List, index: u32) void {
+        const L = self.L;
+        const row: ?script_list.Row = for (l.cache) |r| {
+            if (r.index == index) break r;
+        } else null;
+        L.createTable(0, 6);
+        if (row) |rr| {
+            _ = L.pushString(rr.label);
+            L.setField(-2, if (rr.header) "header" else "label");
+            _ = L.pushString(rr.detail);
+            L.setField(-2, "detail");
+            _ = L.pushString(rr.icon);
+            L.setField(-2, "icon");
+            _ = L.pushString(rr.state);
+            L.setField(-2, "state");
+            L.pushInteger(@intCast(rr.count));
+            L.setField(-2, "count");
+        }
+        L.pushInteger(@as(i64, index) + 1);
+        L.setField(-2, "index");
+    }
+
+    /// `on_enter(row)`.
+    pub fn callRow(self: *Lua, r: LuaRef, l: *const script_list.List, index: u32) void {
+        self.pushRef(r);
+        self.pushListRow(l, index);
+        self.pcall(1, 0) catch self.toastError("list on_enter");
+    }
+
+    /// `on_menu(row)` → `{ { label, run }, … }`. The labels come back on
+    /// `arena` (the menu's own); the `run` refs are kept until the next
+    /// menu opens, so a click can reach them.
+    pub fn callMenu(self: *Lua, r: LuaRef, l: *const script_list.List, index: u32, arena: Allocator) Allocator.Error![]const []const u8 {
+        const L = self.L;
+        self.dropMenuItems();
+        self.pushRef(r);
+        self.pushListRow(l, index);
+        self.pcall(1, 1) catch {
+            self.toastError("list on_menu");
+            return &.{};
+        };
+        defer L.pop(1);
+        if (!L.isTable(-1)) return &.{};
+        const n = L.lenRaw(-1);
+        var labels: std.ArrayListUnmanaged([]const u8) = .empty;
+        var i: usize = 1;
+        while (i <= n) : (i += 1) {
+            _ = L.getIndex(-1, @intCast(i));
+            defer L.pop(1);
+            if (!L.isTable(-1)) continue;
+            const label = stringField(L, -1, "label") orelse continue;
+            const owned = try arena.dupe(u8, label);
+            _ = L.getField(-1, "run");
+            if (!L.isFunction(-1)) {
+                L.pop(1);
+                continue;
+            }
+            try self.menu_items.append(self.gpa, self.ref());
+            try labels.append(arena, owned);
+        }
+        return labels.items;
+    }
+
+    /// A row menu's entry was clicked: its `run()`.
+    pub fn runMenuItem(self: *Lua, item: u32) void {
+        if (item >= self.menu_items.items.len) return;
+        self.pushRef(self.menu_items.items[item]);
+        self.pcall(0, 0) catch self.toastError("list menu");
+    }
+
+    pub fn dropMenuItems(self: *Lua) void {
+        for (self.menu_items.items) |r| self.unref(r);
+        self.menu_items.clearRetainingCapacity();
+    }
+
     /// The picker closed (or a new item list replaces the old): drop the
     /// item refs.
     pub fn pickerClosed(self: *Lua) void {
@@ -1012,6 +1147,9 @@ pub const Lua = struct {
         // Every namespace goes with the state: the decorations it holds
         // and the diagnostics it published (`app/script_decor.zig`).
         try @import("../app/script_decor.zig").reset(app);
+        // The lists and the rail sections they fed go with it too.
+        try @import("../app/script_section.zig").reset(app);
+        app.script_lists.clear(app.gpa);
         if (app.overlay == .picker and app.overlay.picker.kind == .lua) {
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;

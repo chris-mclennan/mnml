@@ -47,6 +47,11 @@ pub const Section = enum(u8) {
     findings,
     /// // changed (lua-track): what the scripts registered, with file:line.
     scripts,
+    /// // changed (lua-plumbing): a section a script registered
+    /// (`mnml.section{}`) — one rail row per registered section, in the
+    /// position its `after` names. The row is never painted when no
+    /// script has registered one, so the stock rail is unchanged.
+    script,
     diagnostics,
     outline,
 
@@ -79,6 +84,7 @@ pub const Section = enum(u8) {
             .todos => .{ .glyph = "\u{f046}", .fallback = "O", .label = "TODOs" }, // nf-fa-check_square
             .findings => .{ .glyph = "\u{f1623}", .fallback = "F", .label = "Findings" }, // nf-md-file_search
             .scripts => .{ .glyph = "\u{f08b1}", .fallback = "L", .label = "Scripts" }, // nf-md-language_lua
+            .script => .{ .glyph = "\u{f0331}", .fallback = "P", .label = "Script section" }, // nf-md-library (a script's own glyph overrides it)
             .diagnostics => .{ .glyph = "\u{f071}", .fallback = "!", .label = "Diagnostics" }, // nf-fa-warning (never on the rail)
             .outline => .{ .glyph = "\u{f01bd}", .fallback = "=", .label = "Outline" }, // nf-md-file_tree (never on the rail)
         };
@@ -104,7 +110,44 @@ pub const Part = union(enum) {
     gear,
     /// The `i`-th pinned launcher icon, in `Props.pins` order.
     pin: u16,
+    /// // changed (lua-plumbing): the `i`-th registered script section,
+    /// in `Props.scripts` order.
+    script: u16,
 };
+
+/// A script section's rail row: its own glyph and ASCII twin, and the
+/// built-in section it sits after (empty = last).
+pub const ScriptRow = struct {
+    glyph: []const u8,
+    fallback: []const u8,
+    label: []const u8,
+    after: []const u8 = "",
+};
+
+/// One row of the rail, in paint order.
+pub const RailRow = union(enum) { section: Section, script: u16 };
+
+/// The rail's rows: the built-ins in their order, with each script
+/// section spliced in after the one its `after` names (or at the end).
+/// Frame arena.
+pub fn railOrder(arena: std.mem.Allocator, scripts: []const ScriptRow) std.mem.Allocator.Error![]const RailRow {
+    var out: std.ArrayListUnmanaged(RailRow) = .empty;
+    for (Section.rail) |sec| {
+        try out.append(arena, .{ .section = sec });
+        for (scripts, 0..) |sr, i| {
+            if (sr.after.len > 0 and std.mem.eql(u8, sr.after, @tagName(sec))) try out.append(arena, .{ .script = @intCast(i) });
+        }
+    }
+    for (scripts, 0..) |sr, i| {
+        if (sr.after.len == 0 or !nameIsSection(sr.after)) try out.append(arena, .{ .script = @intCast(i) });
+    }
+    return out.items;
+}
+
+fn nameIsSection(name: []const u8) bool {
+    for (Section.rail) |sec| if (std.mem.eql(u8, @tagName(sec), name)) return true;
+    return false;
+}
 
 /// A pinned launcher icon: an integration chip's glyph, its ASCII twin
 /// and its colour name (`paletteColor`).
@@ -116,6 +159,14 @@ pub const Pin = struct {
 
 pub const Props = struct {
     active: Section,
+    /// Which script section is lit when `active` is `.script`.
+    active_script: u16 = 0,
+    /// The registered script sections, in registration order. Empty
+    /// leaves the rail exactly as it was before scripts could add one.
+    scripts: []const ScriptRow = &.{},
+    /// The rows in paint order (`railOrder`); empty means `Section.rail`
+    /// less the `script` slot.
+    rows: []const RailRow = &.{},
     /// A count per section, by `@intFromEnum`; zero paints nothing.
     badges: [Section.all.len]u32 = @splat(0),
     /// The pulse: this frame paints the counts over their glyphs.
@@ -137,14 +188,26 @@ pub const Layout = struct {
     /// Null when the rail is too short for a gear.
     gear_y: ?u16,
 
-    pub fn sectionY(l: Layout, s: Section) ?u16 {
-        const y = l.first_y + l.step * @as(u16, @intFromEnum(s));
+    pub fn ordinalY(l: Layout, i: usize) ?u16 {
+        const y = l.first_y + l.step * @as(u16, @intCast(i));
         return if (y < l.end_y) y else null;
     }
 
-    /// The `i`-th pinned icon's row: after the last section, on the same step.
+    /// The row a built-in section lands on when no script section has
+    /// been spliced in — what the tests and the hit map ask for.
+    pub fn sectionY(l: Layout, s: Section) ?u16 {
+        return l.ordinalY(@intFromEnum(s));
+    }
+
+    /// The `i`-th pinned icon's row: after the last section, on the same
+    /// step. `sections` is how many section rows the rail painted (the
+    /// built-ins, plus any script section spliced in).
     pub fn pinY(l: Layout, i: usize) ?u16 {
-        const y = l.first_y + l.step * @as(u16, @intCast(Section.rail.len + i));
+        return l.pinYAfter(Section.rail.len, i);
+    }
+
+    pub fn pinYAfter(l: Layout, sections: usize, i: usize) ?u16 {
+        const y = l.first_y + l.step * @as(u16, @intCast(sections + i));
         return if (y < l.end_y) y else null;
     }
 };
@@ -153,6 +216,8 @@ pub fn layout(area: Rect, extra_items: usize) Layout {
     const end_y = area.y + area.h -| 3;
     const first_y = area.y + 1;
     const avail: usize = end_y -| first_y;
+    // A registered script section arrives through `extra_items`, like a
+    // pinned launcher: `Section.rail` is the built-in rows alone.
     const items = Section.rail.len + extra_items;
     return .{
         .first_y = first_y,
@@ -173,32 +238,47 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
     ui.fill(area, Theme.onBg(th.fg, bg));
     const glyph_x = area.x + 1;
     const glyph_w = area.w -| 1;
-    const lay = layout(area, props.pins.len);
+    const lay = layout(area, props.pins.len + props.scripts.len);
     if (lay.gear_y) |gy| {
         const row = Rect.init(area.x, gy, area.w, 1);
         _ = ui.putStr(glyph_x, gy, glyph_w, if (ui.ascii) gear_ascii else gear_nerd, muted);
         ui.hit(row, .{ .rail = .gear });
     }
-    for (Section.rail) |s| {
-        const y = lay.sectionY(s) orelse break;
+    var default_rows: [Section.rail.len]RailRow = undefined;
+    for (Section.rail, 0..) |sec, n| default_rows[n] = .{ .section = sec };
+    const rows: []const RailRow = if (props.rows.len > 0) props.rows else &default_rows;
+    for (rows, 0..) |rr, i| {
+        const y = lay.ordinalY(i) orelse break;
         const row = Rect.init(area.x, y, area.w, 1);
-        const m = s.meta();
-        const is_active = s == props.active;
+        const is_active = switch (rr) {
+            .section => |sec| sec == props.active,
+            .script => |si| props.active == .script and si == props.active_script,
+        };
+        const glyph: []const u8 = switch (rr) {
+            .section => |sec| if (ui.ascii) sec.meta().fallback else sec.meta().glyph,
+            .script => |si| if (si < props.scripts.len) (if (ui.ascii) props.scripts[si].fallback else props.scripts[si].glyph) else "",
+        };
         if (is_active) _ = ui.putStr(area.x, y, 1, if (ui.ascii) indicator_ascii else indicator, Theme.withFg(Theme.onBg(th.fg, bg), pal.blue));
-        _ = ui.putStr(glyph_x, y, glyph_w, if (ui.ascii) m.fallback else m.glyph, if (is_active) lit else muted);
+        _ = ui.putStr(glyph_x, y, glyph_w, glyph, if (is_active) lit else muted);
         // The badge pulses over the glyph (Rust): the strip is too
         // narrow for a superscript beside a glyph.
-        const count = props.badges[@intFromEnum(s)];
+        const count: u32 = switch (rr) {
+            .section => |sec| props.badges[@intFromEnum(sec)],
+            .script => 0,
+        };
         if (count > 0 and props.show_counts and area.w >= width) {
             const text = if (count == 1) (if (ui.ascii) badge_one_ascii else badge_one) else if (count <= 9) ui.fmt("{d}", .{count}) else "+";
             _ = ui.putStr(glyph_x, y, glyph_w, text, badge);
         }
-        ui.hit(row, .{ .rail = .{ .section = s } });
+        ui.hit(row, .{ .rail = switch (rr) {
+            .section => |sec| .{ .section = sec },
+            .script => |si| .{ .script = si },
+        } });
     }
     // The pinned launcher icons: the chip's glyph in the chip's colour,
     // at the rail's weight (dim, like an unmarked section).
     for (props.pins, 0..) |p, i| {
-        const y = lay.pinY(i) orelse break;
+        const y = lay.pinYAfter(rows.len, i) orelse break;
         const row = Rect.init(area.x, y, area.w, 1);
         const glyph = if (ui.ascii or !ui.nerd_font or p.glyph.len == 0) p.fallback else p.glyph;
         if (glyph.len == 0) continue;
@@ -226,11 +306,12 @@ const test_fixture = @import("test_fixture.zig");
 
 test "glyph table: eleven rail sections in Rust's order less the two that folded into SESSIONS, plus SCRIPTS (and the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
     try t.expectEqual(@as(usize, 11), Section.rail.len);
-    try t.expectEqual(@as(usize, 13), Section.all.len);
+    try t.expectEqual(@as(usize, 14), Section.all.len);
     try t.expectEqual(Section.explorer, Section.rail[0]);
     try t.expectEqual(Section.findings, Section.rail[9]);
     try t.expectEqual(Section.scripts, Section.rail[10]);
-    try t.expectEqual(Section.outline, Section.all[12]);
+    try t.expectEqual(Section.script, Section.all[11]);
+    try t.expectEqual(Section.outline, Section.all[13]);
     var seen_glyphs: [Section.all.len]u21 = undefined;
     for (Section.all, 0..) |s, i| {
         const m = s.meta();
