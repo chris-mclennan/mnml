@@ -143,13 +143,33 @@ not the example.
 Each step is one worktree, one agent, and its examples' `.test` files are the
 acceptance. `api = 1` freezes at the end of step 3.
 
-## Open questions for the user
+## Decisions (the user, 2026-09-13)
 
-- Should installed scripts be able to add **rail sections** (a whole sidebar
-  section like TODOS), or is a pane enough? Sections are more work and most
-  plugins want a pane.
-- Where do published scripts live — a `mnml-scripts` repo we curate, or
-  any git URL? Curated first is my recommendation: the trust story is simpler
-  and the examples set the standard.
-- Is `api = 1` frozen at step 3, or do we run a "0.x" period where it may
-  still change while you use it daily?
+1. **Rail sections: both.** A script may open a pane (the common case) or
+   register a rail section. A section is a `ListPanel` the script feeds rows
+   to — the same `list` helper as the pane variant, hosted in the sidebar with
+   the caps header, filter, sort chip and fold behaviour every built-in
+   section has, so a script section is indistinguishable from TODOS. The
+   activity-bar glyph and position come from the manifest. Sections land in
+   step 2 with the list helper; the pane form first.
+2. **Distribution reuses the integrations model** — installed / marketplace /
+   dev, exactly as the INTEGRATIONS section has them:
+   - **Marketplace** = the curated official set (a `mnml-scripts` repo we
+     maintain, mirrored the way the integrations marketplace is). Rows show
+     name, description, api version, the manifest's hook and command claims.
+   - **Community** = any git URL or archive, installed by hand, shown under
+     its own heading with a "community" badge. Same trust dialog, same claims.
+   - **Private** = scripts from a source the user configures (a company repo,
+     a path), like the private integrations an employer installs from outside.
+   - One code path: a script is a directory with `script.zon`; where it came
+     from is a field on the row and a filter in the panel. The SCRIPTS panel
+     gains the three tabs the INTEGRATIONS panel has (installed · marketplace
+     · dev), and `dev` is a workspace path being edited live with save-reloads.
+3. **No freeze period.** `api = 1` is written into the manifest from day one
+   and may still change until we say otherwise; the doc carries a "changed
+   in" line per function. Freezing is a later, one-line decision.
+
+## Open questions (none blocking)
+
+- The marketplace's index format — reuse the integrations index schema as
+  is, or a sibling schema? Default: reuse, with a `kind = script` field.
