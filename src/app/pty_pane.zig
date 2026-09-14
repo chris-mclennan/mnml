@@ -1375,6 +1375,11 @@ test "a shell pane reads `<terminal> (<shell>)` and its tab wears that terminal'
     try app.render();
     const tab3 = (rectsOf(&app, cmd)).tab orelse return error.TestUnexpectedResult;
     try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab3.x + 1, tab3.y).?.char.grapheme);
+    // `--ascii`: the terminal's twin, not a Nerd Font codepoint.
+    app.cfg.ui.ascii_icons = true;
+    try app.render();
+    const tab4 = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings(bufferline.terminalFor("ghostty", null).fallback, app.screen.readCell(tab4.x + 1, tab4.y).?.char.grapheme);
 }
 
 test "an AI pane's tab wears its product's mark: two Claude panes, the same glyph in two accents; Codex its own glyph in the theme's cyan" {
@@ -1419,6 +1424,14 @@ test "an AI pane's tab wears its product's mark: two Claude panes, the same glyp
     const g3 = app.screen.readCell(t3.x + 1, t3.y).?;
     try t.expectEqualStrings(bufferline.codex_glyph, g3.char.grapheme);
     try t.expect(Theme.Color.eql(g3.style.fg, app.theme.palette.cyan));
+    // `--ascii`: each product's twin, not its Nerd Font codepoint.
+    app.cfg.ui.ascii_icons = true;
+    try app.render();
+    const a1 = (rectsOf(&app, c1)).tab orelse return error.TestUnexpectedResult;
+    const a3 = (rectsOf(&app, cx)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings(bufferline.claude_ascii, app.screen.readCell(a1.x + 1, a1.y).?.char.grapheme);
+    try t.expectEqualStrings(bufferline.codex_ascii, app.screen.readCell(a3.x + 1, a3.y).?.char.grapheme);
+    app.cfg.ui.ascii_icons = false;
     // The user's pick still wins over the brand.
     try setAccent(&app, c1, "red");
     try app.render();
