@@ -1,0 +1,24 @@
+# Lua (D10): the shipped example `docs/examples/scripts/todo-list.lua`,
+# run as it is written — a rail section of the script's own, fed by a
+# hidden `grep` task.
+# env: MNML_REPO=${PWD}
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/todo-list.lua" .mnml/init.lua
+write src/one.zig "const a = 1;\n// TODO: widen\nconst b = 2;\n"
+write src/two.zig "// TODO: unclamp\n"
+command script.reload
+expect screen contains "scripts: reloaded"
+# The scan is a task: give the child time to answer.
+wait 1500
+command user.todos_lua
+expect screen contains "TODOS (lua)"
+expect screen contains "widen"
+expect screen contains "unclamp"
+# The rows are grouped by file under a fold header, with its count.
+expect screen contains "one.zig"
+expect screen contains "two.zig"
+# Enter on a header folds it; the other file's row stays.
+key enter
+expect screen lacks "unclamp"
+expect screen contains "widen"
+key enter
+expect screen contains "unclamp"

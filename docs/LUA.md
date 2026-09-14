@@ -134,6 +134,21 @@ the prefix sees to that.
 argument may be a command id instead of a function — built-in or script —
 and the chord then runs it through `mnml.run`.
 
+```lua
+mnml.commands()          --> { { id = "file.save", title = "Save file", group = "file", keys = { "ctrl+s" } }, … }
+mnml.commands("save")    --> the ones whose id or title holds "save"
+```
+
+*(api 1, added)* `mnml.commands(query?)` is the read behind a picker or
+a list over what the app can do: every command, built-in and script,
+with the chords it answers to under the active profile. `query` narrows
+it by a case-insensitive substring on the id or the title; without one,
+all of them.
+
+| function | changed in |
+|---|---|
+| `mnml.commands` | api 1, added |
+
 ### Hooks
 
 ```lua
@@ -655,8 +670,8 @@ returned table reaches the config.
 
 ## Recipes
 
-Two scripts that ship with mnml, each the whole of one shape. They live
-under `docs/examples/scripts/`; paste one into your `init.lua`
+Five scripts that ship with mnml, each the whole of one shape. They
+live under `docs/examples/scripts/`; paste one into your `init.lua`
 (`script.edit_init`) and reload. Each is driven by a `.test` that runs
 the file as it is written, so a change that breaks one fails the suite.
 
@@ -677,6 +692,68 @@ The pieces worth stealing: one namespace per concern, so the clear is
 safe; `pcall` around `mnml.buf.path` because not every focused pane is
 an editor; and a `<path>:<line>` key so the same line is never asked
 about twice and two runs are never in flight at once.
+
+### `recent-commands` — a live picker with a preview column
+
+`docs/examples/scripts/recent-commands.lua` (75 lines). Every command
+the app knows, asked for again as the query changes, with the chords in
+the column beside them and a `*` on the ones you have run before:
+
+```
+┌ Recent commands ─────────────────────────────────────────┐
+│ quit mnml                                        1 of 3  │
+│▌Quit mnml                        app.quit █│Quit mnml     │
+│                                            │app.quit      │
+│                                            │              │
+│                                            │chords        │
+│                                            │  ctrl+q      │
+└──────────────────────────────────────────────────────────┘
+```
+
+The pieces worth stealing: `live = true` so the source does the
+narrowing itself rather than leaving it to the picker's fuzzy filter;
+`data` carrying the whole command row through to `preview` and
+`on_accept` untouched; and an MRU the script keeps itself, so "recent"
+means what this script means by it.
+
+### `todo-list` — a rail section of the script's own
+
+`docs/examples/scripts/todo-list.lua` (79 lines). A `grep` through a
+hidden task, its hits grouped by file under fold headers, in a section
+with its own activity-bar row under TODOs:
+
+```
+ 󰄬 │ TODOS (lua) (2)        │
+   │  󰍉 / filter            │
+   │▌ ./src/one.zig        1│
+   │ widen the  …one.zig:2  │
+   │  ./src/two.zig        1│
+   │ drop the c …two.zig:1  │
+```
+
+The pieces worth stealing: the `rows(sort)` shape — headers and items in
+one list, the sort's name handed in so ordering stays the script's job;
+`l:refresh()` from the task's `on_done`, so the panel fills when the
+child answers rather than blocking on it; and a row's `detail` doing
+double duty as the `<path>:<line>` that opening needs.
+
+### `surround-word` — one text operation, both profiles
+
+`docs/examples/scripts/surround-word.lua` (65 lines). `gs{motion}` in
+vim, `ctrl+shift+s` in standard, and a `gS` that takes the pair off
+again:
+
+```
+  1 (alpha) beta
+  2 gamma
+```
+
+The pieces worth stealing: one `run(range)` serving every road into it
+(a motion, a text object, a Visual selection, a bare cursor) because the
+range arrives in one shape; `range.mode` telling a linewise application
+to keep the line's indentation outside the pair; and `mnml.config.get`
+reading a key of the user's own, so the pair is configurable without a
+second API.
 
 ### `eslint` — a tool wrapper into the diagnostics sink
 
@@ -723,5 +800,8 @@ header, because a shell resets `PWD` to its own cwd:
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint.lua" .mnml/init.lua
 ```
 
-`tests/e2e/lua_example_eslint.test` and `lua_example_git_blame_line.test`
-do exactly that, which is what keeps the two recipes above true.
+`tests/e2e/lua_example_eslint.test`, `lua_example_git_blame_line.test`,
+`lua_example_recent_commands.test`, `lua_example_todo_list.test` and
+`lua_example_surround_word.test` do exactly that, which is what keeps
+the five recipes above true. The surfaces themselves have their own
+files — `lua_picker_live.test`, `lua_section.test`, `lua_operator.test`.

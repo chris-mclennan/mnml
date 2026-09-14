@@ -884,7 +884,13 @@ pub const Vim = struct {
             .filter => return .consumed, // TODO(vim-slice: filter) `!{motion}`
             // The range goes live the way every other operator's does;
             // the app hands it to the script and clears the selection.
-            .script => return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .linewise = linewise_object } } },
+            .script => {
+                // A linewise object (`ip` / `ap`) hands over whole lines
+                // WITHOUT the last one's terminator: a script that wraps
+                // a range wants the text, not the newline after it.
+                if (linewise_object) try b.push(.normalize_linewise_selection_inner);
+                return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .linewise = linewise_object } } };
+            },
         }
         return b.finish();
     }
@@ -1981,7 +1987,9 @@ pub const Vim = struct {
                     else => {
                         const idx = script_ops.lookup(c) orelse return .consumed;
                         self.enterNormal();
-                        const widen: EditOp = if (linewise) .normalize_linewise_selection else .make_selection_inclusive;
+                        // `_inner`: whole lines, without the last one's
+                        // terminator — the range `gss` hands over too.
+                        const widen: EditOp = if (linewise) .normalize_linewise_selection_inner else .make_selection_inclusive;
                         const list = try arena.dupe(EditOp, &.{widen});
                         return .{ .app = .{ .script_operator = .{ .ops = list, .index = idx, .linewise = linewise } } };
                     },

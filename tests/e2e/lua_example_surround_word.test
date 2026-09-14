@@ -1,0 +1,27 @@
+# Lua (D10): the shipped example `docs/examples/scripts/surround-word.lua`,
+# run as it is written — an operator on both profiles' own seam.
+# env: MNML_REPO=${PWD}
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/surround-word.lua" .mnml/init.lua
+write words.txt "alpha beta\ngamma\n"
+command script.reload
+expect screen contains "scripts: reloaded"
+open words.txt
+# Standard: the chord takes the word under the cursor, in one edit —
+# one Ctrl+Z puts it back.
+key ctrl+shift+s
+expect screen contains "(alpha) beta"
+key ctrl+z
+expect screen contains "alpha beta"
+expect screen lacks "(alpha)"
+# Vim: `gsiw` on a word, `V` then `gs` on a whole line, `gSa(` to take
+# the pair off again.
+command editor.use_vim
+type "gg0gsiw"
+expect screen contains "(alpha) beta"
+type "gg0gSa("
+expect screen contains "alpha beta"
+expect screen lacks "(alpha)"
+type "gg0jVgs"
+expect screen contains "(gamma)"
+type "u"
+expect screen lacks "(gamma)"

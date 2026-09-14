@@ -1,0 +1,27 @@
+# Lua (D10): the shipped example `docs/examples/scripts/recent-commands.lua`,
+# run as it is written — the file is copied into the workspace's
+# init.lua, so a change to the example that breaks it fails here.
+# env: MNML_REPO=${PWD}
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/recent-commands.lua" .mnml/init.lua
+command script.reload
+expect screen contains "scripts: reloaded"
+command user.recent
+expect screen contains "Recent commands"
+# The preview column names the cursor row's command beside the results.
+expect screen contains "ai.dashboard"
+# Typing asks the live source again; the rows and the preview follow.
+type "quit mnml"
+wait 300
+expect screen contains "Quit mnml"
+expect screen contains "app.quit"
+expect screen lacks "ai.dashboard"
+key esc
+# The MRU is the script's own: an accepted row is at the front of the
+# list, marked with its `*`, the next time the picker opens.
+command user.recent
+type "save file"
+wait 300
+key enter
+command user.recent
+expect screen contains "* Save file"
+key esc

@@ -1,0 +1,32 @@
+# Lua (D10): a live picker source — `items(query)` asked again as the
+# query changes, a preview column beside the results, and Tab marking
+# rows for a multi-select accept.
+write .mnml/init.lua "calls = 0\nmnml.picker.source{ id = 'live', title = 'Live', live = true, multi = true,\n  items = function(q)\n    calls = calls + 1\n    if q == '' then return { { label = 'alpha', detail = 'a', data = 1 }, { label = 'beta', detail = 'b', data = 2 } } end\n    return { { label = 'typed ' .. q, detail = 'q', data = 9 } }\n  end,\n  preview = function(row) return { { { text = 'PREVIEW ' .. row.label, fg = 'accent' } }, 'data ' .. tostring(row.data) } end,\n  on_accept = function(rows) mnml.toast('took ' .. #rows .. ' rows') end }\nmnml.command{ id = 'live', run = function() mnml.picker.open('live') end }\nmnml.command{ id = 'calls', run = function() mnml.toast('calls ' .. calls) end }\n"
+command script.reload
+expect screen contains "scripts: reloaded"
+command user.live
+expect screen contains "Live"
+expect screen contains "alpha"
+# The preview column paints the cursor row's rows, beside the results.
+expect screen contains "PREVIEW alpha"
+expect screen contains "data 1"
+# ↓ moves the cursor and the preview follows it.
+key down
+expect screen contains "PREVIEW beta"
+expect screen contains "data 2"
+# Tab marks the row and steps on; the check stays on the marked one.
+key tab
+expect screen contains "✓beta"
+key enter
+expect screen contains "took 1 rows"
+# Typing asks the source again, once the debounce is up — and the old
+# rows are still there until the new ones land.
+command user.live
+command user.calls
+expect screen contains "calls 2"
+type "zz"
+wait 300
+expect screen contains "typed zz"
+expect screen lacks "alpha"
+command user.calls
+expect screen contains "calls 3"

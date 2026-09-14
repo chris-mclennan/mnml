@@ -64,6 +64,7 @@ pub const root_fns = [_]Fn{
     fnOf("workspace", "mnml.workspace() → the absolute workspace path", workspace),
     fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
     fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
+    fnOf("commands", "mnml.commands(query?) → { { id, title, group, keys = { … } }, … } — every command, built-in and script, narrowed by a substring on the id or the title", commandsList),
     fnOf("list", "mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? } → a list handle with :refresh(); host it with pane.open{ list = } or section{ list = }", listRegister),
     fnOf("section", "mnml.section{ id, title, glyph?, ascii?, list, side?, after? } — a rail section of your own, with the caps header, filter, sort chip and folds every built-in has", sectionRegister),
     fnOf("operator", "mnml.operator{ id, keys = { vim = \"g<letter>\", standard = \"chord\" }, run = fn(range) } — operator-pending under vim, the selection or the cursor's word under standard", operatorRegister),
@@ -1058,6 +1059,69 @@ fn paneActive(L: *State) !i32 {
     return 1;
 }
 
+/// `mnml.commands(query?)` — every command the app knows, built-in and
+/// script, as `{ id, title, group, keys }`. `query` narrows it by a
+/// case-insensitive substring on the id or the title. The cap is there
+/// only to bound a runaway — every command the app has fits under it,
+/// so an empty query answers with all of them and a script never has to
+/// work around a truncated list.
+pub const commands_cap: usize = 4000;
+
+fn commandsList(L: *State) !i32 {
+    const c = ctx(L);
+    const q = L.optString(1) orelse "";
+    var qbuf: [128]u8 = undefined;
+    const needle = std.ascii.lowerString(qbuf[0..@min(q.len, qbuf.len)], q[0..@min(q.len, qbuf.len)]);
+    L.createTable(0, 0);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < command.count and n < commands_cap) : (i += 1) {
+        const id: command.CommandId = @enumFromInt(i);
+        if (!matches(needle, command.name(id), command.title(id))) continue;
+        n += 1;
+        pushCommandRow(L, c.app, command.name(id), command.title(id), command.group(id), command.spec(id).keys, &.{});
+        L.setIndex(-2, @intCast(n));
+    }
+    for (c.app.dyn_commands.list.items, c.app.dyn_commands.live.items) |dc, alive| {
+        if (!alive or n >= commands_cap) continue;
+        if (!matches(needle, dc.id, dc.title)) continue;
+        n += 1;
+        pushCommandRow(L, c.app, dc.id, dc.title, dc.group, .{}, dc.keys);
+        L.setIndex(-2, @intCast(n));
+    }
+    return 1;
+}
+
+fn matches(needle: []const u8, id: []const u8, title: []const u8) bool {
+    if (needle.len == 0) return true;
+    var buf: [256]u8 = undefined;
+    for ([_][]const u8{ id, title }) |hay| {
+        const low = std.ascii.lowerString(buf[0..@min(hay.len, buf.len)], hay[0..@min(hay.len, buf.len)]);
+        if (std.mem.indexOf(u8, low, needle) != null) return true;
+    }
+    return false;
+}
+
+fn pushCommandRow(L: *State, app: *App, id: []const u8, title: []const u8, group: []const u8, keys: command.Keys, dyn_keys: []const []const u8) void {
+    L.createTable(0, 4);
+    setStrField(L, "id", id);
+    setStrField(L, "title", title);
+    setStrField(L, "group", group);
+    L.createTable(0, 0);
+    var k: usize = 0;
+    const own = switch (App.profileOf(app.input_style)) {
+        .vim => keys.vim,
+        .standard => keys.standard,
+    };
+    for ([_][]const []const u8{ keys.both, own, dyn_keys }) |list| for (list) |spec| {
+        var buf: [64]u8 = undefined;
+        k += 1;
+        _ = L.pushString(@import("../core/keymap.zig").normalizeSpec(spec, &buf) orelse spec);
+        L.setIndex(-2, @intCast(k));
+    };
+    L.setField(-2, "keys");
+}
+
 // ─── mnml.list, mnml.section ────────────────────────────────────────────
 
 const script_list = @import("../app/script_list.zig");
@@ -1176,9 +1240,30 @@ fn sectionRegister(L: *State) !i32 {
     const owned_after = try gpa.dupe(u8, after);
     errdefer gpa.free(owned_after);
     const idx = try script_section.add(c.app, owned_id, owned_title, owned_glyph, owned_ascii, owned_after, list_id, at_side);
+    // Every built-in section has a `view.activity_*` command; a script's
+    // gets one too, so the palette, `.keys` and a `.test` can reach it.
+    const arena = c.app.frame.allocator();
+    const full = try std.fmt.allocPrintSentinel(arena, "{s}{s}", .{ id_prefix, id }, 0);
+    const cmd_title = try std.fmt.allocPrint(arena, "Show {s}", .{title});
+    L.pushInteger(idx);
+    L.pushClosure(zlua.wrap(showSectionCommand), 1);
+    const cmd_ref = c.self.ref();
+    _ = registerLuaCommand(c.self, full, cmd_title, "view", &.{}, cmd_ref) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.ShadowsBuiltin => L.raiseErrorStr("mnml.section: `%s` shadows a built-in command", .{full.ptr}),
+    };
     try c.self.noteOrigin(.list, title);
     L.pushInteger(idx);
     return 1;
+}
+
+/// The runner behind a section's `user.<id>` command: its own rail row,
+/// clicked from the keyboard.
+fn showSectionCommand(L: *State) !i32 {
+    const c = ctx(L);
+    const idx = L.toInteger(zlua.Lua.upvalueIndex(1)) catch return 0;
+    script_section.show(c.app, if (idx >= 0) @intCast(idx) else 0, true);
+    return 0;
 }
 
 // ─── mnml.task ──────────────────────────────────────────────────────────
@@ -2434,11 +2519,14 @@ test "mnml.picker.source: a live source is asked again as the query changes, deb
     try app.handle(.{ .key = .{ .code = .{ .char = 'x' } } });
     try lua.runString("assert(#calls == 1, #calls)");
     try testing.expectEqualStrings("alpha", app.overlay.picker.labels[0]);
+    // The window is 80 ms — written out, not read from the constant the
+    // code under test uses, so a change to it fails here.
+    try testing.expectEqual(@as(i64, 80), lua_mod.live_debounce_ms);
     // Before the debounce is up, nothing.
-    try app.tick(1000 + lua_mod.live_debounce_ms - 1);
+    try app.tick(1079);
     try lua.runString("assert(#calls == 1, #calls)");
     // After it, one call carrying the whole query.
-    try app.tick(1000 + lua_mod.live_debounce_ms);
+    try app.tick(1080);
     try lua.runString("assert(#calls == 2, #calls) assert(calls[2] == 'x', calls[2])");
     try testing.expectEqual(@as(usize, 1), app.overlay.picker.labels.len);
     try testing.expectEqualStrings("for x", app.overlay.picker.labels[0]);
@@ -2448,7 +2536,9 @@ test "mnml.picker.source: a live source is asked again as the query changes, deb
     try app.handle(.{ .key = .{ .code = .{ .char = 'y' } } });
     app.now_ms = 2040;
     try app.handle(.{ .key = .{ .code = .{ .char = 'z' } } });
-    try app.tick(2040 + lua_mod.live_debounce_ms);
+    try app.tick(2119);
+    try lua.runString("assert(#calls == 2, #calls)");
+    try app.tick(2120);
     try lua.runString("assert(#calls == 3, #calls) assert(calls[3] == 'xyz', calls[3])");
     // A source without `live` is asked exactly once.
     try lua.runString(
@@ -2458,7 +2548,7 @@ test "mnml.picker.source: a live source is asked again as the query changes, deb
     );
     app.now_ms = 5000;
     try app.handle(.{ .key = .{ .code = .{ .char = 'a' } } });
-    try app.tick(5000 + 10 * lua_mod.live_debounce_ms);
+    try app.tick(6000);
     try lua.runString("assert(once == 1, once)");
 }
 
