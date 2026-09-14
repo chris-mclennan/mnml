@@ -9,8 +9,9 @@
 //! current prefix each frame.
 //!
 //! Entries are sorted by key here so a keymap can register them in any
-//! order and the popup still reads alphabetically. `→` is `->` under
-//! `--ascii`.
+//! order and the popup still reads alphabetically — which is why a row
+//! carries the caller's own `id` for the click target rather than its
+//! painted position. `→` is `->` under `--ascii`.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -21,7 +22,15 @@ const overlay = @import("overlay.zig");
 
 const Style = vaxis.Style;
 
-pub const Entry = struct { key: []const u8, label: []const u8, is_group: bool = false };
+pub const Entry = struct {
+    key: []const u8,
+    label: []const u8,
+    is_group: bool = false,
+    /// The caller's index for this row, registered as `.overlay_item`
+    /// so a click lands on the row the CALLER knows — the popup sorts
+    /// its entries, so the painted order is not the caller's.
+    id: ?u32 = null,
+};
 
 pub const arrow = " → ";
 pub const arrow_ascii = " -> ";
@@ -87,6 +96,8 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
             x += ui.putStr(x, y, end -| x, e.key, if (e.is_group) key_group else key_leaf);
             x += ui.putStr(x, y, end -| x, arr, arrow_style);
             _ = ui.putStr(x, y, end -| x, ui.clipStr(e.label, end -| x), if (e.is_group) label_group else label_leaf);
+            // The whole cell is the target, not just the painted text.
+            if (e.id) |id| ui.hit(Rect.init(inner.x + @as(u16, @intCast(c)) * cell_w, y, end -| (inner.x + @as(u16, @intCast(c)) * cell_w), 1), .{ .overlay_item = id });
         }
     }
     if (actual_rows < inner.h) {

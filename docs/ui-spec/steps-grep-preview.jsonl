@@ -1,0 +1,6 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"find.live_grep"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"type","text":"counts"}
+{"cmd":"wait_ms","ms":1200}

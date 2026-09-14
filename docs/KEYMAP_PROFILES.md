@@ -143,9 +143,18 @@ function keys. The F-keys are `both`, so a vim user keeps them too.
 
 Every chord above is checked against `src/commands/specs.zig` by the
 `both key profiles` test in `src/app/cmd_dap.zig`, which also asserts
-that no `dap.*` chord is standard-only. The `+debug` which-key group is
-`vim_only` (`src/app/whichkey.zig`): the standard profile's `Ctrl+K`
-popup keeps Rust's rows.
+that no `dap.*` chord is standard-only. The `+debug` and `+lsp`-on-`r`
+which-key groups are `vim_only` (`src/app/whichkey.zig`): the standard
+profile's `Ctrl+K` popup keeps the reference editor's rows. `r` carries
+NvChad's `<leader>ra` (LSP rename), which that popup does not list, so
+the vim profile shows the row and the standard one does not.
+
+Inside the popup `<BS>` climbs back one level (the reference plugin's
+key); a key that is not a character — an arrow, Enter, a function key —
+leaves the popup where it is; and a key no row carries toasts `no
+leader mapping: <leader>…` rather than dismissing it silently. A vim
+operator with a pending prefix (`g`, `z`, `ctrl+w`) paints the same
+popup titled `Vim: <prefix>`.
 
 ## Ctrl-O / Ctrl-I / Tab in the vim profile
 
