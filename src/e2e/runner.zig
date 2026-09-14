@@ -508,6 +508,26 @@ const Run = struct {
                 if (std.mem.indexOf(u8, body, f.text) == null) return null;
                 return std.fmt.allocPrint(gpa, "file {s} unexpectedly contains {f}", .{ f.rel, debug(f.text) }) catch null;
             },
+            .color => |c| {
+                const scr = d.screen();
+                if (c.x >= scr.width or c.y >= scr.height) {
+                    return std.fmt.allocPrint(gpa, "expect color: cell {d},{d} is off a {d}x{d} screen", .{ c.x, c.y, scr.width, scr.height }) catch null;
+                }
+                const cell = scr.buf[@as(usize, c.y) * scr.width + c.x];
+                const got = if (c.bg) cell.style.bg else cell.style.fg;
+                const hit = switch (got) {
+                    .rgb => |v| std.mem.eql(u8, &v, &c.rgb),
+                    else => false,
+                };
+                if (hit != c.negated) return null;
+                var got_buf: [32]u8 = undefined;
+                const got_text = switch (got) {
+                    .rgb => |v| std.fmt.bufPrint(&got_buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ v[0], v[1], v[2] }) catch "?",
+                    .index => |i| std.fmt.bufPrint(&got_buf, "index {d}", .{i}) catch "?",
+                    .default => "default",
+                };
+                return std.fmt.allocPrint(gpa, "cell {d},{d} {s} is {s}, expected {s}#{x:0>2}{x:0>2}{x:0>2}", .{ c.x, c.y, if (c.bg) "bg" else "fg", got_text, if (c.negated) "not " else "", c.rgb[0], c.rgb[1], c.rgb[2] }) catch null;
+            },
             .highlights_at_least => |min| {
                 const count = d.highlightCount() orelse return gpa.dupe(u8, "expect highlights: no active editor pane") catch null;
                 if (count >= min) return null;

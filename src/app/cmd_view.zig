@@ -822,13 +822,26 @@ pub const system_poll_ms: i64 = 15_000;
 fn pickTheme(app: *App) CommandError!void {
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
     }
-    for (&Theme.all) |*th| try labels.append(gpa, try gpa.dupe(u8, th.name));
+    // The detail says which kind a row is, and marks the one you are on
+    // — the theme you come back to, not the one the cursor is painting.
+    const mark: []const u8 = if (app.cfg.ui.ascii_icons) "*" else "\u{25cf}";
+    for (&Theme.all) |*th| {
+        try labels.append(gpa, try gpa.dupe(u8, th.name));
+        const on = std.mem.eql(u8, th.name, app.theme.name);
+        try details.append(gpa, if (on)
+            try std.fmt.allocPrint(gpa, "{s} current \u{b7} {s}", .{ mark, @tagName(th.kind) })
+        else
+            try gpa.dupe(u8, @tagName(th.kind)));
+    }
     const current = Theme.byName(app.theme.name);
-    try cmd_picker.open(app, "Themes", .themes, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+    try cmd_picker.openPickerWith(app, "Themes", .themes, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.restore_theme = current;
     // Start on the theme that is painted, so Enter is a no-op pick.
     for (app.overlay.picker.filtered.items, 0..) |idx, i| {
@@ -946,13 +959,19 @@ test "theme.pick previews under the cursor, Esc restores, Enter persists ui.them
     try t.expect(app.overlay == .picker);
     try t.expect(app.overlay.picker.kind == .themes);
     try t.expectEqualStrings("onedark", app.overlay.picker.labels[app.overlay.picker.filtered.items[app.overlay.picker.state.cursor]]);
-    // moving previews
+    // The theme you came from is marked; the others say their kind.
+    const cur_row = app.overlay.picker.filtered.items[app.overlay.picker.state.cursor];
+    try t.expect(std.mem.indexOf(u8, app.overlay.picker.details[cur_row], "current") != null);
+    // moving previews — the PALETTE in effect changes, not just the name
+    const before = app.theme.statusline.bg;
     try app.handle(.{ .key = app_mod.Key.named(.down) });
     try t.expect(!std.mem.eql(u8, app.theme.name, "onedark"));
+    try t.expect(!std.meta.eql(before, app.theme.statusline.bg));
     // Esc puts it back and writes nothing
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try t.expect(app.overlay == .none);
     try t.expectEqualStrings("onedark", app.theme.name);
+    try t.expect(std.meta.eql(before, app.theme.statusline.bg));
     try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "config.zon", .{}));
     // typing filters; Enter picks and persists
     try command.run(&app, .{ .static = .@"theme.pick" });

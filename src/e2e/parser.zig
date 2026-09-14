@@ -76,6 +76,10 @@ pub const Check = union(enum) {
     file_contains: struct { rel: []const u8, text: []const u8 },
     file_lacks: struct { rel: []const u8, text: []const u8 },
     highlights_at_least: usize,
+    /// A cell's foreground or background, as a theme resolves it: the
+    /// only way a `.test` can see a colour (the screen dump carries
+    /// none). `expect color X Y fg #61afef`, `… bg not #1e222a`.
+    color: struct { x: u16, y: u16, bg: bool, rgb: [3]u8, negated: bool },
 };
 
 pub const Stmt = union(enum) {
@@ -239,7 +243,7 @@ const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
-    const What = enum { screen, dirty, pane, highlights, file };
+    const What = enum { screen, dirty, pane, highlights, file, color };
     const kind = std.meta.stringToEnum(What, what) orelse return diag.set("line {d}: unknown expectation `{s}`", .{ ln, what });
     const check: Check = switch (kind) {
         .screen => blk: {
@@ -260,6 +264,25 @@ fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Err
             if (!std.mem.eql(u8, op, "at_least")) return diag.set("line {d}: expect highlights at_least <N>", .{ln});
             const min = std.fmt.parseInt(usize, trim(num), 10) catch return diag.set("line {d}: expect highlights at_least <usize>", .{ln});
             break :blk .{ .highlights_at_least = min };
+        },
+        .color => blk: {
+            const xs, const r1 = split1(arg);
+            const ys, const r2 = split1(r1);
+            const which, const r3 = split1(r2);
+            var hex, _ = split1(r3);
+            var negated = false;
+            if (std.mem.eql(u8, hex, "not")) {
+                negated = true;
+                hex, _ = split1(r3["not".len..]);
+            }
+            const x = std.fmt.parseInt(u16, xs, 10) catch return diag.set("line {d}: expect color <X> <Y> <fg|bg> [not] #RRGGBB", .{ln});
+            const y = std.fmt.parseInt(u16, ys, 10) catch return diag.set("line {d}: expect color <X> <Y> <fg|bg> [not] #RRGGBB", .{ln});
+            const is_bg = if (std.mem.eql(u8, which, "bg")) true else if (std.mem.eql(u8, which, "fg")) false else return diag.set("line {d}: expect color … <fg|bg> …", .{ln});
+            const spelt = trim(hex);
+            if (spelt.len != 7 or spelt[0] != '#') return diag.set("line {d}: expect color … #RRGGBB (a `#` and six hex digits)", .{ln});
+            const body = spelt[1..];
+            const v = std.fmt.parseInt(u24, body, 16) catch return diag.set("line {d}: expect color … #RRGGBB (six hex digits)", .{ln});
+            break :blk .{ .color = .{ .x = x, .y = y, .bg = is_bg, .rgb = .{ @intCast((v >> 16) & 0xff), @intCast((v >> 8) & 0xff), @intCast(v & 0xff) }, .negated = negated } };
         },
         .file => blk: {
             const rel, const rest1 = split1(arg);
@@ -572,4 +595,25 @@ test "CRLF and blank lines are tolerated" {
     try t.expectEqual(@as(usize, 2), s.lines.len);
     try t.expectEqualStrings("a.txt", s.lines[0].stmt.step.open);
     try t.expectEqual(@as(usize, 4), s.lines[1].ln);
+}
+
+test "expect color takes a cell, fg or bg, and an optional `not`" {
+    var s = try parseOk("expect color 10 39 bg #1e222a\nexpect color 0 0 fg not #ffffff\n");
+    defer s.deinit();
+    const a = s.lines[0].stmt.check.color;
+    try t.expectEqual(@as(u16, 10), a.x);
+    try t.expectEqual(@as(u16, 39), a.y);
+    try t.expect(a.bg);
+    try t.expect(!a.negated);
+    try t.expectEqualSlices(u8, &.{ 0x1e, 0x22, 0x2a }, &a.rgb);
+    const b = s.lines[1].stmt.check.color;
+    try t.expect(!b.bg);
+    try t.expect(b.negated);
+    try t.expectEqualSlices(u8, &.{ 0xff, 0xff, 0xff }, &b.rgb);
+    // A malformed one is a parse error, not a silently-passing check.
+    for ([_][]const u8{
+        "expect color 10 39 bg 1e222a\n",
+        "expect color 10 39 middle #1e222a\n",
+        "expect color x 39 bg #1e222a\n",
+    }) |bad| t.allocator.free(try parseErr(bad));
 }
