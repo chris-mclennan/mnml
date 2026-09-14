@@ -1,0 +1,38 @@
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
+# env: TERM_PROGRAM=ghostty
+# env: SHELL=/bin/sh
+# The mark a pty tab wears (`src/app/render.zig`'s `ptyIcon`): an AI
+# session's tab carries its product's own glyph — `󱸀` for Claude,
+# `󱸁` for Codex — where every pty tab used to show the one generic
+# codicon terminal ``. A plain shell wears the mark of the terminal
+# mnml itself runs inside (`$TERM_PROGRAM`) and reads `<terminal>
+# (<shell>)` — here `ghostty (sh)`, the ghost. A pane running any
+# other command keeps the codicon.
+#
+# `tools/shims/ai/claude` and `…/codex` stand in for the CLIs (they
+# sleep), so the strips read `claude` and `codex` and no transcript
+# reaches the screen. Each pane is closed before the next opens: every
+# one of these commands splits, and a chip on a quarter-width strip is
+# cut before its name, which would assert nothing.
+command view.toggle_tree
+# The shell: the host terminal's name and mark, not the generic pair.
+command term.shell
+wait 300
+expect pane ghostty (sh)
+expect screen contains "󰊠 ghostty (sh) 󰅖"
+expect screen lacks " ghostty (sh) 󰅖"
+command buffer.close
+command ai.claude_code_new
+wait 300
+expect pane claude
+expect screen contains "󱸀 claude 󰅖"
+expect screen lacks " claude 󰅖"
+command buffer.close
+command ai.codex_new
+wait 300
+expect pane codex
+expect screen contains "󱸁 codex 󰅖"
+command buffer.close
+# Any other command still wears the codicon terminal.
+ex term sleep 30
+expect screen contains " sleep 30 󰅖"

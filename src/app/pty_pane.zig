@@ -32,6 +32,7 @@ const statusline = @import("statusline.zig");
 const CommandError = command.CommandError;
 const launch_profiles = @import("launch_profiles.zig");
 const accent_color = @import("../ui/accent_color.zig");
+const bufferline = @import("../ui/bufferline.zig");
 const Theme = @import("../ui/theme.zig");
 
 /// Every target has a pty backend now (openpty on POSIX, ConPTY on
@@ -407,15 +408,28 @@ pub fn accentOf(app: *const App, p: *const PtyPane, theme: *const Theme) ?Theme.
     };
 }
 
+/// The terminal mnml itself is running inside — the name and the mark
+/// a shell pane's tab wears (`bufferline.terminalFor`).
+pub fn hostTerminal(app: *const App) bufferline.Terminal {
+    return bufferline.terminalFor(app.env.get("TERM_PROGRAM"), app.env.get("WT_SESSION"));
+}
+
+/// The shell's own name as the tab spells it: the binary's base
+/// without the Windows suffix — `zsh`, `bash`, `fish`, `pwsh`.
+pub fn shellName(app: *const App) []const u8 {
+    // The same choice the session makes: `$SHELL` on POSIX, `%COMSPEC%`
+    // on Windows (where `$SHELL`, if set at all, is Git Bash's fiction).
+    const shell = if (pty.is_windows) pty.win_cmdline.defaultShell(&app.env) else app.env.get("SHELL") orelse "sh";
+    const base = std.fs.path.basename(shell);
+    return if (std.ascii.endsWithIgnoreCase(base, ".exe")) base[0 .. base.len - 4] else base;
+}
+
 fn labelFor(app: *App, opts: OpenOptions) Allocator.Error![]u8 {
     const gpa = app.gpa;
     if (opts.label) |l| return gpa.dupe(u8, l);
-    if (opts.argv.len == 0) {
-        // The same choice the session makes: `$SHELL` on POSIX, `%COMSPEC%`
-        // on Windows (where `$SHELL`, if set at all, is Git Bash's fiction).
-        const shell = if (pty.is_windows) pty.win_cmdline.defaultShell(&app.env) else app.env.get("SHELL") orelse "sh";
-        return gpa.dupe(u8, std.fs.path.basename(shell));
-    }
+    // A shell reads `<terminal> (<shell>)`, as Rust's `BinaryProfile::
+    // shell` spells it: the terminal mnml runs inside, then the child.
+    if (opts.argv.len == 0) return std.fmt.allocPrint(gpa, "{s} ({s})", .{ hostTerminal(app).label, shellName(app) });
     return std.mem.join(gpa, " ", opts.argv);
 }
 
@@ -1320,4 +1334,94 @@ test "the identity strip: a Claude pane's left column is the `▌` in its accent
     const tab2 = r2.tab orelse return error.TestUnexpectedResult;
     const glyph2 = app.screen.readCell(tab2.x + 1, tab2.y).?;
     try t.expect(!Theme.Color.eql(glyph2.style.fg, app.theme.palette.blue));
+}
+
+test "a shell pane reads `<terminal> (<shell>)` and its tab wears that terminal's own mark, not the generic one" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // The shell's name is the binary's base, the Windows suffix off.
+    try app.env.put("SHELL", "/usr/local/bin/zsh");
+    try t.expectEqualStrings("zsh", shellName(&app));
+    try app.env.put("SHELL", "/opt/PowerShell/pwsh.exe");
+    try t.expectEqualStrings("pwsh", shellName(&app));
+    // The terminal is the one `$TERM_PROGRAM` names.
+    try app.env.put("TERM_PROGRAM", "ghostty");
+    try t.expectEqualStrings("ghostty", hostTerminal(&app).label);
+    // A shell pane's label is the pair, and the tab's mark is that
+    // terminal's — a shell has no accent, so the mark is not tinted.
+    try app.env.put("SHELL", "/bin/sh");
+    const sh = try open(&app, .{ .placement = .tab });
+    try t.expectEqualStrings("ghostty (sh)", app.panes.pty(sh).?.label);
+    try t.expect(accentOf(&app, app.panes.pty(sh).?, &app.theme) == null);
+    try app.render();
+    const tab = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings("\u{F02A0}", app.screen.readCell(tab.x + 1, tab.y).?.char.grapheme);
+    // An unknown terminal falls back to the codicon, and the label
+    // with it; a command pane is untouched by either.
+    try app.env.put("TERM_PROGRAM", "Hyper");
+    const sh2 = try open(&app, .{ .placement = .tab });
+    try t.expectEqualStrings("terminal (sh)", app.panes.pty(sh2).?.label);
+    try app.render();
+    const tab2 = (rectsOf(&app, sh2)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab2.x + 1, tab2.y).?.char.grapheme);
+    const cmd = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .kind = .command, .placement = .tab });
+    try t.expectEqualStrings("/bin/sh -c sleep 30", app.panes.pty(cmd).?.label);
+    try app.render();
+    const tab3 = (rectsOf(&app, cmd)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab3.x + 1, tab3.y).?.char.grapheme);
+}
+
+test "an AI pane's tab wears its product's mark: two Claude panes, the same glyph in two accents; Codex its own glyph in the theme's cyan" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const shim = try writeClaudeShim(tmp.dir, root);
+    defer t.allocator.free(shim);
+    // A binary literally called `codex` is a Codex session to
+    // `isProductArgv`, no profile needed.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "codex", .data = "#!/bin/sh\nsleep 30\n" });
+    const codex = try std.fs.path.join(t.allocator, &.{ root, "codex" });
+    defer t.allocator.free(codex);
+    const res = try std.process.run(t.allocator, t.io, .{ .argv = &.{ "chmod", "+x", codex } });
+    t.allocator.free(res.stdout);
+    t.allocator.free(res.stderr);
+
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 20 });
+    defer app.deinit();
+    app.cfg.ai.launch_profiles = &color_profiles;
+    app.tree.visible = false;
+    const c1 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    const c2 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    const cx = try open(&app, .{ .argv = &.{codex}, .label = "codex", .kind = .command, .placement = .tab });
+    try app.render();
+    // Both Claude tabs carry the Claude mark; each is painted in its
+    // own auto accent — the same colour as its identity strip and its
+    // sessions card — so two sessions never read as one.
+    const t1 = (rectsOf(&app, c1)).tab orelse return error.TestUnexpectedResult;
+    const t2 = (rectsOf(&app, c2)).tab orelse return error.TestUnexpectedResult;
+    const g1 = app.screen.readCell(t1.x + 1, t1.y).?;
+    const g2 = app.screen.readCell(t2.x + 1, t2.y).?;
+    try t.expectEqualStrings(bufferline.claude_glyph, g1.char.grapheme);
+    try t.expectEqualStrings(bufferline.claude_glyph, g2.char.grapheme);
+    try t.expect(Theme.Color.eql(g1.style.fg, app.theme.palette.green));
+    try t.expect(Theme.Color.eql(g2.style.fg, app.theme.palette.blue));
+    try t.expect(!Theme.Color.eql(g1.style.fg, g2.style.fg));
+    // Codex has its own mark, in the theme's cyan (no auto slot).
+    const t3 = (rectsOf(&app, cx)).tab orelse return error.TestUnexpectedResult;
+    const g3 = app.screen.readCell(t3.x + 1, t3.y).?;
+    try t.expectEqualStrings(bufferline.codex_glyph, g3.char.grapheme);
+    try t.expect(Theme.Color.eql(g3.style.fg, app.theme.palette.cyan));
+    // The user's pick still wins over the brand.
+    try setAccent(&app, c1, "red");
+    try app.render();
+    const t1b = (rectsOf(&app, c1)).tab orelse return error.TestUnexpectedResult;
+    try t.expect(Theme.Color.eql(app.screen.readCell(t1b.x + 1, t1b.y).?.style.fg, app.theme.palette.red));
 }

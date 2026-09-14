@@ -693,7 +693,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .git_graph => kindIcon(ascii, "\u{2387}", "\u{F02A2}", p.orange),
         .git_status => kindIcon(ascii, "\u{B1}", "\u{F1D2}", p.green),
         .request => |*r| .{ .glyph = "", .color = request_pane.methodColor(&app.theme, r.methodName()) },
-        .pty => kindIcon(ascii, bufferline.term_ascii, bufferline.term_glyph, p.green),
+        .pty => |*pty_p| ptyIcon(app, pty_p, ascii),
         .ai, .ai_apply => kindIcon(ascii, "\u{2726}", "\u{F0E0A}", p.purple),
         .tests => kindIcon(ascii, "\u{2713}", "\u{F0668}", p.green),
         .browser => kindIcon(ascii, "\u{25C9}", "\u{F059F}", p.blue),
@@ -722,6 +722,22 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
 /// One pane kind's glyph in its colour, or the `--ascii` twin.
 fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color) icons.Icon {
     return .{ .glyph = if (ascii) twin else nerd, .color = color };
+}
+
+/// A pty tab's mark, as Rust's `pty_icon` picks it: the product's own
+/// for an AI session (in the product's brand, which `tabsOf` then
+/// lets the pane's accent override), the terminal mnml runs inside
+/// for a plain shell — white, the colour the split cluster's terminal
+/// button wears — and the codicon terminal for any other command.
+fn ptyIcon(app: *App, pane: *const pty_pane.PtyPane, ascii: bool) icons.Icon {
+    const p = app.theme.palette;
+    if (pty_pane.productOf(app, pane)) |product| return switch (product) {
+        .claude => kindIcon(ascii, bufferline.claude_ascii, bufferline.claude_glyph, pty_pane.claude_brand),
+        .codex => kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
+    };
+    if (pane.argv.len > 0) return kindIcon(ascii, bufferline.term_ascii, bufferline.term_glyph, p.green);
+    const term = pty_pane.hostTerminal(app);
+    return .{ .glyph = if (ascii) term.fallback else term.glyph, .color = .{ .index = 15 } };
 }
 
 /// `✗N` / `⚠N` (or `●` under `dot`) for an editor with diagnostics,
