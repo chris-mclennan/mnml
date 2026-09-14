@@ -2720,6 +2720,9 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     // Its detail pane: Reinstall, no Build; the binary line says what it is.
     try openDetail(&app, .{ .dev = st.dev[0].key() });
     testing.allocator.free(txt);
+    // The scan's problem toast (a long path, wrapped) would cover the
+    // detail pane's last rows: read the pane without it.
+    app.dismissToasts();
     txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "[ Reinstall ]  [ Open ]") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "[ Build ]") == null);

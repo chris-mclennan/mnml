@@ -1791,19 +1791,19 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expectEqual(@as(usize, 6), child_hits);
     try t.expectEqual(@as(u16, 45), m.sub.?.rect.x);
     try t.expectEqual(@as(u16, 3), m.sub.?.rect.y);
-    // j lights the child's cursor row, the next j moves. The kebab
+    // j lights the child's cursor row AND moves it (Rust's child
+    // `move_down` steps on the first arrow; walkthrough 2.2). The kebab
     // shows only where the label leaves room for it: not on the
     // longest rows (Rust's screen keeps the label there), on HTTP request.
     try app.handle(.{ .key = app_mod.Key.char('j') });
     try t.expect(m.sub.?.highlight);
-    try t.expectEqual(@as(usize, 0), m.sub.?.cursor);
+    try t.expectEqual(@as(usize, 1), m.sub.?.cursor);
     const lit = try screenOf(&app);
     defer t.allocator.free(lit);
     try t.expect(std.mem.indexOf(u8, lit, "│ \u{f067}  Scratch buffer │") != null);
     try t.expect(std.mem.indexOf(u8, lit, "⋮") == null);
     try app.handle(.{ .key = app_mod.Key.char('j') });
-    try t.expectEqual(@as(usize, 1), m.sub.?.cursor);
-    try app.handle(.{ .key = app_mod.Key.char('j') });
+    try t.expectEqual(@as(usize, 2), m.sub.?.cursor);
     const lit2 = try screenOf(&app);
     defer t.allocator.free(lit2);
     try t.expect(std.mem.indexOf(u8, lit2, "│ \u{f067}  HTTP request ⋮ │") != null);
@@ -1888,8 +1888,7 @@ test "a click on the child row's kebab glyph opens the curation, not the row; a 
     app.tree.visible = false;
     try openNewTabMenu(&app, 45, 1);
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸
-    try app.handle(.{ .key = app_mod.Key.named(.down) }); // lights the child's row 0
-    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // the first arrow moves as well as lights
     try app.handle(.{ .key = app_mod.Key.named(.down) }); // HTTP request: room for the kebab
     try app.render();
     // The glyph: the cell on the child's row 2 painting `⋮`.
@@ -1951,16 +1950,14 @@ test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top 
     app.cfg.ui.integration_icons = &.{};
     try openNewTabMenu(&app, 4, 1);
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸
-    try app.handle(.{ .key = app_mod.Key.named(.down) }); // lights Scratch buffer
-    try app.handle(.{ .key = app_mod.Key.named(.down) }); // From clipboard
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // From clipboard (the first arrow moves)
     try app.handle(.{ .key = app_mod.Key.named(.down) }); // HTTP request
     try app.handle(.{ .key = app_mod.Key.named(.right) }); // curation
     const m = &app.overlay.menu;
     try t.expect(m.sub != null);
     try t.expectEqualStrings("Pin to top", m.sub.?.items[0].label);
     try t.expectEqual(command.CommandId.@"http.new", app.menu_ctx.?);
-    try app.handle(.{ .key = app_mod.Key.named(.down) }); // lights Pin
-    try app.handle(.{ .key = app_mod.Key.named(.enter) }); // pin
+    try app.handle(.{ .key = app_mod.Key.named(.enter) }); // pin (row 0)
     try t.expect(app.overlay == .none);
     try t.expectEqual(@as(usize, 1), app.plus_pinned.items.len);
     try t.expectEqualStrings("http.new", app.plus_pinned.items[0]);
@@ -1977,8 +1974,7 @@ test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top 
     // → on the pinned row: Unpin leads; Hide drops it from the New child too.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqualStrings("Unpin", m.sub.?.items[0].label);
-    try app.handle(.{ .key = app_mod.Key.named(.down) });
-    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try app.handle(.{ .key = app_mod.Key.named(.down) }); // Hide this row
     try app.handle(.{ .key = app_mod.Key.named(.enter) }); // hide
     try t.expectEqual(@as(usize, 0), app.plus_pinned.items.len);
     try t.expectEqualStrings("http.new", app.plus_hidden.items[0]);
@@ -1987,8 +1983,7 @@ test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top 
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqual(@as(usize, 5), m.sub.?.items.len);
     for (m.sub.?.items) |it| try t.expect(!std.mem.eql(u8, it.label, "HTTP request"));
-    // Copy id lands on the clipboard.
-    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    // Copy id lands on the clipboard (→ on the child's row 0, Scratch buffer).
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try app.handle(.{ .key = app_mod.Key.named(.end) });
     try app.handle(.{ .key = app_mod.Key.named(.end) });
@@ -2005,8 +2000,7 @@ test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top 
     try t.expectEqual(@as(usize, 4), m.sub.?.cursor);
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expectEqual(command.CommandId.@"files.trash", app.menu_ctx.?);
-    try app.handle(.{ .key = app_mod.Key.named(.down) });
-    try app.handle(.{ .key = app_mod.Key.named(.enter) }); // pin files.trash
+    try app.handle(.{ .key = app_mod.Key.named(.enter) }); // pin files.trash (row 0)
     try t.expectEqual(@as(usize, 1), app.plus_pinned.items.len);
     // The next launch reads the home config (`config.load`) — pinned
     // rows and hidden rows come back from it.
