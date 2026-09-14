@@ -29,9 +29,9 @@ expect screen contains "docs/b.txt"
 expect screen contains "1:7  const alpha = 1;"
 expect screen lacks "out.log"
 expect screen lacks "scratch.txt"
-# ↓ from the query lands on the first hit (docs/b.txt:1 — git grep
-# orders by path); Enter with an empty query opens it — Esc clears first.
-key down
+# The selection starts on the first hit (docs/b.txt:1 — git grep orders
+# by path) while the query keeps the keys; Esc clears the empty query
+# and leaves the field, Enter opens the selected hit.
 key esc
 key enter
 expect screen contains "Ln 1/"
