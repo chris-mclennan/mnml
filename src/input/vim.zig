@@ -19,6 +19,7 @@ const CommandId = input.CommandId;
 const ops = input.ops;
 const repeated = input.repeated;
 const surround = @import("../editor/surround.zig");
+const script_ops = @import("script_ops.zig");
 
 pub const VimMode = enum { normal, insert, replace, visual, visual_line, visual_block };
 
@@ -39,10 +40,14 @@ pub const PendingOp = enum {
     filter,
     /// `zf{motion}`: a manual fold over the range (`:help zf`).
     fold,
+    /// `g<letter>{motion}` where a script claimed the letter
+    /// (`input/script_ops.zig`); `Vim.script_op` says which.
+    script,
 
     fn glyph(op: PendingOp) []const u8 {
         return switch (op) {
             .fold => "zf",
+            .script => "g",
             .delete => "d",
             .change => "c",
             .yank => "y",
@@ -162,6 +167,10 @@ pub const Vim = struct {
     /// The Visual mode the last selection was made in — what `gv`
     /// comes back to (`:help gv`).
     last_visual: VimMode = .visual,
+    /// While `op` is `.script`: which claimed operator is pending, and
+    /// the letter that claimed it — `gss` doubles the way `gUU` does.
+    script_op: u32 = 0,
+    script_letter: u8 = 0,
 
     pub fn init(gpa: Allocator, cfg: input.Config) Vim {
         return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8), .use_tabs = cfg.use_tabs };
@@ -873,6 +882,15 @@ pub const Vim = struct {
                 return .{ .app = .{ .fold_after = b.list.items } };
             },
             .filter => return .consumed, // TODO(vim-slice: filter) `!{motion}`
+            // The range goes live the way every other operator's does;
+            // the app hands it to the script and clears the selection.
+            .script => {
+                // A linewise object (`ip` / `ap`) hands over whole lines
+                // WITHOUT the last one's terminator: a script that wraps
+                // a range wants the text, not the newline after it.
+                if (linewise_object) try b.push(.normalize_linewise_selection_inner);
+                return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .linewise = linewise_object } } };
+            },
         }
         return b.finish();
     }
@@ -1684,7 +1702,19 @@ pub const Vim = struct {
                 self.op = .@"align";
                 return .consumed;
             },
-            else => return .consumed,
+            // A letter vim does not use may be a script's operator
+            // (`input/script_ops.zig`). The lookup sits after the switch,
+            // so a claim can never shadow one of the chords above.
+            else => {
+                if (pending_op == null) if (script_ops.lookup(c)) |idx| {
+                    self.op = .script;
+                    self.script_op = idx;
+                    self.script_letter = @intCast(@min(c, std.math.maxInt(u8)));
+                    if (count_explicit) self.count = n;
+                    return .consumed;
+                };
+                return .consumed;
+            },
         }
     }
 
@@ -1710,6 +1740,7 @@ pub const Vim = struct {
             .@"align" => c == 'A',
             .filter => c == '!',
             .reflow, .comment, .fold => false,
+            .script => c == self.script_letter,
         } else false;
         const n = self.count1();
         self.resetPending();
@@ -1778,6 +1809,19 @@ pub const Vim = struct {
                 },
                 .@"align" => return .consumed, // `gAA` has no meaning
                 .fold => return .consumed, // `zfzf` has no meaning either
+                // `gss` is `count` whole lines, the shape `gUU` has.
+                .script => {
+                    var b = Builder.init(arena);
+                    try b.push(.select_line);
+                    try b.push(.move_line_end);
+                    for (1..n) |_| {
+                        try b.push(.move_down);
+                        try b.push(.move_line_end);
+                    }
+                    // `resetPending` leaves `script_op` alone; it is only
+                    // ever read while the pending op is `.script`.
+                    return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .linewise = true } } };
+                },
             }
         }
         if (ch == 's' and (op == .delete or op == .change or op == .yank)) {
@@ -1938,7 +1982,17 @@ pub const Vim = struct {
                         const widen: EditOp = if (linewise) .normalize_linewise_selection else .make_selection_inclusive;
                         return ops(arena, &.{ widen, .toggle_line_comment, .move_cursor_to_selection_start, .select_clear });
                     },
-                    else => return .consumed,
+                    // `V…gs`: the live selection is the operator's range,
+                    // widened the way every other visual operator widens it.
+                    else => {
+                        const idx = script_ops.lookup(c) orelse return .consumed;
+                        self.enterNormal();
+                        // `_inner`: whole lines, without the last one's
+                        // terminator — the range `gss` hands over too.
+                        const widen: EditOp = if (linewise) .normalize_linewise_selection_inner else .make_selection_inclusive;
+                        const list = try arena.dupe(EditOp, &.{widen});
+                        return .{ .app = .{ .script_operator = .{ .ops = list, .index = idx, .linewise = linewise } } };
+                    },
                 }
             },
             .z_fold => {
@@ -2294,6 +2348,43 @@ fn nextBoundary(s: []const u8, b: usize) usize {
 // ─── tests (handler-level; the end-to-end chord tables live in buffer.zig) ──
 
 const testing = std.testing;
+
+test "a script's g<letter> is operator-pending, and only on a letter vim itself does not use" {
+    // The drift check for `script_ops.reserved`: vim's own `g` chords
+    // must be exactly the letters the table names, or `mnml.operator`
+    // would be refusing a free letter — or accepting a dead one.
+    const gpa = std.testing.allocator;
+    var letters: [52]u8 = undefined;
+    for (0..26) |i| {
+        letters[i] = @intCast('a' + i);
+        letters[26 + i] = @intCast('A' + i);
+    }
+    for (letters) |letter| {
+        defer script_ops.clear(gpa);
+        var buf = [2]u8{ 'g', letter };
+        try script_ops.register(gpa, &buf, 7);
+        var v = Vim.init(gpa, .{});
+        defer v.deinit();
+        var arena_state = std.heap.ArenaAllocator.init(gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        _ = try v.handleKey(Key.char('g'), .{}, arena);
+        _ = try v.handleKey(Key.char(letter), .{}, arena);
+        const claimed = v.op != null and v.op.? == .script;
+        if (script_ops.isReserved(letter)) {
+            std.testing.expect(!claimed) catch |err| {
+                std.debug.print("g{c} is reserved but reached the script\n", .{letter});
+                return err;
+            };
+        } else {
+            std.testing.expect(claimed) catch |err| {
+                std.debug.print("g{c} is free in script_ops.reserved but vim took it\n", .{letter});
+                return err;
+            };
+            try std.testing.expectEqual(@as(u32, 7), v.script_op);
+        }
+    }
+}
 
 test "classifyEx recognises the file verbs and :s" {
     try testing.expectEqual(ExKind.write, classifyEx("w"));

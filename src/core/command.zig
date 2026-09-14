@@ -640,6 +640,14 @@ pub const MenuAction = union(enum) {
     /// the repo's index in discovery order (`app/git_palette.zig`
     /// `setRepoColor`).
     repo_color: struct { idx: u32, name: []const u8 },
+    /// // changed (lua-plumbing): a script list's row menu
+    /// (`app/script_list.zig`) — fold the header at `row`, run the
+    /// script's menu entry `item`, or refresh the list.
+    script_list_fold: struct { list: u32, row: u32 },
+    script_list_menu: struct { list: u32, item: u32 },
+    script_list_refresh: u32,
+    /// The rail menu's *Show …* row for a script's section.
+    script_section_show: u16,
     none,
 };
 

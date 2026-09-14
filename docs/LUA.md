@@ -134,6 +134,21 @@ the prefix sees to that.
 argument may be a command id instead of a function — built-in or script —
 and the chord then runs it through `mnml.run`.
 
+```lua
+mnml.commands()          --> { { id = "file.save", title = "Save file", group = "file", keys = { "ctrl+s" } }, … }
+mnml.commands("save")    --> the ones whose id or title holds "save"
+```
+
+*(api 1, added)* `mnml.commands(query?)` is the read behind a picker or
+a list over what the app can do: every command, built-in and script,
+with the chords it answers to under the active profile. `query` narrows
+it by a case-insensitive substring on the id or the title; without one,
+all of them.
+
+| function | changed in |
+|---|---|
+| `mnml.commands` | api 1, added |
+
 ### Hooks
 
 ```lua
@@ -222,6 +237,9 @@ mnml.buf.line_count(pane?)
 mnml.buf.cursor(pane?)          --> line, col (1-based), byte (0-based)
 mnml.buf.path(pane?)            --> workspace-relative path, nil for a scratch buffer
 mnml.buf.apply({ op = …, … }, pane?)  --> true when the text changed
+mnml.buf.selection(pane?)       --> { start, ["end"], mode }, or nil
+mnml.buf.range(start, end_, pane?)    --> the text between two bytes
+mnml.buf.word_at(byte?, pane?)  --> { text, start, ["end"] }, or nil
 ```
 
 `pane` is a pane id (as `mnml.pane.active()` returns); without it the active
@@ -242,6 +260,88 @@ the tag (`src/editor/edit_op.zig` lists all 131); the payload follows:
 | composed | `select_range` (`start`, `end` — bytes), `atomic` (`ops = { … }`), `repeat` (`count`, `inner`) | one undo step |
 
 `end` is a Lua keyword: write `["end"] = 5`.
+
+#### Reading a range
+
+*(api 1, added)* The three reads a text operation needs before it
+writes one. Positions are bytes, 0-based, `end` exclusive — the same
+numbers `replace_range`, `select_range` and `decor.highlight` take.
+
+```lua
+local s = mnml.buf.selection()                   --> { start = 6, ["end"] = 10, mode = "char" }
+if s then
+  local text = mnml.buf.range(s.start, s["end"])
+  mnml.buf.apply{ op = "replace_range", start = s.start, ["end"] = s["end"], text = "«" .. text .. "»" }
+end
+local w = mnml.buf.word_at()                     --> { text = "alpha", start = 0, ["end"] = 5 }
+```
+
+`selection` is nil when nothing is selected. `mode` is `"char"`,
+`"line"` or `"block"` — the shape the handler is in, the one
+handler-derived fact a script sees; a modeless (standard) selection is
+always `"char"`.
+
+`range` clamps both ends to the buffer and reads a reversed pair the
+same way round, so a position kept from before an edit still answers
+instead of raising.
+
+`word_at` uses vim's `iw` classes (a run of word characters, or a run
+of punctuation) less the third: a run of whitespace is not a word, so
+the space between two words is in neither and the call is nil there.
+Without a byte it asks about the cursor's.
+
+| function | changed in |
+|---|---|
+| `mnml.buf.selection` | api 1, added |
+| `mnml.buf.range` | api 1, added |
+| `mnml.buf.word_at` | api 1, added |
+
+### Operators
+
+*(api 1, added)* A text operation the user reaches the way they reach a
+built-in one — `gs{motion}` under the vim profile, a chord under the
+standard one:
+
+```lua
+mnml.operator{ id = "surround", keys = { vim = "gs", standard = "ctrl+shift+s" },
+  run = function(range)
+    local text = mnml.buf.range(range.start, range["end"])
+    mnml.buf.apply{ op = "replace_range", start = range.start, ["end"] = range["end"], text = "(" .. text .. ")" }
+  end }                                         --> "user.surround"
+```
+
+`run` is handed the range in the shape `mnml.buf.selection()` answers —
+`{ start, ["end"], mode }`, bytes, `end` exclusive.
+
+**Under vim it is operator-pending.** `keys.vim` is `g` and one letter,
+and every road a built-in operator's range comes from is the same one
+here: a motion (`gsw`, `gs$`, `gsj`), a text object (`gsiw`, `gsi"`,
+`gsap`), a count (`3gsw`), a mark (`` gs`a ``), a find (`gsf,`), the
+doubled form for whole lines (`gss`, like `gUU`), and a live Visual
+selection (`viw` then `gs`, or `V` then `gs` — `mode` is `"line"`
+there). The operator clears the selection when it is done and Normal
+resumes, exactly as `gU{motion}` does.
+
+The letter must be one vim does not already use. `gd`, `gc`, `gU`, `gq`
+and the rest of vim's own `g` chords are refused by name at
+registration rather than registered and never reached; the free
+letters today are `b h l m o s w y z` and `B C F G H K L M O Q R S V W
+X Y Z`.
+
+**Under standard it is a command.** `keys.standard` is an ordinary
+chord spec, and the operator is a `user.<id>` command like any other —
+in the palette, in `mnml.run`, bindable in `.keys`. It takes the
+selection; with none, the word under the cursor (the `word_at` rule, so
+a cursor in a run of whitespace does nothing). The standard chord is
+bound under both profiles, so a vim user has both roads.
+
+**One undo step.** Whatever `run` applies — one `replace_range`, or
+several ops — a single `u` puts the text back the way it was before the
+chord.
+
+| function | changed in |
+|---|---|
+| `mnml.operator` | api 1, added |
 
 ### Toasts, the statusline
 
@@ -269,6 +369,59 @@ mnml.picker.open("notes", query?)
 `items(query)` runs once when the picker opens (with `query` or `""`); the
 picker's own fuzzy filter narrows the rows as the user types. Enter calls
 the row's `on_accept(label)`; Esc drops the rows.
+
+#### A live source, a preview column, multi-select
+
+*(api 1, added)* The four fields that turn the one-shot list above into
+the shape a real plugin wants:
+
+```lua
+mnml.picker.source{ id = "recent", title = "Recent commands",
+  items = function(query) return rows end,
+  live = true,
+  preview = function(row) return { { { text = row.label, fg = "accent" } }, row.detail } end,
+  multi = true,
+  on_accept = function(row_or_rows) … end }
+```
+
+A row is a string, or a table `{ label=, detail=, icon=, data=,
+on_accept= }`. `icon` is one glyph before the label, in the accent.
+`data` is yours: it is handed back to `preview` and `on_accept`
+untouched — the whole row table comes back, not a copy.
+
+**`live = true`** asks `items(query)` again as the query changes,
+debounced 80 ms, so a typed word is one call and not one per key. The
+previous call's rows stay on screen until the new ones land: the list
+never blanks while a source is thinking. Without `live` the source is
+asked exactly once, when the picker opens, and the picker's own fuzzy
+filter does the narrowing from there.
+
+**`preview = fn(row)`** paints the picker's right-hand column with rows
+in the script pane's segment shape (a string, or a list of strings and
+`{ text=, fg=, bg=, bold=, italic=, underline= }` tables). The box
+widens to make room: results left, a `│` rule, the preview right, the
+prompt on top with the count at its right edge. It is called when the
+cursor moves, never from the paint loop — the 20 ms budget is never
+spent painting. A box too narrow to read two columns in keeps all its
+width for the rows.
+
+**`multi = true`** makes `Tab` mark the row under the cursor and step
+on, so a run is marked by holding it. A marked row shows a `✓` where
+the cursor marker goes. Enter then hands `on_accept` the **list** of
+marked rows; with nothing marked it hands the one under the cursor —
+still as a list, so the function has one shape to read.
+
+**`on_accept`** on the source is handed the row table (or the list).
+The per-row `on_accept(label)` from before still fires first, so a
+source may use either or both.
+
+| function / field | changed in |
+|---|---|
+| `mnml.picker.source` `live` | api 1, added |
+| `mnml.picker.source` `preview` | api 1, added |
+| `mnml.picker.source` `multi` | api 1, added |
+| `mnml.picker.source` `on_accept` | api 1, added |
+| a row's `icon` / `data` | api 1, added |
 
 ### Script panes
 
@@ -301,6 +454,72 @@ key goes to `on_key(name)` first — `name` is the chord spec (`j`, `ctrl+p`,
 `enter`, `space`); return true to consume it, anything else lets it fall
 through to the chord chain (`space f f` still works from a script pane).
 The wheel arrives as `wheel_up` / `wheel_down`.
+
+### Lists and sections
+
+*(api 1, added)* `mnml.list{}` hands a script the panel every built-in
+section is — the caps header with the refresh and `sort:` chips, the
+filter pill, `j` / `k` / `g` / `G` / Enter, the fold headers, the
+scrollbar, the row menu, the hits — and asks only for rows:
+
+```lua
+local l = mnml.list{ title = "TODOS", sort = { "State", "Name" },
+  rows = function(sort) return rows end,
+  on_enter = function(row) … end,
+  on_menu = function(row) return { { label = "Open", run = function() … end } } end }
+
+mnml.pane.open{ title = "Todos", list = l }                       -- in a pane
+mnml.section{ id = "todos_lua", title = "TODOS", glyph = "󰄬", ascii = "T",
+              list = l, side = "left", after = "todos" }          -- on the rail
+l:refresh()                                                       -- ask rows() again
+```
+
+A row is a string, or one of two tables:
+
+| shape | fields |
+|---|---|
+| a fold header | `{ header = "src/app.zig", count = 3 }` |
+| an item | `{ label=, detail=, icon=, state= }` |
+
+`detail` is muted and right-aligned, clipped from the left so its tail
+(a line number, a file) survives; `icon` is one glyph in the accent
+before the label; `state` is a short word in a chip after it. A header
+folds on Enter (or a click) and hides its items until the next header;
+`E` opens every fold, `C` closes every one, and a fold survives a
+refresh that answers the same header.
+
+`rows(sort)` is called when the list is made, when `l:refresh()` runs,
+when the `⟳` chip is clicked and when the sort changes — never per
+frame, because Lua is never entered from the paint loop. `sort` is the
+current mode's name from your `sort` list (nil when you named none);
+the `sort:` chip cycles them, `s` does it from the keyboard. Sorting is
+yours: the names are labels, and `rows` answers in whatever order the
+mode means.
+
+`on_enter(row)` is Enter (and a second click) on an item; `on_menu(row)`
+answers with the row's menu — `{ { label = …, run = fn }, … }` — which
+the `⋮` and a right-click open, with the panel's own *Refresh* under it.
+`row` carries the fields you wrote plus `index`, its 1-based place in
+what `rows()` answered (a fold does not shift it).
+
+**A section is a real rail section.** `mnml.section{}` puts a row of its
+own on the activity bar — its `glyph` (and `ascii` twin for
+`ui.ascii_icons`), in the position `after` names (`after = "todos"`
+places it directly under the TODOs row; no `after` puts it last) — and
+its list in that side's column, with the caps header, the filter, the
+sort chip and the folds TODOS has. It appears in `rects.json` like any
+section (`rail:script:0`, `row:script:2`, `chip:script:refresh`), and a
+`script.reload` drops the section, its rail row and the list behind it.
+
+One column hosts them: several registered sections each get their own
+rail row, and the one whose row was clicked last is the one the column
+shows.
+
+| function | changed in |
+|---|---|
+| `mnml.list` | api 1, added |
+| `mnml.section` | api 1, added |
+| `mnml.pane.open` `list` | api 1, added |
 
 ### Tasks
 
@@ -451,8 +670,8 @@ returned table reaches the config.
 
 ## Recipes
 
-Two scripts that ship with mnml, each the whole of one shape. They live
-under `docs/examples/scripts/`; paste one into your `init.lua`
+Five scripts that ship with mnml, each the whole of one shape. They
+live under `docs/examples/scripts/`; paste one into your `init.lua`
 (`script.edit_init`) and reload. Each is driven by a `.test` that runs
 the file as it is written, so a change that breaks one fails the suite.
 
@@ -473,6 +692,68 @@ The pieces worth stealing: one namespace per concern, so the clear is
 safe; `pcall` around `mnml.buf.path` because not every focused pane is
 an editor; and a `<path>:<line>` key so the same line is never asked
 about twice and two runs are never in flight at once.
+
+### `recent-commands` — a live picker with a preview column
+
+`docs/examples/scripts/recent-commands.lua` (75 lines). Every command
+the app knows, asked for again as the query changes, with the chords in
+the column beside them and a `*` on the ones you have run before:
+
+```
+┌ Recent commands ─────────────────────────────────────────┐
+│ quit mnml                                        1 of 3  │
+│▌Quit mnml                        app.quit █│Quit mnml     │
+│                                            │app.quit      │
+│                                            │              │
+│                                            │chords        │
+│                                            │  ctrl+q      │
+└──────────────────────────────────────────────────────────┘
+```
+
+The pieces worth stealing: `live = true` so the source does the
+narrowing itself rather than leaving it to the picker's fuzzy filter;
+`data` carrying the whole command row through to `preview` and
+`on_accept` untouched; and an MRU the script keeps itself, so "recent"
+means what this script means by it.
+
+### `todo-list` — a rail section of the script's own
+
+`docs/examples/scripts/todo-list.lua` (79 lines). A `grep` through a
+hidden task, its hits grouped by file under fold headers, in a section
+with its own activity-bar row under TODOs:
+
+```
+ 󰄬 │ TODOS (lua) (2)        │
+   │  󰍉 / filter            │
+   │▌ ./src/one.zig        1│
+   │ widen the  …one.zig:2  │
+   │  ./src/two.zig        1│
+   │ drop the c …two.zig:1  │
+```
+
+The pieces worth stealing: the `rows(sort)` shape — headers and items in
+one list, the sort's name handed in so ordering stays the script's job;
+`l:refresh()` from the task's `on_done`, so the panel fills when the
+child answers rather than blocking on it; and a row's `detail` doing
+double duty as the `<path>:<line>` that opening needs.
+
+### `surround-word` — one text operation, both profiles
+
+`docs/examples/scripts/surround-word.lua` (65 lines). `gs{motion}` in
+vim, `ctrl+shift+s` in standard, and a `gS` that takes the pair off
+again:
+
+```
+  1 (alpha) beta
+  2 gamma
+```
+
+The pieces worth stealing: one `run(range)` serving every road into it
+(a motion, a text object, a Visual selection, a bare cursor) because the
+range arrives in one shape; `range.mode` telling a linewise application
+to keep the line's indentation outside the pair; and `mnml.config.get`
+reading a key of the user's own, so the pair is configurable without a
+second API.
 
 ### `eslint` — a tool wrapper into the diagnostics sink
 
@@ -519,5 +800,8 @@ header, because a shell resets `PWD` to its own cwd:
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint.lua" .mnml/init.lua
 ```
 
-`tests/e2e/lua_example_eslint.test` and `lua_example_git_blame_line.test`
-do exactly that, which is what keeps the two recipes above true.
+`tests/e2e/lua_example_eslint.test`, `lua_example_git_blame_line.test`,
+`lua_example_recent_commands.test`, `lua_example_todo_list.test` and
+`lua_example_surround_word.test` do exactly that, which is what keeps
+the five recipes above true. The surfaces themselves have their own
+files — `lua_picker_live.test`, `lua_section.test`, `lua_operator.test`.

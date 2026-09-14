@@ -453,8 +453,9 @@ test "itemsFor: every API function and table, the hooks, the ids, the key tokens
     try testing.expectEqualStrings("buf", root[api.root_fns.len].label);
     try testing.expectEqual(kind_module, root[api.root_fns.len].kind);
     const buf = try itemsFor(&app, arena, .{ .api = "mnml.buf" });
-    try testing.expectEqual(@as(usize, 6), buf.len);
+    try testing.expectEqual(@as(usize, 9), buf.len);
     try testing.expectEqualStrings("apply", buf[5].label);
+    try testing.expectEqualStrings("word_at", buf[8].label);
     try testing.expectEqual(@as(usize, 0), (try itemsFor(&app, arena, .{ .api = "mnml.nope" })).len);
     const hs = try itemsFor(&app, arena, .hooks);
     try testing.expectEqual(std.enums.values(hooks.Hook).len, hs.len);

@@ -1,0 +1,25 @@
+# Lua (D10): `mnml.operator{}` under the vim profile — `gsiw`, a motion
+# and a Visual selection all build the range the way a built-in
+# operator's does, and the whole thing is one undo step.
+write .mnml/init.lua "mnml.operator{ id = 'wrap', keys = { vim = 'gs', standard = 'ctrl+shift+s' },\n  run = function(r)\n    local t = mnml.buf.range(r.start, r['end'])\n    mnml.buf.apply{ op = 'replace_range', start = r.start, ['end'] = r['end'], text = '<' .. t .. '>' }\n  end }\n"
+write words.txt "alpha beta\ngamma\n"
+command script.reload
+expect screen contains "scripts: reloaded"
+open words.txt
+command editor.use_vim
+# `gsiw` on the first word.
+type "gsiw"
+expect screen contains "<alpha> beta"
+# One undo step puts the whole operator back.
+type "u"
+expect screen contains "alpha beta"
+expect screen lacks "<alpha>"
+# A motion: `gsw` takes the word and the space after it.
+type "gg0gsw"
+expect screen contains "<alpha >beta"
+type "u"
+# A Visual selection: `V` then `gs` wraps the line.
+type "gg0jVgs"
+expect screen contains "<gamma>"
+type "u"
+expect screen lacks "<gamma>"

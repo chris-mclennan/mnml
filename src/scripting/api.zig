@@ -35,6 +35,7 @@ const Dynamic = config.Dynamic;
 const script_pane = @import("../app/script_pane.zig");
 const cmd_picker = @import("../app/cmd_picker.zig");
 const runners = @import("../app/runners.zig");
+const Side = config.Side;
 
 /// The prefix every script command gets: `mnml.command{ id = "hello" }`
 /// is `user.hello` in the palette, `.keys`, `.test` and IPC.
@@ -63,6 +64,10 @@ pub const root_fns = [_]Fn{
     fnOf("workspace", "mnml.workspace() → the absolute workspace path", workspace),
     fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
     fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
+    fnOf("commands", "mnml.commands(query?) → { { id, title, group, keys = { … } }, … } — every command, built-in and script, narrowed by a substring on the id or the title", commandsList),
+    fnOf("list", "mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? } → a list handle with :refresh(); host it with pane.open{ list = } or section{ list = }", listRegister),
+    fnOf("section", "mnml.section{ id, title, glyph?, ascii?, list, side?, after? } — a rail section of your own, with the caps header, filter, sort chip and folds every built-in has", sectionRegister),
+    fnOf("operator", "mnml.operator{ id, keys = { vim = \"g<letter>\", standard = \"chord\" }, run = fn(range) } — operator-pending under vim, the selection or the cursor's word under standard", operatorRegister),
 };
 
 pub const tables = [_]Table{
@@ -73,16 +78,19 @@ pub const tables = [_]Table{
         fnOf("cursor", "mnml.buf.cursor(pane?) → line, col (1-based), byte (0-based)", bufCursor),
         fnOf("path", "mnml.buf.path(pane?) → the workspace-relative path, nil for a scratch buffer", bufPath),
         fnOf("apply", "mnml.buf.apply({ op = \"…\", … }, pane?) → true when the text changed — an EditOp, so undo, dot-repeat and the LSP see it", bufApply),
+        fnOf("selection", "mnml.buf.selection(pane?) → { start, [\"end\"], mode = \"char\" | \"line\" | \"block\" }, or nil when nothing is selected", bufSelection),
+        fnOf("range", "mnml.buf.range(start, end_, pane?) → the text between two bytes (0-based, end exclusive)", bufRange),
+        fnOf("word_at", "mnml.buf.word_at(byte?, pane?) → { text, start, [\"end\"] } for the word under the byte (the cursor's without one), or nil", bufWordAt),
     } },
     .{ .name = "statusline", .doc = "mnml.statusline — a segment of your own on the statusline", .fns = &.{
         fnOf("segment", "mnml.statusline.segment{ id, side?, fn } — fn() is polled every 250 ms; nil hides it; side is \"left\" | \"right\"", statuslineSegment),
     } },
     .{ .name = "picker", .doc = "mnml.picker — a source of rows for the picker, and the picker over it", .fns = &.{
-        fnOf("source", "mnml.picker.source{ id, title?, items = fn(query) } — items returns strings or { label, detail?, on_accept? }", pickerSource),
+        fnOf("source", "mnml.picker.source{ id, title?, items = fn(query), live?, multi?, preview?, on_accept? } — items returns strings or { label, detail?, icon?, data?, on_accept? }", pickerSource),
         fnOf("open", "mnml.picker.open(id, query?) — the picker over the source's items", pickerOpen),
     } },
     .{ .name = "pane", .doc = "mnml.pane — a pane the script renders itself", .fns = &.{
-        fnOf("open", "mnml.pane.open{ title, render = fn(w, h), on_hit?, on_key? } → the pane id; render returns rows of strings or { text=, fg=, bg=, bold=, hit= } segments", paneOpen),
+        fnOf("open", "mnml.pane.open{ title, render = fn(w, h), on_hit?, on_key? } — or { title, list = l } for a list in a pane → the pane id", paneOpen),
         fnOf("close", "mnml.pane.close(id) — close a script pane", paneClose),
         fnOf("active", "mnml.pane.active() → the focused pane's id, or nil", paneActive),
     } },
@@ -468,6 +476,77 @@ fn bufPath(L: *State) !i32 {
     return 1;
 }
 
+/// The selection's shape, from the handler's editing mode — the one
+/// handler-derived fact a script sees, and the same one the statusline
+/// reads (`input.EditingMode`).
+pub fn selectionMode(e: *const EditorPane) []const u8 {
+    return switch (e.buf.input.mode()) {
+        .visual_line => "line",
+        .visual_block => "block",
+        else => "char",
+    };
+}
+
+/// `mnml.buf.selection(pane?)` → `{ start, ["end"], mode }`, or nil
+/// when nothing is selected. Bytes, 0-based, `end` exclusive — the same
+/// numbers `decor.highlight` and `replace_range` take.
+fn bufSelection(L: *State) !i32 {
+    const c = ctx(L);
+    const e = editorArg(L, c.app, 1);
+    const sel = e.buf.editor.selection() orelse {
+        L.pushNil();
+        return 1;
+    };
+    L.createTable(0, 3);
+    L.pushInteger(@intCast(sel[0]));
+    L.setField(-2, "start");
+    L.pushInteger(@intCast(sel[1]));
+    L.setField(-2, "end");
+    _ = L.pushString(selectionMode(e));
+    L.setField(-2, "mode");
+    return 1;
+}
+
+/// `mnml.buf.range(start, end_, pane?)` → the text between two bytes.
+/// A reversed pair reads the same span; both ends are clamped to the
+/// buffer, so a range built from a stale position still answers.
+fn bufRange(L: *State) !i32 {
+    const c = ctx(L);
+    const a = byteArg(L, 1, "start");
+    const b = byteArg(L, 2, "end");
+    const e = editorArg(L, c.app, 3);
+    const text = e.buf.editor.bytes();
+    const lo = @min(@min(a, b), text.len);
+    const hi = @min(@max(a, b), text.len);
+    _ = L.pushString(text[lo..hi]);
+    return 1;
+}
+
+/// `mnml.buf.word_at(byte?, pane?)` → `{ text, start, ["end"] }`, or
+/// nil when the byte is not in a word. Without a byte, the cursor's.
+fn bufWordAt(L: *State) !i32 {
+    const c = ctx(L);
+    const at: ?usize = if (L.isNoneOrNil(1)) null else byteArg(L, 1, "byte");
+    const e = editorArg(L, c.app, 2);
+    const text = e.buf.editor.bytes();
+    const b = @min(at orelse e.buf.editor.cursor, text.len);
+    const bounds = @import("../editor/select.zig").wordBoundsAt(e.buf.editor, b);
+    // Vim's `iw` classes, less the third: a run of whitespace is not a
+    // word, so the space between two words is in neither.
+    if (bounds[1] <= bounds[0] or std.ascii.isWhitespace(text[bounds[0]])) {
+        L.pushNil();
+        return 1;
+    }
+    L.createTable(0, 3);
+    _ = L.pushString(text[bounds[0]..bounds[1]]);
+    L.setField(-2, "text");
+    L.pushInteger(@intCast(bounds[0]));
+    L.setField(-2, "start");
+    L.pushInteger(@intCast(bounds[1]));
+    L.setField(-2, "end");
+    return 1;
+}
+
 /// `mnml.buf.apply({ op = "…", … }, pane?)` → whether the text changed.
 fn bufApply(L: *State) !i32 {
     const c = ctx(L);
@@ -603,6 +682,120 @@ fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: A
     }
 }
 
+// ─── mnml.operator ──────────────────────────────────────────────────────
+
+const script_ops = @import("../input/script_ops.zig");
+
+/// `mnml.operator{ id, keys = { vim = "gs", standard = "ctrl+shift+s" },
+/// run = fn(range) }`.
+///
+/// The two profiles reach it by their own road, and neither knows the
+/// operator came from a script. Under vim the `g<letter>` chord goes
+/// into `input/script_ops.zig` — the table the vim handler asks once
+/// its own `g` switch has fallen through — so `gs{motion}`, `gsiw` and
+/// `V…gs` all build the range the way `gU{motion}` does and hand it
+/// over. Under standard the chord is an ordinary `user.<id>` command
+/// (so it is in the palette and `mnml.run` too) whose runner takes the
+/// selection, or the word under the cursor when there is none.
+fn operatorRegister(L: *State) !i32 {
+    const c = ctx(L);
+    L.checkType(1, .table);
+    const id = needStr(L, 1, "id");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n.") != null) L.raiseErrorStr("mnml.operator: id must be a bare name (no spaces or dots)", .{});
+    // Everything is checked before anything is allocated or ref'd: a
+    // Lua error is a longjmp, and an `errdefer` below one never runs.
+    if (L.getField(1, "keys") != .table) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.operator: keys is a table: { vim = \"g<letter>\", standard = \"a chord spec\" } — at least one", .{});
+    }
+    const keys_at = L.getTop();
+    const vim_spec = strField(L, keys_at, "vim");
+    const std_spec = strField(L, keys_at, "standard");
+    if (vim_spec == null and std_spec == null) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.operator: keys needs a `vim` or a `standard` chord (or both)", .{});
+    }
+    if (vim_spec) |v| if (!script_ops.validVimSpec(v)) {
+        const owned = c.app.frame.allocator().dupeZ(u8, v) catch "?";
+        L.pop(1);
+        L.raiseErrorStr("mnml.operator: the vim chord is `g` and one letter vim does not already use (`%s` is not); vim's own are g%s", .{ owned.ptr, script_ops.reserved.ptr });
+    };
+    const arena = c.app.frame.allocator();
+    const full = try std.fmt.allocPrintSentinel(arena, "{s}{s}", .{ id_prefix, id }, 0);
+    const title = try arena.dupe(u8, strField(L, 1, "title") orelse id);
+    const vim_owned: ?[]const u8 = if (vim_spec) |v| try arena.dupe(u8, v) else null;
+    const std_owned: ?[]const u8 = if (std_spec) |v| try arena.dupe(u8, v) else null;
+    L.pop(1); // the keys table
+    const run_ref = needFn(c.self, 1, "run");
+    // The slot the vim handler and the standard command both name.
+    const index: u32 = blk: {
+        for (c.self.operators.items, 0..) |*o, i| if (std.mem.eql(u8, o.id, full)) {
+            c.self.unref(o.run);
+            o.run = run_ref;
+            break :blk @intCast(i);
+        };
+        const owned_id = c.self.gpa.dupe(u8, full) catch |err| {
+            c.self.unref(run_ref);
+            return err;
+        };
+        errdefer c.self.gpa.free(owned_id);
+        try c.self.operators.append(c.self.gpa, .{ .id = owned_id, .run = run_ref });
+        break :blk @intCast(c.self.operators.items.len - 1);
+    };
+    if (vim_owned) |v| try script_ops.register(c.self.gpa, v, index);
+    // The standard road: a command with the chord, its runner a closure
+    // over the index — `mnml.map(spec, "<id>")`'s trick.
+    L.pushInteger(index);
+    L.pushClosure(zlua.wrap(runOperatorCommand), 1);
+    const cmd_ref = c.self.ref();
+    const keys: []const []const u8 = if (std_owned) |k| try arena.dupe([]const u8, &.{k}) else &.{};
+    _ = registerLuaCommand(c.self, full, title, "user", keys, cmd_ref) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.ShadowsBuiltin => L.raiseErrorStr("mnml.operator: `%s` shadows a built-in command", .{full.ptr}),
+    };
+    try c.self.noteOrigin(.operator, full);
+    _ = L.pushString(full);
+    return 1;
+}
+
+/// The runner behind an operator's standard chord (and its palette
+/// row): the selection, or the word under the cursor when there is
+/// none — and nothing at all when the cursor is not in a word.
+fn runOperatorCommand(L: *State) !i32 {
+    const c = ctx(L);
+    const index: u32 = @intCast(L.toInteger(zlua.Lua.upvalueIndex(1)) catch 0);
+    const e = c.app.activeEditor() orelse return 0;
+    const sel = e.buf.editor.selection() orelse blk: {
+        const text = e.buf.editor.bytes();
+        const w = @import("../editor/select.zig").wordBoundsAt(e.buf.editor, @min(e.buf.editor.cursor, text.len));
+        if (w[1] <= w[0] or std.ascii.isWhitespace(text[w[0]])) return 0;
+        break :blk [2]usize{ w[0], w[1] };
+    };
+    try runOperator(c.app, c.self, index, e, sel[0], sel[1]);
+    return 0;
+}
+
+/// Run the operator at `index` over `[start, end)` as ONE undo step:
+/// whatever the script applies inside, one `undo` puts the text back the
+/// way it was before the chord.
+pub fn runOperator(app: *App, self: *Lua, index: u32, e: *EditorPane, start: usize, end: usize) Allocator.Error!void {
+    return runOperatorMode(app, self, index, e, start, end, selectionMode(e));
+}
+
+/// As `runOperator`, with the range's shape given rather than read off
+/// the handler — the vim road has already left Visual by then.
+pub fn runOperatorMode(app: *App, self: *Lua, index: u32, e: *EditorPane, start: usize, end: usize, mode: []const u8) Allocator.Error!void {
+    const pane_id = app.paneIdOf(e);
+    const before = e.buf.editor.doc.history.undoLen();
+    self.callOperator(index, start, end, mode);
+    // The pane may be gone (a script may close panes): look it up again.
+    const live = if (pane_id) |id| app.panes.editor(id) else null;
+    if (live) |ep| {
+        const after = ep.buf.editor.doc.history.undoLen();
+        if (after > before + 1) ep.buf.editor.doc.history.truncateUndo(before + 1);
+    }
+}
+
 // ─── mnml.statusline ────────────────────────────────────────────────────
 
 /// `mnml.statusline.segment{ id, side?, fn }` — `fn()` returns the text
@@ -636,18 +829,40 @@ fn statuslineSegment(L: *State) !i32 {
 
 // ─── mnml.picker ────────────────────────────────────────────────────────
 
-/// `mnml.picker.source{ id, title?, items = fn(query) }`.
+/// `mnml.picker.source{ id, title?, items = fn(query), live?, multi?,
+/// preview?, on_accept? }`.
 fn pickerSource(L: *State) !i32 {
     const c = ctx(L);
     L.checkType(1, .table);
     const id = needStr(L, 1, "id");
     const title = strField(L, 1, "title") orelse id;
+    const live = boolField(L, 1, "live") orelse false;
+    const multi = boolField(L, 1, "multi") orelse false;
+    // Every check before the first ref: a Lua error is a longjmp.
+    if (L.getField(1, "preview") != .nil and !L.isFunction(-1)) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.picker.source: preview must be a function(row) returning rows of segments", .{});
+    }
+    L.pop(1);
+    if (L.getField(1, "on_accept") != .nil and !L.isFunction(-1)) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.picker.source: on_accept must be a function(row) — or function(rows) when multi = true", .{});
+    }
+    L.pop(1);
     const items = needFn(c.self, 1, "items");
+    const preview = fnField(c.self, 1, "preview");
+    const on_accept = fnField(c.self, 1, "on_accept");
     const gpa = c.self.gpa;
     try c.self.noteOrigin(.source, id);
     if (c.self.findSource(id)) |src| {
         c.self.unref(src.items);
+        if (src.preview) |r| c.self.unref(r);
+        if (src.on_accept) |r| c.self.unref(r);
         src.items = items;
+        src.preview = preview;
+        src.on_accept = on_accept;
+        src.live = live;
+        src.multi = multi;
         const owned = gpa.dupe(u8, title) catch |err| return err;
         gpa.free(src.title);
         src.title = owned;
@@ -660,7 +875,15 @@ fn pickerSource(L: *State) !i32 {
     errdefer gpa.free(owned_id);
     const owned_title = try gpa.dupe(u8, title);
     errdefer gpa.free(owned_title);
-    c.self.sources.append(gpa, .{ .id = owned_id, .title = owned_title, .items = items }) catch |err| {
+    c.self.sources.append(gpa, .{
+        .id = owned_id,
+        .title = owned_title,
+        .items = items,
+        .live = live,
+        .multi = multi,
+        .preview = preview,
+        .on_accept = on_accept,
+    }) catch |err| {
         c.self.unref(items);
         return err;
     };
@@ -673,18 +896,31 @@ fn pickerOpen(L: *State) !i32 {
     const id = L.checkString(1);
     const query = L.optString(2) orelse "";
     const src = c.self.findSource(id) orelse L.raiseErrorStr("mnml.picker.open: no source `%s`", .{id.ptr});
-    const gpa = c.self.gpa;
+    openSource(c.app, c.self, src, query) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => L.raiseErrorStr("mnml.picker.open: %s", .{@errorName(err).ptr}),
+    };
+    return 0;
+}
+
+/// Open the one picker overlay over `src`'s rows for `query`. Shared by
+/// `picker.open` and the live re-run.
+pub fn openSource(app: *App, self: *Lua, src: *lua_mod.PickerSource, query: []const u8) command.CommandError!void {
+    const gpa = self.gpa;
     var labels: std.ArrayList([]u8) = .empty;
     var details: std.ArrayList([]u8) = .empty;
+    var icons: std.ArrayList([]u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
         for (details.items) |d| gpa.free(d);
         details.deinit(gpa);
+        for (icons.items) |g| gpa.free(g);
+        icons.deinit(gpa);
     }
-    try c.self.callItems(src.items, query, &labels, &details);
-    // The overlay owns the four slices from the call on, whatever the
-    // call returns; the errdefers only cover the allocations before it.
+    try self.callItems(src.items, query, &labels, &details, &icons);
+    // The overlay owns the slices from the call on, whatever it returned;
+    // the errdefers only cover the allocations before this point.
     var handed = false;
     const owned_labels = try labels.toOwnedSlice(gpa);
     errdefer if (!handed) {
@@ -696,16 +932,92 @@ fn pickerOpen(L: *State) !i32 {
         for (owned_details) |d| gpa.free(d);
         gpa.free(owned_details);
     };
+    const owned_icons = try icons.toOwnedSlice(gpa);
+    errdefer if (!handed) {
+        for (owned_icons) |g| gpa.free(g);
+        gpa.free(owned_icons);
+    };
     const panes = try gpa.alloc(PaneId, 0);
     errdefer if (!handed) gpa.free(panes);
     const hints = try gpa.alloc([]u8, 0);
     errdefer if (!handed) gpa.free(hints);
+    const marked = try gpa.alloc(bool, if (src.multi) owned_labels.len else 0);
+    @memset(marked, false);
+    errdefer if (!handed) gpa.free(marked);
+    const source_id = try gpa.dupe(u8, src.id);
+    errdefer if (!handed) gpa.free(source_id);
     handed = true;
-    cmd_picker.openPickerWith(c.app, src.title, .lua, owned_labels, panes, owned_details, hints) catch |err| switch (err) {
+    try cmd_picker.openPickerWith(app, src.title, .lua, owned_labels, panes, owned_details, hints);
+    const p = &app.overlay.picker;
+    p.icons = owned_icons;
+    p.marked = marked;
+    p.lua_source = source_id;
+    p.state.multi = src.multi;
+    p.state.has_preview = src.preview != null;
+    // A re-run keeps what the reader typed: the query is the overlay's.
+    if (query.len > 0) {
+        try p.state.query.appendSlice(gpa, query);
+        p.state.caret = p.state.query.items.len;
+        try @import("../app/dispatch.zig").refilterPicker(app);
+    }
+    try refreshPreview(app);
+}
+
+/// The cursor moved (or the rows changed): ask the source for the
+/// preview column again. Lua is never entered from the paint loop, so
+/// the rows are decoded here and held until the next move.
+pub fn refreshPreview(app: *App) Allocator.Error!void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
+    const p = &app.overlay.picker;
+    if (!p.state.has_preview) return;
+    const self = app.script();
+    const src = self.findSource(p.lua_source) orelse return;
+    const fnref = src.preview orelse return;
+    app_mod.Overlay.freePreview(app.gpa, p.preview);
+    p.preview = &.{};
+    if (p.state.cursor >= p.filtered.items.len) return;
+    const row = p.filtered.items[p.state.cursor];
+    p.preview = try self.callPreview(fnref, row, p.labels[row]);
+    app.needs_render = true;
+}
+
+/// A live source's debounced re-run: the query changed `live_debounce_ms`
+/// ago and nothing has been typed since, so ask for rows again. The old
+/// rows stayed on screen the whole time.
+pub fn tickLivePicker(app: *App, now: i64) Allocator.Error!void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
+    const due = app.overlay.picker.requery_at_ms orelse return;
+    if (now < due) return;
+    app.overlay.picker.requery_at_ms = null;
+    const self = app.script();
+    const src = self.findSource(app.overlay.picker.lua_source) orelse return;
+    if (!src.live) return;
+    const query = try app.gpa.dupe(u8, app.overlay.picker.state.queryText());
+    defer app.gpa.free(query);
+    const cursor = app.overlay.picker.state.cursor;
+    openSource(app, self, src, query) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => L.raiseErrorStr("mnml.picker.open: %s", .{@errorName(err).ptr}),
+        else => return,
     };
-    return 0;
+    if (app.overlay == .picker) {
+        const p = &app.overlay.picker;
+        p.state.cursor = @min(cursor, p.filtered.items.len -| 1);
+        try refreshPreview(app);
+    }
+    app.needs_render = true;
+}
+
+/// The query changed on a live source: arm the debounce.
+pub fn noteQueryChanged(app: *App, now: i64) void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
+    const src = app.script().findSource(app.overlay.picker.lua_source) orelse return;
+    if (!src.live) return;
+    app.overlay.picker.requery_at_ms = now + lua_mod.live_debounce_ms;
+}
+
+pub fn nextPickerDeadlineMs(app: *const App) ?i64 {
+    if (app.overlay != .picker) return null;
+    return app.overlay.picker.requery_at_ms;
 }
 
 // ─── mnml.pane ──────────────────────────────────────────────────────────
@@ -715,13 +1027,20 @@ fn paneOpen(L: *State) !i32 {
     const c = ctx(L);
     L.checkType(1, .table);
     const title = strField(L, 1, "title") orelse "script";
+    // `{ list = l }`: the pane hosts a `mnml.list{}` through `ListPanel`
+    // instead of calling a `render`.
+    if (listField(L, c.app, 1)) |list_id| {
+        const id = try script_pane.open(c.app, c.self, title, null, null, null, list_id);
+        L.pushInteger(id);
+        return 1;
+    }
     const render = needFn(c.self, 1, "render");
     errdefer c.self.unref(render);
     const on_hit = fnField(c.self, 1, "on_hit");
     errdefer if (on_hit) |r| c.self.unref(r);
     const on_key = fnField(c.self, 1, "on_key");
     errdefer if (on_key) |r| c.self.unref(r);
-    const id = try script_pane.open(c.app, c.self, title, render, on_hit, on_key);
+    const id = try script_pane.open(c.app, c.self, title, render, on_hit, on_key, 0);
     L.pushInteger(id);
     return 1;
 }
@@ -738,6 +1057,213 @@ fn paneActive(L: *State) !i32 {
     const c = ctx(L);
     if (c.app.active) |id| L.pushInteger(id) else L.pushNil();
     return 1;
+}
+
+/// `mnml.commands(query?)` — every command the app knows, built-in and
+/// script, as `{ id, title, group, keys }`. `query` narrows it by a
+/// case-insensitive substring on the id or the title. The cap is there
+/// only to bound a runaway — every command the app has fits under it,
+/// so an empty query answers with all of them and a script never has to
+/// work around a truncated list.
+pub const commands_cap: usize = 4000;
+
+fn commandsList(L: *State) !i32 {
+    const c = ctx(L);
+    const q = L.optString(1) orelse "";
+    var qbuf: [128]u8 = undefined;
+    const needle = std.ascii.lowerString(qbuf[0..@min(q.len, qbuf.len)], q[0..@min(q.len, qbuf.len)]);
+    L.createTable(0, 0);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < command.count and n < commands_cap) : (i += 1) {
+        const id: command.CommandId = @enumFromInt(i);
+        if (!matches(needle, command.name(id), command.title(id))) continue;
+        n += 1;
+        pushCommandRow(L, c.app, command.name(id), command.title(id), command.group(id), command.spec(id).keys, &.{});
+        L.setIndex(-2, @intCast(n));
+    }
+    for (c.app.dyn_commands.list.items, c.app.dyn_commands.live.items) |dc, alive| {
+        if (!alive or n >= commands_cap) continue;
+        if (!matches(needle, dc.id, dc.title)) continue;
+        n += 1;
+        pushCommandRow(L, c.app, dc.id, dc.title, dc.group, .{}, dc.keys);
+        L.setIndex(-2, @intCast(n));
+    }
+    return 1;
+}
+
+fn matches(needle: []const u8, id: []const u8, title: []const u8) bool {
+    if (needle.len == 0) return true;
+    var buf: [256]u8 = undefined;
+    for ([_][]const u8{ id, title }) |hay| {
+        const low = std.ascii.lowerString(buf[0..@min(hay.len, buf.len)], hay[0..@min(hay.len, buf.len)]);
+        if (std.mem.indexOf(u8, low, needle) != null) return true;
+    }
+    return false;
+}
+
+fn pushCommandRow(L: *State, app: *App, id: []const u8, title: []const u8, group: []const u8, keys: command.Keys, dyn_keys: []const []const u8) void {
+    L.createTable(0, 4);
+    setStrField(L, "id", id);
+    setStrField(L, "title", title);
+    setStrField(L, "group", group);
+    L.createTable(0, 0);
+    var k: usize = 0;
+    const own = switch (App.profileOf(app.input_style)) {
+        .vim => keys.vim,
+        .standard => keys.standard,
+    };
+    for ([_][]const []const u8{ keys.both, own, dyn_keys }) |list| for (list) |spec| {
+        var buf: [64]u8 = undefined;
+        k += 1;
+        _ = L.pushString(@import("../core/keymap.zig").normalizeSpec(spec, &buf) orelse spec);
+        L.setIndex(-2, @intCast(k));
+    };
+    L.setField(-2, "keys");
+}
+
+// ─── mnml.list, mnml.section ────────────────────────────────────────────
+
+const script_list = @import("../app/script_list.zig");
+const script_section = @import("../app/script_section.zig");
+
+/// The `list` field of a table: the handle `mnml.list{}` answered with,
+/// as a table with an `id`, or the bare id. Null when the field is
+/// absent; an error when it is there but names no live list.
+fn listField(L: *State, app: *App, t: i32) ?u32 {
+    const at = L.absIndex(t);
+    defer L.pop(1);
+    switch (L.getField(at, "list")) {
+        .nil, .none => return null,
+        .number => {},
+        .table => {
+            _ = L.getField(-1, "id");
+            defer L.pop(1);
+            const n = L.toInteger(-1) catch L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with", .{});
+            const id: u32 = if (n > 0) @intCast(n) else 0;
+            if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list (a reload drops them)", .{});
+            return id;
+        },
+        else => L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with", .{}),
+    }
+    const n = L.toInteger(-1) catch 0;
+    const id: u32 = if (n > 0) @intCast(n) else 0;
+    if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list (a reload drops them)", .{});
+    return id;
+}
+
+/// `mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? }` →
+/// a table `{ id = n, refresh = fn }`. Everything around the rows — the
+/// header, the filter, the sort chip, the folds, the row menu — is
+/// `ListPanel`'s, the one TODOS uses.
+fn listRegister(L: *State) !i32 {
+    const c = ctx(L);
+    L.checkType(1, .table);
+    const title = needStr(L, 1, "title");
+    // Checked before the first allocation: a Lua error is a longjmp.
+    if (L.getField(1, "sort") != .nil and !L.isTable(-1)) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.list: sort is a table of mode names ({ \"State\", \"Name\" })", .{});
+    }
+    var sort_n: usize = 0;
+    if (L.isTable(-1)) sort_n = L.lenRaw(-1);
+    const gpa = c.self.gpa;
+    const sorts = try gpa.alloc([]u8, sort_n);
+    var made: usize = 0;
+    errdefer {
+        for (sorts[0..made]) |x| gpa.free(x);
+        gpa.free(sorts);
+    }
+    var i: usize = 1;
+    while (i <= sort_n) : (i += 1) {
+        _ = L.getIndex(-1, @intCast(i));
+        defer L.pop(1);
+        sorts[i - 1] = try gpa.dupe(u8, L.toString(-1) catch "");
+        made = i;
+    }
+    L.pop(1); // the sort table (or the nil)
+    const rows_fn = needFn(c.self, 1, "rows");
+    const on_enter = fnField(c.self, 1, "on_enter");
+    const on_menu = fnField(c.self, 1, "on_menu");
+    const owned_title = gpa.dupe(u8, title) catch |err| {
+        c.self.unref(rows_fn);
+        return err;
+    };
+    errdefer gpa.free(owned_title);
+    const id = try script_list.add(c.app, owned_title, rows_fn, on_enter, on_menu, sorts);
+    try c.self.noteOrigin(.list, title);
+    const l = script_list.find(c.app, id).?;
+    try script_list.refresh(c.app, l);
+    // The handle: `{ id = n, refresh = fn }`, so `l:refresh()` reads.
+    L.createTable(0, 2);
+    L.pushInteger(id);
+    L.setField(-2, "id");
+    L.pushInteger(id);
+    L.pushClosure(zlua.wrap(listRefresh), 1);
+    L.setField(-2, "refresh");
+    return 1;
+}
+
+/// `l:refresh()` — the id is the closure's upvalue, so the `self` a
+/// colon call passes is ignored.
+fn listRefresh(L: *State) !i32 {
+    const c = ctx(L);
+    const n = L.toInteger(zlua.Lua.upvalueIndex(1)) catch return 0;
+    const l = script_list.find(c.app, if (n > 0) @intCast(n) else 0) orelse return 0;
+    try script_list.refresh(c.app, l);
+    return 0;
+}
+
+/// `mnml.section{ id, title, glyph?, ascii?, list, side?, after? }` — a
+/// rail row and a column of the script's own.
+fn sectionRegister(L: *State) !i32 {
+    const c = ctx(L);
+    L.checkType(1, .table);
+    const id = needStr(L, 1, "id");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n") != null) L.raiseErrorStr("mnml.section: id must be a bare name", .{});
+    const title = strField(L, 1, "title") orelse id;
+    const glyph = strField(L, 1, "glyph") orelse "";
+    const ascii = strField(L, 1, "ascii") orelse "";
+    const after = strField(L, 1, "after") orelse "";
+    var at_side: Config.Side = .left;
+    if (strField(L, 1, "side")) |sd| at_side = std.meta.stringToEnum(Config.Side, sd) orelse L.raiseErrorStr("mnml.section: side is \"left\" or \"right\"", .{});
+    const list_id = listField(L, c.app, 1) orelse L.raiseErrorStr("mnml.section: `list` is required — what mnml.list{} answered with", .{});
+    const gpa = c.self.gpa;
+    const owned_id = try gpa.dupe(u8, id);
+    errdefer gpa.free(owned_id);
+    const owned_title = try gpa.dupe(u8, title);
+    errdefer gpa.free(owned_title);
+    const owned_glyph = try gpa.dupe(u8, if (glyph.len > 0) glyph else "\u{f0331}");
+    errdefer gpa.free(owned_glyph);
+    const owned_ascii = try gpa.dupe(u8, if (ascii.len > 0) ascii else "P");
+    errdefer gpa.free(owned_ascii);
+    const owned_after = try gpa.dupe(u8, after);
+    errdefer gpa.free(owned_after);
+    const idx = try script_section.add(c.app, owned_id, owned_title, owned_glyph, owned_ascii, owned_after, list_id, at_side);
+    // Every built-in section has a `view.activity_*` command; a script's
+    // gets one too, so the palette, `.keys` and a `.test` can reach it.
+    const arena = c.app.frame.allocator();
+    const full = try std.fmt.allocPrintSentinel(arena, "{s}{s}", .{ id_prefix, id }, 0);
+    const cmd_title = try std.fmt.allocPrint(arena, "Show {s}", .{title});
+    L.pushInteger(idx);
+    L.pushClosure(zlua.wrap(showSectionCommand), 1);
+    const cmd_ref = c.self.ref();
+    _ = registerLuaCommand(c.self, full, cmd_title, "view", &.{}, cmd_ref) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.ShadowsBuiltin => L.raiseErrorStr("mnml.section: `%s` shadows a built-in command", .{full.ptr}),
+    };
+    try c.self.noteOrigin(.list, title);
+    L.pushInteger(idx);
+    return 1;
+}
+
+/// The runner behind a section's `user.<id>` command: its own rail row,
+/// clicked from the keyboard.
+fn showSectionCommand(L: *State) !i32 {
+    const c = ctx(L);
+    const idx = L.toInteger(zlua.Lua.upvalueIndex(1)) catch return 0;
+    script_section.show(c.app, if (idx >= 0) @intCast(idx) else 0, true);
+    return 0;
 }
 
 // ─── mnml.task ──────────────────────────────────────────────────────────
@@ -1139,7 +1665,7 @@ fn lineArg(L: *State, arg: i32) u32 {
 
 fn byteArg(L: *State, arg: i32, what: [:0]const u8) usize {
     const n = L.checkInteger(arg);
-    if (n < 0) L.raiseErrorStr("mnml.decor.highlight: %s must be a byte offset (0-based)", .{what.ptr});
+    if (n < 0) L.raiseErrorStr("mnml: %s must be a byte offset (0-based)", .{what.ptr});
     return @intCast(n);
 }
 
@@ -1832,5 +2358,277 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
     const segs = try lua.segmentTexts(app.frame.allocator(), .right);
     try testing.expectEqual(@as(usize, 1), segs.len);
     try testing.expectEqualStrings("notes 1", segs[0]);
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.buf.selection / range / word_at: the three modes, a clamped range, the word under a byte, and the argument errors" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratch();
+    lua.runString(
+        \\mnml.buf.apply{ op = "insert_str", text = "alpha beta\ngamma delta" }
+        \\assert(mnml.buf.selection() == nil, "nothing is selected yet")
+        \\mnml.buf.apply{ op = "select_range", start = 6, ["end"] = 10 }
+        \\local s = mnml.buf.selection()
+        \\assert(s.start == 6 and s["end"] == 10 and s.mode == "char", s.mode)
+        \\assert(mnml.buf.range(s.start, s["end"]) == "beta")
+        \\assert(mnml.buf.range(10, 6) == "beta", "a reversed pair reads the same span")
+        \\assert(mnml.buf.range(0, 9999) == mnml.buf.text(), "both ends clamp")
+        \\local w = mnml.buf.word_at(1)
+        \\assert(w.text == "alpha" and w.start == 0 and w["end"] == 5, w.text)
+        \\assert(mnml.buf.word_at(11).text == "gamma")
+        \\assert(mnml.buf.word_at(5) == nil, "the space between two words is in neither")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    // Without a byte: the cursor's word.
+    _ = try app.applyOps(app.activeEditor().?, &.{.{ .set_cursor_byte = 12 }});
+    try lua.runString("assert(mnml.buf.word_at().text == \"gamma\")");
+    // The shape follows the handler's mode — the one handler-derived
+    // fact a script sees.
+    try app.setInputStyle(.vim);
+    const e = app.activeEditor().?;
+    try testing.expectEqualStrings("char", selectionMode(e));
+    try app.handle(.{ .key = .{ .code = .{ .char = 'V' } } });
+    try testing.expectEqualStrings("line", selectionMode(e));
+    try lua.runString("assert(mnml.buf.selection().mode == \"line\")");
+    try app.handle(.{ .key = .{ .code = .esc } });
+    try app.handle(.{ .key = .{ .code = .{ .char = 'v' }, .mods = .{ .ctrl = true } } });
+    try testing.expectEqualStrings("block", selectionMode(e));
+    // Arguments are checked before anything is allocated.
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.range(-1, 4)"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "byte offset") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.range('a', 4)"));
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.word_at('x')"));
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.selection(9999)"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "editor") != null);
+}
+
+test "mnml.operator: vim's g<letter> takes a motion, a text object and a visual selection; standard's chord takes the selection or the cursor's word; one undo step either way" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratch();
+    lua.runString(
+        \\ranges = {}
+        \\local id = mnml.operator{ id = "surround", keys = { vim = "gs", standard = "ctrl+shift+s" },
+        \\  run = function(r)
+        \\    ranges[#ranges + 1] = r.start .. ":" .. r["end"] .. ":" .. r.mode
+        \\    local text = mnml.buf.range(r.start, r["end"])
+        \\    mnml.buf.apply{ op = "replace_range", start = r.start, ["end"] = r["end"], text = "(" .. text .. ")" }
+        \\  end }
+        \\assert(id == "user.surround", id)
+        \\mnml.buf.apply{ op = "insert_str", text = "alpha beta\ngamma" }
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    const e = app.activeEditor().?;
+    // ── vim: a motion (`gsw`), then a text object (`gsiw`) ──
+    try app.setInputStyle(.vim);
+    _ = try app.applyOps(e, &.{.{ .set_cursor_byte = 0 }});
+    for ("gsw") |ch| try app.handle(.{ .key = .{ .code = .{ .char = ch } } });
+    try testing.expectEqualStrings("(alpha )beta\ngamma", e.buf.editor.bytes());
+    // One undo step: the whole operator goes in one `u`.
+    _ = try app.applyOps(e, &.{.undo});
+    try testing.expectEqualStrings("alpha beta\ngamma", e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{.{ .set_cursor_byte = 7 }});
+    for ("gsiw") |ch| try app.handle(.{ .key = .{ .code = .{ .char = ch } } });
+    try testing.expectEqualStrings("alpha (beta)\ngamma", e.buf.editor.bytes());
+    try testing.expect(e.buf.editor.selection() == null); // the operator clears it
+    _ = try app.applyOps(e, &.{.undo});
+    // ── vim: a visual selection (`V gs`) ──
+    _ = try app.applyOps(e, &.{.{ .set_cursor_byte = 12 }});
+    try app.handle(.{ .key = .{ .code = .{ .char = 'V' } } });
+    for ("gs") |ch| try app.handle(.{ .key = .{ .code = .{ .char = ch } } });
+    try testing.expectEqualStrings("alpha beta\n(gamma)", e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{.undo});
+    // ── standard: the chord over a selection, then over a bare cursor ──
+    try app.setInputStyle(.standard);
+    _ = try app.applyOps(e, &.{ .{ .set_cursor_byte = 0 }, .select_start, .{ .set_cursor_byte = 5 } });
+    try command.runNamed(&app, "user.surround");
+    try testing.expectEqualStrings("(alpha) beta\ngamma", e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{ .undo, .select_clear, .{ .set_cursor_byte = 7 } });
+    try app.handle(.{ .key = .{ .code = .{ .char = 's' }, .mods = .{ .ctrl = true, .shift = true } } });
+    try testing.expectEqualStrings("alpha (beta)\ngamma", e.buf.editor.bytes());
+    // The cursor in a run of whitespace is in no word: nothing happens.
+    _ = try app.applyOps(e, &.{ .undo, .select_clear, .{ .set_cursor_byte = 5 } });
+    try command.runNamed(&app, "user.surround");
+    try testing.expectEqualStrings("alpha beta\ngamma", e.buf.editor.bytes());
+    // Every road handed the same shape of range.
+    try lua.runString("assert(#ranges == 5, #ranges) assert(ranges[2] == '6:10:char', ranges[2]) assert(ranges[3] == '11:16:line', ranges[3])");
+    // A reload drops the claim: `gs` is an unclaimed `g` letter again.
+    try testing.expectEqual(@as(usize, 1), script_ops.count());
+    try lua.reset();
+    try testing.expectEqual(@as(usize, 0), script_ops.count());
+    try testing.expect(app.dyn_commands.get("user.surround") == null);
+}
+
+test "mnml.operator: the argument errors name the shape, and land before anything is registered" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a' }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "keys is a table") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = {}, run = function() end }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`vim` or a `standard`") != null);
+    // A `g` chord vim already uses is refused by name, not left dead.
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gd' }, run = function() end }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "one letter vim does not already use") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'zs' }, run = function() end }"));
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a.b', keys = { vim = 'gs' }, run = function() end }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "bare name") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' } }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`run` is required") != null);
+    // Nothing above registered anything.
+    try testing.expectEqual(@as(usize, 0), script_ops.count());
+    try testing.expectEqual(@as(usize, 0), lua.operators.items.len);
+    try testing.expect(app.dyn_commands.get("user.a") == null);
+    // Registering the same id again replaces the runner and keeps one slot.
+    try lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' }, run = function() end }");
+    try lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' }, run = function() end }");
+    try testing.expectEqual(@as(usize, 1), lua.operators.items.len);
+    try testing.expectEqual(@as(usize, 1), script_ops.count());
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.picker.source: a live source is asked again as the query changes, debounced, and the old rows stay until the new ones land" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    const lua = app.script();
+    lua.runString(
+        \\calls = {}
+        \\mnml.picker.source{ id = "live", title = "Live", live = true,
+        \\  items = function(query)
+        \\    calls[#calls + 1] = query
+        \\    if query == "" then return { "alpha", "beta" } end
+        \\    return { { label = "for " .. query, detail = "d" } }
+        \\  end }
+        \\mnml.picker.open("live")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expect(app.overlay == .picker);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    // Typing does not ask again on the spot: the rows on screen are the
+    // ones the last call answered with.
+    app.now_ms = 1000;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'x' } } });
+    try lua.runString("assert(#calls == 1, #calls)");
+    try testing.expectEqualStrings("alpha", app.overlay.picker.labels[0]);
+    // The window is 80 ms — written out, not read from the constant the
+    // code under test uses, so a change to it fails here.
+    try testing.expectEqual(@as(i64, 80), lua_mod.live_debounce_ms);
+    // Before the debounce is up, nothing.
+    try app.tick(1079);
+    try lua.runString("assert(#calls == 1, #calls)");
+    // After it, one call carrying the whole query.
+    try app.tick(1080);
+    try lua.runString("assert(#calls == 2, #calls) assert(calls[2] == 'x', calls[2])");
+    try testing.expectEqual(@as(usize, 1), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("for x", app.overlay.picker.labels[0]);
+    try testing.expectEqualStrings("x", app.overlay.picker.state.queryText());
+    // Two keys inside the window are one call, not two.
+    app.now_ms = 2000;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'y' } } });
+    app.now_ms = 2040;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'z' } } });
+    try app.tick(2119);
+    try lua.runString("assert(#calls == 2, #calls)");
+    try app.tick(2120);
+    try lua.runString("assert(#calls == 3, #calls) assert(calls[3] == 'xyz', calls[3])");
+    // A source without `live` is asked exactly once.
+    try lua.runString(
+        \\once = 0
+        \\mnml.picker.source{ id = "still", items = function() once = once + 1; return { "a", "b" } end }
+        \\mnml.picker.open("still")
+    );
+    app.now_ms = 5000;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'a' } } });
+    try app.tick(6000);
+    try lua.runString("assert(once == 1, once)");
+}
+
+test "mnml.picker.source: the preview column follows the cursor, multi-select hands on_accept the marked rows, and data comes back untouched" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    defer app.deinit();
+    const lua = app.script();
+    lua.runString(
+        \\picked = nil
+        \\previewed = {}
+        \\mnml.picker.source{ id = "cmds", title = "Commands", multi = true,
+        \\  items = function()
+        \\    return { { label = "one", detail = "1", icon = "*", data = { n = 1 } },
+        \\             { label = "two", detail = "2", data = { n = 2 } },
+        \\             { label = "three", detail = "3", data = { n = 3 } } }
+        \\  end,
+        \\  preview = function(row)
+        \\    previewed[#previewed + 1] = row.label
+        \\    return { { { text = row.label, fg = "accent" } }, "n = " .. row.data.n }
+        \\  end,
+        \\  on_accept = function(rows)
+        \\    local out = {}
+        \\    for _, r in ipairs(rows) do out[#out + 1] = r.data.n end
+        \\    picked = table.concat(out, ",")
+        \\  end }
+        \\mnml.picker.open("cmds")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expect(app.overlay.picker.state.has_preview);
+    try testing.expect(app.overlay.picker.state.multi);
+    try testing.expectEqualStrings("*", app.overlay.picker.icons[0]);
+    // The first row's preview is there before a key is pressed.
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.preview.len);
+    try testing.expectEqualStrings("one", app.overlay.picker.preview[0][0].text);
+    try testing.expectEqualStrings("n = 1", app.overlay.picker.preview[1][0].text);
+    {
+        const screen_mod = @import("../ipc/screen.zig");
+        try app.render();
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "n = 1") != null);
+    }
+    // ↓ moves the cursor and the preview follows it.
+    try app.handle(.{ .key = .{ .code = .down } });
+    try lua.runString("assert(previewed[#previewed] == 'two', previewed[#previewed])");
+    try testing.expectEqualStrings("n = 2", app.overlay.picker.preview[1][0].text);
+    // Tab marks the row and steps on; Enter hands over every marked row.
+    try app.handle(.{ .key = .{ .code = .tab } });
+    try testing.expect(app.overlay.picker.marked[1]);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.state.cursor);
+    try app.handle(.{ .key = .{ .code = .tab } });
+    {
+        const screen_mod = @import("../ipc/screen.zig");
+        try app.render();
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "\u{2713}two") != null);
+    }
+    try app.handle(.{ .key = .{ .code = .enter } });
+    try lua.runString("assert(picked == '2,3', tostring(picked))");
+    try testing.expect(app.overlay == .none);
+    // With nothing marked, Enter hands over the row under the cursor.
+    try lua.runString("picked = nil mnml.picker.open('cmds')");
+    try app.handle(.{ .key = .{ .code = .enter } });
+    try lua.runString("assert(picked == '1', tostring(picked))");
+}
+
+test "mnml.picker.source: the argument errors name the shape and land before anything is registered" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, preview = 3 }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "preview must be a function") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, on_accept = 'no' }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "on_accept must be a function") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x' }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`items` is required") != null);
+    try testing.expectEqual(@as(usize, 0), lua.sources.items.len);
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.open('nope')"));
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }

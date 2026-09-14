@@ -36,6 +36,8 @@ pub fn kindWord(k: Kind) []const u8 {
         .hook => "hook",
         .segment => "seg ",
         .source => "pick",
+        .operator => "op  ",
+        .list => "list",
     };
 }
 

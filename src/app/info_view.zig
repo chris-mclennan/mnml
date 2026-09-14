@@ -298,6 +298,7 @@ fn sectionTitle(p: app_mod.PanelId) []const u8 {
         .debug => "Run and debug",
         .integrations => "Integrations",
         .scripts => "Scripts",
+        .script => "Script section",
         .search => "Search",
     };
 }

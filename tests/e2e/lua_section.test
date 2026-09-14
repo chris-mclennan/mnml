@@ -1,0 +1,36 @@
+# Lua (D10): `mnml.section{}` — a rail row of the script's own, a column
+# that folds and filters like TODOS, and all of it gone on a reload.
+write .mnml/init.lua "local l = mnml.list{ title = 'NOTES (lua)', sort = { 'State', 'Name' },\n  rows = function(sort)\n    return { { header = 'one.txt', count = 2 },\n             { label = 'first note', detail = 'one.txt:1' },\n             { label = 'second note', detail = 'one.txt:9' },\n             { header = 'two.txt', count = 1 },\n             { label = 'third note', detail = 'two.txt:3' } }\n  end,\n  on_enter = function(row) mnml.toast('enter ' .. row.label) end }\nmnml.section{ id = 'notes_lua', title = 'NOTES (lua)', glyph = '+', ascii = 'N', list = l, side = 'left', after = 'todos' }\n"
+command script.reload
+expect screen contains "scripts: reloaded"
+# The section's own command shows it, the way a `view.activity_*` shows
+# a built-in's — and its column is the ListPanel every section has.
+command user.notes_lua
+expect screen contains "NOTES (lua)"
+expect screen contains "one.txt"
+expect screen contains "first note"
+expect screen contains "third note"
+# The cursor starts on the header; Enter folds it — its two items go,
+# the other file's stays.
+key enter
+expect screen lacks "first note"
+expect screen contains "third note"
+key enter
+expect screen contains "first note"
+# The filter narrows to one row and keeps its file's header.
+key /
+type "third"
+expect screen contains "third note"
+expect screen lacks "first note"
+key esc
+key esc
+# Enter on an item reaches the script.
+key down
+key enter
+expect screen contains "enter first note"
+# A reload drops the section, its rail row and its list.
+write .mnml/init.lua "mnml.command{ id = 'gone', run = function() mnml.toast('reloaded ok') end }\n"
+command script.reload
+command user.gone
+expect screen contains "reloaded ok"
+expect screen lacks "NOTES (lua)"

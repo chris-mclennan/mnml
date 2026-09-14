@@ -120,6 +120,7 @@ const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
 const files_pane = @import("files_pane.zig");
 const scripts_panel = @import("scripts_panel.zig");
+const script_section = @import("script_section.zig");
 const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
 const side_mod = @import("side.zig");
@@ -672,6 +673,8 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .scripts => try scripts_panel.draw(app, ui, area),
         // // changed (search-section): Rust's SEARCH sidebar section.
         .search => try search_section.draw(app, ui, area),
+        // // changed (lua-plumbing): a script's own rail section.
+        .script => try script_section.draw(app, ui, area),
     }
 }
 
@@ -1609,8 +1612,13 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 .label = p.labels[idx],
                 .detail = if (p.details.len > idx) p.details[idx] else null,
                 .hint = if (p.hints.len > idx and p.hints[idx].len > 0) p.hints[idx] else null,
+                .icon = if (p.icons.len > idx and p.icons[idx].len > 0) p.icons[idx] else null,
+                .marked = p.marked.len > idx and p.marked[idx],
             };
             p.state.total = p.labels.len;
+            const preview = try ui.arena.alloc(picker_mod.PreviewRow, p.preview.len);
+            for (p.preview, 0..) |row, i| preview[i] = row;
+            p.state.preview = preview;
             if (picker_mod.draw(ui, screen, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {

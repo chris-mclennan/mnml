@@ -100,9 +100,14 @@ pub const AppCommand = union(enum) {
     /// `zf{motion}` / `zF`: apply these ops (they select the range),
     /// then fold the selection. Frame arena.
     fold_after: []const EditOp,
+    /// `g<letter>{motion}` where the letter is claimed
+    /// (`input/script_ops.zig`): apply these ops — they select the
+    /// range, exactly as a built-in operator's motion does — then hand
+    /// the range to the operator at `index`. Frame arena.
+    script_operator: struct { ops: []const EditOp, index: u32, linewise: bool = false },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 26);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 27);
     }
 };
 

@@ -5,14 +5,19 @@
 write .mnml/init.lua ""
 open .mnml/init.lua
 type "mnml."
-expect screen contains "command    fn      mnml"
-expect screen contains "toast      fn      mnml"
-expect screen contains "buf        module  table"
+expect screen contains "command    fn  mnml"
+expect screen contains "toast      fn  mnml"
 expect screen contains "mnml.command{ id, title?, group?, keys?, run }"
+# The tables are past the popup's ten rows now that the root carries
+# `commands`, `list`, `section` and `operator` too — a letter reaches them.
+type "bu"
+expect screen contains "buf  module  table"
+key backspace
+key backspace
 type "toa"
 expect screen contains "toast  fn  mnml"
 expect screen contains "mnml.toast(text, \"info\" | \"warn\" | \"error\")"
-expect screen lacks "command    fn      mnml"
+expect screen lacks "command    fn  mnml"
 key enter
 expect screen contains "1 mnml.toast"
 expect screen lacks "toast  fn  mnml"
