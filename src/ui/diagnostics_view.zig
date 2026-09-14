@@ -1,7 +1,13 @@
-//! The DIAGNOSTICS panel's row: `<severity glyph> <message>  <rel>:<line>`
-//! — the glyph coloured by severity, the location dim and clipped from
-//! the left so the file and line survive a long message. The panel
-//! chrome (header, filter, scrollbar, hits) is `ListPanel`'s.
+//! The DIAGNOSTICS panel's row: `<severity glyph> <message>  <source>
+//! <rel>:<line>` — the glyph coloured by severity, the location dim and
+//! clipped from the left so the file and line survive a long message
+//! (and so a narrow panel loses the source before the location). The
+//! panel chrome (header, filter, scrollbar, hits) is `ListPanel`'s.
+//!
+//! // changed (lua-decor): the row names the `source` a finding came
+//! from — `eslint`, a language server's name — because a script
+//! publishes into the same panel (`mnml.diagnostics.set`) and "who
+//! said this" is the one thing that told them apart and was not shown.
 
 const std = @import("std");
 const Rect = @import("rect.zig");
@@ -42,7 +48,7 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     const end = r.right();
     x += ui.putStr(x, r.y, end -| x, glyph(row.severity, ui.ascii), Theme.withFg(base, color));
     x += ui.putStr(x, r.y, end -| x, " ", base);
-    const loc = ui.fmt("{s}:{d}", .{ row.rel, row.line + 1 });
+    const loc = if (row.source) |src| ui.fmt("{s} {s}:{d}", .{ src, row.rel, row.line + 1 }) else ui.fmt("{s}:{d}", .{ row.rel, row.line + 1 });
     const min_loc: u16 = 10;
     const avail: u16 = end -| x;
     var message = row.message;

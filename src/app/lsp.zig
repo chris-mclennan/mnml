@@ -1133,7 +1133,11 @@ pub fn gotoDiagnostic(app: *App, forward: bool) CommandError!void {
     const d = list[pick.?];
     e.buf.editor.anchor = null;
     e.buf.editor.setCursor(types.byteOf(text, d.range.start, enc));
-    app.toast("{s}: {s}", .{ d.severity.label(), d.message });
+    // Who said it, when anyone did: a script's findings sit beside a
+    // server's in this list (`mnml.diagnostics.set`).
+    if (d.source) |src| {
+        app.toast("{s} ({s}): {s}", .{ d.severity.label(), src, d.message });
+    } else app.toast("{s}: {s}", .{ d.severity.label(), d.message });
     app.needs_render = true;
 }
 
