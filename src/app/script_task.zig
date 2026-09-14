@@ -238,14 +238,18 @@ test "a hidden task streams its lines to on_line and its exit to on_done" {
     // No pane of its own: a hidden task is invisible (the scratch
     // buffer above is the only pane there is).
     try testing.expectEqual(@as(usize, 1), app.panes.count());
-    var spins: usize = 0;
-    while (spins < 400) : (spins += 1) {
-        try app.tick(app.now_ms + 5);
-        var ok = false;
+    // Real time, not tick counts: the child has to be scheduled, spawn
+    // a shell and exit before its events can land.
+    var waited: u32 = 0;
+    while (true) : (waited += 10) {
+        var pending = false;
         lua.runString("assert(done ~= nil)") catch {
-            ok = true;
+            pending = true;
         };
-        if (!ok) break;
+        if (!pending) break;
+        if (waited > 5000) return error.Timeout;
+        try testing.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
     }
     try lua.runString(
         \\assert(#seen == 3, "lines: " .. #seen)

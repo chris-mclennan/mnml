@@ -2891,7 +2891,8 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     e.buf.editor.setCursor(0);
     try command.run(&app, .{ .static = .@"lsp.next_diagnostic" });
     try testing.expectEqual(@as(usize, 4), e.buf.editor.cursor);
-    try testing.expectEqualStrings("error: a unused", app.lastToast().?);
+    // The toast names the source when the diagnostic carries one.
+    try testing.expectEqualStrings("error (ts): a unused", app.lastToast().?);
     try command.run(&app, .{ .static = .@"lsp.next_diagnostic" });
     try testing.expectEqual(@as(usize, 26), e.buf.editor.cursor);
     try command.run(&app, .{ .static = .@"lsp.next_diagnostic" }); // wraps
