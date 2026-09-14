@@ -30,6 +30,7 @@ const text_field = @import("text_field.zig");
 const scrollbar = @import("scrollbar.zig");
 const fuzzy = @import("fuzzy.zig");
 const list_panel = @import("list_panel.zig");
+const script_view = @import("script_view.zig");
 const key_mod = @import("../core/key.zig");
 const ids = @import("../core/ids.zig");
 
@@ -46,7 +47,17 @@ pub const Item = struct {
     /// After the label, muted: a note the row carries (Zig's pickers
     /// that say more than Rust's).
     hint: ?[]const u8 = null,
+    /// Before the label: a glyph the row carries (a script's row `icon`).
+    icon: ?[]const u8 = null,
+    /// Tab-marked in a multi-select picker: the marker cell is a check.
+    marked: bool = false,
 };
+
+/// One row of the preview column, in the script pane's segment shape —
+/// already resolved against the theme by whoever filled it, so the
+/// paint loop never enters Lua.
+pub const PreviewRow = []const script_view.Segment;
+pub const PreviewSegment = script_view.Segment;
 
 pub const State = struct {
     title: []const u8,
@@ -64,6 +75,15 @@ pub const State = struct {
     /// empty, `j` / `k` move the cursor (the rows are places, not names
     /// a `j` would start) and `g` / `G` jump; any other char filters.
     list_keys_when_empty: bool = false,
+    /// // changed (lua-plumbing): the picker has a preview column —
+    /// results left, the cursor row's preview right. The flag decides
+    /// the geometry, so an empty preview still keeps the column rather
+    /// than resizing the box under the reader.
+    has_preview: bool = false,
+    /// The cursor row's preview, filled by the app when the cursor moves.
+    preview: []const PreviewRow = &.{},
+    /// Tab marks a row and Enter passes every marked one.
+    multi: bool = false,
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         s.query.deinit(gpa);
@@ -77,13 +97,30 @@ pub const State = struct {
 
 /// `ignored`: not a picker key and not a field key — a modified chord
 /// the app may still resolve (Ctrl+S saves from the palette).
-pub const Outcome = union(enum) { consumed, ignored, cancel, changed, accept: usize };
+pub const Outcome = union(enum) {
+    consumed,
+    ignored,
+    cancel,
+    changed,
+    accept: usize,
+    /// Tab on a row of a multi-select picker.
+    toggle: usize,
+};
 
 /// The `.scrollbar` owner the picker's bar registers under.
 pub const scrollbar_owner: ids.PaneId = std.math.maxInt(ids.PaneId);
 
 pub const min_width: u16 = 30;
 pub const max_width: u16 = 90;
+/// With a preview column the box may take more of the screen — the two
+/// halves each need the room one list needed.
+pub const max_width_preview: u16 = 120;
+/// The preview column's share of the inner width, and the least it is
+/// worth painting. Below that the box is all results: the picker must
+/// never squeeze itself into a column it cannot read.
+pub const preview_share_num: u16 = 2;
+pub const preview_share_den: u16 = 5;
+pub const min_preview: u16 = 20;
 pub const min_height: u16 = 7;
 pub const compact_height: u16 = 22;
 pub const no_matches = "  (no matches)";
@@ -100,6 +137,7 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key, count: usize) Allocator.Er
     switch (key.code) {
         .esc => return .cancel,
         .enter => return if (count > 0) .{ .accept = s.cursor } else .consumed,
+        .tab => if (s.multi) return if (count > 0) .{ .toggle = s.cursor } else .consumed,
         .up => s.cursor -|= 1,
         .down => s.cursor = @min(s.cursor + 1, last),
         .page_up => s.cursor -|= page,
@@ -210,9 +248,15 @@ pub fn gather(arena: Allocator, items: []const Item, order: []const usize) Alloc
     return out;
 }
 
-/// The box's rect on `area` for `n` items — Rust's geometry.
+/// The box's rect on `area` for `n` items — Rust's geometry, widened
+/// when a preview column shares it.
 pub fn place(area: Rect, n: usize, anchor: overlay.Anchor) Rect {
-    const w = @min(std.math.clamp(area.w -| 8, min_width, max_width), area.w);
+    return placeWith(area, n, anchor, false);
+}
+
+pub fn placeWith(area: Rect, n: usize, anchor: overlay.Anchor, has_preview: bool) Rect {
+    const widest: u16 = if (has_preview) max_width_preview else max_width;
+    const w = @min(std.math.clamp(area.w -| 8, min_width, widest), area.w);
     const compact = std.math.clamp(@as(u16, @intCast(@min(n, 1000))) + 3, min_height, compact_height);
     const generous = @max(@min(area.h -| 4, (area.h * 4) / 5), min_height);
     const h = @min(@min(compact, generous), area.h);
@@ -224,7 +268,7 @@ pub fn place(area: Rect, n: usize, anchor: overlay.Anchor) Rect {
 pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
     const t = ui.theme;
     if (area.isEmpty()) return null;
-    const inner = overlay.frameLook(ui, place(area, items.len, s.anchor), s.title, .modal);
+    const inner = overlay.frameLook(ui, placeWith(area, items.len, s.anchor, s.has_preview), s.title, .modal);
     if (inner.isEmpty()) return null;
     const bg = t.overlay_bg.bg;
 
@@ -244,8 +288,27 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
     const caret = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = Theme.onBg(t.fg, bg) });
     if (inner.h < 2) return caret;
 
+    // ── the preview column ──
+    // Results left, the cursor row's preview right, a rule between
+    // them. It is taken off the width BEFORE the rows are laid out, so
+    // the scrollbar, the detail budget and the hits all land inside the
+    // left half. A box too narrow to read two columns in has none —
+    // the picker never squeezes itself below what it can paint.
+    var body = Rect.init(inner.x, inner.y + 1, inner.w, inner.h - 1);
+    if (s.has_preview) {
+        const want = @max(min_preview, body.w * preview_share_num / preview_share_den);
+        if (body.w >= min_label + list_panel.marker_w + 1 + want) {
+            const split = body.splitRight(want + 1);
+            body = split.left;
+            const rule = split.rest.splitLeft(1);
+            var ry: u16 = 0;
+            while (ry < rule.left.h) : (ry += 1) _ = ui.putStr(rule.left.x, rule.left.y + ry, 1, "\u{2502}", Theme.onBg(t.border, bg));
+            drawPreview(ui, rule.rest, s.preview, bg);
+        }
+    }
+
     // ── rows ──
-    const list_area = Rect.init(inner.x, inner.y + 1, inner.w, inner.h - 1);
+    const list_area = body;
     s.rows = list_area.h;
     if (s.cursor >= items.len) s.cursor = items.len -| 1;
     if (items.len == 0) {
@@ -270,7 +333,11 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
         const selected = idx == s.cursor;
         const row_bg = if (selected) t.chip.bg else bg;
         ui.fill(r, .{ .bg = row_bg });
-        if (selected) _ = ui.putStr(r.x, r.y, 1, marker, Theme.onBg(t.accent, row_bg));
+        // The marker cell doubles as the multi-select tick: a marked row
+        // keeps its check whether or not the cursor is on it.
+        if (it.marked) {
+            _ = ui.putStr(r.x, r.y, 1, if (ui.ascii) "*" else "\u{2713}", Theme.onBg(t.accent, row_bg));
+        } else if (selected) _ = ui.putStr(r.x, r.y, 1, marker, Theme.onBg(t.accent, row_bg));
         // Rust's budget: the detail may take what is left past twelve
         // label cells, clipped with an ellipsis; it costs a cell of air
         // on each side, and a row without one still owes the edge one.
@@ -288,7 +355,13 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
         var hit_style = Theme.onBg(t.accent, row_bg);
         hit_style.bold = true;
         var x = r.x + list_panel.marker_w;
-        x += drawLabel(ui, x, r.y, label_avail, label, s.query.items, label_style, hit_style);
+        var label_room = label_avail;
+        if (it.icon) |g| if (g.len > 0 and label_room > 3) {
+            const w = ui.putStr(x, r.y, label_room, ui.fmt("{s} ", .{g}), Theme.onBg(t.accent, row_bg));
+            x += w;
+            label_room -|= w;
+        };
+        x += drawLabel(ui, x, r.y, label_room, label, s.query.items, label_style, hit_style);
         if (it.hint) |hh| {
             const room = (r.right() -| detail_cost -| right_pad) -| x;
             if (room > 2) x += ui.putStr(x, r.y, room, ui.clipStr(ui.fmt(" {s}", .{hh}), room), Theme.onBg(t.muted, row_bg));
@@ -297,6 +370,23 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
         ui.hit(r, .{ .overlay_item = @intCast(idx) });
     }
     return caret;
+}
+
+/// The preview column: the cursor row's rows, in the script pane's
+/// segment shape, clipped at the column's edges. A row past the bottom
+/// is dropped; text past the right edge is clipped — the pane's rule.
+fn drawPreview(ui: Ui, area: Rect, rows: []const PreviewRow, bg: vaxis.Color) void {
+    if (area.isEmpty()) return;
+    var y: u16 = 0;
+    while (y < rows.len and y < area.h) : (y += 1) {
+        var x = area.x;
+        for (rows[y]) |seg| {
+            if (x >= area.right()) break;
+            var st = seg.style;
+            st.bg = bg;
+            x += ui.putStr(x, area.y + y, area.right() -| x, seg.text, st);
+        }
+    }
 }
 
 /// The label with the query's matched characters in `hit_style`;
@@ -552,4 +642,62 @@ test "list keys: with the flag and an empty query j / k / g / G move; a typed ch
     defer plain.deinit(gpa);
     try std.testing.expect((try handleKey(&plain, gpa, Key.char('j'), 3)) == .changed);
     try std.testing.expectEqualStrings("j", plain.queryText());
+}
+
+test "a preview column: results left, the preview right, a rule between; a narrow box keeps all its width for the rows" {
+    var f = try Fixture.init(120, 20);
+    defer f.deinit();
+    const arena = f.arena_state.allocator();
+    const rows = try arena.alloc(PreviewRow, 2);
+    rows[0] = &[_]script_view.Segment{.{ .text = "file  ·  Save file", .style = f.theme.fg }};
+    rows[1] = &[_]script_view.Segment{.{ .text = "ctrl+s", .style = f.theme.muted }};
+    var s: State = .{ .title = "Recent commands", .total = 3, .has_preview = true, .preview = rows };
+    defer s.deinit(testing.allocator);
+    _ = draw(f.ui(), f.full(), &s, &files);
+    try f.expectContains("a.txt");
+    try f.expectContains("file  ·  Save file");
+    try f.expectContains("ctrl+s");
+    // 112 wide (120-8) at x 4; the preview takes 2/5 = 44 plus the rule.
+    var buf: [256]u8 = undefined;
+    const row = f.row(8, &buf);
+    try testing.expect(std.mem.indexOf(u8, row, "\u{2502}file  \u{b7}") != null);
+    // The rows' own right edge is inside the left half: the detail of
+    // row 0 sits before the rule, not under the preview.
+    const rule_at = std.mem.indexOf(u8, row, "\u{2502}file").?;
+    try testing.expect(std.mem.indexOf(u8, row[0..rule_at], "src/a.txt") != null);
+    // Below 30 columns the box paints at all — and has no preview column.
+    var tiny = try Fixture.init(28, 10);
+    defer tiny.deinit();
+    var ts: State = .{ .title = "Tiny", .has_preview = true, .preview = rows };
+    defer ts.deinit(testing.allocator);
+    _ = draw(tiny.ui(), tiny.full(), &ts, &files);
+    try tiny.expectContains("a.txt");
+    try tiny.expectLacks("file  \u{b7}");
+    for (tiny.hits.items.items) |e| try testing.expect(tiny.full().intersect(e.rect).eql(e.rect));
+}
+
+test "multi-select: tab marks a row and steps on, a marked row keeps its check, and without multi tab is not a picker key" {
+    const gpa = testing.allocator;
+    var s: State = .{ .title = "Rows", .multi = true };
+    defer s.deinit(gpa);
+    try testing.expectEqual(@as(usize, 0), (try handleKey(&s, gpa, Key.named(.tab), 3)).toggle);
+    // The picker's own list does not move the cursor — the app does,
+    // through `toggleMark`. Here the outcome is all that is asserted.
+    s.cursor = 1;
+    try testing.expectEqual(@as(usize, 1), (try handleKey(&s, gpa, Key.named(.tab), 3)).toggle);
+    try testing.expect((try handleKey(&s, gpa, Key.named(.tab), 0)) == .consumed);
+    var single: State = .{ .title = "Rows" };
+    defer single.deinit(gpa);
+    const out = try handleKey(&single, gpa, Key.named(.tab), 3);
+    try testing.expect(out != .toggle);
+    // A marked row paints a check where the marker would go.
+    var f = try Fixture.init(60, 12);
+    defer f.deinit();
+    const marked = [_]Item{ .{ .label = "one", .marked = true }, .{ .label = "two" }, .{ .label = "three", .icon = "+" } };
+    var draw_state: State = .{ .title = "Rows", .multi = true, .cursor = 1 };
+    defer draw_state.deinit(gpa);
+    _ = draw(f.ui(), f.full(), &draw_state, &marked);
+    try testing.expectEqualStrings("\u{2713}", f.cell(5, 4).char.grapheme);
+    try testing.expectEqualStrings("\u{258c}", f.cell(5, 5).char.grapheme);
+    try f.expectContains("+ three");
 }

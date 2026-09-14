@@ -1609,8 +1609,13 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 .label = p.labels[idx],
                 .detail = if (p.details.len > idx) p.details[idx] else null,
                 .hint = if (p.hints.len > idx and p.hints[idx].len > 0) p.hints[idx] else null,
+                .icon = if (p.icons.len > idx and p.icons[idx].len > 0) p.icons[idx] else null,
+                .marked = p.marked.len > idx and p.marked[idx],
             };
             p.state.total = p.labels.len;
+            const preview = try ui.arena.alloc(picker_mod.PreviewRow, p.preview.len);
+            for (p.preview, 0..) |row, i| preview[i] = row;
+            p.state.preview = preview;
             if (picker_mod.draw(ui, screen, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {

@@ -355,6 +355,59 @@ mnml.picker.open("notes", query?)
 picker's own fuzzy filter narrows the rows as the user types. Enter calls
 the row's `on_accept(label)`; Esc drops the rows.
 
+#### A live source, a preview column, multi-select
+
+*(api 1, added)* The four fields that turn the one-shot list above into
+the shape a real plugin wants:
+
+```lua
+mnml.picker.source{ id = "recent", title = "Recent commands",
+  items = function(query) return rows end,
+  live = true,
+  preview = function(row) return { { { text = row.label, fg = "accent" } }, row.detail } end,
+  multi = true,
+  on_accept = function(row_or_rows) … end }
+```
+
+A row is a string, or a table `{ label=, detail=, icon=, data=,
+on_accept= }`. `icon` is one glyph before the label, in the accent.
+`data` is yours: it is handed back to `preview` and `on_accept`
+untouched — the whole row table comes back, not a copy.
+
+**`live = true`** asks `items(query)` again as the query changes,
+debounced 80 ms, so a typed word is one call and not one per key. The
+previous call's rows stay on screen until the new ones land: the list
+never blanks while a source is thinking. Without `live` the source is
+asked exactly once, when the picker opens, and the picker's own fuzzy
+filter does the narrowing from there.
+
+**`preview = fn(row)`** paints the picker's right-hand column with rows
+in the script pane's segment shape (a string, or a list of strings and
+`{ text=, fg=, bg=, bold=, italic=, underline= }` tables). The box
+widens to make room: results left, a `│` rule, the preview right, the
+prompt on top with the count at its right edge. It is called when the
+cursor moves, never from the paint loop — the 20 ms budget is never
+spent painting. A box too narrow to read two columns in keeps all its
+width for the rows.
+
+**`multi = true`** makes `Tab` mark the row under the cursor and step
+on, so a run is marked by holding it. A marked row shows a `✓` where
+the cursor marker goes. Enter then hands `on_accept` the **list** of
+marked rows; with nothing marked it hands the one under the cursor —
+still as a list, so the function has one shape to read.
+
+**`on_accept`** on the source is handed the row table (or the list).
+The per-row `on_accept(label)` from before still fires first, so a
+source may use either or both.
+
+| function / field | changed in |
+|---|---|
+| `mnml.picker.source` `live` | api 1, added |
+| `mnml.picker.source` `preview` | api 1, added |
+| `mnml.picker.source` `multi` | api 1, added |
+| `mnml.picker.source` `on_accept` | api 1, added |
+| a row's `icon` / `data` | api 1, added |
+
 ### Script panes
 
 ```lua

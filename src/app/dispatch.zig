@@ -1116,9 +1116,11 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             },
             .changed => {
                 try refilterPicker(app);
+                @import("../scripting/api.zig").noteQueryChanged(app, app.now_ms);
                 cmd_picker.preview(app);
             },
             .accept => |i| try cmd_picker.accept(app, i),
+            .toggle => |i| cmd_picker.toggleMark(app, i),
         },
         .settings => try settings_app.key(app, k),
         .wizard => try first_launch.key(app, k),

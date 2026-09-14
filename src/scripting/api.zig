@@ -82,7 +82,7 @@ pub const tables = [_]Table{
         fnOf("segment", "mnml.statusline.segment{ id, side?, fn } — fn() is polled every 250 ms; nil hides it; side is \"left\" | \"right\"", statuslineSegment),
     } },
     .{ .name = "picker", .doc = "mnml.picker — a source of rows for the picker, and the picker over it", .fns = &.{
-        fnOf("source", "mnml.picker.source{ id, title?, items = fn(query) } — items returns strings or { label, detail?, on_accept? }", pickerSource),
+        fnOf("source", "mnml.picker.source{ id, title?, items = fn(query), live?, multi?, preview?, on_accept? } — items returns strings or { label, detail?, icon?, data?, on_accept? }", pickerSource),
         fnOf("open", "mnml.picker.open(id, query?) — the picker over the source's items", pickerOpen),
     } },
     .{ .name = "pane", .doc = "mnml.pane — a pane the script renders itself", .fns = &.{
@@ -825,18 +825,40 @@ fn statuslineSegment(L: *State) !i32 {
 
 // ─── mnml.picker ────────────────────────────────────────────────────────
 
-/// `mnml.picker.source{ id, title?, items = fn(query) }`.
+/// `mnml.picker.source{ id, title?, items = fn(query), live?, multi?,
+/// preview?, on_accept? }`.
 fn pickerSource(L: *State) !i32 {
     const c = ctx(L);
     L.checkType(1, .table);
     const id = needStr(L, 1, "id");
     const title = strField(L, 1, "title") orelse id;
+    const live = boolField(L, 1, "live") orelse false;
+    const multi = boolField(L, 1, "multi") orelse false;
+    // Every check before the first ref: a Lua error is a longjmp.
+    if (L.getField(1, "preview") != .nil and !L.isFunction(-1)) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.picker.source: preview must be a function(row) returning rows of segments", .{});
+    }
+    L.pop(1);
+    if (L.getField(1, "on_accept") != .nil and !L.isFunction(-1)) {
+        L.pop(1);
+        L.raiseErrorStr("mnml.picker.source: on_accept must be a function(row) — or function(rows) when multi = true", .{});
+    }
+    L.pop(1);
     const items = needFn(c.self, 1, "items");
+    const preview = fnField(c.self, 1, "preview");
+    const on_accept = fnField(c.self, 1, "on_accept");
     const gpa = c.self.gpa;
     try c.self.noteOrigin(.source, id);
     if (c.self.findSource(id)) |src| {
         c.self.unref(src.items);
+        if (src.preview) |r| c.self.unref(r);
+        if (src.on_accept) |r| c.self.unref(r);
         src.items = items;
+        src.preview = preview;
+        src.on_accept = on_accept;
+        src.live = live;
+        src.multi = multi;
         const owned = gpa.dupe(u8, title) catch |err| return err;
         gpa.free(src.title);
         src.title = owned;
@@ -849,7 +871,15 @@ fn pickerSource(L: *State) !i32 {
     errdefer gpa.free(owned_id);
     const owned_title = try gpa.dupe(u8, title);
     errdefer gpa.free(owned_title);
-    c.self.sources.append(gpa, .{ .id = owned_id, .title = owned_title, .items = items }) catch |err| {
+    c.self.sources.append(gpa, .{
+        .id = owned_id,
+        .title = owned_title,
+        .items = items,
+        .live = live,
+        .multi = multi,
+        .preview = preview,
+        .on_accept = on_accept,
+    }) catch |err| {
         c.self.unref(items);
         return err;
     };
@@ -862,18 +892,31 @@ fn pickerOpen(L: *State) !i32 {
     const id = L.checkString(1);
     const query = L.optString(2) orelse "";
     const src = c.self.findSource(id) orelse L.raiseErrorStr("mnml.picker.open: no source `%s`", .{id.ptr});
-    const gpa = c.self.gpa;
+    openSource(c.app, c.self, src, query) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => L.raiseErrorStr("mnml.picker.open: %s", .{@errorName(err).ptr}),
+    };
+    return 0;
+}
+
+/// Open the one picker overlay over `src`'s rows for `query`. Shared by
+/// `picker.open` and the live re-run.
+pub fn openSource(app: *App, self: *Lua, src: *lua_mod.PickerSource, query: []const u8) command.CommandError!void {
+    const gpa = self.gpa;
     var labels: std.ArrayList([]u8) = .empty;
     var details: std.ArrayList([]u8) = .empty;
+    var icons: std.ArrayList([]u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
         for (details.items) |d| gpa.free(d);
         details.deinit(gpa);
+        for (icons.items) |g| gpa.free(g);
+        icons.deinit(gpa);
     }
-    try c.self.callItems(src.items, query, &labels, &details);
-    // The overlay owns the four slices from the call on, whatever the
-    // call returns; the errdefers only cover the allocations before it.
+    try self.callItems(src.items, query, &labels, &details, &icons);
+    // The overlay owns the slices from the call on, whatever it returned;
+    // the errdefers only cover the allocations before this point.
     var handed = false;
     const owned_labels = try labels.toOwnedSlice(gpa);
     errdefer if (!handed) {
@@ -885,16 +928,92 @@ fn pickerOpen(L: *State) !i32 {
         for (owned_details) |d| gpa.free(d);
         gpa.free(owned_details);
     };
+    const owned_icons = try icons.toOwnedSlice(gpa);
+    errdefer if (!handed) {
+        for (owned_icons) |g| gpa.free(g);
+        gpa.free(owned_icons);
+    };
     const panes = try gpa.alloc(PaneId, 0);
     errdefer if (!handed) gpa.free(panes);
     const hints = try gpa.alloc([]u8, 0);
     errdefer if (!handed) gpa.free(hints);
+    const marked = try gpa.alloc(bool, if (src.multi) owned_labels.len else 0);
+    @memset(marked, false);
+    errdefer if (!handed) gpa.free(marked);
+    const source_id = try gpa.dupe(u8, src.id);
+    errdefer if (!handed) gpa.free(source_id);
     handed = true;
-    cmd_picker.openPickerWith(c.app, src.title, .lua, owned_labels, panes, owned_details, hints) catch |err| switch (err) {
+    try cmd_picker.openPickerWith(app, src.title, .lua, owned_labels, panes, owned_details, hints);
+    const p = &app.overlay.picker;
+    p.icons = owned_icons;
+    p.marked = marked;
+    p.lua_source = source_id;
+    p.state.multi = src.multi;
+    p.state.has_preview = src.preview != null;
+    // A re-run keeps what the reader typed: the query is the overlay's.
+    if (query.len > 0) {
+        try p.state.query.appendSlice(gpa, query);
+        p.state.caret = p.state.query.items.len;
+        try @import("../app/dispatch.zig").refilterPicker(app);
+    }
+    try refreshPreview(app);
+}
+
+/// The cursor moved (or the rows changed): ask the source for the
+/// preview column again. Lua is never entered from the paint loop, so
+/// the rows are decoded here and held until the next move.
+pub fn refreshPreview(app: *App) Allocator.Error!void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
+    const p = &app.overlay.picker;
+    if (!p.state.has_preview) return;
+    const self = app.script();
+    const src = self.findSource(p.lua_source) orelse return;
+    const fnref = src.preview orelse return;
+    app_mod.Overlay.freePreview(app.gpa, p.preview);
+    p.preview = &.{};
+    if (p.state.cursor >= p.filtered.items.len) return;
+    const row = p.filtered.items[p.state.cursor];
+    p.preview = try self.callPreview(fnref, row, p.labels[row]);
+    app.needs_render = true;
+}
+
+/// A live source's debounced re-run: the query changed `live_debounce_ms`
+/// ago and nothing has been typed since, so ask for rows again. The old
+/// rows stayed on screen the whole time.
+pub fn tickLivePicker(app: *App, now: i64) Allocator.Error!void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
+    const due = app.overlay.picker.requery_at_ms orelse return;
+    if (now < due) return;
+    app.overlay.picker.requery_at_ms = null;
+    const self = app.script();
+    const src = self.findSource(app.overlay.picker.lua_source) orelse return;
+    if (!src.live) return;
+    const query = try app.gpa.dupe(u8, app.overlay.picker.state.queryText());
+    defer app.gpa.free(query);
+    const cursor = app.overlay.picker.state.cursor;
+    openSource(app, self, src, query) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => L.raiseErrorStr("mnml.picker.open: %s", .{@errorName(err).ptr}),
+        else => return,
     };
-    return 0;
+    if (app.overlay == .picker) {
+        const p = &app.overlay.picker;
+        p.state.cursor = @min(cursor, p.filtered.items.len -| 1);
+        try refreshPreview(app);
+    }
+    app.needs_render = true;
+}
+
+/// The query changed on a live source: arm the debounce.
+pub fn noteQueryChanged(app: *App, now: i64) void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
+    const src = app.script().findSource(app.overlay.picker.lua_source) orelse return;
+    if (!src.live) return;
+    app.overlay.picker.requery_at_ms = now + lua_mod.live_debounce_ms;
+}
+
+pub fn nextPickerDeadlineMs(app: *const App) ?i64 {
+    if (app.overlay != .picker) return null;
+    return app.overlay.picker.requery_at_ms;
 }
 
 // ─── mnml.pane ──────────────────────────────────────────────────────────
@@ -2154,5 +2273,139 @@ test "mnml.operator: the argument errors name the shape, and land before anythin
     try lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' }, run = function() end }");
     try testing.expectEqual(@as(usize, 1), lua.operators.items.len);
     try testing.expectEqual(@as(usize, 1), script_ops.count());
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.picker.source: a live source is asked again as the query changes, debounced, and the old rows stay until the new ones land" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    const lua = app.script();
+    lua.runString(
+        \\calls = {}
+        \\mnml.picker.source{ id = "live", title = "Live", live = true,
+        \\  items = function(query)
+        \\    calls[#calls + 1] = query
+        \\    if query == "" then return { "alpha", "beta" } end
+        \\    return { { label = "for " .. query, detail = "d" } }
+        \\  end }
+        \\mnml.picker.open("live")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expect(app.overlay == .picker);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    // Typing does not ask again on the spot: the rows on screen are the
+    // ones the last call answered with.
+    app.now_ms = 1000;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'x' } } });
+    try lua.runString("assert(#calls == 1, #calls)");
+    try testing.expectEqualStrings("alpha", app.overlay.picker.labels[0]);
+    // Before the debounce is up, nothing.
+    try app.tick(1000 + lua_mod.live_debounce_ms - 1);
+    try lua.runString("assert(#calls == 1, #calls)");
+    // After it, one call carrying the whole query.
+    try app.tick(1000 + lua_mod.live_debounce_ms);
+    try lua.runString("assert(#calls == 2, #calls) assert(calls[2] == 'x', calls[2])");
+    try testing.expectEqual(@as(usize, 1), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("for x", app.overlay.picker.labels[0]);
+    try testing.expectEqualStrings("x", app.overlay.picker.state.queryText());
+    // Two keys inside the window are one call, not two.
+    app.now_ms = 2000;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'y' } } });
+    app.now_ms = 2040;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'z' } } });
+    try app.tick(2040 + lua_mod.live_debounce_ms);
+    try lua.runString("assert(#calls == 3, #calls) assert(calls[3] == 'xyz', calls[3])");
+    // A source without `live` is asked exactly once.
+    try lua.runString(
+        \\once = 0
+        \\mnml.picker.source{ id = "still", items = function() once = once + 1; return { "a", "b" } end }
+        \\mnml.picker.open("still")
+    );
+    app.now_ms = 5000;
+    try app.handle(.{ .key = .{ .code = .{ .char = 'a' } } });
+    try app.tick(5000 + 10 * lua_mod.live_debounce_ms);
+    try lua.runString("assert(once == 1, once)");
+}
+
+test "mnml.picker.source: the preview column follows the cursor, multi-select hands on_accept the marked rows, and data comes back untouched" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    defer app.deinit();
+    const lua = app.script();
+    lua.runString(
+        \\picked = nil
+        \\previewed = {}
+        \\mnml.picker.source{ id = "cmds", title = "Commands", multi = true,
+        \\  items = function()
+        \\    return { { label = "one", detail = "1", icon = "*", data = { n = 1 } },
+        \\             { label = "two", detail = "2", data = { n = 2 } },
+        \\             { label = "three", detail = "3", data = { n = 3 } } }
+        \\  end,
+        \\  preview = function(row)
+        \\    previewed[#previewed + 1] = row.label
+        \\    return { { { text = row.label, fg = "accent" } }, "n = " .. row.data.n }
+        \\  end,
+        \\  on_accept = function(rows)
+        \\    local out = {}
+        \\    for _, r in ipairs(rows) do out[#out + 1] = r.data.n end
+        \\    picked = table.concat(out, ",")
+        \\  end }
+        \\mnml.picker.open("cmds")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expect(app.overlay.picker.state.has_preview);
+    try testing.expect(app.overlay.picker.state.multi);
+    try testing.expectEqualStrings("*", app.overlay.picker.icons[0]);
+    // The first row's preview is there before a key is pressed.
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.preview.len);
+    try testing.expectEqualStrings("one", app.overlay.picker.preview[0][0].text);
+    try testing.expectEqualStrings("n = 1", app.overlay.picker.preview[1][0].text);
+    {
+        const screen_mod = @import("../ipc/screen.zig");
+        try app.render();
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "n = 1") != null);
+    }
+    // ↓ moves the cursor and the preview follows it.
+    try app.handle(.{ .key = .{ .code = .down } });
+    try lua.runString("assert(previewed[#previewed] == 'two', previewed[#previewed])");
+    try testing.expectEqualStrings("n = 2", app.overlay.picker.preview[1][0].text);
+    // Tab marks the row and steps on; Enter hands over every marked row.
+    try app.handle(.{ .key = .{ .code = .tab } });
+    try testing.expect(app.overlay.picker.marked[1]);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.state.cursor);
+    try app.handle(.{ .key = .{ .code = .tab } });
+    {
+        const screen_mod = @import("../ipc/screen.zig");
+        try app.render();
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "\u{2713}two") != null);
+    }
+    try app.handle(.{ .key = .{ .code = .enter } });
+    try lua.runString("assert(picked == '2,3', tostring(picked))");
+    try testing.expect(app.overlay == .none);
+    // With nothing marked, Enter hands over the row under the cursor.
+    try lua.runString("picked = nil mnml.picker.open('cmds')");
+    try app.handle(.{ .key = .{ .code = .enter } });
+    try lua.runString("assert(picked == '1', tostring(picked))");
+}
+
+test "mnml.picker.source: the argument errors name the shape and land before anything is registered" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, preview = 3 }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "preview must be a function") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, on_accept = 'no' }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "on_accept must be a function") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x' }"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`items` is required") != null);
+    try testing.expectEqual(@as(usize, 0), lua.sources.items.len);
+    try testing.expectError(error.Failed, lua.runString("mnml.picker.open('nope')"));
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }

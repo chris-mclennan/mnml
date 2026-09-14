@@ -48,6 +48,7 @@ const info_view_app = @import("app/info_view.zig");
 const ex = @import("app/ex.zig");
 const ex_verbs = @import("app/ex_verbs.zig");
 const dispatch = @import("app/dispatch.zig");
+const cmd_picker = @import("app/cmd_picker.zig");
 const render_mod = @import("app/render.zig");
 const theme_mod = @import("ui/theme.zig");
 const hit = @import("ui/hit.zig");
@@ -516,6 +517,19 @@ pub const Overlay = union(enum) {
         restore_theme: ?*const theme_mod = null,
         /// `.custom` only.
         on_accept: ?PickerAccept = null,
+        /// // changed (lua-plumbing): parallel to `labels` — the row's
+        /// glyph, empty for none.
+        icons: [][]u8 = &.{},
+        /// Parallel to `labels`: Tab-marked rows of a multi-select
+        /// picker. Empty when the picker is single-select.
+        marked: []bool = &.{},
+        /// The cursor row's preview column, gpa-owned (its segment texts
+        /// too), refilled when the cursor moves.
+        preview: [][]Picker.PreviewSegment = &.{},
+        /// A `.lua` source that answers again as the query changes: its
+        /// id, and when the debounced re-run is due.
+        lua_source: []u8 = &.{},
+        requery_at_ms: ?i64 = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
@@ -523,6 +537,15 @@ pub const Overlay = union(enum) {
     settings: settings_app.State,
     /// The first-launch wizard (`first_launch.show`).
     wizard: first_launch.State,
+
+    /// The preview column's rows and their segment texts (gpa).
+    pub fn freePreview(gpa: Allocator, rows: [][]Picker.PreviewSegment) void {
+        for (rows) |row| {
+            for (row) |seg| gpa.free(seg.text);
+            gpa.free(row);
+        }
+        gpa.free(rows);
+    }
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
@@ -553,6 +576,11 @@ pub const Overlay = union(enum) {
                 gpa.free(p.details);
                 for (p.hints) |h| gpa.free(h);
                 gpa.free(p.hints);
+                for (p.icons) |i| gpa.free(i);
+                gpa.free(p.icons);
+                gpa.free(p.marked);
+                freePreview(gpa, p.preview);
+                gpa.free(p.lua_source);
                 gpa.free(p.priority);
                 gpa.free(p.score_bonus);
                 gpa.free(p.order);
@@ -2406,6 +2434,7 @@ pub const App = struct {
         try http_app.tick(self, now);
         idle.tick(self, now);
         try self.script().tick(now);
+        try cmd_picker.tick(self, now);
         try update.tick(self);
         session.tick(self, now);
         trash.tick(self, now);
@@ -2443,6 +2472,7 @@ pub const App = struct {
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
         };
+        if (cmd_picker.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         for (self.toasts.items) |t| {
             if (t.expires_ms == std.math.maxInt(i64)) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;

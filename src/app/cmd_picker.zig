@@ -543,11 +543,34 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             };
         },
         .lua => {
-            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            // The marked rows when the picker is multi-select and any
+            // are marked, else the row under the cursor.
+            const arena = app.frame.allocator();
+            var rows: std.ArrayListUnmanaged(usize) = .empty;
+            var labels: std.ArrayListUnmanaged([]const u8) = .empty;
+            for (p.marked, 0..) |on, n| if (on) {
+                try rows.append(arena, n);
+                try labels.append(arena, try arena.dupe(u8, p.labels[n]));
+            };
+            // Every field of `p` is read BEFORE the overlay goes: its
+            // memory is the union's, and `deinit` leaves `.none` there.
+            const multi_source = p.state.multi;
+            const multi = multi_source and rows.items.len > 0;
+            if (!multi) {
+                rows.clearRetainingCapacity();
+                labels.clearRetainingCapacity();
+                try rows.append(arena, i);
+                try labels.append(arena, try arena.dupe(u8, p.labels[i]));
+            }
+            const source_id = try arena.dupe(u8, p.lua_source);
+            const lua = app.script();
+            const source_accept: ?command.LuaRef = if (lua.findSource(source_id)) |src| src.on_accept else null;
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
-            const lua = app.script();
-            lua.acceptItem(i, label);
+            // The row's own `on_accept` first (the shape that shipped),
+            // then the source's — a source may have either or both.
+            if (!multi) lua.acceptItem(i, labels.items[0]);
+            if (source_accept) |r| lua.acceptSource(r, rows.items, labels.items, multi_source);
             lua.pickerClosed();
         },
         .go_run_cmd, .tools, .tasks => |kind| {
@@ -604,8 +627,33 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
 /// The cursor moved or the filter changed: a themes picker paints the
 /// candidate under the cursor. Other kinds have nothing to preview.
 pub fn preview(app: *App) void {
-    if (app.overlay != .picker or app.overlay.picker.kind != .themes) return;
-    @import("cmd_view.zig").previewTheme(app);
+    if (app.overlay != .picker) return;
+    if (app.overlay.picker.kind == .themes) return @import("cmd_view.zig").previewTheme(app);
+    // A `.lua` source with a preview column: the cursor moved.
+    if (app.overlay.picker.kind == .lua) @import("../scripting/api.zig").refreshPreview(app) catch {};
+}
+
+/// Tab on a row of a multi-select picker: mark it, or unmark it.
+pub fn toggleMark(app: *App, idx: usize) void {
+    if (app.overlay != .picker) return;
+    const p = &app.overlay.picker;
+    if (idx >= p.filtered.items.len) return;
+    const i = p.filtered.items[idx];
+    if (i >= p.marked.len) return;
+    p.marked[i] = !p.marked[i];
+    // Tab steps on, so a run of rows is marked by holding it.
+    p.state.cursor = @min(idx + 1, p.filtered.items.len -| 1);
+    preview(app);
+    app.needs_render = true;
+}
+
+/// The live source's debounce (`App.tick`).
+pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    try @import("../scripting/api.zig").tickLivePicker(app, now);
+}
+
+pub fn nextDeadlineMs(app: *const App) ?i64 {
+    return @import("../scripting/api.zig").nextPickerDeadlineMs(app);
 }
 
 /// The picker is closing without a pick: put a previewed theme back.

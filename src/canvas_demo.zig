@@ -471,6 +471,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
             const order = try ui.picker.rank(g.gpa, g.picker.queryText(), &commands, .{});
             defer g.gpa.free(order);
             switch (try ui.picker.handleKey(&g.picker, g.gpa, key, order.len)) {
+                .toggle => {},
                 .accept => |i| g.setNote("accepted: {s}", .{commands[order[i]].label}),
                 .cancel => g.setNote("picker cancelled", .{}),
                 .changed, .consumed, .ignored => {},

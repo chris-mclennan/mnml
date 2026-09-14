@@ -54,17 +54,34 @@ pub const StatusSegment = struct {
     next_poll_ms: i64 = 0,
 };
 
-/// `mnml.picker.source{ id, title, items }` as the state keeps it.
+/// `mnml.picker.source{ id, title, items, live?, preview?, multi?,
+/// on_accept? }` as the state keeps it.
 pub const PickerSource = struct {
     id: []u8,
     title: []u8,
     items: LuaRef,
+    /// `items(query)` runs again as the query changes (debounced).
+    live: bool = false,
+    /// Tab marks a row; Enter hands `on_accept` the list of marked rows.
+    multi: bool = false,
+    /// `preview(row)` → rows for the picker's preview column.
+    preview: ?LuaRef = null,
+    /// The source-wide accept: the row table (or the list of them).
+    on_accept: ?LuaRef = null,
 };
 
-/// One item of an open `.lua` picker: what Enter calls.
+/// One item of an open `.lua` picker: the row table as the script built
+/// it (so `data` comes back untouched) and the row's own `on_accept`.
 pub const PickerItem = struct {
     on_accept: ?LuaRef,
+    /// The whole row table, or null for a plain-string row.
+    row: ?LuaRef = null,
 };
+
+/// How long the picker waits after a keystroke before asking a live
+/// source again. Long enough that a typed word is one call, short
+/// enough that the list never feels stale.
+pub const live_debounce_ms: i64 = 80;
 
 /// `mnml.operator{ id, keys, run }` as the state keeps it. The vim
 /// chord lives in `input/script_ops.zig` (the handler's own table); the
@@ -705,7 +722,7 @@ pub const Lua = struct {
     /// picker takes them) with the `on_accept` refs kept in
     /// `picker_items`. Each item is a string or `{ label, detail?,
     /// on_accept? }`.
-    pub fn callItems(self: *Lua, r: LuaRef, query: []const u8, labels: *std.ArrayList([]u8), details: *std.ArrayList([]u8)) Allocator.Error!void {
+    pub fn callItems(self: *Lua, r: LuaRef, query: []const u8, labels: *std.ArrayList([]u8), details: *std.ArrayList([]u8), icons: *std.ArrayList([]u8)) Allocator.Error!void {
         const L = self.L;
         const gpa = self.gpa;
         self.pushRef(r);
@@ -723,11 +740,14 @@ pub const Lua = struct {
             _ = L.getIndex(-1, @intCast(i));
             defer L.pop(1);
             var on_accept: ?LuaRef = null;
+            var row_ref: ?LuaRef = null;
             var label: []const u8 = "";
             var detail: []const u8 = "";
+            var icon: []const u8 = "";
             if (L.isTable(-1)) {
                 label = stringField(L, -1, "label") orelse "";
                 detail = stringField(L, -1, "detail") orelse "";
+                icon = stringField(L, -1, "icon") orelse "";
                 _ = L.getField(-1, "on_accept");
                 if (L.isFunction(-1)) {
                     on_accept = self.ref();
@@ -739,9 +759,18 @@ pub const Lua = struct {
             errdefer gpa.free(l);
             const d = try gpa.dupe(u8, detail);
             errdefer gpa.free(d);
+            const g = try gpa.dupe(u8, icon);
+            errdefer gpa.free(g);
+            // The row table itself is kept, so `data` reaches `on_accept`
+            // and `preview` exactly as the script wrote it.
+            if (L.isTable(-1)) {
+                L.pushValue(-1);
+                row_ref = self.ref();
+            }
             try labels.append(gpa, l);
             try details.append(gpa, d);
-            try self.picker_items.append(gpa, .{ .on_accept = on_accept });
+            try icons.append(gpa, g);
+            try self.picker_items.append(gpa, .{ .on_accept = on_accept, .row = row_ref });
         }
     }
 
@@ -773,8 +802,77 @@ pub const Lua = struct {
     /// The picker closed (or a new item list replaces the old): drop the
     /// item refs.
     pub fn pickerClosed(self: *Lua) void {
-        for (self.picker_items.items) |it| if (it.on_accept) |a| self.unref(a);
+        for (self.picker_items.items) |it| {
+            if (it.on_accept) |a| self.unref(a);
+            if (it.row) |rr| self.unref(rr);
+        }
         self.picker_items.clearRetainingCapacity();
+    }
+
+    /// Push row `i` of the open picker, or its label when the row was a
+    /// plain string. Leaves exactly one value on the stack.
+    fn pushRow(self: *Lua, i: usize, label: []const u8) void {
+        if (i < self.picker_items.items.len) if (self.picker_items.items[i].row) |r| return self.pushRef(r);
+        _ = self.L.pushString(label);
+    }
+
+    /// The source's `on_accept(row)` — or `on_accept({ row, … })` when
+    /// the picker is multi-select and rows are marked.
+    pub fn acceptSource(self: *Lua, r: LuaRef, rows: []const usize, labels: []const []const u8, multi: bool) void {
+        const L = self.L;
+        self.pushRef(r);
+        if (multi) {
+            L.createTable(@intCast(rows.len), 0);
+            for (rows, 0..) |row, n| {
+                self.pushRow(row, if (n < labels.len) labels[n] else "");
+                L.setIndex(-2, @intCast(n + 1));
+            }
+        } else {
+            self.pushRow(if (rows.len > 0) rows[0] else 0, if (labels.len > 0) labels[0] else "");
+        }
+        self.pcall(1, 0) catch self.toastError("on_accept");
+    }
+
+    /// A source's `preview(row)` → rows of segments for the picker's
+    /// preview column, gpa-owned (the overlay holds them across frames,
+    /// and the frame arena does not survive one).
+    pub fn callPreview(self: *Lua, r: LuaRef, i: usize, label: []const u8) Allocator.Error![][]Segment {
+        const L = self.L;
+        self.pushRef(r);
+        self.pushRow(i, label);
+        self.pcall(1, 1) catch {
+            self.toastError("picker preview");
+            return &.{};
+        };
+        defer L.pop(1);
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const rows = try self.decodeRows(arena_state.allocator(), -1);
+        // Onto the gpa: the preview outlives this frame.
+        const out = try self.gpa.alloc([]Segment, rows.len);
+        var made: usize = 0;
+        errdefer {
+            for (out[0..made]) |row| {
+                for (row) |seg| self.gpa.free(seg.text);
+                self.gpa.free(row);
+            }
+            self.gpa.free(out);
+        }
+        for (rows, 0..) |row, n| {
+            const copy = try self.gpa.alloc(Segment, row.len);
+            var texts: usize = 0;
+            errdefer {
+                for (copy[0..texts]) |seg| self.gpa.free(seg.text);
+                self.gpa.free(copy);
+            }
+            for (row, 0..) |seg, k| {
+                copy[k] = .{ .text = try self.gpa.dupe(u8, seg.text), .style = seg.style, .hit = null };
+                texts = k + 1;
+            }
+            out[n] = copy;
+            made = n + 1;
+        }
+        return out;
     }
 
     pub fn findSource(self: *Lua, id: []const u8) ?*PickerSource {
