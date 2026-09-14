@@ -33,6 +33,10 @@
 //! expect highlights at_least <n> # ≥ n syntax spans on the active editor
 //! expect file <relpath> contains <text>  # the workspace file contains it
 //! expect file <relpath> lacks <text>     # …does not
+//! expect color <x> <y> <fg|bg> [not] #RRGGBB
+//!                                # the cell's resolved colour — the only
+//!                                #   way a script can see one, since the
+//!                                #   screen dump carries no style
 //! ```
 //!
 //! `<text>` may be wrapped in `"…"` (one layer stripped); inside it `\n`
