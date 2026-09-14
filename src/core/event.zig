@@ -17,6 +17,7 @@ const sessions = @import("../sessions.zig");
 const dock = @import("../app/dock.zig");
 const git_client = @import("../git/client.zig");
 const spend = @import("../app/spend.zig");
+const usage = @import("../ai/usage.zig");
 const tests_pane = @import("../app/tests_pane.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
 const http_client = @import("../http/client.zig");
@@ -150,6 +151,8 @@ pub const AppEvent = union(enum) {
     dock: *dock.TailResult,
     /// A finished spend computation. Owned; the spend pane (or the meter) adopts it.
     spend: *spend.Result,
+    /// A finished usage fetch (Claude / Codex / the keychain). Owned; `usage_pane.handle` adopts it.
+    usage: *usage.Result,
     /// A finished Playwright run. Owned; `tests_pane.handle` adopts or destroys it.
     tests: *tests_pane.Result,
     /// A file transfer's totals / progress / end. Owned; `transfers.handle` destroys it.
@@ -182,6 +185,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .sessions => |r| r.destroy(gpa),
         .dock => |r| r.destroy(gpa),
         .spend => |r| r.destroy(gpa),
+        .usage => |r| r.destroy(gpa),
         .tests => |r| r.destroy(gpa),
         .grep => |r| r.destroy(gpa),
         .script_task => |r| r.destroy(gpa),

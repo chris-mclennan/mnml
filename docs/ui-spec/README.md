@@ -31,6 +31,14 @@ not a template. Build on the component system (`Ui`, `HitMap`,
 `Canvas`, `ListPanel`), register every click target in the same
 statement that paints it, and add nothing the Rust screen does not show.
 
+`zig-usage-120x40.txt` / `zig-usage-80x24.txt` / `zig-usage-codex-120x40.txt`
+are the usage panes (`tools/zig-spec.sh usage` / `usage-codex`), cut on
+`usage-fixture/` — three synthetic accounts, a fixed clock and a UTC
+zone through `MNML_CLAUDE_USAGE_FIXTURE` (`env-usage`), so the dump
+never touches the wire and the reset clocks read the same on every
+machine. The Rust pane was never driven for a spec; the layout is
+`claude_usage_view.rs` / `codex_usage_view.rs` read against these.
+
 `rust-git-120x40.txt` / `rust-git-80x24.txt` are git mode (`steps-graph2.jsonl`).
 
 `zig-search-120x40.txt` is the SEARCH section (`steps-search.jsonl`

@@ -296,9 +296,26 @@ otherwise. Copy what you need; leave the rest out.
         .default_worktree_root = null,
         .inline_suggestions = true,
         .claude_show_all_accounts = false,
+        // How the statusline's Claude chip shows several accounts: .off = the
+        // active one alone, .compact = a sparkline block per account, .ticker =
+        // one account at a time, 4 s each (ai.chip_show_all_*). With one
+        // account it is always the single chip; what that chip shows —
+        // session %, weekly %, both; the reset countdown — is the chip's
+        // right-click (ai.chip_show_session / _weekly / _both, ai.chip_toggle_reset).
         .claude_meter_mode = .compact, // .off | .compact | .ticker
-        // Any other key is kept verbatim for the AI subsystems, e.g.:
+        // The Claude Code logins the quota chip and the usage pane
+        // (ai.claude_usage) poll. `token_path` is the OAuth token file the
+        // CLI's keychain item was copied into (`ai.link_claude_token`, or R
+        // in the pane) — `~` expands, a relative path sits under the data
+        // root beside the default `ai_token`; `active` marks the one the
+        // chip shows alone (the CLI's live login wins when the keychain
+        // names one). No entries = one `default` account on `ai_token` — or
+        // the 0.2.x `[[ai.claude.accounts]]` blocks, which the migration keeps
+        // verbatim as `.ai.claude.accounts` and the reader honours as-is.
+        // MNML_CLAUDE_USAGE_FIXTURE=<dir> replaces the wire with files (the
+        // tests, the spec dumps; see src/ai/usage.zig).
         .claude_accounts = .{
+            .{ .name = "personal", .token_path = "ai_token.personal" },
             .{ .name = "work", .token_path = "~/.claude/work.json", .active = true },
         },
     },

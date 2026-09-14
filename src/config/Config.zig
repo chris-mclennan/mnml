@@ -472,6 +472,18 @@ pub const DefaultProfile = struct {
     codex: ?[]const u8 = null,
 };
 
+/// One Claude Code login the usage reader polls (`src/ai/usage.zig`).
+/// `token_path` is the token file — `~` expands, a relative path sits
+/// under the data root beside the default `ai_token`; `active` marks the
+/// one the statusline chip shows alone (the CLI's live login wins when
+/// the keychain names one). No entries is the single `default` account
+/// on `ai_token`.
+pub const ClaudeAccount = struct {
+    name: []const u8 = "default",
+    token_path: []const u8 = "ai_token",
+    active: bool = false,
+};
+
 pub const Ai = struct {
     /// Legacy single-backend switch; `.routing.claude.backend` wins.
     backend: ?AiBackend = null,
@@ -486,6 +498,8 @@ pub const Ai = struct {
     inline_suggestions: bool = true,
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,
+    /// The Claude logins the usage chip and pane read; see `ClaudeAccount`.
+    claude_accounts: []const ClaudeAccount = &.{},
     /// Every key not named above, kept verbatim for the AI subsystems
     /// and integrations that read their own settings out of `.ai`. (A
     /// field named `extra` of type `Dynamic` is the decoder's convention

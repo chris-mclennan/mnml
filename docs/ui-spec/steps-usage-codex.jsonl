@@ -1,0 +1,4 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"ai.codex_usage"}
+{"cmd":"wait_ms","ms":1200}

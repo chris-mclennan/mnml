@@ -25,6 +25,7 @@ const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
 const sessions_table = @import("sessions_table.zig");
 const spend = @import("spend.zig");
+const usage_pane = @import("usage_pane.zig");
 const grep = @import("grep.zig");
 const dap = @import("dap.zig");
 const request_pane = @import("request_pane.zig");
@@ -199,6 +200,8 @@ pub const Pane = union(enum) {
     sessions_table: sessions_table.TablePane,
     /// The AI spend report (one at a time).
     spend_report: spend.SpendPane,
+    /// The Claude / Codex usage pane (one per product).
+    ai_usage: usage_pane.UsagePane,
     /// Workspace grep results (`find.grep`).
     grep: grep.GrepPane,
     /// The debugger's console pane (toolbar + output + evaluations).
@@ -253,6 +256,7 @@ pub const Pane = union(enum) {
             .ai => |*a| a.deinit(),
             .sessions_table => |*tp| tp.deinit(),
             .spend_report => |*s| s.deinit(io),
+            .ai_usage => {},
             .grep => |*g| g.deinit(io),
             .debug => {},
         }
@@ -276,6 +280,7 @@ pub const Pane = union(enum) {
             .ai => |*a| return a.title,
             .sessions_table => return "Sessions",
             .spend_report => return "AI spend (24h)",
+            .ai_usage => |*u| return u.title(),
             .grep => return "Search",
             .debug => return "Debug",
             .request => |*r| return r.title(),
@@ -296,7 +301,7 @@ pub const Pane = union(enum) {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
             .zon => |*z| z.changed,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 

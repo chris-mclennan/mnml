@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /pri…            │ 󱸁 Codex usage 󰅖   󰐕                                                       󱸀        
+▌ │▌    .mnml              │ Codex usage · r refresh · esc close
+   │       ipc-zig          │
+ 󰍉 │      prog.dbg           │Tokens today
+   │                          │  1,234,567
+ 󰊢 │         󰐙 Add workspace  │
+   │                          │Sessions today
+  │                          │  3 sessions
+   │                          │
+ 󰐱 │                          │  Last scan: 8pm
+   │                          │
+ 󰎒 │                          │
+   │                          │ `:ai.refresh_usage` to force scan
+  │                          │
+   │                          │
+  │                          │
+   │                          │
+  │                          │
+   │                          │
+ 󱘣 │                          │
+   │                          │
+ 󰢱 │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │──────────────────────────│
+   │ Codex usage            ⋮ │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+  │                          │
+   │                          │
+ VIEW  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    16:56  ws   —
+
