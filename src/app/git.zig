@@ -12,6 +12,7 @@
 //! command that asked — the extra lives here, not in the trunk.
 
 const std = @import("std");
+const alloc_mod = @import("../core/alloc.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
@@ -1922,7 +1923,31 @@ pub fn commitLinesPrompt(app: *App, dp: *DiffPane) CommandError!void {
     st.line_patch = try app.gpa.dupe(u8, vp.patch);
     st.line_repo = dp.repo;
     dp.anchor = null;
-    openPrompt(app, .commit_lines, try std.fmt.allocPrint(arena, "Commit message for the {s}", .{vp.desc["staged ".len..]}));
+    try openPromptOwned(app, .commit_lines, try std.fmt.allocPrint(arena, "Commit message for the {s}", .{vp.desc["staged ".len..]}));
+}
+
+test "openPromptOwned: a title built on the frame arena survives the next frame — the overlay owns a copy" {
+    var frame_buf: [64 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.frame.deinit();
+    app.frame = alloc_mod.FrameArena.init(fba.allocator());
+    const title = try std.fmt.allocPrint(app.frame.allocator(), "Commit message for the {d} lines of code.txt", .{2});
+    try openPromptOwned(&app, .commit_lines, title);
+    // The next frame reuses the arena from offset zero.
+    app.frame.begin();
+    for (0..1024) |_| {
+        const chunk = try app.frame.allocator().alloc(u8, 16);
+        @memset(chunk, 'X');
+    }
+    try std.testing.expect(app.overlay == .prompt);
+    try std.testing.expect(app.overlay.prompt.title_owned != null);
+    try std.testing.expectEqualStrings("Commit message for the 2 lines of code.txt", app.overlay.prompt.state.title);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.frame.deinit();
+    app.frame = alloc_mod.FrameArena.init(app.gpa);
 }
 
 /// `v` / `git.diff_select`: anchor a selection at the cursor, or drop
@@ -2258,6 +2283,15 @@ pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, title), .purpose = .git } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// `openPrompt` with a title built for this open — the overlay owns it
+/// and frees it on close. A title on the frame arena would read as
+/// garbage on the next frame (the prompt outlives it).
+pub fn openPromptOwned(app: *App, kind: PromptKind, title: []const u8) Allocator.Error!void {
+    const owned = try app.gpa.dupe(u8, title);
+    openPrompt(app, kind, owned);
+    app.overlay.prompt.title_owned = owned;
 }
 
 pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
