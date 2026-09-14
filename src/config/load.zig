@@ -359,7 +359,7 @@ test "a full layer parses into a patch" {
     try t.expectEqualStrings("fn $1() {}", p.snippets.get("rust").?.get("fn").?);
     try t.expectEqualStrings("the", p.abbr.get("teh").?);
     try t.expectEqual(@as(?Config.AiBackend, .sub), p.ai.?.backend);
-    try t.expectEqualStrings("work", p.ai.?.extra.?.get("claude_accounts").?.array[0].get("name").?.string);
+    try t.expectEqualStrings("work", p.ai.?.claude_accounts.?[0].name);
     try t.expectEqualStrings("/usr/bin/cargo", p.tools.?.get("cargo").?.get("path").?.string);
     try t.expectEqualStrings("build", p.startup.?.tasks.?[0]);
     try t.expectEqualStrings("zig build", p.tasks.get("build").?.cmd);
@@ -602,7 +602,9 @@ test "docs config example parses clean" {
     try t.expectEqualStrings("rust-analyzer", cfg.lsp.get("rust").?.cmd.?);
     try t.expectEqual(@as(usize, 2), cfg.startup.layout.len);
     try t.expectEqual(Config.LintParser.shellcheck, cfg.linters.get("sh").?.parser);
-    try t.expectEqualStrings("work", cfg.ai.extra.get("claude_accounts").?.array[0].get("name").?.string);
+    try t.expectEqual(@as(usize, 2), cfg.ai.claude_accounts.len);
+    try t.expectEqualStrings("work", cfg.ai.claude_accounts[1].name);
+    try t.expect(cfg.ai.claude_accounts[1].active);
 }
 
 test "load: a workspace with only .mnml/init.lua still asks for trust" {
