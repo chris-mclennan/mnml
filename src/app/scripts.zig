@@ -47,6 +47,7 @@ const Lua = lua_mod.Lua;
 const manifest_mod = @import("../scripting/manifest.zig");
 const Manifest = manifest_mod.Manifest;
 const Source = manifest_mod.Source;
+const trust = @import("../config/trust.zig");
 
 /// The marker file that means "installed, but off".
 pub const disabled_marker = ".disabled";
@@ -611,9 +612,10 @@ fn stampSource(app: *App, arena: Allocator, dir: []const u8, source: Source, url
 
 // ─── the trust claim ─────────────────────────────────────────────────────
 
-/// What the dialog says before the first run: the commands the manifest
-/// says it adds, the hooks it says it subscribes, and whether its files
-/// contain `task.run` — the only way a script reaches a program.
+/// What the dialog says before the first run — the manifest's commands
+/// and hooks, and whether its files call `task.run`, each rendered
+/// through `trust.zig`'s own `Claim` so this dialog and the workspace
+/// one read alike.
 pub fn claimLines(arena: Allocator, s: Staged) Allocator.Error![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     const m = s.manifest;
@@ -621,17 +623,11 @@ pub fn claimLines(arena: Allocator, s: Staged) Allocator.Error![]const u8 {
     if (m.author.len > 0) try out.print(arena, " by {s}", .{m.author});
     try out.print(arena, " (script api {d})", .{m.api});
     if (m.description.len > 0) try out.print(arena, "\n{s}", .{m.description});
-    try out.appendSlice(arena, "\n\nIt runs when mnml starts, and claims:");
-    if (m.commands.len == 0) {
-        try out.appendSlice(arena, "\n  \u{2022} no commands");
-    } else for (m.commands) |c| try out.print(arena, "\n  \u{2022} command {s}", .{c});
-    if (m.hooks.len == 0) {
-        try out.appendSlice(arena, "\n  \u{2022} no hooks");
-    } else for (m.hooks) |h| try out.print(arena, "\n  \u{2022} hook {s} \u{2014} runs when mnml does", .{h});
-    try out.print(arena, "\n  \u{2022} {s}", .{if (s.runs_tasks)
-        "runs programs \u{2014} its files call task.run"
-    else
-        "runs no programs \u{2014} no task.run in its files"});
+    try out.appendSlice(arena, "\nIt gets its own Lua state and runs every time mnml starts. It claims:");
+    for (try trust.scriptClaims(arena, m.name, m.commands, m.hooks, s.runs_tasks)) |c| {
+        try out.print(arena, "\n  \u{2022} {f}", .{c});
+    }
+    if (m.commands.len == 0 and m.hooks.len == 0) try out.appendSlice(arena, "\n  \u{2022} its manifest declares no commands and no hooks");
     return out.items;
 }
 
@@ -824,4 +820,314 @@ test "classify: a git URL, an archive, a folder" {
     try t.expectEqual(SourceKind.archive, classify("/tmp/x.zip"));
     try t.expectEqual(SourceKind.directory, classify("/tmp/x"));
     try t.expectEqual(SourceKind.directory, classify("../elsewhere/todo-list"));
+}
+
+/// A script directory under `root`: `script.zon` + `init.lua`, plus any
+/// extra files. The tests' fixture builder.
+fn writeScript(dir: Io.Dir, io: Io, root: []const u8, name: []const u8, zon: []const u8, lua: []const u8) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const d = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ root, name });
+    try dir.createDirPath(io, d);
+    var p: [std.fs.max_path_bytes]u8 = undefined;
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&p, "{s}/script.zon", .{d}), .data = zon });
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&p, "{s}/init.lua", .{d}), .data = lua });
+}
+
+test "two installed scripts run in their own states: one erroring leaves the other working, budgets and namespaces are separate" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try writeScript(tmp.dir, t.io, "scripts", "alpha",
+        \\.{ .name = "alpha", .api = 1, .version = "1.0.0", .commands = .{ "user.alpha_go" }, .hooks = .{ "save_post" } }
+    ,
+        \\ns = mnml.decor.namespace("blame")
+        \\mnml.command{ id = "alpha_go", run = function() mnml.toast("alpha") end }
+        \\mnml.on("save_post", function() end)
+    );
+    try writeScript(tmp.dir, t.io, "scripts", "beta",
+        \\.{ .name = "beta", .api = 1, .version = "0.2.0", .commands = .{ "user.beta_go" } }
+    ,
+        \\ns = mnml.decor.namespace("blame")
+        \\mnml.command{ id = "beta_go", run = function() mnml.toast("beta") end }
+    );
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try t.expectEqual(@as(usize, 2), app.scripts.entries.items.len);
+    const alpha = app.scripts.find("alpha").?;
+    const beta = app.scripts.find("beta").?;
+    // Two states, two ids, neither 0 (which is `init.lua`'s).
+    try t.expect(alpha.state != null and beta.state != null);
+    try t.expect(alpha.state.? != beta.state.?);
+    try t.expect(alpha.id != 0 and beta.id != 0 and alpha.id != beta.id);
+    // Both commands are live and each routes back to its own state.
+    try command.runNamed(&app, "user.alpha_go");
+    try t.expectEqualStrings("alpha", app.lastToast().?);
+    try command.runNamed(&app, "user.beta_go");
+    try t.expectEqualStrings("beta", app.lastToast().?);
+    // Both asked for a namespace called "blame" and got different ones.
+    const decor = @import("script_decor.zig");
+    var ns_a: u32 = 0;
+    var ns_b: u32 = 0;
+    var found_a = false;
+    var found_b = false;
+    for (app.script_decor.names.items, 0..) |slot, i| {
+        if (!slot.live or !std.mem.eql(u8, slot.name, "blame")) continue;
+        if (slot.owner == alpha.id) {
+            ns_a = @intCast(i);
+            found_a = true;
+        }
+        if (slot.owner == beta.id) {
+            ns_b = @intCast(i);
+            found_b = true;
+        }
+    }
+    try t.expect(found_a and found_b and ns_a != ns_b);
+    try t.expectEqual(@as(?u16, alpha.id), decor.namespaceOwner(&app, ns_a));
+    // Alpha burns its budget: its own counter moves, beta's does not.
+    // `pcall` keeps the raise inside Lua — the count hook has already
+    // charged it to alpha by then.
+    try app.luaState(alpha.id).?.runString("assert(not pcall(function() while true do end end))");
+    try t.expectEqual(@as(u32, 1), alpha.state.?.budget_hits);
+    try t.expectEqual(@as(u32, 0), beta.state.?.budget_hits);
+    try t.expectEqual(@as(u32, 0), app.script().budget_hits);
+    // Alpha reloaded with a broken file: its command and its namespace
+    // go, beta's stay, and the row says why.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "scripts/alpha/init.lua", .data = "mnml.nope()\n" });
+    try reloadOne(&app, alpha);
+    try t.expect(app.dyn_commands.get("user.alpha_go") == null);
+    try t.expect(app.dyn_commands.get("user.beta_go") != null);
+    try t.expect(alpha.err != null);
+    try t.expect(alpha.state == null);
+    try t.expect(beta.state != null);
+    try t.expect(!decor.isNamespace(&app, ns_a));
+    try t.expect(decor.isNamespace(&app, ns_b));
+    // Beta still runs.
+    try command.runNamed(&app, "user.beta_go");
+    try t.expectEqualStrings("beta", app.lastToast().?);
+}
+
+test "a script's require reaches only its own lib; `..`, a separator and an absolute path are refused" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "outside");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "outside/secret.lua", .data = "return 'leaked'" });
+    try writeScript(tmp.dir, t.io, "scripts", "libbed",
+        \\.{ .name = "libbed", .api = 1 }
+    ,
+        \\local helper = require("lib.helper")
+        \\loaded = helper.greeting
+        \\twice = require("lib.helper") == helper
+    );
+    try tmp.dir.createDirPath(t.io, "scripts/libbed/lib");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "scripts/libbed/lib/helper.lua", .data = "return { greeting = 'hi from lib' }" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const e = app.scripts.find("libbed").?;
+    try t.expect(e.err == null);
+    const l = app.luaState(e.id).?;
+    _ = l.L.getGlobal("loaded");
+    try t.expectEqualStrings("hi from lib", try l.L.toString(-1));
+    l.L.pop(1);
+    // The cache: the same table comes back.
+    _ = l.L.getGlobal("twice");
+    try t.expect(l.L.toBoolean(-1));
+    l.L.pop(1);
+    // Everything that would leave the directory is refused by name, and
+    // the refusal is the module system's — no file is read.
+    try l.runString(
+        \\for _, bad in ipairs{ "..lib.helper", "../outside/secret", "/etc/passwd", "lib/helper", "lib..helper", "" } do
+        \\  local ok, err = pcall(require, bad)
+        \\  assert(not ok, "require(" .. bad .. ") was allowed")
+        \\  assert(not string.find(err, "leaked", 1, true), err)
+        \\  assert(string.find(err, "is not a module under this script", 1, true), err)
+        \\end
+    );
+    // A module that is not there names itself rather than reaching out.
+    try l.runString(
+        \\local ok, err = pcall(require, "lib.nope")
+        \\assert(not ok)
+        \\assert(string.find(err, "no `lib.nope` under this script", 1, true), err)
+    );
+    // `init.lua`'s own state has no `require` at all.
+    try app.script().runString("assert(require == nil)");
+}
+
+test "install from a directory: the trust dialog lists the claims, Cancel runs nothing, Install lands the folder and runs it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "src", "greeter",
+        \\.{ .name = "greeter", .api = 1, .version = "2.1.0", .author = "someone",
+        \\   .description = "Says hello", .commands = .{ "user.greet" }, .hooks = .{ "save_post" } }
+    ,
+        \\mnml.command{ id = "greet", run = function() mnml.toast("hello") end }
+        \\mnml.on("save_post", function() end)
+        \\mnml.task.run{ cmd = "true", hidden = true }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const src = try std.fs.path.join(t.allocator, &.{ root, "src", "greeter" });
+    defer t.allocator.free(src);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try acceptInstall(&app, src);
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .script_install);
+    // Cancel is the focused choice.
+    try t.expectEqual(@as(usize, 1), app.overlay.confirm.state.selected);
+    const msg = app.overlay.confirm.message;
+    try t.expect(std.mem.indexOf(u8, msg, "greeter 2.1.0 by someone (script api 1)") != null);
+    try t.expect(std.mem.indexOf(u8, msg, "script greeter — runs `user.greet (a command)` every time mnml starts") != null);
+    try t.expect(std.mem.indexOf(u8, msg, "save_post (a hook)") != null);
+    try t.expect(std.mem.indexOf(u8, msg, "task.run — it starts programs") != null);
+    // Nothing has run: no state, no command.
+    try t.expect(app.scripts.find("greeter") == null);
+    try t.expect(app.dyn_commands.get("user.greet") == null);
+    // Enter takes the focused choice, Cancel, and the staging goes.
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.scripts.find("greeter") == null);
+    try t.expectEqualStrings("scripts: greeter not installed", app.lastToast().?);
+    // Install: the folder lands under the data root and it runs.
+    try acceptInstall(&app, src);
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    const e = app.scripts.find("greeter").?;
+    try t.expect(e.state != null);
+    try t.expectEqualStrings("2.1.0", e.version);
+    try t.expectEqual(Source.community, e.source);
+    try t.expectEqualStrings(src, e.url);
+    try command.runNamed(&app, "user.greet");
+    try t.expectEqualStrings("hello", app.lastToast().?);
+    try tmp.dir.access(t.io, "data/scripts/greeter/init.lua", .{});
+    // Disable: the marker is written, the command goes, the row stays.
+    try setEnabled(&app, e, false);
+    try t.expect(app.dyn_commands.get("user.greet") == null);
+    try tmp.dir.access(t.io, "data/scripts/greeter/.disabled", .{});
+    try setEnabled(&app, e, true);
+    try t.expect(app.dyn_commands.get("user.greet") != null);
+    // Remove takes the folder with it.
+    try t.expect(try removeEntry(&app, "greeter"));
+    try t.expect(app.scripts.find("greeter") == null);
+    try t.expect(app.dyn_commands.get("user.greet") == null);
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "data/scripts/greeter/script.zon", .{}));
+}
+
+test "a manifest whose api is higher than this build's is a row that says so, and never runs" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try writeScript(tmp.dir, t.io, "scripts", "future",
+        \\.{ .name = "future", .api = 99, .version = "9.0.0" }
+    ,
+        \\mnml.command{ id = "future_go", run = function() end }
+    );
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const e = app.scripts.find("future").?;
+    try t.expect(!e.supported());
+    try t.expect(e.state == null);
+    try t.expect(app.dyn_commands.get("user.future_go") == null);
+    try t.expect(std.mem.indexOf(u8, e.err.?, "written for mnml script api 99") != null);
+}
+
+test "a dev root's script reloads when one of its files is saved" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try writeScript(tmp.dir, t.io, "dev", "wip",
+        \\.{ .name = "wip", .api = 1 }
+    ,
+        \\mnml.command{ id = "one", run = function() end }
+    );
+    var cfg: @import("../config/Config.zig") = .{};
+    cfg.scripts.dev_roots = &.{"dev"};
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const e = app.scripts.find("wip").?;
+    try t.expectEqual(Source.dev, e.source);
+    try t.expect(app.dyn_commands.get("user.one") != null);
+    // Edit the file in a pane and save: the hook reloads that script.
+    const path = try std.fs.path.join(t.allocator, &.{ root, "dev", "wip", "init.lua" });
+    defer t.allocator.free(path);
+    const id = try app.openEditor(path);
+    const ed = app.panes.editor(id).?;
+    try app.splice(ed, 0, ed.buf.editor.len(), "mnml.command{ id = 'two', run = function() end }\n");
+    try command.run(&app, .{ .static = .@"file.save" });
+    try t.expect(app.dyn_commands.get("user.one") == null);
+    try t.expect(app.dyn_commands.get("user.two") != null);
+}
+
+test "install from an archive and from a local git repo; the manifest records where it came from" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "src", "packed",
+        \\.{ .name = "packed", .api = 1, .version = "1.0.0", .commands = .{ "user.packed_go" } }
+    ,
+        \\mnml.command{ id = "packed_go", run = function() mnml.toast("packed") end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 100, .rows = 30 });
+    defer app.deinit();
+
+    // ── an archive ──
+    const tar = try std.fs.path.join(t.allocator, &.{ root, "packed.tar" });
+    defer t.allocator.free(tar);
+    if (!runArgv(&app, &.{ "tar", "-cf", tar, "-C", "src", "packed" }, root)) return error.SkipZigTest;
+    try acceptInstall(&app, tar);
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    const packed_e = app.scripts.find("packed").?;
+    try t.expect(packed_e.state != null);
+    try t.expectEqualStrings(tar, packed_e.url);
+    try command.runNamed(&app, "user.packed_go");
+    try t.expectEqualStrings("packed", app.lastToast().?);
+    // The installed manifest records the source, so `script.update`
+    // knows where to go back to.
+    const zon = try tmp.dir.readFileAlloc(t.io, "data/scripts/packed/script.zon", t.allocator, .limited(1 << 16));
+    defer t.allocator.free(zon);
+    try t.expect(std.mem.indexOf(u8, zon, ".source = .community") != null);
+    try t.expect(std.mem.indexOf(u8, zon, tar) != null);
+
+    // ── a local git repo (the `zig-spec-git.sh` recipe: init, add, commit) ──
+    try writeScript(tmp.dir, t.io, "repo", "cloned",
+        \\.{ .name = "cloned", .api = 1, .version = "0.3.0" }
+    ,
+        \\mnml.command{ id = "cloned_go", run = function() mnml.toast("cloned") end }
+    );
+    const repo = try std.fs.path.join(t.allocator, &.{ root, "repo", "cloned" });
+    defer t.allocator.free(repo);
+    if (!runArgv(&app, &.{ "git", "init", "-q", "." }, repo)) return error.SkipZigTest;
+    _ = runArgv(&app, &.{ "git", "config", "user.email", "t@example.invalid" }, repo);
+    _ = runArgv(&app, &.{ "git", "config", "user.name", "t" }, repo);
+    _ = runArgv(&app, &.{ "git", "add", "-A" }, repo);
+    if (!runArgv(&app, &.{ "git", "commit", "-q", "-m", "seed" }, repo)) return error.SkipZigTest;
+    // A path ending in `.git` is the git shape even on this machine.
+    const url = try std.fmt.allocPrint(t.allocator, "{s}/.git", .{repo});
+    defer t.allocator.free(url);
+    try t.expectEqual(SourceKind.git, classify(url));
+    try acceptInstall(&app, url);
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    const cloned = app.scripts.find("cloned").?;
+    try t.expect(cloned.state != null);
+    try command.runNamed(&app, "user.cloned_go");
+    try t.expectEqualStrings("cloned", app.lastToast().?);
+    // `.git` never travels into the installed copy.
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "data/scripts/cloned/.git", .{}));
 }

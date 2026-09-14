@@ -1,0 +1,11 @@
+.{
+    .name = "todo-list",
+    .version = "1.0.0",
+    .api = 1,
+    .description = "A rail-style list pane of the TODOs a grep found",
+    .author = "mnml",
+    .commands = .{ "user.todos_scan" },
+    .hooks = .{},
+    .source = .marketplace,
+    .url = "https://github.com/chris-mclennan/mnml-scripts",
+}

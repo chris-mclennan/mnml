@@ -1,0 +1,11 @@
+.{
+    .name = "recent-commands",
+    .version = "1.0.0",
+    .api = 1,
+    .description = "A live picker over every command, with its chords in the preview column",
+    .author = "mnml",
+    .commands = .{ "user.recent" },
+    .hooks = .{},
+    .source = .marketplace,
+    .url = "https://github.com/chris-mclennan/mnml-scripts",
+}

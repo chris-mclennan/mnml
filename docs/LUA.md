@@ -677,7 +677,7 @@ the file as it is written, so a change that breaks one fails the suite.
 
 ### `git-blame-line` — who last touched this line
 
-`docs/examples/scripts/git-blame-line.lua` (56 lines). Virtual text at
+`docs/examples/scripts/git-blame-line/init.lua` (56 lines). Virtual text at
 the end of the cursor's line, refreshed when the cursor stops
 (`cursor_idle`) and when a pane takes focus (`pane_focus`), from a
 hidden `git blame` run:
@@ -695,7 +695,7 @@ about twice and two runs are never in flight at once.
 
 ### `recent-commands` — a live picker with a preview column
 
-`docs/examples/scripts/recent-commands.lua` (75 lines). Every command
+`docs/examples/scripts/recent-commands/init.lua` (75 lines). Every command
 the app knows, asked for again as the query changes, with the chords in
 the column beside them and a `*` on the ones you have run before:
 
@@ -718,7 +718,7 @@ means what this script means by it.
 
 ### `todo-list` — a rail section of the script's own
 
-`docs/examples/scripts/todo-list.lua` (79 lines). A `grep` through a
+`docs/examples/scripts/todo-list/init.lua` (79 lines). A `grep` through a
 hidden task, its hits grouped by file under fold headers, in a section
 with its own activity-bar row under TODOs:
 
@@ -739,7 +739,7 @@ double duty as the `<path>:<line>` that opening needs.
 
 ### `surround-word` — one text operation, both profiles
 
-`docs/examples/scripts/surround-word.lua` (65 lines). `gs{motion}` in
+`docs/examples/scripts/surround-word/init.lua` (65 lines). `gs{motion}` in
 vim, `ctrl+shift+s` in standard, and a `gS` that takes the pair off
 again:
 
@@ -757,7 +757,7 @@ second API.
 
 ### `eslint` — a tool wrapper into the diagnostics sink
 
-`docs/examples/scripts/eslint.lua` (45 lines). On `save_post` for a
+`docs/examples/scripts/eslint/init.lua` (45 lines). On `save_post` for a
 `.js` / `.jsx` / `.ts` / `.tsx` file it runs `eslint --format compact`
 as a hidden task, turns each output line into a diagnostic and publishes
 the lot under its own namespace:
@@ -797,7 +797,7 @@ header, because a shell resets `PWD` to its own cwd:
 
 ```
 # env: MNML_REPO=${PWD}
-shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint.lua" .mnml/init.lua
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint/init.lua" .mnml/init.lua
 ```
 
 `tests/e2e/lua_example_eslint.test`, `lua_example_git_blame_line.test`,

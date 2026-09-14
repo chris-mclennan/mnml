@@ -1,0 +1,11 @@
+.{
+    .name = "git-blame-line",
+    .version = "1.0.0",
+    .api = 1,
+    .description = "Who last touched the cursor line, as virtual text at its end",
+    .author = "mnml",
+    .commands = .{},
+    .hooks = .{ "cursor_idle", "pane_focus" },
+    .source = .marketplace,
+    .url = "https://github.com/chris-mclennan/mnml-scripts",
+}

@@ -1310,11 +1310,22 @@ pub const App = struct {
     }
 
     /// The `init.lua` state, pointed at this App for the call about to
-    /// happen.
+    /// happen. Every installed script's state is re-pointed with it:
+    /// the App struct moves after `initWith` returns, so a state made
+    /// during init holds the address of a stack frame that is gone.
     pub fn script(self: *App) *scripting.Lua {
+        self.syncScriptStates();
         const l = self.lua.?;
         l.app = self;
         return l;
+    }
+
+    /// Point every installed script's state at this App. Cheap: a
+    /// handful of entries, a pointer each.
+    pub fn syncScriptStates(self: *App) void {
+        for (self.scripts.entries.items) |*e| if (e.state) |l| {
+            l.app = self;
+        };
     }
 
     /// The state a `LuaRef` belongs to: 0 is `init.lua`'s, 1.. an
@@ -1326,6 +1337,12 @@ pub const App = struct {
         const l = self.scripts.state(id) orelse return null;
         l.app = self;
         return l;
+    }
+
+    /// The state of the installed script `name`, pointed at this App.
+    pub fn scriptNamed(self: *App, name: []const u8) ?*scripting.Lua {
+        const e = self.scripts.find(name) orelse return null;
+        return self.luaState(e.id);
     }
 
     /// Every live Lua state, `init.lua`'s first, on `arena`.
@@ -2783,7 +2800,6 @@ test {
     _ = @import("app/scripts_panel.zig");
     _ = @import("app/scripts.zig");
     _ = @import("app/script_doctor.zig");
-    _ = @import("ui/scripts_panel.zig");
     _ = @import("app/search_section.zig");
     _ = @import("app/grep_picker.zig");
     _ = @import("ui/search_section_view.zig");

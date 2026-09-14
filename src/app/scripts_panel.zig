@@ -839,3 +839,178 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
         else => {},
     }
 }
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+const screen_mod = @import("../ipc/screen.zig");
+
+fn screenText(app: *App) ![]u8 {
+    try app.render();
+    return screen_mod.toTestText(t.allocator, &app.screen);
+}
+
+fn writeScript(dir: Io.Dir, io: Io, root: []const u8, name: []const u8, zon: []const u8, lua: []const u8) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const d = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ root, name });
+    try dir.createDirPath(io, d);
+    var p: [std.fs.max_path_bytes]u8 = undefined;
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&p, "{s}/script.zon", .{d}), .data = zon });
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&p, "{s}/init.lua", .{d}), .data = lua });
+}
+
+test "SCRIPTS: three tabs — Installed lists init.lua and each script, Marketplace reads the index folder, Dev lists the dev roots" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "data/scripts", "blamer",
+        \\.{ .name = "blamer", .api = 1, .version = "1.2.0", .commands = .{ "user.blame" }, .source = .community }
+    ,
+        \\mnml.command{ id = "blame", run = function() end }
+    );
+    try writeScript(tmp.dir, t.io, "index", "tidy",
+        \\.{ .name = "tidy", .api = 1, .version = "0.9.0", .description = "Tidies things", .source = .marketplace }
+    ,
+        \\mnml.command{ id = "tidy", run = function() end }
+    );
+    try writeScript(tmp.dir, t.io, "dev", "wip",
+        \\.{ .name = "wip", .api = 1, .version = "0.0.1" }
+    ,
+        \\mnml.command{ id = "wip", run = function() end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var cfg: @import("../config/Config.zig") = .{};
+    cfg.scripts.dev_roots = &.{"dev"};
+    cfg.scripts.marketplace_local = "index";
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = root, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.activity_scripts" });
+    try t.expectEqual(side.Section.scripts, side.shown(&app, .left).?);
+
+    // Installed: the tab strip with all three counts, `init.lua` first,
+    // then the script with its version and badge.
+    var txt = try screenText(&app);
+    try t.expect(std.mem.indexOf(u8, txt, "SCRIPTS") != null);
+    // The shipped default `tree_width = 30` leaves 26 cells, which is
+    // the compact tier: `Inst (2) Mkt (1)  <dev glyph> (1)`.
+    try t.expect(std.mem.indexOf(u8, txt, "Inst (2) Mkt (1)") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "init.lua") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "blamer") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "1.2.0") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "user.blame") != null);
+    t.allocator.free(txt);
+    // A wide column gets the full tier and the whole badge; the counts
+    // are the same.
+    app.tree.width = 46;
+    txt = try screenText(&app);
+    try t.expect(std.mem.indexOf(u8, txt, "Installed (2) Marketplace (1)") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "~ Community") != null);
+    t.allocator.free(txt);
+    app.tree.width = 30;
+
+    // `l` cycles to Marketplace: the index folder's entry, not installed.
+    try app.handle(.{ .key = Key.char('l') });
+    try t.expectEqual(Tab.marketplace, app.scripts_panel.tab);
+    txt = try screenText(&app);
+    try t.expect(std.mem.indexOf(u8, txt, "tidy") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "Tidies things") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "Official") != null);
+    t.allocator.free(txt);
+
+    // `l` again: Dev, with the folder under `scripts.dev_roots`.
+    try app.handle(.{ .key = Key.char('l') });
+    try t.expectEqual(Tab.dev, app.scripts_panel.tab);
+    txt = try screenText(&app);
+    try t.expect(std.mem.indexOf(u8, txt, "wip") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "Dev") != null);
+    t.allocator.free(txt);
+
+    // Installing the marketplace row: the trust dialog, then the copy.
+    try app.handle(.{ .key = Key.char('2') });
+    try t.expectEqual(Tab.marketplace, app.scripts_panel.tab);
+    app.scripts_panel.panel.cursor = 0;
+    try command.run(&app, .{ .static = .@"script.marketplace_install" });
+    try t.expect(app.overlay == .confirm);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "tidy 0.9.0") != null);
+    try app.handle(.{ .key = Key.char('i') });
+    const installed = app.scripts.find("tidy").?;
+    try t.expectEqual(manifest_mod.Source.marketplace, installed.source);
+    try t.expect(app.dyn_commands.get("user.tidy") != null);
+    // And the Marketplace row now says it is installed: dimmed, with
+    // `(installed)` after the badge.
+    const market = try rows(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 1), market.len);
+    try t.expect(market[0].entry.dim);
+    try t.expectEqualStrings("installed", market[0].entry.source);
+}
+
+test "SCRIPTS: a row's menu enables, disables, reloads and jumps to what the script registered" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "data/scripts", "hello",
+        \\.{ .name = "hello", .api = 1, .version = "1.0.0", .commands = .{ "user.hello" } }
+    ,
+        \\mnml.command{ id = "hello", run = function() mnml.toast("hi") end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.activity_scripts" });
+    // Row 0 is the link (no workspace init.lua), 1 is init.lua, 2 the script.
+    const list = try rows(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 3), list.len);
+    try t.expect(list[0].kind == .link);
+    try t.expect(list[1].kind == .init_state);
+    try t.expect(list[2].kind == .entry);
+    app.scripts_panel.panel.cursor = 2;
+    try t.expectEqualStrings("hello", focusedEntry(&app).?.name);
+
+    try openRowMenu(&app, 2, 5, 5);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("hello", app.overlay.menu.title);
+    const items = app.overlay.menu.items;
+    try t.expectEqualStrings("Disable", items[0].label);
+    try t.expectEqualStrings("Reload", items[1].label);
+    try t.expectEqualStrings("Remove…", items[2].label);
+    try t.expectEqualStrings("Open folder", items[3].label);
+    try t.expectEqualStrings("Open README", items[4].label);
+    // The jump rows carry the registration's file and line.
+    var jump: ?usize = null;
+    for (items, 0..) |it, i| if (std.mem.startsWith(u8, it.label, "Open command user.hello (")) {
+        jump = i;
+    };
+    try t.expect(jump != null);
+    try t.expect(std.mem.endsWith(u8, items[jump.?].label, "init.lua:1)"));
+    try app.handle(.{ .key = Key.named(.esc) });
+
+    // Disable through the command the menu row fires.
+    try command.run(&app, .{ .static = .@"script.toggle_enabled" });
+    try t.expect(app.dyn_commands.get("user.hello") == null);
+    try t.expectEqualStrings("scripts: hello disabled", app.lastToast().?);
+    try tmp.dir.access(t.io, "data/scripts/hello/.disabled", .{});
+    // The row says so.
+    const off = try rows(&app, app.frame.allocator());
+    try t.expectEqual(@import("../ui/integrations_view.zig").Badge.disabled, off[2].entry.badge.?);
+    try command.run(&app, .{ .static = .@"script.toggle_enabled" });
+    try t.expect(app.dyn_commands.get("user.hello") != null);
+
+    // The jump opens the file at the line.
+    try openRowMenu(&app, 2, 5, 5);
+    var key: u32 = 0;
+    for (app.overlay.menu.items) |it| if (it.action == .script_row_open) {
+        key = it.action.script_row_open;
+    };
+    try app.handle(.{ .key = Key.named(.esc) });
+    try openRowIndex(&app, key);
+    try t.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.doc.path.?, "data/scripts/hello/init.lua"));
+    try t.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
+}
