@@ -89,6 +89,7 @@ const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const script_decor = @import("app/script_decor.zig");
 const idle = @import("app/idle.zig");
+const script_task = @import("app/script_task.zig");
 const http_app = @import("app/http.zig");
 const http_panel = @import("app/http_panel.zig");
 const request_pane = @import("app/request_pane.zig");
@@ -866,6 +867,8 @@ pub const App = struct {
     /// The DEBUG section's cursor, folds and last-stop values.
     debug_panel: debug_panel.State = .{},
     lsp: lsp.State = .{},
+    /// The hidden tasks a script started (`app/script_task.zig`).
+    script_tasks: script_task.State = .{},
     /// The two debounced hooks the tick fires (`app/idle.zig`).
     idle: idle.State = .{},
     /// What the scripts painted into the editors and published as
@@ -1398,6 +1401,7 @@ pub const App = struct {
         // Script panes unref'd into the state when the pane store went
         // (above, before the manifests); the state closes after them.
         if (self.lua) |l| l.destroy();
+        self.script_tasks.deinit(self.io);
         self.script_decor.deinit(gpa);
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
@@ -2137,6 +2141,7 @@ pub const App = struct {
             .spend => |result| try spend.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
             .grep => |result| try grep.handle(self, result),
+            .script_task => |t| script_task.handle(self, t),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),

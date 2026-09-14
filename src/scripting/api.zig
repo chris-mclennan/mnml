@@ -742,9 +742,12 @@ fn paneActive(L: *State) !i32 {
 
 // ─── mnml.task ──────────────────────────────────────────────────────────
 
-/// `mnml.task.run{ cmd, cwd?, label?, on_done? }` → the pane id. The
-/// command runs in a task pane below; `on_done{ ok, code | signal }`
-/// fires when it exits.
+/// `mnml.task.run{ cmd, cwd?, label?, hidden?, on_line?, on_done? }` →
+/// the pane id, or the run's id when it is hidden. The command runs in
+/// a task pane below — or with no pane at all under `hidden = true`,
+/// its output going only to `on_line(text)`, a line at a time
+/// (`app/script_task.zig`). `on_done{ ok, code | signal }` fires when
+/// it exits either way.
 fn taskRun(L: *State) !i32 {
     const c = ctx(L);
     L.checkType(1, .table);
@@ -753,6 +756,11 @@ fn taskRun(L: *State) !i32 {
     const cmd = try arena.dupe(u8, needStr(L, 1, "cmd"));
     const label = try arena.dupe(u8, strField(L, 1, "label") orelse cmd);
     const cwd: []const u8 = if (strField(L, 1, "cwd")) |d| (if (std.fs.path.isAbsolute(d)) try arena.dupe(u8, d) else try std.fs.path.join(arena, &.{ app.workspace, d })) else app.workspace;
+    if (boolField(L, 1, "hidden") orelse false) return hiddenTaskRun(L, c.self, cmd, cwd);
+    if (fnField(c.self, 1, "on_line")) |r| {
+        c.self.unref(r);
+        L.raiseErrorStr("mnml.task.run: on_line needs hidden = true (a visible task's output is its pane)", .{});
+    }
     const on_done = fnField(c.self, 1, "on_done");
     errdefer if (on_done) |r| c.self.unref(r);
     const id = runners.spawn(app, label, cmd, cwd, .task) catch |err| switch (err) {
@@ -760,6 +768,21 @@ fn taskRun(L: *State) !i32 {
         else => L.raiseErrorStr("mnml.task.run: %s", .{(try arena.dupeZ(u8, app.diag.msg orelse @errorName(err))).ptr}),
     };
     if (on_done) |r| try c.self.tasks.append(c.self.gpa, .{ .pane = id, .on_done = r });
+    L.pushInteger(id);
+    return 1;
+}
+
+/// The `hidden = true` prong: no pane, `on_line` per output line.
+fn hiddenTaskRun(L: *State, self: *Lua, cmd: []const u8, cwd: []const u8) !i32 {
+    const on_line = fnField(self, 1, "on_line");
+    errdefer if (on_line) |r| self.unref(r);
+    const on_done = fnField(self, 1, "on_done");
+    errdefer if (on_done) |r| self.unref(r);
+    const id = script_task.spawn(self.app, cmd, cwd) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => L.raiseErrorStr("mnml.task.run: %s", .{@errorName(err).ptr}),
+    };
+    try self.hidden_tasks.append(self.gpa, .{ .id = id, .on_line = on_line, .on_done = on_done });
     L.pushInteger(id);
     return 1;
 }
@@ -1083,6 +1106,7 @@ fn readRewrite(L: *State, t: i32, rw: *hooks.HttpRewrite) Allocator.Error!void {
 // the line (`docs/LUA.md`'s promise).
 
 const script_decor = @import("../app/script_decor.zig");
+const script_task = @import("../app/script_task.zig");
 const types = @import("../lsp/types.zig");
 
 /// A namespace handle argument: an integer `mnml.decor.namespace`

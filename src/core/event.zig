@@ -27,6 +27,7 @@ const marketplace = @import("../app/marketplace.zig");
 const font_scan = @import("../app/font_scan.zig");
 const transfers = @import("../app/transfers.zig");
 const grep = @import("../app/grep.zig");
+const script_task = @import("../app/script_task.zig");
 
 pub const PtyId = u32;
 
@@ -155,6 +156,9 @@ pub const AppEvent = union(enum) {
     transfer: *transfers.Event,
     /// A batch of grep hits (the last one says `done`). Owned; `grep.handle` copies and destroys it.
     grep: *grep.Result,
+    /// A hidden script task's output lines or its exit. Owned;
+    /// `script_task.handle` destroys it.
+    script_task: *script_task.Event,
 
     /// A worker failed. `msg` is gpa-owned and freed by the handler.
     err: struct { source: Source, msg: []u8 },
@@ -180,6 +184,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .spend => |r| r.destroy(gpa),
         .tests => |r| r.destroy(gpa),
         .grep => |r| r.destroy(gpa),
+        .script_task => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),
         .lsp => |l| l.msg.destroy(gpa),
         .dap => |d| d.msg.destroy(gpa),
