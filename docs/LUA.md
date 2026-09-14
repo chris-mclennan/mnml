@@ -222,6 +222,9 @@ mnml.buf.line_count(pane?)
 mnml.buf.cursor(pane?)          --> line, col (1-based), byte (0-based)
 mnml.buf.path(pane?)            --> workspace-relative path, nil for a scratch buffer
 mnml.buf.apply({ op = …, … }, pane?)  --> true when the text changed
+mnml.buf.selection(pane?)       --> { start, ["end"], mode }, or nil
+mnml.buf.range(start, end_, pane?)    --> the text between two bytes
+mnml.buf.word_at(byte?, pane?)  --> { text, start, ["end"] }, or nil
 ```
 
 `pane` is a pane id (as `mnml.pane.active()` returns); without it the active
@@ -242,6 +245,41 @@ the tag (`src/editor/edit_op.zig` lists all 131); the payload follows:
 | composed | `select_range` (`start`, `end` — bytes), `atomic` (`ops = { … }`), `repeat` (`count`, `inner`) | one undo step |
 
 `end` is a Lua keyword: write `["end"] = 5`.
+
+#### Reading a range
+
+*(api 1, added)* The three reads a text operation needs before it
+writes one. Positions are bytes, 0-based, `end` exclusive — the same
+numbers `replace_range`, `select_range` and `decor.highlight` take.
+
+```lua
+local s = mnml.buf.selection()                   --> { start = 6, ["end"] = 10, mode = "char" }
+if s then
+  local text = mnml.buf.range(s.start, s["end"])
+  mnml.buf.apply{ op = "replace_range", start = s.start, ["end"] = s["end"], text = "«" .. text .. "»" }
+end
+local w = mnml.buf.word_at()                     --> { text = "alpha", start = 0, ["end"] = 5 }
+```
+
+`selection` is nil when nothing is selected. `mode` is `"char"`,
+`"line"` or `"block"` — the shape the handler is in, the one
+handler-derived fact a script sees; a modeless (standard) selection is
+always `"char"`.
+
+`range` clamps both ends to the buffer and reads a reversed pair the
+same way round, so a position kept from before an edit still answers
+instead of raising.
+
+`word_at` uses vim's `iw` classes (a run of word characters, or a run
+of punctuation) less the third: a run of whitespace is not a word, so
+the space between two words is in neither and the call is nil there.
+Without a byte it asks about the cursor's.
+
+| function | changed in |
+|---|---|
+| `mnml.buf.selection` | api 1, added |
+| `mnml.buf.range` | api 1, added |
+| `mnml.buf.word_at` | api 1, added |
 
 ### Toasts, the statusline
 

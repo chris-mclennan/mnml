@@ -73,6 +73,9 @@ pub const tables = [_]Table{
         fnOf("cursor", "mnml.buf.cursor(pane?) → line, col (1-based), byte (0-based)", bufCursor),
         fnOf("path", "mnml.buf.path(pane?) → the workspace-relative path, nil for a scratch buffer", bufPath),
         fnOf("apply", "mnml.buf.apply({ op = \"…\", … }, pane?) → true when the text changed — an EditOp, so undo, dot-repeat and the LSP see it", bufApply),
+        fnOf("selection", "mnml.buf.selection(pane?) → { start, [\"end\"], mode = \"char\" | \"line\" | \"block\" }, or nil when nothing is selected", bufSelection),
+        fnOf("range", "mnml.buf.range(start, end_, pane?) → the text between two bytes (0-based, end exclusive)", bufRange),
+        fnOf("word_at", "mnml.buf.word_at(byte?, pane?) → { text, start, [\"end\"] } for the word under the byte (the cursor's without one), or nil", bufWordAt),
     } },
     .{ .name = "statusline", .doc = "mnml.statusline — a segment of your own on the statusline", .fns = &.{
         fnOf("segment", "mnml.statusline.segment{ id, side?, fn } — fn() is polled every 250 ms; nil hides it; side is \"left\" | \"right\"", statuslineSegment),
@@ -465,6 +468,77 @@ fn bufPath(L: *State) !i32 {
     const c = ctx(L);
     const e = editorArg(L, c.app, 1);
     if (e.buf.doc.path) |p| _ = L.pushString(c.app.relPath(p)) else L.pushNil();
+    return 1;
+}
+
+/// The selection's shape, from the handler's editing mode — the one
+/// handler-derived fact a script sees, and the same one the statusline
+/// reads (`input.EditingMode`).
+pub fn selectionMode(e: *const EditorPane) []const u8 {
+    return switch (e.buf.input.mode()) {
+        .visual_line => "line",
+        .visual_block => "block",
+        else => "char",
+    };
+}
+
+/// `mnml.buf.selection(pane?)` → `{ start, ["end"], mode }`, or nil
+/// when nothing is selected. Bytes, 0-based, `end` exclusive — the same
+/// numbers `decor.highlight` and `replace_range` take.
+fn bufSelection(L: *State) !i32 {
+    const c = ctx(L);
+    const e = editorArg(L, c.app, 1);
+    const sel = e.buf.editor.selection() orelse {
+        L.pushNil();
+        return 1;
+    };
+    L.createTable(0, 3);
+    L.pushInteger(@intCast(sel[0]));
+    L.setField(-2, "start");
+    L.pushInteger(@intCast(sel[1]));
+    L.setField(-2, "end");
+    _ = L.pushString(selectionMode(e));
+    L.setField(-2, "mode");
+    return 1;
+}
+
+/// `mnml.buf.range(start, end_, pane?)` → the text between two bytes.
+/// A reversed pair reads the same span; both ends are clamped to the
+/// buffer, so a range built from a stale position still answers.
+fn bufRange(L: *State) !i32 {
+    const c = ctx(L);
+    const a = byteArg(L, 1, "start");
+    const b = byteArg(L, 2, "end");
+    const e = editorArg(L, c.app, 3);
+    const text = e.buf.editor.bytes();
+    const lo = @min(@min(a, b), text.len);
+    const hi = @min(@max(a, b), text.len);
+    _ = L.pushString(text[lo..hi]);
+    return 1;
+}
+
+/// `mnml.buf.word_at(byte?, pane?)` → `{ text, start, ["end"] }`, or
+/// nil when the byte is not in a word. Without a byte, the cursor's.
+fn bufWordAt(L: *State) !i32 {
+    const c = ctx(L);
+    const at: ?usize = if (L.isNoneOrNil(1)) null else byteArg(L, 1, "byte");
+    const e = editorArg(L, c.app, 2);
+    const text = e.buf.editor.bytes();
+    const b = @min(at orelse e.buf.editor.cursor, text.len);
+    const bounds = @import("../editor/select.zig").wordBoundsAt(e.buf.editor, b);
+    // Vim's `iw` classes, less the third: a run of whitespace is not a
+    // word, so the space between two words is in neither.
+    if (bounds[1] <= bounds[0] or std.ascii.isWhitespace(text[bounds[0]])) {
+        L.pushNil();
+        return 1;
+    }
+    L.createTable(0, 3);
+    _ = L.pushString(text[bounds[0]..bounds[1]]);
+    L.setField(-2, "text");
+    L.pushInteger(@intCast(bounds[0]));
+    L.setField(-2, "start");
+    L.pushInteger(@intCast(bounds[1]));
+    L.setField(-2, "end");
     return 1;
 }
 
@@ -1139,7 +1213,7 @@ fn lineArg(L: *State, arg: i32) u32 {
 
 fn byteArg(L: *State, arg: i32, what: [:0]const u8) usize {
     const n = L.checkInteger(arg);
-    if (n < 0) L.raiseErrorStr("mnml.decor.highlight: %s must be a byte offset (0-based)", .{what.ptr});
+    if (n < 0) L.raiseErrorStr("mnml: %s must be a byte offset (0-based)", .{what.ptr});
     return @intCast(n);
 }
 
@@ -1833,4 +1907,49 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
     try testing.expectEqual(@as(usize, 1), segs.len);
     try testing.expectEqualStrings("notes 1", segs[0]);
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.buf.selection / range / word_at: the three modes, a clamped range, the word under a byte, and the argument errors" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratch();
+    lua.runString(
+        \\mnml.buf.apply{ op = "insert_str", text = "alpha beta\ngamma delta" }
+        \\assert(mnml.buf.selection() == nil, "nothing is selected yet")
+        \\mnml.buf.apply{ op = "select_range", start = 6, ["end"] = 10 }
+        \\local s = mnml.buf.selection()
+        \\assert(s.start == 6 and s["end"] == 10 and s.mode == "char", s.mode)
+        \\assert(mnml.buf.range(s.start, s["end"]) == "beta")
+        \\assert(mnml.buf.range(10, 6) == "beta", "a reversed pair reads the same span")
+        \\assert(mnml.buf.range(0, 9999) == mnml.buf.text(), "both ends clamp")
+        \\local w = mnml.buf.word_at(1)
+        \\assert(w.text == "alpha" and w.start == 0 and w["end"] == 5, w.text)
+        \\assert(mnml.buf.word_at(11).text == "gamma")
+        \\assert(mnml.buf.word_at(5) == nil, "the space between two words is in neither")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    // Without a byte: the cursor's word.
+    _ = try app.applyOps(app.activeEditor().?, &.{.{ .set_cursor_byte = 12 }});
+    try lua.runString("assert(mnml.buf.word_at().text == \"gamma\")");
+    // The shape follows the handler's mode — the one handler-derived
+    // fact a script sees.
+    try app.setInputStyle(.vim);
+    const e = app.activeEditor().?;
+    try testing.expectEqualStrings("char", selectionMode(e));
+    try app.handle(.{ .key = .{ .code = .{ .char = 'V' } } });
+    try testing.expectEqualStrings("line", selectionMode(e));
+    try lua.runString("assert(mnml.buf.selection().mode == \"line\")");
+    try app.handle(.{ .key = .{ .code = .esc } });
+    try app.handle(.{ .key = .{ .code = .{ .char = 'v' }, .mods = .{ .ctrl = true } } });
+    try testing.expectEqualStrings("block", selectionMode(e));
+    // Arguments are checked before anything is allocated.
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.range(-1, 4)"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "byte offset") != null);
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.range('a', 4)"));
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.word_at('x')"));
+    try testing.expectError(error.Failed, lua.runString("mnml.buf.selection(9999)"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "editor") != null);
 }
