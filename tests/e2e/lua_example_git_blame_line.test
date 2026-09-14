@@ -20,7 +20,8 @@ open notes.txt
 # after git answers.
 wait 400
 expect screen contains "Tester Ttt"
-expect screen contains "seconds ago"
+# git says "1 second ago" when the commit is that fresh, "N seconds ago" after.
+expect screen contains "second"
 # It follows the cursor: line 3 is blamed on the same commit, and the
 # label moves to it.
 key down
