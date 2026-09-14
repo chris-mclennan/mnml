@@ -67,23 +67,30 @@ pub const ReqKind = client.ReqKind;
 pub const Ctx = client.Ctx;
 const Value = jsonrpc.Value;
 
-/// One file's diagnostics from two sources — the server's publish and
-/// an external linter's run — each replaced wholesale by its next
-/// delivery, merged into `items` (sorted, gpa-owned) for every reader.
+/// One file's diagnostics from four sources — the server's publish, an
+/// external linter's run, the script layer's own `init.lua` error and
+/// what a script published through `mnml.diagnostics.set` — each
+/// replaced wholesale by its next delivery, merged into `items`
+/// (sorted, gpa-owned) for every reader.
 const FileDiags = struct {
     arena: alloc.SnapshotArena,
     lint_arena: alloc.SnapshotArena,
     /// // changed (lua-track): a third source — the script layer's own
     /// error for an `init.lua` (`scripting/diag.zig`), not a server.
     script_arena: alloc.SnapshotArena,
+    /// // changed (lua-decor): a fourth — every namespace's
+    /// `mnml.diagnostics.set` for this file, merged by
+    /// `app/script_decor.zig` before it lands here.
+    lua_arena: alloc.SnapshotArena,
     server_items: []types.Diagnostic = &.{},
     lint_items: []types.Diagnostic = &.{},
     script_items: []types.Diagnostic = &.{},
+    lua_items: []types.Diagnostic = &.{},
     items: []types.Diagnostic = &.{},
 
     fn create(gpa: Allocator) Allocator.Error!*FileDiags {
         const fd = try gpa.create(FileDiags);
-        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa), .script_arena = alloc.SnapshotArena.init(gpa) };
+        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa), .script_arena = alloc.SnapshotArena.init(gpa), .lua_arena = alloc.SnapshotArena.init(gpa) };
         return fd;
     }
 
@@ -91,16 +98,19 @@ const FileDiags = struct {
         self.arena.deinit();
         self.lint_arena.deinit();
         self.script_arena.deinit();
+        self.lua_arena.deinit();
         gpa.free(self.items);
         gpa.destroy(self);
     }
 
     /// Rebuild `items` from every source.
     fn merge(self: *FileDiags, gpa: Allocator) Allocator.Error!void {
-        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len + self.script_items.len);
-        @memcpy(merged[0..self.server_items.len], self.server_items);
-        @memcpy(merged[self.server_items.len .. self.server_items.len + self.lint_items.len], self.lint_items);
-        @memcpy(merged[self.server_items.len + self.lint_items.len ..], self.script_items);
+        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len + self.script_items.len + self.lua_items.len);
+        var at: usize = 0;
+        for ([_][]types.Diagnostic{ self.server_items, self.lint_items, self.script_items, self.lua_items }) |src| {
+            @memcpy(merged[at .. at + src.len], src);
+            at += src.len;
+        }
         std.mem.sort(types.Diagnostic, merged, {}, struct {
             fn lt(_: void, a: types.Diagnostic, b: types.Diagnostic) bool {
                 if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
@@ -660,6 +670,8 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
 /// for it go too (a reopen republishes).
 pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
     decor.forgetPane(app, pane);
+    // A script's decorations were about this pane's buffer.
+    @import("script_decor.zig").forgetPane(app, pane);
     if (app.lsp.completion) |c| if (c.pane == pane) closeCompletion(app);
     if (app.lsp.hover) |h| if (h.pane == pane) closeHover(app);
     if (app.lsp.peek) |p| if (p.pane == pane) closePeek(app);
@@ -1019,6 +1031,22 @@ pub fn applyScriptDiagnostics(app: *App, path: []const u8, list: []const types.D
     try finishDiagnostics(app, path, fd);
 }
 
+/// // changed (lua-decor): what the scripts published for `path`
+/// (`mnml.diagnostics.set`, already merged across namespaces by
+/// `app/script_decor.zig`): replaced wholesale; the other three
+/// sources stay. Everything downstream — the gutter dot, the squiggle,
+/// the statusline count, the DIAGNOSTICS panel, `]d` / `[d`, hover and
+/// the `diagnostics` hook — reads the merged list, so a script's
+/// findings are shown exactly like a server's, under their own
+/// `source`.
+pub fn applyLuaDiagnostics(app: *App, path: []const u8, list: []const types.Diagnostic) Allocator.Error!void {
+    const fd = try fileDiags(app, path);
+    fd.lua_arena.reset();
+    fd.lua_items = &.{};
+    fd.lua_items = try copyDiagnostics(fd.lua_arena.allocator(), list);
+    try finishDiagnostics(app, path, fd);
+}
+
 pub fn diagnosticsFor(app: *App, path: []const u8) []const types.Diagnostic {
     const fd = app.lsp.diags.get(path) orelse return &.{};
     return fd.items;
@@ -1068,7 +1096,7 @@ pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Th
             // Same line: keep the worse one (the list is sorted by line).
             continue;
         }
-        try out.append(arena, .{ .line = line, .kind = .sign, .glyph = if (ascii) (if (d.severity == .err) "E" else "W") else "●", .style = severityStyle(theme, d.severity) });
+        try out.append(arena, .{ .line = line, .kind = .sign, .glyph = if (ascii) (if (d.severity == .err) "E" else "W") else "●", .style = severityStyle(theme, d.severity), .priority = editor_view.mark_priority.diagnostic });
     }
     return out.items;
 }

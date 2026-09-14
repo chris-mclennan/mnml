@@ -813,6 +813,9 @@ pub const Lua = struct {
         }
         _ = app.dyn_commands.unregisterOwner(.script);
         _ = app.hooks.unsubscribeLua();
+        // Every namespace goes with the state: the decorations it holds
+        // and the diagnostics it published (`app/script_decor.zig`).
+        try @import("../app/script_decor.zig").reset(app);
         if (app.overlay == .picker and app.overlay.picker.kind == .lua) {
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;

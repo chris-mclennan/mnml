@@ -107,6 +107,7 @@ const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
 const decor = @import("lsp_decor.zig");
+const script_decor = @import("script_decor.zig");
 const conflicts = @import("conflicts.zig");
 const semantic_app = @import("lsp_semantic.zig");
 const http_panel = @import("http_panel.zig");
@@ -1276,19 +1277,28 @@ fn mergeVirtual(arena: Allocator, a: []const editor_view.VirtualText, b: []const
     return out;
 }
 
-/// The gutter's marks, in priority order: the debugger's signs first (a
-/// breakpoint, the ▶ of a stop), then a diagnostic's dot on the lines
-/// they leave, then git's change bars — the view paints the first sign
-/// and the first change mark it finds for a line (one column each; in
-/// a one-cell gutter the sign wins).
-fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
+/// The gutter's marks in priority order — the view paints the first
+/// sign and the first change mark it finds for a line (one column
+/// each; in a one-cell gutter the sign wins). The ladder itself is
+/// `editor_view.mark_priority`: the debugger's signs (a breakpoint,
+/// the ▶ of a stop), a diagnostic's dot, a script's `mnml.decor.gutter`
+/// at whatever it asked for (50 by default), git's change bars last.
+/// A stable sort keeps each producer's own order within its rung.
+pub fn gutterMarksFor(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
     const d = try dap.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
     const l = try lsp.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
+    const s = try script_decor.gutterMarksFor(app, arena, pane, e, &app.theme);
     const g: []const editor_view.GutterMark = if (e.buf.doc.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
-    if (l.len == 0 and g.len == 0) return d;
-    if (d.len == 0 and g.len == 0) return l;
-    if (d.len == 0 and l.len == 0) return g;
-    return std.mem.concat(arena, editor_view.GutterMark, &.{ d, l, g });
+    if (l.len == 0 and g.len == 0 and s.len == 0) return d;
+    if (d.len == 0 and g.len == 0 and s.len == 0) return l;
+    if (d.len == 0 and l.len == 0 and s.len == 0) return g;
+    const all = try std.mem.concat(arena, editor_view.GutterMark, &.{ d, l, s, g });
+    std.mem.sort(editor_view.GutterMark, all, {}, struct {
+        fn gt(_: void, a: editor_view.GutterMark, b: editor_view.GutterMark) bool {
+            return a.priority > b.priority;
+        }
+    }.gt);
+    return all;
 }
 
 /// `ui.highlight_word_under_cursor`: every whole-word occurrence of the
@@ -1388,7 +1398,11 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         e.syntax.dirty = false;
         e.syntax.since_ms = null;
     }
-    ed.doc.edits.trim(e.syntax.seen_seq);
+    // The decorations are an edit-log consumer too: a record dropped
+    // before `script_decor` moved its anchors across it would leave
+    // them sitting still while the text moved (`script_decor.minSeen`).
+    try script_decor.syncPane(app, id);
+    ed.doc.edits.trim(@min(e.syntax.seen_seq, script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));
     // Spans for a window around the viewport and the cursor — the view
     // may scroll to the cursor inside `draw`, so both are covered.
     const line_count = ed.lineCount();
@@ -1402,7 +1416,10 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     const last_vis: u32 = @intCast(@min(e.view.scroll_line + rows, line_count) -| 1);
     try decor.onFrame(app, id, e, first_vis, last_vis);
     const base_spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
-    const spans = try conflicts.tintSpans(app, arena, e, try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line), &app.theme);
+    const tinted = try conflicts.tintSpans(app, arena, e, try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line), &app.theme);
+    // A script's `mnml.decor.highlight` goes over everything the
+    // grammar, the server and a conflict marker put down.
+    const spans = try @import("highlight").engine.layerSpans(editor_view.Span, arena, tinted, try script_decor.highlightsFor(app, arena, id, e, &app.theme));
     const folds = try arena.alloc(editor_view.Fold, e.buf.editor.folds.count());
     for (e.buf.editor.folds.keys(), e.buf.editor.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
@@ -1437,15 +1454,16 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .visual_block = mode == .visual_block,
         .block_eol = e.buf.editor.block_eol,
         .scrollbar = app.cfg.ui.scrollbar,
-        .gutter_marks = try gutterMarks(app, arena, e, ui.ascii),
+        .gutter_marks = try gutterMarksFor(app, arena, id, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
         .underlines = try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme)),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
-        .virtual_text = try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)),
+        .virtual_text = try mergeVirtual(arena, try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)), try script_decor.virtualTextFor(app, arena, id, e, &app.theme)),
         .stopped_line = dap.stoppedLine(app, e),
-        .virtual_lines = try conflicts.mergeVirtualLines(arena, try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii), try conflicts.virtualLinesFor(app, arena, e, &app.theme, ui.ascii)),
+        .virtual_lines = try conflicts.mergeVirtualLines(arena, try conflicts.mergeVirtualLines(arena, try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii), try conflicts.virtualLinesFor(app, arena, e, &app.theme, ui.ascii)), try script_decor.virtualLinesFor(app, arena, id, e, &app.theme)),
+        .line_grounds = try script_decor.lineGroundsFor(app, arena, id, e, &app.theme),
         // ── ui toggles ──
         .relative_numbers = app.cfg.ui.relative_line_numbers,
         .cursor_line_band = app.cfg.ui.cursor_line,

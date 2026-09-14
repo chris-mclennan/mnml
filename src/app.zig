@@ -87,6 +87,7 @@ const grep = @import("app/grep.zig");
 const jumplist = @import("app/jumplist.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
+const script_decor = @import("app/script_decor.zig");
 const http_app = @import("app/http.zig");
 const http_panel = @import("app/http_panel.zig");
 const request_pane = @import("app/request_pane.zig");
@@ -864,6 +865,9 @@ pub const App = struct {
     /// The DEBUG section's cursor, folds and last-stop values.
     debug_panel: debug_panel.State = .{},
     lsp: lsp.State = .{},
+    /// What the scripts painted into the editors and published as
+    /// diagnostics (`app/script_decor.zig`); dropped by a reload.
+    script_decor: script_decor.State = .{},
     focus: FocusId = .tree,
     active: ?PaneId = null,
     /// The editor pane most recently active — a runner pane taking
@@ -1391,6 +1395,7 @@ pub const App = struct {
         // Script panes unref'd into the state when the pane store went
         // (above, before the manifests); the state closes after them.
         if (self.lua) |l| l.destroy();
+        self.script_decor.deinit(gpa);
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
