@@ -23,6 +23,9 @@ key j
 key v
 key J
 command git.diff_commit_lines
+# The prompt opens once the worker has read the lines back; under a
+# loaded box that has taken longer than the expect budget.
+wait 800
 expect screen contains "Commit message for the 2 lines of code.txt"
 type "just two"
 key enter
