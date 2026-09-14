@@ -120,7 +120,7 @@ statusline's coverage-ticker phase flickers one more row in some runs).
 (`steps-status.jsonl`) were cut on `tools/zig-spec.sh`'s throwaway
 workspace after the walkthrough's chrome findings landed
 (`docs/PARITY.md` `walkthrough-chrome`): a child menu's first arrow
-moves, → inside a curatable child changes nothing, Esc clears the
+moves as well as lights, Esc clears the
 toast stack, a long toast wraps to four rows and the stack paints
 beneath the overlays, a 0.2 `config.toml` is one notice per data root
 and the `RESTRICTED` chip. `tools/ui-diff.sh` on the chrome fixture
