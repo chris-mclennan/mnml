@@ -218,7 +218,9 @@ fn commandsLine(arena: Allocator, cmds: []const []const u8) Allocator.Error![]co
 pub fn showDev(app: *App) bool {
     if (app.scripts_panel.show_dev_override) |v| return v;
     if (app.cfg.scripts.show_dev_tab) return true;
-    return app.cfg.scripts.dev_roots.len > 0;
+    if (app.cfg.scripts.dev_roots.len > 0) return true;
+    const v = app.env.get("MNML_SCRIPTS_DEV_ROOTS") orelse return false;
+    return v.len > 0;
 }
 
 fn badgeFor(e: *const scripts.Entry) view.Badge {

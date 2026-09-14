@@ -35,6 +35,142 @@ config still asks; adding a script to a trusted workspace asks again. There
 is nothing to strip — the file simply does not run until the answer is
 Trust.
 
+## Installing scripts
+
+A one-file `init.lua` is for what you write for yourself. A script you
+got from someone else — or one of your own you want to keep, version and
+share — is a **directory**:
+
+```
+<data root>/scripts/<name>/
+  script.zon     the manifest
+  init.lua       the entry
+  lib/*.lua      what a scoped `require` may reach
+  README.md      what Enter on its SCRIPTS row opens
+```
+
+The manifest (`src/scripting/manifest.zig`):
+
+```zon
+.{
+    .name = "git-blame-line",       // the folder name; letters, digits, `-`, `_`
+    .version = "1.0.0",
+    .api = 1,                       // the `mnml` table it was written for
+    .description = "Who last touched the cursor line",
+    .author = "you",
+    .commands = .{ "user.blame_toggle" },   // what it says it registers
+    .hooks = .{ "cursor_idle", "pane_focus" },
+    .source = .marketplace,         // marketplace | community | private | dev
+    .url = "https://…",             // where it came from; `script.update` goes back to it
+}
+```
+
+`.api` is the contract: the `mnml` table as this document describes it for
+that number. A manifest without one is refused — we cannot tell what it
+expects. A manifest naming a number this build does not implement gets a
+row that says so rather than a silent skip, and never runs.
+
+**Each installed script gets its OWN Lua state.** Its own 20 ms budget
+clock, its own decoration namespaces (two scripts may both call theirs
+`"blame"` and never collide), its own registrations, and a `require` that
+resolves only under its own directory. A script that errors is one toast
+and a disabled row; the others keep running. `script.reload` reloads them
+all; the SCRIPTS row's menu reloads, enables, disables, updates or removes
+one.
+
+**`require`**, in an installed script only:
+
+```lua
+local helper = require("lib.helper")   --> <script dir>/lib/helper.lua
+```
+
+Dots separate plain segments. A `..`, a path separator, an absolute path
+or an empty part is refused by name — nothing is read. There is no
+`package`, so there is no `package.path` to widen. A module that returns
+nothing caches `true`, as Lua's own `require` does. The user's and the
+workspace's `init.lua` are unchanged: one file, no `require`.
+
+| function | changed in |
+|---|---|
+| `require` (an installed script's own files only) | api 1, added |
+
+### The three tabs
+
+The SCRIPTS section has the same three tabs the INTEGRATIONS section has,
+painted by the same code:
+
+| tab | what it lists | config |
+|---|---|---|
+| **Installed** | `init.lua` first, then every installed script — name, version, source badge, enabled state, and the commands it adds | `<data root>/scripts/`, plus `scripts.private_sources` |
+| **Marketplace** | the curated set | `scripts.marketplace_url`, or a folder via `scripts.marketplace_local` / `MNML_SCRIPTS_MARKETPLACE` |
+| **Dev** | folders you are editing; a save under one reloads that script | `scripts.dev_roots`, or `MNML_SCRIPTS_DEV_ROOTS` |
+
+Keys in the section: `1` `2` `3` or `h` `l` / Tab pick a tab, `/` filters,
+`s` cycles the sort (and the chip's right-click lists every mode with a
+✓), `r` refreshes, `i` installs, `e` enables or disables the focused row,
+`x` removes it, `d` opens `script.doctor`. Enter opens the focused
+script's README (the file itself, for `init.lua`).
+
+The marketplace's own repo is **not live yet** — the default
+`scripts.marketplace_url` names where it will be. Until then the tab says
+so, and `scripts.marketplace_local` points it at any folder of script
+directories; that is how the five shipped examples under
+`docs/examples/scripts/` are listed.
+
+### Where a script comes from, and the trust dialog
+
+```
+:script.install <git URL>        cloned shallow with your git client → `community`
+:script.install <archive>        .tar/.tar.gz/.tgz/.zip, unpacked      → `community`
+:script.install <folder>         copied                                → `community`
+```
+
+A folder under `scripts.private_sources` badges `private`; one installed
+from the marketplace badges `official`; one under `scripts.dev_roots`
+badges `dev`.
+
+Whatever the source, the copy is **staged and read, never run**, and the
+manifest's claims go on screen first — through the same `Claim` model the
+workspace trust dialog uses (`src/config/trust.zig`, sink
+`script_install`):
+
+```
+Install this script?
+
+greeter 2.1.0 by someone (script api 1)
+Says hello
+It gets its own Lua state and runs every time mnml starts. It claims:
+  • script greeter — runs `user.greet (a command)` every time mnml starts
+  • script greeter — runs `save_post (a hook)` every time mnml starts
+  • script greeter — runs `task.run — it starts programs` every time mnml starts
+
+                                            [Install]  [Cancel]
+```
+
+The last line is not the manifest's word: mnml greps the script's own
+`.lua` files for `task.run`, the only door out of the sandbox, and says
+what it found. Cancel is the focused choice, and it throws the staged copy
+away without running a line.
+
+Enabled / disabled is a `.disabled` marker file in the script's own
+folder: no config write, and it survives a restart.
+
+### Publishing a script
+
+Make the directory, fill in `script.zon` (name, version, `.api = 1`, and
+the commands and hooks you actually register — the trust dialog shows them,
+so a manifest that under-declares reads as dishonest the first time
+someone opens `script.doctor`), write a `README.md` that says what it does
+and what it needs on PATH, and push it. Anyone can then
+`:script.install <your URL>`. A company set is a folder or repo listed in
+`scripts.private_sources`; the curated set is the `mnml-scripts` repo
+`scripts.marketplace_url` names.
+
+`script.doctor` is the receipt: a pane listing every state — its api, its
+source, whether it is enabled, how many times it blew the 20 ms budget
+this session, the hooks it subscribed and its namespaces with live
+decoration counts.
+
 ## The budget, and errors
 
 Every call into Lua — a chunk, a command, a hook, a render — runs under a

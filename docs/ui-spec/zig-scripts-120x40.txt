@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ SCRIPTS                 │ 󰐕                                                                            󱸀      
+  │ Inst (1) Mkt (5)  (1)   │
+   │  󰍉 / filter        A-Z ▾ │
+ 󰍉 │                          │
+   │▌ + create init.lua       │
+ 󰊢 │    the workspace has no …│
+   │                          │
+  │  init.lua  api 1  install│
+   │    0 command(s), 0 hook(…│
+ 󰐱 │                          │
+   │                          │                                                            _
+ 󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
+   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+  │                          │                           | | | | | | | | | | | | | | | | | |
+   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+  │                          │
+   │                          │                                     workspace · ws
+  │                          │
+   │                          │                                        Shortcuts
+ 󱘣 │                          │                                     ──────────────
+   │                          │                                     ^P     find file
+▌󰢱 │                          │                                    ^R     recent files
+   │                          │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │                          │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │                          │
+   │                          │                              mnml 0.3.0-dev+g0bd09e5-dirty
+   │                          │
+   │──────────────────────────│
+   │ Scripts                ⋮ │
+   │                          │
+   │ Arrows walk rows. Enter  │
+   │ jumps to the source. F6  │
+   │ cycles focus.            │
+  │                          │
+   │                          │
+ TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    18:25  ws   —
+

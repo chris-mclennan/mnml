@@ -523,7 +523,9 @@ otherwise. Copy what you need; leave the rest out.
         .private_sources = .{ "~/mnml-private-scripts" },
         // Folders the Dev tab scans: every subfolder with a script.zon
         // is a script in development, reloaded when one of its files is
-        // saved.
+        // saved. MNML_SCRIPTS_DEV_ROOTS=<dir:dir> (`;` on Windows)
+        // overrides, which is how the corpus and the UI specs point the
+        // tab at a folder without writing a config.
         .dev_roots = .{ "../my-scripts" },
         .show_dev_tab = false,
     },

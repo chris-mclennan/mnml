@@ -1,0 +1,28 @@
+# Installed scripts (lua-install): the Marketplace tab. The curated set
+# is a folder of script directories read the way a `local_folder`
+# integrations source is; `scripts.marketplace_local` points at one (and
+# `MNML_SCRIPTS_MARKETPLACE` overrides it, which is what this file uses —
+# the App's config is read before the `write` steps run). The shipped
+# examples under docs/examples/scripts/ are what the real index will
+# hold. Installing from it badges the row `official`.
+# env: MNML_SCRIPTS_MARKETPLACE=index
+shell mkdir -p index/tidy
+write index/tidy/script.zon ".{ .name = \"tidy\", .api = 1, .version = \"0.9.0\", .description = \"Tidies things\", .commands = .{ \"user.tidy\" }, .source = .marketplace }\n"
+write index/tidy/init.lua "mnml.command{ id = 'tidy', title = 'Tidy', run = function() mnml.toast('tidied') end }\n"
+command view.activity_scripts
+expect screen contains "SCRIPTS"
+expect screen contains "Mkt (1)"
+command script.show_marketplace
+expect screen contains "tidy"
+expect screen contains "0.9.0"
+expect screen contains "Tidies things"
+# Install it: the same trust dialog, then the command is live.
+command script.marketplace_install
+expect screen contains "Install this script?"
+expect screen contains "tidy 0.9.0"
+key i
+expect screen contains "scripts: installed tidy"
+command user.tidy
+expect screen contains "tidied"
+command script.show_installed
+expect screen contains "tidy"

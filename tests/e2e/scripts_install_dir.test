@@ -1,0 +1,29 @@
+# Installed scripts (lua-install): `script.install` from a directory.
+# The copy is staged and READ, never run, until the trust dialog is
+# answered; Install lands it under the data root with its own Lua state,
+# and its command works. The SCRIPTS section's Installed tab shows the
+# row with its version, its badge and the command it adds.
+shell mkdir -p src/greeter
+write src/greeter/script.zon ".{ .name = \"greeter\", .api = 1, .version = \"2.1.0\", .author = \"someone\", .description = \"Says hello\", .commands = .{ \"user.greet\" } }\n"
+write src/greeter/init.lua "mnml.command{ id = 'greet', title = 'Greet', run = function() mnml.toast('hello from greeter') end }\n"
+write src/greeter/README.md "# greeter\n\nSays hello.\n"
+command script.install
+expect screen contains "Install script"
+type "src/greeter"
+key enter
+# The claims are on screen before a line of it has run.
+expect screen contains "Install this script?"
+expect screen contains "greeter 2.1.0 by someone"
+expect screen contains "user.greet (a command)"
+key i
+expect screen contains "scripts: installed greeter"
+command user.greet
+expect screen contains "hello from greeter"
+# The Installed tab has it, with its version and what it adds.
+command view.activity_scripts
+expect screen contains "SCRIPTS"
+expect screen contains "greeter"
+expect screen contains "2.1.0"
+expect screen contains "user.greet"
+# init.lua is the tab's own first row.
+expect screen contains "init.lua"

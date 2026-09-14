@@ -1,0 +1,11 @@
+.{
+    .name = "hello-scripts",
+    .version = "0.1.0",
+    .api = 1,
+    .description = "A script being written right now",
+    .author = "you",
+    .commands = .{ "user.hello_scripts" },
+    .hooks = .{},
+    .source = .dev,
+    .url = "",
+}

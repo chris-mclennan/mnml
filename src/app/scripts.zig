@@ -158,6 +158,29 @@ pub fn resolveRoot(app: *App, arena: Allocator, spec: []const u8) Allocator.Erro
     return std.fs.path.join(arena, &.{ app.workspace, expanded });
 }
 
+/// The Dev tab's roots: `MNML_SCRIPTS_DEV_ROOTS` (one or more folders,
+/// `:`-separated, `;` on Windows) when it is set, else
+/// `scripts.dev_roots`. The environment wins so the corpus — which
+/// cannot write the config the App has already read — can point the tab
+/// at a folder, the way `MNML_MARKETPLACE_LOCAL` does for integrations.
+pub fn devRoots(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (app.env.get("MNML_SCRIPTS_DEV_ROOTS")) |v| if (v.len > 0) {
+        const sep: u8 = if (@import("builtin").os.tag == .windows) ';' else ':';
+        var it = std.mem.splitScalar(u8, v, sep);
+        while (it.next()) |part| {
+            if (part.len == 0) continue;
+            try out.append(arena, try resolveRoot(app, arena, part));
+        }
+        return out.toOwnedSlice(arena);
+    };
+    for (app.cfg.scripts.dev_roots) |spec| {
+        const root = try resolveRoot(app, arena, spec);
+        if (root.len > 0) try out.append(arena, root);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 /// The folder the Marketplace tab lists: `MNML_SCRIPTS_MARKETPLACE`,
 /// else `scripts.marketplace_local`. Empty when neither is set — the
 /// `marketplace_url` default names a repo that is not live yet, so the
@@ -299,10 +322,7 @@ pub fn scan(app: *App) Allocator.Error!void {
         const root = try resolveRoot(app, arena, spec);
         if (root.len > 0) try scanRoot(app, root, .private);
     }
-    for (app.cfg.scripts.dev_roots) |spec| {
-        const root = try resolveRoot(app, arena, spec);
-        if (root.len > 0) try scanRoot(app, root, .dev);
-    }
+    for (try devRoots(app, arena)) |root| try scanRoot(app, root, .dev);
     app.scripts.scanned = true;
     var i: usize = 0;
     while (i < app.scripts.entries.items.len) : (i += 1) {
