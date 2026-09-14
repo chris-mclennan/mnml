@@ -1,7 +1,10 @@
 //! Workspace grep (`Pane.grep`): `find.grep` prompts for a query and
 //! runs it on a worker — `rg --json` when ripgrep is on PATH, else an
 //! in-process walk (the `.gitignore` matcher + `src/regex/`) — whose
-//! hits stream into the pane in batches. Results are grouped by file
+//! hits stream into the pane in batches. The same worker, `git grep`
+//! first, serves the SEARCH section (`search_section.zig`), which
+//! reaches this pane through *Open as pane* — the pane is Zig's own
+//! door, kept for the replace and the per-hit toggles. Results are grouped by file
 //! with expand / collapse; Enter opens a hit, `n` / `N` step through
 //! them, `/` narrows with a vim pattern, Space toggles a hit for
 //! `find.grep_replace`, which rewrites every enabled hit across every
@@ -34,12 +37,8 @@ const text_field = @import("../ui/text_field.zig");
 const EditOp = @import("../editor/edit_op.zig").EditOp;
 
 pub const table = .{
-    .@"search.toggle_regex" = &toggleRegexCmd,
-    .@"search.toggle_case_sensitive" = &toggleCaseCmd,
-    .@"search.toggle_whole_word" = &toggleWholeWordCmd,
     .@"find.grep" = &grepCmd,
     .@"find.grep_replace" = &grepReplaceCmd,
-    .@"view.activity_search" = &activitySearch,
     .@"grep.open" = &openRowCmd,
     .@"grep.toggle_hit" = &toggleHitCmd,
     .@"grep.copy" = &copyCmd,
@@ -58,16 +57,25 @@ pub const max_file_bytes: usize = 1024 * 1024;
 pub const batch_size: usize = 64;
 
 pub const Backend = enum {
+    /// `git grep -n --column`: the tracked files only, so `.gitignore`
+    /// and untracked scratch never answer. The SEARCH section's first
+    /// choice in a repo (Rust's `16 hits (git grep)`).
+    git_grep,
     rg,
     walk,
 
     pub fn label(b: Backend) []const u8 {
         return switch (b) {
+            .git_grep => "git grep",
             .rg => "rg",
             .walk => "walk",
         };
     }
 };
+
+/// The `Result.pane` the SEARCH section's runs carry: no pane owns
+/// them, `handle` hands them to `search_section.handle`.
+pub const section_target: PaneId = std.math.maxInt(PaneId);
 
 pub const Flags = struct {
     /// Off = smart case (upper-case in the query turns it on).
@@ -328,10 +336,11 @@ pub fn find(app: *App) ?PaneId {
     return app.panes.findKind(.grep);
 }
 
-/// `search.toggle_regex`: flip the Search pane's regex flag and rerun
-/// the query. The flag was inherited from the editor's find bar and
-/// could not be changed in the pane.
-fn toggleRegexCmd(app: *App) CommandError!void {
+/// `search.toggle_regex` with no SEARCH section shown
+/// (`search_section.zig` owns the ids): flip the Search pane's regex
+/// flag and rerun the query. The flag was inherited from the editor's
+/// find bar and could not be changed in the pane.
+pub fn paneToggleRegex(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const id = find(app) orelse return app.diag.fail(arena, "no Search pane — find.grep opens one", .{});
     const pane = app.panes.get(id) orelse return error.Failed;
@@ -340,11 +349,12 @@ fn toggleRegexCmd(app: *App) CommandError!void {
     try refresh(app, id);
 }
 
-/// `search.toggle_case_sensitive`: flip the Search pane's flag and
-/// rerun; `app.search_case` follows it so the find bar and `:s` agree
-/// (`:set ic` / `noic` write the same slot). With no Search pane the
-/// editor-wide flag alone flips — smart case (null) counts as off.
-fn toggleCaseCmd(app: *App) CommandError!void {
+/// `search.toggle_case_sensitive` with no SEARCH section shown: flip
+/// the Search pane's flag and rerun; `app.search_case` follows it so
+/// the find bar and `:s` agree (`:set ic` / `noic` write the same
+/// slot). With no Search pane the editor-wide flag alone flips — smart
+/// case (null) counts as off.
+pub fn paneToggleCase(app: *App) CommandError!void {
     const on = !(app.search_case orelse false);
     app.search_case = on;
     if (find(app)) |id| {
@@ -356,10 +366,10 @@ fn toggleCaseCmd(app: *App) CommandError!void {
     app.toast("search: case-sensitive {s}", .{if (on) "on" else "off"});
 }
 
-/// `search.toggle_whole_word`: the Search pane's whole-word flag,
-/// rerun. Nothing else holds the flag, so no pane is a failure — as
-/// `search.toggle_regex`.
-fn toggleWholeWordCmd(app: *App) CommandError!void {
+/// `search.toggle_whole_word` with no SEARCH section shown: the Search
+/// pane's whole-word flag, rerun. Nothing else holds the flag, so no
+/// pane is a failure — as `search.toggle_regex`.
+pub fn paneToggleWholeWord(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const id = find(app) orelse return app.diag.fail(arena, "no Search pane — find.grep opens one", .{});
     const pane = app.panes.get(id) orelse return error.Failed;
@@ -394,19 +404,6 @@ pub fn acceptQuery(app: *App, text: []const u8) Allocator.Error!void {
         error.OutOfMemory => return error.OutOfMemory,
         else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
     };
-}
-
-/// `view.activity_search`: the grep pane if there is one, else the
-/// prompt that makes one.
-fn activitySearch(app: *App) CommandError!void {
-    @import("activity_bar.zig").enter(app, .search);
-    if (find(app)) |id| {
-        app.showPane(id);
-        app.focus = .{ .pane = id };
-        app.needs_render = true;
-        return;
-    }
-    try openQueryPrompt(app);
 }
 
 /// Run `query` (the pane's flags kept). One grep pane per app: an
@@ -460,7 +457,7 @@ pub fn refresh(app: *App, id: PaneId) CommandError!void {
     var flags = p.flags;
     if (!flags.case_sensitive and find_mod.hasUpper(p.query)) flags.case_sensitive = true;
     if (app.search_case) |c| flags.case_sensitive = c;
-    p.group.concurrent(app.io, worker, .{ &app.events, app.io, app.gpa, @as([]const u8, p.root), @as([]const u8, p.query), flags, p.generation, id, p.abort }) catch |err| {
+    p.group.concurrent(app.io, worker, .{ &app.events, app.io, app.gpa, @as([]const u8, p.root), @as([]const u8, p.query), flags, p.generation, id, p.abort, false }) catch |err| {
         p.loading = false;
         return app.diag.fail(app.frame.allocator(), "grep: could not start the worker: {s}", .{@errorName(err)});
     };
@@ -470,8 +467,18 @@ pub fn refresh(app: *App, id: PaneId) CommandError!void {
 
 const WorkerError = Io.Cancelable || Allocator.Error;
 
-fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, root: []const u8, query: []const u8, flags: Flags, generation: u32, pane: PaneId, abort: *Abort) Io.Cancelable!void {
+/// The backends in order: `git grep` first when `git_first` (the SEARCH
+/// section — a workspace that is no repo falls through), then `rg`,
+/// then the in-process walk.
+pub fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, root: []const u8, query: []const u8, flags: Flags, generation: u32, pane: PaneId, abort: *Abort, git_first: bool) Io.Cancelable!void {
     var ctx: Ctx = .{ .events = events, .io = io, .gpa = gpa, .generation = generation, .pane = pane, .abort = abort };
+    if (git_first) {
+        const git = runGitGrep(&ctx, root, query, flags) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            error.OutOfMemory => return postOom(events, io, gpa),
+        };
+        if (git == .ran) return;
+    }
     const outcome = runRg(&ctx, root, query, flags) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return postOom(events, io, gpa),
@@ -503,6 +510,8 @@ const Ctx = struct {
     truncated: bool = false,
     /// The ripgrep binary; a test points it at a stand-in.
     rg_bin: []const u8 = "rg",
+    /// The git binary, likewise.
+    git_bin: []const u8 = "git",
 
     fn stale(c: *const Ctx) bool {
         return c.abort.generation.load(.acquire) != c.generation;
@@ -641,6 +650,125 @@ fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError
     return .ran;
 }
 
+const GitOutcome = enum { ran, no_git };
+
+/// Whether `root` is a repository `git grep` would search: a `.git`
+/// entry at the root (a directory, or a worktree's file), else — a
+/// directory inside a repository — one `git check-ignore` says it is
+/// not ignored (a scratch directory under an ignored `.zig-cache/`
+/// would otherwise "run" with nothing, and the next backend never
+/// answer). Exit 128 is no repository at all.
+fn inRepo(c: *Ctx, root: []const u8) WorkerError!bool {
+    const io = c.io;
+    var dir = Io.Dir.cwd().openDir(io, root, .{}) catch |err| {
+        if (err == error.Canceled) return error.Canceled;
+        return false;
+    };
+    defer dir.close(io);
+    if (dir.statFile(io, ".git", .{})) |_| return true else |err| if (err == error.Canceled) return error.Canceled;
+    var child = std.process.spawn(io, .{
+        .argv = &.{ c.git_bin, "check-ignore", "-q", "." },
+        .cwd = .{ .path = root },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    const term = child.wait(io) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return false,
+    };
+    return term == .exited and term.exited == 1;
+}
+
+/// Spawn `git grep -n --column -z` in `root`. `.no_git` when git is
+/// missing or the directory is no repository (exit 128), so the next
+/// backend answers instead. One hit per line (the first match, as
+/// `--column` reports it — Rust counts the same way); the highlight
+/// length is the literal's, or the pattern's own match when the walk's
+/// engine agrees with git's at that column, else nothing.
+fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError!GitOutcome {
+    const io = c.io;
+    const gpa = c.gpa;
+    if (!(try inRepo(c, root))) return .no_git;
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.appendSlice(gpa, &.{ c.git_bin, "grep", "-n", "--column", "-z", "-I", "--no-color" });
+    if (!flags.case_sensitive) try argv.append(gpa, "-i");
+    if (flags.whole_word) try argv.append(gpa, "-w");
+    try argv.append(gpa, if (flags.regex) "-E" else "-F");
+    try argv.appendSlice(gpa, &.{ "-e", query, "--", "." });
+    var child = std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = .{ .path = root },
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    }) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .no_git,
+    };
+    defer child.kill(io);
+    var re: ?regex.Regex = if (flags.regex) regex.Regex.compile(query, .{ .ignore_case = !flags.case_sensitive }) catch null else null;
+    defer if (re) |*r| r.deinit();
+    const buf = try gpa.alloc(u8, 1024 * 1024);
+    defer gpa.free(buf);
+    var fr = child.stdout.?.readerStreaming(io, buf);
+    var saw_line = false;
+    var path_buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer path_buf.deinit(gpa);
+    while (true) {
+        if (c.stale()) return .ran;
+        // `-z`: every separator is NUL — `path\0line\0col\0text\n`.
+        const rel_raw = (fr.interface.takeDelimiter(0) catch |err| switch (err) {
+            error.ReadFailed => break,
+            error.StreamTooLong => break,
+        }) orelse break;
+        const rel = if (std.mem.startsWith(u8, rel_raw, "./")) rel_raw[2..] else rel_raw;
+        path_buf.clearRetainingCapacity();
+        try path_buf.appendSlice(gpa, root);
+        try path_buf.append(gpa, '/');
+        try path_buf.appendSlice(gpa, rel);
+        const line_s = (fr.interface.takeDelimiter(0) catch break) orelse break;
+        const line = std.fmt.parseInt(u32, line_s, 10) catch break;
+        const col_s = (fr.interface.takeDelimiter(0) catch break) orelse break;
+        const col1 = std.fmt.parseInt(u32, col_s, 10) catch break;
+        const rest = (fr.interface.takeDelimiter('\n') catch |err| switch (err) {
+            error.ReadFailed => break,
+            error.StreamTooLong => break,
+        }) orelse break;
+        saw_line = true;
+        const text = std.mem.trimEnd(u8, rest, "\r");
+        const col = col1 -| 1;
+        const len: u32 = blk: {
+            if (re) |*r| {
+                if (col < text.len) if (r.find(text, col)) |m| if (m.start == col) break :blk @intCast(m.end - m.start);
+                break :blk 0;
+            }
+            break :blk @intCast(@min(query.len, text.len -| col));
+        };
+        try c.push(.git_grep, path_buf.items, rel, line, col, len, text);
+        if (c.truncated) break;
+    }
+    const term = child.wait(io) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => null,
+    };
+    if (c.stale()) return .ran;
+    // 0 hits, 1 none, 128 no repository (or git's own refusal): the
+    // first two are answers, the last is not.
+    if (!saw_line) if (term) |tm| switch (tm) {
+        .exited => |code| if (code != 0 and code != 1) return .no_git,
+        else => return .no_git,
+    } else return .no_git;
+    try c.finish(.git_grep, null);
+    return .ran;
+}
+
 /// The in-process backend: every file under `root` that the
 /// `.gitignore`s allow, matched line by line with `src/regex/`.
 fn runWalk(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError!void {
@@ -761,6 +889,7 @@ fn grepFile(c: *Ctx, re: *regex.Regex, dir: Io.Dir, basename: []const u8, rel: [
 // ─── the handler ────────────────────────────────────────────────────────
 
 pub fn handle(app: *App, result: *Result) Allocator.Error!void {
+    if (result.pane == section_target) return @import("search_section.zig").handle(app, result);
     defer result.destroy(app.gpa);
     const pane = app.panes.get(result.pane) orelse return;
     const p = switch (pane.*) {

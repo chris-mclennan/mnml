@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ SEARCH       Aa \b .*   │ 󰐕                                                                            󱸀      
+  │                          │
+   │ / t█                     │
+▌󰍉 │ 2 hits (git grep)        │
+   │                          │
+ 󰊢 │ a.txt                    │
+   │▌  2:1  two               │
+  │   3:1  three             │
+   │                          │
+ 󰐱 │                          │                                                            _
+   │                          │                            _ __ ___    _ __    _ __ ___   | |
+ 󰎒 │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                           | | | | | | | | | | | | | | | | | |
+  │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                          │
+  │                          │                                     workspace · ws
+   │                          │                                         on main
+  │                          │
+   │                          │                                        Shortcuts
+ 󱘣 │                          │                                     ──────────────
+   │                          │                                     ^P     find file
+ 󰢱 │                          │                                    ^R     recent files
+   │                          │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │                          │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │                          │
+   │                          │                              mnml 0.3.0-dev+g8e0cd61-dirty
+   │                          │
+   │──────────────────────────│
+   │ Search                 ⋮ │
+   │                          │
+   │ Workspace search. `/`    │
+   │ filters. Enter jumps to  │
+   │ the match.               │
+  │                          │
+   │                          │
+ TREE   main  ⇡1  [no file]                                                 F 59% ▼0.4  󱼀 󰐎    17:18  ws   —
+

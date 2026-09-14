@@ -357,7 +357,13 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
             .{ .label = "Reveal active file", .action = .{ .command = .@"view.reveal_in_tree" } },
             .{ .label = "Refresh tree", .action = .{ .command = .@"tree.refresh" } },
         },
-        .search => &.{.{ .label = "New search", .action = .{ .command = .@"find.grep" } }},
+        // // changed (search-section): the section's own verbs; the grep
+        // pane stays reachable as *Open as pane*.
+        .search => &.{
+            .{ .label = "Refresh", .action = .{ .command = .@"search.refresh" } },
+            .{ .label = "Open as pane", .action = .{ .command = .@"search.open_pane" } },
+            .{ .label = "Find in files\u{2026}", .action = .{ .command = .@"find.grep" } },
+        },
         .git => &.{
             .{ .label = "Open git graph", .action = .{ .command = .@"git.graph" } },
             .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" } },
@@ -833,12 +839,14 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .diagnostics => app.lsp.panel.cursor,
                 .debug => app.debug_panel.list.cursor,
                 .integrations => app.integrations.panel.cursor,
+                .search => app.search_section.list.cursor,
                 .notes, .findings, .sessions, .outline, .scripts => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
             const m: Mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = .left };
             switch (which) {
                 .todos => try @import("../todos.zig").kebabMouse(app, @intCast(cursor), m),
+                .search => try @import("search_section.zig").kebabMouse(app, @intCast(cursor), m),
                 .git => try @import("git_palette.zig").openRowMenu(app, cursor, r.x, r.y),
                 .http => try @import("http_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .diagnostics => try @import("lsp.zig").rowMouse(app, @intCast(cursor), .{ .x = r.x, .y = r.y, .kind = .press, .button = .right }),

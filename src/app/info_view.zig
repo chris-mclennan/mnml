@@ -298,6 +298,7 @@ fn sectionTitle(p: app_mod.PanelId) []const u8 {
         .debug => "Run and debug",
         .integrations => "Integrations",
         .scripts => "Scripts",
+        .search => "Search",
     };
 }
 
@@ -312,6 +313,9 @@ fn emptyCopy(app: *App) Copy {
         else if (p == .integrations)
             // Rust's words for the INTEGRATIONS section.
             .{ .title = sectionTitle(p), .body = "Installed integrations. Enter fires the command. Right-click for Configure / Uninstall." }
+        else if (p == .search)
+            // Rust's words for the SEARCH section.
+            .{ .title = sectionTitle(p), .body = "Workspace search. `/` filters. Enter jumps to the match." }
         else
             .{ .title = sectionTitle(p), .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
         // In git mode the graph pane says nothing of its own and Rust's box

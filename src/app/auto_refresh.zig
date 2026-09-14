@@ -55,6 +55,7 @@ fn label(panel: PanelId) []const u8 {
         .debug => "DEBUG",
         .integrations => "INTEGRATIONS",
         .scripts => "SCRIPTS",
+        .search => "SEARCH",
     };
 }
 
@@ -71,6 +72,7 @@ fn refreshId(panel: PanelId) command.CommandId {
         .debug => .@"dap.run",
         .integrations => .@"integrations.refresh",
         .scripts => .@"script.reload",
+        .search => .@"search.refresh",
     };
 }
 

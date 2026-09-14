@@ -328,7 +328,7 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try t.expect(app.focus == .tree);
     try t.expectEqual(Section.explorer, active(&app));
     try t.expectEqual(Section.notes, side.shown(&app, .right).?);
-    // A pane surface: Search opens the grep prompt; Debug the DAP pane.
+    // Debug: a column section as well.
     try press(&app, 1, sectionRow(&app, .debug), .left);
     try t.expectEqual(Section.debug, active(&app));
     // Right-click: the section's menu, "Show X" first, then its verbs.
@@ -345,13 +345,15 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try press(&app, 1, sectionRow(&app, .http), .right);
     try t.expectEqualStrings("+ New request", app.overlay.menu.items[2].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
-    // A section on the right offers the way back; a pane section
-    // (Search) has no side and no such row.
+    // A section on the right offers the way back; SEARCH is a column
+    // section too (// changed (search-section)), its verbs after the move.
     try press(&app, 1, sectionRow(&app, .notes), .right);
     try t.expectEqualStrings("Move to left side", app.overlay.menu.items[1].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try press(&app, 1, sectionRow(&app, .search), .right);
-    try t.expectEqualStrings("New search", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("Move to right side", app.overlay.menu.items[1].label);
+    try t.expectEqualStrings("Refresh", app.overlay.menu.items[2].label);
+    try t.expectEqualStrings("Open as pane", app.overlay.menu.items[3].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     // The gear: Settings on the left, the mnml menu on the right.
     try press(&app, 1, 36, .right);

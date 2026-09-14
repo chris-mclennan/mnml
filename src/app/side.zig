@@ -67,7 +67,9 @@ pub fn surface(s: Section) ?Surface {
         .integrations => .{ .panel = .integrations },
         // // changed (lua-track): the SCRIPTS section is a column too.
         .scripts => .{ .panel = .scripts },
-        .search => null,
+        // // changed (search-section): SEARCH is Rust's sidebar section
+        // again — a column; the grep pane is its *Open as pane* door.
+        .search => .{ .panel = .search },
     };
 }
 
@@ -84,6 +86,7 @@ pub fn sectionOfPanel(p: PanelId) Section {
         .debug => .debug,
         .integrations => .integrations,
         .scripts => .scripts,
+        .search => .search,
     };
 }
 
@@ -486,7 +489,9 @@ test "move: a shown section closes on one side and opens on the other with the k
     try move(&app, .notes, .right);
     try t.expectEqual(Side.right, sideOf(&app, .notes));
     try t.expect(shown(&app, .right) == null);
-    try t.expectError(error.Failed, move(&app, .search, .right));
+    // // changed (search-section): SEARCH has a side like the rest.
+    try move(&app, .search, .right);
+    try t.expectEqual(Side.right, sideOf(&app, .search));
 }
 
 test "the right column: toggle brings back the last section shown there, else the first on that side; next / prev walk the side; focus opens it" {

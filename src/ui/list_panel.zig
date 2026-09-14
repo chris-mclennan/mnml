@@ -182,6 +182,11 @@ pub fn ListPanel(comptime Row: type) type {
             /// and the list when there is no New row (which brings its
             /// own air) — the HTTP section's shape.
             filter_gap: bool = false,
+            /// Rows under the header (and the filter pill, when shown)
+            /// left to the panel's owner — painted in the panel's ground
+            /// and otherwise untouched; the owner paints them after
+            /// `draw` (the SEARCH section's query and status rows).
+            prelude_rows: u16 = 0,
             /// Rows per item — SESSIONS' card is four — with `row_gap`
             /// blank rows between items. The scroll window counts items;
             /// an item's hit covers all its rows; the kebab sits on its
@@ -260,6 +265,8 @@ pub fn ListPanel(comptime Row: type) type {
                 });
                 rest = fr.rest;
             }
+
+            if (p.prelude_rows > 0) rest = rest.splitTop(@min(p.prelude_rows, rest.h)).rest;
 
             // The ` + New … ` row with a blank row on either side: the
             // filter, air, the chip, air, the list.

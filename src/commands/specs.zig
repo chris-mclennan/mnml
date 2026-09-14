@@ -998,6 +998,14 @@ pub const specs = [_]Spec{
     .{ .id = "grep.expand_all", .title = "Search: expand every file", .group = "grep" },
     .{ .id = "grep.collapse_all", .title = "Search: collapse every file", .group = "grep" },
     .{ .id = "grep.refresh", .title = "Search: run the search again", .group = "grep" },
+    // Zig-only: the SEARCH section's row menu and chips name these
+    // (`search_section.zig`).
+    .{ .id = "search.refresh", .title = "Search: run the section's query again", .group = "search" },
+    .{ .id = "search.open", .title = "Search: open the hit under the cursor at its line (a file row folds)", .group = "search" },
+    .{ .id = "search.open_split", .title = "Search: open the hit to the side", .group = "search" },
+    .{ .id = "search.copy_path", .title = "Search: copy the hit's path:line", .group = "search" },
+    .{ .id = "search.copy_line", .title = "Search: copy the matched line", .group = "search" },
+    .{ .id = "search.open_pane", .title = "Search: open the query as a grep pane (replace, per-hit toggles)", .group = "search" },
     // Zig-only: the menu bar's summon, the coverage chip's click and menu.
     .{ .id = "view.menu_bar_open", .title = "Menu bar: open the File menu (the words follow under `ui.menu_bar = auto`)", .group = "view" },
     .{ .id = "coverage.toast", .title = "Coverage: toast the feature and code numbers", .group = "coverage" },
@@ -1118,7 +1126,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1044 specs, unique ids" {
+test "1050 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1137,7 +1145,9 @@ test "1044 specs, unique ids" {
     // + `view.reset_layout` + the session-worktree launch and its three
     // row verbs (open in tree / merge / remove) + `view.focus_top` /
     // `focus_bottom` / `focus_previous` (vim Ctrl-W t / b / p)
-    // + the SESSIONS history chip's two verbs (sessions-card).
-    try std.testing.expectEqual(@as(usize, 1044), specs.len);
+    // + the SESSIONS history chip's two verbs (sessions-card)
+    // + six SEARCH section commands (refresh / open / open_split /
+    // copy_path / copy_line / open_pane).
+    try std.testing.expectEqual(@as(usize, 1050), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

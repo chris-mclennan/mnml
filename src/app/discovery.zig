@@ -101,9 +101,20 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .view => .{ .title = "view: chip", .detail = "click cycles the row style" },
             .history => .{ .title = "Ended sessions", .detail = "click shows / hides the ended sessions · right-click: show, hide, clear" },
         },
-        .filter_input => |p| .{
+        .filter_input => |p| if (p == .search) .{
+            .title = "SEARCH query",
+            .detail = "type the query · Enter runs it · Esc clears",
+        } else .{
             .title = try f.fmt(arena, "{s} filter", .{upper(arena, @tagName(p))}),
             .detail = "type to narrow the rows · Esc clears",
+        },
+        .search_chip => |flag| .{
+            .title = switch (flag) {
+                .case_sensitive => "Aa — case-sensitive",
+                .whole_word => "\\b — whole word",
+                .regex => ".* — regex",
+            },
+            .detail = "click toggles the flag and runs the query again",
         },
         .scrollbar => .{ .title = "Scrollbar", .detail = "drag the thumb · wheel scrolls" },
         .hover_popup => .{ .title = "Hover", .detail = "wheel scrolls two lines · click closes" },

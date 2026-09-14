@@ -103,8 +103,8 @@ otherwise. Copy what you need; leave the rest out.
         // vim `Ctrl-W H` / `L` in a section, `:sidebar left|right`).
         // `sidebar_side` is the side a section takes when `section_side`
         // does not name it — the Rust right-panel panes (outline,
-        // diagnostics) take the other side of it. Sections that open a
-        // pane (search, debug, …) have no side. The session keeps the
+        // diagnostics) take the other side of it. Every section has a
+        // side (SEARCH and DEBUG are columns too). The session keeps the
         // sides a user moved; these are the starting point.
         .sidebar_side = .left, // .left | .right (the Settings row "Default sidebar side")
         .section_side = .{ // per section, null = follow sidebar_side (outline and diagnostics: the other side)
@@ -115,6 +115,7 @@ otherwise. Copy what you need; leave the rest out.
             .notes = null,
             .todos = null,
             .findings = null,
+            .search = null, // Rust's SEARCH sidebar section (the grep pane is its *Open as pane* door)
             .diagnostics = null,
             .outline = null,
         },
