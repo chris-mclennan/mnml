@@ -1,0 +1,14 @@
+# `find.live_grep`: what you type is the pattern, the rows are the hits,
+# and the preview shows the file AROUND the hit line — not its head.
+write src/hay.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nthe needle here\nl21\nl22\n"
+
+command find.live_grep
+expect screen contains "┌ Live grep "
+type needle
+wait 1500
+expect screen contains "src/hay.txt:20"
+# The preview is centred on the hit, so the lines around it are there.
+expect screen contains "  20 the needle here"
+expect screen contains "  19 l19"
+expect screen contains "  21 l21"
+key esc

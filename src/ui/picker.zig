@@ -82,6 +82,15 @@ pub const State = struct {
     has_preview: bool = false,
     /// The cursor row's preview, filled by the app when the cursor moves.
     preview: []const PreviewRow = &.{},
+    /// The row of `preview` the column must show — a grep hit's line.
+    /// The column centres on it against its REAL height, so the app
+    /// never rebuilds the rows just to re-centre them.
+    preview_focus: ?usize = null,
+    /// Rows the reader scrolled the preview by (`ctrl+u` / `ctrl+d`,
+    /// PageUp / PageDown), on top of that centring.
+    preview_scroll: usize = 0,
+    /// The preview column's height last frame — the scroll keys' page.
+    preview_h: u16 = 0,
     /// Tab marks a row and Enter passes every marked one.
     multi: bool = false,
 
@@ -130,6 +139,11 @@ pub const min_label: u16 = 12;
 /// ↑↓ / ctrl+p ctrl+n / ctrl+j ctrl+k move, page keys page, enter
 /// accepts the cursor, esc cancels, typing changes the query (and
 /// rewinds the cursor). `count` is the length of the slice last drawn.
+///
+/// With a preview column the four paging keys belong to the PREVIEW, as
+/// the reference plugin binds them: `ctrl+u` / `ctrl+d` scroll it half a
+/// screen, PageUp / PageDown a whole one. Without one they page the
+/// list, as they always did.
 pub fn handleKey(s: *State, gpa: Allocator, key: Key, count: usize) Allocator.Error!Outcome {
     const last = count -| 1;
     if (s.cursor > last) s.cursor = last;
@@ -140,13 +154,21 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key, count: usize) Allocator.Er
         .tab => if (s.multi) return if (count > 0) .{ .toggle = s.cursor } else .consumed,
         .up => s.cursor -|= 1,
         .down => s.cursor = @min(s.cursor + 1, last),
-        .page_up => s.cursor -|= page,
-        .page_down => s.cursor = @min(s.cursor + page, last),
+        .page_up => if (s.has_preview) scrollPreview(s, -@as(isize, previewPage(s))) else {
+            s.cursor -|= page;
+        },
+        .page_down => if (s.has_preview) scrollPreview(s, previewPage(s)) else {
+            s.cursor = @min(s.cursor + page, last);
+        },
         .char => |c| if (key.mods.ctrl and !key.mods.alt) switch (c) {
             'p', 'k' => s.cursor -|= 1,
             'n', 'j' => s.cursor = @min(s.cursor + 1, last),
-            'u' => s.cursor -|= page,
-            'd' => s.cursor = @min(s.cursor + page, last),
+            'u' => if (s.has_preview) scrollPreview(s, -halfPage(s)) else {
+                s.cursor -|= page;
+            },
+            'd' => if (s.has_preview) scrollPreview(s, halfPage(s)) else {
+                s.cursor = @min(s.cursor + page, last);
+            },
             else => return editKey(s, gpa, key),
         } else if (s.list_keys_when_empty and s.query.items.len == 0 and !key.mods.alt and !key.mods.super) switch (c) {
             'j' => s.cursor = @min(s.cursor + 1, last),
@@ -158,6 +180,27 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key, count: usize) Allocator.Er
         else => return editKey(s, gpa, key),
     }
     return .consumed;
+}
+
+/// The preview's page: the column's height last frame, or a sane guess
+/// before the first paint.
+fn previewPage(s: *const State) isize {
+    return @max(1, @as(isize, s.preview_h));
+}
+
+/// Half of it, for `ctrl+u` / `ctrl+d`.
+fn halfPage(s: *const State) isize {
+    return @max(1, @divTrunc(previewPage(s), 2));
+}
+
+/// Scroll the preview column, never past its last row.
+fn scrollPreview(s: *State, delta: isize) void {
+    const last = s.preview.len -| 1;
+    if (delta < 0) {
+        s.preview_scroll -|= @intCast(-delta);
+    } else {
+        s.preview_scroll = @min(s.preview_scroll + @as(usize, @intCast(delta)), last);
+    }
 }
 
 /// The wheel: `delta` rows (negative up), clamped to the list.
@@ -303,9 +346,9 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
             const rule = split.rest.splitLeft(1);
             var ry: u16 = 0;
             while (ry < rule.left.h) : (ry += 1) _ = ui.putStr(rule.left.x, rule.left.y + ry, 1, "\u{2502}", Theme.onBg(t.border, bg));
-            drawPreview(ui, rule.rest, s.preview, bg);
-        }
-    }
+            drawPreview(ui, rule.rest, s, bg);
+        } else s.preview_h = 0;
+    } else s.preview_h = 0;
 
     // ── rows ──
     const list_area = body;
@@ -375,15 +418,28 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
 /// The preview column: the cursor row's rows, in the script pane's
 /// segment shape, clipped at the column's edges. A row past the bottom
 /// is dropped; text past the right edge is clipped — the pane's rule.
-fn drawPreview(ui: Ui, area: Rect, rows: []const PreviewRow, bg: vaxis.Color) void {
+///
+/// The first row painted is the focus (a grep hit) centred against the
+/// column's REAL height, plus whatever the reader scrolled — so the
+/// centring is right at every box size and no rebuild re-centres it.
+fn drawPreview(ui: Ui, area: Rect, s: *State, bg: vaxis.Color) void {
+    s.preview_h = area.h;
     if (area.isEmpty()) return;
+    const rows = s.preview;
+    // The focus sits mid-column, but never past the last screenful: a
+    // preview short enough to fit still starts at its first line.
+    var off: usize = 0;
+    if (s.preview_focus) |f| off = @min(f -| (area.h / 2), rows.len -| area.h);
+    off += s.preview_scroll;
+    if (off > rows.len -| 1) off = rows.len -| 1;
     var y: u16 = 0;
-    while (y < rows.len and y < area.h) : (y += 1) {
+    while (off + y < rows.len and y < area.h) : (y += 1) {
         var x = area.x;
-        for (rows[y]) |seg| {
+        for (rows[off + y]) |seg| {
             if (x >= area.right()) break;
             var st = seg.style;
-            st.bg = bg;
+            // A segment that names its own ground (a grep hit) keeps it.
+            if (std.meta.activeTag(st.bg) == .default) st.bg = bg;
             x += ui.putStr(x, area.y + y, area.right() -| x, seg.text, st);
         }
     }
@@ -700,4 +756,58 @@ test "multi-select: tab marks a row and steps on, a marked row keeps its check, 
     try testing.expectEqualStrings("\u{2713}", f.cell(5, 4).char.grapheme);
     try testing.expectEqualStrings("\u{258c}", f.cell(5, 5).char.grapheme);
     try f.expectContains("+ three");
+}
+
+test "the preview centres its focus against the column's real height and the scroll keys move it, never the list" {
+    const gpa = testing.allocator;
+    // Twelve numbered rows; the focus is the ninth.
+    var rows: [12]PreviewRow = undefined;
+    var segs: [12][1]PreviewSegment = undefined;
+    var texts: [12][8]u8 = undefined;
+    for (&rows, 0..) |*r, i| {
+        const text = std.fmt.bufPrint(&texts[i], "L{d}", .{i}) catch unreachable;
+        segs[i] = .{.{ .text = text, .style = .{} }};
+        r.* = &segs[i];
+    }
+    // A box tall enough for every row: nothing is scrolled off, even
+    // with a focus, because the focus already fits.
+    const many = [_]Item{ .{ .label = "a" }, .{ .label = "b" }, .{ .label = "c" }, .{ .label = "d" }, .{ .label = "e" }, .{ .label = "f" }, .{ .label = "g" }, .{ .label = "h" }, .{ .label = "i" }, .{ .label = "j" }, .{ .label = "k" }, .{ .label = "l" }, .{ .label = "m" }, .{ .label = "n" } };
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    var s: State = .{ .title = "Grep", .has_preview = true, .preview = &rows, .preview_focus = 8 };
+    defer s.deinit(gpa);
+    _ = draw(f.ui(), f.full(), &s, &many);
+    try testing.expect(s.preview_h >= rows.len);
+    try f.expectContains("L0");
+    try f.expectContains("L8");
+
+    // A short box: the focus would fall off the bottom, so the column
+    // starts part-way down and the focus lands near the middle.
+    var short = try Fixture.init(100, 12);
+    defer short.deinit();
+    var ss: State = .{ .title = "Grep", .has_preview = true, .preview = &rows, .preview_focus = 8 };
+    defer ss.deinit(gpa);
+    _ = draw(short.ui(), short.full(), &ss, &files);
+    try short.expectLacks("L0");
+    try short.expectContains("L8");
+
+    // ctrl+d scrolls the preview; the cursor stays on row 0.
+    _ = try handleKey(&s, gpa, Key.ctrl('d'), files.len);
+    try testing.expectEqual(@as(usize, 0), s.cursor);
+    try testing.expect(s.preview_scroll > 0);
+    const scrolled = s.preview_scroll;
+    _ = try handleKey(&s, gpa, Key.ctrl('u'), files.len);
+    try testing.expect(s.preview_scroll < scrolled);
+    // PageDown scrolls a whole column, and never past the last row.
+    var i: usize = 0;
+    while (i < 20) : (i += 1) _ = try handleKey(&s, gpa, Key.named(.page_down), files.len);
+    try testing.expectEqual(rows.len - 1, s.preview_scroll);
+    try testing.expectEqual(@as(usize, 0), s.cursor);
+
+    // Without a preview column the same keys page the list, as before.
+    var plain: State = .{ .title = "Files", .rows = 2 };
+    defer plain.deinit(gpa);
+    _ = try handleKey(&plain, gpa, Key.named(.page_down), files.len);
+    try testing.expectEqual(files.len - 1, plain.cursor);
+    try testing.expectEqual(@as(usize, 0), plain.preview_scroll);
 }

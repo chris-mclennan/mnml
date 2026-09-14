@@ -1131,6 +1131,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .changed => {
                 try refilterPicker(app);
                 @import("../scripting/api.zig").noteQueryChanged(app, app.now_ms);
+                @import("grep_picker.zig").noteQueryChanged(app, app.now_ms);
                 cmd_picker.preview(app);
             },
             .accept => |i| try cmd_picker.accept(app, i),
@@ -1199,6 +1200,15 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
 pub fn refilterPicker(app: *App) Allocator.Error!void {
     const p = &app.overlay.picker;
     p.filtered.clearRetainingCapacity();
+    // The live-grep picker's query IS the pattern: the rows came back
+    // already matching it, so a second, fuzzy pass over them would only
+    // throw hits away. Keep the worker's order.
+    if (p.kind == .grep) {
+        try p.filtered.ensureTotalCapacity(app.gpa, p.labels.len);
+        for (0..p.labels.len) |i| p.filtered.appendAssumeCapacity(@intCast(i));
+        if (p.state.cursor >= p.filtered.items.len) p.state.cursor = 0;
+        return;
+    }
     var arena_state = std.heap.ArenaAllocator.init(app.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();

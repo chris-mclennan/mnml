@@ -1,0 +1,16 @@
+# `Open file` (Ctrl+P) previews the row under the cursor: results left,
+# the file's head right, numbered, with the syntax engine colouring it.
+# Ctrl+D scrolls the preview (not the list — the cursor stays put).
+write src/main.rs "fn one() {}\nfn two() {}\nfn three() {}\nfn four() {}\n"
+write README.md "# hi\n"
+
+key ctrl+p
+expect screen contains "┌ Open file "
+type ma
+expect screen contains "▌src/main.rs"
+# The preview column: the file's head, line-numbered.
+expect screen contains "   1 fn one() {}"
+expect screen contains "   2 fn two() {}"
+# `fn` is a keyword, not plain foreground — the engine ran.
+expect screen contains "   4 fn four() {}"
+key esc

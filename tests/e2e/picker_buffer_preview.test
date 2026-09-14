@@ -1,0 +1,14 @@
+# The buffer picker previews the buffer under the cursor — the pane's
+# own bytes, so an unsaved edit shows in the preview too.
+write a.txt "alpha one\nalpha two\n"
+write b.txt "beta one\nbeta two\n"
+open a.txt
+open b.txt
+
+command picker.buffers
+expect screen contains "┌ Buffers "
+type a.txt
+expect screen contains "▌a.txt"
+expect screen contains "   1 alpha one"
+expect screen contains "   2 alpha two"
+key esc
