@@ -19,6 +19,10 @@ pub const Hook = enum {
     save_post,
     /// Debounced 150 ms after the last edit.
     buffer_change,
+    /// // changed (lua-decor): 300 ms after the cursor last moved, once
+    /// per resting place (`app/idle.zig`) — what a blame line or any
+    /// cursor-following decoration hangs off.
+    cursor_idle,
     diagnostics,
     pane_focus,
     lsp_attach,
@@ -40,6 +44,7 @@ pub const HookArgs = union(Hook) {
     save_pre: struct { path: []const u8, pane: u32 },
     save_post: struct { path: []const u8, pane: u32, bytes: u64 },
     buffer_change: struct { pane: u32, line_count: u32 },
+    cursor_idle: struct { pane: u32, line: u32 },
     diagnostics: struct { path: []const u8, errors: u32, warnings: u32 },
     pane_focus: struct { pane: ?u32 },
     lsp_attach: struct { server: []const u8, pane: u32 },

@@ -96,6 +96,18 @@ pub const tables = [_]Table{
         fnOf("set_var", "mnml.http.set_var(name, value) → true, or false and the reason; NAME=value into the active env file", httpSetVar),
         fnOf("send", "mnml.http.send(pane?) → fire the request pane (the active one by default); not from inside http_request", httpSend),
     } },
+    .{ .name = "decor", .doc = "mnml.decor — what a script paints into an editor without changing its text; every decoration lives in a namespace and follows the text through edits", .fns = &.{
+        fnOf("namespace", "mnml.decor.namespace(name) → ns — the handle every other decor call takes; one per concern", decorNamespace),
+        fnOf("virtual_text", "mnml.decor.virtual_text(ns, pane, line, segments, { at = \"eol\" | \"above\" | \"below\" }) — text beside (or over / under) a line; segments are strings or { text=, fg=, bg=, bold=, italic=, underline= }", decorVirtualText),
+        fnOf("gutter", "mnml.decor.gutter(ns, pane, line, glyph, { fg = role, priority = n }) — one cell in the sign column; priority 50 by default (breakpoints 90, diagnostics 60, git 10)", decorGutter),
+        fnOf("highlight", "mnml.decor.highlight(ns, pane, start_byte, end_byte, role) — a theme role over a byte range", decorHighlight),
+        fnOf("line", "mnml.decor.line(ns, pane, line, role) — a whole-row ground", decorLine),
+        fnOf("clear", "mnml.decor.clear(ns, pane?) → how many went — the namespace's decorations, or only the ones in one pane", decorClear),
+    } },
+    .{ .name = "diagnostics", .doc = "mnml.diagnostics — publish findings the way a language server does: the gutter, the squiggle, the statusline count, the DIAGNOSTICS panel and ]d all show them", .fns = &.{
+        fnOf("set", "mnml.diagnostics.set(ns, path, { { line, col, end_col?, severity, message, source }, … }) — replaces this namespace's list for the file", diagnosticsSet),
+        fnOf("clear", "mnml.diagnostics.clear(ns, path?) — this namespace's list for one file, or for every file", diagnosticsClear),
+    } },
 };
 
 /// Build the `mnml` table and set it as a global.
@@ -730,9 +742,12 @@ fn paneActive(L: *State) !i32 {
 
 // ─── mnml.task ──────────────────────────────────────────────────────────
 
-/// `mnml.task.run{ cmd, cwd?, label?, on_done? }` → the pane id. The
-/// command runs in a task pane below; `on_done{ ok, code | signal }`
-/// fires when it exits.
+/// `mnml.task.run{ cmd, cwd?, label?, hidden?, on_line?, on_done? }` →
+/// the pane id, or the run's id when it is hidden. The command runs in
+/// a task pane below — or with no pane at all under `hidden = true`,
+/// its output going only to `on_line(text)`, a line at a time
+/// (`app/script_task.zig`). `on_done{ ok, code | signal }` fires when
+/// it exits either way.
 fn taskRun(L: *State) !i32 {
     const c = ctx(L);
     L.checkType(1, .table);
@@ -741,6 +756,11 @@ fn taskRun(L: *State) !i32 {
     const cmd = try arena.dupe(u8, needStr(L, 1, "cmd"));
     const label = try arena.dupe(u8, strField(L, 1, "label") orelse cmd);
     const cwd: []const u8 = if (strField(L, 1, "cwd")) |d| (if (std.fs.path.isAbsolute(d)) try arena.dupe(u8, d) else try std.fs.path.join(arena, &.{ app.workspace, d })) else app.workspace;
+    if (boolField(L, 1, "hidden") orelse false) return hiddenTaskRun(L, c.self, cmd, cwd);
+    if (fnField(c.self, 1, "on_line")) |r| {
+        c.self.unref(r);
+        L.raiseErrorStr("mnml.task.run: on_line needs hidden = true (a visible task's output is its pane)", .{});
+    }
     const on_done = fnField(c.self, 1, "on_done");
     errdefer if (on_done) |r| c.self.unref(r);
     const id = runners.spawn(app, label, cmd, cwd, .task) catch |err| switch (err) {
@@ -748,6 +768,21 @@ fn taskRun(L: *State) !i32 {
         else => L.raiseErrorStr("mnml.task.run: %s", .{(try arena.dupeZ(u8, app.diag.msg orelse @errorName(err))).ptr}),
     };
     if (on_done) |r| try c.self.tasks.append(c.self.gpa, .{ .pane = id, .on_done = r });
+    L.pushInteger(id);
+    return 1;
+}
+
+/// The `hidden = true` prong: no pane, `on_line` per output line.
+fn hiddenTaskRun(L: *State, self: *Lua, cmd: []const u8, cwd: []const u8) !i32 {
+    const on_line = fnField(self, 1, "on_line");
+    errdefer if (on_line) |r| self.unref(r);
+    const on_done = fnField(self, 1, "on_done");
+    errdefer if (on_done) |r| self.unref(r);
+    const id = script_task.spawn(self.app, cmd, cwd) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => L.raiseErrorStr("mnml.task.run: %s", .{@errorName(err).ptr}),
+    };
+    try self.hidden_tasks.append(self.gpa, .{ .id = id, .on_line = on_line, .on_done = on_done });
     L.pushInteger(id);
     return 1;
 }
@@ -1063,11 +1098,280 @@ fn readRewrite(L: *State, t: i32, rw: *hooks.HttpRewrite) Allocator.Error!void {
     }
 }
 
+// ─── mnml.decor, mnml.diagnostics ───────────────────────────────────────
+// An additive block. The store and the anchoring live in
+// `app/script_decor.zig`; everything here is argument checking — a
+// wrong shape raises a Lua error naming the argument and the shape it
+// wanted, which the script's `pcall` boundary turns into a toast with
+// the line (`docs/LUA.md`'s promise).
+
+const script_decor = @import("../app/script_decor.zig");
+const script_task = @import("../app/script_task.zig");
+const types = @import("../lsp/types.zig");
+
+/// A namespace handle argument: an integer `mnml.decor.namespace`
+/// answered with.
+fn nsArg(L: *State, app: *App, arg: i32) u32 {
+    const n = L.checkInteger(arg);
+    if (n < 0 or n > std.math.maxInt(u32) or !script_decor.isNamespace(app, @intCast(n))) L.argError(arg, "ns must be a handle from mnml.decor.namespace(name)");
+    return @intCast(n);
+}
+
+/// The editor pane an argument names; the active one when it is nil.
+fn paneArg(L: *State, app: *App, arg: i32) PaneId {
+    if (L.isNoneOrNil(arg)) {
+        const id = app.active orelse L.argError(arg, "pane must be a pane id (mnml.pane.active()); there is no active pane");
+        if (app.panes.editor(id) == null) L.argError(arg, "pane must name an editor pane");
+        return id;
+    }
+    const n = L.checkInteger(arg);
+    if (n < 0 or n > std.math.maxInt(PaneId)) L.argError(arg, "pane must be a pane id (mnml.pane.active())");
+    if (app.panes.editor(@intCast(n)) == null) L.argError(arg, "pane must name an editor pane");
+    return @intCast(n);
+}
+
+/// A 1-based line number, as `mnml.buf.line` and `mnml.buf.cursor` count.
+fn lineArg(L: *State, arg: i32) u32 {
+    const n = L.checkInteger(arg);
+    if (n < 1 or n > std.math.maxInt(u32)) L.argError(arg, "line must be a 1-based line number");
+    return @intCast(n);
+}
+
+fn byteArg(L: *State, arg: i32, what: [:0]const u8) usize {
+    const n = L.checkInteger(arg);
+    if (n < 0) L.raiseErrorStr("mnml.decor.highlight: %s must be a byte offset (0-based)", .{what.ptr});
+    return @intCast(n);
+}
+
+/// A theme role name, duped onto the gpa. Roles only — a script never
+/// sees a colour; an unknown role paints plain (`ui/script_view.zig`).
+fn roleArg(L: *State, gpa: Allocator, arg: i32, what: [:0]const u8) Allocator.Error![]u8 {
+    if (L.typeOf(arg) != .string) L.raiseErrorStr("%s must be a theme role name (\"accent\", \"error\", \"syn_string\", …)", .{what.ptr});
+    return gpa.dupe(u8, L.toString(arg) catch "");
+}
+
+/// The `segments` argument → gpa-owned segments: a string is one plain
+/// segment, a list is its rows, a bare `{ text = … }` is one segment.
+fn decodeSegs(self: *Lua, index: i32) Allocator.Error![]script_decor.Seg {
+    const L = self.L;
+    const gpa = self.gpa;
+    const t = L.absIndex(index);
+    var out: std.ArrayListUnmanaged(script_decor.Seg) = .empty;
+    errdefer {
+        for (out.items) |s| {
+            gpa.free(s.text);
+            if (s.fg) |f| gpa.free(f);
+            if (s.bg) |b| gpa.free(b);
+        }
+        out.deinit(gpa);
+    }
+    switch (L.typeOf(t)) {
+        .string, .number => try out.append(gpa, .{ .text = try gpa.dupe(u8, L.toString(t) catch "") }),
+        .table => {
+            if (L.getField(t, "text") != .nil) {
+                L.pop(1);
+                try out.append(gpa, try decodeSeg(self, t));
+            } else {
+                L.pop(1);
+                const n = L.lenRaw(t);
+                var i: usize = 1;
+                while (i <= n) : (i += 1) {
+                    _ = L.getIndex(t, @intCast(i));
+                    defer L.pop(1);
+                    switch (L.typeOf(-1)) {
+                        .table => try out.append(gpa, try decodeSeg(self, -1)),
+                        else => try out.append(gpa, .{ .text = try gpa.dupe(u8, L.toString(-1) catch "") }),
+                    }
+                }
+            }
+        },
+        else => L.argError(index, "segments must be a string or a list of { text=, fg=, bg=, bold=, italic=, underline= }"),
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+fn decodeSeg(self: *Lua, index: i32) Allocator.Error!script_decor.Seg {
+    const L = self.L;
+    const gpa = self.gpa;
+    const t = L.absIndex(index);
+    var seg: script_decor.Seg = .{ .text = try gpa.dupe(u8, strField(L, t, "text") orelse "") };
+    errdefer gpa.free(seg.text);
+    if (strField(L, t, "fg")) |f| seg.fg = try gpa.dupe(u8, f);
+    errdefer if (seg.fg) |f| gpa.free(f);
+    if (strField(L, t, "bg")) |b| seg.bg = try gpa.dupe(u8, b);
+    seg.bold = boolField(L, t, "bold") orelse false;
+    seg.italic = boolField(L, t, "italic") orelse false;
+    seg.underline = boolField(L, t, "underline") orelse false;
+    return seg;
+}
+
+fn setError(L: *State, where: [:0]const u8, err: script_decor.SetError) noreturn {
+    switch (err) {
+        error.OutOfMemory => L.raiseErrorStr("%s: out of memory", .{where.ptr}),
+        error.NotAnEditor => L.raiseErrorStr("%s: pane must name an editor pane", .{where.ptr}),
+        error.TooMany => L.raiseErrorStr("%s: too many decorations (the cap is 10000; clear a namespace)", .{where.ptr}),
+    }
+}
+
+/// `mnml.decor.namespace(name)` → the handle.
+fn decorNamespace(L: *State) !i32 {
+    const c = ctx(L);
+    if (L.typeOf(1) != .string) L.argError(1, "mnml.decor.namespace(name) takes a name, a string");
+    const name = L.toString(1) catch "";
+    if (name.len == 0) L.argError(1, "a namespace name cannot be empty");
+    L.pushInteger(@intCast(try script_decor.namespace(c.app, name)));
+    return 1;
+}
+
+/// `mnml.decor.virtual_text(ns, pane, line, segments, opts?)`.
+fn decorVirtualText(L: *State) !i32 {
+    const c = ctx(L);
+    const ns = nsArg(L, c.app, 1);
+    const pane = paneArg(L, c.app, 2);
+    const line = lineArg(L, 3);
+    var at: script_decor.At = .eol;
+    if (!L.isNoneOrNil(5)) {
+        if (L.typeOf(5) != .table) L.argError(5, "the options are a table: { at = \"eol\" | \"above\" | \"below\" }");
+        if (strField(L, 5, "at")) |s| at = std.meta.stringToEnum(script_decor.At, s) orelse L.argError(5, "at is \"eol\", \"above\" or \"below\"");
+    }
+    const segs = try decodeSegs(c.self, 4);
+    script_decor.addVirtualText(c.app, ns, pane, line, segs, at) catch |err| setError(L, "mnml.decor.virtual_text", err);
+    return 0;
+}
+
+/// `mnml.decor.gutter(ns, pane, line, glyph, opts?)`.
+fn decorGutter(L: *State) !i32 {
+    const c = ctx(L);
+    const ns = nsArg(L, c.app, 1);
+    const pane = paneArg(L, c.app, 2);
+    const line = lineArg(L, 3);
+    if (L.typeOf(4) != .string) L.argError(4, "glyph must be a string of one cell (\"▎\", \"●\")");
+    // Everything is checked BEFORE anything is allocated: a Lua error
+    // is a longjmp out of this function, so an `errdefer` below one
+    // would never run.
+    var role_name: []const u8 = "fg";
+    var priority: u8 = @import("../ui/editor_view.zig").mark_priority.script;
+    if (!L.isNoneOrNil(5)) {
+        if (L.typeOf(5) != .table) L.argError(5, "the options are a table: { fg = role, priority = n }");
+        if (intField(L, 5, "priority")) |p| {
+            if (p < 0 or p > 255) L.argError(5, "priority is 0…255 (50 by default; breakpoints 90, diagnostics 60, git 10)");
+            priority = @intCast(p);
+        }
+        if (strField(L, 5, "fg")) |f| role_name = f;
+    }
+    const glyph = try c.self.gpa.dupe(u8, L.toString(4) catch "");
+    errdefer c.self.gpa.free(glyph);
+    const role = try c.self.gpa.dupe(u8, role_name);
+    script_decor.addGutter(c.app, ns, pane, line, glyph, role, priority) catch |err| setError(L, "mnml.decor.gutter", err);
+    return 0;
+}
+
+/// `mnml.decor.highlight(ns, pane, start_byte, end_byte, role)`.
+fn decorHighlight(L: *State) !i32 {
+    const c = ctx(L);
+    const ns = nsArg(L, c.app, 1);
+    const pane = paneArg(L, c.app, 2);
+    const start = byteArg(L, 3, "start_byte");
+    const end = byteArg(L, 4, "end_byte");
+    const role = try roleArg(L, c.self.gpa, 5, "mnml.decor.highlight: role");
+    script_decor.addHighlight(c.app, ns, pane, start, end, role) catch |err| setError(L, "mnml.decor.highlight", err);
+    return 0;
+}
+
+/// `mnml.decor.line(ns, pane, line, role)`.
+fn decorLine(L: *State) !i32 {
+    const c = ctx(L);
+    const ns = nsArg(L, c.app, 1);
+    const pane = paneArg(L, c.app, 2);
+    const line = lineArg(L, 3);
+    const role = try roleArg(L, c.self.gpa, 4, "mnml.decor.line: role");
+    script_decor.addLine(c.app, ns, pane, line, role) catch |err| setError(L, "mnml.decor.line", err);
+    return 0;
+}
+
+/// `mnml.decor.clear(ns, pane?)` → how many decorations went.
+fn decorClear(L: *State) !i32 {
+    const c = ctx(L);
+    const ns = nsArg(L, c.app, 1);
+    const pane: ?PaneId = if (L.isNoneOrNil(2)) null else paneArg(L, c.app, 2);
+    L.pushInteger(@intCast(script_decor.clear(c.app, ns, pane)));
+    return 1;
+}
+
+/// `mnml.diagnostics.set(ns, path, list)`. `path` is workspace-relative
+/// (or absolute); `line` / `col` are 1-based, as every other position a
+/// script sees.
+fn diagnosticsSet(L: *State) !i32 {
+    const c = ctx(L);
+    const app = c.app;
+    const ns = nsArg(L, app, 1);
+    if (L.typeOf(2) != .string) L.argError(2, "path must be a string (workspace-relative, or absolute)");
+    const rel = L.toString(2) catch "";
+    if (L.typeOf(3) != .table) L.argError(3, "the list is a table of { line, col, end_col?, severity, message, source }");
+    const arena = app.frame.allocator();
+    const abs = if (std.fs.path.isAbsolute(rel)) try arena.dupe(u8, rel) else try std.fs.path.join(arena, &.{ app.workspace, rel });
+    var out: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
+    const n = L.lenRaw(3);
+    var i: usize = 1;
+    while (i <= n) : (i += 1) {
+        _ = L.getIndex(3, @intCast(i));
+        defer L.pop(1);
+        if (!L.isTable(-1)) L.argError(3, "every diagnostic is a table: { line, col, end_col?, severity, message, source }");
+        const line = intField(L, -1, "line") orelse L.argError(3, "a diagnostic needs `line`, a 1-based line number");
+        const col = intField(L, -1, "col") orelse 1;
+        const end_col = intField(L, -1, "end_col");
+        const msg = strField(L, -1, "message") orelse L.argError(3, "a diagnostic needs `message`, a string");
+        const sev_name = strField(L, -1, "severity") orelse "error";
+        const sev: types.Severity = if (std.mem.eql(u8, sev_name, "error"))
+            .err
+        else if (std.mem.eql(u8, sev_name, "warning"))
+            .warning
+        else if (std.mem.eql(u8, sev_name, "info"))
+            .info
+        else if (std.mem.eql(u8, sev_name, "hint"))
+            .hint
+        else
+            L.argError(3, "severity is \"error\", \"warning\", \"info\" or \"hint\"");
+        const start_col: u32 = @intCast(@max(col, 1) - 1);
+        const end: u32 = if (end_col) |e| @intCast(@max(@max(e, 1) - 1, start_col + 1)) else start_col + 1;
+        try out.append(arena, .{
+            .range = .{
+                .start = .{ .line = @intCast(@max(line, 1) - 1), .character = start_col },
+                .end = .{ .line = @intCast(@max(line, 1) - 1), .character = end },
+            },
+            .severity = sev,
+            .message = try arena.dupe(u8, msg),
+            .source = if (strField(L, -1, "source")) |s| try arena.dupe(u8, s) else null,
+            .code = null,
+        });
+    }
+    try script_decor.setDiagnostics(app, ns, abs, out.items);
+    return 0;
+}
+
+/// `mnml.diagnostics.clear(ns, path?)`.
+fn diagnosticsClear(L: *State) !i32 {
+    const c = ctx(L);
+    const app = c.app;
+    const ns = nsArg(L, app, 1);
+    const arena = app.frame.allocator();
+    var abs: ?[]const u8 = null;
+    if (!L.isNoneOrNil(2)) {
+        if (L.typeOf(2) != .string) L.argError(2, "path must be a string (workspace-relative, or absolute)");
+        const rel = L.toString(2) catch "";
+        abs = if (std.fs.path.isAbsolute(rel)) try arena.dupe(u8, rel) else try std.fs.path.join(arena, &.{ app.workspace, rel });
+    }
+    try script_decor.clearDiagnostics(app, ns, abs);
+    return 0;
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
 const Key = app_mod.Key;
 const keymap = @import("../core/keymap.zig");
+const dap_app = @import("../app/dap.zig");
+const lsp_app = @import("../app/lsp.zig");
 
 test "mnml.command registers user.<id>, binds its keys, runs, and a reload unregisters it" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
@@ -1183,6 +1487,308 @@ test "mnml.config.get walks structs, maps, optionals and Dynamic; mnml.workspace
         \\assert(mnml.workspace() == "/tmp")
     );
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.decor: the four decorations paint, anchored, in a namespace the reload drops" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const lua = app.script();
+    const pane = try app.openScratchWith("alpha\nbeta\ngamma\n");
+    _ = pane;
+    lua.runString(
+        \\ns = mnml.decor.namespace("demo")
+        \\local pane = mnml.pane.active()
+        \\mnml.decor.virtual_text(ns, pane, 1, { { text = "  << here", fg = "muted" } })
+        \\mnml.decor.virtual_text(ns, pane, 2, "ABOVE-ROW", { at = "above" })
+        \\mnml.decor.virtual_text(ns, pane, 2, "BELOW-ROW", { at = "below" })
+        \\mnml.decor.gutter(ns, pane, 3, "!", { fg = "accent", priority = 70 })
+        \\mnml.decor.line(ns, pane, 3, "match")
+        \\mnml.decor.highlight(ns, pane, 6, 10, "match")
+    ) catch |err| {
+        std.debug.print("lua: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    {
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "alpha  << here") != null);
+        try testing.expect(std.mem.indexOf(u8, txt, "ABOVE-ROW") != null);
+        try testing.expect(std.mem.indexOf(u8, txt, "BELOW-ROW") != null);
+        try testing.expect(std.mem.indexOf(u8, txt, "!") != null);
+        // The rows are in text order: above, the line, below.
+        const above = std.mem.indexOf(u8, txt, "ABOVE-ROW").?;
+        const beta = std.mem.indexOf(u8, txt, "beta").?;
+        const below = std.mem.indexOf(u8, txt, "BELOW-ROW").?;
+        try testing.expect(above < beta and beta < below);
+    }
+    // A line inserted above line 1 carries every decoration down with
+    // its own text.
+    const e = app.activeEditor().?;
+    _ = try app.applyOps(e, &.{ .{ .set_cursor_byte = 0 }, .{ .insert_str = "zero\n" } });
+    try app.render();
+    {
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "alpha  << here") != null);
+        const above = std.mem.indexOf(u8, txt, "ABOVE-ROW").?;
+        try testing.expect(std.mem.indexOf(u8, txt, "zero").? < above);
+    }
+    // The namespace goes with the reload.
+    try lua.reset();
+    try app.render();
+    {
+        const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "<< here") == null);
+        try testing.expect(std.mem.indexOf(u8, txt, "ABOVE-ROW") == null);
+    }
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.decor: every argument error names the argument and the shape it wanted" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratchWith("alpha\nbeta\n");
+    try lua.runString("ns = mnml.decor.namespace('demo')");
+    const Case = struct { src: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .src = "mnml.decor.namespace()", .want = "takes a name, a string" },
+        .{ .src = "mnml.decor.namespace('')", .want = "cannot be empty" },
+        .{ .src = "mnml.decor.gutter(999, mnml.pane.active(), 1, '!')", .want = "mnml.decor.namespace(name)" },
+        .{ .src = "mnml.decor.line(ns, 77, 1, 'match')", .want = "editor pane" },
+        .{ .src = "mnml.decor.line(ns, mnml.pane.active(), 0, 'match')", .want = "1-based line number" },
+        .{ .src = "mnml.decor.line(ns, mnml.pane.active(), 1, 3)", .want = "theme role name" },
+        .{ .src = "mnml.decor.gutter(ns, mnml.pane.active(), 1, 7)", .want = "glyph must be a string" },
+        .{ .src = "mnml.decor.gutter(ns, mnml.pane.active(), 1, '!', { priority = 900 })", .want = "priority is 0" },
+        .{ .src = "mnml.decor.virtual_text(ns, mnml.pane.active(), 1, 'x', { at = 'sideways' })", .want = "at is \"eol\"" },
+        .{ .src = "mnml.decor.virtual_text(ns, mnml.pane.active(), 1, true)", .want = "segments must be a string or a list" },
+        .{ .src = "mnml.decor.highlight(ns, mnml.pane.active(), -1, 4, 'match')", .want = "byte offset" },
+        .{ .src = "mnml.decor.highlight(ns, mnml.pane.active(), 0, 4, 9)", .want = "role must be a theme role" },
+        .{ .src = "mnml.diagnostics.set(ns, 3, {})", .want = "path must be a string" },
+        .{ .src = "mnml.diagnostics.set(ns, 'a.js', 'nope')", .want = "the list is a table" },
+        .{ .src = "mnml.diagnostics.set(ns, 'a.js', { { col = 1, message = 'x' } })", .want = "needs `line`" },
+        .{ .src = "mnml.diagnostics.set(ns, 'a.js', { { line = 1 } })", .want = "needs `message`" },
+        .{ .src = "mnml.diagnostics.set(ns, 'a.js', { { line = 1, message = 'x', severity = 'loud' } })", .want = "severity is" },
+    };
+    for (cases) |c| {
+        try testing.expectError(error.Failed, lua.runString(c.src));
+        const msg = lua.last_error orelse "";
+        if (std.mem.indexOf(u8, msg, c.want) == null) {
+            std.debug.print("`{s}`\n  wanted: {s}\n  got:    {s}\n", .{ c.src, c.want, msg });
+            return error.TestExpectedEqual;
+        }
+    }
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.decor.gutter: a script mark sits between a breakpoint and git's bar, and its priority moves it" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const lua = app.script();
+    const pane = try app.openScratchWith("alpha\nbeta\n");
+    const e = app.panes.editor(pane).?;
+    // A breakpoint of the debugger's on the same line as the script's mark.
+    const path = try testing.allocator.dupe(u8, "/tmp/bp.zig");
+    defer testing.allocator.free(path);
+    e.buf.doc.setPath(path) catch unreachable;
+    try dap_app.toggleBreakpointAt(&app, path, 0);
+    try lua.runString(
+        \\local ns = mnml.decor.namespace("marks")
+        \\mnml.decor.gutter(ns, mnml.pane.active(), 1, "S", { fg = "accent" })
+        \\mnml.decor.gutter(ns, mnml.pane.active(), 2, "S", { fg = "accent" })
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const render_mod = @import("../app/render.zig");
+    var marks = try render_mod.gutterMarksFor(&app, arena.allocator(), pane, e, false);
+    // Line 0: the breakpoint wins the cell; line 1: the script's does.
+    try testing.expectEqualStrings("\u{25CF}", firstSign(marks, 0).?.glyph);
+    try testing.expectEqualStrings("S", firstSign(marks, 1).?.glyph);
+    // The script asks to outrank the breakpoint and does.
+    try lua.runString(
+        \\local ns = mnml.decor.namespace("marks")
+        \\mnml.decor.clear(ns)
+        \\mnml.decor.gutter(ns, mnml.pane.active(), 1, "S", { fg = "accent", priority = 99 })
+    );
+    marks = try render_mod.gutterMarksFor(&app, arena.allocator(), pane, e, false);
+    try testing.expectEqualStrings("S", firstSign(marks, 0).?.glyph);
+}
+
+fn firstSign(marks: []const @import("../ui/editor_view.zig").GutterMark, line: u32) ?@import("../ui/editor_view.zig").GutterMark {
+    for (marks) |m| if (m.line == line and m.kind == .sign) return m;
+    return null;
+}
+
+test "mnml.diagnostics: a script's findings reach the gutter, the statusline, the panel and ]d" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const lua = app.script();
+    const pane = try app.openScratchWith("one\ntwo\nthree\n");
+    const e = app.panes.editor(pane).?;
+    const path = try testing.allocator.dupe(u8, "/tmp/app.js");
+    defer testing.allocator.free(path);
+    e.buf.doc.setPath(path) catch unreachable;
+    try lua.runString(
+        \\ns = mnml.decor.namespace("eslint")
+        \\mnml.diagnostics.set(ns, "app.js", {
+        \\  { line = 1, col = 1, end_col = 4, severity = "warning", message = "unused", source = "eslint" },
+        \\  { line = 3, col = 1, severity = "error", message = "no-undef", source = "eslint" },
+        \\})
+    );
+    const list = lsp_app.diagnosticsFor(&app, path);
+    try testing.expectEqual(@as(usize, 2), list.len);
+    try testing.expectEqualStrings("eslint", list[0].source.?);
+    // The squiggle and the gutter dot, from the same store a server fills.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const uls = try lsp_app.underlinesFor(&app, arena.allocator(), e, &app.theme);
+    try testing.expectEqual(@as(usize, 2), uls.len);
+    try testing.expectEqual(@as(usize, 0), uls[0].start);
+    try testing.expectEqual(@as(usize, 3), uls[0].end);
+    const marks = try lsp_app.marksFor(&app, arena.allocator(), path, &app.theme, false);
+    try testing.expectEqual(@as(usize, 2), marks.len);
+    // The statusline chip counts them, and `]d` walks them.
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "1") != null);
+    e.buf.editor.setCursor(0);
+    try command.run(&app, .{ .static = .@"lsp.next_diagnostic" });
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "no-undef") != null);
+    // The DIAGNOSTICS panel lists them under the script's own source.
+    try command.run(&app, .{ .static = .@"lsp.diagnostics" });
+    try app.render();
+    const panel = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(panel);
+    try testing.expect(std.mem.indexOf(u8, panel, "DIAGNOSTICS (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, panel, "unused") != null);
+    // A second namespace's set does not replace the first's; clearing
+    // one leaves the other.
+    try lua.runString(
+        \\local other = mnml.decor.namespace("mine")
+        \\mnml.diagnostics.set(other, "app.js", { { line = 2, message = "mine", source = "mine" } })
+    );
+    try testing.expectEqual(@as(usize, 3), lsp_app.diagnosticsFor(&app, path).len);
+    try lua.runString("mnml.diagnostics.clear(ns, 'app.js')");
+    try testing.expectEqual(@as(usize, 1), lsp_app.diagnosticsFor(&app, path).len);
+    try testing.expectEqualStrings("mine", lsp_app.diagnosticsFor(&app, path)[0].source.?);
+    // The reload takes what is left.
+    try lua.reset();
+    try testing.expectEqual(@as(usize, 0), lsp_app.diagnosticsFor(&app, path).len);
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "the budget applies to a decoration set in a hot loop" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratchWith("one\ntwo\n");
+    try testing.expectError(error.Failed, lua.runString(
+        \\local ns = mnml.decor.namespace("hot")
+        \\while true do mnml.decor.gutter(ns, mnml.pane.active(), 1, "!") ; mnml.decor.clear(ns) end
+    ));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "budget exceeded") != null);
+    // And the cap holds when nothing clears them.
+    try testing.expectError(error.Failed, lua.runString(
+        \\local ns = mnml.decor.namespace("hot")
+        \\for _ = 1, 20000 do mnml.decor.gutter(ns, mnml.pane.active(), 1, "!") end
+    ));
+    try testing.expect(app.script_decor.items.items.len <= script_decor.max_items);
+}
+
+test "docs/examples/scripts/git-blame-line.lua loads, asks git on cursor_idle and paints what comes back" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const lua = app.script();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/git-blame-line.lua", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(src);
+    lua.runString(src) catch |err| {
+        std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expectEqual(@as(usize, 1), app.hooks.count(.cursor_idle));
+    // A pane with no path (a scratch buffer) asks nothing and errors
+    // on nothing.
+    _ = try app.openScratchWith("alpha\nbeta\n");
+    app.hooks.emit(&app, .{ .cursor_idle = .{ .pane = app.active.?, .line = 1 } });
+    try testing.expectEqual(@as(usize, 0), app.script_decor.items.items.len);
+    try testing.expect(app.lastToast() == null);
+    // Feed the script the shape `git blame --date=relative` prints,
+    // through the same `on_line` / `on_done` the task would.
+    try lua.runString(
+        \\seen = nil
+        \\mnml.task.run = function(o)
+        \\  seen = o.cmd
+        \\  o.on_line("^0d9ac1f (Chris McLennan 3 days ago 1) alpha")
+        \\  o.on_done({ ok = true, code = 0 })
+        \\  return 1
+        \\end
+        \\mnml.buf.path = function() return "src/main.zig" end
+    );
+    app.hooks.emit(&app, .{ .cursor_idle = .{ .pane = app.active.?, .line = 2 } });
+    try lua.runString("assert(seen and seen:find('git blame %-L 2,2'), tostring(seen))");
+    try testing.expectEqual(@as(usize, 1), app.script_decor.items.items.len);
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "Chris McLennan 3 days ago") != null);
+    // The same line again asks nothing more.
+    try lua.runString("seen = nil");
+    app.hooks.emit(&app, .{ .cursor_idle = .{ .pane = app.active.?, .line = 2 } });
+    try lua.runString("assert(seen == nil, 'asked twice for one line')");
+}
+
+test "docs/examples/scripts/eslint.lua loads and turns compact output into diagnostics on save" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/eslint.lua", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(src);
+    lua.runString(src) catch |err| {
+        std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    // The task is faked so the test does not need eslint installed;
+    // the parsing and the sink are the example's own.
+    try lua.runString(
+        \\mnml.task.run = function(o)
+        \\  cmd = o.cmd
+        \\  o.on_line("app.js: line 3, col 5, Warning - 'x' is assigned but never used (no-unused-vars)")
+        \\  o.on_line("app.js: line 9, col 1, Error - 'y' is not defined (no-undef)")
+        \\  o.on_line("2 problems")
+        \\  o.on_done({ ok = false, code = 1 })
+        \\end
+    );
+    // A `.zig` save is not eslint's business.
+    app.hooks.emit(&app, .{ .save_post = .{ .path = "main.zig", .pane = 0, .bytes = 4 } });
+    try lua.runString("assert(cmd == nil)");
+    app.hooks.emit(&app, .{ .save_post = .{ .path = "app.js", .pane = 0, .bytes = 4 } });
+    try lua.runString("assert(cmd:find('eslint'), tostring(cmd))");
+    const list = lsp_app.diagnosticsFor(&app, "/tmp/app.js");
+    try testing.expectEqual(@as(usize, 2), list.len);
+    try testing.expectEqual(types.Severity.warning, list[0].severity);
+    try testing.expectEqual(@as(u32, 2), list[0].range.start.line);
+    try testing.expectEqual(@as(u32, 4), list[0].range.start.character);
+    try testing.expectEqualStrings("eslint", list[0].source.?);
+    try testing.expect(std.mem.indexOf(u8, list[0].message, "no-unused-vars") != null);
+    try testing.expectEqual(types.Severity.err, list[1].severity);
+    // A clean run replaces the list with nothing.
+    try lua.runString(
+        \\mnml.task.run = function(o) o.on_done({ ok = true, code = 0 }) end
+    );
+    app.hooks.emit(&app, .{ .save_post = .{ .path = "app.js", .pane = 0, .bytes = 4 } });
+    try testing.expectEqual(@as(usize, 0), lsp_app.diagnosticsFor(&app, "/tmp/app.js").len);
 }
 
 test "docs/examples/init.lua loads and its surfaces are all there" {

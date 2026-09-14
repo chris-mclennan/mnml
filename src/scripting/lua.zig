@@ -72,6 +72,15 @@ pub const Task = struct {
     on_done: LuaRef,
 };
 
+/// `mnml.task.run{ hidden = true, on_line = fn, on_done = fn }`: a run
+/// with no pane (`app/script_task.zig`), found by the run's id when its
+/// lines and its exit arrive.
+pub const HiddenTask = struct {
+    id: u32,
+    on_line: ?LuaRef = null,
+    on_done: ?LuaRef = null,
+};
+
 pub const OriginKind = enum {
     command,
     hook,
@@ -131,6 +140,7 @@ pub const Lua = struct {
     /// The `on_accept` refs of the picker that is open, by row.
     picker_items: std.ArrayList(PickerItem) = .empty,
     tasks: std.ArrayList(Task) = .empty,
+    hidden_tasks: std.ArrayList(HiddenTask) = .empty,
     /// Everything registered since the last reset, in order.
     origins: std.ArrayList(Origin) = .empty,
     /// The script error that is a diagnostic right now (`diag.zig`).
@@ -162,6 +172,7 @@ pub const Lua = struct {
         self.sources.deinit(self.gpa);
         self.picker_items.deinit(self.gpa);
         self.tasks.deinit(self.gpa);
+        self.hidden_tasks.deinit(self.gpa);
         self.origins.deinit(self.gpa);
         if (self.report) |r| self.gpa.free(r.path);
         self.gpa.destroy(self);
@@ -200,6 +211,9 @@ pub const Lua = struct {
         self.sources.clearRetainingCapacity();
         self.picker_items.clearRetainingCapacity();
         self.tasks.clearRetainingCapacity();
+        // A hidden run keeps going; its events find no row and are
+        // dropped (`app/script_task.zig`).
+        self.hidden_tasks.clearRetainingCapacity();
         self.clearOrigins();
         self.loaded_files = 0;
         self.map_seq = 0;
@@ -772,6 +786,46 @@ pub const Lua = struct {
         }
     }
 
+    fn hiddenTask(self: *Lua, id: u32) ?*HiddenTask {
+        for (self.hidden_tasks.items) |*t| if (t.id == id) return t;
+        return null;
+    }
+
+    /// One line of a hidden task's output → `on_line(text)`.
+    pub fn hiddenTaskLine(self: *Lua, id: u32, text: []const u8) void {
+        const t = self.hiddenTask(id) orelse return;
+        const r = t.on_line orelse return;
+        self.pushRef(r);
+        _ = self.L.pushString(text);
+        self.pcall(1, 0) catch self.toastError("on_line");
+    }
+
+    /// A hidden task exited → `on_done{ ok, code | signal }`, and the
+    /// row goes.
+    pub fn hiddenTaskDone(self: *Lua, id: u32, ok: bool, code: i32, signal: u8) void {
+        var idx: usize = 0;
+        const t = while (idx < self.hidden_tasks.items.len) : (idx += 1) {
+            if (self.hidden_tasks.items[idx].id == id) break self.hidden_tasks.items[idx];
+        } else return;
+        _ = self.hidden_tasks.orderedRemove(idx);
+        if (t.on_line) |r| self.unref(r);
+        const done = t.on_done orelse return;
+        defer self.unref(done);
+        const L = self.L;
+        self.pushRef(done);
+        L.createTable(0, 2);
+        L.pushBoolean(ok);
+        L.setField(-2, "ok");
+        if (signal != 0) {
+            L.pushInteger(signal);
+            L.setField(-2, "signal");
+        } else {
+            L.pushInteger(code);
+            L.setField(-2, "code");
+        }
+        self.pcall(1, 0) catch self.toastError("on_done");
+    }
+
     pub fn nextDeadlineMs(self: *const Lua) ?i64 {
         var next: ?i64 = null;
         for (self.segments.items) |s| next = @min(next orelse std.math.maxInt(i64), s.next_poll_ms);
@@ -813,6 +867,9 @@ pub const Lua = struct {
         }
         _ = app.dyn_commands.unregisterOwner(.script);
         _ = app.hooks.unsubscribeLua();
+        // Every namespace goes with the state: the decorations it holds
+        // and the diagnostics it published (`app/script_decor.zig`).
+        try @import("../app/script_decor.zig").reset(app);
         if (app.overlay == .picker and app.overlay.picker.kind == .lua) {
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;

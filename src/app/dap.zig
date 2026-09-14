@@ -494,15 +494,15 @@ pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Th
             .log => if (ascii) "@" else "\u{25C6}",
         };
         const dim = !b.enabled or (b.verified != null and !b.verified.?);
-        try out.append(arena, .{ .line = b.line, .kind = .sign, .glyph = glyph, .style = if (dim) theme.muted else theme.error_fg });
+        try out.append(arena, .{ .line = b.line, .kind = .sign, .glyph = glyph, .style = if (dim) theme.muted else theme.error_fg, .priority = editor_view.mark_priority.breakpoint });
     }
     if (app.dap.arrow) |a| if (std.mem.eql(u8, a.path, p)) {
         // Replace the breakpoint's mark on that line rather than add.
         for (out.items) |*m| if (m.line == a.line) {
-            m.* = .{ .line = a.line, .kind = .sign, .glyph = if (ascii) ">" else "▶", .style = theme.warn_fg };
+            m.* = .{ .line = a.line, .kind = .sign, .glyph = if (ascii) ">" else "▶", .style = theme.warn_fg, .priority = editor_view.mark_priority.breakpoint };
             return out.items;
         };
-        try out.append(arena, .{ .line = a.line, .kind = .sign, .glyph = if (ascii) ">" else "▶", .style = theme.warn_fg });
+        try out.append(arena, .{ .line = a.line, .kind = .sign, .glyph = if (ascii) ">" else "▶", .style = theme.warn_fg, .priority = editor_view.mark_priority.breakpoint });
     };
     return out.items;
 }

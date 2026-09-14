@@ -72,9 +72,17 @@ pub const Label = struct { byte: usize, text: []const u8 };
 pub const VirtualText = struct { byte: usize, text: []const u8, style: Style };
 /// One clickable piece of a virtual line.
 pub const VirtualSeg = struct { text: []const u8, style: Style, hit: ?u32 = null };
-/// A row above `line` (0-based). Sorted by `line`; several rows may
-/// name the same line and stack in order.
-pub const VirtualLine = struct { line: u32, segments: []const VirtualSeg };
+/// A row above `line` (0-based) — or below it when `below`. Sorted by
+/// `line`; several rows may name the same line and stack in order.
+/// // changed (lua-decor): `below` — `mnml.decor.virtual_text` with
+/// `at = "below"` puts the row after the line's last row. A virtual
+/// row is counted by the scroll math and never carries the cursor:
+/// `j` / `k` move by text lines, so they step over it.
+pub const VirtualLine = struct { line: u32, segments: []const VirtualSeg, below: bool = false };
+/// A whole-row ground on `line` (0-based) — what `mnml.decor.line`'s
+/// role paints. Sorted by `line`; the first entry for a line wins, and
+/// the cursor line's own band still wins over it.
+pub const LineGround = struct { line: u32, style: Style };
 
 pub const Doc = struct {
     text: []const u8,
@@ -122,6 +130,8 @@ pub const Doc = struct {
     virtual_text: []const VirtualText = &.{},
     /// Sorted by `line`.
     virtual_lines: []const VirtualLine = &.{},
+    /// Sorted by `line`; the first entry for a line paints its ground.
+    line_grounds: []const LineGround = &.{},
 
     // ── ui toggles ──
     // The `ui.*` fields that change what a cell looks like. Every one
@@ -167,12 +177,34 @@ pub const MarkKind = enum { added, modified, deleted, sign };
 /// view paints the first match on a line. With line numbers off the
 /// gutter is one cell while marks exist, both columns coincide, and the
 /// sign wins over the change mark.
+/// // changed (lua-decor): `priority` says who wins the shared cell
+/// when several producers mark the same line. The app sorts the list
+/// by it (stable, highest first) before the view walks it, so the
+/// order below is the one that paints — see `priority.*` in
+/// `app/script_decor.zig` and `docs/LUA.md`.
 pub const GutterMark = struct {
     line: u32,
     kind: MarkKind,
     glyph: []const u8 = "",
     style: Style = .{},
+    priority: u8 = 50,
 };
+/// Who wins the shared sign cell. Highest first; a script's gutter mark
+/// defaults to `script` and may name any number, so a script can put
+/// itself above a diagnostic or below one. `docs/LUA.md` states the
+/// same ladder.
+pub const mark_priority = struct {
+    /// The debugger's ▶ and its breakpoints (`app/dap.zig`).
+    pub const breakpoint: u8 = 90;
+    /// A diagnostic's severity dot (`app/lsp.zig`).
+    pub const diagnostic: u8 = 60;
+    /// `mnml.decor.gutter`'s default.
+    pub const script: u8 = 50;
+    /// Git's change bars, which live in the gutter's other column
+    /// anyway (`app/git.zig`).
+    pub const git_change: u8 = 10;
+};
+
 /// The widest blame label the gutter will show.
 pub const blame_max_w: u16 = 32;
 
@@ -551,8 +583,8 @@ pub fn markStyle(t: *const Theme, kind: MarkKind, base: Style) Style {
     });
 }
 
-/// The virtual lines stacked above `line`.
-fn virtualLinesAt(doc: Doc, line: u32) []const VirtualLine {
+/// Every virtual line naming `line`, above and below together.
+fn virtualLinesOf(doc: Doc, line: u32) []const VirtualLine {
     const vl = doc.virtual_lines;
     var lo: usize = 0;
     var hi: usize = vl.len;
@@ -563,6 +595,24 @@ fn virtualLinesAt(doc: Doc, line: u32) []const VirtualLine {
     var e = lo;
     while (e < vl.len and vl[e].line == line) e += 1;
     return vl[lo..e];
+}
+
+/// How many of `line`'s virtual rows sit on the given side.
+fn virtualLineCount(doc: Doc, line: u32, below: bool) u32 {
+    var n: u32 = 0;
+    for (virtualLinesOf(doc, line)) |vl| {
+        if (vl.below == below) n += 1;
+    }
+    return n;
+}
+
+/// The whole-row ground `line` was given, if any (`mnml.decor.line`).
+fn lineGroundAt(doc: Doc, line: u32) ?Style {
+    for (doc.line_grounds) |g| {
+        if (g.line == line) return g.style;
+        if (g.line > line) break;
+    }
+    return null;
 }
 
 /// Index of the first virtual text at or past byte `off`.
@@ -577,12 +627,34 @@ fn firstVirtualAt(vt: []const VirtualText, off: usize) usize {
 }
 
 /// Rows `line` takes at `text_w` (1 when not wrapping or folded), plus
-/// the virtual lines above it.
+/// the virtual lines above and below it.
 fn lineRows(ui: Ui, doc: Doc, lines: Lines, line: u32, text_w: u16) Allocator.Error!u32 {
-    const above: u32 = @intCast(virtualLinesAt(doc, line).len);
-    if (!doc.wrap or foldStartingAt(doc.folds, line) != null) return 1 + above;
+    const virt: u32 = @intCast(virtualLinesOf(doc, line).len);
+    if (!doc.wrap or foldStartingAt(doc.folds, line) != null) return 1 + virt;
     const cells = try layoutLine(ui, lines.slice(doc.text, line), doc.tab_width);
-    return @as(u32, @intCast((try wrapRows(ui.arena, cells, text_w)).len)) + above;
+    return @as(u32, @intCast((try wrapRows(ui.arena, cells, text_w)).len)) + virt;
+}
+
+/// Paint `line`'s virtual rows on one side, top-down from `y`, and
+/// answer the row after them. A segment with a `hit` is clickable
+/// where it painted, exactly as in a script pane.
+fn drawVirtualRows(ui: Ui, pane: PaneId, area: Rect, doc: Doc, line: u32, below: bool, text_x: u16, text_w: u16, y_in: u16) u16 {
+    const t = ui.theme;
+    var y = y_in;
+    for (virtualLinesOf(doc, line)) |vl| {
+        if (vl.below != below) continue;
+        if (y >= area.bottom()) break;
+        ui.fill(Rect.init(area.x, y, area.w, 1), t.bg);
+        var vx: u16 = text_x;
+        for (vl.segments) |seg| {
+            if (vx >= text_x + text_w) break;
+            const used = ui.putStr(vx, y, text_x + text_w - vx, seg.text, Theme.onBg(seg.style, t.bg.bg));
+            if (seg.hit) |id| ui.hit(Rect.init(vx, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
+            vx += used + 2;
+        }
+        y += 1;
+    }
+    return y;
 }
 
 /// Adjusts `view` so the cursor's row is inside `text_h` rows.
@@ -613,7 +685,7 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
             try starts.append(ui.arena, line);
             sum += h;
         }
-        var subrow: u32 = @intCast(virtualLinesAt(doc, cur_line).len);
+        var subrow: u32 = virtualLineCount(doc, cur_line, false);
         if (doc.wrap and foldStartingAt(doc.folds, cur_line) == null) {
             const rows = try wrapRows(ui.arena, cur_cells, text_w);
             subrow += rowOfCell(rows, cellIndex(cur_cells, cur_off));
@@ -731,7 +803,12 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
 
         const is_cursor_line = line == cursor_line;
         const is_stopped_line = doc.stopped_line != null and doc.stopped_line.? == line;
-        const row_style: Style = if ((is_cursor_line and doc.cursor_line_band) or is_stopped_line) t.cursor_line else t.bg;
+        const row_style: Style = if ((is_cursor_line and doc.cursor_line_band) or is_stopped_line)
+            t.cursor_line
+        else if (lineGroundAt(doc, line)) |g|
+            g
+        else
+            t.bg;
         var spans = RangeCursor(Span).init(doc.spans, line_start);
         var var_spans = RangeCursor(VarSpan).init(doc.var_spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
@@ -739,18 +816,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         var vti = firstVirtualAt(doc.virtual_text, line_start);
 
         // ── virtual lines: the rows above this line (a code lens) ──
-        for (virtualLinesAt(doc, line)) |vl| {
-            if (y >= area.bottom()) break;
-            ui.fill(Rect.init(area.x, y, area.w, 1), t.bg);
-            var vx: u16 = text_x;
-            for (vl.segments) |seg| {
-                if (vx >= text_x + text_w) break;
-                const used = ui.putStr(vx, y, text_x + text_w - vx, seg.text, Theme.onBg(seg.style, t.bg.bg));
-                if (seg.hit) |id| ui.hit(Rect.init(vx, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
-                vx += used + 2;
-            }
-            y += 1;
-        }
+        y = drawVirtualRows(ui, pane, area, doc, line, false, text_x, text_w, y);
         var words = RangeCursor(Range).init(doc.word_matches, line_start);
         // ── ui toggles ──
         const toggles = try lineToggles(ui, doc, line_text, cells, is_cursor_line, &rainbow_depth);
@@ -995,6 +1061,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             }
             y += 1;
         }
+        // ── virtual lines: the rows below this line ──
+        y = drawVirtualRows(ui, pane, area, doc, line, true, text_x, text_w, y);
     }
     if (bar) scrollbar.drawVerticalLook(ui, Rect.init(area.right() - scrollbar_w, area.y, scrollbar_w, area.h), .{ .pane = pane }, total, text_h, view.scroll_line, .solid);
     return found;
@@ -1654,6 +1722,64 @@ test "a virtual line paints above its line, counts in the scroll math, and its s
     _ = draw(g.ui(), 5, g.full(), &view, d);
     try g.expectRows(&.{ "3 references  ▶ run", "fn b() {}", "fn c() {}" });
     try testing.expectEqual(@as(u32, 1), view.scroll_line);
+}
+
+test "a virtual line below its line paints after it, counts in the scroll math, and the cursor never lands on it" {
+    var f = try Fixture.init(30, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn a() {}\nfn b() {}\nfn c() {}");
+    d.line_numbers = false;
+    d.virtual_lines = &.{.{ .line = 0, .segments = &.{.{ .text = "  chris · 3d ago", .style = .{} }}, .below = true }};
+    d.cursor = 0;
+    const cur = draw(f.ui(), 5, f.full(), &view, d);
+    try f.expectRows(&.{ "fn a() {}", "  chris · 3d ago", "fn b() {}" });
+    // The cursor is on line 0's own row, not on the virtual one.
+    try testing.expectEqual(Cursor{ .x = 0, .y = 0 }, cur.?);
+    // The row costs one: with the cursor on line 2 the top scrolls away.
+    d.cursor = 20;
+    _ = draw(f.ui(), 5, f.full(), &view, d);
+    try testing.expectEqual(@as(u32, 1), view.scroll_line);
+    try f.expectRows(&.{ "fn b() {}", "fn c() {}", "" });
+}
+
+test "a line ground paints the whole row, and the cursor line's band still wins" {
+    var f = try Fixture.init(10, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab\ncd\nef");
+    d.cursor = 0;
+    d.line_grounds = &.{ .{ .line = 1, .style = .{ .bg = f.theme.match.bg } }, .{ .line = 0, .style = .{ .bg = f.theme.selection.bg } } };
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    // Line 1 wears its ground across the row…
+    try testing.expect(f.bgEql(0, 1, f.theme.match));
+    try testing.expect(f.bgEql(9, 1, f.theme.match));
+    // …line 0 is the cursor line, so its band wins over the ground…
+    try testing.expect(f.bgEql(9, 0, f.theme.cursor_line));
+    // …and a line with no ground is plain.
+    try testing.expect(f.bgEql(9, 2, f.theme.bg));
+}
+
+test "the gutter paints the highest-priority sign on a line" {
+    var f = try Fixture.init(12, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab\ncd");
+    d.cursor = 0;
+    // The app hands the list sorted by priority; the view paints the
+    // first sign it finds for the line.
+    d.gutter_marks = &.{
+        .{ .line = 0, .kind = .sign, .glyph = "B", .style = .{}, .priority = mark_priority.breakpoint },
+        .{ .line = 0, .kind = .sign, .glyph = "S", .style = .{}, .priority = mark_priority.script },
+        .{ .line = 1, .kind = .sign, .glyph = "S", .style = .{}, .priority = mark_priority.script },
+        .{ .line = 1, .kind = .added, .glyph = "", .style = .{}, .priority = mark_priority.git_change },
+    };
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectContains("B");
+    try f.expectLacks("BS");
+    // The script's sign and git's change bar share line 1's gutter, one
+    // column each.
+    try f.expectRow(1, "S  2▎cd");
 }
 
 test "a degenerate area never panics" {

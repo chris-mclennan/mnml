@@ -1,0 +1,37 @@
+# Lua (D10): the diagnostics sink. What a script publishes through
+# `mnml.diagnostics.set` is the same store a language server fills, so
+# the gutter dot, the squiggle, the statusline count, the DIAGNOSTICS
+# panel and `]d` all show it — under the script's own `source`. Keyed by
+# (namespace, path): a second namespace's set does not replace the
+# first's, and a reload drops both.
+write app.js "const x = 1;\nconst y = 2;\nconst z = 3;\n"
+write .mnml/init.lua "ns = mnml.decor.namespace('eslint')\nother = mnml.decor.namespace('mine')\nmnml.command{ id = 'lint', run = function()\n  mnml.diagnostics.set(ns, 'app.js', {\n    { line = 1, col = 7, end_col = 8, severity = 'warning', message = 'x is never read', source = 'eslint' },\n    { line = 3, col = 7, severity = 'error', message = 'z is not defined', source = 'eslint' },\n  })\nend }\nmnml.command{ id = 'mine', run = function()\n  mnml.diagnostics.set(other, 'app.js', { { line = 2, message = 'y is suspicious', source = 'mine' } })\nend }\nmnml.command{ id = 'unlint', run = function() mnml.diagnostics.clear(ns, 'app.js') end }\n"
+command script.reload
+open app.js
+command user.lint
+# The gutter dot on both lines, and the panel with the message and the
+# source the script named.
+expect screen contains "●  1 const x = 1;"
+command lsp.diagnostics
+expect screen contains "DIAGNOSTICS (2)"
+expect screen contains "x is never read"
+expect screen contains "z is not defined"
+# The panel names the source beside the location (clipped from the left
+# in a narrow panel, so the file and line survive).
+expect screen contains "app.js:1"
+# `]d` walks them like a server's, and says who found it.
+command lsp.next_diagnostic
+expect screen contains "warning (eslint): x is never read"
+# A second namespace adds to the file; clearing the first leaves it.
+command user.mine
+expect screen contains "DIAGNOSTICS (3)"
+command user.unlint
+expect screen contains "DIAGNOSTICS (1)"
+expect screen contains "y is suspicious"
+# (the `]d` toast above says the same words for four seconds)
+wait 4100
+expect screen lacks "x is never read"
+# The reload takes what is left.
+command script.reload
+expect screen contains "DIAGNOSTICS (0)"
+expect screen lacks "y is suspicious"

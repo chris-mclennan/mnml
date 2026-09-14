@@ -87,6 +87,9 @@ const grep = @import("app/grep.zig");
 const jumplist = @import("app/jumplist.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
+const script_decor = @import("app/script_decor.zig");
+const idle = @import("app/idle.zig");
+const script_task = @import("app/script_task.zig");
 const http_app = @import("app/http.zig");
 const http_panel = @import("app/http_panel.zig");
 const request_pane = @import("app/request_pane.zig");
@@ -864,6 +867,13 @@ pub const App = struct {
     /// The DEBUG section's cursor, folds and last-stop values.
     debug_panel: debug_panel.State = .{},
     lsp: lsp.State = .{},
+    /// The hidden tasks a script started (`app/script_task.zig`).
+    script_tasks: script_task.State = .{},
+    /// The two debounced hooks the tick fires (`app/idle.zig`).
+    idle: idle.State = .{},
+    /// What the scripts painted into the editors and published as
+    /// diagnostics (`app/script_decor.zig`); dropped by a reload.
+    script_decor: script_decor.State = .{},
     focus: FocusId = .tree,
     active: ?PaneId = null,
     /// The editor pane most recently active — a runner pane taking
@@ -1391,6 +1401,8 @@ pub const App = struct {
         // Script panes unref'd into the state when the pane store went
         // (above, before the manifests); the state closes after them.
         if (self.lua) |l| l.destroy();
+        self.script_tasks.deinit(self.io);
+        self.script_decor.deinit(gpa);
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
@@ -2129,6 +2141,7 @@ pub const App = struct {
             .spend => |result| try spend.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
             .grep => |result| try grep.handle(self, result),
+            .script_task => |t| script_task.handle(self, t),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -2255,6 +2268,7 @@ pub const App = struct {
         try lsp.tick(self, now);
         try ai_app.tick(self);
         try http_app.tick(self, now);
+        idle.tick(self, now);
         try self.script().tick(now);
         try update.tick(self);
         session.tick(self, now);
@@ -2289,6 +2303,7 @@ pub const App = struct {
         if (coverage.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (idle.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
         };

@@ -1566,7 +1566,7 @@ pub fn viewMarks(app: *App, abs_path: []const u8, arena: Allocator) Allocator.Er
         .added => .added,
         .modified => .modified,
         .deleted => .deleted,
-    } };
+    }, .priority = editor_view.mark_priority.git_change };
     return out;
 }
 
