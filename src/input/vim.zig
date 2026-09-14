@@ -170,6 +170,8 @@ pub const Vim = struct {
     /// While `op` is `.script`: which claimed operator is pending, and
     /// the letter that claimed it — `gss` doubles the way `gUU` does.
     script_op: u32 = 0,
+    /// Which Lua state owns `script_op` (`input/script_ops.zig`).
+    script_op_state: u16 = 0,
     script_letter: u8 = 0,
 
     pub fn init(gpa: Allocator, cfg: input.Config) Vim {
@@ -889,7 +891,7 @@ pub const Vim = struct {
                 // WITHOUT the last one's terminator: a script that wraps
                 // a range wants the text, not the newline after it.
                 if (linewise_object) try b.push(.normalize_linewise_selection_inner);
-                return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .linewise = linewise_object } } };
+                return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .state = self.script_op_state, .linewise = linewise_object } } };
             },
         }
         return b.finish();
@@ -1706,9 +1708,10 @@ pub const Vim = struct {
             // (`input/script_ops.zig`). The lookup sits after the switch,
             // so a claim can never shadow one of the chords above.
             else => {
-                if (pending_op == null) if (script_ops.lookup(c)) |idx| {
+                if (pending_op == null) if (script_ops.lookup(c)) |claim| {
                     self.op = .script;
-                    self.script_op = idx;
+                    self.script_op = claim.index;
+                    self.script_op_state = claim.state;
                     self.script_letter = @intCast(@min(c, std.math.maxInt(u8)));
                     if (count_explicit) self.count = n;
                     return .consumed;
@@ -1820,7 +1823,7 @@ pub const Vim = struct {
                     }
                     // `resetPending` leaves `script_op` alone; it is only
                     // ever read while the pending op is `.script`.
-                    return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .linewise = true } } };
+                    return .{ .app = .{ .script_operator = .{ .ops = b.list.items, .index = self.script_op, .state = self.script_op_state, .linewise = true } } };
                 },
             }
         }
@@ -1985,13 +1988,13 @@ pub const Vim = struct {
                     // `V…gs`: the live selection is the operator's range,
                     // widened the way every other visual operator widens it.
                     else => {
-                        const idx = script_ops.lookup(c) orelse return .consumed;
+                        const claim = script_ops.lookup(c) orelse return .consumed;
                         self.enterNormal();
                         // `_inner`: whole lines, without the last one's
                         // terminator — the range `gss` hands over too.
                         const widen: EditOp = if (linewise) .normalize_linewise_selection_inner else .make_selection_inclusive;
                         const list = try arena.dupe(EditOp, &.{widen});
-                        return .{ .app = .{ .script_operator = .{ .ops = list, .index = idx, .linewise = linewise } } };
+                        return .{ .app = .{ .script_operator = .{ .ops = list, .index = claim.index, .state = claim.state, .linewise = linewise } } };
                     },
                 }
             },
@@ -2362,7 +2365,7 @@ test "a script's g<letter> is operator-pending, and only on a letter vim itself 
     for (letters) |letter| {
         defer script_ops.clear(gpa);
         var buf = [2]u8{ 'g', letter };
-        try script_ops.register(gpa, &buf, 7);
+        try script_ops.register(gpa, &buf, 0, 7);
         var v = Vim.init(gpa, .{});
         defer v.deinit();
         var arena_state = std.heap.ArenaAllocator.init(gpa);

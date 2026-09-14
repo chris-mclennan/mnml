@@ -1028,6 +1028,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .diag_row_open => |i| try lsp.openRowIndex(app, i),
         .set_severity_filter => |f| lsp.setFilter(app, f),
         .script_row_open => |i| try scripts_panel.openRowIndex(app, i),
+        .script_sort => |v| scripts_panel.setSort(app, @enumFromInt(v)),
         .lua_bind => try scripts_panel.promptBind(app, text.?),
         // // changed (lsp-defaults): the LSP chip menu's Install row.
         .lsp_install => try toastOnFail(app, runners.installBin(app, text.?)),
@@ -1310,6 +1311,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_bp_log => |b| try dap.acceptLogMessage(app, b.path, b.line, text),
         .lsp_rename => try lsp.acceptRename(app, text),
         .lua_bind => |b| try scripts_panel.acceptBind(app, b.id, text),
+        .script_install => try @import("scripts.zig").acceptInstall(app, text),
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
         .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
         .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
@@ -1333,6 +1335,8 @@ fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!voi
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
     switch (purpose) {
         .trust_workspace => try @import("trust.zig").answer(app, choice),
+        .script_install => |i| try @import("scripts.zig").answerInstall(app, i, choice),
+        .remove_script => |n| try @import("scripts.zig").answerRemove(app, n, choice),
         .replace_confirm => try ex_verbs.answerConfirm(app, choice),
         .review_trust => try @import("workspace_trust.zig").answerReview(app, choice),
         .close_pane => |id| switch (choice) {
@@ -2175,6 +2179,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 if (try context_menus.openButtonMenu(app, id, m.x, m.y)) return;
             }
             // The INTEGRATIONS section's tabs.
+            // // changed (lua-install): the SCRIPTS section's tabs — the
+            // same strip, its own base.
+            if (id >= integrations_view.script_tab_base and id < integrations_view.script_tab_base + integrations_view.Tab.all.len) {
+                scripts_panel.tabMouse(app, @enumFromInt(id - integrations_view.script_tab_base), m);
+                return;
+            }
             if (id >= integrations_view.tab_base and id < integrations_view.tab_base + integrations_view.Tab.all.len) {
                 return integrations.tabClick(app, id - integrations_view.tab_base, m);
             }
@@ -3035,7 +3045,8 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             // mode no longer carries the shape.
             const api_mod = @import("../scripting/api.zig");
             const mode: []const u8 = if (so.linewise) "line" else api_mod.selectionMode(e);
-            try api_mod.runOperatorMode(app, app.script(), so.index, e, sel[0], sel[1], mode);
+            const lua = app.luaState(so.state) orelse return;
+            try api_mod.runOperatorMode(app, lua, so.index, e, sel[0], sel[1], mode);
             if (app.panes.editor(pane_id)) |live| _ = try app.applyOps(live, &.{.select_clear});
         },
     }

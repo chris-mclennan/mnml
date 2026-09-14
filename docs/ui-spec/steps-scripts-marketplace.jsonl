@@ -1,0 +1,3 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"script.show_marketplace"}
+{"cmd":"wait_ms","ms":600}

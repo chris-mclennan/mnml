@@ -87,17 +87,32 @@ pub const Store = struct {
     }
 
     pub fn clear(self: *Store, gpa: Allocator) void {
-        for (self.lists.items) |*l| {
-            gpa.free(l.title);
-            freeRows(gpa, l.cache);
-            for (l.sorts) |s| gpa.free(s);
-            gpa.free(l.sorts);
-            for (l.folded.items) |f| gpa.free(f);
-            l.folded.deinit(gpa);
-            l.panel.deinit(gpa);
-        }
+        for (self.lists.items) |*l| freeList(gpa, l);
         self.lists.clearRetainingCapacity();
         self.next_id = 1;
+    }
+
+    /// Drop the lists ONE Lua state registered. The ids keep counting
+    /// up, so a handle another state still holds stays valid.
+    pub fn clearState(self: *Store, gpa: Allocator, state: u16) void {
+        var i: usize = 0;
+        while (i < self.lists.items.len) {
+            if (self.lists.items[i].rows_fn.state == state) {
+                freeList(gpa, &self.lists.items[i]);
+                _ = self.lists.orderedRemove(i);
+            } else i += 1;
+        }
+        if (self.lists.items.len == 0) self.next_id = 1;
+    }
+
+    fn freeList(gpa: Allocator, l: *List) void {
+        gpa.free(l.title);
+        freeRows(gpa, l.cache);
+        for (l.sorts) |s| gpa.free(s);
+        gpa.free(l.sorts);
+        for (l.folded.items) |f| gpa.free(f);
+        l.folded.deinit(gpa);
+        l.panel.deinit(gpa);
     }
 };
 

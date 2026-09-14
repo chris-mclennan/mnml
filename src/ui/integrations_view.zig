@@ -47,6 +47,10 @@ pub const chip_base: u32 = 0x0300;
 pub const max_chips: u32 = 0x30;
 /// `.button` ids of the section's three tabs: `tab_base + @intFromEnum(tab)`.
 pub const tab_base: u32 = 0x0340;
+/// // changed (lua-install): the SCRIPTS section's own three tabs, which
+/// reuse `drawSection` — its own base so a click lands in its own
+/// dispatch branch.
+pub const script_tab_base: u32 = 0x0350;
 
 pub const Tab = enum(u8) {
     installed,
@@ -87,14 +91,19 @@ pub const Badge = enum {
     private,
     installed_here,
     not_installed,
+    /// // changed (lua-install): a SCRIPTS row's own two states.
+    dev,
+    disabled,
 
-    fn text(b: Badge, ascii: bool) []const u8 {
+    pub fn text(b: Badge, ascii: bool) []const u8 {
         return switch (b) {
             .official => if (ascii) "+ Official" else "\u{2713} Official",
             .community => "~ Community",
             .private => "Private",
             .installed_here => "installed from here",
             .not_installed => "not installed",
+            .dev => "Dev",
+            .disabled => "disabled",
         };
     }
 };
@@ -122,6 +131,14 @@ pub const Entry = struct {
 };
 
 pub const SectionProps = struct {
+    /// // changed (lua-install): which section is painting. The
+    /// SCRIPTS section reuses this whole surface — the tabs, the sort
+    /// chip, the filter pill, the three-row entries and the scrollbar
+    /// — so the two never drift apart.
+    panel: @import("hit.zig").PanelId = .integrations,
+    label: []const u8 = "INTEGRATIONS",
+    /// The `.button` base the tabs register under.
+    tabs_at: u32 = tab_base,
     tab: Tab,
     /// Installed, marketplace, dev — the tab labels' counts.
     counts: [3]usize,
@@ -254,7 +271,7 @@ fn drawTabs(ui: Ui, row: Rect, p: SectionProps) void {
         const style = if (active) t.chip_active else Theme.onBg(t.muted, t.panel_bg.bg);
         const r = Rect.init(x, row.y, w, 1);
         _ = ui.putStr(x, row.y, w, ui.clipStr(label, w), style);
-        ui.hit(r, .{ .button = tab_base + @as(u32, @intFromEnum(tab)) });
+        ui.hit(r, .{ .button = p.tabs_at + @as(u32, @intFromEnum(tab)) });
         x += w + 1;
     }
 }
@@ -269,8 +286,8 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
     ui.fill(area, t.panel_bg);
     if (area.isEmpty()) return null;
     const top = area.splitTop(1);
-    _ = header.draw(ui, top.top, .{ .panel = .integrations, .label = "INTEGRATIONS", .bg = t.panel_bg });
-    if (p.busy) list_panel.paintSpinner(ui, top.top, "INTEGRATIONS", p.now_ms);
+    _ = header.draw(ui, top.top, .{ .panel = p.panel, .label = p.label, .bg = t.panel_bg });
+    if (p.busy) list_panel.paintSpinner(ui, top.top, p.label, p.now_ms);
     if (area.h < 2) return null;
     drawTabs(ui, area.row(1), p);
     if (area.h < 3) return null;
@@ -285,10 +302,10 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
         var sstyle = Theme.onBg(t.accent, t.panel_bg.bg);
         sstyle.fg = t.chip_active.bg;
         sstyle.bold = true;
-        _ = chip.paint(ui, frow.right() - sort_w, frow.y, sort_w, sort_text, sstyle, .integrations, .sort);
+        _ = chip.paint(ui, frow.right() - sort_w, frow.y, sort_w, sort_text, sstyle, p.panel, .sort);
     }
     const caret = filter_input.draw(ui, filter_rect, .{
-        .panel = .integrations,
+        .panel = p.panel,
         .text = p.filter,
         .caret = p.filter_caret,
         .focused = p.filter_focused,
@@ -317,7 +334,7 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
         const split = body.splitRight(1);
         // One cell of air before the track, as the Rust panel reserves.
         list = Rect.init(split.left.x, split.left.y, split.left.w -| 1, split.left.h);
-        scrollbar.drawVertical(ui, split.rest, .{ .panel = .integrations }, p.rows.len, visible_entries, p.scroll.*);
+        scrollbar.drawVertical(ui, split.rest, .{ .panel = p.panel }, p.rows.len, visible_entries, p.scroll.*);
     }
     var y: u16 = 0;
     var i: usize = win.first;
@@ -334,8 +351,8 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
             _ = ui.putStr(r1.x, r1.y, 1, marker, Theme.withFg(style, if (p.focused) t.accent.fg else t.muted.fg));
         }
         paintEntry(ui, r1, r2, e, style);
-        ui.hit(r1, .{ .row = .{ .panel = .integrations, .idx = @intCast(i) } });
-        ui.hit(r2, .{ .row = .{ .panel = .integrations, .idx = @intCast(i) } });
+        ui.hit(r1, .{ .row = .{ .panel = p.panel, .idx = @intCast(i) } });
+        ui.hit(r2, .{ .row = .{ .panel = p.panel, .idx = @intCast(i) } });
         y += rows_per_entry;
     }
     return caret;
@@ -387,8 +404,9 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
     if (e.badge) |b| {
         const fg: Color = switch (b) {
             .official, .installed_here => t.palette.green,
-            .community, .not_installed => t.muted.fg,
+            .community, .not_installed, .disabled => t.muted.fg,
             .private => t.palette.yellow,
+            .dev => t.palette.orange,
         };
         x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{b.text(ui.ascii)}), Theme.withFg(style, fg));
     }

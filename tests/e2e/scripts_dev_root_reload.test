@@ -1,0 +1,29 @@
+# Installed scripts (lua-install): the Dev tab. A folder under
+# `scripts.dev_roots` is a script being edited live — saving a file
+# under it reloads THAT script and nothing else.
+# `MNML_SCRIPTS_DEV_ROOTS` names the folders when it is set, which is
+# how the corpus points the tab at one: the App's config is read before
+# these steps run, so a `.mnml/config.zon` written here is too late.
+# env: MNML_SCRIPTS_DEV_ROOTS=dev
+shell mkdir -p dev/wip
+write dev/wip/script.zon ".{ .name = \"wip\", .api = 1, .version = \"0.0.1\" }\n"
+write dev/wip/init.lua "mnml.command{ id = 'wip_one', title = 'One', run = function() mnml.toast('one') end }\n"
+command script.rescan
+command view.activity_scripts
+command script.show_dev
+expect screen contains "SCRIPTS"
+expect screen contains "wip"
+expect screen contains "0.0.1"
+command user.wip_one
+expect screen contains "one"
+
+# Edit the script in an editor and save: the hook reloads it, so the new
+# command is live and the old one is gone.
+open dev/wip/init.lua
+command editor.select_all
+type "mnml.command{ id = 'wip_two', title = 'Two', run = function() mnml.toast('two') end }"
+key ctrl+s
+wait 300
+expect screen contains "scripts: reloaded 1 dev script"
+command user.wip_two
+expect screen contains "two"

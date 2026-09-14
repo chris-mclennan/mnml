@@ -1,4 +1,4 @@
-# Lua (D10): the shipped example `docs/examples/scripts/eslint.lua`,
+# Lua (D10): the shipped example `docs/examples/scripts/eslint/init.lua`,
 # run as it is written — the file is copied into the workspace's
 # init.lua, so a change to the example that breaks it fails here.
 # `MNML_REPO` is the runner's own cwd — the repo root, since that is
@@ -11,7 +11,7 @@
 # env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
 # env: MNML_REPO=${PWD}
 shell mkdir -p bin && printf '#!/bin/sh\necho "app.js: line 1, col 7, Warning - '"'"'x'"'"' is assigned a value but never used (no-unused-vars)"\necho "app.js: line 3, col 7, Error - '"'"'z'"'"' is not defined (no-undef)"\nexit 1\n' > bin/eslint && chmod +x bin/eslint
-shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint.lua" .mnml/init.lua
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint/init.lua" .mnml/init.lua
 write app.js "const x = 1;\nconst y = 2;\nconst z = 3;\n"
 command script.reload
 expect screen contains "scripts: reloaded"

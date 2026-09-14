@@ -1,0 +1,11 @@
+.{
+    .name = "eslint",
+    .version = "1.0.0",
+    .api = 1,
+    .description = "Runs eslint on save and publishes what it finds as diagnostics",
+    .author = "mnml",
+    .commands = .{},
+    .hooks = .{ "save_post" },
+    .source = .marketplace,
+    .url = "https://github.com/chris-mclennan/mnml-scripts",
+}

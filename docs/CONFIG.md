@@ -500,6 +500,39 @@ otherwise. Copy what you need; leave the rest out.
         // (cached at <data root>/cache/nerdfonts-latest.json).
     },
 
+    // ── scripts ────────────────────────────────────────────────────────
+    // Installed Lua scripts (docs/LUA.md, "Installing scripts"). A
+    // script is a directory under <data root>/scripts/<name>/ holding a
+    // script.zon, an init.lua and optionally lib/*.lua and a README.md,
+    // and it gets its OWN Lua state: its own budget clock, its own
+    // decoration namespaces, its own require root. The SCRIPTS section
+    // lists them on three tabs — installed · marketplace · dev — the way
+    // INTEGRATIONS does.
+    // Installed scripts land in <data root>/scripts/ unless
+    // MNML_SCRIPTS_ROOT=<folder> names somewhere else — how the corpus
+    // keeps each file's installs to itself.
+    .scripts = .{
+        // Where the official (curated) set will be published. NOT LIVE
+        // YET: out of the box the Marketplace tab says so. Point
+        // `marketplace_local` at a folder of script directories to list
+        // one meanwhile (MNML_SCRIPTS_MARKETPLACE=<folder> overrides,
+        // which is how the tests and the corpus list the shipped
+        // examples under docs/examples/scripts/).
+        .marketplace_url = "https://github.com/chris-mclennan/mnml-scripts",
+        .marketplace_local = "",
+        // Folders of script directories you maintain — a company repo, a
+        // mounted share. Listed with the `private` badge; the same trust
+        // dialog on install. Relative to the workspace, `~` expanded.
+        .private_sources = .{ "~/mnml-private-scripts" },
+        // Folders the Dev tab scans: every subfolder with a script.zon
+        // is a script in development, reloaded when one of its files is
+        // saved. MNML_SCRIPTS_DEV_ROOTS=<dir:dir> (`;` on Windows)
+        // overrides, which is how the corpus and the UI specs point the
+        // tab at a folder without writing a config.
+        .dev_roots = .{ "../my-scripts" },
+        .show_dev_tab = false,
+    },
+
     // ── cloud ──────────────────────────────────────────────────────────
     .cloud_run = .{
         .defaults = .{ .agent_id = "", .env_id = "", .sandbox = "", .model = "" },

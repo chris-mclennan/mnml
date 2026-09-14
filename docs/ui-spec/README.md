@@ -571,6 +571,19 @@ dump cut on Linux or Windows shows the yellow version alone.
   `󰫯` on row 24, after the SCRIPTS row, where Rust paints its
   `LauncherIcon` slots. Zig-authored (the Rust dump was cut on the
   author's own pins); the shape is `rust-integrations-mkt-120x40.txt`'s.
+- `zig-scripts-120x40.txt`, `zig-scripts-marketplace-120x40.txt`,
+  `zig-scripts-dev-120x40.txt` — `steps-scripts{,-marketplace,-dev}.jsonl`
+  through `tools/zig-spec.sh scripts[-marketplace|-dev]` (`env-scripts`
+  points `MNML_SCRIPTS_MARKETPLACE` at the repo's
+  `docs/examples/scripts/` and `MNML_SCRIPTS_DEV_ROOTS` at the seeded
+  workspace's `dev/`): the SCRIPTS section's three tabs, painted by the
+  INTEGRATIONS section's own `drawSection` — `Inst (1) Mkt (5)  󰫯 (1)`,
+  the filter pill with the `A-Z ▾` sort chip, and three-row entries.
+  Installed shows the `+ create init.lua` link and the `init.lua` row;
+  Marketplace the five shipped examples as `✓ Official`; Dev the seeded
+  `hello-scripts  0.1.0  Dev` over the command it adds. Zig-authored —
+  the Rust editor has no script install path.
+
 ## Menus (2026-09-07)
 
 - `rust-menu-file-120x40.txt` — `steps-menu-file.jsonl`: a click on the

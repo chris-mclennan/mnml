@@ -1,0 +1,52 @@
+# Installed scripts (lua-install): the trust dialog is the gate. A
+# staged script is READ, never run, until it is answered — its manifest's
+# commands and hooks are listed through `trust.zig`'s own Claim shape,
+# and the last line is not the manifest's word but a grep of the
+# script's own .lua files for `task.run`, the one door out of the
+# sandbox. Cancel is the focused choice and throws the copy away.
+# `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own
+# temp workspace: the corpus shares one data root across every file, and
+# a script installed here would otherwise load in all the rest.
+# env: MNML_SCRIPTS_ROOT=installed
+shell mkdir -p src/nosy
+write src/nosy/script.zon ".{ .name = \"nosy\", .api = 1, .version = \"0.1.0\", .author = \"stranger\", .description = \"Wants a lot\", .commands = .{ \"user.nosy_one\", \"user.nosy_two\" }, .hooks = .{ \"save_post\", \"cursor_idle\" } }\n"
+write src/nosy/init.lua "mnml.command{ id = 'nosy_one', run = function() end }\nmnml.command{ id = 'nosy_two', run = function() mnml.task.run{ cmd = 'echo hi', hidden = true } end }\nmnml.on('save_post', function() end)\nmnml.on('cursor_idle', function() end)\n"
+command script.install
+type "src/nosy"
+key enter
+expect screen contains "Install this script?"
+expect screen contains "nosy 0.1.0 by stranger"
+expect screen contains "Wants a lot"
+expect screen contains "user.nosy_one (a command)"
+expect screen contains "user.nosy_two (a command)"
+expect screen contains "save_post (a hook)"
+expect screen contains "cursor_idle (a hook)"
+expect screen contains "it starts programs"
+# Enter takes the focused choice, Cancel: nothing ran.
+key enter
+expect screen contains "scripts: nosy not installed"
+command view.activity_scripts
+# The SCRIPTS panel has only `init.lua`: no row carries nosy's version.
+expect screen lacks "0.1.0"
+
+# A script whose files never call `task.run` says so instead.
+shell mkdir -p src/quiet
+write src/quiet/script.zon ".{ .name = \"quiet\", .api = 1, .version = \"1.0.0\" }\n"
+write src/quiet/init.lua "mnml.command{ id = 'quiet_go', run = function() mnml.toast('quiet') end }\n"
+command script.install
+type "src/quiet"
+key enter
+expect screen contains "it starts no programs"
+key i
+expect screen contains "scripts: installed quiet"
+
+# A manifest written for a script api this build does not implement is
+# refused with a reason, not installed silently.
+shell mkdir -p src/future
+write src/future/script.zon ".{ .name = \"future\", .api = 99, .version = \"9.0.0\" }\n"
+write src/future/init.lua "mnml.command{ id = 'future_go', run = function() end }\n"
+command script.install
+type "src/future"
+key enter
+expect screen contains "needs script api 99"
+expect screen lacks "Install this script?"

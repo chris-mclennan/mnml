@@ -9,6 +9,7 @@ const CommandError = command.CommandError;
 const hooks = @import("../core/hooks.zig");
 const lua_mod = @import("../scripting/lua.zig");
 const script_diag = @import("../scripting/diag.zig");
+const scripts = @import("scripts.zig");
 
 pub const table = .{
     .@"script.reload" = &reload,
@@ -53,9 +54,18 @@ fn reload(app: *App) CommandError!void {
     const lua = app.script();
     try lua.reset();
     try lua.loadInitFiles();
+    // // changed (lua-install): every installed script goes off and on
+    // again with the `init.lua` files — each in its own state, so one
+    // that errors is one disabled row and not a failed reload.
+    try scripts.reloadAll(app);
     if (!lua.last_load_ok) return;
     const s = lua.summary();
-    app.toast("scripts: reloaded — {d} command{s}, {d} hook{s} · {d} file(s) loaded", .{ s.commands, plural(s.commands), s.hooks, plural(s.hooks), lua.loaded_files });
+    const n = app.scripts.entries.items.len;
+    if (n == 0) {
+        app.toast("scripts: reloaded — {d} command{s}, {d} hook{s} · {d} file(s) loaded", .{ s.commands, plural(s.commands), s.hooks, plural(s.hooks), lua.loaded_files });
+    } else {
+        app.toast("scripts: reloaded — {d} command{s}, {d} hook{s} · {d} file(s) loaded · {d} installed script{s}", .{ s.commands, plural(s.commands), s.hooks, plural(s.hooks), lua.loaded_files, n, plural(@intCast(n)) });
+    }
 }
 
 fn plural(n: u32) []const u8 {

@@ -1,0 +1,33 @@
+# Installed scripts (lua-install): `script.doctor` — one pane that says,
+# for every Lua state the app is running, what it is and what it costs:
+# its api, where it came from, whether it is enabled, how many times it
+# blew the 20 ms budget this session, the hooks it subscribed and its
+# decoration namespaces with the live counts.
+# `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own
+# temp workspace: the corpus shares one data root across every file, and
+# a script installed here would otherwise load in all the rest.
+# env: MNML_SCRIPTS_ROOT=installed
+shell mkdir -p src/blamer
+write src/blamer/script.zon ".{ .name = \"blamer\", .api = 1, .version = \"1.2.0\", .commands = .{ \"user.blame_go\" }, .hooks = .{ \"cursor_idle\" } }\n"
+write src/blamer/init.lua "ns = mnml.decor.namespace('blame')\nmnml.command{ id = 'blame_go', run = function() end }\nmnml.on('cursor_idle', function() end)\n"
+command script.install
+type "src/blamer"
+key enter
+key i
+expect screen contains "scripts: installed blamer"
+command script.doctor
+expect screen contains "mnml script doctor — script api 1"
+expect screen contains "budget 20 ms per entry"
+expect screen contains "init.lua"
+expect screen contains "blamer 1.2.0"
+expect screen contains "source community"
+expect screen contains "enabled yes"
+expect screen contains "budget overruns 0"
+expect screen contains "hooks cursor_idle"
+expect screen contains "namespace blame: 0 decoration(s)"
+
+# A decoration the script paints is counted.
+write note.txt "one\ntwo\nthree\n"
+open note.txt
+command script.doctor
+expect screen contains "namespace blame"

@@ -1,0 +1,6 @@
+# Sourced by tools/zig-spec.sh for the steps-scripts*.jsonl specs. The
+# repo's own docs/examples/scripts/ is the Marketplace tab's index — the
+# five shipped examples are the curated set's first entries — and the
+# seeded workspace's dev/ is the Dev tab's root.
+export MNML_SCRIPTS_MARKETPLACE="$ROOT/docs/examples/scripts"
+export MNML_SCRIPTS_DEV_ROOTS="dev"

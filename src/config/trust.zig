@@ -41,6 +41,13 @@ pub const Sink = enum {
     /// each declaring commands that spawn a binary; registered only
     /// once the workspace is trusted.
     workspace_manifests,
+    /// // changed (lua-install): an installed script
+    /// (`<data root>/scripts/<name>/`). Not a config key either — a
+    /// directory with a `script.zon`, whose manifest's commands and
+    /// hooks (and whether its files call `task.run`) are the claims
+    /// `script.install` puts on screen before the first run
+    /// (`app/scripts.zig`).
+    script_install,
 
     /// Human label for the trust dialog's bullet list.
     pub fn label(s: Sink) []const u8 {
@@ -56,6 +63,7 @@ pub const Sink = enum {
             .launch_profile => "AI launch profile",
             .init_lua => "script",
             .workspace_manifests => "integration",
+            .script_install => "script",
         };
     }
 
@@ -72,6 +80,7 @@ pub const Sink = enum {
             .launch_profile => "when you start a Claude / Codex session",
             .init_lua => "immediately, on open",
             .workspace_manifests => "when you run one of its commands",
+            .script_install => "every time mnml starts",
         };
     }
 };
@@ -94,6 +103,7 @@ pub const exec_bearing = [_]Rule{
     .{ .path = "ai.default_profile", .sink = .launch_profile },
     .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
     .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },
+    .{ .path = "<data root>/scripts/<name>/ (an installed script's directory)", .sink = .script_install },
 };
 
 /// What the loader knows about the workspace beyond its config patch:
@@ -219,6 +229,9 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
         .init_lua => return 0,
         // Nothing in the patch either: the scan skips the directory.
         .workspace_manifests => return 0,
+        // Nothing in the patch: a script is installed by hand, and the
+        // dialog that installs it is the gate.
+        .script_install => return 0,
     }
 }
 
@@ -254,6 +267,30 @@ pub const Claim = struct {
     }
 };
 
+/// The claims one installed script makes, in the same `Claim` shape
+/// the workspace dialog lists — so the two dialogs read alike and one
+/// `format` renders both. `commands` and `hooks` are the manifest's;
+/// `runs_tasks` is what a grep of its own files found.
+pub fn scriptClaims(arena: Allocator, name: []const u8, commands: []const []const u8, hooks: []const []const u8, runs_tasks: bool) Allocator.Error![]Claim {
+    var out: std.ArrayList(Claim) = .empty;
+    for (commands) |c| try out.append(arena, .{
+        .sink = .script_install,
+        .key = try std.fmt.allocPrint(arena, "script.{s}", .{name}),
+        .command = try std.fmt.allocPrint(arena, "{s} (a command)", .{c}),
+    });
+    for (hooks) |h| try out.append(arena, .{
+        .sink = .script_install,
+        .key = try std.fmt.allocPrint(arena, "script.{s}", .{name}),
+        .command = try std.fmt.allocPrint(arena, "{s} (a hook)", .{h}),
+    });
+    try out.append(arena, .{
+        .sink = .script_install,
+        .key = try std.fmt.allocPrint(arena, "script.{s}", .{name}),
+        .command = if (runs_tasks) "task.run — it starts programs" else "no task.run — it starts no programs",
+    });
+    return out.toOwnedSlice(arena);
+}
+
 fn joinArgs(arena: Allocator, cmd: []const u8, args: []const []const u8) Allocator.Error![]const u8 {
     if (args.len == 0) return cmd;
     var out: std.ArrayList(u8) = .empty;
@@ -285,6 +322,10 @@ pub fn claimsWith(arena: Allocator, p: Patch(Config), facts: Facts) Allocator.Er
 
 fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts, out: *std.ArrayList(Claim)) Allocator.Error!void {
     switch (sink) {
+        // An installed script is never part of a config layer: it is
+        // installed by hand, and `script.install`'s own dialog is where
+        // its claims are shown (`scriptClaims`).
+        .script_install => {},
         .init_lua => {
             if (facts.init_lua) try out.append(arena, .{ .sink = sink, .key = "script.init", .command = ".mnml/init.lua" });
         },

@@ -129,16 +129,27 @@ pub const DiagSet = struct {
     }
 };
 
+/// One namespace slot. The id a script holds is the index, so a slot
+/// is never removed — a reload of one state frees its names and marks
+/// them dead, and every other state's handles keep meaning what they
+/// meant.
+pub const Ns = struct {
+    name: []u8,
+    /// The Lua state that made it (`Lua.id`).
+    owner: u16,
+    live: bool = true,
+};
+
 pub const State = struct {
-    /// Namespace names by id; `namespace(name)` is stable for a name
-    /// until the next reload.
-    names: std.ArrayListUnmanaged([]u8) = .empty,
+    /// Namespace slots by id; `namespace(owner, name)` is stable for a
+    /// name until that state reloads.
+    names: std.ArrayListUnmanaged(Ns) = .empty,
     items: std.ArrayListUnmanaged(Item) = .empty,
     tracks: std.AutoHashMapUnmanaged(PaneId, PaneTrack) = .empty,
     diags: std.ArrayListUnmanaged(DiagSet) = .empty,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
-        for (self.names.items) |n| gpa.free(n);
+        for (self.names.items) |n| if (n.live) gpa.free(n.name);
         self.names.deinit(gpa);
         for (self.items.items) |it| it.free(gpa);
         self.items.deinit(gpa);
@@ -150,25 +161,54 @@ pub const State = struct {
 
 // ─── namespaces ─────────────────────────────────────────────────────────
 
-/// The id of `name`, made on first use.
-pub fn namespace(app: *App, name: []const u8) Allocator.Error!u32 {
+/// The id of `owner`'s `name`, made on first use. Two scripts asking
+/// for "blame" get two namespaces — the name is theirs, not shared.
+pub fn namespace(app: *App, owner: u16, name: []const u8) Allocator.Error!u32 {
     const st = &app.script_decor;
-    for (st.names.items, 0..) |n, i| if (std.mem.eql(u8, n, name)) return @intCast(i);
+    for (st.names.items, 0..) |n, i| if (n.live and n.owner == owner and std.mem.eql(u8, n.name, name)) return @intCast(i);
     const owned = try app.gpa.dupe(u8, name);
     errdefer app.gpa.free(owned);
-    try st.names.append(app.gpa, owned);
+    try st.names.append(app.gpa, .{ .name = owned, .owner = owner });
     return @intCast(st.names.items.len - 1);
 }
 
 pub fn namespaceName(app: *App, ns: u32) []const u8 {
     const st = &app.script_decor;
-    if (ns >= st.names.items.len) return "";
-    return st.names.items[ns];
+    if (ns >= st.names.items.len or !st.names.items[ns].live) return "";
+    return st.names.items[ns].name;
+}
+
+pub fn namespaceOwner(app: *App, ns: u32) ?u16 {
+    const st = &app.script_decor;
+    if (ns >= st.names.items.len or !st.names.items[ns].live) return null;
+    return st.names.items[ns].owner;
 }
 
 pub fn isNamespace(app: *App, ns: u32) bool {
-    return ns < app.script_decor.names.items.len;
+    return ns < app.script_decor.names.items.len and app.script_decor.names.items[ns].live;
 }
+
+/// How many decorations each of `state`'s live namespaces holds —
+/// `script.doctor`'s column. On `arena`.
+pub fn liveCounts(app: *App, arena: Allocator, state: u16) Allocator.Error![]NsCount {
+    const st = &app.script_decor;
+    var out: std.ArrayListUnmanaged(NsCount) = .empty;
+    for (st.names.items, 0..) |n, i| {
+        if (!n.live or n.owner != state) continue;
+        var count: usize = 0;
+        for (st.items.items) |it| if (it.ns == i) {
+            count += 1;
+        };
+        var diags: usize = 0;
+        for (st.diags.items) |d| if (d.ns == i) {
+            diags += d.items.len;
+        };
+        try out.append(arena, .{ .name = n.name, .items = count, .diagnostics = diags });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+pub const NsCount = struct { name: []const u8, items: usize, diagnostics: usize };
 
 // ─── anchoring ──────────────────────────────────────────────────────────
 
@@ -390,7 +430,7 @@ pub fn reset(app: *App) Allocator.Error!void {
     for (st.items.items) |it| it.free(gpa);
     st.items.clearRetainingCapacity();
     st.tracks.clearRetainingCapacity();
-    for (st.names.items) |n| gpa.free(n);
+    for (st.names.items) |n| if (n.live) gpa.free(n.name);
     st.names.clearRetainingCapacity();
     // The sink's paths are still in the LSP store: republish each as empty.
     while (st.diags.items.len > 0) {
@@ -399,6 +439,46 @@ pub fn reset(app: *App) Allocator.Error!void {
         defer gpa.free(path);
         set.destroy(gpa);
         try republish(app, path);
+    }
+    app.needs_render = true;
+}
+
+/// One state's namespaces go — its decorations and its diagnostics
+/// with them; every other script's stay on screen. The slots stay so
+/// the handles another state holds keep their meaning.
+pub fn resetState(app: *App, state: u16) Allocator.Error!void {
+    const st = &app.script_decor;
+    const gpa = app.gpa;
+    var mine: std.ArrayListUnmanaged(u32) = .empty;
+    defer mine.deinit(gpa);
+    for (st.names.items, 0..) |*n, i| if (n.live and n.owner == state) {
+        try mine.append(gpa, @intCast(i));
+    };
+    if (mine.items.len == 0) return;
+    for (mine.items) |ns| {
+        var i: usize = 0;
+        while (i < st.items.items.len) {
+            if (st.items.items[i].ns == ns) {
+                st.items.items[i].free(gpa);
+                _ = st.items.orderedRemove(i);
+            } else i += 1;
+        }
+    }
+    for (mine.items) |ns| {
+        var i: usize = 0;
+        while (i < st.diags.items.len) {
+            if (st.diags.items[i].ns == ns) {
+                var set = st.diags.orderedRemove(i);
+                const path = try gpa.dupe(u8, set.path);
+                defer gpa.free(path);
+                set.destroy(gpa);
+                try republish(app, path);
+            } else i += 1;
+        }
+    }
+    for (mine.items) |ns| {
+        gpa.free(st.names.items[ns].name);
+        st.names.items[ns] = .{ .name = &.{}, .owner = state, .live = false };
     }
     app.needs_render = true;
 }
@@ -600,7 +680,7 @@ test "decor anchoring: a line inserted above moves it, deleting its line kills i
     const pane = try app.openScratch();
     const e = app.panes.editor(pane).?;
     try app.splice(e, 0, 0, "one\ntwo\nthree\n");
-    const ns = try namespace(&app, "blame");
+    const ns = try namespace(&app, 0, "blame");
     try addGutter(&app, ns, pane, 2, try testing.allocator.dupe(u8, "▎"), try testing.allocator.dupe(u8, "accent"), 50);
     const st = &app.script_decor;
     try testing.expectEqual(@as(usize, 1), st.items.items.len);
@@ -632,9 +712,9 @@ test "a namespace clears only its own, and a reload drops every one" {
     const pane = try app.openScratch();
     const e = app.panes.editor(pane).?;
     try app.splice(e, 0, 0, "a\nb\nc\n");
-    const a = try namespace(&app, "a");
-    const b = try namespace(&app, "b");
-    try testing.expectEqual(a, try namespace(&app, "a"));
+    const a = try namespace(&app, 0, "a");
+    const b = try namespace(&app, 0, "b");
+    try testing.expectEqual(a, try namespace(&app, 0, "a"));
     try addLine(&app, a, pane, 1, try testing.allocator.dupe(u8, "cursor_line"));
     try addLine(&app, b, pane, 2, try testing.allocator.dupe(u8, "match"));
     try testing.expectEqual(@as(usize, 2), app.script_decor.items.items.len);
@@ -654,7 +734,7 @@ test "a highlight follows the text and stops at the buffer's end" {
     const pane = try app.openScratch();
     const e = app.panes.editor(pane).?;
     try app.splice(e, 0, 0, "hello world");
-    const ns = try namespace(&app, "h");
+    const ns = try namespace(&app, 0, "h");
     try addHighlight(&app, ns, pane, 6, 11, try testing.allocator.dupe(u8, "match"));
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

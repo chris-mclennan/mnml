@@ -160,6 +160,22 @@ pub const Lua = struct {
     gpa: Allocator,
     io: Io,
     ui_thread: std.Thread.Id,
+    /// Which state this is: 0 is the App's `init.lua` state, 1.. an
+    /// installed script's own (`app/scripts.zig`). Every `LuaRef` this
+    /// state hands out carries it, so a ref never reaches another
+    /// state's registry.
+    id: u16 = 0,
+    /// The installed script's name, "" for the `init.lua` state. It
+    /// prefixes the decoration namespaces and labels the origins.
+    script_name: []const u8 = "",
+    /// The script's directory — the only place a scoped `require`
+    /// looks. Null for the `init.lua` state, which has no `require`.
+    root: ?[]const u8 = null,
+    /// How many times the 20 ms budget tripped in this session — the
+    /// SCRIPTS row's chip and `script.doctor`'s column.
+    budget_hits: u32 = 0,
+    /// The scoped `require`'s cache table, when this state has one.
+    modules: ?LuaRef = null,
     /// Set by the outermost `enter`; the count hook compares against it.
     deadline_ms: ?i64 = null,
     depth: u32 = 0,
@@ -191,6 +207,12 @@ pub const Lua = struct {
     /// table installed. Heap-allocated: the C hook finds it through the
     /// state's extra space, so its address must not move.
     pub fn create(gpa: Allocator, io: Io, app: *App) Allocator.Error!*Lua {
+        return createFor(gpa, io, app, 0, "", null);
+    }
+
+    /// A state for an installed script: its own id, its own name and
+    /// the directory a scoped `require` may read under.
+    pub fn createFor(gpa: Allocator, io: Io, app: *App, id: u16, script_name: []const u8, root: ?[]const u8) Allocator.Error!*Lua {
         const self = try gpa.create(Lua);
         errdefer gpa.destroy(self);
         self.* = .{
@@ -199,6 +221,9 @@ pub const Lua = struct {
             .gpa = gpa,
             .io = io,
             .ui_thread = std.Thread.getCurrentId(),
+            .id = id,
+            .script_name = script_name,
+            .root = root,
         };
         try self.openState();
         return self;
@@ -220,9 +245,9 @@ pub const Lua = struct {
 
     fn openState(self: *Lua) Allocator.Error!void {
         // The operator table is process-global (the vim handler has no
-        // App): a fresh state starts with an empty one, whatever the
-        // last App in this process left behind.
-        @import("../input/script_ops.zig").clear(self.gpa);
+        // App): a fresh state starts with its own claims cleared,
+        // whatever the last App in this process left behind.
+        @import("../input/script_ops.zig").clearState(self.gpa, self.id);
         const L = try State.init(self.gpa);
         self.L = L;
         attach(L, self);
@@ -239,7 +264,89 @@ pub const Lua = struct {
         L.setGlobal("loadfile");
         L.pushFunction(zlua.wrap(api.print));
         L.setGlobal("print");
+        // An installed script — and only an installed script — may
+        // `require` its own files. There is no `package`, so this is
+        // the whole module system: a name resolves under the script's
+        // own directory or it does not resolve.
+        if (self.root != null) {
+            L.newTable();
+            self.modules = self.ref();
+            L.pushFunction(zlua.wrap(requireFn));
+            L.setGlobal("require");
+        }
         api.install(self);
+    }
+
+    /// `require("lib.thing")` → `<root>/lib/thing.lua`, run once and
+    /// cached. The name is dots and plain segments only: a `..`, a
+    /// separator, a leading `/` or a drive letter is refused, so the
+    /// reach never leaves the script's directory. Nothing else is
+    /// loadable — there is no `package.path` to widen.
+    fn requireFn(L: *State) !i32 {
+        const self = of(L);
+        const name = L.checkString(1);
+        const root = self.root orelse L.raiseErrorStr("require: only an installed script may require its own files", .{});
+        if (!validModuleName(name)) {
+            const shown: [:0]const u8 = self.app.frame.allocator().dupeZ(u8, name) catch "?";
+            L.raiseErrorStr("require: `%s` is not a module under this script (letters, digits, `_`, `-`, and `.` between parts)", .{shown.ptr});
+        }
+        const arena = self.app.frame.allocator();
+        const cache = self.modules orelse L.raiseErrorStr("require: no module cache", .{});
+        // Already loaded? `cache[name]`.
+        self.pushRef(cache);
+        L.pushValue(1);
+        if (L.getTableRaw(-2) != .nil) {
+            L.remove(-2);
+            return 1;
+        }
+        L.pop(1);
+        // `lib.thing` → `<root>/lib/thing.lua`, and nowhere else.
+        const rel = arena.dupe(u8, name) catch L.raiseErrorStr("require: out of memory", .{});
+        for (rel) |*ch| if (ch.* == '.') {
+            ch.* = std.fs.path.sep;
+        };
+        const path = std.fmt.allocPrint(arena, "{s}{c}{s}.lua", .{ root, std.fs.path.sep, rel }) catch L.raiseErrorStr("require: out of memory", .{});
+        const src = Io.Dir.cwd().readFileAllocOptions(self.io, path, arena, .limited(max_init_bytes), .of(u8), 0) catch {
+            const shown: [:0]const u8 = arena.dupeZ(u8, name) catch "?";
+            L.raiseErrorStr("require: no `%s` under this script", .{shown.ptr});
+        };
+        const chunk = std.fmt.allocPrintSentinel(arena, "@{s}", .{path}, 0) catch L.raiseErrorStr("require: out of memory", .{});
+        L.loadBuffer(src, chunk, .text) catch {
+            const msg: [:0]const u8 = arena.dupeZ(u8, L.toStringEx(-1)) catch "load error";
+            L.raiseErrorStr("require: %s", .{msg.ptr});
+        };
+        L.protectedCall(.{ .args = 0, .results = 1 }) catch {
+            const msg: [:0]const u8 = arena.dupeZ(u8, L.toStringEx(-1)) catch "run error";
+            L.raiseErrorStr("require: %s", .{msg.ptr});
+        };
+        // A module that returns nothing caches `true`, as Lua's does.
+        if (L.isNoneOrNil(-1)) {
+            L.pop(1);
+            L.pushBoolean(true);
+        }
+        // cache[name] = value, and leave the value.
+        L.pushValue(1);
+        L.pushValue(-2);
+        L.setTableRaw(-4);
+        L.remove(-2);
+        return 1;
+    }
+
+    /// `lib.thing` — dot-separated plain segments. No `..`, no empty
+    /// part, no path separator, nothing absolute.
+    pub fn validModuleName(name: []const u8) bool {
+        if (name.len == 0 or name.len > 200) return false;
+        var it = std.mem.splitScalar(u8, name, '.');
+        var parts: usize = 0;
+        while (it.next()) |part| {
+            parts += 1;
+            if (part.len == 0) return false;
+            for (part) |c| switch (c) {
+                'a'...'z', 'A'...'Z', '0'...'9', '_', '-' => {},
+                else => return false,
+            };
+        }
+        return parts > 0;
     }
 
     fn closeState(self: *Lua) void {
@@ -257,7 +364,8 @@ pub const Lua = struct {
         for (self.operators.items) |o| self.gpa.free(o.id);
         self.operators.clearRetainingCapacity();
         self.menu_items.clearRetainingCapacity();
-        @import("../input/script_ops.zig").clear(self.gpa);
+        @import("../input/script_ops.zig").clearState(self.gpa, self.id);
+        self.modules = null;
         self.tasks.clearRetainingCapacity();
         // A hidden run keeps going; its events find no row and are
         // dropped (`app/script_task.zig`).
@@ -340,16 +448,19 @@ pub const Lua = struct {
     pub fn ref(self: *Lua) LuaRef {
         const r = self.L.ref(zlua.registry_index);
         std.debug.assert(r > 0);
-        return @intCast(r);
+        return .{ .state = self.id, .ref = @intCast(r) };
     }
 
     pub fn unref(self: *Lua, r: LuaRef) void {
-        self.L.unref(zlua.registry_index, @intCast(r));
+        std.debug.assert(r.state == self.id);
+        self.L.unref(zlua.registry_index, @intCast(r.ref));
     }
 
-    /// Push the registry value `r`.
+    /// Push the registry value `r`. The ref must be this state's — the
+    /// dispatchers route by `r.state` before they get here.
     pub fn pushRef(self: *Lua, r: LuaRef) void {
-        _ = self.L.getIndexRaw(zlua.registry_index, @intCast(r));
+        std.debug.assert(r.state == self.id);
+        _ = self.L.getIndexRaw(zlua.registry_index, @intCast(r.ref));
     }
 
     // ── budget ──
@@ -360,7 +471,10 @@ pub const Lua = struct {
         const L: *State = @ptrCast(state.?);
         const self = of(L);
         const deadline = self.deadline_ms orelse return;
-        if (App.nowMs(self.io) >= deadline) L.raiseErrorStr("mnml: script budget exceeded", .{});
+        if (App.nowMs(self.io) >= deadline) {
+            self.budget_hits += 1;
+            L.raiseErrorStr("mnml: script budget exceeded", .{});
+        }
     }
 
     /// UI-thread assertion plus the budget for the outermost call. Pair
@@ -1136,21 +1250,21 @@ pub const Lua = struct {
         var i: usize = 0;
         while (i < app.panes.slots.items.len) : (i += 1) {
             const slot = app.panes.slots.items[i] orelse continue;
-            if (slot == .script) try app.forceClosePane(@intCast(i));
+            if (slot == .script and slot.script.lua == self) try app.forceClosePane(@intCast(i));
         }
         for (app.dyn_commands.list.items, app.dyn_commands.live.items) |c, alive| {
-            if (!alive or c.owner != .script) continue;
+            if (!alive or c.owner != .script or c.owner.script != self.id) continue;
             for (c.keys) |k| app.keymap.unbind(k);
         }
-        _ = app.dyn_commands.unregisterOwner(.script);
-        _ = app.hooks.unsubscribeLua();
+        _ = app.dyn_commands.unregisterScript(self.id);
+        _ = app.hooks.unsubscribeState(self.id);
         // Every namespace goes with the state: the decorations it holds
         // and the diagnostics it published (`app/script_decor.zig`).
-        try @import("../app/script_decor.zig").reset(app);
+        try @import("../app/script_decor.zig").resetState(app, self.id);
         // The lists and the rail sections they fed go with it too.
-        try @import("../app/script_section.zig").reset(app);
-        app.script_lists.clear(app.gpa);
-        if (app.overlay == .picker and app.overlay.picker.kind == .lua) {
+        try @import("../app/script_section.zig").resetState(app, self.id);
+        app.script_lists.clearState(app.gpa, self.id);
+        if (app.overlay == .picker and app.overlay.picker.kind == .lua and app.overlay.picker.lua_state == self.id) {
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
         }

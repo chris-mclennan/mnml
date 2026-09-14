@@ -1,0 +1,11 @@
+.{
+    .name = "surround-word",
+    .version = "1.0.0",
+    .api = 1,
+    .description = "Surround a motion's text with a pair — gs{motion} in vim, a command in standard",
+    .author = "mnml",
+    .commands = .{ "user.surround", "user.surround_delete" },
+    .hooks = .{},
+    .source = .marketplace,
+    .url = "https://github.com/chris-mclennan/mnml-scripts",
+}

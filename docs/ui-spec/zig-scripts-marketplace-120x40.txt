@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ SCRIPTS                 │ 󰐕                                                                            󱸀      
+  │ Inst (1) Mkt (5)  (1)   │
+   │  󰍉 / filter        A-Z ▾ │
+ 󰍉 │                          │
+   │▌ eslint  1.0.0  ✓ Officia│
+ 󰊢 │    Runs eslint on save a…│
+   │                          │
+  │  git-blame-line  1.0.0  ✓│
+   │    Who last touched the …│
+ 󰐱 │                          │
+   │  recent-commands  1.0.0  │                                                            _
+ 󰎒 │    A live picker over ev…│                            _ __ ___    _ __    _ __ ___   | |
+   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+  │  surround-word  1.0.0  ✓ │                           | | | | | | | | | | | | | | | | | |
+   │    Surround a motion's t…│                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+  │                          │
+   │  todo-list  1.0.0  ✓ Offi│                                     workspace · ws
+  │    A rail-style list pan…│
+   │                          │                                        Shortcuts
+ 󱘣 │                          │                                     ──────────────
+   │                          │                                     ^P     find file
+▌󰢱 │                          │                                    ^R     recent files
+   │                          │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │                          │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │                          │
+   │                          │                                 mnml 0.3.0-dev+gcd87ce6
+   │                          │
+   │──────────────────────────│
+   │ Scripts                ⋮ │
+   │                          │
+   │ Arrows walk rows. Enter  │
+   │ jumps to the source. F6  │
+   │ cycles focus.            │
+  │                          │
+   │                          │
+ TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    19:40  ws   —
+

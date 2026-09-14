@@ -257,7 +257,7 @@ fn registerLuaCommand(self: *Lua, full_id: []const u8, title: []const u8, group:
         .group = group,
         .keys = keys,
         .runner = .{ .lua = run_ref },
-        .owner = .script,
+        .owner = .{ .script = self.id },
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ShadowsBuiltin => {
@@ -742,7 +742,7 @@ fn operatorRegister(L: *State) !i32 {
         try c.self.operators.append(c.self.gpa, .{ .id = owned_id, .run = run_ref });
         break :blk @intCast(c.self.operators.items.len - 1);
     };
-    if (vim_owned) |v| try script_ops.register(c.self.gpa, v, index);
+    if (vim_owned) |v| try script_ops.register(c.self.gpa, v, c.self.id, index);
     // The standard road: a command with the chord, its runner a closure
     // over the index — `mnml.map(spec, "<id>")`'s trick.
     L.pushInteger(index);
@@ -1745,7 +1745,7 @@ fn decorNamespace(L: *State) !i32 {
     if (L.typeOf(1) != .string) L.argError(1, "mnml.decor.namespace(name) takes a name, a string");
     const name = L.toString(1) catch "";
     if (name.len == 0) L.argError(1, "a namespace name cannot be empty");
-    L.pushInteger(@intCast(try script_decor.namespace(c.app, name)));
+    L.pushInteger(@intCast(try script_decor.namespace(c.app, c.self.id, name)));
     return 1;
 }
 
@@ -2229,13 +2229,13 @@ test "the budget applies to a decoration set in a hot loop" {
     try testing.expect(app.script_decor.items.items.len <= script_decor.max_items);
 }
 
-test "docs/examples/scripts/git-blame-line.lua loads, asks git on cursor_idle and paints what comes back" {
+test "docs/examples/scripts/git-blame-line/init.lua loads, asks git on cursor_idle and paints what comes back" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();
-    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/git-blame-line.lua", testing.allocator, .limited(1 << 20));
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/git-blame-line/init.lua", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(src);
     lua.runString(src) catch |err| {
         std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
@@ -2274,12 +2274,12 @@ test "docs/examples/scripts/git-blame-line.lua loads, asks git on cursor_idle an
     try lua.runString("assert(seen == nil, 'asked twice for one line')");
 }
 
-test "docs/examples/scripts/eslint.lua loads and turns compact output into diagnostics on save" {
+test "docs/examples/scripts/eslint/init.lua loads and turns compact output into diagnostics on save" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
-    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/eslint.lua", testing.allocator, .limited(1 << 20));
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/eslint/init.lua", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(src);
     lua.runString(src) catch |err| {
         std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
