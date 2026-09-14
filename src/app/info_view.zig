@@ -148,7 +148,16 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
     return switch (p.*) {
         .editor => |*e| try editorCopy(app, arena, p, e),
         .request => .{ .title = p.title(), .body = "Request pane — Enter to send, Ctrl+S saves as .http/.curl." },
-        .pty => .{ .title = p.title(), .body = "Terminal pane — Ctrl+Alt+H to detach, Ctrl+Alt+K to kill." },
+        // The title is the pane's label — `ghostty (zsh)` on a shell:
+        // the terminal mnml runs inside, then the child. The chords
+        // are the active profile's, read off the keymap. Rust's copy
+        // named a detach and a kill chord; mnml binds neither, and
+        // closing the tab is what ends the child.
+        .pty => .{ .title = p.title(), .body = try std.fmt.allocPrint(arena, "Terminal pane \u{2014} {s}.", .{try chordLine(app, arena, &.{
+            .{ .id = .@"term.restart", .label = "Restart" },
+            .{ .id = .@"term.rename", .label = "Rename" },
+            .{ .id = .@"buffer.close", .label = "Close" },
+        })}) },
         .md_preview => .{ .title = p.title(), .body = "Rendered markdown preview — click header chip to jump back to source." },
         // The ZON tree: the focused field's doc line (docs/CONFIG.md's
         // comment for a config key, else its type).
@@ -768,4 +777,30 @@ test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
     try t.expectEqualStrings("gd", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
     try t.expectEqualStrings("K", (try chordOf(&app, a, .@"lsp.hover")).?);
     try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
+}
+
+test "a pty pane's copy: the title names the terminal and the shell, and the chords under it are the profile's, not prose" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.env.put("TERM_PROGRAM", "ghostty");
+    try app.env.put("SHELL", "/bin/sh");
+    const id = try @import("pty_pane.zig").open(&app, .{ .placement = .tab });
+    app.focus = .{ .pane = id };
+    const arena = app.frame.allocator();
+    const copy = try pick(&app, arena);
+    // The title is the pane's label: the terminal mnml runs inside,
+    // then the child — the same pair the tab shows.
+    try t.expectEqualStrings("ghostty (sh)", copy.title);
+    try t.expect(std.mem.startsWith(u8, copy.body, "Terminal pane \u{2014} "));
+    // The close chord comes off the keymap (standard profile here), so
+    // a rebind moves the copy with it; `term.restart` is unbound and
+    // contributes its label alone.
+    try t.expect(std.mem.indexOf(u8, copy.body, "[Ctrl+W] Close") != null);
+    try t.expect(std.mem.indexOf(u8, copy.body, "Restart") != null);
+    try t.expect(std.mem.indexOf(u8, copy.body, "Ctrl+Alt+") == null);
 }
