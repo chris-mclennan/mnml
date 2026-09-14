@@ -353,6 +353,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     const allow_shell = std.mem.eql(u8, env.get("MNML_E2E_ALLOW_SHELL") orelse "1", "1");
     const network = std.mem.eql(u8, env.get("MNML_E2E_NETWORK") orelse "0", "1");
     const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 120 else 120;
+    const heartbeat: u64 = if (env.get("MNML_E2E_HEARTBEAT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 60 else 60;
     // `TMPDIR` is the POSIX spelling, `TEMP` / `TMP` Windows's.
     const tmp_root = env.get("TMPDIR") orelse env.get("TEMP") orelse env.get("TMP") orelse "/tmp";
     const data_root = try e2e.runner.makeTempDir(gpa, io, tmp_root);
@@ -405,6 +406,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         .allow_shell = allow_shell,
         .network = network,
         .file_timeout_secs = timeout,
+        .heartbeat_secs = heartbeat,
         .sizes = if (sizes.items.len > 0) sizes.items else &.{e2e.runner.content_size},
         .shell = env.get("SHELL") orelse "/bin/sh",
         .tmp_root = tmp_root,

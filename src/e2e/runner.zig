@@ -57,6 +57,11 @@ pub const Options = struct {
     /// Run files marked `# requires: network` (`MNML_E2E_NETWORK=1`).
     network: bool = false,
     file_timeout_secs: u64 = 120,
+    /// While a file is in flight, every this many seconds the runner
+    /// prints `⏳ <name> still running (Ns)` with the process's children,
+    /// so a long file is distinguishable from a wedged one before the
+    /// timeout fires (`MNML_E2E_HEARTBEAT_SECS`; 0 = off).
+    heartbeat_secs: u64 = 60,
     /// Screen sizes to run each file at. Assertions count at `content_size` only.
     sizes: []const Size = &.{content_size},
     timing: Timing = .{},
@@ -610,8 +615,9 @@ const Job = struct {
 
 /// `runFile` on a worker thread with a wall-clock deadline. On timeout the
 /// worker is abandoned (it dies with the process) and a failing outcome
-/// is synthesized so the suite keeps going.
-pub fn runFileWithTimeout(gpa: Allocator, io: Io, factory: Factory, path: []const u8, size: Size, opts: Options) Outcome {
+/// is synthesized so the suite keeps going. With `out`, a heartbeat
+/// line names the file every `opts.heartbeat_secs` while it runs.
+pub fn runFileWithTimeout(gpa: Allocator, io: Io, factory: Factory, path: []const u8, size: Size, opts: Options, out: ?*Io.Writer) Outcome {
     // The job outlives this call when abandoned, so it cannot come from
     // the leak-checked gpa: page_allocator, and deliberately never freed
     // on the timeout path.
@@ -621,8 +627,30 @@ pub fn runFileWithTimeout(gpa: Allocator, io: Io, factory: Factory, path: []cons
         std.heap.page_allocator.destroy(job);
         return runFile(gpa, io, factory, path, size, opts);
     };
-    const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(@intCast(opts.file_timeout_secs)), .clock = .awake } };
-    const timed_out = if (job.done.waitTimeout(io, timeout)) |_| false else |_| job.state.cmpxchgStrong(.running, .abandoned, .acq_rel, .acquire) == null;
+    // Wait in heartbeat-sized slices: each one that lapses without the
+    // file finishing prints its name and elapsed time, so a run that is
+    // merely long (the corpus takes minutes) is never mistaken for a
+    // hang, and a real hang names its file before the timeout fires.
+    var elapsed_secs: u64 = 0;
+    const timed_out = blk: while (true) {
+        const remaining = opts.file_timeout_secs - elapsed_secs;
+        const slice = if (out != null and opts.heartbeat_secs > 0) @min(remaining, opts.heartbeat_secs) else remaining;
+        const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromSeconds(@intCast(slice)), .clock = .awake } };
+        if (job.done.waitTimeout(io, timeout)) |_| break :blk false else |_| {}
+        elapsed_secs += slice;
+        if (elapsed_secs >= opts.file_timeout_secs) {
+            break :blk job.state.cmpxchgStrong(.running, .abandoned, .acq_rel, .acquire) == null;
+        }
+        if (out) |w| {
+            w.print("  ⏳ {s} still running ({d}s)", .{ std.fs.path.basename(path), elapsed_secs }) catch {};
+            if (childrenSummary(gpa, io)) |kids| {
+                defer gpa.free(kids);
+                w.print(" — children: {s}", .{kids}) catch {};
+            }
+            w.writeAll("\n") catch {};
+            w.flush() catch {};
+        }
+    };
     if (!timed_out) {
         // Either the file finished in time, or it finished in the instant
         // between the timeout and the hand-off; both are the worker's outcome.
@@ -639,6 +667,36 @@ pub fn runFileWithTimeout(gpa: Allocator, io: Io, factory: Factory, path: []cons
             .message = std.fmt.allocPrint(gpa, "TIMEOUT after {d}s (worker abandoned — a step never returned; override via MNML_E2E_FILE_TIMEOUT_SECS)", .{opts.file_timeout_secs}) catch null,
         };
     }
+}
+
+/// `pid name` for each live child of this process, space-joined — what
+/// a heartbeat shows so a stuck file's child (a git that never exits, a
+/// shell that outlived its pane) is named without a second terminal.
+/// Best-effort: null on Windows, when `pgrep` is missing, or when there
+/// are no children. Owned.
+fn childrenSummary(gpa: Allocator, io: Io) ?[]u8 {
+    if (builtin.os.tag == .windows) return null;
+    var pid_buf: [16]u8 = undefined;
+    const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{std.c.getpid()}) catch return null;
+    const res = std.process.run(gpa, io, .{
+        .argv = &.{ "pgrep", "-lP", pid },
+        .timeout = .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } },
+    }) catch return null;
+    defer gpa.free(res.stderr);
+    defer gpa.free(res.stdout);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    var lines = std.mem.splitScalar(u8, res.stdout, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        // pgrep lists itself as our child; nobody is stuck on pgrep.
+        if (std.mem.endsWith(u8, line, " pgrep")) continue;
+        if (out.items.len > 0) out.append(gpa, ' ') catch return null;
+        out.appendSlice(gpa, line) catch return null;
+    }
+    if (out.items.len == 0) return null;
+    return gpa.dupe(u8, out.items) catch null;
 }
 
 // ─── a path ─────────────────────────────────────────────────────────────
@@ -673,9 +731,12 @@ fn lessThan(_: void, a: []u8, b: []u8) bool {
     return std.mem.order(u8, a, b) == .lt;
 }
 
-/// Run a root, reporting as Rust `mnml test` does: `▶ e2e: <name>` before
-/// each file, `⊘ e2e SKIP …` for gated files, then one `  ok   <name>` /
-/// `  FAIL <name> — <message>` per outcome.
+/// Run a root, reporting in Rust `mnml test`'s line formats: `▶ e2e:
+/// <name>` before each file, `⊘ e2e SKIP …` for gated files, and one
+/// `  ok   <name>` / `  FAIL <name> — <message>` per outcome. Unlike
+/// Rust, each verdict is printed the moment its file finishes rather
+/// than after the whole root: a 500-file corpus takes ten minutes, and
+/// a run that prints only start lines for that long reads as a hang.
 pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts: Options, out: *Io.Writer) !Stats {
     const files = try collectFiles(gpa, io, root);
     defer {
@@ -686,11 +747,7 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         try out.print("mnml-zig test: no .test files under {s}\n", .{root});
         try out.flush();
     }
-    var outcomes: std.ArrayList(Outcome) = .empty;
-    defer {
-        for (outcomes.items) |*o| o.deinit(gpa);
-        outcomes.deinit(gpa);
-    }
+    var stats: Stats = .{};
     for (files) |path| {
         const stem = stemOf(path);
         if (opts.name_filter) |f| if (std.mem.indexOf(u8, stem, f) == null) continue;
@@ -715,20 +772,18 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         for (sizes) |size| {
             try out.print("▶ e2e: {s}\n", .{std.fs.path.basename(path)});
             try out.flush();
-            try outcomes.append(gpa, runFileWithTimeout(gpa, io, factory, path, size, opts));
+            var o = runFileWithTimeout(gpa, io, factory, path, size, opts, out);
+            defer o.deinit(gpa);
+            stats.total += 1;
+            if (o.passed) {
+                try out.print("  ok   {s}\n", .{o.name});
+            } else {
+                stats.failed += 1;
+                try out.print("  FAIL {s} — {s}\n", .{ o.name, o.message orelse "" });
+            }
+            try out.flush();
         }
     }
-    var stats: Stats = .{};
-    for (outcomes.items) |o| {
-        stats.total += 1;
-        if (o.passed) {
-            try out.print("  ok   {s}\n", .{o.name});
-        } else {
-            stats.failed += 1;
-            try out.print("  FAIL {s} — {s}\n", .{ o.name, o.message orelse "" });
-        }
-    }
-    try out.flush();
     return stats;
 }
 
@@ -840,8 +895,9 @@ fn expectFailed(o: *Outcome, want_msg: []const u8) !void {
     try t.expectEqualStrings(want_msg, o.message orelse "");
 }
 
-test "shipped defaults: 120×40, 50 ms settle, 3 s expect budget at 40 ms, 25 ms wait slices, 120 s timeout, shell refused" {
+test "shipped defaults: 120×40, 50 ms settle, 3 s expect budget at 40 ms, 25 ms wait slices, 120 s timeout, 60 s heartbeat, shell refused" {
     const o: Options = .{ .data_root = "" };
+    try t.expectEqual(@as(u64, 60), o.heartbeat_secs);
     try t.expectEqual(@as(u16, 120), content_size.cols);
     try t.expectEqual(@as(u16, 40), content_size.rows);
     try t.expectEqual(@as(usize, 1), o.sizes.len);
@@ -1090,7 +1146,7 @@ test "a hung file times out, is abandoned, and the suite continues" {
     var dummy: u8 = 0;
     var opts = env.opts();
     opts.file_timeout_secs = 1;
-    var o = runFileWithTimeout(t.allocator, t.io, .{ .ptr = &dummy, .create = Hang.create }, path, content_size, opts);
+    var o = runFileWithTimeout(t.allocator, t.io, .{ .ptr = &dummy, .create = Hang.create }, path, content_size, opts, null);
     try expectFailed(&o, "TIMEOUT after 1s (worker abandoned — a step never returned; override via MNML_E2E_FILE_TIMEOUT_SECS)");
     // Let the abandoned worker finish and free its own outcome before the
     // test allocator checks for leaks.
@@ -1122,19 +1178,22 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     const report = out.written();
     // Sorted by path; a hidden file and a non-.test file are ignored; the
     // width header pins e_wide to 80 columns where the miss is not asserted.
+    // Each verdict follows its own start line — the rendered-screen dump of
+    // the miss sits between a_fail's first start and its 80x24 start.
     const expected =
-        "▶ e2e: a_fail.test\n▶ e2e: a_fail.test\n▶ e2e: b_pass.test\n▶ e2e: b_pass.test\n" ++
-        "⊘ e2e SKIP (network opt-in): " ++ "SUITE/sub/c_net.test\n" ++
-        "▶ e2e: e_wide.test\n" ++
+        "▶ e2e: a_fail.test\n" ++
         "  FAIL a_fail.test — line 1: screen does not contain \"nope\"\n── rendered screen ──\n" ++ "SCREEN" ++
-        "\n  ok   a_fail.test @80x24\n  ok   b_pass.test\n  ok   b_pass.test @80x24\n  ok   e_wide.test @80x40\n\n4/5 passed\n";
+        "\n▶ e2e: a_fail.test\n  ok   a_fail.test @80x24\n" ++
+        "▶ e2e: b_pass.test\n  ok   b_pass.test\n▶ e2e: b_pass.test\n  ok   b_pass.test @80x24\n" ++
+        "⊘ e2e SKIP (network opt-in): " ++ "SUITE/sub/c_net.test\n" ++
+        "▶ e2e: e_wide.test\n  ok   e_wide.test @80x40\n\n4/5 passed\n";
     // Compare piecewise around the parts that carry paths / the screen dump.
-    const head = std.mem.indexOf(u8, expected, "SUITE").?;
+    const head = std.mem.indexOf(u8, expected, "SCREEN").?;
     try t.expectEqualStrings(expected[0..head], report[0..head]);
-    try t.expect(std.mem.indexOf(u8, report, "⊘ e2e SKIP (network opt-in): ") != null);
+    const middle = expected[head + "SCREEN".len .. std.mem.indexOf(u8, expected, "SUITE").?];
+    try t.expect(std.mem.indexOf(u8, report, middle) != null);
     try t.expect(std.mem.indexOf(u8, report, "/suite/sub/c_net.test\n") != null);
-    try t.expect(std.mem.indexOf(u8, report, "▶ e2e: e_wide.test\n  FAIL a_fail.test — line 1: screen does not contain \"nope\"\n── rendered screen ──\nok") != null);
-    try t.expect(std.mem.endsWith(u8, report, "\n  ok   a_fail.test @80x24\n  ok   b_pass.test\n  ok   b_pass.test @80x24\n  ok   e_wide.test @80x40\n\n4/5 passed\n"));
+    try t.expect(std.mem.endsWith(u8, report, "/suite/sub/c_net.test\n▶ e2e: e_wide.test\n  ok   e_wide.test @80x40\n\n4/5 passed\n"));
     try t.expectEqual(@as(usize, 5), sf.made);
 
     // A network-opted-in run includes the gated file.
@@ -1167,7 +1226,7 @@ test "runPath: --filter keeps the matching names silently, --skip announces the 
     try t.expectEqual(@as(usize, 0), s.failed);
     const skip_line = try std.fmt.allocPrint(t.allocator, "\u{2298} e2e SKIP (--skip): {s}/alpha_two.test\n", .{root});
     defer t.allocator.free(skip_line);
-    const expected = try std.mem.concat(t.allocator, u8, &.{ "\u{25b6} e2e: alpha_one.test\n", skip_line, "  ok   alpha_one.test\n" });
+    const expected = try std.mem.concat(t.allocator, u8, &.{ "\u{25b6} e2e: alpha_one.test\n  ok   alpha_one.test\n", skip_line });
     defer t.allocator.free(expected);
     try t.expectEqualStrings(expected, out.written());
     try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
@@ -1194,6 +1253,66 @@ test "runPath on a single file and on an empty directory" {
     const s2 = try runPath(t.allocator, t.io, sf.factory(), empty, env.opts(), &out2.writer);
     try t.expectEqual(@as(usize, 0), s2.total);
     try t.expect(std.mem.startsWith(u8, out2.written(), "mnml-zig test: no .test files under "));
+}
+
+test "runPath: a verdict lands right after its own start line, not after the whole root" {
+    // A ten-minute corpus that prints only start lines until the end reads
+    // as a hang (2026-09-13: four runs killed mid-flight for exactly that).
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "suite");
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/a_fail.test", .data = "expect screen contains nope\n" });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/b_pass.test", .data = "expect screen contains ok\n" });
+    const root = try std.fs.path.join(t.allocator, &.{ env.root, "suite" });
+    defer t.allocator.free(root);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    const s = try runPath(t.allocator, t.io, sf.factory(), root, env.opts(), &out.writer);
+    try t.expectEqual(@as(usize, 2), s.total);
+    const report = out.written();
+    // a_fail's verdict is out before b_pass even starts.
+    try t.expect(std.mem.startsWith(u8, report, "▶ e2e: a_fail.test\n  FAIL a_fail.test — "));
+    try t.expect(std.mem.endsWith(u8, report, "▶ e2e: b_pass.test\n  ok   b_pass.test\n"));
+}
+
+test "runFileWithTimeout: a heartbeat names a file that is still running before the timeout" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const path = try env.script("slow.test", "wait 1\n");
+    defer t.allocator.free(path);
+    const Slow = struct {
+        var slept_once = false;
+        fn create(_: *anyopaque, gpa: Allocator, _: Io, cfg: driver_mod.Config) anyerror!Driver {
+            const s = try gpa.create(driver_mod.Stub);
+            s.* = try driver_mod.Stub.init(gpa, cfg.cols, cfg.rows);
+            return .{ .ptr = s, .vtable = &slow };
+        }
+        const slow: Driver.VTable = blk: {
+            var v = @as(*const Driver.VTable, driver_mod.Stub.vtablePtr()).*;
+            v.tick = struct {
+                fn f(_: *anyopaque) driver_mod.Error!void {
+                    // One tick outlives the heartbeat but not the timeout.
+                    if (slept_once) return;
+                    slept_once = true;
+                    std.testing.io.sleep(.fromMilliseconds(1500), .awake) catch {};
+                }
+            }.f;
+            break :blk v;
+        };
+    };
+    var dummy: u8 = 0;
+    var opts = env.opts();
+    opts.heartbeat_secs = 1;
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    var o = runFileWithTimeout(t.allocator, t.io, .{ .ptr = &dummy, .create = Slow.create }, path, content_size, opts, &out.writer);
+    defer o.deinit(t.allocator);
+    try t.expect(o.passed);
+    // The line names the file and the seconds elapsed; the children list
+    // that may follow depends on the machine and is not asserted.
+    try t.expect(std.mem.startsWith(u8, out.written(), "  ⏳ slow.test still running (1s)"));
+    try t.expect(std.mem.endsWith(u8, out.written(), "\n"));
 }
 
 test "debug quoting matches Rust's {:?} for the characters that appear in scripts" {
