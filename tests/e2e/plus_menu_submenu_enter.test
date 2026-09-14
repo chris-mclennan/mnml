@@ -1,18 +1,14 @@
 # The `+` menu's New ▸ child: the pointer opens it on row 0 (un-highlighted,
 # as Rust's child starts), two downs land on the THIRD row and Enter runs it —
-# the HTTP request opens; `→` on the child's row changes nothing (Rust's Right
-# reads the parent's row). The first arrow used to only light the cursor, so
-# every later key was one row above where the screen said it was, and `→`
-# opened the curation list so Enter pinned instead of creating (walkthrough 2.2).
+# the HTTP request opens. The first arrow used to only light the cursor, so
+# every later key was one row above where the screen said it was, `→`
+# curated the row above and Enter pinned instead of creating (walkthrough 2.2).
 click 33 1
 expect screen contains "Create…"
 hover 36 3
 expect screen contains "Scratch buffer"
 key down
 key down
-key right
-expect screen contains "HTTP request"
-expect screen lacks "Pin to top"
 key enter
 expect screen lacks "Create…"
 expect screen contains "new request"

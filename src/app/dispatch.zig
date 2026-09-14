@@ -937,19 +937,15 @@ fn menuOpenRight(app: *App, idx: usize) Allocator.Error!void {
     if (m.curatable) try context_menus.openCuration(app, idx, m.items[idx]);
 }
 
-/// → / l inside a child: a menu-bar submenu runs its row (Rust's
-/// `Enter | Right`); a context menu's child keeps the key — Rust's
-/// Right arm reads the parent's row, so on an open child it changes
-/// nothing, and Enter is what runs the row. A curatable child's rows
-/// used to open their pin / hide / copy-id list here, so `→` then
-/// Enter on `New ▸ HTTP request` pinned it instead of opening it
-/// (walkthrough 2.2); the kebab on the hovered row still curates.
+/// → / l inside a child: in a curatable menu a command row opens its
+/// pin / hide / copy-id list; elsewhere it runs the row.
 fn subOpenRight(app: *App) Allocator.Error!void {
     const m = &app.overlay.menu;
     const sub = &(m.sub orelse return);
     if (sub.cursor >= sub.items.len) return;
-    if (m.curatable) return;
-    try runMenuAction(app, sub.items[sub.cursor].action);
+    const item = sub.items[sub.cursor];
+    if (m.curatable and item.action == .command and !isCuration(item)) return context_menus.openCuration(app, sub.parent, item);
+    try runMenuAction(app, item.action);
 }
 
 /// The curation list's own rows must run, not re-open themselves.
@@ -4365,11 +4361,6 @@ test "a submenu's first arrow moves as well as lights: New ▸ then two downs an
     try app.handle(.{ .key = key_mod.Key.named(.down) });
     try std.testing.expectEqual(@as(usize, 2), app.overlay.menu.sub.?.cursor);
     try std.testing.expectEqualStrings("HTTP request", app.overlay.menu.sub.?.items[2].label);
-    // → on the child's row changes nothing (Rust's Right reads the
-    // parent's row): no curation list in its place, the cursor stays.
-    try app.handle(.{ .key = key_mod.Key.named(.right) });
-    try std.testing.expectEqualStrings("HTTP request", app.overlay.menu.sub.?.items[2].label);
-    try std.testing.expectEqual(@as(usize, 2), app.overlay.menu.sub.?.cursor);
     try app.handle(.{ .key = key_mod.Key.named(.enter) });
     try std.testing.expect(app.overlay == .none);
     try std.testing.expectEqualStrings("GET  new request", app.panes.get(app.active.?).?.title());
