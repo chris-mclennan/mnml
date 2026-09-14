@@ -322,6 +322,16 @@ workspace at 120×40:
   step names the workspace the App sees as `$MNML_E2E_WORKSPACE` (a
   transcript's `cwd` must match it — `$PWD` resolves the symlinked
   temp dir and does not).
+  *// changed 2026-09-13 (tab-icons):* `zig-sessions-120x40.txt` was
+  re-cut — row 1's three pty tabs now read `󱸀 claude 󰅖`, the Claude
+  mark Rust paints there, where they showed the generic codicon
+  terminal ``; and the info box's pty copy reads `Terminal pane —
+  Restart · Rename · [Ctrl+W] Close.`, the chords read off the
+  keymap, where it repeated Rust's prose about a detach and a kill
+  chord neither editor binds. Rows beyond the rail against
+  `rust-sessions-120x40.txt` are unchanged at 39 — the row itself
+  still differs (Rust names each session by its prompt, Zig by the
+  binary), but the mark on it now matches.
 - `outline` — `src/main.rs` open, `view.toggle_right_panel`,
   `outline.show`: the outline in the right panel at Rust's 32 cells (the
   divider at 87), a strip row above it (`main.rs ⌥1   󰐕 … ×`,

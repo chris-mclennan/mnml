@@ -1,5 +1,5 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ SESSIONS (3)           │  claude 󰅖    claude 󰅖    claude 󰅖   󰐕                            󰅁  󰅂  󱸀        
+   │ SESSIONS (3)           │ 󱸀 claude 󰅖   󱸀 claude 󰅖   󱸀 claude 󰅖   󰐕                            󰅁  󰅂  󱸀        
   │  󰍉 / filter              │▌claude (fake) 5e551011-0000-4000-8000-000000000001
    │                          │▌^[^[
  󰍉 │  + New session           │▌
@@ -31,10 +31,10 @@
    │──────────────────────────│▌
    │ claude                 ⋮ │▌
    │                          │▌
-   │ Terminal pane —          │▌
-   │ Ctrl+Alt+H to detach,    │▌
-   │ Ctrl+Alt+K to kill.      │▌                                             ┌───────────────────────────────────── × ┐
+   │ Terminal pane — Restart  │▌
+   │ · Rename · [Ctrl+W]      │▌
+   │ Close.                   │▌                                             ┌───────────────────────────────────── × ┐
   │                          │▌                                             │ pinned write the release notes for 0.3 │
    │                          │▌                                             └────────────────────────────────────────┘
- TREE  [no file]                                                                            󱼀 󰐎    15:59  ws   —
+ TREE  [no file]                                                                            󱼀 󰐎    14:52  ws   —
 
