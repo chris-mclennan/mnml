@@ -2722,6 +2722,7 @@ test {
     _ = @import("ui/fuzzy.zig");
     _ = @import("ui/editor_view.zig");
     _ = @import("scripting/lua.zig");
+    _ = @import("scripting/manifest.zig");
     _ = @import("scripting/api.zig");
     _ = @import("scripting/diag.zig");
     _ = @import("scripting/complete.zig");
