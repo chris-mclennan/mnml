@@ -658,9 +658,21 @@ width floor. The grep dump shows the other half of the rule: the window
 is centred on the hit line, not the file's head.
 
 `zig-whichkey-120x40.txt` is the leader popup the standard profile
-shows (`tools/zig-spec.sh whichkey`), beside `rust-whichkey-120x40.txt`
-— the two agree row for row since the root's `r → +lsp` became
-`vim_only`.
+shows (`tools/zig-spec.sh whichkey`), beside `rust-whichkey-120x40.txt`.
+The rows carry the same keys and labels in the same order — the root's
+`r → +lsp` became `vim_only` to make that true — but this is the **one
+place the which-key popup deliberately leaves the Rust screen**: on
+2026-09-14 the user chose the reference plugin's look, so every row now
+wears a glyph and every group label carries its chord count
+(`󰍉 f → +find (7)`), and a sub-level's header is that group's own row
+(`┌ <leader>f  +find (7) `). Rust's popup has neither, so `steps-whichkey`
+reads 14 rows differing beyond the rail where it read 2 — the twelve
+content rows of the popup; its header, its `esc to cancel` hint and its
+box still match, and the other two rows predate this. The faces are
+taken from the rail and the devicon table rather than re-picked
+(`src/ui/whichkey_glyph.zig`), each with its one-cell `--ascii` twin, so
+the popup agrees with the rest of the chrome and the column math does
+not move between glyph modes. See `docs/PARITY.md`, the which-key row.
 
 `zig-themes-120x40.txt` is the theme browser mid-preview
 (`tools/zig-spec.sh themes` — `theme.pick`, then `gruv` typed). The
