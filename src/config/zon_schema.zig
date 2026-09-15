@@ -513,7 +513,8 @@ test "the config schema names every widget kind" {
     const side = lookup(.config, &.{ "ui", "section_side", "git" }).?;
     try t.expectEqual(Widget.@"enum", side.widget);
     try t.expect(side.optional);
-    try expectTags(side, &.{ "left", "right" });
+    // // changed (bottom-dock): the dock is a third side.
+    try expectTags(side, &.{ "left", "right", "bottom" });
 
     // a list of strings, a list of structs and the struct inside
     const kw = lookup(.config, &.{ "ui", "todo_keywords" }).?;

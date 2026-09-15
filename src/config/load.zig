@@ -277,6 +277,7 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.editor.chord_timeout_ms = std.math.clamp(cfg.editor.chord_timeout_ms, Config.chord_timeout_ms_min, Config.chord_timeout_ms_max);
     cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
     cfg.ui.hover_help_height = std.math.clamp(cfg.ui.hover_help_height, Config.hover_help_height_min, Config.hover_help_height_max);
+    cfg.ui.bottom_panel_height = std.math.clamp(cfg.ui.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
     cfg.ui.projects_dir = try expandTilde(arena, cfg.ui.projects_dir, home);
     if (cfg.startup.default_workspace) |ws| cfg.startup.default_workspace = try expandTilde(arena, ws, home);
 
