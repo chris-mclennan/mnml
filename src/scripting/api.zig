@@ -64,6 +64,7 @@ pub const root_fns = [_]Fn{
     fnOf("workspace", "mnml.workspace() → the absolute workspace path", workspace),
     fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
     fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
+    fnOf("inspect", "mnml.inspect(v) → a string — any value written out for reading: tables walked 4 deep with their keys sorted, a repeat marked <cycle>, anything deeper {…}", inspect),
     fnOf("commands", "mnml.commands(query?) → { { id, title, group, keys = { … } }, … } — every command, built-in and script, narrowed by a substring on the id or the title", commandsList),
     fnOf("list", "mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? } → a list handle with :refresh(); host it with pane.open{ list = } or section{ list = }", listRegister),
     fnOf("section", "mnml.section{ id, title, glyph?, ascii?, list, side?, after? } — a rail section of your own, with the caps header, filter, sort chip and folds every built-in has", sectionRegister),
@@ -426,6 +427,144 @@ fn dataRoot(L: *State) !i32 {
 fn redraw(L: *State) !i32 {
     ctx(L).app.needs_render = true;
     return 0;
+}
+
+// ─── mnml.inspect ───────────────────────────────────────────────────────
+// `print` is the log — it toasts, the way it always has. `inspect` is
+// the other half: it never prints anything itself, it answers with the
+// string, so `print(mnml.inspect(a))` toasts a hook's whole payload and
+// `mnml.toast(mnml.inspect(row))` does it from a picker.
+
+/// How deep `mnml.inspect` walks before it writes `{…}` instead.
+pub const inspect_depth: usize = 4;
+/// The cap on the string it answers with; past it the tail is `…`.
+pub const inspect_bytes: usize = 16 * 1024;
+
+/// `mnml.inspect(v)` → the value as a string. Deterministic: the array
+/// part in order, then every other key sorted, so two runs of the same
+/// table read the same and a test can pin it.
+fn inspect(L: *State) !i32 {
+    const c = ctx(L);
+    if (L.getTop() == 0) L.raiseErrorStr("mnml.inspect(v) takes one value — any type, nil included", .{});
+    const arena = c.app.frame.allocator();
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var seen: [inspect_depth]?*const anyopaque = @splat(null);
+    try writeInspect(L, arena, &out, 1, 0, &seen);
+    if (out.items.len > inspect_bytes) {
+        out.shrinkRetainingCapacity(inspect_bytes);
+        try out.appendSlice(arena, "…");
+    }
+    _ = L.pushString(out.items);
+    return 1;
+}
+
+fn lessThanStr(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// Whether a string key may be written bare (`x = 1`) rather than
+/// bracketed (`["a b"] = 1`).
+fn bareKey(s: []const u8) bool {
+    if (s.len == 0 or std.ascii.isDigit(s[0])) return false;
+    for (s) |ch| if (!std.ascii.isAlphanumeric(ch) and ch != '_') return false;
+    return true;
+}
+
+fn writeQuoted(arena: Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) Allocator.Error!void {
+    try out.append(arena, '"');
+    for (s) |ch| switch (ch) {
+        '"' => try out.appendSlice(arena, "\\\""),
+        '\\' => try out.appendSlice(arena, "\\\\"),
+        '\n' => try out.appendSlice(arena, "\\n"),
+        '\t' => try out.appendSlice(arena, "\\t"),
+        '\r' => try out.appendSlice(arena, "\\r"),
+        else => try out.append(arena, ch),
+    };
+    try out.append(arena, '"');
+}
+
+/// The value at `index` written into `out`. `seen` holds the tables on
+/// the path down to here, so a table that names itself reads `<cycle>`
+/// instead of running until the budget stops it.
+fn writeInspect(L: *State, arena: Allocator, out: *std.ArrayListUnmanaged(u8), index: i32, depth: usize, seen: []?*const anyopaque) Allocator.Error!void {
+    if (out.items.len > inspect_bytes) return;
+    const at = L.absIndex(index);
+    switch (L.typeOf(at)) {
+        .none, .nil => try out.appendSlice(arena, "nil"),
+        .boolean => try out.appendSlice(arena, if (L.toBoolean(at)) "true" else "false"),
+        .number => {
+            if (L.isInteger(at)) {
+                try out.print(arena, "{d}", .{L.toInteger(at) catch 0});
+            } else {
+                try out.print(arena, "{d}", .{L.toNumber(at) catch 0});
+            }
+        },
+        // `toString` on a string reads it; on a number it would REWRITE
+        // the stack slot, which would break the `next` walk above.
+        .string => try writeQuoted(arena, out, L.toString(at) catch ""),
+        .table => try writeTable(L, arena, out, at, depth, seen),
+        .function => try out.appendSlice(arena, "<function>"),
+        else => try out.print(arena, "<{s}>", .{L.typeNameIndex(at)}),
+    }
+}
+
+fn writeTable(L: *State, arena: Allocator, out: *std.ArrayListUnmanaged(u8), at: i32, depth: usize, seen: []?*const anyopaque) Allocator.Error!void {
+    const ptr = L.toPointer(at);
+    for (seen[0..depth]) |p| if (p != null and p == ptr) return out.appendSlice(arena, "<cycle>");
+    if (depth >= inspect_depth) return out.appendSlice(arena, "{…}");
+    seen[depth] = ptr;
+    defer seen[depth] = null;
+    const start = out.items.len;
+    try out.appendSlice(arena, "{ ");
+    var wrote: usize = 0;
+    const n = L.lenRaw(at);
+    var i: usize = 1;
+    while (i <= n) : (i += 1) {
+        _ = L.getIndex(at, @intCast(i));
+        defer L.pop(1);
+        if (wrote > 0) try out.appendSlice(arena, ", ");
+        try writeInspect(L, arena, out, -1, depth + 1, seen);
+        wrote += 1;
+    }
+    // Everything the array part did not cover, rendered one at a time
+    // and sorted: `next`'s order is the hash's, and a report that
+    // reorders itself between runs is not a report.
+    var rest: std.ArrayListUnmanaged([]const u8) = .empty;
+    L.pushNil();
+    while (L.next(at)) {
+        const in_array = L.isInteger(-2) and blk: {
+            const k = L.toInteger(-2) catch 0;
+            break :blk k >= 1 and k <= @as(i64, @intCast(n));
+        };
+        if (in_array) {
+            L.pop(1);
+            continue;
+        }
+        var one: std.ArrayListUnmanaged(u8) = .empty;
+        if (L.typeOf(-2) == .string and bareKey(L.toString(-2) catch "")) {
+            try one.appendSlice(arena, L.toString(-2) catch "");
+        } else {
+            try one.append(arena, '[');
+            try writeInspect(L, arena, &one, -2, depth + 1, seen);
+            try one.append(arena, ']');
+        }
+        try one.appendSlice(arena, " = ");
+        try writeInspect(L, arena, &one, -1, depth + 1, seen);
+        try rest.append(arena, one.items);
+        L.pop(1);
+    }
+    std.mem.sort([]const u8, rest.items, {}, lessThanStr);
+    for (rest.items) |s| {
+        if (wrote > 0) try out.appendSlice(arena, ", ");
+        try out.appendSlice(arena, s);
+        wrote += 1;
+    }
+    if (wrote == 0) {
+        out.shrinkRetainingCapacity(start);
+        try out.appendSlice(arena, "{}");
+    } else {
+        try out.appendSlice(arena, " }");
+    }
 }
 
 // ─── mnml.buf ───────────────────────────────────────────────────────────
@@ -1984,6 +2123,56 @@ test "mnml.on fires with the marshalled args; mnml.buf.apply goes through EditOp
     try testing.expectError(error.Failed, lua.runString("mnml.buf.apply{ op = 'nope' }"));
     try testing.expectError(error.Failed, lua.runString("mnml.buf.apply{ op = 'insert_str' }"));
     try testing.expectError(error.Failed, lua.runString("mnml.buf.text(99)"));
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.inspect: every type, the array part before the sorted keys, a cycle marked, a depth cap, and print still toasts" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const Case = struct { src: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .src = "mnml.inspect(nil)", .want = "nil" },
+        .{ .src = "mnml.inspect(true)", .want = "true" },
+        .{ .src = "mnml.inspect(7)", .want = "7" },
+        .{ .src = "mnml.inspect(1.5)", .want = "1.5" },
+        .{ .src = "mnml.inspect('hi')", .want = "\"hi\"" },
+        .{ .src = "mnml.inspect('a\\nb\"c')", .want = "\"a\\nb\\\"c\"" },
+        .{ .src = "mnml.inspect(print)", .want = "<function>" },
+        .{ .src = "mnml.inspect({})", .want = "{}" },
+        .{ .src = "mnml.inspect({ 1, 2, 3 })", .want = "{ 1, 2, 3 }" },
+        // The array part first, then the rest of the keys in sorted
+        // order — `next`'s own order is the hash's and varies.
+        .{ .src = "mnml.inspect({ 'x', zed = 1, alpha = 2 })", .want = "{ \"x\", alpha = 2, zed = 1 }" },
+        .{ .src = "mnml.inspect({ ['a b'] = 1, [2.5] = 2 })", .want = "{ [\"a b\"] = 1, [2.5] = 2 }" },
+        .{ .src = "mnml.inspect({ a = { b = { c = 1 } } })", .want = "{ a = { b = { c = 1 } } }" },
+        // Four tables deep is the cap, the outermost counted: the fifth
+        // is `{…}`.
+        .{ .src = "mnml.inspect({ a = { b = { c = { d = { e = 1 } } } } })", .want = "{ a = { b = { c = { d = {…} } } } }" },
+        .{ .src = "local t = {} t.self = t return mnml.inspect(t)", .want = "{ self = <cycle> }" },
+        // A table reached twice down two branches is not a cycle.
+        .{ .src = "local s = { 1 } return mnml.inspect({ a = s, b = s })", .want = "{ a = { 1 }, b = { 1 } }" },
+    };
+    for (cases) |c| {
+        const got = (try lua.eval(c.src)) orelse {
+            std.debug.print("`{s}` answered nothing\n", .{c.src});
+            return error.TestExpectedEqual;
+        };
+        if (!std.mem.eql(u8, got, c.want)) {
+            std.debug.print("`{s}`\n  wanted: {s}\n  got:    {s}\n", .{ c.src, c.want, got });
+            return error.TestExpectedEqual;
+        }
+    }
+    // No argument at all is the one error: `inspect(nil)` is a question,
+    // `inspect()` is a mistake.
+    try testing.expectError(error.Failed, lua.runString("mnml.inspect()"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error orelse "", "takes one value") != null);
+    // `print` is still the log: it toasts, and `inspect` never does.
+    app.dismissToasts();
+    try lua.runString("mnml.inspect({ 1 })");
+    try testing.expect(app.lastToast() == null);
+    try lua.runString("print(mnml.inspect({ a = 1 }))");
+    try testing.expectEqualStrings("{ a = 1 }", app.lastToast().?);
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
 
