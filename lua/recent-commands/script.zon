@@ -7,5 +7,4 @@
     .commands = .{ "user.recent" },
     .hooks = .{},
     .source = .marketplace,
-    .url = "https://github.com/chris-mclennan/mnml-scripts",
 }
