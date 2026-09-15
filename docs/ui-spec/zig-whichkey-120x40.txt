@@ -23,18 +23,18 @@
  󰢱 │                          │                                    ^R     recent files
    │                          │                                   ^K     which-key menu
  ┌ <leader> ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │/ → toggle comment             H → +harpoon                   i → +integrations                                     │
- │1 → harpoon 1                  I → +insert                    l → +lsp                                              │
- │2 → harpoon 2                  L → +lang/run                  m → markdown preview                                  │
- │3 → harpoon 3                  P → +pr                        n → line numbers                                      │
- │4 → harpoon 4                  T → +test                      o → run task…                                         │
- │5 → harpoon 5                  a → +ai/term                   p → command palette                                   │
- │6 → harpoon 6                  b → +buffer                    q → close buffer                                      │
- │7 → harpoon 7                  c → +nvchad                    s → +split                                            │
- │8 → harpoon 8                  e → explorer                   t → +toggle                                           │
- │9 → harpoon 9                  f → +find                      w → write/save                                        │
- │? → cheatsheet (all chords)    g → +git                                                                             │
- │B → open browser (Chrome/CDP)  h → +http                                                                            │
+ │󰘵 / → toggle comment              H → +harpoon (2)               󰐱 i → +integrations (5)                           │
+ │󰘵 1 → harpoon 1                   I → +insert (2)                 l → +lsp (12)                                   │
+ │󰘵 2 → harpoon 2                   L → +lang/run (19)             󰘵 m → markdown preview                            │
+ │󰘵 3 → harpoon 3                  󰓂 P → +pr (2)                    󰘵 n → line numbers                                │
+ │󰘵 4 → harpoon 4                   T → +test (6)                  󰘵 o → run task…                                   │
+ │󰘵 5 → harpoon 5                  󰚩 a → +ai/term (14)              󰘵 p → command palette                             │
+ │󰘵 6 → harpoon 6                  󰎒 b → +buffer (5)                󰘵 q → close buffer                                │
+ │󰘵 7 → harpoon 7                   c → +nvchad (3)                 s → +split (12)                                 │
+ │󰘵 8 → harpoon 8                  󰘵 e → explorer                    t → +toggle (14)                                │
+ │󰘵 9 → harpoon 9                  󰍉 f → +find (7)                  󰘵 w → write/save                                  │
+ │󰘵 ? → cheatsheet (all chords)    󰊢 g → +git (18)                                                                    │
+ │󰘵 B → open browser (Chrome/CDP)   h → +http (6)                                                                    │
  │  esc to cancel                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 

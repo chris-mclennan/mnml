@@ -154,7 +154,19 @@ key); a key that is not a character — an arrow, Enter, a function key —
 leaves the popup where it is; and a key no row carries toasts `no
 leader mapping: <leader>…` rather than dismissing it silently. A vim
 operator with a pending prefix (`g`, `z`, `ctrl+w`) paints the same
-popup titled `Vim: <prefix>`.
+popup titled `Vim: <prefix>` — with no glyph column, since its rows are
+motions rather than groups.
+
+Since 2026-09-14 the popup reads the reference plugin's way in both
+profiles: a glyph before every row and the chord count after every
+group label — `󰍉 f → +find (7)`, a leaf wearing its group's face
+dimmed, and a sub-level's header carrying that group's own row
+(`<leader>f  +find (7)`). The count is read off the tree
+(`whichkey.chordCount`), so a chord added under a group moves it; the
+faces come from `src/ui/whichkey_glyph.zig`, which takes the rail's and
+the devicon table's glyphs rather than picking new ones. Each has a
+one-cell `--ascii` twin. This is a deliberate departure from the
+reference editor's popup, which has neither (`docs/PARITY.md`).
 
 ## Ctrl-O / Ctrl-I / Tab in the vim profile
 

@@ -1,12 +1,19 @@
 //! Which-key — the hint popup for a pending prefix: `<leader>`,
-//! `<leader> f`, `Vim: g`. A square box two cells narrower than the
-//! screen, sitting just above the statusline, listing every
-//! continuation as `key → label` in as many columns as fit (a cell is
-//! the widest label plus six), column-major so the eye reads down.
-//! Groups paint in the accent — their labels carry the `+` — leaves in
-//! the text color with the key in the warning yellow; `  esc to cancel`
-//! closes the list. Stateless: the app hands in the entries for the
-//! current prefix each frame.
+//! `<leader>f  +find (7)`, `Vim: g`. A square box two cells narrower
+//! than the screen, sitting just above the statusline, listing every
+//! continuation as `glyph key → label` in as many columns as fit (a
+//! cell is the widest label plus six, plus the glyph column when any
+//! row carries one), column-major so the eye reads down. Groups paint
+//! in the accent — their labels carry the `+` and their chord count —
+//! leaves in the text color with the key in the warning yellow and the
+//! glyph dimmed; `  esc to cancel` closes the list. Stateless: the app
+//! hands in the entries for the current prefix each frame.
+//!
+//! The glyph column is the reference plugin's look, which the reference
+//! editor's own popup does not have (`docs/PARITY.md`, the which-key
+//! row): `ui/whichkey_glyph.zig` is the table and `app/render.zig`
+//! resolves a row's face before handing the entry over, so a popup with
+//! nothing to show (the vim operator menu) pays no column for it.
 //!
 //! Entries are sorted by key here so a keymap can register them in any
 //! order and the popup still reads alphabetically — which is why a row
@@ -26,6 +33,10 @@ pub const Entry = struct {
     key: []const u8,
     label: []const u8,
     is_group: bool = false,
+    /// The row's face, already resolved for the ui's glyph mode (one
+    /// cell, or its `--ascii` twin). Empty on every row means no glyph
+    /// column at all — the vim operator popup keeps its old width.
+    glyph: []const u8 = "",
     /// The caller's index for this row, registered as `.overlay_item`
     /// so a click lands on the row the CALLER knows — the popup sorts
     /// its entries, so the painted order is not the caller's.
@@ -55,11 +66,15 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
     const arr_w = ui.width(arr);
     var key_w: u16 = 1;
     var label_w: u16 = 0;
+    var glyph_w: u16 = 0;
     for (entries) |e| {
         key_w = @max(key_w, ui.width(e.key));
         label_w = @max(label_w, ui.width(e.label));
+        // One glyph and one cell of air, and every row in the popup pays
+        // for it so the keys stay in one column.
+        if (e.glyph.len > 0) glyph_w = @max(glyph_w, ui.width(e.glyph) + 1);
     }
-    const cell_w = @max(min_cell_w, key_w + arr_w + label_w + 2);
+    const cell_w = @max(min_cell_w + glyph_w, glyph_w + key_w + arr_w + label_w + 2);
     const avail_w = @max(area.w -| 4, cell_w);
     const cols: usize = @max(1, avail_w / cell_w);
     const n = entries.len;
@@ -79,6 +94,10 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
     const label_leaf = Theme.onBg(t.fg, bg);
     const label_group = Theme.onBg(t.accent, bg);
     const arrow_style = Theme.onBg(t.muted, bg);
+    // A group wears its face in the accent, a leaf the same face dimmed
+    // — the row still says which group the chord belongs to.
+    const glyph_group = Theme.onBg(t.accent, bg);
+    const glyph_leaf = Theme.onBg(t.muted, bg);
 
     var r: usize = 0;
     while (r < actual_rows and r < inner.h) : (r += 1) {
@@ -90,6 +109,10 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
             const e = entries[idx];
             var x = inner.x + @as(u16, @intCast(c)) * cell_w;
             const end = @min(x + cell_w, inner.right());
+            if (glyph_w > 0) {
+                if (e.glyph.len > 0) _ = ui.putStr(x, y, end -| x, e.glyph, if (e.is_group) glyph_group else glyph_leaf);
+                x += glyph_w;
+            }
             // Keys right-align in their column so the arrows line up.
             const kw = ui.width(e.key);
             x += key_w -| kw;
@@ -169,6 +192,67 @@ test "the gate's shape: a group then its leaves; ascii arrows; narrow screens" {
     draw(g.ui(), g.full(), "Leader", &leader);
     draw(g.ui(), Rect.empty, "Leader", &leader);
     draw(g.ui(), g.full(), "Leader", &.{});
+}
+
+test "the glyph column: a cell per row, the keys still in one column, and no column at all without one" {
+    // The faces come from the table, not from a literal here — a row
+    // painted by this test is a row the popup really paints.
+    const wkg = @import("whichkey_glyph.zig");
+    const g_find = wkg.forGroup("+find").glyph;
+    const g_split = wkg.forGroup("+split").glyph;
+    const g_none = wkg.neutral.glyph;
+    // 60 wide with the column: cell 18 (2 + 1 + 3 + 10 + 2), 56
+    // available → 3 columns on one row.
+    var f = try Fixture.init(60, 12);
+    defer f.deinit();
+    const iconed = [_]Entry{
+        .{ .key = "s", .label = "+split (2)", .is_group = true, .glyph = g_split },
+        .{ .key = "f", .label = "+find (7)", .is_group = true, .glyph = g_find },
+        .{ .key = "e", .label = "explorer", .glyph = g_none },
+    };
+    draw(f.ui(), f.full(), "<leader>", &iconed);
+    var buf: [256]u8 = undefined;
+    var c1: [64]u8 = undefined;
+    var c2: [64]u8 = undefined;
+    var c3: [64]u8 = undefined;
+    const row = f.row(8, &buf);
+    // Sorted e, f, s left to right, each behind its own face.
+    const e_at = std.mem.indexOf(u8, row, try cell(g_none, "e", "explorer", &c1)) orelse return error.NoLeafRow;
+    const f_at = std.mem.indexOf(u8, row, try cell(g_find, "f", "+find (7)", &c2)) orelse return error.NoFindRow;
+    const s_at = std.mem.indexOf(u8, row, try cell(g_split, "s", "+split (2)", &c3)) orelse return error.NoSplitRow;
+    try testing.expect(e_at < f_at and f_at < s_at);
+    // The group's face paints in the accent, the leaf's in the muted
+    // colour — same glyph, dimmer, when the leaf is inside a group.
+    try testing.expect(f.fgEql(2, 8, f.theme.muted)); // `e`, a leaf
+    try testing.expect(f.fgEql(20, 8, f.theme.accent)); // `f`, a group
+    // Under --ascii the twins are one cell too, so nothing moves.
+    var a = try Fixture.init(60, 12);
+    defer a.deinit();
+    var ui = a.ui();
+    ui.ascii = true;
+    const twins = [_]Entry{
+        .{ .key = "s", .label = "+split (2)", .is_group = true, .glyph = wkg.forGroup("+split").fallback },
+        .{ .key = "f", .label = "+find (7)", .is_group = true, .glyph = wkg.forGroup("+find").fallback },
+        .{ .key = "e", .label = "explorer", .glyph = wkg.neutral.fallback },
+    };
+    draw(ui, a.full(), "<leader>", &twins);
+    try a.expectContains("f f -> +find (7)");
+    try a.expectContains(". e -> explorer");
+    // No glyph on any row: the column is not reserved, so the vim
+    // operator popup keeps the width it had — cell 14, all four of the
+    // leader fixture's entries on the one row.
+    var n = try Fixture.init(60, 12);
+    defer n.deinit();
+    draw(n.ui(), n.full(), "Vim: g", &leader);
+    const plain = n.row(8, &buf);
+    for ([_][]const u8{ "e → explorer", "f → +find", "q → quit", "s → +split" }) |want| {
+        try testing.expect(std.mem.indexOf(u8, plain, want) != null);
+    }
+}
+
+/// `glyph key → label`, the way a row reads on screen.
+fn cell(glyph: []const u8, key: []const u8, label: []const u8, buf: []u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{s} {s} → {s}", .{ glyph, key, label });
 }
 
 test "keys of different widths line their arrows up" {

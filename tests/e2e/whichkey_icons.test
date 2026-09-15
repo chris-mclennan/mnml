@@ -1,0 +1,55 @@
+# width: 120
+# The reference plugin's look, decided 2026-09-14 and recorded in
+# `docs/PARITY.md`: a glyph before every row and the chord count after
+# every group label. A group wears its own face — taken from the rail
+# where it has one there, so the popup and the rail never drift — and a
+# leaf wears the face of the group it lives in, dimmer. The header of a
+# level inside a group is that group's own row.
+write a.txt "hello\n"
+open a.txt
+
+command editor.use_standard
+key ctrl+k
+# Group rows: the rail's SEARCH / GIT / INTEGRATIONS / SESSIONS faces.
+expect screen contains "󰍉 f → +find (7)"
+expect screen contains "󰊢 g → +git (18)"
+expect screen contains "󰐱 i → +integrations (5)"
+expect screen contains "󰎒 b → +buffer (5)"
+expect screen contains " L → +lang/run (19)"
+expect screen contains "󰓂 P → +pr (2)"
+expect screen contains "󰚩 a → +ai/term (14)"
+# A root leaf has no group of its own: the neutral mark.
+expect screen contains "󰘵 q → close buffer"
+expect screen contains "󰘵 w → write/save"
+
+# Inside a group the header carries that group's row, and every leaf
+# there wears the group's face rather than the neutral one.
+type f
+expect screen contains "┌ <leader>f  +find (7) "
+expect screen contains "󰍉 g → grep"
+expect screen contains "󰍉 f → files"
+expect screen lacks "󰘵 g → grep"
+key esc
+expect screen lacks "esc to cancel"
+
+# A nested group: each runner wears its language's devicon and counts
+# its own leaves; the parent's count is the sum.
+key ctrl+k
+type L
+expect screen contains "┌ <leader>L  +lang/run (19) "
+expect screen contains " c → +cargo (5)"
+expect screen contains " n → +npm (7)"
+expect screen contains " p → +pytest (2)"
+expect screen contains " g → +go (5)"
+key esc
+
+# The vim profile's own two groups carry a face and a count as well.
+command editor.use_vim
+key space
+expect screen contains " d → +debug (15)"
+expect screen contains " r → +lsp (1)"
+type r
+expect screen contains "┌ <leader>r  +lsp (1) "
+expect screen contains " a → rename symbol"
+key esc
+expect screen lacks "esc to cancel"
