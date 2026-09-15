@@ -23,7 +23,7 @@ line), not by hand.
 | section | done | partial | cut | missing | rows |
 |---|---|---|---|---|---|
 | Editing & input | 49 | 0 | 0 | 0 | 49 |
-| Panes, splits & tab pages | 19 | 0 | 0 | 0 | 19 |
+| Panes, splits & tab pages | 23 | 0 | 0 | 0 | 23 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
 | Navigation & search | 31 | 0 | 0 | 0 | 31 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
@@ -232,7 +232,11 @@ trust sink. Each row names its file and its test.
 | Reopen closed buffer | done | `buffer.reopen` in `src/app/cmd_buffer.zig` | |
 | Recent-files picker | done | `picker.recent` in `src/app/cmd_picker.zig`, `file.open_recent_0–9` / `clear_recent` in `cmd_app.zig` | |
 | Alternate-file jump | done | `:A` in `ex.zig` | |
-| Session — panes, layout, tab pages, chrome, pins, history | done | `src/app/session.zig` (`.mnml/session.zon`, `session.save` / `restore` / `clear`) | Zig-only; a stale / foreign file is one toast; dock widgets ride along |
+| Bottom panel — `view.toggle_bottom_panel` (`Ctrl+Shift+J`) | done | `src/app/bottom.zig`, `Chrome.bottom` / `FrameRects.bottom` in `src/app/render.zig`, `Side.bottom` in `src/config/Config.zig` + `src/app/side.zig`; `tests/e2e/bottom_dock_toggle.test`, `diagnostics_bottom_default.test` | *2026-09-14 (bottom-dock), the user's "allow the bottom one too":* was a `cutRunner`. The dock is the THIRD host in the section-placement model, not a separate widget — `body = [left col \| splits \| right col]` over `[dock]`, carved off `upper` before the columns as Rust's is. `ui.bottom_panel_height` (12 rows, clamped 3..60) and `ui.bottom_panel_visible`; a one-row divider above it drags to resize, and `Ctrl-W +` / `-` resize it from the keys (the same chords, which now also resize a focused column by `>` / `<` — neither had a keyboard path before). Two thirds of `upper` is the cap and the body keeps two rows, so the dock never takes the editor's last row; under six rows of `upper` none is carved. Rows ride in `session.zon` (`bottom` / `bottom_panel_height`) beside the columns' |
+| Diagnostics in the bottom panel by default | done | `configuredSide` in `src/app/side.zig`; `tests/e2e/diagnostics_bottom_default.test` | *2026-09-14 (bottom-dock), walkthrough finding 2.1 closed:* Rust's `lsp.diagnostics` opens `󰀦 problems` as a pane under the editor; Zig opened `DIAGNOSTICS` in the right column. It now lands in the dock. `sections.diagnostics = .right` in the config keeps the old placement |
+| Host a pane in the bottom panel — `view.host_active_in_bottom_panel` | done | `host` / `unhost` / `drain` in `src/app/bottom.zig`, `drawBottomDock` / `drawPaneContent` in `render.zig`; `tests/e2e/bottom_dock_host_pane.test` | *2026-09-14 (bottom-dock):* was a `cutRunner`. The active pane leaves the split tree and lives in the dock (kept in `App.panes`, out of the layout — `outline_panel`'s shape), behind its own tab strip: focus, close, middle-click and the tab menu all work as on a leaf. *// changed:* running the id again on a docked pane sends it BACK to the splits, which Rust has no door for; the toggle drains every hosted pane back rather than dropping it, as Rust's does. Rust refuses editor / pty / request kinds ("not hostable yet") — here every pane kind draws, since the dock calls the same per-kind painter a leaf does |
+| Move a section to the bottom dock — `Ctrl-W J` / `K`, the rail menu, `:sidebar bottom` | done | `ctrlWSectionSide` / `came_from` in `src/app/side.zig`, the move rows in `src/app/context_menus.zig` | Zig-only (Rust has no section placement at all). `J` docks the focused section, `K` returns it to the column it came from; the rail's right-click grows a third *Move to bottom dock* row, and `:sidebar bottom` is the word form. No new command ids — the spec count stays 1068 |
+| Session — panes, layout, tab pages, chrome, pins, history | done | `src/app/session.zig` (`.mnml/session.zon`, `session.save` / `restore` / `clear`) | Zig-only; a stale / foreign file is one toast; dock widgets ride along; // changed (bottom-dock): the dock's section and height ride too |
 
 ## File manager
 

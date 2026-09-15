@@ -293,6 +293,15 @@ Rust toggles it; Zig toasts that there is no bottom panel.
 `lsp.diagnostics_filter`: Zig toasts the new filter; Rust shows no feedback.
 Owner: `mnml-zig/src/app/lsp.zig:1323` vs Rust `src/ui/diagnostics_view.rs`.
 
+**CLOSED 2026-09-14 (`bottom-dock`).** mnml-zig has a bottom dock, and the
+diagnostics live in it by default (`side.configuredSide`). It is the third
+host in the section-placement model rather than a Rust-shaped one-off:
+`Config.Side` gained `.bottom`, so any section moves there (`Ctrl-W J` / the
+rail's *Move to bottom dock* / `:sidebar bottom`) and back (`Ctrl-W K`).
+`view.toggle_bottom_panel` and `view.host_active_in_bottom_panel` were
+`cutRunner`s in `cmd_app.zig`; both now run. See `docs/PARITY.md` § Panes,
+splits & tab pages.
+
 **2.2 — `+` menu → `New ▸` → `→`: Rust ignores the key, Zig opens the
 row-curation submenu on the wrong row, and `Enter` pins instead of creating.**
 `plusmenu/03-right`, `04-enter`. Both open `Create…` with `New ▸ / Open ▸ /
@@ -591,7 +600,8 @@ live with `steps-doors.jsonl` (94 ids, each run on both sides, the
   `job.1`, `plugin.x`, `slack.*`, `crates.io` in the grep are fixture strings,
   not commands — both sides ack them `false`.)
 - **Rust surfaces with no Zig door:** the AGENTS and CLOUD AGENTS sections
-  (accepted), the bottom panel (`view.toggle_bottom_panel` — Zig toasts),
+  (accepted), the bottom panel (`view.toggle_bottom_panel` — landed
+  2026-09-14, `docs/PARITY.md` § Panes, splits & tab pages),
   the `Claude usage` quota pane, the `:` line's live suggestion list, the
   settings filter/Save/Cancel, the palette's recents pinning, the welcome
   `Tip` row, the ex-command row under the statusline, the indent guides and

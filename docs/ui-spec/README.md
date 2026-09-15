@@ -26,6 +26,19 @@ Nerd Font family — and put nothing in U+F1B00–U+F20FF the Rust side does
 not already bake (`mnml/assets/glyphs/`, the Rust glyph tables), or it
 renders as a box.
 
+`zig-bottom-dock-120x40.txt` / `zig-bottom-dock-80x24.txt` are the
+bottom dock with its default section, the diagnostics
+(`tools/zig-spec.sh bottom-dock`, `steps-bottom-dock.jsonl`): the `─`
+divider across the frame, the section's caps header with its `sort:`
+chip and the `×` that hides the dock, and the columns above it short by
+the dock's rows. There is nothing to diff against — the Rust bottom
+panel was never driven for a spec, and it is absent from every
+`rust-*.txt` here (it is carved only while it is open), so no existing
+dump changed when the dock landed. The DIAGNOSTICS section moved from
+the right column into it; no dump carried that section either. The
+geometry itself is pinned by the unit tests in `src/app/side.zig`
+(80×24 / 120×40 / 200×60).
+
 Same look, Zig internals: the Rust modules are a behaviour reference,
 not a template. Build on the component system (`Ui`, `HitMap`,
 `Canvas`, `ListPanel`), register every click target in the same

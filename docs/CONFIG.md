@@ -98,25 +98,30 @@ otherwise. Copy what you need; leave the rest out.
         .tree_width = 30, // clamped to 10..80
         .right_panel_visible = false,
         .right_panel_width = 32, // the right column (the Rust right panel's width)
-        // Every activity section lives in the left or the right column
-        // (`view.move_section_left` / `_right`, the rail's right-click,
-        // vim `Ctrl-W H` / `L` in a section, `:sidebar left|right`).
-        // `sidebar_side` is the side a section takes when `section_side`
-        // does not name it — the Rust right-panel panes (outline,
-        // diagnostics) take the other side of it. Every section has a
-        // side (SEARCH and DEBUG are columns too). The session keeps the
-        // sides a user moved; these are the starting point.
+        .bottom_panel_visible = false, // the dock at start (Rust's bottom panel)
+        .bottom_panel_height = 12, // the dock's rows; clamped to 3..60
+        // Every activity section lives in the left column, the right
+        // column or the BOTTOM DOCK (`view.move_section_left` /
+        // `_right`, the rail's right-click, vim `Ctrl-W H` / `L` / `J` /
+        // `K` in a section, `:sidebar left|right|bottom`).
+        // `sidebar_side` is the column a section takes when
+        // `section_side` does not name one — the outline takes the other
+        // side of it, and the diagnostics the dock (Rust opens
+        // `lsp.diagnostics` as a pane under the editor). Every section
+        // has a side (SEARCH and DEBUG are columns too). The session
+        // keeps the sides a user moved; these are the starting point.
         .sidebar_side = .left, // .left | .right (the Settings row "Default sidebar side")
-        .section_side = .{ // per section, null = follow sidebar_side (outline and diagnostics: the other side)
-            .explorer = null, // .left | .right
+        .section_side = .{ // per section, null = the default above
+            .explorer = null, // .left | .right | .bottom
             .git = null,
             .sessions = null,
             .http = null,
             .notes = null,
             .todos = null,
             .findings = null,
+            .scripts = null,
             .search = null, // Rust's SEARCH sidebar section (the grep pane is its *Open as pane* door)
-            .diagnostics = null,
+            .diagnostics = null, // null = the dock; `.right` is the pre-dock placement
             .outline = null,
         },
         .auto_hide_narrow_width = 0, // 0 = never auto-hide the tree
@@ -775,9 +780,9 @@ file written since the overlay opened — a file that did not exist is
 removed again.
 
 Rows are discrete choices (bools, enums, the theme) and numbers
-(`tree_width`, `right_panel_width`, `wheel_lines`, `md_image_rows`,
+(`tree_width`, `right_panel_width`, `bottom_panel_height`, `wheel_lines`, `md_image_rows`,
 `hover_help_height`, `color_column`, `tab_width`, `text_width`,
-`chord_timeout_ms` — 70 rows in all); text (`projects_dir`, the
+`chord_timeout_ms` — 73 rows in all); text (`projects_dir`, the
 labels) stays a file edit.
 
 ### Themes
