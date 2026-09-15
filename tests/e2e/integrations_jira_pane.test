@@ -84,4 +84,14 @@ key q
 wait 500
 key x
 expect screen lacks "1 Mine"
+# Uninstall before leaving. The corpus shares ONE data root across every
+# file, so a manifest left installed here is still installed when the
+# next integrations script asks how many there are — which is how this
+# script took six other tests down with it the first time it ran.
+command integrations.show_installed
+key x
+expect screen contains "Remove Jira?"
+key r
+expect screen contains "removed jira"
+expect screen contains "Nothing installed yet"
 shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
