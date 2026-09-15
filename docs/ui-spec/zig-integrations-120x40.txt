@@ -1,40 +1,40 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                                      󰐕  ●━  󰅖
-   │ INTEGRATIONS            │ 󰐕                                                                                   
-  │ Inst (1) Mkt (0)  (0)   │
- 󰍉 │  󰍉 / filter        A-Z ▾ │
- 󰊢 │                          │
-  │▌  Sample  0.1.0         │
-▌󰐱 │    sample.open           │
- 󰎒 │                          │
- 󰚩 │                          │
- 󰅣 │                          │
-  │                          │                                                            _
-  │                          │                            _ __ ___    _ __    _ __ ___   | |
-  │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
- 󱘣 │                          │                           | | | | | | | | | | | | | | | | | |
-   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ INTEGRATIONS            │ 󰐕                                                                            󱸀      
+  │ Inst (4) Mkt (0)         │
+   │  󰍉 / filter        A-Z ▾ │
+ 󰍉 │                          │
+   │▌  Browser  first-party  │
+ 󰊢 │    browser.open          │
    │                          │
+  │  󱸀 Claude Code (hidden)  │
+   │    not logged in         │
+▌󰐱 │                          │
+   │  󱸁 Codex (hidden)  first-│                                                            _
+ 󰎒 │    not read yet          │                            _ __ ___    _ __    _ __ ___   | |
+   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+  │   HTTP (hidden)  first-p│                           | | | | | | | | | | | | | | | | | |
+   │    view.activity_http    │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+  │                          │
    │                          │                                     workspace · ws
-   │                          │                                         on main
-   │                          │
+  │                          │
    │                          │                                        Shortcuts
-   │                          │                                     ──────────────
+ 󱘣 │                          │                                     ──────────────
    │                          │                                     ^P     find file
-   │                          │                                    ^R     recent files
+ 󰢱 │                          │                                    ^R     recent files
    │                          │                                   ^K     which-key menu
    │                          │                                      ^N     new file
    │                          │                                    ^B     toggle tree
    │                          │                                        ^Q     quit
+   │                          │
+   │                          │                                mnml 0.3.0-dev+g95d24d5e
+   │                          │
    │──────────────────────────│
-   │ Integrations           ⋮ │                                 mnml 0.3.0-dev+g630df94
+   │ Integrations           ⋮ │
    │                          │
    │ Installed integrations.  │
    │ Enter fires the command. │
    │ Right-click for          │
-   │ Configure / Uninstall.   │
+  │ Configure / Uninstall.   │
    │                          │
-   │                          │
-  │                          │
-   │                          │
- TREE   main  󰐙 2  [no file]                              S·sample   C 74% ±0.0  󱼀 󰐎  WRAP    23:07  ws   —
+ TREE  [no file]                                                              F 59% ▲0.4  󱼀 󰐎    11:21  ws   —
 

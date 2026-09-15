@@ -8,11 +8,16 @@ command integrations.refresh
 expect screen contains "1 installed"
 command integrations.show_installed
 expect screen contains INTEGRATIONS
-expect screen contains "Inst (1)"
+# Four first-party rows (integrations_first_party_rows.test) plus this one.
+expect screen contains "Inst (5)"
 # The column is 26 cells at the shipped width: the row clips; a drag on
-# the divider widens it and the whole row reads.
-expect screen contains "H Hello Sample"
+# the divider widens it and the whole row reads. The manifest sits under
+# the first-party block, so the cursor walks down to it.
 drag 30 5 60 5
+key down
+key down
+key down
+key down
 expect screen contains "H Hello Sample (mnml-hello not installed)"
 expect screen contains "hello.open"
 # The detail pane: the buttons, the command with its chord, the missing binary.

@@ -27,8 +27,13 @@ key q
 wait 500
 key x
 expect screen lacks "SAMPLE ·"
-# Uninstall, so the size sweep (one data root for every size) starts clean.
+# Uninstall, so the size sweep (one data root for every size) starts
+# clean. The four first-party rows sit above the manifest: walk down.
 command integrations.show_installed
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Sample?"
 key r

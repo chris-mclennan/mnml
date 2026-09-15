@@ -7,7 +7,10 @@ write .mnml/integrations/old.toml "[integration]\nid = \"old\"\nlabel = \"Old\"\
 command integrations.refresh
 expect screen contains "1 integration from mnml 0.2 is not loaded"
 command view.activity_integrations
-expect screen contains "Nothing installed yet"
+# The Installed tab is never empty — the four first-party surfaces are
+# always on it — so the notice's panel surface is the toast, which
+# stands while the tab is opened.
+expect screen contains "Inst (4)"
 expect screen contains "1 integration from mnml"
 command integrations.dismiss_toml_notice
 expect screen lacks "from mnml"

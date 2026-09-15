@@ -167,8 +167,15 @@ otherwise. Copy what you need; leave the rest out.
         .git_graph_author_col = null,
         .git_graph_detail_col = null,
         .picker_position = .center, // .center | .top
-        // The activity-bar icon strip. Omit to keep the three built-ins
-        // (browser, claude_code, codex); set it to replace them.
+        // The four first-party surfaces (browser, claude_code, codex,
+        // http) — the palette-bar chip strip AND the always-present rows
+        // of the INTEGRATIONS section's Installed tab. Omit to keep them;
+        // set it to replace them. `enabled` (the chip paints and the row
+        // reads live, not `(hidden)`) and `in_palette_bar` (the chip is on
+        // the bar's strip) are the two the row menu's *Enable / Disable*
+        // and *Show in / Hide from palette bar* write back here, in the
+        // home config, whole. The other fields describe the row and are
+        // not written by the UI.
         .integration_icons = .{
             .{
                 .id = "browser",

@@ -43,10 +43,16 @@ wait 500
 key x
 expect screen lacks "SAMPLE ·"
 # Uninstall from the Installed tab: the confirm, then everything goes.
+# The four first-party rows sit above the manifest, so walk down to it.
 command integrations.show_installed
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Sample?"
 key r
 expect screen contains "removed sample"
 expect screen lacks "S·sample"
-expect screen contains "Nothing installed yet"
+# The tab drops back to the four first-party rows, never to empty.
+expect screen contains "Installed (4)"

@@ -56,6 +56,7 @@ const marketplace = @import("marketplace.zig");
 const font_scan = @import("font_scan.zig");
 const fonts_section = @import("../ui/fonts_section.zig");
 const side = @import("side.zig");
+const usage_pane = @import("usage_pane.zig");
 const auto_refresh = @import("auto_refresh.zig");
 const settings = @import("settings.zig");
 const hit = @import("../ui/hit.zig");
@@ -71,6 +72,84 @@ pub const Tab = view.Tab;
 pub const Panel = list_panel.ListPanel(view.Entry);
 
 pub const Source = enum { home, workspace };
+
+// ─── the first-party surfaces ───────────────────────────────────────────
+
+/// The four surfaces mnml ships itself. No manifest describes them, so
+/// no scan finds them — the Rust editor lists them as built-in
+/// `IntegrationIcon` rows (`config.rs` ~1640) and everything else
+/// comes from a manifest. This table is the Zig side of that list: the
+/// Installed tab paints these four above whatever is installed, and
+/// `Config.default_integration_icons` mirrors it field for field (a
+/// unit test holds the two together) so `ui.integration_icons` stays
+/// the one place the two user preferences are stored.
+pub const FirstParty = struct {
+    id: []const u8,
+    glyph: []const u8,
+    fallback: []const u8,
+    /// What Enter on the row — and a click on the chip — runs.
+    command: []const u8,
+    /// A theme role, or a `#RRGGBB` literal.
+    color: []const u8,
+    label: []const u8,
+    /// The shipped defaults of the two preferences `ui.integration_icons`
+    /// persists. Only Browser's chip is on out of the box, as Rust's
+    /// is: a first launch stays quiet.
+    enabled: bool,
+    in_palette_bar: bool,
+};
+
+pub const first_party = [_]FirstParty{
+    .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
+    // Claude's mark is mnml's own baked glyph; the fallback is the idle
+    // char a user without the font still sees. `#D16D51` is the
+    // Anthropic brand orange as a literal — no theme role is it.
+    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = "#D16D51", .label = "Claude Code", .enabled = false, .in_palette_bar = false },
+    .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
+    .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
+};
+
+/// The first-party row with `id`, if it is one.
+pub fn firstPartyIndex(id: []const u8) ?usize {
+    for (first_party, 0..) |fp, i| if (std.mem.eql(u8, fp.id, id)) return i;
+    return null;
+}
+
+/// The config row for `id` — where a toggle lands. Absent only when a
+/// user config replaced `ui.integration_icons` without it.
+fn configIcon(app: *const App, id: []const u8) ?config.Config.IntegrationIcon {
+    for (app.cfg.ui.integration_icons) |ic| if (std.mem.eql(u8, ic.id, id)) return ic;
+    return null;
+}
+
+/// A first-party row's live `enabled` / `in_palette_bar`: the config's
+/// when it names the id, else the table's default.
+pub fn fpEnabled(app: *const App, i: usize) bool {
+    return if (configIcon(app, first_party[i].id)) |ic| ic.enabled else first_party[i].enabled;
+}
+
+pub fn fpOnBar(app: *const App, i: usize) bool {
+    return if (configIcon(app, first_party[i].id)) |ic| ic.in_palette_bar else first_party[i].in_palette_bar;
+}
+
+/// An Installed-tab index: the four first-party rows come first, then
+/// the scanned manifests. Every consumer of an Installed index decodes
+/// through here rather than indexing `State.list` directly.
+pub const InstalledRow = union(enum) { first_party: usize, manifest: usize };
+
+pub fn installedRow(v: usize) InstalledRow {
+    return if (v < first_party.len) .{ .first_party = v } else .{ .manifest = v - first_party.len };
+}
+
+/// The Installed-tab index of manifest `i`.
+pub fn manifestVirtual(i: usize) usize {
+    return first_party.len + i;
+}
+
+/// The Installed tab's row count — what its tab label says.
+pub fn installedCount(app: *const App) usize {
+    return first_party.len + app.integrations.list.len;
+}
 
 /// One manifest as scanned. Everything borrows the snapshot arena.
 pub const Installed = struct {
@@ -278,6 +357,11 @@ pub const State = struct {
     /// `ui.activity_bar_pinned_integrations` after a pin / unpin: the
     /// config field points here until the next reload.
     pins_owned: ?[][]u8 = null,
+    /// `ui.integration_icons` after a first-party row's Enable /
+    /// Disable or Show in palette bar: the array AND its strings, so
+    /// the config field cannot dangle on the next reload of the file
+    /// underneath. The arena is the whole ownership.
+    icons_arena: ?std.heap.ArenaAllocator = null,
     scanned: bool = false,
     /// The last scan's problems, one line each (snapshot arena).
     problems: [][]const u8 = &.{},
@@ -326,6 +410,7 @@ pub const State = struct {
         for (self.segment_ids.items) |s| gpa.free(s);
         self.segment_ids.deinit(gpa);
         if (self.menu_chip) |c| gpa.free(c);
+        if (self.icons_arena) |*a| a.deinit();
         self.freePins(gpa);
         self.panel.deinit(gpa);
         if (self.job) |*j| j.deinit(gpa);
@@ -991,8 +1076,15 @@ fn settingsEnv(app: *App, arena: Allocator, id: []const u8) Allocator.Error![]mo
 }
 
 /// Run the integration's first command (what the chip and Enter do).
-fn openRow(app: *App, idx: usize) CommandError!void {
+/// Enter (or a second click) on an Installed row: a first-party row
+/// runs its command, a manifest its first command — or, when it
+/// declares none, the binary itself.
+fn openRow(app: *App, virtual: usize) CommandError!void {
     const st = &app.integrations;
+    const idx = switch (installedRow(virtual)) {
+        .first_party => |i| return command.runNamed(app, first_party[i].command),
+        .manifest => |i| i,
+    };
     if (idx >= st.list.len) return;
     const inst = &st.list[idx];
     if (inst.slots.len == 0) {
@@ -1075,7 +1167,7 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
     if (idx >= list.len) return;
     const chip = list[idx];
     if (m.button == .right) {
-        if (chip.installed) |row| return openInstalledMenu(app, row, m.x, m.y);
+        if (chip.installed) |row| return openInstalledMenu(app, manifestVirtual(row), m.x, m.y);
         // The AI chips: their launch profiles.
         if (std.mem.eql(u8, chip.id, "claude_code")) return launch_profiles.openChipMenu(app, .claude, m.x, m.y);
         if (std.mem.eql(u8, chip.id, "codex")) return launch_profiles.openChipMenu(app, .codex, m.x, m.y);
@@ -1144,7 +1236,7 @@ pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     errdefer items.deinit(app.gpa);
     if (chip.installed) |row| {
-        st.menu_row = .{ .tab = .installed, .idx = row };
+        st.menu_row = .{ .tab = .installed, .idx = manifestVirtual(row) };
         const inst = &st.list[row];
         const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else true;
         try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
@@ -1265,11 +1357,14 @@ fn togglePaletteBar(app: *App) CommandError!void {
     const st = &app.integrations;
     if (st.menu_chip) |c| {
         const row = st.find(c);
+        const fp = firstPartyIndex(c);
         try st.setMenuChip(app.gpa, null);
         st.menu_row = null;
         if (row) |r| return toggleChipField(app, r, .in_palette_bar);
+        if (fp) |i| return fpToggle(app, i, .in_palette_bar);
         return app.diag.fail(app.frame.allocator(), "integrations: only a manifest's chip can leave the bar — a config icon's `in_palette_bar` lives in config.zon", .{});
     }
+    if (try focusedFirstParty(app)) |i| return fpToggle(app, i, .in_palette_bar);
     if (try focusedRow(app)) |r| return toggleChipField(app, r, .in_palette_bar);
     return pickRow(app, .integrations_toggle_bar, "Show / hide on the palette bar");
 }
@@ -1386,20 +1481,20 @@ pub fn visibleEntries(app: *App, arena: Allocator) Allocator.Error![]usize {
                 const m = inst.manifest;
                 const first: []const u8 = if (m.commands.len > 0) m.commands[0].id else m.binary;
                 if (q.len > 0 and !(containsIgnoreCase(m.label, q) or containsIgnoreCase(m.id, q) or containsIgnoreCase(first, q) or containsIgnoreCase(m.category, q))) continue;
-                try out.append(arena, i);
+                try out.append(arena, manifestVirtual(i));
             }
             const Ctx = struct {
                 list: []Installed,
                 sort: InstalledSort,
                 fn lt(self: @This(), a: usize, b: usize) bool {
-                    const ma = self.list[a].manifest;
-                    const mb = self.list[b].manifest;
+                    const ma = self.list[a - first_party.len].manifest;
+                    const mb = self.list[b - first_party.len].manifest;
                     switch (self.sort) {
                         .name => {},
                         .name_desc => return std.ascii.lessThanIgnoreCase(mb.label, ma.label),
                         .enabled_first => {
-                            const ea = self.list[a].enabled();
-                            const eb = self.list[b].enabled();
+                            const ea = self.list[a - first_party.len].enabled();
+                            const eb = self.list[b - first_party.len].enabled();
                             if (ea != eb) return ea;
                         },
                         .category => {
@@ -1411,6 +1506,17 @@ pub fn visibleEntries(app: *App, arena: Allocator) Allocator.Error![]usize {
                 }
             };
             std.mem.sort(usize, out.items, Ctx{ .list = st.list, .sort = st.installed_sort }, Ctx.lt);
+            // The four first-party rows go above whatever is installed,
+            // in table order, whatever the sort chip says — they are the
+            // editor's own surfaces, not entries competing for a place in
+            // the list. The filter still hides them.
+            var head: std.ArrayListUnmanaged(usize) = .empty;
+            for (first_party, 0..) |fp, i| {
+                if (q.len > 0 and !(containsIgnoreCase(fp.label, q) or containsIgnoreCase(fp.id, q) or containsIgnoreCase(fp.command, q))) continue;
+                try head.append(arena, i);
+            }
+            try head.appendSlice(arena, out.items);
+            return head.toOwnedSlice(arena);
         },
         .marketplace => {
             for (app.marketplace.entries, 0..) |e, i| {
@@ -1732,10 +1838,56 @@ fn openEntryMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
     }
 }
 
-fn openInstalledMenu(app: *App, row: usize, x: u16, y: u16) Allocator.Error!void {
+/// The first-party row's menu: the surface it reaches, then the two
+/// preferences `ui.integration_icons` persists. Claude and Codex lead
+/// with their sessions — *New session ▸* is the chip's own profile
+/// menu, so the two never drift — then the usage pane and the profiles.
+fn openFirstPartyMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     const st = &app.integrations;
+    if (i >= first_party.len) return;
+    const fp = first_party[i];
+    st.menu_row = .{ .tab = .installed, .idx = i };
+    try st.setMenuChip(app.gpa, null);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    const product: ?launch_profiles.Product = if (std.mem.eql(u8, fp.id, "claude_code"))
+        .claude
+    else if (std.mem.eql(u8, fp.id, "codex"))
+        .codex
+    else
+        null;
+    if (product) |p| {
+        try rows.append(app.gpa, .{ .label = "New session", .action = .none, .submenu = try launch_profiles.menuItems(app, mem.allocator(), p) });
+        try rows.append(app.gpa, .{ .label = "Usage", .action = .{ .command = if (p == .codex) .@"ai.codex_usage" else .@"ai.claude_usage" } });
+        // Codex has no login of its own — its reader counts
+        // transcripts on disk, so there is nothing to link.
+        if (p == .claude) try rows.append(app.gpa, .{ .label = "Login", .action = .{ .command = .@"ai.link_claude_token" } });
+        try rows.append(app.gpa, .{ .label = "Configure profiles…", .action = .{ .ai_profile = .{ .product = p, .index = launch_profiles.legacy_index, .set_default = false } } });
+    } else if (std.mem.eql(u8, fp.id, "browser")) {
+        try rows.append(app.gpa, .{ .label = "Open", .action = .{ .command = .@"browser.open" } });
+    } else {
+        try rows.append(app.gpa, .{ .label = "New request", .action = .{ .command = .@"http.new_request" } });
+        try rows.append(app.gpa, .{ .label = "Collections", .action = .{ .command = .@"view.activity_http" } });
+    }
+    try rows.append(app.gpa, .{ .label = if (fpEnabled(app, i)) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" }, .separator_before = true });
+    try rows.append(app.gpa, .{ .label = if (fpOnBar(app, i)) "Hide from palette bar" else "Show in palette bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu(fp.label, owned, x, y);
+    app.overlay.menu.mem = mem;
+}
+
+/// `virtual` is an Installed-tab index: a first-party row or a manifest.
+fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.integrations;
+    const row = switch (installedRow(virtual)) {
+        .first_party => |i| return openFirstPartyMenu(app, i, x, y),
+        .manifest => |i| i,
+    };
     if (row >= st.list.len) return;
-    st.menu_row = .{ .tab = .installed, .idx = row };
+    st.menu_row = .{ .tab = .installed, .idx = virtual };
     try st.setMenuChip(app.gpa, null);
     const inst = &st.list[row];
     const enabled = inst.enabled();
@@ -1789,7 +1941,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     };
     const caret = view.drawSection(ui, area, .{
         .tab = st.tab,
-        .counts = .{ st.list.len, app.marketplace.entries.len, st.dev.len },
+        .counts = .{ installedCount(app), app.marketplace.entries.len, st.dev.len },
         .show_dev = showDev(app),
         .filter = st.panel.filterText(),
         .filter_caret = st.panel.filter_caret,
@@ -1809,12 +1961,39 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     };
 }
 
+/// A first-party row. Its second line is the command Enter runs —
+/// except for the two AI surfaces, where it is the quota the usage
+/// reader last saw, so the numbers are in the list without opening the
+/// pane (`usage_pane.claudeSummary` / `codexSummary`).
+fn firstPartyRow(app: *App, arena: Allocator, i: usize) Allocator.Error!view.Entry {
+    const fp = first_party[i];
+    const line2: []const u8 = if (std.mem.eql(u8, fp.id, "claude_code"))
+        try usage_pane.claudeSummary(app, arena)
+    else if (std.mem.eql(u8, fp.id, "codex"))
+        try usage_pane.codexSummary(app, arena)
+    else
+        fp.command;
+    return .{
+        .glyph = fp.glyph,
+        .fallback = fp.fallback,
+        .color = fp.color,
+        .kind = .installed,
+        .label = fp.label,
+        .hidden = !fpEnabled(app, i),
+        .badge = .first_party,
+        .line2 = line2,
+    };
+}
+
 /// One entry of the active tab as the painter wants it.
 fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry {
     const st = &app.integrations;
     switch (st.tab) {
         .installed => {
-            const inst = &st.list[idx];
+            const inst = switch (installedRow(idx)) {
+                .first_party => |i| return firstPartyRow(app, arena, i),
+                .manifest => |i| &st.list[i],
+            };
             const m = inst.manifest;
             return .{
                 .glyph = try chipGlyph(arena, m.chip),
@@ -1911,7 +2090,10 @@ fn focusedRow(app: *App) Allocator.Error!?usize {
     const st = &app.integrations;
     if (st.menu_row) |r| {
         st.menu_row = null;
-        if (r.tab == .installed and r.idx < st.list.len) return r.idx;
+        if (r.tab == .installed) return switch (installedRow(r.idx)) {
+            .first_party => null,
+            .manifest => |i| if (i < st.list.len) i else null,
+        };
         if (r.tab == .dev and r.idx < st.dev.len) return st.find(st.dev[r.idx].id());
         return null;
     }
@@ -1921,8 +2103,38 @@ fn focusedRow(app: *App) Allocator.Error!?usize {
         .marketplace => {},
     };
     if (app.focus == .panel and app.focus.panel == .integrations) {
-        if (st.tab == .installed) return try cursorEntry(app);
+        if (st.tab == .installed) {
+            if (try cursorEntry(app)) |v| return switch (installedRow(v)) {
+                .first_party => null,
+                .manifest => |i| i,
+            };
+            return null;
+        }
         if (st.tab == .dev) if (try cursorEntry(app)) |i| return st.find(st.dev[i].id());
+    }
+    return null;
+}
+
+/// The first-party row a command acts on: the one its menu was opened
+/// on, else the section's cursor when it is on one. Asked BEFORE
+/// `focusedRow`, which consumes `menu_row`.
+fn focusedFirstParty(app: *App) Allocator.Error!?usize {
+    const st = &app.integrations;
+    if (st.menu_row) |r| {
+        if (r.tab != .installed) return null;
+        return switch (installedRow(r.idx)) {
+            .first_party => |i| blk: {
+                st.menu_row = null;
+                break :blk i;
+            },
+            .manifest => null,
+        };
+    }
+    if (app.focus == .panel and app.focus.panel == .integrations and st.tab == .installed) {
+        if (try cursorEntry(app)) |v| return switch (installedRow(v)) {
+            .first_party => |i| i,
+            .manifest => null,
+        };
     }
     return null;
 }
@@ -2022,6 +2234,7 @@ fn openFile(app: *App, path_in: []const u8) CommandError!void {
 }
 
 fn toggleEnabled(app: *App) CommandError!void {
+    if (try focusedFirstParty(app)) |i| return fpToggle(app, i, .enabled);
     if (try focusedRow(app)) |r| return toggleAt(app, r);
     return pickRow(app, .integrations_toggle, "Enable / disable integration");
 }
@@ -2032,6 +2245,97 @@ fn toggleAt(app: *App, i: usize) CommandError!void {
 }
 
 const ChipFlag = enum { enabled, in_palette_bar };
+
+/// Flip a first-party row's `enabled` / `in_palette_bar`. A scanned
+/// integration's two flags live in its manifest file, which
+/// `toggleChipField` rewrites; a first-party surface has no manifest,
+/// so its two live in `ui.integration_icons` in the home config —
+/// written whole, the way a reorder writes a list.
+fn fpToggle(app: *App, i: usize, flag: ChipFlag) CommandError!void {
+    if (i >= first_party.len) return;
+    const fp = first_party[i];
+    const arena = app.frame.allocator();
+    var rows: std.ArrayListUnmanaged(config.Config.IntegrationIcon) = .empty;
+    var seen = false;
+    for (app.cfg.ui.integration_icons) |ic| {
+        var row = ic;
+        if (std.mem.eql(u8, ic.id, fp.id)) {
+            seen = true;
+            switch (flag) {
+                .enabled => row.enabled = !row.enabled,
+                .in_palette_bar => row.in_palette_bar = !row.in_palette_bar,
+            }
+        }
+        try rows.append(arena, row);
+    }
+    // A config that dropped the row: put it back, flipped off its
+    // table default, so the toggle has somewhere to land.
+    if (!seen) try rows.append(arena, .{
+        .id = fp.id,
+        .glyph = fp.glyph,
+        .fallback = fp.fallback,
+        .command = fp.command,
+        .color = fp.color,
+        .label = fp.label,
+        .enabled = if (flag == .enabled) !fp.enabled else fp.enabled,
+        .in_palette_bar = if (flag == .in_palette_bar) !fp.in_palette_bar else fp.in_palette_bar,
+    });
+    try setIcons(app, rows.items);
+    const now = switch (flag) {
+        .enabled => fpEnabled(app, i),
+        .in_palette_bar => fpOnBar(app, i),
+    };
+    switch (flag) {
+        .enabled => app.toast("{s}: {s}", .{ fp.id, if (now) "enabled" else "disabled" }),
+        .in_palette_bar => app.toast("{s}: {s} the palette bar", .{ fp.id, if (now) "shown on" else "hidden from" }),
+    }
+}
+
+/// The new `ui.integration_icons`, owned by the state (arena, strings
+/// and all) and named by the config field, persisted to the home
+/// config — `setPinned`'s shape for an array of records.
+fn setIcons(app: *App, rows: []const config.Config.IntegrationIcon) Allocator.Error!void {
+    const st = &app.integrations;
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer arena_state.deinit();
+    const a = arena_state.allocator();
+    const owned = try a.alloc(config.Config.IntegrationIcon, rows.len);
+    for (rows, 0..) |ic, i| owned[i] = try dupeIcon(a, ic);
+    _ = try settings.persist(app, .home, &.{ "ui", "integration_icons" }, owned);
+    // Nothing fallible past here: the arena moves into the state and
+    // the errdefer above must not fire on the copy that shares it.
+    if (st.icons_arena) |*old| old.deinit();
+    st.icons_arena = arena_state;
+    app.cfg.ui.integration_icons = owned;
+    app.needs_render = true;
+}
+
+fn dupeIcon(a: Allocator, ic: config.Config.IntegrationIcon) Allocator.Error!config.Config.IntegrationIcon {
+    const opt = struct {
+        fn dupe(al: Allocator, s: ?[]const u8) Allocator.Error!?[]const u8 {
+            return if (s) |v| try al.dupe(u8, v) else null;
+        }
+    }.dupe;
+    const cmds = try a.alloc(config.Config.IntegrationIconCommand, ic.commands.len);
+    for (ic.commands, 0..) |c, i| cmds[i] = .{ .id = try a.dupe(u8, c.id), .title = try a.dupe(u8, c.title) };
+    return .{
+        .id = try a.dupe(u8, ic.id),
+        .glyph = try a.dupe(u8, ic.glyph),
+        .fallback = try a.dupe(u8, ic.fallback),
+        .command = try a.dupe(u8, ic.command),
+        .color = try a.dupe(u8, ic.color),
+        .label = try opt(a, ic.label),
+        .enabled = ic.enabled,
+        .in_palette_bar = ic.in_palette_bar,
+        .description = try opt(a, ic.description),
+        .homepage = try opt(a, ic.homepage),
+        .docs = try opt(a, ic.docs),
+        .repository = try opt(a, ic.repository),
+        .author = try opt(a, ic.author),
+        .version = try opt(a, ic.version),
+        .commands = cmds,
+    };
+}
 
 /// Flip one of the chip's two user-preference flags and write the
 /// manifest back; the list follows.
@@ -2181,8 +2485,8 @@ fn fireButton(app: *App, p: *IntegrationsPane) CommandError!void {
     if (p.cursor >= buttons.len) return;
     switch (buttons[p.cursor]) {
         .open => switch (p.target) {
-            .installed => |id| if (st.find(id)) |i| return openRow(app, i),
-            .dev => |key| if (st.findDev(key)) |d| if (st.find(st.dev[d].id())) |i| return openRow(app, i),
+            .installed => |id| if (st.find(id)) |i| return openRow(app, manifestVirtual(i)),
+            .dev => |key| if (st.findDev(key)) |d| if (st.find(st.dev[d].id())) |i| return openRow(app, manifestVirtual(i)),
             .marketplace => {},
         },
         .toggle => if (try focusedRow(app)) |i| return toggleAt(app, i),
@@ -2612,7 +2916,16 @@ test "the section: Installed lists the manifest in the Rust row shape, the tabs 
     var txt = try screenText(&app);
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "INTEGRATIONS") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Installed (1)") != null);
+    // Four first-party rows plus the one manifest.
+    try testing.expect(std.mem.indexOf(u8, txt, "Installed (5)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Browser  first-party") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "browser.open") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Claude Code (hidden)  first-party") != null);
+    // The manifest is the fifth row; the column holds three entries, so
+    // it takes the cursor to scroll into view.
+    app.integrations.panel.cursor = first_party.len;
+    testing.allocator.free(txt);
+    txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "H Hello (mnml-hello not installed)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "hello.open") != null);
     // `tab` walks to the marketplace (no fetch without a source that answers — the empty state).
@@ -2620,7 +2933,8 @@ test "the section: Installed lists the manifest in the Rust row shape, the tabs 
     try testing.expectEqual(Tab.marketplace, app.integrations.tab);
     try testing.expect(try handleKey(&app, .{ .code = .backtab }));
     try testing.expectEqual(Tab.installed, app.integrations.tab);
-    // `y` copies the id; `d` opens the detail pane with its buttons.
+    // `y` copies the id; `d` opens the detail pane with its buttons —
+    // both on the manifest row, which the first-party block sits above.
     try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'y' } }));
     try testing.expectEqualStrings("hello", app.clipboard.text());
     try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'd' } }));
@@ -2790,6 +3104,9 @@ test "install from a dev folder: the prebuilt sample's --install runs in a task 
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Sample  installed from here  (dev)") != null);
     setTab(&app, .installed);
+    // The four first-party rows sit above the manifests: put the cursor
+    // on the new row so the short test column scrolls to it.
+    app.integrations.panel.cursor = first_party.len;
     testing.allocator.free(txt);
     txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "Sample  0.1.0") != null);
@@ -2880,11 +3197,13 @@ test "0.2 .toml manifests: counted, never read, one notice toast per launch, the
     const first = app.lastToast() orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("2 integrations from mnml 0.2 are not loaded — 0.3 integrations install from the Marketplace", first);
     try testing.expectEqual(@as(usize, 1), app.toasts.items.len);
-    // The Installed tab's empty state carries the same line.
+    // The Installed tab is never empty — the four first-party rows are
+    // always on it — so the notice's panel surface is the toast, which
+    // stands while the tab is opened.
     try showInstalled(&app);
     const text = try screenText(&app);
     defer testing.allocator.free(text);
-    try testing.expect(std.mem.indexOf(u8, text, "Nothing installed yet") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Inst (4)") != null);
     try testing.expect(std.mem.indexOf(u8, text, "2 integrations from mnml 0.2") != null);
     // A second scan this launch says nothing more.
     try refresh(&app);
@@ -2907,4 +3226,224 @@ test "0.2 .toml manifests: counted, never read, one notice toast per launch, the
     app.dismissToasts();
     try refresh(&app);
     try testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+// ─── the first-party rows ───────────────────────────────────────────────
+
+test "the table: four rows in Rust's order, every glyph with a fallback, and `ui.integration_icons` mirroring it" {
+    try testing.expectEqual(@as(usize, 4), first_party.len);
+    const ids = [_][]const u8{ "browser", "claude_code", "codex", "http" };
+    for (first_party, ids, 0..) |fp, id, i| {
+        try testing.expectEqualStrings(id, fp.id);
+        try testing.expectEqual(i, firstPartyIndex(id).?);
+        // Every row is reachable: a command, a label, a glyph, and the
+        // `--ascii` twin `glyph-audit` insists on.
+        try testing.expect(fp.command.len > 0);
+        try testing.expect(fp.label.len > 0);
+        try testing.expect(fp.glyph.len > 0);
+        try testing.expect(fp.fallback.len > 0);
+        try testing.expect(command.by_name.get(fp.command) != null);
+    }
+    try testing.expect(firstPartyIndex("nope") == null);
+    // Claude's brand orange is a literal, not a theme role.
+    try testing.expectEqualStrings("#D16D51", first_party[1].color);
+    // The config array is the storage for the same four, field for field.
+    const icons = config.Config.default_integration_icons;
+    try testing.expectEqual(first_party.len, icons.len);
+    for (first_party, icons) |fp, ic| {
+        try testing.expectEqualStrings(fp.id, ic.id);
+        try testing.expectEqualStrings(fp.glyph, ic.glyph);
+        try testing.expectEqualStrings(fp.fallback, ic.fallback);
+        try testing.expectEqualStrings(fp.command, ic.command);
+        try testing.expectEqualStrings(fp.color, ic.color);
+        try testing.expectEqualStrings(fp.label, ic.label.?);
+        try testing.expectEqual(fp.enabled, ic.enabled);
+        try testing.expectEqual(fp.in_palette_bar, ic.in_palette_bar);
+    }
+    // The index space: the four, then the manifests.
+    try testing.expectEqual(@as(usize, 0), installedRow(0).first_party);
+    try testing.expectEqual(@as(usize, 3), installedRow(3).first_party);
+    try testing.expectEqual(@as(usize, 0), installedRow(4).manifest);
+    try testing.expectEqual(@as(usize, 4), manifestVirtual(0));
+}
+
+test "a fresh data root: the four rows are on the Installed tab at the SHIPPED column width, sorted first whatever the sort chip says" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    // `ui.tree_width` is 30 out of the box, which leaves the column 26
+    // cells — the width the badge has to survive.
+    try testing.expectEqual(@as(u16, 30), app.tree.width);
+    const txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    // Nothing is installed, and the tab is still not empty.
+    try testing.expectEqual(@as(usize, 0), app.integrations.list.len);
+    try testing.expect(std.mem.indexOf(u8, txt, "Inst (4)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Nothing installed yet") == null);
+    // 26 cells: the short label leaves room for the whole badge; the
+    // long ones clip it, the way every badge of this section clips
+    // (`scripts_marketplace_default.test` pins the same for `✓ Offi…`).
+    try testing.expect(std.mem.indexOf(u8, txt, "Browser  first-party") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)  first-") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "browser.open") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Claude Code (hidden)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "not logged in") != null);
+    const rows = try visibleEntries(&app, app.frame.allocator());
+    try testing.expectEqual(@as(usize, 4), rows.len);
+    // Z–A does not shuffle them: they are the editor's own surfaces, not
+    // entries competing for a place in the list.
+    try setSort(&app, InstalledSort.name_desc.toList());
+    const desc = try visibleEntries(&app, app.frame.allocator());
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3 }, desc);
+    // The filter still narrows them, on the label, the id or the command.
+    try setSort(&app, InstalledSort.name.toList());
+    try app.handle(.{ .key = app_mod.Key.char('/') });
+    for ("codex") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
+    const one = try visibleEntries(&app, app.frame.allocator());
+    try testing.expectEqualSlices(usize, &.{2}, one);
+}
+
+test "the row menus: Claude's sessions, usage, login and profiles; Browser's and HTTP's own; every command id resolves" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var app = try testApp(&tmp);
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    const Want = struct { row: usize, title: []const u8, first: []const u8, sub: bool };
+    const wants = [_]Want{
+        .{ .row = 0, .title = "Browser", .first = "Open", .sub = false },
+        .{ .row = 1, .title = "Claude Code", .first = "New session", .sub = true },
+        .{ .row = 2, .title = "Codex", .first = "New session", .sub = true },
+        .{ .row = 3, .title = "HTTP", .first = "New request", .sub = false },
+    };
+    for (wants) |w| {
+        try rowMouse(&app, @intCast(w.row), .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+        const m = &app.overlay.menu;
+        try testing.expectEqualStrings(w.title, m.title);
+        try testing.expectEqualStrings(w.first, m.items[0].label);
+        try testing.expectEqual(w.sub, m.items[0].submenu.len > 0);
+        // Every row goes somewhere real, submenu rows included.
+        for (m.items) |it| {
+            switch (it.action) {
+                .command => |id| try testing.expect(command.by_name.get(command.name(id)) != null),
+                .ai_profile, .none => {},
+                else => return error.TestUnexpectedResult,
+            }
+            for (it.submenu) |sub| switch (sub.action) {
+                .ai_profile => {},
+                else => return error.TestUnexpectedResult,
+            };
+        }
+        // The two preference rows close every menu.
+        const last = m.items[m.items.len - 1];
+        const prev = m.items[m.items.len - 2];
+        try testing.expectEqual(command.CommandId.@"integrations.toggle_palette_bar", last.action.command);
+        try testing.expectEqual(command.CommandId.@"integrations.toggle_enabled", prev.action.command);
+        try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    }
+    // Claude's rows in full; Codex has no login of its own.
+    try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    const claude = try labelsOf(&app, app.frame.allocator());
+    try testing.expectEqualStrings("Usage", claude[1]);
+    try testing.expectEqualStrings("Login", claude[2]);
+    try testing.expectEqualStrings("Configure profiles…", claude[3]);
+    try testing.expectEqual(command.CommandId.@"ai.claude_usage", app.overlay.menu.items[1].action.command);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try rowMouse(&app, 2, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    const codex = try labelsOf(&app, app.frame.allocator());
+    try testing.expectEqualStrings("Usage", codex[1]);
+    try testing.expectEqualStrings("Configure profiles…", codex[2]);
+    try testing.expectEqual(command.CommandId.@"ai.codex_usage", app.overlay.menu.items[1].action.command);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    // The manifest row keeps the menu it had, one place further down.
+    try rowMouse(&app, first_party.len, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    try testing.expectEqualStrings("Hello", app.overlay.menu.title);
+    try testing.expectEqualStrings("Details", app.overlay.menu.items[0].label);
+}
+
+fn labelsOf(app: *App, arena: Allocator) Allocator.Error![][]const u8 {
+    const items = app.overlay.menu.items;
+    const out = try arena.alloc([]const u8, items.len);
+    for (items, 0..) |it, i| out[i] = it.label;
+    return out;
+}
+
+test "the two preferences persist to the home config and come back on the next launch" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    {
+        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 40 });
+        defer app.deinit();
+        try command.run(&app, .{ .static = .@"integrations.show_installed" });
+        try testing.expect(!fpEnabled(&app, 1)); // claude_code, off out of the box
+        try testing.expect(!fpOnBar(&app, 1));
+        // Enable + show, from the row the menu was opened on.
+        try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+        try command.run(&app, .{ .static = .@"integrations.toggle_enabled" });
+        try testing.expect(fpEnabled(&app, 1));
+        try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "claude_code: enabled") != null);
+        try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+        try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
+        try testing.expect(fpOnBar(&app, 1));
+        // The chip cluster follows: it is on the bar now, and the other
+        // three are not.
+        const bar = try chips(&app, app.frame.allocator());
+        var seen = false;
+        for (bar) |c| if (std.mem.eql(u8, c.id, "claude_code")) {
+            seen = true;
+            try testing.expect(c.enabled);
+        };
+        try testing.expect(seen);
+        // Off again, and the row's `(hidden)` comes back.
+        try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+        try command.run(&app, .{ .static = .@"integrations.toggle_enabled" });
+        try testing.expect(!fpEnabled(&app, 1));
+        try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+        try command.run(&app, .{ .static = .@"integrations.toggle_enabled" });
+    }
+    const home = try tmp.dir.readFileAlloc(testing.io, "config.zon", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(home);
+    try testing.expect(std.mem.indexOf(u8, home, ".integration_icons = ") != null);
+    try testing.expect(std.mem.indexOf(u8, home, "claude_code") != null);
+    // A fresh launch on the same data root reads the file back — through
+    // the real loader, which is the half a written-and-never-parsed
+    // literal would fail.
+    const home_path = try std.fs.path.join(testing.allocator, &.{ root, "config.zon" });
+    defer testing.allocator.free(home_path);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const loaded = try @import("../config/load.zig").load(testing.allocator, testing.io, .{ .explicit = home_path, .workspace = ws, .trust = .trusted, .env = .{ .vars = &env } });
+    var next = try App.initWith(testing.allocator, testing.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = ws, .data_root = root, .cols = 100, .rows = 40 });
+    defer next.deinit();
+    try testing.expectEqual(@as(usize, 4), next.cfg.ui.integration_icons.len);
+    try testing.expect(fpEnabled(&next, 1));
+    try testing.expect(fpOnBar(&next, 1));
+    try testing.expect(fpEnabled(&next, 0)); // browser stays on
+    try testing.expect(!fpEnabled(&next, 2)); // codex untouched
+}
+
+test "Enter on a first-party row runs its command" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var app = try testApp(&tmp);
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    // A frame first: the panel learns how many rows it has, which is
+    // what Enter walks.
+    try app.render();
+    app.integrations.panel.cursor = 3; // HTTP
+    try testing.expect(try handleKey(&app, .{ .code = .enter }));
+    try testing.expect(side.isShown(&app, .http));
 }

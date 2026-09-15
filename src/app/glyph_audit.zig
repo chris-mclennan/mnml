@@ -328,7 +328,7 @@ test "audit / menu audit report the workspace's glyph sites into a scratch pane;
     const text = e.buf.editor.bytes();
     try t.expect(std.mem.indexOf(u8, text, "# tofu check") != null);
     try t.expect(std.mem.indexOf(u8, text, "MnmlSymbols: not installed") != null);
-    try t.expect(std.mem.indexOf(u8, text, "clean: 3 icon refs checked") != null);
+    try t.expect(std.mem.indexOf(u8, text, "clean: 4 icon refs checked") != null);
     try t.expect(std.mem.indexOf(u8, text, "ui/chip.zig:1") != null);
     // f0dc is `fa-sort` and `fa-unsorted` both; the table keeps one.
     try t.expect(std.mem.indexOf(u8, text, "U+F0DC  fa-") != null);
@@ -410,12 +410,13 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     font_scan.onStartup(&app, .startup);
     onStartup(&app, .startup);
     // The shipped icons: browser EB01 (routed, lacking), claude F1E00
-    // (not baked), codex F1E01 (baked); the core claude mark again.
+    // (not baked), codex F1E01 (baked), http F1D8; the core claude
+    // mark again.
     try t.expectEqualStrings("\u{26A0} 3 integration icons will render as ? — run :integrations.audit_glyphs", app.lastToast().?);
     const c = try tofuCheck(&app, app.frame.allocator());
     try t.expect(c.mnml_present);
     try t.expectEqual(@as(usize, 2), c.map.rules.len);
-    try t.expectEqual(@as(usize, 7), c.refs);
+    try t.expectEqual(@as(usize, 8), c.refs);
     try t.expectEqual(@as(usize, 3), c.verdicts.len);
     try t.expectEqualStrings("browser", c.verdicts[0].id);
     try t.expect(std.mem.startsWith(u8, c.verdicts[0].why, "force-routed to `Symbols Nerd Font Mono`"));
@@ -429,7 +430,7 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     try t.expect(std.mem.indexOf(u8, text, "ghostty map: ") != null);
     try t.expect(std.mem.indexOf(u8, text, "(2 rules)") != null);
     try t.expect(std.mem.indexOf(u8, text, "browser              U+0EB01  Browser  (config icon)  → force-routed") != null);
-    try t.expect(std.mem.indexOf(u8, text, "3 of 7 icon refs will render as ?") != null);
+    try t.expect(std.mem.indexOf(u8, text, "3 of 8 icon refs will render as ?") != null);
     // Without the face, the block stands down and only the routed miss remains.
     try tmp.dir.deleteFile(io, "fonts/MnmlSymbols.ttf");
     font_scan.onStartup(&app, .startup);

@@ -12,6 +12,12 @@ type launchers/htop.zon
 key enter
 expect screen contains "installed htop"
 command integrations.show_installed
+# The four first-party rows sit above the manifests, and none of their
+# commands can back a docked icon: walk down to the launcher's row.
+key down
+key down
+key down
+key down
 command integrations.pin_to_activity_bar
 expect screen contains "htop: added to the activity bar"
 # The icon: a left click runs htop.open.

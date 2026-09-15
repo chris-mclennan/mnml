@@ -350,10 +350,16 @@ pub const IntegrationIcon = struct {
 /// The markers the TODOS panel scans for when `ui.todo_keywords` is unset.
 pub const default_todo_keywords = [_][]const u8{ "TODO", "FIXME", "XXX", "HACK", "REVIEW" };
 
+/// The four first-party surfaces, as `app/integrations.zig`'s
+/// `first_party` table spells them — that table is the description
+/// (the Installed tab's rows and their menus), this array the storage
+/// the two user preferences persist into. A unit test there holds the
+/// two together.
 pub const default_integration_icons = [_]IntegrationIcon{
     .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
     .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = "#D16D51", .label = "Claude Code", .enabled = false, .in_palette_bar = false },
     .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
+    .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
 };
 
 // ─── small fixed sections ────────────────────────────────────────────────
@@ -752,8 +758,9 @@ test "defaults are the shipped values" {
     try std.testing.expect(c.ui.show_workspace_dots);
     try std.testing.expect(!c.ui.first_launch_complete);
     try std.testing.expectEqual(MdEngine.builtin, c.ui.md_preview_engine);
-    try std.testing.expectEqual(@as(usize, 3), c.ui.integration_icons.len);
+    try std.testing.expectEqual(@as(usize, 4), c.ui.integration_icons.len);
     try std.testing.expectEqualStrings("browser", c.ui.integration_icons[0].id);
+    try std.testing.expectEqualStrings("http", c.ui.integration_icons[3].id);
     try std.testing.expect(!c.ui.integration_icons[1].enabled);
     // the rest
     try std.testing.expect(c.session.restore);

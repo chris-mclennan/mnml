@@ -24,6 +24,11 @@ wait 500
 key x
 expect screen lacks "BITBUCKET — setup"
 command integrations.show_installed
+# The four first-party rows sit above the manifests: walk down to this one.
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Bitbucket?"
 key r
