@@ -1,0 +1,30 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/never-written.zon
+# A pane with no config and no token. The failure mode worth guarding
+# against is a pane that opens, finds nothing, and closes again with a
+# banner — leaving the user with no idea what is missing. Instead it
+# paints the setup screen, names what is wrong, and lists the three
+# steps. `q` closes it.
+write market/bitbucket.zon ".{ .id = \"bitbucket\", .label = \"Bitbucket\", .version = \"0.1.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .description = \"Bitbucket Cloud pull requests\", .commands = .{ .{ .id = \"bitbucket.open\", .title = \"Bitbucket: pull requests\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket"
+command bitbucket.open
+command view.focus_pane
+wait 900
+expect screen contains "BITBUCKET — setup"
+# The first run writes the scaffold and says where, so there is a file
+# to edit rather than an error to decode.
+expect screen contains "never-written.zon"
+expect screen contains "edit config.zon"
+expect screen contains "BITBUCKET_API_TOKEN"
+expect screen contains "mnml-bitbucket --check"
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET — setup"
+command integrations.show_installed
+key x
+expect screen contains "Remove Bitbucket?"
+key r
+expect screen contains "removed bitbucket"
