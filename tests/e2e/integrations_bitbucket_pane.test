@@ -134,6 +134,11 @@ expect screen lacks "acme/api#"
 
 # Uninstall, so the size sweep starts from a clean data root.
 command integrations.show_installed
+# The four first-party rows sit above the manifests: walk down to this one.
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Bitbucket?"
 key r

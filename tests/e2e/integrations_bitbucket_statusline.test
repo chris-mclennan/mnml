@@ -24,8 +24,13 @@ expect screen contains "BB"
 command bitbucket.refresh
 wait 2500
 expect screen contains "1 pull requests waiting on your review"
-# Clean up so the size sweep starts from an empty data root.
+# Clean up so the size sweep starts from an empty data root. The four
+# first-party rows sit above the manifests: walk down to this one.
 command integrations.show_installed
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Bitbucket?"
 key r

@@ -89,9 +89,15 @@ expect screen lacks "1 Mine"
 # next integrations script asks how many there are — which is how this
 # script took six other tests down with it the first time it ran.
 command integrations.show_installed
+# The four first-party rows sit above the manifests: walk down to this one.
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Jira?"
 key r
 expect screen contains "removed jira"
-expect screen contains "Nothing installed yet"
+# The tab drops back to the four first-party rows, never to empty.
+expect screen contains "Installed (4)"
 shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
