@@ -1,0 +1,10 @@
+.{
+    .name = .mnml_jira,
+    .version = "0.1.0",
+    .fingerprint = 0x9571d7b8e978182a,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .mnml_sdk = .{ .path = "../../sdk/mnml-sdk" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "main.zig", "manifest.zon", "src", "tools", "README.md" },
+}

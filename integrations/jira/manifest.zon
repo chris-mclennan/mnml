@@ -1,0 +1,46 @@
+// The Jira integration's manifest — one file, two readers:
+// `mnml-jira --install` writes it into mnml's data root (`@import`ed by
+// main.zig, so the binary and the file cannot drift), and the
+// INTEGRATIONS section's Dev tab reads it beside build.zig to list the
+// folder before anything is built.
+//
+// Every command opens the pane, because that is the only thing this
+// binary does; the arguments say which tab and whether the filter is
+// waiting. `jira.open` is first, so it is what the chip, Enter, the
+// statusline segment and a pinned activity-bar icon all run.
+.{
+    .id = "jira",
+    .label = "Jira",
+    .description = "Jira tickets: configurable tabs, an epic → story → sub-task tree, the detail pane, and the actions",
+    .version = "0.1.0",
+    .binary = "mnml-jira",
+    .category = "tracker",
+    .chip = .{ .glyph = "\u{f0303}", .fallback = "JI", .color = "blue", .tooltip = "Jira tickets" }, // nf-md-jira
+    .commands = .{
+        .{ .id = "jira.open", .title = "Jira: tickets", .keys = .{"ctrl+k j"} },
+        .{ .id = "jira.refresh", .title = "Jira: reload every tab", .args = .{"--refresh-all"} },
+        .{ .id = "jira.search", .title = "Jira: find a ticket", .args = .{"--filter"}, .keys = .{"ctrl+k /"} },
+    },
+    .context_menu = .{
+        .{ .target = "tree.file", .title = "Jira: find a ticket", .command = "jira.search" },
+    },
+    .statusline = .{
+        .{ .id = "jira", .text = "JIRA", .color = "blue", .click_command = "jira.open", .priority = 60 },
+    },
+    .settings = .{
+        .{ .key = "detail", .label = "Detail pane", .options = .{ "shown", "hidden" }, .default = "shown", .help = "Whether the ticket detail opens beside the list" },
+        .{ .key = "group", .label = "Ticket tree", .options = .{ "hierarchy", "status" }, .default = "hierarchy", .help = "Epic → story → sub-task, or one bucket per workflow status" },
+    },
+    .auth = .{
+        .{ .key = "site_url", .label = "Jira site URL", .kind = .url, .required = true, .help = "Your Atlassian instance, like https://acme.atlassian.net" },
+        .{ .key = "email", .label = "Atlassian account email", .kind = .email, .required = true, .help = "The user name half of the HTTP Basic pair" },
+        .{ .key = "api_token", .label = "Jira API token", .kind = .secret, .env_fallback = "JIRA_API_TOKEN", .required = true, .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Not your Atlassian password — an API token" },
+    },
+    .values_sources = .{
+        .{ .id = "jira_values", .command = "mnml-jira --values", .poll_interval_secs = 300 },
+    },
+    // No `.requires`: mnml dims a chip whose required variables are
+    // unset, and the token may perfectly well live in a file
+    // (`jira.token_file`, or the default one). A dimmed chip for a
+    // working install is a lie; the pane itself says what is missing.
+}
