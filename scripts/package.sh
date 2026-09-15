@@ -14,7 +14,12 @@
 # Each archive holds one directory, mnml-<triple>/, with the binary, the two
 # licenses, README.md and CHANGELOG.md — the layout cargo-dist produced, so
 # Homebrew's strip-one-directory extraction and package-linux's `find` keep
-# working. No completions or man page yet; when they exist, stage them here.
+# working — plus share/mnml/lua/, the curated Lua script set (the repo's
+# lua/). The binary looks for that folder beside itself and one level up, so
+# an unpacked archive lists the five official scripts in the SCRIPTS
+# section's Marketplace tab with no config; package-linux re-lays the same
+# tree at /usr/share/mnml/lua. No completions or man page yet; when they
+# exist, stage them here.
 #
 # With --macos-app, every *-apple-darwin binary is also wrapped as an
 # app bundle (dist/macos/build-app.sh) and shipped as
@@ -76,6 +81,13 @@ for dir in "$release_dir"/*/; do
     for extra in LICENSE-MIT LICENSE-APACHE README.md CHANGELOG.md; do
         [ -f "$repo/$extra" ] && cp "$repo/$extra" "$stage/$pkg/$extra"
     done
+    # The curated Lua script set, at the path the binary probes:
+    # <exe dir>/share/mnml/lua (and <exe dir>/../share/mnml/lua once an
+    # installer puts the binary in a bin/). Missing it would ship an
+    # empty Marketplace tab, so this is fatal, not best-effort.
+    [ -d "$repo/lua" ] || { echo "package.sh: no lua/ in $repo" >&2; exit 1; }
+    mkdir -p "$stage/$pkg/share/mnml"
+    cp -R "$repo/lua" "$stage/$pkg/share/mnml/lua"
 
     asset="$pkg.$ext"
     case "$ext" in

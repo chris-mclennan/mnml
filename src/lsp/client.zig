@@ -142,7 +142,13 @@ pub const Caps = struct {
 
 /// How long `deinit` waits for a server to leave on `exit` before the
 /// pipes close under it.
-pub const exit_grace_ms: u32 = 250;
+pub const default_exit_grace_ms: u32 = 250;
+
+/// The live budget. A `var` only so a test that asserts what the server
+/// wrote on its way out can hand itself a budget a loaded box can meet;
+/// the app never assigns it, and quitting still costs at most 250 ms
+/// per server that will not leave.
+pub var exit_grace_ms: u32 = default_exit_grace_ms;
 
 /// A builtin server: what mnml starts for an extension unless
 /// `.lsp.<name>` says otherwise.

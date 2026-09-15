@@ -2709,13 +2709,13 @@ test "the budget applies to a decoration set in a hot loop" {
     try testing.expect(app.script_decor.items.items.len <= script_decor.max_items);
 }
 
-test "docs/examples/scripts/git-blame-line/init.lua loads, asks git on cursor_idle and paints what comes back" {
+test "lua/git-blame-line/init.lua loads, asks git on cursor_idle and paints what comes back" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();
-    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/git-blame-line/init.lua", testing.allocator, .limited(1 << 20));
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "lua/git-blame-line/init.lua", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(src);
     lua.runString(src) catch |err| {
         std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
@@ -2754,12 +2754,12 @@ test "docs/examples/scripts/git-blame-line/init.lua loads, asks git on cursor_id
     try lua.runString("assert(seen == nil, 'asked twice for one line')");
 }
 
-test "docs/examples/scripts/eslint/init.lua loads and turns compact output into diagnostics on save" {
+test "lua/eslint/init.lua loads and turns compact output into diagnostics on save" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
-    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/scripts/eslint/init.lua", testing.allocator, .limited(1 << 20));
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "lua/eslint/init.lua", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(src);
     lua.runString(src) catch |err| {
         std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});

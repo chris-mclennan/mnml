@@ -7,5 +7,4 @@
     .commands = .{},
     .hooks = .{ "cursor_idle", "pane_focus" },
     .source = .marketplace,
-    .url = "https://github.com/chris-mclennan/mnml-scripts",
 }

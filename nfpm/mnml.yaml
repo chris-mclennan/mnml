@@ -17,6 +17,15 @@ contents:
     dst: /usr/bin/mnml
     file_info:
       mode: 0755
+  # The curated Lua script set, laid where `shippedRoot` looks first on
+  # a system install: the binary is `/usr/bin/mnml`, so
+  # `<exe dir>/../share/mnml/lua` is this. Staged out of the release
+  # tarball beside the binary, so the package carries exactly what the
+  # archive does. Without it the SCRIPTS section's Marketplace tab is
+  # empty for everyone who installed from a `.deb` or an `.rpm`.
+  - src: staging/lua
+    dst: /usr/share/mnml/lua
+    type: tree
   - src: LICENSE-MIT
     dst: /usr/share/doc/mnml/LICENSE-MIT
   - src: LICENSE-APACHE

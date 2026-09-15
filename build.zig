@@ -579,6 +579,14 @@ pub fn build(b: *std.Build) void {
     // the folder as `$MNML_LAUNCHERS` so a `.test` can point
     // `MNML_MARKETPLACE_LOCAL` at it.
     build_options.addOption([]const u8, "launchers_dir", b.pathFromRoot("launchers"));
+    // `lua/`: the curated script set, in this repo the way `integrations/`
+    // and `launchers/` are. A dev build lists it in the SCRIPTS section's
+    // Marketplace tab with no config at all, because the folder's
+    // absolute path is baked in here; a packaged build finds the same set
+    // as `share/mnml/lua` beside the binary instead
+    // (`src/app/scripts.zig`'s `shippedRoot`, `nfpm/mnml.yaml`,
+    // `scripts/package.sh`).
+    build_options.addOption([]const u8, "scripts_dir", b.pathFromRoot("lua"));
     tests_run.step.dependOn(&fake_dap_install.step);
     e2e_run.step.dependOn(&fake_dap_install.step);
     gate_in_test.step.dependOn(&fake_dap_install.step);

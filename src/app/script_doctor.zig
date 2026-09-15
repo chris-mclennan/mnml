@@ -19,6 +19,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const scripts = @import("scripts.zig");
 const script_decor = @import("script_decor.zig");
+const build_options = @import("build_options");
 const manifest_mod = @import("../scripting/manifest.zig");
 const lua_mod = @import("../scripting/lua.zig");
 
@@ -84,7 +85,7 @@ fn writeSources(app: *App, arena: Allocator, out: *std.ArrayListUnmanaged(u8)) A
     if (market.len > 0)
         try out.print(arena, "  marketplace {s}\n", .{market})
     else
-        try out.print(arena, "  marketplace (no local folder; {s} is not live yet)\n", .{app.cfg.scripts.marketplace_url});
+        try out.appendSlice(arena, "  marketplace (none: no share/mnml/lua beside the binary, no scripts.marketplace_local)\n");
     const dev = try scripts.devRoots(app, arena);
     if (dev.len == 0) {
         try out.appendSlice(arena, "  dev         (none)\n");
@@ -137,7 +138,10 @@ test "script.doctor names init.lua, its budget overruns and what it registered" 
     // "why is my script not listed" is answered by the same command.
     try t.expect(std.mem.indexOf(u8, text, "sources") != null);
     try t.expect(std.mem.indexOf(u8, text, "installed   (no data root)") != null);
-    try t.expect(std.mem.indexOf(u8, text, "marketplace (no local folder;") != null);
+    // Nothing is configured here, so the marketplace row names the set
+    // that ships with mnml — under a test, the checkout's own `lua/`.
+    // A row that said "(none)" out of the box was the bug this replaced.
+    try t.expect(std.mem.indexOf(u8, text, "marketplace " ++ build_options.scripts_dir) != null);
     try t.expect(std.mem.indexOf(u8, text, "dev         (none)") != null);
     // `init.lua` is one file: it has no scoped `require`, and the row
     // says so rather than leaving a reader to guess where it looks.

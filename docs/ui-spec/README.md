@@ -575,7 +575,7 @@ dump cut on Linux or Windows shows the yellow version alone.
   `zig-scripts-dev-120x40.txt` — `steps-scripts{,-marketplace,-dev}.jsonl`
   through `tools/zig-spec.sh scripts[-marketplace|-dev]` (`env-scripts`
   points `MNML_SCRIPTS_MARKETPLACE` at the repo's
-  `docs/examples/scripts/` and `MNML_SCRIPTS_DEV_ROOTS` at the seeded
+  `lua/` and `MNML_SCRIPTS_DEV_ROOTS` at the seeded
   workspace's `dev/`): the SCRIPTS section's three tabs, painted by the
   INTEGRATIONS section's own `drawSection` — `Inst (1) Mkt (5)  󰫯 (1)`,
   the filter pill with the `A-Z ▾` sort chip, and three-row entries.

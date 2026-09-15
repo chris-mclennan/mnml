@@ -62,6 +62,26 @@ try {
     $Shown = try { & $Target --version 2>$null } catch { 'mnml' }
     Write-Host "mnml: installed $Shown to $Target"
 
+    # The curated Lua script set. The zip carries it as share\mnml\lua
+    # beside mnml.exe; mnml looks there and one level up, so
+    # ...\mnml\bin\mnml.exe finds ...\mnml\share\mnml\lua. Ours, not the
+    # user's (installed scripts live under the data root), so an upgrade
+    # replaces it wholesale; a failure here costs an empty Marketplace
+    # tab, not the install.
+    $LuaSrc = Join-Path $Exe.Directory.FullName 'share\mnml\lua'
+    if (Test-Path $LuaSrc) {
+        try {
+            $ShareDir = Join-Path (Split-Path -Parent $InstallDir) 'share\mnml'
+            New-Item -ItemType Directory -Path $ShareDir -Force | Out-Null
+            $LuaDst = Join-Path $ShareDir 'lua'
+            if (Test-Path $LuaDst) { Remove-Item -Recurse -Force $LuaDst }
+            Copy-Item -Path $LuaSrc -Destination $LuaDst -Recurse -Force
+            Write-Host "mnml: script set installed to $LuaDst"
+        } catch {
+            Write-Host 'mnml: could not install the script set (the editor still runs)'
+        }
+    }
+
     # User-scope PATH — no elevation, takes effect in new shells.
     if ($IsWindows -or $env:OS -eq 'Windows_NT') {
         $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

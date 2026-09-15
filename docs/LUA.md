@@ -1309,18 +1309,29 @@ there is no `package.path` to widen. A module that returns nothing caches
 | tab | what it lists | where it reads |
 |---|---|---|
 | **Installed** | `init.lua` first, then every installed script — name, version, source badge, enabled state, the `⏱ N` budget chip, and the commands it adds | `<data root>/scripts/` (or `MNML_SCRIPTS_ROOT`), plus `scripts.private_sources` |
-| **Marketplace** | the curated set | `scripts.marketplace_url`, or a folder via `scripts.marketplace_local` / `MNML_SCRIPTS_MARKETPLACE` |
+| **Marketplace** | the curated set that ships with mnml | the shipped `lua/` folder (below), or `scripts.marketplace_local` / `MNML_SCRIPTS_MARKETPLACE` |
 | **Dev** | folders you are editing; a save under one reloads that script | `scripts.dev_roots`, or `MNML_SCRIPTS_DEV_ROOTS` |
 
 `script.doctor` names all three resolved paths at the head of its report, so
 "why is my script not listed" is one command and not a hunt through the
 config.
 
-The marketplace's own repo is **not live yet** — the default
-`scripts.marketplace_url` names where it will be. Until then the tab says so,
-and `scripts.marketplace_local` points it at any folder of script
-directories; that is how the five shipped examples under
-`docs/examples/scripts/` are listed.
+**The curated set lives in mnml, the way the integrations do.** It is the
+repo's own `lua/` folder, and the Marketplace tab lists it out of the box —
+no config, no network, nothing to point at. The binary finds it in this
+order:
+
+1. `lua/` in the checkout it was built from (baked in at build time), so a
+   dev build lists the five straight away;
+2. `share/mnml/lua` one level up from the binary — `/usr/bin/mnml` with
+   `/usr/share/mnml/lua`, which is what the `.deb` and the `.rpm` lay down;
+3. `share/mnml/lua` beside the binary — the `.tar.xz` and the Windows `.zip`
+   unpack to exactly that;
+4. `mnml-data/lua` beside the binary — the portable directory.
+
+`scripts.marketplace_local` (and `MNML_SCRIPTS_MARKETPLACE`, which wins over
+it) points the tab at a folder of your own instead — an offline mirror, a
+company set, or a test fixture.
 
 ### Where a script comes from, and the trust dialog
 
@@ -1368,26 +1379,27 @@ opens `script.doctor`); write a `README.md` that says what it does and what
 it needs on PATH; push it. Anyone can then `:script.install <your URL>`.
 
 A company set is a folder or repo listed in `scripts.private_sources`; the
-curated set is the `mnml-scripts` repo `scripts.marketplace_url` names.
+curated set is mnml's own `lua/` folder, which ships with the binary.
 
 Before you publish, run `script.doctor` and read your own row: it is the
 receipt a user will read too.
 
 ## Recipes
 
-Five scripts ship with mnml, each the whole of one shape. Each is driven by a
+Five scripts ship with mnml — `lua/` in the repo, `share/mnml/lua` in the
+package — each the whole of one shape. Each is driven by a
 `.test` that runs the file **as it is written**, so a change that breaks one
 fails the suite. Paste one into your `init.lua` (`script.edit_init`) and
-reload, or point `scripts.marketplace_local` at `docs/examples/scripts/` and
+reload, or open the Marketplace tab — they are its rows out of the box — and
 install it.
 
 | script | shape | what to steal from it |
 |---|---|---|
-| [`git-blame-line`](examples/scripts/git-blame-line/) | decorations + a hidden task | one namespace per concern, so the clear is safe; `pcall` around `mnml.buf.path` because not every focused pane is an editor; a `<path>:<line>` key so the same line is never asked about twice and two runs are never in flight at once |
-| [`recent-commands`](examples/scripts/recent-commands/) | a live picker with a preview column | `live = true` so the source does the narrowing rather than the picker's fuzzy filter; `data` carrying the whole command row through to `preview` and `on_accept`; `rank` read off `mnml.commands()` instead of an MRU of its own |
-| [`todo-list`](examples/scripts/todo-list/) | a rail section of the script's own | the `rows(sort)` shape — headers and items in one list, the sort's name handed in so ordering stays the script's job; `l:refresh()` from the task's `on_done`, so the panel fills when the child answers rather than blocking on it; a row's `detail` doing double duty as the `<path>:<line>` that opening needs |
-| [`surround-word`](examples/scripts/surround-word/) | one text operation, both profiles | one `run(range)` serving every road into it, because the range arrives in one shape; `range.mode` telling a linewise application to keep the indentation outside the pair; `mnml.config.get` reading a key of the user's own |
-| [`eslint`](examples/scripts/eslint/) | a tool wrapper into the diagnostics sink | `hidden = true` because there is nothing to watch; an `on_line` parse that ignores what does not match (the tool's summary line); a `set` on every run — including the empty one that clears a file the tool is now happy with |
+| [`git-blame-line`](../lua/git-blame-line/) | decorations + a hidden task | one namespace per concern, so the clear is safe; `pcall` around `mnml.buf.path` because not every focused pane is an editor; a `<path>:<line>` key so the same line is never asked about twice and two runs are never in flight at once |
+| [`recent-commands`](../lua/recent-commands/) | a live picker with a preview column | `live = true` so the source does the narrowing rather than the picker's fuzzy filter; `data` carrying the whole command row through to `preview` and `on_accept`; `rank` read off `mnml.commands()` instead of an MRU of its own |
+| [`todo-list`](../lua/todo-list/) | a rail section of the script's own | the `rows(sort)` shape — headers and items in one list, the sort's name handed in so ordering stays the script's job; `l:refresh()` from the task's `on_done`, so the panel fills when the child answers rather than blocking on it; a row's `detail` doing double duty as the `<path>:<line>` that opening needs |
+| [`surround-word`](../lua/surround-word/) | one text operation, both profiles | one `run(range)` serving every road into it, because the range arrives in one shape; `range.mode` telling a linewise application to keep the indentation outside the pair; `mnml.config.get` reading a key of the user's own |
+| [`eslint`](../lua/eslint/) | a tool wrapper into the diagnostics sink | `hidden = true` because there is nothing to watch; an `on_line` parse that ignores what does not match (the tool's summary line); a `set` on every run — including the empty one that clears a file the tool is now happy with |
 
 `docs/examples/init.lua` is the sixth: one file that touches every surface at
 once, which is what a unit test runs to prove they all still load together.
@@ -1422,7 +1434,7 @@ because a shell resets `PWD` to its own cwd:
 
 ```
 # env: MNML_REPO=${PWD}
-shell mkdir -p .mnml && cp "${MNML_REPO:?}/docs/examples/scripts/eslint/init.lua" .mnml/init.lua
+shell mkdir -p .mnml && cp "${MNML_REPO:?}/lua/eslint/init.lua" .mnml/init.lua
 ```
 
 `lua_example_eslint.test`, `lua_example_git_blame_line.test`,
@@ -1434,8 +1446,9 @@ five recipes true. The surfaces themselves have their own files —
 `lua_diagnostics_sink.test`, `lua_error_diagnostic.test`,
 `lua_http_hooks.test`, `lua_run_selection.test`, `lua_init.test`; the SCRIPTS
 section has `scripts_doctor.test`, `scripts_install_dir.test`,
-`scripts_trust_claims.test`, `scripts_marketplace_local.test`,
-`scripts_dev_root_reload.test` and `scripts_budget_chip.test`.
+`scripts_trust_claims.test`, `scripts_marketplace_default.test` (the shipped
+set, with no environment at all), `scripts_marketplace_local.test` (the
+override), `scripts_dev_root_reload.test` and `scripts_budget_chip.test`.
 
 A test that installs a script sets `MNML_SCRIPTS_ROOT` in its header: the
 corpus shares one data root across every file, and a script installed by one

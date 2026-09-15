@@ -7,5 +7,4 @@
     .commands = .{},
     .hooks = .{ "save_post" },
     .source = .marketplace,
-    .url = "https://github.com/chris-mclennan/mnml-scripts",
 }

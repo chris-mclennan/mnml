@@ -7,5 +7,4 @@
     .commands = .{ "user.surround", "user.surround_delete" },
     .hooks = .{},
     .source = .marketplace,
-    .url = "https://github.com/chris-mclennan/mnml-scripts",
 }

@@ -33,6 +33,12 @@ class Mnml < Formula
 
   def install
     bin.install "mnml"
+    # The curated Lua script set the archive carries as share/mnml/lua.
+    # `bin` is <prefix>/bin and `pkgshare` is <prefix>/share/mnml, so the
+    # installed binary finds it as `<exe dir>/../share/mnml/lua` — the
+    # same path the .deb and .rpm use. Without it the SCRIPTS section's
+    # Marketplace tab is empty on a brew install.
+    pkgshare.install "share/mnml/lua" if File.directory?("share/mnml/lua")
   end
 
   test do

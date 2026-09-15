@@ -71,7 +71,15 @@ jobs:
           mkdir -p staging
           cp "mnml-$TRIPLE/mnml" staging/mnml
           chmod +x staging/mnml
-          ls -la staging/
+          # The curated Lua script set rides in the archive as
+          # share/mnml/lua; nfpm lays it at /usr/share/mnml/lua, which is
+          # where a /usr/bin binary looks for it.
+          test -d "mnml-$TRIPLE/share/mnml/lua" || {
+              echo "the tarball has no share/mnml/lua — scripts/package.sh did not stage it" >&2
+              exit 1
+          }
+          cp -R "mnml-$TRIPLE/share/mnml/lua" staging/lua
+          ls -la staging/ staging/lua/
 
       - name: Install nfpm
         run: |

@@ -133,6 +133,25 @@ chmod 0755 "$install_dir/mnml.tmp.$$"
 mv -f "$install_dir/mnml.tmp.$$" "$install_dir/mnml"
 say "installed $("$install_dir/mnml" --version 2>/dev/null || echo mnml) to $install_dir/mnml"
 
+# ── the curated Lua script set ──
+# The archive carries it as share/mnml/lua beside the binary; mnml also
+# looks one level up from its own directory, so ~/.local/bin/mnml finds
+# ~/.local/share/mnml/lua. Ours, not the user's — installed scripts live
+# under the data root — so an upgrade replaces it wholesale. A failure
+# here costs an empty Marketplace tab, not an install.
+lua_src="$tmp/mnml-$triple/share/mnml/lua"
+if [ -d "$lua_src" ]; then
+    share_dir=$(dirname "$install_dir")/share/mnml
+    if mkdir -p "$share_dir" 2>/dev/null && cp -R "$lua_src" "$share_dir/lua.tmp.$$" 2>/dev/null; then
+        rm -rf "$share_dir/lua"
+        mv -f "$share_dir/lua.tmp.$$" "$share_dir/lua"
+        say "script set installed to $share_dir/lua"
+    else
+        rm -rf "$share_dir/lua.tmp.$$" 2>/dev/null || true
+        say "could not install the script set beside $install_dir (the editor still runs)"
+    fi
+fi
+
 # ── PATH hint ──
 case ":$PATH:" in
     *":$install_dir:"*) ;;
