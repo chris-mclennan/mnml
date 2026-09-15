@@ -110,10 +110,20 @@ Pinned by the `ctrlWCommand` and `vim:` tests in `src/app/side.zig`.
 | `view.focus_right_panel` | — | `Ctrl+K R` |
 | `view.right_panel_next_tab` / `prev_tab` | `<leader>t]` / `<leader>t[` | — |
 | `view.right_panel_close_tab` | `<leader>tx` | `Ctrl+Alt+W` (both) |
+| `view.toggle_bottom_panel` (the dock) | `Ctrl+Shift+J` (both) | `Ctrl+Shift+J` (both) |
+| `view.host_active_in_bottom_panel` | — (the palette; run again on a docked pane to send it back) | — |
+| section → the dock / back up | `Ctrl-W J` / `K` in a section or the tree | — (`:sidebar bottom`, the rail menu) |
+| focus the dock / leave it | `Ctrl-W j` / `k` (the ordinary focus step) | — |
 
 In an editor `Ctrl-W H` / `L` keep Neovim's meaning — move the split to
 the far edge; only a focused section or the tree reads them as a side
-move.
+move. // changed (bottom-dock): `Ctrl-W J` / `K` read the same way —
+the section goes into the dock and comes back up to the column it came
+from — and they are not command ids, since the dock's two ids are
+Rust's `toggle` and `host_active`. Lowercase `j` / `k` stay the focus
+step, and reach the dock because it is a window under everything.
+`Ctrl-W + / - / > / <` resize the window the keys are in: a row of the
+dock, or two cells of a focused column.
 
 ## Debugger
 
