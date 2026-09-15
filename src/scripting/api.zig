@@ -203,13 +203,87 @@ fn fnField(self: *Lua, t: i32, name: [:0]const u8) ?LuaRef {
     return null;
 }
 
-/// A required string field, else a Lua error naming it.
-fn needStr(L: *State, t: i32, name: [:0]const u8) []const u8 {
-    return strField(L, t, name) orelse L.raiseErrorStr("mnml: `%s` is required and must be a string", .{name.ptr});
+// ─── argument errors ────────────────────────────────────────────────────
+// One rule, everywhere below: a wrong argument raises a message that
+// names the CALL, the ARGUMENT and the SHAPE it wanted —
+// `mnml.picker.source: \`items\` must be a function(query) returning a
+// table of rows`. Lua's own `luaL_check*` messages name the type and a
+// `'?'` where the function's name should be, so this file does not use
+// them for anything a script author can get wrong.
+//
+// Every check runs BEFORE the first allocation or registry ref of the
+// call. A Lua error is a longjmp out of the C frame: an `errdefer`
+// under one never runs, so anything already acquired would leak.
+
+/// Every hook name, `, `-joined — what `mnml.on` shows when it is
+/// handed one that is not there. Built from the enum, so a hook added
+/// to `core/hooks.zig` is in the message the same day.
+pub const hook_names: [:0]const u8 = blk: {
+    var out: [:0]const u8 = "";
+    for (std.enums.values(hooks.Hook), 0..) |h, i| {
+        out = out ++ (if (i > 0) ", " else "") ++ @tagName(h);
+    }
+    break :blk out;
+};
+
+/// A required string field of the table at `t`, else a Lua error
+/// naming the call, the field and `shape`.
+fn needStr(L: *State, t: i32, name: [:0]const u8, where: [:0]const u8, shape: [:0]const u8) []const u8 {
+    return strField(L, t, name) orelse L.raiseErrorStr("%s: `%s` is required and must be %s", .{ where.ptr, name.ptr, shape.ptr });
 }
 
-fn needFn(self: *Lua, t: i32, name: [:0]const u8) LuaRef {
-    return fnField(self, t, name) orelse self.L.raiseErrorStr("mnml: `%s` is required and must be a function", .{name.ptr});
+/// A required function field, else the same shape of message. A field
+/// that is there but is not a function says so rather than reading as
+/// missing.
+fn needFn(self: *Lua, t: i32, name: [:0]const u8, where: [:0]const u8, shape: [:0]const u8) LuaRef {
+    return fnField(self, t, name) orelse self.L.raiseErrorStr("%s: `%s` must be %s", .{ where.ptr, name.ptr, shape.ptr });
+}
+
+/// An optional function field: nil is fine, anything else that is not a
+/// function is the error. Checked before the call's first allocation.
+fn checkOptFn(L: *State, t: i32, name: [:0]const u8, where: [:0]const u8, shape: [:0]const u8) void {
+    const at = L.absIndex(t);
+    const kind = L.getField(at, name);
+    defer L.pop(1);
+    if (kind == .nil or kind == .none) return;
+    if (!L.isFunction(-1)) L.raiseErrorStr("%s: `%s` must be %s", .{ where.ptr, name.ptr, shape.ptr });
+}
+
+/// A required function field, checked WITHOUT taking a ref — for a call
+/// that allocates before it refs, so the check can run first.
+fn checkFn(L: *State, t: i32, name: [:0]const u8, where: [:0]const u8, shape: [:0]const u8) void {
+    const at = L.absIndex(t);
+    _ = L.getField(at, name);
+    defer L.pop(1);
+    if (!L.isFunction(-1)) L.raiseErrorStr("%s: `%s` must be %s", .{ where.ptr, name.ptr, shape.ptr });
+}
+
+/// The one table a `mnml.x{ … }` call takes.
+fn needTable(L: *State, arg: i32, where: [:0]const u8, shape: [:0]const u8) void {
+    if (L.typeOf(arg) != .table) L.raiseErrorStr("%s takes one table: %s", .{ where.ptr, shape.ptr });
+}
+
+/// A positional string argument.
+fn argStr(L: *State, arg: i32, where: [:0]const u8, shape: [:0]const u8) []const u8 {
+    if (L.typeOf(arg) != .string) L.raiseErrorStr("%s: %s", .{ where.ptr, shape.ptr });
+    return L.toString(arg) catch "";
+}
+
+/// A positional string argument that may be left out.
+fn optArgStr(L: *State, arg: i32, where: [:0]const u8, shape: [:0]const u8) ?[]const u8 {
+    if (L.isNoneOrNil(arg)) return null;
+    return argStr(L, arg, where, shape);
+}
+
+/// A positional integer argument.
+fn argInt(L: *State, arg: i32, where: [:0]const u8, shape: [:0]const u8) i64 {
+    if (L.typeOf(arg) != .number or !L.isInteger(arg)) L.raiseErrorStr("%s: %s", .{ where.ptr, shape.ptr });
+    return L.toInteger(arg) catch 0;
+}
+
+/// A positional function argument.
+fn argFn(L: *State, arg: i32, where: [:0]const u8, shape: [:0]const u8) void {
+    if (!L.isFunction(arg)) L.raiseErrorStr("%s: %s", .{ where.ptr, shape.ptr });
 }
 
 /// The `keys` field: a string or a list of strings, onto the frame arena.
@@ -237,11 +311,11 @@ fn keysField(L: *State, arena: Allocator, t: i32) Allocator.Error![]const []cons
 /// at `arg`, else the active editor.
 fn editorArg(L: *State, app: *App, arg: i32) *EditorPane {
     if (!L.isNoneOrNil(arg)) {
-        const id = L.checkInteger(arg);
-        if (id < 0 or id > std.math.maxInt(PaneId)) L.argError(arg, "pane id out of range");
-        return app.panes.editor(@intCast(id)) orelse L.raiseErrorStr("mnml.buf: pane %d is not an editor", .{@as(c_int, @intCast(id))});
+        const id = argInt(L, arg, "mnml.buf", "`pane` must be a pane id (what mnml.pane.active() answers with), or left out for the active editor");
+        if (id < 0 or id > std.math.maxInt(PaneId)) L.raiseErrorStr("mnml.buf: `pane` must be a pane id (what mnml.pane.active() answers with); %d is not one", .{@as(c_int, @intCast(@min(id, std.math.maxInt(c_int))))});
+        return app.panes.editor(@intCast(id)) orelse L.raiseErrorStr("mnml.buf: `pane` must name an editor pane; pane %d is not one", .{@as(c_int, @intCast(id))});
     }
-    return app.activeEditor() orelse L.raiseErrorStr("mnml.buf: no active editor pane", .{});
+    return app.activeEditor() orelse L.raiseErrorStr("mnml.buf: no active editor pane — pass a pane id, or open a file first", .{});
 }
 
 /// Register a dynamic command with a Lua runner and bind its keys.
@@ -289,15 +363,15 @@ pub fn rebind(app: *App) Allocator.Error!void {
 /// `mnml.command{ id, title?, group?, keys?, run }` → the full id.
 fn cmdRegister(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
+    needTable(L, 1, "mnml.command", "{ id, title?, group?, keys?, run }");
     const arena = c.app.frame.allocator();
-    const id = needStr(L, 1, "id");
-    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n.") != null) L.raiseErrorStr("mnml.command: id must be a bare name (no spaces or dots)", .{});
+    const id = needStr(L, 1, "id", "mnml.command", "a bare name — \"hello\" becomes the command user.hello");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n.") != null) L.raiseErrorStr("mnml.command: `id` must be a bare name — letters, digits and `_`, no spaces or dots (\"hello\" becomes user.hello)", .{});
     const full = try std.fmt.allocPrintSentinel(arena, "{s}{s}", .{ id_prefix, id }, 0);
     const title = try arena.dupe(u8, strField(L, 1, "title") orelse id);
     const group = try arena.dupe(u8, strField(L, 1, "group") orelse "user");
     const keys = try keysField(L, arena, 1);
-    const run_ref = needFn(c.self, 1, "run");
+    const run_ref = needFn(c.self, 1, "run", "mnml.command", "a function() — what the palette row, the chord and `:user.<id>` all run");
     _ = registerLuaCommand(c.self, full, title, group, keys, run_ref) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ShadowsBuiltin => L.raiseErrorStr("mnml.command: `%s` shadows a built-in command", .{full.ptr}),
@@ -313,18 +387,18 @@ fn cmdRegister(L: *State) !i32 {
 /// that command, built-in or script, through `mnml.run`.
 fn map(L: *State) !i32 {
     const c = ctx(L);
-    const spec = L.checkString(1);
+    const spec = argStr(L, 1, "mnml.map", "the first argument is a chord spec, a string (\"ctrl+shift+n\", \"space u n\")");
     const arena = c.app.frame.allocator();
     var title: []const u8 = spec;
     if (L.typeOf(2) == .string) {
         // A closure over the id: `function() mnml.run(id) end`.
         const id = L.toString(2) catch unreachable;
-        if (command.by_name.get(id) == null and c.app.dyn_commands.get(id) == null) L.raiseErrorStr("mnml.map: no command `%s`", .{id.ptr});
+        if (command.by_name.get(id) == null and c.app.dyn_commands.get(id) == null) L.raiseErrorStr("mnml.map: the second argument names no command — `%s` is not an id mnml.commands() lists", .{id.ptr});
         title = try std.fmt.allocPrint(arena, "{s} → {s}", .{ spec, id });
         L.pushValue(2);
         L.pushClosure(zlua.wrap(runBound), 1);
     } else {
-        L.checkType(2, .function);
+        argFn(L, 2, "mnml.map", "the second argument is a function(), or a command id as a string (\"file.save\")");
         L.pushValue(2);
     }
     c.self.map_seq += 1;
@@ -354,9 +428,9 @@ fn runBound(L: *State) !i32 {
 /// `mnml.on(hook, fn)`.
 fn on(L: *State) !i32 {
     const c = ctx(L);
-    const name = L.checkString(1);
-    L.checkType(2, .function);
-    const hook = std.meta.stringToEnum(hooks.Hook, name) orelse L.argError(1, "unknown hook (see docs/LUA.md for the list)");
+    const name = argStr(L, 1, "mnml.on", "the first argument is a hook name, a string");
+    argFn(L, 2, "mnml.on", "the second argument is a function(args) — args is a flat table of the hook's fields plus hook = \"<name>\"");
+    const hook = std.meta.stringToEnum(hooks.Hook, name) orelse L.raiseErrorStr("mnml.on: `%s` is not a hook — the names are %s", .{ (try c.app.frame.allocator().dupeZ(u8, name)).ptr, hook_names.ptr });
     L.pushValue(2);
     const r = c.self.ref();
     c.app.hooks.subscribe(hook, .{ .lua = r }) catch |err| {
@@ -372,9 +446,9 @@ fn on(L: *State) !i32 {
 /// `mnml.toast(text, level?)` — level `info` (default) | `warn` | `error`.
 fn toast(L: *State) !i32 {
     const c = ctx(L);
-    const text = L.checkString(1);
-    const level: app_mod.ToastLevel = if (L.optString(2)) |lv|
-        (if (std.mem.eql(u8, lv, "warn")) .warn else if (std.mem.eql(u8, lv, "error")) .err else .info)
+    const text = argStr(L, 1, "mnml.toast", "the first argument is the text, a string");
+    const level: app_mod.ToastLevel = if (optArgStr(L, 2, "mnml.toast", "the second argument is the level, one of \"info\", \"warn\", \"error\"")) |lv|
+        (if (std.mem.eql(u8, lv, "info")) .info else if (std.mem.eql(u8, lv, "warn")) .warn else if (std.mem.eql(u8, lv, "error")) .err else L.raiseErrorStr("mnml.toast: the level is \"info\", \"warn\" or \"error\"", .{}))
     else
         .info;
     try c.app.toastLevel(level, "{s}", .{text});
@@ -385,7 +459,7 @@ fn toast(L: *State) !i32 {
 /// toasted by `command.run`; the message is the second return.
 fn run(L: *State) !i32 {
     const c = ctx(L);
-    const id = L.checkString(1);
+    const id = argStr(L, 1, "mnml.run", "takes a command id, a string (\"file.save\", \"user.hello\" — mnml.commands() lists them)");
     command.runNamed(c.app, id) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -401,7 +475,7 @@ fn run(L: *State) !i32 {
 /// `mnml.ex(line)` — a `:` line without the colon.
 fn ex(L: *State) !i32 {
     const c = ctx(L);
-    const line = L.checkString(1);
+    const line = argStr(L, 1, "mnml.ex", "takes a `:` line without the colon, a string (\"w\", \"e src/app.zig\")");
     c.app.runEx(line) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -579,7 +653,7 @@ fn bufText(L: *State) !i32 {
 /// `mnml.buf.line(n, pane?)` — 1-based; nil past the end.
 fn bufLine(L: *State) !i32 {
     const c = ctx(L);
-    const n = L.checkInteger(1);
+    const n = argInt(L, 1, "mnml.buf.line", "the first argument is a 1-based line number");
     const e = editorArg(L, c.app, 2);
     if (n < 1 or n > e.buf.editor.lineCount()) {
         L.pushNil();
@@ -689,7 +763,7 @@ fn bufWordAt(L: *State) !i32 {
 /// `mnml.buf.apply({ op = "…", … }, pane?)` → whether the text changed.
 fn bufApply(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
+    needTable(L, 1, "mnml.buf.apply", "{ op = \"<tag>\", … } — see the op table in docs/LUA.md");
     const e = editorArg(L, c.app, 2);
     const arena = c.app.frame.allocator();
     const op = try decodeOp(L, arena, 1);
@@ -730,10 +804,10 @@ fn charField(L: *State, t: i32, name: [:0]const u8) ?u21 {
 /// tags. `select_range{ start, end }` and `atomic{ ops }` are composed.
 fn decodeOp(L: *State, arena: Allocator, t: i32) !EditOp {
     const at = L.absIndex(t);
-    const name = strField(L, at, "op") orelse L.raiseErrorStr("mnml.buf.apply: `op` is required", .{});
+    const name = strField(L, at, "op") orelse L.raiseErrorStr("mnml.buf.apply: `op` is required and must be an edit-op tag, a string (\"insert_str\", \"replace_range\", \"undo\")", .{});
     if (std.mem.eql(u8, name, "select_range")) {
-        const start = intField(L, at, "start") orelse L.raiseErrorStr("mnml.buf.apply: select_range needs start and end", .{});
-        const end = intField(L, at, "end") orelse L.raiseErrorStr("mnml.buf.apply: select_range needs start and end", .{});
+        const start = intField(L, at, "start") orelse L.raiseErrorStr("mnml.buf.apply: select_range needs `start` and `end`, both byte offsets (0-based, `end` exclusive; `end` is a Lua keyword, so write [\"end\"])", .{});
+        const end = intField(L, at, "end") orelse L.raiseErrorStr("mnml.buf.apply: select_range needs `start` and `end`, both byte offsets (0-based, `end` exclusive; `end` is a Lua keyword, so write [\"end\"])", .{});
         const ops = try arena.alloc(EditOp, 3);
         ops[0] = .{ .set_cursor_byte = @intCast(@max(start, 0)) };
         ops[1] = .select_start;
@@ -743,14 +817,14 @@ fn decodeOp(L: *State, arena: Allocator, t: i32) !EditOp {
     if (std.mem.eql(u8, name, "atomic")) {
         _ = L.getField(at, "ops");
         defer L.pop(1);
-        if (!L.isTable(-1)) L.raiseErrorStr("mnml.buf.apply: atomic needs `ops`, a list of op tables", .{});
+        if (!L.isTable(-1)) L.raiseErrorStr("mnml.buf.apply: atomic needs `ops`, a list of op tables — { ops = { { op = \"…\" }, … } }", .{});
         const n = L.lenRaw(-1);
         const ops = try arena.alloc(EditOp, n);
         var i: usize = 0;
         while (i < n) : (i += 1) {
             _ = L.getIndex(-1, @intCast(i + 1));
             defer L.pop(1);
-            if (!L.isTable(-1)) L.raiseErrorStr("mnml.buf.apply: atomic ops must be tables", .{});
+            if (!L.isTable(-1)) L.raiseErrorStr("mnml.buf.apply: every entry of `ops` must be an op table — { op = \"…\", … }", .{});
             ops[i] = try decodeOp(L, arena, -1);
         }
         return .{ .atomic = ops };
@@ -759,7 +833,7 @@ fn decodeOp(L: *State, arena: Allocator, t: i32) !EditOp {
         const count = intField(L, at, "count") orelse 1;
         _ = L.getField(at, "inner");
         defer L.pop(1);
-        if (!L.isTable(-1)) L.raiseErrorStr("mnml.buf.apply: repeat needs `inner`, an op table", .{});
+        if (!L.isTable(-1)) L.raiseErrorStr("mnml.buf.apply: repeat needs `inner`, one op table — { op = \"repeat\", count = 3, inner = { op = \"…\" } }", .{});
         const inner = try arena.create(EditOp);
         inner.* = try decodeOp(L, arena, -1);
         return .{ .repeat = .{ .count = @intCast(@max(count, 0)), .inner = inner } };
@@ -771,7 +845,28 @@ fn decodeOp(L: *State, arena: Allocator, t: i32) !EditOp {
             }
         }
     }
-    L.raiseErrorStr("mnml.buf.apply: unknown op `%s`", .{(try arena.dupeZ(u8, name)).ptr});
+    L.raiseErrorStr("mnml.buf.apply: `op` names no edit op — `%s` is not one of the tags in src/editor/edit_op.zig (docs/LUA.md lists them by shape)", .{(try arena.dupeZ(u8, name)).ptr});
+}
+
+/// An enum payload's accepted words, `, `-joined — so a wrong `value`
+/// on an op reads as a list of the right ones rather than "unknown".
+fn enumNames(comptime T: type) [:0]const u8 {
+    return comptime blk: {
+        var out: [:0]const u8 = "";
+        for (std.enums.values(T), 0..) |v, i| out = out ++ (if (i > 0) ", " else "") ++ "\"" ++ @tagName(v) ++ "\"";
+        break :blk out;
+    };
+}
+
+/// What a struct payload's field must be, in words — the tail of the
+/// `\`join_lines\` needs \`keep_space\`, a boolean` message.
+fn fieldShape(comptime T: type) [:0]const u8 {
+    return switch (@typeInfo(T)) {
+        .bool => "a boolean",
+        .int => if (T == u21) "one character, as a string" else "an integer",
+        .pointer => "a string",
+        else => "a value",
+    };
 }
 
 fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: Allocator, at: i32) !T {
@@ -783,21 +878,21 @@ fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: A
             if (T == u21) if (charField(L, at, "ch")) |ch| return ch;
             const alias: ?[:0]const u8 = int_alias.get(tag);
             const v = intField(L, at, "value") orelse (if (alias) |a| intField(L, at, a) else null) orelse
-                L.raiseErrorStr("mnml.buf.apply: `%s` needs an integer `value`", .{tag.ptr});
+                L.raiseErrorStr("mnml.buf.apply: `%s` needs an integer `value` (or its own name for the field: line / col / byte / count / width)", .{tag.ptr});
             return std.math.cast(T, v) orelse L.raiseErrorStr("mnml.buf.apply: `%s`: value out of range", .{tag.ptr});
         },
-        .bool => return boolField(L, at, "value") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs a boolean `value`", .{tag.ptr}),
+        .bool => return boolField(L, at, "value") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs `value`, a boolean", .{tag.ptr}),
         .optional => |o| {
             if (o.child == u21) return charField(L, at, "ch");
             @compileError("unhandled optional payload for " ++ tag);
         },
         .pointer => |p| {
-            if (p.child == u8) return try arena.dupe(u8, strField(L, at, "text") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs `text`", .{tag.ptr}));
+            if (p.child == u8) return try arena.dupe(u8, strField(L, at, "text") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs `text`, a string", .{tag.ptr}));
             @compileError("unhandled pointer payload for " ++ tag);
         },
         .@"enum" => {
-            const s = strField(L, at, "value") orelse strField(L, at, "case") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs `value`", .{tag.ptr});
-            return std.meta.stringToEnum(T, s) orelse L.raiseErrorStr("mnml.buf.apply: `%s`: unknown value", .{tag.ptr});
+            const s = strField(L, at, "value") orelse strField(L, at, "case") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs `value`, one of %s", .{ tag.ptr, enumNames(T).ptr });
+            return std.meta.stringToEnum(T, s) orelse L.raiseErrorStr("mnml.buf.apply: `%s`: `value` is one of %s", .{ tag.ptr, enumNames(T).ptr });
         },
         .@"struct" => |s| {
             var out: T = undefined;
@@ -810,7 +905,7 @@ fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: A
                     .pointer => if (strField(L, at, fname)) |v| try arena.dupe(u8, v) else null,
                     else => @compileError("unhandled struct payload field " ++ tag ++ "." ++ sf.name),
                 };
-                @field(out, sf.name) = got orelse (if (sf.defaultValue()) |d| d else L.raiseErrorStr("mnml.buf.apply: `%s` needs `%s`", .{ tag.ptr, fname.ptr }));
+                @field(out, sf.name) = got orelse (if (sf.defaultValue()) |d| d else L.raiseErrorStr("mnml.buf.apply: `%s` needs `%s`, %s", .{ tag.ptr, fname.ptr, fieldShape(Ft).ptr }));
             }
             return out;
         },
@@ -838,26 +933,26 @@ const script_ops = @import("../input/script_ops.zig");
 /// selection, or the word under the cursor when there is none.
 fn operatorRegister(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
-    const id = needStr(L, 1, "id");
-    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n.") != null) L.raiseErrorStr("mnml.operator: id must be a bare name (no spaces or dots)", .{});
+    needTable(L, 1, "mnml.operator", "{ id, title?, keys = { vim?, standard? }, run }");
+    const id = needStr(L, 1, "id", "mnml.operator", "a bare name — \"surround\" becomes the command user.surround");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n.") != null) L.raiseErrorStr("mnml.operator: `id` must be a bare name — letters, digits and `_`, no spaces or dots", .{});
     // Everything is checked before anything is allocated or ref'd: a
     // Lua error is a longjmp, and an `errdefer` below one never runs.
     if (L.getField(1, "keys") != .table) {
         L.pop(1);
-        L.raiseErrorStr("mnml.operator: keys is a table: { vim = \"g<letter>\", standard = \"a chord spec\" } — at least one", .{});
+        L.raiseErrorStr("mnml.operator: `keys` must be a table — { vim = \"g<letter>\", standard = \"a chord spec\" }, at least one of the two", .{});
     }
     const keys_at = L.getTop();
     const vim_spec = strField(L, keys_at, "vim");
     const std_spec = strField(L, keys_at, "standard");
     if (vim_spec == null and std_spec == null) {
         L.pop(1);
-        L.raiseErrorStr("mnml.operator: keys needs a `vim` or a `standard` chord (or both)", .{});
+        L.raiseErrorStr("mnml.operator: `keys` needs a `vim` chord (\"g\" and one letter) or a `standard` one (any chord spec), or both", .{});
     }
     if (vim_spec) |v| if (!script_ops.validVimSpec(v)) {
         const owned = c.app.frame.allocator().dupeZ(u8, v) catch "?";
         L.pop(1);
-        L.raiseErrorStr("mnml.operator: the vim chord is `g` and one letter vim does not already use (`%s` is not); vim's own are g%s", .{ owned.ptr, script_ops.reserved.ptr });
+        L.raiseErrorStr("mnml.operator: `keys.vim` must be `g` and one letter vim does not already use — `%s` is not; vim's own are g%s", .{ owned.ptr, script_ops.reserved.ptr });
     };
     const arena = c.app.frame.allocator();
     const full = try std.fmt.allocPrintSentinel(arena, "{s}{s}", .{ id_prefix, id }, 0);
@@ -865,7 +960,7 @@ fn operatorRegister(L: *State) !i32 {
     const vim_owned: ?[]const u8 = if (vim_spec) |v| try arena.dupe(u8, v) else null;
     const std_owned: ?[]const u8 = if (std_spec) |v| try arena.dupe(u8, v) else null;
     L.pop(1); // the keys table
-    const run_ref = needFn(c.self, 1, "run");
+    const run_ref = needFn(c.self, 1, "run", "mnml.operator", "a function(range) — range is { start, [\"end\"], mode }, the shape mnml.buf.selection() answers with");
     // The slot the vim handler and the standard command both name.
     const index: u32 = blk: {
         for (c.self.operators.items, 0..) |*o, i| if (std.mem.eql(u8, o.id, full)) {
@@ -941,10 +1036,10 @@ pub fn runOperatorMode(app: *App, self: *Lua, index: u32, e: *EditorPane, start:
 /// (nil hides it), polled every 250 ms.
 fn statuslineSegment(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
-    const id = needStr(L, 1, "id");
-    const side: lua_mod.Side = if (strField(L, 1, "side")) |s| (std.meta.stringToEnum(lua_mod.Side, s) orelse L.raiseErrorStr("mnml.statusline.segment: side is `left` or `right`", .{})) else .right;
-    const func = needFn(c.self, 1, "fn");
+    needTable(L, 1, "mnml.statusline.segment", "{ id, side?, fn }");
+    const id = needStr(L, 1, "id", "mnml.statusline.segment", "a name of your own — registering it again replaces the segment");
+    const side: lua_mod.Side = if (strField(L, 1, "side")) |s| (std.meta.stringToEnum(lua_mod.Side, s) orelse L.raiseErrorStr("mnml.statusline.segment: `side` is \"left\" or \"right\"", .{})) else .right;
+    const func = needFn(c.self, 1, "fn", "mnml.statusline.segment", "a function() returning the text — nil hides the segment; it is polled every 250 ms");
     const gpa = c.self.gpa;
     try c.self.noteOrigin(.segment, id);
     for (c.self.segments.items) |*seg| if (std.mem.eql(u8, seg.id, id)) {
@@ -972,23 +1067,15 @@ fn statuslineSegment(L: *State) !i32 {
 /// preview?, on_accept? }`.
 fn pickerSource(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
-    const id = needStr(L, 1, "id");
+    needTable(L, 1, "mnml.picker.source", "{ id, title?, items, live?, multi?, preview?, on_accept? }");
+    const id = needStr(L, 1, "id", "mnml.picker.source", "a name of your own — mnml.picker.open takes it back");
     const title = strField(L, 1, "title") orelse id;
     const live = boolField(L, 1, "live") orelse false;
     const multi = boolField(L, 1, "multi") orelse false;
     // Every check before the first ref: a Lua error is a longjmp.
-    if (L.getField(1, "preview") != .nil and !L.isFunction(-1)) {
-        L.pop(1);
-        L.raiseErrorStr("mnml.picker.source: preview must be a function(row) returning rows of segments", .{});
-    }
-    L.pop(1);
-    if (L.getField(1, "on_accept") != .nil and !L.isFunction(-1)) {
-        L.pop(1);
-        L.raiseErrorStr("mnml.picker.source: on_accept must be a function(row) — or function(rows) when multi = true", .{});
-    }
-    L.pop(1);
-    const items = needFn(c.self, 1, "items");
+    checkOptFn(L, 1, "preview", "mnml.picker.source", "a function(row) returning rows of segments for the preview column");
+    checkOptFn(L, 1, "on_accept", "mnml.picker.source", "a function(row) — or function(rows), the marked ones, when multi = true");
+    const items = needFn(c.self, 1, "items", "mnml.picker.source", "a function(query) returning a table of rows — a row is a string, or { label, detail?, icon?, data?, on_accept? }");
     const preview = fnField(c.self, 1, "preview");
     const on_accept = fnField(c.self, 1, "on_accept");
     const gpa = c.self.gpa;
@@ -1032,9 +1119,9 @@ fn pickerSource(L: *State) !i32 {
 /// `mnml.picker.open(id, query?)` — the picker over `items(query)`.
 fn pickerOpen(L: *State) !i32 {
     const c = ctx(L);
-    const id = L.checkString(1);
-    const query = L.optString(2) orelse "";
-    const src = c.self.findSource(id) orelse L.raiseErrorStr("mnml.picker.open: no source `%s`", .{id.ptr});
+    const id = argStr(L, 1, "mnml.picker.open", "the first argument is a source id, a string — the `id` mnml.picker.source{} was given");
+    const query = optArgStr(L, 2, "mnml.picker.open", "the second argument is the starting query, a string") orelse "";
+    const src = c.self.findSource(id) orelse L.raiseErrorStr("mnml.picker.open: no source `%s` — mnml.picker.source{ id = … } registers one, and a reload drops them", .{id.ptr});
     openSource(c.app, c.self, src, query) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => L.raiseErrorStr("mnml.picker.open: %s", .{@errorName(err).ptr}),
@@ -1164,7 +1251,7 @@ pub fn nextPickerDeadlineMs(app: *const App) ?i64 {
 /// `mnml.pane.open{ title, render, on_hit?, on_key? }` → the pane id.
 fn paneOpen(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
+    needTable(L, 1, "mnml.pane.open", "{ title, render, on_hit?, on_key? } — or { title, list = a mnml.list{} handle }");
     const title = strField(L, 1, "title") orelse "script";
     // `{ list = l }`: the pane hosts a `mnml.list{}` through `ListPanel`
     // instead of calling a `render`.
@@ -1173,7 +1260,9 @@ fn paneOpen(L: *State) !i32 {
         L.pushInteger(id);
         return 1;
     }
-    const render = needFn(c.self, 1, "render");
+    checkOptFn(L, 1, "on_hit", "mnml.pane.open", "a function(hit_id, \"left\" | \"right\" | \"middle\") — a segment with hit = n is the target");
+    checkOptFn(L, 1, "on_key", "mnml.pane.open", "a function(chord) returning true when it consumed the key");
+    const render = needFn(c.self, 1, "render", "mnml.pane.open", "a function(w, h) returning up to h rows — a row is a string or a list of segments; pass `list` instead to host a mnml.list{}");
     errdefer c.self.unref(render);
     const on_hit = fnField(c.self, 1, "on_hit");
     errdefer if (on_hit) |r| c.self.unref(r);
@@ -1186,8 +1275,8 @@ fn paneOpen(L: *State) !i32 {
 
 fn paneClose(L: *State) !i32 {
     const c = ctx(L);
-    const id = L.checkInteger(1);
-    if (id < 0 or id > std.math.maxInt(PaneId)) L.argError(1, "pane id out of range");
+    const id = argInt(L, 1, "mnml.pane.close", "takes a pane id, an integer (what mnml.pane.open{} answered with)");
+    if (id < 0 or id > std.math.maxInt(PaneId)) L.raiseErrorStr("mnml.pane.close: takes a pane id (what mnml.pane.open{} answered with); %d is not one", .{@as(c_int, @intCast(@min(id, std.math.maxInt(c_int))))});
     try c.app.forceClosePane(@intCast(id));
     return 0;
 }
@@ -1208,7 +1297,7 @@ pub const commands_cap: usize = 4000;
 
 fn commandsList(L: *State) !i32 {
     const c = ctx(L);
-    const q = L.optString(1) orelse "";
+    const q = optArgStr(L, 1, "mnml.commands", "takes a query, a string — a substring of an id or a title; without one, every command") orelse "";
     var qbuf: [128]u8 = undefined;
     const needle = std.ascii.lowerString(qbuf[0..@min(q.len, qbuf.len)], q[0..@min(q.len, qbuf.len)]);
     L.createTable(0, 0);
@@ -1278,16 +1367,16 @@ fn listField(L: *State, app: *App, t: i32) ?u32 {
         .table => {
             _ = L.getField(-1, "id");
             defer L.pop(1);
-            const n = L.toInteger(-1) catch L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with", .{});
+            const n = L.toInteger(-1) catch L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with — the handle table, or its `id`", .{});
             const id: u32 = if (n > 0) @intCast(n) else 0;
-            if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list (a reload drops them)", .{});
+            if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list — make it with mnml.list{} in this run (a reload drops them)", .{});
             return id;
         },
-        else => L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with", .{}),
+        else => L.raiseErrorStr("mnml: `list` must be what mnml.list{} answered with — the handle table, or its `id`", .{}),
     }
     const n = L.toInteger(-1) catch 0;
     const id: u32 = if (n > 0) @intCast(n) else 0;
-    if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list (a reload drops them)", .{});
+    if (script_list.find(app, id) == null) L.raiseErrorStr("mnml: `list` names no live list — make it with mnml.list{} in this run (a reload drops them)", .{});
     return id;
 }
 
@@ -1297,12 +1386,16 @@ fn listField(L: *State, app: *App, t: i32) ?u32 {
 /// `ListPanel`'s, the one TODOS uses.
 fn listRegister(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
-    const title = needStr(L, 1, "title");
-    // Checked before the first allocation: a Lua error is a longjmp.
+    needTable(L, 1, "mnml.list", "{ title, rows, on_enter?, on_menu?, sort? }");
+    const title = needStr(L, 1, "title", "mnml.list", "the caps header's words, a string (\"TODOS\")");
+    // Every check before the first allocation: a Lua error is a
+    // longjmp, and the `sorts` below would never be freed.
+    checkOptFn(L, 1, "on_enter", "mnml.list", "a function(row) — Enter, and a second click, on an item");
+    checkOptFn(L, 1, "on_menu", "mnml.list", "a function(row) returning { { label, run = fn }, … } — the row's ⋮ menu");
+    checkFn(L, 1, "rows", "mnml.list", "a function(sort) returning a table of rows — a row is a string, { header, count } or { label, detail?, icon?, state? }");
     if (L.getField(1, "sort") != .nil and !L.isTable(-1)) {
         L.pop(1);
-        L.raiseErrorStr("mnml.list: sort is a table of mode names ({ \"State\", \"Name\" })", .{});
+        L.raiseErrorStr("mnml.list: `sort` must be a table of mode names — { \"State\", \"Name\" }; the chip cycles them and `rows(sort)` is handed the current one", .{});
     }
     var sort_n: usize = 0;
     if (L.isTable(-1)) sort_n = L.lenRaw(-1);
@@ -1321,7 +1414,7 @@ fn listRegister(L: *State) !i32 {
         made = i;
     }
     L.pop(1); // the sort table (or the nil)
-    const rows_fn = needFn(c.self, 1, "rows");
+    const rows_fn = needFn(c.self, 1, "rows", "mnml.list", "a function(sort) returning a table of rows");
     const on_enter = fnField(c.self, 1, "on_enter");
     const on_menu = fnField(c.self, 1, "on_menu");
     const owned_title = gpa.dupe(u8, title) catch |err| {
@@ -1357,16 +1450,16 @@ fn listRefresh(L: *State) !i32 {
 /// rail row and a column of the script's own.
 fn sectionRegister(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
-    const id = needStr(L, 1, "id");
-    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n") != null) L.raiseErrorStr("mnml.section: id must be a bare name", .{});
+    needTable(L, 1, "mnml.section", "{ id, title?, glyph?, ascii?, list, side?, after? }");
+    const id = needStr(L, 1, "id", "mnml.section", "a bare name — it also becomes the command user.<id> that shows the section");
+    if (id.len == 0 or std.mem.indexOfAny(u8, id, " \t\n") != null) L.raiseErrorStr("mnml.section: `id` must be a bare name — letters, digits and `_`, no spaces", .{});
     const title = strField(L, 1, "title") orelse id;
     const glyph = strField(L, 1, "glyph") orelse "";
     const ascii = strField(L, 1, "ascii") orelse "";
     const after = strField(L, 1, "after") orelse "";
     var at_side: Config.Side = .left;
-    if (strField(L, 1, "side")) |sd| at_side = std.meta.stringToEnum(Config.Side, sd) orelse L.raiseErrorStr("mnml.section: side is \"left\" or \"right\"", .{});
-    const list_id = listField(L, c.app, 1) orelse L.raiseErrorStr("mnml.section: `list` is required — what mnml.list{} answered with", .{});
+    if (strField(L, 1, "side")) |sd| at_side = std.meta.stringToEnum(Config.Side, sd) orelse L.raiseErrorStr("mnml.section: `side` is \"left\" or \"right\"", .{});
+    const list_id = listField(L, c.app, 1) orelse L.raiseErrorStr("mnml.section: `list` is required and must be what mnml.list{} answered with", .{});
     const gpa = c.self.gpa;
     const owned_id = try gpa.dupe(u8, id);
     errdefer gpa.free(owned_id);
@@ -1415,16 +1508,18 @@ fn showSectionCommand(L: *State) !i32 {
 /// it exits either way.
 fn taskRun(L: *State) !i32 {
     const c = ctx(L);
-    L.checkType(1, .table);
+    needTable(L, 1, "mnml.task.run", "{ cmd, cwd?, label?, hidden?, on_line?, on_done? }");
     const app = c.app;
     const arena = app.frame.allocator();
-    const cmd = try arena.dupe(u8, needStr(L, 1, "cmd"));
+    checkOptFn(L, 1, "on_done", "mnml.task.run", "a function(result) — result is { ok, code } or { ok = false, signal }");
+    checkOptFn(L, 1, "on_line", "mnml.task.run", "a function(text), one output line at a time — it needs hidden = true");
+    const cmd = try arena.dupe(u8, needStr(L, 1, "cmd", "mnml.task.run", "the shell line to run, a string (\"zig build\")"));
     const label = try arena.dupe(u8, strField(L, 1, "label") orelse cmd);
     const cwd: []const u8 = if (strField(L, 1, "cwd")) |d| (if (std.fs.path.isAbsolute(d)) try arena.dupe(u8, d) else try std.fs.path.join(arena, &.{ app.workspace, d })) else app.workspace;
     if (boolField(L, 1, "hidden") orelse false) return hiddenTaskRun(L, c.self, cmd, cwd);
     if (fnField(c.self, 1, "on_line")) |r| {
         c.self.unref(r);
-        L.raiseErrorStr("mnml.task.run: on_line needs hidden = true (a visible task's output is its pane)", .{});
+        L.raiseErrorStr("mnml.task.run: `on_line` needs `hidden = true` — a visible task's output is its pane", .{});
     }
     const on_done = fnField(c.self, 1, "on_done");
     errdefer if (on_done) |r| c.self.unref(r);
@@ -1460,7 +1555,7 @@ fn hiddenTaskRun(L: *State, self: *Lua, cmd: []const u8, cwd: []const u8) !i32 {
 /// whole config as nested tables.
 fn configGet(L: *State) !i32 {
     const c = ctx(L);
-    const path = L.optString(1) orelse "";
+    const path = optArgStr(L, 1, "mnml.config.get", "takes a dotted path, a string (\"editor.tab_width\", \"lsp.rust.cmd\"); without one, the whole config") orelse "";
     pushPath(L, Config, c.app.cfg, path);
     return 1;
 }
@@ -1608,8 +1703,8 @@ const http_app = @import("../app/http.zig");
 /// Returns true, or false and the reason (a bad name, a newline).
 fn httpSetVar(L: *State) !i32 {
     const c = ctx(L);
-    const name = L.checkString(1);
-    const value = L.checkString(2);
+    const name = argStr(L, 1, "mnml.http.set_var", "the first argument is the variable name, a string of [A-Za-z0-9_]");
+    const value = argStr(L, 2, "mnml.http.set_var", "the second argument is the value, a string of one line");
     cmd_http.setEnvVar(c.app, name, value) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidKey => {
@@ -1640,12 +1735,12 @@ fn httpSend(L: *State) !i32 {
     const c = ctx(L);
     const app = c.app;
     const id: PaneId = if (!L.isNoneOrNil(1)) blk: {
-        const n = L.checkInteger(1);
-        if (n < 0 or n > std.math.maxInt(PaneId)) L.argError(1, "pane id out of range");
+        const n = argInt(L, 1, "mnml.http.send", "takes a pane id, an integer — the request pane to fire; without one, the active pane");
+        if (n < 0 or n > std.math.maxInt(PaneId)) L.raiseErrorStr("mnml.http.send: takes a pane id; %d is not one", .{@as(c_int, @intCast(@min(n, std.math.maxInt(c_int))))});
         break :blk @intCast(n);
-    } else (app.active orelse L.raiseErrorStr("mnml.http.send: no active pane", .{}));
-    const p = app.panes.get(id) orelse L.raiseErrorStr("mnml.http.send: no pane %d", .{@as(c_int, @intCast(id))});
-    if (p.asRequest() == null) L.raiseErrorStr("mnml.http.send: pane %d is not a request", .{@as(c_int, @intCast(id))});
+    } else (app.active orelse L.raiseErrorStr("mnml.http.send: no active pane — pass the request pane's id", .{}));
+    const p = app.panes.get(id) orelse L.raiseErrorStr("mnml.http.send: there is no pane %d", .{@as(c_int, @intCast(id))});
+    if (p.asRequest() == null) L.raiseErrorStr("mnml.http.send: pane %d is not a request pane (open a .http / .curl / .rest file)", .{@as(c_int, @intCast(id))});
     switch (app.http.hook) {
         .request => L.raiseErrorStr("mnml.http.send: not from inside http_request (that send is the one in flight)", .{}),
         .response => {
@@ -1777,7 +1872,11 @@ const types = @import("../lsp/types.zig");
 /// A namespace handle argument: an integer `mnml.decor.namespace`
 /// answered with.
 fn nsArg(L: *State, app: *App, arg: i32) u32 {
-    const n = L.checkInteger(arg);
+    // These four are shared by every decor / diagnostics call, so the
+    // message is Lua's own `bad argument #N to '<fn>'` frame — it names
+    // the position AND the function, which a fixed prefix could not.
+    if (L.typeOf(arg) != .number or !L.isInteger(arg)) L.argError(arg, "ns must be a handle from mnml.decor.namespace(name)");
+    const n = L.toInteger(arg) catch 0;
     if (n < 0 or n > std.math.maxInt(u32) or !script_decor.isNamespace(app, @intCast(n))) L.argError(arg, "ns must be a handle from mnml.decor.namespace(name)");
     return @intCast(n);
 }
@@ -1789,7 +1888,8 @@ fn paneArg(L: *State, app: *App, arg: i32) PaneId {
         if (app.panes.editor(id) == null) L.argError(arg, "pane must name an editor pane");
         return id;
     }
-    const n = L.checkInteger(arg);
+    if (L.typeOf(arg) != .number or !L.isInteger(arg)) L.argError(arg, "pane must be a pane id (mnml.pane.active())");
+    const n = L.toInteger(arg) catch 0;
     if (n < 0 or n > std.math.maxInt(PaneId)) L.argError(arg, "pane must be a pane id (mnml.pane.active())");
     if (app.panes.editor(@intCast(n)) == null) L.argError(arg, "pane must name an editor pane");
     return @intCast(n);
@@ -1797,21 +1897,23 @@ fn paneArg(L: *State, app: *App, arg: i32) PaneId {
 
 /// A 1-based line number, as `mnml.buf.line` and `mnml.buf.cursor` count.
 fn lineArg(L: *State, arg: i32) u32 {
-    const n = L.checkInteger(arg);
-    if (n < 1 or n > std.math.maxInt(u32)) L.argError(arg, "line must be a 1-based line number");
+    if (L.typeOf(arg) != .number or !L.isInteger(arg)) L.argError(arg, "line must be a 1-based line number, as mnml.buf.cursor() counts");
+    const n = L.toInteger(arg) catch 0;
+    if (n < 1 or n > std.math.maxInt(u32)) L.argError(arg, "line must be a 1-based line number, as mnml.buf.cursor() counts");
     return @intCast(n);
 }
 
-fn byteArg(L: *State, arg: i32, what: [:0]const u8) usize {
-    const n = L.checkInteger(arg);
-    if (n < 0) L.raiseErrorStr("mnml: %s must be a byte offset (0-based)", .{what.ptr});
+fn byteArg(L: *State, arg: i32, comptime what: []const u8) usize {
+    if (L.typeOf(arg) != .number or !L.isInteger(arg)) L.argError(arg, what ++ " must be a byte offset, an integer (0-based, `end` exclusive; mnml.buf.cursor() answers with one)");
+    const n = L.toInteger(arg) catch 0;
+    if (n < 0) L.argError(arg, what ++ " must be a byte offset, 0 or more (0-based, `end` exclusive)");
     return @intCast(n);
 }
 
 /// A theme role name, duped onto the gpa. Roles only — a script never
 /// sees a colour; an unknown role paints plain (`ui/script_view.zig`).
 fn roleArg(L: *State, gpa: Allocator, arg: i32, what: [:0]const u8) Allocator.Error![]u8 {
-    if (L.typeOf(arg) != .string) L.raiseErrorStr("%s must be a theme role name (\"accent\", \"error\", \"syn_string\", …)", .{what.ptr});
+    if (L.typeOf(arg) != .string) L.raiseErrorStr("%s must be a theme role name, a string (\"accent\", \"error\", \"syn_string\", … — never a colour)", .{what.ptr});
     return gpa.dupe(u8, L.toString(arg) catch "");
 }
 
@@ -2263,14 +2365,39 @@ test "mnml.decor: the four decorations paint, anchored, in a namespace the reloa
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
 
+/// One wrong call and the words its message must carry.
+const ArgCase = struct { src: []const u8, want: []const u8 };
+
+/// Every case must fail, must carry `want`, and must name the call it
+/// was — either as `mnml.<path>:` (this file's own messages) or as
+/// Lua's `bad argument #N to '<fn>'`. A message that says only what the
+/// type was is the thing these tests exist to keep out.
+fn expectArgErrors(lua: *lua_mod.Lua, cases: []const ArgCase) !void {
+    for (cases) |c| {
+        lua.runString(c.src) catch |err| switch (err) {
+            error.Failed => {},
+            else => return err,
+        };
+        const msg = lua.last_error orelse "";
+        if (std.mem.indexOf(u8, msg, c.want) == null) {
+            std.debug.print("`{s}`\n  wanted: {s}\n  got:    {s}\n", .{ c.src, c.want, msg });
+            return error.TestExpectedEqual;
+        }
+        if (std.mem.indexOf(u8, msg, "mnml.") == null and std.mem.indexOf(u8, msg, "bad argument #") == null) {
+            std.debug.print("`{s}`\n  names no call: {s}\n", .{ c.src, msg });
+            return error.TestExpectedEqual;
+        }
+    }
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
 test "mnml.decor: every argument error names the argument and the shape it wanted" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratchWith("alpha\nbeta\n");
     try lua.runString("ns = mnml.decor.namespace('demo')");
-    const Case = struct { src: []const u8, want: []const u8 };
-    const cases = [_]Case{
+    const cases = [_]ArgCase{
         .{ .src = "mnml.decor.namespace()", .want = "takes a name, a string" },
         .{ .src = "mnml.decor.namespace('')", .want = "cannot be empty" },
         .{ .src = "mnml.decor.gutter(999, mnml.pane.active(), 1, '!')", .want = "mnml.decor.namespace(name)" },
@@ -2288,16 +2415,137 @@ test "mnml.decor: every argument error names the argument and the shape it wante
         .{ .src = "mnml.diagnostics.set(ns, 'a.js', { { col = 1, message = 'x' } })", .want = "needs `line`" },
         .{ .src = "mnml.diagnostics.set(ns, 'a.js', { { line = 1 } })", .want = "needs `message`" },
         .{ .src = "mnml.diagnostics.set(ns, 'a.js', { { line = 1, message = 'x', severity = 'loud' } })", .want = "severity is" },
+        .{ .src = "mnml.diagnostics.clear(ns, 3)", .want = "path must be a string" },
     };
-    for (cases) |c| {
-        try testing.expectError(error.Failed, lua.runString(c.src));
-        const msg = lua.last_error orelse "";
-        if (std.mem.indexOf(u8, msg, c.want) == null) {
-            std.debug.print("`{s}`\n  wanted: {s}\n  got:    {s}\n", .{ c.src, c.want, msg });
-            return error.TestExpectedEqual;
-        }
-    }
-    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+    try expectArgErrors(lua, &cases);
+}
+
+test "argument errors: the root functions name the call, the argument and the shape" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const cases = [_]ArgCase{
+        .{ .src = "mnml.command('hello')", .want = "mnml.command takes one table: { id, title?, group?, keys?, run }" },
+        .{ .src = "mnml.command{ run = function() end }", .want = "mnml.command: `id` is required and must be a bare name" },
+        .{ .src = "mnml.command{ id = 'a b', run = function() end }", .want = "mnml.command: `id` must be a bare name" },
+        .{ .src = "mnml.command{ id = 'ok' }", .want = "mnml.command: `run` must be a function()" },
+        .{ .src = "mnml.map(3, function() end)", .want = "mnml.map: the first argument is a chord spec, a string" },
+        .{ .src = "mnml.map('ctrl+shift+n', 7)", .want = "mnml.map: the second argument is a function()" },
+        .{ .src = "mnml.map('ctrl+shift+n', 'no.such.command')", .want = "mnml.map: the second argument names no command" },
+        .{ .src = "mnml.on(3, function() end)", .want = "mnml.on: the first argument is a hook name, a string" },
+        .{ .src = "mnml.on('save_post', 3)", .want = "mnml.on: the second argument is a function(args)" },
+        // The list of hooks is built from the enum, so the message can
+        // never name a hook that is gone or miss one that is new.
+        .{ .src = "mnml.on('on_save', function() end)", .want = "mnml.on: `on_save` is not a hook — the names are startup, exit, open, save_pre, save_post" },
+        .{ .src = "mnml.toast(3)", .want = "mnml.toast: the first argument is the text, a string" },
+        .{ .src = "mnml.toast('x', 'loud')", .want = "mnml.toast: the level is \"info\", \"warn\" or \"error\"" },
+        .{ .src = "mnml.toast('x', 3)", .want = "mnml.toast: the second argument is the level" },
+        .{ .src = "mnml.run(3)", .want = "mnml.run: takes a command id, a string" },
+        .{ .src = "mnml.ex(3)", .want = "mnml.ex: takes a `:` line without the colon" },
+        .{ .src = "mnml.inspect()", .want = "mnml.inspect(v) takes one value" },
+        .{ .src = "mnml.commands(3)", .want = "mnml.commands: takes a query, a string" },
+        .{ .src = "mnml.operator{ id = 'a', keys = { vim = 'gs' } }", .want = "mnml.operator: `run` must be a function(range)" },
+        .{ .src = "mnml.operator('a')", .want = "mnml.operator takes one table" },
+    };
+    try expectArgErrors(lua, &cases);
+    // Nothing above left a registration behind: every check lands
+    // before the first allocation or ref.
+    try testing.expectEqual(@as(usize, 0), lua.operators.items.len);
+    try testing.expect(app.dyn_commands.get("user.ok") == null);
+}
+
+test "argument errors: mnml.buf names the call, the argument and the shape" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratchWith("alpha\nbeta\n");
+    const cases = [_]ArgCase{
+        .{ .src = "mnml.buf.text('two')", .want = "mnml.buf: `pane` must be a pane id" },
+        .{ .src = "mnml.buf.text(99)", .want = "mnml.buf: `pane` must name an editor pane" },
+        .{ .src = "mnml.buf.line('1')", .want = "mnml.buf.line: the first argument is a 1-based line number" },
+        .{ .src = "mnml.buf.apply('insert_str')", .want = "mnml.buf.apply takes one table" },
+        .{ .src = "mnml.buf.apply{}", .want = "mnml.buf.apply: `op` is required and must be an edit-op tag" },
+        .{ .src = "mnml.buf.apply{ op = 'nope' }", .want = "mnml.buf.apply: `op` names no edit op" },
+        .{ .src = "mnml.buf.apply{ op = 'insert_str' }", .want = "mnml.buf.apply: `insert_str` needs `text`, a string" },
+        .{ .src = "mnml.buf.apply{ op = 'move_to_line' }", .want = "mnml.buf.apply: `move_to_line` needs an integer `value`" },
+        .{ .src = "mnml.buf.apply{ op = 'replace_range', start = 0 }", .want = "mnml.buf.apply: `replace_range` needs `end`, an integer" },
+        .{ .src = "mnml.buf.apply{ op = 'select_range', start = 0 }", .want = "mnml.buf.apply: select_range needs `start` and `end`" },
+        .{ .src = "mnml.buf.apply{ op = 'atomic' }", .want = "mnml.buf.apply: atomic needs `ops`, a list of op tables" },
+        .{ .src = "mnml.buf.apply{ op = 'atomic', ops = { 3 } }", .want = "mnml.buf.apply: every entry of `ops` must be an op table" },
+        .{ .src = "mnml.buf.apply{ op = 'repeat', count = 2 }", .want = "mnml.buf.apply: repeat needs `inner`, one op table" },
+        .{ .src = "mnml.buf.range(-1, 2)", .want = "bad argument #1 to 'range' (start must be a byte offset, 0 or more" },
+        .{ .src = "mnml.buf.word_at('x')", .want = "bad argument #1 to 'word_at' (byte must be a byte offset" },
+    };
+    try expectArgErrors(lua, &cases);
+}
+
+test "argument errors: mnml.list, mnml.section and mnml.pane name the call, the argument and the shape" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const cases = [_]ArgCase{
+        .{ .src = "mnml.list('TODOS')", .want = "mnml.list takes one table: { title, rows, on_enter?, on_menu?, sort? }" },
+        .{ .src = "mnml.list{ rows = function() end }", .want = "mnml.list: `title` is required" },
+        .{ .src = "mnml.list{ title = 'T' }", .want = "mnml.list: `rows` must be a function(sort)" },
+        .{ .src = "mnml.list{ title = 'T', rows = function() end, sort = 'State' }", .want = "mnml.list: `sort` must be a table of mode names" },
+        .{ .src = "mnml.list{ title = 'T', rows = function() end, on_enter = 3 }", .want = "mnml.list: `on_enter` must be a function(row)" },
+        .{ .src = "mnml.list{ title = 'T', rows = function() end, on_menu = 3 }", .want = "mnml.list: `on_menu` must be a function(row)" },
+        .{ .src = "mnml.section('todos')", .want = "mnml.section takes one table" },
+        .{ .src = "mnml.section{ title = 'T' }", .want = "mnml.section: `id` is required" },
+        .{ .src = "mnml.section{ id = 'a b' }", .want = "mnml.section: `id` must be a bare name" },
+        .{ .src = "mnml.section{ id = 'todos_lua' }", .want = "mnml.section: `list` is required" },
+        .{ .src = "mnml.section{ id = 'todos_lua', list = 99 }", .want = "`list` names no live list" },
+        .{ .src = "mnml.pane.open('Notes')", .want = "mnml.pane.open takes one table" },
+        .{ .src = "mnml.pane.open{ title = 'Notes' }", .want = "mnml.pane.open: `render` must be a function(w, h)" },
+        .{ .src = "mnml.pane.open{ title = 'N', render = function() end, on_key = 3 }", .want = "mnml.pane.open: `on_key` must be a function(chord)" },
+        .{ .src = "mnml.pane.open{ title = 'N', render = function() end, on_hit = 3 }", .want = "mnml.pane.open: `on_hit` must be a function(hit_id" },
+        .{ .src = "mnml.pane.close('1')", .want = "mnml.pane.close: takes a pane id" },
+    };
+    try expectArgErrors(lua, &cases);
+    // The `sorts` a bad `rows` used to leave behind: nothing registered.
+    try testing.expectEqual(@as(u32, 0), lua.summary().lists);
+}
+
+test "argument errors: mnml.picker, mnml.statusline and mnml.task name the call, the argument and the shape" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const cases = [_]ArgCase{
+        .{ .src = "mnml.picker.source('notes')", .want = "mnml.picker.source takes one table" },
+        .{ .src = "mnml.picker.source{ items = function() end }", .want = "mnml.picker.source: `id` is required" },
+        .{ .src = "mnml.picker.source{ id = 'notes' }", .want = "mnml.picker.source: `items` must be a function(query) returning a table of rows" },
+        .{ .src = "mnml.picker.source{ id = 'n', items = function() end, preview = 3 }", .want = "mnml.picker.source: `preview` must be a function(row)" },
+        .{ .src = "mnml.picker.source{ id = 'n', items = function() end, on_accept = 3 }", .want = "mnml.picker.source: `on_accept` must be a function(row)" },
+        .{ .src = "mnml.picker.open(3)", .want = "mnml.picker.open: the first argument is a source id" },
+        .{ .src = "mnml.picker.open('nope')", .want = "mnml.picker.open: no source `nope`" },
+        .{ .src = "mnml.statusline.segment('clock')", .want = "mnml.statusline.segment takes one table" },
+        .{ .src = "mnml.statusline.segment{ fn = function() end }", .want = "mnml.statusline.segment: `id` is required" },
+        .{ .src = "mnml.statusline.segment{ id = 'clock' }", .want = "mnml.statusline.segment: `fn` must be a function() returning the text" },
+        .{ .src = "mnml.statusline.segment{ id = 'c', side = 'up', fn = function() end }", .want = "mnml.statusline.segment: `side` is \"left\" or \"right\"" },
+        .{ .src = "mnml.task.run('ls')", .want = "mnml.task.run takes one table" },
+        .{ .src = "mnml.task.run{ label = 'x' }", .want = "mnml.task.run: `cmd` is required" },
+        .{ .src = "mnml.task.run{ cmd = 'ls', on_done = 3 }", .want = "mnml.task.run: `on_done` must be a function(result)" },
+        .{ .src = "mnml.task.run{ cmd = 'ls', on_line = function() end }", .want = "mnml.task.run: `on_line` needs `hidden = true`" },
+    };
+    try expectArgErrors(lua, &cases);
+    try testing.expectEqual(@as(usize, 0), lua.sources.items.len);
+    try testing.expectEqual(@as(usize, 0), lua.segments.items.len);
+}
+
+test "argument errors: mnml.config and mnml.http name the call, the argument and the shape" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratch();
+    const cases = [_]ArgCase{
+        .{ .src = "mnml.config.get(3)", .want = "mnml.config.get: takes a dotted path, a string" },
+        .{ .src = "mnml.http.set_var(3, 'x')", .want = "mnml.http.set_var: the first argument is the variable name" },
+        .{ .src = "mnml.http.set_var('TOKEN', 3)", .want = "mnml.http.set_var: the second argument is the value" },
+        .{ .src = "mnml.http.send('two')", .want = "mnml.http.send: takes a pane id" },
+        .{ .src = "mnml.http.send(99)", .want = "mnml.http.send: there is no pane 99" },
+        .{ .src = "mnml.http.send()", .want = "mnml.http.send: pane 0 is not a request pane" },
+    };
+    try expectArgErrors(lua, &cases);
 }
 
 test "mnml.decor.gutter: a script mark sits between a breakpoint and git's bar, and its priority moves it" {
@@ -2660,9 +2908,9 @@ test "mnml.operator: the argument errors name the shape, and land before anythin
     defer app.deinit();
     const lua = app.script();
     try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a' }"));
-    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "keys is a table") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`keys` must be a table") != null);
     try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = {}, run = function() end }"));
-    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`vim` or a `standard`") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "needs a `vim` chord") != null);
     // A `g` chord vim already uses is refused by name, not left dead.
     try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gd' }, run = function() end }"));
     try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "one letter vim does not already use") != null);
@@ -2670,7 +2918,7 @@ test "mnml.operator: the argument errors name the shape, and land before anythin
     try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a.b', keys = { vim = 'gs' }, run = function() end }"));
     try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "bare name") != null);
     try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a', keys = { vim = 'gs' } }"));
-    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`run` is required") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`run` must be a function(range)") != null);
     // Nothing above registered anything.
     try testing.expectEqual(@as(usize, 0), script_ops.count());
     try testing.expectEqual(@as(usize, 0), lua.operators.items.len);
@@ -2812,11 +3060,11 @@ test "mnml.picker.source: the argument errors name the shape and land before any
     defer app.deinit();
     const lua = app.script();
     try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, preview = 3 }"));
-    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "preview must be a function") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`preview` must be a function(row)") != null);
     try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, on_accept = 'no' }"));
-    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "on_accept must be a function") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`on_accept` must be a function(row)") != null);
     try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x' }"));
-    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`items` is required") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "`items` must be a function(query)") != null);
     try testing.expectEqual(@as(usize, 0), lua.sources.items.len);
     try testing.expectError(error.Failed, lua.runString("mnml.picker.open('nope')"));
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
