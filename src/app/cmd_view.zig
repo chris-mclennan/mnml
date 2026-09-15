@@ -377,6 +377,14 @@ const Dir = enum { left, right, up, down };
 /// counts as the leftmost window (NvChad's nvim-tree is one): left from
 /// the leftmost split enters it, right from it returns to the split.
 fn focusDir(app: *App, dir: Dir) CommandError!void {
+    // // changed (bottom-dock): the dock is a window under everything
+    // else, so `Ctrl-W j` steps down into it from any of them and
+    // `Ctrl-W k` steps back up to the panes.
+    if (bottom_dock.focused(app)) {
+        if (dir == .up) leaveDock(app);
+        return;
+    }
+    if (dir == .down and bottom_dock.open(app) and app.focus != .pane) return enterDock(app);
     const cur = app.active orelse return error.NoActivePane;
     if (app.focus == .tree) {
         if (dir == .right) {
@@ -422,9 +430,29 @@ fn focusDir(app: *App, dir: Dir) CommandError!void {
             app.focus = .tree;
             app.needs_render = true;
         }
+        // Nothing below in the split tree: the dock is what is below.
+        if (dir == .down and bottom_dock.open(app)) enterDock(app);
         return;
     };
     app.setActive(target.pane);
+}
+
+/// The keys go into the dock: its hosted pane, else its section.
+/// // changed (bottom-dock).
+fn enterDock(app: *App) void {
+    if (bottom_dock.activePane(app)) |p| return app.setActive(p);
+    if (side.shown(app, .bottom)) |s| side.focusSection(app, s);
+}
+
+/// The keys leave the dock for the panes — the most recent one still in
+/// the split tree, else the first leaf. // changed (bottom-dock).
+fn leaveDock(app: *App) void {
+    const layout = app.layouts.current();
+    for (app.pane_mru.items) |p| if (layout.leafOf(p) != null) return app.setActive(p);
+    if (layout.firstLeaf()) |first| if (layout.leaf(first)) |l| return app.setActive(l.active);
+    // The dock holds the only pane: the keys go to a column instead.
+    for ([_]side.Side{ .left, .right }) |c| if (side.shown(app, c)) |sec| return side.focusSection(app, sec);
+    app.needs_render = true;
 }
 
 fn overlaps(a0: u16, a1: u16, b0: u16, b1: u16) bool {

@@ -754,6 +754,54 @@ test "the dock: a section moved down and back — `Ctrl-W J` docks TODOS, `Ctrl-
     try t.expect(ctrlWSectionSide(&app, Key.char('x'), .todos) == null);
 }
 
+test "the dock is a window: vim `Ctrl-W j` steps down into it from a pane, from the tree and from a column, and `Ctrl-W k` steps back up" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const ed = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+    try t.expectEqual(Section.diagnostics, shown(&app, .bottom).?);
+    try t.expect(app.focus == .pane);
+    // From the editor down into the dock's section, and back up.
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('j') });
+    try t.expect(app.focus == .panel and app.focus.panel == .diagnostics);
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('k') });
+    try t.expect(app.focus == .pane and app.active.? == ed);
+    // From the tree: the dock runs under it too.
+    try command.run(&app, .{ .static = .@"view.activity_explorer" });
+    app.focus = .tree;
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('j') });
+    try t.expect(app.focus == .panel and app.focus.panel == .diagnostics);
+    // From a column section, the same step.
+    try command.run(&app, .{ .static = .@"view.activity_todos" });
+    try t.expect(app.focus == .panel and app.focus.panel == .todos);
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('j') });
+    try t.expect(app.focus == .panel and app.focus.panel == .diagnostics);
+    // A hosted pane is the dock's window instead, and `k` leaves it for
+    // the pane that stayed in the splits.
+    app.setActive(ed);
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const other = app.active.?;
+    try t.expect(other != ed);
+    app.setActive(ed);
+    try command.run(&app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    try t.expectEqual(ed, bottom_mod.activePane(&app).?);
+    try t.expect(bottom_mod.focused(&app));
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('k') });
+    try t.expect(!bottom_mod.focused(&app));
+    try t.expectEqual(other, app.active.?);
+    // `j` steps back down into it.
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('j') });
+    try t.expectEqual(ed, app.active.?);
+    try t.expect(bottom_mod.focused(&app));
+}
+
 test "the dock hosts a pane: `view.host_active_in_bottom_panel` takes the active pane out of the splits and puts it back" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();
