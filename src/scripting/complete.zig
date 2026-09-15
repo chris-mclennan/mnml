@@ -519,9 +519,6 @@ test "typing in a workspace .mnml script opens the popup with the API rows; Ente
     const screen_mod = @import("../ipc/screen.zig");
     const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
     defer testing.allocator.free(txt);
-    // The sub-tables are the first rows now, so the areas a reader is
-    // looking for are on screen without typing a letter; the root
-    // functions follow, and `toast` is past the popup's ten rows.
     // The sub-tables are the first rows now, so every area a reader is
     // looking for is on screen without typing a letter; the root
     // functions follow, and `toast` falls past the popup's ten rows.
