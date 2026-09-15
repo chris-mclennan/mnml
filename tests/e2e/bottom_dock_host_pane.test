@@ -1,0 +1,42 @@
+# width: 120
+# `view.host_active_in_bottom_panel` (Rust's "dock active pane into
+# bottom panel") takes the active pane out of the split tree and hosts
+# it in the dock, behind a tab strip of its own. Running it again on the
+# docked pane sends it back to the splits.
+write a.txt "alpha alpha alpha\n"
+write b.txt "bravo bravo bravo\n"
+open a.txt
+command view.split_right
+open b.txt
+expect screen contains "alpha alpha alpha"
+expect screen contains "bravo bravo bravo"
+command view.host_active_in_bottom_panel
+# Both are still on screen: a.txt fills the splits now that b.txt left
+# them, and b.txt is down in the dock.
+expect screen contains "alpha alpha alpha"
+expect screen contains "bravo bravo bravo"
+expect pane b.txt
+# A click on the dock's body (rows 26–37 at 120x40) focuses its pane;
+# a click up in the splits focuses the pane that stayed there.
+click 40 10
+expect pane a.txt
+click 40 30
+expect pane b.txt
+# Back out to the splits: b.txt is a tab in the leaf it left, so the
+# left split shows it again and the dock's rows go back to the panes.
+command view.host_active_in_bottom_panel
+expect screen contains "bravo bravo bravo"
+expect screen contains "alpha alpha alpha"
+expect pane b.txt
+click 40 30
+expect pane b.txt
+click 90 10
+expect pane a.txt
+# Docked again, the dock's toggle drains it back rather than losing it.
+click 40 10
+expect pane b.txt
+command view.host_active_in_bottom_panel
+expect pane b.txt
+command view.toggle_bottom_panel
+expect screen contains "bravo bravo bravo"
+expect screen contains "alpha alpha alpha"

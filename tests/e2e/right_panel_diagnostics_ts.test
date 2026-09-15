@@ -1,15 +1,19 @@
-# lsp.diagnostics routes to right panel when visible.
+# `lsp.diagnostics` opens the DIAGNOSTICS section wherever it lives.
+# // changed (bottom-dock): it lives in the dock now, not the right
+# column, so this opens the dock under an open right column — both are
+# on screen, and the editor keeps its rows.
 
 shell echo '{"name":"app"}' > package.json
 write src/api.ts interface Foo {\n  x: string;\n}\n
 open src/api.ts
 wait 100
 
-# Toggle right panel on
+# The right column open (on the outline, the section that lives there)
 command view.toggle_right_panel
 wait 100
 
-# Open diagnostics pane — should route to right panel
+# The diagnostics land in the dock, under both columns
 command lsp.diagnostics
 wait 100
 expect screen contains "api.ts"
+expect screen contains "DIAGNOSTICS"

@@ -1,0 +1,4 @@
+{"cmd":"open","path":"prog.dbg"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"run-command","id":"view.toggle_bottom_panel"}
+{"cmd":"wait_ms","ms":600}

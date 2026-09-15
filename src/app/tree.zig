@@ -509,6 +509,15 @@ pub const Tree = struct {
         // `Ctrl-L` does. The chord owns its second key whatever it is.
         if (self.ctrl_w_pending) {
             self.ctrl_w_pending = false;
+            // // changed (bottom-dock): `J` / `K` dock the explorer and
+            // bring it back up, as they do from any other section.
+            if (side.ctrlWSectionSide(app, k, .explorer)) |dest| {
+                side.move(app, .explorer, dest) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                };
+                return true;
+            }
             if (side.ctrlWCommand(k)) |cid| try runCmd(app, cid);
             return true;
         }

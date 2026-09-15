@@ -102,10 +102,15 @@ pub const Saved = struct {
     tree_expanded: []const []const u8 = &.{},
     /// The right column's width; `tree_width` is the left's.
     right_panel_width: u16 = 32,
-    /// What each column shows (`tree_visible` stays the explorer's own
+    /// // changed (bottom-dock): the dock's height in rows.
+    bottom_panel_height: u16 = 12,
+    /// What each host shows (`tree_visible` stays the explorer's own
     /// flag, as in Rust). // changed (section-side): replaces `right_panel`.
+    /// // changed (bottom-dock): `bottom` joins the two columns —
+    /// `null` is a closed dock, which is how its `visible` flag rides.
     left: ?Section = null,
     right: ?Section = null,
+    bottom: ?Section = null,
     /// Where every section with a column surface lives.
     sides: Config.SectionSide = .{},
     zen: bool = false,
@@ -269,8 +274,10 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     std.mem.sort([]const u8, expanded.items, {}, lessThan);
     saved.tree_expanded = expanded.items;
     saved.right_panel_width = app.side.right_width;
+    saved.bottom_panel_height = app.side.bottom_height;
     saved.left = app.side.open.get(.left);
     saved.right = app.side.open.get(.right);
+    saved.bottom = app.side.open.get(.bottom);
     inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
         @field(saved.sides, f.name) = app.side.of.get(@field(Section, f.name));
     }
@@ -485,12 +492,13 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     app.tree.restored = true;
     app.tree.loaded = false; // re-listed on the next frame with the expansions applied
     app.side.right_width = @max(saved.right_panel_width, 8);
+    app.side.bottom_height = std.math.clamp(saved.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
     inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
         if (@field(saved.sides, f.name)) |s| app.side.of.set(@field(Section, f.name), s);
     }
     // A column shows a section only if the section lives there (a
     // hand-edited file cannot put TODOS in both columns).
-    for ([_]Config.Side{ .left, .right }, [_]?Section{ saved.left, saved.right }) |s, sec| {
+    for ([_]Config.Side{ .left, .right, .bottom }, [_]?Section{ saved.left, saved.right, saved.bottom }) |s, sec| {
         const ok = if (sec) |x| side_mod.surface(x) != null and side_mod.sideOf(app, x) == s else false;
         app.side.open.set(s, if (ok) sec else null);
         app.side.last.set(s, if (ok) sec else null);
@@ -937,6 +945,47 @@ test "session: the session worktrees ride in the file by path, the learned id wi
         try t.expectEqualStrings("/w", feat.repo);
         try t.expect(feat.session_id == null);
         try t.expectEqualStrings("/w-worktrees/fix", app.sessions.worktrees.bySession("sid-7").?.path);
+    }
+}
+
+test "session: the bottom dock round-trips — which section it shows, its height, and a section a user docked" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    {
+        var app = try f.app();
+        defer app.deinit();
+        // The diagnostics start in the dock; open it, put TODOS there
+        // too (so the dock's `last` is TODOS), and drag it taller.
+        try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+        try t.expectEqual(side_mod.Section.diagnostics, side_mod.shown(&app, .bottom).?);
+        try side_mod.move(&app, .todos, .bottom);
+        try side_mod.open(&app, .todos, false);
+        side_mod.setSize(&app, .bottom, 18);
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        try t.expectEqual(@as(u16, 18), side_mod.size(&app, .bottom));
+        try t.expectEqual(Config.Side.bottom, side_mod.sideOf(&app, .todos));
+        try t.expectEqual(side_mod.Section.todos, side_mod.shown(&app, .bottom).?);
+        // A closed dock comes back closed, and its height with it.
+        try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+        try t.expect(side_mod.shown(&app, .bottom) == null);
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(side_mod.shown(&app, .bottom) == null);
+        try t.expectEqual(@as(u16, 18), side_mod.size(&app, .bottom));
+        // The toggle opens the first section that lives in the dock —
+        // TODOS, in rail order — since a closed dock saved no `last`.
+        try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+        try t.expectEqual(side_mod.Section.todos, side_mod.shown(&app, .bottom).?);
     }
 }
 

@@ -1200,13 +1200,17 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
     return try out.toOwnedSlice(gpa);
 }
 
-/// `:sidebar left` / `:sidebar right`: the focused section (else the
-/// rail's mark) goes to that side — Neovim's `Ctrl-W H` / `L` as words.
+/// `:sidebar left` / `right` / `bottom`: the focused section (else the
+/// rail's mark) goes there — Neovim's `Ctrl-W H` / `L` / `J` as words.
+/// // changed (bottom-dock): `bottom` names the dock. It runs
+/// `side.move` rather than a command id: the dock's two command ids
+/// are Rust's `toggle` and `host_active`, and there is no third.
 fn sidebar(app: *App, args: []const u8) CommandError!void {
     const a = std.mem.trim(u8, args, " \t");
     if (eqAny(a, &.{ "l", "left" })) return command.run(app, .{ .static = .@"view.move_section_left" });
     if (eqAny(a, &.{ "r", "right" })) return command.run(app, .{ .static = .@"view.move_section_right" });
-    return app.diag.fail(app.frame.allocator(), ":sidebar left|right", .{});
+    if (eqAny(a, &.{ "b", "bot", "bottom", "dock" })) return side.move(app, side.targetSection(app), .bottom);
+    return app.diag.fail(app.frame.allocator(), ":sidebar left|right|bottom", .{});
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

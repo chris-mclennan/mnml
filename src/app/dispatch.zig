@@ -112,6 +112,7 @@ const font_scan = @import("font_scan.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
 const side = @import("side.zig");
+const bottom = @import("bottom.zig");
 const ai_app = @import("ai.zig");
 const sessions_table = @import("sessions_table.zig");
 const cloud_agents = @import("cloud_agents.zig");
@@ -191,6 +192,16 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         // key whatever it is.
         if (app.side.ctrl_w_pending) {
             app.side.ctrl_w_pending = false;
+            // // changed (bottom-dock): `J` / `K` move the section into
+            // the dock and back up before the command table is read.
+            const sec = side.sectionOfPanel(app.focus.panel);
+            if (side.ctrlWSectionSide(app, k, sec)) |dest| {
+                side.move(app, sec, dest) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                };
+                return;
+            }
             if (side.ctrlWCommand(k)) |id| try runCmd(app, id);
             return;
         }
@@ -836,6 +847,25 @@ fn closeOverlay(app: *App) void {
 fn tabStripStep(app: *App, leaf_idx: u32, delta: i8) Allocator.Error!void {
     const lid = (try app.layouts.current().leafAt(app.frame.allocator(), leaf_idx)) orelse return;
     return tabStripStepLid(app, lid, delta);
+}
+
+/// A click on the dock's tab strip: the tab it names takes the keys,
+/// middle closes it, right opens the tab menu. The dock's panes are
+/// out of the split tree, so there is no leaf to route through.
+/// // changed (bottom-dock).
+fn bottomTabClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
+    const list = app.bottom.panes.items;
+    if (idx >= list.len or m.kind != .press) return;
+    const pane = list[idx];
+    if (app.overlay != .none) closeOverlay(app);
+    switch (m.button) {
+        .middle => try app.closePane(pane, false),
+        .right => try context_menus.openTabMenu(app, pane, m.x, m.y),
+        else => {
+            app.bottom.active = idx;
+            app.setActive(pane);
+        },
+    }
 }
 
 /// Scroll a leaf's strip by one, addressed by its node id (the pane
@@ -1819,6 +1849,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             return editorCellMouse(app, .{ .pane = g.pane, .line = g.line, .col = 0 }, m, count, wheel);
         },
         .tab => |tb| {
+            // // changed (bottom-dock): the dock's strip is not a leaf.
+            if (tb.leaf == bottom.strip_leaf) return bottomTabClick(app, tb.idx, m);
             if (wheel) return tabStripStep(app, tb.leaf, if (m.kind == .scroll_down) 1 else -1);
             const layout = app.layouts.current();
             const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
@@ -1838,6 +1870,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .tab_close => |tb| {
             if (wheel or m.kind != .press or (m.button != .left and m.button != .right)) return;
+            if (tb.leaf == bottom.strip_leaf) {
+                const list = app.bottom.panes.items;
+                if (tb.idx >= list.len) return;
+                return app.closePane(list[tb.idx], false);
+            }
             const layout = app.layouts.current();
             const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
             const leaf = layout.leaf(lid) orelse return;
@@ -2224,6 +2261,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .right_close => try runCmd(app, .@"view.right_panel_close_tab"),
                 .right_tab => try runCmd(app, .@"view.focus_right_panel"),
                 .right_new => try context_menus.openAddPanelMenu(app, m.x, m.y),
+                // // changed (bottom-dock): the dock's `×`.
+                .bottom_close => try runCmd(app, .@"view.toggle_bottom_panel"),
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),
@@ -2638,6 +2677,11 @@ fn beginDividerDrag(app: *App, id: u32) Allocator.Error!void {
         app.drag = .right_divider;
         return;
     }
+    // // changed (bottom-dock): the dock's divider resizes it by rows.
+    if (id == render.bottom_divider_id) {
+        app.drag = .bottom_divider;
+        return;
+    }
     const rects = try app.layouts.current().computeRects(app.panes_area, app.frame.allocator());
     if (id >= rects.dividers.len) return;
     const d = rects.dividers[id];
@@ -2726,6 +2770,10 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         .right_divider => if (m.kind == .drag) {
             app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
+        // // changed (bottom-dock): the pointer's row is the divider's,
+        // so the dock keeps every row under it. `frameRects` clamps the
+        // height to two thirds of the frame, so a drag past that stops.
+        .bottom_divider => if (m.kind == .drag) bottom.dragTo(app, m.y),
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
         .diff_select => |ds| git_app.dragDiffSelect(app, ds.pane, ds.anchor, m),
         .select => |sel| {

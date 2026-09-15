@@ -138,7 +138,14 @@ pub const DebugToolbar = enum { auto, always, hidden };
 /// // changed (section-side): which column an activity section lives
 /// in. `ui.sidebar_side` is the side sections take when nothing says
 /// otherwise; `ui.section_side` overrides it per section.
-pub const Side = enum { left, right };
+/// // changed (bottom-dock): `.bottom` is the dock under the editor
+/// area — a third host beside the two columns, sized in rows
+/// (`ui.bottom_panel_height`) rather than in columns.
+pub const Side = enum { left, right, bottom };
+/// The two columns. `ui.sidebar_side` names one of them: the dock is
+/// somewhere a section is *put*, never the home every section that
+/// names no side falls back to.
+pub const ColumnSide = enum { left, right };
 /// One optional side per section that owns a column surface (the tree,
 /// git mode's palette, a list panel). The field names are the rail's
 /// section tags; a pane-backed section (search, debug, …) has no side.
@@ -175,6 +182,11 @@ pub const MdEngine = union(enum) {
 
 pub const tree_width_min: u16 = 10;
 pub const tree_width_max: u16 = 80;
+/// // changed (bottom-dock): the dock's row clamp — Rust's
+/// `session.rs` clamps a restored `bottom_panel_height` to 3..60 and
+/// `ui/mod.rs` floors the drawn height at 3.
+pub const bottom_panel_height_min: u16 = 3;
+pub const bottom_panel_height_max: u16 = 60;
 pub const hover_help_height_min: u16 = 3;
 pub const hover_help_height_max: u16 = 20;
 
@@ -192,10 +204,19 @@ pub const Ui = struct {
     /// The right column's width (Rust's right panel: 32); `tree_width`
     /// is the left column's.
     right_panel_width: u16 = 32,
+    /// // changed (bottom-dock): the dock opens at start (on the last
+    /// section it showed, else the first section whose side is bottom
+    /// — the diagnostics by default).
+    bottom_panel_visible: bool = false,
+    /// // changed (bottom-dock): the dock's height in rows (Rust's
+    /// `App::bottom_panel_height`: 12). Clamped to
+    /// `bottom_panel_height_min..max` on load.
+    bottom_panel_height: u16 = 12,
     /// // changed (section-side): the side a section takes when
     /// `section_side` does not name it. The Rust right-panel panes
-    /// (outline, diagnostics) take the other side.
-    sidebar_side: Side = .left,
+    /// (outline, diagnostics) take the other side — the diagnostics
+    /// then land in the dock (`side.configuredSide`).
+    sidebar_side: ColumnSide = .left,
     section_side: SectionSide = .{},
     auto_hide_narrow_width: u16 = 0,
     auto_equalize_splits: bool = false,

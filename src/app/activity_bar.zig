@@ -360,13 +360,17 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try t.expectEqualStrings("Source control", app.overlay.menu.title);
     try t.expectEqualStrings("Show Source control", app.overlay.menu.items[0].label);
     try t.expectEqual(command.CommandId.@"view.activity_git", app.overlay.menu.items[0].action.command);
+    // // changed (bottom-dock): two move rows — the other column and
+    // the dock — so a section's own verbs start at item 3.
     try t.expectEqualStrings("Move to right side", app.overlay.menu.items[1].label);
     try t.expectEqual(Section.git, app.overlay.menu.items[1].action.move_section.section);
     try t.expectEqual(Config.Side.right, app.overlay.menu.items[1].action.move_section.side);
-    try t.expectEqualStrings("Open git graph", app.overlay.menu.items[2].label);
+    try t.expectEqualStrings("Move to bottom dock", app.overlay.menu.items[2].label);
+    try t.expectEqual(Config.Side.bottom, app.overlay.menu.items[2].action.move_section.side);
+    try t.expectEqualStrings("Open git graph", app.overlay.menu.items[3].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try press(&app, 1, sectionRow(&app, .http), .right);
-    try t.expectEqualStrings("+ New request", app.overlay.menu.items[2].label);
+    try t.expectEqualStrings("+ New request", app.overlay.menu.items[3].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     // A section on the right offers the way back; SEARCH is a column
     // section too (// changed (search-section)), its verbs after the move.
@@ -375,8 +379,9 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try press(&app, 1, sectionRow(&app, .search), .right);
     try t.expectEqualStrings("Move to right side", app.overlay.menu.items[1].label);
-    try t.expectEqualStrings("Refresh", app.overlay.menu.items[2].label);
-    try t.expectEqualStrings("Open as pane", app.overlay.menu.items[3].label);
+    try t.expectEqualStrings("Move to bottom dock", app.overlay.menu.items[2].label);
+    try t.expectEqualStrings("Refresh", app.overlay.menu.items[3].label);
+    try t.expectEqualStrings("Open as pane", app.overlay.menu.items[4].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     // The gear: Settings on the left, the mnml menu on the right.
     try press(&app, 1, 36, .right);

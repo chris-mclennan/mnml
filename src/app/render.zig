@@ -125,6 +125,7 @@ const script_section = @import("script_section.zig");
 const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
 const side_mod = @import("side.zig");
+const bottom_mod = @import("bottom.zig");
 const rail_mod = @import("../ui/activity_bar.zig");
 const icons = @import("../ui/icons.zig");
 
@@ -136,6 +137,11 @@ pub const palette_bar_min_width: u16 = 40;
 /// otherwise an index into the split tree's dividers).
 pub const tree_divider_id: u32 = std.math.maxInt(u32);
 pub const right_divider_id: u32 = std.math.maxInt(u32) - 1;
+/// // changed (bottom-dock): the dock's own divider, the row above it.
+pub const bottom_divider_id: u32 = std.math.maxInt(u32) - 2;
+/// // changed (bottom-dock): rows the frame's upper area needs before a
+/// dock is carved at all — Rust's `upper.height >= 6`.
+pub const bottom_upper_min: u16 = 6;
 
 /// `.button` ids the frame registers. The chrome row's fixed buttons
 /// are 1..0x10; the integration chips own 0x10..0x40
@@ -175,6 +181,9 @@ pub const Button = enum(u32) {
     /// Full screen's corner mark: the one cell of chrome kept, at the
     /// body's top-right; a click leaves (`drawFullscreenMark`).
     fullscreen_exit = 21,
+    /// // changed (bottom-dock): the dock's `×` — it hides the dock,
+    /// as the `×` on Rust's bottom-panel header does.
+    bottom_close = 22,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -258,7 +267,14 @@ pub const FrameRects = struct {
     right: Rect = Rect.empty,
     /// The one-cell resize divider on the right column's left (`right_divider_id`).
     right_divider: Rect = Rect.empty,
-    /// What `upper` leaves for the panes and the dock.
+    /// // changed (bottom-dock): the dock under the whole frame — the
+    /// two columns and the splits all sit above it, as Rust's bottom
+    /// panel does (it is carved off `upper` before them). Empty when
+    /// the dock is closed or the frame is too short to hold it.
+    bottom: Rect = Rect.empty,
+    /// The one-row resize divider above the dock (`bottom_divider_id`).
+    bottom_divider: Rect = Rect.empty,
+    /// What `upper` leaves for the panes and the dock widgets.
     body: Rect,
 };
 
@@ -269,6 +285,9 @@ pub const Chrome = struct {
     sidebar: ?u16 = null,
     /// The right column's width when it is open (`ui.right_panel_width`).
     right: ?u16 = null,
+    /// // changed (bottom-dock): the dock's height in rows when it is
+    /// open (`ui.bottom_panel_height`).
+    bottom: ?u16 = null,
     /// Whether the activity bar paints (`activity_bar.shown`).
     rail: bool = true,
 };
@@ -278,6 +297,7 @@ pub fn chrome(app: *const App) Chrome {
     return .{
         .sidebar = if (!app.zen and side_mod.shown(app, .left) != null) app.tree.width else null,
         .right = if (!app.zen and side_mod.shown(app, .right) != null) app.side.right_width else null,
+        .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
     };
 }
@@ -294,6 +314,14 @@ pub fn chrome(app: *const App) Chrome {
 /// was with or without the rail. The right column takes its width plus
 /// a divider off the far side of what is left, under the same clamp
 /// (Rust's right panel).
+///
+/// // changed (bottom-dock): the dock is carved off the bottom of
+/// `upper` FIRST — the columns and the splits are all above it, which
+/// is where Rust's bottom panel sits (`ui/mod.rs` splits the screen,
+/// takes the panel's rows off `upper`, then lays the tree out in what
+/// is left). Its rows plus a divider row need `upper` to be at least
+/// six deep, and never take more than two thirds of it, so the editor
+/// keeps rows whatever height the user drags to.
 pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     var r = full;
     var bar = Rect.empty;
@@ -310,6 +338,22 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     }
     const s = r.splitBottom(1);
     var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top };
+    // ── bottom dock ──
+    if (ch.bottom) |bh| if (fr.upper.h >= bottom_upper_min) {
+        // Rust's two-thirds cap, and — since the Zig dock also spends a
+        // row on its divider — a floor of two rows for the body, so
+        // the dock can never take the editor's last row.
+        const two_thirds: u16 = @intCast(@as(u32, fr.upper.h) * 2 / 3);
+        const max_allowed: u16 = @min(two_thirds, fr.upper.h -| 3);
+        const want: u16 = @max(bh, Config.bottom_panel_height_min);
+        const h: u16 = @max(@min(want, max_allowed), Config.bottom_panel_height_min);
+        const rows = fr.upper.splitBottom(h);
+        const div = rows.top.splitBottom(1);
+        fr.upper = div.top;
+        fr.bottom_divider = div.rest;
+        fr.bottom = rows.rest;
+        fr.body = fr.upper;
+    };
     // ── rail ──
     if (ch.sidebar) |tw| if (fr.upper.w > 12) {
         const w: u16 = @max(@min(tw, fr.upper.w -| 21), 8);
@@ -431,6 +475,11 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             }
             try drawColumn(app, ui, area, s);
         }
+    }
+    // ── bottom dock ──
+    if (!fr.bottom.isEmpty()) {
+        drawHDivider(app, ui, fr.bottom_divider, bottom_divider_id);
+        try drawBottomDock(app, ui, fr.bottom);
     }
     // The dock's inline strips come off the body; its widgets paint
     // over whatever the panes drew.
@@ -635,6 +684,54 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
     ui.hit(r, .{ .divider = id });
 }
 
+/// The dock's divider — the same cell treatment lying down.
+/// // changed (bottom-dock).
+fn drawHDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
+    if (r.isEmpty()) return;
+    const dragging = if (app.drag) |d| d == .bottom_divider else false;
+    const style = if (dragging or ui.hovered(r)) app.theme.accent else app.theme.border;
+    ui.canvas.fill(r, style);
+    var x: u16 = r.x;
+    while (x < r.right()) : (x += 1) ui.canvas.put(x, r.y, .{ .char = .{ .grapheme = if (ui.ascii) "-" else "─", .width = 1 }, .style = style });
+    ui.hit(r, .{ .divider = id });
+}
+
+/// The dock's content: its hosted panes behind a tab strip, else the
+/// section its side shows — the section's own caps header and chips,
+/// with a `×` over the header's right end that hides the dock (Rust's
+/// bottom-panel header carries the same `×`).
+/// // changed (bottom-dock).
+fn drawBottomDock(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    ui.canvas.fill(area, app.theme.bg);
+    if (bottom_mod.activePane(app)) |id| {
+        try ui.hits.add(ui.arena, area, .{ .pane = id });
+        var rect = area;
+        if (rect.h >= 2) {
+            const s = rect.splitTop(1);
+            const tabs = try tabsOfList(app, ui, app.bottom.panes.items, id);
+            _ = bufferline.draw(ui, s.top, tabs, .{ .leaf = bottom_mod.strip_leaf });
+            rect = s.rest;
+        }
+        try drawPaneContent(app, ui, id, rect);
+        return;
+    }
+    const s = side_mod.shown(app, .bottom) orelse return;
+    try drawColumn(app, ui, area, s);
+    drawBottomClose(app, ui, area);
+}
+
+/// The ` × ` at the dock header's right end. It paints after the
+/// section so it lands over the header row's empty tail — the dock is
+/// the body's width, so nothing of the section's own chips is there.
+fn drawBottomClose(app: *App, ui: Ui, area: Rect) void {
+    if (area.w < 5 or area.h == 0) return;
+    const cell = Rect.init(area.right() - 4, area.y, 3, 1);
+    const pal = app.theme.palette;
+    const style: Theme.Style = if (ui.hovered(cell)) app.theme.accent else .{ .fg = pal.red, .bg = pal.bg, .bold = true };
+    _ = ui.putStr(cell.x, cell.y, 3, if (ui.ascii) " x " else " × ", style);
+    ui.hit(cell, .{ .button = @intFromEnum(Button.bottom_close) });
+}
+
 /// The panel in the right slot. Only TODOS draws today; the others
 /// name themselves until their module lands.
 /// The right column's strip: ` <title>` and a `×` at the far end (Rust
@@ -769,11 +866,18 @@ fn diagChip(app: *App, ui: Ui, e: *EditorPane) DiagChip {
 /// tab (which is active when either window is). A Request pane's title
 /// splits into the method pill and the rest.
 pub fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
+    const leaf = layout.leaf(lid) orelse return &.{};
+    return tabsOfList(app, ui, leaf.tabs.items, leaf.active);
+}
+
+/// The strip chips for a list of panes with one of them active — the
+/// leaf's own list, or the dock's hosted panes (`app/bottom.zig`).
+/// // changed (bottom-dock): lifted out of `tabsOf`.
+pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) Allocator.Error![]bufferline.Tab {
     var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
-    const leaf = layout.leaf(lid) orelse return tabs.items;
-    for (leaf.tabs.items) |id| {
+    for (ids) |id| {
         const p = app.panes.get(id) orelse continue;
-        const active = leaf.active == id;
+        const active = active_id == id;
         var diag: bufferline.Severity = .none;
         var diag_text: []const u8 = "";
         if (p.asEditor()) |e| {
@@ -1058,7 +1162,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     }
     if (app.ai.placeholder) for (rects.empties) |e| try drawAiPlaceholder(app, ui, e);
     for (rects.panes, leaf_index..) |pr, li| {
-        const pane = app.panes.get(pr.pane) orelse continue;
+        if (app.panes.get(pr.pane) == null) continue;
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
         var rect = pr.rect;
         if (rect.h >= 2 and !app.zen) {
@@ -1066,51 +1170,60 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             try drawStrip(app, ui, layout, pr.leaf, li, s.top);
             rect = s.rest;
         }
-        switch (pane.*) {
-            .editor => |*e| try drawEditor(app, ui, pr.pane, e, rect),
-            .outline => |*o| {
-                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
-                try outline.draw(app, ui, pr.pane, o, rect, app.active == pr.pane);
-            },
-            .md_preview => |*m| try md_preview.draw(app, ui, pr.pane, m, rect),
-            .zon => |*z| try drawZon(app, ui, pr.pane, z, rect),
-            .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
-            .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
-            .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
-            .git_status => |*s| try git_app.drawStatusPane(app, ui, pr.pane, s, rect),
-            .diff => |*d| git_app.drawDiffPane(app, ui, pr.pane, d, rect),
-            .git_graph => |*g| git_app.drawGraphPane(app, ui, pr.pane, g, rect),
-            .ai => |*a| drawAi(app, ui, pr.pane, a, rect),
-            .sessions_table => |*tp| try sessions_table.drawPane(app, ui, pr.pane, tp, rect),
-            .spend_report => |*s| {
-                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
-                spend_view.draw(ui, pr.pane, rect, s, app.active == pr.pane and app.focus == .pane);
-            },
-            .ai_usage => |*u| {
-                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
-                try usage_pane.draw(app, ui, pr.pane, u, rect);
-            },
-            .grep => |*g| {
-                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
-                grep_view.draw(ui, pr.pane, rect, g, app.active == pr.pane and app.focus == .pane);
-            },
-            .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
-            .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
-            .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
-            .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
-            .script => |*s| try script_pane.draw(app, ui, pr.pane, s, rect),
-            .mount => |*mp| try mount_pane.draw(app, ui, pr.pane, mp, rect),
-            .integrations => |*ip| try integrations.draw(app, ui, pr.pane, ip, rect),
-            .ai_apply => |*ap| drawAiApply(app, ui, pr.pane, ap, rect),
-            .tests => |*tp| try drawTests(app, ui, pr.pane, tp, rect),
-            .flaky => |*fp| {
-                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
-                flaky_view.draw(ui, pr.pane, rect, fp, app.active == pr.pane and app.focus == .pane);
-            },
-            .files => |*f| try files_pane.draw(app, ui, pr.pane, f, rect),
-            .image => |*im| try image_pane.draw(app, ui, pr.pane, im, rect),
-        }
+        try drawPaneContent(app, ui, pr.pane, rect);
         drawDropHint(app, ui, pr.pane, rect);
+    }
+}
+
+/// One pane's body in a rect — the kind switch, with nothing about
+/// where the rect came from. // changed (bottom-dock): lifted out of
+/// `drawBody` so the dock paints a hosted pane the same way a leaf
+/// does; a docked pane is a leaf like any other, minus the split tree.
+pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, rect: Rect) Allocator.Error!void {
+    const pane = app.panes.get(id) orelse return;
+    switch (pane.*) {
+        .editor => |*e| try drawEditor(app, ui, id, e, rect),
+        .outline => |*o| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            try outline.draw(app, ui, id, o, rect, app.active == id);
+        },
+        .md_preview => |*m| try md_preview.draw(app, ui, id, m, rect),
+        .zon => |*z| try drawZon(app, ui, id, z, rect),
+        .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, id, rect),
+        .list => |*l| drawListPane(app, l, ui, id, rect),
+        .pty => |*p| try drawPty(app, ui, id, p, rect),
+        .git_status => |*s| try git_app.drawStatusPane(app, ui, id, s, rect),
+        .diff => |*d| git_app.drawDiffPane(app, ui, id, d, rect),
+        .git_graph => |*g| git_app.drawGraphPane(app, ui, id, g, rect),
+        .ai => |*a| drawAi(app, ui, id, a, rect),
+        .sessions_table => |*tp| try sessions_table.drawPane(app, ui, id, tp, rect),
+        .spend_report => |*s| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            spend_view.draw(ui, id, rect, s, app.active == id and app.focus == .pane);
+        },
+        .ai_usage => |*u| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            try usage_pane.draw(app, ui, id, u, rect);
+        },
+        .grep => |*g| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            grep_view.draw(ui, id, rect, g, app.active == id and app.focus == .pane);
+        },
+        .debug => |*d| try dap.drawDebug(app, ui, id, d, rect),
+        .request => |*rp| try request_pane.draw(app, ui, id, rp, rect),
+        .websocket => |*w| try ws_pane.draw(app, ui, id, w, rect),
+        .browser => |*b| try browser_pane.draw(app, ui, id, b, rect),
+        .script => |*s| try script_pane.draw(app, ui, id, s, rect),
+        .mount => |*mp| try mount_pane.draw(app, ui, id, mp, rect),
+        .integrations => |*ip| try integrations.draw(app, ui, id, ip, rect),
+        .ai_apply => |*ap| drawAiApply(app, ui, id, ap, rect),
+        .tests => |*tp| try drawTests(app, ui, id, tp, rect),
+        .flaky => |*fp| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            flaky_view.draw(ui, id, rect, fp, app.active == id and app.focus == .pane);
+        },
+        .files => |*f| try files_pane.draw(app, ui, id, f, rect),
+        .image => |*im| try image_pane.draw(app, ui, id, im, rect),
     }
 }
 

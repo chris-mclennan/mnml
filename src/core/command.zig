@@ -95,6 +95,7 @@ const runner_tables = .{
     @import("../findings.zig"),
     @import("../sessions.zig"),
     @import("../app/dock.zig"),
+    @import("../app/bottom.zig"),
     @import("../app/cmd_file.zig"),
     @import("../app/cmd_buffer.zig"),
     @import("../app/cmd_editor.zig"),

@@ -1,0 +1,41 @@
+# width: 120
+# `view.toggle_bottom_panel` (Rust's Ctrl+Shift+J) opens and closes the
+# dock, and the divider above it drags to resize. At 120x40 the dock is
+# twelve rows — 26 to 37 — with the divider on row 25 and its `×` at
+# column 117.
+write a.txt "one\ntwo\nthree\n"
+open a.txt
+expect screen lacks "DIAGNOSTICS"
+command view.toggle_bottom_panel
+expect screen contains "DIAGNOSTICS"
+# Any section can live in the dock. TODOS opens in the left column;
+# `:sidebar bottom` moves it down, where it takes the DIAGNOSTICS'
+# place — a host shows one section at a time — and the left column
+# falls back to the explorer beside it.
+command view.activity_todos
+expect screen contains "TODOS"
+ex sidebar bottom
+expect screen contains "TODOS"
+expect screen lacks "DIAGNOSTICS"
+# The `×` on the dock's header row closes it. If the dock were not at
+# rows 26–37 this click would miss.
+click 117 26
+expect screen lacks "TODOS"
+command view.toggle_bottom_panel
+expect screen contains "TODOS"
+# The divider on row 25 drags up to row 20: the dock now starts on row
+# 21, so that is where its `×` is — and the old column is empty air.
+drag 60 25 60 20
+click 117 26
+expect screen contains "TODOS"
+click 117 21
+expect screen lacks "TODOS"
+# `Ctrl-W +` / `-` from the focused dock resize it by a row — the same
+# chords a split uses, in the window they are pressed in.
+command view.toggle_bottom_panel
+command editor.use_vim
+key ctrl+w
+key +
+key ctrl+w
+key -
+expect screen contains "TODOS"

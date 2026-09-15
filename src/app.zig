@@ -32,6 +32,7 @@ const edit_op = @import("editor/edit_op.zig");
 const edit_op_editor = @import("editor/editor.zig");
 const pane_mod = @import("app/pane.zig");
 const side_mod = @import("app/side.zig");
+const bottom_mod = @import("app/bottom.zig");
 const layout_mod = @import("app/layout.zig");
 const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
@@ -741,6 +742,8 @@ pub const Drag = union(enum) {
     divider: struct { split: layout_mod.NodeId, dir: layout_mod.SplitDir },
     tree_divider,
     right_divider,
+    /// // changed (bottom-dock): the row above the dock.
+    bottom_divider,
     /// A tab off a leaf's strip. `moved` once the pointer has left
     /// the cell it pressed on — a press-and-release is a click.
     tab: struct { pane: PaneId, x: u16, y: u16, moved: bool = false },
@@ -910,6 +913,9 @@ pub const App = struct {
     /// Which side each activity section lives on and what each column
     /// shows (`app/side.zig`). Seeded from the config in `init`.
     side: side_mod.State,
+    /// // changed (bottom-dock): the dock's hosted panes — the section
+    /// it shows is `side.open.get(.bottom)` like any other host.
+    bottom: bottom_mod.State = .{},
     /// The outline drawn in a column (`PanelId.outline`): a pane kept in
     /// the store, outside the layout. `outline.show` routes here when
     /// the outline's column is open.
@@ -1298,6 +1304,13 @@ pub const App = struct {
             const on_right = side_mod.sectionsOn(&app, .right, &sbuf);
             if (on_right.len > 0) side_mod.place(&app, on_right[0], false);
         }
+        // // changed (bottom-dock): the same for the dock — the
+        // diagnostics live there, so that is what opens.
+        if (app.cfg.ui.bottom_panel_visible) {
+            var bbuf: [side_mod.Section.all.len]side_mod.Section = undefined;
+            const on_bottom = side_mod.sectionsOn(&app, .bottom, &bbuf);
+            if (on_bottom.len > 0) side_mod.place(&app, on_bottom[0], false);
+        }
         try app.seedPlusMenu();
         auto_refresh.seed(&app);
         clock.seed(&app);
@@ -1536,6 +1549,7 @@ pub const App = struct {
         self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
         self.dock.deinit(gpa, self.io);
+        self.bottom.deinit(gpa);
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
@@ -2173,6 +2187,8 @@ pub const App = struct {
         // The zoomed pane going means the zoom goes: a synthetic leaf
         // holding a pane that is no longer in the layout paints nothing.
         if (self.zoomed_leaf == id) self.zoomed_leaf = null;
+        // // changed (bottom-dock): a closed pane cannot stay hosted.
+        bottom_mod.forget(self, id);
         // A graph tab closed is a repo hidden for the session (Rust `close_pane`).
         if (pane.* == .git_graph) if (self.git.repoById(pane.git_graph.repo)) |r| try git_palette_app.noteClosed(self, r.path);
         // Editors and markdown previews are files: they can come back —
