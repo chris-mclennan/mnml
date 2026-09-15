@@ -38,9 +38,9 @@ line), not by hand.
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
 | UI & theming | 84 | 0 | 3 | 0 | 87 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 55 | 0 | 2 | 0 | 57 |
+| Headless, IPC & extensibility | 56 | 0 | 2 | 0 | 58 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **545** | **0** | **9** | **0** | **554** |
+| **total** | **546** | **0** | **9** | **0** | **555** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -52,7 +52,11 @@ the two shipped example scripts are written against, both Zig-authored.
 Three more since: the live picker source with its preview column, the
 list helper with its rail sections, and the text operations with
 operator registration — the three shapes examples 3, 4 and 5 are
-written against, all Zig-authored.
+written against, all Zig-authored. Two more since: installed scripts
+(a script as a directory, one Lua state each, the three tabs) and the
+platform polish that closed §5 of the design — `mnml.inspect`, the
+argument-error contract, the budget chip, `script.doctor`'s roots and
+the doc check that keeps `docs/LUA.md` and the registry in step.
 
 Ids: 1039 in `src/commands/specs.zig` (the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1039 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
 
@@ -807,6 +811,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | Lua text operations + operator registration — `mnml.buf.selection` / `range` / `word_at`, `mnml.operator{}`, `mnml.commands` | done | the `mnml.buf` block of `src/scripting/api.zig`, `src/input/script_ops.zig`, `PendingOp.script` / `finishOperator` in `src/input/vim.zig`, `AppCommand.script_operator`, `runOperatorMode` | Zig-authored. A script reads a range (`selection` with its `char` / `line` / `block` shape, `range`, `word_at`) and registers an operator that reaches both profiles by their own road: under vim the `g<letter>` chord goes into a table the handler asks once its own `g` switch has fallen through, so `gs{motion}`, `gsiw`, `3gsw`, `gss` and `V…gs` all build the range the way `gU{motion}` does; under standard the chord is an ordinary `user.<id>` command taking the selection, or the word under the cursor. Whatever `run` applies is one undo step. `docs/LUA.md`; `tests/e2e/lua_operator.test`, `lua_example_surround_word.test` |
 | Lua `cursor_idle` hook; `mnml.task.run{ hidden, on_line }` | done | `src/app/idle.zig`, `src/app/script_task.zig`, `Hook.cursor_idle` in `src/core/hooks.zig` | Zig-authored. `cursor_idle` fires 300 ms after the cursor stops, once per resting place; `buffer_change`, documented since D10 and emitted nowhere, fires too. A `hidden` task has no pane and streams its output to `on_line` a line at a time (stderr merged in, 5000 lines of 4 KiB capped). The two shipped examples are the acceptance: `docs/examples/scripts/{git-blame-line,eslint}/init.lua`, `tests/e2e/lua_example_git_blame_line.test`, `lua_example_eslint.test` |
 | Installed scripts — a script is a directory, one Lua state each, `installed · marketplace · dev` | done | `src/scripting/manifest.zig`, `src/app/scripts.zig`, `src/app/scripts_panel.zig`, `src/app/script_doctor.zig`, `Lua.createFor` / `requireFn` in `src/scripting/lua.zig`, `LuaRef.state` in `src/core/command.zig`, sink `script_install` in `src/config/trust.zig` | Zig-authored — the Rust editor has no plugin install path at all. A script is a directory with a `script.zon` (`name`, `version`, `api = 1`, the commands and hooks it claims, where it came from); each installed one gets its OWN Lua state — its own budget clock, its own decoration namespaces, its own registrations, and a `require` that resolves only under its own directory — so one erroring is one toast and a disabled row. `script.install` takes a git URL (shallow clone), an archive or a folder, stages it, and puts the manifest's claims plus a grep for `task.run` in the trust dialog BEFORE the first run. The SCRIPTS section gains the INTEGRATIONS section's three tabs, painted by the same `drawSection`. `script.doctor` is the receipt. `docs/LUA.md`; `tests/e2e/scripts_install_dir.test`, `scripts_marketplace_local.test`, `scripts_trust_claims.test`, `scripts_dev_root_reload.test`, `scripts_doctor.test` |
+| Lua platform polish — `mnml.inspect`, the argument-error contract, the budget chip, the doc check | done | `inspect` / `writeInspect` and the `needStr` / `needFn` / `needTable` / `argStr` / `argInt` helpers in `src/scripting/api.zig`, `src/scripting/doc_check.zig`, `Entry.budget_hits` / `budget_glyph` in `src/ui/integrations_view.zig`, `writeSources` in `src/app/script_doctor.zig` | Zig-authored — §5 of `docs/research/lua-platform-design-2026-09-13.md`. `mnml.inspect(v)` writes any value out for reading (tables four deep, keys sorted so it is deterministic, `<cycle>` for a table that names itself); `print` stays the log. Every `mnml.*` argument check names the CALL, the ARGUMENT and the SHAPE (`mnml.picker.source: `items` must be a function(query) returning a table of rows`) and lands before the first allocation — a Lua error is a longjmp, so an `errdefer` under one never runs. A script that trips the 20 ms budget wears a `⏱ N` chip on its SCRIPTS row, painted at the right edge so it survives the shipped `ui.tree_width = 30`; `script.doctor` gains the three scan roots and each script's `require` root. The `mnml.` completion popup lists the sub-tables before the root functions. `docs/LUA.md` is a reference with one `####` heading per function, walked against the registry in both directions by `doc_check.zig`. `tests/e2e/lua_inspect.test`, `scripts_budget_chip.test`, `lua_completion.test` |
 | Bridge v2 — `Pane.mount` over a socket | done | `src/bridge/host.zig` / `wire.zig`, `src/app/mount_pane.zig`, `mount.open` | beyond the Rust list; the SDK is `sdk/mnml-sdk` |
 
 ## Languages
