@@ -93,8 +93,8 @@ mnml.command{
 }
 
 -- A picker source: `mnml.picker.open("notes")` lists the notes; Enter
--- runs the row's on_accept.
--- `live = true` asks `items(query)` again as the query changes
+-- runs the row's on_accept. `live = true` asks `items(query)` again as
+-- the query changes
 -- (debounced); `preview(row)` fills the picker's second column; `data`
 -- is yours and comes back untouched; `on_accept` on the source sees the
 -- whole row (or the marked ones under `multi = true`).
