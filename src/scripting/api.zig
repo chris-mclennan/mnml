@@ -206,7 +206,7 @@ fn fnField(self: *Lua, t: i32, name: [:0]const u8) ?LuaRef {
 // ─── argument errors ────────────────────────────────────────────────────
 // One rule, everywhere below: a wrong argument raises a message that
 // names the CALL, the ARGUMENT and the SHAPE it wanted —
-// `mnml.picker.source: \`items\` must be a function(query) returning a
+// `mnml.picker.source: `items` must be a function(query) returning a
 // table of rows`. Lua's own `luaL_check*` messages name the type and a
 // `'?'` where the function's name should be, so this file does not use
 // them for anything a script author can get wrong.
