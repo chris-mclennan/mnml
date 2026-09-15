@@ -256,6 +256,14 @@ fn sampleIntegrationPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
     return fakeToolPath(gpa, io, "mnml-sample", build_options.sample_integration_exe);
 }
 
+fn bitbucketIntegrationPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-bitbucket", build_options.bitbucket_integration_exe);
+}
+
+fn fakeBitbucketPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-fake-bitbucket", build_options.fake_bitbucket_exe);
+}
+
 /// A fake tool built beside this binary (`zig build`), or at the
 /// build's install path when the runner is elsewhere.
 fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8) Allocator.Error!?[]u8 {
@@ -400,6 +408,23 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         if (try sampleIntegrationPath(gpa, io)) |p| {
             defer gpa.free(p);
             try env.put("MNML_SAMPLE_INTEGRATION", p);
+        }
+    }
+    // `$MNML_BITBUCKET_INTEGRATION` and `$MNML_FAKE_BITBUCKET`: the
+    // Bitbucket pane and the deterministic Bitbucket it talks to, for
+    // the `integrations_bitbucket_*` scripts. The script starts the
+    // fake server itself and points the pane at it with
+    // `BITBUCKET_BASE_URL=@<file>`, so no port is ever chosen.
+    if (env.get("MNML_BITBUCKET_INTEGRATION") == null) {
+        if (try bitbucketIntegrationPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_BITBUCKET_INTEGRATION", p);
+        }
+    }
+    if (env.get("MNML_FAKE_BITBUCKET") == null) {
+        if (try fakeBitbucketPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_FAKE_BITBUCKET", p);
         }
     }
     const opts: e2e.Options = .{
