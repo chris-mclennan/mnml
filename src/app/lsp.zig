@@ -2899,9 +2899,10 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     try testing.expectEqual(@as(usize, 4), e.buf.editor.cursor);
     try command.run(&app, .{ .static = .@"lsp.prev_diagnostic" });
     try testing.expectEqual(@as(usize, 26), e.buf.editor.cursor);
-    // The panel in the right slot lists both, the filter narrows to errors.
+    // // changed (bottom-dock): the panel opens in the DOCK, which is
+    // where the diagnostics live (Rust opens a pane under the editor).
     try command.run(&app, .{ .static = .@"lsp.diagnostics" });
-    try testing.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
+    try testing.expectEqual(side.Section.diagnostics, side.shown(&app, .bottom).?);
     try app.render();
     const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
     defer testing.allocator.free(txt);

@@ -1,6 +1,7 @@
 # Diagnostics through the fake server: the TODO line is a warning —
 # the gutter dot on line 3, the strip's ⚠1, and the DIAGNOSTICS panel
-# in the right panel with the message and the location.
+# in the BOTTOM DOCK with the message and the location.
+# // changed (bottom-dock): the diagnostics moved off the right column.
 write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
 write .fkroot ""
 write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }

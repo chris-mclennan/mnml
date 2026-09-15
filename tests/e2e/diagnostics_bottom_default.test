@@ -1,0 +1,37 @@
+# width: 120
+# The diagnostics live in the BOTTOM DOCK out of the box — Rust opens
+# `lsp.diagnostics` as a pane under the editor, not as a right-panel
+# list, and the dock is where the Zig section lands (`side.zig`
+# `configuredSide`). The dock spans the frame's width under the
+# columns, so at 120x40 it is rows 26–37 with its divider on row 25 and
+# its `×` at column 117.
+write app.js "const x = 1;\n"
+write .mnml/init.lua "ns = mnml.decor.namespace('lint')\nmnml.command{ id = 'lint', run = function()\n  mnml.diagnostics.set(ns, 'app.js', { { line = 1, col = 7, severity = 'warning', message = 'x is never read', source = 'lint' } })\nend }\n"
+command script.reload
+open app.js
+command user.lint
+command lsp.diagnostics
+expect screen contains "DIAGNOSTICS (1)"
+expect screen contains "x is never read"
+# The right column is still shut: the diagnostics did not go there.
+expect screen lacks "OUTLINE"
+# The `×` on the dock's header row hides the dock (Rust's bottom-panel
+# close chip). If the dock were anywhere else this click would miss.
+click 117 26
+expect screen lacks "DIAGNOSTICS (1)"
+expect screen lacks "x is never read"
+# The toggle brings it back on what it showed last.
+command view.toggle_bottom_panel
+expect screen contains "DIAGNOSTICS (1)"
+# `Ctrl-W K` from the focused dock sends the section back up to a
+# column — the default `sidebar_side`, since it has never moved.
+command editor.use_vim
+key ctrl+w
+key K
+expect screen contains "DIAGNOSTICS (1)"
+# Back down again with `Ctrl-W J`.
+key ctrl+w
+key J
+expect screen contains "DIAGNOSTICS (1)"
+click 117 26
+expect screen lacks "DIAGNOSTICS (1)"
