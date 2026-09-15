@@ -94,15 +94,23 @@ mnml.command{
 
 -- A picker source: `mnml.picker.open("notes")` lists the notes; Enter
 -- runs the row's on_accept.
+-- `live = true` asks `items(query)` again as the query changes
+-- (debounced); `preview(row)` fills the picker's second column; `data`
+-- is yours and comes back untouched; `on_accept` on the source sees the
+-- whole row (or the marked ones under `multi = true`).
 mnml.picker.source{
   id = "notes",
   title = "Notes",
+  live = true,
   items = function(query)
     local items = {}
     for i, n in ipairs(notes) do
-      items[#items + 1] = { label = n, detail = "#" .. i, on_accept = function() mnml.toast("picked " .. n) end }
+      items[#items + 1] = { label = n, detail = "#" .. i, data = i, on_accept = function() mnml.toast("picked " .. n) end }
     end
     return items
+  end,
+  preview = function(row)
+    return { { { text = row.label, fg = "accent", bold = true } }, "", { { text = "note " .. tostring(row.data), fg = "muted" } } }
   end,
 }
 
@@ -117,6 +125,106 @@ mnml.command{
     mnml.task.run{ cmd = "printf '%s\\n' " .. #notes .. " | wc -l", label = "wc", on_done = function(r)
       mnml.toast(r.ok and "wc done" or "wc failed")
     end }
+  end,
+}
+
+-- A hidden task: no pane at all, its output parsed a line at a time by
+-- `on_line`, and the findings published through the diagnostics sink —
+-- the gutter dot, the squiggle, the DIAGNOSTICS panel and `]d` all show
+-- them, exactly as a language server's do.
+local lint_ns = mnml.decor.namespace("notes_lint")
+
+mnml.command{
+  id = "notes_lint",
+  title = "Lint the notes (a hidden task into the diagnostics sink)",
+  run = function()
+    local found = {}
+    mnml.task.run{
+      cmd = "printf '1:todo without a verb\n'",
+      hidden = true,
+      on_line = function(text)
+        local line, msg = text:match("^(%d+):(.*)$")
+        if line then
+          found[#found + 1] = { line = tonumber(line), col = 1, severity = "warning", message = msg, source = "notes" }
+        end
+      end,
+      -- A `set` on every run, the empty one included: that is how a run
+      -- that found nothing clears what the last one found.
+      on_done = function()
+        local path = mnml.buf.path()
+        if path then mnml.diagnostics.set(lint_ns, path, found) end
+      end,
+    }
+  end,
+}
+
+-- Decorations: what a script paints into an editor without changing its
+-- text. They live in a namespace, follow the text through edits, and are
+-- data the renderer reads — never a callback in the paint loop.
+local mark_ns = mnml.decor.namespace("notes_marks")
+
+mnml.command{
+  id = "notes_mark",
+  title = "Mark the cursor line (virtual text, a gutter cell, a ground)",
+  run = function()
+    local pane = mnml.pane.active()
+    local line = select(1, mnml.buf.cursor())
+    mnml.decor.clear(mark_ns)
+    mnml.decor.virtual_text(mark_ns, pane, line, { { text = "  ← noted", fg = "muted" } }, { at = "eol" })
+    mnml.decor.gutter(mark_ns, pane, line, "▎", { fg = "accent", priority = 50 })
+    mnml.decor.line(mark_ns, pane, line, "cursor_line")
+    -- The word under the cursor, highlighted through its byte range.
+    local w = mnml.buf.word_at()
+    if w then mnml.decor.highlight(mark_ns, pane, w.start, w["end"], "match") end
+  end,
+}
+
+-- An operator: `gn{motion}` in vim, ctrl+shift+n in standard, one undo
+-- step whatever `run` applies. The range arrives in the shape
+-- `mnml.buf.selection()` answers with, from every road into it.
+mnml.operator{
+  id = "note_it",
+  title = "Add the range to the notes",
+  keys = { vim = "gy", standard = "ctrl+alt+n" },
+  run = function(range)
+    notes[#notes + 1] = mnml.buf.range(range.start, range["end"])
+  end,
+}
+
+-- A list, and the rail section that hosts it: the caps header, the
+-- filter, the sort chip, the folds and the row menu every built-in
+-- section has, with `rows(sort)` the only thing the script writes.
+local notes_list = mnml.list{
+  title = "NOTES",
+  sort = { "Order", "A-Z" },
+  rows = function(sort)
+    local rows = { { header = "notes", count = #notes } }
+    local shown = { table.unpack(notes) }
+    if sort == "A-Z" then table.sort(shown) end
+    for i, n in ipairs(shown) do
+      rows[#rows + 1] = { label = n, detail = "#" .. i, icon = "•" }
+    end
+    return rows
+  end,
+  on_enter = function(row) mnml.toast(row.label) end,
+  on_menu = function(row)
+    return { { label = "Toast it", run = function() mnml.toast(row.label) end } }
+  end,
+}
+
+mnml.section{ id = "notes_section", title = "NOTES", glyph = "󰎞", ascii = "N",
+              list = notes_list, side = "left" }
+
+-- `mnml.commands()` is the read behind a picker or a list over what the
+-- app can do; each row carries its MRU `rank` (nil when never run).
+-- `mnml.inspect` writes any value out for reading, and `print` toasts —
+-- together they are the debugger.
+mnml.command{
+  id = "notes_debug",
+  title = "Print what this script knows",
+  run = function()
+    local save = mnml.commands("file.save")[1]
+    print(mnml.inspect{ notes = #notes, workspace = mnml.workspace(), save_rank = save and save.rank })
   end,
 }
 

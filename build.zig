@@ -325,6 +325,11 @@ pub fn build(b: *std.Build) void {
     // `docs/CONFIG.md`, embedded: its per-key comments are the ZON view
     // pane's hover copy for a config file (`src/config/zon_schema.zig`).
     root_module.addAnonymousImport("config_md", .{ .root_source_file = b.path("docs/CONFIG.md") });
+    // `docs/LUA.md`, embedded: `src/scripting/doc_check.zig` walks it
+    // against `api.zig`'s registration list, so a function that is
+    // registered and not written down — or written down and not
+    // registered — fails the suite rather than shipping.
+    root_module.addAnonymousImport("lua_md", .{ .root_source_file = b.path("docs/LUA.md") });
     root_module.addAnonymousImport("ui_spec_rust_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-120x40.txt") });
     root_module.addAnonymousImport("ui_spec_rust_80x24", .{ .root_source_file = b.path("docs/ui-spec/rust-80x24.txt") });
     root_module.addAnonymousImport("ui_spec_rust_sessions_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-sessions-120x40.txt") });

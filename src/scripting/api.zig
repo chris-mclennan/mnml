@@ -2813,6 +2813,18 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
     try testing.expect(app.dyn_commands.get("user.notes_count") != null);
     try testing.expectEqual(@as(usize, 1), lua.segments.items.len);
     try testing.expect(lua.findSource("notes") != null);
+    // Every surface this file is the reference for, present after one
+    // load: the commands, the operator, the list and its rail section,
+    // the two namespaces, and the hidden-task / diagnostics pair.
+    try testing.expect(app.dyn_commands.get("user.notes_lint") != null);
+    try testing.expect(app.dyn_commands.get("user.notes_mark") != null);
+    try testing.expect(app.dyn_commands.get("user.notes_debug") != null);
+    try testing.expect(app.dyn_commands.get("user.note_it") != null);
+    try testing.expectEqual(@as(usize, 1), lua.operators.items.len);
+    const sum = lua.summary();
+    try testing.expectEqual(@as(u32, 1), sum.operators);
+    try testing.expect(sum.lists >= 1);
+    try testing.expect(app.script_sections.items.items.len >= 1);
     try command.runNamed(&app, "user.hello");
     try testing.expectEqualStrings("hello from init.lua", app.lastToast().?);
     // The pane opens, renders the notes, and `x` (on_key) removes one.
@@ -2838,6 +2850,21 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
     const segs = try lua.segmentTexts(app.frame.allocator(), .right);
     try testing.expectEqual(@as(usize, 1), segs.len);
     try testing.expectEqualStrings("notes 1", segs[0]);
+    // The decorations: four in one namespace, over an editor pane.
+    _ = try app.openScratchWith("alpha beta\ngamma\n");
+    try command.runNamed(&app, "user.notes_mark");
+    try testing.expectEqual(@as(usize, 4), app.script_decor.items.items.len);
+    // `mnml.inspect` through `print`: a deterministic line, so the
+    // reference file's own debugging command is worth pinning.
+    try command.runNamed(&app, "user.notes_debug");
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "{ notes = 1,"));
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "workspace = \"/tmp\"") != null);
+    // The operator, from the standard road: the word under the cursor
+    // joins the notes.
+    const e = app.activeEditor().?;
+    e.buf.editor.setCursor(0);
+    try command.runNamed(&app, "user.note_it");
+    try lua.runString("assert(notes[#notes] == 'alpha', notes[#notes])");
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
 
