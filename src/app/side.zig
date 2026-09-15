@@ -1,9 +1,17 @@
 //! Which side of the screen each activity section lives on. The frame
 //! has two columns — left, with the rail down its edge, and right —
-//! and every section that owns a column surface (the tree, git mode's
-//! palette, a list panel) sits in one of them. A column shows one
-//! section at a time; the explorer on the left and TODOS on the right
-//! are both on screen, which is the point.
+//! and a dock under the editor area, and every section that owns a
+//! column surface (the tree, git mode's palette, a list panel) sits in
+//! one of the three. A host shows one section at a time; the explorer
+//! on the left, TODOS on the right and the diagnostics in the dock are
+//! all on screen at once, which is the point.
+//!
+//! // changed (bottom-dock): the dock is the third host — Rust's
+//! bottom panel (`App::bottom_panel_visible` / `_height`), where its
+//! diagnostics live. It is sized in rows, not columns, so `size` /
+//! `setSize` read `tree.width`, `side.right_width` or
+//! `side.bottom_height` by side; it hosts a pane as well as a section
+//! (`app/bottom.zig`).
 //!
 //! Rust has one sidebar (`active_section` swaps its content) and a
 //! separate tabbed right panel. Here the two are one idea: a section
@@ -113,9 +121,15 @@ pub const State = struct {
     /// The section a column showed before the current one — what the
     /// column falls back to when the current one moves away.
     prev: std.EnumArray(Side, ?Section) = .initFill(null),
+    /// // changed (bottom-dock): the side each section was on before
+    /// its last move — what `Ctrl-W K` brings a docked section back to.
+    came_from: std.EnumArray(Section, ?Side) = .initFill(null),
     /// The right column's width (`ui.right_panel_width`); the left's
     /// is `tree.width` (`ui.tree_width`).
     right_width: u16 = 32,
+    /// // changed (bottom-dock): the dock's height in rows
+    /// (`ui.bottom_panel_height`; Rust's `bottom_panel_height`).
+    bottom_height: u16 = 12,
     /// vim: a `Ctrl-W` arrived with a panel focused; the next key names
     /// the window move (`ctrlW`).
     ctrl_w_pending: bool = false,
@@ -124,22 +138,36 @@ pub const State = struct {
         var st: State = .{ .of = .initFill(.left) };
         for (Section.all) |s| st.of.set(s, configuredSide(cfg, s));
         st.right_width = @max(cfg.ui.right_panel_width, 8);
+        st.bottom_height = @max(cfg.ui.bottom_panel_height, Config.bottom_panel_height_min);
         return st;
     }
 };
 
-pub fn opposite(s: Side) Side {
+/// The other column. The dock is never an `opposite`: it is somewhere
+/// a section is put, not a side a default flips onto.
+pub fn opposite(s: Config.ColumnSide) Side {
     return if (s == .left) .right else .left;
 }
 
 /// The config's answer for a section: its `ui.section_side` entry,
 /// else `ui.sidebar_side` — the Rust right-panel panes take the other
-/// side of that.
+/// side of that, and the diagnostics the dock, which is where Rust
+/// puts them (`lsp.diagnostics` opens a pane under the editor).
 pub fn configuredSide(cfg: *const Config, s: Section) Side {
     if (overrideOf(&cfg.ui.section_side, s)) |o| return o;
     return switch (s) {
-        .outline, .diagnostics => opposite(cfg.ui.sidebar_side),
-        else => cfg.ui.sidebar_side,
+        // // changed (bottom-dock): was `.right` with the outline.
+        .diagnostics => .bottom,
+        .outline => opposite(cfg.ui.sidebar_side),
+        else => column(cfg.ui.sidebar_side),
+    };
+}
+
+/// A column as a `Side`.
+pub fn column(c: Config.ColumnSide) Side {
+    return switch (c) {
+        .left => .left,
+        .right => .right,
     };
 }
 
@@ -165,18 +193,31 @@ pub fn isShown(app: *const App, s: Section) bool {
     return shown(app, sideOf(app, s)) == s;
 }
 
-pub fn width(app: *const App, side: Side) u16 {
+/// A host's own measure: the columns in cells across, the dock in rows
+/// down. // changed (bottom-dock): was `width` / `setWidth`.
+pub fn size(app: *const App, side: Side) u16 {
     return switch (side) {
         .left => app.tree.width,
         .right => app.side.right_width,
+        .bottom => app.side.bottom_height,
     };
 }
 
-pub fn setWidth(app: *App, side: Side, w: u16) void {
+pub fn setSize(app: *App, side: Side, n: u16) void {
     switch (side) {
-        .left => app.tree.width = w,
-        .right => app.side.right_width = w,
+        .left => app.tree.width = n,
+        .right => app.side.right_width = n,
+        .bottom => app.side.bottom_height = std.math.clamp(n, Config.bottom_panel_height_min, Config.bottom_panel_height_max),
     }
+}
+
+/// How a side reads in a toast: the dock is a dock, not a "bottom side".
+pub fn sideLabel(s: Side) []const u8 {
+    return switch (s) {
+        .left => "left side",
+        .right => "right side",
+        .bottom => "bottom dock",
+    };
 }
 
 /// The section the keyboard is in, if it is in a column.
@@ -231,7 +272,7 @@ fn dropFocus(app: *App) void {
         app.focus = .{ .pane = a };
         return;
     }
-    for ([_]Side{ .left, .right }) |side| if (shown(app, side)) |s| if (focusOf(s)) |f| {
+    for ([_]Side{ .left, .right, .bottom }) |side| if (shown(app, side)) |s| if (focusOf(s)) |f| {
         app.focus = f;
         return;
     };
@@ -285,7 +326,7 @@ pub fn toggleColumn(app: *App, side: Side) CommandError!void {
     var buf: [Section.all.len]Section = undefined;
     const here = sectionsOn(app, side, &buf);
     const s = app.side.last.get(side) orelse (if (here.len > 0) here[0] else null) orelse
-        return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} side — right-click a rail icon: Move to {s} side", .{ @tagName(side), @tagName(side) });
+        return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} — right-click a rail icon: Move to {s}", .{ sideLabel(side), sideLabel(side) });
     try open(app, s, false);
 }
 
@@ -294,7 +335,7 @@ pub fn toggleColumn(app: *App, side: Side) CommandError!void {
 pub fn step(app: *App, side: Side, by: isize) CommandError!void {
     var buf: [Section.all.len]Section = undefined;
     const here = sectionsOn(app, side, &buf);
-    if (here.len == 0) return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} side", .{@tagName(side)});
+    if (here.len == 0) return app.diag.fail(app.frame.allocator(), "nothing lives on the {s}", .{sideLabel(side)});
     const cur = shown(app, side) orelse return open(app, here[0], false);
     const had_focus = if (focusOf(cur)) |f| std.meta.eql(app.focus, f) else false;
     var idx: usize = 0;
@@ -313,18 +354,19 @@ pub fn move(app: *App, s: Section, dest: Side) CommandError!void {
     if (surface(s) == null) return app.diag.fail(arena, "{s} opens as a pane; it has no side", .{label(s)});
     const from = sideOf(app, s);
     if (from == dest) {
-        app.toast("{s} is already on the {s}", .{ label(s), @tagName(dest) });
+        app.toast("{s} is already on the {s}", .{ label(s), sideLabel(dest) });
         return;
     }
     const was_shown = isShown(app, s);
     const had_focus = if (focusOf(s)) |f| std.meta.eql(app.focus, f) else false;
     if (was_shown) remove(app, s);
+    app.side.came_from.set(s, from);
     app.side.of.set(s, dest);
     if (was_shown) place(app, s, had_focus);
     // The vacated column shows what it showed before (the explorer, as
     // a rule) — TODOS on the right beside the tree, not beside a gap.
     if (was_shown and shown(app, from) == null) if (fallbackFor(app, from, s)) |back| place(app, back, false);
-    app.toast("{s} → {s} side", .{ label(s), @tagName(dest) });
+    app.toast("{s} → {s}", .{ label(s), sideLabel(dest) });
     app.needs_render = true;
 }
 
@@ -354,6 +396,10 @@ pub fn reseed(app: *App) void {
 
 /// The section the move commands act on: the focused one, else the
 /// rail's mark.
+pub fn targetSection(app: *App) Section {
+    return target(app);
+}
+
 fn target(app: *App) Section {
     const activity_bar = @import("activity_bar.zig");
     return sectionOfFocus(app) orelse activity_bar.active(app);
@@ -371,8 +417,28 @@ fn moveRightCmd(app: *App) CommandError!void {
 /// when that is at least eight cells (Rust `open_git_graph`).
 pub fn snapGit(app: *App) void {
     const side = sideOf(app, .git);
+    // The dock is sized in rows; the snap is a column rule.
+    if (side == .bottom) return;
     const fifth: u16 = @intCast(@as(u32, app.screen.width) * 20 / 100);
-    if (fifth >= 8) setWidth(app, side, fifth);
+    if (fifth >= 8) setSize(app, side, fifth);
+}
+
+/// // changed (bottom-dock): Neovim's `Ctrl-W J` / `K` from a column —
+/// the section goes down into the dock, or back up to the column it
+/// came from (its configured column when it has never moved). They are
+/// not command ids: the two Rust ids for the dock are `toggle` and
+/// `host_active`, and the spec count is pinned. Null: not a move.
+pub fn ctrlWSectionSide(app: *const App, k: Key, s: Section) ?Side {
+    if (k.code != .char) return null;
+    return switch (k.code.char) {
+        'J' => .bottom,
+        'K' => if (sideOf(app, s) != .bottom) null else blk: {
+            if (app.side.came_from.get(s)) |c| if (c != .bottom) break :blk c;
+            const cfg_side = configuredSide(&app.cfg, s);
+            break :blk if (cfg_side != .bottom) cfg_side else column(app.cfg.ui.sidebar_side);
+        },
+        else => null,
+    };
 }
 
 /// vim's `Ctrl-W` family from a column: `w` / `p` / `h` / `j` / `k` /
@@ -410,31 +476,45 @@ pub fn isCtrlW(app: *const App, k: Key) bool {
 
 const t = std.testing;
 const render = @import("render.zig");
+const bottom_mod = @import("bottom.zig");
 const Rect = @import("../ui/rect.zig");
 
 fn rects(app: *App) render.FrameRects {
     return render.frameRects(Rect.init(0, 0, app.screen.width, app.screen.height), render.chrome(app));
 }
 
-test "defaults: every section is on the left but the outline and the diagnostics; the explorer is open on the left, the right column closed" {
+test "defaults: every section is on the left but the outline (right) and the diagnostics (the dock); the explorer is open on the left, the right column and the dock closed" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();
-    for (Section.all) |s| try t.expectEqual(if (s == .outline or s == .diagnostics) Side.right else Side.left, sideOf(&app, s));
+    for (Section.all) |s| try t.expectEqual(switch (s) {
+        .outline => Side.right,
+        // // changed (bottom-dock): the diagnostics live in the dock.
+        .diagnostics => Side.bottom,
+        else => Side.left,
+    }, sideOf(&app, s));
     try t.expectEqual(Section.explorer, shown(&app, .left).?);
     try t.expect(shown(&app, .right) == null);
+    try t.expect(shown(&app, .bottom) == null);
     const fr = rects(&app);
     try t.expect(fr.sidebar.eql(Rect.init(4, 1, 26, 37)));
     try t.expect(fr.right.isEmpty() and fr.right_divider.isEmpty());
+    try t.expect(fr.bottom.isEmpty() and fr.bottom_divider.isEmpty());
     try t.expect(fr.body.eql(Rect.init(31, 1, 89, 37)));
 }
 
-test "configuredSide: the overrides win, then sidebar_side, the Rust right-panel panes on the other side of it" {
+test "configuredSide: the overrides win, then sidebar_side, the outline on the other side of it, the diagnostics in the dock whichever side that is" {
     var cfg = Config{};
     try t.expectEqual(Side.left, configuredSide(&cfg, .todos));
     try t.expectEqual(Side.right, configuredSide(&cfg, .outline));
+    try t.expectEqual(Side.bottom, configuredSide(&cfg, .diagnostics));
     cfg.ui.sidebar_side = .right;
     try t.expectEqual(Side.right, configuredSide(&cfg, .todos));
-    try t.expectEqual(Side.left, configuredSide(&cfg, .diagnostics));
+    try t.expectEqual(Side.left, configuredSide(&cfg, .outline));
+    // The dock is not a side the sidebar default flips onto.
+    try t.expectEqual(Side.bottom, configuredSide(&cfg, .diagnostics));
+    // A user who wants the old placement says so.
+    cfg.ui.section_side.diagnostics = .right;
+    try t.expectEqual(Side.right, configuredSide(&cfg, .diagnostics));
     cfg.ui.section_side.todos = .left;
     cfg.ui.section_side.outline = .right;
     try t.expectEqual(Side.left, configuredSide(&cfg, .todos));
@@ -442,6 +522,7 @@ test "configuredSide: the overrides win, then sidebar_side, the Rust right-panel
     const st = State.init(&cfg);
     try t.expectEqual(Side.left, st.of.get(.todos));
     try t.expectEqual(Side.right, st.of.get(.notes));
+    try t.expectEqual(@as(u16, 12), st.bottom_height);
 }
 
 test "move: a shown section closes on one side and opens on the other with the keys; the explorer stays; a pane section has no side; the same side is a no-op" {
@@ -502,9 +583,10 @@ test "the right column: toggle brings back the last section shown there, else th
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
-    // Fresh: the diagnostics and the outline live on the right, in
-    // section order; the toggle opens the first, the next walks on (the
-    // outline lands on the open scratch).
+    // // changed (bottom-dock): the diagnostics moved to the dock, so
+    // the outline is what lives on the right out of the box. Put the
+    // diagnostics back beside it to walk a two-section column.
+    try move(&app, .diagnostics, .right);
     try command.run(&app, .{ .static = .@"view.toggle_right_panel" });
     try t.expectEqual(Section.diagnostics, shown(&app, .right).?);
     // A toggle and a tab walk leave the keys in the editor (Rust's
@@ -569,6 +651,152 @@ test "layout: sections on one side, both sides, none; the right column keeps the
     const tiny = render.frameRects(Rect.init(0, 0, 60, 40), .{ .sidebar = 30, .right = 40 });
     try t.expect(tiny.right.isEmpty());
     try t.expect(tiny.body.eql(Rect.init(31, 1, 29, 37)));
+}
+
+test "layout (bottom-dock): the dock comes off `upper` before the columns — full width, a divider row above it, two thirds the cap, and nothing at all under six rows" {
+    // 12 rows plus a divider: the columns and the body end above them.
+    const d = render.frameRects(Rect.init(0, 0, 120, 40), .{ .sidebar = 30, .right = 40, .bottom = 12 });
+    try t.expect(d.bottom.eql(Rect.init(0, 26, 120, 12)));
+    try t.expect(d.bottom_divider.eql(Rect.init(0, 25, 120, 1)));
+    try t.expect(d.upper.eql(Rect.init(0, 1, 120, 24)));
+    // The columns keep their widths and lose the dock's rows.
+    try t.expect(d.sidebar.eql(Rect.init(4, 1, 26, 24)));
+    try t.expect(d.right.eql(Rect.init(80, 1, 40, 24)));
+    try t.expect(d.body.eql(Rect.init(31, 1, 48, 24)));
+    // The cap: two thirds of `upper`. At 40 rows `upper` is 37, so 24.
+    const greedy = render.frameRects(Rect.init(0, 0, 120, 40), .{ .bottom = 60 });
+    try t.expectEqual(@as(u16, 24), greedy.bottom.h);
+    try t.expect(greedy.body.h == 12);
+    // 80x24: `upper` is 21, the cap 14, the ask 12.
+    const small = render.frameRects(Rect.init(0, 0, 80, 24), .{ .sidebar = 30, .bottom = 12 });
+    try t.expect(small.bottom.eql(Rect.init(0, 10, 80, 12)));
+    try t.expect(small.body.h == 8);
+    try t.expect(small.sidebar.h == 8);
+    // 200x60: `upper` is 57, the ask 12, so the editor keeps 44 rows.
+    const big = render.frameRects(Rect.init(0, 0, 200, 60), .{ .sidebar = 30, .right = 40, .bottom = 12 });
+    try t.expect(big.bottom.eql(Rect.init(0, 46, 200, 12)));
+    try t.expect(big.body.eql(Rect.init(31, 1, 128, 44)));
+    // Too short: `upper` under six rows carves no dock at all, and the
+    // frame is exactly what it was without one.
+    const squat = render.frameRects(Rect.init(0, 0, 120, 8), .{ .bottom = 12 });
+    try t.expectEqual(@as(u16, 5), squat.upper.h);
+    try t.expect(squat.bottom.isEmpty() and squat.bottom_divider.isEmpty());
+    try t.expect(squat.body.eql(render.frameRects(Rect.init(0, 0, 120, 8), .{}).body));
+    // Exactly six rows of `upper`: the floor of three plus the divider,
+    // and the body still has two rows — the dock never takes the last.
+    const six = render.frameRects(Rect.init(0, 0, 120, 9), .{ .bottom = 12 });
+    try t.expectEqual(@as(u16, 6), six.upper.h + six.bottom.h + 1);
+    try t.expectEqual(@as(u16, 3), six.bottom.h);
+    try t.expectEqual(@as(u16, 2), six.body.h);
+    // Seven: the two-thirds cap and the body floor both say four.
+    const seven = render.frameRects(Rect.init(0, 0, 120, 10), .{ .bottom = 12 });
+    try t.expectEqual(@as(u16, 4), seven.bottom.h);
+    try t.expectEqual(@as(u16, 2), seven.body.h);
+}
+
+test "the dock: placing a section there, `view.toggle_bottom_panel` closing and reopening it, the height clamp, and a divider drag" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    // The diagnostics live in the dock; the toggle opens it there.
+    try t.expectEqual(Side.bottom, sideOf(&app, .diagnostics));
+    try t.expect(shown(&app, .bottom) == null);
+    try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+    try t.expectEqual(Section.diagnostics, shown(&app, .bottom).?);
+    var fr = rects(&app);
+    try t.expect(fr.bottom.eql(Rect.init(0, 26, 120, 12)));
+    // A drag of the divider up to row 20 gives the dock the rows under it.
+    bottom_mod.dragTo(&app, 20);
+    try t.expectEqual(@as(u16, 17), size(&app, .bottom));
+    fr = rects(&app);
+    try t.expect(fr.bottom.eql(Rect.init(0, 21, 120, 17)));
+    // Dragging past the floor and the ceiling clamps instead of wrapping.
+    bottom_mod.dragTo(&app, 37);
+    try t.expectEqual(Config.bottom_panel_height_min, size(&app, .bottom));
+    setSize(&app, .bottom, 500);
+    try t.expectEqual(Config.bottom_panel_height_max, size(&app, .bottom));
+    setSize(&app, .bottom, 12);
+    // The toggle closes it, and opens it again on what it showed last.
+    try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+    try t.expect(shown(&app, .bottom) == null);
+    try t.expect(rects(&app).bottom.isEmpty());
+    try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+    try t.expectEqual(Section.diagnostics, shown(&app, .bottom).?);
+}
+
+test "the dock: a section moved down and back — `Ctrl-W J` docks TODOS, `Ctrl-W K` returns it to the column it came from" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"view.activity_todos" });
+    try t.expectEqual(Section.todos, shown(&app, .left).?);
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('J') });
+    try t.expectEqual(Side.bottom, sideOf(&app, .todos));
+    try t.expectEqual(Section.todos, shown(&app, .bottom).?);
+    try t.expect(app.focus == .panel and app.focus.panel == .todos);
+    // The left column falls back to the explorer, as it does for a
+    // section moved to the other column.
+    try t.expectEqual(Section.explorer, shown(&app, .left).?);
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('K') });
+    try t.expectEqual(Side.left, sideOf(&app, .todos));
+    try t.expectEqual(Section.todos, shown(&app, .left).?);
+    // `K` in a column is not a move — it is the focus step.
+    try app.handle(.{ .key = Key.ctrl('w') });
+    try app.handle(.{ .key = Key.char('K') });
+    try t.expectEqual(Side.left, sideOf(&app, .todos));
+    // A section whose configured home is the dock comes back to the
+    // sidebar side when it has never been anywhere else.
+    try t.expect(ctrlWSectionSide(&app, Key.char('K'), .diagnostics).? == .left);
+    try t.expect(ctrlWSectionSide(&app, Key.char('J'), .diagnostics).? == .bottom);
+    try t.expect(ctrlWSectionSide(&app, Key.char('x'), .todos) == null);
+}
+
+test "the dock hosts a pane: `view.host_active_in_bottom_panel` takes the active pane out of the splits and puts it back" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try t.expect(a != b);
+    try t.expect(app.layouts.current().leafOf(b) != null);
+    // Docked: out of the split tree, into the dock, with the keys.
+    try command.run(&app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    try t.expect(bottom_mod.hosts(&app, b));
+    try t.expect(app.layouts.current().leafOf(b) == null);
+    try t.expectEqual(b, bottom_mod.activePane(&app).?);
+    try t.expectEqual(b, app.active.?);
+    try t.expect(bottom_mod.open(&app));
+    try t.expect(!rects(&app).bottom.isEmpty());
+    // The split tree is back to one leaf holding the pane that stayed.
+    try t.expectEqual(a, app.layouts.current().leaf(app.layouts.current().firstLeaf().?).?.active);
+    // Run again on the docked pane: back out to the splits.
+    try command.run(&app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    try t.expect(!bottom_mod.hosts(&app, b));
+    try t.expect(app.layouts.current().leafOf(b) != null);
+    try t.expect(!bottom_mod.open(&app));
+    // Closing a docked pane forgets it (`App.forceClosePane`).
+    try command.run(&app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    try t.expect(bottom_mod.hosts(&app, b));
+    try app.closePane(b, true);
+    try t.expect(!bottom_mod.hosts(&app, b));
+    try t.expect(bottom_mod.activePane(&app) == null);
+}
+
+test "the dock: the toggle drains its hosted panes back to the splits, as Rust's does" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    try t.expect(bottom_mod.hosts(&app, b));
+    try command.run(&app, .{ .static = .@"view.toggle_bottom_panel" });
+    try t.expect(!bottom_mod.hosts(&app, b));
+    try t.expect(app.layouts.current().leafOf(b) != null);
+    try t.expect(!bottom_mod.open(&app));
 }
 
 test "ctrlWCommand: the vim window family from a column, H / L the section moves" {
