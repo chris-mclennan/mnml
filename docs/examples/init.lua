@@ -179,9 +179,10 @@ mnml.command{
   end,
 }
 
--- An operator: `gn{motion}` in vim, ctrl+shift+n in standard, one undo
+-- An operator: `gy{motion}` in vim, ctrl+alt+n in standard, one undo
 -- step whatever `run` applies. The range arrives in the shape
--- `mnml.buf.selection()` answers with, from every road into it.
+-- `mnml.buf.selection()` answers with, whichever road it came by — a
+-- motion, a text object, a Visual selection, or the cursor's word.
 mnml.operator{
   id = "note_it",
   title = "Add the range to the notes",
