@@ -7,17 +7,23 @@ command script.reload
 expect screen contains "scripts: reloaded"
 command user.recent
 expect screen contains "Recent commands"
-# The preview column names the cursor row's command beside the results.
-expect screen contains "ai.dashboard"
+# The MRU is the app's own, so `script.reload` — which this file just
+# ran — heads the list with its `*`, and the preview column names it.
+expect screen contains "* Lua: reload init.lua"
+expect screen contains "run 1 ago"
 # Typing asks the live source again; the rows and the preview follow.
 type "quit mnml"
 wait 300
 expect screen contains "Quit mnml"
 expect screen contains "app.quit"
-expect screen lacks "ai.dashboard"
+expect screen lacks "* Lua: reload init.lua"
 key esc
-# The MRU is the script's own: an accepted row is at the front of the
-# list, marked with its `*`, the next time the picker opens.
+# An accepted row goes to the front of the app's MRU, so it is marked
+# with its `*` the next time the picker opens. The MRU is the app's,
+# and the app only records a command that SUCCEEDED — so there is a
+# file open for `file.save` to write.
+write notes.txt "hello"
+open notes.txt
 command user.recent
 type "save file"
 wait 300

@@ -1,0 +1,18 @@
+# Lua (D10): `mnml.inspect(v)` writes any value out for reading, and
+# `print` is still the log — `print(mnml.inspect(t))` is the pair a
+# script debugs a hook payload with. The strings are kept short: a
+# toast wraps at the box's width.
+write .mnml/init.lua "mnml.command{ id = 'show', run = function() print(mnml.inspect({ 'a', ok = true, at = { n = 12 } })) end }\nmnml.command{ id = 'cycle', run = function() local t = { id = 3 } t.self = t mnml.toast(mnml.inspect(t)) end }\nmnml.command{ id = 'deep', run = function() mnml.toast(mnml.inspect({ a = { b = { c = { d = { e = 1 } } } } })) end }\n"
+command script.reload
+expect screen contains "1 file(s) loaded"
+# The array part first, then every other key sorted — the same string
+# every run, which is what makes it worth printing.
+command user.show
+expect screen contains "{ \"a\", at = { n = 12 }, ok = true }"
+# A table that names itself stops at <cycle> instead of running until
+# the budget does.
+command user.cycle
+expect screen contains "{ id = 3, self = <cycle> }"
+# Four tables deep is the cap, the outermost counted; the fifth is {…}.
+command user.deep
+expect screen contains "{ c = { d = {…} } }"

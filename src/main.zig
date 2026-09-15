@@ -565,6 +565,7 @@ test {
     _ = @import("input/vim.zig");
     _ = @import("app/driver.zig");
     _ = @import("scripting/lua.zig");
+    _ = @import("scripting/doc_check.zig");
     _ = @import("app/smoke_test.zig");
     _ = @import("http/cli.zig");
     _ = @import("http/multipart.zig");

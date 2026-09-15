@@ -182,8 +182,12 @@ fn item(label: []const u8, kind: u8, detail: ?[]const u8, doc: ?[]const u8) type
     return .{ .label = label, .kind = kind, .detail = detail, .documentation = doc, .insert_text = label, .format = .plain, .edit_range = null, .sort_text = null, .filter_text = null, .raw = .null };
 }
 
-/// The API rows keep the table's own order (`command` first, the
-/// tables last) rather than the alphabet: the sort key is the index.
+/// The API rows keep this file's order rather than the alphabet: the
+/// sort key is the index. Under `mnml.` that order puts the
+/// SUB-TABLES first — `buf`, `decor`, `picker`, … — because a reader
+/// who has just typed `mnml.` is looking for an area, and the popup
+/// shows ten rows: with the root functions first, `buf` and `decor`
+/// were below the fold and only a letter reached them.
 fn ordered(arena: Allocator, it: types.CompletionItem, index: usize) Allocator.Error!types.CompletionItem {
     var out = it;
     out.sort_text = try std.fmt.allocPrint(arena, "{d:0>3}", .{index});
@@ -235,8 +239,8 @@ pub fn itemsFor(app: *App, arena: Allocator, ctx: Context) Allocator.Error![]typ
     switch (ctx) {
         .api => |parent| {
             if (std.mem.eql(u8, parent, "mnml")) {
-                inline for (api.root_fns, 0..) |e, i| try out.append(arena, try ordered(arena, item(e.name, kind_fn, "mnml", e.doc), i));
-                inline for (api.tables, 0..) |t, i| try out.append(arena, try ordered(arena, item(t.name, kind_module, "table", t.doc), api.root_fns.len + i));
+                inline for (api.tables, 0..) |t, i| try out.append(arena, try ordered(arena, item(t.name, kind_module, "table", t.doc), i));
+                inline for (api.root_fns, 0..) |e, i| try out.append(arena, try ordered(arena, item(e.name, kind_fn, "mnml", e.doc), api.tables.len + i));
             } else {
                 const rest = parent["mnml.".len..];
                 inline for (api.tables) |t| if (std.mem.eql(u8, rest, t.name)) {
@@ -448,10 +452,22 @@ test "itemsFor: every API function and table, the hooks, the ids, the key tokens
     const arena = app.frame.allocator();
     const root = try itemsFor(&app, arena, .{ .api = "mnml" });
     try testing.expectEqual(api.root_fns.len + api.tables.len, root.len);
-    try testing.expectEqualStrings("command", root[0].label);
-    try testing.expect(std.mem.startsWith(u8, root[0].documentation.?, "mnml.command{ id"));
-    try testing.expectEqualStrings("buf", root[api.root_fns.len].label);
-    try testing.expectEqual(kind_module, root[api.root_fns.len].kind);
+    // The sub-tables come first: `mnml.` is typed to find an area, and
+    // the popup only shows ten rows.
+    try testing.expectEqualStrings("buf", root[0].label);
+    try testing.expectEqual(kind_module, root[0].kind);
+    try testing.expect(std.mem.startsWith(u8, root[0].documentation.?, "mnml.buf —"));
+    // Every table is above every root function, by the sort key the
+    // popup orders on and not just by the order they were appended.
+    for (root[0..api.tables.len]) |r| try testing.expectEqual(kind_module, r.kind);
+    for (root[api.tables.len..]) |r| try testing.expectEqual(kind_fn, r.kind);
+    var last: []const u8 = "";
+    for (root) |r| {
+        try testing.expect(std.mem.order(u8, last, r.sort_text.?) == .lt);
+        last = r.sort_text.?;
+    }
+    try testing.expectEqualStrings("command", root[api.tables.len].label);
+    try testing.expect(std.mem.startsWith(u8, root[api.tables.len].documentation.?, "mnml.command{ id"));
     const buf = try itemsFor(&app, arena, .{ .api = "mnml.buf" });
     try testing.expectEqual(@as(usize, 9), buf.len);
     try testing.expectEqualStrings("apply", buf[5].label);
@@ -503,8 +519,14 @@ test "typing in a workspace .mnml script opens the popup with the API rows; Ente
     const screen_mod = @import("../ipc/screen.zig");
     const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
     defer testing.allocator.free(txt);
+    // The sub-tables are the first rows now, so every area a reader is
+    // looking for is on screen without typing a letter; the root
+    // functions follow, and `toast` falls past the popup's ten rows.
+    try testing.expect(std.mem.indexOf(u8, txt, "decor") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "diagnostics") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "command") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "toast") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "buf").? < std.mem.indexOf(u8, txt, "command").?);
+    try testing.expect(std.mem.indexOf(u8, txt, "toast") == null);
     // Typing narrows; Enter inserts the row.
     for ("toa") |c| try app.handle(.{ .key = Key.char(c) });
     try testing.expect(app.lsp.completion != null);

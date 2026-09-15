@@ -1,0 +1,36 @@
+# Installed scripts (lua-polish): a script that trips the 20 ms budget
+# wears a `⏱ N` chip on its SCRIPTS row, so a slow script is visible
+# before it is annoying — at the SHIPPED `ui.tree_width = 30`, which
+# leaves the column 26 cells and is where a chip appended after the
+# label, version and badge would never have been on screen at all.
+# `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own
+# temp workspace: the corpus shares one data root across every file.
+# env: MNML_SCRIPTS_ROOT=installed
+shell mkdir -p src/spinner
+write src/spinner/script.zon ".{ .name = \"spinner\", .api = 1, .version = \"1.0.0\", .commands = .{ \"user.spin\" } }\n"
+write src/spinner/init.lua "mnml.command{ id = 'spin', run = function() while true do end end }\n"
+command script.install
+type "src/spinner"
+key enter
+key i
+expect screen contains "scripts: installed spinner"
+command view.activity_scripts
+expect screen contains "SCRIPTS"
+expect screen contains "spinner"
+# Nothing has run yet: no chip.
+expect screen lacks "⏱"
+# One runaway command is one toast and one chip.
+command user.spin
+expect screen contains "script budget exceeded"
+command view.activity_scripts
+expect screen contains "⏱ 1"
+# It counts up.
+command user.spin
+command view.activity_scripts
+expect screen contains "⏱ 2"
+# `script.doctor` still spells the count out, and names the folders a
+# script can be scanned from.
+command script.doctor
+expect screen contains "budget overruns 2"
+expect screen contains "sources"
+expect screen contains "require root"
