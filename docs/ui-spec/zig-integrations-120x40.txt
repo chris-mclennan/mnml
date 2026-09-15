@@ -26,7 +26,7 @@
    │                          │                                    ^B     toggle tree
    │                          │                                        ^Q     quit
    │                          │
-   │                          │                             mnml 0.3.0-dev+gce783f92-dirty
+   │                          │                                mnml 0.3.0-dev+g95d24d5e
    │                          │
    │──────────────────────────│
    │ Integrations           ⋮ │
@@ -36,5 +36,5 @@
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    10:07  ws   —
+ TREE  [no file]                                                              F 59% ▲0.4  󱼀 󰐎    11:21  ws   —
 
