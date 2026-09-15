@@ -65,7 +65,7 @@ pub const root_fns = [_]Fn{
     fnOf("data_root", "mnml.data_root() → the data root (~/.config/mnml, or MNML_DATA_ROOT)", dataRoot),
     fnOf("redraw", "mnml.redraw() — ask for a frame (a key or click already implies one)", redraw),
     fnOf("inspect", "mnml.inspect(v) → a string — any value written out for reading: tables walked 4 deep with their keys sorted, a repeat marked <cycle>, anything deeper {…}", inspect),
-    fnOf("commands", "mnml.commands(query?) → { { id, title, group, keys = { … } }, … } — every command, built-in and script, narrowed by a substring on the id or the title", commandsList),
+    fnOf("commands", "mnml.commands(query?) → { { id, title, group, keys = { … }, rank }, … } — every command, built-in and script, narrowed by a substring on the id or the title; rank is its place in the MRU, 1 = the one run most recently, nil = never run", commandsList),
     fnOf("list", "mnml.list{ title, rows = fn(sort), on_enter?, on_menu?, sort? } → a list handle with :refresh(); host it with pane.open{ list = } or section{ list = }", listRegister),
     fnOf("section", "mnml.section{ id, title, glyph?, ascii?, list, side?, after? } — a rail section of your own, with the caps header, filter, sort chip and folds every built-in has", sectionRegister),
     fnOf("operator", "mnml.operator{ id, keys = { vim = \"g<letter>\", standard = \"chord\" }, run = fn(range) } — operator-pending under vim, the selection or the cursor's word under standard", operatorRegister),
@@ -1331,10 +1331,18 @@ fn matches(needle: []const u8, id: []const u8, title: []const u8) bool {
 }
 
 fn pushCommandRow(L: *State, app: *App, id: []const u8, title: []const u8, group: []const u8, keys: command.Keys, dyn_keys: []const []const u8) void {
-    L.createTable(0, 4);
+    L.createTable(0, 5);
     setStrField(L, "id", id);
     setStrField(L, "title", title);
     setStrField(L, "group", group);
+    // The MRU the palette and `picker.recent_commands` already keep —
+    // every run, from the palette, a chord, a menu or a `:` line, its
+    // own. 1 is the one run most recently; a command never run has no
+    // `rank` at all, so `if row.rank then` reads as the question it is.
+    if (app.recentCommandRank(id)) |r| {
+        L.pushInteger(@intCast(r + 1));
+        L.setField(-2, "rank");
+    }
     L.createTable(0, 0);
     var k: usize = 0;
     const own = switch (App.profileOf(app.input_style)) {
@@ -2275,6 +2283,41 @@ test "mnml.inspect: every type, the array part before the sorted keys, a cycle m
     try testing.expect(app.lastToast() == null);
     try lua.runString("print(mnml.inspect({ a = 1 }))");
     try testing.expectEqualStrings("{ a = 1 }", app.lastToast().?);
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.commands: every command, narrowed by the query, each row carrying its MRU rank" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    // Nothing has run yet: every row is rank-less, and `if row.rank`
+    // reads as the question it is.
+    try lua.runString(
+        \\local all = mnml.commands()
+        \\assert(#all > 100, tostring(#all))
+        \\for _, c in ipairs(all) do assert(c.rank == nil, c.id .. " has a rank") end
+        \\local save = nil
+        \\for _, c in ipairs(mnml.commands("toggle_line_numbers")) do save = c end
+        \\assert(save and save.id == "view.toggle_line_numbers", tostring(save))
+        \\assert(save.group == "view" and #save.title > 0)
+    );
+    // Two runs, and the MRU has them newest first — 1 is the last one.
+    try command.runNamed(&app, "view.toggle_line_numbers");
+    try command.runNamed(&app, "view.toggle_tree");
+    try lua.runString(
+        \\local rank = {}
+        \\for _, c in ipairs(mnml.commands()) do rank[c.id] = c.rank end
+        \\assert(rank["view.toggle_tree"] == 1, tostring(rank["view.toggle_tree"]))
+        \\assert(rank["view.toggle_line_numbers"] == 2, tostring(rank["view.toggle_line_numbers"]))
+        \\assert(rank["app.quit"] == nil)
+    );
+    // A script command is in the same list, and its own runs count.
+    try lua.runString("mnml.command{ id = 'hello', title = 'Say hello', run = function() end }");
+    try command.runNamed(&app, "user.hello");
+    try lua.runString(
+        \\local rows = mnml.commands("user.hello")
+        \\assert(#rows == 1 and rows[1].rank == 1 and rows[1].title == "Say hello", tostring(#rows))
+    );
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
 
