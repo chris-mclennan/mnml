@@ -601,6 +601,50 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_bitbucket_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(fake_bitbucket, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_bitbucket_exe_name }).step);
 
+    // `integrations/jira/` is the Jira ticket viewer: its own package on
+    // the SDK, built here beside the exe the way the sample is, with its
+    // offline server (`integrations/jira/tools/fake_jira/`) beside it so
+    // the corpus never touches the network. Both paths reach the unit
+    // tests as build options and `mnml-zig test` as `$MNML_JIRA` /
+    // `$MNML_FAKE_JIRA`.
+    const jira_mod = b.createModule(.{
+        .root_source_file = b.path("integrations/jira/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "mnml_sdk", .module = sdk_mod }},
+    });
+    const jira_exe = b.addExecutable(.{ .name = "mnml-jira", .root_module = jira_mod });
+    const jira_install = b.addInstallArtifact(jira_exe, .{});
+    b.getInstallStep().dependOn(&jira_install.step);
+    const jira_exe_name = b.fmt("mnml-jira{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    const jira_step = b.step("jira-integration", "Build the Jira integration (zig-out/bin/mnml-jira)");
+    jira_step.dependOn(&jira_install.step);
+    build_options.addOption([]const u8, "jira_integration_exe", b.getInstallPath(.bin, jira_exe_name));
+    tests_run.step.dependOn(&jira_install.step);
+    e2e_run.step.dependOn(&jira_install.step);
+    gate_in_test.step.dependOn(&jira_install.step);
+    corpus_run.step.dependOn(&jira_install.step);
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jira_mod, .filters = test_filters, .test_runner = test_runner })).step);
+    gate_step.dependOn(&b.addInstallArtifact(jira_exe, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = jira_exe_name }).step);
+
+    const fake_jira_mod = b.createModule(.{
+        .root_source_file = b.path("integrations/jira/tools/fake_jira/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const fake_jira = b.addExecutable(.{ .name = "mnml-fake-jira", .root_module = fake_jira_mod });
+    const fake_jira_install = b.addInstallArtifact(fake_jira, .{});
+    b.getInstallStep().dependOn(&fake_jira_install.step);
+    const fake_jira_exe_name = b.fmt("mnml-fake-jira{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    build_options.addOption([]const u8, "fake_jira_exe", b.getInstallPath(.bin, fake_jira_exe_name));
+    jira_step.dependOn(&fake_jira_install.step);
+    tests_run.step.dependOn(&fake_jira_install.step);
+    e2e_run.step.dependOn(&fake_jira_install.step);
+    gate_in_test.step.dependOn(&fake_jira_install.step);
+    corpus_run.step.dependOn(&fake_jira_install.step);
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_jira_mod, .filters = test_filters, .test_runner = test_runner })).step);
+    gate_step.dependOn(&b.addInstallArtifact(fake_jira, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_jira_exe_name }).step);
+
     // ── fake DAP adapter ──
     // `mnml-fake-dap` (tools/fake_dap/) is the deterministic debug adapter
     // the DAP client test and the `dap_session_*.test` scripts drive; it

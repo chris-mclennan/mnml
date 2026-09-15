@@ -264,6 +264,14 @@ fn fakeBitbucketPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
     return fakeToolPath(gpa, io, "mnml-fake-bitbucket", build_options.fake_bitbucket_exe);
 }
 
+fn jiraIntegrationPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-jira", build_options.jira_integration_exe);
+}
+
+fn fakeJiraPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-fake-jira", build_options.fake_jira_exe);
+}
+
 /// A fake tool built beside this binary (`zig build`), or at the
 /// build's install path when the runner is elsewhere.
 fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8) Allocator.Error!?[]u8 {
@@ -425,6 +433,22 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         if (try fakeBitbucketPath(gpa, io)) |p| {
             defer gpa.free(p);
             try env.put("MNML_FAKE_BITBUCKET", p);
+        }
+    }
+    // `$MNML_JIRA` and `$MNML_FAKE_JIRA`: the Jira integration and its
+    // offline server, for the `integrations_jira_*` scripts — a manifest
+    // whose `binary` is that variable resolves to it, and a `config.zon`
+    // whose `jira.url` points at the fake server needs no network.
+    if (env.get("MNML_JIRA") == null) {
+        if (try jiraIntegrationPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_JIRA", p);
+        }
+    }
+    if (env.get("MNML_FAKE_JIRA") == null) {
+        if (try fakeJiraPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_FAKE_JIRA", p);
         }
     }
     const opts: e2e.Options = .{
