@@ -387,9 +387,11 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
     const chip_w = ui.width(chip_text);
     // Below this the row is a label and nothing else; a chip would be
     // the whole row.
-    const chip_fits = chip_w > 0 and r1.w > chip_w + 8;
+    const chip_fits = chip_w > 0 and r1.w > chip_w + 9;
     if (chip_fits) {
-        right -|= @intCast(chip_w + 1);
+        // +2: one cell of air before the chip, one after it (the last
+        // column of the row is the column's border).
+        right -|= @intCast(chip_w + 2);
         // Painted BEFORE the left-to-right run, so the run clips
         // against the narrowed `right` instead of overwriting it.
         _ = ui.putStrRight(r1.right() - 1, r1.y, chip_w, chip_text, Theme.withFg(style, t.palette.yellow));
