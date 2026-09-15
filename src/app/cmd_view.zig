@@ -15,6 +15,7 @@ const Layout = app_mod.Layout;
 const layout_mod = @import("layout.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
+const bottom_dock = @import("bottom.zig");
 const http_panel = @import("http_panel.zig");
 const http_app = @import("http.zig");
 const git_palette = @import("git_palette.zig");
@@ -1297,6 +1298,16 @@ fn splitOpenFileUnderCursor(app: *App) CommandError!void {
     if (target.line) |l| if (app.panes.editor(id)) |ed| ed.buf.editor.placeCursor(l -| 1, (target.col orelse 1) -| 1);
 }
 
+/// The host the keys are in when they are not in a pane: a column, or
+/// the dock (its section or its hosted pane).
+/// // changed (bottom-dock).
+fn hostUnderKeys(app: *App) ?side.Side {
+    if (bottom_dock.focused(app)) return .bottom;
+    const s = side.sectionOfFocus(app) orelse return null;
+    if (!side.isShown(app, s)) return null;
+    return side.sideOf(app, s);
+}
+
 /// The nearest enclosing split of `dir` above the active leaf, and
 /// whether the leaf sits in its first half.
 fn enclosingSplit(app: *App, dir: layout_mod.SplitDir) CommandError!struct { id: layout_mod.NodeId, first: bool, ratio: u16 } {
@@ -1311,8 +1322,22 @@ fn enclosingSplit(app: *App, dir: layout_mod.SplitDir) CommandError!struct { id:
     return app.diag.fail(app.frame.allocator(), "no {s} split to resize", .{if (dir == .horizontal) "side-by-side" else "stacked"});
 }
 
-/// Grow (or shrink) the active leaf's half of its enclosing split by 5 %.
+/// Grow (or shrink) the active leaf's half of its enclosing split by
+/// 5 % — or, with the keys in a column or the dock, that host's own
+/// measure: two cells across for a column, a row for the dock. The
+/// same `Ctrl-W > < + -` chords, whichever window they are pressed in.
+/// // changed (bottom-dock): the columns and the dock had no keyboard
+/// resize at all; the mouse's divider was the only way.
 fn resize(app: *App, dir: layout_mod.SplitDir, grow: bool) CommandError!void {
+    if (hostUnderKeys(app)) |host| {
+        const wants_width = dir == .horizontal;
+        if (wants_width != (host != .bottom)) return app.diag.fail(app.frame.allocator(), "the {s} resizes by {s}", .{ side.sideLabel(host), if (host == .bottom) "rows (ctrl+w + / -)" else "columns (ctrl+w > / <)" });
+        const step: i32 = if (host == .bottom) 1 else 2;
+        const now: i32 = @intCast(side.size(app, host));
+        side.setSize(app, host, @intCast(@max(now + (if (grow) step else -step), 3)));
+        app.needs_render = true;
+        return;
+    }
     const s = try enclosingSplit(app, dir);
     const delta: i32 = if (grow == s.first) 5 else -5;
     const next: i32 = std.math.clamp(@as(i32, s.ratio) + delta, 10, 90);
@@ -1487,13 +1512,15 @@ test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right
     try command.run(&app, .{ .static = .@"view.rotate_splits" });
     try t.expectEqual(first_before, layout.node(pid).split.second);
     // The right column's tabs walk the sections on the right side
-    // (`side.zig` has the walk itself).
+    // (`side.zig` has the walk itself). // changed (bottom-dock): the
+    // outline is the only one that lives there out of the box, so the
+    // walk stays on it.
     try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
-    try t.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
+    try t.expectEqual(side.Section.outline, side.shown(&app, .right).?);
     try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
     try t.expectEqual(side.Section.outline, side.shown(&app, .right).?);
     try command.run(&app, .{ .static = .@"view.right_panel_prev_tab" });
-    try t.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
+    try t.expectEqual(side.Section.outline, side.shown(&app, .right).?);
     try command.run(&app, .{ .static = .@"view.right_panel_close_tab" });
     // A scratch in a fresh split beside the current pane.
     const before = app.active.?;

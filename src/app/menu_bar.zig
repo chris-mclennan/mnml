@@ -148,7 +148,7 @@ const brand_rows = [_]MenuItem{
 const file_recent_row = 3;
 /// The View menu's full-screen row is index `view_fullscreen_row`: its
 /// label reads the way out while inside (`zen.title`).
-const view_fullscreen_row = 7;
+const view_fullscreen_row = 8;
 const file_rows = [_]MenuItem{
     .{ .icon = "\u{F0224}", .icon_ascii = "+", .label = "New file", .action = .{ .command = .@"file.new" } },
     .{ .icon = "\u{F115}", .icon_ascii = "/", .label = "Open file…", .action = .{ .command = .@"picker.files" } },
@@ -181,16 +181,18 @@ const selection_rows = [_]MenuItem{
     .{ .icon = "\u{F00D}", .icon_ascii = "x", .label = "Clear extra cursors", .action = .{ .command = .@"editor.clear_extra_cursors" } },
 };
 
-/// Rust's "Toggle bottom panel" and "Commands reference…" rows are left
-/// out (here and in Help): `view.toggle_bottom_panel` and
-/// `view.commands_reference` have no runner yet, and a row that toasts
-/// "not implemented" is dead.
+/// Rust's "Commands reference…" row is left out (here and in Help):
+/// `view.commands_reference` has no runner yet, and a row that toasts
+/// "not implemented" is dead. // changed (bottom-dock): "Toggle bottom
+/// panel" was left out for the same reason and is back — the dock runs.
 const view_rows = [_]MenuItem{
     .{ .icon = "\u{F0770}", .icon_ascii = "/", .label = "File browser pane", .action = .{ .command = .@"files.open" } },
     .{ .icon = "\u{F0770}", .icon_ascii = "/", .label = "Dual file panes (commander)", .action = .{ .command = .@"files.open_split" } },
     .{ .icon = "\u{F4B5}", .icon_ascii = ">", .label = "Command palette", .action = .{ .command = .palette } },
     sep(.{ .icon = "\u{EC02}", .icon_ascii = "|", .label = "Toggle left panel", .action = .{ .command = .@"view.toggle_tree" } }),
     .{ .icon = "\u{EC00}", .icon_ascii = "|", .label = "Toggle right panel", .action = .{ .command = .@"view.toggle_right_panel" } },
+    // // changed (bottom-dock): Rust's own View row, back in the menu.
+    .{ .icon = "\u{EC17}", .icon_ascii = "_", .label = "Toggle bottom panel", .action = .{ .command = .@"view.toggle_bottom_panel" } },
     .{ .icon = "\u{F0C9}", .icon_ascii = "=", .label = "Cycle menu bar (always / auto / hidden)", .action = .{ .command = .@"view.menu_bar_cycle" } },
     .{ .icon = "\u{EB80}", .icon_ascii = "~", .label = "Toggle line wrap", .action = .{ .command = .@"view.toggle_wrap" } },
     .{ .icon = "\u{F06E}", .icon_ascii = "o", .label = "Enter full screen", .action = .{ .command = .@"view.fullscreen" } },
@@ -530,7 +532,8 @@ fn forEachRow(comptime f: fn (Menu, MenuItem) anyerror!void) !void {
 
 test "menu rows: ten menus with Rust's row counts; every row is a registered command with a runner, or the recent-files parent" {
     try t.expectEqual(@as(usize, 10), Menu.count);
-    const counts = [Menu.count]usize{ 3, 10, 6, 7, 13, 6, 6, 3, 15, 3 };
+    // // changed (bottom-dock): View grew "Toggle bottom panel" (14).
+    const counts = [Menu.count]usize{ 3, 10, 6, 7, 14, 6, 6, 3, 15, 3 };
     for (Menu.all, counts) |m, n| try t.expectEqual(n, rowsOf(m).len);
     const Check = struct {
         var missing: usize = 0;

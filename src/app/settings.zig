@@ -29,6 +29,7 @@ const ai_app = @import("ai.zig");
 const Config = config.Config;
 const command = @import("../core/command.zig");
 const side = @import("side.zig");
+const bottom = @import("bottom.zig");
 const input = @import("../input/mod.zig");
 const Theme = @import("../ui/theme.zig");
 const ui_settings = @import("../ui/settings.zig");
@@ -210,6 +211,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
     .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
     .{ .path = "ui.right_panel_width", .label = "Right panel width", .section = .ui, .scope = .workspace, .number = .{ .min = 8, .max = 120, .step = 2 } },
+    // // changed (bottom-dock): the dock's pair, beside the column's.
+    .{ .path = "ui.bottom_panel_visible", .label = "Bottom dock at start", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.bottom_panel_height", .label = "Bottom dock rows", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.bottom_panel_height_min, .max = config.Config.bottom_panel_height_max, .step = 1 } },
     .{ .path = "ui.tree_width", .label = "Tree width", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.tree_width_min, .max = config.Config.tree_width_max, .step = 2 } },
     .{ .path = "ui.sidebar_side", .label = "Default sidebar side", .section = .ui, .scope = .home },
     .{ .path = "ui.color_column", .label = "Colour column (0 = off)", .section = .ui, .scope = .workspace, .number = .{ .min = 0, .max = 240, .step = 4 } },
@@ -667,6 +671,15 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         };
         // The overlay keeps the keys while it is up.
         if (app.overlay != .none) app.focus = .overlay;
+    } else if (comptime std.mem.eql(u8, path, "ui.bottom_panel_height")) {
+        app.side.bottom_height = app.cfg.ui.bottom_panel_height;
+    } else if (comptime std.mem.eql(u8, path, "ui.bottom_panel_visible")) {
+        const dock_open = bottom.open(app);
+        if (app.cfg.ui.bottom_panel_visible != dock_open) command.run(app, .{ .static = .@"view.toggle_bottom_panel" }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        };
+        if (app.overlay != .none) app.focus = .overlay;
     } else if (comptime std.mem.eql(u8, path, "ui.sidebar_side")) {
         side.reseed(app);
         if (app.overlay != .none) app.focus = .overlay;
@@ -884,8 +897,9 @@ test "number rows: → steps the right panel width, writes it, and the config se
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 80, .cfg = .{ .ui = .{ .right_panel_visible = true, .right_panel_width = 30 } } });
     defer app.deinit();
     // `right_panel_visible` opens the right column on the first section
-    // that lives there (the diagnostics, fresh).
-    try t.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
+    // that lives there. // changed (bottom-dock): the diagnostics moved
+    // to the dock, so that is the outline.
+    try t.expectEqual(side.Section.outline, side.shown(&app, .right).?);
     try t.expectEqual(@as(u16, 30), app.side.right_width);
     try open(&app);
     const list = try items(&app, app.frame.allocator());

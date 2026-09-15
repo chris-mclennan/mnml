@@ -414,16 +414,30 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
     };
     // A section with a column surface can change sides (VS Code's
     // "Move to right side"); a pane section has no side.
-    const move: ?MenuItem = if (side.surface(s) != null) (if (side.sideOf(app, s) == .left)
-        .{ .label = "Move to right side", .action = .{ .move_section = .{ .section = s, .side = .right } } }
-    else
-        .{ .label = "Move to left side", .action = .{ .move_section = .{ .section = s, .side = .left } } }) else null;
-    const extra: usize = if (move != null) 1 else 0;
-    const rows = try app.gpa.alloc(MenuItem, 1 + extra + verbs.len);
+    // // changed (bottom-dock): three hosts, so two move rows — the
+    // other column, and the dock (or, from the dock, back up).
+    var moves: [2]MenuItem = undefined;
+    var n_moves: usize = 0;
+    if (side.surface(s) != null) {
+        const here = side.sideOf(app, s);
+        for ([_]side.Side{ .left, .right, .bottom }) |dest| {
+            if (dest == here or n_moves == moves.len) continue;
+            moves[n_moves] = .{
+                .label = switch (dest) {
+                    .left => "Move to left side",
+                    .right => "Move to right side",
+                    .bottom => "Move to bottom dock",
+                },
+                .action = .{ .move_section = .{ .section = s, .side = dest } },
+            };
+            n_moves += 1;
+        }
+    }
+    const rows = try app.gpa.alloc(MenuItem, 1 + n_moves + verbs.len);
     errdefer app.gpa.free(rows);
     rows[0] = show;
-    if (move) |m| rows[1] = m;
-    @memcpy(rows[1 + extra ..], verbs);
+    @memcpy(rows[1 .. 1 + n_moves], moves[0..n_moves]);
+    @memcpy(rows[1 + n_moves ..], verbs);
     try app.openMenu(s.meta().label, rows, x, y);
 }
 
