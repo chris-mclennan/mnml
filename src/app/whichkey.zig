@@ -327,6 +327,25 @@ pub fn continuations(arena: std.mem.Allocator, path: []const u8, vim: bool) []co
     return out[0..n_out];
 }
 
+/// The chords beneath a node, recursively: a leaf is one of its own, a
+/// group is the sum of its kids'. What the popup shows in a group row's
+/// `+find (7)` — read off the tree, so a chord added below changes the
+/// number with nothing else to edit. `vim = false` leaves the `vim_only`
+/// entries out, as that profile's popup does.
+pub fn chordCount(n: *const Node, vim: bool) u16 {
+    return switch (n.*) {
+        .cmd, .dead => 1,
+        .group => |g| blk: {
+            var sum: u16 = 0;
+            for (g.kids) |k| {
+                if (!vim and k.vim_only) continue;
+                sum += chordCount(&k.node, vim);
+            }
+            break :blk sum;
+        },
+    };
+}
+
 test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expect(lookup("") != null);
     try std.testing.expectEqualStrings("+split", lookup("s").?.label());
@@ -392,6 +411,82 @@ test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves 
     // Every key at the root is unique (a group's kids too) — the trie
     // would silently shadow the second otherwise.
     try expectUniqueKeys(&root);
+}
+
+test "every group in both profiles has a glyph with an ascii twin, and the counts are the tree's" {
+    const t = std.testing;
+    const glyphs = @import("../ui/whichkey_glyph.zig");
+    // Both profiles, every group reachable in it: a row of its own in
+    // the table (not the neutral fall-through) and a one-byte twin.
+    for ([_]bool{ true, false }) |vim| {
+        var stack: [64]*const Node = undefined;
+        var n_stack: usize = 1;
+        stack[0] = &root;
+        var seen: usize = 0;
+        while (n_stack > 0) {
+            n_stack -= 1;
+            const node = stack[n_stack];
+            const g = node.group;
+            if (node != &root) {
+                seen += 1;
+                const face = glyphs.forGroup(g.label);
+                if (std.mem.eql(u8, face.glyph, glyphs.neutral.glyph)) {
+                    std.debug.print("which-key group with no glyph: {s}\n", .{g.label});
+                    return error.GroupWithoutGlyph;
+                }
+                try t.expect(face.fallback.len == 1 and std.ascii.isPrint(face.fallback[0]));
+            }
+            for (g.kids) |*k| {
+                if (!vim and k.vim_only) continue;
+                if (k.node == .group) {
+                    stack[n_stack] = &k.node;
+                    n_stack += 1;
+                }
+            }
+        }
+        try t.expect(seen >= 19);
+    }
+    // The count is a walk of the tree, not a literal: an iterative
+    // sweep of every leaf beneath a node agrees with `chordCount`.
+    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "h", "i", "H", "I", "P", "b", "c", "r" }) |path| {
+        for ([_]bool{ true, false }) |vim| {
+            const n = lookupIn(path, vim) orelse continue;
+            try t.expectEqual(leavesUnder(n, vim), chordCount(n, vim));
+        }
+    }
+    // The numbers the popup paints today, so a chord added or dropped
+    // shows up here rather than silently on screen.
+    try t.expectEqual(@as(u16, 7), chordCount(lookup("f").?, true));
+    try t.expectEqual(@as(u16, 12), chordCount(lookup("s").?, true));
+    try t.expectEqual(@as(u16, 5), chordCount(lookup("Lc").?, true));
+    try t.expectEqual(@as(u16, 19), chordCount(lookup("L").?, true));
+    try t.expectEqual(@as(u16, 15), chordCount(lookup("d").?, true));
+    try t.expectEqual(@as(u16, 1), chordCount(lookup("Pp").?, true));
+    // The root: the vim profile carries `+debug`'s fifteen and
+    // `<leader>ra`'s one more than the standard one.
+    try t.expectEqual(chordCount(&root, false) + 16, chordCount(&root, true));
+}
+
+/// An independent counter for the test: every leaf beneath `n`, found
+/// with an explicit stack instead of `chordCount`'s recursion.
+fn leavesUnder(n: *const Node, vim: bool) u16 {
+    var stack: [256]*const Node = undefined;
+    var n_stack: usize = 1;
+    stack[0] = n;
+    var leaves: u16 = 0;
+    while (n_stack > 0) {
+        n_stack -= 1;
+        const node = stack[n_stack];
+        switch (node.*) {
+            .cmd, .dead => leaves += 1,
+            .group => |g| for (g.kids) |*k| {
+                if (!vim and k.vim_only) continue;
+                stack[n_stack] = &k.node;
+                n_stack += 1;
+            },
+        }
+    }
+    return leaves;
 }
 
 fn expectUniqueKeys(n: *const Node) !void {
