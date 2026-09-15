@@ -559,6 +559,48 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = sample_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(sample, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = sample_exe_name }).step);
 
+    // `mnml-bitbucket` (`integrations/bitbucket/`) is the Bitbucket
+    // Cloud pull-request pane, and `mnml-fake-bitbucket`
+    // (`integrations/bitbucket/tools/fake_bitbucket/`) the deterministic
+    // Bitbucket its tests and the corpus drive. Both are built beside
+    // the exe and reach the corpus as `$MNML_BITBUCKET_INTEGRATION` and
+    // `$MNML_FAKE_BITBUCKET` (main.zig's `test`).
+    const bitbucket_mod = b.createModule(.{
+        .root_source_file = b.path("integrations/bitbucket/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "mnml_sdk", .module = sdk_mod }},
+    });
+    const bitbucket = b.addExecutable(.{ .name = "mnml-bitbucket", .root_module = bitbucket_mod });
+    const bitbucket_install = b.addInstallArtifact(bitbucket, .{});
+    b.getInstallStep().dependOn(&bitbucket_install.step);
+    const bitbucket_exe_name = b.fmt("mnml-bitbucket{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    const bitbucket_step = b.step("bitbucket-integration", "Build the Bitbucket integration (zig-out/bin/mnml-bitbucket)");
+    bitbucket_step.dependOn(&bitbucket_install.step);
+    build_options.addOption([]const u8, "bitbucket_integration_exe", b.getInstallPath(.bin, bitbucket_exe_name));
+    e2e_run.step.dependOn(&bitbucket_install.step);
+    gate_in_test.step.dependOn(&bitbucket_install.step);
+    corpus_run.step.dependOn(&bitbucket_install.step);
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = bitbucket_mod, .filters = test_filters, .test_runner = test_runner })).step);
+    gate_step.dependOn(&b.addInstallArtifact(bitbucket, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = bitbucket_exe_name }).step);
+
+    const fake_bitbucket_mod = b.createModule(.{
+        .root_source_file = b.path("integrations/bitbucket/tools/fake_bitbucket/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const fake_bitbucket = b.addExecutable(.{ .name = "mnml-fake-bitbucket", .root_module = fake_bitbucket_mod });
+    const fake_bitbucket_install = b.addInstallArtifact(fake_bitbucket, .{});
+    b.getInstallStep().dependOn(&fake_bitbucket_install.step);
+    const fake_bitbucket_exe_name = b.fmt("mnml-fake-bitbucket{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    build_options.addOption([]const u8, "fake_bitbucket_exe", b.getInstallPath(.bin, fake_bitbucket_exe_name));
+    bitbucket_step.dependOn(&fake_bitbucket_install.step);
+    e2e_run.step.dependOn(&fake_bitbucket_install.step);
+    gate_in_test.step.dependOn(&fake_bitbucket_install.step);
+    corpus_run.step.dependOn(&fake_bitbucket_install.step);
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_bitbucket_mod, .filters = test_filters, .test_runner = test_runner })).step);
+    gate_step.dependOn(&b.addInstallArtifact(fake_bitbucket, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_bitbucket_exe_name }).step);
+
     // ── fake DAP adapter ──
     // `mnml-fake-dap` (tools/fake_dap/) is the deterministic debug adapter
     // the DAP client test and the `dap_session_*.test` scripts drive; it

@@ -1,0 +1,199 @@
+//! The socket around `server.zig`. A thread accepts, `std.http.Server`
+//! parses, `server.handle` answers. `start` takes port 0 and reports
+//! the one the OS gave, so a test never picks a number and two runs
+//! never collide; `stop` wakes the accept with a connection of its own,
+//! the way mnml's own mock server does.
+//!
+//! The `State` is shared: a test reads `srv.state` after driving the
+//! client to see the approval that landed or the comment that was
+//! posted, under `state_lock`.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const bb = @import("server.zig");
+
+pub const Server = struct {
+    gpa: Allocator,
+    io: Io,
+    port: u16,
+    listener: Io.net.Server,
+    thread: std.Thread,
+    stopping: std.atomic.Value(bool) = .init(false),
+    state: bb.State = .{},
+    state_lock: Io.Mutex = .init,
+    /// The arena the replies are built on, reset per request.
+    arena: std.heap.ArenaAllocator,
+
+    pub fn start(gpa: Allocator, io: Io, port: u16) !*Server {
+        const self = try gpa.create(Server);
+        errdefer gpa.destroy(self);
+        const addr: Io.net.IpAddress = .{ .ip4 = .loopback(port) };
+        var listener = try addr.listen(io, .{ .reuse_address = true });
+        errdefer listener.deinit(io);
+        self.* = .{
+            .gpa = gpa,
+            .io = io,
+            .port = listener.socket.address.getPort(),
+            .listener = listener,
+            .thread = undefined,
+            .arena = std.heap.ArenaAllocator.init(gpa),
+        };
+        self.thread = try std.Thread.spawn(.{}, loop, .{self});
+        return self;
+    }
+
+    pub fn stop(self: *Server) void {
+        self.stopping.store(true, .release);
+        const addr: Io.net.IpAddress = .{ .ip4 = .loopback(self.port) };
+        if (addr.connect(self.io, .{ .mode = .stream })) |s| s.close(self.io) else |_| {}
+        self.thread.join();
+        self.listener.deinit(self.io);
+        self.arena.deinit();
+        self.gpa.destroy(self);
+    }
+
+    /// `http://127.0.0.1:<port>/2.0` — an API root, the shape
+    /// `BITBUCKET_BASE_URL` wants. Owned by the caller.
+    pub fn baseUrl(self: *const Server, gpa: Allocator) Allocator.Error![]u8 {
+        return std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/2.0", .{self.port});
+    }
+
+    /// Answer the next `n` requests with a 429.
+    pub fn rateLimitNext(self: *Server, n: u32) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.rate_limit_next = n;
+    }
+
+    /// Answer `/2.0/user` with a 403 from now on.
+    pub fn denyUser(self: *Server, on: bool) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.deny_user = on;
+    }
+
+    /// A copy of the state as it stands — what the pane's writes did.
+    pub fn snapshot(self: *Server) bb.State {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        return self.state;
+    }
+
+    fn loop(self: *Server) void {
+        while (!self.stopping.load(.acquire)) {
+            const stream = self.listener.accept(self.io) catch break;
+            defer stream.close(self.io);
+            if (self.stopping.load(.acquire)) break;
+            self.serveOne(stream) catch {};
+        }
+    }
+
+    fn serveOne(self: *Server, stream: Io.net.Stream) !void {
+        var rbuf: [16 * 1024]u8 = undefined;
+        var wbuf: [64 * 1024]u8 = undefined;
+        var reader = stream.reader(self.io, &rbuf);
+        var writer = stream.writer(self.io, &wbuf);
+        var http = std.http.Server.init(&reader.interface, &writer.interface);
+        var request = http.receiveHead() catch return;
+
+        // `head.target` and the header values point into the reader's
+        // buffer, and reading the body refills it — copy both out
+        // first or the routing walks freed bytes.
+        var target_buf: [2048]u8 = undefined;
+        const tlen = @min(request.head.target.len, target_buf.len);
+        @memcpy(target_buf[0..tlen], request.head.target[0..tlen]);
+        const target = target_buf[0..tlen];
+        const method = bb.methodOf(@tagName(request.head.method));
+
+        var auth_buf: [1024]u8 = undefined;
+        var auth: []const u8 = "";
+        var it = request.iterateHeaders();
+        while (it.next()) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "authorization") and h.value.len <= auth_buf.len) {
+                @memcpy(auth_buf[0..h.value.len], h.value);
+                auth = auth_buf[0..h.value.len];
+            }
+        }
+        var body_buf: [64 * 1024]u8 = undefined;
+        var body: []const u8 = "";
+        if (request.head.content_length) |n| {
+            if (n > 0 and n <= body_buf.len) {
+                const br = request.readerExpectContinue(&.{}) catch request.readerExpectNone(&.{});
+                const got = br.readSliceShort(body_buf[0..@intCast(n)]) catch 0;
+                body = body_buf[0..got];
+            }
+        }
+
+        self.state_lock.lockUncancelable(self.io);
+        _ = self.arena.reset(.retain_capacity);
+        const reply = bb.handle(self.arena.allocator(), &self.state, .{
+            .method = method,
+            .target = target,
+            .body = body,
+            .authorization = auth,
+        }) catch bb.Reply{ .status = 500, .body = "{\"error\":{\"message\":\"out of memory\"}}" };
+        self.state_lock.unlock(self.io);
+
+        var extra: [2]std.http.Header = undefined;
+        var n_extra: usize = 1;
+        extra[0] = .{ .name = "content-type", .value = reply.content_type };
+        var ra_buf: [8]u8 = undefined;
+        if (reply.retry_after_secs) |secs| {
+            extra[1] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
+            n_extra = 2;
+        }
+        request.respond(reply.body, .{
+            .status = @enumFromInt(reply.status),
+            .extra_headers = extra[0..n_extra],
+            .keep_alive = false,
+        }) catch {};
+    }
+};
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "the listener answers a real HTTP request on an ephemeral port" {
+    const io = t.io;
+    const srv = try Server.start(t.allocator, io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    try t.expect(std.mem.startsWith(u8, base, "http://127.0.0.1:"));
+    try t.expect(std.mem.endsWith(u8, base, "/2.0"));
+
+    const url = try std.fmt.allocPrint(t.allocator, "{s}/user", .{base});
+    defer t.allocator.free(url);
+    var client: std.http.Client = .{ .allocator = t.allocator, .io = io };
+    defer client.deinit();
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    const res = try client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .response_writer = &out.writer,
+        .extra_headers = &.{.{ .name = "authorization", .value = "Basic dXNlcjp0b2tlbg==" }},
+        .keep_alive = false,
+    });
+    try t.expectEqual(@as(u16, 200), @intFromEnum(res.status));
+    try t.expect(std.mem.indexOf(u8, out.written(), "acct-chris") != null);
+}
+
+test "a request with no credentials comes back 401 over the wire too" {
+    const io = t.io;
+    const srv = try Server.start(t.allocator, io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    const url = try std.fmt.allocPrint(t.allocator, "{s}/user", .{base});
+    defer t.allocator.free(url);
+    var client: std.http.Client = .{ .allocator = t.allocator, .io = io };
+    defer client.deinit();
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    const res = try client.fetch(.{ .location = .{ .url = url }, .method = .GET, .response_writer = &out.writer, .keep_alive = false });
+    try t.expectEqual(@as(u16, 401), @intFromEnum(res.status));
+    try t.expectEqual(@as(u32, 1), srv.snapshot().unauthorized);
+}

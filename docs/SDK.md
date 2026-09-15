@@ -249,6 +249,33 @@ Each call appends one JSON line to `$MNML_IPC_DIR/command`; the shapes
 are in `docs/BRIDGE.md`. Over a mount, prefer `mount.toast` and
 `mount.command` — they need no file.
 
+## A second one, with a network behind it
+
+`integrations/bitbucket` is the other official integration: Bitbucket
+Cloud pull requests, on the same SDK, with an HTTP client, a private
+`config.zon` beside the manifest, a read/write token split, and a
+deterministic fake server of its own
+(`integrations/bitbucket/tools/fake_bitbucket/`). Three things it ran
+into are worth knowing before you write one:
+
+* **A key arrives as the host spells it, not as you say it.** mnml folds
+  an uppercase letter into `shift+<lower>` and reports a back-tab as
+  `backtab` (`src/core/key.zig`'s `Chord.of`). Fold both back once, on
+  the way in, rather than doubling twenty comparisons.
+* **There is no host→sibling command.** `HostMessage` is hello / resize /
+  input / focus / goodbye: mnml can start your binary for a command, but
+  it cannot send one into a mount that is already running. A command
+  that has to act on a *live* pane needs a key, or a second headless
+  invocation that writes to the Tier-2 channel.
+* **A `pty` child does not inherit `MNML_IPC_DIR`.** A mount child does
+  (`src/bridge/host.zig`'s `envFor`); a `:term` one gets the app's own
+  environment. If a headless `run` line has to publish a segment or a
+  badge, pass mnml's workspace through the ex line
+  (`--workspace {{workspace}}`) and find the channel under it.
+
+Its `--refresh`, its rate gate and its auth split are all worth reading
+before writing the equivalents.
+
 ## Testing an integration
 
 The socket is plain: a test can `UnixAddress.listen`, spawn the binary

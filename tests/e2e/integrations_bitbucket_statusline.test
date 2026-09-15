@@ -1,0 +1,32 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The manifest's statusline segment, and the headless refresh behind it.
+# `bitbucket.refresh` runs the binary in a task pane; it counts the
+# review queue and writes a `statusline-set-segment` line on the Tier-2
+# file-IPC channel, which is what puts `BB·1` on mnml's statusline with
+# no pane open at all.
+#
+# The corpus asserts the count, not the painted segment: the e2e App is
+# in-process and does not poll the file channel, so a segment written by
+# a child never reaches this screen. The JSON that goes down the channel
+# is asserted byte for byte in main.zig's `--refresh` unit test instead.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 120 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .rate = .{ .min_interval_ms = 0 }, .tabs = .{ .{ .name = \"Review\", .mode = .reviewing } } }"
+write market/bitbucket.zon ".{ .id = \"bitbucket\", .label = \"Bitbucket\", .version = \"0.1.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .description = \"Bitbucket Cloud pull requests\", .statusline = .{ .{ .id = \"review\", .text = \"BB\", .color = \"blue\", .click_command = \"bitbucket.review_queue\" } }, .commands = .{ .{ .id = \"bitbucket.review_queue\", .title = \"Bitbucket: pull requests to review\" }, .{ .id = \"bitbucket.refresh\", .title = \"Bitbucket: refresh the review-queue count\", .ex = \"term $MNML_BITBUCKET_INTEGRATION --refresh --workspace {{workspace}}\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket"
+# The manifest's own segment is on the statusline the moment it installs.
+expect screen contains "BB"
+# The headless refresh counts the queue.
+command bitbucket.refresh
+wait 2500
+expect screen contains "1 pull requests waiting on your review"
+# Clean up so the size sweep starts from an empty data root.
+command integrations.show_installed
+key x
+expect screen contains "Remove Bitbucket?"
+key r
+expect screen contains "removed bitbucket"
