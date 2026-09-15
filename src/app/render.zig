@@ -45,6 +45,7 @@ const prompt_mod = @import("../ui/prompt.zig");
 const confirm_mod = @import("../ui/confirm.zig");
 const picker_mod = @import("../ui/picker.zig");
 const which_key = @import("../ui/which_key.zig");
+const whichkey_glyph = @import("../ui/whichkey_glyph.zig");
 const find_bar_mod = @import("../ui/find_bar.zig");
 const toast_mod = @import("../ui/toast.zig");
 const whichkey = @import("whichkey.zig");
@@ -1649,15 +1650,32 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             if (picker_mod.draw(ui, screen, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {
-            // Rust's title is the leader and the keys typed so far.
+            // The title is the leader and the keys typed so far; inside
+            // a group it carries that group's own row — `<leader>f
+            // +find (7)` — the way the reference plugin's header reads.
             const path = w.slice();
-            const title: []const u8 = if (path.len == 0) "<leader>" else ui.fmt("<leader> {s}", .{path});
-            const kids = whichkey.continuations(ui.arena, path, app.input_style == .vim);
+            const vim = app.input_style == .vim;
+            const here = whichkey.lookupIn(path, vim);
+            const title: []const u8 = if (path.len == 0 or here == null)
+                "<leader>"
+            else
+                ui.fmt("<leader>{s}  {s} ({d})", .{ path, here.?.label(), whichkey.chordCount(here.?, vim) });
+            // A group row wears its own face; a leaf wears the face of
+            // the group it lives in, which `which_key` paints dimmer.
+            const leaf_glyph = whichkey_glyph.forGroup(if (here) |n| n.label() else "").pick(ui.ascii);
+            const kids = whichkey.continuations(ui.arena, path, vim);
             const entries = try ui.arena.alloc(which_key.Entry, kids.len);
-            for (kids, 0..) |k, i| {
+            for (kids, 0..) |*k, i| {
                 const key = try ui.arena.alloc(u8, 1);
                 key[0] = k.key;
-                entries[i] = .{ .key = key, .label = k.node.label(), .is_group = k.node == .group, .id = @intCast(i) };
+                const is_group = k.node == .group;
+                entries[i] = .{
+                    .key = key,
+                    .label = if (is_group) ui.fmt("{s} ({d})", .{ k.node.label(), whichkey.chordCount(&k.node, vim) }) else k.node.label(),
+                    .is_group = is_group,
+                    .glyph = if (is_group) whichkey_glyph.forGroup(k.node.label()).pick(ui.ascii) else leaf_glyph,
+                    .id = @intCast(i),
+                };
             }
             which_key.draw(ui, screen, title, entries);
         },
