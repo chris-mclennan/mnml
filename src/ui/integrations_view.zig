@@ -128,7 +128,17 @@ pub const Entry = struct {
     /// The whole entry dims (a marketplace row that is already installed).
     dim: bool = false,
     installing: bool = false,
+    /// // changed (lua-polish): `⏱ N` after the badge — how many times
+    /// this script tripped the 20 ms budget this session. 0 paints
+    /// nothing, so a well-behaved script's row is unchanged and a slow
+    /// one is visible before it is annoying (the platform design, §5).
+    budget_hits: u32 = 0,
 };
+
+/// The budget chip's glyph and its `--ascii` twin. U+23F1 is a plain
+/// Unicode symbol, not a Nerd Font one, so it needs no codepoint pin.
+pub const budget_glyph = "\u{23F1}";
+pub const budget_ascii = "!";
 
 pub const SectionProps = struct {
     /// // changed (lua-install): which section is painting. The
@@ -362,7 +372,28 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
     const t = ui.theme;
     const dimmed = e.dim or e.hidden;
     var x = r1.x + 2;
-    const right = r1.right();
+    var right = r1.right();
+    // The budget chip is painted at the row's RIGHT edge, and its cells
+    // come out of the run before anything else takes them: at the
+    // shipped `ui.tree_width = 30` the column is 26 cells wide and the
+    // label, version and badge already fill them, so a chip appended
+    // after all of those would never be on screen at all.
+    const chip_text: []const u8 = if (e.budget_hits == 0)
+        ""
+    else if (ui.ascii)
+        ui.fmt("{s}{d}", .{ budget_ascii, e.budget_hits })
+    else
+        ui.fmt("{s} {d}", .{ budget_glyph, e.budget_hits });
+    const chip_w = ui.width(chip_text);
+    // Below this the row is a label and nothing else; a chip would be
+    // the whole row.
+    const chip_fits = chip_w > 0 and r1.w > chip_w + 8;
+    if (chip_fits) {
+        right -|= @intCast(chip_w + 1);
+        // Painted BEFORE the left-to-right run, so the run clips
+        // against the narrowed `right` instead of overwriting it.
+        _ = ui.putStrRight(r1.right() - 1, r1.y, chip_w, chip_text, Theme.withFg(style, t.palette.yellow));
+    }
     // The glyph, coloured; the `[tag]` when there is one.
     const glyph = if (ui.nerd_font and !ui.ascii and e.glyph.len > 0) e.glyph else e.fallback;
     if (glyph.len > 0) {

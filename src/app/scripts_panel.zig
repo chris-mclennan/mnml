@@ -279,6 +279,7 @@ pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
                 .label = init_label,
                 .version = try std.fmt.allocPrint(arena, "api {d}", .{manifest_mod.api_version}),
                 .badge = .installed_here,
+                .budget_hits = lua.budget_hits,
                 .line2 = try std.fmt.allocPrint(arena, "{d} command(s), {d} hook(s), {d} segment(s), {d} source(s)", .{ s.commands, s.hooks, s.segments, s.sources }),
             } });
             for (app.scripts.entries.items) |*e| {
@@ -342,16 +343,14 @@ pub fn rows(app: *App, arena: Allocator) Allocator.Error![]Row {
 }
 
 fn installedRow(app: *App, arena: Allocator, e: *scripts.Entry) Allocator.Error!view.Entry {
-    var line2: []const u8 = undefined;
-    if (e.err) |m| {
-        line2 = try std.fmt.allocPrint(arena, "error: {s}", .{m[0 .. std.mem.indexOfScalar(u8, m, '\n') orelse m.len]});
-    } else if (e.state) |l| {
-        const hits = l.budget_hits;
-        const cmds = try commandsLine(arena, @ptrCast(e.commands));
-        line2 = if (hits > 0) try std.fmt.allocPrint(arena, "{s}  \u{2022} {d} budget overrun(s)", .{ cmds, hits }) else cmds;
-    } else {
-        line2 = try commandsLine(arena, @ptrCast(e.commands));
-    }
+    // // changed (lua-polish): the budget overruns were words on the
+    // second row, competing with the command list for a narrow column.
+    // They are the `⏱ N` chip on the label row now — one shape, next to
+    // the badge, and `script.doctor` still spells it out.
+    const line2: []const u8 = if (e.err) |m|
+        try std.fmt.allocPrint(arena, "error: {s}", .{m[0 .. std.mem.indexOfScalar(u8, m, '\n') orelse m.len]})
+    else
+        try commandsLine(arena, @ptrCast(e.commands));
     _ = app;
     return .{
         .kind = .installed,
@@ -360,6 +359,7 @@ fn installedRow(app: *App, arena: Allocator, e: *scripts.Entry) Allocator.Error!
         .badge = badgeFor(e),
         .dim = !e.enabled,
         .missing = if (!e.supported()) try std.fmt.allocPrint(arena, "script api {d}", .{e.api}) else null,
+        .budget_hits = if (e.state) |l| l.budget_hits else 0,
         .line2 = line2,
     };
 }
@@ -1043,4 +1043,76 @@ test "SCRIPTS: a row's menu enables, disables, reloads and jumps to what the scr
     try openRowIndex(&app, key);
     try t.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.doc.path.?, "data/scripts/hello/init.lua"));
     try t.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
+}
+
+test "SCRIPTS: a script that tripped the budget wears a ⏱ N chip, at the shipped tree_width and wider" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "data/scripts", "spinner",
+        \\.{ .name = "spinner", .api = 1, .version = "1.0.0", .commands = .{ "user.spin" } }
+    ,
+        \\mnml.command{ id = "spin", run = function() while true do end end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    // The SHIPPED default: `ui.tree_width = 30` leaves the column 26
+    // cells, which the label, version and badge already fill. The chip
+    // is painted at the right edge and its cells come out of the run
+    // first, so this is the width it has to survive.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try t.expectEqual(@as(u16, 30), app.cfg.ui.tree_width);
+    try command.run(&app, .{ .static = .@"view.activity_scripts" });
+    // Nothing has run: no chip on any row.
+    {
+        const list = try rows(&app, app.frame.allocator());
+        for (list) |r| try t.expectEqual(@as(u32, 0), r.entry.budget_hits);
+        const txt = try screenText(&app);
+        defer t.allocator.free(txt);
+        try t.expect(std.mem.indexOf(u8, txt, view.budget_glyph) == null);
+    }
+    // One runaway command is one toast and one chip — on the script's
+    // row, not on `init.lua`'s.
+    try t.expectError(error.Failed, command.run(&app, .{ .dyn = app.dyn_commands.get("user.spin").? }));
+    {
+        const list = try rows(&app, app.frame.allocator());
+        var chipped: usize = 0;
+        for (list) |r| if (r.entry.budget_hits > 0) {
+            try t.expectEqualStrings("spinner", r.entry.label);
+            try t.expectEqual(@as(u32, 1), r.entry.budget_hits);
+            chipped += 1;
+        };
+        try t.expectEqual(@as(usize, 1), chipped);
+        const txt = try screenText(&app);
+        defer t.allocator.free(txt);
+        try t.expect(std.mem.indexOf(u8, txt, view.budget_glyph ++ " 1") != null);
+    }
+    // It counts up, and the chip follows.
+    try t.expectError(error.Failed, command.run(&app, .{ .dyn = app.dyn_commands.get("user.spin").? }));
+    {
+        const txt = try screenText(&app);
+        defer t.allocator.free(txt);
+        try t.expect(std.mem.indexOf(u8, txt, view.budget_glyph ++ " 2") != null);
+    }
+    // `--ascii` has its own twin rather than a hole where the chip was.
+    app.cfg.ui.ascii_icons = true;
+    {
+        const txt = try screenText(&app);
+        defer t.allocator.free(txt);
+        try t.expect(std.mem.indexOf(u8, txt, view.budget_glyph) == null);
+        try t.expect(std.mem.indexOf(u8, txt, view.budget_ascii ++ "2") != null);
+    }
+    // And a wide column keeps it, with the badge on screen beside it.
+    app.cfg.ui.ascii_icons = false;
+    app.tree.width = 64;
+    {
+        const txt = try screenText(&app);
+        defer t.allocator.free(txt);
+        try t.expect(std.mem.indexOf(u8, txt, view.budget_glyph ++ " 2") != null);
+        try t.expect(std.mem.indexOf(u8, txt, "Community") != null);
+    }
 }
