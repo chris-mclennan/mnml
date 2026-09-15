@@ -737,6 +737,38 @@ pub fn codexChip(app: *App, arena: Allocator, glyph: []const u8) Allocator.Error
     return .{ .text = try std.fmt.allocPrint(arena, " {s} {s} ", .{ glyph, @import("../ai/transcript.zig").fmtTokens(&buf, c.tokens_today) }), .has_data = true };
 }
 
+// ─── the one-line summaries ─────────────────────────────────────────────
+
+/// What the INTEGRATIONS row for *Claude Code* says under its label:
+/// the chip's numbers spelled out, or why there are none. Read at
+/// paint time from the same snapshots the chip and the pane read, so
+/// it follows the reader's cadence with nothing to invalidate.
+pub fn claudeSummary(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    const a = st(app).active() orelse return "not logged in";
+    const u = &a.usage;
+    if (u.needs_reauth) return "not logged in";
+    if (u.fetched_at == 0) {
+        if (u.last_error) |e| return std.fmt.allocPrint(arena, "no reading — {s}", .{e});
+        return "not read yet";
+    }
+    return std.fmt.allocPrint(arena, "{d}% session · {d}% week{s}", .{ u.percent, u.weekly_percent, if (u.last_error != null) " (stale)" else "" });
+}
+
+/// The same for *Codex*, whose reader counts a day's transcripts
+/// rather than asking an endpoint — so its "nothing" is a quiet day,
+/// never a login.
+pub fn codexSummary(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    const c = st(app).codex orelse return "not read yet";
+    if (c.last_error) |e| return std.fmt.allocPrint(arena, "no reading — {s}", .{e});
+    if (c.tokens_today == 0 and c.sessions_today == 0) return "no sessions today";
+    var buf: [16]u8 = undefined;
+    return std.fmt.allocPrint(arena, "{s} tokens today · {d} session{s}", .{
+        @import("../ai/transcript.zig").fmtTokens(&buf, c.tokens_today),
+        c.sessions_today,
+        if (c.sessions_today == 1) "" else "s",
+    });
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -1009,4 +1041,36 @@ test "the cadence: one spawn per tick with the gap, the backed-off account skipp
     try t.expect(s.find("work") == null);
     try t.expect(s.schedFor("work") == null);
     try settle(&app);
+}
+
+test "the INTEGRATIONS row's quota line, per reader state" {
+    // Nothing configured and no fixture: the row says why there is no
+    // number rather than showing a zero.
+    {
+        var bare = try App.initWith(t.allocator, t.io, .{ .workspace = "/w", .cols = 80, .rows = 24 });
+        defer bare.deinit();
+        try t.expectEqualStrings("not logged in", try claudeSummary(&bare, bare.frame.allocator()));
+        try t.expectEqualStrings("not read yet", try codexSummary(&bare, bare.frame.allocator()));
+    }
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    var app = try fx.app();
+    defer app.deinit();
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"ai.claude_usage" });
+    try command.run(&app, .{ .static = .@"ai.codex_usage" });
+    try settle(&app);
+    try t.expectEqualStrings("95% session · 52% week", try claudeSummary(&app, app.frame.allocator()));
+    try t.expectEqualStrings("1.2M tokens today · 3 sessions", try codexSummary(&app, app.frame.allocator()));
+    // A reading on top of a failure is stale, not gone.
+    const personal = st(&app).find("personal").?;
+    personal.usage.last_error = "HTTP 500";
+    try t.expectEqualStrings("95% session · 52% week (stale)", try claudeSummary(&app, app.frame.allocator()));
+    // The keychain's login is another account's: the row says so, which
+    // is what the pane's guided re-auth is for.
+    personal.usage.needs_reauth = true;
+    try t.expectEqualStrings("not logged in", try claudeSummary(&app, app.frame.allocator()));
+    // A quiet Codex day reads as one, not as a login problem.
+    st(&app).codex = .{ .tokens_today = 0, .sessions_today = 0, .fetched_at = 1 };
+    try t.expectEqualStrings("no sessions today", try codexSummary(&app, app.frame.allocator()));
 }
