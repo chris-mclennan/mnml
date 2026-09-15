@@ -362,12 +362,17 @@ fn acceptProfile(app: *App, product: Product, name: []const u8) Allocator.Error!
 
 /// The chip's right-click.
 pub fn openChipMenu(app: *App, product: Product, x: u16, y: u16) Allocator.Error!void {
-    const items = try menuItems(app, app.gpa, product);
-    errdefer {
-        for (items) |it| app.gpa.free(it.label);
-        app.gpa.free(items);
-    }
+    // Every label carries a profile name, so they are built for this
+    // open: the menu's own `mem` arena owns them, which is what frees
+    // them again (`MenuState`'s deinit frees the row array and the
+    // arena — never the labels one by one).
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const rows = try menuItems(app, mem.allocator(), product);
+    const items = try app.gpa.dupe(command.MenuItem, rows);
+    errdefer app.gpa.free(items);
     try app.openMenu(if (product == .claude) "Claude Code" else "Codex", items, x, y);
+    app.overlay.menu.mem = mem;
 }
 
 /// A menu row: `index` 0 is the built-in, else `list()[index - 1]`.
