@@ -3099,6 +3099,19 @@ fn pumpUntil(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, bud
     }
 }
 
+/// `pumpUntil`, rendering each round: for a condition that only becomes
+/// true once a frame has run (an edit's `didChange` goes out from the
+/// render, not from the tick).
+fn pumpUntilDrawn(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, budget_ms: u32) !void {
+    var spent: u32 = 0;
+    while (!cond(ctx)) : (spent += 10) {
+        if (spent > budget_ms) return error.Timeout;
+        try app.render();
+        try testing.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+}
+
 /// The scripted server wired into an `App` for the tests of the
 /// app-side modules (`lsp_decor`, `lsp_semantic`, `lsp_format`,
 /// `lsp_rename`): `start` spawns `fakeLanguageServer` on two pipes and
@@ -3217,6 +3230,12 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     _ = try app.openPath(file);
     const Probe = struct { app: *App, log: []const u8 };
     const ctx: Probe = .{ .app = &app, .log = log };
+    // Every wait below is on a condition, with one budget generous
+    // enough for a cold spawn on a loaded box: under `zig build test`
+    // the corpus, four other test binaries and the gate share this
+    // machine, so a handshake that costs 20 ms on an idle run can cost
+    // a hundred times that. A passing run never spends the budget.
+    const budget_ms: u32 = 30_000;
     const Cond = struct {
         fn logHas(c: Probe, needle: []const u8) bool {
             const text = Io.Dir.cwd().readFileAlloc(c.app.io, c.log, c.app.gpa, .unlimited) catch return false;
@@ -3228,6 +3247,15 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
             if (servers.len != 1 or !servers[0].ready or servers[0].docs.count() != 1) return false;
             const toast = c.app.lastToast() orelse return false;
             return std.mem.startsWith(u8, toast, "LSP: Failed to discover workspace.");
+        }
+        /// `started` is all client-side: `ready` and `docs.count()` are
+        /// set when the client SENDS, and the toast comes out of the
+        /// server's `initialize` handler — none of it says the server
+        /// has yet read the `initialized` and `didOpen` that follow.
+        /// The log is the server's own account, so wait on that too
+        /// rather than assert it the instant the client is happy.
+        fn handshook(c: Probe) bool {
+            return started(c) and logHas(c, "initialize\ninitialized\ntextDocument/didOpen\n");
         }
         fn closed(c: Probe) bool {
             return logHas(c, "textDocument/didClose\n");
@@ -3242,8 +3270,13 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
             const v = it.next() orelse return false;
             return v.*.items.len == 0;
         }
+        /// The same pairing for the edit: the client's symbol set is
+        /// empty AND the server logged the two frames that emptied it.
+        fn asked(c: Probe) bool {
+            return noSymbol(c) and logHas(c, "textDocument/didChange\ntextDocument/documentSymbol\n");
+        }
     };
-    try pumpUntil(&app, ctx, Cond.started, 5000);
+    try pumpUntil(&app, ctx, Cond.handshook, budget_ms);
     const s = app.lsp.servers.items[0];
     try testing.expectEqualStrings("fake", s.name);
     try testing.expectEqualStrings(ws, s.root);
@@ -3255,26 +3288,24 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     };
     try testing.expectEqual(@as(usize, 1), n);
     try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "LSP: Failed to discover workspace.\nConsider adding the `Cargo.toml`"));
-    try testing.expect(Cond.logHas(ctx, "initialize\ninitialized\ntextDocument/didOpen\n"));
 
     // The symbols landed (`fn foo`); an edit that removes the function
     // sends didChange from the frame and, after the debounce, asks
     // again: the set empties, so the breadcrumb cannot name a deleted fn.
-    try pumpUntil(&app, ctx, Cond.oneSymbol, 5000);
+    try pumpUntil(&app, ctx, Cond.oneSymbol, budget_ms);
     try app.activeEditor().?.buf.editor.setText("let y = 2;\n");
-    var spent: u32 = 0;
-    while (!Cond.noSymbol(ctx)) : (spent += 10) {
-        if (spent > 5000) return error.Timeout;
-        try app.render();
-        try io.sleep(.fromMilliseconds(10), .awake);
-        try app.tick(App.nowMs(io));
-    }
-    try testing.expect(Cond.logHas(ctx, "textDocument/didChange\ntextDocument/documentSymbol\n"));
+    try pumpUntilDrawn(&app, ctx, Cond.asked, budget_ms);
 
     try command.run(&app, .{ .static = .@"buffer.close" });
-    try pumpUntil(&app, ctx, Cond.closed, 2000);
+    try pumpUntil(&app, ctx, Cond.closed, budget_ms);
     try testing.expect(!s.isOpen(file));
 
+    // `deinit` waits for the server to leave on `exit` and then KILLS
+    // it, so the log only says `exit` if the child was scheduled inside
+    // the grace. 250 ms is the shipped one — plenty on an idle box, not
+    // on a loaded one — so this test lifts it for its own run.
+    client.exit_grace_ms = budget_ms;
+    defer client.exit_grace_ms = client.default_exit_grace_ms;
     live = false;
     app.deinit();
     try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
