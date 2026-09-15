@@ -21,10 +21,16 @@ key i
 expect screen contains "installed btop"
 expect screen contains "[installed] btop"
 command integrations.show_installed
-expect screen contains "Installed (1)"
+# The four first-party rows are always on this tab, above the manifests.
+expect screen contains "Installed (5)"
 expect screen contains "btop.open"
 expect screen lacks "not installed"
-# Uninstall, so the size sweep (one data root for every size) starts clean.
+# Uninstall, so the size sweep (one data root for every size) starts
+# clean. Walk past the first-party block to the launcher's row.
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove btop?"
 key r

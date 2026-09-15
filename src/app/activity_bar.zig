@@ -461,8 +461,12 @@ test "pinned icons: pinning an installed launcher paints its chip after the sect
     try app.render();
     // Nothing pinned: no pin hit anywhere on the rail.
     for (app.hits.items.items) |e| if (e.target == .rail) try t.expect(e.target.rail != .pin);
-    // Pin from the Installed row (the row menu's "Add to activity bar" names the same command).
+    // Pin from the Installed row (the row menu's "Add to activity bar"
+    // names the same command). The cursor starts on the first of the
+    // four first-party rows, whose commands cannot back a docked icon;
+    // the manifest is the row after them.
     try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    app.integrations.panel.cursor = integrations.first_party.len;
     try command.run(&app, .{ .static = .@"integrations.pin_to_activity_bar" });
     try t.expectEqual(@as(usize, 1), app.cfg.ui.activity_bar_pinned_integrations.len);
     try t.expectEqualStrings("htop", app.cfg.ui.activity_bar_pinned_integrations[0]);

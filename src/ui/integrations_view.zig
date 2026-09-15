@@ -94,6 +94,10 @@ pub const Badge = enum {
     /// // changed (lua-install): a SCRIPTS row's own two states.
     dev,
     disabled,
+    /// One of the four surfaces mnml ships itself
+    /// (`app/integrations.zig`'s `first_party`) — nothing vouched for
+    /// it from a marketplace source, so not `official`.
+    first_party,
 
     pub fn text(b: Badge, ascii: bool) []const u8 {
         return switch (b) {
@@ -104,6 +108,7 @@ pub const Badge = enum {
             .not_installed => "not installed",
             .dev => "Dev",
             .disabled => "disabled",
+            .first_party => "first-party",
         };
     }
 };
@@ -440,6 +445,7 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
             .community, .not_installed, .disabled => t.muted.fg,
             .private => t.palette.yellow,
             .dev => t.palette.orange,
+            .first_party => t.palette.teal,
         };
         x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{b.text(ui.ascii)}), Theme.withFg(style, fg));
     }

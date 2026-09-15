@@ -28,17 +28,27 @@ expect screen contains "nosuchprog-xyz is not on PATH"
 # The Installed tab lists both as launchers: a chip glyph, no missing binary.
 command integrations.show_installed
 drag 30 5 60 5
-expect screen contains "Installed (2)"
+# The four first-party rows are always on this tab, above the manifests.
+expect screen contains "Installed (6)"
 expect screen contains "htop.open"
 expect screen contains "nope.open"
 expect screen lacks "not installed"
-# Uninstall both, so the size sweep starts clean.
+# Uninstall both, so the size sweep starts clean. Walk past the
+# first-party block first.
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove htop?"
 key r
 expect screen contains "removed htop"
 # The confirm hands focus back to the pane; the section takes it again.
 command integrations.show_installed
+key down
+key down
+key down
+key down
 key x
 expect screen contains "Remove Nope?"
 key r

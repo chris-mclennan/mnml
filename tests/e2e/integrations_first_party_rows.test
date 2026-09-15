@@ -1,0 +1,52 @@
+# The four surfaces mnml ships itself (src/app/integrations.zig's
+# `first_party`): no manifest describes them, so nothing scans them in —
+# the Installed tab lists them above whatever is installed, always, and a
+# fresh data root reads `Inst (4)` instead of the `Inst (0)` the
+# walkthrough found (finding 1). Each row carries its `first-party`
+# badge; Claude's and Codex's second line is the usage reader's quota
+# rather than a command id. The row menu reaches the surface: Enter on
+# Claude Code's *Usage* opens the usage pane.
+command view.activity_integrations
+expect screen contains INTEGRATIONS
+expect screen contains "Inst (4)"
+expect screen lacks "Nothing installed yet"
+# The column is 26 cells at the shipped width, so the badge clips like
+# every other badge does; a drag on the divider reads the whole row.
+expect screen contains "Browser"
+expect screen contains "browser.open"
+drag 30 5 70 5
+expect screen contains "Browser  first-party"
+expect screen contains "Claude Code (hidden)  first-party"
+expect screen contains "Codex (hidden)  first-party"
+expect screen contains "HTTP (hidden)  first-party"
+expect screen contains "view.activity_http"
+# No account on file: the AI rows say why there is no number.
+expect screen contains "not logged in"
+# Browser's menu: its own action, then the two preferences.
+rightclick 4 5
+expect screen contains "Open"
+expect screen contains "Disable"
+# Browser is the one chip that ships on the bar, so its row offers the
+# other direction.
+expect screen contains "Hide from palette bar"
+key esc
+# Claude Code's: the sessions submenu, the usage pane, the login, the
+# profiles. Enter on Usage opens the pane.
+rightclick 4 8
+expect screen contains "New session"
+expect screen contains "Usage"
+expect screen contains "Login"
+expect screen contains "Configure profiles"
+key down
+key enter
+expect screen contains "Claude usage"
+# Show in palette bar persists: the row menu's last item writes the home
+# config, and the toast names it.
+rightclick 4 8
+key down
+key down
+key down
+key down
+key down
+key enter
+expect screen contains "claude_code: shown on the palette bar"
