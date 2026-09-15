@@ -25,8 +25,10 @@
 //! panel, exactly as the INTEGRATIONS section does it:
 //!
 //!   installed     `<data root>/scripts/` — whatever has been installed
-//!   marketplace   the curated index (`scripts.marketplace_url`, or a
-//!                 local folder), `official` badge
+//!   marketplace   the curated set that ships with mnml — this repo's
+//!                 own `lua/`, packaged as `share/mnml/lua` beside the
+//!                 binary (`shippedRoot`) — or a folder the user names
+//!                 instead; `official` badge
 //!   dev           `scripts.dev_roots` — edited live, saved = reloaded
 //!
 //! and `script.install <git URL | archive | directory>` adds a
@@ -47,6 +49,8 @@ const Lua = lua_mod.Lua;
 const manifest_mod = @import("../scripting/manifest.zig");
 const Manifest = manifest_mod.Manifest;
 const Source = manifest_mod.Source;
+const build_options = @import("build_options");
+const data_root_mod = @import("../config/data_root.zig");
 const trust = @import("../config/trust.zig");
 
 /// The marker file that means "installed, but off".
@@ -186,13 +190,54 @@ pub fn devRoots(app: *App, arena: Allocator) Allocator.Error![]const []const u8 
     return out.toOwnedSlice(arena);
 }
 
-/// The folder the Marketplace tab lists: `MNML_SCRIPTS_MARKETPLACE`,
-/// else `scripts.marketplace_local`. Empty when neither is set — the
-/// `marketplace_url` default names a repo that is not live yet, so the
-/// tab then says so rather than pretending to fetch.
+/// The folder holding the curated set that SHIPS with mnml — this
+/// repo's `lua/`, the way `integrations/` and `launchers/` ship their
+/// own — tried in order:
+///
+///   1. `build_dir` — `build_options.scripts_dir`, the checkout's own
+///      `lua/` baked in at build time, so a dev build lists the set
+///      with no config and no install step;
+///   2. `<exe dir>/../share/mnml/lua` — the system layout the `.deb`
+///      and the `.rpm` lay down (`/usr/bin/mnml` + `/usr/share/…`);
+///   3. `<exe dir>/share/mnml/lua` — the archive layout: the `.tar.xz`
+///      and the Windows `.zip` unpack `share/` beside the binary;
+///   4. `<exe dir>/mnml-data/lua` — the portable directory.
+///
+/// Null when none of the four is there (a bare binary copied out of its
+/// package). `build_dir` and `exe_dir` are values so the test can hand
+/// in a sandbox rather than depend on where it happens to be running.
+pub fn shippedRoot(io: Io, arena: Allocator, build_dir: []const u8, exe_dir: ?[]const u8) Allocator.Error!?[]const u8 {
+    if (build_dir.len > 0 and isDir(io, build_dir)) return build_dir;
+    const dir = exe_dir orelse return null;
+    const candidates = [_][]const []const u8{
+        &.{ dir, "..", "share", "mnml", "lua" },
+        &.{ dir, "share", "mnml", "lua" },
+        &.{ dir, data_root_mod.portable_dir, "lua" },
+    };
+    for (candidates) |parts| {
+        const path = std.fs.path.resolve(arena, parts) catch continue;
+        if (isDir(io, path)) return path;
+    }
+    return null;
+}
+
+fn isDir(io: Io, path: []const u8) bool {
+    var d = Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    d.close(io);
+    return true;
+}
+
+/// The folder the Marketplace tab lists. The two overrides first —
+/// `MNML_SCRIPTS_MARKETPLACE`, then `scripts.marketplace_local` — and
+/// otherwise the set that ships with mnml (`shippedRoot`), so a fresh
+/// data root with no config at all still has a populated tab. Empty
+/// only when nothing is configured AND no shipped folder is beside the
+/// binary.
 pub fn marketplaceRoot(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     if (app.env.get("MNML_SCRIPTS_MARKETPLACE")) |v| if (v.len > 0) return try resolveRoot(app, arena, v);
-    return resolveRoot(app, arena, app.cfg.scripts.marketplace_local);
+    if (app.cfg.scripts.marketplace_local.len > 0) return try resolveRoot(app, arena, app.cfg.scripts.marketplace_local);
+    const exe_dir = std.process.executableDirPathAlloc(app.io, arena) catch null;
+    return (try shippedRoot(app.io, arena, build_options.scripts_dir, exe_dir)) orelse "";
 }
 
 // ─── scanning ────────────────────────────────────────────────────────────
@@ -851,6 +896,107 @@ test "classify: a git URL, an archive, a folder" {
     try t.expectEqual(SourceKind.archive, classify("/tmp/x.zip"));
     try t.expectEqual(SourceKind.directory, classify("/tmp/x"));
     try t.expectEqual(SourceKind.directory, classify("../elsewhere/todo-list"));
+}
+
+test "shippedRoot: build option, then ../share/mnml/lua, then share/mnml/lua, then the portable dir" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    // `<root>/prefix/bin` is the exe dir for a system-style layout,
+    // `<root>/flat` for an unpacked archive.
+    try tmp.dir.createDirPath(t.io, "prefix/bin");
+    try tmp.dir.createDirPath(t.io, "flat");
+    const bin = try std.fs.path.join(a, &.{ root, "prefix", "bin" });
+    const flat = try std.fs.path.join(a, &.{ root, "flat" });
+
+    // Nothing laid down yet and no build option: nothing is found.
+    try t.expect((try shippedRoot(t.io, a, "", bin)) == null);
+    try t.expect((try shippedRoot(t.io, a, "", null)) == null);
+    // A build option that does not exist is not a hit either.
+    const absent = try std.fs.path.join(a, &.{ root, "no-such-lua" });
+    try t.expect((try shippedRoot(t.io, a, absent, bin)) == null);
+
+    // 4. the portable directory beside the binary, lowest of the four.
+    try tmp.dir.createDirPath(t.io, "flat/mnml-data/lua");
+    try t.expectEqualStrings(
+        try std.fs.path.join(a, &.{ flat, "mnml-data", "lua" }),
+        (try shippedRoot(t.io, a, "", flat)).?,
+    );
+
+    // 3. `share/mnml/lua` beside the binary — the archive layout — wins
+    //    over the portable directory.
+    try tmp.dir.createDirPath(t.io, "flat/share/mnml/lua");
+    try t.expectEqualStrings(
+        try std.fs.path.join(a, &.{ flat, "share", "mnml", "lua" }),
+        (try shippedRoot(t.io, a, "", flat)).?,
+    );
+
+    // 2. `../share/mnml/lua` — the system layout the .deb lays down —
+    //    wins over both, and is found from a `bin/` one level down.
+    try tmp.dir.createDirPath(t.io, "prefix/share/mnml/lua");
+    try tmp.dir.createDirPath(t.io, "prefix/bin/share/mnml/lua");
+    try tmp.dir.createDirPath(t.io, "prefix/bin/mnml-data/lua");
+    try t.expectEqualStrings(
+        try std.fs.path.join(a, &.{ root, "prefix", "share", "mnml", "lua" }),
+        (try shippedRoot(t.io, a, "", bin)).?,
+    );
+
+    // 1. the build option beats every path beside the binary: a dev
+    //    build lists the checkout's own `lua/`, not a stale install's.
+    try tmp.dir.createDirPath(t.io, "checkout/lua");
+    const checkout = try std.fs.path.join(a, &.{ root, "checkout", "lua" });
+    try t.expectEqualStrings(checkout, (try shippedRoot(t.io, a, checkout, bin)).?);
+}
+
+test "the Marketplace tab lists the shipped set with no config, and either override takes it back" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try writeScript(tmp.dir, t.io, "mine", "ours",
+        \\.{ .name = "ours", .api = 1, .version = "0.1.0" }
+    ,
+        \\mnml.command{ id = "ours", run = function() end }
+    );
+    try writeScript(tmp.dir, t.io, "theirs", "yours",
+        \\.{ .name = "yours", .api = 1, .version = "0.2.0" }
+    ,
+        \\mnml.command{ id = "yours", run = function() end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .env = &env, .cols = 80, .rows = 24 });
+    defer app.deinit();
+
+    // No config, no environment: the set that ships with mnml. Under a
+    // test that is `build_options.scripts_dir` — the repo's own `lua/` —
+    // and the five example scripts are its rows.
+    {
+        const arena = app.frame.allocator();
+        const got = try marketplaceRoot(&app, arena);
+        try t.expectEqualStrings(build_options.scripts_dir, got);
+    }
+    // The config override.
+    app.cfg.scripts.marketplace_local = "mine";
+    {
+        const arena = app.frame.allocator();
+        const got = try marketplaceRoot(&app, arena);
+        try t.expectEqualStrings(try std.fs.path.join(arena, &.{ root, "mine" }), got);
+    }
+    // The environment beats the config.
+    try app.env.put("MNML_SCRIPTS_MARKETPLACE", "theirs");
+    {
+        const arena = app.frame.allocator();
+        const got = try marketplaceRoot(&app, arena);
+        try t.expectEqualStrings(try std.fs.path.join(arena, &.{ root, "theirs" }), got);
+    }
 }
 
 /// A script directory under `root`: `script.zon` + `init.lua`, plus any

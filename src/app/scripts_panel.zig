@@ -12,12 +12,14 @@
 //!                is enable / disable / reload / update / remove / open
 //!                folder / open README, and the jumps to what it
 //!                registered (`file:line`, off `Lua.origins`).
-//!   Marketplace  the curated index — a folder of script directories
-//!                read exactly as a `local_folder` integrations source
-//!                is (`scripts.marketplace_local`, or
-//!                `MNML_SCRIPTS_MARKETPLACE`). `scripts.marketplace_url`
-//!                names where the official set will live; it is not
-//!                live yet and the empty state says so.
+//!   Marketplace  the curated set that ships with mnml — the repo's own
+//!                `lua/`, packaged as `share/mnml/lua` beside the
+//!                binary — read exactly as a `local_folder`
+//!                integrations source is, so the tab has rows on a
+//!                fresh data root with no config at all.
+//!                `scripts.marketplace_local` (or
+//!                `MNML_SCRIPTS_MARKETPLACE`) points it at a folder of
+//!                the user's own instead.
 //!   Dev          the folders under `scripts.dev_roots`, reloaded on
 //!                save.
 //!
@@ -198,8 +200,9 @@ pub fn refreshMarket(app: *App) Allocator.Error!void {
     st.market_scanned = true;
 }
 
-/// Read the index folder. Empty when none is configured — the default
-/// `scripts.marketplace_url` names a repo that is not live yet.
+/// Read the index folder — the shipped `lua/` set unless an override
+/// names another (`scripts.marketplaceRoot`). Empty only when neither
+/// is there.
 pub fn marketRows(app: *App, arena: Allocator) Allocator.Error![]MarketEntry {
     var out: std.ArrayListUnmanaged(MarketEntry) = .empty;
     const root = try scripts.marketplaceRoot(app, arena);
@@ -400,8 +403,8 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     else switch (st.tab) {
         .installed => .{ .message = "No scripts installed yet — try the Marketplace tab", .hint = "script.install takes a git URL, an archive or a folder" },
         .marketplace => .{
-            .message = "The script marketplace is not live yet",
-            .hint = ui.fmt("{s} will host it; scripts.marketplace_local points at a folder meanwhile", .{app.cfg.scripts.marketplace_url}),
+            .message = "No scripts in the marketplace index",
+            .hint = "the curated set ships with mnml as share/mnml/lua beside the binary; scripts.marketplace_local names another folder",
         },
         .dev => .{ .message = "No dev folders — nothing under scripts.dev_roots", .hint = "a folder is a script.zon with an init.lua beside it" },
     };

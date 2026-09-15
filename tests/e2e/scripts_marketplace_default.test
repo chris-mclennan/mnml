@@ -1,0 +1,22 @@
+# Installed scripts: the Marketplace tab OUT OF THE BOX. No `# env:`
+# line, no config, no `MNML_SCRIPTS_MARKETPLACE` — the curated set is
+# mnml's own `lua/` folder, found beside the binary (or baked in from
+# the checkout it was built from), exactly the way the official
+# integrations live in `integrations/`. This file is the acceptance for
+# that: a fresh run lists the five shipped scripts and says nothing
+# about a repo that does not exist.
+command view.activity_scripts
+expect screen contains "SCRIPTS"
+expect screen contains "Mkt (5)"
+command script.show_marketplace
+expect screen contains "eslint"
+expect screen contains "git-blame-line"
+expect screen contains "recent-commands"
+expect screen contains "surround-word"
+expect screen contains "todo-list"
+# The badge is `✓ Official`, clipped to the tree's width at the shipped
+# `tree_width = 30`.
+expect screen contains "Offi"
+# The dead "not live yet" hint is gone: the tab has rows, so no empty
+# state at all.
+expect screen lacks "not live yet"

@@ -34,7 +34,8 @@ pub const subdir = "scripts";
 
 /// Where a script came from — the row's badge and the panel's filter.
 pub const Source = enum {
-    /// The curated index (`scripts.marketplace_url`) — badge `official`.
+    /// The curated set that ships with mnml (this repo's `lua/`), or a
+    /// folder `scripts.marketplace_local` names — badge `official`.
     marketplace,
     /// A git URL or an archive the user installed by hand.
     community,

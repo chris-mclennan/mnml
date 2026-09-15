@@ -1,10 +1,11 @@
-# Installed scripts (lua-install): the Marketplace tab. The curated set
-# is a folder of script directories read the way a `local_folder`
-# integrations source is; `scripts.marketplace_local` points at one (and
-# `MNML_SCRIPTS_MARKETPLACE` overrides it, which is what this file uses —
-# the App's config is read before the `write` steps run). The shipped
-# examples under docs/examples/scripts/ are what the real index will
-# hold. Installing from it badges the row `official`.
+# Installed scripts (lua-install): the Marketplace tab pointed at a
+# folder of the user's OWN. The curated set that ships with mnml is the
+# repo's `lua/` (see scripts_marketplace_default.test); this file covers
+# the override — `scripts.marketplace_local` names a folder of script
+# directories, read the way a `local_folder` integrations source is, and
+# `MNML_SCRIPTS_MARKETPLACE` beats it, which is what this file uses (the
+# App's config is read before the `write` steps run). Installing from
+# either badges the row `official`.
 # env: MNML_SCRIPTS_MARKETPLACE=index
 # `MNML_SCRIPTS_ROOT` keeps what this file installs inside its own temp
 # workspace, out of the data root the whole corpus shares.

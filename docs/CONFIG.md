@@ -512,13 +512,14 @@ otherwise. Copy what you need; leave the rest out.
     // MNML_SCRIPTS_ROOT=<folder> names somewhere else — how the corpus
     // keeps each file's installs to itself.
     .scripts = .{
-        // Where the official (curated) set will be published. NOT LIVE
-        // YET: out of the box the Marketplace tab says so. Point
-        // `marketplace_local` at a folder of script directories to list
-        // one meanwhile (MNML_SCRIPTS_MARKETPLACE=<folder> overrides,
-        // which is how the tests and the corpus list the shipped
-        // examples under docs/examples/scripts/).
-        .marketplace_url = "https://github.com/chris-mclennan/mnml-scripts",
+        // The curated set ships with mnml — the repo's own lua/ folder,
+        // packaged as share/mnml/lua beside the binary — so the
+        // Marketplace tab lists it out of the box with no config at
+        // all. This key points the tab at a folder of YOUR script
+        // directories instead: an offline mirror, a company set, a test
+        // fixture. Relative to the workspace, `~` expanded.
+        // MNML_SCRIPTS_MARKETPLACE=<folder> overrides it, which is how
+        // the corpus and the UI specs seed the tab.
         .marketplace_local = "",
         // Folders of script directories you maintain — a company repo, a
         // mounted share. Listed with the `private` badge; the same trust
