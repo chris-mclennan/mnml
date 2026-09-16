@@ -1052,14 +1052,17 @@ pub const Painter = struct {
         try p.hitAdd(r, .help_body);
         const ix = r.x + 1;
         const iw = r.w -| 2;
-        var lines: std.ArrayList(Line) = .empty;
+        const HelpRow = struct { header: []const u8 = "", chord: []const u8 = "", label: []const u8 = "" };
+        var lines: std.ArrayList(HelpRow) = .empty;
         const ctx = p.a.context();
         const active = try keymap.active(p.arena, ctx);
-        var chord_w: usize = 8;
+        var chord_w: u16 = 8;
         for (active) |b| {
             var buf: [64]u8 = undefined;
-            chord_w = @max(chord_w, @min(chordText(&buf, b).len, 20));
+            chord_w = @max(chord_w, @min(text.width(chordText(&buf, b)), 20));
         }
+        for (keymap.modal_rows) |m| chord_w = @max(chord_w, @min(text.width(m.keys), 40));
+        const fold = if (p.ui.ascii) "v" else "▾";
         inline for (@typeInfo(keymap.Section).@"enum".fields) |sf| {
             const section: keymap.Section = @enumFromInt(sf.value);
             var n: usize = 0;
@@ -1067,17 +1070,16 @@ pub const Painter = struct {
                 n += 1;
             };
             if (n > 0) {
-                try lines.append(p.arena, .{ .s = try std.fmt.allocPrint(p.arena, "{s} ── {s} ── ({d})", .{ if (p.ui.ascii) "v" else "▾", section.title(), n }), .style = bold });
+                try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── {s} ── ({d})", .{ fold, section.title(), n }) });
                 for (active) |b| if (b.section == section) {
                     var buf: [64]u8 = undefined;
-                    const chord = chordText(&buf, b);
-                    try lines.append(p.arena, .{ .s = try std.fmt.allocPrint(p.arena, "  {s}  {s}", .{ padRight(p.arena, chord, chord_w), b.label }) });
+                    try lines.append(p.arena, .{ .chord = try p.arena.dupe(u8, chordText(&buf, b)), .label = b.label });
                 };
-                try lines.append(p.arena, .{ .s = "" });
+                try lines.append(p.arena, .{});
             }
         }
-        try lines.append(p.arena, .{ .s = try std.fmt.allocPrint(p.arena, "{s} ── overlays ── ({d})", .{ if (p.ui.ascii) "v" else "▾", keymap.modal_rows.len }), .style = bold });
-        for (keymap.modal_rows) |m| try lines.append(p.arena, .{ .s = try std.fmt.allocPrint(p.arena, "  {s}  {s}", .{ m.keys, m.label }) });
+        try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── overlays ── ({d})", .{ fold, keymap.modal_rows.len }) });
+        for (keymap.modal_rows) |m| try lines.append(p.arena, .{ .chord = m.keys, .label = m.label });
         const body_h: usize = r.h -| 3;
         var start = p.a.help_scroll;
         if (start > lines.items.len -| body_h) start = lines.items.len -| body_h;
@@ -1089,15 +1091,12 @@ pub const Painter = struct {
             y += 1;
         }) {
             const l = lines.items[i];
-            if (l.style.mods.bold) {
-                _ = p.putFit(ix + 1, y, iw -| 1, l.s, l.style);
-            } else {
-                // The chord in the accent, the title plain.
-                const chord_end = 2 + chord_w;
-                if (l.s.len > chord_end) {
-                    _ = p.put(ix + 1, y, @intCast(chord_end), l.s[0..chord_end], accent_plain);
-                    _ = p.putFit(ix + 1 + @as(u16, @intCast(chord_end)), y, iw -| (1 + @as(u16, @intCast(chord_end))), l.s[chord_end..], plain);
-                } else _ = p.putFit(ix + 1, y, iw -| 1, l.s, plain);
+            if (l.header.len > 0) {
+                _ = p.putFit(ix + 1, y, iw -| 1, l.header, bold);
+            } else if (l.chord.len > 0) {
+                // The chord in the accent, padded to the column; the title plain.
+                _ = p.putFit(ix + 3, y, chord_w, l.chord, accent_plain);
+                _ = p.putFit(ix + 3 + chord_w + 2, y, iw -| (chord_w + 6), l.label, plain);
             }
         }
         _ = p.putFit(ix + 1, r.bottom() - 2, iw -| 1, "j/k scroll · Esc close", muted);
