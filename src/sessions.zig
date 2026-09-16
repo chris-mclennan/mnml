@@ -62,6 +62,7 @@ const app_mod = @import("app.zig");
 const App = app_mod.App;
 const auto_refresh = @import("app/auto_refresh.zig");
 const side = @import("app/side.zig");
+const context_menus = @import("app/context_menus.zig");
 const Key = app_mod.Key;
 const key_mod = @import("core/key.zig");
 const Mouse = key_mod.Mouse;
@@ -1698,8 +1699,7 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
     if (host == .section) try items.append(app.gpa, .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" }, .separator_before = true });
     const owned = try items.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
-    try app.openMenu(title, owned, x, y);
-    app.overlay.menu.mem = mem;
+    try context_menus.openOwned(app, title, owned, x, y, mem);
 }
 
 /// The `+ New session` menu: a local session, a batch (Rust's ×2 / ×4

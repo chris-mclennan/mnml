@@ -29,6 +29,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
+const context_menus = @import("context_menus.zig");
 const App = app_mod.App;
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
@@ -177,8 +178,7 @@ pub fn openLspChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     });
     const rows = try app.gpa.dupe(command.MenuItem, list.items);
     errdefer app.gpa.free(rows);
-    try app.openMenu("LSP", rows, x, y);
-    app.overlay.menu.mem = mem;
+    try context_menus.openOwned(app, "LSP", rows, x, y, mem);
 }
 
 /// Rust's per-side cap on host segments: a third of the row, at least 20.

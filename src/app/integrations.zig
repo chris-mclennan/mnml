@@ -42,6 +42,7 @@ const key_mod = @import("../core/key.zig");
 const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
 const launch_profiles = @import("launch_profiles.zig");
+const context_menus = @import("context_menus.zig");
 const CommandError = command.CommandError;
 const alloc = @import("../core/alloc.zig");
 const panel = @import("../core/panel.zig");
@@ -1901,8 +1902,7 @@ fn openFirstPartyMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void 
     try rows.append(app.gpa, .{ .label = if (fpOnBar(app, i)) "Hide from palette bar" else "Show in palette bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
-    try app.openMenu(fp.label, owned, x, y);
-    app.overlay.menu.mem = mem;
+    try context_menus.openOwned(app, fp.label, owned, x, y, mem);
 }
 
 /// `virtual` is an Installed-tab index: a first-party row or a manifest.
