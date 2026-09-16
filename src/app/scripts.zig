@@ -43,6 +43,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const command = @import("../core/command.zig");
+const alloc_mod = @import("../core/alloc.zig");
 const CommandError = command.CommandError;
 const lua_mod = @import("../scripting/lua.zig");
 const Lua = lua_mod.Lua;
@@ -1326,17 +1327,29 @@ test "script.remove asks first, and the dialog it opens survives the frame it wa
     try command.run(&app, .{ .static = .@"view.activity_scripts" });
     const list = try panel.rows(&app, app.frame.allocator());
     app.scripts_panel.panel.cursor = list.len - 1;
+    // The frame arena over a fixed buffer for the open, where a reset
+    // hands the SAME bytes back. A `render` on the gpa-backed arena
+    // proves nothing: a DebugAllocator reset moves the next frame's node,
+    // so the dead bytes are never written over and a borrowed title
+    // reads fine in the test and as garbage in the app.
+    var frame_buf: [512 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
+    const real_frame = app.frame;
+    app.frame = alloc_mod.FrameArena.init(fba.allocator());
     try command.run(&app, .{ .static = .@"script.remove" });
     try t.expect(app.overlay == .confirm);
     try t.expect(app.overlay.confirm.purpose == .remove_script);
     // Cancel is the focused choice.
     try t.expectEqual(@as(usize, 1), app.overlay.confirm.state.selected);
-    // A render resets the frame arena: a title or a message borrowed
-    // from it would be gone by the paint after this one.
-    try app.render();
-    try app.render();
+    app.frame.begin();
+    for (0..1024) |_| {
+        const chunk = try app.frame.allocator().alloc(u8, 16);
+        @memset(chunk, 'X');
+    }
     try t.expectEqualStrings("Remove this script?", app.overlay.confirm.state.title);
     try t.expect(std.mem.startsWith(u8, app.overlay.confirm.message, "doomed 1.0.0"));
+    app.frame.deinit();
+    app.frame = real_frame;
     // Cancel keeps it.
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
     try t.expect(app.scripts.find("doomed") != null);

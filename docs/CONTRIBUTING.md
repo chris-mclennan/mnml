@@ -90,6 +90,54 @@ The corpus number must not go down. 393/393 is the current line
 (2026-09-07); a change that drops it is not finished. A file that is
 re-aimed at a deliberate change says so in the commit.
 
+## Strings that outlive the frame
+
+`FrameArena.begin` is `reset(.retain_capacity)`, so the next frame hands
+the same bytes back from offset zero. A slice built on
+`app.frame.allocator()` — or a slice of a local `[N]u8` — is therefore
+correct for exactly as long as the frame that made it. Give it to
+something that keeps it and it paints as garbage on the NEXT frame, only
+sometimes: the corpus file passes alone and fails in a full run. Six bugs
+of that one shape shipped before the audit existed — a menu's labels, a
+graph's date column, a prompt's title, a confirm dialog's strings, a chip
+menu's labels, a palette's row menus.
+
+The consumers that keep a slice: a context menu (`MenuItem.label`,
+`.copy_text`, `.open_url`), a prompt or confirm overlay's title and
+message, a pane or overlay `.title`, a toast that does not expire, a
+decoration, a session row, and the screen itself — `putStr` hands
+`Canvas.put` the grapheme bytes and vaxis keeps that slice until the
+frame is flushed.
+
+Three sanctioned patterns, in the order you should reach for them:
+
+1. **An arena the consumer owns.** Build the strings on a fresh
+   `std.heap.ArenaAllocator` and hand it over with the rows:
+   `context_menus.openOwned(app, title, rows, x, y, mem)` puts it on
+   `MenuState.mem`, which the close frees. Every menu whose labels are
+   not literals goes through `openOwned`; `App.openMenu` is for rows
+   whose labels are string literals (it dupes only the title).
+   `git.openPromptOwned(app, kind, title)` is the same move for a
+   prompt.
+2. **`gpa.dupe` + free on close.** When the consumer already owns a
+   field (`openConfirm`'s `message: []u8`, `Prompt.title_owned`), dupe
+   on the gpa at the boundary and free it where the overlay closes.
+   `[]u8` in a field means owned; `[]const u8` means borrowed.
+3. **`arena.dupe` for the same frame only.** `ui.fmt`, `ui.clipStr` and
+   a `dupe` onto `ui.arena` are exactly right for a string the same
+   frame paints and nobody keeps. That is what the frame arena is for —
+   it is never a finding.
+
+`zig build arena-audit` walks `src/` for the shape and names every site;
+`zig build test` runs the same audit as a unit test (`tools/arena_audit.zig`),
+and CI runs the step so the hit list is in the log. A test for one of
+these fixes must back the frame arena with a `FixedBufferAllocator` —
+a `DebugAllocator`-backed `reset(.retain_capacity)` moves the arena's
+node, so the dead bytes stay readable and the test passes while the app
+paints tofu. Open the thing, swap `app.frame` to the fixed buffer,
+`app.frame.begin()`, scribble 1024 × 16 bytes of `'X'`, then assert the
+text (`openDiffRowMenu` in `src/app/git.zig` is the model).
+
 ## Tests
 
 - Unit tests run on `std.testing.allocator` only; a leak is a failure.

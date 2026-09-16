@@ -2554,6 +2554,39 @@ test "the repos menu keeps its labels while open: the frame arena's reuse cannot
     app.frame = alloc.FrameArena.init(app.gpa);
 }
 
+test "a row menu keeps its labels while open: the frame arena's reuse cannot scribble them" {
+    // The other half of the row-menu fix: every label carries the row's
+    // name, so they live on the arena the menu owns. Backed by a fixed
+    // buffer, where a reset hands the same bytes back — a gpa-backed
+    // arena moves its node instead and the dead bytes stay readable,
+    // which is how a test of this shape passes while the app paints tofu.
+    var frame_buf: [256 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    app.frame.deinit();
+    app.frame = alloc.FrameArena.init(fba.allocator());
+    // Row 1 is the `feature` branch: fifteen of its rows name it.
+    try openRowMenu(app, 1, 3, 3);
+    try testing.expect(app.overlay == .menu);
+    app.frame.begin();
+    for (0..1024) |_| {
+        const chunk = try app.frame.allocator().alloc(u8, 16);
+        @memset(chunk, 'X');
+    }
+    try testing.expectEqualStrings("Checkout feature", app.overlay.menu.items[0].label);
+    try testing.expectEqualStrings("Merge feature into main", app.overlay.menu.items[4].label);
+    try testing.expectEqualStrings("Delete feature\u{2026}", app.overlay.menu.items[12].label);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.frame.deinit();
+    app.frame = alloc.FrameArena.init(app.gpa);
+}
+
 test "one repo: no accent anywhere — the pill, the panes and the tree paint as before, and the pill's right-click is the repos menu" {
     var t = try TestApp.init();
     defer t.deinit();

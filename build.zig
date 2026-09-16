@@ -351,6 +351,28 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(glyph_tests).step);
     // ── end glyph audit ─────────────────────────────────────────────────
 
+    // ── the arena audit ─────────────────────────────────────────────────
+    // `zig build arena-audit`: every place a string that dies at the next
+    // frame reaches a consumer that outlives the frame (a menu label, a
+    // prompt title, a confirm message, the screen's grapheme slices).
+    // Its own unit test walks the real `src/` under `zig build test`, so
+    // the seventh bug of that shape fails the suite rather than shipping.
+    const arena_opts = b.addOptions();
+    arena_opts.addOptionPath("src_root", b.path("src"));
+    const arena_mod = b.createModule(.{ .root_source_file = b.path("tools/arena_audit.zig"), .target = target, .optimize = optimize });
+    arena_mod.addOptions("build_options", arena_opts);
+    const arena_exe = b.addExecutable(.{ .name = "arena-audit", .root_module = arena_mod });
+    const arena_run = b.addRunArtifact(arena_exe);
+    arena_run.addDirectoryArg(b.path("src"));
+    arena_run.addArg("--strict");
+    arena_run.has_side_effects = true;
+    arena_run.stdio = .inherit;
+    const arena_step = b.step("arena-audit", "Frame-arena and stack strings reaching consumers that outlive the frame");
+    arena_step.dependOn(&arena_run.step);
+    const arena_tests = b.addTest(.{ .root_module = arena_mod, .filters = test_filters, .test_runner = test_runner });
+    unit_step.dependOn(&b.addRunArtifact(arena_tests).step);
+    // ── end arena audit ─────────────────────────────────────────────────
+
     // ── e2e: gate-build ──
     // Compile the exe and every test binary for the selected target without
     // running them, installed under zig-out/gate/. The exe alone is not a

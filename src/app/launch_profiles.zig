@@ -28,6 +28,7 @@ const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const Config = @import("../config/Config.zig");
 const command = @import("../core/command.zig");
+const context_menus = @import("context_menus.zig");
 const CommandError = command.CommandError;
 const settings = @import("settings.zig");
 const pty_pane = @import("pty_pane.zig");
@@ -371,8 +372,7 @@ pub fn openChipMenu(app: *App, product: Product, x: u16, y: u16) Allocator.Error
     const rows = try menuItems(app, mem.allocator(), product);
     const items = try app.gpa.dupe(command.MenuItem, rows);
     errdefer app.gpa.free(items);
-    try app.openMenu(if (product == .claude) "Claude Code" else "Codex", items, x, y);
-    app.overlay.menu.mem = mem;
+    try context_menus.openOwned(app, if (product == .claude) "Claude Code" else "Codex", items, x, y, mem);
 }
 
 /// A menu row: `index` 0 is the built-in, else `list()[index - 1]`.

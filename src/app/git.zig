@@ -1985,7 +1985,12 @@ pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
 pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error!void {
     const has_sel = (selectedLines(dp, app.frame.allocator()) catch null) != null;
     const what: []const u8 = if (has_sel) "selected lines" else "hunk";
-    const arena = app.frame.allocator();
+    // Every row names the scope, so the labels are built for this open:
+    // they go on an arena the menu owns, not the frame's, which the next
+    // paint hands back from offset zero.
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
     var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     switch (dp.scope) {
         .file, .worktree, .head => {
@@ -2001,7 +2006,39 @@ pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error
     try items.append(app.gpa, .{ .label = "Open file at line", .action = .{ .command = .@"git.diff_open_line" } });
     const owned = try items.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
-    try app.openMenu("Diff", owned, x, y);
+    try context_menus.openOwned(app, "Diff", owned, x, y, mem);
+}
+
+test "openDiffRowMenu: the row labels survive the next frame — the menu owns them" {
+    var frame_buf: [64 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    // A fixed buffer, where a reset hands the SAME bytes back: a
+    // DebugAllocator-backed arena would give the next frame fresh pages
+    // and the scribble would never reach the dead ones.
+    app.frame.deinit();
+    app.frame = alloc_mod.FrameArena.init(fba.allocator());
+    defer {
+        app.overlay.deinit(app.gpa);
+        app.overlay = .none;
+        app.frame.deinit();
+        app.frame = alloc_mod.FrameArena.init(app.gpa);
+    }
+    var dp: DiffPane = .{ .gpa = app.gpa, .repo = 0, .scope = .worktree, .title = try app.gpa.dupe(u8, "diff"), .arena = .init(app.gpa) };
+    defer dp.deinit();
+    try openDiffRowMenu(&app, &dp, 4, 4);
+    // The next frame reuses the arena from offset zero.
+    app.frame.begin();
+    for (0..1024) |_| {
+        const chunk = try app.frame.allocator().alloc(u8, 16);
+        @memset(chunk, 'X');
+    }
+    try std.testing.expect(app.overlay == .menu);
+    try std.testing.expectEqualStrings("Stage hunk", app.overlay.menu.items[0].label);
+    try std.testing.expectEqualStrings("Discard hunk\u{2026}", app.overlay.menu.items[1].label);
+    try std.testing.expectEqualStrings("Stash hunk", app.overlay.menu.items[2].label);
+    try std.testing.expectEqualStrings("Commit hunk\u{2026}", app.overlay.menu.items[3].label);
 }
 
 // ─── pickers ────────────────────────────────────────────────────────────
