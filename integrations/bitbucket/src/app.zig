@@ -158,6 +158,8 @@ pub const App = struct {
     values_requested: bool = false,
     /// Set by `commit` when a refresh landed, so a test can wait on it.
     refreshes_landed: u32 = 0,
+    /// The worker's progress, read by the header while a tab loads.
+    progress: ?*const fetch.Progress = null,
 
     pub fn init(gpa: Allocator, io: Io, config: cfg.Config, config_path: []const u8, opts: Options) Allocator.Error!App {
         var app: App = .{
@@ -245,6 +247,14 @@ pub const App = struct {
     }
 
     // ─── what the loop asks ──────────────────────────────────────────
+
+    pub fn progressDone(app: *const App) u32 {
+        return if (app.progress) |p| p.done.load(.acquire) else 0;
+    }
+
+    pub fn progressTotal(app: *const App) u32 {
+        return if (app.progress) |p| p.total.load(.acquire) else 0;
+    }
 
     pub fn activeTab(app: *App) *TabState {
         return &app.tabs[app.active];

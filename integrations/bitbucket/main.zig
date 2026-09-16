@@ -20,4 +20,6 @@ test {
     _ = @import("src/theme.zig");
     _ = @import("src/fetch.zig");
     _ = @import("src/app.zig");
+    _ = @import("src/view.zig");
+    _ = @import("src/screen.zig");
 }

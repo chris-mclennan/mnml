@@ -48,7 +48,7 @@ pub const Col = struct {
 
 /// The reference's column tables. `drop` ranks: 1 goes first.
 pub const pr_tree_cols = [_]Col{
-    .{ .name = "REPO / #PR", .w = 30 },
+    .{ .name = "REPO / #PR", .w = 28 },
     .{ .name = "STATE", .w = 10, .drop = 4 },
     .{ .name = "AUTHOR", .w = 18, .drop = 2 },
     .{ .name = "BRANCH", .w = 22, .drop = 1 },
@@ -56,10 +56,10 @@ pub const pr_tree_cols = [_]Col{
     .{ .name = "TITLE", .w = 20, .rest = true },
 };
 pub const pipelines_tree_cols = [_]Col{
-    .{ .name = "REPO / BRANCH", .w = 40 },
+    .{ .name = "REPO / BRANCH", .w = 38 },
     .{ .name = "STATE", .w = 14, .drop = 3 },
     .{ .name = "BUILD", .w = 8, .drop = 2 },
-    .{ .name = "RESULT", .w = 10 },
+    .{ .name = "RESULT", .w = 13 },
     .{ .name = "DATE", .w = 12, .drop = 1 },
 };
 pub const pr_flat_cols = [_]Col{
@@ -522,15 +522,17 @@ test "the reference's columns fit at 120 and drop the branch, then the author, a
     try t.expectEqualStrings("TITLE", wide[5].name);
     try t.expect(wide[5].w > 20);
     const narrow = try fit(a, .pr_tree, 80);
-    // 30+10+18+12+20 + 4 gaps = 94 > 80 → drop BRANCH (94-23=71 ≤ 80).
-    try t.expectEqual(@as(usize, 5), narrow.len);
-    for (narrow) |c| try t.expect(!std.mem.eql(u8, c.name, "BRANCH"));
+    // 28+10+18+22+12+20 + 5 gaps = 115 > 80 → drop BRANCH (92), then
+    // AUTHOR (73 ≤ 80): the title keeps its room, unlike the reference's
+    // four-character columns at this width.
+    try t.expectEqual(@as(usize, 4), narrow.len);
+    for (narrow) |c| try t.expect(!std.mem.eql(u8, c.name, "BRANCH") and !std.mem.eql(u8, c.name, "AUTHOR"));
     const tiny = try fit(a, .pr_tree, 50);
     try t.expectEqual(@as(usize, 2), tiny.len);
     try t.expectEqualStrings("REPO / #PR", tiny[0].name);
     try t.expectEqualStrings("TITLE", tiny[1].name);
     const pipes = try fit(a, .pipelines_tree, 80);
-    // 40+14+8+10+12 + 4 = 88 > 80 → drop DATE.
+    // 38+14+8+13+12 + 4 = 89 > 80 → drop DATE.
     try t.expectEqual(@as(usize, 4), pipes.len);
     try t.expectEqualStrings("RESULT", pipes[3].name);
 }

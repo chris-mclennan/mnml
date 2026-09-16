@@ -86,6 +86,12 @@ pub const Theme = struct {
         return .{ .fg = th.chip_fg orelse th.fg, .bg = th.chip_bg };
     }
 
+    /// The filter pill while it has the keys: the ground stays, the
+    /// text brightens.
+    pub fn chipActiveSoft(th: Theme) Style {
+        return .{ .fg = th.fg, .bg = th.chip_bg };
+    }
+
     /// The refresh glyph: the accent on the ground.
     pub fn refresh(th: Theme) Style {
         return .{ .fg = th.chip_active_bg };
