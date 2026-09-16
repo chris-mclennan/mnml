@@ -236,7 +236,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             const caret: []const u8 = if (!expandable) "  " else if (p.sub) expander(true) else expander(false);
             cells[0] = try std.fmt.allocPrint(a, "  {s} #{d}", .{ caret, pr.id });
             styles[0] = cellStyle(c, th.number());
-            cells[1] = if (pr.draft) "DRAFT" else pr.state;
+            cells[1] = pr.state;
             styles[1] = cellStyle(c, th.prState(pr.state));
             cells[2] = pr.author;
             styles[2] = base;
@@ -289,7 +289,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
                 styles[0] = base;
                 cells[1] = try std.fmt.allocPrint(a, "#{d}", .{pr.id});
                 styles[1] = cellStyle(c, th.number());
-                cells[2] = if (pr.draft) "DRAFT" else pr.state;
+                cells[2] = pr.state;
                 styles[2] = cellStyle(c, th.prState(pr.state));
                 cells[3] = if (pr.author.len > 0) pr.author else "—";
                 styles[3] = base;

@@ -52,7 +52,7 @@ expect screen contains "#1234"
 expect screen contains "Fix the login redirect"
 expect screen contains "chris/fix-login"
 expect screen contains "▾ web"
-expect screen contains "DRAFT"
+expect screen contains "#820"
 expect screen contains "Redesign the em"
 expect screen contains "[ Show 1 more older ]"
 expect screen contains "author: all"
@@ -70,19 +70,19 @@ expect screen contains "Bump the client"
 expect screen lacks "[ Show"
 # c collapses every repo (the header keeps its preview), e opens them.
 key c
-expect screen lacks "OPEN       Chris M"
+expect screen lacks "Fix the login redirect"
 expect screen contains "▸ api"
 key e
-expect screen contains "OPEN       Chris M"
+expect screen contains "Fix the login redirect"
 
 # The filter narrows the PR rows under the headers; esc clears it.
 type /
 type empty
 key enter
 expect screen contains "Redesign the em"
-expect screen lacks "OPEN       Chris M"
+expect screen lacks "Fix the login redirect"
 key esc
-expect screen contains "OPEN       Chris M"
+expect screen contains "Fix the login redirect"
 
 # The detail beside the list: the reference's header lines, the
 # description, the comments most-recent first.

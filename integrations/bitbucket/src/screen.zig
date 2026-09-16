@@ -677,7 +677,7 @@ test "a click on a row selects that row and toggles a header; the strip switches
     try t.expect(has(scr, "▸ api"));
     // The header keeps its preview of #1234; the PR row itself is gone.
     try t.expect(has(scr, "#1234 · Fix the login"));
-    try t.expect(!has(scr, "OPEN       Chris M"));
+    try t.expect(!has(scr, "Fix the login redirect"));
     // The strip.
     const hit_tab = s.rig.app.hits.rectOf(.{ .tab = 1 }).?;
     try s.click(hit_tab.x + 2, hit_tab.y, .left);
@@ -771,8 +771,8 @@ test "the key sheet, the row menu and the filter paint as overlays that take the
     for ("login") |c| try s.key(&[_]u8{c});
     scr = try s.draw();
     try t.expect(has(scr, "login▏"));
-    try t.expect(has(scr, "OPEN       Chris M"));
-    try t.expect(!has(scr, "DRAFT"));
+    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(!has(scr, "Redesign the empty"));
 }
 
 test "the pane paints at every size the gate runs, and at one below them" {

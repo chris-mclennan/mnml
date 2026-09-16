@@ -75,15 +75,20 @@ def facts(text):
         m = re.search(r"(✓|✗|⊘|→)\s*(SUCCESSFUL|FAILED|STOPPED|no pipeline ran|fetching pipeline)\s*(#\d+)?", s)
         if m and s.startswith(("→", "✓", "✗", "⊘")) or (m and "on " in s and m.group(3)):
             out.add(f"subline:{m.group(2)}:{m.group(3) or ''}")
-        for tab in re.findall(r"(?:\d\.|\b\d )\s?(Open \+ Draft|Merged|Pipelines|Mine)\s*\((\d+)\)", s):
-            out.add(f"tab:{tab[0]}")
+        # The tab strip is chrome: the reference hides it under --only,
+        # the Zig pane shows it for two tabs. Not a content fact.
         m = re.match(r"^(?:[A-Za-z]+/)?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#(\d+)\s*$", s.strip("┌┐─ "))
         if m:
             out.add(f"detail:#{m.group(1)}")
-        for key in ("author:", "updated:", "not approved", "you approved", "comments (", "(no description)"):
+        if "· updated:" in s:
+            m = re.search(r"author:\s*([^·│]*)·\s*updated:\s*([^│ ]*)", s)
+            if m:
+                out.add(f"detail:author:{m.group(1).strip()}")
+                out.add(f"detail:updated:{m.group(2).strip()}")
+        for key in ("not approved", "you approved", "comments (", "(no description)"):
             if key in s:
-                out.add(f"detail:{key}{re.search(re.escape(key) + r'\s*([^·]*)', s).group(1).strip()[:14] if key in ('author:', 'updated:') else ''}")
-        if "Author:" in s or "author:" in s and "all" in s:
+                out.add(f"detail:{key}")
+        if re.search(r"\bAuthor(: [^▾]+)? ▾", s) or re.search(r"\bauthor: \S", s):
             out.add("chip:author")
         if "Refresh" in s or "" in s or "󰑐" in s:
             out.add("chip:refresh")
@@ -101,7 +106,7 @@ def run_rust(args, tmp, fake_url, family, steps, out_dir, name):
                 '[[tabs]]\nname = "Open + Draft"\nkind = "workspace_open_prs"\n[[tabs]]\nname = "Merged"\nkind = "workspace_merged_prs"\n[[tabs]]\nname = "Pipelines"\nkind = "workspace_pipelines"\n')
     only = {"prs": "prs", "pipelines": "pipelines", "mine": "prs-mine"}[family]
     first = "until:REPO / BRANCH" if family == "pipelines" else "until:REPO / #PR"
-    cmd = [sys.executable, os.path.join(HERE, "rust-capture.py"), "--bin", args.oracle, "--arg", "--only", "--arg", only,
+    cmd = [sys.executable, os.path.join(HERE, "rust-capture.py"), "--bin", args.oracle, "--arg=--only", f"--arg={only}",
            "--env", "MNML_PANE=1", "--env", f"HOME={home}", "--env", f"TATTLE_ARTIFACTS_ROOT={os.path.join(tmp, 'rl')}",
            "--env", f"BITBUCKET_BASE_URL={fake_url}", "--env", "BITBUCKET_API_TOKEN=x", "--env", f"MNML_BB_ORACLE_LOG={os.path.join(tmp, 'oracle.log')}",
            "--size", args.size, "--out-dir", out_dir, first] + steps + [f"snap:rust-{name}", "key:q", "wait:300"]
