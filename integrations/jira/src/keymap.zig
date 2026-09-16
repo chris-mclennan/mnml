@@ -89,6 +89,8 @@ pub const Binding = struct {
     where: Where = .any,
     /// On the hint row, in this order (0 = not there).
     hint: u8 = 0,
+    /// The hint row's shorter word for the label, when the label is long.
+    short: []const u8 = "",
 };
 
 pub const bindings = [_]Binding{
@@ -110,16 +112,16 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{ "enter", "o" }, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .flat },
     .{ .keys = &.{"o"}, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .tree },
     .{ .keys = &.{"o"}, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .kanban },
-    .{ .keys = &.{"space"}, .action = .toggle_select, .label = "select for a bulk action", .section = .rows, .where = .flat, .hint = 3 },
-    .{ .keys = &.{"space"}, .action = .toggle_select, .label = "select for a bulk action", .section = .rows, .where = .kanban, .hint = 3 },
-    .{ .keys = &.{"shift+s"}, .action = .toggle_select, .label = "select for a bulk action", .section = .rows, .where = .tree, .hint = 3 },
+    .{ .keys = &.{"space"}, .action = .toggle_select, .label = "select for a bulk action", .section = .rows, .where = .flat, .hint = 3, .short = "select" },
+    .{ .keys = &.{"space"}, .action = .toggle_select, .label = "select for a bulk action", .section = .rows, .where = .kanban, .hint = 3, .short = "select" },
+    .{ .keys = &.{"shift+s"}, .action = .toggle_select, .label = "select for a bulk action", .section = .rows, .where = .tree, .hint = 3, .short = "select" },
     .{ .keys = &.{"t"}, .action = .transition, .label = "transition", .section = .ticket, .hint = 1 },
     .{ .keys = &.{"a"}, .action = .assignee, .label = "assignee", .section = .ticket, .hint = 2 },
     .{ .keys = &.{"f"}, .action = .fix_version, .label = "fix version", .section = .ticket, .where = .work_or_boards, .hint = 4 },
     .{ .keys = &.{"shift+f"}, .action = .fix_version, .label = "fix version on the ticket", .section = .ticket, .where = .fix_versions },
     .{ .keys = &.{"w"}, .action = .watch, .label = "watch / unwatch", .section = .ticket },
-    .{ .keys = &.{"c"}, .action = .comment, .label = "comment", .section = .ticket, .where = .detail_open },
-    .{ .keys = &.{"d"}, .action = .toggle_details, .label = "detail pane", .section = .view, .hint = 5 },
+    .{ .keys = &.{"c"}, .action = .comment, .label = "comment", .section = .ticket, .where = .detail_open, .hint = 6 },
+    .{ .keys = &.{"d"}, .action = .toggle_details, .label = "detail pane", .section = .view, .hint = 5, .short = "detail" },
     .{ .keys = &.{"shift+d"}, .action = .detail_modal, .label = "detail modal", .section = .view },
     .{ .keys = &.{"."}, .action = .action_picker, .label = "actions", .section = .dispatch, .hint = 7 },
     .{ .keys = &.{"shift+i"}, .action = .dispatch_implement, .label = "dispatch: implement", .section = .dispatch, .where = .fix_versions },
@@ -229,7 +231,7 @@ pub fn hintRow(arena: Allocator, ctx: Context) Allocator.Error![]const u8 {
         var buf: [16]u8 = undefined;
         try out.appendSlice(arena, displayKey(&buf, b.keys[0]));
         try out.append(arena, ' ');
-        try out.appendSlice(arena, b.label);
+        try out.appendSlice(arena, if (b.short.len > 0) b.short else b.label);
     }
     return out.toOwnedSlice(arena);
 }
@@ -283,7 +285,7 @@ test "the hint row and the sheet are read from the table, so a chord cannot drif
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const row = try hintRow(a.allocator(), tree_ctx);
-    try testing.expectEqualStrings("t transition · a assignee · S select for a bulk action · f fix version · d detail pane · . actions · / filter · r refresh · ? keys", row);
+    try testing.expectEqualStrings("t transition · a assignee · S select · f fix version · d detail · . actions · / filter · r refresh · ? keys", row);
     const fixv = try hintRow(a.allocator(), fixv_ctx);
     try testing.expect(std.mem.indexOf(u8, fixv, "f switch the release") != null);
     const kb = try hintRow(a.allocator(), kanban_ctx);

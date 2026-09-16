@@ -811,7 +811,8 @@ pub const Painter = struct {
         // bindings that apply, whole entries only, as many as fit.
         for (try keymap.hints(p.arena, a.context()), 0..) |b, i| {
             var kb: [16]u8 = undefined;
-            const entry = if (i == 0) p.fmt("{s} {s}", .{ keymap.displayKey(&kb, b.keys[0]), b.label }) else p.fmt("· {s} {s}", .{ keymap.displayKey(&kb, b.keys[0]), b.label });
+            const label = if (b.short.len > 0) b.short else b.label;
+            const entry = if (i == 0) p.fmt("{s} {s}", .{ keymap.displayKey(&kb, b.keys[0]), label }) else p.fmt("· {s} {s}", .{ keymap.displayKey(&kb, b.keys[0]), label });
             const ew = text.width(entry);
             if (x + ew > w) break;
             x += p.put(x, y, ew, entry, muted) + 1;
@@ -1375,7 +1376,7 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .merge } }, a.hits.at(merge_x + 2, 7).?);
     // The hint row comes from the bindings, not a string.
     const last = try rowText(ar, &f, 39);
-    try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select for a bulk action") != null);
+    try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select") != null);
     // Every painted row is a hit, and a click on row 6 selects that row.
     try testing.expectEqual(hit.Target{ .row = 2 }, a.hits.at(30, 6).?);
     try testing.expectEqual(hit.Target{ .tab = 1 }, a.hits.at(14, 1).?);
