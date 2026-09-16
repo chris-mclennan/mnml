@@ -12,6 +12,7 @@ pub const max_message = wire.max_message;
 pub const Geometry = wire.Geometry;
 pub const Capabilities = wire.Capabilities;
 pub const Hello = wire.Hello;
+pub const Palette = wire.Palette;
 pub const Button = wire.Button;
 pub const InputEvent = wire.InputEvent;
 pub const HostMessage = wire.HostMessage;

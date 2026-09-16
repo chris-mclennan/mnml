@@ -27,6 +27,8 @@ const wire = @import("../bridge/wire.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const view = @import("../ui/mount_view.zig");
+const vaxis = @import("vaxis");
+const Theme = @import("../ui/theme.zig");
 const pty_pane = @import("pty_pane.zig");
 const build_options = @import("build_options");
 
@@ -205,6 +207,7 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
                 .theme = app.theme.name,
                 .workspace = app.workspace,
                 .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons },
+                .palette = paletteOf(&app.theme),
             } });
             m.greeted = true;
             const focused = app.active == ev.pane and app.focus == .pane;
@@ -301,6 +304,41 @@ pub fn hover(p: *MountPane, row: u32, m: Mouse, rect: ?Rect) void {
 }
 
 // ─── frame ──────────────────────────────────────────────────────────────
+
+/// The theme's roles as wire colours, for `hello.palette`: a sibling
+/// paints in the theme it is mounted in instead of the terminal's
+/// palette. A role the theme leaves to the terminal goes out as null.
+pub fn paletteOf(t: *const Theme) wire.Palette {
+    return .{
+        .fg = wireColor(t.fg.fg),
+        .bg = wireColor(t.bg.bg),
+        .muted = wireColor(t.muted.fg),
+        .accent = wireColor(t.accent.fg),
+        .border = wireColor(t.border.fg),
+        .panel_bg = wireColor(t.panel_bg.bg),
+        .cursor_line = wireColor(t.cursor_line.bg),
+        .chip_fg = wireColor(t.chip.fg),
+        .chip_bg = wireColor(t.chip.bg),
+        .chip_active_fg = wireColor(t.chip_active.fg),
+        .chip_active_bg = wireColor(t.chip_active.bg),
+        .red = wireColor(t.palette.red),
+        .green = wireColor(t.palette.green),
+        .yellow = wireColor(t.palette.yellow),
+        .orange = wireColor(t.palette.orange),
+        .blue = wireColor(t.palette.blue),
+        .cyan = wireColor(t.palette.cyan),
+        .purple = wireColor(t.palette.purple),
+        .comment = wireColor(t.palette.comment),
+    };
+}
+
+fn wireColor(c: vaxis.Color) ?wire.Color {
+    return switch (c) {
+        .default => null,
+        .index => |i| .{ .index = i },
+        .rgb => |v| .{ .rgb = v },
+    };
+}
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *MountPane, rect: Rect) Allocator.Error!void {
     const focused = app.active == id and app.focus == .pane;

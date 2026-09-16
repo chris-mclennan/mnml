@@ -45,6 +45,40 @@ pub const Capabilities = struct {
     ascii: bool = false,
 };
 
+/// The host theme's roles, so a sibling can paint in the theme it is
+/// mounted in rather than the terminal's palette. Every role is
+/// optional: a host that predates it sends none, a theme that leaves a
+/// colour to the terminal sends null for that one, and a sibling falls
+/// back to a palette index either way (`Style.fg = .{ .index = n }`).
+pub const Palette = struct {
+    /// Primary text and the editor ground.
+    fg: ?Color = null,
+    bg: ?Color = null,
+    /// Secondary text: hints, counts, placeholders.
+    muted: ?Color = null,
+    /// Links, group labels, the "look here" colour.
+    accent: ?Color = null,
+    /// Pane frames and separators.
+    border: ?Color = null,
+    /// Activity panels' ground, and the row the cursor is on.
+    panel_bg: ?Color = null,
+    cursor_line: ?Color = null,
+    /// A chip at rest, and one that is on (the primary button).
+    chip_fg: ?Color = null,
+    chip_bg: ?Color = null,
+    chip_active_fg: ?Color = null,
+    chip_active_bg: ?Color = null,
+    /// The named colours a state or a severity wants.
+    red: ?Color = null,
+    green: ?Color = null,
+    yellow: ?Color = null,
+    orange: ?Color = null,
+    blue: ?Color = null,
+    cyan: ?Color = null,
+    purple: ?Color = null,
+    comment: ?Color = null,
+};
+
 /// The first message after connect.
 pub const Hello = struct {
     protocol: u8 = protocol,
@@ -54,6 +88,8 @@ pub const Hello = struct {
     /// Absolute workspace path.
     workspace: []const u8 = "",
     capabilities: Capabilities = .{},
+    /// The theme's roles as colours; null from a host that has none.
+    palette: ?Palette = null,
 };
 
 pub const Button = enum { left, middle, right };
