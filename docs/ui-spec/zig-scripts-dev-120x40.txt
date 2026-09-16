@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ SCRIPTS                 │ 󰐕                                                                            󱸀      
+   │ SCRIPTS                │ 󰐕                                                                            󱸀      
   │ Inst (1) Mkt (5)  (1)   │
-   │  󰍉 / filter        A-Z ▾ │
+   │  󰍉 / filter              │
  󰍉 │                          │
    │▌ hello-scripts  0.1.0  De│
- 󰊢 │    user.hello_scripts    │
+ 󰊢 │▌   user.hello_scripts    │
    │                          │
   │                          │
    │                          │

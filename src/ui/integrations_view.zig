@@ -1,8 +1,9 @@
 //! The INTEGRATIONS section — the sidebar column the Rust editor
 //! paints (`rust-integrations-120x40.txt`): the caps header, the
 //! three tabs (`Inst (3) Mkt (9)  (34)` — Installed, Marketplace, the
-//! Dev tab's nf-fa-dev glyph), the filter pill with the sort chip at
-//! its right end, then three rows per entry — ` <glyph> Label`, the
+//! Dev tab's nf-fa-dev glyph), the filter pill — the sort chip sits in
+//! the header's chip ladder, where every other section keeps it — then
+//! three rows per entry — ` <glyph> Label`, the
 //! dim command id / description / folder, a blank — with a scrollbar
 //! when the list is longer than the column. Also the detail pane
 //! (`Pane.integrations`, Rust's `IntegrationDetail`): the title line,
@@ -11,7 +12,7 @@
 //! between the search chip and the right cluster.
 //!
 //! Hits, each registered in the statement that paints it: the tabs are
-//! `.button = tab_base + i`; the sort chip `.chip{ .integrations, .sort }`;
+//! `.button = tab_base + i`; the header's sort chip `.chip{ .integrations, .sort }`;
 //! the filter `.filter_input = .integrations`; an entry's two text rows
 //! `.row{ .integrations, idx }`; the scrollbar `.scrollbar{ .panel }`;
 //! a detail button `.script_hit{ pane, id = i }`; a strip chip
@@ -163,6 +164,9 @@ pub const SectionProps = struct {
     filter_focused: bool,
     /// The active tab's sort, short (`A-Z`).
     sort_label: []const u8,
+    /// The widest label that sort can ever show — the header chip pads
+    /// to it so it never resizes under a repeat-clicking pointer.
+    sort_widest: usize = 0,
     rows: []const Entry,
     scroll: *usize,
     cursor: usize,
@@ -291,35 +295,31 @@ fn drawTabs(ui: Ui, row: Rect, p: SectionProps) void {
     }
 }
 
-/// The sort chip's text: ` A-Z ▾ `.
-pub fn sortChipText(ui: Ui, label: []const u8) []const u8 {
-    return ui.fmt(" {s} {s} ", .{ label, if (ui.ascii) "v" else "\u{25be}" });
-}
-
 pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
     const t = ui.theme;
     ui.fill(area, t.panel_bg);
     if (area.isEmpty()) return null;
     const top = area.splitTop(1);
-    _ = header.draw(ui, top.top, .{ .panel = p.panel, .label = p.label, .bg = t.panel_bg });
+    // // changed (panel-consistency): the sort chip was painted at the
+    // right end of the FILTER row, where no other section keeps it. It
+    // is the header's mode chip now — the same ladder as TODOS /
+    // NOTES / FINDINGS / SESSIONS, so at the shipped 26-cell width it
+    // is the icon rung rather than a pill stealing the filter's cells.
+    const mode_text: ?[]const u8 = chip.modeText(ui.arena, "sort", p.sort_label, p.sort_widest) catch null;
+    _ = header.draw(ui, top.top, .{
+        .panel = p.panel,
+        .label = p.label,
+        .mode_chip = mode_text,
+        .mode_kind = .sort,
+        .bg = t.panel_bg,
+    });
     if (p.busy) list_panel.paintSpinner(ui, top.top, p.label, p.now_ms);
     if (area.h < 2) return null;
     drawTabs(ui, area.row(1), p);
     if (area.h < 3) return null;
 
-    // The filter pill, with the sort chip at the row's right end.
-    const frow = area.row(2);
-    const sort_text = sortChipText(ui, p.sort_label);
-    const sort_w = ui.width(sort_text);
-    var filter_rect = frow;
-    if (frow.w > sort_w + 8) {
-        filter_rect.w = frow.w - sort_w;
-        var sstyle = Theme.onBg(t.accent, t.panel_bg.bg);
-        sstyle.fg = t.chip_active.bg;
-        sstyle.bold = true;
-        _ = chip.paint(ui, frow.right() - sort_w, frow.y, sort_w, sort_text, sstyle, p.panel, .sort);
-    }
-    const caret = filter_input.draw(ui, filter_rect, .{
+    // The filter pill, the shared widget across the whole row.
+    const caret = filter_input.draw(ui, area.row(2), .{
         .panel = p.panel,
         .text = p.filter,
         .caret = p.filter_caret,
@@ -361,10 +361,10 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
         const style = list_panel.rowStyle(t, selected);
         ui.fill(r1, style);
         ui.fill(r2, style);
-        if (selected) {
-            const marker = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
-            _ = ui.putStr(r1.x, r1.y, 1, marker, Theme.withFg(style, if (p.focused) t.accent.fg else t.muted.fg));
-        }
+        // // changed (panel-consistency): the gutter ran on `r1` alone,
+        // so a selected entry was half-marked; `paintMarker` takes the
+        // entry's whole height.
+        if (selected) list_panel.paintMarker(ui, Rect.init(r1.x, r1.y, r1.w, 2), style, p.focused);
         paintEntry(ui, r1, r2, e, style);
         ui.hit(r1, .{ .row = .{ .panel = p.panel, .idx = @intCast(i) } });
         ui.hit(r2, .{ .row = .{ .panel = p.panel, .idx = @intCast(i) } });
@@ -631,6 +631,7 @@ fn sectionProps(rows: []const Entry, scroll: *usize, tab: Tab) SectionProps {
         .filter_caret = 0,
         .filter_focused = false,
         .sort_label = "A-Z",
+        .sort_widest = 8, // "Category"
         .rows = rows,
         .scroll = scroll,
         .cursor = 0,
@@ -639,7 +640,7 @@ fn sectionProps(rows: []const Entry, scroll: *usize, tab: Tab) SectionProps {
     };
 }
 
-test "the section: header, the three tabs at the Rust widths, the filter with the sort chip, three rows per entry" {
+test "the section: header with the sort chip in its ladder, the three tabs at the Rust widths, the filter across the whole row, three rows per entry, the gutter down BOTH rows of the selected one" {
     var f = try Fixture.init(26, 14);
     defer f.deinit();
     var scroll: usize = 0;
@@ -651,18 +652,30 @@ test "the section: header, the three tabs at the Rust widths, the filter with th
     try f.expectContains("INTEGRATIONS");
     // 26 wide: the compact tier, as the Rust dump at the shipped width.
     try f.expectRow(1, " Inst (3) Mkt (9) " ++ dev_glyph ++ " (34)");
-    try f.expectContains("/ filter");
-    try f.expectContains(" A-Z \u{25be}");
+    // The sort chip is the header's, at the icon rung the 26-cell
+    // shipped width leaves — never on the filter row, where no other
+    // section keeps it.
+    try f.expectRow(0, " INTEGRATIONS" ++ " " ** 7 ++ "\u{f0dc}   \u{eb37}");
+    try f.expectLacks("A-Z");
+    try f.expectRow(2, "  \u{F0349} / filter");
+    // The selected entry's gutter runs BOTH its rows.
     try f.expectRow(4, "\u{258c} B Browser");
-    try f.expectRow(5, "    browser.open");
+    try f.expectRow(5, "\u{258c}   browser.open");
     try f.expectRow(6, "");
     try f.expectRow(7, "  C Claude Code (hidden)");
+    try testing.expect(f.bgEql(10, 4, f.theme.cursor_line));
+    try testing.expect(f.bgEql(10, 5, f.theme.cursor_line));
+    try testing.expect(f.fgEql(0, 5, f.theme.accent));
     try testing.expectEqual(tab_base + 0, f.hits.at(2, 1).?.button);
     try testing.expectEqual(tab_base + 2, f.hits.at(20, 1).?.button);
     try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
     try testing.expectEqual(@as(u32, 1), f.hits.at(5, 8).?.row.idx);
-    try testing.expectEqual(chip.ChipKind.sort, f.hits.at(22, 2).?.chip.kind);
+    try testing.expectEqual(chip.ChipKind.sort, f.hits.at(20, 0).?.chip.kind);
+    try testing.expectEqual(chip.ChipKind.refresh, f.hits.at(24, 0).?.chip.kind);
     try testing.expectEqual(list_panel.PanelId.integrations, f.hits.at(5, 2).?.filter_input);
+    // Where the sort pill used to sit the filter now reaches: the pill
+    // is the whole row, and nothing on it is a chip.
+    try testing.expectEqual(list_panel.PanelId.integrations, f.hits.at(22, 2).?.filter_input);
     // The active pill is the accent; the hidden row dims.
     try testing.expect(f.bgEql(1, 1, f.theme.chip_active));
     try testing.expect(f.style(6, 7).dim);
@@ -690,7 +703,7 @@ test "marketplace and dev rows carry their tag, badge and source; the empty stat
     };
     _ = drawSection(f.ui(), f.full(), sectionProps(&rows, &scroll, .marketplace));
     try f.expectContains("\u{258c} b  [launcher] btop  \u{2713} Official  (acme)");
-    try f.expectContains("    Resource monitor");
+    try f.expectContains("\u{258c}   Resource monitor");
     try f.expectContains("[installed] mnml-db  ~ Community  (me)");
     try f.expectContains("installing…");
     // Ten rows hold two entries; three need the bar.

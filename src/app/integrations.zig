@@ -269,6 +269,9 @@ pub const InstalledSort = enum {
     }
 
     pub const all = [_]InstalledSort{ .name, .name_desc, .enabled_first, .category };
+
+    /// Widest label, in code points — the header chip pads to it.
+    pub const widest_label: usize = widestLabel(InstalledSort);
 };
 
 /// The Marketplace and Dev tabs' orders (`newest` = by kind, `oldest` = by source).
@@ -324,7 +327,22 @@ pub const MarketSort = enum {
     }
 
     pub const all = [_]MarketSort{ .name, .name_desc, .kind, .source };
+
+    /// Widest label, in code points — the header chip pads to it.
+    pub const widest_label: usize = widestLabel(MarketSort);
 };
+
+/// The widest `label()` of a sort enum's `all`, in code points. The
+/// header's sort chip is right-anchored and pads to it, so a shorter
+/// label never slides the chip out from under a repeat-clicking
+/// pointer (`ui/chip.zig`).
+fn widestLabel(comptime Sort: type) usize {
+    comptime {
+        var w: usize = 0;
+        for (Sort.all) |m| w = @max(w, std.unicode.utf8CountCodepoints(m.label()) catch unreachable);
+        return w;
+    }
+}
 
 /// A Dev install in flight: the task pane running `zig build` and / or
 /// `<binary> --install`; `tick` finishes the job when it exits.
@@ -1465,6 +1483,14 @@ fn sortLabel(app: *App) []const u8 {
     };
 }
 
+/// What the header's sort chip pads to on the active tab.
+fn sortWidest(app: *App) usize {
+    return switch (app.integrations.tab) {
+        .installed => InstalledSort.widest_label,
+        .marketplace, .dev => MarketSort.widest_label,
+    };
+}
+
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
     return std.ascii.indexOfIgnoreCase(hay, needle) != null;
 }
@@ -1947,6 +1973,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .filter_caret = st.panel.filter_caret,
         .filter_focused = st.panel.filter_focused,
         .sort_label = sortLabel(app),
+        .sort_widest = sortWidest(app),
         .rows = rows,
         .scroll = &st.panel.scroll,
         .cursor = st.panel.cursor,
