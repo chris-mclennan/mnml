@@ -1461,7 +1461,11 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     try paint(ar, &f, a, .{});
     const impl_y = (try findRow(ar, &f, "dispatch: implement")).?;
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, impl_y), "│   I ") != null);
+    // The overlays section is last; a big scroll clamps to the end.
+    a.help_scroll = 999;
+    try paint(ar, &f, a, .{});
     try testing.expect((try findRow(ar, &f, "▾ ── overlays ──")) != null);
+    try testing.expect((try findRow(ar, &f, "JQL editor: run")) != null);
     try a.click(60, 20, false);
     try testing.expect(!a.help);
 }
