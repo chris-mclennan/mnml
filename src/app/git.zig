@@ -2872,10 +2872,48 @@ pub fn statusPaneWheel(app: *App, sp: *StatusPane, down: bool, n: usize) void {
 
 /// Esc: back to the tree when it is showing, else the pane closes.
 fn leaveStatusPane(app: *App, id: PaneId) Allocator.Error!void {
-    if (app.tree.visible) {
-        if (app.activeBuffer()) |b| b.input.onBlur();
-        app.focus = .tree;
-    } else try app.closePane(id, true);
+    _ = id;
+    leaveToTree(app);
+}
+
+/// Esc's way out of a git pane: the keys go to the tree when it is
+/// shown, and stay on the pane otherwise. A pane never closes on Esc —
+/// `q` and the tab's × do that.
+fn leaveToTree(app: *App) void {
+    if (!app.tree.visible) return;
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .tree;
+}
+
+test "esc never closes a git pane: the graph, the diff and the status pane keep their tabs, with the tree shown or hidden" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "initial" });
+    const app = &f.app;
+    try discover(app);
+    try command.run(app, .{ .static = .@"git.graph" });
+    const graph_id = app.active.?;
+    const before = app.panes.count();
+    // Tree shown: Esc hands the keys to the column, the tab stays.
+    app.tree.visible = true;
+    app.setActive(graph_id);
+    app.focus = .{ .pane = graph_id };
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expectEqual(before, app.panes.count());
+    try testing.expect(app.layouts.current().leafOf(graph_id) != null);
+    // The keys left the pane (in git mode the column is the branches
+    // panel, so the focus is a panel, not the file tree).
+    try testing.expect(app.focus != .pane);
+    // Tree hidden: Esc is a no-op on the pane, still no close.
+    app.tree.visible = false;
+    app.setActive(graph_id);
+    app.focus = .{ .pane = graph_id };
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expectEqual(before, app.panes.count());
+    try testing.expect(app.layouts.current().leafOf(graph_id) != null);
 }
 
 /// The status pane's keys, Rust's `Pane::GitStatus` arm: `j k ↑ ↓`
@@ -2980,12 +3018,15 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
         .end => diffHome(dp, true),
         .enter => runToast(app, openDiffLine(app, dp)),
         .esc => {
+            // Esc leaves states, never the pane: a selection, then the
+            // filter, then the keys go back to the tree (the tab stays —
+            // it used to close, and one Esc per pane emptied a strip).
             if (dp.anchor != null) {
                 dp.anchor = null;
             } else if (dp.filter.items.len > 0) {
                 dp.filter.clearRetainingCapacity();
                 try refilterDiff(app, dp);
-            } else try app.closePane(id, true);
+            } else leaveToTree(app);
         },
         .char => |c| {
             if (k.mods.ctrl and (c == 'd' or c == 'u')) {
@@ -3348,8 +3389,9 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
         .enter => runToast(app, showSelectedCommit(app, g)),
         .tab => g.detail_focus = true,
         .esc => {
-            // A selection in progress goes first; the pane after.
-            if (g.anchor != null or g.marks.count() > 0) g.clearSelection() else try app.closePane(id, true);
+            // A selection in progress goes first; then the keys go back
+            // to the tree. The pane stays: `q` closes it.
+            if (g.anchor != null or g.marks.count() > 0) g.clearSelection() else leaveToTree(app);
         },
         .char => |c| {
             if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
