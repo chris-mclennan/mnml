@@ -172,14 +172,17 @@ pub const State = struct {
     }
 };
 
+/// A row under a PR: the ticket and the PR it hangs from.
+pub const PrRef = struct { issue_idx: usize, pr_idx: usize };
+
 pub const Row = union(enum) {
     group: struct { status: []const u8, count: usize, expanded: bool },
     ticket: struct { issue_idx: usize, effective_status: []const u8, bumped: bool },
-    pr: struct { issue_idx: usize, pr_idx: usize },
+    pr: PrRef,
     pr_loading: struct { issue_idx: usize },
-    pipeline_loading: struct { issue_idx: usize, pr_idx: usize },
-    pipeline_empty: struct { issue_idx: usize, pr_idx: usize },
-    pipeline_error: struct { issue_idx: usize, pr_idx: usize },
+    pipeline_loading: PrRef,
+    pipeline_empty: PrRef,
+    pipeline_error: PrRef,
     pipeline: struct { issue_idx: usize, pr_idx: usize, pipeline_idx: usize },
     show_more: struct { issue_idx: usize, hidden: usize },
 

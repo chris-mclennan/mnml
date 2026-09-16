@@ -37,6 +37,8 @@ pub const hit = @import("src/hit.zig");
 pub const keymap = @import("src/keymap.zig");
 pub const pickers = @import("src/pickers.zig");
 pub const inbox = @import("src/inbox.zig");
+pub const app_mod = @import("src/app.zig");
+pub const textedit = @import("src/textedit.zig");
 pub const bitbucket = @import("src/bitbucket.zig");
 pub const json = @import("src/json.zig");
 pub const text = @import("src/text.zig");
@@ -188,6 +190,12 @@ pub fn configPath(arena: Allocator, io: Io, env: *const std.process.Environ.Map,
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test {
+    // Every module's tests run under `zig build test`, not only the ones
+    // main.zig happens to call.
+    testing.refAllDecls(@This());
+}
 
 test "the three manifests: one binary, three families, the Work chip carries the statusline segment" {
     try testing.expectEqualStrings("jira_work", spec_work.id);
