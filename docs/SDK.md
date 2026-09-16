@@ -252,16 +252,23 @@ are in `docs/BRIDGE.md`. Over a mount, prefer `mount.toast` and
 ## A second one, with a network behind it
 
 `integrations/bitbucket` is the other official integration: Bitbucket
-Cloud pull requests, on the same SDK, with an HTTP client, a private
-`config.zon` beside the manifest, a read/write token split, and a
-deterministic fake server of its own
-(`integrations/bitbucket/tools/fake_bitbucket/`). Three things it ran
-into are worth knowing before you write one:
+Cloud pull requests and pipelines, on the same SDK, as two chips from
+one binary (`--install` writes two manifests), with an HTTP client, a
+private `config.zon` beside the manifests, a shared cross-process rate
+bucket, a worker thread for the fetches, and a deterministic fake
+server of its own (`integrations/bitbucket/tools/fake_bitbucket/`). Four
+things it ran into are worth knowing before you write one:
 
 * **A key arrives as the host spells it, not as you say it.** mnml folds
   an uppercase letter into `shift+<lower>` and reports a back-tab as
-  `backtab` (`src/core/key.zig`'s `Chord.of`). Fold both back once, on
-  the way in, rather than doubling twenty comparisons.
+  `backtab` (`src/core/key.zig`'s `Chord.of`). Spell the table that
+  way (`keymap.zig`) rather than doubling twenty comparisons.
+* **`Mount.next` blocks, so a fetch cannot share its thread.** The pane
+  runs a reader thread that turns host messages into events on an
+  `Io.Queue`, a worker thread that runs the fetches and posts results
+  on the same queue, and a ticker for the auto-refresh; the main loop
+  takes one event at a time. A pane that fetches inline freezes for as
+  long as the network takes — minutes, under a shared rate bucket.
 * **There is no host→sibling command.** `HostMessage` is hello / resize /
   input / focus / goodbye: mnml can start your binary for a command, but
   it cannot send one into a mount that is already running. A command
@@ -273,8 +280,9 @@ into are worth knowing before you write one:
   badge, pass mnml's workspace through the ex line
   (`--workspace {{workspace}}`) and find the channel under it.
 
-Its `--refresh`, its rate gate and its auth split are all worth reading
-before writing the equivalents.
+`hello.palette` carries the host theme's roles (`theme.zig` there
+turns them into the styles the pane paints with, falling back to
+palette indices on a host that sends none).
 
 ## Testing an integration
 
