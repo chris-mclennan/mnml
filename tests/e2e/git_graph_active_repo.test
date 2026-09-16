@@ -1,5 +1,6 @@
 # Walkthrough finding 1.4: `git.graph` showed a foreign repo's graph once
-# an esc on the workspace repo's tab had closed it. The command lands on
+# a close of the workspace repo's tab had hidden it (esc used to close
+# the tab; since 2026-09-15 esc never closes a git pane — `q` does). The command lands on
 # the ACTIVE repo's graph — the first discovered here, `alpha` — and
 # brings its tab back; the other repo's graph only once the panel
 # switched to it.
@@ -12,8 +13,8 @@ command git.graph
 wait 1500
 expect pane "alpha"
 expect screen contains "alpha init"
-# esc closes the tab; beta's graph is what is left.
-key esc
+# q closes the tab; beta's graph is what is left.
+key q
 wait 300
 expect pane "beta"
 expect screen contains "beta init"
