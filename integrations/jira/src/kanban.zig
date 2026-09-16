@@ -67,10 +67,13 @@ pub const CardLine = union(enum) {
     summary: []const u8,
     assignee: []const u8,
     labels,
-    hint,
+    /// A line of `(click card for full details)`, wrapped to the card.
+    hint: []const u8,
     actions: []const dispatch.Button,
     blank,
 };
+
+pub const hint_text = "(click card for full details)";
 
 pub const Card = struct {
     issue_idx: usize,
@@ -86,7 +89,7 @@ pub fn layoutCard(arena: Allocator, issue_idx: usize, iss: Issue, expanded: bool
     for (wrapped) |w| try lines.append(arena, .{ .summary = w });
     if (iss.assignee) |a| if (a.display_name.len > 0) try lines.append(arena, .{ .assignee = a.display_name });
     if (expanded and iss.labels.len > 0) try lines.append(arena, .labels);
-    if (expanded) try lines.append(arena, .hint);
+    if (expanded) for (try text.wrap(arena, hint_text, wrap_w)) |l| try lines.append(arena, .{ .hint = l });
     const buttons = dispatch.buttonsForTicket(iss);
     if (buttons.len > 0) try lines.append(arena, .{ .actions = buttons });
     try lines.append(arena, .blank);

@@ -686,8 +686,8 @@ pub const Painter = struct {
                         }
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
-                    .hint => {
-                        _ = p.putFit(ix + 3, y, inner_w -| 3, "(click card for full details)", muted);
+                    .hint => |hint_line| {
+                        _ = p.putFit(ix + 3, y, inner_w -| 3, hint_line, muted);
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .actions => try p.paintActions(ix + 3, y, inner_w -| 3, ln.issue, iss),
