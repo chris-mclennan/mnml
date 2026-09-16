@@ -261,6 +261,17 @@ own steps (`docs/ui-spec/walk/steps-git.jsonl`) reproduce findings
 `git_graph_active_repo.test`, `git_commit_box.test` and
 `git_status_beside.test` drive the same sequences in the corpus.
 
+*// changed 2026-09-16 (git-panel):* `zig-git-palette-{120x40,80x24}.txt`
+/ `-all-120x40.txt` were re-cut: the checked-out branch reads
+`  󱓏 main` (its own glyph, no check in the gutter, no green ground)
+and the worktree on show `  󰋜 main (ws)`; nothing else moved. The
+Rust panel still paints the check and the green row, so `steps-graph2`
+reads 38 beyond the rail against `rust-git-120x40.txt` (37 before the
+re-skin): the one extra row is `main` in LOCAL. The click model
+(one click hovers, a double-click acts) and the row menus are the
+user's departure from the Rust panel, described in `docs/PARITY.md`
+under `git-panel`.
+
 ## Sections and their sides (2026-09-07)
 
 Every activity section has a side (`src/app/side.zig`); these are the
