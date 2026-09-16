@@ -220,7 +220,7 @@ pub fn main(init: std.process.Init) !u8 {
         },
         else => return err,
     };
-    return pane(gpa, io, env, arena, mount, args, cfg_path, data_root);
+    return pane(gpa, io, env, arena, mount, args, data_root);
 }
 
 /// Where the config is: `--config`, `$MNML_JIRA_CONFIG`, the workspace's
@@ -263,7 +263,7 @@ fn setup(arena: Allocator, io: Io, env: *const std.process.Environ.Map, cfg_path
 
 const setup_hint = "r try again · q quit";
 
-fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, mount: *sdk.Mount, args: Args, cfg_path: []const u8, data_root: ?[]const u8) !u8 {
+fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, mount: *sdk.Mount, args: Args, data_root: ?[]const u8) !u8 {
     defer mount.destroy();
     var frame = try sdk.Frame.init(gpa, mount.geometry.cols, mount.geometry.rows);
     defer frame.deinit();
@@ -281,6 +281,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // to do and waits for r (try again) or q. The config's strings live
     // on `arena` for the rest of the run.
     const rd = while (true) {
+        // Resolved every time: a config written while the screen is up
+        // is found by the next r, wherever it landed.
+        const cfg_path = try configPath(arena, io, env, args);
         switch (try setup(arena, io, env, cfg_path, data_root, family)) {
             .ready => |r| break r,
             .problem => |pb| {
