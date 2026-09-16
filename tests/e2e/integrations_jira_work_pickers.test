@@ -1,0 +1,110 @@
+# Jira Work — the pickers: t (the transitions with their targets, 1-9
+# jumps, Enter moves the ticket), a (assignable users, typed filter, the
+# assignment lands on the site and the tab drops the ticket), f (the
+# project's versions, unreleased first), . (the ticket's actions), and
+# a bulk selection carried into a picker's title.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18724 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18724\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+wait 4000
+command jira_work.open
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK (3)"
+key j
+# t: the transition picker names the ticket and lists the moves.
+key t
+expect screen contains "transition ENG-2"
+expect screen contains "1. Back to To Do  → To Do"
+expect screen contains "3. Ready to test  → Testing"
+expect screen contains "1-9 jump · ↑↓/jk move · Enter commit · Esc cancel"
+key esc
+expect screen lacks "transition ENG-2"
+# f: the versions, unreleased first, released suffixed.
+key f
+expect screen contains "assign fixVersion on ticket"
+expect screen contains "— Clear fixVersion —"
+expect screen contains "13.17.0"
+expect screen contains "13.14.0 (released)"
+key esc
+# .: the ticket's buttons — ENG-2 is In PR Review, so Review.
+type .
+expect screen contains "actions"
+expect screen contains "[ Review ]"
+key esc
+# S selects ENG-2 for a bulk action; the header counts; a picker's
+# title carries the count.
+key shift+s
+expect screen contains "1 selected"
+# Four rows down: past ENG-2's two PR rows and the next group header.
+key j
+key j
+key j
+key j
+key shift+s
+expect screen contains "2 selected"
+key t
+expect screen contains "transition ENG-1 (+1 more)"
+key esc
+key esc
+expect screen lacks "2 selected"
+key k
+key k
+key k
+key k
+# a: the assignee picker; typing narrows it; Enter assigns on the site
+# and the Assigned tab drops the ticket on the refetch.
+key a
+expect screen contains "set assignee"
+expect screen contains "— Unassign —"
+expect screen contains "Lin Zhao"
+type lin
+expect screen lacks "Sam Beckett"
+key enter
+expect screen contains "assignee = Lin Zhao"
+expect screen contains "JIRA WORK (2)"
+expect screen lacks "ENG-2"
+# t on ENG-1, Enter on the first move: the ticket moves and the tree follows.
+key j
+key t
+expect screen contains "transition ENG-1"
+type 3
+key enter
+expect screen contains "ENG-1 → Testing"
+expect screen contains "Testing (1)"
+key q
+wait 500
+key x
+expect screen lacks "1 Assigned"
+command integrations.show_installed
+expect screen contains "Installed (7)"
+# The three manifests sort last: End reaches each in turn.
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Fix Versions?"
+key r
+expect screen contains "removed jira_fix_versions"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Boards?"
+key r
+expect screen contains "removed jira_boards"
+expect screen contains "Installed (4)"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

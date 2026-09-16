@@ -1,0 +1,95 @@
+# Jira Fix Versions: the release tab resolved to the next unreleased
+# version, its fixVersion pill, status_order grouping with a bump star,
+# the tab-view version picker switching the release, the per-ticket
+# picker on F, and a dispatch key with no workspace to write into.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18721 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_fix_versions\", .label = \"Jira Fix Versions\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_fix_versions.open\", .title = \"Jira Fix Versions\", .args = .{ \"--only\", \"fix-versions\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18721\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned }, .{ .name = \"Current Release\", .kind = .fix_version_tree, .project = \"ENG\", .mode = .current_release, .status_order = .{ \"Testing\", \"In PR Review\", \"In Progress\", \"To Do\", \"Done\" }, .bumps = .{ .pr_approved = \"Testing\", .no_open_prs = \"Testing\" } } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Fix Versions  0.2.0  not installed"
+key i
+expect screen contains "installed jira_fix_versions from"
+wait 4000
+command jira_fix_versions.open
+command view.toggle_tree
+command view.focus_pane
+# Only the family's tab is here; the release resolved to 13.16.0.
+expect screen contains "JIRA FIX VERSIONS (8)"
+expect screen contains "1 Current Release"
+expect screen lacks "Assigned"
+expect screen contains " space: ENG "
+expect screen contains " fixVersion: 13.16.0 "
+expect screen contains " ⓧ "
+# status_order puts Testing first; ENG-2 is bumped into it by its
+# approved PR and carries the star with its real status beside it.
+expect screen contains "Testing (2)"
+expect screen contains "ENG-2 ★"
+expect screen contains "ENG-6"
+expect screen contains "Rotate the payment keys"
+expect screen contains "In Progress (2)"
+expect screen contains "To Do (1)"
+expect screen contains "Done (3)"
+expect screen contains "f switch the release"
+# f: the tab-view picker; typing narrows it; Enter switches the release.
+key f
+expect screen contains "switch tab view to fixVersion"
+expect screen contains "13.17.0"
+expect screen contains "13.14.0 (released)"
+type 13.15
+expect screen lacks "13.17.0"
+key enter
+expect screen contains "JIRA FIX VERSIONS (1)"
+expect screen contains " fixVersion: 13.15.0 "
+expect screen contains "ENG-5"
+expect screen contains "Basket total wrong with a voucher"
+# F on the ticket: the per-ticket picker, with the clear row first.
+key j
+key shift+f
+expect screen contains "assign fixVersion on ticket"
+expect screen contains "— Clear fixVersion —"
+key esc
+expect screen lacks "assign fixVersion on ticket"
+# I dispatches Implement/Fix: no dispatch_workspace, so nothing to write into.
+key shift+x
+expect screen contains "fix: no dispatch channels available"
+# The action picker names the ticket's buttons.
+type .
+expect screen contains "actions"
+expect screen contains "[ Fix ]"
+expect screen contains "[ Triage ]"
+key esc
+key q
+wait 500
+key x
+expect screen lacks "1 Current Release"
+# Uninstall before leaving: `--install` wrote the three manifests into
+# the corpus's one shared data root, and x removes one row at a time —
+# the first manifest row each time, alphabetically.
+command integrations.show_installed
+expect screen contains "Installed (7)"
+# The three manifests sort last: End reaches each in turn.
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Fix Versions?"
+key r
+expect screen contains "removed jira_fix_versions"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Boards?"
+key r
+expect screen contains "removed jira_boards"
+expect screen contains "Installed (4)"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

@@ -1,0 +1,93 @@
+# Jira Boards: the active sprint as a kanban — the board and sprint
+# chips, the avatar cluster seeded to me, the four columns with their
+# counts, the cursor's card, > expanding a card, the detail modal, the
+# team picker, and the Backlog tab.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18722 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_boards\", .label = \"Jira Boards\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_boards.open\", .title = \"Jira Boards\", .args = .{ \"--only\", \"boards\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18722\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .team_field_id = \"customfield_10056\", .tabs = .{ .{ .name = \"Sprint\", .kind = .board_active_sprint, .project = \"ENG\", .board_id = 7 }, .{ .name = \"Backlog\", .kind = .board_backlog, .project = \"ENG\" } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Boards  0.2.0  not installed"
+key i
+expect screen contains "installed jira_boards from"
+wait 4000
+command jira_boards.open
+command view.toggle_tree
+command view.focus_pane
+# The sprint from the board; the assignee filter seeded to me shows 3 of 9.
+expect screen contains "JIRA BOARDS (3 of 9)"
+expect screen contains "1 Sprint"
+expect screen contains "2 Backlog"
+expect screen contains " board: Checkout board "
+expect screen contains " sprint: Sprint 4 "
+expect screen contains " SB "
+expect screen contains " [?] "
+expect screen contains " quick filters "
+expect screen contains " settings "
+expect screen contains " To Do ("
+expect screen contains " In Progress ("
+expect screen contains " Testing ("
+expect screen contains " Done ("
+expect screen contains "ENG-1"
+expect screen contains "Checkout rewrite"
+expect screen contains "· Ada Lovelace"
+expect screen lacks "ENG-6"
+# > expands the cursor's card: label chips and the hint line.
+key shift+.
+expect screen contains "#checkout"
+expect screen contains "(click card for full"
+key shift+.
+expect screen lacks "(click card for full"
+# D: the detail modal with the field table and the description.
+key shift+d
+expect screen contains "ENG-1 · Checkout rewrite  [In Progress]"
+expect screen contains "Assignee    : Ada Lovelace"
+expect screen contains "The umbrella for the checkout work."
+key esc
+expect screen lacks "Assignee    : Ada Lovelace"
+# T: the team picker over the components, labels and team values seen.
+key shift+t
+expect screen contains "filter kanban by team"
+expect screen contains "— Clear team —"
+expect screen contains "Apollo"
+key esc
+# The Backlog tab: the tickets in no sprint — two, neither mine, so the
+# seeded assignee filter shows none of them until it is cleared.
+key 2
+expect screen contains "JIRA BOARDS (0 of 2)"
+expect screen contains " To Do (0)"
+expect screen lacks "ENG-1 "
+key q
+wait 500
+key x
+expect screen lacks "1 Sprint"
+# Uninstall before leaving: `--install` wrote the three manifests into
+# the corpus's one shared data root, and x removes one row at a time —
+# the first manifest row each time, alphabetically.
+command integrations.show_installed
+expect screen contains "Installed (7)"
+# The three manifests sort last: End reaches each in turn.
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Fix Versions?"
+key r
+expect screen contains "removed jira_fix_versions"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Boards?"
+key r
+expect screen contains "removed jira_boards"
+expect screen contains "Installed (4)"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

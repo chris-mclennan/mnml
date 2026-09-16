@@ -1,0 +1,98 @@
+# Jira Work — the detail pane beside the tree (the field table, the
+# watcher line, the description, the comments), the comment box that
+# posts with Ctrl+S, w toggling the watch, and the detail modal with its
+# field table and description.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18723 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18723\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+wait 4000
+command jira_work.open
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK (3)"
+# j to ENG-2, d opens the detail pane on it.
+key j
+key d
+expect screen contains "DETAIL"
+expect screen contains "ENG-2  Card form validates on blur"
+expect screen contains "      type: Story"
+expect screen contains "  reporter: Sam Beckett"
+expect screen contains "fixVersion: 13.16.0"
+expect screen contains "★ watching (2 total)"
+expect screen contains "── description"
+expect screen contains "Validate the card number when the"
+expect screen contains "── comments (2)"
+expect screen contains "Sam Beckett · 2026-09"
+# The hint row follows the context: c is only there with the pane open.
+expect screen contains "c comment"
+# c: the comment box; the text; Ctrl+S posts it and the pane re-reads.
+key c
+expect screen contains "comment on ENG-2"
+expect screen contains "Enter on an empty line or Ctrl+S sends"
+type on it
+key enter
+key enter
+expect screen contains "commented on ENG-2"
+expect screen contains "── comments (3)"
+expect screen contains "on it"
+# w unwatches, w watches again; the watcher line follows.
+key w
+expect screen contains "unwatched ENG-2"
+expect screen contains "☆ not watching (1 total)"
+key w
+expect screen contains "watched ENG-2"
+expect screen contains "★ watching (2 total)"
+# Ctrl+D scrolls the detail; Esc closes the pane, not the app.
+key ctrl+d
+key esc
+expect screen lacks "DETAIL"
+expect screen contains "JIRA WORK (3)"
+# D: the detail modal, 40 / 60, the reference's field table.
+key shift+d
+expect screen contains "ENG-2 · Card form validates on blur  [In PR Review]"
+expect screen contains "Type        : Story"
+expect screen contains "Priority    : Medium"
+expect screen contains "Labels      : checkout, web"
+expect screen contains "Fix version : 13.16.0"
+expect screen contains "Parent      : Checkout rewrite"
+expect screen contains "Description"
+expect screen contains "Validate the card number"
+expect screen contains " × "
+key esc
+expect screen lacks "Type        : Story"
+key q
+wait 500
+key x
+expect screen lacks "1 Assigned"
+command integrations.show_installed
+expect screen contains "Installed (7)"
+# The three manifests sort last: End reaches each in turn.
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Fix Versions?"
+key r
+expect screen contains "removed jira_fix_versions"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Boards?"
+key r
+expect screen contains "removed jira_boards"
+expect screen contains "Installed (4)"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
