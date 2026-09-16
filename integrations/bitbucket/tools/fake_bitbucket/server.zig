@@ -10,8 +10,11 @@
 //! belongs to is `acct-chris` (Chris M) — so "PRs I opened" returns
 //! two and "PRs to review" returns one.
 //!
-//! What it deliberately does *not* fake: pagination past one page,
-//! pipelines, and branch listing. Those are not what the pane reads.
+//! Pipelines and branches are faked too, per repo, with their dates
+//! relative to `State.now_secs` so the pane's recency rules (the 24-hour
+//! window on a PR, the 14-day staleness on a feature branch) see the
+//! same picture every run. What it deliberately does *not* fake:
+//! pagination past one page.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -59,6 +62,10 @@ pub const State = struct {
     /// Set when a write arrived; the corpus proves the write token
     /// reached the wire without ever printing it.
     last_auth_was_write: bool = false,
+    /// The clock every relative date is written against, as seconds
+    /// since the epoch; the listener stamps the real one before each
+    /// request, a test sets its own.
+    now_secs: i64 = 1_789_500_000,
 
     pub const Vote = enum { none, approved, changes_requested };
 
@@ -107,6 +114,10 @@ pub const Fixture = struct {
     source_sha: []const u8,
     description: []const u8,
     draft: bool = false,
+    /// `updated_on` is this many hours before `State.now_secs`.
+    age_hours: u32 = 3,
+    /// The merge commit's hash on a MERGED fixture.
+    merge_sha: []const u8 = "",
     reviewers: []const Reviewer,
     /// `SUCCESSFUL` / `FAILED` / `INPROGRESS` — one per build status.
     builds: []const Build,
@@ -194,6 +205,7 @@ pub const fixtures = [_]Fixture{
         .source_branch = "dana/timeout",
         .source_sha = "bbb2222ccc3333",
         .description = "The 10s default trips on a cold start.",
+        .age_hours = 30,
         .reviewers = &.{.{ .id = me_account_id, .name = me_display_name }},
         .builds = &.{.{ .key = "pipe-build", .name = "Pipeline #409", .state = "SUCCESSFUL" }},
         .files = &.{.{ .status = "modified", .path = "src/http/client.zig", .added = 2, .removed = 2 }},
@@ -234,12 +246,81 @@ pub const fixtures = [_]Fixture{
         .source_branch = "sam/drop-exporter",
         .source_sha = "fff6666aaa7777",
         .description = "",
+        .age_hours = 5,
+        .merge_sha = "9999mergecommit",
         .reviewers = &.{.{ .id = me_account_id, .name = me_display_name, .vote = .approved }},
         .builds = &.{},
         .files = &.{.{ .status = "removed", .path = "src/export/legacy.zig", .added = 0, .removed = 240 }},
         .diff = "diff --git a/src/export/legacy.zig b/src/export/legacy.zig\ndeleted file mode 100644\n",
         .activity = &.{},
     },
+    .{
+        .repo = "web",
+        .id = 801,
+        .title = "Tidy the footer links",
+        .state = "MERGED",
+        .author_id = "acct-dana",
+        .author_name = "Dana R",
+        .source_branch = "dana/footer",
+        .source_sha = "eee5555fff6666",
+        .description = "",
+        .age_hours = 40,
+        .merge_sha = "8888mergecommit",
+        .reviewers = &.{},
+        .builds = &.{},
+        .files = &.{.{ .status = "modified", .path = "src/views/footer.zig", .added = 3, .removed = 3 }},
+        .diff = "diff --git a/src/views/footer.zig b/src/views/footer.zig\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+        .activity = &.{},
+    },
+};
+
+/// A pipeline run. `age_hours` is `created_on` before `State.now_secs`.
+pub const PipelineFixture = struct {
+    repo: []const u8,
+    build_number: u32,
+    /// `PENDING` / `IN_PROGRESS` / `COMPLETED`.
+    state: []const u8,
+    /// `SUCCESSFUL` / `FAILED` / `STOPPED`, or "" while not COMPLETED.
+    result: []const u8 = "",
+    ref_name: []const u8,
+    commit: []const u8,
+    trigger: []const u8 = "push",
+    creator: []const u8 = "Chris M",
+    duration_secs: u32 = 0,
+    age_hours: u32,
+};
+
+/// Newest first, the order Bitbucket's `sort=-created_on` returns.
+pub const pipelines = [_]PipelineFixture{
+    .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "chris/fix-login", .commit = "abc1234def5678", .age_hours = 1 },
+    .{ .repo = "api", .build_number = 412, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "9999mergecommit", .duration_secs = 312, .age_hours = 4 },
+    .{ .repo = "api", .build_number = 411, .state = "COMPLETED", .result = "FAILED", .ref_name = "develop", .commit = "1212121212", .trigger = "schedule", .duration_secs = 95, .age_hours = 20 },
+    .{ .repo = "api", .build_number = 405, .state = "COMPLETED", .result = "STOPPED", .ref_name = "release/1.2", .commit = "3434343434", .duration_secs = 40, .age_hours = 24 * 10 },
+    .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "chris/empty-state", .commit = "ddd4444eee5555", .age_hours = 1 },
+    .{ .repo = "web", .build_number = 70, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "8888mergecommit", .duration_secs = 200, .age_hours = 24 * 3 },
+};
+
+/// A branch head. `age_hours` is the tip commit's date before now.
+pub const BranchFixture = struct {
+    repo: []const u8,
+    name: []const u8,
+    hash: []const u8,
+    message: []const u8,
+    author: []const u8 = "Chris M <chris@example.com>",
+    age_hours: u32,
+};
+
+/// Most recently committed first, the order `sort=-target.date` returns.
+pub const branches = [_]BranchFixture{
+    .{ .repo = "api", .name = "chris/fix-login", .hash = "abc1234def5678", .message = "Keep the query string on the login redirect", .age_hours = 1 },
+    .{ .repo = "api", .name = "main", .hash = "9999mergecommit", .message = "Merged in sam/drop-exporter (pull request #1100)", .author = "Sam K <sam@example.com>", .age_hours = 4 },
+    .{ .repo = "api", .name = "develop", .hash = "1212121212", .message = "Bump the client timeout", .author = "Dana R <dana@example.com>", .age_hours = 20 },
+    .{ .repo = "api", .name = "dana/timeout", .hash = "bbb2222ccc3333", .message = "Bump the client timeout to 30s", .author = "Dana R <dana@example.com>", .age_hours = 30 },
+    .{ .repo = "api", .name = "release/1.2", .hash = "3434343434", .message = "Release 1.2", .age_hours = 24 * 10 },
+    .{ .repo = "api", .name = "old/experiment", .hash = "5656565656", .message = "An experiment nobody finished", .age_hours = 24 * 40 },
+    .{ .repo = "web", .name = "chris/empty-state", .hash = "ddd4444eee5555", .message = "Redesign the empty state", .age_hours = 1 },
+    .{ .repo = "web", .name = "staging", .hash = "7878787878", .message = "Deploy 2.3 to staging", .age_hours = 24 * 2 },
+    .{ .repo = "web", .name = "main", .hash = "8888mergecommit", .message = "Merged in dana/footer (pull request #801)", .author = "Dana R <dana@example.com>", .age_hours = 24 * 3 },
 };
 
 /// The two repos the canned workspace has. Anything else is a 404,
@@ -295,9 +376,14 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
 
     // `/2.0/repositories/<ws>` — the repo list.
     if (std.mem.eql(u8, path, "/2.0/repositories/" ++ workspace)) {
-        return json(arena,
-            \\{"pagelen":100,"size":2,"values":[{"slug":"api","full_name":"acme/api"},{"slug":"web","full_name":"acme/web"}]}
-        );
+        var out: std.Io.Writer.Allocating = .init(arena);
+        const w = &out.writer;
+        w.writeAll("{\"pagelen\":100,\"size\":2,\"values\":[{\"slug\":\"api\",\"full_name\":\"acme/api\",\"updated_on\":\"") catch return error.OutOfMemory;
+        writeIso(w, st.now_secs - 3600) catch return error.OutOfMemory;
+        w.writeAll("\"},{\"slug\":\"web\",\"full_name\":\"acme/web\",\"updated_on\":\"") catch return error.OutOfMemory;
+        writeIso(w, st.now_secs - 24 * 3600) catch return error.OutOfMemory;
+        w.writeAll("\"}]}") catch return error.OutOfMemory;
+        return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
     }
 
     var seg = Segments.init(path);
@@ -313,6 +399,14 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
         if (!seg.eat("statuses")) return notFound(arena);
         return statuses(arena, repo, sha);
     }
+
+    // `/refs/branches` and `/pipelines/` — the pipelines tree's two
+    // reads per repo.
+    if (seg.eat("refs")) {
+        if (!seg.eat("branches")) return notFound(arena);
+        return listBranches(arena, st, repo);
+    }
+    if (seg.eat("pipelines")) return listPipelines(arena, st, repo);
 
     if (!seg.eat("pullrequests")) return notFound(arena);
     const id_text = seg.next() orelse return listPrs(arena, st, repo, query);
@@ -505,11 +599,12 @@ const Shape = enum { list, detail };
 fn writePr(w: *std.Io.Writer, f: *const Fixture, st: *const State, shape: Shape) Allocator.Error!void {
     w.print("{{\"type\":\"pullrequest\",\"id\":{d},\"title\":", .{f.id}) catch return error.OutOfMemory;
     try writeJsonString(w, f.title);
-    w.print(",\"state\":\"{s}\",\"draft\":{s},\"updated_on\":\"2026-09-0{d}T12:34:56.000+00:00\"", .{
+    w.print(",\"state\":\"{s}\",\"draft\":{s},\"updated_on\":\"", .{
         effectiveState(f, st),
         if (f.draft) "true" else "false",
-        @as(u32, f.id % 7) + 1,
     }) catch return error.OutOfMemory;
+    writeIso(w, st.now_secs - @as(i64, f.age_hours) * 3600) catch return error.OutOfMemory;
+    w.writeAll("\"") catch return error.OutOfMemory;
     w.print(",\"comment_count\":{d},\"task_count\":0", .{f.activity.len}) catch return error.OutOfMemory;
     w.print(",\"author\":{{\"display_name\":\"{s}\",\"account_id\":\"{s}\"}}", .{ f.author_name, f.author_id }) catch return error.OutOfMemory;
     w.print(",\"source\":{{\"branch\":{{\"name\":\"{s}\"}},\"commit\":{{\"hash\":\"{s}\"}},\"repository\":{{\"full_name\":\"{s}/{s}\"}}}}", .{
@@ -555,6 +650,8 @@ fn writePr(w: *std.Io.Writer, f: *const Fixture, st: *const State, shape: Shape)
     w.writeAll("]") catch return error.OutOfMemory;
     if (st.isMerged(f.id)) {
         w.writeAll(",\"merge_commit\":{\"hash\":\"9999mergecommit\"}") catch return error.OutOfMemory;
+    } else if (f.merge_sha.len > 0) {
+        w.print(",\"merge_commit\":{{\"hash\":\"{s}\"}}", .{f.merge_sha}) catch return error.OutOfMemory;
     }
     w.writeAll("}") catch return error.OutOfMemory;
 }
@@ -641,6 +738,68 @@ fn statuses(arena: Allocator, repo: []const u8, sha: []const u8) Allocator.Error
     }
     w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
     return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+fn listBranches(arena: Allocator, st: *State, repo: []const u8) Allocator.Error!Reply {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const w = &out.writer;
+    w.writeAll("{\"pagelen\":100,\"values\":[") catch return error.OutOfMemory;
+    var n: usize = 0;
+    for (&branches) |*b| {
+        if (!std.mem.eql(u8, b.repo, repo)) continue;
+        if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
+        w.print("{{\"type\":\"branch\",\"name\":\"{s}\",\"target\":{{\"hash\":\"{s}\",\"date\":\"", .{ b.name, b.hash }) catch return error.OutOfMemory;
+        writeIso(w, st.now_secs - @as(i64, b.age_hours) * 3600) catch return error.OutOfMemory;
+        w.writeAll("\",\"message\":") catch return error.OutOfMemory;
+        try writeJsonString(w, b.message);
+        w.print(",\"author\":{{\"raw\":\"{s}\"}}}},\"links\":{{\"html\":{{\"href\":\"https://bitbucket.org/{s}/{s}/branch/{s}\"}}}}}}", .{ b.author, workspace, repo, b.name }) catch return error.OutOfMemory;
+        n += 1;
+    }
+    w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
+    return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+fn listPipelines(arena: Allocator, st: *State, repo: []const u8) Allocator.Error!Reply {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const w = &out.writer;
+    w.writeAll("{\"pagelen\":100,\"values\":[") catch return error.OutOfMemory;
+    var n: usize = 0;
+    for (&pipelines) |*p| {
+        if (!std.mem.eql(u8, p.repo, repo)) continue;
+        if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
+        w.print("{{\"type\":\"pipeline\",\"uuid\":\"{{{s}-{d}}}\",\"build_number\":{d},\"state\":{{\"name\":\"{s}\"", .{ repo, p.build_number, p.build_number, p.state }) catch return error.OutOfMemory;
+        if (p.result.len > 0) w.print(",\"result\":{{\"name\":\"{s}\"}}", .{p.result}) catch return error.OutOfMemory;
+        w.writeAll("},\"created_on\":\"") catch return error.OutOfMemory;
+        writeIso(w, st.now_secs - @as(i64, p.age_hours) * 3600) catch return error.OutOfMemory;
+        w.print("\",\"duration_in_seconds\":{d},\"target\":{{\"ref_name\":\"{s}\",\"ref_type\":\"branch\",\"commit\":{{\"hash\":\"{s}\"}}}},\"trigger\":{{\"name\":\"{s}\"}},\"creator\":{{\"display_name\":\"{s}\"}}}}", .{
+            p.duration_secs, p.ref_name, p.commit, p.trigger, p.creator,
+        }) catch return error.OutOfMemory;
+        n += 1;
+    }
+    w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
+    return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+/// `2026-09-15T10:00:00.000000+00:00` for seconds since the epoch —
+/// the shape Bitbucket writes, civil date by Howard Hinnant's
+/// `civil_from_days`.
+pub fn writeIso(w: *std.Io.Writer, secs: i64) std.Io.Writer.Error!void {
+    const days = @divFloor(secs, 86_400);
+    const rem = @mod(secs, 86_400);
+    const z = days + 719_468;
+    const era = @divFloor(z, 146_097);
+    const doe = z - era * 146_097;
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36_524) - @divFloor(doe, 146_096), 365);
+    const y0 = yoe + era * 400;
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
+    const mp = @divFloor(5 * doy + 2, 153);
+    const d = doy - @divFloor(153 * mp + 2, 5) + 1;
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    const y = if (m <= 2) y0 + 1 else y0;
+    try w.print("{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000000+00:00", .{
+        @as(u32, @intCast(y)), @as(u32, @intCast(m)), @as(u32, @intCast(d)),
+        @as(u32, @intCast(@divFloor(rem, 3600))), @as(u32, @intCast(@divFloor(@mod(rem, 3600), 60))), @as(u32, @intCast(@mod(rem, 60))),
+    });
 }
 
 // ─── little helpers ──────────────────────────────────────────────────────
@@ -899,4 +1058,38 @@ test "the repo list and whoami are the two endpoints a mine tab needs before it 
     const repos = try call(a, &st, .GET, "/2.0/repositories/acme?role=member", "");
     try t.expect(std.mem.indexOf(u8, repos.body, "\"slug\":\"api\"") != null);
     try t.expect(std.mem.indexOf(u8, repos.body, "\"slug\":\"web\"") != null);
+}
+
+test "branches and pipelines answer per repo, newest first, dated against the state's clock" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var st: State = .{ .now_secs = 1_789_500_000 };
+    const br = try call(a, &st, .GET, "/2.0/repositories/acme/api/refs/branches?pagelen=100&sort=-target.date", "");
+    try t.expectEqual(@as(u16, 200), br.status);
+    try t.expect(std.mem.indexOf(u8, br.body, "\"name\":\"chris/fix-login\"") != null);
+    try t.expect(std.mem.indexOf(u8, br.body, "\"name\":\"old/experiment\"") != null);
+    try t.expect(std.mem.indexOf(u8, br.body, "dana/footer") == null);
+    const pl = try call(a, &st, .GET, "/2.0/repositories/acme/api/pipelines/?pagelen=100&sort=-created_on", "");
+    try t.expectEqual(@as(u16, 200), pl.status);
+    try t.expect(std.mem.indexOf(u8, pl.body, "\"build_number\":412") != null);
+    try t.expect(std.mem.indexOf(u8, pl.body, "\"result\":{\"name\":\"FAILED\"}") != null);
+    try t.expect(std.mem.indexOf(u8, pl.body, "\"build_number\":77") == null);
+    // The merged fixture carries its merge commit, and a PR a day old is dated a day ago.
+    const merged = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=MERGED", "");
+    try t.expect(std.mem.indexOf(u8, merged.body, "\"merge_commit\":{\"hash\":\"9999mergecommit\"}") != null);
+    const open = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN", "");
+    try t.expect(std.mem.indexOf(u8, open.body, "2026-09-1") != null);
+    const repos = try call(a, &st, .GET, "/2.0/repositories/acme?role=member", "");
+    try t.expect(std.mem.indexOf(u8, repos.body, "\"updated_on\":\"2026-09-1") != null);
+}
+
+test "writeIso spells the epoch the way Bitbucket does" {
+    var buf: [64]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeIso(&w, 0);
+    try t.expectEqualStrings("1970-01-01T00:00:00.000000+00:00", w.buffered());
+    var w2: std.Io.Writer = .fixed(&buf);
+    try writeIso(&w2, 1_789_500_000);
+    try t.expectEqualStrings("2026-09-15T19:20:00.000000+00:00", w2.buffered());
 }

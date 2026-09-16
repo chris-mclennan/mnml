@@ -127,6 +127,8 @@ pub const Server = struct {
 
         self.state_lock.lockUncancelable(self.io);
         _ = self.arena.reset(.retain_capacity);
+        // Every relative date is written against the real clock.
+        self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
         const reply = bb.handle(self.arena.allocator(), &self.state, .{
             .method = method,
             .target = target,
