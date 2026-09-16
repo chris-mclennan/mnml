@@ -791,7 +791,7 @@ pub const Painter = struct {
         const hint: []const u8 = blk: {
             if (a.help) break :blk "j/k scroll · Esc close";
             if (a.modal != null) break :blk "j/k · PgUp/PgDn scroll · Esc close";
-            if (a.comment != null) break :blk "typing comment · Ctrl+S send · Esc cancel · Enter newline";
+            if (a.comment != null) break :blk "typing comment · Enter newline · Enter on an empty line or Ctrl+S sends · Esc cancel";
             if (a.picker) |pk| break :blk if (pk.kind.multi()) "type to filter · ↑↓ move · Space toggle · Enter commit · Esc cancel" else "type to filter · ↑↓ move · Enter commit · Esc cancel";
             if (a.transition != null) break :blk "1-9 jump · ↑↓/jk move · Enter commit · Esc cancel";
             if (a.jql != null) break :blk "type to edit · Enter run · Esc cancel · Ctrl+A/E ends · Alt+←/→ words";
@@ -1057,7 +1057,7 @@ pub const Painter = struct {
         }
         if (lines.len == 0) _ = p.put(r.x + 1, r.y + 1, 1, " ", .{ .mods = .{ .reverse = true } });
         if (c.error_text.len > 0) _ = p.putFit(r.x + 1, r.bottom() - 2, iw, c.error_text, err_style);
-        _ = p.putFit(r.x + 1, r.bottom() - 1, iw, if (c.posting) " sending… " else " Ctrl+S send · Esc cancel · Enter newline ", muted);
+        _ = p.putFit(r.x + 1, r.bottom() - 1, iw, if (c.posting) " sending… " else " Enter newline · Enter on an empty line or Ctrl+S sends · Esc cancel ", muted);
     }
 
     /// The key sheet, the built-in sections' way: `▾ ── name ── (n)`

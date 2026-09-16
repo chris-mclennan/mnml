@@ -242,7 +242,7 @@ pub const modal_rows = [_]struct { keys: []const u8, label: []const u8 }{
     .{ .keys = "type ↑↓ Enter Esc", .label = "picker: filter · move · commit · cancel (Space toggles a multi-select row)" },
     .{ .keys = "1-9 ↑↓ Enter Esc", .label = "transition picker: jump · move · commit · cancel" },
     .{ .keys = "j k PgUp PgDn Esc", .label = "detail modal: scroll · close" },
-    .{ .keys = "Ctrl+S Enter Esc", .label = "comment: send · newline · cancel" },
+    .{ .keys = "Enter Enter Ctrl+S Esc", .label = "comment: newline · an empty line or Ctrl+S sends · cancel" },
     .{ .keys = "Ctrl+A/E Alt+←/→", .label = "JQL editor: line ends · words; Ctrl+U/K/W kill; Enter runs, Esc cancels" },
 };
 

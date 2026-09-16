@@ -1785,7 +1785,15 @@ pub const App = struct {
             } else if (std.mem.eql(u8, spec, "ctrl+s")) {
                 try a.submitComment();
             } else if (std.mem.eql(u8, spec, "enter")) {
-                if (!c.posting) try c.edit.insert("\n");
+                // Enter is a newline; Enter on an empty last line sends,
+                // since a host keeps Ctrl+S for itself.
+                if (c.posting) return true;
+                const t = c.edit.text();
+                if (t.len > 0 and t[t.len - 1] == '\n' and c.edit.cursor == t.len) {
+                    c.edit.buf.items.len = std.mem.trimEnd(u8, t, "\n").len;
+                    c.edit.cursor = c.edit.buf.items.len;
+                    try a.submitComment();
+                } else try c.edit.insert("\n");
             } else if (!c.posting) _ = try c.edit.key(spec);
             return true;
         }
@@ -2376,8 +2384,10 @@ test "Work: the assignee picker assigns, the fixVersion picker sets, watching to
     _ = try a.onKey("c");
     try testing.expect(a.comment != null);
     for ("on it") |c| _ = try a.onKey(if (c == ' ') "space" else &[_]u8{c});
+    // Enter is a newline; a second Enter on the empty line sends.
     _ = try a.onKey("enter");
-    _ = try a.onKey("ctrl+s");
+    try testing.expect(a.comment != null);
+    _ = try a.onKey("enter");
     try testing.expect(a.comment == null);
     try testing.expectEqual(comments + 1, h.store.find("ENG-1").?.comments.items.len);
     const d = a.detailOf("ENG-1").?;
