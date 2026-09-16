@@ -1,0 +1,38 @@
+# The branches panel's click model (src/app/git_palette.zig `rowMouse`,
+# the reference client's, not the Rust panel's select-then-act): one
+# click on a LOCAL row is a hover — nothing checks out and the cursor
+# marker stays on the LOCAL header — a right-click opens the row's menu
+# and moves no cursor either, and a double-click checks the branch out.
+# Rows at 120x40: LOCAL 7, feature 8, main 9.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git branch feature
+command view.activity_git
+wait 1000
+expect screen contains "Viewing 3"
+expect screen contains "󱓏 main"
+expect screen contains "  󰘬 feature"
+# One click: the panel takes the keys, the cursor stays on the header.
+click 6 8
+wait 600
+expect file .git/HEAD contains "refs/heads/main"
+expect screen contains "▌ 󰌢 LOCAL"
+expect screen contains "  󰘬 feature"
+# A right-click: the row's menu, the cursor still on the header.
+rightclick 6 8
+expect screen contains "Checkout feature"
+key esc
+wait 600
+expect screen contains "▌ 󰌢 LOCAL"
+expect file .git/HEAD contains "refs/heads/main"
+# A double-click acts: feature is checked out.
+doubleclick 6 8
+wait 1500
+expect file .git/HEAD contains "refs/heads/feature"
+expect screen contains "󱓏 feature"
+expect screen contains "  󰘬 main"

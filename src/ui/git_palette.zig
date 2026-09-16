@@ -10,8 +10,8 @@
 //!  Viewing 9
 //!
 //!   󰌢 LOCAL             2
-//!  󰄬 󰘬 main         1↑ 3↓     ← the checked-out branch: green ground,
-//!     󰘬 feature                  a check in the gutter, ahead / behind
+//!     󱓏 main         1↑ 3↓     ← the checked-out branch: its own glyph,
+//!     󰘬 feature                  the name bold, ahead / behind
 //!
 //!   󰅟 REMOTE            3
 //!     󰊤 origin
@@ -19,8 +19,9 @@
 //!       󰘬 feature
 //!
 //!   󰐅 WORKTREES         2
-//!     󰋜 ws                         ← the house is the main tree
-//!  󰌾 󰐅 wt-fix (fix)         ●     ← locked (gutter) · dirty (the dot)
+//!     󰋜 ws                         ← the house is the main tree; the
+//!  󰌾 󰐅 wt-fix (fix)         ●        one on show is bold · locked
+//!                                        (gutter) · dirty (the dot)
 //!
 //!   󰏗 STASHES           1
 //!     ab12cd3 On main: half done
@@ -44,9 +45,14 @@
 //! under REMOTE — and the repo's rows one level further in. A section header is a chevron, a
 //! glyph, the caps label and its count at the right edge; a click on
 //! any of it folds the section. Column 0 of every row is the gutter:
-//! the green check on the checked-out branch and the current worktree,
-//! the lock on a `git worktree lock`ed tree, the cursor marker when the
-//! row has nothing else to say there. The right edge carries the
+//! the lock on a `git worktree lock`ed tree, a repo's or a session's
+//! accent, the cursor marker when the row has nothing else to say
+//! there. The cursor row is the list panels' selection — the grey
+//! ground and the accent `▌` — and nothing else paints a ground: the
+//! checked-out branch is told by its own glyph (the branch with a
+//! check on it) and a bold name, the worktree on show by a bold name
+//! (the reference client marks the main tree with a house, not the
+//! checked-out row with a check column). The right edge carries the
 //! branch's ahead / behind (`10↑`, `2↓`, `1↑ 3↓`; nothing when even or
 //! untracked) and the blue dot of a worktree with uncommitted changes.
 //! Names clip with `…` before those cells; nothing paints past the
@@ -67,7 +73,6 @@ const expander = @import("expander.zig");
 const filter_input = @import("filter_input.zig");
 const list_panel = @import("list_panel.zig");
 const scrollbar = @import("scrollbar.zig");
-const diff_view = @import("diff_view.zig");
 const text_field = @import("text_field.zig");
 
 const Style = vaxis.Style;
@@ -194,8 +199,9 @@ pub const tree_nerd = "\u{F0405}"; // md-pine_tree
 pub const tree_ascii = "^";
 pub const lock_nerd = "\u{F033E}"; // md-lock
 pub const lock_ascii = "!";
-pub const check_nerd = "\u{F012C}"; // md-check
-pub const check_ascii = "*";
+/// The checked-out branch's glyph — the branch with a check on it.
+pub const current_branch_nerd = "\u{F14CF}"; // md-source_branch_check
+pub const current_branch_ascii = "*";
 pub const tag_nerd = "\u{F04F9}"; // md-tag
 pub const tag_ascii = "#";
 pub const dirty_dot = "\u{25CF}";
@@ -226,11 +232,6 @@ pub fn trackText(ui: Ui, ahead: u32, behind: u32) []const u8 {
     if (ahead > 0) return ui.fmt("{d}{s}", .{ ahead, up });
     if (behind > 0) return ui.fmt("{d}{s}", .{ behind, down });
     return "";
-}
-
-/// The checked-out row's ground: the theme's green over the panel.
-pub fn currentBg(t: *const Theme) Color {
-    return diff_view.blendOver(t.palette.green, t.panel_bg.bg, 45, t.palette.bg2);
 }
 
 /// The rows above the list: the caps header, the filter, a blank, the
@@ -333,7 +334,6 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         scrollbar.drawVertical(ui, split.rest, .{ .panel = .git }, p.rows.len, list.h, out.scroll);
     }
     const focused = ui.isFocused(.{ .panel = .git });
-    const green_bg = currentBg(t);
     var i: usize = 0;
     while (i < win.visible) : (i += 1) {
         const idx = win.first + i;
@@ -342,17 +342,13 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         const y = rr.y;
         const end = rr.right();
         const at_cursor = idx == p.cursor and row.isStop();
-        const current = switch (row) {
-            .branch => |b| b.current,
-            .worktree => |wt| wt.current,
-            else => false,
-        };
-        const ground: Style = if (at_cursor) list_panel.rowStyle(t, true) else if (current) Theme.onBg(bg, green_bg) else bg;
-        if (at_cursor or current) ui.fill(rr, ground);
+        const ground: Style = if (at_cursor) list_panel.rowStyle(t, true) else bg;
+        if (at_cursor) ui.fill(rr, ground);
         const muted = Theme.withFg(ground, t.muted.fg);
         const accent = Theme.withFg(ground, t.accent.fg);
 
-        // The gutter: a check, a lock, a repo's accent, or the cursor's marker.
+        // The gutter: a lock, a repo's or a session's accent, or the
+        // cursor's marker.
         var gutter: ?[]const u8 = null;
         var gutter_style = ground;
         switch (row) {
@@ -360,16 +356,9 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
                 gutter = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
                 gutter_style = Theme.withFg(ground, repo_accent);
             },
-            .branch => |b| if (b.current) {
-                gutter = g(ui, check_nerd, check_ascii);
-                gutter_style = Theme.withFg(ground, pal.green);
-            },
             .worktree => |wt| if (wt.locked) {
                 gutter = g(ui, lock_nerd, lock_ascii);
                 gutter_style = Theme.withFg(ground, pal.yellow);
-            } else if (wt.current) {
-                gutter = g(ui, check_nerd, check_ascii);
-                gutter_style = Theme.withFg(ground, pal.green);
             } else if (wt.accent) |session_accent| {
                 gutter = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
                 gutter_style = Theme.withFg(ground, session_accent);
@@ -425,9 +414,9 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
             },
             .branch => |b| {
                 x += 2 + nest;
-                x += ui.putStr(x, y, right_x -| x, g(ui, branch_nerd, branch_ascii), Theme.withFg(ground, pal.purple));
+                x += ui.putStr(x, y, right_x -| x, if (b.current) g(ui, current_branch_nerd, current_branch_ascii) else g(ui, branch_nerd, branch_ascii), Theme.withFg(ground, if (b.current) pal.green else pal.purple));
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
-                var ns = Theme.withFg(ground, if (b.current) pal.green else t.fg.fg);
+                var ns = Theme.withFg(ground, t.fg.fg);
                 ns.bold = b.current;
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(b.name, (right_x -| 1) -| x), ns);
             },
@@ -447,7 +436,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
                 x += 2 + nest;
                 x += ui.putStr(x, y, right_x -| x, if (wt.main) g(ui, home_nerd, home_ascii) else g(ui, tree_nerd, tree_ascii), Theme.withFg(ground, if (wt.main) pal.yellow else pal.green));
                 x += ui.putStr(x, y, right_x -| x, " ", ground);
-                var ns = Theme.withFg(ground, if (wt.current) pal.green else t.fg.fg);
+                var ns = Theme.withFg(ground, t.fg.fg);
                 ns.bold = wt.current;
                 _ = ui.putStr(x, y, (right_x -| 1) -| x, ui.clipStr(wt.shown, (right_x -| 1) -| x), ns);
             },
@@ -540,7 +529,7 @@ fn viewing(rows: []const Row) usize {
     return n;
 }
 
-test "the spec's column at 26 cells: the caps header with its refresh chip, the filter, the pill with the chevrons, Viewing N, then every section with its glyph, its count at the edge, the check, the lock, the dot and the ahead / behind; every stop a hit" {
+test "the spec's column at 26 cells: the caps header with its refresh chip, the filter, the pill with the chevrons, Viewing N, then every section with its glyph, its count at the edge, the checked-out branch's glyph, the lock, the dot and the ahead / behind; every stop a hit" {
     var f = try Fixture.init(26, 26);
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = viewing(&spec_rows) });
@@ -552,7 +541,7 @@ test "the spec's column at 26 cells: the caps header with its refresh chip, the 
     try f.expectRow(5, "");
     // The cursor rests on the first row: its muted marker in the gutter.
     try f.expectRow(6, "\u{258c}\u{F47C} \u{F0322} LOCAL              2");
-    try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
+    try f.expectRow(7, "  \u{F14CF} main            1\u{2191} 3\u{2193}");
     try f.expectRow(8, "  \u{F062C} feature");
     try f.expectRow(9, "");
     try f.expectRow(10, " \u{F47C} \u{F015F} REMOTE             3");
@@ -562,7 +551,7 @@ test "the spec's column at 26 cells: the caps header with its refresh chip, the 
     try f.expectRow(14, "    \u{F062C} hotfix");
     try f.expectRow(15, "");
     try f.expectRow(16, " \u{F47C} \u{F0405} WORKTREES          2");
-    try f.expectRow(17, "\u{F012C} \u{F02DC} ws              1\u{2191} 3\u{2193}");
+    try f.expectRow(17, "  \u{F02DC} ws              1\u{2191} 3\u{2193}");
     try f.expectRow(18, "\u{F033E} \u{F0405} fix (wt-fix)        \u{25CF}");
     try f.expectRow(19, "");
     try f.expectRow(20, " \u{F47C} \u{F03D7} STASHES            1");
@@ -590,22 +579,30 @@ test "the spec's column at 26 cells: the caps header with its refresh chip, the 
     try testing.expect(f.hits.at(5, 9) == null);
     try testing.expectEqual(@as(u32, 5), f.hits.at(3, 11).?.row.idx);
     try testing.expectEqual(@as(u32, 17), f.hits.at(3, 23).?.row.idx);
-    // Colours: N and the counts in the accent; the check and the ahead in
-    // green, the behind in orange, the lock in yellow, the dot in the
-    // accent; the checked-out rows on the green ground from column 0.
+    // Colours: N and the counts in the accent; the checked-out branch's
+    // glyph and the ahead in green, the behind in orange, the lock in
+    // yellow, the dot in the accent. No row paints a ground of its own
+    // — the checked-out branch and the worktree on show sit on the
+    // panel's, told by the glyph and a bold name; the gutter is empty
+    // on both (no check column).
     try testing.expect(f.fgEql(9, 4, f.theme.accent));
     try testing.expect(f.fgEql(24, 6, f.theme.accent));
-    try testing.expect(f.fgEql(0, 7, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(2, 7, .{ .fg = f.theme.palette.green }));
     try testing.expect(f.fgEql(20, 7, .{ .fg = f.theme.palette.green }));
     try testing.expect(f.fgEql(23, 7, .{ .fg = f.theme.palette.orange }));
     try testing.expect(f.fgEql(0, 18, .{ .fg = f.theme.palette.yellow }));
     try testing.expect(f.fgEql(24, 18, f.theme.accent));
-    try testing.expect(f.bgEql(0, 7, .{ .bg = currentBg(&f.theme) }));
-    try testing.expect(f.bgEql(25, 7, .{ .bg = currentBg(&f.theme) }));
+    try testing.expect(f.bgEql(0, 7, f.theme.panel_bg));
+    try testing.expect(f.bgEql(25, 7, f.theme.panel_bg));
     try testing.expect(f.bgEql(0, 8, f.theme.panel_bg));
-    try testing.expect(f.bgEql(0, 17, .{ .bg = currentBg(&f.theme) }));
+    try testing.expect(f.bgEql(0, 17, f.theme.panel_bg));
+    try testing.expect(f.bgEql(25, 17, f.theme.panel_bg));
+    try testing.expectEqualStrings(" ", f.cell(0, 7).char.grapheme);
+    try testing.expectEqualStrings(" ", f.cell(0, 17).char.grapheme);
     try testing.expect(f.style(4, 7).bold);
     try testing.expect(!f.style(4, 8).bold);
+    try testing.expect(f.style(4, 17).bold);
+    try testing.expect(!f.style(4, 18).bold);
 }
 
 test "the chevrons: lit and clickable with two repos (prev, next), dim and inert with one; a pill too wide for them paints alone" {
@@ -660,13 +657,13 @@ test "all repos: a muted sub-header per repo under each section, the rows one le
     try f.expectRow(3, pill_all);
     try f.expectRow(6, " \u{F47C} \u{F0322} LOCAL              3");
     try f.expectRow(7, "  alpha");
-    try f.expectRow(8, "\u{F012C}   \u{F062C} main             1\u{2191}");
+    try f.expectRow(8, "\u{258c}   \u{F14CF} main             1\u{2191}");
     try f.expectRow(9, "    \u{F062C} feature");
     try f.expectRow(10, "  beta");
-    try f.expectRow(11, "\u{F012C}   \u{F062C} dev");
+    try f.expectRow(11, "    \u{F14CF} dev");
     try testing.expect(f.fgEql(2, 7, f.theme.muted));
     try testing.expect(f.bgEql(0, 8, f.theme.cursor_line));
-    try testing.expect(f.bgEql(0, 11, .{ .bg = currentBg(&f.theme) }));
+    try testing.expect(f.bgEql(0, 11, f.theme.panel_bg));
     // The sub-header is a stop with a row hit; the section count is the sum.
     try testing.expectEqual(@as(u32, 1), f.hits.at(4, 7).?.row.idx);
     try testing.expectEqual(@as(u32, 4), f.hits.at(4, 10).?.row.idx);
@@ -694,9 +691,10 @@ test "the cursor row takes the list panels' ground and marker, or keeps its gutt
     try testing.expect(f.bgEql(0, 8, f.theme.cursor_line));
     try testing.expect(f.bgEql(25, 8, f.theme.cursor_line));
     try testing.expect(f.fgEql(0, 8, f.theme.accent));
-    // On the checked-out branch the check stays and the cursor ground wins.
+    // On the checked-out branch the cursor's marker takes the gutter (no
+    // check to keep) and its ground is the selection's.
     p = draw(ui, f.full(), .{ .rows = &spec_rows, .repo = "ws", .viewing = 8, .cursor = 1 });
-    try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
+    try f.expectRow(7, "\u{258c} \u{F14CF} main            1\u{2191} 3\u{2193}");
     try testing.expect(f.bgEql(3, 7, f.theme.cursor_line));
     try testing.expect(f.bgEql(3, 8, f.theme.panel_bg));
     // Unfocused, the marker is muted.
@@ -723,7 +721,7 @@ test "the list scrolls as one: the scroll follows the cursor, the scrollbar take
     p = draw(f.ui(), f.full(), .{ .rows = few, .repo = "ws", .viewing = 2 });
     try testing.expectEqual(@as(usize, 0), p.scroll);
     try testing.expectEqual(@as(u32, 1), f.hits.at(25, 7).?.row.idx);
-    try f.expectRow(7, "\u{F012C} \u{F062C} main            1\u{2191} 3\u{2193}");
+    try f.expectRow(7, "  \u{F14CF} main            1\u{2191} 3\u{2193}");
 }
 
 test "narrow columns: at 16, 20 and 24 cells nothing paints past the edge, the count wins over the label, names clip with an ellipsis" {
@@ -750,7 +748,7 @@ test "narrow columns: at 16, 20 and 24 cells nothing paints past the edge, the c
         const wt = f.row(7, &buf);
         try testing.expect(std.mem.endsWith(u8, wt, "10\u{2191} 2\u{2193} \u{25CF}"));
         try testing.expect(std.mem.indexOf(u8, wt, "\u{2026}") != null);
-        try testing.expect(std.mem.startsWith(u8, wt, "\u{F012C} \u{F0405} a"));
+        try testing.expect(std.mem.startsWith(u8, wt, "  \u{F0405} a"));
         // The stash row clips its message.
         const st = f.row(8, &buf);
         try testing.expect(std.mem.endsWith(u8, st, "\u{2026}"));
@@ -781,9 +779,9 @@ test "ascii: every glyph has a one-cell twin and the row shapes hold" {
     try f.expectRow(1, "  / / filter");
     try f.expectRow(3, "  ws v              <  >");
     try f.expectRow(6, ">v % LOCAL              2");
-    try f.expectRow(7, "* Y main            1^ 3v");
+    try f.expectRow(7, "  * main            1^ 3v");
     try f.expectRow(11, "  G origin");
-    try f.expectRow(17, "* @ ws              1^ 3v");
+    try f.expectRow(17, "  @ ws              1^ 3v");
     try f.expectRow(18, "! ^ fix (wt-fix)        o");
     try f.expectRow(23, " > # TAGS               2");
     try testing.expectEqualStrings("", trackText(ui, 0, 0));

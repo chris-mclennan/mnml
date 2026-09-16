@@ -1,4 +1,4 @@
-# A REMOTE row lists its branches without the remote's prefix; a second
+# A REMOTE row lists its branches without the remote's prefix; a double-
 # click on one creates the local tracking branch of its short name.
 # Rows at 120x40: LOCAL 5, main 6, gap 7, REMOTE 8, origin 9, hotfix
 # 10, main 11.
@@ -22,5 +22,5 @@ click 6 12
 click 6 12
 wait 1500
 expect file .git/HEAD contains "refs/heads/hotfix"
-expect screen contains "󰄬 󰘬 hotfix"
+expect screen contains "󱓏 hotfix"
 expect screen contains "Viewing 5"

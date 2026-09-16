@@ -1,4 +1,4 @@
-# A STASHES row: the short sha and the message; a second click shows
+# A STASHES row: the short sha and the message; a double-click shows
 # the stash's files (git-more2 — Enter used to apply); the row menu's
 # Apply keeps the stash and puts the change back. Rows at 120x40:
 # LOCAL 7, main 8, gap 9, REMOTE 10, gap 11, WORKTREES 12, main 13,

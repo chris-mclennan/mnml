@@ -1,0 +1,62 @@
+# The row menus (src/app/git_palette.zig `openRowMenu`) come from the
+# row under the pointer, never the cursor, and have one shape per row
+# kind: a local branch's menu, the checked-out branch's own, and the
+# same worktree menu on the main tree and a linked tree — where Remove
+# stays and the main tree refuses it by name. The cursor marker stays
+# on LOCAL's header throughout. Rows at 120x40: LOCAL 7, feat 8, main
+# 9, gap 10, REMOTE 11, gap 12, WORKTREES 13, main (the workspace) 14,
+# feat (wt) 15.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nwt/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git worktree add -q wt -b feat
+command view.activity_git
+wait 1000
+expect screen contains "󱓏 main"
+expect screen contains "  󰘬 feat"
+expect screen contains "▌ 󰌢 LOCAL"
+# A local branch that is not checked out: checkout first, reset last.
+rightclick 6 8
+expect screen contains "Checkout feat"
+expect screen contains "Merge feat into main"
+expect screen contains "Delete feat…"
+expect screen contains "Reset main to this commit"
+key esc
+expect screen contains "▌ 󰌢 LOCAL"
+# The checked-out branch: no checkout, the push and the upstream verbs.
+rightclick 6 9
+expect screen contains "● main"
+expect screen lacks "Checkout main"
+expect screen contains "Push --force-with-lease…"
+expect screen contains "Set upstream…"
+key esc
+# The main tree keeps the Remove row; running it is refused by name.
+rightclick 6 14
+expect screen contains "Open this worktree"
+expect screen contains "Remove this worktree…"
+key down
+key down
+key down
+key down
+key enter
+wait 300
+expect screen contains "is the main worktree"
+expect screen contains "▌ 󰌢 LOCAL"
+# The linked tree: the same five rows; Remove asks.
+rightclick 6 15
+expect screen contains "Open this worktree"
+expect screen contains "Remove this worktree…"
+key down
+key down
+key down
+key down
+key enter
+expect screen contains "Remove worktree"
+key n
+wait 300
+expect screen contains "  󰘬 feat"
+expect screen contains "▌ 󰌢 LOCAL"

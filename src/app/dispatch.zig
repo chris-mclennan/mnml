@@ -2350,17 +2350,27 @@ fn pressOutside(app: *App) void {
 
 // ── the editor: click, drag-select, double / triple ──
 
-/// A left press in the text: shift extends the selection; a second
-/// press within the double-click window selects the word, a third the
-/// line; and the press anchors a drag-select at its granularity.
-fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) Allocator.Error!void {
-    const ed = e.buf.editor;
+/// The press's place in a run of clicks: 1 for a first press, 2 for a
+/// second on the same cell within the double-click window, 3 for a
+/// third (and any after). One bookkeeping for every surface that acts
+/// on a double-click — the editor's word / line select, the branches
+/// panel's rows — so they cannot drift on the window or the cell rule.
+pub fn clickCount(app: *App, m: Mouse) u8 {
     const now = app.now_ms;
     var count: u8 = 1;
     if (app.last_click) |lc| {
         if (lc.x == m.x and lc.y == m.y and now - lc.at_ms <= app_mod.double_click_ms) count = @min(lc.count + 1, 3);
     }
     app.last_click = .{ .at_ms = now, .x = m.x, .y = m.y, .count = count };
+    return count;
+}
+
+/// A left press in the text: shift extends the selection; a second
+/// press within the double-click window selects the word, a third the
+/// line; and the press anchors a drag-select at its granularity.
+fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) Allocator.Error!void {
+    const ed = e.buf.editor;
+    const count = clickCount(app, m);
     if (m.mods.shift) {
         if (ed.anchor == null) ed.anchor = ed.cursor;
         ed.setCursor(byte);

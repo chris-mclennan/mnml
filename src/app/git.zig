@@ -126,6 +126,10 @@ pub const PromptKind = enum {
     reset_hard,
     /// `git.branch_rename`: the new name for `State.verb_branch`.
     branch_rename,
+    /// A tag on the branches panel's row (`State.verb_start` is its
+    /// ref): lightweight, or annotated with the name as its message.
+    tag_at,
+    tag_annotated_at,
     /// `stash branch <name> <State.verb_branch>`.
     stash_branch,
     /// A stash's new message (`State.verb_branch` is its ref).
@@ -2392,6 +2396,12 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             if (text.len == 0) return;
             try submitOp(app, try requireRepo(app), .{ .tag = try gpa.dupe(u8, text) });
         },
+        .tag_at, .tag_annotated_at => {
+            if (text.len == 0) return;
+            const start = takeVerbStart(app) orelse return app.diag.fail(app.frame.allocator(), "tag: the row is gone", .{});
+            errdefer gpa.free(start);
+            try submitOp(app, try requireRepo(app), .{ .tag_at = .{ .name = try gpa.dupe(u8, text), .start = start, .annotated = kind == .tag_annotated_at } });
+        },
         .worktree_add => {
             if (text.len == 0) return;
             // `<path> [branch]`
@@ -2768,6 +2778,34 @@ pub fn worktreeFrom(app: *App, start: []const u8) CommandError!void {
     _ = try requireRepo(app);
     try setVerbStart(app, start);
     openPrompt(app, .worktree_add, if (std.mem.eql(u8, start, "HEAD")) "Worktree: <path> [new-branch]" else "Worktree from the selected commit / ref: <path> [new-branch]");
+}
+
+/// `Create tag here…` / `Create annotated tag here…` on a branches
+/// panel row: the prompt for the name, the row's ref kept for its
+/// accept (git-panel).
+pub fn tagAt(app: *App, start: []const u8, annotated: bool) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbStart(app, start);
+    openPrompt(app, if (annotated) .tag_annotated_at else .tag_at, if (annotated) "Annotated tag on the selected ref (the name is the message)" else "Tag on the selected ref");
+}
+
+/// `Push` on a branch that is not checked out: `push -u <remote>
+/// <branch>` — its upstream's remote, else the first remote (git-panel).
+/// The checked-out branch takes `git.push`.
+pub fn pushBranch(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = try requireRepo(app);
+    var remote: []const u8 = "";
+    if (railBranch(app, name)) |b| if (b.upstream.len > 0) if (std.mem.indexOfScalar(u8, b.upstream, '/')) |sl| {
+        remote = b.upstream[0..sl];
+    };
+    if (remote.len == 0 and app.git.rail_remotes.len > 0) remote = app.git.rail_remotes[0].name;
+    if (remote.len == 0) return app.diag.fail(arena, "push {s}: no remote \u{2014} add one first", .{name});
+    const gpa = app.gpa;
+    const r = try gpa.dupe(u8, remote);
+    errdefer gpa.free(r);
+    app.toast("pushing {s} to {s}\u{2026}", .{ name, remote });
+    try submitOp(app, repo, .{ .push_branch = .{ .remote = r, .branch = try gpa.dupe(u8, name) } });
 }
 
 /// `Push --force-with-lease…`: the confirm names the risk. Rust refused
@@ -5245,7 +5283,7 @@ test "cleanCommitMessage strips fences and splits the subject from the body" {
     try testing.expectEqual(@as(usize, 0), bare.body.len);
 }
 
-test "git mode: entering lists the branches and the worktree in the palette, one graph tab per repo; a branch row asks nothing and jumps; leaving puts the layout back" {
+test "git mode: entering lists the branches and the worktree in the palette, one graph tab per repo; one click on a branch row selects nothing; leaving puts the layout back" {
     var f = try Fixture.init(120, 40);
     defer f.deinit();
     try f.sh(&.{ "init", "-q", "-b", "main" });
@@ -5272,29 +5310,30 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
     // The branches panel: the caps header, the pill, Viewing N (2 locals
-    // + 1 worktree), the filter, LOCAL with the check on main, WORKTREES
-    // with the house.
+    // + 1 worktree), the filter, LOCAL with the checked-out glyph on
+    // main, WORKTREES with the house.
     try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F0322} LOCAL") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "  \u{F062C} feature") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F062C} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  \u{F14CF} main") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F0405} WORKTREES") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F02DC} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  \u{F02DC} main") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F03D7} STASHES") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F04FB} TAGS") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "git graph") == null);
     testing.allocator.free(txt);
-    // A click on the feature row selects it and keeps the palette's focus.
+    // One click on the feature row hands the palette the keys and
+    // selects nothing (the double-click acts — `git_palette.zig`).
     const rows = try git_palette.rows(&f.app, f.app.frame.allocator());
     var feature_row: ?usize = null;
     for (rows, 0..) |r, i| if (r == .branch and std.mem.eql(u8, r.branch.name, "feature")) {
         feature_row = i;
     };
-    try git_palette.select(&f.app, feature_row.?);
-    try testing.expectEqualStrings("feature", f.app.git_palette.selected.?);
-    try testing.expect(f.app.focus == .pane);
+    try git_palette.rowMouse(&f.app, @intCast(feature_row.?), .{ .x = 4, .y = 8, .kind = .press, .button = .left });
+    try testing.expect(f.app.git_palette.selected == null);
+    try testing.expect(f.app.focus == .panel and f.app.focus.panel == .git);
     // Leaving through another section restores the editor.
     try command.run(&f.app, .{ .static = .@"view.activity_explorer" });
     try testing.expect(!f.app.git_palette.active);

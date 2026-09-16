@@ -694,54 +694,85 @@ pub const SessionColorAct = struct {
 
 /// What a git palette menu row does, with the index of the row it
 /// names (a rail branch, a remote, a worktree, a stash, a tag, a repo,
-/// a closed repo).
+/// a closed repo). `repo` is the row's repo under All repos (its index
+/// in discovery order): the action makes it the active one first, so
+/// opening the menu switches nothing (`app/git_palette.zig`).
 pub const GitPaletteAct = struct {
-    what: enum {
-        checkout,
-        merge,
-        rebase,
-        new_branch,
-        delete_branch,
-        copy_name,
-        remote_fetch,
-        remote_copy_url,
-        worktree_open,
-        worktree_shell,
-        worktree_copy_path,
-        worktree_remove,
-        /// // changed (sessions-worktree): a session-owned worktree's
-        /// merge into the main tree / remove with its branch
-        /// (`app/session_worktree.zig`, behind a named confirm).
-        session_merge,
-        session_remove,
-        stash_apply,
-        stash_pop,
-        stash_drop,
-        /// // changed (git-more2): a STASHES row's files pane, a branch
-        /// from it, its rename.
-        stash_show,
-        stash_branch,
-        stash_rename,
-        tag_checkout,
-        tag_delete,
-        tag_copy,
-        /// A branch row against the checked-out one: `current..branch`.
-        diff_current,
-        // The branch verbs (git-more2); `new_branch_from` / `worktree_from`
-        // name a tag row.
-        rename,
-        fast_forward,
-        set_upstream,
-        checkout_force,
-        delete_remote,
-        push_force,
-        new_branch_from,
-        worktree_from,
-        switch_repo,
-        reopen_repo,
-        all_repos,
-    },
+    what: GitPaletteWhat,
     idx: u32,
+    repo: ?u32 = null,
+};
+
+pub const GitPaletteWhat = enum {
+    checkout,
+    merge,
+    rebase,
+    new_branch,
+    delete_branch,
+    copy_name,
+    remote_fetch,
+    remote_copy_url,
+    worktree_open,
+    worktree_shell,
+    worktree_copy_path,
+    worktree_remove,
+    /// // changed (sessions-worktree): a session-owned worktree's
+    /// merge into the main tree / remove with its branch
+    /// (`app/session_worktree.zig`, behind a named confirm).
+    session_merge,
+    session_remove,
+    stash_apply,
+    stash_pop,
+    stash_drop,
+    /// // changed (git-more2): a STASHES row's files pane, a branch
+    /// from it, its rename.
+    stash_show,
+    stash_branch,
+    stash_rename,
+    tag_checkout,
+    tag_delete,
+    tag_copy,
+    /// A branch row against the checked-out one: `current..branch`.
+    diff_current,
+    // The branch verbs (git-more2); `new_branch_from` / `worktree_from`
+    // name a tag row.
+    rename,
+    fast_forward,
+    set_upstream,
+    checkout_force,
+    delete_remote,
+    push_force,
+    new_branch_from,
+    worktree_from,
+    switch_repo,
+    reopen_repo,
+    all_repos,
+    /// The row menus' `.command` rows made acts, so that under All
+    /// repos the row's repo goes active before the command runs.
+    pull,
+    push,
+    worktree_new,
+    /// A section header's fold; a repo sub-header's "show only".
+    fold,
+    refresh,
+    /// `reset --soft / --mixed / --hard` to the ROW's branch (the
+    /// commands read the cursor's).
+    reset_soft,
+    reset_mixed,
+    reset_hard,
+    /// The reference client's branch verbs (git-panel): the row's tip
+    /// commit onto HEAD / reverted, its sha and its web links copied, a
+    /// worktree from it, a tag on it, a branch that is not checked out
+    /// pushed to its remote.
+    cherry_pick,
+    revert,
+    copy_sha,
+    copy_branch_link,
+    copy_commit_link,
+    branch_worktree,
+    tag_here,
+    tag_annotated_here,
+    push_branch,
 };
 
 pub const MenuItem = struct {
