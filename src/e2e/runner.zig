@@ -23,6 +23,8 @@ const mock = @import("../http/mock.zig");
 const driver_mod = @import("driver.zig");
 const key = @import("../core/key.zig");
 const screen_mod = @import("../ipc/screen.zig");
+const ipc = @import("../ipc/root.zig");
+const build_options = @import("build_options");
 
 pub const Driver = driver_mod.Driver;
 pub const Factory = driver_mod.Factory;
@@ -139,6 +141,12 @@ const Run = struct {
     name: []u8,
     workspace: []u8 = "",
     driver: ?Driver = null,
+    /// The workspace's file-IPC channel, drained on every tick so a
+    /// mounted integration's Tier-2 lines (`statusline-set-segment`,
+    /// `set-activity-badge`, …) reach the App the way the terminal loop
+    /// and the headless loop deliver them — a `.test` can then assert
+    /// the chip a pane published.
+    channel: ?ipc.Channel = null,
     /// // changed (sessions-card): the file's environment — the run's
     /// plus `MNML_E2E_WORKSPACE` and the `# env:` lines — for its
     /// `shell` steps too, so a step can name the workspace the App sees
@@ -172,6 +180,13 @@ const Run = struct {
             Io.Dir.cwd().deleteTree(io, self.workspace) catch {};
             gpa.free(self.workspace);
         }
+        // The channel before the App, so nothing a pane writes early is
+        // truncated by a later open.
+        self.channel = ipc.Channel.init(gpa, io, self.workspace, .{ .subdir = build_options.ipc_subdir }) catch null;
+        defer if (self.channel) |*c| {
+            c.deinit();
+            self.channel = null;
+        };
 
         // The driver gets its own leak-checking allocator: a leak anywhere
         // in the App is this file's failure, not a note at process exit.
@@ -250,6 +265,7 @@ const Run = struct {
     fn renderCycle(self: *Run) ?[]u8 {
         const d = self.driver.?;
         d.tick() catch |e| return self.errMsg("render: {s}", e);
+        self.drainIpc();
         self.sleepMs(self.opts.timing.step_settle_ms);
         d.expireChords() catch |e| return self.errMsg("render: {s}", e);
         d.tick() catch |e| return self.errMsg("render: {s}", e);
@@ -259,6 +275,16 @@ const Run = struct {
 
     fn errMsg(self: *Run, comptime fmt: []const u8, e: anyerror) ?[]u8 {
         return std.fmt.allocPrint(self.gpa, fmt, .{@errorName(e)}) catch null;
+    }
+
+    /// Every command line on the workspace's channel, into the driver.
+    fn drainIpc(self: *Run) void {
+        const c = &(self.channel orelse return);
+        const d = self.driver orelse return;
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const cmds = c.poll(arena.allocator()) catch return;
+        for (cmds) |*cmd| d.ipcCommand(cmd) catch {};
     }
 
     fn sleepMs(self: *Run, ms: u64) void {
@@ -286,6 +312,7 @@ const Run = struct {
             if (self.nowMs() >= deadline) return err;
             self.gpa.free(err);
             d.tick() catch |e| return self.errMsg("render: {s}", e);
+            self.drainIpc();
             self.sleepMs(self.opts.timing.expect_poll_ms);
             d.render() catch |e| return self.errMsg("render: {s}", e);
         }
@@ -329,6 +356,7 @@ const Run = struct {
                 const deadline = self.nowMs() + @as(i64, @intCast(ms));
                 while (self.nowMs() < deadline) {
                     d.tick() catch |e| return self.errMsg("wait: {s}", e);
+                    self.drainIpc();
                     const remaining: u64 = @intCast(@max(deadline - self.nowMs(), 0));
                     self.sleepMs(@min(remaining, self.opts.timing.wait_slice_ms));
                 }
