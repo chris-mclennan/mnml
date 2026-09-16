@@ -1,0 +1,258 @@
+//! The one table of bindings. Dispatch reads it, the hint row under the
+//! list reads it, the `?` key sheet reads it and the row menus name
+//! their actions from it — so no hint can drift from what a key does,
+//! which is the fault the reference's hand-written footer had.
+//!
+//! The keys are the reference's (`keys.rs`): `q` quits, `r` refreshes,
+//! `j`/`k` and the arrows move, `enter`/`space` toggle a tree row,
+//! `o` opens on the web, `y` copies the URL, `d` the detail, `a` the
+//! approval, `m` open↔merged, `tab` the next tab, `1`–`9` a tab by
+//! number, `e`/`c` open / close every repo, `x` hides one, `H` un-hides
+//! them all, `s` cycles the scope, `alt+↑`/`alt+↓` reorder, `ctrl+u` /
+//! `ctrl+d` scroll the detail. Added here: `?` for this sheet, `/`
+//! for the filter, `esc` to leave either.
+
+const std = @import("std");
+
+pub const Action = enum {
+    quit,
+    refresh,
+    up,
+    down,
+    page_up,
+    page_down,
+    home,
+    end,
+    /// Enter / space on a tree row: expand or collapse it; on a
+    /// `[ Show N more ]` row, lift the filter; on a flat row, open.
+    activate,
+    open_web,
+    yank_url,
+    next_tab,
+    prev_tab,
+    /// `m` — the reference's open↔merged toggle (the next tab).
+    toggle_merged,
+    tab_1,
+    tab_2,
+    tab_3,
+    tab_4,
+    tab_5,
+    tab_6,
+    tab_7,
+    tab_8,
+    tab_9,
+    toggle_detail,
+    detail_up,
+    detail_down,
+    toggle_approval,
+    expand,
+    collapse,
+    expand_all,
+    collapse_all,
+    hide_repo,
+    unhide_all,
+    cycle_scope,
+    reorder_up,
+    reorder_down,
+    filter,
+    help,
+    escape,
+
+    /// Which tab, for the numbered actions.
+    pub fn tabNumber(a: Action) ?u8 {
+        const i = @intFromEnum(a);
+        const first = @intFromEnum(Action.tab_1);
+        if (i < first or i > @intFromEnum(Action.tab_9)) return null;
+        return @intCast(i - first);
+    }
+};
+
+/// Where a binding applies.
+pub const Scope = enum {
+    any,
+    /// The two workspace trees.
+    tree,
+    /// A row that has a URL (a PR, a branch, a pipeline, a repo header).
+    row,
+    /// While the detail is open.
+    detail,
+};
+
+pub const Binding = struct {
+    /// The specs mnml sends (`src/core/key.zig`'s grammar), first is
+    /// the one the hint shows.
+    keys: []const []const u8,
+    action: Action,
+    /// What the sheet says.
+    title: []const u8,
+    scope: Scope = .any,
+    /// Painted on the hint row (in table order) when it applies.
+    hint: bool = false,
+    /// The sheet's section.
+    section: []const u8 = "navigate",
+};
+
+pub const table = [_]Binding{
+    .{ .keys = &.{ "down", "j" }, .action = .down, .title = "move down", .hint = true },
+    .{ .keys = &.{ "up", "k" }, .action = .up, .title = "move up" },
+    .{ .keys = &.{"pagedown"}, .action = .page_down, .title = "page down" },
+    .{ .keys = &.{"pageup"}, .action = .page_up, .title = "page up" },
+    .{ .keys = &.{ "home", "g" }, .action = .home, .title = "first row" },
+    .{ .keys = &.{ "end", "shift+g" }, .action = .end, .title = "last row" },
+    .{ .keys = &.{ "enter", "space" }, .action = .activate, .title = "expand / collapse the row", .scope = .tree, .hint = true, .section = "tree" },
+    .{ .keys = &.{ "right", "l" }, .action = .expand, .title = "expand, or step into the first child", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{ "left", "h" }, .action = .collapse, .title = "collapse, or step up to the repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"e"}, .action = .expand_all, .title = "expand every repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"c"}, .action = .collapse_all, .title = "collapse every repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"x"}, .action = .hide_repo, .title = "hide this repo (persists)", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"shift+h"}, .action = .unhide_all, .title = "un-hide every repo (persists)", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"s"}, .action = .cycle_scope, .title = "cycle the scope: all → recent → explicit (persists)", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"alt+up"}, .action = .reorder_up, .title = "move this repo up (persists)", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"alt+down"}, .action = .reorder_down, .title = "move this repo down (persists)", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{"o"}, .action = .open_web, .title = "open on the web", .scope = .row, .hint = true, .section = "row" },
+    .{ .keys = &.{"y"}, .action = .yank_url, .title = "copy the URL", .scope = .row, .section = "row" },
+    .{ .keys = &.{"d"}, .action = .toggle_detail, .title = "the pull request's detail", .hint = true, .section = "row" },
+    .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .detail, .hint = true, .section = "row" },
+    .{ .keys = &.{"ctrl+d"}, .action = .detail_down, .title = "scroll the detail down", .scope = .detail, .section = "row" },
+    .{ .keys = &.{"ctrl+u"}, .action = .detail_up, .title = "scroll the detail up", .scope = .detail, .section = "row" },
+    .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .hint = true, .section = "tabs" },
+    .{ .keys = &.{"tab"}, .action = .next_tab, .title = "next tab", .section = "tabs" },
+    .{ .keys = &.{ "backtab", "shift+tab" }, .action = .prev_tab, .title = "previous tab", .section = "tabs" },
+    .{ .keys = &.{"1"}, .action = .tab_1, .title = "tab 1", .section = "tabs" },
+    .{ .keys = &.{"2"}, .action = .tab_2, .title = "tab 2", .section = "tabs" },
+    .{ .keys = &.{"3"}, .action = .tab_3, .title = "tab 3", .section = "tabs" },
+    .{ .keys = &.{"4"}, .action = .tab_4, .title = "tab 4", .section = "tabs" },
+    .{ .keys = &.{"5"}, .action = .tab_5, .title = "tab 5", .section = "tabs" },
+    .{ .keys = &.{"6"}, .action = .tab_6, .title = "tab 6", .section = "tabs" },
+    .{ .keys = &.{"7"}, .action = .tab_7, .title = "tab 7", .section = "tabs" },
+    .{ .keys = &.{"8"}, .action = .tab_8, .title = "tab 8", .section = "tabs" },
+    .{ .keys = &.{"9"}, .action = .tab_9, .title = "tab 9", .section = "tabs" },
+    .{ .keys = &.{"/"}, .action = .filter, .title = "filter the rows", .section = "pane" },
+    .{ .keys = &.{"r"}, .action = .refresh, .title = "refresh this tab", .hint = true, .section = "pane" },
+    .{ .keys = &.{"?"}, .action = .help, .title = "this key sheet", .hint = true, .section = "pane" },
+    .{ .keys = &.{"esc"}, .action = .escape, .title = "close the sheet / clear the filter", .section = "pane" },
+    .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .title = "quit", .hint = true, .section = "pane" },
+};
+
+pub const sections = [_][]const u8{ "navigate", "tree", "row", "tabs", "pane" };
+
+/// What is true of the focused row, for scope checks.
+pub const Context = struct {
+    on_tree: bool = false,
+    on_row: bool = false,
+    detail_open: bool = false,
+
+    pub fn allows(c: Context, scope: Scope) bool {
+        return switch (scope) {
+            .any => true,
+            .tree => c.on_tree,
+            .row => c.on_row,
+            .detail => c.detail_open,
+        };
+    }
+};
+
+/// mnml spells an upper-case letter `shift+<lower>` and a back-tab
+/// `backtab`; the table spells them that way too, so a spec matches
+/// as it arrives.
+pub fn lookup(spec: []const u8, ctx: Context) ?Action {
+    for (&table) |b| {
+        if (!ctx.allows(b.scope)) continue;
+        for (b.keys) |k| if (std.mem.eql(u8, k, spec)) return b.action;
+    }
+    return null;
+}
+
+pub fn bindingOf(action: Action) ?Binding {
+    for (&table) |b| if (b.action == action) return b;
+    return null;
+}
+
+/// The key a hint shows for a spec: `↑`, `⏎`, `⇥`, `⌥↑`, `^d`, or
+/// the letter.
+pub fn keyLabel(spec: []const u8) []const u8 {
+    const pairs = [_][2][]const u8{
+        .{ "enter", "⏎" },
+        .{ "space", "␣" },
+        .{ "up", "↑" },
+        .{ "down", "↓" },
+        .{ "left", "←" },
+        .{ "right", "→" },
+        .{ "tab", "⇥" },
+        .{ "backtab", "⇤" },
+        .{ "esc", "esc" },
+        .{ "pageup", "⇞" },
+        .{ "pagedown", "⇟" },
+        .{ "home", "⇱" },
+        .{ "end", "⇲" },
+        .{ "alt+up", "⌥↑" },
+        .{ "alt+down", "⌥↓" },
+        .{ "ctrl+d", "^d" },
+        .{ "ctrl+u", "^u" },
+        .{ "ctrl+c", "^c" },
+        .{ "shift+g", "G" },
+        .{ "shift+h", "H" },
+        .{ "shift+tab", "⇤" },
+    };
+    for (pairs) |p| if (std.mem.eql(u8, p[0], spec)) return p[1];
+    return spec;
+}
+
+/// The bindings the hint row paints, in table order, for the context.
+pub fn hints(ctx: Context, out: []Binding) []const Binding {
+    var n: usize = 0;
+    for (&table) |b| {
+        if (!b.hint or !ctx.allows(b.scope)) continue;
+        if (n == out.len) break;
+        out[n] = b;
+        n += 1;
+    }
+    return out[0..n];
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "the reference's keys dispatch to their actions, scoped to where they apply" {
+    const tree: Context = .{ .on_tree = true, .on_row = true };
+    try t.expectEqual(Action.quit, lookup("q", .{}).?);
+    try t.expectEqual(Action.quit, lookup("ctrl+c", .{}).?);
+    try t.expectEqual(Action.down, lookup("j", .{}).?);
+    try t.expectEqual(Action.end, lookup("shift+g", .{}).?);
+    try t.expectEqual(Action.unhide_all, lookup("shift+h", tree).?);
+    try t.expectEqual(Action.activate, lookup("enter", tree).?);
+    try t.expectEqual(Action.expand, lookup("right", tree).?);
+    try t.expectEqual(Action.reorder_up, lookup("alt+up", tree).?);
+    try t.expectEqual(Action.tab_3, lookup("3", .{}).?);
+    try t.expectEqual(@as(?u8, 2), Action.tab_3.tabNumber());
+    try t.expect(Action.quit.tabNumber() == null);
+    try t.expectEqual(Action.prev_tab, lookup("backtab", .{}).?);
+    // Off a tree, the tree keys are not bound: `e` does nothing on a flat list.
+    try t.expect(lookup("e", .{}) == null);
+    try t.expect(lookup("enter", .{ .on_row = true }) == null);
+    // `a` only while the detail is open, as in the reference.
+    try t.expect(lookup("a", .{}) == null);
+    try t.expectEqual(Action.toggle_approval, lookup("a", .{ .detail_open = true }).?);
+    try t.expect(lookup("z", tree) == null);
+}
+
+test "every action in the table is reachable and the hint row is a subset of it" {
+    var seen = std.enums.EnumSet(Action).initEmpty();
+    for (&table) |b| seen.insert(b.action);
+    inline for (@typeInfo(Action).@"enum".fields) |f| {
+        try t.expect(seen.contains(@field(Action, f.name)));
+    }
+    var buf: [table.len]Binding = undefined;
+    const hs = hints(.{ .on_tree = true, .on_row = true, .detail_open = true }, &buf);
+    try t.expect(hs.len >= 6);
+    try t.expectEqual(Action.down, hs[0].action);
+    try t.expectEqual(Action.quit, hs[hs.len - 1].action);
+    for (hs) |b| try t.expect(bindingOf(b.action) != null);
+    // On a flat list without a detail the tree-only and detail-only hints are gone.
+    const flat = hints(.{}, &buf);
+    for (flat) |b| try t.expect(b.scope == .any);
+    try t.expectEqualStrings("⏎", keyLabel("enter"));
+    try t.expectEqualStrings("⌥↑", keyLabel("alt+up"));
+    try t.expectEqualStrings("q", keyLabel("q"));
+}

@@ -1,0 +1,904 @@
+//! What the worker thread does: one `Job` in, one `Result` out. The
+//! pane never blocks on the network — the reference freezes for the
+//! minutes a thirteen-repo prefetch takes under the shared bucket, and
+//! paints nothing but `loading…` until it is done — so every fetch
+//! runs here, with a `Progress` the main loop reads to say how far it
+//! is, and lands as a `Result` the app commits on its own thread.
+//!
+//! The fetches are the reference's, endpoint for endpoint: a
+//! workspace tab resolves its repos from the scope (the `repos`
+//! allow-list short-circuits the enumeration), fans out one list per
+//! repo, fills an empty repo's row with its last merge, and keeps an
+//! erroring repo as a row with a short label instead of dropping it;
+//! the pipelines tree pairs each branch with the newest pipeline that
+//! ran on it and curates the branches; the detail is the PR plus its
+//! comments; the statusline values are the reference's `--values`
+//! predicate.
+//!
+//! A job owns an arena for its inputs; a result owns one for its data,
+//! which the tab keeps until the next refresh replaces it.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const api = @import("api.zig");
+const cfg = @import("config.zig");
+const model = @import("model.zig");
+const tabs = @import("tabs.zig");
+const dates = @import("dates.zig");
+const j = @import("json.zig");
+
+/// What the workspace-wide fetches need to know, copied onto the job.
+pub const ScopeInputs = struct {
+    workspace: []const u8,
+    scope: cfg.Scope,
+    recent_window_days: u32,
+    explicit_repos: []const []const u8,
+    hidden_repos: []const []const u8,
+    repo_order: []const []const u8,
+    repos: []const []const u8,
+    /// Bumped by the app when any of the above changes; the worker's
+    /// scope cache is keyed by it.
+    generation: u32,
+};
+
+pub const PrKey = struct { workspace: []const u8, repo: []const u8, id: i64 };
+
+pub const Job = struct {
+    arena: std.heap.ArenaAllocator,
+    kind: Kind,
+    now_secs: i64,
+
+    pub const Kind = union(enum) {
+        whoami,
+        refresh: struct { tab: usize, spec: tabs.TabSpec, scope: ScopeInputs },
+        detail: PrKey,
+        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8 },
+        approve: struct { key: PrKey, withdraw: bool },
+        values: struct { scope: ScopeInputs, stale_after_days: u32, excluded_branch_patterns: []const []const u8 },
+    };
+
+    pub fn deinit(job: *Job) void {
+        job.arena.deinit();
+        job.* = undefined;
+    }
+};
+
+pub const Whoami = struct { account_id: []const u8 = "", display_name: []const u8 = "", error_text: []const u8 = "" };
+
+pub const RefreshResult = struct {
+    tab: usize,
+    data: ?tabs.TabData = null,
+    /// The fetch failed as a whole.
+    error_text: []const u8 = "",
+    /// The reference's status line: `Open + Draft · 4 repos, 64 PRs (1 errored)`.
+    status: []const u8 = "",
+    repos: usize = 0,
+    /// Rows on a flat list, PRs on a tree.
+    items: usize = 0,
+    errored: usize = 0,
+    /// The scope the tree used, for the header's count.
+    scope_repos: []const []const u8 = &.{},
+};
+
+pub const DetailResult = struct { key: PrKey, pr: ?model.PullRequest = null, comments: []const model.Comment = &.{}, error_text: []const u8 = "" };
+
+pub const PrPipelinesResult = struct { tab: usize, slug: []const u8, id: i64, pipelines: []const model.Pipeline = &.{}, error_text: []const u8 = "" };
+
+pub const ApproveResult = struct { key: PrKey, withdrew: bool, error_text: []const u8 = "" };
+
+pub const ValuesResult = struct { open_mine: usize = 0, unapproved_mine: usize = 0, approved_mine: usize = 0, error_text: []const u8 = "" };
+
+pub const Result = struct {
+    arena: std.heap.ArenaAllocator,
+    payload: Payload,
+
+    pub const Payload = union(enum) {
+        whoami: Whoami,
+        refresh: RefreshResult,
+        detail: DetailResult,
+        pr_pipelines: PrPipelinesResult,
+        approve: ApproveResult,
+        values: ValuesResult,
+    };
+
+    pub fn deinit(r: *Result) void {
+        r.arena.deinit();
+        r.* = undefined;
+    }
+};
+
+/// How far the running job is; the main loop paints it.
+pub const Progress = struct {
+    done: std.atomic.Value(u32) = .init(0),
+    total: std.atomic.Value(u32) = .init(0),
+    /// Requests the client has sent, for the diagnostics.
+    busy: std.atomic.Value(bool) = .init(false),
+
+    pub fn set(p: *Progress, done: u32, total: u32) void {
+        p.done.store(done, .release);
+        p.total.store(total, .release);
+    }
+};
+
+/// The worker's own state: the account and the scope it resolved,
+/// so a chain of jobs (whoami, then three tabs) needs no round trip
+/// through the app between them.
+pub const Worker = struct {
+    gpa: Allocator,
+    io: Io,
+    client: *api.Client,
+    progress: *Progress,
+    me_account_id: []u8 = &.{},
+    me_display_name: []u8 = &.{},
+    /// A configured `account_id` wins over whoami.
+    configured_account_id: []const u8 = "",
+    scope_gen: ?u32 = null,
+    scope_arena: ?std.heap.ArenaAllocator = null,
+    scope_repos: []const []const u8 = &.{},
+    /// A scope failure's text lives as long as the worker's last
+    /// failure — the result copies it.
+    failure_buf: [512]u8 = undefined,
+
+    pub fn init(gpa: Allocator, io: Io, client: *api.Client, progress: *Progress, configured_account_id: []const u8) Worker {
+        return .{ .gpa = gpa, .io = io, .client = client, .progress = progress, .configured_account_id = configured_account_id };
+    }
+
+    pub fn deinit(w: *Worker) void {
+        w.gpa.free(w.me_account_id);
+        w.gpa.free(w.me_display_name);
+        if (w.scope_arena) |*a| a.deinit();
+        w.* = undefined;
+    }
+
+    pub fn accountId(w: *const Worker) []const u8 {
+        return if (w.configured_account_id.len > 0) w.configured_account_id else w.me_account_id;
+    }
+
+    /// Run one job to its result.
+    pub fn run(w: *Worker, job: *Job) Allocator.Error!Result {
+        w.progress.busy.store(true, .release);
+        defer w.progress.busy.store(false, .release);
+        var arena = std.heap.ArenaAllocator.init(w.gpa);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+        const payload: Result.Payload = switch (job.kind) {
+            .whoami => .{ .whoami = try w.whoami(a) },
+            .refresh => |r| .{ .refresh = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs) },
+            .detail => |k| .{ .detail = try w.detail(a, k) },
+            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash) },
+            .approve => |ap| .{ .approve = try w.approve(a, ap.key, ap.withdraw) },
+            .values => |v| .{ .values = try w.values(a, v.scope, v.stale_after_days, v.excluded_branch_patterns, job.now_secs) },
+        };
+        return .{ .arena = arena, .payload = payload };
+    }
+
+    // ─── the account ─────────────────────────────────────────────────
+
+    fn whoami(w: *Worker, a: Allocator) Allocator.Error!Whoami {
+        var reply = try w.client.whoami(w.gpa);
+        defer reply.deinit(w.gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return .{ .error_text = "whoami: the reply is not JSON" };
+                const id = j.str(v, "account_id");
+                const name = j.str(v, "display_name");
+                w.gpa.free(w.me_account_id);
+                w.me_account_id = try w.gpa.dupe(u8, id);
+                w.gpa.free(w.me_display_name);
+                w.me_display_name = try w.gpa.dupe(u8, name);
+                return .{ .account_id = try a.dupe(u8, id), .display_name = try a.dupe(u8, name) };
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                return .{ .error_text = try std.fmt.allocPrint(a, "whoami failed: {s}", .{f.describe(&buf)}) };
+            },
+        }
+    }
+
+    // ─── the scope ───────────────────────────────────────────────────
+
+    /// The repos a workspace tab reads: `repos` when set, else the
+    /// explicit list, else the workspace's repos filtered to the
+    /// recent window (or all of them), minus the hidden, ordered by
+    /// `repo_order` first. Cached per generation.
+    pub fn resolveScope(w: *Worker, s: ScopeInputs, now_secs: i64) Allocator.Error!union(enum) { ok: []const []const u8, failed: []const u8 } {
+        if (w.scope_gen == s.generation) return .{ .ok = w.scope_repos };
+        var arena = std.heap.ArenaAllocator.init(w.gpa);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+        var raw: std.ArrayList([]const u8) = .empty;
+        if (s.repos.len > 0) {
+            for (s.repos) |r| try raw.append(a, try a.dupe(u8, r));
+        } else if (s.scope == .explicit) {
+            for (s.explicit_repos) |r| try raw.append(a, try a.dupe(u8, r));
+        } else {
+            var reply = try w.client.listReposWithActivity(w.gpa, s.workspace);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch {
+                        arena.deinit();
+                        return .{ .failed = "the repo list is not JSON" };
+                    };
+                    const cutoff = now_secs - @as(i64, s.recent_window_days) * 86_400;
+                    for (try model.parseRepos(a, v)) |r| {
+                        if (s.scope == .recent) {
+                            const ts = dates.parseEpoch(r.updated_on) orelse continue;
+                            if (ts < cutoff) continue;
+                        }
+                        try raw.append(a, r.slug);
+                    }
+                },
+                .failed => |f| {
+                    var buf: [256]u8 = undefined;
+                    const why = try w.gpa.dupe(u8, f.describe(&buf));
+                    arena.deinit();
+                    // Leaked on purpose? No — hand it to the caller's arena.
+                    defer w.gpa.free(why);
+                    return .{ .failed = try w.failedText(why) };
+                },
+            }
+        }
+        var after_hide: std.ArrayList([]const u8) = .empty;
+        for (raw.items) |slug| if (!cfg.contains(s.hidden_repos, slug)) try after_hide.append(a, slug);
+        var ordered: std.ArrayList([]const u8) = .empty;
+        for (s.repo_order) |slug| if (cfg.contains(after_hide.items, slug)) try ordered.append(a, try a.dupe(u8, slug));
+        for (after_hide.items) |slug| if (!cfg.contains(s.repo_order, slug)) try ordered.append(a, slug);
+        if (w.scope_arena) |*old| old.deinit();
+        w.scope_arena = arena;
+        w.scope_repos = try ordered.toOwnedSlice(a);
+        w.scope_gen = s.generation;
+        return .{ .ok = w.scope_repos };
+    }
+
+    fn failedText(w: *Worker, why: []const u8) Allocator.Error![]const u8 {
+        const n = @min(why.len, w.failure_buf.len);
+        @memcpy(w.failure_buf[0..n], why[0..n]);
+        return w.failure_buf[0..n];
+    }
+
+    // ─── the tabs ────────────────────────────────────────────────────
+
+    fn refresh(w: *Worker, a: Allocator, tab: usize, spec: tabs.TabSpec, scope: ScopeInputs, now_secs: i64) Allocator.Error!RefreshResult {
+        w.progress.set(0, 0);
+        switch (spec.kind) {
+            .pull_requests => return w.flatPrs(a, tab, spec, scope),
+            .pipelines => {
+                var reply = try w.client.listPipelines(w.gpa, spec.workspace, spec.repo, 50);
+                defer reply.deinit(w.gpa);
+                return switch (reply) {
+                    .ok => |body| blk: {
+                        const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
+                        const list = try model.parsePipelines(a, v);
+                        break :blk .{ .tab = tab, .data = .{ .pipelines = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} pipelines", .{ spec.name, list.len }) };
+                    },
+                    .failed => |f| blk: {
+                        var buf: [256]u8 = undefined;
+                        break :blk failed(a, tab, spec.name, f.describe(&buf));
+                    },
+                };
+            },
+            .branches => {
+                var reply = try w.client.listBranches(w.gpa, spec.workspace, spec.repo, 50);
+                defer reply.deinit(w.gpa);
+                return switch (reply) {
+                    .ok => |body| blk: {
+                        const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
+                        const list = try model.parseBranches(a, v);
+                        break :blk .{ .tab = tab, .data = .{ .branches = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} branches", .{ spec.name, list.len }) };
+                    },
+                    .failed => |f| blk: {
+                        var buf: [256]u8 = undefined;
+                        break :blk failed(a, tab, spec.name, f.describe(&buf));
+                    },
+                };
+            },
+            .workspace_open_prs, .workspace_merged_prs => {
+                const repos = switch (try w.resolveScope(scope, now_secs)) {
+                    .ok => |r| r,
+                    .failed => |why| return failed(a, tab, spec.name, try std.fmt.allocPrint(a, "scope-resolve error: {s}", .{why})),
+                };
+                const merged = spec.kind == .workspace_merged_prs;
+                var bbql: []const u8 = "";
+                var per_page: u32 = 25;
+                if (spec.mine_only) {
+                    const me = w.accountId();
+                    if (me.len > 0) {
+                        bbql = try std.fmt.allocPrint(a, "(state = \"OPEN\" OR state = \"MERGED\") AND author.account_id = \"{s}\"", .{me});
+                        per_page = 20;
+                    }
+                }
+                var rows = try w.prsByRepo(a, spec.workspace, repos, if (merged) "MERGED" else "OPEN", bbql, per_page, !merged);
+                if (spec.mine_only) {
+                    var kept: std.ArrayList(model.RepoPrs) = .empty;
+                    for (rows) |r| if (r.prs.len > 0 or r.error_label.len > 0) try kept.append(a, r);
+                    rows = try kept.toOwnedSlice(a);
+                }
+                var total: usize = 0;
+                var errored: usize = 0;
+                for (rows) |r| {
+                    total += r.prs.len;
+                    errored += @intFromBool(r.error_label.len > 0);
+                }
+                const status = if (errored > 0)
+                    try std.fmt.allocPrint(a, "{s} · {d} repos, {d} PRs ({d} errored)", .{ spec.name, rows.len, total, errored })
+                else
+                    try std.fmt.allocPrint(a, "{s} · {d} repos, {d} PRs", .{ spec.name, rows.len, total });
+                return .{ .tab = tab, .data = .{ .repo_pr_tree = rows }, .repos = rows.len, .items = total, .errored = errored, .status = status, .scope_repos = try dupeList(a, repos) };
+            },
+            .workspace_pipelines => {
+                const repos = switch (try w.resolveScope(scope, now_secs)) {
+                    .ok => |r| r,
+                    .failed => |why| return failed(a, tab, spec.name, try std.fmt.allocPrint(a, "scope-resolve error: {s}", .{why})),
+                };
+                const rows = try w.pipelinesTree(a, spec.workspace, repos, now_secs);
+                var errored: usize = 0;
+                for (rows) |r| errored += @intFromBool(r.error_label.len > 0);
+                return .{ .tab = tab, .data = .{ .repo_tree = rows }, .repos = rows.len, .errored = errored, .status = try std.fmt.allocPrint(a, "{s} · {d} repos", .{ spec.name, rows.len }), .scope_repos = try dupeList(a, repos) };
+            },
+        }
+    }
+
+    fn failed(a: Allocator, tab: usize, name: []const u8, why: []const u8) Allocator.Error!RefreshResult {
+        return .{ .tab = tab, .error_text = try a.dupe(u8, why), .status = try std.fmt.allocPrint(a, "{s}: {s}", .{ name, why }) };
+    }
+
+    /// A `pull_requests` tab: one repo's list, or `mode = mine` /
+    /// `reviewing` fanned out over the workspace's repos.
+    fn flatPrs(w: *Worker, a: Allocator, tab: usize, spec: tabs.TabSpec, scope: ScopeInputs) Allocator.Error!RefreshResult {
+        if (spec.mode == .none) {
+            var reply = try w.client.listPrs(w.gpa, spec.workspace, spec.repo, spec.state, spec.q, 50);
+            defer reply.deinit(w.gpa);
+            return switch (reply) {
+                .ok => |body| blk: {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
+                    const list = try model.parsePullRequests(a, v);
+                    break :blk .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }) };
+                },
+                .failed => |f| blk: {
+                    var buf: [256]u8 = undefined;
+                    break :blk failed(a, tab, spec.name, f.describe(&buf));
+                },
+            };
+        }
+        const me = w.accountId();
+        if (me.len == 0) return failed(a, tab, spec.name, "mode=\"mine\" needs Account:Read on the token (or `account_id` in config.zon)");
+        const predicate = if (spec.mode == .mine)
+            try std.fmt.allocPrint(a, "author.account_id = \"{s}\"", .{me})
+        else
+            try std.fmt.allocPrint(a, "reviewers.account_id = \"{s}\"", .{me});
+        const bbql = if (spec.q.len > 0) try std.fmt.allocPrint(a, "({s}) AND ({s})", .{ predicate, spec.q }) else predicate;
+        // The reference enumerates every repo of the workspace here;
+        // the `repos` allow-list is honoured when set.
+        var repos: []const []const u8 = scope.repos;
+        if (repos.len == 0) {
+            var reply = try w.client.listReposWithActivity(w.gpa, spec.workspace);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return failed(a, tab, spec.name, "the repo list is not JSON");
+                    var slugs: std.ArrayList([]const u8) = .empty;
+                    for (try model.parseRepos(a, v)) |r| try slugs.append(a, r.slug);
+                    repos = try slugs.toOwnedSlice(a);
+                },
+                .failed => |f| {
+                    var buf: [256]u8 = undefined;
+                    return failed(a, tab, spec.name, f.describe(&buf));
+                },
+            }
+        }
+        var all: std.ArrayList(model.PullRequest) = .empty;
+        var errors: usize = 0;
+        w.progress.set(0, @intCast(repos.len));
+        for (repos, 0..) |slug, i| {
+            defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
+            var reply = try w.client.listPrs(w.gpa, spec.workspace, slug, spec.state, bbql, 50);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
+                    for (try model.parsePullRequests(a, v)) |pr| try all.append(a, pr);
+                },
+                .failed => errors += 1,
+            }
+        }
+        if (errors > 0 and errors == repos.len) return failed(a, tab, spec.name, try std.fmt.allocPrint(a, "all {d} repo requests failed", .{errors}));
+        std.mem.sort(model.PullRequest, all.items, {}, newestFirst);
+        const list = try all.toOwnedSlice(a);
+        return .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .errored = errors, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }) };
+    }
+
+    fn newestFirst(_: void, x: model.PullRequest, y: model.PullRequest) bool {
+        return std.mem.order(u8, x.updated_on, y.updated_on) == .gt;
+    }
+
+    /// One `RepoPrs` per slug, in the slugs' order; an erroring repo
+    /// keeps its row with a label, an empty open repo shows its last
+    /// merge.
+    fn prsByRepo(w: *Worker, a: Allocator, workspace: []const u8, repos: []const []const u8, state: []const u8, bbql: []const u8, per_page: u32, fallback_merged: bool) Allocator.Error![]model.RepoPrs {
+        var rows: std.ArrayList(model.RepoPrs) = .empty;
+        w.progress.set(0, @intCast(repos.len));
+        for (repos, 0..) |slug, i| {
+            defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
+            var reply = try w.client.listPrs(w.gpa, workspace, slug, state, bbql, per_page);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch {
+                        try rows.append(a, .{ .slug = try a.dupe(u8, slug), .error_label = "bad JSON" });
+                        continue;
+                    };
+                    const prs = try model.parsePullRequests(a, v);
+                    std.mem.sort(model.PullRequest, @constCast(prs), {}, newestFirst);
+                    var row: model.RepoPrs = .{ .slug = try a.dupe(u8, slug), .prs = prs };
+                    if (prs.len == 0 and fallback_merged) {
+                        // Best effort, one request, no retry. Under a
+                        // BBQL predicate the state clause has to move too.
+                        const merged_q = if (bbql.len > 0) try replaceAll(a, bbql, "state = \"OPEN\"", "state = \"MERGED\"") else "";
+                        var fb = try w.client.listPrs(w.gpa, workspace, slug, "MERGED", merged_q, 1);
+                        defer fb.deinit(w.gpa);
+                        if (fb == .ok) {
+                            if (std.json.parseFromSliceLeaky(j.Value, a, fb.ok.bytes, .{})) |fv| {
+                                const one = try model.parsePullRequests(a, fv);
+                                if (one.len > 0) row.fallback_merged = one[0];
+                            } else |_| {}
+                        }
+                    }
+                    try rows.append(a, row);
+                },
+                .failed => |f| {
+                    var buf: [96]u8 = undefined;
+                    try rows.append(a, .{ .slug = try a.dupe(u8, slug), .error_label = try a.dupe(u8, f.shortLabel(&buf)) });
+                },
+            }
+        }
+        return rows.toOwnedSlice(a);
+    }
+
+    /// Each repo's branches paired with the newest pipeline on each,
+    /// curated, repos sorted by their newest pipeline.
+    fn pipelinesTree(w: *Worker, a: Allocator, workspace: []const u8, repos: []const []const u8, now_secs: i64) Allocator.Error![]model.RepoPipelines {
+        var rows: std.ArrayList(model.RepoPipelines) = .empty;
+        w.progress.set(0, @intCast(repos.len));
+        for (repos, 0..) |slug, i| {
+            defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
+            var branches: []const model.BranchRef = &.{};
+            var pipelines: []const model.Pipeline = &.{};
+            var label: []const u8 = "";
+            {
+                var reply = try w.client.listBranches(w.gpa, workspace, slug, 100);
+                defer reply.deinit(w.gpa);
+                switch (reply) {
+                    .ok => |body| if (std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{})) |v| {
+                        branches = try model.parseBranches(a, v);
+                    } else |_| {},
+                    .failed => |f| {
+                        var buf: [96]u8 = undefined;
+                        label = try a.dupe(u8, f.shortLabel(&buf));
+                    },
+                }
+            }
+            {
+                var reply = try w.client.listPipelines(w.gpa, workspace, slug, 100);
+                defer reply.deinit(w.gpa);
+                if (reply == .ok) if (std.json.parseFromSliceLeaky(j.Value, a, reply.ok.bytes, .{})) |v| {
+                    pipelines = try model.parsePipelines(a, v);
+                } else |_| {};
+            }
+            var paired: std.ArrayList(model.BranchWithPipeline) = .empty;
+            for (branches) |b| {
+                var latest: ?model.Pipeline = null;
+                for (pipelines) |p| if (std.mem.eql(u8, p.ref_name, b.name)) {
+                    latest = p;
+                    break;
+                };
+                try paired.append(a, .{
+                    .name = b.name,
+                    .latest = latest,
+                    .last_activity_on = if (latest) |p| (if (p.created_on.len > 0) p.created_on else b.date) else b.date,
+                });
+            }
+            try rows.append(a, .{ .slug = try a.dupe(u8, slug), .branches = try model.curateBranches(a, now_secs, paired.items), .error_label = label });
+        }
+        std.mem.sort(model.RepoPipelines, rows.items, {}, newestPipelineFirst);
+        return rows.toOwnedSlice(a);
+    }
+
+    fn newestPipelineFirst(_: void, x: model.RepoPipelines, y: model.RepoPipelines) bool {
+        return std.mem.order(u8, x.newestPipeline(), y.newestPipeline()) == .gt;
+    }
+
+    // ─── the detail, the merged PR's pipeline, approve ───────────────
+
+    fn detail(w: *Worker, a: Allocator, key: PrKey) Allocator.Error!DetailResult {
+        const k: PrKey = .{ .workspace = try a.dupe(u8, key.workspace), .repo = try a.dupe(u8, key.repo), .id = key.id };
+        var reply = try w.client.prDetail(w.gpa, key.workspace, key.repo, key.id);
+        defer reply.deinit(w.gpa);
+        const pr = switch (reply) {
+            .ok => |body| blk: {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return .{ .key = k, .error_text = "the detail is not JSON" };
+                break :blk try model.parsePullRequest(a, v);
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                return .{ .key = k, .error_text = try std.fmt.allocPrint(a, "detail fetch failed: {s}", .{f.describe(&buf)}) };
+            },
+        };
+        var comments: []const model.Comment = &.{};
+        var creply = try w.client.prComments(w.gpa, key.workspace, key.repo, key.id);
+        defer creply.deinit(w.gpa);
+        if (creply == .ok) if (std.json.parseFromSliceLeaky(j.Value, a, creply.ok.bytes, .{})) |v| {
+            comments = try model.parseComments(a, v);
+        } else |_| {};
+        return .{ .key = k, .pr = pr, .comments = comments };
+    }
+
+    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8) Allocator.Error!PrPipelinesResult {
+        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id };
+        var reply = try w.client.listPipelines(w.gpa, workspace, slug, 60);
+        defer reply.deinit(w.gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return out;
+                const all = try model.parsePipelines(a, v);
+                var r = out;
+                r.pipelines = try model.pipelinesOnCommit(a, all, hash);
+                return r;
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                var r = out;
+                r.error_text = try std.fmt.allocPrint(a, "pipeline fetch failed: {s}", .{f.describe(&buf)});
+                return r;
+            },
+        }
+    }
+
+    fn approve(w: *Worker, a: Allocator, key: PrKey, withdraw: bool) Allocator.Error!ApproveResult {
+        const k: PrKey = .{ .workspace = try a.dupe(u8, key.workspace), .repo = try a.dupe(u8, key.repo), .id = key.id };
+        var reply = if (withdraw) try w.client.unapprove(w.gpa, key.workspace, key.repo, key.id) else try w.client.approve(w.gpa, key.workspace, key.repo, key.id);
+        defer reply.deinit(w.gpa);
+        return switch (reply) {
+            .ok => .{ .key = k, .withdrew = withdraw },
+            .failed => |f| blk: {
+                var buf: [256]u8 = undefined;
+                break :blk .{ .key = k, .withdrew = withdraw, .error_text = try std.fmt.allocPrint(a, "approval toggle failed: {s}", .{f.describe(&buf)}) };
+            },
+        };
+    }
+
+    // ─── the statusline values ───────────────────────────────────────
+
+    /// The reference's `--values`: OPEN PRs the account authored, updated
+    /// in the last `stale_after_days`, not on an excluded branch, across
+    /// `repos` (or every repo of the workspace); how many, and how many
+    /// have no approval yet.
+    fn values(w: *Worker, a: Allocator, scope: ScopeInputs, stale_after_days: u32, patterns: []const []const u8, now_secs: i64) Allocator.Error!ValuesResult {
+        if (w.accountId().len == 0) {
+            const me = try w.whoami(a);
+            if (me.error_text.len > 0) return .{ .error_text = me.error_text };
+        }
+        const me = w.accountId();
+        if (me.len == 0) return .{ .error_text = "/2.0/user returned no account_id" };
+        var q: Io.Writer.Allocating = .init(a);
+        q.writer.print("state = \"OPEN\" AND author.account_id = \"{s}\"", .{me}) catch return error.OutOfMemory;
+        if (stale_after_days > 0) {
+            var buf: [10]u8 = undefined;
+            q.writer.print(" AND updated_on >= {s}", .{dates.writeDate(&buf, now_secs - @as(i64, stale_after_days) * 86_400)}) catch return error.OutOfMemory;
+        }
+        var repos: []const []const u8 = scope.repos;
+        if (repos.len == 0) {
+            var reply = try w.client.listReposWithActivity(w.gpa, scope.workspace);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return .{ .error_text = "the repo list is not JSON" };
+                    var slugs: std.ArrayList([]const u8) = .empty;
+                    for (try model.parseRepos(a, v)) |r| try slugs.append(a, r.slug);
+                    repos = try slugs.toOwnedSlice(a);
+                },
+                .failed => |f| {
+                    var buf: [256]u8 = undefined;
+                    return .{ .error_text = try std.fmt.allocPrint(a, "counting open PRs authored by you: {s}", .{f.describe(&buf)}) };
+                },
+            }
+        }
+        var open: usize = 0;
+        var approved: usize = 0;
+        var failures: usize = 0;
+        w.progress.set(0, @intCast(repos.len));
+        for (repos, 0..) |slug, i| {
+            defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
+            var reply = try w.client.listPrs(w.gpa, scope.workspace, slug, "OPEN", q.written(), 50);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
+                    for (try model.parsePullRequests(a, v)) |pr| {
+                        var excluded = false;
+                        for (patterns) |p| if (model.branchMatches(p, pr.source_branch)) {
+                            excluded = true;
+                        };
+                        if (excluded) continue;
+                        open += 1;
+                        approved += @intFromBool(pr.approvalCount() > 0);
+                    }
+                },
+                .failed => failures += 1,
+            }
+        }
+        if (failures > 0 and failures == repos.len) return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
+        return .{ .open_mine = open, .unapproved_mine = open - approved, .approved_mine = approved };
+    }
+};
+
+fn dupeList(a: Allocator, list: []const []const u8) Allocator.Error![]const []const u8 {
+    const out = try a.alloc([]const u8, list.len);
+    for (list, out) |s, *o| o.* = try a.dupe(u8, s);
+    return out;
+}
+
+fn replaceAll(a: Allocator, s: []const u8, needle: []const u8, with: []const u8) Allocator.Error![]const u8 {
+    const n = std.mem.replacementSize(u8, s, needle, with);
+    const out = try a.alloc(u8, n);
+    _ = std.mem.replace(u8, s, needle, with, out);
+    return out;
+}
+
+/// A job with its inputs copied onto its own arena.
+pub fn makeJob(gpa: Allocator, now_secs: i64, kind: Job.Kind) Allocator.Error!Job {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    errdefer arena.deinit();
+    const a = arena.allocator();
+    const copied: Job.Kind = switch (kind) {
+        .whoami => .whoami,
+        .refresh => |r| .{ .refresh = .{ .tab = r.tab, .spec = try dupeSpec(a, r.spec), .scope = try dupeScope(a, r.scope) } },
+        .detail => |k| .{ .detail = try dupeKey(a, k) },
+        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash) } },
+        .approve => |ap| .{ .approve = .{ .key = try dupeKey(a, ap.key), .withdraw = ap.withdraw } },
+        .values => |v| .{ .values = .{ .scope = try dupeScope(a, v.scope), .stale_after_days = v.stale_after_days, .excluded_branch_patterns = try dupeList(a, v.excluded_branch_patterns) } },
+    };
+    return .{ .arena = arena, .kind = copied, .now_secs = now_secs };
+}
+
+fn dupeKey(a: Allocator, k: PrKey) Allocator.Error!PrKey {
+    return .{ .workspace = try a.dupe(u8, k.workspace), .repo = try a.dupe(u8, k.repo), .id = k.id };
+}
+
+fn dupeSpec(a: Allocator, s: tabs.TabSpec) Allocator.Error!tabs.TabSpec {
+    var out = s;
+    out.name = try a.dupe(u8, s.name);
+    out.workspace = try a.dupe(u8, s.workspace);
+    out.repo = try a.dupe(u8, s.repo);
+    out.state = try a.dupe(u8, s.state);
+    out.q = try a.dupe(u8, s.q);
+    return out;
+}
+
+fn dupeScope(a: Allocator, s: ScopeInputs) Allocator.Error!ScopeInputs {
+    var out = s;
+    out.workspace = try a.dupe(u8, s.workspace);
+    out.explicit_repos = try dupeList(a, s.explicit_repos);
+    out.hidden_repos = try dupeList(a, s.hidden_repos);
+    out.repo_order = try dupeList(a, s.repo_order);
+    out.repos = try dupeList(a, s.repos);
+    return out;
+}
+
+/// The scope inputs for a config, at a generation.
+pub fn scopeOf(c: cfg.Config, workspace: []const u8, generation: u32) ScopeInputs {
+    return .{
+        .workspace = workspace,
+        .scope = c.scope,
+        .recent_window_days = c.recent_window_days,
+        .explicit_repos = c.explicit_repos,
+        .hidden_repos = c.hidden_repos,
+        .repo_order = c.repo_order,
+        .repos = c.repos,
+        .generation = generation,
+    };
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+const listener = @import("../tools/fake_bitbucket/listener.zig");
+const server = @import("../tools/fake_bitbucket/server.zig");
+
+const Rig = struct {
+    srv: *listener.Server,
+    client: api.Client,
+    progress: Progress = .{},
+    worker: Worker,
+
+    fn init() !*Rig {
+        const r = try t.allocator.create(Rig);
+        r.* = .{ .srv = undefined, .client = undefined, .worker = undefined };
+        r.srv = try listener.Server.start(t.allocator, t.io, 0);
+        const base = try r.srv.baseUrl(t.allocator);
+        defer t.allocator.free(base);
+        r.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+        r.worker = Worker.init(t.allocator, t.io, &r.client, &r.progress, "");
+        return r;
+    }
+
+    fn deinit(r: *Rig) void {
+        r.worker.deinit();
+        r.client.deinit();
+        r.srv.stop();
+        t.allocator.destroy(r);
+    }
+
+    fn run(r: *Rig, kind: Job.Kind) !Result {
+        var job = try makeJob(t.allocator, realNow(), kind);
+        defer job.deinit();
+        return r.worker.run(&job);
+    }
+};
+
+fn realNow() i64 {
+    return Io.Timestamp.now(t.io, .real).toSeconds();
+}
+
+const acme_scope: ScopeInputs = .{ .workspace = "acme", .scope = .recent, .recent_window_days = 14, .explicit_repos = &.{}, .hidden_repos = &.{}, .repo_order = &.{}, .repos = &.{ "api", "web" }, .generation = 1 };
+
+test "the open tree: one row per repo, a 24-hour-old PR still in the data, the merged tree with its merge commits" {
+    const r = try Rig.init();
+    defer r.deinit();
+    var who = try r.run(.whoami);
+    defer who.deinit();
+    try t.expectEqualStrings("acct-chris", who.payload.whoami.account_id);
+    try t.expectEqualStrings("acct-chris", r.worker.accountId());
+
+    var open = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .workspace_open_prs, .name = "Open + Draft", .workspace = "acme" }, .scope = acme_scope } });
+    defer open.deinit();
+    const o = open.payload.refresh;
+    try t.expectEqualStrings("Open + Draft · 2 repos, 3 PRs", o.status);
+    try t.expectEqual(@as(usize, 2), o.data.?.repo_pr_tree.len);
+    try t.expectEqualStrings("api", o.data.?.repo_pr_tree[0].slug);
+    try t.expectEqual(@as(usize, 2), o.data.?.repo_pr_tree[0].prs.len);
+    // Newest first: #1234 (2h) before #1198 (30h).
+    try t.expectEqual(@as(i64, 1234), o.data.?.repo_pr_tree[0].prs[0].id);
+    try t.expectEqual(@as(u32, 2), r.progress.done.load(.acquire));
+
+    var merged = try r.run(.{ .refresh = .{ .tab = 1, .spec = .{ .kind = .workspace_merged_prs, .name = "Merged", .workspace = "acme" }, .scope = acme_scope } });
+    defer merged.deinit();
+    const m = merged.payload.refresh;
+    try t.expectEqualStrings("Merged · 2 repos, 2 PRs", m.status);
+    try t.expectEqualStrings("9999mergecommit", m.data.?.repo_pr_tree[0].prs[0].merge_commit);
+    // The scope was resolved once and cached for the second tab.
+    try t.expectEqual(@as(?u32, 1), r.worker.scope_gen);
+}
+
+test "an unknown repo keeps its row with a label, and a mine-only tree drops the repos with nothing" {
+    const r = try Rig.init();
+    defer r.deinit();
+    const scope: ScopeInputs = .{ .workspace = "acme", .scope = .all, .recent_window_days = 14, .explicit_repos = &.{}, .hidden_repos = &.{}, .repo_order = &.{}, .repos = &.{ "api", "ghost" }, .generation = 2 };
+    var open = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .workspace_open_prs, .name = "Open", .workspace = "acme" }, .scope = scope } });
+    defer open.deinit();
+    const rows = open.payload.refresh.data.?.repo_pr_tree;
+    try t.expectEqual(@as(usize, 2), rows.len);
+    try t.expectEqualStrings("no such repo", rows[1].error_label);
+    try t.expectEqualStrings("Open · 2 repos, 2 PRs (1 errored)", open.payload.refresh.status);
+
+    var who = try r.run(.whoami);
+    who.deinit();
+    var mine = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .workspace_open_prs, .name = "Mine", .workspace = "acme", .mine_only = true }, .scope = acme_scope } });
+    defer mine.deinit();
+    const mrows = mine.payload.refresh.data.?.repo_pr_tree;
+    // api: #1234 open (mine) + #1100 merged (not mine) → only #1234; web: #820 (mine, draft) + #801 merged by Dana → #820.
+    try t.expectEqual(@as(usize, 2), mrows.len);
+    for (mrows) |row| for (row.prs) |pr| try t.expectEqualStrings("acct-chris", pr.author_id);
+}
+
+test "the scope: recent filters on updated_on, hidden subtracts, repo_order leads, explicit needs no enumeration" {
+    const r = try Rig.init();
+    defer r.deinit();
+    const now = realNow();
+    // No allow-list: api (1 h ago) and web (a day ago) are both recent.
+    var all: ScopeInputs = .{ .workspace = "acme", .scope = .recent, .recent_window_days = 14, .explicit_repos = &.{}, .hidden_repos = &.{}, .repo_order = &.{"web"}, .repos = &.{}, .generation = 5 };
+    const got = try r.worker.resolveScope(all, now);
+    try t.expectEqual(@as(usize, 2), got.ok.len);
+    try t.expectEqualStrings("web", got.ok[0]);
+    // A day's window drops web (a day old, on the edge) only when the cutoff passes it.
+    all.recent_window_days = 0;
+    all.generation = 6;
+    try t.expectEqual(@as(usize, 0), (try r.worker.resolveScope(all, now)).ok.len);
+    all.scope = .explicit;
+    all.explicit_repos = &.{ "web", "api" };
+    all.hidden_repos = &.{"api"};
+    all.generation = 7;
+    const ex = try r.worker.resolveScope(all, now);
+    try t.expectEqual(@as(usize, 1), ex.ok.len);
+    try t.expectEqualStrings("web", ex.ok[0]);
+}
+
+test "the pipelines tree pairs branches with their newest run and curates them" {
+    const r = try Rig.init();
+    defer r.deinit();
+    var res = try r.run(.{ .refresh = .{ .tab = 2, .spec = .{ .kind = .workspace_pipelines, .name = "Pipelines", .workspace = "acme" }, .scope = acme_scope } });
+    defer res.deinit();
+    const rows = res.payload.refresh.data.?.repo_tree;
+    try t.expectEqualStrings("Pipelines · 2 repos", res.payload.refresh.status);
+    // api has the newer pipeline (1 h) so it sorts first.
+    try t.expectEqualStrings("api", rows[0].slug);
+    // main, develop, release/1.2 (10 days: kept), and the newest feature (chris/fix-login); dana/timeout (30 h) loses to it; old/experiment (40 days) is stale.
+    const names = rows[0].branches;
+    try t.expectEqual(@as(usize, 4), names.len);
+    try t.expectEqualStrings("main", names[0].name);
+    try t.expectEqualStrings("develop", names[1].name);
+    try t.expectEqualStrings("release/1.2", names[2].name);
+    try t.expectEqualStrings("chris/fix-login", names[3].name);
+    try t.expectEqual(@as(i64, 412), names[0].latest.?.build_number);
+    try t.expectEqualStrings("FAILED", names[1].latest.?.result_name);
+    try t.expectEqual(@as(i64, 413), names[3].latest.?.build_number);
+    // web: main, staging, chris/empty-state.
+    try t.expectEqual(@as(usize, 3), rows[1].branches.len);
+}
+
+test "flat tabs: a repo's list, a mine list across the allow-list, pipelines and branches" {
+    const r = try Rig.init();
+    defer r.deinit();
+    var api_tab = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pull_requests, .name = "api", .workspace = "acme", .repo = "api", .state = "OPEN" }, .scope = acme_scope } });
+    defer api_tab.deinit();
+    try t.expectEqual(@as(usize, 2), api_tab.payload.refresh.data.?.pull_requests.len);
+    try t.expectEqualStrings("api · 2 PRs", api_tab.payload.refresh.status);
+    // Without an account a mine tab explains itself.
+    var no_me = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pull_requests, .name = "Mine", .workspace = "acme", .mode = .mine, .state = "OPEN" }, .scope = acme_scope } });
+    defer no_me.deinit();
+    try t.expect(std.mem.indexOf(u8, no_me.payload.refresh.error_text, "Account:Read") != null);
+    var who = try r.run(.whoami);
+    who.deinit();
+    var mine = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pull_requests, .name = "Mine", .workspace = "acme", .mode = .mine, .state = "OPEN" }, .scope = acme_scope } });
+    defer mine.deinit();
+    try t.expectEqual(@as(usize, 2), mine.payload.refresh.data.?.pull_requests.len);
+    var reviewing = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pull_requests, .name = "Review", .workspace = "acme", .mode = .reviewing, .state = "OPEN" }, .scope = acme_scope } });
+    defer reviewing.deinit();
+    try t.expectEqual(@as(usize, 1), reviewing.payload.refresh.data.?.pull_requests.len);
+    try t.expectEqual(@as(i64, 1198), reviewing.payload.refresh.data.?.pull_requests[0].id);
+    var pl = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pipelines, .name = "builds", .workspace = "acme", .repo = "api" }, .scope = acme_scope } });
+    defer pl.deinit();
+    try t.expectEqual(@as(usize, 4), pl.payload.refresh.data.?.pipelines.len);
+    try t.expectEqualStrings("builds · 4 pipelines", pl.payload.refresh.status);
+    var br = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .branches, .name = "heads", .workspace = "acme", .repo = "web" }, .scope = acme_scope } });
+    defer br.deinit();
+    try t.expectEqual(@as(usize, 3), br.payload.refresh.data.?.branches.len);
+}
+
+test "the detail, the merged PR's pipeline, approve and withdraw, and the statusline values" {
+    const r = try Rig.init();
+    defer r.deinit();
+    var d = try r.run(.{ .detail = .{ .workspace = "acme", .repo = "api", .id = 1234 } });
+    defer d.deinit();
+    try t.expectEqualStrings("Fix the login redirect", d.payload.detail.pr.?.title);
+    try t.expectEqual(@as(usize, 1), d.payload.detail.pr.?.approvalCount());
+    var gone = try r.run(.{ .detail = .{ .workspace = "acme", .repo = "api", .id = 42 } });
+    defer gone.deinit();
+    try t.expect(std.mem.indexOf(u8, gone.payload.detail.error_text, "404") != null);
+
+    var pp = try r.run(.{ .pr_pipelines = .{ .tab = 1, .workspace = "acme", .slug = "api", .id = 1100, .hash = "9999mergecommit" } });
+    defer pp.deinit();
+    try t.expectEqual(@as(usize, 1), pp.payload.pr_pipelines.pipelines.len);
+    try t.expectEqual(@as(i64, 412), pp.payload.pr_pipelines.pipelines[0].build_number);
+
+    var ap = try r.run(.{ .approve = .{ .key = .{ .workspace = "acme", .repo = "api", .id = 1198 }, .withdraw = false } });
+    defer ap.deinit();
+    try t.expectEqualStrings("", ap.payload.approve.error_text);
+    try t.expectEqual(server.State.Vote.approved, r.srv.snapshot().voteFor(1198));
+    var un = try r.run(.{ .approve = .{ .key = .{ .workspace = "acme", .repo = "api", .id = 1198 }, .withdraw = true } });
+    defer un.deinit();
+    try t.expect(un.payload.approve.withdrew);
+    try t.expectEqual(server.State.Vote.none, r.srv.snapshot().voteFor(1198));
+
+    // Values: my OPEN PRs across api + web — #1234 (Dana approved) and #820 (no reviewers) → 2 open, 1 unapproved.
+    var vals = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 90, .excluded_branch_patterns = &.{ "^release/", "^hotfix/" } } });
+    defer vals.deinit();
+    try t.expectEqualStrings("", vals.payload.values.error_text);
+    try t.expectEqual(@as(usize, 2), vals.payload.values.open_mine);
+    try t.expectEqual(@as(usize, 1), vals.payload.values.unapproved_mine);
+    // Excluding chris/* branches counts nothing.
+    var none = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 0, .excluded_branch_patterns = &.{"^chris/"} } });
+    defer none.deinit();
+    try t.expectEqual(@as(usize, 0), none.payload.values.open_mine);
+}

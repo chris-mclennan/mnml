@@ -453,6 +453,7 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
         }
     }
     if (std.mem.eql(u8, leaf, "comments")) {
+        if (req.method == .GET) return comments(arena, st, fx);
         if (req.method != .POST) return notFound(arena);
         st.last_auth_was_write = true;
         const text = extractJsonString(req.body, "raw") orelse "";
@@ -647,6 +648,23 @@ fn writePr(w: *std.Io.Writer, f: *const Fixture, st: *const State, shape: Shape)
             r.id,
         }) catch return error.OutOfMemory;
     }
+    // A vote from someone who is not a reviewer — the author approving
+    // their own, say — joins the participants the way Bitbucket adds
+    // them.
+    var me_listed = false;
+    for (f.reviewers) |r| if (std.mem.eql(u8, r.id, me_account_id)) {
+        me_listed = true;
+    };
+    const live = st.voteFor(f.id);
+    if (!me_listed and live != .none) {
+        if (f.reviewers.len > 0) w.writeByte(',') catch return error.OutOfMemory;
+        w.print("{{\"role\":\"PARTICIPANT\",\"approved\":{s},\"state\":{s},\"user\":{{\"display_name\":\"{s}\",\"account_id\":\"{s}\"}}}}", .{
+            if (live == .approved) "true" else "false",
+            if (live == .approved) "\"approved\"" else "\"changes_requested\"",
+            me_display_name,
+            me_account_id,
+        }) catch return error.OutOfMemory;
+    }
     w.writeAll("]") catch return error.OutOfMemory;
     if (st.isMerged(f.id)) {
         w.writeAll(",\"merge_commit\":{\"hash\":\"9999mergecommit\"}") catch return error.OutOfMemory;
@@ -694,6 +712,35 @@ fn activity(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Rep
         w.writeAll("{\"comment\":{\"id\":9999,\"user\":{\"display_name\":\"Chris M\"},\"created_on\":\"2026-09-02T09:00:00+00:00\",\"content\":{\"raw\":") catch return error.OutOfMemory;
         try writeJsonString(w, c.text);
         w.writeAll("}}}") catch return error.OutOfMemory;
+        n += 1;
+    }
+    w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
+    return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+/// `GET …/comments` — the thread as Bitbucket's comments endpoint
+/// lists it: the fixture's, then any the pane posted.
+fn comments(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Reply {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const w = &out.writer;
+    w.writeAll("{\"pagelen\":50,\"values\":[") catch return error.OutOfMemory;
+    var n: usize = 0;
+    for (f.activity) |c| {
+        if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
+        w.print("{{\"id\":{d},\"user\":{{\"display_name\":\"{s}\"}},\"created_on\":\"{s}\",\"content\":{{\"raw\":", .{ c.id, c.author, c.date }) catch return error.OutOfMemory;
+        try writeJsonString(w, c.text);
+        w.writeAll("}") catch return error.OutOfMemory;
+        if (c.parent != 0) w.print(",\"parent\":{{\"id\":{d}}}", .{c.parent}) catch return error.OutOfMemory;
+        if (c.path.len > 0) w.print(",\"inline\":{{\"path\":\"{s}\",\"from\":null,\"to\":{d}}}", .{ c.path, c.line }) catch return error.OutOfMemory;
+        w.writeAll("}") catch return error.OutOfMemory;
+        n += 1;
+    }
+    var buf: [16]State.Posted = undefined;
+    for (st.commentsFor(f.id, &buf)) |c| {
+        if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
+        w.writeAll("{\"id\":9999,\"user\":{\"display_name\":\"Chris M\"},\"created_on\":\"2026-09-02T09:00:00+00:00\",\"content\":{\"raw\":") catch return error.OutOfMemory;
+        try writeJsonString(w, c.text);
+        w.writeAll("}}") catch return error.OutOfMemory;
         n += 1;
     }
     w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
@@ -797,7 +844,7 @@ pub fn writeIso(w: *std.Io.Writer, secs: i64) std.Io.Writer.Error!void {
     const m = if (mp < 10) mp + 3 else mp - 9;
     const y = if (m <= 2) y0 + 1 else y0;
     try w.print("{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000000+00:00", .{
-        @as(u32, @intCast(y)), @as(u32, @intCast(m)), @as(u32, @intCast(d)),
+        @as(u32, @intCast(y)),                    @as(u32, @intCast(m)),                              @as(u32, @intCast(d)),
         @as(u32, @intCast(@divFloor(rem, 3600))), @as(u32, @intCast(@divFloor(@mod(rem, 3600), 60))), @as(u32, @intCast(@mod(rem, 60))),
     });
 }
@@ -1000,6 +1047,17 @@ test "merge moves the PR to MERGED, and merging it twice is a 409" {
     try t.expect(std.mem.indexOf(u8, open.body, "Fix the login redirect") == null);
     // The already-merged fixture refuses.
     try t.expectEqual(@as(u16, 409), (try call(a, &st, .POST, "/2.0/repositories/acme/api/pullrequests/1100/merge", "{}")).status);
+}
+
+test "GET comments lists the fixture's thread with its parent and inline fields" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var st: State = .{};
+    const r = try call(arena.allocator(), &st, .GET, "/2.0/repositories/acme/api/pullrequests/1234/comments?pagelen=50", "");
+    try t.expectEqual(@as(u16, 200), r.status);
+    try t.expect(std.mem.indexOf(u8, r.body, "\"size\":3") != null);
+    try t.expect(std.mem.indexOf(u8, r.body, "\"parent\":{\"id\":9002}") != null);
+    try t.expect(std.mem.indexOf(u8, r.body, "\"inline\":{\"path\":\"src/auth/session.zig\"") != null);
 }
 
 test "diffstat, diff and statuses each answer in their own shape" {

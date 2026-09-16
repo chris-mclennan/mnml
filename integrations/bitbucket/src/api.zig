@@ -1,0 +1,453 @@
+//! Bitbucket Cloud REST v2 — the reads the pane makes and its one
+//! write, approve. Blocking: the fetches run on the pane's worker
+//! thread, which is why every call is a plain function and not a
+//! future.
+//!
+//! Two things are deliberate here:
+//!
+//! * **A failure is a value, not an error.** `send` answers `.failed`
+//!   with the status, the server's message and a parsed `Retry-After`;
+//!   only running out of memory is an `error`. A 404 on one archived
+//!   repo has to be paintable in that repo's row, not fatal to the fan
+//!   out, and a transport failure has to read the same way as an HTTP
+//!   one.
+//! * **The shared bucket is in front of every request** (`ratelimit.zig`),
+//!   and a 429 is answered the reference's way: the bucket is penalised
+//!   so every process on the machine backs off, the request retried up
+//!   to `max_attempts` times honouring `Retry-After` (clamped by
+//!   `max_backoff_secs`), and nothing else is retried — a 401 will not
+//!   become a 200 by asking twice.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const cfg = @import("config.zig");
+const ratelimit = @import("ratelimit.zig");
+
+pub const default_base_url = "https://api.bitbucket.org/2.0";
+pub const user_agent = "mnml-bitbucket/0.2.0";
+
+pub const Method = enum {
+    GET,
+    POST,
+    DELETE,
+
+    fn stdMethod(m: Method) std.http.Method {
+        return switch (m) {
+            .GET => .GET,
+            .POST => .POST,
+            .DELETE => .DELETE,
+        };
+    }
+};
+
+pub const Side = enum { read, write };
+
+pub const Failure = struct {
+    /// null for a transport failure — DNS, TLS, a reset connection.
+    status: ?u16 = null,
+    retry_after_secs: ?u32 = null,
+    /// The server's message, or the transport error's name. Owned.
+    message: []u8 = &.{},
+
+    pub fn deinit(self: *Failure, gpa: Allocator) void {
+        gpa.free(self.message);
+        self.* = undefined;
+    }
+
+    pub fn isRateLimited(self: Failure) bool {
+        return self.status == 429;
+    }
+
+    /// The reference's short row label: `429 · retry in 30s`, `auth
+    /// failed`, `no such repo`, `HTTP 400 · <why>`, `network error`.
+    pub fn shortLabel(self: Failure, buf: []u8) []const u8 {
+        const status = self.status orelse return fit(buf, "network error");
+        return switch (status) {
+            429 => if (self.retry_after_secs) |s|
+                (std.fmt.bufPrint(buf, "429 · retry in {d}s", .{s}) catch fit(buf, "429 · rate limited"))
+            else
+                fit(buf, "429 · rate limited"),
+            401, 403 => fit(buf, "auth failed"),
+            404 => fit(buf, "no such repo"),
+            400 => if (self.message.len > 0)
+                (std.fmt.bufPrint(buf, "HTTP 400 · {s}", .{self.message[0..@min(self.message.len, 80)]}) catch fit(buf, "HTTP 400"))
+            else
+                fit(buf, "HTTP 400"),
+            else => std.fmt.bufPrint(buf, "HTTP {d}", .{status}) catch fit(buf, "HTTP error"),
+        };
+    }
+
+    /// `HTTP 403: <message>` / `<message>` — the long form for a status line.
+    pub fn describe(self: Failure, buf: []u8) []const u8 {
+        if (self.status) |code| return std.fmt.bufPrint(buf, "HTTP {d}: {s}", .{ code, self.message }) catch fit(buf, "HTTP error");
+        return fit(buf, self.message);
+    }
+
+    fn fit(buf: []u8, s: []const u8) []const u8 {
+        const n = @min(buf.len, s.len);
+        @memcpy(buf[0..n], s[0..n]);
+        return buf[0..n];
+    }
+};
+
+pub const Body = struct {
+    status: u16,
+    /// Owned by the allocator passed to `send`.
+    bytes: []u8,
+
+    pub fn deinit(self: *Body, gpa: Allocator) void {
+        gpa.free(self.bytes);
+        self.* = undefined;
+    }
+};
+
+pub const Reply = union(enum) {
+    ok: Body,
+    failed: Failure,
+
+    pub fn deinit(self: *Reply, gpa: Allocator) void {
+        switch (self.*) {
+            .ok => |*b| b.deinit(gpa),
+            .failed => |*f| f.deinit(gpa),
+        }
+    }
+};
+
+pub const Client = struct {
+    gpa: Allocator,
+    io: Io,
+    /// No trailing slash; `https://api.bitbucket.org/2.0` by default.
+    base_url: []u8,
+    read_header: []u8,
+    write_header: []u8,
+    rate: cfg.Rate,
+    limiter: ?*ratelimit.Limiter = null,
+    /// Requests actually sent, retries included — the diagnostics and
+    /// the rate-limit tests both read it.
+    sent: u32 = 0,
+
+    pub fn init(
+        gpa: Allocator,
+        io: Io,
+        base_url: []const u8,
+        email: []const u8,
+        read_token: []const u8,
+        write_token: []const u8,
+        rate: cfg.Rate,
+    ) Allocator.Error!Client {
+        const auth = @import("auth.zig");
+        const trimmed = std.mem.trimEnd(u8, if (base_url.len > 0) base_url else default_base_url, "/");
+        return .{
+            .gpa = gpa,
+            .io = io,
+            .base_url = try gpa.dupe(u8, trimmed),
+            .read_header = try auth.basicHeader(gpa, email, read_token),
+            .write_header = try auth.basicHeader(gpa, email, if (write_token.len > 0) write_token else read_token),
+            .rate = rate,
+        };
+    }
+
+    pub fn deinit(self: *Client) void {
+        self.gpa.free(self.base_url);
+        self.gpa.free(self.read_header);
+        self.gpa.free(self.write_header);
+        self.* = undefined;
+    }
+
+    fn header(self: *const Client, side: Side) []const u8 {
+        return switch (side) {
+            .read => self.read_header,
+            .write => self.write_header,
+        };
+    }
+
+    /// One request, gated and retried. `path` starts with `/` and
+    /// already carries its query.
+    pub fn send(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+        const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ self.base_url, path });
+        defer gpa.free(url);
+        var attempt: u8 = 0;
+        while (true) {
+            attempt += 1;
+            if (self.limiter) |l| _ = l.acquire();
+            self.sent += 1;
+            var reply = try self.once(gpa, method, url, payload, side);
+            switch (reply) {
+                .ok => return reply,
+                .failed => |f| {
+                    if (!f.isRateLimited()) return reply;
+                    const wait = @min(f.retry_after_secs orelse self.rate.default_backoff_secs, self.rate.max_backoff_secs);
+                    if (self.limiter) |l| l.penalize(@floatFromInt(wait));
+                    if (attempt >= @max(self.rate.max_attempts, 1)) return reply;
+                    reply.deinit(gpa);
+                    self.io.sleep(.fromMilliseconds(@as(i64, wait) * 1000), .awake) catch {};
+                },
+            }
+        }
+    }
+
+    fn once(self: *Client, gpa: Allocator, method: Method, url: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+        var client: std.http.Client = .{ .allocator = gpa, .io = self.io };
+        defer client.deinit();
+        const uri = std.Uri.parse(url) catch return transportFailure(gpa, "the base URL does not parse");
+
+        var extra: [3]std.http.Header = undefined;
+        var n_extra: usize = 2;
+        extra[0] = .{ .name = "authorization", .value = self.header(side) };
+        extra[1] = .{ .name = "accept", .value = "application/json" };
+        if (payload != null) {
+            extra[2] = .{ .name = "content-type", .value = "application/json" };
+            n_extra = 3;
+        }
+
+        var req = client.request(method.stdMethod(), uri, .{
+            .headers = .{
+                .user_agent = .{ .override = user_agent },
+                .accept_encoding = .{ .override = "identity" },
+            },
+            .extra_headers = extra[0..n_extra],
+            .keep_alive = false,
+            .redirect_behavior = .unhandled,
+        }) catch |err| return transportFailure(gpa, @errorName(err));
+        defer req.deinit();
+
+        if (payload) |p| {
+            req.transfer_encoding = .{ .content_length = p.len };
+            var body = req.sendBodyUnflushed(&.{}) catch |err| return transportFailure(gpa, @errorName(err));
+            body.writer.writeAll(p) catch |err| return transportFailure(gpa, @errorName(err));
+            body.end() catch |err| return transportFailure(gpa, @errorName(err));
+            if (req.connection) |c| c.flush() catch |err| return transportFailure(gpa, @errorName(err));
+        } else {
+            req.sendBodiless() catch |err| return transportFailure(gpa, @errorName(err));
+        }
+
+        var response = req.receiveHead(&.{}) catch |err| return transportFailure(gpa, @errorName(err));
+        const status: u16 = @intFromEnum(response.head.status);
+        // `Retry-After` is read off the head before the body, so a
+        // body-read failure can never swallow the hint.
+        var retry_after: ?u32 = null;
+        var hit = response.head.iterateHeaders();
+        while (hit.next()) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
+                retry_after = std.fmt.parseInt(u32, std.mem.trim(u8, h.value, " \t"), 10) catch null;
+            }
+        }
+
+        var transfer: [4096]u8 = undefined;
+        var sink: Io.Writer.Allocating = .init(gpa);
+        errdefer sink.deinit();
+        const reader = response.reader(&transfer);
+        _ = reader.streamRemaining(&sink.writer) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => {
+                // A truncated body still leaves a usable status.
+            },
+        };
+        const bytes = sink.toOwnedSlice() catch return error.OutOfMemory;
+
+        if (status >= 200 and status < 300) return .{ .ok = .{ .status = status, .bytes = bytes } };
+        defer gpa.free(bytes);
+        return .{ .failed = .{
+            .status = status,
+            .retry_after_secs = retry_after,
+            .message = try gpa.dupe(u8, serverMessage(bytes)),
+        } };
+    }
+
+    fn transportFailure(gpa: Allocator, message: []const u8) Allocator.Error!Reply {
+        return .{ .failed = .{ .status = null, .message = try gpa.dupe(u8, message) } };
+    }
+
+    // ─── the endpoints ───────────────────────────────────────────────
+
+    /// `GET /user` — the account the token belongs to.
+    pub fn whoami(self: *Client, gpa: Allocator) Allocator.Error!Reply {
+        return self.send(gpa, .GET, "/user", null, .read);
+    }
+
+    /// `GET /repositories/{ws}` — every repo with its `updated_on`,
+    /// newest activity first (`pagelen=100`, up to five pages, or the
+    /// first page whose last entry is older than `since_secs`).
+    pub fn listReposWithActivity(self: *Client, gpa: Allocator, workspace: []const u8) Allocator.Error!Reply {
+        const path = try std.fmt.allocPrint(gpa, "/repositories/{s}?role=member&pagelen=100&sort=-updated_on", .{workspace});
+        defer gpa.free(path);
+        return self.send(gpa, .GET, path, null, .read);
+    }
+
+    /// `GET …/pullrequests?state=&pagelen=[&q=]`.
+    pub fn listPrs(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, state: []const u8, bbql: []const u8, page_len: u32) Allocator.Error!Reply {
+        var out: Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        const w = &out.writer;
+        w.print("/repositories/{s}/{s}/pullrequests?pagelen={d}", .{ workspace, repo, page_len }) catch return error.OutOfMemory;
+        if (state.len > 0) w.print("&state={s}", .{state}) catch return error.OutOfMemory;
+        if (bbql.len > 0) {
+            w.writeAll("&q=") catch return error.OutOfMemory;
+            percentEncode(w, bbql) catch return error.OutOfMemory;
+        }
+        return self.send(gpa, .GET, out.written(), null, .read);
+    }
+
+    pub fn prDetail(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
+        return self.prPath(gpa, .GET, workspace, repo, id, "", null, .read);
+    }
+
+    pub fn prComments(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
+        return self.prPath(gpa, .GET, workspace, repo, id, "/comments?pagelen=50", null, .read);
+    }
+
+    /// `POST …/approve` — the one write. `DELETE` withdraws it.
+    pub fn approve(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
+        return self.prPath(gpa, .POST, workspace, repo, id, "/approve", "", .write);
+    }
+
+    pub fn unapprove(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
+        return self.prPath(gpa, .DELETE, workspace, repo, id, "/approve", null, .write);
+    }
+
+    /// `GET …/pipelines/?sort=-created_on` — newest first.
+    pub fn listPipelines(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, page_len: u32) Allocator.Error!Reply {
+        const path = try std.fmt.allocPrint(gpa, "/repositories/{s}/{s}/pipelines/?pagelen={d}&sort=-created_on", .{ workspace, repo, page_len });
+        defer gpa.free(path);
+        return self.send(gpa, .GET, path, null, .read);
+    }
+
+    /// `GET …/refs/branches?sort=-target.date` — most recently committed first.
+    pub fn listBranches(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, page_len: u32) Allocator.Error!Reply {
+        const path = try std.fmt.allocPrint(gpa, "/repositories/{s}/{s}/refs/branches?pagelen={d}&sort=-target.date", .{ workspace, repo, page_len });
+        defer gpa.free(path);
+        return self.send(gpa, .GET, path, null, .read);
+    }
+
+    fn prPath(self: *Client, gpa: Allocator, method: Method, workspace: []const u8, repo: []const u8, id: i64, tail: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+        const path = try std.fmt.allocPrint(gpa, "/repositories/{s}/{s}/pullrequests/{d}{s}", .{ workspace, repo, id, tail });
+        defer gpa.free(path);
+        return self.send(gpa, method, path, payload, side);
+    }
+};
+
+/// `author.account_id = "{id}"` and friends, ready for `&q=`.
+pub fn percentEncode(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
+    for (s) |c| switch (c) {
+        'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '.', '~' => try w.writeByte(c),
+        else => try w.print("%{X:0>2}", .{c}),
+    };
+}
+
+/// Bitbucket's error shape is `{"error":{"message":"…"}}`; anything
+/// else comes back as its first line, cut short.
+pub fn serverMessage(body: []const u8) []const u8 {
+    if (std.mem.indexOf(u8, body, "\"message\"")) |at| {
+        const rest = body[at + "\"message\"".len ..];
+        const open = std.mem.indexOfScalar(u8, rest, '"') orelse return firstLine(body);
+        const close = std.mem.indexOfScalarPos(u8, rest, open + 1, '"') orelse return firstLine(body);
+        return rest[open + 1 .. close];
+    }
+    return firstLine(body);
+}
+
+fn firstLine(body: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, body, '\n') orelse body.len;
+    return body[0..@min(end, 120)];
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+const listener = @import("../tools/fake_bitbucket/listener.zig");
+const server = @import("../tools/fake_bitbucket/server.zig");
+
+test "a short label says what the user has to fix, not just a number" {
+    var buf: [96]u8 = undefined;
+    try t.expectEqualStrings("network error", (Failure{ .status = null, .message = &.{} }).shortLabel(&buf));
+    try t.expectEqualStrings("auth failed", (Failure{ .status = 401, .message = &.{} }).shortLabel(&buf));
+    try t.expectEqualStrings("auth failed", (Failure{ .status = 403, .message = &.{} }).shortLabel(&buf));
+    try t.expectEqualStrings("no such repo", (Failure{ .status = 404, .message = &.{} }).shortLabel(&buf));
+    try t.expectEqualStrings("429 · rate limited", (Failure{ .status = 429, .message = &.{} }).shortLabel(&buf));
+    try t.expectEqualStrings("429 · retry in 45s", (Failure{ .status = 429, .retry_after_secs = 45, .message = &.{} }).shortLabel(&buf));
+    var why = [_]u8{ 'b', 'a', 'd', ' ', 'q' };
+    try t.expectEqualStrings("HTTP 400 · bad q", (Failure{ .status = 400, .message = &why }).shortLabel(&buf));
+    try t.expectEqualStrings("HTTP 500", (Failure{ .status = 500, .message = &.{} }).shortLabel(&buf));
+}
+
+test "the server's message is lifted out of Bitbucket's error envelope" {
+    try t.expectEqualStrings("Resource not found", serverMessage("{\"type\":\"error\",\"error\":{\"message\":\"Resource not found\"}}"));
+    try t.expectEqualStrings("plain text", serverMessage("plain text\nmore"));
+}
+
+test "percent-encoding keeps the unreserved set and escapes the rest" {
+    var buf: [128]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    try percentEncode(&w, "author.account_id = \"a-1\"");
+    try t.expectEqualStrings("author.account_id%20%3D%20%22a-1%22", w.buffered());
+}
+
+test "against the fake server: whoami, the lists, approve and unapprove, a 404 as a value" {
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{});
+    defer client.deinit();
+
+    var who = try client.whoami(t.allocator);
+    defer who.deinit(t.allocator);
+    try t.expect(who == .ok);
+    try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-chris") != null);
+
+    var prs = try client.listPrs(t.allocator, "acme", "api", "OPEN", "author.account_id = \"acct-chris\"", 25);
+    defer prs.deinit(t.allocator);
+    try t.expect(prs == .ok);
+    try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Fix the login redirect") != null);
+    try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Bump the client timeout") == null);
+
+    var pl = try client.listPipelines(t.allocator, "acme", "api", 100);
+    defer pl.deinit(t.allocator);
+    try t.expect(pl == .ok);
+    try t.expect(std.mem.indexOf(u8, pl.ok.bytes, "\"build_number\":412") != null);
+    var br = try client.listBranches(t.allocator, "acme", "web", 100);
+    defer br.deinit(t.allocator);
+    try t.expect(std.mem.indexOf(u8, br.ok.bytes, "chris/empty-state") != null);
+
+    var ok = try client.approve(t.allocator, "acme", "api", 1198);
+    defer ok.deinit(t.allocator);
+    try t.expect(ok == .ok);
+    try t.expectEqual(server.State.Vote.approved, srv.snapshot().voteFor(1198));
+    var gone = try client.unapprove(t.allocator, "acme", "api", 1198);
+    defer gone.deinit(t.allocator);
+    try t.expect(gone == .ok);
+    try t.expectEqual(server.State.Vote.none, srv.snapshot().voteFor(1198));
+
+    var missing = try client.listPrs(t.allocator, "acme", "ghost", "OPEN", "", 25);
+    defer missing.deinit(t.allocator);
+    var buf: [64]u8 = undefined;
+    try t.expectEqualStrings("no such repo", missing.failed.shortLabel(&buf));
+}
+
+test "a 429 is retried after Retry-After and penalises the bucket; the last attempt's failure is returned" {
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const state_path = try std.fs.path.join(t.allocator, &.{ dir, "bucket.json" });
+    defer t.allocator.free(state_path);
+    var lim = try ratelimit.Limiter.init(t.allocator, t.io, state_path, .{ .max_block_secs = 0.1 });
+    defer lim.deinit();
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{ .max_attempts = 2, .max_backoff_secs = 1 });
+    defer client.deinit();
+    client.limiter = &lim;
+    // Two 429s, then a 200: with two attempts the second answer is
+    // still the 429, and the bucket has been penalised twice.
+    srv.rateLimitNext(2);
+    var r = try client.whoami(t.allocator);
+    defer r.deinit(t.allocator);
+    try t.expect(r == .failed);
+    try t.expect(r.failed.isRateLimited());
+    try t.expectEqual(@as(u32, 2), client.sent);
+    try t.expectEqual(@as(u32, 2), lim.status().?.throttles);
+}
