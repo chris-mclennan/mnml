@@ -673,12 +673,21 @@ pub const Painter = struct {
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .labels => {
-                        const joined = try std.mem.join(p.arena, ", ", iss.labels);
-                        _ = p.putFit(ix + 3, y, inner_w -| 3, p.fmt("labels: {s}", .{joined}), muted);
+                        // `#label` chips, four at most, the reference's way.
+                        var lx = ix + 3;
+                        for (iss.labels, 0..) |l, lidx| {
+                            if (lidx == 4) {
+                                _ = p.put(lx, y, inner_w -| (lx - ix), p.fmt("+{d}", .{iss.labels.len - 4}), muted);
+                                break;
+                            }
+                            const chip = p.fmt("#{s}", .{l});
+                            if (lx + text.width(chip) > ix + inner_w) break;
+                            lx += p.put(lx, y, inner_w -| (lx - ix), chip, accent_plain) + 1;
+                        }
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .hint => {
-                        _ = p.putFit(ix + 3, y, inner_w -| 3, p.fmt("{s} · {s}", .{ iss.status, iss.updatedDay() }), muted);
+                        _ = p.putFit(ix + 3, y, inner_w -| 3, "(click card for full details)", muted);
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .actions => try p.paintActions(ix + 3, y, inner_w -| 3, ln.issue, iss),
