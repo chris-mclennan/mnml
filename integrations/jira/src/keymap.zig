@@ -237,11 +237,11 @@ pub fn hintRow(arena: Allocator, ctx: Context) Allocator.Error![]const u8 {
 /// The static rows of a modal's help, shown in the sheet's last
 /// section so a user inside a picker can still read them.
 pub const modal_rows = [_]struct { keys: []const u8, label: []const u8 }{
-    .{ .keys = "type · ↑ ↓ · Enter · Esc", .label = "picker: filter · move · commit · cancel (Space toggles a multi-select row)" },
-    .{ .keys = "1-9 · ↑ ↓ · Enter · Esc", .label = "transition picker: jump · move · commit · cancel" },
-    .{ .keys = "j k · PgUp PgDn · Esc", .label = "detail modal: scroll · close" },
-    .{ .keys = "Ctrl+S · Enter · Esc", .label = "comment: send · newline · cancel" },
-    .{ .keys = "Enter · Esc · Ctrl+A/E · Alt+←/→ · Ctrl+U/K/W", .label = "JQL editor: run · cancel · line ends · words · kill" },
+    .{ .keys = "type ↑↓ Enter Esc", .label = "picker: filter · move · commit · cancel (Space toggles a multi-select row)" },
+    .{ .keys = "1-9 ↑↓ Enter Esc", .label = "transition picker: jump · move · commit · cancel" },
+    .{ .keys = "j k PgUp PgDn Esc", .label = "detail modal: scroll · close" },
+    .{ .keys = "Ctrl+S Enter Esc", .label = "comment: send · newline · cancel" },
+    .{ .keys = "Ctrl+A/E Alt+←/→", .label = "JQL editor: line ends · words; Ctrl+U/K/W kill; Enter runs, Esc cancels" },
 };
 
 // ─── tests ───────────────────────────────────────────────────────────────

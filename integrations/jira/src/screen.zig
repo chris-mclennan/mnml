@@ -1076,7 +1076,7 @@ pub const Painter = struct {
             var buf: [64]u8 = undefined;
             chord_w = @max(chord_w, @min(text.width(chordText(&buf, b)), 20));
         }
-        for (keymap.modal_rows) |m| chord_w = @max(chord_w, @min(text.width(m.keys), 40));
+        for (keymap.modal_rows) |m| chord_w = @max(chord_w, @min(text.width(m.keys), 20));
         const fold = if (p.ui.ascii) "v" else "▾";
         inline for (@typeInfo(keymap.Section).@"enum".fields) |sf| {
             const section: keymap.Section = @enumFromInt(sf.value);
@@ -1485,7 +1485,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     a.help_scroll = 999;
     try paint(ar, &f, a, .{});
     try testing.expect((try findRow(ar, &f, "▾ ── overlays ──")) != null);
-    try testing.expect((try findRow(ar, &f, "JQL editor: run")) != null);
+    try testing.expect((try findRow(ar, &f, "JQL editor: line ends")) != null);
     try a.click(60, 20, false);
     try testing.expect(!a.help);
 }
