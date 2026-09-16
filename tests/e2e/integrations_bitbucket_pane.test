@@ -1,145 +1,154 @@
 # env: MNML_MARKETPLACE_LOCAL=market
 # env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
 # env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
 # env: BITBUCKET_API_TOKEN=corpus-read-token
-# env: BITBUCKET_ACCESS_TOKEN=corpus-write-token
 # env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
-# The Bitbucket integration driven as a real mounted pane, against the
+# The Bitbucket PRs chip driven as a real mounted pane, against the
 # deterministic Bitbucket in integrations/bitbucket/tools/fake_bitbucket.
+# The screens are docs/ui-spec/bitbucket/rust-full-*.txt's content in
+# mnml-zig's own chrome: the caps header, the tab strip, the filter pill,
+# the reference's columns, the ▌ marker, the hint row from the keymap.
 # The fake server takes port 0 and writes the URL it got to `bb.url`;
 # `BITBUCKET_BASE_URL=@<file>` is how the pane reads it, so nothing here
 # ever picks a port. `--lifetime-secs` means a run that fails half way
 # still leaves nothing behind.
-shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 120 >/dev/null 2>&1 &
-# The private config: a review-queue tab and a per-repo tab, pointed at
-# the fake workspace. No token in here — those are in the environment.
-write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .rate = .{ .min_interval_ms = 0 }, .tabs = .{ .{ .name = \"Review\", .mode = .reviewing }, .{ .name = \"api\", .mode = .repo, .repo = \"api\" } } }"
-# Install it from a private folder — the marketplace `local_folder` path
-# the Zig integrations plan describes. The binary is the one `zig build`
-# put beside mnml.
-write market/bitbucket.zon ".{ .id = \"bitbucket\", .label = \"Bitbucket\", .version = \"0.1.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .description = \"Bitbucket Cloud pull requests\", .commands = .{ .{ .id = \"bitbucket.open\", .title = \"Bitbucket: pull requests\" } } }"
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+# The private config, the reference's keys by name: the three
+# workspace-wide tabs over the two repos, no auto-refresh, a bucket of
+# its own so the corpus never waits.
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs }, .{ .name = \"Pipelines\", .kind = .workspace_pipelines } } }"
+# Install the PRs chip from a private folder — the marketplace
+# `local_folder` path. The binary is the one `zig build` put beside mnml.
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" }, .{ .id = \"bitbucket_prs.open_mine\", .title = \"Bitbucket PRs: open (mine only)\", .args = .{ \"--only\", \"prs-mine\" } } } }"
 command integrations.show_marketplace
 expect screen contains "Mkt (1)"
 key i
-expect screen contains "installed bitbucket"
+expect screen contains "installed bitbucket_prs"
 command integrations.show_installed
-expect screen contains "Bitbucket  0.1.0"
-expect screen contains "bitbucket.open"
+expect screen contains "Bitbucket PRs  0.2.0"
+expect screen contains "bitbucket_prs.open"
 
-# The pane mounts, resolves the account over /2.0/user and lists the
-# review queue: one pull request, opened by someone else, waiting on me.
-command bitbucket.open
+# The pane mounts on the PR family — two tabs, the strip — resolves
+# the account and paints the open tree with both repos opened, the way
+# the reference's first fetch does.
+command bitbucket_prs.open
+command view.toggle_tree
 command view.focus_pane
-wait 1200
-expect screen contains "▸1 Review"
-expect screen contains "2 api"
-expect screen contains "#1198"
-expect screen contains "Bump the cl"
-expect screen lacks "Fix the log"
-
-# The second tab is one repo's list: both of its open pull requests,
-# newest first, with the state and the branches.
-key 2
-wait 600
+wait 1500
+expect screen contains "BITBUCKET PRS"
+expect screen contains "(2 repos · 3 PRs)"
+expect screen contains " 1 Open + Draft (3)"
+expect screen contains " 2 Merged (2)"
+expect screen lacks "Pipelines"
+expect screen contains "/ filter"
+expect screen contains "REPO / #PR"
+expect screen contains "AUTHOR"
+expect screen contains "UPDATED"
+expect screen contains "TITLE"
+expect screen contains "▌ ▾ api"
+expect screen contains "2 PRs"
 expect screen contains "#1234"
-expect screen contains "Fix the log"
-expect screen contains "OPEN"
+expect screen contains "Fix the login redirect"
+expect screen contains "chris/fix-login"
+expect screen contains "▾ web"
+expect screen contains "DRAFT"
+expect screen contains "Redesign the em"
+expect screen contains "[ Show 1 more older ]"
+expect screen contains "author: all"
+expect screen contains "Open + Draft · 2 repos, 3 PRs"
+expect screen contains "⏎ expand"
+expect screen contains "q quit"
+# The reference's dead placeholder chips are not painted.
+expect screen lacks "Target branch"
 
-# The filter narrows across every column and esc puts it back.
-key /
-type login
-expect screen contains "(1/2)"
-expect screen lacks "Bump the cl"
+# The footer lifts the 24-hour window: the day-old #1198 appears.
+key G
 key enter
-key esc
-expect screen contains "Bump the cl"
-
-# The detail: the reviewers with their votes, the build statuses, the
-# diffstat, the diff, the threads, and the Jira key from the body.
-key d
-wait 900
-expect screen contains "acme/api#1234"
-expect screen contains "chris/fix-login → main"
-expect screen contains "reviewers"
-expect screen contains "Dana R"
-expect screen contains "changes requested"
-expect screen contains "builds"
-expect screen contains "Pipeline #412"
-expect screen contains "Deploy to dev"
-expect screen contains "files (2)"
-expect screen contains "src/auth/session.zig"
-expect screen contains "issues: [1] ENG-4210"
-expect screen contains "@@ -40,7 +40,9 @@"
-# The diff is the longest section by far; D folds it away, and the
-# threads come into view — an inline comment with the file and line it
-# hangs off, and its reply indented under it rather than filed by time.
-key D
-expect screen contains "diff  (hidden"
-expect screen contains "activity"
-expect screen contains "withQuery needs"
-expect screen contains "src/auth/session.zig:44"
-key D
-key d
-
-# A write is confirmed first. Escape changes nothing; `y` goes through
-# on the write token and the pane says what it did.
-key a
-expect screen contains "Approve acme/api#1234?"
-expect screen contains "y confirm · esc cancel"
-key esc
-expect screen lacks "Approve acme/api#1234?"
-key a
-key y
-wait 900
-expect screen contains "approved acme/api#1234"
-
-# A comment is typed into a real text field — the caret moves, and what
-# lands on the server is what was typed.
+expect screen contains "#1198"
+expect screen contains "Bump the client"
+expect screen lacks "[ Show"
+# c collapses every repo (the header keeps its preview), e opens them.
 key c
-expect screen contains "enter post · esc cancel"
-type ship
-key left
-key left
-key backspace
-key end
-type ped
+expect screen lacks "OPEN       Chris M"
+expect screen contains "▸ api"
+key e
+expect screen contains "OPEN       Chris M"
+
+# The filter narrows the PR rows under the headers; esc clears it.
+type /
+type empty
 key enter
-wait 900
-expect screen contains "commented on acme/api#1234"
+expect screen contains "Redesign the em"
+expect screen lacks "OPEN       Chris M"
+key esc
+expect screen contains "OPEN       Chris M"
 
-# The merge confirm names the strategy, and `s` cycles it.
-key s
-expect screen contains "merge strategy: merge commit"
-key m
-expect screen contains "Merge acme/api#1234"
-expect screen contains "strategy: merge commit"
-key y
-wait 900
-expect screen contains "merged acme/api#1234"
-
-# Checking the branch out is refused: the corpus workspace is not a
-# clone of acme/api, and the pane says so instead of touching it.
-key C
-expect screen contains "cannot check out"
-
-# `?` is the key help; any key closes it. `q` ends the pane.
-key ?
-expect screen contains "check the branch out in the workspace"
+# The detail beside the list: the reference's header lines, the
+# description, the comments most-recent first.
+key g
 key j
-expect screen lacks "check the branch out in the workspace"
+key d
+wait 800
+expect screen contains "acme/api#1234"
+expect screen contains "OPEN · chris/fix-login → main"
+expect screen contains "author: Chris M"
+expect screen contains "○ not approved · 1 total"
+expect screen contains "Fixes ENG-4210"
+expect screen contains "comments (3, most-recent first):"
+expect screen contains "Good point, pushed an escape."
+# a approves on the fake server and the detail follows; a again withdraws.
+key a
+wait 800
+expect screen contains "approved acme/api#1234"
+expect screen contains "✓ you approved · 2 total"
+key a
+wait 800
+expect screen contains "unapproved acme/api#1234"
+expect screen contains "○ not approved · 1 total"
+key d
+
+# m is the reference's open↔merged toggle; a merged PR opens to the
+# pipeline that ran on its merge commit.
+key m
+expect screen contains " 2 Merged (2)"
+expect screen contains "MERGED"
+expect screen contains "#1100"
+expect screen contains "Drop the legacy"
+key j
+key enter
+wait 800
+expect screen contains "✓ SUCCESSFUL"
+expect screen contains "#412"
+expect screen contains "on main"
+
+# The key sheet is the one keymap table; any other key closes it.
+type ?
+expect screen contains " Keys "
+expect screen contains "hide this repo (persists)"
+expect screen contains "cycle the scope"
+expect screen contains "approve / withdraw the approval"
+key esc
+expect screen lacks " Keys "
+
+# x hides a repo and rewrites the config; H brings it back.
+key 1
+key g
+key x
+wait 800
+expect screen contains "hid api (H to un-hide all)"
+expect screen lacks "▾ api"
+expect file bitbucket.zon contains "hidden_repos"
+expect file bitbucket.zon contains "api"
+key H
+wait 800
+expect screen contains "un-hid 1 repo(s)"
+# Back in the tree — collapsed, as the reference re-adds it (the open
+# set carries over the refetch; api was not in it).
+expect screen contains "▸ api"
+
+# q ends the pane; the exit banner sits under the next key, which closes it.
 key q
 wait 500
 key x
-expect screen lacks "acme/api#"
-
-# Uninstall, so the size sweep starts from a clean data root.
-command integrations.show_installed
-# The four first-party rows sit above the manifests: walk down to this one.
-key down
-key down
-key down
-key down
-key x
-expect screen contains "Remove Bitbucket?"
-key r
-expect screen contains "removed bitbucket"
+expect screen lacks "BITBUCKET PRS"

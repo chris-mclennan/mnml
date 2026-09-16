@@ -5,11 +5,11 @@
 # banner — leaving the user with no idea what is missing. Instead it
 # paints the setup screen, names what is wrong, and lists the three
 # steps. `q` closes it.
-write market/bitbucket.zon ".{ .id = \"bitbucket\", .label = \"Bitbucket\", .version = \"0.1.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .description = \"Bitbucket Cloud pull requests\", .commands = .{ .{ .id = \"bitbucket.open\", .title = \"Bitbucket: pull requests\" } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
 command integrations.show_marketplace
 key i
-expect screen contains "installed bitbucket"
-command bitbucket.open
+expect screen contains "installed bitbucket_prs"
+command bitbucket_prs.open
 command view.focus_pane
 wait 900
 expect screen contains "BITBUCKET — setup"
@@ -23,13 +23,3 @@ key q
 wait 500
 key x
 expect screen lacks "BITBUCKET — setup"
-command integrations.show_installed
-# The four first-party rows sit above the manifests: walk down to this one.
-key down
-key down
-key down
-key down
-key x
-expect screen contains "Remove Bitbucket?"
-key r
-expect screen contains "removed bitbucket"

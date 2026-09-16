@@ -1,0 +1,78 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The Bitbucket Pipelines chip: the same binary on the pipelines
+# family, one tab so no strip, the repo tree with each branch's latest
+# run — docs/ui-spec/bitbucket/rust-full-pipelines-120x40.txt's content
+# (REPO / BRANCH · STATE · BUILD · RESULT · DATE, the curated branches:
+# the majors, one release, the newest feature) in mnml-zig's chrome.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs }, .{ .name = \"Pipelines\", .kind = .workspace_pipelines } } }"
+write market/bitbucket_pipelines.zon ".{ .id = \"bitbucket_pipelines\", .label = \"Bitbucket Pipelines\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"pipelines\" }, .description = \"Bitbucket: recent pipeline runs per repo/branch\", .commands = .{ .{ .id = \"bitbucket_pipelines.open\", .title = \"Bitbucket Pipelines: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_pipelines"
+command bitbucket_pipelines.open
+command view.toggle_tree
+command view.focus_pane
+wait 1500
+expect screen contains "BITBUCKET PIPELINES"
+expect screen contains "(2 repos)"
+expect screen lacks " 1 Pipelines"
+expect screen contains "REPO / BRANCH"
+expect screen contains "STATE"
+expect screen contains "BUILD"
+expect screen contains "RESULT"
+expect screen contains "DATE"
+# api sorts first (its newest run is an hour old) and opens to its
+# curated branches: main, develop, release/1.2, and the newest feature.
+expect screen contains "▌ ▾ api"
+expect screen contains "4 branches"
+expect screen contains "main"
+expect screen contains "COMPLETED"
+expect screen contains "#412"
+expect screen contains "✓ SUCCESSFUL"
+expect screen contains "develop"
+expect screen contains "#411"
+expect screen contains "✗ FAILED"
+expect screen contains "release/1.2"
+expect screen contains "⊘ STOPPED"
+expect screen contains "chris/fix-login"
+expect screen contains "IN_PROGRESS"
+expect screen contains "#413"
+# The stale experiment and the older feature are curated away.
+expect screen lacks "old/experiment"
+expect screen lacks "dana/timeout"
+# web: main, staging (no run yet: —), and its feature.
+expect screen contains "▾ web"
+expect screen contains "3 branches"
+expect screen contains "staging"
+expect screen contains "PENDING"
+expect screen contains "#77"
+# The pipelines pages are chips on the header, and the hint row is the
+# tree's.
+expect screen contains "run pipeline"
+expect screen contains "schedules"
+expect screen contains "caches"
+expect screen contains "usage"
+expect screen contains "Pipelines · 2 repos"
+expect screen contains "⏎ expand"
+# l on a header steps into its first child; h on a branch steps back up
+# and closes the repo.
+key l
+key h
+expect screen lacks "release/1.2"
+expect screen contains "▸ api"
+key l
+expect screen contains "release/1.2"
+# s cycles the scope and says so.
+key s
+wait 800
+expect screen contains "scope: all"
+expect file bitbucket.zon contains ".scope = .all"
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PIPELINES"
