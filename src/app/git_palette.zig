@@ -1734,8 +1734,10 @@ test "All repos: every section groups per repo under a sub-header with the count
     try testing.expect(list[3].branch.current);
     try testing.expectEqualStrings("dev", list[5].branch.name);
     try testing.expectEqual(@as(usize, 13), viewing(list));
-    // The filter: under TAGS only alpha has a `v1`; beta's sub-header goes.
-    try st.filter.appendSlice(testing.allocator, "v1");
+    // The filter: under TAGS only alpha has a `v1.` (the dot keeps the
+    // probe off the tmp workspace's random name, which the worktree row
+    // matches by basename); beta's sub-header goes.
+    try st.filter.appendSlice(testing.allocator, "v1.");
     list = try rows(app, arena);
     const tags = list[list.len - 4];
     try testing.expectEqual(Section.tags, tags.section.s);
@@ -1861,7 +1863,7 @@ test "the filter narrows every section by substring and Viewing N follows; a fol
     try testing.expectEqual(@as(u32, 0), list[11].section.count);
     try testing.expectEqual(@as(usize, 2), viewing(list));
     app.git_palette.filter.clearRetainingCapacity();
-    try app.git_palette.filter.appendSlice(testing.allocator, "v1");
+    try app.git_palette.filter.appendSlice(testing.allocator, "v1.");
     list = try rows(app, arena);
     try testing.expectEqual(@as(u32, 1), list[list.len - 3].section.count);
     try testing.expectEqualStrings("v1.0", list[list.len - 2].tag.name);
