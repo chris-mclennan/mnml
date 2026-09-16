@@ -5245,7 +5245,7 @@ test "cleanCommitMessage strips fences and splits the subject from the body" {
     try testing.expectEqual(@as(usize, 0), bare.body.len);
 }
 
-test "git mode: entering lists the branches and the worktree in the palette, one graph tab per repo; a branch row asks nothing and jumps; leaving puts the layout back" {
+test "git mode: entering lists the branches and the worktree in the palette, one graph tab per repo; one click on a branch row selects nothing; leaving puts the layout back" {
     var f = try Fixture.init(120, 40);
     defer f.deinit();
     try f.sh(&.{ "init", "-q", "-b", "main" });
@@ -5286,15 +5286,16 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F04FB} TAGS") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "git graph") == null);
     testing.allocator.free(txt);
-    // A click on the feature row selects it and keeps the palette's focus.
+    // One click on the feature row hands the palette the keys and
+    // selects nothing (the double-click acts — `git_palette.zig`).
     const rows = try git_palette.rows(&f.app, f.app.frame.allocator());
     var feature_row: ?usize = null;
     for (rows, 0..) |r, i| if (r == .branch and std.mem.eql(u8, r.branch.name, "feature")) {
         feature_row = i;
     };
-    try git_palette.select(&f.app, feature_row.?);
-    try testing.expectEqualStrings("feature", f.app.git_palette.selected.?);
-    try testing.expect(f.app.focus == .pane);
+    try git_palette.rowMouse(&f.app, @intCast(feature_row.?), .{ .x = 4, .y = 8, .kind = .press, .button = .left });
+    try testing.expect(f.app.git_palette.selected == null);
+    try testing.expect(f.app.focus == .panel and f.app.focus.panel == .git);
     // Leaving through another section restores the editor.
     try command.run(&f.app, .{ .static = .@"view.activity_explorer" });
     try testing.expect(!f.app.git_palette.active);

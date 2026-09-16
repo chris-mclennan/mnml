@@ -85,6 +85,8 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .row => |pr| if (pr.panel == .sessions and try @import("../sessions.zig").hoverTip(app, arena, pr.idx) != null)
             (try @import("../sessions.zig").hoverTip(app, arena, pr.idx)).?
+        else if (pr.panel == .git and try @import("git_palette.zig").hoverTip(app, arena, pr.idx) != null)
+            (try @import("git_palette.zig").hoverTip(app, arena, pr.idx)).?
         else
             .{
                 .title = try f.fmt(arena, "{s} row {d}", .{ upper(arena, @tagName(pr.panel)), pr.idx + 1 }),
@@ -182,7 +184,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .font_update => .{ .title = "Update font", .detail = "click: the Homebrew command that brings this Nerd Font family to the latest release, in a terminal pane below" },
         .git_palette => |part| switch (part) {
-            .repo => .{ .title = "Repo", .detail = "click: switch repo · All repos · reopen a closed one · add a workspace" },
+            .repo => .{ .title = "Repo", .detail = "click: the repos menu — switch repo, All repos (every open repo's rows at once; git.palette_all), reopen a closed one, add a workspace · right-click: the repo's colour" },
             .repo_prev => .{ .title = "Previous repo", .detail = "click: the previous repo in discovery order, wrapping ([)" },
             .repo_next => .{ .title = "Next repo", .detail = "click: the next repo in discovery order, wrapping (])" },
         },

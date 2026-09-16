@@ -1,5 +1,5 @@
 # A WORKTREES row: the main tree carries the house, a linked tree the
-# tree glyph; a second click on a linked tree opens it — its directory
+# tree glyph; a double-click on a linked tree opens it — its directory
 # joins the workspace and the graph tab switches to it. Rows at
 # 120x40: LOCAL 5, feat 6, main 7, gap 8, REMOTE 9, gap 10, WORKTREES
 # 11, main (ws) 12, feat (wt) 13.

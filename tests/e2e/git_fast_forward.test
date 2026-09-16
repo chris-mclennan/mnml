@@ -24,7 +24,10 @@ shell test "$(git rev-parse feat)" = "$(git rev-parse main)"
 command view.activity_git
 wait 1000
 expect screen contains "feat"
+# The panel takes the keys on a click (a click selects nothing — the
+# double-click model); Down puts the cursor on feat, the verb's branch.
 click 6 8
+key down
 wait 200
 command git.fast_forward
 wait 2000

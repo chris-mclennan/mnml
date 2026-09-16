@@ -1,5 +1,5 @@
 # The branches panel (src/app/git_palette.zig): a click on a LOCAL row
-# selects it; a second click on the same row checks the branch out
+# selects it; a double-click on the row checks the branch out
 # through the worker. The screen is 120x40: the sidebar snaps to 24,
 # the GIT header is row 1, the filter row 2, the pill row 4, the list
 # starts on row 7 (LOCAL), feature on 8, main on 9.

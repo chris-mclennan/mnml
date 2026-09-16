@@ -25,14 +25,22 @@
 //! (`git.switchTo` moves the parked rail into `rail_*`, its graph tab
 //! comes to the front) and then runs as it does with one repo.
 //!
-//! A click on a row selects it — the cursor moves there and, for a
-//! ref, the graph tab jumps to its commit. Enter, or a click on the row
-//! the cursor is already on, ACTS: a local branch checks out, a remote
-//! branch becomes a local tracking branch of its short name, a
-//! worktree opens (its directory joins the tree as a workspace root
-//! and the graph tab switches to it), a stash applies (and stays), a
-//! tag checks out detached after the confirm. The row menus do the
-//! rest (pop / drop a stash, delete a tag, remove a worktree, …).
+//! The mouse follows the reference client: one click on an item row is
+//! a hover — the keys go to the panel and nothing is selected (the
+//! cursor stays where the keys left it; `j` / `k` move it). A
+//! DOUBLE-CLICK acts, as Enter does on the cursor row: a local branch
+//! checks out, a remote branch becomes a local tracking branch of its
+//! short name, a worktree opens (its directory joins the tree as a
+//! workspace root and the graph tab switches to it — the tab's name
+//! and its content are that worktree's), a stash shows its files, a
+//! tag checks out detached after the confirm. A right-click opens the
+//! row's menu, built from the row under the pointer, and leaves the
+//! cursor alone. A section header or a repo sub-header is no item: one
+//! click folds it / shows that repo. The row menus do the rest (pop /
+//! drop a stash, delete a tag, remove a worktree, …).
+//! // changed (git-panel): the Rust panel selects on one click and acts
+//! on the second click of the selected row; the double-click model is
+//! the user's call (2026-09-15).
 //!
 //! // changed: Rust keeps `active_section` and `pre_git_layout` on the
 //! app; here the mode is `State.active` and the stash `State.pre`, and
@@ -918,34 +926,6 @@ fn setSelected(app: *App, name: ?[]const u8) Allocator.Error!void {
     st.selected = if (name) |n| try app.gpa.dupe(u8, n) else null;
 }
 
-/// The commit a row stands for: a branch's sha, a worktree's HEAD, a
-/// stash's commit, a tag's peeled commit.
-fn rowSha(app: *App, row: Row) ?[]const u8 {
-    const gs = &app.git;
-    return switch (row) {
-        .branch => |b| if (b.idx < gs.rail_branches.len) gs.rail_branches[b.idx].sha else null,
-        .remote_branch => |b| if (b.idx < gs.rail_branches.len) gs.rail_branches[b.idx].sha else null,
-        .worktree => |w| if (w.idx < gs.rail_worktrees.len) gs.rail_worktrees[w.idx].head else null,
-        .stash => |s| if (s.idx < gs.rail_stashes.len) gs.rail_stashes[s.idx].sha else null,
-        .tag => |t| if (t.idx < gs.rail_tags.len) gs.rail_tags[t.idx].sha else null,
-        else => null,
-    };
-}
-
-/// The name a row selects: a branch's, a worktree's label, a stash's
-/// ref, a tag's.
-fn rowName(app: *App, row: Row) ?[]const u8 {
-    const gs = &app.git;
-    return switch (row) {
-        .branch => |b| b.name,
-        .remote_branch => |b| b.name,
-        .worktree => |w| if (w.idx < gs.rail_worktrees.len) gs.rail_worktrees[w.idx].label() else null,
-        .stash => |s| if (s.idx < gs.rail_stashes.len) gs.rail_stashes[s.idx].ref else null,
-        .tag => |t| t.name,
-        else => null,
-    };
-}
-
 /// The active graph's cursor lands on `sha`'s commit; the palette keeps
 /// the focus. A commit the graph has not loaded is said, not sought.
 fn jumpToSha(app: *App, sha: []const u8, name: []const u8) void {
@@ -968,27 +948,7 @@ fn jumpToSha(app: *App, sha: []const u8, name: []const u8) void {
     app.toast("git: `{s}` is not in the open graph", .{name});
 }
 
-/// A click on a row: the cursor moves there; a ref is selected and the
-/// graph jumps to its commit; a header folds.
-pub fn select(app: *App, idx: usize) Allocator.Error!void {
-    const st = &app.git_palette;
-    const row = (try rowAt(app, idx)) orelse return;
-    st.cursor = idx;
-    try switchToRowRepo(app, idx);
-    switch (row) {
-        .gap, .remote => {},
-        .repo => |r| git.runToast(app, selectRepo(app, r.idx)),
-        .section => |s| st.collapsed.toggle(s.s),
-        else => {
-            const name = rowName(app, row) orelse return;
-            try setSelected(app, name);
-            if (rowSha(app, row)) |sha| jumpToSha(app, sha, name) else app.toast("git: cannot resolve `{s}`", .{name});
-        },
-    }
-    app.needs_render = true;
-}
-
-/// Enter, or a click on the row the cursor is on: the row's action.
+/// Enter on the cursor row, or a double-click on a row: the row's action.
 pub fn activate(app: *App, idx: usize) Allocator.Error!void {
     const st = &app.git_palette;
     const gs = &app.git;
@@ -1047,8 +1007,11 @@ fn checkoutTracking(app: *App, full: []const u8) CommandError!void {
 
 /// Open a worktree: its directory joins the tree as a workspace root
 /// (unless it is one, or the workspace itself), the repos are
-/// rediscovered so it has a graph tab, and that tab becomes the active
-/// one — the palette then lists that tree's refs.
+/// rediscovered so it has a graph tab, and that tab comes to the front
+/// — its name and its log are the tree's — the palette then lists
+/// that tree's refs. `rebuildTabs` alone would keep the graph that was
+/// showing (its rule for re-entering the mode), so the tree's tab is
+/// shown after it, explicitly.
 pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
     const st = &app.git_palette;
     const gs = &app.git;
@@ -1061,7 +1024,8 @@ pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
     // Known already (a nested tree, an extra root): switch to it.
     for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) {
         try git.switchTo(app, i);
-        try rebuildTabs(app);
+        if (st.active) try rebuildTabs(app);
+        showRepoTab(app, i);
         return;
     };
     _ = app.tree.addRoot(app, w.path, null) catch |err| switch (err) {
@@ -1073,6 +1037,7 @@ pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
     for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) {
         try git.switchTo(app, i);
         if (st.active) try rebuildTabs(app);
+        showRepoTab(app, i);
         app.toast("worktree: {s}", .{w.path});
         return;
     };
@@ -1292,25 +1257,47 @@ pub fn focusPalette(app: *App) void {
     app.needs_render = true;
 }
 
+/// A press on a row (D6 `.row` hit, the row under the pointer). Left:
+/// the keys go to the panel; an item row acts on the second press of a
+/// double-click only (`dispatch.clickCount`), a header on every press.
+/// Right: the row's menu, the cursor untouched.
 pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     const st = &app.git_palette;
-    switch (m.kind) {
-        .press => {
-            st.filter_focused = false;
-            const was_here = st.cursor == idx and app.focus == .panel and app.focus.panel == .git;
+    if (m.kind != .press) return;
+    st.filter_focused = false;
+    switch (m.button) {
+        .left => {
+            const clicks = dispatch.clickCount(app, m);
             focusPalette(app);
-            switch (m.button) {
-                .left => if (was_here) try activate(app, idx) else try select(app, idx),
-                .right => {
-                    st.cursor = idx;
-                    try openRowMenu(app, idx, m.x, m.y);
-                },
-                else => {},
-            }
+            const row = (try rowAt(app, idx)) orelse return;
+            const header = row == .section or row == .repo;
+            if (header or clicks >= 2) try activate(app, idx);
+        },
+        .right => {
+            focusPalette(app);
+            try openRowMenu(app, idx, m.x, m.y);
         },
         else => {},
     }
     app.needs_render = true;
+}
+
+/// The hover tip of row `idx` (`discovery.describe`): the row's name
+/// and what a double-click does to it.
+pub fn hoverTip(app: *App, arena: Allocator, idx: u32) Allocator.Error!?@import("../ui/tooltip.zig").Tip {
+    const row = (try rowAt(app, idx)) orelse return null;
+    const menu = "right-click: the row menu";
+    return switch (row) {
+        .branch => |b| .{ .title = try std.fmt.allocPrint(arena, "Branch: {s}", .{b.name}), .detail = if (b.current) "checked out · " ++ menu else "double-click / Enter: checkout · " ++ menu },
+        .remote_branch => |r| .{ .title = try std.fmt.allocPrint(arena, "Remote branch: {s}", .{r.name}), .detail = "double-click / Enter: checkout as a local tracking branch · " ++ menu },
+        .worktree => |w| .{ .title = try std.fmt.allocPrint(arena, "Worktree: {s}", .{w.shown}), .detail = if (w.current) "the graph tab shown · " ++ menu else "double-click / Enter: switch the graph tab to this worktree · " ++ menu },
+        .stash => |s| .{ .title = try std.fmt.allocPrint(arena, "Stash {s}: {s}", .{ s.sha, s.message }), .detail = "double-click / Enter: show its files · " ++ menu },
+        .tag => |t| .{ .title = try std.fmt.allocPrint(arena, "Tag: {s}", .{t.name}), .detail = "double-click / Enter: checkout (detached) · " ++ menu },
+        .remote => |r| .{ .title = try std.fmt.allocPrint(arena, "Remote: {s}", .{r.name}), .detail = menu },
+        .section => |s| .{ .title = s.s.label(), .detail = "click: fold / unfold the section" },
+        .repo => |r| .{ .title = try std.fmt.allocPrint(arena, "Repo: {s}", .{r.name}), .detail = "click: show this repo's graph tab · " ++ menu },
+        .gap => null,
+    };
 }
 
 pub fn partMouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
@@ -1529,6 +1516,44 @@ const TestApp = struct {
         const res = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "git", "init", "-q", "-b", "main" }, .cwd = .{ .path = dir } });
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
+    }
+
+    /// `git <args>` in the workspace, the test's own git (not the worker's).
+    fn sh(t: *TestApp, args: []const []const u8) !void {
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer argv.deinit(testing.allocator);
+        try argv.appendSlice(testing.allocator, &.{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=tester" });
+        try argv.appendSlice(testing.allocator, args);
+        const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = t.root } });
+        defer testing.allocator.free(res.stdout);
+        defer testing.allocator.free(res.stderr);
+        if (res.term != .exited or res.term.exited != 0) {
+            std.debug.print("git {s} failed: {s}\n", .{ args[0], res.stderr });
+            return error.GitFailed;
+        }
+    }
+
+    fn write(t: *TestApp, rel: []const u8, data: []const u8) !void {
+        try t.tmp.dir.writeFile(testing.io, .{ .sub_path = rel, .data = data });
+    }
+
+    /// Tick until the worker has answered everything (or `max` ticks pass).
+    fn settle(t: *TestApp, max: usize) !void {
+        var i: usize = 0;
+        while (i < max) : (i += 1) {
+            try t.app.tick(App.nowMs(testing.io));
+            const gs = &t.app.git;
+            if (!gs.status_pending and gs.busy == 0 and !gs.rail_pending and !git.anyRailPending(gs) and !graphPending(&t.app)) return;
+            testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+        }
+    }
+
+    fn graphPending(app: *App) bool {
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .git_graph => |*g| if (g.pending) return true,
+            else => {},
+        };
+        return false;
     }
 
     fn deinit(t: *TestApp) void {
@@ -1884,7 +1909,7 @@ test "the filter narrows every section by substring and Viewing N follows; a fol
     try command.run(app, .{ .static = .@"view.activity_explorer" });
 }
 
-test "a click selects and a second click on the same row acts: the stash applies through the worker, a remote branch asks for its short name, the tag confirm names detached HEAD; the keys skip the gaps" {
+test "the click model: one click on an item row gives the panel the keys and moves nothing, a double-click acts (the stash shows its files, Enter on the tag row names detached HEAD), a right-click opens the row's menu with the cursor where it was, two clicks apart are two hovers; the keys skip the gaps" {
     var t = try TestApp.init();
     defer t.deinit();
     const app = &t.app;
@@ -1902,14 +1927,32 @@ test "a click selects and a second click on the same row acts: the stash applies
     try testing.expectEqual(@as(usize, 19), st.cursor);
     _ = try handleKey(app, .{ .code = .{ .char = 'g' } });
     try testing.expectEqual(@as(usize, 0), st.cursor);
-    // A click on the stash row selects it (no repo: the graph jump only toasts).
-    try rowMouse(app, 15, .{ .x = 5, .y = 20, .kind = .press, .button = .left });
+    // One click on the stash row: the panel has the keys; the cursor
+    // stays on row 0, nothing is selected, nothing is said.
+    const press: Mouse = .{ .x = 5, .y = 20, .kind = .press, .button = .left };
+    app.focus = .tree;
+    try rowMouse(app, 15, press);
+    try testing.expect(app.focus == .panel and app.focus.panel == .git);
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    try testing.expect(st.selected == null);
+    try testing.expect(app.lastToast() == null);
+    // A second click past the double-click window is one more hover.
+    app.now_ms += app_mod.double_click_ms + 1;
+    try rowMouse(app, 15, press);
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    try testing.expect(st.selected == null);
+    // The second press of a double-click acts: the row is selected and
+    // the stash's files are asked for (the seeded ref is not in the
+    // repo, so the worker says so; the point is that it ran).
+    try rowMouse(app, 15, press);
     try testing.expectEqual(@as(usize, 15), st.cursor);
     try testing.expectEqualStrings("stash@{0}", st.selected.?);
-    try testing.expect(app.focus == .panel and app.focus.panel == .git);
-    // The second click acts: with no repo the action fails loudly, not silently.
-    try rowMouse(app, 15, .{ .x = 5, .y = 20, .kind = .press, .button = .left });
-    try testing.expect(app.lastToast() != null);
+    // A right-click on the tag row: its menu, the cursor still on the stash.
+    try rowMouse(app, 18, .{ .x = 5, .y = 23, .kind = .press, .button = .right });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("v2.0", app.overlay.menu.title);
+    try testing.expectEqual(@as(usize, 15), st.cursor);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
     // Enter on the tag row opens the confirm.
     st.cursor = 18;
     _ = try handleKey(app, .{ .code = .enter });
@@ -1929,6 +1972,62 @@ test "a click selects and a second click on the same row acts: the stash applies
     try testing.expect(st.filter_focused);
     _ = try handleKey(app, .{ .code = .esc });
     try testing.expect(!st.filter_focused);
+}
+
+test "a double-click on a worktree row, through the painted panel's hit map, switches the graph tab to THAT worktree — the tab's name and its repo are the tree's, not its neighbour's — and one click there switches nothing" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try t.write("a.txt", "one\n");
+    try t.sh(&.{ "add", "a.txt" });
+    try t.sh(&.{ "commit", "-q", "-m", "init" });
+    try t.sh(&.{ "worktree", "add", "-q", "wt-a", "-b", "feat-a" });
+    try t.sh(&.{ "worktree", "add", "-q", "wt-b", "-b", "feat-b" });
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    try t.settle(600);
+    try testing.expect(app.git.rail_loaded);
+    const ws = app.git.activeRepo().?;
+    const ws_id = ws.id;
+    try app.render();
+    // The two linked trees' rows, neighbours under WORKTREES.
+    const list = try rows(app, app.frame.allocator());
+    var a_idx: ?usize = null;
+    var b_idx: ?usize = null;
+    for (list, 0..) |r, i| switch (r) {
+        .worktree => |w| {
+            if (std.mem.startsWith(u8, w.shown, "feat-a")) a_idx = i;
+            if (std.mem.startsWith(u8, w.shown, "feat-b")) b_idx = i;
+        },
+        else => {},
+    };
+    const ra = rowRect(app, @intCast(a_idx.?)) orelse return error.TestUnexpectedResult;
+    const rb = rowRect(app, @intCast(b_idx.?)) orelse return error.TestUnexpectedResult;
+    // The hits are one row each, the full column across.
+    try testing.expectEqual(ra.y + 1, rb.y);
+    try testing.expectEqual(@as(u16, 1), rb.h);
+    try testing.expect(rb.w >= 16);
+    const x = rb.x + 3;
+    const y = rb.y;
+    // One click: the panel has the keys; the tab is still the workspace's.
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .release, .button = .left } });
+    try testing.expect(app.focus == .panel and app.focus.panel == .git);
+    try testing.expectEqual(ws_id, app.git.activeRepo().?.id);
+    try testing.expectEqual(ws_id, git.activeGraph(app).?.repo);
+    // The second press of the double-click: the tab is wt-b's — its
+    // name, its repo — not wt-a's above it.
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .release, .button = .left } });
+    try t.settle(600);
+    const now = app.git.activeRepo().?;
+    try testing.expect(now.id != ws_id);
+    try testing.expectEqualStrings("wt-b", std.fs.path.basename(now.path));
+    const g = git.activeGraph(app) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(now.id, g.repo);
+    try testing.expectEqualStrings("wt-b", g.name);
+    try testing.expect(app.active != null);
+    try testing.expect(app.panes.get(app.active.?).?.* == .git_graph);
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
 }
 
 test "every row menu names actions that resolve, and each menu action reaches the worker or a confirm" {

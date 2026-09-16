@@ -1,4 +1,4 @@
-# A TAGS row: a second click asks before checking the tag out detached;
+# A TAGS row: a double-click asks before checking the tag out detached;
 # `y` does it. Rows at 120x40: LOCAL 5, main 6, gap 7, REMOTE 8, gap
 # 9, WORKTREES 10, main 11, gap 12, STASHES 13, gap 14, TAGS 15, v1 16.
 shell git init -q -b main
