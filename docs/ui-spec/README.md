@@ -58,8 +58,13 @@ machine. The Rust pane was never driven for a spec; the layout is
 through `tools/zig-spec-git.sh search` — the branches fixture's repo,
 the query `t`, the cursor on the first hit): Rust's
 `draw_search_section` shape row for row — the header with the
-`Aa \b .*` flags, a blank row, ` / t█`, `2 hits (git grep)`, a blank
-row, the file header, `  2:1  two`. The Rust side has no dump of its
+`Aa \b .*` flags, the query pill `󰍉 t`, a blank row,
+`2 hits (git grep)`, a blank row, the file header, `  2:1  two`.
+*// changed 2026-09-15 (panel-consistency):* the query was the THIRD
+row with the blank above it, painted as a bare ` / t█` run of the
+section's own; it is `ui/filter_input.zig`'s pill on the second row
+now — the grey band, the blue magnify glyph, `/ search` as the
+placeholder — the shape every other left section has. The Rust side has no dump of its
 own; the walkthrough's `docs/ui-spec/walk/steps-search.jsonl` on the
 chrome fixture is the comparison (`rg` off the PATH, so both sides
 answer with `git grep`): `tools/ui-diff.sh` read 33 rows beyond the
@@ -555,7 +560,9 @@ SESSIONS column itself is unchanged, card for card.
   `Inst (3) Mkt (9)  (34)` (the Rust fixture's real data root has
   three manifests and its marketplace is fetched; the third tab's label
   is nf-fa-dev), the filter pill `󰍉 type to filter…▏` with the sort chip
-  ` A-Z ▾` at its right end, then three rows per entry — ` <glyph>
+  ` A-Z ▾` at its right end (Zig keeps the sort in the header's chip
+  ladder instead — see the note under the SCRIPTS dumps), then three
+  rows per entry — ` <glyph>
   Label (hidden)`, the dim command id, a blank. The Zig side lists the
   sample instead of the author's manifests; the chrome is what is
   matched. `rust-integrations-mkt-120x40.txt` /
@@ -602,7 +609,13 @@ dump cut on Linux or Windows shows the yellow version alone.
   `lua/` and `MNML_SCRIPTS_DEV_ROOTS` at the seeded
   workspace's `dev/`): the SCRIPTS section's three tabs, painted by the
   INTEGRATIONS section's own `drawSection` — `Inst (1) Mkt (5)  󰫯 (1)`,
-  the filter pill with the `A-Z ▾` sort chip, and three-row entries.
+  the filter pill across the whole row, and three-row entries.
+  *// changed 2026-09-15 (panel-consistency):* the sort was an ` A-Z ▾`
+  pill at the right end of the FILTER row, which no other section
+  does; it is the header's mode chip now (`ui/header.zig`'s ladder —
+  the icon rung at the shipped 26 cells, ``), and a selected
+  entry's `▌` gutter runs BOTH its rows, not the first alone. Both
+  changes land on INTEGRATIONS too, which shares `drawSection`.
   Installed shows the `+ create init.lua` link and the `init.lua` row;
   Marketplace the five shipped examples as `✓ Official`; Dev the seeded
   `hello-scripts  0.1.0  Dev` over the command it adds. Zig-authored —
