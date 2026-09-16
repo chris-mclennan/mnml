@@ -22,9 +22,9 @@ expect screen contains "▌ 󰌢 LOCAL"
 # A local branch that is not checked out: checkout first, reset last.
 rightclick 6 8
 expect screen contains "Checkout feat"
-expect screen contains "Merge feat into current"
+expect screen contains "Merge feat into main"
 expect screen contains "Delete feat…"
-expect screen contains "Reset --hard to feat…"
+expect screen contains "Reset main to this commit"
 key esc
 expect screen contains "▌ 󰌢 LOCAL"
 # The checked-out branch: no checkout, the push and the upstream verbs.

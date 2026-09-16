@@ -126,6 +126,10 @@ pub const PromptKind = enum {
     reset_hard,
     /// `git.branch_rename`: the new name for `State.verb_branch`.
     branch_rename,
+    /// A tag on the branches panel's row (`State.verb_start` is its
+    /// ref): lightweight, or annotated with the name as its message.
+    tag_at,
+    tag_annotated_at,
     /// `stash branch <name> <State.verb_branch>`.
     stash_branch,
     /// A stash's new message (`State.verb_branch` is its ref).
@@ -2392,6 +2396,12 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             if (text.len == 0) return;
             try submitOp(app, try requireRepo(app), .{ .tag = try gpa.dupe(u8, text) });
         },
+        .tag_at, .tag_annotated_at => {
+            if (text.len == 0) return;
+            const start = takeVerbStart(app) orelse return app.diag.fail(app.frame.allocator(), "tag: the row is gone", .{});
+            errdefer gpa.free(start);
+            try submitOp(app, try requireRepo(app), .{ .tag_at = .{ .name = try gpa.dupe(u8, text), .start = start, .annotated = kind == .tag_annotated_at } });
+        },
         .worktree_add => {
             if (text.len == 0) return;
             // `<path> [branch]`
@@ -2768,6 +2778,34 @@ pub fn worktreeFrom(app: *App, start: []const u8) CommandError!void {
     _ = try requireRepo(app);
     try setVerbStart(app, start);
     openPrompt(app, .worktree_add, if (std.mem.eql(u8, start, "HEAD")) "Worktree: <path> [new-branch]" else "Worktree from the selected commit / ref: <path> [new-branch]");
+}
+
+/// `Create tag here…` / `Create annotated tag here…` on a branches
+/// panel row: the prompt for the name, the row's ref kept for its
+/// accept (git-panel).
+pub fn tagAt(app: *App, start: []const u8, annotated: bool) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbStart(app, start);
+    openPrompt(app, if (annotated) .tag_annotated_at else .tag_at, if (annotated) "Annotated tag on the selected ref (the name is the message)" else "Tag on the selected ref");
+}
+
+/// `Push` on a branch that is not checked out: `push -u <remote>
+/// <branch>` — its upstream's remote, else the first remote (git-panel).
+/// The checked-out branch takes `git.push`.
+pub fn pushBranch(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const repo = try requireRepo(app);
+    var remote: []const u8 = "";
+    if (railBranch(app, name)) |b| if (b.upstream.len > 0) if (std.mem.indexOfScalar(u8, b.upstream, '/')) |sl| {
+        remote = b.upstream[0..sl];
+    };
+    if (remote.len == 0 and app.git.rail_remotes.len > 0) remote = app.git.rail_remotes[0].name;
+    if (remote.len == 0) return app.diag.fail(arena, "push {s}: no remote \u{2014} add one first", .{name});
+    const gpa = app.gpa;
+    const r = try gpa.dupe(u8, remote);
+    errdefer gpa.free(r);
+    app.toast("pushing {s} to {s}\u{2026}", .{ name, remote });
+    try submitOp(app, repo, .{ .push_branch = .{ .remote = r, .branch = try gpa.dupe(u8, name) } });
 }
 
 /// `Push --force-with-lease…`: the confirm names the risk. Rust refused

@@ -160,6 +160,9 @@ pub const Job = union(enum) {
     pull,
     push,
     push_tags,
+    /// `push -u remote branch`: a branch that is not checked out, to its
+    /// remote (git-panel).
+    push_branch: struct { remote: []u8, branch: []u8 },
     /// `stash push`: everything (with untracked files), the index only,
     /// some paths, or the tree with the index kept (`stashArgs`).
     stash: StashPush,
@@ -177,6 +180,9 @@ pub const Job = union(enum) {
     stash_apply: []u8,
     stash_drop: []u8,
     tag: []u8,
+    /// `tag [-a -m name] name start`: a tag on the branches panel's row
+    /// (its tip), lightweight or annotated (git-panel).
+    tag_at: struct { name: []u8, start: []u8, annotated: bool },
     tag_delete: []u8,
     cherry_pick: []u8,
     revert: []u8,
@@ -319,6 +325,14 @@ pub const Job = union(enum) {
                 gpa.free(s.msg);
             },
             .blame, .stage, .unstage, .discard, .commit, .checkout, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
+            .tag_at => |t| {
+                gpa.free(t.name);
+                gpa.free(t.start);
+            },
+            .push_branch => |p| {
+                gpa.free(p.remote);
+                gpa.free(p.branch);
+            },
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
@@ -1128,6 +1142,11 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .stash_apply => |ref| try simple(repo, io, r, &.{ "stash", "apply", "-q", ref }, try std.fmt.allocPrint(arena, "applied {s}", .{ref})),
         .stash_drop => |ref| try simple(repo, io, r, &.{ "stash", "drop", "-q", ref }, try std.fmt.allocPrint(arena, "dropped {s}", .{ref})),
         .tag => |name| try simple(repo, io, r, &.{ "tag", "-a", name, "-m", name }, try std.fmt.allocPrint(arena, "tagged {s}", .{name})),
+        .tag_at => |t| if (t.annotated)
+            try simple(repo, io, r, &.{ "tag", "-a", t.name, "-m", t.name, t.start }, try std.fmt.allocPrint(arena, "tagged {s} at {s}", .{ t.name, t.start }))
+        else
+            try simple(repo, io, r, &.{ "tag", t.name, t.start }, try std.fmt.allocPrint(arena, "tagged {s} at {s}", .{ t.name, t.start })),
+        .push_branch => |p| try simple(repo, io, r, &.{ "push", "-u", p.remote, p.branch }, try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote })),
         .tag_delete => |name| try simple(repo, io, r, &.{ "tag", "-d", name }, try std.fmt.allocPrint(arena, "deleted tag {s}", .{name})),
         .cherry_pick => |sha| try simple(repo, io, r, &.{ "cherry-pick", sha }, try std.fmt.allocPrint(arena, "cherry-picked {s}", .{sha[0..@min(7, sha.len)]})),
         .revert => |sha| try simple(repo, io, r, &.{ "revert", "--no-edit", sha }, try std.fmt.allocPrint(arena, "reverted {s}", .{sha[0..@min(7, sha.len)]})),

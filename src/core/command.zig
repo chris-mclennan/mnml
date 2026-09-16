@@ -760,6 +760,19 @@ pub const GitPaletteWhat = enum {
     reset_soft,
     reset_mixed,
     reset_hard,
+    /// The reference client's branch verbs (git-panel): the row's tip
+    /// commit onto HEAD / reverted, its sha and its web links copied, a
+    /// worktree from it, a tag on it, a branch that is not checked out
+    /// pushed to its remote.
+    cherry_pick,
+    revert,
+    copy_sha,
+    copy_branch_link,
+    copy_commit_link,
+    branch_worktree,
+    tag_here,
+    tag_annotated_here,
+    push_branch,
 };
 
 pub const MenuItem = struct {

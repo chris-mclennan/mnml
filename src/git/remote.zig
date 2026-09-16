@@ -151,6 +151,22 @@ pub fn commitUrl(arena: Allocator, remote: []const u8, sha: []const u8) Allocato
     };
 }
 
+/// The web page of branch `branch` (git-panel: the branches panel's
+/// "Copy link to branch").
+pub fn branchUrl(arena: Allocator, remote: []const u8, branch: []const u8) Allocator.Error![]const u8 {
+    const r = parseRemote(remote) orelse return arena.dupe(u8, std.mem.trim(u8, remote, " \t\r\n"));
+    const w = try webBase(arena, r);
+    return switch (providerOfHost(r.host)) {
+        .bitbucket => if (try bitbucketServer(arena, w.path)) |web|
+            std.fmt.allocPrint(arena, "https://{s}/{s}/browse?at=refs/heads/{s}", .{ w.host, web, branch })
+        else
+            std.fmt.allocPrint(arena, "https://{s}/{s}/branch/{s}", .{ w.host, w.path, branch }),
+        .gitlab => std.fmt.allocPrint(arena, "https://{s}/{s}/-/tree/{s}", .{ w.host, w.path, branch }),
+        .azure => std.fmt.allocPrint(arena, "https://{s}/{s}?version=GB{s}", .{ w.host, w.path, branch }),
+        .github, .other, .none => std.fmt.allocPrint(arena, "https://{s}/{s}/tree/{s}", .{ w.host, w.path, branch }),
+    };
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -204,4 +220,16 @@ test "remote → browse URL table: file, line and commit on every forge shape" {
     }
     // A local remote comes back as itself.
     try testing.expectEqualStrings("/srv/git/repo.git", try fileUrl(arena, "/srv/git/repo.git", "main", "f", 1));
+}
+
+test "branchUrl: the branch page on every forge shape" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    try testing.expectEqualStrings("https://github.com/o/r/tree/feat/x", try branchUrl(arena, "git@github.com:o/r.git", "feat/x"));
+    try testing.expectEqualStrings("https://gitlab.com/g/p/-/tree/main", try branchUrl(arena, "https://user@gitlab.com/g/p.git", "main"));
+    try testing.expectEqualStrings("https://bitbucket.org/w/r/branch/main", try branchUrl(arena, "git@bitbucket.org:w/r.git", "main"));
+    try testing.expectEqualStrings("https://bitbucket.mycorp.com/projects/proj/repos/repo/browse?at=refs/heads/main", try branchUrl(arena, "https://bitbucket.mycorp.com/scm/proj/repo.git", "main"));
+    try testing.expectEqualStrings("https://dev.azure.com/org/proj/_git/repo?version=GBmain", try branchUrl(arena, "https://dev.azure.com/org/proj/_git/repo", "main"));
+    try testing.expectEqualStrings("/srv/git/repo.git", try branchUrl(arena, "/srv/git/repo.git", "main"));
 }
