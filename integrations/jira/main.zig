@@ -451,7 +451,8 @@ fn configProblem(arena: Allocator, path: []const u8, why: []const u8) Allocator.
 
 fn noTabs(arena: Allocator, path: []const u8, f: config.Family) Allocator.Error![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
-    try out.append(arena, try std.fmt.allocPrint(arena, "No tab in {s} has a kind that belongs to `--only {s}`.", .{ path, f.cli() }));
+    try out.append(arena, try std.fmt.allocPrint(arena, "None of the config's tabs has a kind that belongs to `--only {s}`.", .{f.cli()}));
+    try out.append(arena, path);
     try out.append(arena, "");
     try out.append(arena, switch (f) {
         .work => "Work tabs: work_assigned · work_recently_done · work_recent · work_unified · filter.",
