@@ -469,6 +469,68 @@ pub const App = struct {
         }
     }
 
+    /// `--prefetch`'s JSON (`{"generated_at":…,"tabs":[{"name":…,"issues":[…]}]}`)
+    /// into the tabs it names, so the first paint has tickets before any
+    /// fetch; returns how many tabs took it.
+    pub fn hydrate(a: *App, src: []const u8) Allocator.Error!usize {
+        var n: usize = 0;
+        for (a.tabs, 0..) |*t, idx| {
+            var next = std.heap.ArenaAllocator.init(a.gpa);
+            errdefer next.deinit();
+            const arena = next.allocator();
+            const doc = std.json.parseFromSliceLeaky(Value, arena, src, .{}) catch {
+                next.deinit();
+                return n;
+            };
+            const tabs_v = switch (doc) {
+                .object => |o| o.get("tabs") orelse {
+                    next.deinit();
+                    return n;
+                },
+                else => {
+                    next.deinit();
+                    return n;
+                },
+            };
+            const list = switch (tabs_v) {
+                .array => |arr| arr.items,
+                else => &.{},
+            };
+            var took = false;
+            for (list) |tv| {
+                const name = switch (tv) {
+                    .object => |o| if (o.get("name")) |nv| (if (nv == .string) nv.string else "") else "",
+                    else => "",
+                };
+                if (!std.mem.eql(u8, name, t.cfg.name)) continue;
+                const issues_v = tv.object.get("issues") orelse continue;
+                const vals = switch (issues_v) {
+                    .array => |arr| arr.items,
+                    else => continue,
+                };
+                t.issues = try jira.parseIssues(arena, vals, a.cfg.team_field_id);
+                t.data.deinit();
+                t.data = next;
+                t.fetched = true;
+                t.last_error = "";
+                took = true;
+                n += 1;
+                if (t.cfg.kind == .work_assigned) {
+                    a.assigned_open = t.issues.len;
+                    a.segment_dirty = true;
+                }
+                if (t.tree) |*st| if (t.cfg.isTree()) {
+                    for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
+                };
+                try a.aggregateAssignees(t);
+                _ = idx;
+                break;
+            }
+            if (!took) next.deinit();
+        }
+        return n;
+    }
+
     fn resolveJql(a: *App, t: *TabState) Allocator.Error!void {
         const mode = t.cfg.mode orelse return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
@@ -1872,7 +1934,8 @@ pub const App = struct {
         if (a.jql != null) {
             switch (target orelse hit.Target.jql_body) {
                 .jql_text => |t| {
-                    a.jql.?.setCursorCodepoints(@as(usize, t.row) * a.jqlWrapWidth() + t.col);
+                    const r = a.hits.rectOf(target.?) orelse return;
+                    a.jql.?.setCursorCodepoints(@as(usize, t.row) * a.jqlWrapWidth() + (col -| r.x));
                 },
                 .jql_body => {},
                 else => try a.closeJql(false),
