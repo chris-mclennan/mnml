@@ -1,0 +1,23 @@
+// The Bitbucket integration's second manifest, the Pipelines chip —
+// the reference's `bitbucket_pipelines.toml` key for key: the same
+// binary opened on the pipelines family, its own chip (`BL`, green)
+// and its own open command. `mnml-bitbucket --install` writes this
+// beside `bitbucket_prs.zon`.
+.{
+    .id = "bitbucket_pipelines",
+    .label = "Bitbucket Pipelines",
+    .description = "Bitbucket: recent pipeline runs per repo/branch",
+    .version = "0.2.0",
+    .binary = "mnml-bitbucket",
+    .args = .{ "--only", "pipelines" },
+    .category = "forge",
+    .chip = .{ .glyph = "\u{f00a8}", .fallback = "BL", .color = "green", .tooltip = "Bitbucket pipelines", .in_palette_bar = false },
+    .commands = .{
+        .{ .id = "bitbucket_pipelines.open", .title = "Bitbucket Pipelines: open", .keys = .{"space i l"} },
+    },
+    .auth = .{
+        .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Preferred. Atlassian scoped API token — fresh rate-limit bucket, per-integration revoke. Either this OR an app password is required." },
+        .{ .key = "app_password", .label = "Bitbucket app password", .kind = .secret, .env_fallback = "BITBUCKET_APP_PASSWORD", .help_url = "https://bitbucket.org/account/settings/app-passwords/", .help = "Legacy path. Set this OR an api_token above (api_token wins if both are set). Scopes: Repositories:Read + Pull requests:Read + Pipelines:Read." },
+        .{ .key = "username", .label = "Bitbucket username (optional)", .kind = .text, .env_fallback = "BITBUCKET_USERNAME", .help = "Optional. Only needed if your app password requires Basic auth (username + password); leave blank for token-only auth." },
+    },
+}
