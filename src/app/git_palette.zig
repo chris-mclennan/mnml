@@ -2373,6 +2373,39 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try command.run(app, .{ .static = .@"view.activity_explorer" });
 }
 
+test "All repos is discoverable: the pill's hover help names it and its command, the pill's menu leads with it, and the toggle, the chevrons and `]` all reach it" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    try seedBeta(app);
+    const st = &app.git_palette;
+    const discovery = @import("discovery.zig");
+    const tip = (try discovery.describe(app, app.frame.allocator(), .{ .git_palette = .repo })).?;
+    try testing.expect(std.mem.indexOf(u8, tip.detail.?, "All repos") != null);
+    try testing.expect(std.mem.indexOf(u8, tip.detail.?, "git.palette_all") != null);
+    const next = (try discovery.describe(app, app.frame.allocator(), .{ .git_palette = .repo_next })).?;
+    try testing.expect(std.mem.indexOf(u8, next.detail.?, "]") != null);
+    // The pill's menu: All repos first; picking it turns the mode on.
+    try openReposMenu(app, 2, 4);
+    try testing.expect(std.mem.endsWith(u8, app.overlay.menu.items[0].label, "All repos"));
+    const all_row = app.overlay.menu.items[0].action;
+    try app.handle(.{ .key = Key.named(.esc) });
+    try dispatch.runMenuActionForTest(app, all_row);
+    try testing.expect(st.all);
+    // The command toggles it off and on; a chevron leaves it at a repo.
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    try testing.expect(!st.all);
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    try testing.expect(st.all);
+    try partMouse(app, .repo_next, .{ .x = 9, .y = 4, .kind = .press, .button = .left });
+    try testing.expect(!st.all);
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
+}
+
 test "every row menu names actions that resolve, and each menu action reaches the worker or a confirm" {
     var t = try TestApp.init();
     defer t.deinit();
