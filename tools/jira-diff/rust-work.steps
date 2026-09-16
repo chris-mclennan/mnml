@@ -1,0 +1,42 @@
+# Jira Work on the reference, against the offline server.
+waitfor KEY 30000
+settle 800
+snap assigned
+key j
+key d
+settle 1500
+snap detail
+key d
+key t
+settle 1500
+snap transition
+key esc
+key a
+settle 1500
+snap assignee-picker
+key esc
+key f
+settle 1500
+snap fixversion-picker
+key esc
+key .
+settle 800
+snap action-picker
+key esc
+key /
+type vou
+snap filter-editing
+key enter
+snap filter-committed
+key esc
+key E
+snap jql-editor
+key esc
+key D
+settle 1500
+snap modal
+key esc
+key 2
+settle 2500
+snap recently-done
+quit
