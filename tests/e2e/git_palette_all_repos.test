@@ -1,7 +1,7 @@
 # All repos (src/app/git_palette.zig `setAll`): `git.palette_all` lists
 # both repos at once — the pill reads `All repos`, each section holds a
 # sub-header per repo with that repo's rows one level further in, the
-# check marks each repo's own branch, and Viewing N counts every row
+# checked-out branch of each repo carries its own glyph, and Viewing N counts every row
 # (two branches and the two main trees). The same command puts one
 # repo back.
 shell mkdir -p alpha beta
@@ -27,8 +27,8 @@ expect screen contains " 󰌢 LOCAL"
 # colors (2026-09-10): a sub-header carries its repo's `▌` in the gutter.
 expect screen contains "▌ alpha"
 expect screen contains "▌ beta"
-expect screen contains "󰄬   󰘬 main"
-expect screen contains "󰄬   󰘬 dev"
+expect screen contains "󱓏 main"
+expect screen contains "󱓏 dev"
 expect screen contains "Viewing 4"
 command git.palette_all
 wait 500

@@ -5272,16 +5272,16 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
     // The branches panel: the caps header, the pill, Viewing N (2 locals
-    // + 1 worktree), the filter, LOCAL with the check on main, WORKTREES
-    // with the house.
+    // + 1 worktree), the filter, LOCAL with the checked-out glyph on
+    // main, WORKTREES with the house.
     try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Viewing 3") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "/ filter") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F0322} LOCAL") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "  \u{F062C} feature") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F062C} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  \u{F14CF} main") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F47C} \u{F0405} WORKTREES") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F012C} \u{F02DC} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "  \u{F02DC} main") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F03D7} STASHES") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F04FB} TAGS") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "git graph") == null);

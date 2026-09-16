@@ -22,5 +22,5 @@ click 6 12
 click 6 12
 wait 1500
 expect file .git/HEAD contains "refs/heads/hotfix"
-expect screen contains "󰄬 󰘬 hotfix"
+expect screen contains "󱓏 hotfix"
 expect screen contains "Viewing 5"

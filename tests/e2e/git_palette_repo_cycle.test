@@ -20,19 +20,19 @@ shell git -C beta commit -q -m "init"
 command view.activity_git
 wait 1000
 expect screen contains " alpha 󰅀"
-expect screen contains "󰄬 󰘬 main"
+expect screen contains "󱓏 main"
 click 8 7
 click 8 7
 expect screen contains " 󰌢 LOCAL"
 key ]
 wait 800
 expect screen contains " beta 󰅀"
-expect screen contains "󰄬 󰘬 dev"
+expect screen contains "󱓏 dev"
 expect screen lacks " alpha 󰅀"
 key ]
 wait 800
 expect screen contains " alpha 󰅀"
-expect screen contains "󰄬 󰘬 main"
+expect screen contains "󱓏 main"
 key [
 wait 800
 expect screen contains " beta 󰅀"

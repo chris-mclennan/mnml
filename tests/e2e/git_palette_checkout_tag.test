@@ -21,4 +21,4 @@ expect screen contains "Checkout tag v1? (detached HEAD)"
 key y
 wait 1500
 expect file .git/HEAD lacks "refs/heads"
-expect screen lacks "󰄬 󰘬 main"
+expect screen lacks "󱓏 main"
