@@ -55,6 +55,14 @@ jobs:
         shell: bash
         run: zig build --summary failures
 
+      # A string that dies at the next frame reaching a consumer that
+      # outlives the frame (a menu label, a prompt title, a confirm
+      # message, the screen's grapheme slices). `zig build test` runs the
+      # same audit as a unit test; this step names the sites on failure.
+      - name: zig build arena-audit (no frame-arena string outlives its frame)
+        shell: bash
+        run: zig build arena-audit --summary failures
+
       # Every spec id has a runner (D5): `-Dpartial=false` turns a missing
       # runner into a compile error.
       - name: zig build -Dpartial=false (every command id has a runner)
