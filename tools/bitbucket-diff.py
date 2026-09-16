@@ -23,14 +23,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 
 SCREENS = [
-    # name, rust steps (after the first paint), zig keys, family
-    ("open-tree", ["key:e"], ["e"], "prs"),
-    ("open-show-all", ["key:e", "key:G", "key:enter"], ["e", "shift+g", "enter"], "prs"),
-    ("merged-tree", ["key:m", "settle:800", "key:e"], ["m", "e"], "prs"),
-    ("merged-pr-pipeline", ["key:m", "settle:800", "key:e", "key:j", "key:enter", "untilnot:fetching pipeline"], ["m", "e", "j", "enter"], "prs"),
-    ("detail", ["key:e", "key:j", "key:d", "until:comments ("], ["e", "j", "d"], "prs"),
-    ("pipelines-tree", ["key:e"], ["e"], "pipelines"),
-    ("mine", [], [], "mine"),
+    # name, rust steps (after the first paint), zig keys, family, size
+    # (the reference drops its right-hand pipeline chips below ~130
+    # columns — its own overflow rule — so that screen runs wider),
+    # the fact prefix to compare (None: every fact; the detail screen
+    # compares the detail's own lines, since the reference squeezes the
+    # list beside it to unreadable columns).
+    ("open-tree", ["key:e"], ["e"], "prs", None, None),
+    ("open-show-all", ["key:e", "key:G", "key:enter"], ["e", "shift+g", "enter"], "prs", None, None),
+    ("merged-tree", ["key:m", "settle:800", "key:e"], ["m", "e"], "prs", None, None),
+    ("merged-pr-pipeline", ["key:m", "settle:800", "key:e", "key:j", "key:enter", "untilnot:fetching pipeline"], ["m", "e", "j", "enter"], "prs", None, None),
+    ("detail", ["key:e", "key:j", "key:d", "until:comments ("], ["e", "j", "d"], "prs", None, "detail:"),
+    ("pipelines-tree", ["key:e"], ["e"], "pipelines", "160x40", None),
+    ("mine", [], [], "mine", None, None),
 ]
 
 STATE_WORDS = {"OPEN", "MERGED", "DECLINED", "SUPERSEDED", "DRAFT", "COMPLETED", "PENDING", "IN_PROGRESS", "SUCCESSFUL", "FAILED", "STOPPED", "HALTED", "ERROR"}
@@ -88,7 +93,9 @@ def facts(text):
         for key in ("not approved", "you approved", "comments (", "(no description)"):
             if key in s:
                 out.add(f"detail:{key}")
-        if re.search(r"\bAuthor(: [^▾]+)? ▾", s) or re.search(r"\bauthor: \S", s):
+        # `[ Author ▾ ]` / `[ Author: Chris M ▾ ]` (the chevron is `v`
+        # after the normalisation above) and the Zig `author: all`.
+        if re.search(r"\[ Author(: [^\]]+?)? v \]", s) or re.search(r"\bauthor: \S", s):
             out.add("chip:author")
         if "Refresh" in s or "" in s or "󰑐" in s:
             out.add("chip:refresh")
@@ -190,10 +197,17 @@ def main():
             time.sleep(0.1)
         fake_url = open(url_file).read().strip()
         total = 0
-        for name, rsteps, zkeys, family in SCREENS:
+        for name, rsteps, zkeys, family, size, prefix in SCREENS:
+            saved = args.size
+            if size:
+                args.size = size
             rust = run_rust(args, tmp, fake_url, family, rsteps, out_dir, name)
             zig = run_zig(args, tmp, url_file, family, zkeys, out_dir, name)
+            args.size = saved
             rf, zf = facts(rust), facts(zig)
+            if prefix:
+                rf = {f for f in rf if f.startswith(prefix)}
+                zf = {f for f in zf if f.startswith(prefix)}
             only_rust = sorted(rf - zf)
             only_zig = sorted(zf - rf)
             n = len(only_rust) + len(only_zig)
