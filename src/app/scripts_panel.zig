@@ -79,6 +79,16 @@ pub const Sort = enum {
             .state => "State",
         };
     }
+
+    pub const all = [_]Sort{ .name, .source, .state };
+
+    /// Widest label, in code points — the header chip pads to it so it
+    /// never resizes under a repeat-clicking pointer.
+    pub const widest_label: usize = blk: {
+        var w: usize = 0;
+        for (all) |m| w = @max(w, std.unicode.utf8CountCodepoints(m.label()) catch unreachable);
+        break :blk w;
+    };
 };
 
 pub const State = struct {
@@ -419,6 +429,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .filter_caret = st.panel.filter_caret,
         .filter_focused = st.panel.filter_focused,
         .sort_label = st.sort.label(),
+        .sort_widest = Sort.widest_label,
         .rows = entries,
         .scroll = &st.panel.scroll,
         .cursor = st.panel.cursor,
@@ -931,6 +942,11 @@ test "SCRIPTS: three tabs — Installed lists init.lua and each script, Marketpl
     // The shipped default `tree_width = 30` leaves 26 cells, which is
     // the compact tier: `Inst (2) Mkt (1)  <dev glyph> (1)`.
     try t.expect(std.mem.indexOf(u8, txt, "Inst (2) Mkt (1)") != null);
+    // The sort control is the header's chip — the icon rung at 26 cells
+    // — never a pill at the right end of the filter row, which is what
+    // this section used to paint and no other section does.
+    try t.expect(std.mem.indexOf(u8, txt, "A-Z") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "\u{F0349} / filter") != null);
     try t.expect(std.mem.indexOf(u8, txt, "init.lua") != null);
     try t.expect(std.mem.indexOf(u8, txt, "blamer") != null);
     try t.expect(std.mem.indexOf(u8, txt, "1.2.0") != null);
@@ -942,6 +958,9 @@ test "SCRIPTS: three tabs — Installed lists init.lua and each script, Marketpl
     txt = try screenText(&app);
     try t.expect(std.mem.indexOf(u8, txt, "Installed (2) Marketplace (1)") != null);
     try t.expect(std.mem.indexOf(u8, txt, "~ Community") != null);
+    // Wide enough, the chip's full rung reads ` sort: A-Z    ` — padded
+    // to `State` / `Source`, the widest labels, so it never resizes.
+    try t.expect(std.mem.indexOf(u8, txt, " sort: A-Z    ") != null);
     t.allocator.free(txt);
     app.tree.width = 30;
 

@@ -84,6 +84,24 @@ pub fn rowStyle(t: *const Theme, selected: bool) Style {
     return if (selected) Theme.onBg(t.panel_bg, t.cursor_line.bg) else t.panel_bg;
 }
 
+/// The selection gutter down the WHOLE of `r` — one marker cell per row
+/// of the item, the accent when the panel has the keys and muted when
+/// it does not. `ground` is the row's fill, so the marker keeps the
+/// cursor-line background under it.
+///
+/// // changed (panel-consistency): an item taller than one row painted
+/// its gutter on the first row alone, so SCRIPTS' and INTEGRATIONS'
+/// two-row entries showed a half-height bar. The height is the knob:
+/// every caller hands the item's whole rect, one row or four.
+pub fn paintMarker(ui: Ui, r: Rect, ground: Style, focused: bool) void {
+    if (r.w == 0) return;
+    const t = ui.theme;
+    const marker = if (ui.ascii) marker_ascii else marker_glyph;
+    const style = Theme.withFg(ground, if (focused) t.accent.fg else t.muted.fg);
+    var y: u16 = 0;
+    while (y < r.h) : (y += 1) _ = ui.putStr(r.x, r.y + y, marker_w, marker, style);
+}
+
 /// How long ago `then_s` was, in one short token: `now`, `5m`, `3h`,
 /// `2d`, `6w`, `4mo`, `2y`. On the frame arena; a future stamp is `now`.
 pub fn ageText(ui: Ui, now_s: i64, then_s: i64) []const u8 {
@@ -279,11 +297,7 @@ pub fn ListPanel(comptime Row: type) type {
                     rest = nr.rest;
                     const style = rowStyle(t, st.on_new);
                     ui.fill(row_rect, style);
-                    if (st.on_new) {
-                        const marker = if (ui.ascii) marker_ascii else marker_glyph;
-                        const mstyle = Theme.withFg(style, if (focused) t.accent.fg else t.muted.fg);
-                        _ = ui.putStr(row_rect.x, row_rect.y, marker_w, marker, mstyle);
-                    }
+                    if (st.on_new) paintMarker(ui, row_rect, style, focused);
                     const text = ui.fmt(" {s} ", .{label});
                     const cw = @min(ui.width(text), row_rect.w -| 1);
                     if (cw > 0) {
@@ -340,11 +354,9 @@ pub fn ListPanel(comptime Row: type) type {
                 var content = row_rect;
                 if (!p.own_marker) {
                     ui.fill(row_rect, style);
-                    if (selected) {
-                        const marker = if (ui.ascii) marker_ascii else marker_glyph;
-                        const mstyle = Theme.withFg(style, if (focused) t.accent.fg else t.muted.fg);
-                        _ = ui.putStr(row_rect.x, row_rect.y, marker_w, marker, mstyle);
-                    }
+                    // The gutter runs the item's whole height, not its
+                    // first row (`paintMarker`).
+                    if (selected) paintMarker(ui, row_rect, style, focused);
                     content = row_rect.splitLeft(marker_w).rest;
                 }
                 const hovered = p.has_kebab and ui.hovered(row_rect);
@@ -837,6 +849,27 @@ test "the + New row: under the filter with a blank row after it, in the empty an
     _ = Todos.draw(&st, g.ui(), g.full(), p);
     try g.expectRow(3, "  + N…");
     for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
+}
+
+test "a multi-row item keeps its gutter on every row, not the first alone" {
+    var f = try Fixture.init(30, 10);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = try forty(f.arena_state.allocator());
+    var p = props(rows);
+    p.row_h = 2;
+    p.has_kebab = false;
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    // Item 0 is selected: the marker is on BOTH of its rows and the
+    // cursor-line ground runs under both.
+    try testing.expectEqualStrings(marker_glyph, f.cell(0, 2).char.grapheme);
+    try testing.expectEqualStrings(marker_glyph, f.cell(0, 3).char.grapheme);
+    try testing.expect(f.bgEql(5, 2, f.theme.cursor_line));
+    try testing.expect(f.bgEql(5, 3, f.theme.cursor_line));
+    // Item 1 is not: neither of its rows carries one.
+    try testing.expect(!std.mem.eql(u8, marker_glyph, f.cell(0, 4).char.grapheme));
+    try testing.expect(!std.mem.eql(u8, marker_glyph, f.cell(0, 5).char.grapheme));
 }
 
 /// A four-row card: the marker down `x + 1` (accent when selected), the

@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS            │ 󰐕                                                                            󱸀      
+   │ INTEGRATIONS           │ 󰐕                                                                            󱸀      
   │ Inst (4) Mkt (0)         │
-   │  󰍉 / filter        A-Z ▾ │
+   │  󰍉 / filter              │
  󰍉 │                          │
    │▌  Browser  first-party  │
- 󰊢 │    browser.open          │
+ 󰊢 │▌   browser.open          │
    │                          │
   │  󱸀 Claude Code (hidden)  │
    │    not logged in         │

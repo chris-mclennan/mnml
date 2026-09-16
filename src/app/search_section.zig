@@ -37,6 +37,7 @@ const hit = @import("../ui/hit.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const chip = @import("../ui/chip.zig");
 const text_field = @import("../ui/text_field.zig");
+const filter_input = @import("../ui/filter_input.zig");
 const view = @import("../ui/search_section_view.zig");
 const grep = @import("grep.zig");
 const find_mod = @import("find.zig");
@@ -61,10 +62,18 @@ pub const table = .{
     .@"search.open_pane" = &openPaneCmd,
 };
 
-/// Rows the panel leaves under its header for the query, the status
-/// and their air: a blank row, ` / query`, `N hits (…)`, a blank row —
-/// Rust's rows 1–4.
+/// Rows the panel leaves under its header for the query pill, the
+/// status and their air: the pill, a blank row, `N hits (…)`, a blank
+/// row.
+/// // changed (panel-consistency): the pill was the THIRD row with a
+/// blank above it; every other section puts its input on row 1 with
+/// the air below. The count is unchanged, so the list starts where it
+/// did.
 pub const prelude_rows: u16 = 4;
+
+/// Rows inside the prelude, from the header down.
+const query_row: u16 = 1;
+const status_row: u16 = 3;
 
 pub const Group = struct {
     rel: []const u8,
@@ -657,11 +666,20 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .prelude_rows = prelude_rows,
     });
     if (area.h > 0) view.drawFlags(ui, area.row(0), st.flags, ui.width(chip.refreshIcon(ui.ascii)));
-    if (area.h > 2) {
-        const caret = view.drawQuery(ui, area.row(2), .{ .text = st.query.items, .caret = st.caret, .focused = st.query_focused and focused });
+    // The query is the shared filter pill — the same widget, glyph and
+    // grey band SESSIONS and every other section paint on this row.
+    if (area.h > query_row) {
+        const caret = filter_input.draw(ui, area.row(query_row), .{
+            .panel = .search,
+            .text = st.query.items,
+            .caret = st.caret,
+            .focused = st.query_focused and focused,
+            .bg = ui.theme.panel_bg,
+            .noun = "search",
+        });
         if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
     }
-    if (area.h > 3) view.drawStatus(ui, area.row(3), statusText(ui, st));
+    if (area.h > status_row) view.drawStatus(ui, area.row(status_row), statusText(ui, st));
     if (st.loading) list_panel.paintSpinner(ui, area, "SEARCH", app.now_ms);
 }
 
@@ -760,7 +778,9 @@ test "view.activity_search: the section takes the column with the query focused;
     var txt = try f.screen();
     try t.expect(std.mem.indexOf(u8, txt, " SEARCH") != null);
     try t.expect(std.mem.indexOf(u8, txt, "Aa \\b .*") != null);
-    try t.expect(std.mem.indexOf(u8, txt, " / \u{2588}") != null);
+    // The input is the shared filter pill, not a bare ` / ` run: the
+    // magnify glyph and the `type to search…` placeholder.
+    try t.expect(std.mem.indexOf(u8, txt, "\u{F0349} type to search\u{2026}") != null);
     try t.expect(std.mem.indexOf(u8, txt, "Enter to run") != null);
     t.allocator.free(txt);
     try f.typeQuery("alpha");
@@ -780,10 +800,13 @@ test "view.activity_search: the section takes the column with the query focused;
     txt = try f.screen();
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, " 4 hits (git grep)") != null);
-    try t.expect(std.mem.indexOf(u8, txt, " / alpha\u{2588}") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "\u{F0349} alpha") != null);
     try t.expect(std.mem.indexOf(u8, txt, "src/a.zig") != null);
     try t.expect(std.mem.indexOf(u8, txt, "1:7  const alpha = 1;") != null);
-    // Rust's shape: the header, a blank row, the query, the status, a blank row, the rows.
+    // The shape every section shares: the caps title, the input pill,
+    // a BLANK row under it, the status, a blank row, the rows. The
+    // pill was the third row with the blank above it — the deviation
+    // the panel-consistency pass fixed.
     var lines = std.mem.splitScalar(u8, txt, '\n');
     var y: usize = 0;
     var header_y: ?usize = null;
@@ -793,9 +816,17 @@ test "view.activity_search: the section takes the column with the query focused;
     lines.reset();
     y = 0;
     while (lines.next()) |l| : (y += 1) {
-        if (y == header_y.? + 2) try t.expect(std.mem.indexOf(u8, l, " / alpha") != null);
-        if (y == header_y.? + 3) try t.expect(std.mem.indexOf(u8, l, "4 hits (git grep)") != null);
-        if (y == header_y.? + 5) try t.expect(std.mem.indexOf(u8, l, "src/a.zig") != null or std.mem.indexOf(u8, l, "notes.md") != null or std.mem.indexOf(u8, l, "b.txt") != null);
+        if (y == header_y.? + 1) {
+            try t.expect(std.mem.indexOf(u8, l, "\u{F0349} alpha") != null);
+        } else if (y == header_y.? + 2) {
+            // The air under the pill: neither the input nor the status.
+            try t.expect(std.mem.indexOf(u8, l, "\u{F0349}") == null);
+            try t.expect(std.mem.indexOf(u8, l, "hits (") == null);
+        } else if (y == header_y.? + 3) {
+            try t.expect(std.mem.indexOf(u8, l, "4 hits (git grep)") != null);
+        } else if (y == header_y.? + 5) {
+            try t.expect(std.mem.indexOf(u8, l, "src/a.zig") != null or std.mem.indexOf(u8, l, "notes.md") != null or std.mem.indexOf(u8, l, "b.txt") != null);
+        }
     }
     // The pane door: the same query in a grep pane, which walks (rg / the walk — never git).
     try command.run(app, .{ .static = .@"search.open_pane" });

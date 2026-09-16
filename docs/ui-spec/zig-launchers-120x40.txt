@@ -1,7 +1,7 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS            │ 󰐕                                                                            󱸀      
+   │ INTEGRATIONS           │ 󰐕                                                                            󱸀      
   │ Inst (1) Mkt (4)         │
-   │  󰍉 / filter        A-Z ▾ │
+   │  󰍉 / filter              │
  󰍉 │                          │
    │  FONTS · latest Nerd Fon…│
  󰊢 │    JetBrainsMono Nerd F…│
@@ -9,7 +9,7 @@
   │    Symbols Nerd Font  v…│
    │                          │
 ▌󰐱 │▌ 󰫯  [installed] btop  ✓ O│
-   │    Resource monitor (cpu…│                                                            _
+   │▌   Resource monitor (cpu…│                                                            _
  󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
    │  󱴀  [launcher] htop  ✓ Of│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
   │    Interactive process v…│                           | | | | | | | | | | | | | | | | | |

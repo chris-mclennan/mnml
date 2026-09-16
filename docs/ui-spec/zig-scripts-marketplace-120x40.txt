@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ SCRIPTS                 │ 󰐕                                                                            󱸀      
+   │ SCRIPTS                │ 󰐕                                                                            󱸀      
   │ Inst (1) Mkt (5)  (1)   │
-   │  󰍉 / filter        A-Z ▾ │
+   │  󰍉 / filter              │
  󰍉 │                          │
    │▌ eslint  1.0.0  ✓ Officia│
- 󰊢 │    Runs eslint on save a…│
+ 󰊢 │▌   Runs eslint on save a…│
    │                          │
   │  git-blame-line  1.0.0  ✓│
    │    Who last touched the …│

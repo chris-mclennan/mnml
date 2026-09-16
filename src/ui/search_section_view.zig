@@ -1,10 +1,15 @@
 //! The SEARCH section's painters (`app/search_section.zig` owns the
 //! state): the three header flags — ` Aa` ` \b` ` .*`, Rust's
 //! `draw_search_section` chips, right-aligned before the refresh glyph
-//! — the query row (` / query█`), the status row (`16 hits (git grep)`)
-//! and the list rows a `ListPanel(Row)` hands here: a file header in
-//! the accent, a hit as `  12:5  the line` with the match lit. Every
-//! target registers in the statement that paints it (D6).
+//! — the status row (`16 hits (git grep)`) and the list rows a
+//! `ListPanel(Row)` hands here: a file header in the accent, a hit as
+//! `  12:5  the line` with the match lit. Every target registers in the
+//! statement that paints it (D6).
+//!
+//! // changed (panel-consistency): the query is `ui/filter_input.zig`'s
+//! pill now — the same widget, glyph and grey band every other section
+//! puts on its second row — instead of this file's own bare ` / query█`
+//! run, which put a blank row where the input belonged.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -56,9 +61,6 @@ pub const File = struct { rel: []const u8, count: u32, collapsed: bool };
 
 pub const Row = union(enum) { file: File, hit: grep.Hit };
 
-/// The query row's leader — Rust's ` / ` in the accent.
-pub const query_lead = " / ";
-
 /// The flags on the header row, right-aligned before `refresh_w` cells
 /// of refresh chip (one cell of air between): an active flag paints
 /// bold on the accent (Rust: `fg = bg, bg = yellow, BOLD`), an inactive
@@ -83,36 +85,6 @@ pub fn drawFlags(ui: Ui, header: Rect, flags: grep.Flags, refresh_w: u16) void {
         ui.hit(r, .{ .search_chip = f });
         x += chip_w;
     }
-}
-
-pub const QueryProps = struct {
-    text: []const u8,
-    caret: usize,
-    focused: bool,
-};
-
-/// ` / ` then the query as a text field; focused, the caret's cell is
-/// returned for the terminal cursor and — with the caret at the end,
-/// where Rust's always is — a `█` is painted after the text, so a
-/// screen dump reads as Rust's does. The row is one `.filter_input`
-/// target: a press focuses the query.
-pub fn drawQuery(ui: Ui, row: Rect, p: QueryProps) ?Caret {
-    const t = ui.theme;
-    if (row.h == 0 or row.w == 0) return null;
-    ui.fill(row, t.panel_bg);
-    ui.hit(row, .{ .filter_input = .search });
-    const lead_w = ui.putStr(row.x, row.y, row.w, query_lead, Theme.onBg(t.accent, t.panel_bg.bg));
-    // Room for the block after the text.
-    const field = Rect.init(row.x + lead_w, row.y, row.w -| lead_w -| 1, 1);
-    const caret = text_field.draw(ui, field, p.text, p.caret, .{
-        .style = Theme.onBg(t.fg, t.panel_bg.bg),
-        .focused = p.focused,
-    });
-    if (p.focused and p.caret >= p.text.len) {
-        const tw = ui.width(p.text);
-        if (tw < field.w) _ = ui.putStr(field.x + tw, row.y, 1, if (ui.ascii) "_" else "\u{2588}", Theme.onBg(t.accent, t.panel_bg.bg));
-    }
-    return caret;
 }
 
 /// The status row: muted and dim, as Rust's.
@@ -166,23 +138,6 @@ test "flags: three chips before the refresh glyph, the active one on the accent,
     defer g.deinit();
     drawFlags(g.ui(), g.full(), .{}, 3);
     try testing.expect(g.hits.at(10, 0) == null);
-}
-
-test "query row: the leader, the text, the block after it when focused at the end; the row is one filter_input hit" {
-    var f = try Fixture.init(26, 1);
-    defer f.deinit();
-    const caret = drawQuery(f.ui(), f.full(), .{ .text = "toggle", .caret = 6, .focused = true });
-    try f.expectRow(0, " / toggle\u{2588}");
-    try testing.expectEqual(@as(u16, 9), caret.?.x);
-    try testing.expectEqual(list_panel.PanelId.search, f.hits.at(4, 0).?.filter_input);
-    var g = try Fixture.init(26, 1);
-    defer g.deinit();
-    _ = drawQuery(g.ui(), g.full(), .{ .text = "toggle", .caret = 2, .focused = true });
-    try g.expectRow(0, " / toggle");
-    var h = try Fixture.init(26, 1);
-    defer h.deinit();
-    try testing.expect(drawQuery(h.ui(), h.full(), .{ .text = "toggle", .caret = 6, .focused = false }) == null);
-    try h.expectRow(0, " / toggle");
 }
 
 test "rows: a file header is its path; folded it leads with the expander and ends with the count; a hit is line:col and the line" {

@@ -25,17 +25,20 @@ pub const Caret = text_field.Caret;
 pub const glyph_nerd = "\u{F0349}";
 pub const glyph_ascii = "/";
 
-pub const placeholder_unfocused = "/ filter";
-pub const placeholder_focused = "type to filter…";
-pub const placeholder_focused_ascii = "type to filter...";
+/// The word the placeholder names. Every list panel filters, so
+/// `filter` is the default; SEARCH runs a grep, so its pill says
+/// `search` in the same widget rather than lying about what Enter does.
+pub const default_noun = "filter";
 
 pub fn glyph(ui: Ui) []const u8 {
     return if (ui.ascii or !ui.nerd_font) glyph_ascii else glyph_nerd;
 }
 
-pub fn placeholder(ui: Ui, focused: bool) []const u8 {
-    if (!focused) return placeholder_unfocused;
-    return if (ui.ascii) placeholder_focused_ascii else placeholder_focused;
+/// `/ <noun>` unfocused — the `/` is the key that focuses the pill —
+/// and `type to <noun>…` focused and empty. On the frame arena.
+pub fn placeholder(ui: Ui, focused: bool, noun: []const u8) []const u8 {
+    if (!focused) return ui.fmt("/ {s}", .{noun});
+    return ui.fmt("type to {s}{s}", .{ noun, if (ui.ascii) "..." else "\u{2026}" });
 }
 
 pub const Props = struct {
@@ -48,6 +51,9 @@ pub const Props = struct {
     /// // changed (sessions-merge): hosted by a pane, the pill's hit is
     /// the pane's `.script_hit` with `hit.ListHit.filter_id`.
     pane: ?hit.PaneId = null,
+    /// // changed (panel-consistency): what the placeholder calls the
+    /// thing being typed — `filter` everywhere but SEARCH.
+    noun: []const u8 = default_noun,
 };
 
 /// Paints the pill across `area` (one row, one cell of ground on each
@@ -67,7 +73,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) ?Caret {
     if (p.pane) |id| ui.hit(pill, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.filter_id } }) else ui.hit(pill, .{ .filter_input = p.panel });
     return text_field.draw(ui, field, p.text, p.caret, .{
         .style = style,
-        .placeholder = placeholder(ui, p.focused),
+        .placeholder = placeholder(ui, p.focused, p.noun),
         .focused = p.focused,
     });
 }
