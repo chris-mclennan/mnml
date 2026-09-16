@@ -529,19 +529,25 @@ pub const Painter = struct {
                         try p.hitAdd(.{ .x = cx, .y = y, .w = 2, .h = 1 }, .{ .chevron = idx });
                     }
                     _ = p.putFit(cx + 2, y, key_c.w -| 8, pr.status, prStyle(pr.status));
-                    // `[ Review ] [ Open ]` at the right end of the summary.
-                    const review_t = "[ Review ]";
-                    const open_t = "[ Open ]";
-                    const bw = text.width(review_t) + 1 + text.width(open_t);
+                    // The reference's chips at the right end of the summary:
+                    // `[ Review ] [ Merge ] [ Open ]` on an open PR, `[ Open ]`
+                    // on a merged or declined one — here every one a hit.
+                    const Btn = struct { label: []const u8, which: hit.PrButton };
+                    const open_set = [_]Btn{ .{ .label = "[ Review ]", .which = .review }, .{ .label = "[ Merge ]", .which = .merge }, .{ .label = "[ Open ]", .which = .open } };
+                    const closed_set = [_]Btn{.{ .label = "[ Open ]", .which = .open }};
+                    const set: []const Btn = if (pr.isOpen()) &open_set else &closed_set;
+                    var bw: u16 = 0;
+                    for (set) |b| bw += text.width(b.label) + 1;
                     var sw = @min(sum_c.w, w -| sum_c.x);
                     if (sw > bw + 12) {
-                        sw -= bw + 1;
-                        var bx = sum_c.x + sw + 1;
-                        _ = p.put(bx, y, text.width(review_t), review_t, chip_style);
-                        try p.hitAdd(.{ .x = bx, .y = y, .w = text.width(review_t), .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .review } });
-                        bx += text.width(review_t) + 1;
-                        _ = p.put(bx, y, text.width(open_t), open_t, chip_style);
-                        try p.hitAdd(.{ .x = bx, .y = y, .w = text.width(open_t), .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .open } });
+                        sw -= bw;
+                        var bx = sum_c.x + sw;
+                        for (set) |b| {
+                            const lw = text.width(b.label);
+                            _ = p.put(bx, y, lw, b.label, chip_style);
+                            try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
+                            bx += lw + 1;
+                        }
                     }
                     const title = if (pr.name.len > 0) pr.name else pr.url;
                     _ = p.putFit(sum_c.x, y, sw -| 1, title, base);
@@ -1352,6 +1358,12 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     const r6 = try rowText(ar, &f, 6);
     try testing.expect(std.mem.indexOf(u8, r6, "MERGED") != null);
     try testing.expect(std.mem.indexOf(u8, r6, "[ Open ]") != null);
+    try testing.expect(std.mem.indexOf(u8, r6, "[ Merge ]") == null);
+    const r7 = try rowText(ar, &f, 7);
+    try testing.expect(std.mem.indexOf(u8, r7, "OPEN") != null);
+    try testing.expect(std.mem.indexOf(u8, r7, "[ Review ] [ Merge ] [ Open ]") != null);
+    const merge_x = (try colOfText(ar, &f, 7, "[ Merge ]")).?;
+    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .merge } }, a.hits.at(merge_x + 2, 7).?);
     // The hint row comes from the bindings, not a string.
     const last = try rowText(ar, &f, 39);
     try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select for a bulk action") != null);
