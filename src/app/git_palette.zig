@@ -1044,115 +1044,186 @@ pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
     app.toast("worktree: {s} added to the workspace", .{w.path});
 }
 
-/// The row's menu.
+/// One row menu's rows as they are built: the labels on the arena the
+/// menu will own, every act carrying the row's repo.
+const MenuBuilder = struct {
+    items: std.ArrayListUnmanaged(MenuItem) = .empty,
+    a: Allocator,
+    gpa: Allocator,
+    repo: ?u32,
+
+    fn fmt(b: *MenuBuilder, comptime f: []const u8, args: anytype) Allocator.Error![]const u8 {
+        return std.fmt.allocPrint(b.a, f, args);
+    }
+
+    fn act(b: *MenuBuilder, label: []const u8, what: command.GitPaletteWhat, idx: u32, sep: bool) Allocator.Error!void {
+        try b.items.append(b.gpa, .{ .label = label, .action = .{ .git_palette = .{ .what = what, .idx = idx, .repo = b.repo } }, .separator_before = sep });
+    }
+};
+
+/// The row menus (a right-click, `m`, `contextMenuAtFocus`). Built from
+/// the row under the pointer — `idx` is the hit's index into this
+/// frame's rows — never from the cursor, which stays where it is. One
+/// shape per row kind, whatever the cursor, the tree on show, the main
+/// tree or All repos say: a row a verb cannot take says so when the
+/// verb runs rather than losing the row (the kinds: a local branch, the
+/// checked-out local branch, a remote, a remote branch, a worktree, a
+/// session's worktree, a stash, a tag, a section header, a repo
+/// sub-header). The labels live on an arena the menu owns — the frame's
+/// is reused by the next paint, which scribbled over them. Under All
+/// repos the row's repo rides on every act (`GitPaletteAct.repo`) and
+/// the rows are read from that repo's parked rail: opening the menu
+/// switches nothing; running a row does.
 pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
     const gpa = app.gpa;
     const gs = &app.git;
-    const arena = app.frame.allocator();
-    const row = (try rowAt(app, idx)) orelse return;
-    try switchToRowRepo(app, idx);
-    switch (row) {
-        .branch => |b| {
-            const name = b.name;
-            const items: []const MenuItem = if (b.current) &.{
-                .{ .label = "New branch from here\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch, .idx = b.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = b.idx } } },
-                .{ .label = "Rename\u{2026}", .action = .{ .git_palette = .{ .what = .rename, .idx = b.idx } }, .separator_before = true },
-                .{ .label = "Fast-forward to upstream", .action = .{ .git_palette = .{ .what = .fast_forward, .idx = b.idx } } },
-                .{ .label = "Set upstream\u{2026}", .action = .{ .git_palette = .{ .what = .set_upstream, .idx = b.idx } } },
-                .{ .label = "Push --force-with-lease\u{2026}", .action = .{ .git_palette = .{ .what = .push_force, .idx = b.idx } }, .separator_before = true },
-                .{ .label = "Delete on the remote\u{2026}", .action = .{ .git_palette = .{ .what = .delete_remote, .idx = b.idx } } },
-            } else &.{
-                .{ .label = try std.fmt.allocPrint(arena, "Checkout {s}", .{name}), .action = .{ .git_palette = .{ .what = .checkout, .idx = b.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{name}), .action = .{ .git_palette = .{ .what = .merge, .idx = b.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Rebase current onto {s}", .{name}), .action = .{ .git_palette = .{ .what = .rebase, .idx = b.idx } } },
-                .{ .label = "New branch from here\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch, .idx = b.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = b.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{name}), .action = .{ .git_palette = .{ .what = .delete_branch, .idx = b.idx } } },
-                .{ .label = "Rename\u{2026}", .action = .{ .git_palette = .{ .what = .rename, .idx = b.idx } }, .separator_before = true },
-                .{ .label = "Fast-forward to upstream", .action = .{ .git_palette = .{ .what = .fast_forward, .idx = b.idx } } },
-                .{ .label = "Set upstream\u{2026}", .action = .{ .git_palette = .{ .what = .set_upstream, .idx = b.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Force checkout {s}\u{2026}", .{name}), .action = .{ .git_palette = .{ .what = .checkout_force, .idx = b.idx } } },
-                .{ .label = "Delete on the remote\u{2026}", .action = .{ .git_palette = .{ .what = .delete_remote, .idx = b.idx } } },
-                .{ .label = "Diff against current", .action = .{ .git_palette = .{ .what = .diff_current, .idx = b.idx } }, .separator_before = true },
-                .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
-                .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{name}), .action = .{ .command = .@"git.reset_mixed" } },
-                .{ .label = try std.fmt.allocPrint(arena, "Reset --hard to {s}\u{2026}", .{name}), .action = .{ .command = .@"git.reset_hard" } },
-            };
-            try app.openMenu(if (b.current) try std.fmt.allocPrint(arena, "\u{25CF} {s}", .{name}) else name, try gpa.dupe(MenuItem, items), x, y);
+    const st = &app.git_palette;
+    const list = try rows(app, app.frame.allocator());
+    if (idx >= list.len) {
+        app.toast("git: the row changed under the pointer \u{2014} try again", .{});
+        return;
+    }
+    const row = list[idx];
+    if (row == .gap) return;
+    const repo_idx: ?u32 = if (st.all) repoOfRow(list, idx) else null;
+    const v: RailView = if (repo_idx) |ri| railView(gs, ri) else if (gs.active) |ai| (if (ai < gs.repos.items.len) railView(gs, ai) else RailView{}) else RailView{};
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    errdefer mem.deinit();
+    var b: MenuBuilder = .{ .a = mem.allocator(), .gpa = gpa, .repo = repo_idx };
+    errdefer b.items.deinit(gpa);
+    const title: []const u8 = switch (row) {
+        .gap => unreachable,
+        .section => |s| blk: {
+            try b.act(if (s.collapsed) "Unfold" else "Fold", .fold, @intFromEnum(s.s), false);
+            try b.act("Refresh", .refresh, 0, false);
+            break :blk s.s.label();
         },
-        .remote_branch => |m| {
-            const items = try gpa.dupe(MenuItem, &.{
-                .{ .label = try std.fmt.allocPrint(arena, "Checkout {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .checkout, .idx = m.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Merge {s} into current", .{m.name}), .action = .{ .git_palette = .{ .what = .merge, .idx = m.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Rebase current onto {s}", .{m.name}), .action = .{ .git_palette = .{ .what = .rebase, .idx = m.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{m.name}), .action = .{ .git_palette = .{ .what = .copy_name, .idx = m.idx } } },
-                .{ .label = "Delete on the remote\u{2026}", .action = .{ .git_palette = .{ .what = .delete_remote, .idx = m.idx } }, .separator_before = true },
-                .{ .label = "Diff against current", .action = .{ .git_palette = .{ .what = .diff_current, .idx = m.idx } }, .separator_before = true },
-                .{ .label = try std.fmt.allocPrint(arena, "Reset --soft to {s}", .{m.name}), .action = .{ .command = .@"git.reset_soft" }, .separator_before = true },
-                .{ .label = try std.fmt.allocPrint(arena, "Reset --mixed to {s}", .{m.name}), .action = .{ .command = .@"git.reset_mixed" } },
-                .{ .label = try std.fmt.allocPrint(arena, "Reset --hard to {s}\u{2026}", .{m.name}), .action = .{ .command = .@"git.reset_hard" } },
-            });
-            try app.openMenu(m.name, items, x, y);
+        .repo => |r| blk: {
+            try b.act(try b.fmt("Show only {s}", .{r.name}), .switch_repo, r.idx, false);
+            try b.act("Refresh", .refresh, 0, false);
+            break :blk r.name;
         },
-        .remote => |r| {
-            var items: std.ArrayListUnmanaged(MenuItem) = .empty;
-            errdefer items.deinit(gpa);
-            try items.append(gpa, .{ .label = "Fetch", .action = .{ .git_palette = .{ .what = .remote_fetch, .idx = r.idx } } });
-            if (r.idx < gs.rail_remotes.len) try items.append(gpa, .{ .label = "Copy URL", .action = .{ .git_palette = .{ .what = .remote_copy_url, .idx = r.idx } } });
-            try app.openMenu(r.name, try items.toOwnedSlice(gpa), x, y);
+        .branch => |br| blk: {
+            const name = br.name;
+            if (br.current) {
+                try b.act("New branch from here\u{2026}", .new_branch, br.idx, false);
+                try b.act(try b.fmt("Copy name ({s})", .{name}), .copy_name, br.idx, false);
+                try b.act("Rename\u{2026}", .rename, br.idx, true);
+                try b.act("Fast-forward to upstream", .fast_forward, br.idx, false);
+                try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
+                try b.act("Push --force-with-lease\u{2026}", .push_force, br.idx, true);
+                try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
+                break :blk try b.fmt("\u{25CF} {s}", .{name});
+            }
+            try b.act(try b.fmt("Checkout {s}", .{name}), .checkout, br.idx, false);
+            try b.act(try b.fmt("Merge {s} into current", .{name}), .merge, br.idx, false);
+            try b.act(try b.fmt("Rebase current onto {s}", .{name}), .rebase, br.idx, false);
+            try b.act("New branch from here\u{2026}", .new_branch, br.idx, false);
+            try b.act(try b.fmt("Copy name ({s})", .{name}), .copy_name, br.idx, false);
+            try b.act(try b.fmt("Delete {s}\u{2026}", .{name}), .delete_branch, br.idx, false);
+            try b.act("Rename\u{2026}", .rename, br.idx, true);
+            try b.act("Fast-forward to upstream", .fast_forward, br.idx, false);
+            try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
+            try b.act(try b.fmt("Force checkout {s}\u{2026}", .{name}), .checkout_force, br.idx, false);
+            try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
+            try b.act("Diff against current", .diff_current, br.idx, true);
+            try b.act(try b.fmt("Reset --soft to {s}", .{name}), .reset_soft, br.idx, true);
+            try b.act(try b.fmt("Reset --mixed to {s}", .{name}), .reset_mixed, br.idx, false);
+            try b.act(try b.fmt("Reset --hard to {s}\u{2026}", .{name}), .reset_hard, br.idx, false);
+            break :blk name;
         },
-        .worktree => |w| {
-            if (w.idx >= gs.rail_worktrees.len) return;
-            const wt = gs.rail_worktrees[w.idx];
-            var items: std.ArrayListUnmanaged(MenuItem) = .empty;
-            errdefer items.deinit(gpa);
-            try items.append(gpa, .{ .label = "Open", .action = .{ .git_palette = .{ .what = .worktree_open, .idx = w.idx } } });
-            try items.append(gpa, .{ .label = "Open shell here", .action = .{ .git_palette = .{ .what = .worktree_shell, .idx = w.idx } } });
-            try items.append(gpa, .{ .label = "Copy path", .action = .{ .git_palette = .{ .what = .worktree_copy_path, .idx = w.idx } } });
-            try items.append(gpa, .{ .label = "New worktree\u{2026}", .action = .{ .command = .@"git.worktree_add" } });
+        .remote_branch => |m| blk: {
+            try b.act(try b.fmt("Checkout {s}", .{m.name}), .checkout, m.idx, false);
+            try b.act(try b.fmt("Merge {s} into current", .{m.name}), .merge, m.idx, false);
+            try b.act(try b.fmt("Rebase current onto {s}", .{m.name}), .rebase, m.idx, false);
+            try b.act(try b.fmt("Copy name ({s})", .{m.name}), .copy_name, m.idx, false);
+            try b.act("Delete on the remote\u{2026}", .delete_remote, m.idx, true);
+            try b.act("Diff against current", .diff_current, m.idx, true);
+            try b.act(try b.fmt("Reset --soft to {s}", .{m.name}), .reset_soft, m.idx, true);
+            try b.act(try b.fmt("Reset --mixed to {s}", .{m.name}), .reset_mixed, m.idx, false);
+            try b.act(try b.fmt("Reset --hard to {s}\u{2026}", .{m.name}), .reset_hard, m.idx, false);
+            break :blk m.name;
+        },
+        .remote => |r| blk: {
+            // A prefix no `git remote` names (a branch `fork/x` without
+            // a remote `fork`) has no URL: the row stays, the copy says so.
+            try b.act("Fetch", .remote_fetch, r.idx, false);
+            try b.act("Copy URL", .remote_copy_url, r.idx, false);
+            break :blk r.name;
+        },
+        .worktree => |w| blk: {
+            if (w.idx >= v.worktrees.len) {
+                app.toast("git: the row changed under the pointer \u{2014} try again", .{});
+                return;
+            }
+            const wt = v.worktrees[w.idx];
+            try b.act("Open this worktree", .worktree_open, w.idx, false);
+            try b.act("Open shell here", .worktree_shell, w.idx, false);
+            try b.act("Copy path", .worktree_copy_path, w.idx, false);
+            try b.act("New worktree\u{2026}", .worktree_new, w.idx, false);
             // sessions-worktree: a session's tree merges and removes
             // through the session verbs (the branch goes with it).
             if (app.sessions.worktrees.byPath(wt.path)) |e| {
-                const into = session_worktree.currentBranch(app, arena, e.repo) catch "HEAD";
-                try items.append(gpa, .{ .label = try std.fmt.allocPrint(arena, "Merge into {s}\u{2026}", .{into}), .action = .{ .git_palette = .{ .what = .session_merge, .idx = w.idx } }, .separator_before = true });
-                try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .session_remove, .idx = w.idx } } });
-            } else if (!w.main and !w.current) try items.append(gpa, .{ .label = "Remove worktree\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_remove, .idx = w.idx } } });
-            try app.openMenu(try std.fmt.allocPrint(arena, "{s}  {s}", .{ wt.label(), wt.path }), try items.toOwnedSlice(gpa), x, y);
+                const into = session_worktree.currentBranch(app, b.a, e.repo) catch "HEAD";
+                try b.act(try b.fmt("Merge into {s}\u{2026}", .{into}), .session_merge, w.idx, true);
+                try b.act("Remove worktree and delete branch\u{2026}", .session_remove, w.idx, false);
+            } else {
+                // The main tree and the tree on show keep the row; the
+                // verb refuses them by name.
+                try b.act("Remove this worktree\u{2026}", .worktree_remove, w.idx, true);
+            }
+            break :blk try b.fmt("{s}  {s}", .{ wt.label(), wt.path });
         },
-        .stash => |s| {
-            if (s.idx >= gs.rail_stashes.len) return;
-            const items = try gpa.dupe(MenuItem, &.{
-                .{ .label = "Show files (Enter)", .action = .{ .git_palette = .{ .what = .stash_show, .idx = s.idx } } },
-                .{ .label = "Apply (keep)", .action = .{ .git_palette = .{ .what = .stash_apply, .idx = s.idx } }, .separator_before = true },
-                .{ .label = "Pop (apply + drop)", .action = .{ .git_palette = .{ .what = .stash_pop, .idx = s.idx } } },
-                .{ .label = "Drop\u{2026}", .action = .{ .git_palette = .{ .what = .stash_drop, .idx = s.idx } } },
-                .{ .label = "Branch from stash\u{2026}", .action = .{ .git_palette = .{ .what = .stash_branch, .idx = s.idx } }, .separator_before = true },
-                .{ .label = "Rename\u{2026}", .action = .{ .git_palette = .{ .what = .stash_rename, .idx = s.idx } } },
-            });
-            try app.openMenu(try std.fmt.allocPrint(arena, "{s} {s}", .{ gs.rail_stashes[s.idx].ref, s.message }), items, x, y);
+        .stash => |sh| blk: {
+            if (sh.idx >= v.stashes.len) {
+                app.toast("git: the row changed under the pointer \u{2014} try again", .{});
+                return;
+            }
+            try b.act("Show files (Enter)", .stash_show, sh.idx, false);
+            try b.act("Apply (keep)", .stash_apply, sh.idx, true);
+            try b.act("Pop (apply + drop)", .stash_pop, sh.idx, false);
+            try b.act("Drop\u{2026}", .stash_drop, sh.idx, false);
+            try b.act("Branch from stash\u{2026}", .stash_branch, sh.idx, true);
+            try b.act("Rename\u{2026}", .stash_rename, sh.idx, false);
+            break :blk try b.fmt("{s} {s}", .{ v.stashes[sh.idx].ref, sh.message });
         },
-        .tag => |t| {
-            const items = try gpa.dupe(MenuItem, &.{
-                .{ .label = try std.fmt.allocPrint(arena, "Checkout {s} (detached)", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_checkout, .idx = t.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Copy name ({s})", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_copy, .idx = t.idx } } },
-                .{ .label = try std.fmt.allocPrint(arena, "Delete {s}\u{2026}", .{t.name}), .action = .{ .git_palette = .{ .what = .tag_delete, .idx = t.idx } } },
-                .{ .label = "New branch from tag\u{2026}", .action = .{ .git_palette = .{ .what = .new_branch_from, .idx = t.idx } }, .separator_before = true },
-                .{ .label = "New worktree from tag\u{2026}", .action = .{ .git_palette = .{ .what = .worktree_from, .idx = t.idx } } },
-            });
-            try app.openMenu(t.name, items, x, y);
+        .tag => |t| blk: {
+            try b.act(try b.fmt("Checkout {s} (detached)", .{t.name}), .tag_checkout, t.idx, false);
+            try b.act(try b.fmt("Copy name ({s})", .{t.name}), .tag_copy, t.idx, false);
+            try b.act(try b.fmt("Delete {s}\u{2026}", .{t.name}), .tag_delete, t.idx, false);
+            try b.act("New branch from tag\u{2026}", .new_branch_from, t.idx, true);
+            try b.act("New worktree from tag\u{2026}", .worktree_from, t.idx, false);
+            break :blk t.name;
         },
-        .section, .repo, .gap => {},
-    }
+    };
+    try context_menus.openOwned(app, title, try b.items.toOwnedSlice(gpa), x, y, mem);
 }
 
-/// A menu row picked.
+/// A menu row picked. Under All repos the row's repo goes active first
+/// (`a.repo`): everything below reads the live rail, which is then
+/// that repo's.
 pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
     const gs = &app.git;
+    const st = &app.git_palette;
     const gpa = app.gpa;
     const arena = app.frame.allocator();
+    if (a.repo) |r| if (gs.active == null or gs.active.? != r) {
+        git.runToast(app, selectRepo(app, r));
+        if (gs.active == null or gs.active.? != r) return;
+    };
     const result: CommandError!void = blk: {
         switch (a.what) {
+            .fold => {
+                st.collapsed.toggle(@enumFromInt(a.idx));
+                break :blk;
+            },
+            .refresh => {
+                try chipMouse(app, .refresh, .{ .x = 0, .y = 0, .kind = .press, .button = .left });
+                break :blk;
+            },
+            .pull => break :blk command.run(app, .{ .static = .@"git.pull" }),
+            .push => break :blk command.run(app, .{ .static = .@"git.push" }),
+            .worktree_new => break :blk command.run(app, .{ .static = .@"git.worktree_add" }),
             .switch_repo => {
                 app.git_palette.all = false;
                 app.git_palette.cursor = 0;
@@ -1163,7 +1234,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .reopen_repo => break :blk reopen(app, a.idx),
             .remote_fetch => break :blk command.run(app, .{ .static = .@"git.fetch" }),
             .remote_copy_url => {
-                if (a.idx >= gs.rail_remotes.len) break :blk;
+                if (a.idx >= gs.rail_remotes.len) break :blk app.diag.fail(arena, "copy URL: no such git remote \u{2014} the row is a ref prefix, not a remote", .{});
                 const url = gs.rail_remotes[a.idx].url;
                 try app.clipboard.setYank(url, false);
                 app.toast("copied {s}", .{url});
@@ -1186,7 +1257,13 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                         const opened = pty_pane.open(app, .{ .cwd = wt.path, .label = try std.fmt.allocPrint(arena, "shell: {s}", .{std.fs.path.basename(wt.path)}), .placement = .below, .kind = .shell });
                         _ = opened catch |err| break :blk err;
                     },
-                    else => break :blk git.openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, wt.path) }, try std.fmt.allocPrint(gpa, "  Remove worktree {s}?", .{wt.path})),
+                    else => {
+                        // The row is always there; the main tree and the
+                        // tree on show are refused by name.
+                        if (wt.main) break :blk app.diag.fail(arena, "remove worktree: {s} is the main worktree", .{wt.path});
+                        if (gs.activeRepo()) |r| if (samePath(app, arena, r.path, wt.path)) break :blk app.diag.fail(arena, "remove worktree: {s} is the tree on show \u{2014} switch to another first", .{wt.path});
+                        break :blk git.openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, wt.path) }, try std.fmt.allocPrint(gpa, "  Remove worktree {s}?", .{wt.path}));
+                    },
                 }
                 break :blk;
             },
@@ -1233,6 +1310,9 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .new_branch => break :blk git.newBranchFrom(app, name),
             .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{name})),
             .diff_current => break :blk git.diffAgainstCurrent(app, repo, name),
+            .reset_soft => break :blk git.resetTo(app, .soft, name),
+            .reset_mixed => break :blk git.resetTo(app, .mixed, name),
+            .reset_hard => break :blk git.resetTo(app, .hard, name),
             .rename => break :blk git.branchRename(app, name),
             .fast_forward => break :blk git.fastForward(app, name),
             .set_upstream => break :blk git.setUpstream(app, name),
@@ -1850,7 +1930,7 @@ test "rows: the five sections in order with their counts; LOCAL A–Z with the c
     var remove_row: ?command.GitPaletteAct = null;
     for (app.overlay.menu.items) |mi| {
         if (std.mem.startsWith(u8, mi.label, "Merge into ")) merge_row = mi.action.git_palette;
-        if (std.mem.eql(u8, mi.label, "Remove worktree\u{2026}")) remove_row = mi.action.git_palette;
+        if (std.mem.eql(u8, mi.label, "Remove worktree and delete branch\u{2026}")) remove_row = mi.action.git_palette;
     }
     try testing.expect(merge_row.?.what == .session_merge and merge_row.?.idx == 1);
     try testing.expect(remove_row.?.what == .session_remove);
@@ -2030,6 +2110,154 @@ test "a double-click on a worktree row, through the painted panel's hit map, swi
     try command.run(app, .{ .static = .@"view.activity_explorer" });
 }
 
+/// The labels of the open menu's rows, on `arena`.
+fn menuLabels(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (app.overlay.menu.items) |it| try out.append(arena, it.label);
+    return out.items;
+}
+
+fn expectMenu(app: *App, idx: usize, labels: []const []const u8) !void {
+    try openRowMenu(app, idx, 3, 3);
+    if (app.overlay != .menu) {
+        std.debug.print("row {d}: no menu opened\n", .{idx});
+        return error.TestUnexpectedResult;
+    }
+    const got = try menuLabels(app, app.frame.allocator());
+    if (got.len != labels.len) {
+        std.debug.print("row {d}: {d} rows, want {d}:\n", .{ idx, got.len, labels.len });
+        for (got) |l| std.debug.print("  {s}\n", .{l});
+        return error.TestUnexpectedResult;
+    }
+    for (got, labels) |g, w| try testing.expectEqualStrings(w, g);
+}
+
+/// The last toast's text, empty when there is none — a missing toast
+/// fails an expect instead of unwrapping null.
+fn lastToastText(app: *App) []const u8 {
+    return app.lastToast() orelse "";
+}
+
+const worktree_menu = [_][]const u8{ "Open this worktree", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}" };
+
+test "row menus: one shape per row kind, built from the row under the pointer while the cursor stays; the main tree and the tree on show keep Remove and are refused by name; a prefix-only remote keeps Copy URL and says so; Reset targets the row, not the cursor; a stale index opens nothing; under All repos a right-click on another repo's row switches nothing and its rows carry the repo, which the act switches to" {
+    var t = try TestApp.initWith(&.{ "alpha", "beta" });
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    seed(app);
+    try seedBeta(app);
+    const st = &app.git_palette;
+    st.cursor = 0;
+    // alpha's seed: LOCAL 0, feature 1, main 2, gap, REMOTE 4, origin 5,
+    // feature 6, hotfix 7, main 8, gap, WORKTREES 10, main 11, wt-fix
+    // 12, gap, STASHES 14, stash 15, gap, TAGS 17, v2.0 18, v1.0 19.
+    try expectMenu(app, 0, &.{ "Fold", "Refresh" });
+    try testing.expectEqualStrings("LOCAL", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 1, &.{ "Checkout feature", "Merge feature into current", "Rebase current onto feature", "New branch from here\u{2026}", "Copy name (feature)", "Delete feature\u{2026}", "Rename\u{2026}", "Fast-forward to upstream", "Set upstream\u{2026}", "Force checkout feature\u{2026}", "Delete on the remote\u{2026}", "Diff against current", "Reset --soft to feature", "Reset --mixed to feature", "Reset --hard to feature\u{2026}" });
+    try testing.expectEqualStrings("feature", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 2, &.{ "New branch from here\u{2026}", "Copy name (main)", "Rename\u{2026}", "Fast-forward to upstream", "Set upstream\u{2026}", "Push --force-with-lease\u{2026}", "Delete on the remote\u{2026}" });
+    try testing.expectEqualStrings("\u{25CF} main", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 5, &.{ "Fetch", "Copy URL" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 6, &.{ "Checkout origin/feature", "Merge origin/feature into current", "Rebase current onto origin/feature", "Copy name (origin/feature)", "Delete on the remote\u{2026}", "Diff against current", "Reset --soft to origin/feature", "Reset --mixed to origin/feature", "Reset --hard to origin/feature\u{2026}" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    // The main tree (the workspace, on show) and the locked linked tree:
+    // the same five rows.
+    try expectMenu(app, 11, &worktree_menu);
+    try testing.expect(std.mem.startsWith(u8, app.overlay.menu.title, "main  "));
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 12, &worktree_menu);
+    try testing.expect(std.mem.startsWith(u8, app.overlay.menu.title, "fix  /repo/wt-fix"));
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 15, &.{ "Show files (Enter)", "Apply (keep)", "Pop (apply + drop)", "Drop\u{2026}", "Branch from stash\u{2026}", "Rename\u{2026}" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try expectMenu(app, 18, &.{ "Checkout v2.0 (detached)", "Copy name (v2.0)", "Delete v2.0\u{2026}", "New branch from tag\u{2026}", "New worktree from tag\u{2026}" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    // None of that moved the cursor, and outside All repos no act names a repo.
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    try openRowMenu(app, 12, 3, 3);
+    for (app.overlay.menu.items) |it| try testing.expect(it.action.git_palette.repo == null);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // Remove on the main tree: refused by name. On a linked tree that is
+    // the one on show: refused too. On wt-fix: the confirm.
+    try menuAction(app, .{ .what = .worktree_remove, .idx = 0 });
+    try testing.expect(std.mem.indexOf(u8, lastToastText(app), "main worktree") != null);
+    try testing.expect(app.overlay != .confirm);
+    // (In this two-repo fixture the seed's first tree is the workspace,
+    // not alpha's path: point it at the repo on show for the probe.)
+    seed_worktrees[0].main = false;
+    seed_worktrees[0].path = app.git.activeRepo().?.path;
+    try menuAction(app, .{ .what = .worktree_remove, .idx = 0 });
+    seed_worktrees[0].main = true;
+    seed_worktrees[0].path = app.workspace;
+    try testing.expect(std.mem.indexOf(u8, lastToastText(app), "tree on show") != null);
+    try testing.expect(app.overlay != .confirm);
+    try menuAction(app, .{ .what = .worktree_remove, .idx = 1 });
+    try testing.expect(app.git.confirm == .worktree_remove);
+    try testing.expectEqualStrings("/repo/wt-fix", app.git.confirm.worktree_remove);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // Reset reads the ROW's branch: the cursor is on LOCAL's header, the
+    // menu was opened on feature, the confirm names feature.
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    try openRowMenu(app, 1, 3, 3);
+    const hard = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try testing.expectEqualStrings("Reset --hard to feature\u{2026}", hard.label);
+    try dispatch.runMenuActionForTest(app, hard.action);
+    try testing.expect(app.git.confirm == .reset_hard);
+    try testing.expectEqualStrings("feature", app.git.confirm.reset_hard);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // A branch under a prefix no `git remote` names: its remote row
+    // keeps both rows; Copy URL says there is none.
+    var fork_branches = seed_branches ++ [_]parse.Branch{.{ .name = "fork/x", .time = 0, .current = false, .remote = true, .sha = "ffff666" }};
+    app.git.rail_branches = &fork_branches;
+    const forked = try rows(app, app.frame.allocator());
+    var fork_row: ?usize = null;
+    for (forked, 0..) |r, i| if (r == .remote and std.mem.eql(u8, r.remote.name, "fork")) {
+        fork_row = i;
+    };
+    try expectMenu(app, fork_row.?, &.{ "Fetch", "Copy URL" });
+    const copy = app.overlay.menu.items[1];
+    try app.handle(.{ .key = Key.named(.esc) });
+    try dispatch.runMenuActionForTest(app, copy.action);
+    try testing.expect(std.mem.indexOf(u8, lastToastText(app), "no such git remote") != null);
+    app.git.rail_branches = &seed_branches;
+    // A stale index (the rows changed under the pointer): no menu, a word.
+    try openRowMenu(app, 999, 3, 3);
+    try testing.expect(app.overlay != .menu);
+    try testing.expect(std.mem.indexOf(u8, lastToastText(app), "row changed") != null);
+    // All repos: beta's `dev` (row 5) with alpha active and the cursor
+    // on row 0 — the menu is dev's, alpha stays active, every row
+    // carries beta; Copy name switches to beta and copies.
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    st.cursor = 0;
+    const all = try rows(app, app.frame.allocator());
+    try testing.expectEqualStrings("dev", all[5].branch.name);
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    try openRowMenu(app, 5, 3, 3);
+    try testing.expectEqualStrings("\u{25CF} dev", app.overlay.menu.title);
+    try testing.expectEqual(@as(usize, 0), app.git.active.?);
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    var copy_dev: ?command.MenuAction = null;
+    for (app.overlay.menu.items) |it| {
+        try testing.expectEqual(@as(?u32, 1), it.action.git_palette.repo);
+        if (std.mem.eql(u8, it.label, "Copy name (dev)")) copy_dev = it.action;
+    }
+    try app.handle(.{ .key = Key.named(.esc) });
+    try dispatch.runMenuActionForTest(app, copy_dev.?);
+    try testing.expectEqual(@as(usize, 1), app.git.active.?);
+    try testing.expectEqualStrings("dev", app.clipboard.text());
+    // beta's sub-header: show only beta / refresh.
+    try expectMenu(app, 4, &.{ "Show only beta", "Refresh" });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try command.run(app, .{ .static = .@"git.palette_all" });
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
+}
+
 test "every row menu names actions that resolve, and each menu action reaches the worker or a confirm" {
     var t = try TestApp.init();
     defer t.deinit();
@@ -2038,11 +2266,13 @@ test "every row menu names actions that resolve, and each menu action reaches th
     try testing.expect(app.git.activeRepo() != null);
     seed(app);
     const list = try rows(app, app.frame.allocator());
-    // Open the menu on every stop: no crash, a title, at least one row
-    // whose command id — when it is a command — is a registered one.
+    // Open the menu on every stop — the headers included: no crash, a
+    // title, at least one row, every row a palette act (a command id
+    // would resolve by construction — `MenuAction.command` is the enum).
     for (list, 0..) |r, i| {
-        if (!r.isStop() or r == .section) continue;
+        if (!r.isStop()) continue;
         try openRowMenu(app, i, 3, 3);
+        try testing.expect(app.overlay == .menu);
         try testing.expect(app.overlay.menu.items.len > 0);
         for (app.overlay.menu.items) |it| switch (it.action) {
             .command => |id| try testing.expect(command.by_name.get(command.name(id)) != null),
