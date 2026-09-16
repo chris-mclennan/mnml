@@ -80,6 +80,11 @@ pub const Args = struct {
     bad_only: ?[]const u8 = null,
     config_path: ?[]const u8 = null,
     workspace: ?[]const u8 = null,
+    /// `--dump --steps FILE [--size WxH]`: the headless driver behind
+    /// tools/jira-diff.sh — the pane painted to stdout, no mnml.
+    dump: bool = false,
+    steps: ?[]const u8 = null,
+    size: ?[]const u8 = null,
     unknown: ?[]const u8 = null,
 };
 
@@ -98,6 +103,14 @@ pub fn parseArgs(argv: []const []const u8) Args {
         } else if (std.mem.eql(u8, s, "--workspace") and i + 1 < argv.len) {
             i += 1;
             a.workspace = argv[i];
+        } else if (std.mem.eql(u8, s, "--dump")) {
+            a.dump = true;
+        } else if (std.mem.eql(u8, s, "--steps") and i + 1 < argv.len) {
+            i += 1;
+            a.steps = argv[i];
+        } else if (std.mem.eql(u8, s, "--size") and i + 1 < argv.len) {
+            i += 1;
+            a.size = argv[i];
         } else a.unknown = s;
     }
     return a;
@@ -117,6 +130,9 @@ pub const usage =
     \\  --only work|fix-versions|boards   the family a pane shows
     \\  --config PATH             the config file (else $MNML_JIRA_CONFIG, the
     \\                            workspace's, the data root's)
+    \\  --dump --steps FILE [--size WxH] [--only F]
+    \\                            play a step script at the pane with no mnml and
+    \\                            print every `snap` as text (tools/jira-diff.sh)
     \\
 ;
 
@@ -187,12 +203,13 @@ pub fn main(init: std.process.Init) !u8 {
 
     const data_root = sdk.manifest.dataRoot(arena, env) catch null;
     const cfg_path = try configPath(arena, io, env, args);
-    if (args.check or args.diag or args.values or args.prefetch) {
+    if (args.check or args.diag or args.values or args.prefetch or args.dump) {
         const loaded = try config.load(arena, io, cfg_path);
         const token = try auth.resolve(arena, io, env, .{ .config_path = loaded.config.token_file, .env_name = loaded.config.token_env, .data_root = data_root });
         if (args.check) return check(arena, stdout, loaded, token);
         if (args.diag) return diag(gpa, io, arena, stdout, loaded, token);
         if (args.values) return values(gpa, io, arena, stdout, stderr, loaded, token, args);
+        if (args.dump) return dump(gpa, io, env, arena, stdout, stderr, loaded, token, args);
         return prefetch(gpa, io, arena, stdout, stderr, loaded, token, args);
     }
 
@@ -603,6 +620,122 @@ fn prefetch(gpa: Allocator, io: Io, arena: Allocator, out: *Io.Writer, err: *Io.
     try w.endObject();
     try out.writeAll("\n");
     return 0;
+}
+
+// ─── --dump: the headless driver ─────────────────────────────────────────
+
+/// `--dump --steps FILE [--size WxH] [--only F]`: the same App and the
+/// same paint as the pane, driven by the capture tool's step grammar
+/// (`key`, `type`, `click`, `rclick`, `clickon`, `rclickon`,
+/// `clickafter`, `scroll`, `snap`, `expect`; the waits are no-ops since
+/// every fetch is synchronous). Each `snap NAME` prints `=== NAME` and
+/// the screen, one row per line — what tools/jira-diff.sh compares with
+/// the reference's dumps.
+fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
+    const c = loaded.config;
+    const t: auth.Token = switch (token) {
+        .ok => |v| v,
+        .missing => |m| {
+            try err.print("mnml-jira --dump: no token ({s})\n", .{@tagName(m.reason)});
+            return 1;
+        },
+    };
+    var why: []const u8 = "";
+    config.validate(c, &why) catch {
+        try err.print("mnml-jira --dump: {s}\n", .{why});
+        return 1;
+    };
+    var cols: u16 = 120;
+    var rows: u16 = 40;
+    if (args.size) |sz| if (std.mem.indexOfScalar(u8, sz, 'x')) |x| {
+        cols = std.fmt.parseInt(u16, sz[0..x], 10) catch cols;
+        rows = std.fmt.parseInt(u16, sz[x + 1 ..], 10) catch rows;
+    };
+    const steps_src = if (args.steps) |p| try Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1 << 20)) else "snap screen\n";
+    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api, c.rate);
+    const forge_token = if (c.bitbucket_token_env.len > 0) env.get(c.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
+    var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{ .gpa = gpa, .io = io, .base_url = c.bitbucket_api_url, .token = forge_token orelse "" });
+    defer app.deinit();
+    app.resize(cols, rows);
+    var frame = try sdk.Frame.init(gpa, cols, rows);
+    defer frame.deinit();
+    var paint_arena = std.heap.ArenaAllocator.init(gpa);
+    defer paint_arena.deinit();
+    try app.ensureLoaded();
+    try repaint(&paint_arena, &frame, &app, .{});
+    var lines = std.mem.splitScalar(u8, steps_src, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const sp = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
+        const verb = line[0..sp];
+        const rest = std.mem.trimStart(u8, line[sp..], " ");
+        if (std.mem.eql(u8, verb, "key")) {
+            _ = try app.onKey(rest);
+        } else if (std.mem.eql(u8, verb, "type")) {
+            var it = std.unicode.Utf8View.initUnchecked(rest).iterator();
+            while (it.nextCodepointSlice()) |cp| {
+                if (cp.len == 1 and cp[0] == ' ') {
+                    _ = try app.onKey("space");
+                } else if (cp.len == 1 and std.ascii.isUpper(cp[0])) {
+                    var kb: [8]u8 = undefined;
+                    _ = try app.onKey(std.fmt.bufPrint(&kb, "shift+{c}", .{std.ascii.toLower(cp[0])}) catch cp);
+                } else _ = try app.onKey(cp);
+            }
+        } else if (std.mem.eql(u8, verb, "click") or std.mem.eql(u8, verb, "rclick")) {
+            var it = std.mem.tokenizeScalar(u8, rest, ' ');
+            const x = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            const y = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            try app.click(x, y, std.mem.eql(u8, verb, "rclick"));
+        } else if (std.mem.eql(u8, verb, "clickon") or std.mem.eql(u8, verb, "rclickon") or std.mem.eql(u8, verb, "clickafter")) {
+            var needle = rest;
+            var after: u16 = 0;
+            if (std.mem.eql(u8, verb, "clickafter")) {
+                const last = std.mem.lastIndexOfScalar(u8, rest, ' ') orelse rest.len;
+                after = std.fmt.parseInt(u16, rest[@min(last + 1, rest.len)..], 10) catch 0;
+                needle = std.mem.trimEnd(u8, rest[0..last], " ");
+            }
+            if (try findOnScreen(arena, &frame, needle)) |at| {
+                const x = if (after > 0) at.x + @as(u16, @intCast(std.unicode.utf8CountCodepoints(needle) catch needle.len)) + after else at.x;
+                try app.click(x, at.y, std.mem.eql(u8, verb, "rclickon"));
+            } else try err.print("mnml-jira --dump: {s} '{s}': not on screen\n", .{ verb, needle });
+        } else if (std.mem.eql(u8, verb, "scroll")) {
+            var it = std.mem.tokenizeScalar(u8, rest, ' ');
+            const x = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            const y = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            const dir = it.next() orelse "down";
+            try app.wheel(x, y, if (std.mem.eql(u8, dir, "up")) 1 else -1);
+        } else if (std.mem.eql(u8, verb, "snap")) {
+            try repaint(&paint_arena, &frame, &app, .{});
+            try out.print("=== {s}\n", .{rest});
+            try out.writeAll(try screen.screenText(arena, &frame));
+        } else if (std.mem.eql(u8, verb, "expect")) {
+            try repaint(&paint_arena, &frame, &app, .{});
+            if ((try findOnScreen(arena, &frame, rest)) == null) {
+                try err.print("mnml-jira --dump: expect '{s}': not on screen\n", .{rest});
+                return 1;
+            }
+        } else if (std.mem.eql(u8, verb, "quit")) {
+            break;
+        }
+        // wait / settle / waitfor / waitsoft / find: nothing to wait for.
+        try repaint(&paint_arena, &frame, &app, .{});
+        if (app.quit) break;
+    }
+    return 0;
+}
+
+const At = struct { x: u16, y: u16 };
+
+fn findOnScreen(arena: Allocator, frame: *const sdk.Frame, needle: []const u8) Allocator.Error!?At {
+    var y: u16 = 0;
+    while (y < frame.rows) : (y += 1) {
+        const row = try screen.rowText(arena, frame, y);
+        if (std.mem.indexOf(u8, row, needle)) |byte| {
+            return .{ .x = @intCast(std.unicode.utf8CountCodepoints(row[0..byte]) catch byte), .y = y };
+        }
+    }
+    return null;
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
