@@ -1,7 +1,7 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
    │ SEARCH       Aa \b .*   │ 󰐕                                                                            󱸀      
-  │                          │
-   │ / t█                     │
+  │  󰍉 t                     │
+   │                          │
 ▌󰍉 │ 2 hits (git grep)        │
    │                          │
  󰊢 │ a.txt                    │

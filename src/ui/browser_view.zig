@@ -235,7 +235,7 @@ fn drawFilter(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
     ui.hit(pill, .{ .script_hit = .{ .pane = pane, .id = hit_filter } });
     return text_field.draw(ui, field, m.filter, m.filter_caret, .{
         .style = style,
-        .placeholder = filter_input.placeholder(ui, m.filter_focused),
+        .placeholder = filter_input.placeholder(ui, m.filter_focused, filter_input.default_noun),
         .focused = m.filter_focused and m.focused,
     });
 }
