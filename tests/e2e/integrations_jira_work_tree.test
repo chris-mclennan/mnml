@@ -1,0 +1,111 @@
+# Jira Work (integrations/jira/, built beside the exe as $MNML_JIRA)
+# installed from a Dev folder and mounted as a pane against the offline
+# server beside it ($MNML_FAKE_JIRA): the caps header with the count,
+# the tab strip, the mode chips, the status-grouped tree with the
+# auto-expanded ticket and its PR rows, the fold keys, the hint row
+# from the bindings, the second tab, and the statusline chip the pane
+# publishes over the IPC channel.
+#
+# The workspace is an SDK checkout (it has sdk/mnml-sdk), so its
+# integrations/ is a dev root by itself; the folder's manifest.zon names
+# the prebuilt binary, so Install skips the build. The pane reads
+# <workspace>/.mnml/integrations/jira/config.zon.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18719 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } }, .statusline = .{ .{ .id = \"assigned\", .text = \"\u{f0303}\", .color = \"#1B5DCF\", .click_command = \"jira_work.open\" } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18719\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned }, .{ .name = \"Recently Done\", .kind = .work_recently_done } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+# The install toasts sit over the pane's last row for a moment.
+wait 4000
+# The pane mounts, searches the offline Jira and paints.
+command jira_work.open
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK (3)"
+expect screen contains "1 Assigned"
+expect screen contains "2 Recently Done"
+# The mode chips, never clipped.
+expect screen contains " basic "
+expect screen contains " assignee: All "
+expect screen contains " status: All "
+expect screen contains "/ filter"
+# The columns and the tree: In PR Review first, ENG-2 auto-expanded
+# with its two PRs and the buttons on them.
+expect screen contains "KEY"
+expect screen contains "SUMMARY"
+expect screen contains "In PR Review (1)"
+expect screen contains "ENG-2"
+expect screen contains "Card form validates on blur"
+expect screen contains "MERGED"
+expect screen contains "Validate the card form on blur"
+expect screen contains "[ Review ]"
+expect screen contains "[ Open ]"
+expect screen contains "In Progress (1)"
+expect screen contains "ENG-1"
+expect screen contains "To Do (1)"
+expect screen contains "ENG-5"
+expect screen lacks "ENG-3"
+# The hint row comes from the bindings.
+expect screen contains "t transition · a assignee"
+# The statusline chip: the manifest's slot, replaced live with the count
+# the pane published over the IPC channel (the host drains it on a tick).
+wait 800
+expect screen contains "󰌃 3"
+# j to the ticket, h folds it (the PRs go), l opens it again.
+key j
+key h
+expect screen lacks "Validate the card form on blur"
+key l
+expect screen contains "Validate the card form on blur"
+# The second tab: the Done group, collapsed tickets.
+key 2
+expect screen contains "JIRA WORK (1)"
+expect screen contains "Done (1)"
+expect screen contains "ENG-12"
+key 1
+expect screen contains "JIRA WORK (3)"
+# ? opens the key sheet the built-in sections use; Esc closes it.
+type ?
+expect screen contains "KEYS"
+expect screen contains "── rows ── "
+expect screen contains "fold a group · expand a ticket · open a PR"
+key esc
+expect screen lacks "── rows ── "
+# q ends the pane.
+key q
+wait 500
+key x
+expect screen lacks "1 Assigned"
+# Uninstall before leaving: `--install` wrote the three manifests into
+# the corpus's one shared data root, and x removes one row at a time —
+# the first manifest row each time, alphabetically.
+command integrations.show_installed
+expect screen contains "Installed (7)"
+# The three manifests sort last: End reaches each in turn.
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Fix Versions?"
+key r
+expect screen contains "removed jira_fix_versions"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Boards?"
+key r
+expect screen contains "removed jira_boards"
+expect screen contains "Installed (4)"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

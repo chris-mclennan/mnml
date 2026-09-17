@@ -1,23 +1,35 @@
-//! `config.zon` — the integration's own file, in ZON because this repo
-//! never reads TOML.
+//! `config.zon` — the reference tracker's TOML config, key for key, in
+//! ZON. Every top-level key of `~/.config/mnml-tracker-jira.toml`
+//! (`jira_url`, `email`, `refresh_interval_secs`, `release_cut`,
+//! `team_field_id`, `team_field_name`, `dispatch_workspace`, `projects`,
+//! `[detail_modal]`, `[[tabs]]`) and every `[[tabs]]` key (`name`,
+//! `kind`, `mode`, `jql`, `project`, `component`, `columns`,
+//! `status_order`, `bumps`, `version_name_contains`, `team`,
+//! `issue_type`, `label`, `board_id`, `filter_id`) is the same word
+//! here, so a file converts mechanically:
 //!
-//! Three sections, which are the Rust tracker's three TOML sections by
-//! another spelling: `.jira` is the site and how to reach it (its
-//! top-level `jira_url` / `email` / `team_field_*` / `projects`),
-//! `.mnml` is how the pane behaves (its `refresh_interval_secs`,
-//! `release_cut` and `[detail_modal]`), and `.tabs` is `[[tabs]]`
-//! unchanged. `README.md` documents every key with an example.
+//!   jira_url = "https://x"           .jira_url = "https://x",
+//!   [[tabs]] name = "Sprint"         .tabs = .{ .{ .name = "Sprint",
+//!     kind = "board_active_sprint"       .kind = .board_active_sprint,
+//!     board_id = 200                     .board_id = 200 } },
+//!   [tabs.bumps]                     .bumps = .{
+//!     pr_approved = "Testing"            .pr_approved = "Testing",
+//!     release_cut = { Done = "top" }     .release_cut = .{ .{ .status = "Done", .target = "top" } } },
+//!   [detail_modal] fields = [        .detail_modal = .{ .fields = .{
+//!     "assignee",                        .{ .id = "assignee" },
+//!     { id = "customfield_1", label = "X" } ]   .{ .id = "customfield_1", .label = "X" } } },
+//!   [detail_modal.field_alias]       .field_alias = .{ .{ .name = "problem", .id = "customfield_1" } }
+//!     problem = "customfield_1"
 //!
-//! Where the file lives, first hit wins:
+//! The two shapes ZON cannot spell the TOML way — a string-or-table list
+//! and a string-keyed map — are lists of small structs; the README has
+//! the table. Keys the reference does not have (`token_file`,
+//! `token_env`, `api`, `rate`, `bitbucket_api_url`) are the port's own
+//! and default sensibly.
 //!
-//!   1. `--config PATH`
-//!   2. `$MNML_JIRA_CONFIG`
-//!   3. `<workspace>/.mnml/integrations/jira/config.zon`   (per project)
-//!   4. `<data root>/integrations/jira/config.zon`         (the private-
-//!      source install path — `~/.config/mnml/integrations/jira/`)
-//!
-//! A missing file is not an error: `Loaded.missing` carries the path the
-//! pane should tell the user to write, and `example` is what to write.
+//! Where the file lives, first hit wins: `--config PATH`,
+//! `$MNML_JIRA_CONFIG`, `<workspace>/.mnml/integrations/jira/config.zon`,
+//! `<data root>/integrations/jira/config.zon`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -28,53 +40,96 @@ pub const dir_name = "jira";
 pub const env_path = "MNML_JIRA_CONFIG";
 pub const max_file_bytes = 1 << 20;
 
-/// Which REST version to speak. v3 takes and returns ADF for bodies; v2
-/// takes wiki markup as a plain string. A Server / Data Center site only
-/// has v2.
 pub const ApiVersion = enum { v3, v2 };
-
-/// How a `fix_version` tab picks its version out of the project's
-/// unreleased ones.
 pub const ResolveMode = enum { current_release, next_release };
 
-/// The families a tab can be. `jql` on the tab overrides whatever the
-/// kind would have built.
-pub const TabKind = enum {
-    /// Everything assigned to me and unresolved.
-    work_assigned,
-    /// What I closed in the last 30 days.
-    work_recently_done,
-    /// Anything I touched in the last 30 days.
-    work_recent,
-    /// Assigned to me, open or closed recently — one list.
-    work_unified,
-    /// A saved Jira filter (`filter_id`).
-    filter,
-    /// A release: `project` + the auto-resolved `fixVersion`.
-    fix_version,
-    /// A raw JQL the tab carries itself.
-    custom,
+/// The three chips the reference ships — `--only work` / `fix-versions`
+/// / `boards` — and which tab kinds each keeps.
+pub const Family = enum {
+    work,
+    fix_versions,
+    boards,
 
-    pub fn defaultJql(k: TabKind) ?[]const u8 {
-        return switch (k) {
-            .work_assigned =>
-            \\assignee = currentUser() AND resolution = Unresolved AND status not in ("Done", "Closed", "Resolved") ORDER BY updated DESC
-            ,
-            .work_recently_done =>
-            \\assignee = currentUser() AND status in (Done, Closed, Resolved) AND resolved >= -30d ORDER BY resolved DESC
-            ,
-            .work_recent =>
-            \\(assignee was currentUser() OR reporter = currentUser() OR worklogAuthor = currentUser() OR commentedBy = currentUser()) AND updated >= -30d ORDER BY updated DESC
-            ,
-            .work_unified =>
-            \\assignee = currentUser() AND (resolution is EMPTY OR resolved >= -30d) ORDER BY resolved DESC, updated DESC
-            ,
-            .filter, .fix_version, .custom => null,
+    /// The CLI spelling(s) the reference accepts.
+    pub fn fromCli(s: []const u8) ?Family {
+        if (std.mem.eql(u8, s, "work") or std.mem.eql(u8, s, "jira_work")) return .work;
+        if (std.mem.eql(u8, s, "fix-versions") or std.mem.eql(u8, s, "fix_versions") or std.mem.eql(u8, s, "fix_version")) return .fix_versions;
+        if (std.mem.eql(u8, s, "boards") or std.mem.eql(u8, s, "jira_boards")) return .boards;
+        return null;
+    }
+
+    pub fn cli(f: Family) []const u8 {
+        return switch (f) {
+            .work => "work",
+            .fix_versions => "fix-versions",
+            .boards => "boards",
+        };
+    }
+
+    /// The manifest id.
+    pub fn id(f: Family) []const u8 {
+        return switch (f) {
+            .work => "jira_work",
+            .fix_versions => "jira_fix_versions",
+            .boards => "jira_boards",
+        };
+    }
+
+    pub fn label(f: Family) []const u8 {
+        return switch (f) {
+            .work => "Jira Work",
+            .fix_versions => "Jira Fix Versions",
+            .boards => "Jira Boards",
+        };
+    }
+
+    /// The pane's caps title.
+    pub fn title(f: Family) []const u8 {
+        return switch (f) {
+            .work => "JIRA WORK",
+            .fix_versions => "JIRA FIX VERSIONS",
+            .boards => "JIRA BOARDS",
         };
     }
 };
 
-/// A column of the ticket table. `summary` takes what is left.
+pub const TabKind = enum {
+    work_assigned,
+    work_recently_done,
+    work_recent,
+    work_unified,
+    filter,
+    fix_version_tree,
+    board_active_sprint,
+    board_backlog,
+
+    pub fn family(k: TabKind) Family {
+        return switch (k) {
+            .work_assigned, .work_recently_done, .work_recent, .work_unified, .filter => .work,
+            .fix_version_tree => .fix_versions,
+            .board_active_sprint, .board_backlog => .boards,
+        };
+    }
+
+    /// The reference's JQL for the kind, where it is static. Release
+    /// tabs resolve a version first; filter tabs need their id.
+    pub fn defaultJql(k: TabKind) ?[]const u8 {
+        return switch (k) {
+            .work_assigned => "assignee = currentUser() AND resolution = Unresolved AND status not in (\"Done\", \"Done in Staging\", \"Done in Production\") ORDER BY updated DESC",
+            .work_recently_done => "assignee = currentUser() AND status in (Done, Closed, Resolved) AND resolved >= -30d ORDER BY resolved DESC",
+            .work_recent => "(assignee was currentUser() OR reporter = currentUser() OR worklogAuthor = currentUser() OR commentedBy = currentUser()) AND updated >= -30d ORDER BY updated DESC",
+            .work_unified => "assignee = currentUser() AND (resolution is EMPTY OR resolved >= -30d) ORDER BY resolved DESC, updated DESC",
+            .board_active_sprint => "sprint in openSprints() ORDER BY rank ASC",
+            .board_backlog => "sprint is EMPTY AND status != Done ORDER BY rank ASC",
+            .fix_version_tree, .filter => null,
+        };
+    }
+
+    pub fn isKanban(k: TabKind) bool {
+        return k == .board_active_sprint or k == .board_backlog;
+    }
+};
+
 pub const Column = enum {
     key,
     status,
@@ -87,16 +142,17 @@ pub const Column = enum {
     summary,
     actions,
 
-    /// Cells, the Rust tracker's numbers. `summary` is the flexible one.
+    /// Cells; `summary` takes what is left. KEY is the tree's width
+    /// (chevron, indent, key, bump star).
     pub fn width(c: Column) ?u16 {
         return switch (c) {
-            .key => 14,
+            .key => 18,
             .status => 14,
             .assignee => 20,
             .reporter => 20,
             .priority => 10,
             .type => 10,
-            .updated => 10,
+            .updated => 12,
             .fix_version => 14,
             .actions => 11,
             .summary => null,
@@ -119,150 +175,222 @@ pub const Column = enum {
     }
 };
 
-pub const default_columns = [_]Column{ .key, .status, .assignee, .updated, .summary, .actions };
+/// The reference's tree columns.
+pub const default_columns = [_]Column{ .key, .status, .assignee, .updated, .summary };
 
-/// How the tree buckets its top level.
-pub const GroupBy = enum {
-    /// Epic → story → sub-task, the issue hierarchy.
-    hierarchy,
-    /// A bucket per workflow status, in `status_order` then alphabetical
-    /// — what the Rust tracker's tree does.
-    status,
+/// `release_cut = { Done = "top" }` as a list: one rule per status.
+pub const StatusRule = struct { status: []const u8, target: []const u8 };
+
+pub const Bumps = struct {
+    /// PR-review tickets with an approved PR go into this group.
+    pr_approved: []const u8 = "",
+    /// PR-review tickets with no open PR left go into this group.
+    no_open_prs: []const u8 = "",
+    /// With the global `release_cut` on: status → target group, or `top`.
+    release_cut: []const StatusRule = &.{},
 };
 
 pub const Tab = struct {
-    name: []const u8,
-    kind: TabKind = .custom,
-    /// Wins over whatever `kind` would build.
+    name: []const u8 = "",
+    kind: ?TabKind = null,
+    mode: ?ResolveMode = null,
     jql: []const u8 = "",
-    /// `fix_version` needs it; the team clause and the assignee picker
-    /// use it when it is there.
     project: []const u8 = "",
     component: []const u8 = "",
-    mode: ResolveMode = .current_release,
-    /// Only consider versions whose name contains this (case-insensitive)
-    /// — for a project with parallel release tracks.
+    columns: ?[]const Column = null,
+    status_order: ?[]const []const u8 = null,
+    bumps: ?Bumps = null,
     version_name_contains: []const u8 = "",
-    filter_id: u64 = 0,
-    /// A team value matched against the team field, the component and
-    /// the labels. Empty means no team clause.
     team: []const u8 = "",
-    columns: []const Column = &default_columns,
-    group_by: GroupBy = .hierarchy,
-    /// The status buckets, in order, when `group_by = .status`.
-    status_order: []const []const u8 = &.{ "In Progress", "In Review", "Testing", "To Do", "Open", "Done" },
+    issue_type: []const u8 = "",
+    label: []const u8 = "",
+    board_id: u64 = 0,
+    filter_id: u64 = 0,
 
-    /// The JQL this tab runs before the fixVersion resolve: the explicit
-    /// one, else the filter form, else the kind's default. Null means it
-    /// has to ask the server (a `fix_version` tab).
-    pub fn staticJql(t: Tab, gpa: Allocator) Allocator.Error!?[]u8 {
-        if (t.jql.len > 0) return try gpa.dupe(u8, t.jql);
-        if (t.kind == .filter) {
-            if (t.filter_id == 0) return null;
-            return try std.fmt.allocPrint(gpa, "filter = {d} ORDER BY updated DESC", .{t.filter_id});
+    /// A kinded tab is a tree (or a kanban); a legacy one a flat table.
+    pub fn isTree(t: Tab) bool {
+        return t.kind != null and !t.isKanban();
+    }
+
+    pub fn isKanban(t: Tab) bool {
+        return if (t.kind) |k| k.isKanban() else false;
+    }
+
+    pub fn isFixVersions(t: Tab) bool {
+        return t.kind == .fix_version_tree;
+    }
+
+    pub fn isWorkFamily(t: Tab) bool {
+        return if (t.kind) |k| k.family() == .work else false;
+    }
+
+    /// The JQL known before any call: the explicit one, a saved filter,
+    /// or the kind's default. Null means "resolve a version first".
+    pub fn staticJql(t: Tab, arena: Allocator) Allocator.Error!?[]const u8 {
+        if (t.jql.len > 0) return t.jql;
+        if (t.kind) |k| {
+            if (k == .filter) {
+                if (t.filter_id == 0) return null;
+                return try std.fmt.allocPrint(arena, "filter = {d} ORDER BY updated DESC", .{t.filter_id});
+            }
+            return k.defaultJql();
         }
-        const d = t.kind.defaultJql() orelse return null;
-        return try gpa.dupe(u8, d);
+        return null;
+    }
+
+    pub fn statusOrder(t: Tab) []const []const u8 {
+        return t.status_order orelse &default_status_order;
+    }
+
+    pub fn columnSet(t: Tab) []const Column {
+        return t.columns orelse &default_columns;
     }
 };
 
-/// The token bucket's parameters — `crates/mnml-ratelimit`'s Jira row.
+/// One entry of `[detail_modal] fields`: a bare TOML string is
+/// `.{ .id = "assignee" }`; an inline table keeps its `label`.
+pub const FieldSpec = struct { id: []const u8, label: []const u8 = "" };
+pub const Alias = struct { name: []const u8, id: []const u8 };
+
+pub const default_detail_fields = [_]FieldSpec{
+    .{ .id = "type" },       .{ .id = "priority" },    .{ .id = "assignee" }, .{ .id = "reporter" }, .{ .id = "labels" },
+    .{ .id = "components" }, .{ .id = "fix_version" }, .{ .id = "sprint" },   .{ .id = "parent" },   .{ .id = "description" },
+};
+
+pub const DetailModal = struct {
+    fields: []const FieldSpec = &default_detail_fields,
+    field_alias: []const Alias = &.{},
+
+    /// The Jira field id a spec names, after the alias map.
+    pub fn resolveId(m: DetailModal, spec: FieldSpec) []const u8 {
+        for (m.field_alias) |a| if (std.mem.eql(u8, a.name, spec.id)) return a.id;
+        return spec.id;
+    }
+
+    /// The label beside the value: the spec's own, an alias name whose
+    /// id this is, or the built-in title case.
+    pub fn resolveLabel(m: DetailModal, spec: FieldSpec) []const u8 {
+        if (spec.label.len > 0) return spec.label;
+        for (m.field_alias) |a| if (std.mem.eql(u8, a.id, spec.id)) return a.name;
+        return defaultLabel(spec.id);
+    }
+};
+
+pub fn defaultLabel(name: []const u8) []const u8 {
+    const table = [_][2][]const u8{
+        .{ "title", "Title" },       .{ "summary", "Title" },         .{ "status", "Status" },           .{ "type", "Type" },
+        .{ "issuetype", "Type" },    .{ "priority", "Priority" },     .{ "assignee", "Assignee" },       .{ "reporter", "Reporter" },
+        .{ "labels", "Labels" },     .{ "components", "Components" }, .{ "fix_version", "Fix version" }, .{ "fixversions", "Fix version" },
+        .{ "sprint", "Sprint" },     .{ "parent", "Parent" },         .{ "description", "Description" }, .{ "environment", "Environment" },
+        .{ "severity", "Severity" },
+    };
+    for (table) |row| if (std.mem.eql(u8, row[0], name)) return row[1];
+    return name;
+}
+
+/// The limiter's numbers — the reference's Jira row.
 pub const Rate = struct {
     per_sec: f64 = 0.33,
     burst: u32 = 60,
-    /// The pause a 429 with no `Retry-After` takes, seconds.
     cooldown_secs: u32 = 45,
-    /// The ceiling on one wait, seconds.
     max_block_secs: u32 = 120,
 };
 
-pub const Jira = struct {
-    /// `https://acme.atlassian.net`; a trailing `/` is stripped on load.
-    url: []const u8 = "",
-    /// The Atlassian account email — the HTTP Basic user name.
-    email: []const u8 = "",
-    api: ApiVersion = .v3,
-    /// The environment variable holding the API token.
-    token_env: []const u8 = "JIRA_API_TOKEN",
-    /// A file holding the API token. `~` is expanded. Empty means the
-    /// default path (`auth.defaultTokenPath`).
-    token_file: []const u8 = "",
-    /// A Jira select custom field holding the team (`customfield_10056`).
-    team_field_id: []const u8 = "",
-    /// Its display name, which reads better in the JQL it goes into.
-    team_field_name: []const u8 = "",
-    /// Project keys the statusline count is scoped to. Sanitised to
-    /// `[A-Z0-9]{1,10}` on load; anything else is dropped.
-    projects: []const []const u8 = &.{},
-    rate: Rate = .{},
-};
-
-pub const Mnml = struct {
-    /// Auto-refresh the active tab after this many idle seconds. 0 off.
-    refresh_interval_secs: u32 = 60,
-    /// The detail pane's share of the width, per cent.
-    detail_width_pct: u8 = 40,
-    /// The detail pane starts open.
-    detail_open: bool = true,
-    /// `▼`/`▶` or `▾`/`▸` — matches mnml's own `$MNML_EXPAND_INDICATOR`.
-    expand_indicator: enum { chevron, triangle } = .chevron,
-    /// How many comments the detail pane shows, newest first.
-    max_comments: u8 = 10,
-    /// How many linked PRs a ticket shows before `Show all`.
-    max_prs: u8 = 3,
-    /// What `o` runs on a URL. Empty picks the platform's opener.
-    open_command: []const u8 = "",
-};
-
 pub const Config = struct {
-    jira: Jira = .{},
-    mnml: Mnml = .{},
+    jira_url: []const u8 = "",
+    email: []const u8 = "",
+    refresh_interval_secs: u32 = 60,
+    release_cut: bool = false,
+    team_field_id: []const u8 = "",
+    team_field_name: []const u8 = "",
+    dispatch_workspace: []const u8 = "",
+    projects: []const []const u8 = &.{},
+    detail_modal: DetailModal = .{},
     tabs: []const Tab = &.{},
+    // ── the port's own keys ──
+    /// A token file; `~` expands. Empty: `$token_env`, then the default
+    /// file, then the reference's own `~/.config/mnml-tracker-jira/token`.
+    token_file: []const u8 = "",
+    token_env: []const u8 = "",
+    api: ApiVersion = .v3,
+    rate: Rate = .{},
+    /// The forge the post-merge pipeline rows come from.
+    bitbucket_api_url: []const u8 = "https://api.bitbucket.org/2.0",
+    bitbucket_token_env: []const u8 = "BITBUCKET_ACCESS_TOKEN",
+    /// The browser opener; empty picks the platform's.
+    open_command: []const u8 = "",
+
+    /// The team field the JQL clause uses: the display name where there
+    /// is one, else the id.
+    pub fn teamField(c: Config) []const u8 {
+        return if (c.team_field_name.len > 0) c.team_field_name else c.team_field_id;
+    }
 };
 
-pub const ValidateError = error{
-    NoUrl,
-    NoEmail,
-    NoTabs,
-    TabWithoutName,
-    FixVersionWithoutProject,
-    FilterWithoutId,
-    CustomWithoutJql,
-};
+/// The reference's built-in status order for release tabs.
+pub const default_status_order = [_][]const u8{ "Testing", "In PR Review", "Code Review", "In Progress", "To Do", "Open", "Done" };
 
-/// The rule the pane applies before it tries to fetch anything. `why`
-/// gets the line the empty state shows.
+pub const ValidateError = error{ NoUrl, NoEmail, NoTabs, TabWithoutName, TabNeedsProject, FilterWithoutId, TabNeedsJqlOrMode, TabJqlAndMode };
+
+/// The reference's rules, so a converted file fails the same way.
 pub fn validate(c: Config, why: *[]const u8) ValidateError!void {
-    if (c.jira.url.len == 0) {
-        why.* = "jira.url is empty — set it to your Atlassian site";
+    if (c.jira_url.len == 0) {
+        why.* = ".jira_url is empty";
         return error.NoUrl;
     }
-    if (c.jira.email.len == 0) {
-        why.* = "jira.email is empty — it is the HTTP Basic user name";
+    if (c.email.len == 0) {
+        why.* = ".email is empty";
         return error.NoEmail;
     }
     if (c.tabs.len == 0) {
-        why.* = "no tabs: add at least one .{ .name = \"…\", .kind = … }";
+        why.* = ".tabs needs at least one entry";
         return error.NoTabs;
     }
     for (c.tabs) |t| {
         if (t.name.len == 0) {
-            why.* = "a tab has no name";
+            why.* = "a tab has no .name";
             return error.TabWithoutName;
         }
-        if (t.kind == .fix_version and t.project.len == 0 and t.jql.len == 0) {
-            why.* = "a fix_version tab needs .project = \"<KEY>\"";
-            return error.FixVersionWithoutProject;
+        if (t.kind) |k| {
+            if (t.jql.len > 0 and t.mode != null) {
+                why.* = "a tab sets both .jql and .mode (the kind supplies a default)";
+                return error.TabJqlAndMode;
+            }
+            switch (k) {
+                .fix_version_tree, .board_active_sprint, .board_backlog => if (t.project.len == 0) {
+                    why.* = "a fix_version_tree / board tab needs .project = \"<KEY>\"";
+                    return error.TabNeedsProject;
+                },
+                .filter => if (t.filter_id == 0) {
+                    why.* = "a filter tab needs .filter_id = <n>";
+                    return error.FilterWithoutId;
+                },
+                else => {},
+            }
+            continue;
         }
-        if (t.kind == .filter and t.filter_id == 0 and t.jql.len == 0) {
-            why.* = "a filter tab needs .filter_id = <n>";
-            return error.FilterWithoutId;
+        if (t.jql.len > 0 and t.mode != null) {
+            why.* = "a tab sets both .jql and .mode";
+            return error.TabJqlAndMode;
         }
-        if (t.kind == .custom and t.jql.len == 0) {
-            why.* = "a custom tab needs .jql = \"…\"";
-            return error.CustomWithoutJql;
+        if (t.jql.len == 0 and t.mode == null) {
+            why.* = "a tab needs .kind, .jql or .mode";
+            return error.TabNeedsJqlOrMode;
+        }
+        if (t.mode != null and t.project.len == 0) {
+            why.* = "a .mode tab needs .project = \"<KEY>\"";
+            return error.TabNeedsProject;
         }
     }
+}
+
+/// The tabs `--only <family>` keeps; a legacy tab (no kind) is dropped
+/// by any `--only`, as in the reference.
+pub fn tabsOfFamily(arena: Allocator, tabs: []const Tab, family: ?Family) Allocator.Error![]const Tab {
+    const f = family orelse return tabs;
+    var out: std.ArrayList(Tab) = .empty;
+    for (tabs) |t| if (t.kind) |k| if (k.family() == f) try out.append(arena, t);
+    return out.toOwnedSlice(arena);
 }
 
 /// A project key as `projects` accepts it: 1–10 of `[A-Z0-9]`.
@@ -276,27 +404,18 @@ pub fn validProjectKey(k: []const u8) bool {
 }
 
 pub const Loaded = struct {
-    /// Everything below lives on `arena`.
     config: Config,
-    /// Where it was read from, or where it would have been.
     path: []const u8,
-    /// No file at `path`: `config` is the defaults and the pane says so.
     missing: bool,
-    /// The ZON did not parse; the message names the line.
     parse_error: ?[]const u8 = null,
 };
 
 pub const LoadOpts = struct {
-    /// `--config PATH`.
     explicit: ?[]const u8 = null,
-    /// `$MNML_WORKSPACE`, for the per-project file.
     workspace: ?[]const u8 = null,
-    /// mnml's data root (`manifest.dataRoot`).
     data_root: ?[]const u8 = null,
 };
 
-/// The first candidate that exists, else the last one (the data-root
-/// path — what the user should create).
 pub fn resolvePath(arena: Allocator, io: Io, opts: LoadOpts, env_value: ?[]const u8) Allocator.Error![]const u8 {
     var last: []const u8 = file_name;
     if (opts.explicit) |p| return p;
@@ -319,7 +438,6 @@ fn exists(io: Io, path: []const u8) bool {
     return true;
 }
 
-/// Read and parse. Everything in the result lives on `arena`.
 pub fn load(arena: Allocator, io: Io, path: []const u8) Allocator.Error!Loaded {
     const src = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(max_file_bytes), .of(u8), 0) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -340,53 +458,50 @@ pub fn parse(arena: Allocator, src: [:0]const u8, path: []const u8) Allocator.Er
     return .{ .config = try normalise(arena, cfg), .path = path, .missing = false };
 }
 
-/// The tidying both readers want: a trailing `/` off the URL, project
-/// keys sanitised, the detail width kept inside a sane band.
 pub fn normalise(arena: Allocator, in: Config) Allocator.Error!Config {
     var c = in;
-    c.jira.url = std.mem.trimEnd(u8, std.mem.trim(u8, c.jira.url, " \t\r\n"), "/");
-    c.jira.email = std.mem.trim(u8, c.jira.email, " \t\r\n");
-    if (c.jira.projects.len > 0) {
-        var keep: std.ArrayListUnmanaged([]const u8) = .empty;
-        for (c.jira.projects) |k| if (validProjectKey(k)) try keep.append(arena, k);
-        c.jira.projects = try keep.toOwnedSlice(arena);
+    c.jira_url = std.mem.trimEnd(u8, std.mem.trim(u8, c.jira_url, " \t\r\n"), "/");
+    c.bitbucket_api_url = std.mem.trimEnd(u8, std.mem.trim(u8, c.bitbucket_api_url, " \t\r\n"), "/");
+    c.email = std.mem.trim(u8, c.email, " \t\r\n");
+    if (c.projects.len > 0) {
+        var keep: std.ArrayList([]const u8) = .empty;
+        for (c.projects) |k| if (validProjectKey(k)) try keep.append(arena, k);
+        c.projects = try keep.toOwnedSlice(arena);
     }
-    c.mnml.detail_width_pct = std.math.clamp(c.mnml.detail_width_pct, 20, 70);
-    if (c.mnml.max_comments == 0) c.mnml.max_comments = 1;
-    if (c.mnml.max_prs == 0) c.mnml.max_prs = 1;
     return c;
 }
 
-/// What `mnml-jira --write-config` puts on disk, and what the pane's
-/// empty state tells the user to write.
+/// What `--write-config` puts on disk: the reference's example, in ZON.
 pub const example =
-    \\// mnml-jira — the Jira ticket viewer. See integrations/jira/README.md.
+    \\// mnml-jira — the config, the reference tracker's TOML keys in ZON.
+    \\// See integrations/jira/README.md for the key-by-key table.
     \\.{
-    \\    .jira = .{
-    \\        .url = "https://acme.atlassian.net",
-    \\        .email = "you@acme.com",
-    \\        // The token is never written here. It comes from this
-    \\        // environment variable, or from .token_file.
-    \\        .token_env = "JIRA_API_TOKEN",
-    \\        // .token_file = "~/.config/mnml/integrations/jira/token",
-    \\        .api = .v3,
-    \\        // .team_field_id = "customfield_10056",
-    \\        // .team_field_name = "Team",
-    \\        .projects = .{"ENG"},
-    \\    },
-    \\    .mnml = .{
-    \\        .refresh_interval_secs = 60,
-    \\        .detail_width_pct = 40,
-    \\    },
+    \\    .jira_url = "https://yourorg.atlassian.net",
+    \\    .email = "you@example.com",
+    \\    // The token is never written here: $JIRA_API_TOKEN, or .token_file.
+    \\    // .token_file = "~/.config/mnml-tracker-jira/token",
+    \\    .refresh_interval_secs = 60,
+    \\    .release_cut = false,
+    \\    // .team_field_id = "customfield_10056",
+    \\    // .team_field_name = "Team",
+    \\    // .dispatch_workspace = "/path/to/agent/workspace",
     \\    .tabs = .{
-    \\        .{ .name = "Mine", .kind = .work_assigned },
-    \\        .{ .name = "Recent", .kind = .work_recent },
+    \\        .{ .name = "Assigned", .kind = .work_assigned },
+    \\        .{ .name = "Recently Done", .kind = .work_recently_done },
     \\        .{
-    \\            .name = "Release",
-    \\            .kind = .fix_version,
-    \\            .project = "ENG",
+    \\            .name = "Current Release",
+    \\            .kind = .fix_version_tree,
+    \\            .project = "TE",
     \\            .mode = .current_release,
+    \\            .status_order = .{ "Testing", "In PR Review", "In Progress", "To Do", "Done" },
+    \\            .bumps = .{
+    \\                .pr_approved = "Testing",
+    \\                .no_open_prs = "Testing",
+    \\                .release_cut = .{ .{ .status = "Done", .target = "top" } },
+    \\            },
     \\        },
+    \\        .{ .name = "Sprint", .kind = .board_active_sprint, .project = "TE", .board_id = 200 },
+    \\        .{ .name = "Backlog", .kind = .board_backlog, .project = "TE" },
     \\    },
     \\}
     \\
@@ -396,105 +511,108 @@ pub const example =
 
 const testing = std.testing;
 
-test "the example config parses, normalises and validates" {
+test "the example parses, validates, and reads as the reference's config" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const src = try a.allocator().dupeZ(u8, example);
     const loaded = try parse(a.allocator(), src, "example");
     try testing.expect(loaded.parse_error == null);
     const c = loaded.config;
-    try testing.expectEqualStrings("https://acme.atlassian.net", c.jira.url);
-    try testing.expectEqual(ApiVersion.v3, c.jira.api);
-    try testing.expectEqual(@as(usize, 1), c.jira.projects.len);
-    try testing.expectEqual(@as(usize, 3), c.tabs.len);
-    try testing.expectEqual(TabKind.work_assigned, c.tabs[0].kind);
-    try testing.expectEqual(TabKind.fix_version, c.tabs[2].kind);
-    try testing.expectEqual(ResolveMode.current_release, c.tabs[2].mode);
-    // The defaults every tab inherits.
-    try testing.expectEqual(GroupBy.hierarchy, c.tabs[0].group_by);
-    try testing.expectEqualSlices(Column, &default_columns, c.tabs[0].columns);
+    try testing.expectEqualStrings("https://yourorg.atlassian.net", c.jira_url);
+    try testing.expectEqual(@as(u32, 60), c.refresh_interval_secs);
+    try testing.expectEqual(@as(usize, 5), c.tabs.len);
+    try testing.expectEqual(TabKind.fix_version_tree, c.tabs[2].kind.?);
+    try testing.expectEqual(ResolveMode.current_release, c.tabs[2].mode.?);
+    try testing.expectEqualStrings("Testing", c.tabs[2].bumps.?.pr_approved);
+    try testing.expectEqualStrings("Done", c.tabs[2].bumps.?.release_cut[0].status);
+    try testing.expectEqualStrings("top", c.tabs[2].bumps.?.release_cut[0].target);
+    try testing.expectEqual(@as(u64, 200), c.tabs[3].board_id);
+    try testing.expectEqual(@as(usize, 5), c.tabs[2].status_order.?.len);
+    try testing.expectEqual(@as(usize, 7), c.tabs[0].statusOrder().len);
     var why: []const u8 = "";
     try validate(c, &why);
 }
 
-test "normalise strips the trailing slash, drops bad project keys and clamps the split" {
+test "the families split the tabs the way --only does, and a legacy tab is dropped by any --only" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const c = try normalise(a.allocator(), .{
-        .jira = .{ .url = " https://x.atlassian.net/ ", .email = " me@x ", .projects = &.{ "ENG", "eng", "", "TOOLONGPROJECTKEY", "A1" } },
-        .mnml = .{ .detail_width_pct = 95, .max_comments = 0, .max_prs = 0 },
-    });
-    try testing.expectEqualStrings("https://x.atlassian.net", c.jira.url);
-    try testing.expectEqualStrings("me@x", c.jira.email);
-    try testing.expectEqual(@as(usize, 2), c.jira.projects.len);
-    try testing.expectEqualStrings("ENG", c.jira.projects[0]);
-    try testing.expectEqualStrings("A1", c.jira.projects[1]);
-    try testing.expectEqual(@as(u8, 70), c.mnml.detail_width_pct);
-    try testing.expectEqual(@as(u8, 1), c.mnml.max_comments);
-    try testing.expectEqual(@as(u8, 1), c.mnml.max_prs);
+    const tabs = [_]Tab{
+        .{ .name = "A", .kind = .work_assigned },
+        .{ .name = "R", .kind = .work_recently_done },
+        .{ .name = "C", .kind = .fix_version_tree, .project = "TE" },
+        .{ .name = "S", .kind = .board_active_sprint, .project = "TE" },
+        .{ .name = "B", .kind = .board_backlog, .project = "TE" },
+        .{ .name = "L", .jql = "project = X" },
+    };
+    try testing.expectEqual(@as(usize, 2), (try tabsOfFamily(a.allocator(), &tabs, .work)).len);
+    try testing.expectEqual(@as(usize, 1), (try tabsOfFamily(a.allocator(), &tabs, .fix_versions)).len);
+    try testing.expectEqual(@as(usize, 2), (try tabsOfFamily(a.allocator(), &tabs, .boards)).len);
+    try testing.expectEqual(@as(usize, 6), (try tabsOfFamily(a.allocator(), &tabs, null)).len);
+    try testing.expectEqual(Family.work, Family.fromCli("work").?);
+    try testing.expectEqual(Family.fix_versions, Family.fromCli("fix-versions").?);
+    try testing.expectEqual(Family.boards, Family.fromCli("jira_boards").?);
+    try testing.expect(Family.fromCli("bogus") == null);
+    try testing.expectEqualStrings("JIRA FIX VERSIONS", Family.fix_versions.title());
+    try testing.expect(tabs[3].isKanban() and !tabs[3].isTree() and tabs[0].isTree() and !tabs[5].isTree());
 }
 
-test "validate names the one thing that is wrong" {
+test "the default JQLs are the reference's, and the release kind has none" {
+    const mine = TabKind.work_assigned.defaultJql().?;
+    try testing.expect(std.mem.indexOf(u8, mine, "resolution = Unresolved") != null);
+    try testing.expect(std.mem.indexOf(u8, mine, "Done in Production") != null);
+    try testing.expect(std.mem.indexOf(u8, TabKind.board_backlog.defaultJql().?, "sprint is EMPTY") != null);
+    try testing.expect(TabKind.fix_version_tree.defaultJql() == null);
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    try testing.expectEqualStrings("filter = 12 ORDER BY updated DESC", (try (Tab{ .name = "F", .kind = .filter, .filter_id = 12 }).staticJql(a.allocator())).?);
+    try testing.expectEqualStrings("project = X", (try (Tab{ .name = "M", .kind = .work_assigned, .jql = "project = X" }).staticJql(a.allocator())).?);
+    try testing.expect((try (Tab{ .name = "R", .kind = .fix_version_tree, .project = "X" }).staticJql(a.allocator())) == null);
+}
+
+test "validate: the reference's rules" {
     var why: []const u8 = "";
     try testing.expectError(error.NoUrl, validate(.{}, &why));
-    try testing.expect(std.mem.indexOf(u8, why, "jira.url") != null);
-    const site: Jira = .{ .url = "https://x", .email = "me@x" };
-    try testing.expectError(error.NoTabs, validate(.{ .jira = site }, &why));
-    try testing.expectError(error.FixVersionWithoutProject, validate(.{
-        .jira = site,
-        .tabs = &.{.{ .name = "R", .kind = .fix_version }},
-    }, &why));
-    try testing.expect(std.mem.indexOf(u8, why, ".project") != null);
-    try testing.expectError(error.FilterWithoutId, validate(.{
-        .jira = site,
-        .tabs = &.{.{ .name = "F", .kind = .filter }},
-    }, &why));
-    try testing.expectError(error.CustomWithoutJql, validate(.{
-        .jira = site,
-        .tabs = &.{.{ .name = "C" }},
-    }, &why));
-    try testing.expectError(error.TabWithoutName, validate(.{
-        .jira = site,
-        .tabs = &.{.{ .name = "", .jql = "x" }},
-    }, &why));
-    // A fix_version tab with an explicit JQL needs no project.
-    try validate(.{ .jira = site, .tabs = &.{.{ .name = "R", .kind = .fix_version, .jql = "project = X" }} }, &why);
+    const site: Config = .{ .jira_url = "https://x", .email = "me@x" };
+    try testing.expectError(error.NoTabs, validate(site, &why));
+    var c = site;
+    c.tabs = &.{.{ .name = "R", .kind = .fix_version_tree }};
+    try testing.expectError(error.TabNeedsProject, validate(c, &why));
+    c.tabs = &.{.{ .name = "F", .kind = .filter }};
+    try testing.expectError(error.FilterWithoutId, validate(c, &why));
+    c.tabs = &.{.{ .name = "B", .kind = .work_assigned, .jql = "x", .mode = .next_release }};
+    try testing.expectError(error.TabJqlAndMode, validate(c, &why));
+    c.tabs = &.{.{ .name = "L" }};
+    try testing.expectError(error.TabNeedsJqlOrMode, validate(c, &why));
+    c.tabs = &.{.{ .name = "L", .mode = .current_release }};
+    try testing.expectError(error.TabNeedsProject, validate(c, &why));
+    c.tabs = &.{ .{ .name = "T", .jql = "status = Testing" }, .{ .name = "C", .mode = .current_release, .project = "TE" } };
+    try validate(c, &why);
 }
 
-test "staticJql: the explicit one wins, then the filter form, then the kind's default; fix_version has to ask" {
-    const gpa = testing.allocator;
-    const mine = (try (Tab{ .name = "M", .kind = .work_assigned }).staticJql(gpa)).?;
-    defer gpa.free(mine);
-    try testing.expect(std.mem.startsWith(u8, mine, "assignee = currentUser()"));
-    const over = (try (Tab{ .name = "M", .kind = .work_assigned, .jql = "project = X" }).staticJql(gpa)).?;
-    defer gpa.free(over);
-    try testing.expectEqualStrings("project = X", over);
-    const filt = (try (Tab{ .name = "F", .kind = .filter, .filter_id = 12 }).staticJql(gpa)).?;
-    defer gpa.free(filt);
-    try testing.expectEqualStrings("filter = 12 ORDER BY updated DESC", filt);
-    try testing.expect((try (Tab{ .name = "R", .kind = .fix_version, .project = "X" }).staticJql(gpa)) == null);
-    try testing.expect((try (Tab{ .name = "C" }).staticJql(gpa)) == null);
+test "the detail modal resolves aliases both ways and titles the built-ins" {
+    const m: DetailModal = .{ .field_alias = &.{.{ .name = "problem", .id = "customfield_10101" }} };
+    try testing.expectEqualStrings("customfield_10101", m.resolveId(.{ .id = "problem" }));
+    try testing.expectEqualStrings("assignee", m.resolveId(.{ .id = "assignee" }));
+    try testing.expectEqualStrings("problem", m.resolveLabel(.{ .id = "customfield_10101" }));
+    try testing.expectEqualStrings("Fix version", m.resolveLabel(.{ .id = "fix_version" }));
+    try testing.expectEqualStrings("What", m.resolveLabel(.{ .id = "customfield_2", .label = "What" }));
+    try testing.expectEqual(@as(usize, 10), default_detail_fields.len);
 }
 
-test "a broken config comes back as a parse error, not a crash; a missing one is missing" {
+test "a broken config is a parse error, a missing one is missing, normalise tidies" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const src = try a.allocator().dupeZ(u8, ".{ .jira = .{ .url = ");
+    const src = try a.allocator().dupeZ(u8, ".{ .jira_url = ");
     const bad = try parse(a.allocator(), src, "bad.zon");
     try testing.expect(bad.parse_error != null);
-    try testing.expect(!bad.missing);
     const gone = try load(a.allocator(), testing.io, "/nowhere/at/all/config.zon");
     try testing.expect(gone.missing);
-    try testing.expectEqual(@as(usize, 0), gone.config.tabs.len);
+    const c = try normalise(a.allocator(), .{ .jira_url = " https://x/ ", .projects = &.{ "TE", "te", "TOOLONGPROJECTKEY" } });
+    try testing.expectEqualStrings("https://x", c.jira_url);
+    try testing.expectEqual(@as(usize, 1), c.projects.len);
 }
 
-test "columns carry their width and header; summary is the flexible one" {
-    try testing.expectEqual(@as(?u16, 14), Column.key.width());
-    try testing.expect(Column.summary.width() == null);
-    try testing.expectEqualStrings("FIXVERSION", Column.fix_version.header());
-}
-
-test "resolvePath prefers the workspace file, then the data root, and names the data root when neither is there" {
+test "resolvePath prefers the workspace file, then the data root, and names the data root when neither exists" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
@@ -504,20 +622,14 @@ test "resolvePath prefers the workspace file, then the data root, and names the 
     const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
     const ws = try std.fs.path.join(arena, &.{ root, "ws" });
     const data = try std.fs.path.join(arena, &.{ root, "data" });
-    // Neither exists: the data-root path is what the pane names.
     const none = try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null);
     try testing.expect(std.mem.endsWith(u8, none, "data/integrations/jira/config.zon"));
-    // The data-root one exists: it wins over the absent workspace one.
     try tmp.dir.createDirPath(testing.io, "data/integrations/jira");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "data/integrations/jira/config.zon", .data = ".{}" });
-    const in_data = try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null);
-    try testing.expect(std.mem.endsWith(u8, in_data, "data/integrations/jira/config.zon"));
-    // The workspace one exists: it wins over both.
+    try testing.expect(std.mem.endsWith(u8, try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "data/integrations/jira/config.zon"));
     try tmp.dir.createDirPath(testing.io, "ws/.mnml/integrations/jira");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/.mnml/integrations/jira/config.zon", .data = ".{}" });
-    const in_ws = try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null);
-    try testing.expect(std.mem.endsWith(u8, in_ws, "ws/.mnml/integrations/jira/config.zon"));
-    // The environment beats the lot; `--config` beats that.
-    try testing.expectEqualStrings("/from/env.zon", try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, "/from/env.zon"));
-    try testing.expectEqualStrings("/flag.zon", try resolvePath(arena, testing.io, .{ .explicit = "/flag.zon", .workspace = ws }, "/from/env.zon"));
+    try testing.expect(std.mem.endsWith(u8, try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "ws/.mnml/integrations/jira/config.zon"));
+    try testing.expectEqualStrings("/from/env.zon", try resolvePath(arena, testing.io, .{ .workspace = ws }, "/from/env.zon"));
+    try testing.expectEqualStrings("/flag.zon", try resolvePath(arena, testing.io, .{ .explicit = "/flag.zon" }, "/from/env.zon"));
 }

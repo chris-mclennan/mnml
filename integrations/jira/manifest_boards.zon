@@ -1,23 +1,20 @@
-// The Jira Work manifest — one of the three chips the Jira integration
+// The Jira Boards manifest — one of the three chips the Jira integration
 // ships, each opening the same binary on one family of tabs
-// (`--only work`), the way the reference tracker's three launcher
+// (`--only boards`), the way the reference tracker's three launcher
 // manifests do. `mnml-jira --install` writes all three into mnml's
 // data root; the INTEGRATIONS section's Dev tab reads `manifest.zon`
 // beside build.zig to list the folder before anything is built.
 .{
-    .id = "jira_work",
-    .label = "Jira Work",
-    .description = "Jira: tickets assigned to me + recently done",
+    .id = "jira_boards",
+    .label = "Jira Boards",
+    .description = "Jira: active sprint + backlog",
     .version = "0.2.0",
     .binary = "mnml-jira",
     .category = "tracker",
-    .chip = .{ .glyph = "\u{f0303}", .fallback = "JW", .color = "blue", .tooltip = "Jira Work", .in_palette_bar = false }, // nf-md-jira
+    .chip = .{ .glyph = "\u{f0303}", .fallback = "JB", .color = "magenta", .tooltip = "Jira Boards", .in_palette_bar = false }, // nf-md-jira
     .commands = .{
-        .{ .id = "jira_work.open", .title = "Jira Work: open", .args = .{ "--only", "work" }, .keys = .{"space i j w"} },
-        .{ .id = "jira_work.refresh", .title = "Jira Work: republish the statusline count", .ex = "term mnml-jira --values --only work --workspace {{workspace}}" },
-    },
-    .statusline = .{
-        .{ .id = "assigned", .text = "\u{f0303}", .color = "#1B5DCF", .click_command = "jira_work.open", .priority = 60 },
+        .{ .id = "jira_boards.open", .title = "Jira Boards: open", .args = .{ "--only", "boards" }, .keys = .{"space i j b"} },
+        .{ .id = "jira_boards.refresh", .title = "Jira Boards: republish the statusline count", .ex = "term mnml-jira --values --only boards --workspace {{workspace}}" },
     },
     .auth = .{
         .{ .key = "site_url", .label = "Jira site URL", .kind = .url, .required = true, .env_fallback = "JIRA_URL", .help = "Your Atlassian instance, like https://mycompany.atlassian.net" },
@@ -25,6 +22,6 @@
         .{ .key = "api_token", .label = "Jira API token", .kind = .secret, .required = true, .env_fallback = "JIRA_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Create at id.atlassian.com → Security → API tokens. This is different from your Atlassian account password." },
     },
     .values_sources = .{
-        .{ .id = "jira_work_values", .command = "mnml-jira --values --only work", .poll_interval_secs = 300 },
+        .{ .id = "jira_boards_values", .command = "mnml-jira --values --only boards", .poll_interval_secs = 300 },
     },
 }

@@ -1,0 +1,32 @@
+waitfor To Do ( 60000
+settle 1500
+snap sprint
+key j
+snap cursor
+key >
+snap card-expanded
+key >
+key D
+settle 1500
+snap modal
+key esc
+key T
+settle 800
+snap team-picker
+key esc
+clickon [ Sprint
+settle 1500
+snap sprint-picker
+key esc
+clickon [ Board
+settle 1500
+snap board-picker
+key esc
+clickon [ Epic
+settle 800
+snap epic-picker
+key esc
+key 2
+settle 4000
+snap backlog
+quit

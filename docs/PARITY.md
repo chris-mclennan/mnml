@@ -833,131 +833,77 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 
 ## Integrations — jira
 
-`integrations/jira/` against the Rust tracker
-`mnml-integrations/apps/mnml-tracker-jira` v0.2.24 (12 source files,
-~14k lines), read in full before this table was written. The Rust app is
-**not** in the Rust editor's `FEATURES.md` — it is a separate binary —
-so this section is its own ledger rather than a continuation of the
-counts above.
+`integrations/jira/` against the reference tracker
+`mnml-integrations/apps/mnml-tracker-jira` v0.2.24, rebuilt from
+scratch in September 2026 after the first port was rejected. The spec is
+`docs/ui-spec/jira/README.md`: every screen of the reference captured
+as text from the running tracker (`tools/jira-capture.py`), an
+inventory of surfaces, keys and clicks per screen, and ten things the
+reference gets wrong that the port does not copy. The port keeps the
+reference's shape — three chips over one binary, the same screens, the
+same keys, the same columns — in mnml's chrome: the caps header with
+its chips, the tab strip with the `▌` marker, ` key: value ` mode chips,
+the built-in sections' key sheet, and a hint row generated from the
+bindings. `tools/jira-diff.sh` runs both apps headless on the offline
+server and prints the rows that differ per screen, by content.
 
-Three of the brief's asks are things the Rust app does **not** have
-(create, copy, assign-to-me); they are built here and marked
-*beyond Rust*. Three of the Rust app's tracks are deliberately not
-here (kanban boards, the Claude-Code dispatch queue, the Bitbucket
-pipeline rows); each `cut` row says why and where the user learns it.
-
-### The pane
+### The families and the screens
 
 | feature | status | note |
 |---|---|---|
-| Configurable tabs, one per `[[tabs]]` entry | done | `.tabs` in `config.zon`; `Tab` in `integrations/jira/src/config.zig`, `App.openTabs` |
-| `kind` = `work_assigned` / `work_recently_done` / `work_recent` / `work_unified` / `filter` | done | `TabKind.defaultJql` carries the four JQLs; the Rust `work_assigned` status list was employer-specific (`"Done in Staging"`, `"Done in Production"`) and is the portable `("Done", "Closed", "Resolved")` here, overridable with `.jql` |
-| `kind = fix_version_tree` — a release tab | done, renamed `.fix_version` | the `_tree` half of the name said which renderer it used, which is now a per-tab `group_by` |
-| `mode = current_release` / `next_release`, `version_name_contains` | done | `unreleasedVersions` + `pickVersion` in `src/jira.zig`, including the name-**descending** tiebreak between two undated versions — the case that actually runs, because most projects never set a `startDate` |
-| A failed version resolve is non-fatal (`issuekey = ''`) | done | `App.refresh`; the tab is empty and present, with a line saying why |
-| `jql` overrides `kind` | done | `Tab.staticJql` |
-| `filter_id` | done | `filter = {id} ORDER BY updated DESC` |
-| `team` → a server-side team clause | done | `jira.withTeam` — `("Team" = t OR component = t OR labels = t)`, with `splitOrderBy` taking the `ORDER BY` off first because Jira rejects `(<where> ORDER BY x) AND <extra>`. The version name is escaped for JQL on **both** paths; the Rust app escapes it in the picker and not in the resolve |
-| Per-tab `columns`, ten kinds, the Rust widths | done | `config.Column`, `ui.layout` |
-| Columns degrade on a narrow pane | done — beyond Rust | Rust's tree tabs hard-code five columns and ignore `[[tabs]] columns` entirely; here the configured set is honoured and fixed columns are dropped **from the right** (never `key`, never `summary`) so the sentence survives a pane beside an open sidebar. `ui.zig` "the layout gives the flexible column what is left" |
-| A ticket tree with folds | done — **different shape** | Rust's tree is `status group → ticket → PR → CI pipeline`; the brief asked for Jira's own hierarchy, so `group_by = .hierarchy` (the default) is `epic → story → sub-task` out of `parent`, with the PRs as leaves. `group_by = .status` is Rust's shape, `status_order` and all |
-| Fold state keyed by name, surviving a refresh | done | `tree.State` — `collapsed` / `hidden` / `pr_shown` are key sets, never indices |
-| The sibling tree-nav convention | done — beyond Rust | `→`/`l` expand, `←`/`h` collapse (and from a leaf, climb to the parent), Enter / Space toggle, `E`/`C` all, `x` hide the branch, `H` unhide with a count on the status line. Rust has `→`/`←`/Enter and no hide at all |
-| Orphans | done | a ticket whose `parent` is not in the result set is a root, not a lost row; `tree.zig` "an orphan whose epic is not in the result set is a root" |
-| Linked PR rows under a ticket, capped, with `Show all` | done | `max_prs` (Rust's 3), `P` lifts the cap in one press (Rust's `+3` staircase was already fixed to one press in #994) |
-| PRs fetched lazily, on expand | done — **deliberately different** | Rust auto-expands every unresolved ticket on every refresh and fetches its dev-status **serially**, which is the N+1 that makes its limiter necessary. Here the fetch happens when a ticket is opened, once, cached until the next refresh |
-| Detail pane, right-hand split | done | `ui.drawDetail`; `detail_width_pct`, `d` toggles, `ctrl+d` / `ctrl+u` scroll |
-| Detail: fields, description, comments | done | type / status / priority / assignee / reporter / version / epic, the ADF description flattened, `max_comments` newest-first |
-| Detail: the ticket's pull requests, read-only | done | a `── pull requests ──` block; the rows carry state, repo, id, branches and the approval count |
-| Live filter (`/`) | done — **fixed** | Rust's text filter never reaches the tree renderer, so on its Work and Fix Versions tabs `/` is inert. Here it filters every shape, keeps a matching row's ancestors so nothing is orphaned, and reads the key, the summary, the assignee and the status |
-| Refresh with a progress line | partial | `r`, and the line moves between requests (`App.sink`). The fetch is **synchronous**: the mount loop blocks on `mount.next`, so a worker thread finishing would have nothing to wake the paint with, and the pane does not answer keys while a refresh runs. `src/app.zig`'s header names the seam |
-| Auto-refresh every `refresh_interval_secs` | partial | Bridge v2 has no timer message, so **focus** is the tick: the pane reloads when it regains the keyboard and the last load was that long ago. `App.focusGained` |
-| Transition, with a confirm | done — beyond Rust | Rust's picker fires on Enter with no confirm; here Enter opens a `y / n` naming the ticket and the target |
-| Assign (a picker over the project's assignable users) | done | `a`; `— Unassign —` first |
-| Assign to me | done — beyond Rust | `m`. Rust has no chord: you pick your own name out of the list |
-| Set the fix version on a ticket | done | `f`; `— Clear the fix version —` first |
-| Comment | done | `c` — `ctrl+s` sends, `Enter` is a newline, the buffer survives a failed post so it can be fixed or copied out. v3 posts ADF, v2 a plain string |
-| Create a ticket | done — beyond Rust | `n`: project / type / summary / description, `Tab` walks, `ctrl+s` creates. Rust has no create path at all |
-| Copy the key / the URL | done — beyond Rust | `y` / `Y` through the platform's clipboard tool (`src/os.zig`); a machine with none puts the text on the status line so it can at least be read off. Rust has no clipboard dependency |
-| Open in the browser | done | `o`; on a PR row it opens the PR. Only `http(s)` URLs are ever handed to the opener |
-| A key sheet | done — beyond Rust | `?`; the rows are checked against the table by a test, so a chord cannot drift out of the sheet |
-| The mouse | done | the tab strip switches tab, a row click selects, a chevron click (or a right-click on the row) folds, the wheel moves three rows. Rust's `table_row_at` still adds two rows for a border its #1001 removed, so its row hit-testing is off by one; this one is tested at the cell |
-| Themes | partial | the mount contract gives a sibling the theme's **name** and nothing else, so `src/theme.zig` is roles over ANSI indices (which the host passes to the terminal untouched, so the user's own palette decides) plus a light/dark split off the name; a cell with no colour is the theme's own fg on its own bg. Rust's `theme.rs` reads mnml's `current-theme.toml` — and is **entirely unwired**: its own header says so, and nothing in its `ui.rs` calls it |
-| `--ascii` twins for every glyph | done — beyond Rust | `ui.Chrome`; the host's `capabilities.ascii` / `.nerd_font` picks |
+| Three chips over one binary (`jira_work`, `jira_fix_versions`, `jira_boards`), each `--only <family>` | done | `manifest.zon`, `manifest_fix_versions.zon`, `manifest_boards.zon`; `--install` writes all three |
+| The tab strip names the active tab | done — beyond the reference | the reference hides the strip under `--only` (note 5 of the spec) |
+| The status-grouped tree: `status_order`, unknown statuses alphabetical last | done | `src/tree.zig` |
+| Bumps: `pr_approved`, `no_open_prs`, `release_cut` with `top` | done | `tree.applyBumps`; `★` after the key, the real status in the STATUS column |
+| Unresolved tickets auto-expanded with their linked PRs, three per ticket, `Show all N PRs ↴` | done | `App.refreshTab` → `ensurePrs`; `tree.pr_cap` |
+| A merged PR expands to its post-merge pipelines (Bitbucket) | done | `src/bitbucket.zig` — merge commit → pipelines filtered by hash prefix; the token's absence is a row, not a crash |
+| `[ Review ] [ Merge ] [ Open ]` on an open PR, `[ Open ]` on the rest | done — beyond the reference | every chip is a hit; the reference painted Merge and Open as text |
+| The columns (`key` 18 / `status` 14 / `assignee` 20 / `updated` 12 / summary), `columns` per tab | done | shrink together at 80 columns, the summary keeps 20 cells, the date column keeps a date |
+| The kanban: four columns bucketed by status name, cards with the type glyph, the wrapped summary, `· assignee`, the buttons, `>` expands to `#label` chips and the hint | done | `src/kanban.zig`, `screen.paintKanban` |
+| The board path: `board_id` → Agile API with sprint and quick-filter clauses; sprints, boards, quick filters | done | `jira.boardIssues`, `sprintsForBoard`, `boardsForProject`, `quickFilters` |
+| The detail pane (60/40, fields, watcher line, description, comments) | done | `screen.paintDetail` |
+| The comment box (`c`, `Ctrl+S`) | done | `App.submitComment` |
+| The detail modal (80 % × 80 %, `detail_modal.fields`, `field_alias`, custom fields by id) | done | `screen.paintModal`, `model.fieldDisplay` |
+| Watching (`w`) | done | the reference's `/myself` for the account id; a failed `/myself` is a status line, not a crash |
+| The pickers: transition (`1-9`), assignee, fix version, actions, team, tab-view version, assignees (multi), epic (multi), type, label, quick filters (multi), board, sprint | done | `src/pickers.zig`; every row a hit, a click outside cancels |
+| Bulk selection into `t` / `a` / `f`; the transition by name, skips reported | done | `S` on a tree tab — the reference's `Space` there activates the row instead (note 7) |
+| The filter (`/`) | done — beyond the reference | narrows the tree as it is typed; the reference's is inert on tree tabs (note 1) |
+| The JQL editor (`E`): the resolved query, arrows, Home/End, words, kills, paste, a click places the caret | done | `src/textedit.zig` — every text field gets the same affordances |
+| The chips: basic / jql / search / space / assignee / type / status; the fixVersion pill with `ⓧ`; board / sprint / avatars / `[?]` / version / epic / type / label / quick filters / unassigned / settings | done | mode chips that wrap to a second row; the reference clips them at 120 columns (note 3) |
+| The scope chip cycles All → Unresolved → Resolved with the toolbar still there | done | the reference drops the toolbar on an empty scope (note 2) |
+| `Esc` cascade: selection → filter → detail → quit | done | the reference's fourth `Esc` quits too; kept |
+| The hint row | done — beyond the reference | generated from `keymap.bindings` by rank, whole entries that fit; the reference's six literal strings drift (note 8) |
+| The key sheet (`?`) | done | the built-in sections' shape from the bindings that apply |
+| Auto-refresh every `refresh_interval_secs`; the cursor keeps its ticket; an action's message survives the refetch | done | `App.tick` from the inbox loop's timed wait |
+| The first frame before the first fetch | done — beyond the reference | the reference waits on the whole fetch (note 6) |
+| Click targets | done — beyond the reference | rows, chevrons, show-all rows, PR chips, action buttons, tabs, chips, avatars, cards, card chevrons, columns, picker rows, the modal's `×`, the JQL text — registered in the same statement they paint (`src/hit.zig`); the reference's are rows at fixed offsets (note 10) |
+| The dispatch queue: `queue.jsonl` + the `term` line, the prompts per kind, the buttons by type and status | done | `src/dispatch.zig`; kanban buttons click (note 9) |
+| The statusline segment `󰌃 N` | done | the manifest's `jira_work.assigned` slot, replaced live over Tier-2 IPC after every refresh and by `--values --workspace`; the exact IPC line is under test |
+| `--check`, `--diag`, `--values`, `--prefetch`, hydration from `$MNML_PREFETCH_CACHE_FILE` | done | the reference's reports; the token is never printed |
+| `--dump --steps FILE` | done — port only | the headless driver behind `tools/jira-diff.sh` |
+| The seeded assignee filter (`Assignee: Me` on load) | done — different on tree tabs | seeded on the kanban, where the reference's filter works; on tree tabs the reference's filter is inert so the seed would hide every other assignee's ticket (the release tab shows everyone's); the chips work on trees when the user sets them |
+| Kanban action buttons, `Space ▾`, `More filters`, `Save filter` | different | the buttons click; the three placeholders are not painted (the reference painted them inert) |
 
 ### Auth, the API and the limiter
 
 | feature | status | note |
 |---|---|---|
-| Token from a file | done | `jira.token_file`, `~` expanded |
-| Token from the environment | done — beyond Rust | `jira.token_env`, default `JIRA_API_TOKEN`. Rust reads exactly one hard-coded file and has no env path in the binary at all |
-| Default token file | done | `<data root>/integrations/jira/token` |
-| Surrounding quotes stripped | done | carried over deliberately: Atlassian's copy button hands out `"ATATT3x…"`, and a quoted token authenticates as a corrupted one, which Jira answers with `200` and zero results rather than `401` |
-| Every refusal path named on screen | done — beyond Rust | no config / a config that will not parse / a config that cannot work / no token / an empty variable / an unreadable file, each with the path and the next step. Rust exits the process with a four-line message |
-| `/myself` never a preflight | done | a scoped token often cannot answer it while being able to search; a failure costs `m` and nothing else |
-| The token never printed | done | `--check` reports its length and its source; `auth.describe` is tested for it |
-| Search — `POST /rest/api/3/search/jql`, `nextPageToken`, the 500 cap | done | `jira.search` / `searchPage` |
-| Search — the v2 `GET /rest/api/2/search` with `startAt` | done — beyond Rust | Rust is v3-only; `.api = .v2` reaches a Server / Data Center site |
-| Issue detail | done | one call with the fields the pane paints |
-| Transitions — list and execute | done | |
-| Comment — ADF (v3) / plain (v2) | done | `writeAdf`: one paragraph per line, a bare one for a blank |
-| Assign, set fixVersions | done | `PUT /issue/{key}` |
-| Create | done — beyond Rust | `POST /issue` |
-| Project versions | done | |
-| Assignable users | done | `project` is percent-encoded here; Rust interpolates it raw |
-| Current user | done | cached, and a refusal is remembered rather than re-asked |
-| Linked PRs — the dev-status panel | done | `/rest/dev-status/latest/issue/detail?issueId=…` — it wants the numeric id, not the key |
-| Linked PRs — `/issue/{key}/remotelink` as a fallback | done — beyond Rust | a site without the dev panel, or a PR linked by hand, still shows. A 404 from either is "no PRs", not a failure |
-| Watchers (`w`) | cut | the watch toggle needs `/myself` for the accountId, which a scoped token often cannot answer, and the state it shows is one line of the detail pane. `docs/PARITY.md` (here) and `integrations/jira/README.md`'s key table, which does not list `w` |
-| Jira error messages surfaced verbatim | done | `jira.failureOf` reads `errorMessages` / `errors`; `401`, `403`, `404`, `410` and `429` also get a sentence saying what to do (the `410` one names `.api = .v2`) |
-| Rate limiting — a token bucket in front of every call | done | `src/ratelimit.zig` with the Rust Jira row's numbers (0.33/s, burst 60, 45 s cooldown, 120 s ceiling), configurable per site |
-| Rate limiting — the 429 branch | done — **beyond Rust** | Rust's `Client::penalize` is `#[allow(dead_code)]` with zero callers: there is no 429 detection, no retry and no `Retry-After` parsing anywhere. Here a `429` or a `5xx` pauses the next permit and doubles per consecutive strike, and a success clears it |
-| Rate limiting — `Retry-After` | cut | `std.http.Client.fetch` hands back a status and a body, not the response headers; a `429` takes the configured `cooldown_secs` instead. Named in `src/jira.zig` at the call site |
-| Rate limiting — a cross-process `flock` file | cut | one integration process per pane, and `flock` is a no-op on Windows, which this repo ships. The bucket is per process |
-
-### Installing, and what mnml sees
-
-| feature | status | note |
-|---|---|---|
-| `--install` / `--uninstall` write and delete the manifest | done | `sdk.manifest.write` / `.remove`; `manifest.zon` is `@import`ed so the binary and the Dev tab read one definition |
-| One manifest, not three | done — **deliberately different** | Rust ships `jira_work`, `jira_fix_versions` and `jira_boards` as three chips over one binary, each `--only`-ing a tab family. One pane with a tab strip is the mnml shape, and three chips for one integration crowds the bar |
-| Chip — glyph, fallback, colour, tooltip | done | `\u{f0303}` (nf-md-jira), `JI`, blue — the Rust glyph |
-| Commands | done | `jira.open` (`ctrl+k j`), `jira.refresh` (`--refresh-all`), `jira.search` (`--filter`, `ctrl+k /`). A test resolves every id the manifest points at, and every argument it passes, against what `main.zig` answers |
-| Statusline segment with the count of "mine" | done | the manifest's static twin plus a live `JIRA <n>` pushed over Tier-2 IPC at startup |
-| Activity badge | done | `set-activity-badge integrations <n>` |
-| Settings rows | done | *Detail pane* (shown / hidden) and *Ticket tree* (hierarchy / status), both read from `MNML_SETTING_<KEY>` and both wired — the config key they override is wired too |
-| `auth[]` fields | done | `site_url`, `email`, `api_token` with `JIRA_API_TOKEN` as its env fallback |
-| `values_sources` + `--values` | done | `{"assigned_open": N}`; mnml's own polling of `values_sources` is a later slice of the manifest layer, and the live segment covers it meanwhile |
-| `--check` | done | the config, the site, the tabs and the token's length, with no network |
-| `--write-config` | done — beyond Rust | Rust writes its example on first run and then errors out; here the pane paints the path and the command, and the pane still opens |
-| `--diag` | cut | `--check` is the same information; a second flag that prints a box-drawn version of it is not worth the surface |
-| `--only <family>` | cut | one pane with a tab strip replaces the three-binary split |
-| `--prefetch` + `$MNML_PREFETCH_CACHE_FILE` | cut | it exists in Rust because the interactive launch is slow behind its own auto-expand N+1; lazy PR fetching removes the reason |
-| The root `zig build` picks it up | done | `build.zig` builds `mnml-jira` and `mnml-fake-jira` beside the exe, runs their unit tests under `zig build test`, and installs both into the gate directory so `gate-build` cross-compiles them |
-
-### Tracks left out whole
-
-| feature | status | note |
-|---|---|---|
-| Kanban boards — `board_active_sprint` / `board_backlog`, the four columns, cards, the avatar cluster, quick filters, sprint and board pickers | cut | the whole `agile/1.0` surface (board issues, board meta, three sprint requests, quick filters) plus a second renderer and its own toolbar. The two `kind` values are not in `TabKind`, so a config naming one is a ZON parse error the pane paints with the line number — not a tab that opens empty and never says why |
-| The detail **modal** (`D`) with `[detail_modal] fields` / `field_alias` | cut | the right-hand detail pane shows the same fields; a full-screen modal over a pane that is already one pane of an editor is the wrong shape here |
-| Bumps — `pr_approved` / `no_open_prs` / `release_cut` | cut | a ticket can only be bumped once its PRs are fetched, which in Rust means the auto-expand N+1 on every refresh; the lazy fetch here removes the input. The status a ticket is in is the status Jira has |
-| Bulk selection and bulk transition / assign / fixVersion | cut | v1 acts on the row under the cursor. The Rust bulk transition matches by transition **name** across workflows, which is the piece worth porting when this lands |
-| The Claude-Code dispatch queue — the action buttons, `.`, `I` / `X` / `T` / `V`, `queue.jsonl`, the `:term claude` IPC line | cut | it is employer-specific: it writes into one team's agent workspace. mnml can open a terminal pane on any command already |
-| Post-merge CI pipeline rows under a merged PR | cut | it is a second forge client with its own `$BITBUCKET_ACCESS_TOKEN`, and it belongs with the Bitbucket integration rather than in the Jira one |
-| The JQL editor (`E`) | cut | a tab's JQL is a config key; editing it live and not persisting it (Rust never writes the config back) is a change that vanishes on restart |
-| Watch / unwatch (`w`) | cut | see the auth table above |
-| `release_cut` persisted, the `m` chord, the `--release-cut` flag | n/a | none of the three exists in the Rust app either — the config comment claims all three and the code has none |
+| Token from a file, from the environment, from the data root, from the reference's `~/.config/mnml-tracker-jira/token` | done | `src/auth.zig`; quotes stripped |
+| `POST /rest/api/3/search/jql`, `nextPageToken`, the 500 cap | done | `jira.search` |
+| Issue, transitions, comment, assignee, fixVersion, watchers, myself, assignable users, project versions, dev-status, Agile board / issue / sprint / quickfilter | done | `src/jira.zig`, each against the fake server over a real socket |
+| Rate limiting — the reference's numbers (0.33/s, burst 60, 45 s cooldown, 120 s ceiling) | done | `src/ratelimit.zig`, in-process |
+| Rate limiting — the cross-process state file (`$TATTLE_ARTIFACTS_ROOT/jira-ratelimit.json`) | not done | see "needs a decision" in the hand-off |
+| `Retry-After` | cut | `std.http.Client.fetch` hands back a status and a body, not the headers; a `429` takes `cooldown_secs` |
+| Synchronous fetches | as the reference | every fetch runs in the loop; the pane paints between them, not during |
 
 ### The offline server
 
-| feature | status | note |
-|---|---|---|
-| A fake Jira, so every test runs offline | done — beyond Rust | `integrations/jira/tools/fake_jira/`: one epic, two stories, a sub-task, a bug, three fix versions, two users, a four-state workflow. `Store.handle` is the server as a pure function, so most of its tests touch no socket; `src/jira.zig`'s last two tests drive the client against it over a real TCP connection |
-| Endpoints | done | `myself`, `search/jql` (v3) and `search` (v2), `issue/{key}`, `issue/{key}/transitions` (GET and POST), `issue/{key}/comment`, `issue/{key}/remotelink`, `PUT issue/{key}`, `POST issue`, `project/{key}/versions`, `user/assignable/search`, `dev-status/latest/issue/detail` |
-| Mutating routes actually mutate | done | a transition, a comment, an assignment, a fix version and a created ticket all show up in the next read |
-| The refusal paths | done | `--no-auth` off means a wrong `Authorization` is a real `401` with Jira's own sentence; `Store.fail_with` turns every route into one status, for the `429` / `5xx` tests |
-| Corpus scripts | done | `tests/e2e/integrations_jira_pane.test` — install from the Dev tab, mount, the tree, the filter, the help sheet, hide / unhide, the transition picker, all against the fake server; `integrations_jira_blocked.test` — no config, no token, a config that will not parse |
+`integrations/jira/tools/fake_jira/`: project ENG, twelve issues, a
+scrum board with an active, a future and two closed sprints, quick
+filters, versions, six users, the dev-status panel with linked PRs, a
+forge corner for pipelines, the JQL subset every default query uses.
+The unit suite, the corpus scripts and `tools/jira-diff.sh` all run on
+it; the reference runs on it too.
 
 ## Disputed
 

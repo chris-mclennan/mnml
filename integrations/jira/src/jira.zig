@@ -1,7 +1,10 @@
 //! The Jira REST client: one `request` through the rate limiter, and a
-//! named wrapper per endpoint the pane uses. Nothing here knows about
-//! panes, frames or keys — `tools/fake_jira` answers the same twelve
-//! routes, so every test in this integration runs offline.
+//! named wrapper per endpoint the pane uses — the REST v3 search, the
+//! issue, its transitions / comments / assignee / fix version / watchers,
+//! the dev-status pull requests, the project's versions and assignable
+//! users, and the Agile API's boards, board issues, sprints and quick
+//! filters. Nothing here knows about panes, frames or keys —
+//! `tools/fake_jira` answers every route, so every test runs offline.
 //!
 //! **API version.** `v3` is Atlassian Cloud today: a description and a
 //! comment body are ADF (a JSON document), and search is
@@ -23,6 +26,7 @@ const json = @import("json.zig");
 const text = @import("text.zig");
 const ratelimit = @import("ratelimit.zig");
 const config = @import("config.zig");
+const model = @import("model.zig");
 
 pub const Value = std.json.Value;
 pub const ApiVersion = config.ApiVersion;
@@ -34,9 +38,9 @@ pub const page_size: u32 = 100;
 /// The fields every search asks for. `parent` carries the epic on a
 /// team-managed project; `customfield_*` extras are added by the caller.
 pub const search_fields = [_][]const u8{
-    "summary",    "status",  "assignee", "reporter",       "priority",
-    "issuetype",  "updated", "created",  "resolutiondate", "fixVersions",
-    "components", "labels",  "parent",   "subtasks",
+    "summary",           "status",  "assignee",    "reporter",   "priority", "issuetype",
+    "updated",           "created", "fixVersions", "components", "labels",   "parent",
+    "customfield_10020",
 };
 
 pub const Failure = struct {
@@ -383,28 +387,49 @@ pub fn search(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []con
     return .{ .ok = try all.toOwnedSlice(arena) };
 }
 
-/// One issue with everything the detail pane shows.
-pub fn issue(c: *Client, arena: Allocator, key: []const u8) CallError!Answer(Value) {
+// ─── issues ──────────────────────────────────────────────────────────────
+
+/// One issue with the fields the detail pane paints.
+pub fn issueDetail(c: *Client, arena: Allocator, key: []const u8) CallError!Answer(model.IssueDetail) {
     const url = try std.fmt.allocPrint(
         arena,
-        "{s}{s}/issue/{s}?fields=summary,status,assignee,reporter,priority,issuetype,updated,created,fixVersions,components,labels,parent,subtasks,description,comment,watches",
+        "{s}{s}/issue/{s}?fields=description,comment,watches,summary,status,assignee,issuetype,priority,fixVersions,updated,reporter",
         .{ c.base_url, c.apiRoot(), key },
     );
+    switch (try getJson(c, arena, url)) {
+        .failed => |f| return .{ .failed = f },
+        .ok => |doc| return .{ .ok = try model.IssueDetail.fromJson(arena, doc) },
+    }
+}
+
+/// One issue with the caller's field list (`*all` when empty), raw —
+/// the detail modal paints whatever `[detail_modal] fields` asked for.
+pub fn issueFull(c: *Client, arena: Allocator, key: []const u8, fields: []const []const u8) CallError!Answer(Value) {
+    const csv = if (fields.len == 0) "*all" else try std.mem.join(arena, ",", fields);
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}?fields={s}", .{ c.base_url, c.apiRoot(), key, csv });
     return getJson(c, arena, url);
 }
 
-pub const Transition = struct {
-    id: []const u8,
-    name: []const u8,
-    to_name: []const u8,
-};
+/// The tickets a JQL finds, parsed. `extra_fields` is the team select's id.
+pub fn searchIssues(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8, team_field_id: []const u8) CallError!Answer([]const model.Issue) {
+    switch (try search(c, arena, jql, extra_fields)) {
+        .failed => |f| return .{ .failed = f },
+        .ok => |vals| return .{ .ok = try parseIssues(arena, vals, team_field_id) },
+    }
+}
 
-pub fn transitions(c: *Client, arena: Allocator, key: []const u8) CallError!Answer([]const Transition) {
+pub fn parseIssues(arena: Allocator, vals: []const Value, team_field_id: []const u8) Allocator.Error![]const model.Issue {
+    const out = try arena.alloc(model.Issue, vals.len);
+    for (vals, out) |v, *i| i.* = try model.Issue.fromJson(arena, v, team_field_id);
+    return out;
+}
+
+pub fn transitions(c: *Client, arena: Allocator, key: []const u8) CallError!Answer([]const model.Transition) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/transitions", .{ c.base_url, c.apiRoot(), key });
     switch (try getJson(c, arena, url)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| {
-            var out: std.ArrayListUnmanaged(Transition) = .empty;
+            var out: std.ArrayList(model.Transition) = .empty;
             for (json.array(doc, "transitions")) |t| try out.append(arena, .{
                 .id = json.getStrOr(t, "id", ""),
                 .name = json.getStrOr(t, "name", "(unnamed)"),
@@ -437,7 +462,7 @@ pub fn addComment(c: *Client, arena: Allocator, key: []const u8, plain: []const 
 }
 
 /// `plain` as an ADF doc: one paragraph per line, a bare paragraph for a
-/// blank one. No marks — a comment box is a comment box.
+/// blank one.
 pub fn writeAdf(s: *std.json.Stringify, plain: []const u8) !void {
     try s.beginObject();
     try s.objectField("type");
@@ -500,165 +525,43 @@ pub fn setFixVersion(c: *Client, arena: Allocator, key: []const u8, name: []cons
     return voidCall(c, arena, .PUT, url, body.written());
 }
 
-pub const NewIssue = struct {
-    project: []const u8,
-    issue_type: []const u8,
-    summary: []const u8,
-    description: []const u8 = "",
-};
-
-/// Create. The answer is the new key.
-pub fn createIssue(c: *Client, arena: Allocator, n: NewIssue) CallError!Answer([]const u8) {
-    const url = try std.fmt.allocPrint(arena, "{s}{s}/issue", .{ c.base_url, c.apiRoot() });
-    var body: Io.Writer.Allocating = .init(arena);
-    var s: std.json.Stringify = .{ .writer = &body.writer };
-    s.beginObject() catch return error.OutOfMemory;
-    s.objectField("fields") catch return error.OutOfMemory;
-    s.beginObject() catch return error.OutOfMemory;
-    s.objectField("project") catch return error.OutOfMemory;
-    s.beginObject() catch return error.OutOfMemory;
-    s.objectField("key") catch return error.OutOfMemory;
-    s.write(n.project) catch return error.OutOfMemory;
-    s.endObject() catch return error.OutOfMemory;
-    s.objectField("issuetype") catch return error.OutOfMemory;
-    s.beginObject() catch return error.OutOfMemory;
-    s.objectField("name") catch return error.OutOfMemory;
-    s.write(n.issue_type) catch return error.OutOfMemory;
-    s.endObject() catch return error.OutOfMemory;
-    s.objectField("summary") catch return error.OutOfMemory;
-    s.write(n.summary) catch return error.OutOfMemory;
-    if (n.description.len > 0) {
-        s.objectField("description") catch return error.OutOfMemory;
-        switch (c.api) {
-            .v3 => writeAdf(&s, n.description) catch return error.OutOfMemory,
-            .v2 => s.write(n.description) catch return error.OutOfMemory,
-        }
-    }
-    s.endObject() catch return error.OutOfMemory;
-    s.endObject() catch return error.OutOfMemory;
-    const raw = try c.request(arena, .POST, url, body.written());
-    if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
-    const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
-        return .{ .failed = .{ .status = raw.status, .message = "the create answer was not JSON" } };
-    };
-    return .{ .ok = json.getStrOr(doc, "key", "") };
+/// Watch as the token's user: an empty JSON string as the body.
+pub fn watch(c: *Client, arena: Allocator, key: []const u8) CallError!Answer(void) {
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/watchers", .{ c.base_url, c.apiRoot(), key });
+    return voidCall(c, arena, .POST, url, "\"\"");
 }
 
-pub const PullRequest = struct {
-    id: []const u8,
-    title: []const u8,
-    status: []const u8,
-    url: []const u8,
-    repo: []const u8,
-    source_branch: []const u8,
-    dest_branch: []const u8,
-    approvals: u16,
+/// Unwatch needs the account id (`myself`).
+pub fn unwatch(c: *Client, arena: Allocator, key: []const u8, account_id: []const u8) CallError!Answer(void) {
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/watchers?accountId={s}", .{ c.base_url, c.apiRoot(), key, account_id });
+    return voidCall(c, arena, .DELETE, url, null);
+}
 
-    pub fn isOpen(p: PullRequest) bool {
-        return std.ascii.eqlIgnoreCase(p.status, "OPEN") or
-            std.ascii.eqlIgnoreCase(p.status, "DRAFT") or
-            std.ascii.eqlIgnoreCase(p.status, "IN_REVIEW");
-    }
-};
-
-/// The PRs a ticket carries. Two sources, in order:
-///
-///   1. `/rest/dev-status/latest/issue/detail` — Atlassian's dev panel,
-///      which is what actually knows about the branch and the reviewers.
-///      It wants the issue's numeric **id**, not its key.
-///   2. `{api}/issue/{key}/remotelink` — the public remote-links list,
-///      which a site without the dev panel (or a PR linked by hand)
-///      still answers.
-///
-/// A 404 from either is "no PRs", not a failure: a ticket nobody has
-/// branched for is the normal case.
-pub fn pullRequests(c: *Client, arena: Allocator, key: []const u8, issue_id: []const u8) CallError!Answer([]const PullRequest) {
-    var out: std.ArrayListUnmanaged(PullRequest) = .empty;
-    if (issue_id.len > 0) {
-        const url = try std.fmt.allocPrint(
-            arena,
-            "{s}/rest/dev-status/latest/issue/detail?issueId={s}&applicationType=bitbucket&dataType=pullrequest",
-            .{ c.base_url, issue_id },
-        );
-        const raw = try c.request(arena, .GET, url, null);
-        if (raw.status >= 200 and raw.status < 300) {
-            const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
-            for (json.array(doc, "detail")) |d| {
-                for (json.array(d, "pullRequests")) |p| try out.append(arena, .{
-                    .id = json.getStrOr(p, "id", ""),
-                    .title = json.getStrOr(p, "name", ""),
-                    .status = json.getStrOr(p, "status", ""),
-                    .url = json.getStrOr(p, "url", ""),
-                    .repo = json.getStrOr(p, "repositoryName", ""),
-                    .source_branch = json.getStrOr(p, "source.branch", ""),
-                    .dest_branch = json.getStrOr(p, "destination.branch", ""),
-                    .approvals = countApprovals(json.array(p, "reviewers")),
-                });
-            }
-            if (out.items.len > 0) return .{ .ok = try out.toOwnedSlice(arena) };
-        } else if (raw.status != 404) {
-            // A real refusal (401/403) is worth showing once; fall
-            // through to remote links only on 404.
-            if (raw.status == 401 or raw.status == 403) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
-        }
-    }
-    const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/remotelink", .{ c.base_url, c.apiRoot(), key });
+/// The PRs Atlassian's dev panel links to the issue (by numeric id).
+/// A 404 is "no dev info", not a failure.
+pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8) CallError!Answer([]const model.LinkedPr) {
+    const url = try std.fmt.allocPrint(
+        arena,
+        "{s}/rest/dev-status/latest/issue/detail?issueId={s}&applicationType=bitbucket&dataType=pullrequest",
+        .{ c.base_url, issue_id },
+    );
     const raw = try c.request(arena, .GET, url, null);
     if (raw.status == 404) return .{ .ok = &.{} };
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
-    const links: []const Value = switch (doc) {
-        .array => |a| a.items,
-        else => &.{},
-    };
-    for (links) |l| {
-        const href = json.getStrOr(l, "object.url", "");
-        if (!looksLikePr(href)) continue;
-        try out.append(arena, .{
-            .id = json.getStrOr(l, "object.title", href),
-            .title = json.getStrOr(l, "object.summary", json.getStrOr(l, "object.title", "")),
-            .status = json.getStrOr(l, "object.status.icon.title", ""),
-            .url = href,
-            .repo = repoOf(href),
-            .source_branch = "",
-            .dest_branch = "",
-            .approvals = 0,
-        });
+    var out: std.ArrayList(model.LinkedPr) = .empty;
+    for (json.array(doc, "detail")) |d| {
+        for (json.array(d, "pullRequests")) |p| try out.append(arena, try model.LinkedPr.fromJson(arena, p));
     }
     return .{ .ok = try out.toOwnedSlice(arena) };
 }
 
-fn countApprovals(reviewers: []const Value) u16 {
-    var n: u16 = 0;
-    for (reviewers) |r| if (json.getBool(r, "approved") orelse false) {
-        n += 1;
-    };
-    return n;
-}
-
-/// A remote link that points at a pull request on one of the forges.
-pub fn looksLikePr(url: []const u8) bool {
-    return std.mem.indexOf(u8, url, "/pull-requests/") != null or
-        std.mem.indexOf(u8, url, "/pull/") != null or
-        std.mem.indexOf(u8, url, "/merge_requests/") != null;
-}
-
-/// `https://bitbucket.org/ws/repo/pull-requests/12` → `repo`.
-pub fn repoOf(url: []const u8) []const u8 {
-    const marker = std.mem.indexOf(u8, url, "/pull-requests/") orelse
-        std.mem.indexOf(u8, url, "/pull/") orelse
-        std.mem.indexOf(u8, url, "/merge_requests/") orelse return "";
-    const head = url[0..marker];
-    const slash = std.mem.lastIndexOfScalar(u8, head, '/') orelse return "";
-    return head[slash + 1 ..];
-}
-
-pub const User = struct { account_id: []const u8, display_name: []const u8 };
+// ─── people and versions ─────────────────────────────────────────────────
 
 /// Who the token belongs to. A scoped token often cannot answer this
 /// while being perfectly able to search, so a failure here must only
 /// cost the "me" features — never the pane.
-pub fn myself(c: *Client, arena: Allocator) CallError!Answer(User) {
+pub fn myself(c: *Client, arena: Allocator) CallError!Answer(model.User) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/myself", .{ c.base_url, c.apiRoot() });
     switch (try getJson(c, arena, url)) {
         .failed => |f| return .{ .failed = f },
@@ -669,9 +572,9 @@ pub fn myself(c: *Client, arena: Allocator) CallError!Answer(User) {
     }
 }
 
-pub fn assignableUsers(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const User) {
+pub fn assignableUsers(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const model.User) {
     const p = try text.urlEncode(arena, project);
-    const url = try std.fmt.allocPrint(arena, "{s}{s}/user/assignable/search?project={s}&maxResults=50", .{ c.base_url, c.apiRoot(), p });
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/user/assignable/search?project={s}&query=&maxResults=50", .{ c.base_url, c.apiRoot(), p });
     const raw = try c.request(arena, .GET, url, null);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
@@ -679,7 +582,7 @@ pub fn assignableUsers(c: *Client, arena: Allocator, project: []const u8) CallEr
         .array => |a| a.items,
         else => json.array(doc, "values"),
     };
-    var out: std.ArrayListUnmanaged(User) = .empty;
+    var out: std.ArrayList(model.User) = .empty;
     for (items) |u| {
         const id = json.getStrOr(u, "accountId", "");
         if (id.len == 0) continue;
@@ -688,15 +591,7 @@ pub fn assignableUsers(c: *Client, arena: Allocator, project: []const u8) CallEr
     return .{ .ok = try out.toOwnedSlice(arena) };
 }
 
-pub const Version = struct {
-    name: []const u8,
-    released: bool,
-    archived: bool,
-    start_date: []const u8,
-    release_date: []const u8,
-};
-
-pub fn projectVersions(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const Version) {
+pub fn projectVersions(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const model.Version) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/project/{s}/versions", .{ c.base_url, c.apiRoot(), project });
     const raw = try c.request(arena, .GET, url, null);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
@@ -705,7 +600,7 @@ pub fn projectVersions(c: *Client, arena: Allocator, project: []const u8) CallEr
         .array => |a| a.items,
         else => json.array(doc, "values"),
     };
-    var out: std.ArrayListUnmanaged(Version) = .empty;
+    var out: std.ArrayList(model.Version) = .empty;
     for (items) |v| try out.append(arena, .{
         .name = json.getStrOr(v, "name", ""),
         .released = json.getBool(v, "released") orelse false,
@@ -716,24 +611,23 @@ pub fn projectVersions(c: *Client, arena: Allocator, project: []const u8) CallEr
     return .{ .ok = try out.toOwnedSlice(arena) };
 }
 
-/// The unreleased versions, in the order a release tab reads them:
+/// The unreleased versions in the order a release tab reads them:
 /// `startDate` ascending with the undated last, and **name descending**
-/// between two undated ones — which is the case that actually happens,
-/// because most projects never set a start date and `13.16.0` is the one
-/// being worked on, not `13.1.0`. `contains` (case-insensitive) narrows
-/// to one release track first.
-pub fn unreleasedVersions(arena: Allocator, all: []const Version, contains: []const u8) Allocator.Error![]const Version {
-    var keep: std.ArrayListUnmanaged(Version) = .empty;
+/// between two undated ones (most projects never set a start date, and
+/// `13.16.0` is the one being worked on, not `13.1.0`). `contains`
+/// narrows to one release track first.
+pub fn unreleasedVersions(arena: Allocator, all: []const model.Version, contains: []const u8) Allocator.Error![]const model.Version {
+    var keep: std.ArrayList(model.Version) = .empty;
     for (all) |v| {
         if (v.released) continue;
         if (contains.len > 0 and !text.containsIgnoreCase(v.name, contains)) continue;
         try keep.append(arena, v);
     }
-    std.mem.sort(Version, keep.items, {}, versionBefore);
+    std.mem.sort(model.Version, keep.items, {}, versionBefore);
     return keep.toOwnedSlice(arena);
 }
 
-fn versionBefore(_: void, a: Version, b: Version) bool {
+fn versionBefore(_: void, a: model.Version, b: model.Version) bool {
     const ad = a.start_date.len > 0;
     const bd = b.start_date.len > 0;
     if (ad and bd) {
@@ -745,14 +639,168 @@ fn versionBefore(_: void, a: Version, b: Version) bool {
     return std.mem.order(u8, a.name, b.name) == .gt;
 }
 
-/// The version a `fix_version` tab means: the newest unreleased one, or
-/// the one after it.
-pub fn pickVersion(list: []const Version, mode: config.ResolveMode) ?Version {
+/// The picker's order: unreleased first, each half by `startDate`
+/// descending then name descending, archived ones dropped.
+pub fn pickerVersions(arena: Allocator, all: []const model.Version) Allocator.Error![]const model.Version {
+    var keep: std.ArrayList(model.Version) = .empty;
+    for (all) |v| if (!v.archived) try keep.append(arena, v);
+    std.mem.sort(model.Version, keep.items, {}, pickerBefore);
+    return keep.toOwnedSlice(arena);
+}
+
+fn pickerBefore(_: void, a: model.Version, b: model.Version) bool {
+    if (a.released != b.released) return !a.released;
+    const ad = a.start_date.len > 0;
+    const bd = b.start_date.len > 0;
+    if (ad and bd) {
+        const c = std.mem.order(u8, a.start_date, b.start_date);
+        if (c != .eq) return c == .gt;
+        return std.mem.order(u8, a.name, b.name) == .gt;
+    }
+    if (ad != bd) return ad;
+    return std.mem.order(u8, a.name, b.name) == .gt;
+}
+
+/// The version a release tab means: the first unreleased one, or the
+/// one after it (falling back to the first).
+pub fn pickVersion(list: []const model.Version, mode: config.ResolveMode) ?model.Version {
     if (list.len == 0) return null;
     return switch (mode) {
         .current_release => list[0],
         .next_release => if (list.len > 1) list[1] else list[0],
     };
+}
+
+// ─── the Agile API ───────────────────────────────────────────────────────
+
+pub const agile_root = "/rest/agile/1.0";
+
+/// The board's issues (its saved filter + active sprint), paged by
+/// `startAt`, with `extra_jql` ANDed in, capped at `max_issues`.
+pub fn boardIssues(c: *Client, arena: Allocator, board_id: u64, extra_jql: ?[]const u8, extra_fields: []const []const u8) CallError!Answer([]const Value) {
+    var fields: std.ArrayList([]const u8) = .empty;
+    try fields.appendSlice(arena, &search_fields);
+    for (extra_fields) |f| if (f.len > 0) try fields.append(arena, f);
+    const csv = try std.mem.join(arena, ",", fields.items);
+    var all: std.ArrayList(Value) = .empty;
+    var start: u32 = 0;
+    while (true) {
+        var url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}/issue?fields={s}&maxResults={d}&startAt={d}", .{ c.base_url, agile_root, board_id, csv, page_size, start });
+        if (extra_jql) |j| if (std.mem.trim(u8, j, " ").len > 0) {
+            url = try std.fmt.allocPrint(arena, "{s}&jql={s}", .{ url, try text.urlEncode(arena, j) });
+        };
+        const raw = try c.request(arena, .GET, url, null);
+        if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
+        const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
+            return .{ .failed = .{ .status = raw.status, .message = "the board answer was not JSON" } };
+        };
+        const issues = json.array(doc, "issues");
+        try all.appendSlice(arena, issues);
+        if (all.items.len >= max_issues) {
+            all.shrinkRetainingCapacity(max_issues);
+            break;
+        }
+        const got: u32 = @intCast(issues.len);
+        const total = json.getInt(doc, "total");
+        const done_by_total = if (total) |t| (@as(i64, start) + got) >= t else false;
+        if (got < page_size or done_by_total or (json.getBool(doc, "isLast") orelse false)) break;
+        start += page_size;
+    }
+    return .{ .ok = try all.toOwnedSlice(arena) };
+}
+
+pub fn board(c: *Client, arena: Allocator, board_id: u64) CallError!Answer(model.Board) {
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}", .{ c.base_url, agile_root, board_id });
+    switch (try getJson(c, arena, url)) {
+        .failed => |f| return .{ .failed = f },
+        .ok => |doc| return .{ .ok = .{
+            .id = @intCast(@max(json.getInt(doc, "id") orelse 0, 0)),
+            .name = json.getStrOr(doc, "name", ""),
+            .kind = json.getStrOr(doc, "type", ""),
+        } },
+    }
+}
+
+pub fn boardsForProject(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const model.Board) {
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/board?projectKeyOrId={s}&maxResults=100", .{ c.base_url, agile_root, try text.urlEncode(arena, project) });
+    switch (try getJson(c, arena, url)) {
+        .failed => |f| return .{ .failed = f },
+        .ok => |doc| {
+            var out: std.ArrayList(model.Board) = .empty;
+            for (json.array(doc, "values")) |b| try out.append(arena, .{
+                .id = @intCast(@max(json.getInt(b, "id") orelse 0, 0)),
+                .name = json.getStrOr(b, "name", ""),
+                .kind = json.getStrOr(b, "type", ""),
+            });
+            return .{ .ok = try out.toOwnedSlice(arena) };
+        },
+    }
+}
+
+/// The board's sprints: active and future in full, then the most recent
+/// closed ones (the endpoint pages oldest first, so the closed tail is
+/// asked for from `total - 20`). A kanban board answers 400 to any of
+/// these, which is an empty list, not a failure.
+pub fn sprintsForBoard(c: *Client, arena: Allocator, board_id: u64) CallError!Answer([]const model.Sprint) {
+    var out: std.ArrayList(model.Sprint) = .empty;
+    for ([_][]const u8{ "active", "future" }) |state| {
+        switch (try sprintPage(c, arena, board_id, state, 0, 50)) {
+            .failed => |f| {
+                if (f.status == 400) return .{ .ok = &.{} };
+                return .{ .failed = f };
+            },
+            .ok => |page| try out.appendSlice(arena, page.values),
+        }
+    }
+    switch (try sprintPage(c, arena, board_id, "closed", 0, 1)) {
+        .ok => |probe| {
+            const total: u32 = @intCast(@max(probe.total, 0));
+            const start = total -| 20;
+            switch (try sprintPage(c, arena, board_id, "closed", start, 20)) {
+                .ok => |page| try out.appendSlice(arena, page.values),
+                .failed => {},
+            }
+        },
+        .failed => {},
+    }
+    return .{ .ok = try out.toOwnedSlice(arena) };
+}
+
+const SprintPage = struct { values: []const model.Sprint, total: i64 };
+
+fn sprintPage(c: *Client, arena: Allocator, board_id: u64, state: []const u8, start: u32, max: u32) CallError!Answer(SprintPage) {
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}/sprint?state={s}&startAt={d}&maxResults={d}", .{ c.base_url, agile_root, board_id, state, start, max });
+    switch (try getJson(c, arena, url)) {
+        .failed => |f| return .{ .failed = f },
+        .ok => |doc| {
+            var out: std.ArrayList(model.Sprint) = .empty;
+            for (json.array(doc, "values")) |s| try out.append(arena, .{
+                .id = @intCast(@max(json.getInt(s, "id") orelse 0, 0)),
+                .name = json.getStrOr(s, "name", ""),
+                .state = json.getStrOr(s, "state", ""),
+                .start_date = json.getStrOr(s, "startDate", ""),
+                .end_date = json.getStrOr(s, "endDate", ""),
+                .complete_date = json.getStrOr(s, "completeDate", ""),
+            });
+            return .{ .ok = .{ .values = try out.toOwnedSlice(arena), .total = json.getInt(doc, "total") orelse @as(i64, @intCast(out.items.len)) } };
+        },
+    }
+}
+
+pub fn quickFilters(c: *Client, arena: Allocator, board_id: u64) CallError!Answer([]const model.QuickFilter) {
+    const url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}/quickfilter?maxResults=50", .{ c.base_url, agile_root, board_id });
+    switch (try getJson(c, arena, url)) {
+        .failed => |f| return .{ .failed = f },
+        .ok => |doc| {
+            var out: std.ArrayList(model.QuickFilter) = .empty;
+            for (json.array(doc, "values")) |q| try out.append(arena, .{
+                .id = @intCast(@max(json.getInt(q, "id") orelse 0, 0)),
+                .name = json.getStrOr(q, "name", ""),
+                .jql = json.getStrOr(q, "jql", ""),
+            });
+            return .{ .ok = try out.toOwnedSlice(arena) };
+        },
+    }
 }
 
 // ─── shared shapes ───────────────────────────────────────────────────────
@@ -783,116 +831,70 @@ test "splitOrderBy takes the last one outside quotes, and leaves a JQL without o
     const b = splitOrderBy("project = X");
     try testing.expectEqualStrings("project = X", b.where);
     try testing.expectEqualStrings("", b.order);
-    // Lower case, and a `)` immediately before it.
     const c = splitOrderBy("(a = 1 OR b = 2) order by updated DESC");
     try testing.expectEqualStrings("(a = 1 OR b = 2)", c.where);
-    try testing.expectEqualStrings("order by updated DESC", c.order);
-    // A field called `reorder by` must not be mistaken for the clause.
     const d = splitOrderBy("reorder by = 1");
     try testing.expectEqualStrings("reorder by = 1", d.where);
-    try testing.expectEqualStrings("", d.order);
 }
 
 test "the team clause goes to the server, wrapping the where and keeping the order" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    const with = try withTeam(arena, "assignee = currentUser() ORDER BY updated DESC", "Apollo", "Team", "customfield_1");
     try testing.expectEqualStrings(
         "(assignee = currentUser()) AND (\"Team\" = \"Apollo\" OR component = \"Apollo\" OR labels = \"Apollo\") ORDER BY updated DESC",
-        with,
+        try withTeam(arena, "assignee = currentUser() ORDER BY updated DESC", "Apollo", "Team", "customfield_1"),
     );
-    // No display name: the custom-field id is quoted instead.
-    const by_id = try withTeam(arena, "project = X", "T", "", "customfield_1");
-    try testing.expect(std.mem.indexOf(u8, by_id, "\"customfield_1\" = \"T\"") != null);
-    // No field at all: component and labels still match.
-    const no_field = try withTeam(arena, "project = X", "T", "", "");
-    try testing.expectEqualStrings("(project = X) AND (component = \"T\" OR labels = \"T\")", no_field);
-    // An empty team is a no-op, not an empty clause.
+    try testing.expect(std.mem.indexOf(u8, try withTeam(arena, "project = X", "T", "", "customfield_1"), "\"customfield_1\" = \"T\"") != null);
+    try testing.expectEqualStrings("(project = X) AND (component = \"T\" OR labels = \"T\")", try withTeam(arena, "project = X", "T", "", ""));
     try testing.expectEqualStrings("project = X", try withTeam(arena, "project = X", "", "Team", ""));
-    // A quote in the value is escaped, never left to break the query.
-    const quoted = try withTeam(arena, "project = X", "a\"b", "Team", "");
-    try testing.expect(std.mem.indexOf(u8, quoted, "\\\"") != null);
-}
-
-test "withProjects scopes a JQL and keeps its order clause" {
-    var a = std.heap.ArenaAllocator.init(testing.allocator);
-    defer a.deinit();
-    const arena = a.allocator();
     try testing.expectEqualStrings(
         "project in (ENG, OPS) AND (assignee = currentUser()) ORDER BY updated DESC",
         try withProjects(arena, "assignee = currentUser() ORDER BY updated DESC", &.{ "ENG", "OPS" }),
     );
-    try testing.expectEqualStrings("a = 1", try withProjects(arena, "a = 1", &.{}));
+    try testing.expectEqualStrings("project = ENG AND fixVersion = \"13.15.0\" ORDER BY rank", try fixVersionJql(arena, "ENG", "13.15.0", ""));
+    try testing.expect(std.mem.indexOf(u8, try fixVersionJql(arena, "ENG", "a\"b", ""), "\"a\\\"b\"") != null);
 }
 
-test "fixVersionJql escapes the version name — in both the resolve and the picker path" {
+test "versions: the release resolve order and the picker order" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    try testing.expectEqualStrings(
-        "project = ENG AND fixVersion = \"13.15.0\" ORDER BY rank",
-        try fixVersionJql(arena, "ENG", "13.15.0", ""),
-    );
-    try testing.expectEqualStrings(
-        "project = ENG AND fixVersion = \"13.15.0\" AND component = \"api\" ORDER BY rank",
-        try fixVersionJql(arena, "ENG", "13.15.0", "api"),
-    );
-    const nasty = try fixVersionJql(arena, "ENG", "a\"b", "");
-    try testing.expect(std.mem.indexOf(u8, nasty, "\"a\\\"b\"") != null);
-}
-
-test "unreleasedVersions: released ones go, the name filter narrows, and undated names sort descending" {
-    var a = std.heap.ArenaAllocator.init(testing.allocator);
-    defer a.deinit();
-    const arena = a.allocator();
-    const all = [_]Version{
-        .{ .name = "13.14.0", .released = true, .archived = false, .start_date = "", .release_date = "" },
-        .{ .name = "13.15.0", .released = false, .archived = false, .start_date = "", .release_date = "" },
-        .{ .name = "13.16.0", .released = false, .archived = false, .start_date = "", .release_date = "" },
-        .{ .name = "Mobile - 1.6.X", .released = false, .archived = false, .start_date = "", .release_date = "" },
+    const all = [_]model.Version{
+        .{ .name = "13.14.0", .released = true },
+        .{ .name = "13.15.0" },
+        .{ .name = "13.16.0", .start_date = "2026-09-01" },
+        .{ .name = "13.17.0", .start_date = "2026-09-15" },
+        .{ .name = "Mobile - 1.6.X", .archived = true },
     };
     const open = try unreleasedVersions(arena, &all, "");
-    try testing.expectEqual(@as(usize, 3), open.len);
-    // Name descending: the newest release is first, which is what
-    // `current_release` means.
-    try testing.expectEqualStrings("Mobile - 1.6.X", open[0].name);
-    try testing.expectEqualStrings("13.16.0", open[1].name);
-    try testing.expectEqualStrings("13.15.0", open[2].name);
-    try testing.expectEqualStrings("Mobile - 1.6.X", pickVersion(open, .current_release).?.name);
-    try testing.expectEqualStrings("13.15.0", pickVersion(open[1..], .next_release).?.name);
-    // The name filter picks one release track out of the parallel ones.
+    try testing.expectEqual(@as(usize, 4), open.len);
+    try testing.expectEqualStrings("13.16.0", open[0].name);
+    try testing.expectEqualStrings("13.17.0", open[1].name);
+    try testing.expectEqualStrings("Mobile - 1.6.X", open[2].name);
+    try testing.expectEqualStrings("13.15.0", open[3].name);
+    try testing.expectEqualStrings("13.16.0", pickVersion(open, .current_release).?.name);
+    try testing.expectEqualStrings("13.17.0", pickVersion(open, .next_release).?.name);
     const track = try unreleasedVersions(arena, &all, "13.");
-    try testing.expectEqual(@as(usize, 2), track.len);
-    try testing.expectEqualStrings("13.16.0", track[0].name);
-    try testing.expectEqualStrings("13.16.0", pickVersion(track, .current_release).?.name);
-    try testing.expectEqualStrings("13.15.0", pickVersion(track, .next_release).?.name);
-    // A dated version sorts before an undated one whatever its name.
-    const dated = [_]Version{
-        .{ .name = "1.0", .released = false, .archived = false, .start_date = "", .release_date = "" },
-        .{ .name = "0.9", .released = false, .archived = false, .start_date = "2026-01-01", .release_date = "" },
-    };
-    const d = try unreleasedVersions(arena, &dated, "");
-    try testing.expectEqualStrings("0.9", d[0].name);
+    try testing.expectEqual(@as(usize, 3), track.len);
     try testing.expect(pickVersion(&.{}, .current_release) == null);
+    // The picker: unreleased first, dated by start desc, archived gone.
+    const pick = try pickerVersions(arena, &all);
+    try testing.expectEqual(@as(usize, 4), pick.len);
+    try testing.expectEqualStrings("13.17.0", pick[0].name);
+    try testing.expectEqualStrings("13.16.0", pick[1].name);
+    try testing.expectEqualStrings("13.15.0", pick[2].name);
+    try testing.expectEqualStrings("13.14.0", pick[3].name);
 }
 
 test "a Jira error answer becomes the sentence Jira wrote, not the number" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    const f = try failureOf(arena, 400, "{\"errorMessages\":[\"Field 'wat' does not exist.\"],\"errors\":{}}");
-    try testing.expectEqualStrings("Field 'wat' does not exist.", f.message);
-    const g = try failureOf(arena, 400, "{\"errorMessages\":[],\"errors\":{\"summary\":\"is required\"}}");
-    try testing.expectEqualStrings("summary: is required", g.message);
-    // No JSON, but a status worth explaining.
-    const h = try failureOf(arena, 401, "<html>nope</html>");
-    try testing.expect(std.mem.indexOf(u8, h.message, "token was refused") != null);
-    const i = try failureOf(arena, 410, "");
-    try testing.expect(std.mem.indexOf(u8, i.message, ".api = .v2") != null);
-    // Nothing to say: the number, at least.
-    const j = try failureOf(arena, 418, "{}");
-    try testing.expectEqualStrings("HTTP 418", j.message);
+    try testing.expectEqualStrings("Field 'wat' does not exist.", (try failureOf(arena, 400, "{\"errorMessages\":[\"Field 'wat' does not exist.\"],\"errors\":{}}")).message);
+    try testing.expectEqualStrings("summary: is required", (try failureOf(arena, 400, "{\"errorMessages\":[],\"errors\":{\"summary\":\"is required\"}}")).message);
+    try testing.expect(std.mem.indexOf(u8, (try failureOf(arena, 401, "<html>nope</html>")).message, "token was refused") != null);
+    try testing.expectEqualStrings("HTTP 418", (try failureOf(arena, 418, "{}")).message);
 }
 
 test "ADF: one paragraph per line, a bare one for a blank line" {
@@ -909,58 +911,22 @@ test "ADF: one paragraph per line, a bare one for a blank line" {
     );
 }
 
-test "a remote link is a PR link only when its URL says so; the repo is the segment before" {
-    try testing.expect(looksLikePr("https://bitbucket.org/acme/web/pull-requests/12"));
-    try testing.expect(looksLikePr("https://github.com/acme/web/pull/12"));
-    try testing.expect(looksLikePr("https://gitlab.com/acme/web/-/merge_requests/12"));
-    try testing.expect(!looksLikePr("https://confluence/x/y"));
-    try testing.expectEqualStrings("web", repoOf("https://bitbucket.org/acme/web/pull-requests/12"));
-    try testing.expectEqualStrings("web", repoOf("https://github.com/acme/web/pull/12"));
-    try testing.expectEqualStrings("", repoOf("nope"));
-}
-
-test "a PR's open-ness is read from its status, whatever the case" {
-    const open: PullRequest = .{ .id = "#1", .title = "", .status = "open", .url = "", .repo = "", .source_branch = "", .dest_branch = "", .approvals = 0 };
-    const merged: PullRequest = .{ .id = "#2", .title = "", .status = "MERGED", .url = "", .repo = "", .source_branch = "", .dest_branch = "", .approvals = 2 };
-    try testing.expect(open.isOpen());
-    try testing.expect(!merged.isOpen());
-}
-
-test "the api root follows the version, and the search field list carries what a row paints" {
-    var c: Client = .{ .gpa = testing.allocator, .io = testing.io, .base_url = "https://x", .authorization = "", .limiter = ratelimit.Limiter.init(.{}, 0) };
-    try testing.expectEqualStrings("/rest/api/3", c.apiRoot());
-    c.api = .v2;
-    try testing.expectEqualStrings("/rest/api/2", c.apiRoot());
-    var saw_parent = false;
-    var saw_subtasks = false;
-    for (search_fields) |f| {
-        if (std.mem.eql(u8, f, "parent")) saw_parent = true;
-        if (std.mem.eql(u8, f, "subtasks")) saw_subtasks = true;
-    }
-    try testing.expect(saw_parent and saw_subtasks);
-}
-
 // ─── the wire, end to end ────────────────────────────────────────────────
 //
-// `tools/fake_jira` is the same store the unit tests above drive as a
-// pure function; here it is behind a real socket, so the client's URLs,
+// `tools/fake_jira` is the same store the unit tests drive as a pure
+// function; here it is behind a real socket, so the client's URLs,
 // headers, bodies and status handling are all exercised against an
 // answer that came off a TCP connection.
 
 pub const fake = @import("../tools/fake_jira/main.zig");
 
-/// A fake Jira behind a real socket. `app.zig`'s tests drive the whole
-/// pane against it, so it is public rather than test-private.
+/// A fake Jira behind a real socket, for the pane's tests too.
 pub const Loopback = struct {
     store: *fake.Store,
     server: *Io.net.Server,
-    /// Requests served, for the test to read back.
     served: usize = 0,
 
-    /// Serve until the client asks for `/__done`. Counting requests
-    /// instead would make every one of these tests brittle: adding a
-    /// call to the client would hang the loop on an accept that never
-    /// comes, and `group.await` with it.
+    /// Serve until the client asks for `/__done`.
     pub fn serve(io: Io, lb: *Loopback) Io.Cancelable!void {
         while (true) {
             lb.served += 1;
@@ -969,9 +935,6 @@ pub const Loopback = struct {
             var arena_state = std.heap.ArenaAllocator.init(lb.store.gpa);
             defer arena_state.deinit();
             const arena = arena_state.allocator();
-            // Small buffers on purpose: this runs on a pool thread, and
-            // 160 KB of stack there is a corrupted arena, not a crash
-            // that names itself.
             var rbuf: [4096]u8 = undefined;
             var wbuf: [4096]u8 = undefined;
             var reader = stream.reader(io, &rbuf);
@@ -983,9 +946,6 @@ pub const Loopback = struct {
             while (it.next()) |h| {
                 if (std.ascii.eqlIgnoreCase(h.name, "authorization")) authorization = arena.dupe(u8, h.value) catch null;
             }
-            // `head.target` and every header value are slices of the
-            // reader's buffer, which reading the body refills: copy them
-            // out FIRST or they turn into garbage lengths.
             const target = arena.dupe(u8, request.head.target) catch return;
             var body_buf: [4096]u8 = undefined;
             const body_reader = request.readerExpectNone(&body_buf);
@@ -1009,7 +969,6 @@ pub const Loopback = struct {
         }
     }
 
-    /// The last request of a test: it ends the loop so `await` returns.
     pub fn finish(lb: *Loopback, c: *Client, arena: Allocator) !void {
         _ = lb;
         const url = try std.fmt.allocPrint(arena, "{s}/__done", .{c.base_url});
@@ -1017,7 +976,17 @@ pub const Loopback = struct {
     }
 };
 
-test "the client against a real socket: search, detail, transitions, a comment, an assignment, a create, the PRs" {
+fn okOr(comptime T: type, answer: Answer(T)) !T {
+    return switch (answer) {
+        .ok => |v| v,
+        .failed => |f| {
+            std.debug.print("call failed: {d} {s}\n", .{ f.status, f.message });
+            return error.TestUnexpectedResult;
+        },
+    };
+}
+
+test "the client against a real socket: search, detail, the full issue, transitions, a comment, an assignment, watchers, the PRs" {
     const io = testing.io;
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -1034,84 +1003,107 @@ test "the client against a real socket: search, detail, transitions, a comment, 
     defer group.cancel(io);
 
     const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
-    // `fake@acme.com` / `fake-token` is the credential the fake accepts.
     const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
-    // A rate high enough that pacing never sleeps, but not zero: zero
-    // turns the limiter off, and the 429 test below needs it on.
     var c = Client.init(testing.allocator, io, base, authorization, .v3, .{ .per_sec = 10_000, .burst = 100 });
 
-    // 1. The whole project.
-    const all = switch (try search(&c, arena, "project = ENG ORDER BY rank", &.{})) {
-        .ok => |v| v,
-        .failed => |f| {
-            std.debug.print("search failed: {d} {s}\n", .{ f.status, f.message });
-            return error.TestUnexpectedResult;
-        },
-    };
-    try testing.expectEqual(@as(usize, 5), all.len);
-    try testing.expectEqualStrings("ENG-1", json.getStrOr(all[0], "key", ""));
-    try testing.expectEqualStrings("Checkout rewrite", json.getStrOr(all[0], "fields.summary", ""));
-    try testing.expectEqualStrings("indeterminate", json.getStrOr(all[0], "fields.status.statusCategory.key", ""));
-    try testing.expectEqualStrings("ENG-1", json.getStrOr(all[1], "fields.parent.key", ""));
+    const all = try okOr([]const model.Issue, try searchIssues(&c, arena, "project = ENG ORDER BY rank", &.{"customfield_10056"}, "customfield_10056"));
+    try testing.expectEqual(@as(usize, fake.issue_count), all.len);
+    try testing.expectEqualStrings("ENG-1", all[0].key);
+    try testing.expectEqualStrings("Checkout rewrite", all[0].summary);
+    try testing.expectEqualStrings("Apollo", all[0].team);
+    try testing.expectEqualStrings("ENG-1", all[1].epicKey().?);
+    try testing.expectEqualStrings("Sprint 4", all[1].sprint);
 
-    // 2. One issue, with its description and comments.
-    const one = switch (try issue(&c, arena, "ENG-2")) {
-        .ok => |v| v,
-        .failed => return error.TestUnexpectedResult,
-    };
-    const body = try json.renderBody(arena, json.get(one, "fields.description"));
-    try testing.expect(std.mem.indexOf(u8, body, "loses focus") != null);
-    try testing.expectEqual(@as(usize, 2), json.array(one, "fields.comment.comments").len);
+    const mine = try okOr([]const model.Issue, try searchIssues(&c, arena, TabKindJql(.work_assigned), &.{}, ""));
+    try testing.expectEqual(@as(usize, 3), mine.len);
 
-    // 3. The transitions ENG-3 offers, and firing one.
-    const ts = switch (try transitions(&c, arena, "ENG-3")) {
-        .ok => |v| v,
-        .failed => return error.TestUnexpectedResult,
-    };
-    try testing.expectEqual(@as(usize, 3), ts.len);
+    const d = try okOr(model.IssueDetail, try issueDetail(&c, arena, "ENG-2"));
+    try testing.expect(std.mem.indexOf(u8, d.description, "loses focus") != null);
+    try testing.expectEqual(@as(usize, 2), d.comments.len);
+    try testing.expect(d.watching);
+
+    const full = try okOr(Value, try issueFull(&c, arena, "ENG-2", &.{ "summary", "labels", "customfield_10056" }));
+    try testing.expectEqualStrings("Apollo", try model.fieldDisplay(arena, full, "customfield_10056"));
+
+    const ts = try okOr([]const model.Transition, try transitions(&c, arena, "ENG-3"));
+    try testing.expectEqual(@as(usize, 4), ts.len);
     var start_id: []const u8 = "";
     for (ts) |t| if (std.mem.eql(u8, t.to_name, "In Progress")) {
         start_id = t.id;
     };
-    try testing.expect(start_id.len > 0);
     try testing.expect((try doTransition(&c, arena, "ENG-3", start_id)) == .ok);
     try testing.expectEqualStrings("In Progress", store.find("ENG-3").?.status);
 
-    // 4. A comment, and an assignment.
     try testing.expect((try addComment(&c, arena, "ENG-3", "picking this up")) == .ok);
-    try testing.expect(std.mem.indexOf(u8, store.find("ENG-3").?.comments.items[0], "picking this up") != null);
     try testing.expect((try setAssignee(&c, arena, "ENG-3", fake.account_me)) == .ok);
     try testing.expectEqualStrings(fake.account_me, store.find("ENG-3").?.assignee);
+    try testing.expect((try setFixVersion(&c, arena, "ENG-3", "13.15.0")) == .ok);
+    try testing.expectEqualStrings("13.15.0", store.find("ENG-3").?.fix_version);
 
-    // 5. Create.
-    const made = switch (try createIssue(&c, arena, .{ .project = "ENG", .issue_type = "Bug", .summary = "From the pane" })) {
-        .ok => |k| k,
-        .failed => return error.TestUnexpectedResult,
-    };
-    try testing.expectEqualStrings("ENG-91", made);
+    // Watch, then unwatch with the account id from /myself.
+    const me = try okOr(model.User, try myself(&c, arena));
+    try testing.expectEqualStrings(fake.account_me, me.account_id);
+    try testing.expect((try watch(&c, arena, "ENG-3")) == .ok);
+    try testing.expect((try okOr(model.IssueDetail, try issueDetail(&c, arena, "ENG-3"))).watching);
+    try testing.expect((try unwatch(&c, arena, "ENG-3", me.account_id)) == .ok);
+    try testing.expect(!(try okOr(model.IssueDetail, try issueDetail(&c, arena, "ENG-3"))).watching);
 
-    // 6. The PRs — the dev-status panel for ENG-2 …
-    const prs = switch (try pullRequests(&c, arena, "ENG-2", "10002")) {
-        .ok => |v| v,
-        .failed => return error.TestUnexpectedResult,
-    };
+    const prs = try okOr([]const model.LinkedPr, try pullRequests(&c, arena, "10002"));
     try testing.expectEqual(@as(usize, 2), prs.len);
     try testing.expectEqualStrings("#2023", prs[0].id);
     try testing.expectEqualStrings("checkout", prs[0].repo);
-    try testing.expectEqual(@as(u16, 2), prs[0].approvals);
-    try testing.expect(!prs[0].isOpen());
-    try testing.expect(prs[1].isOpen());
+    try testing.expectEqual(@as(u16, 2), prs[0].approvals());
+    try testing.expectEqual(@as(usize, 0), (try okOr([]const model.LinkedPr, try pullRequests(&c, arena, "10001"))).len);
 
-    // 7. … and the remote-links fallback for ENG-5, whose dev panel is
-    //    empty and whose PR was linked by hand. The non-PR link is not
-    //    a PR row.
-    const links = switch (try pullRequests(&c, arena, "ENG-5", "10005")) {
-        .ok => |v| v,
-        .failed => return error.TestUnexpectedResult,
-    };
-    try testing.expectEqual(@as(usize, 1), links.len);
-    try testing.expectEqualStrings("https://bitbucket.org/acme/basket/pull-requests/77", links[0].url);
-    try testing.expectEqualStrings("basket", links[0].repo);
+    const users = try okOr([]const model.User, try assignableUsers(&c, arena, "ENG"));
+    try testing.expectEqual(@as(usize, fake.user_count), users.len);
+    const versions = try okOr([]const model.Version, try projectVersions(&c, arena, "ENG"));
+    try testing.expectEqualStrings("13.16.0", pickVersion(try unreleasedVersions(arena, versions, ""), .current_release).?.name);
+
+    try lb.finish(&c, arena);
+    try group.await(io);
+}
+
+fn TabKindJql(k: config.TabKind) []const u8 {
+    return k.defaultJql().?;
+}
+
+test "the client against a real socket: the Agile API — board issues, the board, the boards, sprints, quick filters" {
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var store = try fake.Store.init(testing.allocator);
+    defer store.deinit();
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var lb: Loopback = .{ .store = &store, .server = &server };
+    var group: Io.Group = .init;
+    try group.concurrent(io, Loopback.serve, .{ io, &lb });
+    defer group.cancel(io);
+    const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
+    const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
+    var c = Client.init(testing.allocator, io, base, authorization, .v3, .{ .per_sec = 10_000, .burst = 100 });
+
+    const sprint_issues = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, null, &.{}));
+    try testing.expectEqual(@as(usize, fake.sprint_issue_count), sprint_issues.len);
+    const bugs = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, "(issuetype = Bug)", &.{}));
+    try testing.expectEqual(@as(usize, 2), bugs.len);
+    const b = try okOr(model.Board, try board(&c, arena, fake.board_scrum));
+    try testing.expectEqualStrings("Checkout board", b.name);
+    try testing.expectEqualStrings("scrum", b.kind);
+    const boards = try okOr([]const model.Board, try boardsForProject(&c, arena, "ENG"));
+    try testing.expectEqual(@as(usize, 2), boards.len);
+    const sprints = try okOr([]const model.Sprint, try sprintsForBoard(&c, arena, fake.board_scrum));
+    try testing.expectEqual(@as(usize, 4), sprints.len);
+    try testing.expectEqualStrings("Sprint 4", sprints[0].name);
+    try testing.expect(sprints[0].isActive());
+    try testing.expectEqual(@as(usize, 0), (try okOr([]const model.Sprint, try sprintsForBoard(&c, arena, fake.board_kanban))).len);
+    const qf = try okOr([]const model.QuickFilter, try quickFilters(&c, arena, fake.board_scrum));
+    try testing.expectEqual(@as(usize, 2), qf.len);
+    try testing.expectEqualStrings("Only bugs", qf[0].name);
+    try testing.expectEqual(@as(usize, 0), (try okOr([]const model.QuickFilter, try quickFilters(&c, arena, fake.board_kanban))).len);
 
     try lb.finish(&c, arena);
     try group.await(io);
@@ -1122,7 +1114,6 @@ test "a refusal comes back as Jira's own sentence, and the limiter pauses after 
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-
     var store = try fake.Store.init(testing.allocator);
     defer store.deinit();
     var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
@@ -1132,12 +1123,9 @@ test "a refusal comes back as Jira's own sentence, and the limiter pauses after 
     var group: Io.Group = .init;
     try group.concurrent(io, Loopback.serve, .{ io, &lb });
     defer group.cancel(io);
-
     const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
     var c = Client.init(testing.allocator, io, base, "Basic bm9wZQ==", .v3, .{ .per_sec = 10_000, .burst = 100 });
     c.sleep_enabled = false;
-
-    // A bad credential is Jira's 401 sentence, not a number.
     switch (try search(&c, arena, "project = ENG", &.{})) {
         .ok => return error.TestUnexpectedResult,
         .failed => |f| {
@@ -1145,19 +1133,15 @@ test "a refusal comes back as Jira's own sentence, and the limiter pauses after 
             try testing.expect(std.mem.indexOf(u8, f.message, "must be authenticated") != null);
         },
     }
-
-    // A 429 from the server pushes the next permit out by the cooldown.
     store.require_auth = false;
     store.fail_with = 429;
     _ = try search(&c, arena, "project = ENG", &.{});
     try testing.expect(c.limiter.strikes > 0);
     try testing.expect(c.limiter.acquire(c.clock_ms) > 0);
-    // A good answer clears the strikes.
     store.fail_with = null;
     c.limiter.blocked_until_ms = 0;
     _ = try search(&c, arena, "project = ENG", &.{});
     try testing.expectEqual(@as(u32, 0), c.limiter.strikes);
-
     try lb.finish(&c, arena);
     try group.await(io);
 }

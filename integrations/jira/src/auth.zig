@@ -42,12 +42,15 @@ pub const Source = enum {
     environment,
     /// `<data root>/integrations/jira/token`.
     default_file,
+    /// `~/.config/mnml-tracker-jira/token`, the reference's.
+    legacy_file,
 
     pub fn label(s: Source) []const u8 {
         return switch (s) {
             .config_file => "the file config.zon names",
             .environment => "the environment",
             .default_file => "the default token file",
+            .legacy_file => "the reference tracker's token file",
         };
     }
 };
@@ -148,9 +151,18 @@ pub fn resolve(arena: Allocator, io: Io, env: *const std.process.Environ.Map, op
     switch (try readToken(arena, io, default_path)) {
         .ok => |v| return .{ .ok = .{ .value = v, .source = .default_file, .path = default_path } },
         .empty => return .{ .missing = .{ .reason = .empty_file, .path = default_path, .env_name = env_name } },
-        .gone => return .{ .missing = .{ .reason = .nowhere, .path = default_path, .env_name = env_name } },
+        .gone => {},
         .unreadable => return .{ .missing = .{ .reason = .unreadable, .path = default_path, .env_name = env_name } },
     }
+    // 4. The reference tracker's file, so a token already on the box works.
+    if (home) |h| {
+        const legacy = try std.fs.path.join(arena, &.{ h, ".config", "mnml-tracker-jira", token_file_name });
+        switch (try readToken(arena, io, legacy)) {
+            .ok => |v| return .{ .ok = .{ .value = v, .source = .legacy_file, .path = legacy } },
+            else => {},
+        }
+    }
+    return .{ .missing = .{ .reason = .nowhere, .path = default_path, .env_name = env_name } };
 }
 
 const Read = union(enum) { ok: []const u8, empty, gone, unreadable };

@@ -1,1799 +1,2512 @@
-//! The pane's state and every action that changes it. `ui.zig` paints
-//! this and nothing else; `main.zig` is the mount loop that feeds it
-//! keys and clicks.
-//!
-//! **A refresh is synchronous, and says so.** The mount loop blocks on
-//! `mount.next`, so a worker thread finishing a fetch would have nothing
-//! to wake the paint with. Instead `refresh` fetches on the loop and
-//! calls `progress` between requests — the sink `main` installs paints
-//! the frame and sends it, so the progress line moves while the pane is
-//! busy. The pane does not answer keys during a refresh; the line says
-//! what it is doing and how far along it is. A worker thread plus a
-//! wake-up message is the shape to grow into, and the seam is here.
-//!
-//! **PRs are fetched when a ticket is opened, not for every ticket on
-//! every refresh.** The Rust tracker auto-expands every unresolved
-//! ticket and fetches its dev-status serially, which is the N+1 that
-//! makes its rate limiter necessary; this one asks once, on expand, and
-//! caches until the next refresh.
+//! The pane's state and every action on it — what is loaded, what is
+//! selected, which overlay is up — with no painting in it. `screen.zig`
+//! turns an `App` into a frame (and fills the hit map while it does);
+//! `key`, `click` and `wheel` here turn what the user did into state.
+//! Every fetch is synchronous through the client, the way the reference
+//! does it; the loop in `main.zig` paints between them.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const sdk = @import("mnml_sdk");
-
-const auth = @import("auth.zig");
 const config = @import("config.zig");
-const jira = @import("jira.zig");
-const json = @import("json.zig");
-const keys = @import("keys.zig");
 const model = @import("model.zig");
-const os = @import("os.zig");
-const text = @import("text.zig");
-const theme = @import("theme.zig");
+const jira = @import("jira.zig");
+const bitbucket = @import("bitbucket.zig");
 const tree = @import("tree.zig");
+const kanban = @import("kanban.zig");
+const filters = @import("filters.zig");
+const dispatch = @import("dispatch.zig");
+const hit = @import("hit.zig");
+const keymap = @import("keymap.zig");
+const pickers = @import("pickers.zig");
+const textedit = @import("textedit.zig");
+const os = @import("os.zig");
 
-pub const Action = keys.Action;
-pub const Mode = keys.Mode;
+pub const Issue = model.Issue;
+pub const TextEdit = textedit.TextEdit;
+pub const Value = std.json.Value;
 
-/// A one-line text field with a cursor, in bytes. Used by the filter,
-/// the comment box and every field of the create form — so every text
-/// input in this pane gets arrows, home / end and word-delete from the
-/// first day, rather than being append-only.
-pub const Editor = struct {
-    gpa: Allocator,
-    buf: std.ArrayListUnmanaged(u8) = .empty,
-    cursor: usize = 0,
+/// An assignee's presence on a tab, for the avatar cluster.
+pub const AssigneeSummary = struct { account_id: []const u8, display_name: []const u8, count: usize };
 
-    pub fn init(gpa: Allocator) Editor {
-        return .{ .gpa = gpa };
-    }
-
-    pub fn deinit(e: *Editor) void {
-        e.buf.deinit(e.gpa);
-        e.* = undefined;
-    }
-
-    pub fn text(e: *const Editor) []const u8 {
-        return e.buf.items;
-    }
-
-    pub fn clear(e: *Editor) void {
-        e.buf.clearRetainingCapacity();
-        e.cursor = 0;
-    }
-
-    pub fn set(e: *Editor, s: []const u8) Allocator.Error!void {
-        e.buf.clearRetainingCapacity();
-        try e.buf.appendSlice(e.gpa, s);
-        e.cursor = e.buf.items.len;
-    }
-
-    pub fn insert(e: *Editor, cp: u21) Allocator.Error!void {
-        var tmp: [4]u8 = undefined;
-        const n = std.unicode.utf8Encode(cp, &tmp) catch return;
-        try e.buf.insertSlice(e.gpa, e.cursor, tmp[0..n]);
-        e.cursor += n;
-    }
-
-    pub fn backspace(e: *Editor) void {
-        if (e.cursor == 0) return;
-        const start = prevBoundary(e.buf.items, e.cursor);
-        e.buf.replaceRange(e.gpa, start, e.cursor - start, &.{}) catch return;
-        e.cursor = start;
-    }
-
-    pub fn killToStart(e: *Editor) void {
-        e.buf.replaceRange(e.gpa, 0, e.cursor, &.{}) catch return;
-        e.cursor = 0;
-    }
-
-    pub fn killToEnd(e: *Editor) void {
-        e.buf.shrinkRetainingCapacity(e.cursor);
-    }
-
-    pub fn deleteWordBack(e: *Editor) void {
-        var i = e.cursor;
-        while (i > 0 and isSpace(e.buf.items[i - 1])) i -= 1;
-        while (i > 0 and !isSpace(e.buf.items[i - 1])) i -= 1;
-        e.buf.replaceRange(e.gpa, i, e.cursor - i, &.{}) catch return;
-        e.cursor = i;
-    }
-
-    pub fn left(e: *Editor) void {
-        if (e.cursor == 0) return;
-        e.cursor = prevBoundary(e.buf.items, e.cursor);
-    }
-
-    pub fn right(e: *Editor) void {
-        if (e.cursor >= e.buf.items.len) return;
-        e.cursor = nextBoundary(e.buf.items, e.cursor);
-    }
-
-    pub fn home(e: *Editor) void {
-        e.cursor = 0;
-    }
-
-    pub fn end(e: *Editor) void {
-        e.cursor = e.buf.items.len;
-    }
-
-    /// Apply one editing action. True when it was one.
-    pub fn apply(e: *Editor, a: Action) Allocator.Error!bool {
-        switch (a) {
-            .insert => |cp| try e.insert(cp),
-            .backspace => e.backspace(),
-            .kill_to_start => e.killToStart(),
-            .kill_to_end => e.killToEnd(),
-            .delete_word_back => e.deleteWordBack(),
-            .cursor_left => e.left(),
-            .cursor_right => e.right(),
-            .cursor_home => e.home(),
-            .cursor_end => e.end(),
-            .newline => try e.insert('\n'),
-            else => return false,
-        }
-        return true;
-    }
-
-    fn isSpace(c: u8) bool {
-        return c == ' ' or c == '\t' or c == '\n';
-    }
-
-    fn prevBoundary(s: []const u8, at: usize) usize {
-        var i = at - 1;
-        while (i > 0 and (s[i] & 0xc0) == 0x80) i -= 1;
-        return i;
-    }
-
-    fn nextBoundary(s: []const u8, at: usize) usize {
-        var i = at + 1;
-        while (i < s.len and (s[i] & 0xc0) == 0x80) i += 1;
-        return i;
-    }
-};
-
-/// What a picker's Enter does.
-pub const PickKind = enum { transition, assignee, fix_version, issue_type };
-
-pub const PickItem = struct {
-    /// What the action needs — a transition id, an accountId, a version
-    /// name. May be empty, which is the `— none —` row.
-    id: []const u8,
+pub const TabState = struct {
+    cfg: config.Tab,
+    /// The resolved JQL; replaced by the JQL editor and the tab-version picker.
+    jql: []const u8,
+    /// Owns the issues; reset on every refresh.
+    data: std.heap.ArenaAllocator,
+    /// Owns the caches that outlive a refresh.
+    meta: std.heap.ArenaAllocator,
+    issues: []const Issue = &.{},
+    /// A row index on a tree tab, an issue index otherwise.
+    selected: usize = 0,
+    fetched: bool = false,
+    last_error: []const u8 = "",
+    tree: ?tree.State = null,
+    sprints: ?[]const model.Sprint = null,
+    selected_sprint: ?u64 = null,
+    quick_filters: ?[]const model.QuickFilter = null,
+    active_quick_filters: std.ArrayList(u64) = .empty,
+    scope: filters.Scope = .all,
+    assignees: []const AssigneeSummary = &.{},
+    active_assignees: std.StringHashMapUnmanaged(void) = .empty,
+    show_jql: bool = false,
+    seeded: bool = false,
+    boards: ?[]const model.Board = null,
+    active_epics: std.StringHashMapUnmanaged(void) = .empty,
+    team: []const u8,
+    issue_type: []const u8,
     label: []const u8,
-};
+    board_id: u64,
+    scroll: usize = 0,
 
-pub const Picker = struct {
-    kind: PickKind,
-    /// The ticket this was opened on, pinned so a refresh cannot move it.
-    key: []const u8,
-    items: []const PickItem,
-    cursor: usize = 0,
-    filter: Editor,
-    /// Set when the call that filled it failed.
-    err: ?[]const u8 = null,
+    pub fn shape(t: *const TabState) keymap.TabShape {
+        if (t.cfg.isKanban()) return .kanban;
+        if (t.cfg.isTree()) return .tree;
+        return .flat;
+    }
 
-    /// The rows that survive the filter, as indices into `items`.
-    pub fn visible(p: *const Picker, arena: Allocator) Allocator.Error![]const usize {
-        var out: std.ArrayListUnmanaged(usize) = .empty;
-        for (p.items, 0..) |it, i| {
-            if (text.containsIgnoreCase(it.label, p.filter.text())) try out.append(arena, i);
-        }
+    pub fn issue(t: *const TabState, idx: usize) ?Issue {
+        if (idx >= t.issues.len) return null;
+        return t.issues[idx];
+    }
+
+    fn activeIds(t: *const TabState, arena: Allocator) Allocator.Error![]const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        var it = t.active_assignees.keyIterator();
+        while (it.next()) |k| try out.append(arena, k.*);
+        return out.toOwnedSlice(arena);
+    }
+
+    fn activeEpics(t: *const TabState, arena: Allocator) Allocator.Error![]const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        var it = t.active_epics.keyIterator();
+        while (it.next()) |k| try out.append(arena, k.*);
         return out.toOwnedSlice(arena);
     }
 };
 
-/// What Enter on a confirm does.
-pub const Pending = union(enum) {
-    transition: struct { key: []const u8, id: []const u8, to: []const u8 },
-};
+pub const Filter = struct { edit: TextEdit, editing: bool };
 
-pub const Confirm = struct {
-    message: []const u8,
-    what: Pending,
-};
+pub const Comment = struct { key: []const u8, edit: TextEdit, posting: bool = false, error_text: []const u8 = "" };
 
-/// The create form's fields, in tab order.
-pub const FormField = enum { project, issue_type, summary, description };
-
-pub const Form = struct {
-    fields: [4]Editor,
-    focus: FormField = .summary,
-    err: ?[]const u8 = null,
-
-    pub fn get(f: *Form, which: FormField) *Editor {
-        return &f.fields[@intFromEnum(which)];
-    }
-
-    pub fn next(f: *Form) void {
-        const at: usize = @intFromEnum(f.focus);
-        f.focus = @enumFromInt((at + 1) % f.fields.len);
-    }
-
-    pub fn prev(f: *Form) void {
-        const at: usize = @intFromEnum(f.focus);
-        f.focus = @enumFromInt((at + f.fields.len - 1) % f.fields.len);
-    }
-};
-
-pub const Overlay = union(enum) {
-    none,
-    help: struct { scroll: u16 = 0 },
-    filter: Editor,
-    picker: Picker,
-    comment: struct { key: []const u8, editor: Editor, err: ?[]const u8 = null, posting: bool = false },
-    form: Form,
-    confirm: Confirm,
-
-    pub fn mode(o: Overlay) Mode {
-        return switch (o) {
-            .none => .list,
-            .help => .help,
-            .filter => .filter,
-            .picker => .picker,
-            .comment, .form => .prompt,
-            .confirm => .confirm,
-        };
-    }
-};
-
-pub const Tab = struct {
-    cfg: config.Tab,
-    /// The JQL after `kind` and the fixVersion resolve. Owned by `arena`.
-    jql: []const u8 = "",
-    /// The version a release tab resolved to, for the header.
-    version: []const u8 = "",
-    issues: []model.Issue = &.{},
-    rows: []const tree.Row = &.{},
-    state: tree.State,
-    cursor: usize = 0,
-    scroll: usize = 0,
-    filter: []const u8 = "",
-    err: ?[]const u8 = null,
-    fetched: bool = false,
-    /// Everything this tab's last fetch allocated.
+pub const Modal = struct {
+    key: []const u8,
     arena: std.heap.ArenaAllocator,
-
-    pub fn deinit(t: *Tab) void {
-        t.state.deinit();
-        t.arena.deinit();
-    }
-
-    pub fn selected(t: *const Tab) ?*const model.Issue {
-        if (t.rows.len == 0) return null;
-        const at = @min(t.cursor, t.rows.len - 1);
-        const i = t.rows[at].issueIndex() orelse return null;
-        if (i >= t.issues.len) return null;
-        return &t.issues[i];
-    }
-
-    pub fn selectedRow(t: *const Tab) ?tree.Row {
-        if (t.rows.len == 0) return null;
-        return t.rows[@min(t.cursor, t.rows.len - 1)];
-    }
+    data: ?Value = null,
+    scroll: u16 = 0,
+    error_text: []const u8 = "",
 };
 
-/// A repaint the app asks for mid-refresh.
-pub const Sink = struct {
-    ctx: ?*anyopaque = null,
-    paint: ?*const fn (ctx: ?*anyopaque) void = null,
-
-    pub fn call(s: Sink) void {
-        if (s.paint) |f| f(s.ctx);
-    }
-};
+pub const Rows = tree.Rows;
 
 pub const App = struct {
     gpa: Allocator,
     io: Io,
     cfg: config.Config,
-    cfg_path: []const u8,
-    /// Why there is nothing to show: no config, a broken one, no token.
-    blocked: ?[]const []const u8 = null,
-    client: ?jira.Client = null,
-    /// `accountId`, once `/myself` answered. A scoped token often cannot
-    /// answer it while being able to search, so a failure costs only the
-    /// "me" features.
-    me: []const u8 = "",
-    me_asked: bool = false,
-    tabs: []Tab = &.{},
+    family: ?config.Family,
+    client: *jira.Client,
+    forge: bitbucket.Client,
+    /// Small owned strings: keys in sets, the status, resolved JQLs.
+    keys: std.heap.ArenaAllocator,
+    tabs: []TabState,
     active: usize = 0,
-    detail_open: bool = true,
-    detail_scroll: u16 = 0,
-    /// `key` → the fetched detail. Cleared for one key when it changes.
-    details: std.StringHashMapUnmanaged(model.Detail) = .empty,
-    overlay: Overlay = .none,
-    palette: theme.Palette = theme.Palette.dark_palette,
+    status: std.ArrayList(u8) = .empty,
+    details_visible: bool = false,
+    details_scroll: u16 = 0,
+    details: std.StringHashMapUnmanaged(*DetailEntry) = .empty,
+    filter: ?Filter = null,
+    jql: ?TextEdit = null,
+    transition: ?pickers.TransitionPicker = null,
+    picker: ?pickers.FieldPicker = null,
+    comment: ?Comment = null,
+    selection: std.StringHashMapUnmanaged(void) = .empty,
+    modal: ?Modal = null,
+    help: bool = false,
+    help_scroll: usize = 0,
+    me: ?model.User = null,
+    me_failed: bool = false,
+    board_names: std.AutoHashMapUnmanaged(u64, []const u8) = .empty,
+    kanban_scroll: [kanban.count]u16 = .{ 0, 0, 0, 0 },
+    kanban_expanded: std.StringHashMapUnmanaged(void) = .empty,
+    hits: hit.Map = .{},
     cols: u16 = 80,
     rows: u16 = 24,
-    focused: bool = true,
-    /// The status line. Owned by `scratch`.
-    status: []const u8 = "",
-    /// The Jira timestamp the last refresh started at. Every `Updated`
-    /// cell is measured against this one value, so no two rows on screen
-    /// disagree about what "now" is.
-    now_stamp: []const u8 = "",
-    /// The monotonic clock at the end of the last refresh, for
-    /// `mnml.refresh_interval_secs`.
     last_refresh_ms: i64 = 0,
-    /// True while `refresh` is on the wire.
-    busy: bool = false,
-    sink: Sink = .{},
-    /// Set when `q` was pressed.
-    done: bool = false,
-    /// Short-lived strings: the status line, a picker's items, a detail.
-    scratch: std.heap.ArenaAllocator,
-    /// The config, the token and the resolved JQLs — the life of the run.
-    perm: std.heap.ArenaAllocator,
+    quit: bool = false,
+    /// The count the statusline segment shows; null until a work tab loaded.
+    assigned_open: ?usize = null,
+    /// Set when `assigned_open` changed and has not been published.
+    segment_dirty: bool = false,
+    /// The last thing worth a toast (an action's outcome); the loop drains it.
+    toast: std.ArrayList(u8) = .empty,
+    toast_pending: bool = false,
 
-    pub fn init(gpa: Allocator, io: Io) App {
-        return .{
-            .gpa = gpa,
-            .io = io,
-            .cfg = .{},
-            .cfg_path = "",
-            .scratch = std.heap.ArenaAllocator.init(gpa),
-            .perm = std.heap.ArenaAllocator.init(gpa),
-        };
+    const DetailEntry = struct { arena: std.heap.ArenaAllocator, detail: model.IssueDetail };
+
+    pub fn init(gpa: Allocator, io: Io, cfg: config.Config, family: ?config.Family, client: *jira.Client, forge: bitbucket.Client) Allocator.Error!App {
+        var keys = std.heap.ArenaAllocator.init(gpa);
+        errdefer keys.deinit();
+        const cfg_tabs = try config.tabsOfFamily(keys.allocator(), cfg.tabs, family);
+        const tabs = try gpa.alloc(TabState, cfg_tabs.len);
+        errdefer gpa.free(tabs);
+        for (cfg_tabs, tabs) |c, *t| {
+            t.* = .{
+                .cfg = c,
+                .jql = (try c.staticJql(keys.allocator())) orelse "",
+                .data = std.heap.ArenaAllocator.init(gpa),
+                .meta = std.heap.ArenaAllocator.init(gpa),
+                .tree = if (c.isTree() or c.isKanban()) tree.State.init(gpa) else null,
+                .team = c.team,
+                .issue_type = c.issue_type,
+                .label = c.label,
+                .board_id = c.board_id,
+            };
+        }
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs };
     }
 
     pub fn deinit(a: *App) void {
-        for (a.tabs) |*t| t.deinit();
-        if (a.tabs.len > 0) a.gpa.free(a.tabs);
+        for (a.tabs) |*t| {
+            t.data.deinit();
+            t.meta.deinit();
+            if (t.tree) |*tr| tr.deinit();
+            t.active_quick_filters.deinit(a.gpa);
+            t.active_assignees.deinit(a.gpa);
+            t.active_epics.deinit(a.gpa);
+        }
+        a.gpa.free(a.tabs);
+        a.status.deinit(a.gpa);
+        a.toast.deinit(a.gpa);
+        var it = a.details.valueIterator();
+        while (it.next()) |e| {
+            e.*.arena.deinit();
+            a.gpa.destroy(e.*);
+        }
         a.details.deinit(a.gpa);
-        a.closeOverlay();
-        a.scratch.deinit();
-        a.perm.deinit();
+        if (a.filter) |*f| f.edit.deinit();
+        if (a.jql) |*j| j.deinit();
+        if (a.transition) |*t| t.deinit();
+        if (a.picker) |*p| p.deinit();
+        if (a.comment) |*c| c.edit.deinit();
+        if (a.modal) |*m| m.arena.deinit();
+        a.selection.deinit(a.gpa);
+        a.board_names.deinit(a.gpa);
+        a.kanban_expanded.deinit(a.gpa);
+        a.hits.deinit(a.gpa);
+        a.keys.deinit();
         a.* = undefined;
     }
 
-    pub fn tab(a: *App) ?*Tab {
-        if (a.tabs.len == 0) return null;
-        return &a.tabs[@min(a.active, a.tabs.len - 1)];
-    }
+    // ─── small helpers ───────────────────────────────────────────────────
 
-    /// Build the tabs from the config. Nothing is fetched here.
-    pub fn openTabs(a: *App) Allocator.Error!void {
-        const arena = a.perm.allocator();
-        var list: std.ArrayListUnmanaged(Tab) = .empty;
-        for (a.cfg.tabs) |tc| {
-            const jql = (try tc.staticJql(arena)) orelse "";
-            try list.append(a.gpa, .{
-                .cfg = tc,
-                .jql = jql,
-                .state = tree.State.init(a.gpa),
-                .arena = std.heap.ArenaAllocator.init(a.gpa),
-            });
-        }
-        a.tabs = try list.toOwnedSlice(a.gpa);
+    pub fn keep(a: *App, s: []const u8) Allocator.Error![]const u8 {
+        return a.keys.allocator().dupe(u8, s);
     }
 
     pub fn setStatus(a: *App, comptime fmt: []const u8, args: anytype) void {
-        a.status = std.fmt.allocPrint(a.scratch.allocator(), fmt, args) catch "";
+        a.status.clearRetainingCapacity();
+        a.status.print(a.gpa, fmt, args) catch {};
     }
 
-    /// A status line plus a repaint, for the middle of a refresh.
-    fn progress(a: *App, comptime fmt: []const u8, args: anytype) void {
+    /// A status that is also worth mnml's toast.
+    pub fn say(a: *App, comptime fmt: []const u8, args: anytype) void {
         a.setStatus(fmt, args);
-        a.sink.call();
+        a.toast.clearRetainingCapacity();
+        a.toast.print(a.gpa, fmt, args) catch {};
+        a.toast_pending = true;
     }
 
-    // ── keys ────────────────────────────────────────────────────────────
-
-    pub fn key(a: *App, spec: []const u8) !void {
-        const action = keys.map(a.overlay.mode(), spec);
-        try a.act(action);
+    pub fn nowMs(a: *App) i64 {
+        return Io.Timestamp.now(a.io, .real).toMilliseconds();
     }
 
-    pub fn act(a: *App, action: Action) !void {
-        switch (a.overlay) {
-            .none => try a.listAction(action),
-            .help => try a.helpAction(action),
-            .filter => try a.filterAction(action),
-            .picker => try a.pickerAction(action),
-            .comment => try a.commentAction(action),
-            .form => try a.formAction(action),
-            .confirm => try a.confirmAction(action),
-        }
+    pub fn tab(a: *App) *TabState {
+        return &a.tabs[a.active];
     }
 
-    fn helpAction(a: *App, action: Action) !void {
-        switch (action) {
-            .cancel => a.closeOverlay(),
-            .move => |d| {
-                const h = &a.overlay.help;
-                if (d > 0) h.scroll +|= 1 else h.scroll -|= 1;
-            },
-            else => {},
-        }
+    pub fn tabConst(a: *const App) *const TabState {
+        return &a.tabs[a.active];
     }
 
-    fn listAction(a: *App, action: Action) !void {
-        const t = a.tab() orelse {
-            // With no tabs at all only quitting and the help sheet work.
-            switch (action) {
-                .quit, .cancel => a.done = true,
-                .help => a.overlay = .{ .help = .{} },
-                .refresh => try a.reload(),
-                else => {},
-            }
-            return;
+    pub fn hasTabs(a: *const App) bool {
+        return a.tabs.len > 0;
+    }
+
+    pub fn context(a: *const App) keymap.Context {
+        const t = a.tabConst();
+        return .{ .shape = t.shape(), .fix_versions = t.cfg.isFixVersions(), .detail_open = a.details_visible };
+    }
+
+    pub fn isKanban(a: *const App) bool {
+        return a.hasTabs() and a.tabConst().cfg.isKanban();
+    }
+
+    pub fn isTree(a: *const App) bool {
+        return a.hasTabs() and a.tabConst().cfg.isTree();
+    }
+
+    /// The tree's team field as the JQL wants it.
+    fn teamClause(a: *App, arena: Allocator, base: []const u8, team: []const u8) Allocator.Error![]const u8 {
+        if (team.len == 0) return base;
+        return jira.withTeam(arena, base, team, a.cfg.team_field_name, a.cfg.team_field_id);
+    }
+
+    fn teamFilterClause(a: *App, arena: Allocator, team: []const u8) Allocator.Error![]const u8 {
+        const t = try jira.escapeQuotes(arena, team);
+        const field = a.cfg.teamField();
+        if (field.len > 0) return std.fmt.allocPrint(arena, "(\"{s}\" = \"{s}\" OR component = \"{s}\" OR labels = \"{s}\")", .{ field, t, t, t });
+        return std.fmt.allocPrint(arena, "(component = \"{s}\" OR labels = \"{s}\")", .{ t, t });
+    }
+
+    // ─── the visible rows ────────────────────────────────────────────────
+
+    pub fn criteria(a: *App, arena: Allocator, t: *const TabState) Allocator.Error!filters.Criteria {
+        return .{
+            .text = if (a.filter) |f| f.edit.text() else "",
+            .assignees = try t.activeIds(arena),
+            .epics = try t.activeEpics(arena),
+            .issue_type = t.issue_type,
+            .label = t.label,
+            .team = if (t.cfg.isKanban()) t.team else "",
+            .scope = t.scope,
         };
-        switch (action) {
-            .quit => a.done = true,
-            .cancel => {
-                // Esc is a cascade: clear the filter, else close the
-                // detail pane, else leave.
-                if (t.filter.len > 0) {
-                    t.filter = "";
-                    try a.rebuild(t);
-                    a.setStatus("filter cleared", .{});
-                } else if (a.detail_open) {
-                    a.detail_open = false;
-                } else a.done = true;
-            },
-            .refresh => try a.refresh(),
-            .move => |d| a.moveCursor(t, d),
-            .page => |d| a.moveCursor(t, @intCast(@as(i32, d) * @as(i32, @intCast(@max(1, a.listHeight() - 1))))),
-            .top => {
-                t.cursor = 0;
-                a.onCursorMoved();
-            },
-            .bottom => {
-                t.cursor = if (t.rows.len == 0) 0 else t.rows.len - 1;
-                a.onCursorMoved();
-            },
-            .expand, .collapse, .toggle_row => {
-                const move: tree.Move = switch (action) {
-                    .expand => .expand,
-                    .collapse => .collapse,
-                    else => .toggle,
-                };
-                // Opening a ticket is when its PRs are worth fetching.
-                if (move != .collapse) try a.ensurePrs(t);
-                t.cursor = try tree.navigate(&t.state, t.rows, t.issues, t.cursor, move);
-                try a.rebuild(t);
-                a.onCursorMoved();
-            },
-            .expand_all => {
-                t.state.expandAll();
-                try a.rebuild(t);
-            },
-            .collapse_all => {
-                try t.state.collapseAll();
-                try a.rebuild(t);
-            },
-            .hide_row => {
-                const it = t.selected() orelse return;
-                try t.state.hide(it.key);
-                a.setStatus("hid {s} ({d} hidden · H brings them back)", .{ it.key, t.state.hiddenCount() });
-                try a.rebuild(t);
-            },
-            .unhide_all => {
-                const n = t.state.hiddenCount();
-                t.state.unhideAll();
-                a.setStatus("{d} row(s) back", .{n});
-                try a.rebuild(t);
-            },
-            .show_all_prs => {
-                const it = t.selected() orelse return;
-                try t.state.showAllPrs(it.key);
-                try a.rebuild(t);
-            },
-            .next_tab => a.gotoTab(a.active + 1),
-            .prev_tab => a.gotoTab(if (a.active == 0) a.tabs.len - 1 else a.active - 1),
-            .go_tab => |n| a.gotoTab(@as(usize, n) - 1),
-            .open_filter => {
-                var e = Editor.init(a.gpa);
-                try e.set(t.filter);
-                a.overlay = .{ .filter = e };
-            },
-            .toggle_detail => a.detail_open = !a.detail_open,
-            .detail_scroll => |d| {
-                if (d > 0) a.detail_scroll +|= @intCast(d) else a.detail_scroll -|= @intCast(-d);
-            },
-            .help => a.overlay = .{ .help = .{} },
-            .open_browser => try a.openInBrowser(),
-            .copy_key => try a.copy(.key),
-            .copy_url => try a.copy(.url),
-            .transition => try a.openTransitions(),
-            .assign => try a.openAssignees(),
-            .assign_to_me => try a.assignToMe(),
-            .set_fix_version => try a.openVersions(),
-            .comment => try a.openComment(),
-            .create => try a.openForm(),
-            else => {},
-        }
     }
 
-    fn filterAction(a: *App, action: Action) !void {
-        const t = a.tab() orelse return;
-        const e = &a.overlay.filter;
-        switch (action) {
-            .cancel => {
-                a.closeOverlay();
-                t.filter = "";
-                try a.rebuild(t);
-            },
-            .accept => {
-                t.filter = try a.perm.allocator().dupe(u8, e.text());
-                a.closeOverlay();
-                try a.rebuild(t);
-            },
-            .move => |d| a.moveCursor(t, d),
-            else => {
-                if (try e.apply(action)) {
-                    // Live: the list narrows as the user types.
-                    t.filter = try a.perm.allocator().dupe(u8, e.text());
-                    try a.rebuild(t);
-                }
-            },
-        }
+    pub fn mask(a: *App, arena: Allocator, t: *const TabState) Allocator.Error![]const bool {
+        return filters.mask(arena, t.issues, try a.criteria(arena, t));
     }
 
-    fn pickerAction(a: *App, action: Action) !void {
-        const p = &a.overlay.picker;
+    /// The tree rows of the active tab (null on a kanban / flat tab).
+    pub fn treeRows(a: *App, arena: Allocator) Allocator.Error!?Rows {
+        const t = a.tab();
+        if (!t.cfg.isTree()) return null;
+        const st = &(t.tree.?);
+        return try tree.computeRows(arena, t.issues, st, t.cfg, a.cfg.release_cut, try a.mask(arena, t));
+    }
+
+    /// The issue indices a flat or kanban tab shows, in order.
+    pub fn visibleIssues(a: *App, arena: Allocator) Allocator.Error![]const usize {
+        const t = a.tab();
+        const m = try a.mask(arena, t);
+        var out: std.ArrayList(usize) = .empty;
+        for (m, 0..) |ok, i| if (ok) try out.append(arena, i);
+        return out.toOwnedSlice(arena);
+    }
+
+    pub fn focusedIssueIdx(a: *App, arena: Allocator) Allocator.Error!?usize {
+        if (!a.hasTabs()) return null;
+        const t = a.tab();
+        if (t.cfg.isTree()) {
+            const r = (try a.treeRows(arena)) orelse return null;
+            if (t.selected >= r.rows.len) return null;
+            return r.rows[t.selected].issueIdx();
+        }
+        if (t.selected >= t.issues.len) return null;
+        return t.selected;
+    }
+
+    pub fn focusedKey(a: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+        const idx = (try a.focusedIssueIdx(arena)) orelse return null;
+        return a.tab().issues[idx].key;
+    }
+
+    pub fn focusedRow(a: *App, arena: Allocator) Allocator.Error!?tree.Row {
+        const r = (try a.treeRows(arena)) orelse return null;
+        const t = a.tab();
+        if (t.selected >= r.rows.len) return null;
+        return r.rows[t.selected];
+    }
+
+    // ─── the loop's entry points ─────────────────────────────────────────
+
+    pub fn resize(a: *App, cols: u16, rows: u16) void {
+        a.cols = cols;
+        a.rows = rows;
+    }
+
+    /// The auto-refresh, on the reference's cadence.
+    pub fn tick(a: *App, now: i64) Allocator.Error!void {
+        const secs = a.cfg.refresh_interval_secs;
+        if (secs == 0 or !a.hasTabs()) return;
+        if (a.last_refresh_ms == 0 or now - a.last_refresh_ms < @as(i64, secs) * 1000) return;
+        try a.refreshActive();
+    }
+
+    /// Fetch the active tab if it has not been.
+    pub fn ensureLoaded(a: *App) Allocator.Error!void {
+        if (!a.hasTabs()) return;
+        if (!a.tab().fetched and a.tab().last_error.len == 0) try a.refreshActive();
+    }
+
+    // ─── refreshing ──────────────────────────────────────────────────────
+
+    fn ensureMe(a: *App) Allocator.Error!void {
+        if (a.me != null or a.me_failed) return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        const vis = try p.visible(scratch.allocator());
-        switch (action) {
-            .cancel => a.closeOverlay(),
-            .move => |d| {
-                if (vis.len == 0) return;
-                p.cursor = clampMove(p.cursor, d, vis.len);
-            },
-            .page => |d| {
-                if (vis.len == 0) return;
-                p.cursor = clampMove(p.cursor, @as(i8, @intCast(@min(9, @as(i16, d) * 5))), vis.len);
-            },
-            .go_tab => |n| {
-                if (n <= vis.len) p.cursor = n - 1;
-            },
-            .accept => {
-                if (vis.len == 0) return;
-                const item = p.items[vis[@min(p.cursor, vis.len - 1)]];
-                try a.commitPick(p.kind, p.key, item);
-            },
-            else => {
-                if (try p.filter.apply(action)) p.cursor = 0;
-            },
-        }
-    }
-
-    fn commentAction(a: *App, action: Action) !void {
-        const c = &a.overlay.comment;
-        switch (action) {
-            .cancel => a.closeOverlay(),
-            .accept => {
-                const body = std.mem.trim(u8, c.editor.text(), " \t\r\n");
-                if (body.len == 0) {
-                    c.err = "nothing to post";
-                    return;
-                }
-                const key_copy = try a.scratch.allocator().dupe(u8, c.key);
-                const body_copy = try a.scratch.allocator().dupe(u8, body);
-                var scratch = std.heap.ArenaAllocator.init(a.gpa);
-                defer scratch.deinit();
-                const client = a.client orelse return;
-                _ = client;
-                switch (try jira.addComment(&a.client.?, scratch.allocator(), key_copy, body_copy)) {
-                    .ok => {
-                        a.closeOverlay();
-                        a.forgetDetail(key_copy);
-                        try a.loadDetail(key_copy);
-                        a.setStatus("commented on {s}", .{key_copy});
-                    },
-                    // The buffer is kept: the user can fix it or copy it out.
-                    .failed => |f| c.err = try a.scratch.allocator().dupe(u8, f.message),
-                }
-            },
-            else => _ = try c.editor.apply(action),
-        }
-    }
-
-    fn formAction(a: *App, action: Action) !void {
-        const f = &a.overlay.form;
-        switch (action) {
-            .cancel => a.closeOverlay(),
-            .next_field => f.next(),
-            .prev_field => f.prev(),
-            .accept => try a.submitForm(),
-            .newline => {
-                // Only the description is multi-line; elsewhere Enter
-                // moves on, which is what a form should do.
-                if (f.focus == .description) {
-                    _ = try f.get(.description).apply(.newline);
-                } else f.next();
-            },
-            else => _ = try f.get(f.focus).apply(action),
-        }
-    }
-
-    fn confirmAction(a: *App, action: Action) !void {
-        switch (action) {
-            .cancel => {
-                a.closeOverlay();
-                a.setStatus("cancelled", .{});
-            },
-            .accept => {
-                const what = a.overlay.confirm.what;
-                a.closeOverlay();
-                switch (what) {
-                    .transition => |tr| try a.runTransition(tr.key, tr.id, tr.to),
-                }
-            },
-            else => {},
-        }
-    }
-
-    pub fn closeOverlay(a: *App) void {
-        switch (a.overlay) {
-            .filter => |*e| e.deinit(),
-            .picker => |*p| p.filter.deinit(),
-            .comment => |*c| c.editor.deinit(),
-            .form => |*f| for (&f.fields) |*e| e.deinit(),
-            else => {},
-        }
-        a.overlay = .none;
-    }
-
-    // ── cursor ──────────────────────────────────────────────────────────
-
-    pub fn listHeight(a: *App) u16 {
-        // Row 0 the tab strip, row 1 the column header, the last row the
-        // status line, and a filter line when one is on.
-        const chrome: u16 = 3 + @as(u16, if (a.tab()) |t| @intFromBool(t.filter.len > 0) else 0);
-        return if (a.rows > chrome) a.rows - chrome else 1;
-    }
-
-    fn moveCursor(a: *App, t: *Tab, delta: i8) void {
-        if (t.rows.len == 0) return;
-        t.cursor = clampMove(t.cursor, delta, t.rows.len);
-        a.onCursorMoved();
-    }
-
-    fn clampMove(cursor: usize, delta: i8, len: usize) usize {
-        if (len == 0) return 0;
-        const at: i64 = @intCast(cursor);
-        const to = std.math.clamp(at + delta, 0, @as(i64, @intCast(len - 1)));
-        return @intCast(to);
-    }
-
-    fn onCursorMoved(a: *App) void {
-        a.detail_scroll = 0;
-        const t = a.tab() orelse return;
-        // Keep the cursor on screen.
-        const h = a.listHeight();
-        if (t.cursor < t.scroll) t.scroll = t.cursor;
-        if (t.cursor >= t.scroll + h) t.scroll = t.cursor + 1 - h;
-    }
-
-    /// The first screen row the ticket list occupies: under the tab
-    /// strip, under the filter line when one is showing, under the
-    /// column header.
-    pub fn listTop(a: *App) u16 {
-        const filtering: u16 = if (a.tab()) |t| @intFromBool(t.filter.len > 0) else 0;
-        return 2 + filtering;
-    }
-
-    /// The column the detail pane starts at, or null when it is closed.
-    pub fn detailX(a: *App) ?u16 {
-        if (!a.detail_open or a.cols < 60) return null;
-        const w = @max(28, a.cols / 100 * a.cfg.mnml.detail_width_pct);
-        return a.cols -| (w + 1);
-    }
-
-    /// A click at a screen cell. The tab strip switches tabs; a row in
-    /// the list selects it, and a click on its chevron folds it — the
-    /// same two things the keyboard does, in the same places the eye
-    /// sees them.
-    pub fn click(a: *App, col: u16, row: u16, right: bool) !void {
-        if (a.overlay != .none) {
-            // A click outside an overlay dismisses it, which is what
-            // every other mnml overlay does.
-            a.closeOverlay();
-            return;
-        }
-        if (row == 0) {
-            var x: u16 = 6; // past the `JIRA` chip
-            for (a.tabs, 0..) |*t, i| {
-                const w: u16 = @intCast(text.width(t.cfg.name) + 5);
-                if (col >= x and col < x + w) {
-                    a.gotoTab(i);
-                    return;
-                }
-                x += w;
-            }
-            return;
-        }
-        const t = a.tab() orelse return;
-        if (a.detailX()) |dx| if (col >= dx) return;
-        const top = a.listTop();
-        if (row < top) return;
-        const at = t.scroll + (row - top);
-        if (at >= t.rows.len) return;
-        t.cursor = at;
-        a.onCursorMoved();
-        // The chevron sits at the row's indent; a click there folds.
-        const mark_x: u16 = 1 + @as(u16, t.rows[at].depth()) * 2;
-        if (right or col <= mark_x + 1) {
-            try a.ensurePrs(t);
-            t.cursor = try tree.navigate(&t.state, t.rows, t.issues, t.cursor, .toggle);
-            try a.rebuild(t);
-        }
-    }
-
-    /// A wheel notch: positive is up. Over the detail pane it scrolls
-    /// the detail; over the list it moves the cursor.
-    pub fn wheel(a: *App, dy: i16) !void {
-        const step: i8 = 3;
-        if (dy > 0) {
-            if (a.detail_scroll > 0 and a.overlay == .none) a.detail_scroll -|= @intCast(step);
-            const t = a.tab() orelse return;
-            a.moveCursor(t, -step);
-        } else if (dy < 0) {
-            const t = a.tab() orelse return;
-            a.moveCursor(t, step);
-        }
-    }
-
-    fn gotoTab(a: *App, want: usize) void {
-        if (a.tabs.len == 0) return;
-        a.active = want % a.tabs.len;
-        a.detail_scroll = 0;
-    }
-
-    // ── fetching ────────────────────────────────────────────────────────
-
-    /// Rebuild the visible rows from the issues already in hand.
-    pub fn rebuild(a: *App, t: *Tab) Allocator.Error!void {
-        t.rows = try tree.build(t.arena.allocator(), &t.state, t.issues, .{
-            .group_by = t.cfg.group_by,
-            .status_order = t.cfg.status_order,
-            .max_prs = a.cfg.mnml.max_prs,
-            .filter = t.filter,
-        });
-        if (t.rows.len == 0) {
-            t.cursor = 0;
-            t.scroll = 0;
-        } else if (t.cursor >= t.rows.len) t.cursor = t.rows.len - 1;
-        a.onCursorMoved();
-    }
-
-    /// The whole active tab, from the wire.
-    pub fn refresh(a: *App) !void {
-        const t = a.tab() orelse return;
-        if (a.client == null) return;
-        a.busy = true;
-        defer a.busy = false;
-        t.err = null;
-        a.now_stamp = nowStamp(a.perm.allocator(), a.io) catch a.now_stamp;
-        a.progress("refreshing {s}…", .{t.cfg.name});
-
-        var scratch = std.heap.ArenaAllocator.init(a.gpa);
-        defer scratch.deinit();
-
-        // Who "me" is, once. A refusal is remembered, not retried.
-        if (!a.me_asked) {
-            a.me_asked = true;
-            switch (try jira.myself(&a.client.?, scratch.allocator())) {
-                .ok => |u| a.me = try a.perm.allocator().dupe(u8, u.account_id),
-                .failed => {},
-            }
-        }
-
-        // A release tab has to ask which version it means.
-        if (t.jql.len == 0 and t.cfg.kind == .fix_version and t.cfg.project.len > 0) {
-            a.progress("{s}: finding the release…", .{t.cfg.name});
-            switch (try jira.projectVersions(&a.client.?, scratch.allocator(), t.cfg.project)) {
-                .failed => |f| {
-                    t.err = try a.perm.allocator().dupe(u8, f.message);
-                    a.setStatus("{s}: {s}", .{ t.cfg.name, f.message });
-                    return;
-                },
-                .ok => |all| {
-                    const open = try jira.unreleasedVersions(scratch.allocator(), all, t.cfg.version_name_contains);
-                    const pick = jira.pickVersion(open, t.cfg.mode) orelse {
-                        // The Rust tracker's sentinel: the tab exists and
-                        // is empty rather than the pane failing.
-                        t.jql = "issuekey = ''";
-                        t.err = try a.perm.allocator().dupe(u8, "no unreleased version matches (check version_name_contains)");
-                        return;
-                    };
-                    t.version = try a.perm.allocator().dupe(u8, pick.name);
-                    t.jql = try jira.fixVersionJql(a.perm.allocator(), t.cfg.project, pick.name, t.cfg.component);
-                },
-            }
-        }
-        if (t.jql.len == 0) {
-            t.err = "this tab has no JQL — give it .jql, or a .kind that builds one";
-            return;
-        }
-
-        const jql = try jira.withTeam(scratch.allocator(), t.jql, t.cfg.team, a.cfg.jira.team_field_name, a.cfg.jira.team_field_id);
-        a.progress("{s}: searching…", .{t.cfg.name});
-
-        // The issues AND the cached PR lists live on the tab's own
-        // arena, which this resets — so the PR cache has to be dropped
-        // in the same breath, before anything can fail and leave the
-        // map pointing into freed memory.
-        _ = t.arena.reset(.retain_capacity);
-        t.state.forgetPrs();
-        t.issues = &.{};
-        t.rows = &.{};
-        const arena = t.arena.allocator();
-        const extra: []const []const u8 = if (a.cfg.jira.team_field_id.len > 0) &.{a.cfg.jira.team_field_id} else &.{};
-        switch (try jira.search(&a.client.?, arena, jql, extra)) {
-            .failed => |f| {
-                t.err = try a.perm.allocator().dupe(u8, f.message);
-                a.setStatus("{s}: {s}", .{ t.cfg.name, f.message });
+        switch (jira.myself(a.client, scratch.allocator()) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => {
+                a.me_failed = true;
                 return;
             },
-            .ok => |items| {
-                t.issues = try model.listFromJson(arena, items, a.cfg.jira.team_field_id);
+        }) {
+            .ok => |u| a.me = .{ .account_id = try a.keep(u.account_id), .display_name = try a.keep(u.display_name) },
+            .failed => a.me_failed = true,
+        }
+    }
+
+    pub fn refreshActive(a: *App) Allocator.Error!void {
+        if (!a.hasTabs()) return;
+        try a.refreshTab(a.active);
+        a.last_refresh_ms = a.nowMs();
+    }
+
+    pub fn refreshTab(a: *App, idx: usize) Allocator.Error!void {
+        const t = &a.tabs[idx];
+        try a.ensureMe();
+        // The reference seeds the assignee filter with "me" once.
+        // The reference seeds the assignee filter with "me" once; on its
+        // tree tabs the filter is inert, so the seed only lands where it
+        // shows (flat and kanban) — here the chips work on trees too.
+        if (!t.seeded and (a.me != null or a.me_failed)) {
+            if (a.me) |me| if (!t.cfg.isTree() and t.active_assignees.count() == 0 and me.account_id.len > 0) try t.active_assignees.put(a.gpa, me.account_id, {});
+            t.seeded = true;
+        }
+        if (t.jql.len == 0) try a.resolveJql(t);
+        // The cursor survives a refetch: remember the ticket it is on.
+        var keep_key: ?[]const u8 = null;
+        var keep_buf: [64]u8 = undefined;
+        if (idx == a.active) {
+            var pre = std.heap.ArenaAllocator.init(a.gpa);
+            defer pre.deinit();
+            if (try a.focusedKey(pre.allocator())) |k| if (k.len <= keep_buf.len) {
+                @memcpy(keep_buf[0..k.len], k);
+                keep_key = keep_buf[0..k.len];
+            };
+        }
+        // The issues slice into the JSON they came from, so the fetch
+        // lands in a fresh arena that becomes the tab's on success and
+        // is dropped on failure (the old issues stay on screen).
+        var next = std.heap.ArenaAllocator.init(a.gpa);
+        errdefer next.deinit();
+        const arena = next.allocator();
+        const extra: []const []const u8 = if (a.cfg.team_field_id.len > 0) &.{a.cfg.team_field_id} else &.{};
+        const answer: jira.Answer([]const Value) = blk: {
+            if (t.board_id != 0) {
+                var clauses: std.ArrayList([]const u8) = .empty;
+                if (t.team.len > 0) try clauses.append(arena, try a.teamFilterClause(arena, t.team));
+                if (t.selected_sprint) |sp| try clauses.append(arena, try std.fmt.allocPrint(arena, "sprint = {d}", .{sp}));
+                if (t.quick_filters) |qfs| for (qfs) |qf| {
+                    for (t.active_quick_filters.items) |id| if (id == qf.id and std.mem.trim(u8, qf.jql, " ").len > 0) {
+                        try clauses.append(arena, try std.fmt.allocPrint(arena, "({s})", .{std.mem.trim(u8, qf.jql, " ")}));
+                    };
+                };
+                const extra_jql: ?[]const u8 = if (clauses.items.len == 0) null else try std.mem.join(arena, " AND ", clauses.items);
+                break :blk jira.boardIssues(a.client, arena, t.board_id, extra_jql, extra) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.Transport => jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+                };
+            }
+            const q = try a.teamClause(arena, t.jql, t.team);
+            break :blk jira.search(a.client, arena, q, extra) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Transport => jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+            };
+        };
+        switch (answer) {
+            .failed => |f| {
+                t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{f.message});
+                a.setStatus("error: {s}", .{f.message});
+                next.deinit();
+            },
+            .ok => |vals| {
+                t.issues = try jira.parseIssues(arena, vals, a.cfg.team_field_id);
+                t.data.deinit();
+                t.data = next;
                 t.fetched = true;
+                t.last_error = "";
+                // An action's message outlives the refetch it triggers;
+                // an empty status gets the tab's summary.
+                if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
+                if (t.cfg.kind == .work_assigned) {
+                    a.assigned_open = t.issues.len;
+                    a.segment_dirty = true;
+                }
+                // The reference auto-expands unresolved tickets on tree tabs
+                // and fetches their PRs; the kanban does the fetch too but
+                // never shows it, so only the tree pays for it here.
+                if (t.tree) |*st| if (t.cfg.isTree()) {
+                    for (t.issues) |iss| if (iss.isUnresolved()) {
+                        try st.setExpanded(iss.key, true);
+                        try a.ensurePrs(idx, iss.key);
+                    };
+                };
+                if (t.sprints == null and t.board_id != 0) try a.loadSprints(idx);
+                try a.aggregateAssignees(t);
+                // Put the cursor back on the ticket it was on (its row
+                // may have moved), else on the first row.
+                if (idx == a.active) {
+                    if (t.cfg.isTree()) {
+                        t.selected = 0;
+                        if (keep_key) |k| {
+                            var post = std.heap.ArenaAllocator.init(a.gpa);
+                            defer post.deinit();
+                            if (try a.treeRows(post.allocator())) |r| if (tree.rowOfKey(r.rows, t.issues, k)) |ri| {
+                                t.selected = ri;
+                            };
+                        }
+                    } else {
+                        t.selected = 0;
+                        if (keep_key) |k| for (t.issues, 0..) |iss, i| if (std.mem.eql(u8, iss.key, k)) {
+                            t.selected = i;
+                        };
+                        try a.clampCursor();
+                    }
+                }
             },
         }
-        try a.rebuild(t);
-        a.setStatus("{s} · {d} ticket{s}", .{ t.cfg.name, t.issues.len, if (t.issues.len == 1) "" else "s" });
-        a.last_refresh_ms = Io.Timestamp.now(a.io, .awake).toMilliseconds();
-        if (a.detail_open) if (t.selected()) |it| try a.loadDetail(it.key);
     }
 
-    /// Re-read the config and start again — what `r` does when the pane
-    /// is blocked on a missing config or token.
-    pub fn reload(a: *App) !void {
-        a.setStatus("nothing to refresh", .{});
+    /// `--prefetch`'s JSON (`{"generated_at":…,"tabs":[{"name":…,"issues":[…]}]}`)
+    /// into the tabs it names, so the first paint has tickets before any
+    /// fetch; returns how many tabs took it.
+    pub fn hydrate(a: *App, src: []const u8) Allocator.Error!usize {
+        var n: usize = 0;
+        for (a.tabs, 0..) |*t, idx| {
+            var next = std.heap.ArenaAllocator.init(a.gpa);
+            errdefer next.deinit();
+            const arena = next.allocator();
+            const doc = std.json.parseFromSliceLeaky(Value, arena, src, .{}) catch {
+                next.deinit();
+                return n;
+            };
+            const tabs_v = switch (doc) {
+                .object => |o| o.get("tabs") orelse {
+                    next.deinit();
+                    return n;
+                },
+                else => {
+                    next.deinit();
+                    return n;
+                },
+            };
+            const list = switch (tabs_v) {
+                .array => |arr| arr.items,
+                else => &.{},
+            };
+            var took = false;
+            for (list) |tv| {
+                const name = switch (tv) {
+                    .object => |o| if (o.get("name")) |nv| (if (nv == .string) nv.string else "") else "",
+                    else => "",
+                };
+                if (!std.mem.eql(u8, name, t.cfg.name)) continue;
+                const issues_v = tv.object.get("issues") orelse continue;
+                const vals = switch (issues_v) {
+                    .array => |arr| arr.items,
+                    else => continue,
+                };
+                t.issues = try jira.parseIssues(arena, vals, a.cfg.team_field_id);
+                t.data.deinit();
+                t.data = next;
+                t.fetched = true;
+                t.last_error = "";
+                took = true;
+                n += 1;
+                if (t.cfg.kind == .work_assigned) {
+                    a.assigned_open = t.issues.len;
+                    a.segment_dirty = true;
+                }
+                if (t.tree) |*st| if (t.cfg.isTree()) {
+                    for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
+                };
+                try a.aggregateAssignees(t);
+                _ = idx;
+                break;
+            }
+            if (!took) next.deinit();
+        }
+        return n;
     }
 
-    /// The pane just got the keyboard back. Bridge v2 has no timer
-    /// message — the host speaks `hello`, `resize`, `input`, `focus` and
-    /// `goodbye` — so regaining focus is the tick an idle auto-refresh
-    /// gets: come back to the pane after `refresh_interval_secs` and it
-    /// reloads before you read it.
-    pub fn focusGained(a: *App) !void {
-        a.focused = true;
-        const every = a.cfg.mnml.refresh_interval_secs;
-        if (every == 0 or a.client == null or a.busy) return;
-        if (a.overlay != .none) return;
-        const t = a.tab() orelse return;
-        if (!t.fetched) return;
-        const now = Io.Timestamp.now(a.io, .awake).toMilliseconds();
-        if (now - a.last_refresh_ms < @as(i64, every) * 1000) return;
-        try a.refresh();
+    fn resolveJql(a: *App, t: *TabState) Allocator.Error!void {
+        const mode = t.cfg.mode orelse return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const versions = switch (jira.projectVersions(a.client, arena, t.cfg.project) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer([]const model.Version){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        }) {
+            .ok => |v| v,
+            .failed => |f| {
+                t.jql = "issuekey = ''";
+                t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "fetching unreleased versions: {s}", .{f.message});
+                return;
+            },
+        };
+        const open = try jira.unreleasedVersions(arena, versions, t.cfg.version_name_contains);
+        const picked = jira.pickVersion(open, mode) orelse {
+            t.jql = "issuekey = ''";
+            t.last_error = try t.meta.allocator().dupe(u8, "no unreleased versions match (check version_name_contains)");
+            return;
+        };
+        t.jql = try a.keep(try jira.fixVersionJql(arena, t.cfg.project, picked.name, t.cfg.component));
     }
 
-    /// Fetch the selected ticket's PRs, once.
-    fn ensurePrs(a: *App, t: *Tab) !void {
-        const it = t.selected() orelse return;
-        if (t.state.prsOf(it.key) != null) return;
-        if (a.client == null) return;
-        a.progress("{s}: linked pull requests…", .{it.key});
-        switch (try jira.pullRequests(&a.client.?, t.arena.allocator(), it.key, it.id)) {
+    fn loadSprints(a: *App, idx: usize) Allocator.Error!void {
+        const t = &a.tabs[idx];
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        switch (jira.sprintsForBoard(a.client, scratch.allocator(), t.board_id) catch return) {
             .ok => |list| {
-                try t.state.setPrs(it.key, list);
-                if (list.len > 0) a.setStatus("{s} · {d} linked PR{s}", .{ it.key, list.len, if (list.len == 1) "" else "s" });
+                const copy = try t.meta.allocator().alloc(model.Sprint, list.len);
+                for (list, copy) |src, *dst| dst.* = .{
+                    .id = src.id,
+                    .name = try t.meta.allocator().dupe(u8, src.name),
+                    .state = try t.meta.allocator().dupe(u8, src.state),
+                    .start_date = try t.meta.allocator().dupe(u8, src.start_date),
+                    .end_date = try t.meta.allocator().dupe(u8, src.end_date),
+                    .complete_date = try t.meta.allocator().dupe(u8, src.complete_date),
+                };
+                t.sprints = copy;
+            },
+            .failed => {},
+        }
+    }
+
+    fn aggregateAssignees(a: *App, t: *TabState) Allocator.Error!void {
+        const me_id = if (a.me) |m| m.account_id else "";
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        var list: std.ArrayList(AssigneeSummary) = .empty;
+        for (t.issues) |iss| {
+            const u = iss.assignee orelse continue;
+            if (u.account_id.len == 0 or std.mem.eql(u8, u.account_id, me_id)) continue;
+            var found = false;
+            for (list.items) |*s| if (std.mem.eql(u8, s.account_id, u.account_id)) {
+                s.count += 1;
+                found = true;
+            };
+            if (!found) try list.append(scratch.allocator(), .{ .account_id = u.account_id, .display_name = u.display_name, .count = 1 });
+        }
+        std.mem.sort(AssigneeSummary, list.items, {}, struct {
+            fn lt(_: void, x: AssigneeSummary, y: AssigneeSummary) bool {
+                if (x.count != y.count) return x.count > y.count;
+                return std.mem.order(u8, x.display_name, y.display_name) == .lt;
+            }
+        }.lt);
+        const out = try t.meta.allocator().alloc(AssigneeSummary, list.items.len);
+        for (list.items, out) |src, *dst| dst.* = .{
+            .account_id = try t.meta.allocator().dupe(u8, src.account_id),
+            .display_name = try t.meta.allocator().dupe(u8, src.display_name),
+            .count = src.count,
+        };
+        t.assignees = out;
+    }
+
+    /// Fetch and cache a ticket's linked PRs once.
+    pub fn ensurePrs(a: *App, idx: usize, key: []const u8) Allocator.Error!void {
+        const t = &a.tabs[idx];
+        const st = &(t.tree orelse return);
+        if (st.prs(key) != null) return;
+        var issue_id: []const u8 = "";
+        for (t.issues) |iss| if (std.mem.eql(u8, iss.key, key)) {
+            issue_id = iss.id;
+        };
+        if (issue_id.len == 0) {
+            a.setStatus("{s}: no numeric id", .{key});
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        switch (jira.pullRequests(a.client, scratch.allocator(), issue_id) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => {
+                a.setStatus("{s}: linked-PR fetch failed", .{key});
+                return;
+            },
+        }) {
+            .ok => |list| {
+                try st.putPrs(key, list);
+                a.setStatus("{s}: {d} linked PR(s)", .{ key, list.len });
+            },
+            .failed => |f| a.setStatus("{s}: linked-PR fetch failed: {s}", .{ key, f.message }),
+        }
+    }
+
+    pub fn ensurePipelines(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        if (st.pipelines(key, pr.id) != null or st.pipelineError(key, pr.id) != null) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        a.setStatus("fetching pipeline for {s} {s}…", .{ key, pr.id });
+        switch (try a.forge.pipelinesForPrUrl(scratch.allocator(), pr.url)) {
+            .ok => |list| {
+                try st.putPipelines(key, pr.id, list);
+                a.setStatus("{s} {s}: {d} pipeline(s) on merge commit", .{ key, pr.id, list.len });
+            },
+            .failed => |why| {
+                try st.putPipelineError(key, pr.id, why);
+                a.setStatus("{s} {s} pipeline lookup: {s}", .{ key, pr.id, why });
+            },
+        }
+    }
+
+    // ─── the detail ──────────────────────────────────────────────────────
+
+    pub fn detailOf(a: *App, key: []const u8) ?model.IssueDetail {
+        const e = a.details.get(key) orelse return null;
+        return e.detail;
+    }
+
+    pub fn ensureDetail(a: *App, key: []const u8) Allocator.Error!void {
+        if (a.details.contains(key)) return;
+        const e = try a.gpa.create(DetailEntry);
+        e.* = .{ .arena = std.heap.ArenaAllocator.init(a.gpa), .detail = .{} };
+        switch (jira.issueDetail(a.client, e.arena.allocator(), key) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer(model.IssueDetail){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        }) {
+            .ok => |d| e.detail = d,
+            .failed => |f| {
+                e.detail.error_text = try e.arena.allocator().dupe(u8, f.message);
+                a.setStatus("detail fetch failed for {s}: {s}", .{ key, f.message });
+            },
+        }
+        try a.details.put(a.gpa, try a.keep(key), e);
+    }
+
+    pub fn invalidateDetail(a: *App, key: []const u8) void {
+        if (a.details.fetchRemove(key)) |kv| {
+            kv.value.arena.deinit();
+            a.gpa.destroy(kv.value);
+        }
+    }
+
+    fn ensureFocusedDetail(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const key = (try a.focusedKey(scratch.allocator())) orelse return;
+        try a.ensureDetail(key);
+    }
+
+    pub fn toggleDetails(a: *App) Allocator.Error!void {
+        a.details_visible = !a.details_visible;
+        a.details_scroll = 0;
+        if (a.details_visible) try a.ensureFocusedDetail();
+    }
+
+    // ─── navigation ──────────────────────────────────────────────────────
+
+    fn afterMove(a: *App) Allocator.Error!void {
+        if (a.details_visible) {
+            a.details_scroll = 0;
+            try a.ensureFocusedDetail();
+        }
+    }
+
+    pub fn move(a: *App, delta: i64) Allocator.Error!void {
+        if (!a.hasTabs()) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const t = a.tab();
+        if (t.cfg.isTree()) {
+            const r = (try a.treeRows(arena)) orelse return;
+            if (r.rows.len == 0) return;
+            const cur: i64 = @intCast(t.selected);
+            t.selected = @intCast(std.math.clamp(cur + delta, 0, @as(i64, @intCast(r.rows.len)) - 1));
+        } else {
+            const vis = try a.visibleIssues(arena);
+            if (vis.len == 0) return;
+            var pos: i64 = 0;
+            for (vis, 0..) |i, k| if (i == t.selected) {
+                pos = @intCast(k);
+            };
+            const np: usize = @intCast(std.math.clamp(pos + delta, 0, @as(i64, @intCast(vis.len)) - 1));
+            t.selected = vis[np];
+        }
+        try a.afterMove();
+    }
+
+    pub fn moveHome(a: *App) Allocator.Error!void {
+        try a.move(-std.math.maxInt(i32));
+    }
+
+    pub fn moveEnd(a: *App) Allocator.Error!void {
+        try a.move(std.math.maxInt(i32));
+    }
+
+    /// Keep the tree cursor inside the row list after a fold or a filter.
+    fn clampCursor(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const t = a.tab();
+        if (t.cfg.isTree()) {
+            const r = (try a.treeRows(scratch.allocator())) orelse return;
+            if (r.rows.len == 0) t.selected = 0 else if (t.selected >= r.rows.len) t.selected = r.rows.len - 1;
+        } else {
+            const vis = try a.visibleIssues(scratch.allocator());
+            if (vis.len == 0) return;
+            for (vis) |i| if (i == t.selected) return;
+            t.selected = vis[0];
+        }
+    }
+
+    pub fn switchTab(a: *App, idx: usize) Allocator.Error!void {
+        if (idx >= a.tabs.len) return;
+        a.active = idx;
+        if (!a.tabs[idx].fetched and a.tabs[idx].last_error.len == 0) {
+            a.setStatus("loading {s}…", .{a.tabs[idx].cfg.name});
+            try a.refreshActive();
+        }
+        try a.afterMove();
+    }
+
+    pub fn nextTab(a: *App) Allocator.Error!void {
+        if (a.tabs.len == 0) return;
+        try a.switchTab((a.active + 1) % a.tabs.len);
+    }
+
+    pub fn prevTab(a: *App) Allocator.Error!void {
+        if (a.tabs.len == 0) return;
+        try a.switchTab(if (a.active == 0) a.tabs.len - 1 else a.active - 1);
+    }
+
+    // ─── the tree ────────────────────────────────────────────────────────
+
+    /// Enter / Space / a row click on a tree tab.
+    pub fn treeActivate(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const row = (try a.focusedRow(scratch.allocator())) orelse {
+            try a.openBrowser();
+            return;
+        };
+        const t = a.tab();
+        const st = &(t.tree.?);
+        switch (row) {
+            .group => |g| try st.toggleGroup(g.status),
+            .ticket => |tk| {
+                const key = t.issues[tk.issue_idx].key;
+                if (st.isExpanded(key)) {
+                    try st.setExpanded(key, false);
+                } else {
+                    try st.setExpanded(key, true);
+                    try a.ensurePrs(a.active, key);
+                }
+            },
+            .pr => |p| {
+                const key = t.issues[p.issue_idx].key;
+                if (st.prs(key)) |prs| if (p.pr_idx < prs.len and prs[p.pr_idx].url.len > 0) try a.openUrl(prs[p.pr_idx].url);
+            },
+            .show_more => |s| try st.showAll(t.issues[s.issue_idx].key),
+            else => {},
+        }
+        try a.clampCursor();
+    }
+
+    pub fn treeExpand(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const row = (try a.focusedRow(scratch.allocator())) orelse return;
+        const t = a.tab();
+        const st = &(t.tree.?);
+        switch (row) {
+            .group => |g| if (!g.expanded) try st.setGroup(g.status, false),
+            .ticket => |tk| {
+                const key = t.issues[tk.issue_idx].key;
+                if (!st.isExpanded(key)) {
+                    try st.setExpanded(key, true);
+                    try a.ensurePrs(a.active, key);
+                }
+            },
+            .pr => |p| {
+                const key = t.issues[p.issue_idx].key;
+                const prs = st.prs(key) orelse return;
+                if (p.pr_idx >= prs.len) return;
+                const pr = prs[p.pr_idx];
+                if (!pr.isMerged()) return;
+                if (!st.isPrExpanded(key, pr.id)) {
+                    try st.setPrExpanded(key, pr.id, true);
+                    try a.ensurePipelines(key, pr);
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn treeCollapse(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const row = (try a.focusedRow(scratch.allocator())) orelse return;
+        const t = a.tab();
+        const st = &(t.tree.?);
+        switch (row) {
+            .group => |g| if (g.expanded) try st.setGroup(g.status, true),
+            .ticket => |tk| try st.setExpanded(t.issues[tk.issue_idx].key, false),
+            .pr => |p| {
+                const key = t.issues[p.issue_idx].key;
+                if (st.prs(key)) |prs| if (p.pr_idx < prs.len) {
+                    const pr = prs[p.pr_idx];
+                    if (st.isPrExpanded(key, pr.id)) {
+                        try st.setPrExpanded(key, pr.id, false);
+                        return;
+                    }
+                };
+                try st.setExpanded(key, false);
+            },
+            .pr_loading => |x| try st.setExpanded(t.issues[x.issue_idx].key, false),
+            .show_more => |x| try st.setExpanded(t.issues[x.issue_idx].key, false),
+            .pipeline_loading, .pipeline_empty, .pipeline_error => |x| {
+                const k = t.issues[x.issue_idx].key;
+                if (st.prs(k)) |prs| if (x.pr_idx < prs.len) try st.setPrExpanded(k, prs[x.pr_idx].id, false);
+            },
+            .pipeline => |x| {
+                const k = t.issues[x.issue_idx].key;
+                if (st.prs(k)) |prs| if (x.pr_idx < prs.len) try st.setPrExpanded(k, prs[x.pr_idx].id, false);
+            },
+        }
+        try a.clampCursor();
+    }
+
+    // ─── the browser ─────────────────────────────────────────────────────
+
+    pub fn openUrl(a: *App, url: []const u8) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        switch (os.open(a.io, scratch.allocator(), a.cfg.open_command, url)) {
+            .ok => a.say("opened {s}", .{url}),
+            .failed => |why| a.say("open failed: {s}", .{why}),
+        }
+    }
+
+    pub fn openBrowser(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const key = (try a.focusedKey(scratch.allocator())) orelse return;
+        try a.openUrl(try model.issueUrl(scratch.allocator(), a.cfg.jira_url, key));
+    }
+
+    // ─── the filter and the JQL editor ───────────────────────────────────
+
+    pub fn openFilter(a: *App) Allocator.Error!void {
+        if (a.filter) |*f| {
+            f.editing = true;
+            return;
+        }
+        a.filter = .{ .edit = TextEdit.init(a.gpa), .editing = true };
+    }
+
+    pub fn closeFilter(a: *App, commit: bool) Allocator.Error!void {
+        var f = a.filter orelse return;
+        if (commit and std.mem.trim(u8, f.edit.text(), " ").len > 0) {
+            f.editing = false;
+            a.filter = f;
+        } else {
+            f.edit.deinit();
+            a.filter = null;
+        }
+        try a.clampCursor();
+    }
+
+    pub fn openJql(a: *App) Allocator.Error!void {
+        if (a.jql != null or !a.hasTabs()) return;
+        var e = TextEdit.init(a.gpa);
+        try e.set(a.tab().jql);
+        a.jql = e;
+        a.tab().show_jql = true;
+    }
+
+    pub fn closeJql(a: *App, commit: bool) Allocator.Error!void {
+        var e = a.jql orelse return;
+        defer e.deinit();
+        a.jql = null;
+        if (!commit) return;
+        const t = a.tab();
+        t.jql = try a.keep(std.mem.trim(u8, e.text(), " "));
+        t.fetched = false;
+        try a.refreshActive();
+    }
+
+    // ─── selection ───────────────────────────────────────────────────────
+
+    pub fn toggleSelection(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const key = (try a.focusedKey(scratch.allocator())) orelse return;
+        if (a.selection.remove(key)) return;
+        try a.selection.put(a.gpa, try a.keep(key), {});
+    }
+
+    pub fn clearSelection(a: *App) void {
+        a.selection.clearRetainingCapacity();
+    }
+
+    pub fn isSelected(a: *const App, key: []const u8) bool {
+        return a.selection.contains(key);
+    }
+
+    /// The keys an action runs on: the selection, else the focused row.
+    pub fn bulkKeys(a: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        if (a.selection.count() > 0) {
+            var it = a.selection.keyIterator();
+            while (it.next()) |k| try out.append(arena, k.*);
+            std.mem.sort([]const u8, out.items, {}, struct {
+                fn lt(_: void, x: []const u8, y: []const u8) bool {
+                    return std.mem.order(u8, x, y) == .lt;
+                }
+            }.lt);
+        } else if (try a.focusedKey(arena)) |k| try out.append(arena, k);
+        return out.toOwnedSlice(arena);
+    }
+
+    // ─── the transition picker ───────────────────────────────────────────
+
+    pub fn openTransition(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const key = (try a.focusedKey(scratch.allocator())) orelse return;
+        var p = try pickers.TransitionPicker.init(a.gpa, key);
+        p.targets = if (a.selection.count() > 0) a.selection.count() else 1;
+        switch (jira.transitions(a.client, scratch.allocator(), key) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer([]const model.Transition){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        }) {
+            .ok => |list| try p.setTransitions(list),
+            .failed => |f| try p.fail(f.message),
+        }
+        a.transition = p;
+    }
+
+    pub fn closeTransition(a: *App) void {
+        if (a.transition) |*p| p.deinit();
+        a.transition = null;
+    }
+
+    pub fn commitTransition(a: *App) Allocator.Error!void {
+        const p = &(a.transition orelse return);
+        const chosen = p.current() orelse return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const to_name = if (chosen.to_name.len > 0) chosen.to_name else chosen.name;
+        if (a.selection.count() == 0) {
+            const key = p.key;
+            switch (jira.doTransition(a.client, arena, key, chosen.id) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+            }) {
+                .ok => {
+                    // The words are the picker's; say them before it goes.
+                    a.say("{s} → {s}", .{ key, to_name });
+                    a.closeTransition();
+                    a.invalidateDetail(key);
+                    try a.refreshActive();
+                    if (a.details_visible) try a.ensureFocusedDetail();
+                },
+                .failed => |f| try p.fail(f.message),
+            }
+            return;
+        }
+        // Bulk: match by name on every selected ticket, skip the ones without it.
+        const keys = try a.bulkKeys(arena);
+        var ok: usize = 0;
+        var skipped: std.ArrayList([]const u8) = .empty;
+        var errors: std.ArrayList([]const u8) = .empty;
+        for (keys) |key| {
+            const list = switch (jira.transitions(a.client, arena, key) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Transport => jira.Answer([]const model.Transition){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+            }) {
+                .ok => |l| l,
+                .failed => |f| {
+                    try errors.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ key, f.message }));
+                    continue;
+                },
+            };
+            var id: ?[]const u8 = null;
+            for (list) |t| if (std.ascii.eqlIgnoreCase(t.name, chosen.name)) {
+                id = t.id;
+            };
+            const tid = id orelse {
+                try skipped.append(arena, key);
+                continue;
+            };
+            switch (jira.doTransition(a.client, arena, key, tid) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+            }) {
+                .ok => {
+                    ok += 1;
+                    a.invalidateDetail(key);
+                },
+                .failed => |f| try errors.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ key, f.message })),
+            }
+        }
+        if (errors.items.len == 0) {
+            if (skipped.items.len > 0) {
+                a.say("{d} ticket(s) → {s} · skipped {d}: {s}", .{ ok, to_name, skipped.items.len, try std.mem.join(arena, ", ", skipped.items) });
+            } else a.say("{d} ticket(s) → {s}", .{ ok, to_name });
+            a.closeTransition();
+            a.clearSelection();
+        } else {
+            try p.fail(try std.fmt.allocPrint(arena, "{d} ok · {d} skipped · {d} failed — {s}", .{ ok, skipped.items.len, errors.items.len, try std.mem.join(arena, " / ", errors.items) }));
+        }
+        try a.refreshActive();
+        if (a.details_visible) try a.ensureFocusedDetail();
+    }
+
+    // ─── the field pickers ───────────────────────────────────────────────
+
+    fn startPicker(a: *App, kind: pickers.Kind) Allocator.Error!*pickers.FieldPicker {
+        a.closePicker();
+        a.picker = pickers.FieldPicker.init(a.gpa, kind);
+        const p = &(a.picker.?);
+        p.targets = if (a.selection.count() > 0) a.selection.count() else 1;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        if (try a.focusedKey(scratch.allocator())) |k| p.focused_key = try p.arena().dupe(u8, k);
+        return p;
+    }
+
+    pub fn closePicker(a: *App) void {
+        if (a.picker) |*p| p.deinit();
+        a.picker = null;
+    }
+
+    fn failPicker(a: *App, p: *pickers.FieldPicker, err: jira.CallError) Allocator.Error!void {
+        _ = a;
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => try p.fail("the site did not answer"),
+        }
+    }
+
+    pub fn openAssignee(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const key = (try a.focusedKey(arena)) orelse return;
+        const project = model.projectOf(key) orelse {
+            a.setStatus("can't derive project from {s}", .{key});
+            return;
+        };
+        const p = try a.startPicker(.assignee);
+        switch (jira.assignableUsers(a.client, arena, project) catch |err| return a.failPicker(p, err)) {
+            .ok => |users| {
+                var items: std.ArrayList(pickers.Item) = .empty;
+                try items.append(arena, .{ .id = "", .label = "— Unassign —" });
+                for (users) |u| try items.append(arena, .{ .id = u.account_id, .label = u.display_name });
+                try p.setItems(items.items);
+            },
+            .failed => |f| try p.fail(f.message),
+        }
+    }
+
+    fn versionItems(a: *App, arena: Allocator, project: []const u8, clear_row: ?[]const u8) Allocator.Error!jira.Answer([]const pickers.Item) {
+        switch (jira.projectVersions(a.client, arena, project) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => return .{ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        }) {
+            .failed => |f| return .{ .failed = f },
+            .ok => |all| {
+                var items: std.ArrayList(pickers.Item) = .empty;
+                if (clear_row) |c| try items.append(arena, .{ .id = "", .label = c });
+                for (try jira.pickerVersions(arena, all)) |v| {
+                    const label = if (v.released) try std.fmt.allocPrint(arena, "{s} (released)", .{v.name}) else v.name;
+                    try items.append(arena, .{ .id = v.name, .label = label });
+                }
+                return .{ .ok = try items.toOwnedSlice(arena) };
+            },
+        }
+    }
+
+    pub fn openFixVersion(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const key = (try a.focusedKey(arena)) orelse return;
+        const project = model.projectOf(key) orelse return;
+        const p = try a.startPicker(.fix_version);
+        switch (try a.versionItems(arena, project, "— Clear fixVersion —")) {
+            .ok => |items| try p.setItems(items),
+            .failed => |f| try p.fail(f.message),
+        }
+    }
+
+    pub fn openTabFixVersion(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        if (t.cfg.project.len == 0) {
+            a.setStatus("V: tab has no `project`", .{});
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const p = try a.startPicker(.tab_fix_version);
+        switch (try a.versionItems(scratch.allocator(), t.cfg.project, null)) {
+            .ok => |items| try p.setItems(items),
+            .failed => |f| try p.fail(f.message),
+        }
+    }
+
+    /// The distinct values of a field over the tab's tickets, sorted.
+    fn distinct(a: *App, arena: Allocator, comptime pick: fn (Issue, *std.ArrayList([]const u8), Allocator) Allocator.Error!void) Allocator.Error![]const []const u8 {
+        var seen: std.ArrayList([]const u8) = .empty;
+        for (a.tab().issues) |iss| {
+            var vals: std.ArrayList([]const u8) = .empty;
+            try pick(iss, &vals, arena);
+            for (vals.items) |v| {
+                if (std.mem.trim(u8, v, " ").len == 0) continue;
+                var dup = false;
+                for (seen.items) |s| if (std.mem.eql(u8, s, v)) {
+                    dup = true;
+                };
+                if (!dup) try seen.append(arena, v);
+            }
+        }
+        std.mem.sort([]const u8, seen.items, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.order(u8, x, y) == .lt;
+            }
+        }.lt);
+        return seen.toOwnedSlice(arena);
+    }
+
+    fn pickTeam(iss: Issue, out: *std.ArrayList([]const u8), arena: Allocator) Allocator.Error!void {
+        for (iss.components) |c| try out.append(arena, c);
+        for (iss.labels) |l| try out.append(arena, l);
+        if (iss.team.len > 0) try out.append(arena, iss.team);
+    }
+
+    fn pickType(iss: Issue, out: *std.ArrayList([]const u8), arena: Allocator) Allocator.Error!void {
+        try out.append(arena, iss.issuetype);
+    }
+
+    fn pickLabel(iss: Issue, out: *std.ArrayList([]const u8), arena: Allocator) Allocator.Error!void {
+        for (iss.labels) |l| try out.append(arena, l);
+    }
+
+    fn openLocalPicker(a: *App, kind: pickers.Kind, clear_row: []const u8, comptime pick: fn (Issue, *std.ArrayList([]const u8), Allocator) Allocator.Error!void) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const values = try a.distinct(arena, pick);
+        const p = try a.startPicker(kind);
+        var items: std.ArrayList(pickers.Item) = .empty;
+        try items.append(arena, .{ .id = "", .label = clear_row });
+        for (values) |v| try items.append(arena, .{ .id = v, .label = v });
+        try p.setItems(items.items);
+    }
+
+    pub fn openTeam(a: *App) Allocator.Error!void {
+        try a.openLocalPicker(.team, "— Clear team —", pickTeam);
+    }
+
+    pub fn openIssueType(a: *App) Allocator.Error!void {
+        try a.openLocalPicker(.issue_type, "— Clear type —", pickType);
+    }
+
+    pub fn openLabel(a: *App) Allocator.Error!void {
+        try a.openLocalPicker(.label, "— Clear label —", pickLabel);
+    }
+
+    pub fn openActions(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const idx = (try a.focusedIssueIdx(arena)) orelse return;
+        const iss = a.tab().issues[idx];
+        const buttons = dispatch.buttonsForTicket(iss);
+        if (buttons.len == 0) {
+            a.setStatus(". actions: no ticket-level actions for {s} ({s} · {s})", .{ iss.key, if (iss.issuetype.len > 0) iss.issuetype else "?", if (iss.status.len > 0) iss.status else "?" });
+            return;
+        }
+        const p = try a.startPicker(.action);
+        var items: std.ArrayList(pickers.Item) = .empty;
+        for (buttons) |b| try items.append(arena, .{ .id = b.kind(), .label = b.label() });
+        try p.setItems(items.items);
+    }
+
+    pub fn openSprint(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        if (t.board_id == 0) {
+            a.setStatus("sprint picker: this tab has no `board_id`", .{});
+            return;
+        }
+        if (t.sprints == null) try a.loadSprints(a.active);
+        const list = t.sprints orelse &.{};
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const sorted = try model.Sprint.sortForPicker(arena, list, 5);
+        if (sorted.len == 0) {
+            a.setStatus("sprint picker: this board has no sprints", .{});
+            return;
+        }
+        const p = try a.startPicker(.sprint);
+        var items: std.ArrayList(pickers.Item) = .empty;
+        try items.append(arena, .{ .id = "", .label = "— Board default (active sprint) —" });
+        for (sorted) |s| {
+            const tag = if (std.ascii.eqlIgnoreCase(s.state, "active")) "active" else if (std.ascii.eqlIgnoreCase(s.state, "future")) "future" else "closed";
+            try items.append(arena, .{ .id = try std.fmt.allocPrint(arena, "{d}", .{s.id}), .label = try std.fmt.allocPrint(arena, "{s}  [{s}]", .{ s.name, tag }) });
+        }
+        try p.setItems(items.items);
+        if (t.selected_sprint) |id| p.selectId(try std.fmt.allocPrint(arena, "{d}", .{id}));
+    }
+
+    pub fn openQuickFilters(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        if (t.board_id == 0) {
+            a.setStatus("quick filters: this tab has no `board_id`", .{});
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        if (t.quick_filters == null) {
+            switch (jira.quickFilters(a.client, arena, t.board_id) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Transport => jira.Answer([]const model.QuickFilter){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+            }) {
+                .ok => |list| {
+                    const copy = try t.meta.allocator().alloc(model.QuickFilter, list.len);
+                    for (list, copy) |src, *dst| dst.* = .{ .id = src.id, .name = try t.meta.allocator().dupe(u8, src.name), .jql = try t.meta.allocator().dupe(u8, src.jql) };
+                    t.quick_filters = copy;
+                },
+                .failed => |f| {
+                    const p = try a.startPicker(.quick_filter);
+                    try p.fail(f.message);
+                    return;
+                },
+            }
+        }
+        const qfs = t.quick_filters.?;
+        if (qfs.len == 0) {
+            a.setStatus("quick filters: this board defines none", .{});
+            return;
+        }
+        const p = try a.startPicker(.quick_filter);
+        var items: std.ArrayList(pickers.Item) = .empty;
+        var seed: std.ArrayList([]const u8) = .empty;
+        for (qfs) |q| {
+            const id = try std.fmt.allocPrint(arena, "{d}", .{q.id});
+            try items.append(arena, .{ .id = id, .label = q.name });
+            for (t.active_quick_filters.items) |x| if (x == q.id) try seed.append(arena, id);
+        }
+        try p.setItems(items.items);
+        try p.seedMulti(seed.items);
+    }
+
+    pub fn openBoard(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        if (t.cfg.project.len == 0) {
+            a.setStatus("board picker: this tab has no `project`", .{});
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        if (t.boards == null) {
+            switch (jira.boardsForProject(a.client, arena, t.cfg.project) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Transport => jira.Answer([]const model.Board){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+            }) {
+                .ok => |list| {
+                    const copy = try t.meta.allocator().alloc(model.Board, list.len);
+                    for (list, copy) |src, *dst| dst.* = .{ .id = src.id, .name = try t.meta.allocator().dupe(u8, src.name), .kind = try t.meta.allocator().dupe(u8, src.kind) };
+                    t.boards = copy;
+                },
+                .failed => |f| {
+                    const p = try a.startPicker(.board);
+                    try p.fail(f.message);
+                    return;
+                },
+            }
+        }
+        const boards = t.boards.?;
+        if (boards.len == 0) {
+            a.setStatus("board picker: project {s} has no visible boards", .{t.cfg.project});
+            return;
+        }
+        const p = try a.startPicker(.board);
+        var items: std.ArrayList(pickers.Item) = .empty;
+        try items.append(arena, .{ .id = "", .label = "— Board default —" });
+        for (boards) |b| {
+            const label = if (b.kind.len > 0) try std.fmt.allocPrint(arena, "{s}  [{s}]", .{ b.name, b.kind }) else b.name;
+            try items.append(arena, .{ .id = try std.fmt.allocPrint(arena, "{d}", .{b.id}), .label = label });
+        }
+        try p.setItems(items.items);
+        if (t.board_id != 0) p.selectId(try std.fmt.allocPrint(arena, "{d}", .{t.board_id}));
+    }
+
+    pub fn openEpic(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        if (t.issues.len == 0) {
+            a.setStatus("Epic filter: no issues on this tab yet — refresh first", .{});
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        var items: std.ArrayList(pickers.Item) = .empty;
+        for (t.issues) |iss| {
+            const key = iss.epicKey() orelse continue;
+            var dup = false;
+            for (items.items) |it| if (std.mem.eql(u8, it.id, key)) {
+                dup = true;
+            };
+            if (dup) continue;
+            const label = if (iss.parent_summary.len > 0) try std.fmt.allocPrint(arena, "{s}  {s}", .{ key, iss.parent_summary }) else key;
+            try items.append(arena, .{ .id = key, .label = label });
+        }
+        if (items.items.len == 0) {
+            a.setStatus("Epic filter: no epics found on current issues", .{});
+            return;
+        }
+        std.mem.sort(pickers.Item, items.items, {}, struct {
+            fn lt(_: void, x: pickers.Item, y: pickers.Item) bool {
+                return std.mem.order(u8, x.id, y.id) == .lt;
+            }
+        }.lt);
+        const p = try a.startPicker(.epic);
+        try p.setItems(items.items);
+        try p.seedMulti(try t.activeEpics(arena));
+    }
+
+    /// The avatar cluster's overflow / the Assignee chip: every assignee
+    /// seen on the tab, Me and Unassigned first.
+    pub fn openAssignees(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const p = try a.startPicker(.assignees);
+        var items: std.ArrayList(pickers.Item) = .empty;
+        if (a.me) |me| if (me.account_id.len > 0) try items.append(arena, .{ .id = me.account_id, .label = "— Me (Current User) —" });
+        try items.append(arena, .{ .id = model.unassigned_sentinel, .label = "— Unassigned —" });
+        for (t.assignees) |s| try items.append(arena, .{ .id = s.account_id, .label = try std.fmt.allocPrint(arena, "{s}  ({d})", .{ s.display_name, s.count }) });
+        try p.setItems(items.items);
+        try p.seedMulti(try t.activeIds(arena));
+    }
+
+    fn resetSet(a: *App, set: *std.StringHashMapUnmanaged(void), ids: []const []const u8) Allocator.Error!void {
+        set.clearRetainingCapacity();
+        for (ids) |id| try set.put(a.gpa, try a.keep(id), {});
+    }
+
+    /// Enter in a field picker.
+    pub fn commitPicker(a: *App) Allocator.Error!void {
+        const p = &(a.picker orelse return);
+        if (!p.loaded) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const t = a.tab();
+        switch (p.kind) {
+            .team => {
+                const it = p.current() orelse return;
+                t.team = try a.keep(it.id);
+                a.say("team filter: {s}", .{if (it.id.len == 0) "(cleared)" else it.label});
+                a.closePicker();
+                try a.refreshActive();
+            },
+            .issue_type => {
+                const it = p.current() orelse return;
+                t.issue_type = try a.keep(it.id);
+                a.say("type filter: {s}", .{if (it.id.len == 0) "(cleared)" else it.label});
+                a.closePicker();
+                try a.clampCursor();
+            },
+            .label => {
+                const it = p.current() orelse return;
+                t.label = try a.keep(it.id);
+                a.say("label filter: {s}", .{if (it.id.len == 0) "(cleared)" else it.label});
+                a.closePicker();
+                try a.clampCursor();
+            },
+            .tab_fix_version => {
+                const it = p.current() orelse return;
+                if (t.cfg.project.len == 0) {
+                    a.closePicker();
+                    return;
+                }
+                t.jql = try a.keep(try jira.fixVersionJql(arena, t.cfg.project, it.id, ""));
+                a.say("tab view: fixVersion = {s}", .{it.id});
+                a.closePicker();
+                try a.refreshActive();
+            },
+            .action => {
+                const it = p.current() orelse return;
+                const kind = try arena.dupe(u8, it.id);
+                a.closePicker();
+                try a.dispatchTicket(kind);
+            },
+            .sprint => {
+                const it = p.current() orelse return;
+                t.selected_sprint = if (it.id.len == 0) null else std.fmt.parseInt(u64, it.id, 10) catch null;
+                a.kanban_scroll = .{ 0, 0, 0, 0 };
+                a.closePicker();
+                if (t.selected_sprint) |id| a.say("sprint: pinned to {d}", .{id}) else a.say("sprint: back to board default (active)", .{});
+                try a.refreshActive();
+            },
+            .quick_filter => {
+                const ids = try p.checked(arena);
+                t.active_quick_filters.clearRetainingCapacity();
+                for (ids) |id| try t.active_quick_filters.append(a.gpa, std.fmt.parseInt(u64, id, 10) catch continue);
+                a.closePicker();
+                if (t.active_quick_filters.items.len == 0) a.say("quick filters: cleared", .{}) else a.say("quick filters: {d} active", .{t.active_quick_filters.items.len});
+                try a.refreshActive();
+            },
+            .assignees => {
+                const ids = try p.checked(arena);
+                try a.resetSet(&t.active_assignees, ids);
+                a.closePicker();
+                if (ids.len == 0) a.say("assignees: all", .{}) else a.say("assignees: {d} active", .{ids.len});
+                try a.clampCursor();
+            },
+            .board => {
+                const it = p.current() orelse return;
+                t.board_id = if (it.id.len == 0) 0 else std.fmt.parseInt(u64, it.id, 10) catch 0;
+                t.sprints = null;
+                t.quick_filters = null;
+                t.selected_sprint = null;
+                t.active_quick_filters.clearRetainingCapacity();
+                a.kanban_scroll = .{ 0, 0, 0, 0 };
+                a.closePicker();
+                if (t.board_id != 0) a.say("board: switched to {d}", .{t.board_id}) else a.say("board: back to default (synthetic JQL)", .{});
+                try a.refreshActive();
+            },
+            .epic => {
+                const ids = try p.checked(arena);
+                try a.resetSet(&t.active_epics, ids);
+                a.closePicker();
+                if (ids.len == 0) a.say("epic filter: cleared", .{}) else a.say("epic filter: {d} active", .{ids.len});
+                try a.clampCursor();
+            },
+            .assignee, .fix_version => {
+                const it = p.current() orelse return;
+                const keys = try a.bulkKeys(arena);
+                if (keys.len == 0) return;
+                var ok: usize = 0;
+                var errors: std.ArrayList([]const u8) = .empty;
+                const id = try arena.dupe(u8, it.id);
+                const label = try arena.dupe(u8, it.label);
+                const kind = p.kind;
+                for (keys) |key| {
+                    const answer = (if (kind == .assignee) jira.setAssignee(a.client, arena, key, id) else jira.setFixVersion(a.client, arena, key, id)) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+                    };
+                    switch (answer) {
+                        .ok => {
+                            ok += 1;
+                            a.invalidateDetail(key);
+                        },
+                        .failed => |f| try errors.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ key, f.message })),
+                    }
+                }
+                if (errors.items.len == 0) {
+                    a.closePicker();
+                    a.say("{d} ticket(s) · {s} = {s}", .{ ok, if (kind == .assignee) "assignee" else "fixVersion", label });
+                    a.clearSelection();
+                } else {
+                    try p.fail(try std.fmt.allocPrint(arena, "{d} ok · {d} failed — {s}", .{ ok, errors.items.len, try std.mem.join(arena, " / ", errors.items) }));
+                }
+                try a.refreshActive();
+                if (a.details_visible) try a.ensureFocusedDetail();
+            },
+        }
+    }
+
+    /// A click on an avatar / the `[?]` chip: toggle one id.
+    pub fn toggleAssignee(a: *App, id: []const u8) Allocator.Error!void {
+        const t = a.tab();
+        if (t.active_assignees.remove(id)) {
+            try a.clampCursor();
+            return;
+        }
+        try t.active_assignees.put(a.gpa, try a.keep(id), {});
+        try a.clampCursor();
+    }
+
+    /// The Status chip: All → Unresolved → Resolved → All.
+    pub fn cycleScope(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        t.scope = t.scope.cycle();
+        try a.clampCursor();
+    }
+
+    /// The fixVersion pill's ⓧ: drop the clause and refetch.
+    pub fn removeFixVersionClause(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        t.jql = try a.keep(try stripFixVersion(scratch.allocator(), t.jql));
+        t.fetched = false;
+        try a.refreshActive();
+    }
+
+    // ─── comments and watching ───────────────────────────────────────────
+
+    pub fn openComment(a: *App) Allocator.Error!void {
+        if (!a.details_visible) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const key = (try a.focusedKey(scratch.allocator())) orelse return;
+        a.closeComment();
+        a.comment = .{ .key = try a.keep(key), .edit = TextEdit.init(a.gpa) };
+    }
+
+    pub fn closeComment(a: *App) void {
+        if (a.comment) |*c| c.edit.deinit();
+        a.comment = null;
+    }
+
+    pub fn submitComment(a: *App) Allocator.Error!void {
+        const c = &(a.comment orelse return);
+        if (std.mem.trim(u8, c.edit.text(), " \n").len == 0 or c.posting) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        c.posting = true;
+        c.error_text = "";
+        switch (jira.addComment(a.client, scratch.allocator(), c.key, c.edit.text()) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        }) {
+            .ok => {
+                const key = c.key;
+                a.closeComment();
+                a.say("commented on {s}", .{key});
+                a.invalidateDetail(key);
+                if (a.details_visible) try a.ensureFocusedDetail();
             },
             .failed => |f| {
-                // Remember the refusal as "none", so one 403 is not a
-                // fetch on every keypress.
-                try t.state.setPrs(it.key, &.{});
-                a.setStatus("{s}: pull requests: {s}", .{ it.key, f.message });
+                c.posting = false;
+                c.error_text = try a.keep(f.message);
             },
         }
     }
 
-    pub fn detailOf(a: *App, issue_key: []const u8) ?model.Detail {
-        return a.details.get(issue_key);
-    }
-
-    fn forgetDetail(a: *App, issue_key: []const u8) void {
-        _ = a.details.remove(issue_key);
-    }
-
-    pub fn loadDetail(a: *App, issue_key: []const u8) !void {
-        if (a.client == null) return;
-        if (a.details.contains(issue_key)) return;
-        switch (try jira.issue(&a.client.?, a.scratch.allocator(), issue_key)) {
-            .ok => |v| {
-                const d = try model.detailFromJson(a.scratch.allocator(), v);
-                try a.details.put(a.gpa, try a.scratch.allocator().dupe(u8, issue_key), d);
+    pub fn toggleWatch(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const key = (try a.focusedKey(arena)) orelse return;
+        try a.ensureDetail(key);
+        const was = if (a.detailOf(key)) |d| d.watching else false;
+        const answer = blk: {
+            if (was) {
+                try a.ensureMe();
+                const me = a.me orelse {
+                    a.say("can't unwatch — the account id is unknown (/myself failed)", .{});
+                    return;
+                };
+                break :blk jira.unwatch(a.client, arena, key, me.account_id);
+            }
+            break :blk jira.watch(a.client, arena, key);
+        } catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        };
+        switch (answer) {
+            .ok => {
+                a.say("{s} {s}", .{ if (was) "unwatched" else "watched", key });
+                a.invalidateDetail(key);
+                if (a.details_visible) try a.ensureFocusedDetail();
             },
-            .failed => |f| a.setStatus("{s}: {s}", .{ issue_key, f.message }),
+            .failed => |f| a.say("watch toggle failed for {s}: {s}", .{ key, f.message }),
         }
     }
 
-    // ── actions ─────────────────────────────────────────────────────────
+    // ─── the dispatch queue ──────────────────────────────────────────────
 
-    fn browseUrl(a: *App, issue_key: []const u8) Allocator.Error![]const u8 {
-        return std.fmt.allocPrint(a.scratch.allocator(), "{s}/browse/{s}", .{ a.cfg.jira.url, issue_key });
+    fn isoNow(a: *App, buf: *[24]u8) []const u8 {
+        const secs: u64 = @intCast(@max(@divTrunc(a.nowMs(), 1000), 0));
+        const es = std.time.epoch.EpochSeconds{ .secs = secs };
+        const day = es.getEpochDay();
+        const yd = day.calculateYearDay();
+        const md = yd.calculateMonthDay();
+        const ds = es.getDaySeconds();
+        return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{ yd.year, md.month.numeric(), md.day_index + 1, ds.getHoursIntoDay(), ds.getMinutesIntoHour(), ds.getSecondsIntoMinute() }) catch "";
     }
 
-    fn openInBrowser(a: *App) !void {
-        const t = a.tab() orelse return;
-        // On a PR row, `o` opens the PR — that is the link the row is.
-        if (t.selectedRow()) |r| if (r == .pr) {
-            const it = t.issues[r.pr.issue];
-            const list = t.state.prsOf(it.key) orelse &.{};
-            if (r.pr.pr < list.len) {
+    pub fn dispatchTicket(a: *App, kind: []const u8) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const idx = (try a.focusedIssueIdx(arena)) orelse {
+            a.setStatus("no ticket under cursor", .{});
+            return;
+        };
+        const iss = a.tab().issues[idx];
+        var buf: [24]u8 = undefined;
+        const d = dispatch.Dispatch.forTicket(kind, iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), a.isoNow(&buf));
+        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace);
+        a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
+    }
+
+    pub fn dispatchReview(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const row = (try a.focusedRow(arena)) orelse {
+            a.setStatus("no PR under cursor", .{});
+            return;
+        };
+        const p = switch (row) {
+            .pr => |p| p,
+            else => {
+                a.setStatus("no PR under cursor", .{});
+                return;
+            },
+        };
+        const t = a.tab();
+        const iss = t.issues[p.issue_idx];
+        const prs = t.tree.?.prs(iss.key) orelse return;
+        if (p.pr_idx >= prs.len or prs[p.pr_idx].url.len == 0) {
+            a.setStatus("PR has no URL", .{});
+            return;
+        }
+        var buf: [24]u8 = undefined;
+        const d = dispatch.Dispatch.forPr(iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), prs[p.pr_idx].url, a.isoNow(&buf));
+        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace);
+        a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
+    }
+
+    // ─── the detail modal ────────────────────────────────────────────────
+
+    pub fn openModal(a: *App, key: []const u8) Allocator.Error!void {
+        a.closeModal();
+        var m: Modal = .{ .key = try a.keep(key), .arena = std.heap.ArenaAllocator.init(a.gpa) };
+        var fields: std.ArrayList([]const u8) = .empty;
+        const arena = m.arena.allocator();
+        for (a.cfg.detail_modal.fields) |spec| try fields.append(arena, a.cfg.detail_modal.resolveId(spec));
+        for ([_][]const u8{ "summary", "status", "issuetype", "priority", "assignee", "reporter", "labels", "components", "fixVersions", "parent", "description", "customfield_10020" }) |baked| {
+            var dup = false;
+            for (fields.items) |f| if (std.mem.eql(u8, f, baked)) {
+                dup = true;
+            };
+            if (!dup) try fields.append(arena, baked);
+        }
+        switch (jira.issueFull(a.client, arena, key, fields.items) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer(Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
+        }) {
+            .ok => |v| m.data = v,
+            .failed => |f| m.error_text = try arena.dupe(u8, f.message),
+        }
+        a.modal = m;
+    }
+
+    pub fn closeModal(a: *App) void {
+        if (a.modal) |*m| m.arena.deinit();
+        a.modal = null;
+    }
+
+    pub fn modalScroll(a: *App, delta: i32) void {
+        const m = &(a.modal orelse return);
+        const cur: i32 = m.scroll;
+        m.scroll = @intCast(@max(cur + delta, 0));
+    }
+
+    // ─── the kanban ──────────────────────────────────────────────────────
+
+    pub fn toggleCard(a: *App, key: []const u8) Allocator.Error!void {
+        if (a.kanban_expanded.remove(key)) return;
+        try a.kanban_expanded.put(a.gpa, try a.keep(key), {});
+    }
+
+    pub fn isCardExpanded(a: *const App, key: []const u8) bool {
+        return a.kanban_expanded.contains(key);
+    }
+
+    pub fn scrollColumn(a: *App, col: usize, delta: i32) void {
+        if (col >= kanban.count) return;
+        const cur: i32 = a.kanban_scroll[col];
+        a.kanban_scroll[col] = @intCast(@max(cur + delta, 0));
+    }
+
+    pub fn boardName(a: *App, id: u64) Allocator.Error![]const u8 {
+        if (a.board_names.get(id)) |n| return n;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const name: []const u8 = switch (jira.board(a.client, scratch.allocator(), id) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Transport => jira.Answer(model.Board){ .failed = .{ .status = 0, .message = "" } },
+        }) {
+            .ok => |b| try a.keep(b.name),
+            .failed => try std.fmt.allocPrint(a.keys.allocator(), "{d}", .{id}),
+        };
+        try a.board_names.put(a.gpa, id, name);
+        return name;
+    }
+
+    pub fn openBoardSettings(a: *App) Allocator.Error!void {
+        const t = a.tab();
+        if (t.board_id == 0) {
+            a.setStatus("board settings: this tab has no `board_id`", .{});
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const url = if (t.cfg.project.len > 0)
+            try std.fmt.allocPrint(scratch.allocator(), "{s}/jira/software/c/projects/{s}/boards/{d}?config=filter", .{ a.cfg.jira_url, t.cfg.project, t.board_id })
+        else
+            try std.fmt.allocPrint(scratch.allocator(), "{s}/secure/RapidBoard.jspa?rapidView={d}&config=filter", .{ a.cfg.jira_url, t.board_id });
+        try a.openUrl(url);
+    }
+
+    // ─── keys ────────────────────────────────────────────────────────────
+
+    /// One key from the host. Returns false when nothing took it.
+    pub fn onKey(a: *App, spec: []const u8) Allocator.Error!bool {
+        if (a.help) {
+            if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "?") or std.mem.eql(u8, spec, "q") or std.mem.eql(u8, spec, "f1")) {
+                a.help = false;
+            } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) {
+                a.help_scroll += 1;
+            } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) {
+                a.help_scroll -|= 1;
+            }
+            return true;
+        }
+        if (a.modal != null) {
+            if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "q")) a.closeModal() else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) a.modalScroll(2) else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) a.modalScroll(-2) else if (std.mem.eql(u8, spec, "pagedown")) a.modalScroll(10) else if (std.mem.eql(u8, spec, "pageup")) a.modalScroll(-10);
+            return true;
+        }
+        if (a.comment) |*c| {
+            if (std.mem.eql(u8, spec, "esc")) {
+                a.closeComment();
+            } else if (std.mem.eql(u8, spec, "ctrl+s")) {
+                try a.submitComment();
+            } else if (std.mem.eql(u8, spec, "enter")) {
+                // Enter is a newline; Enter on an empty last line sends,
+                // since a host keeps Ctrl+S for itself.
+                if (c.posting) return true;
+                const t = c.edit.text();
+                if (t.len > 0 and t[t.len - 1] == '\n' and c.edit.cursor == t.len) {
+                    c.edit.buf.items.len = std.mem.trimEnd(u8, t, "\n").len;
+                    c.edit.cursor = c.edit.buf.items.len;
+                    try a.submitComment();
+                } else try c.edit.insert("\n");
+            } else if (!c.posting) _ = try c.edit.key(spec);
+            return true;
+        }
+        if (a.picker) |*p| {
+            if (std.mem.eql(u8, spec, "esc")) {
+                a.closePicker();
+            } else if (std.mem.eql(u8, spec, "enter")) {
+                try a.commitPicker();
+            } else if (std.mem.eql(u8, spec, "up")) {
+                try p.move(-1);
+            } else if (std.mem.eql(u8, spec, "down")) {
+                try p.move(1);
+            } else if (std.mem.eql(u8, spec, "backspace")) {
+                try p.backspace();
+            } else if (std.mem.eql(u8, spec, "space") and p.kind.multi()) {
+                try p.toggleSelected();
+            } else if (std.mem.eql(u8, spec, "space")) {
+                try p.insert(" ");
+            } else if (TextEdit.printable(spec)) |s| try p.insert(s);
+            return true;
+        }
+        if (a.transition) |*p| {
+            if (std.mem.eql(u8, spec, "esc")) {
+                a.closeTransition();
+            } else if (std.mem.eql(u8, spec, "enter")) {
+                try a.commitTransition();
+            } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) {
+                p.move(-1);
+            } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) {
+                p.move(1);
+            } else if (keymap.tabDigit(spec)) |d| p.jump(d);
+            return true;
+        }
+        if (a.filter) |*f| if (f.editing) {
+            if (std.mem.eql(u8, spec, "esc")) {
+                try a.closeFilter(false);
+            } else if (std.mem.eql(u8, spec, "enter")) {
+                try a.closeFilter(true);
+            } else if (try f.edit.key(spec)) {
+                try a.clampCursor();
+            }
+            return true;
+        };
+        if (a.jql) |*e| {
+            if (std.mem.eql(u8, spec, "esc")) {
+                try a.closeJql(false);
+            } else if (std.mem.eql(u8, spec, "enter")) {
+                try a.closeJql(true);
+            } else _ = try e.key(spec);
+            return true;
+        }
+        if (!a.hasTabs()) {
+            if (std.mem.eql(u8, spec, "q") or std.mem.eql(u8, spec, "esc")) a.quit = true;
+            return true;
+        }
+        const action = keymap.resolve(spec, a.context()) orelse return false;
+        a.status.clearRetainingCapacity();
+        try a.act(action, spec);
+        return true;
+    }
+
+    pub fn act(a: *App, action: keymap.Action, spec: []const u8) Allocator.Error!void {
+        switch (action) {
+            .quit => a.quit = true,
+            .escape => {
+                if (a.selection.count() > 0) {
+                    a.clearSelection();
+                } else if (a.filter != null) {
+                    try a.closeFilter(false);
+                } else if (a.details_visible) {
+                    try a.toggleDetails();
+                } else a.quit = true;
+            },
+            .refresh => {
+                if (a.details_visible) {
+                    var scratch = std.heap.ArenaAllocator.init(a.gpa);
+                    defer scratch.deinit();
+                    if (try a.focusedKey(scratch.allocator())) |k| a.invalidateDetail(k);
+                }
+                try a.refreshActive();
+                if (a.details_visible) try a.ensureFocusedDetail();
+            },
+            .up => try a.move(-1),
+            .down => try a.move(1),
+            .page_up => try a.move(-10),
+            .page_down => try a.move(10),
+            .home => try a.moveHome(),
+            .end => try a.moveEnd(),
+            .open_browser => try a.openBrowser(),
+            .next_tab => try a.nextTab(),
+            .prev_tab => try a.prevTab(),
+            .switch_tab => if (keymap.tabDigit(spec)) |d| try a.switchTab(d),
+            .toggle_details => try a.toggleDetails(),
+            .detail_scroll_up => a.details_scroll -|= 4,
+            .detail_scroll_down => a.details_scroll +|= 4,
+            .filter => try a.openFilter(),
+            .jql_editor => try a.openJql(),
+            .transition => try a.openTransition(),
+            .watch => try a.toggleWatch(),
+            .comment => try a.openComment(),
+            .toggle_select => try a.toggleSelection(),
+            .assignee => try a.openAssignee(),
+            .fix_version => try a.openFixVersion(),
+            .tab_fix_version => try a.openTabFixVersion(),
+            .team => try a.openTeam(),
+            .action_picker => try a.openActions(),
+            .tree_activate => try a.treeActivate(),
+            .tree_expand => try a.treeExpand(),
+            .tree_collapse => try a.treeCollapse(),
+            .dispatch_implement => try a.dispatchTicket("implement"),
+            .dispatch_fix => try a.dispatchTicket("fix"),
+            .dispatch_triage => try a.dispatchTicket("triage"),
+            .dispatch_review => try a.dispatchReview(),
+            .detail_modal => {
                 var scratch = std.heap.ArenaAllocator.init(a.gpa);
                 defer scratch.deinit();
-                return a.reportOpen(os.open(a.io, scratch.allocator(), a.cfg.mnml.open_command, list[r.pr.pr].url), list[r.pr.pr].url);
+                if (try a.focusedKey(scratch.allocator())) |k| try a.openModal(k);
+            },
+            .card_expand => {
+                var scratch = std.heap.ArenaAllocator.init(a.gpa);
+                defer scratch.deinit();
+                if (try a.focusedKey(scratch.allocator())) |k| try a.toggleCard(k);
+            },
+            .help => {
+                a.help = true;
+                a.help_scroll = 0;
+            },
+        }
+    }
+
+    pub fn paste(a: *App, text_in: []const u8) Allocator.Error!void {
+        if (a.jql) |*e| try e.insert(text_in) else if (a.comment) |*c| try c.edit.insert(text_in) else if (a.filter) |*f| {
+            if (f.editing) try f.edit.insert(text_in);
+        } else if (a.picker) |*p| try p.insert(text_in);
+    }
+
+    // ─── the mouse ───────────────────────────────────────────────────────
+
+    /// A press, routed by the hit map the last paint filled.
+    pub fn click(a: *App, col: u16, row: u16, right: bool) Allocator.Error!void {
+        const target = a.hits.at(col, row);
+        if (a.help) {
+            a.help = false;
+            return;
+        }
+        if (a.jql != null) {
+            switch (target orelse hit.Target.jql_body) {
+                .jql_text => |t| {
+                    const r = a.hits.rectOf(target.?) orelse return;
+                    a.jql.?.setCursorCodepoints(@as(usize, t.row) * a.jqlWrapWidth() + (col -| r.x));
+                },
+                .jql_body => {},
+                else => try a.closeJql(false),
             }
-        };
-        const it = t.selected() orelse return;
-        const url = try a.browseUrl(it.key);
-        var scratch = std.heap.ArenaAllocator.init(a.gpa);
-        defer scratch.deinit();
-        a.reportOpen(os.open(a.io, scratch.allocator(), a.cfg.mnml.open_command, url), url);
-    }
-
-    fn reportOpen(a: *App, out: os.Outcome, url: []const u8) void {
-        switch (out) {
-            .ok => a.setStatus("opened {s}", .{url}),
-            .failed => |why| a.setStatus("could not open {s}: {s}", .{ url, why }),
+            return;
         }
-    }
-
-    const CopyWhat = enum { key, url };
-
-    fn copy(a: *App, what: CopyWhat) !void {
-        const t = a.tab() orelse return;
-        const it = t.selected() orelse return;
-        const s = switch (what) {
-            .key => it.key,
-            .url => try a.browseUrl(it.key),
-        };
-        switch (os.copy(a.io, s)) {
-            .ok => a.setStatus("copied {s}", .{s}),
-            // Put it on the status line so it can at least be read off.
-            .failed => |why| a.setStatus("{s} — {s}", .{ s, why }),
+        if (a.picker != null) {
+            switch (target orelse hit.Target.picker_body) {
+                .picker_row => |i| {
+                    a.picker.?.selected = i;
+                    try a.commitPicker();
+                },
+                .picker_body => {},
+                else => a.closePicker(),
+            }
+            return;
         }
-    }
-
-    fn openTransitions(a: *App) !void {
-        const t = a.tab() orelse return;
-        const it = t.selected() orelse return;
-        if (a.client == null) return;
-        const arena = a.scratch.allocator();
-        const key_copy = try arena.dupe(u8, it.key);
-        a.progress("{s}: transitions…", .{key_copy});
-        var items: std.ArrayListUnmanaged(PickItem) = .empty;
-        var err: ?[]const u8 = null;
-        switch (try jira.transitions(&a.client.?, arena, key_copy)) {
-            .ok => |list| for (list) |tr| try items.append(arena, .{
-                .id = tr.id,
-                .label = if (tr.to_name.len > 0)
-                    try std.fmt.allocPrint(arena, "{s}  → {s}", .{ tr.name, tr.to_name })
-                else
-                    tr.name,
-            }),
-            .failed => |f| err = f.message,
+        if (a.transition != null) {
+            switch (target orelse hit.Target.picker_body) {
+                .picker_row => |i| {
+                    a.transition.?.jump(i);
+                    try a.commitTransition();
+                },
+                .picker_body => {},
+                else => a.closeTransition(),
+            }
+            return;
         }
-        a.overlay = .{ .picker = .{
-            .kind = .transition,
-            .key = key_copy,
-            .items = try items.toOwnedSlice(arena),
-            .filter = Editor.init(a.gpa),
-            .err = err,
-        } };
-    }
-
-    fn openAssignees(a: *App) !void {
-        const t = a.tab() orelse return;
-        const it = t.selected() orelse return;
-        if (a.client == null) return;
-        const arena = a.scratch.allocator();
-        const key_copy = try arena.dupe(u8, it.key);
-        const project = projectOf(key_copy);
-        a.progress("{s}: who can take it…", .{key_copy});
-        var items: std.ArrayListUnmanaged(PickItem) = .empty;
-        try items.append(arena, .{ .id = "", .label = "— Unassign —" });
-        var err: ?[]const u8 = null;
-        switch (try jira.assignableUsers(&a.client.?, arena, project)) {
-            .ok => |users| for (users) |u| try items.append(arena, .{ .id = u.account_id, .label = u.display_name }),
-            .failed => |f| err = f.message,
+        if (a.modal != null) {
+            switch (target orelse hit.Target.modal_close) {
+                .modal_body => {},
+                else => a.closeModal(),
+            }
+            return;
         }
-        a.overlay = .{ .picker = .{
-            .kind = .assignee,
-            .key = key_copy,
-            .items = try items.toOwnedSlice(arena),
-            .filter = Editor.init(a.gpa),
-            .err = err,
-        } };
-    }
-
-    fn openVersions(a: *App) !void {
-        const t = a.tab() orelse return;
-        const it = t.selected() orelse return;
-        if (a.client == null) return;
-        const arena = a.scratch.allocator();
-        const key_copy = try arena.dupe(u8, it.key);
-        const project = projectOf(key_copy);
-        a.progress("{s}: versions…", .{key_copy});
-        var items: std.ArrayListUnmanaged(PickItem) = .empty;
-        try items.append(arena, .{ .id = "", .label = "— Clear the fix version —" });
-        var err: ?[]const u8 = null;
-        switch (try jira.projectVersions(&a.client.?, arena, project)) {
-            .ok => |all| {
-                const open = try jira.unreleasedVersions(arena, all, "");
-                for (open) |v| try items.append(arena, .{ .id = v.name, .label = v.name });
-                for (all) |v| if (v.released) try items.append(arena, .{
-                    .id = v.name,
-                    .label = try std.fmt.allocPrint(arena, "{s}  (released)", .{v.name}),
-                });
+        if (a.comment != null) return;
+        const tg = target orelse return;
+        switch (tg) {
+            .row => |i| try a.clickRow(i, right),
+            .chevron => |i| try a.clickChevron(i),
+            .show_more => |i| {
+                a.tab().selected = i;
+                try a.treeActivate();
             },
-            .failed => |f| err = f.message,
-        }
-        a.overlay = .{ .picker = .{
-            .kind = .fix_version,
-            .key = key_copy,
-            .items = try items.toOwnedSlice(arena),
-            .filter = Editor.init(a.gpa),
-            .err = err,
-        } };
-    }
-
-    fn commitPick(a: *App, kind: PickKind, issue_key: []const u8, item: PickItem) !void {
-        var scratch = std.heap.ArenaAllocator.init(a.gpa);
-        defer scratch.deinit();
-        switch (kind) {
-            // A transition is the one action that changes what everyone
-            // else sees, so it asks first.
-            .transition => {
-                const arena = a.scratch.allocator();
-                a.closeOverlay();
-                a.overlay = .{ .confirm = .{
-                    .message = try std.fmt.allocPrint(arena, "Move {s} — {s}?", .{ issue_key, item.label }),
-                    .what = .{ .transition = .{
-                        .key = try arena.dupe(u8, issue_key),
-                        .id = try arena.dupe(u8, item.id),
-                        .to = try arena.dupe(u8, item.label),
-                    } },
-                } };
-            },
-            .assignee => {
-                switch (try jira.setAssignee(&a.client.?, scratch.allocator(), issue_key, item.id)) {
-                    .ok => {
-                        a.closeOverlay();
-                        a.forgetDetail(issue_key);
-                        // After the refresh, not before: a refresh sets
-                        // its own line, and the outcome is what the user
-                        // is looking for.
-                        try a.refresh();
-                        a.setStatus("{s} · assignee = {s}", .{ issue_key, item.label });
-                    },
-                    .failed => |f| a.overlay.picker.err = try a.scratch.allocator().dupe(u8, f.message),
+            .pr_button => |b| try a.clickPrButton(b.row, b.which),
+            .action => |x| {
+                const iss = a.tab().issue(x.issue) orelse return;
+                const buttons = dispatch.buttonsForTicket(iss);
+                if (x.button < buttons.len) {
+                    try a.selectIssue(x.issue);
+                    try a.dispatchTicket(buttons[x.button].kind());
                 }
             },
-            .fix_version => {
-                switch (try jira.setFixVersion(&a.client.?, scratch.allocator(), issue_key, item.id)) {
-                    .ok => {
-                        a.closeOverlay();
-                        a.forgetDetail(issue_key);
-                        try a.refresh();
-                        a.setStatus("{s} · fix version = {s}", .{ issue_key, if (item.id.len == 0) "none" else item.id });
-                    },
-                    .failed => |f| a.overlay.picker.err = try a.scratch.allocator().dupe(u8, f.message),
-                }
+            .tab => |i| try a.switchTab(i),
+            .chip => |c| try a.clickChip(c),
+            .avatar => |i| {
+                const t = a.tab();
+                if (i < t.assignees.len) try a.toggleAssignee(t.assignees[i].account_id);
             },
-            .issue_type => a.closeOverlay(),
+            .filter => try a.openFilter(),
+            .card => |i| {
+                try a.selectIssue(i);
+                if (right) {
+                    try a.toggleCard(a.tab().issues[i].key);
+                } else try a.openModal(a.tab().issues[i].key);
+            },
+            .card_chevron => |i| {
+                try a.selectIssue(i);
+                try a.toggleCard(a.tab().issues[i].key);
+            },
+            .column, .detail, .comment, .help_body, .picker_row, .picker_body, .modal_close, .modal_body, .jql_text, .jql_body => {},
         }
     }
 
-    fn runTransition(a: *App, issue_key: []const u8, id: []const u8, to: []const u8) !void {
-        var scratch = std.heap.ArenaAllocator.init(a.gpa);
-        defer scratch.deinit();
-        a.progress("{s}: {s}…", .{ issue_key, to });
-        switch (try jira.doTransition(&a.client.?, scratch.allocator(), issue_key, id)) {
-            .ok => {
-                a.forgetDetail(issue_key);
-                try a.refresh();
-                a.setStatus("{s} · {s}", .{ issue_key, to });
-            },
-            .failed => |f| a.setStatus("{s}: {s}", .{ issue_key, f.message }),
-        }
+    fn selectIssue(a: *App, idx: usize) Allocator.Error!void {
+        const t = a.tab();
+        if (t.cfg.isTree()) {
+            var scratch = std.heap.ArenaAllocator.init(a.gpa);
+            defer scratch.deinit();
+            const r = (try a.treeRows(scratch.allocator())) orelse return;
+            if (idx < t.issues.len) if (tree.rowOfKey(r.rows, t.issues, t.issues[idx].key)) |ri| {
+                t.selected = ri;
+            };
+        } else t.selected = idx;
+        try a.afterMove();
     }
 
-    fn assignToMe(a: *App) !void {
-        const t = a.tab() orelse return;
-        const it = t.selected() orelse return;
-        if (a.me.len == 0) {
-            a.setStatus("who \"me\" is is unknown — the token cannot read /myself, so use a to pick", .{});
+    fn clickRow(a: *App, i: u32, right: bool) Allocator.Error!void {
+        const t = a.tab();
+        if (t.cfg.isTree()) {
+            t.selected = i;
+            try a.afterMove();
+            if (right) try a.treeActivate();
             return;
         }
+        t.selected = i;
+        try a.afterMove();
+        if (right) try a.toggleSelection();
+    }
+
+    fn clickChevron(a: *App, i: u32) Allocator.Error!void {
+        const t = a.tab();
+        if (!t.cfg.isTree()) return;
+        t.selected = i;
+        try a.treeActivate();
+    }
+
+    fn clickPrButton(a: *App, row: u32, which: hit.PrButton) Allocator.Error!void {
+        const t = a.tab();
+        t.selected = row;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        const key_copy = try a.scratch.allocator().dupe(u8, it.key);
-        switch (try jira.setAssignee(&a.client.?, scratch.allocator(), key_copy, a.me)) {
-            .ok => {
-                a.forgetDetail(key_copy);
-                try a.refresh();
-                a.setStatus("{s} · assigned to you", .{key_copy});
-            },
-            .failed => |f| a.setStatus("{s}: {s}", .{ key_copy, f.message }),
+        const r = (try a.focusedRow(scratch.allocator())) orelse return;
+        const p = switch (r) {
+            .pr => |p| p,
+            else => return,
+        };
+        const key = t.issues[p.issue_idx].key;
+        const prs = t.tree.?.prs(key) orelse return;
+        if (p.pr_idx >= prs.len) return;
+        switch (which) {
+            .review => try a.dispatchReview(),
+            .open => if (prs[p.pr_idx].url.len > 0) try a.openUrl(prs[p.pr_idx].url),
+            .merge => a.say("merge: use the Bitbucket pane (m) — this pane opens the PR", .{}),
         }
     }
 
-    fn openComment(a: *App) !void {
-        const t = a.tab() orelse return;
-        const it = t.selected() orelse return;
-        a.overlay = .{ .comment = .{
-            .key = try a.scratch.allocator().dupe(u8, it.key),
-            .editor = Editor.init(a.gpa),
-        } };
+    pub fn clickChip(a: *App, c: hit.Chip) Allocator.Error!void {
+        switch (c) {
+            .refresh => try a.act(.refresh, "r"),
+            .help => try a.act(.help, "?"),
+            .basic => {
+                a.tab().show_jql = false;
+                if (a.jql != null) try a.closeJql(false);
+            },
+            .jql => try a.openJql(),
+            .search => try a.openFilter(),
+            .space => a.setStatus("Space: the tab's project is {s}", .{if (a.tab().cfg.project.len > 0) a.tab().cfg.project else "unset"}),
+            .assignee, .overflow => try a.openAssignees(),
+            .type => try a.openIssueType(),
+            .status => try a.cycleScope(),
+            .more_filters => a.setStatus("More filters: not in the reference either", .{}),
+            .save_filter => a.setStatus("Save filter: not in the reference either", .{}),
+            .fixv_pill, .version => try a.openTabFixVersion(),
+            .fixv_remove => try a.removeFixVersionClause(),
+            .board => try a.openBoard(),
+            .sprint => try a.openSprint(),
+            .epic => try a.openEpic(),
+            .label => try a.openLabel(),
+            .quick_filters => try a.openQuickFilters(),
+            .unassigned => try a.toggleAssignee(model.unassigned_sentinel),
+            .settings => try a.openBoardSettings(),
+        }
     }
 
-    fn openForm(a: *App) !void {
-        const t = a.tab() orelse return;
-        var f: Form = .{ .fields = .{ Editor.init(a.gpa), Editor.init(a.gpa), Editor.init(a.gpa), Editor.init(a.gpa) } };
-        // Seed the project from the tab, or from the row under the cursor.
-        const project = if (t.cfg.project.len > 0)
-            t.cfg.project
-        else if (t.selected()) |it| projectOf(it.key) else "";
-        try f.get(.project).set(project);
-        try f.get(.issue_type).set("Task");
-        a.overlay = .{ .form = f };
-    }
-
-    fn submitForm(a: *App) !void {
-        const f = &a.overlay.form;
-        const project = std.mem.trim(u8, f.get(.project).text(), " \t");
-        const kind = std.mem.trim(u8, f.get(.issue_type).text(), " \t");
-        const summary = std.mem.trim(u8, f.get(.summary).text(), " \t\r\n");
-        if (project.len == 0) {
-            f.err = "a project key is required";
-            f.focus = .project;
+    /// A wheel notch; positive is up.
+    pub fn wheel(a: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
+        const steps: i32 = if (dy > 0) -3 else 3;
+        if (a.modal != null) {
+            a.modalScroll(steps);
             return;
         }
-        if (summary.len == 0) {
-            f.err = "a summary is required";
-            f.focus = .summary;
+        if (a.help) {
+            if (steps > 0) a.help_scroll += 3 else a.help_scroll -|= 3;
             return;
         }
-        var scratch = std.heap.ArenaAllocator.init(a.gpa);
-        defer scratch.deinit();
-        a.progress("creating in {s}…", .{project});
-        switch (try jira.createIssue(&a.client.?, scratch.allocator(), .{
-            .project = project,
-            .issue_type = if (kind.len > 0) kind else "Task",
-            .summary = summary,
-            .description = f.get(.description).text(),
-        })) {
-            .ok => |new_key| {
-                const copy_key = try a.scratch.allocator().dupe(u8, new_key);
-                a.closeOverlay();
-                try a.refresh();
-                a.setStatus("created {s}", .{copy_key});
+        switch (a.hits.at(col, row) orelse hit.Target.help_body) {
+            .column => |c| a.scrollColumn(c, steps),
+            .detail => {
+                if (steps > 0) a.details_scroll +|= 3 else a.details_scroll -|= 3;
             },
-            .failed => |fail| f.err = try a.scratch.allocator().dupe(u8, fail.message),
+            .picker_row, .picker_body => if (a.picker) |*p| try p.move(steps) else if (a.transition) |*t| t.move(steps),
+            else => try a.move(steps),
         }
+    }
+
+    /// The JQL editor's wrap width, shared with the painter.
+    pub fn jqlWrapWidth(a: *const App) usize {
+        const w: usize = @max(@min(a.cols -| 8, 200), 20);
+        return @max(w -| 2, 1);
     }
 };
 
-/// The wall clock as a Jira timestamp, for the `Updated` column's ages.
-pub fn nowStamp(arena: Allocator, io: Io) Allocator.Error![]const u8 {
-    const secs = @divTrunc(Io.Timestamp.now(io, .real).toMilliseconds(), 1000);
-    const es: std.time.epoch.EpochSeconds = .{ .secs = @intCast(@max(secs, 0)) };
-    const day = es.getEpochDay();
-    const yd = day.calculateYearDay();
-    const md = yd.calculateMonthDay();
-    const ds = es.getDaySeconds();
-    return std.fmt.allocPrint(arena, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000+0000", .{
-        yd.year,
-        md.month.numeric(),
-        md.day_index + 1,
-        ds.getHoursIntoDay(),
-        ds.getMinutesIntoHour(),
-        ds.getSecondsIntoMinute(),
-    });
-}
-
-/// `ENG-1234` → `ENG`.
-pub fn projectOf(key: []const u8) []const u8 {
-    const dash = std.mem.indexOfScalar(u8, key, '-') orelse return key;
-    return key[0..dash];
+/// The reference's `strip_fix_version`: drop `fixVersion = "…"` and the
+/// connector beside it.
+pub fn stripFixVersion(arena: Allocator, jql: []const u8) Allocator.Error![]const u8 {
+    var lower: [4096]u8 = undefined;
+    const n = @min(jql.len, lower.len);
+    for (jql[0..n], 0..) |c, i| lower[i] = std.ascii.toLower(c);
+    const start = std.mem.indexOf(u8, lower[0..n], "fixversion") orelse return jql;
+    const after = jql[start + "fixversion".len ..];
+    const eq = std.mem.indexOfScalar(u8, after, '=') orelse return jql;
+    const after_eq = after[eq + 1 ..];
+    const q1 = std.mem.indexOfScalar(u8, after_eq, '"') orelse return jql;
+    const rest = after_eq[q1 + 1 ..];
+    const q2 = std.mem.indexOfScalar(u8, rest, '"') orelse return jql;
+    const clause_end = start + "fixversion".len + eq + 1 + q1 + 1 + q2 + 1;
+    var before = std.mem.trimEnd(u8, jql[0..start], " ");
+    var tail = std.mem.trimStart(u8, jql[clause_end..], " ");
+    if (std.ascii.endsWithIgnoreCase(before, " and") or std.ascii.endsWithIgnoreCase(before, " or")) {
+        before = std.mem.trimEnd(u8, before[0..std.mem.lastIndexOfScalar(u8, before, ' ').?], " ");
+    } else if (std.ascii.startsWithIgnoreCase(tail, "and ") or std.ascii.startsWithIgnoreCase(tail, "or ")) {
+        tail = std.mem.trimStart(u8, tail[std.mem.indexOfScalar(u8, tail, ' ').?..], " ");
+    }
+    if (before.len == 0) return tail;
+    if (tail.len == 0) return before;
+    return std.fmt.allocPrint(arena, "{s} {s}", .{ before, tail });
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const auth = @import("auth.zig");
 
-test "the editor: insert, the cursor, word-delete, kill, and a multi-byte character" {
-    var e = Editor.init(testing.allocator);
-    defer e.deinit();
-    for ("hello world") |c| try e.insert(c);
-    try testing.expectEqualStrings("hello world", e.text());
-    e.deleteWordBack();
-    try testing.expectEqualStrings("hello ", e.text());
-    e.home();
-    try testing.expectEqual(@as(usize, 0), e.cursor);
-    try e.insert('>');
-    try testing.expectEqualStrings(">hello ", e.text());
-    e.end();
-    e.killToStart();
-    try testing.expectEqualStrings("", e.text());
-    // A multi-byte code point goes in and comes out whole.
-    try e.insert('é');
-    try e.insert('x');
-    try testing.expectEqualStrings("éx", e.text());
-    e.left();
-    e.backspace();
-    try testing.expectEqualStrings("x", e.text());
-    // Backspace at the start is a no-op, not an underflow.
-    e.home();
-    e.backspace();
-    try testing.expectEqualStrings("x", e.text());
-    // killToEnd cuts from the cursor.
-    try e.set("abcdef");
-    e.home();
-    e.right();
-    e.right();
-    e.killToEnd();
-    try testing.expectEqualStrings("ab", e.text());
-}
-
-test "the editor answers exactly the actions the prompt mode produces" {
-    var e = Editor.init(testing.allocator);
-    defer e.deinit();
-    try testing.expect(try e.apply(.{ .insert = 'a' }));
-    try testing.expect(try e.apply(.newline));
-    try testing.expect(try e.apply(.cursor_home));
-    try testing.expect(!try e.apply(.accept));
-    try testing.expect(!try e.apply(.quit));
-    try testing.expectEqualStrings("a\n", e.text());
-}
-
-test "projectOf takes the prefix of a key, and copes with one that has none" {
-    try testing.expectEqualStrings("ENG", projectOf("ENG-1234"));
-    try testing.expectEqualStrings("A", projectOf("A-1"));
-    try testing.expectEqualStrings("nodash", projectOf("nodash"));
-    try testing.expectEqualStrings("", projectOf(""));
-}
-
-test "the overlay decides the key mode, and closing one frees its editors" {
-    var a = App.init(testing.allocator, testing.io);
+test "stripFixVersion drops the clause and its connector" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    a.overlay = .{ .filter = Editor.init(testing.allocator) };
-    try testing.expectEqual(Mode.filter, a.overlay.mode());
-    a.closeOverlay();
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    a.overlay = .{ .comment = .{ .key = "ENG-1", .editor = Editor.init(testing.allocator) } };
-    try testing.expectEqual(Mode.prompt, a.overlay.mode());
-    a.closeOverlay();
-    a.overlay = .{ .confirm = .{ .message = "?", .what = .{ .transition = .{ .key = "ENG-1", .id = "1", .to = "Done" } } } };
-    try testing.expectEqual(Mode.confirm, a.overlay.mode());
-    a.closeOverlay();
-    a.overlay = .{ .help = .{} };
-    try testing.expectEqual(Mode.help, a.overlay.mode());
+    try testing.expectEqualStrings("project = TE ORDER BY rank", try stripFixVersion(a.allocator(), "project = TE AND fixVersion = \"13.19.0\" ORDER BY rank"));
+    try testing.expectEqualStrings("ORDER BY rank", try stripFixVersion(a.allocator(), "fixVersion = \"1\" AND ORDER BY rank"));
+    try testing.expectEqualStrings("a = 1", try stripFixVersion(a.allocator(), "a = 1"));
 }
 
-/// An app with tabs and issues but no client — every key that does not
-/// touch the wire can be driven against it.
-fn offlineApp(gpa: Allocator) !App {
-    var a = App.init(gpa, testing.io);
-    a.cfg = .{
-        .jira = .{ .url = "https://acme.atlassian.net", .email = "me@acme.com" },
-        .tabs = &.{
-            .{ .name = "Mine", .kind = .work_assigned },
-            .{ .name = "Release", .jql = "project = ENG", .kind = .custom },
-        },
-    };
-    try a.openTabs();
-    const t = &a.tabs[0];
-    const arena = t.arena.allocator();
-    const issues = try arena.alloc(model.Issue, 5);
-    issues[0] = .{ .key = "ENG-1", .summary = "Checkout rewrite", .level = .epic, .status = "In Progress", .category = .indeterminate, .assignee = "Ada" };
-    issues[1] = .{ .key = "ENG-2", .summary = "Card form", .level = .story, .status = "In Review", .category = .indeterminate, .parent_key = "ENG-1" };
-    issues[2] = .{ .key = "ENG-3", .summary = "Apple Pay", .level = .story, .status = "To Do", .category = .new, .parent_key = "ENG-1" };
-    issues[3] = .{ .key = "ENG-4", .summary = "Blur handler", .level = .subtask, .status = "Done", .category = .done, .parent_key = "ENG-2" };
-    issues[4] = .{ .key = "ENG-5", .summary = "Voucher total", .level = .story, .status = "To Do", .category = .new };
-    t.issues = issues;
-    t.fetched = true;
-    a.rows = 24;
-    a.cols = 100;
-    try a.rebuild(t);
-    return a;
-}
-
-test "the list keys move, fold, hide and switch tabs against a tree that is already loaded" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    const t = a.tab().?;
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-    try testing.expectEqualStrings("ENG-1", t.selected().?.key);
-
-    try a.key("j");
-    try testing.expectEqualStrings("ENG-2", t.selected().?.key);
-    try a.key("G");
-    try testing.expectEqualStrings("ENG-5", t.selected().?.key);
-    try a.key("g");
-    try testing.expectEqualStrings("ENG-1", t.selected().?.key);
-
-    // Collapse the epic: the three rows under it go.
-    try a.key("h");
-    try testing.expectEqual(@as(usize, 2), t.rows.len);
-    try a.key("l");
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-    // C folds everything, E opens it.
-    try a.key("C");
-    try testing.expectEqual(@as(usize, 2), t.rows.len);
-    try a.key("E");
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-    // Enter toggles the row under the cursor.
-    try a.key("enter");
-    try testing.expectEqual(@as(usize, 2), t.rows.len);
-    try a.key("space");
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-
-    // `x` hides the branch, `H` brings it back and says how many.
-    try a.key("j");
-    try a.key("x");
-    try testing.expectEqual(@as(usize, 3), t.rows.len);
-    try testing.expect(std.mem.indexOf(u8, a.status, "hid ENG-2") != null);
-    try a.key("H");
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-
-    // Tabs wrap in both directions, and the digits jump.
-    try testing.expectEqual(@as(usize, 0), a.active);
-    try a.key("tab");
-    try testing.expectEqual(@as(usize, 1), a.active);
-    try a.key("tab");
-    try testing.expectEqual(@as(usize, 0), a.active);
-    try a.key("shift+tab");
-    try testing.expectEqual(@as(usize, 1), a.active);
-    try a.key("2");
-    try testing.expectEqual(@as(usize, 1), a.active);
-    try a.key("1");
-    try testing.expectEqual(@as(usize, 0), a.active);
-
-    // `q` ends the pane.
-    try testing.expect(!a.done);
-    try a.key("q");
-    try testing.expect(a.done);
-}
-
-test "the filter is live, Esc drops it, and Esc cascades after that" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    const t = a.tab().?;
-    try a.key("/");
-    try testing.expectEqual(Mode.filter, a.overlay.mode());
-    // Typing narrows as it goes — and keeps the matched row's ancestors.
-    for ("blur") |c| try a.key(&[_]u8{c});
-    try testing.expectEqual(@as(usize, 3), t.rows.len);
-    try a.key("enter");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    try testing.expectEqualStrings("blur", t.filter);
-    // Esc clears the filter first…
-    try a.key("esc");
-    try testing.expectEqualStrings("", t.filter);
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-    // …then closes the detail pane…
-    try testing.expect(a.detail_open);
-    try a.key("esc");
-    try testing.expect(!a.detail_open);
-    // …then leaves.
-    try a.key("esc");
-    try testing.expect(a.done);
-    // Esc inside the filter cancels it outright.
-    a.done = false;
-    try a.key("/");
-    for ("zzz") |c| try a.key(&[_]u8{c});
-    try a.key("esc");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    try testing.expectEqualStrings("", t.filter);
-}
-
-test "`?` opens the help sheet and every key but its own is ignored while it is up" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    const t = a.tab().?;
-    try a.key("?");
-    try testing.expectEqual(Mode.help, a.overlay.mode());
-    // `q` would quit from the list; here it closes the sheet.
-    try a.key("q");
-    try testing.expect(!a.done);
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    // `j` under the sheet does not move the list.
-    try a.key("?");
-    const before = t.cursor;
-    try a.key("j");
-    try testing.expectEqual(before, t.cursor);
-}
-
-test "a picker filters, moves, jumps by digit and cancels without doing anything" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    var scratch = std.heap.ArenaAllocator.init(testing.allocator);
-    defer scratch.deinit();
-    a.overlay = .{ .picker = .{
-        .kind = .assignee,
-        .key = "ENG-1",
-        .items = &.{
-            .{ .id = "", .label = "— Unassign —" },
-            .{ .id = "a1", .label = "Ada Lovelace" },
-            .{ .id = "a2", .label = "Sam Beckett" },
-        },
-        .filter = Editor.init(testing.allocator),
-    } };
-    try testing.expectEqual(@as(usize, 3), (try a.overlay.picker.visible(scratch.allocator())).len);
-    try a.key("down");
-    try testing.expectEqual(@as(usize, 1), a.overlay.picker.cursor);
-    try a.key("3");
-    try testing.expectEqual(@as(usize, 2), a.overlay.picker.cursor);
-    // Typing filters; `j` and `k` type rather than moving.
-    for ("sam") |c| try a.key(&[_]u8{c});
-    const vis = try a.overlay.picker.visible(scratch.allocator());
-    try testing.expectEqual(@as(usize, 1), vis.len);
-    try testing.expectEqualStrings("Sam Beckett", a.overlay.picker.items[vis[0]].label);
-    try testing.expectEqual(@as(usize, 0), a.overlay.picker.cursor);
-    // Backspacing the filter away brings every row back.
-    try a.key("backspace");
-    try a.key("backspace");
-    try a.key("backspace");
-    try testing.expectEqual(@as(usize, 3), (try a.overlay.picker.visible(scratch.allocator())).len);
-    try a.key("esc");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-}
-
-test "the comment box refuses an empty body and keeps what was typed when the post fails" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    try a.key("c");
-    try testing.expectEqual(Mode.prompt, a.overlay.mode());
-    try testing.expectEqualStrings("ENG-1", a.overlay.comment.key);
-    // Whitespace is not a comment.
-    try a.key("space");
-    try a.key("ctrl+s");
-    try testing.expectEqualStrings("nothing to post", a.overlay.comment.err.?);
-    try testing.expectEqual(Mode.prompt, a.overlay.mode());
-    // Enter makes a newline here; ctrl+s is the send.
-    try a.key("enter");
-    try testing.expect(std.mem.indexOfScalar(u8, a.overlay.comment.editor.text(), '\n') != null);
-    try a.key("esc");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-}
-
-test "the create form seeds its project, walks its fields and names the field that is empty" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    try a.key("n");
-    try testing.expectEqual(Mode.prompt, a.overlay.mode());
-    const f = &a.overlay.form;
-    // The project came off the row under the cursor.
-    try testing.expectEqualStrings("ENG", f.get(.project).text());
-    try testing.expectEqualStrings("Task", f.get(.issue_type).text());
-    try testing.expectEqual(FormField.summary, f.focus);
-    // Tab and shift+tab walk, wrapping.
-    try a.key("tab");
-    try testing.expectEqual(FormField.description, f.focus);
-    try a.key("tab");
-    try testing.expectEqual(FormField.project, f.focus);
-    try a.key("shift+tab");
-    try testing.expectEqual(FormField.description, f.focus);
-    // Enter in a one-line field moves on instead of typing a newline.
-    f.focus = .summary;
-    try a.key("enter");
-    try testing.expectEqual(FormField.description, f.focus);
-    try testing.expectEqualStrings("", f.get(.summary).text());
-    // Submitting with no summary says so and puts the cursor there.
-    try a.key("ctrl+s");
-    try testing.expectEqualStrings("a summary is required", f.err.?);
-    try testing.expectEqual(FormField.summary, f.focus);
-    // …and with no project key either.
-    f.get(.project).clear();
-    try a.key("ctrl+s");
-    try testing.expectEqualStrings("a project key is required", f.err.?);
-    try testing.expectEqual(FormField.project, f.focus);
-}
-
-test "a transition asks before it moves anything, and n leaves the ticket alone" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    a.overlay = .{ .confirm = .{
-        .message = "Move ENG-1 — Close  → Done?",
-        .what = .{ .transition = .{ .key = "ENG-1", .id = "41", .to = "Close  → Done" } },
-    } };
-    try a.key("n");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    try testing.expectEqualStrings("cancelled", a.status);
-    // An unrelated key leaves the question up.
-    a.overlay = .{ .confirm = .{
-        .message = "?",
-        .what = .{ .transition = .{ .key = "ENG-1", .id = "41", .to = "Done" } },
-    } };
-    try a.key("z");
-    try testing.expectEqual(Mode.confirm, a.overlay.mode());
-}
-
-test "the cursor keeps itself on screen as it moves" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    a.rows = 8; // three rows of chrome, five of list
-    const t = a.tab().?;
-    try testing.expectEqual(@as(u16, 5), a.listHeight());
-    try a.key("G");
-    try testing.expectEqual(@as(usize, 4), t.cursor);
-    try testing.expectEqual(@as(usize, 0), t.scroll);
-    a.rows = 6; // three of list
-    try a.key("g");
-    try a.key("G");
-    try testing.expectEqual(@as(usize, 2), t.scroll);
-    try a.key("g");
-    try testing.expectEqual(@as(usize, 0), t.scroll);
-}
-
-test "a click selects the row it landed on, and a click on the chevron folds it" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    const t = a.tab().?;
-    a.detail_open = false;
-    // Row 2 of the screen is the first ticket (strip, header, then rows).
-    try testing.expectEqual(@as(u16, 2), a.listTop());
-    try a.click(20, 3, false);
-    try testing.expectEqualStrings("ENG-2", t.selected().?.key);
-    // Its chevron is at the row's indent: a click there folds the branch.
-    try a.click(3, 3, false);
-    try testing.expectEqual(@as(usize, 4), t.rows.len);
-    try a.click(3, 3, false);
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-    // A right-click anywhere on the row folds it too.
-    try a.click(40, 3, true);
-    try testing.expectEqual(@as(usize, 4), t.rows.len);
-    try a.click(40, 3, true);
-    // A click past the last row changes nothing.
-    const before = t.cursor;
-    try a.click(20, 19, false);
-    try testing.expectEqual(before, t.cursor);
-    // A click on the tab strip switches tabs.
-    try a.click(8, 0, false);
-    try testing.expectEqual(@as(usize, 0), a.active);
-    try a.click(20, 0, false);
-    try testing.expectEqual(@as(usize, 1), a.active);
-    // A click with an overlay up dismisses it rather than reaching the list.
-    a.active = 0;
-    try a.key("?");
-    try a.click(20, 3, false);
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-}
-
-test "focus is the tick: an auto-refresh only fires when the interval has passed, and never mid-overlay" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    // No client: `focusGained` can never reach the wire, so this test
-    // asserts the guards rather than the fetch.
-    a.cfg.mnml.refresh_interval_secs = 60;
-    a.last_refresh_ms = 0;
-    try a.focusGained();
-    try testing.expect(a.focused);
-    // Off by config.
-    a.cfg.mnml.refresh_interval_secs = 0;
-    try a.focusGained();
-    // An overlay is up: the user is typing, not reading.
-    a.cfg.mnml.refresh_interval_secs = 60;
-    try a.key("/");
-    try a.focusGained();
-    try testing.expectEqual(Mode.filter, a.overlay.mode());
-    try a.key("esc");
-}
-
-test "the wheel moves the cursor three rows a notch, and stops at the ends" {
-    var a = try offlineApp(testing.allocator);
-    defer a.deinit();
-    const t = a.tab().?;
-    try a.wheel(-1);
-    try testing.expectEqual(@as(usize, 3), t.cursor);
-    try a.wheel(-1);
-    try testing.expectEqual(@as(usize, 4), t.cursor);
-    try a.wheel(1);
-    try testing.expectEqual(@as(usize, 1), t.cursor);
-    try a.wheel(1);
-    try testing.expectEqual(@as(usize, 0), t.cursor);
-    try a.wheel(0);
-    try testing.expectEqual(@as(usize, 0), t.cursor);
-}
-
-/// An app wired to a fake Jira behind a real socket. The caller must
-/// `finishServing` before the group is awaited.
-const Wired = struct {
-    app: App,
-    store: fake.Store,
-    server: Io.net.Server,
-    loopback: jira.Loopback = undefined,
+/// A pane against the fake server behind a real socket.
+pub const Harness = struct {
+    lb: jira.Loopback,
+    store: *jira.fake.Store,
+    server: *Io.net.Server,
     group: Io.Group = .init,
-    arena: std.heap.ArenaAllocator,
+    client: *jira.Client,
+    app: App,
+    base: []const u8,
 
-    const fake = jira.fake;
-
-    fn start(gpa: Allocator) !*Wired {
-        const w = try gpa.create(Wired);
-        w.* = .{
-            .app = App.init(gpa, testing.io),
-            .store = try fake.Store.init(gpa),
-            .server = undefined,
-            .arena = std.heap.ArenaAllocator.init(gpa),
-        };
+    pub fn start(cfg_in: config.Config, family: ?config.Family) !*Harness {
+        const io = testing.io;
+        const h = try testing.allocator.create(Harness);
+        errdefer testing.allocator.destroy(h);
+        h.store = try testing.allocator.create(jira.fake.Store);
+        h.store.* = try jira.fake.Store.init(testing.allocator);
+        h.server = try testing.allocator.create(Io.net.Server);
         var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
-        w.server = try addr.listen(testing.io, .{ .reuse_address = true });
-        w.loopback = .{ .store = &w.store, .server = &w.server };
-        try w.group.concurrent(testing.io, jira.Loopback.serve, .{ testing.io, &w.loopback });
-        const ar = w.arena.allocator();
-        const base = try std.fmt.allocPrint(ar, "http://127.0.0.1:{d}", .{w.server.socket.address.getPort()});
-        w.app.cfg = .{
-            .jira = .{ .url = base, .email = "fake@acme.com", .rate = .{ .per_sec = 10_000, .burst = 100 } },
-            .tabs = &.{.{ .name = "All", .kind = .custom, .jql = "project = ENG ORDER BY rank" }},
-        };
-        w.app.client = jira.Client.init(gpa, testing.io, base, try auth.basicHeader(ar, "fake@acme.com", "fake-token"), .v3, w.app.cfg.jira.rate);
-        try w.app.openTabs();
-        return w;
+        h.server.* = try addr.listen(io, .{ .reuse_address = true });
+        h.lb = .{ .store = h.store, .server = h.server };
+        h.group = .init;
+        try h.group.concurrent(io, jira.Loopback.serve, .{ io, &h.lb });
+        h.base = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}", .{h.server.socket.address.getPort()});
+        const authorization = try auth.basicHeader(testing.allocator, "fake@acme.com", "fake-token");
+        defer testing.allocator.free(authorization);
+        h.client = try testing.allocator.create(jira.Client);
+        h.client.* = jira.Client.init(testing.allocator, io, h.base, try testing.allocator.dupe(u8, authorization), .v3, .{ .per_sec = 10_000, .burst = 1000 });
+        var cfg = cfg_in;
+        cfg.jira_url = h.base;
+        cfg.email = "fake@acme.com";
+        cfg.refresh_interval_secs = 0;
+        cfg.bitbucket_api_url = h.base;
+        h.app = try App.init(testing.allocator, io, cfg, family, h.client, .{ .gpa = testing.allocator, .io = io, .base_url = h.base, .token = "fake-forge" });
+        h.app.resize(120, 40);
+        return h;
     }
 
-    fn stop(w: *Wired, gpa: Allocator) void {
-        w.loopback.finish(&w.app.client.?, w.arena.allocator()) catch {};
-        w.group.await(testing.io) catch {};
-        w.group.cancel(testing.io);
-        w.server.deinit(testing.io);
-        w.app.deinit();
-        w.store.deinit();
-        w.arena.deinit();
-        gpa.destroy(w);
+    pub fn stop(h: *Harness) void {
+        var scratch = std.heap.ArenaAllocator.init(testing.allocator);
+        h.lb.finish(h.client, scratch.allocator()) catch {};
+        scratch.deinit();
+        h.group.await(testing.io) catch {};
+        h.app.deinit();
+        testing.allocator.free(h.client.authorization);
+        testing.allocator.destroy(h.client);
+        h.server.deinit(testing.io);
+        testing.allocator.destroy(h.server);
+        h.store.deinit();
+        testing.allocator.destroy(h.store);
+        testing.allocator.free(h.base);
+        testing.allocator.destroy(h);
     }
 };
 
-test "a refresh against a real server fills the tree, the detail and the PR cache" {
-    const gpa = testing.allocator;
-    const w = try Wired.start(gpa);
-    defer w.stop(gpa);
-    const a = &w.app;
-    a.cols = 120;
-    a.rows = 30;
+pub const work_tabs = [_]config.Tab{
+    .{ .name = "Assigned", .kind = .work_assigned },
+    .{ .name = "Recently Done", .kind = .work_recently_done },
+};
 
-    try a.refresh();
-    const t = a.tab().?;
-    try testing.expectEqual(@as(usize, 5), t.issues.len);
-    try testing.expectEqualStrings("ENG-1", t.issues[0].key);
-    // The hierarchy came out of `parent`: the epic over two stories, one
-    // of them over a sub-task, and the bug on its own.
-    try testing.expectEqual(@as(usize, 5), t.rows.len);
-    try testing.expectEqual(@as(u8, 0), t.rows[0].issue.depth);
-    try testing.expectEqual(@as(u8, 1), t.rows[1].issue.depth);
-    try testing.expectEqual(@as(u8, 2), t.rows[2].issue.depth);
-    // The detail pane's ticket was fetched with it.
-    try testing.expect(a.detailOf("ENG-1") != null);
-    try testing.expect(std.mem.indexOf(u8, a.detailOf("ENG-1").?.description, "umbrella") != null);
-    try testing.expect(std.mem.indexOf(u8, a.status, "5 ticket") != null);
+pub const fixv_tabs = [_]config.Tab{
+    .{ .name = "Current Release", .kind = .fix_version_tree, .project = "ENG", .mode = .current_release, .status_order = &.{ "Testing", "In PR Review", "In Progress", "To Do", "Done" }, .bumps = .{ .pr_approved = "Testing", .no_open_prs = "Testing", .release_cut = &.{.{ .status = "Done", .target = "top" }} } },
+};
 
-    // Opening ENG-2 fetches its pull requests, once.
-    try a.key("j");
-    try testing.expectEqualStrings("ENG-2", t.selected().?.key);
-    const before = w.store.requests;
-    try a.key("l");
-    try testing.expectEqual(@as(usize, 2), t.state.prsOf("ENG-2").?.len);
-    try testing.expect(w.store.requests > before);
-    const after = w.store.requests;
-    try a.key("h");
-    try a.key("l");
-    try testing.expectEqual(after, w.store.requests);
+pub const board_tabs = [_]config.Tab{
+    .{ .name = "Sprint", .kind = .board_active_sprint, .project = "ENG", .board_id = 7 },
+    .{ .name = "Backlog", .kind = .board_backlog, .project = "ENG" },
+};
+
+test "Work: the assigned tab loads the three tickets, auto-expands them with their PRs, and the tree keys fold and move" {
+    const h = try Harness.start(.{ .tabs = &work_tabs, .team_field_id = "customfield_10056" }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expectEqual(@as(?usize, 3), a.assigned_open);
+    try testing.expect(a.segment_dirty);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const r = (try a.treeRows(arena.allocator())).?;
+    // No bumps on the Work tabs: the default order puts In PR Review
+    // first, ENG-2 auto-expanded with its two PRs under it.
+    try testing.expectEqualStrings("In PR Review", r.rows[0].group.status);
+    try testing.expect(!r.rows[1].ticket.bumped);
+    try testing.expect(r.rows[2] == .pr and r.rows[3] == .pr);
+    // The last auto-expanded ticket's PR count is the status, as in the reference.
+    try testing.expect(std.mem.endsWith(u8, a.status.items, "linked PR(s)"));
+    // The focused row starts on the first group; j reaches the ticket.
+    _ = try a.onKey("j");
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+    // h folds the ticket, l opens it again; the cursor stays on ENG-2.
+    _ = try a.onKey("h");
+    const folded = (try a.treeRows(arena.allocator())).?;
+    try testing.expect(folded.rows[2] != .pr);
+    _ = try a.onKey("l");
+    try testing.expect((try a.treeRows(arena.allocator())).?.rows[2] == .pr);
+    // A refetch keeps the cursor on the same ticket.
+    _ = try a.onKey("r");
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+    // Tab switches; the second tab loads on arrival.
+    _ = try a.onKey("tab");
+    try testing.expectEqual(@as(usize, 1), a.active);
+    try testing.expectEqual(@as(usize, 1), a.tab().issues.len);
+    try testing.expectEqualStrings("ENG-12", a.tab().issues[0].key);
+    _ = try a.onKey("1");
+    try testing.expectEqual(@as(usize, 0), a.active);
 }
 
-test "a failed refresh drops the PR cache with the arena it points into" {
-    const gpa = testing.allocator;
-    const w = try Wired.start(gpa);
-    defer w.stop(gpa);
-    const a = &w.app;
-    a.cols = 120;
-    a.rows = 30;
-    try a.refresh();
-    const t = a.tab().?;
-    try a.key("j");
-    try a.key("l");
-    try testing.expect(t.state.prsOf("ENG-2") != null);
-
-    // The next refresh fails — after the tab's arena has already been
-    // reset. The PR lists live on that arena, so a cache that survives
-    // is a map of dangling slices, and the next `rebuild` walks them.
-    w.store.fail_with = 503;
-    try a.refresh();
-    try testing.expect(t.err != null);
-    try testing.expect(t.state.prsOf("ENG-2") == null);
-    try testing.expectEqual(@as(usize, 0), t.issues.len);
-    try testing.expectEqual(@as(usize, 0), t.rows.len);
-    // Painting and moving after the failure touch nothing freed.
-    try a.rebuild(t);
-    try a.key("j");
-    try a.key("l");
-    try testing.expectEqual(@as(usize, 0), t.rows.len);
-
-    // And it recovers: the folds the user chose are still theirs.
-    w.store.fail_with = null;
-    try a.refresh();
-    try testing.expectEqual(@as(usize, 5), t.issues.len);
-    try testing.expect(t.err == null);
+test "Work: the filter narrows the tree (unlike the reference), the scope chip cycles, and Esc unwinds without quitting early" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    _ = try a.onKey("/");
+    try testing.expect(a.filter.?.editing);
+    for ("voucher") |c| _ = try a.onKey(&[_]u8{c});
+    _ = try a.onKey("enter");
+    try testing.expect(!a.filter.?.editing);
+    const r = (try a.treeRows(arena.allocator())).?;
+    try testing.expectEqual(@as(usize, 1), r.ticket_count);
+    try testing.expectEqualStrings("ENG-5", a.tab().issues[r.rows[1].ticket.issue_idx].key);
+    _ = try a.onKey("esc");
+    try testing.expect(a.filter == null);
+    try testing.expect(!a.quit);
+    try a.cycleScope();
+    try testing.expectEqual(filters.Scope.unresolved, a.tab().scope);
+    try a.cycleScope();
+    try testing.expectEqual(@as(usize, 0), (try a.treeRows(arena.allocator())).?.ticket_count);
+    try a.cycleScope();
+    try testing.expectEqual(filters.Scope.all, a.tab().scope);
+    _ = try a.onKey("d");
+    try testing.expect(a.details_visible);
+    _ = try a.onKey("esc");
+    try testing.expect(!a.details_visible and !a.quit);
+    _ = try a.onKey("esc");
+    try testing.expect(a.quit);
 }
 
-test "an action against a real server changes the ticket and the next refresh shows it" {
-    const gpa = testing.allocator;
-    const w = try Wired.start(gpa);
-    defer w.stop(gpa);
-    const a = &w.app;
-    a.cols = 120;
-    a.rows = 30;
-    try a.refresh();
-    const t = a.tab().?;
+test "Work: the transition picker moves a ticket; the bulk selection transitions by name and skips" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    _ = try a.onKey("j");
+    _ = try a.onKey("t");
+    try testing.expect(a.transition != null);
+    try testing.expectEqual(@as(usize, 4), a.transition.?.transitions.?.len);
+    _ = try a.onKey("esc");
+    try testing.expect(a.transition == null);
+    // Select ENG-2 and ENG-5 (S on a tree tab), then move both to Testing.
+    _ = try a.onKey("shift+s");
+    try testing.expect(a.isSelected("ENG-2"));
+    try a.moveEnd();
+    try a.moveHome();
+    // Find ENG-5's row.
+    const r = (try a.treeRows(arena.allocator())).?;
+    a.tab().selected = tree.rowOfKey(r.rows, a.tab().issues, "ENG-5").?;
+    _ = try a.onKey("shift+s");
+    try testing.expectEqual(@as(usize, 2), a.selection.count());
+    _ = try a.onKey("t");
+    try testing.expectEqual(@as(usize, 2), a.transition.?.targets);
+    // Jump to "Ready to test" (Testing) and commit.
+    for (a.transition.?.transitions.?, 0..) |t, i| if (std.mem.eql(u8, t.to_name, "Testing")) a.transition.?.jump(i);
+    _ = try a.onKey("enter");
+    try testing.expect(a.transition == null);
+    try testing.expectEqualStrings("Testing", h.store.find("ENG-2").?.status);
+    try testing.expectEqualStrings("Testing", h.store.find("ENG-5").?.status);
+    try testing.expectEqual(@as(usize, 0), a.selection.count());
+    try testing.expect(std.mem.startsWith(u8, a.status.items, "2 ticket(s) → Testing"));
+}
 
-    // `t` opens the workflow the server offers for ENG-1.
-    try a.key("t");
-    try testing.expectEqual(Mode.picker, a.overlay.mode());
-    try testing.expectEqualStrings("ENG-1", a.overlay.picker.key);
-    try testing.expectEqual(@as(usize, 3), a.overlay.picker.items.len);
-    // Enter asks first — nothing has moved yet.
-    try a.key("enter");
-    try testing.expectEqual(Mode.confirm, a.overlay.mode());
-    try testing.expect(std.mem.indexOf(u8, a.overlay.confirm.message, "ENG-1") != null);
-    try testing.expectEqualStrings("In Progress", w.store.find("ENG-1").?.status);
-    // `n` leaves it alone.
-    try a.key("n");
-    try testing.expectEqualStrings("In Progress", w.store.find("ENG-1").?.status);
-    // `y` moves it, and the refresh that follows shows the new status.
-    try a.key("t");
-    try a.key("enter");
-    try a.key("y");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    try testing.expect(!std.mem.eql(u8, "In Progress", w.store.find("ENG-1").?.status));
-    try testing.expectEqualStrings(w.store.find("ENG-1").?.status, t.issues[0].status);
-    // The outcome line survives the refresh that follows it.
-    try testing.expect(std.mem.indexOf(u8, a.status, "ENG-1") != null);
-
-    // A comment posts and comes back on the detail without a manual refresh.
-    try a.key("c");
-    for ("picking this up") |c| try a.key(&[_]u8{c});
-    try a.key("ctrl+s");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    try testing.expect(std.mem.indexOf(u8, a.status, "commented on ENG-1") != null);
+test "Work: the assignee picker assigns, the fixVersion picker sets, watching toggles, a comment posts" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    _ = try a.onKey("j");
+    _ = try a.onKey("a");
+    try testing.expectEqual(pickers.Kind.assignee, a.picker.?.kind);
+    try testing.expectEqualStrings("— Unassign —", a.picker.?.items[0].label);
+    for ("lin") |c| _ = try a.onKey(&[_]u8{c});
+    _ = try a.onKey("enter");
+    try testing.expect(a.picker == null);
+    try testing.expectEqualStrings(jira.fake.account_lin, h.store.find("ENG-2").?.assignee);
+    // ENG-2 is Lin's now, so the assigned tab dropped it; the cursor is
+    // back on the first group and j lands on ENG-1.
+    try testing.expectEqual(@as(usize, 2), a.tab().issues.len);
+    _ = try a.onKey("j");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqualStrings("ENG-1", (try a.focusedKey(arena.allocator())).?);
+    _ = try a.onKey("f");
+    try testing.expectEqual(pickers.Kind.fix_version, a.picker.?.kind);
+    a.picker.?.selectId("13.17.0");
+    _ = try a.onKey("enter");
+    try testing.expectEqualStrings("13.17.0", h.store.find("ENG-1").?.fix_version);
+    try testing.expectEqualStrings("ENG-1", (try a.focusedKey(arena.allocator())).?);
+    // Watching toggles against the site's list.
+    const before = h.store.find("ENG-1").?.watchers.items.len;
+    try a.ensureDetail("ENG-1");
+    const was = a.detailOf("ENG-1").?.watching;
+    _ = try a.onKey("w");
+    try testing.expectEqual(if (was) before - 1 else before + 1, h.store.find("ENG-1").?.watchers.items.len);
+    try a.ensureDetail("ENG-1");
+    try testing.expectEqual(!was, a.detailOf("ENG-1").?.watching);
+    _ = try a.onKey("w");
+    try testing.expectEqual(before, h.store.find("ENG-1").?.watchers.items.len);
+    // A comment needs the detail pane.
+    const comments = h.store.find("ENG-1").?.comments.items.len;
+    _ = try a.onKey("c");
+    try testing.expect(a.comment == null);
+    _ = try a.onKey("d");
+    _ = try a.onKey("c");
+    try testing.expect(a.comment != null);
+    for ("on it") |c| _ = try a.onKey(if (c == ' ') "space" else &[_]u8{c});
+    // Enter is a newline; a second Enter on the empty line sends.
+    _ = try a.onKey("enter");
+    try testing.expect(a.comment != null);
+    _ = try a.onKey("enter");
+    try testing.expect(a.comment == null);
+    try testing.expectEqual(comments + 1, h.store.find("ENG-1").?.comments.items.len);
     const d = a.detailOf("ENG-1").?;
-    try testing.expect(std.mem.indexOf(u8, d.comments[d.comments.len - 1].body, "picking this up") != null);
-
-    // Creating a ticket adds it to the next refresh.
-    try a.key("n");
-    a.overlay.form.focus = .summary;
-    for ("From the pane") |c| try a.key(&[_]u8{c});
-    try a.key("ctrl+s");
-    try testing.expectEqual(Mode.list, a.overlay.mode());
-    try testing.expect(std.mem.indexOf(u8, a.status, "created ENG-91") != null);
-    try testing.expectEqual(@as(usize, 6), t.issues.len);
+    try testing.expect(std.mem.indexOf(u8, d.comments[d.comments.len - 1].body, "on it") != null);
 }
 
-test "a refusal from the server lands on the status line in Jira's own words" {
-    const gpa = testing.allocator;
-    const w = try Wired.start(gpa);
-    defer w.stop(gpa);
-    const a = &w.app;
-    a.cols = 120;
-    a.rows = 30;
-    // A bad credential: the pane says what Jira said, not a number.
-    var bad = jira.Client.init(gpa, testing.io, a.cfg.jira.url, "Basic bm9wZQ==", .v3, a.cfg.jira.rate);
-    bad.sleep_enabled = false;
-    a.client = bad;
-    try a.refresh();
-    const t = a.tab().?;
-    try testing.expect(t.err != null);
-    try testing.expect(std.mem.indexOf(u8, t.err.?, "must be authenticated") != null);
-    try testing.expect(std.mem.indexOf(u8, a.status, "must be authenticated") != null);
+test "Fix Versions: the release resolves to 13.16.0, status_order and bumps group the tree, f switches the release, F assigns" {
+    const h = try Harness.start(.{ .tabs = &fixv_tabs }, .fix_versions);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    try testing.expectEqualStrings("project = ENG AND fixVersion = \"13.16.0\" ORDER BY rank", a.tab().jql);
+    try testing.expectEqual(@as(usize, 8), a.tab().issues.len);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const r = (try a.treeRows(arena.allocator())).?;
+    try testing.expectEqualStrings("Testing", r.rows[0].group.status);
+    // ENG-6 (Testing) and ENG-2 (bumped from In PR Review) share the
+    // group — the tree is not narrowed to "me" the way a flat tab is.
+    try testing.expectEqual(@as(usize, 2), r.rows[0].group.count);
+    try testing.expect(r.rows[1].ticket.bumped);
+    try testing.expectEqual(@as(usize, 0), a.tab().active_assignees.count());
+    _ = try a.onKey("f");
+    try testing.expectEqual(pickers.Kind.tab_fix_version, a.picker.?.kind);
+    a.picker.?.selectId("13.15.0");
+    _ = try a.onKey("enter");
+    try testing.expectEqualStrings("project = ENG AND fixVersion = \"13.15.0\" ORDER BY rank", a.tab().jql);
+    try testing.expectEqual(@as(usize, 1), a.tab().issues.len);
+    _ = try a.onKey("j");
+    _ = try a.onKey("shift+f");
+    try testing.expectEqual(pickers.Kind.fix_version, a.picker.?.kind);
+    _ = try a.onKey("esc");
+    // Dispatch on a fresh workspace: nothing to write into, and it says so.
+    _ = try a.onKey("shift+i");
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "no dispatch channels") != null);
+    // The release-cut flag bumps Done to the top.
+    a.cfg.release_cut = true;
+    a.picker = null;
+    a.tab().jql = "project = ENG AND fixVersion = \"13.16.0\" ORDER BY rank";
+    try a.refreshActive();
+    const cut = (try a.treeRows(arena.allocator())).?;
+    try testing.expectEqualStrings(tree.top_sentinel, cut.rows[0].group.status);
 }
 
-test "with no tabs at all the pane still quits, and does not index into nothing" {
-    var a = App.init(testing.allocator, testing.io);
-    defer a.deinit();
-    try a.openTabs();
-    try testing.expect(a.tab() == null);
-    try a.key("j");
-    try a.key("enter");
-    try a.key("t");
-    try a.key("?");
-    try testing.expectEqual(Mode.help, a.overlay.mode());
-    try a.key("esc");
-    try a.key("q");
-    try testing.expect(a.done);
+test "Boards: the sprint loads from the board, the cursor is a card, the pickers open, and the backlog is the second tab" {
+    const h = try Harness.start(.{ .tabs = &board_tabs, .team_field_id = "customfield_10056" }, .boards);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    try testing.expectEqual(@as(usize, 9), a.tab().issues.len);
+    // The reference seeds the assignee filter with me.
+    try testing.expect(a.tab().active_assignees.contains(jira.fake.account_me));
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqual(@as(usize, 3), (try a.visibleIssues(arena.allocator())).len);
+    try a.toggleAssignee(jira.fake.account_me);
+    try testing.expectEqual(@as(usize, 9), (try a.visibleIssues(arena.allocator())).len);
+    try testing.expectEqualStrings("Checkout board", try a.boardName(7));
+    try testing.expect(a.tab().sprints != null);
+    try testing.expectEqual(@as(usize, 5), a.tab().assignees.len);
+    _ = try a.onKey("shift+.");
+    try testing.expect(a.isCardExpanded("ENG-1"));
+    try a.openSprint();
+    try testing.expectEqual(pickers.Kind.sprint, a.picker.?.kind);
+    try testing.expectEqualStrings("Sprint 4  [active]", a.picker.?.items[1].label);
+    _ = try a.onKey("esc");
+    try a.openEpic();
+    try testing.expectEqual(pickers.Kind.epic, a.picker.?.kind);
+    try testing.expectEqualStrings("ENG-1", a.picker.?.items[0].id);
+    _ = try a.onKey("esc");
+    try a.openQuickFilters();
+    try testing.expectEqual(pickers.Kind.quick_filter, a.picker.?.kind);
+    _ = try a.onKey("space");
+    _ = try a.onKey("enter");
+    try testing.expectEqual(@as(usize, 1), a.tab().active_quick_filters.items.len);
+    try testing.expectEqual(@as(usize, 2), a.tab().issues.len);
+    try a.openBoard();
+    try testing.expectEqualStrings("Checkout board  [scrum]", a.picker.?.items[1].label);
+    _ = try a.onKey("esc");
+    _ = try a.onKey("shift+t");
+    try testing.expectEqual(pickers.Kind.team, a.picker.?.kind);
+    _ = try a.onKey("esc");
+    _ = try a.onKey("shift+d");
+    try testing.expect(a.modal != null and a.modal.?.data != null);
+    _ = try a.onKey("esc");
+    _ = try a.onKey("2");
+    try testing.expectEqual(@as(usize, 2), a.tab().issues.len);
+    try testing.expectEqualStrings("ENG-10", a.tab().issues[0].key);
+}
+
+test "the dispatch queue writes the reference's line into the configured workspace" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, ".claude");
+    const h = try Harness.start(.{ .tabs = &fixv_tabs, .dispatch_workspace = root }, .fix_versions);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // Row 1 is ENG-2 (bumped into Testing, still In PR Review): Review.
+    _ = try a.onKey("j");
+    _ = try a.onKey(".");
+    try testing.expectEqual(pickers.Kind.action, a.picker.?.kind);
+    try testing.expectEqualStrings("[ Review ]", a.picker.?.items[0].label);
+    _ = try a.onKey("enter");
+    try testing.expectEqualStrings("review → queue", a.status.items);
+    // Row 2 is ENG-6 (Testing, a Task): Test.
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    try testing.expectEqualStrings("ENG-6", (try a.focusedKey(arena.allocator())).?);
+    _ = try a.onKey(".");
+    _ = try a.onKey("enter");
+    try testing.expectEqualStrings("test → queue", a.status.items);
+    const q = try tmp.dir.readFileAlloc(testing.io, ".claude/queue.jsonl", arena.allocator(), .unlimited);
+    try testing.expect(std.mem.indexOf(u8, q, "\"kind\":\"review\",\"issue_key\":\"ENG-2\"") != null);
+    try testing.expect(std.mem.indexOf(u8, q, "\"kind\":\"test\",\"issue_key\":\"ENG-6\"") != null);
 }

@@ -23,6 +23,8 @@ const mock = @import("../http/mock.zig");
 const driver_mod = @import("driver.zig");
 const key = @import("../core/key.zig");
 const screen_mod = @import("../ipc/screen.zig");
+const ipc_command = @import("../ipc/command.zig");
+const build_options = @import("build_options");
 
 pub const Driver = driver_mod.Driver;
 pub const Factory = driver_mod.Factory;
@@ -139,6 +141,14 @@ const Run = struct {
     name: []u8,
     workspace: []u8 = "",
     driver: ?Driver = null,
+    /// How much of the workspace's `command` file has been read. The
+    /// file is a mounted integration's Tier-2 line channel
+    /// (`statusline-set-segment`, `set-activity-badge`, …); the host
+    /// makes its directory when a pane is spawned and the runner reads
+    /// it on every tick, so a `.test` can assert the chip a pane
+    /// published. Nothing is created here: a script that never mounts a
+    /// pane keeps a workspace with no `.mnml/` in it.
+    cmd_offset: u64 = 0,
     /// // changed (sessions-card): the file's environment — the run's
     /// plus `MNML_E2E_WORKSPACE` and the `# env:` lines — for its
     /// `shell` steps too, so a step can name the workspace the App sees
@@ -172,6 +182,7 @@ const Run = struct {
             Io.Dir.cwd().deleteTree(io, self.workspace) catch {};
             gpa.free(self.workspace);
         }
+        self.cmd_offset = 0;
 
         // The driver gets its own leak-checking allocator: a leak anywhere
         // in the App is this file's failure, not a note at process exit.
@@ -250,6 +261,7 @@ const Run = struct {
     fn renderCycle(self: *Run) ?[]u8 {
         const d = self.driver.?;
         d.tick() catch |e| return self.errMsg("render: {s}", e);
+        self.drainIpc();
         self.sleepMs(self.opts.timing.step_settle_ms);
         d.expireChords() catch |e| return self.errMsg("render: {s}", e);
         d.tick() catch |e| return self.errMsg("render: {s}", e);
@@ -259,6 +271,36 @@ const Run = struct {
 
     fn errMsg(self: *Run, comptime fmt: []const u8, e: anyerror) ?[]u8 {
         return std.fmt.allocPrint(self.gpa, fmt, .{@errorName(e)}) catch null;
+    }
+
+    /// Every complete line appended to the workspace's `command` file
+    /// since the last look, into the driver (the channel's own `poll`,
+    /// without the channel: opening one would create the directory).
+    fn drainIpc(self: *Run) void {
+        const d = self.driver orelse return;
+        const io = self.io;
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const path = std.fs.path.join(a, &.{ self.workspace, ".mnml", build_options.ipc_subdir, "command" }) catch return;
+        const file = Io.Dir.cwd().openFile(io, path, .{}) catch return;
+        defer file.close(io);
+        const len = file.length(io) catch return;
+        if (len < self.cmd_offset) self.cmd_offset = 0;
+        if (len == self.cmd_offset) return;
+        const buf = a.alloc(u8, @intCast(len - self.cmd_offset)) catch return;
+        const n = file.readPositionalAll(io, buf, self.cmd_offset) catch return;
+        const text = buf[0..n];
+        var start: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, text, start, '\n')) |nl| {
+            const line = text[start .. nl + 1];
+            start = nl + 1;
+            self.cmd_offset += line.len;
+            const trimmed = std.mem.trim(u8, line, " \t\r\n");
+            if (trimmed.len == 0) continue;
+            const cmd = ipc_command.parse(a, trimmed) catch continue;
+            d.ipcCommand(&cmd) catch {};
+        }
     }
 
     fn sleepMs(self: *Run, ms: u64) void {
@@ -286,6 +328,7 @@ const Run = struct {
             if (self.nowMs() >= deadline) return err;
             self.gpa.free(err);
             d.tick() catch |e| return self.errMsg("render: {s}", e);
+            self.drainIpc();
             self.sleepMs(self.opts.timing.expect_poll_ms);
             d.render() catch |e| return self.errMsg("render: {s}", e);
         }
@@ -329,6 +372,7 @@ const Run = struct {
                 const deadline = self.nowMs() + @as(i64, @intCast(ms));
                 while (self.nowMs() < deadline) {
                     d.tick() catch |e| return self.errMsg("wait: {s}", e);
+                    self.drainIpc();
                     const remaining: u64 = @intCast(@max(deadline - self.nowMs(), 0));
                     self.sleepMs(@min(remaining, self.opts.timing.wait_slice_ms));
                 }

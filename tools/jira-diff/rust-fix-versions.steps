@@ -1,0 +1,29 @@
+waitfor KEY 30000
+settle 800
+snap current
+key f
+settle 1500
+snap tab-version-picker
+key esc
+key j
+key F
+settle 1500
+snap ticket-version-picker
+key esc
+key t
+settle 1500
+snap transition
+key esc
+key .
+settle 800
+snap action-picker
+key esc
+key d
+settle 1500
+snap detail
+key d
+key D
+settle 1500
+snap modal
+key esc
+quit

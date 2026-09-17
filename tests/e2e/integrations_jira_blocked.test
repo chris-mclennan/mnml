@@ -1,42 +1,55 @@
 # The Jira pane with nothing to show: no config, then a config with no
-# token. Both paint a screen that names the file and the next step —
-# neither is a blank pane, and neither needs the network.
+# token, then one that does not parse. Each paints a screen that names
+# the file and the next step — never a blank pane — and r tries again
+# without a restart. No network.
 #
 # The manifest is written straight into the workspace's own
-# `.mnml/integrations/`, which is the per-project install path; the
-# trust gate is not in the way because the e2e workspace is trusted.
+# `.mnml/integrations/`, the per-project install path; the trust gate is
+# not in the way because the e2e workspace is trusted.
 # env: JIRA_API_TOKEN=
 # env: MNML_JIRA_CONFIG=
-write .mnml/integrations/jira.zon ".{ .id = \"jira\", .label = \"Jira\", .version = \"0.1.0\", .binary = \"$MNML_JIRA\", .commands = .{ .{ .id = \"jira.open\", .title = \"Jira: tickets\" } } }"
+write .mnml/integrations/jira_work.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
 command integrations.refresh
-command jira.open
+command jira_work.open
 command view.toggle_tree
 command view.focus_pane
 expect screen contains "No Jira config yet."
 expect screen contains "--write-config"
-expect screen contains ".jira.url"
-key q
-wait 300
-key x
-# Now a config, but still no token: the pane says where a token comes
-# from and where to put it, and never guesses one.
-write .mnml/integrations/jira/config.zon ".{ .jira = .{ .url = \"http://127.0.0.1:18720\", .email = \"fake@acme.com\" }, .tabs = .{ .{ .name = \"Mine\", .kind = .work_assigned } } }"
-command jira.open
-command view.focus_pane
+expect screen contains ".jira_url"
+expect screen contains "r try again · q quit"
+# r with the file still missing paints the same screen; a config that
+# lands meanwhile is picked up by the next r.
+key r
+expect screen contains "No Jira config yet."
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18726\", .email = \"fake@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+key r
 # `# env: JIRA_API_TOKEN=` sets it to the empty string, which is its own
 # reason: the user meant to set it and the shell ate the value.
-expect screen contains "set to the empty string"
+expect screen contains "No Jira API token."
+expect screen contains "$JIRA_API_TOKEN is set to the empty string."
 expect screen contains "id.atlassian.com"
-expect screen contains "JIRA_API_TOKEN"
 expect screen contains "press r to try again"
 expect screen lacks "KEY"
 key q
 wait 300
 key x
-# And a config that does not parse says so, with the file named.
-write .mnml/integrations/jira/config.zon ".{ .jira = .{ .url = "
-command jira.open
+# A config that does not parse says so, with the file named.
+write .mnml/integrations/jira/config.zon ".{ .jira_url = "
+command jira_work.open
 command view.focus_pane
 expect screen contains "The config did not parse."
 expect screen contains "config.zon"
 key q
+wait 300
+key x
+# A scope with no tabs names the kinds it wants.
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18726\", .email = \"fake@acme.com\", .tabs = .{ .{ .name = \"Sprint\", .kind = .board_active_sprint, .project = \"ENG\", .board_id = 7 } } }"
+command jira_work.open
+command view.focus_pane
+expect screen contains "No tabs for this scope."
+expect screen contains "--only work"
+expect screen contains "work_assigned"
+key q
+wait 300
+key x
+expect screen lacks "No tabs for this scope."

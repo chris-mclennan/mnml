@@ -1,0 +1,38 @@
+# The reference tracker's config for tools/jira-diff.sh: the same five
+# tabs as config.zon beside it, pointed at the offline server. PORT is
+# substituted by the script.
+jira_url = "http://127.0.0.1:PORT"
+email = "fake@acme.com"
+refresh_interval_secs = 3600
+team_field_id = "customfield_10056"
+team_field_name = "Team"
+
+[[tabs]]
+name = "Assigned"
+kind = "work_assigned"
+
+[[tabs]]
+name = "Recently Done"
+kind = "work_recently_done"
+
+[[tabs]]
+name = "Current Release"
+kind = "fix_version_tree"
+project = "ENG"
+mode = "current_release"
+status_order = ["Testing", "In PR Review", "In Progress", "To Do", "Done"]
+
+[tabs.bumps]
+pr_approved = "Testing"
+no_open_prs = "Testing"
+
+[[tabs]]
+name = "Sprint"
+kind = "board_active_sprint"
+project = "ENG"
+board_id = 7
+
+[[tabs]]
+name = "Backlog"
+kind = "board_backlog"
+project = "ENG"

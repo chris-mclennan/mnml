@@ -1,0 +1,84 @@
+# Jira Work — the filter narrows the tree while typing and the header
+# counts the match, Esc unwinds it; the JQL editor shows the tab's
+# resolved query in its box, Enter runs the edit and the tab re-fetches;
+# the scope chip is on the toolbar; a refresh keeps the cursor's ticket.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18725 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18725\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+wait 4000
+command jira_work.open
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK (3)"
+# /: the search pill takes the text and the tree narrows as it is typed.
+type /
+expect screen contains "type to filter…▏"
+expect screen contains "type to filter · Enter commit · Esc cancel"
+type vou
+expect screen contains "vou▏"
+expect screen contains "JIRA WORK (1 of 3)"
+expect screen contains "ENG-5"
+expect screen lacks "ENG-2"
+key enter
+expect screen contains " vou "
+expect screen contains "JIRA WORK (1 of 3)"
+# Esc clears the filter and nothing else; a second Esc would quit.
+key esc
+expect screen contains "JIRA WORK (3)"
+expect screen contains "ENG-2"
+expect screen contains "/ filter"
+# E: the JQL editor with the tab's query; Ctrl+E then a clause; Enter runs it.
+key shift+e
+expect screen contains "JQL — type to edit · Enter run · Esc cancel"
+expect screen contains "assignee = currentUser() AND resolution = Unresolved"
+key ctrl+e
+type  AND issuetype = Bug
+key enter
+expect screen lacks "JQL — type to edit"
+expect screen contains "JIRA WORK (1)"
+expect screen contains "ENG-5"
+expect screen lacks "ENG-2"
+# The scope chip and the assignee chip are on the toolbar as mode chips.
+expect screen contains " status: All "
+expect screen contains " assignee: All "
+expect screen contains " space: — "
+# r refetches and the cursor stays on its ticket.
+key j
+key r
+expect screen contains "ENG-5"
+key q
+wait 500
+key x
+expect screen lacks "1 Assigned"
+command integrations.show_installed
+expect screen contains "Installed (7)"
+# The three manifests sort last: End reaches each in turn.
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Fix Versions?"
+key r
+expect screen contains "removed jira_fix_versions"
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Boards?"
+key r
+expect screen contains "removed jira_boards"
+expect screen contains "Installed (4)"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
