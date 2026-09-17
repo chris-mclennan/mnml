@@ -16,9 +16,10 @@ expect screen contains "unclamp"
 # The rows are grouped by file under a fold header, with its count.
 expect screen contains "one.zig"
 expect screen contains "two.zig"
-# Enter on a header folds it; the other file's row stays.
+# Enter on a header folds it; the other file's row stays. The scan sorts,
+# so `one.zig` leads on every platform and it is `widen` that goes.
 key enter
-expect screen lacks "unclamp"
-expect screen contains "widen"
-key enter
+expect screen lacks "widen"
 expect screen contains "unclamp"
+key enter
+expect screen contains "widen"

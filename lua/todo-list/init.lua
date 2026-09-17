@@ -24,7 +24,10 @@ end
 local function scan()
   hits = {}
   mnml.task.run{
-    cmd = "grep -rn TODO --exclude-dir=.git --exclude-dir=.mnml . | head -200",
+    -- `| sort` so "Found" is the same order on every machine: grep walks
+    -- the directory in whatever order the filesystem hands back, which is
+    -- not the same on macOS and Linux.
+    cmd = "grep -rn TODO --exclude-dir=.git --exclude-dir=.mnml . | sort | head -200",
     hidden = true,
     on_line = parse,
     on_done = function() if list then list:refresh() end end,
