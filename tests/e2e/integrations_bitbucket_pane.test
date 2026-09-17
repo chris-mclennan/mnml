@@ -59,8 +59,12 @@ expect screen contains "author: all"
 expect screen contains "Open + Draft · 2 repos, 3 PRs"
 expect screen contains "⏎ expand"
 expect screen contains "q quit"
-# The reference's dead placeholder chips are not painted.
+# The reference's four dead placeholder chips are not painted — the
+# ones whose click only says `filter not wired yet (round-1 visual)`.
 expect screen lacks "Target branch"
+expect screen lacks "Pipeline type"
+expect screen lacks "Trigger type"
+expect screen lacks "[ Branch"
 
 # The footer lifts the 24-hour window: the day-old #1198 appears.
 key G

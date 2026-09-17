@@ -127,7 +127,7 @@ the facts are the spec, and the mnml-zig side of each is covered by
   no Tier-2 line and sets no activity badge: the Rust mnml polls
   `--values` and paints the segment.
 
-## What the port keeps, changes and needs a decision on
+## What the port keeps, changes and decided
 
 Kept: every screen above, its columns and keys, the two chips, the
 config keys by name, the shared rate bucket, the headless JSON
@@ -137,10 +137,31 @@ the toolbar is the caps header's chips; the tab strip is mnml's
 `▌` marker; columns are dropped whole below their width instead of
 squeezed; the hint row is generated from the keymap and its words are
 click targets; `?` opens a key sheet; the pane paints its progress
-during a fetch instead of freezing. Left out: the four placeholder
-chips that do nothing in the reference (`Target branch`, `Branch`,
-`Pipeline type`, `Trigger type`); `--prefetch` (mnml-zig has no
-prefetch worker). Added: a working `/` filter behind the filter pill
-(the reference's Search chip is a dead placeholder), a right-click row
-menu of the same actions. Each of these is listed for the user's
-decision in the port's report.
+during a fetch instead of freezing.
+
+The six the user settled:
+
+1. **The four dead chips are cut.** `Target branch`, `Branch`,
+   `Pipeline type` and `Trigger type` paint in the reference and answer
+   a click with `filter not wired yet (round-1 visual)`. They are not
+   here — no paint, no hit target, no row in the key table — and a unit
+   test and `integrations_bitbucket_pane.test` both assert the screen
+   lacks all four, on both families.
+2. **A working `/` filter** behind the pill, the shape the sibling Jira
+   integration uses: `/` opens it, typing narrows live, `⏎` commits,
+   `esc` clears and leaves, the caps header reads `N of M` while it
+   narrows, and the hint row says what the filter answers to.
+3. **A right-click row menu**, deterministic per row kind — repo
+   header, PR, merged PR, the `Show N more` footer, branch — offering
+   only actions the pane already answers to by key. No writes were
+   invented; approve appears only where its key is bound.
+4. **`--prefetch` is kept and wired.** It fetches every tab through the
+   shared bucket and writes the bodies to `<config dir>/cache/`; the
+   pane serves each URL from there once, so its first paint is rows.
+   The integration README carries the contract a poller runs it under.
+5. **The token is `BITBUCKET_ACCESS_TOKEN` when set, the token file
+   otherwise** — the reference's three variables still resolve between
+   them. `--check` names the source and the length, never the token.
+6. **`space i b` / `space i l`** open the two chips, and the leader
+   popup lists them under `+integrations` — the tree reads the
+   registry, so a built-in row always wins the key.

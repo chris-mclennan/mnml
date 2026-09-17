@@ -687,8 +687,21 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
     try t.expect(has(scr, "⏎ expand"));
     try t.expect(has(scr, "q quit"));
-    // The dead placeholder chips of the reference are not painted.
-    try t.expect(!has(scr, "Target branch"));
+    // The reference paints four chips that do nothing when clicked
+    // (`filter not wired yet (round-1 visual)`). None of them is here,
+    // on either family — the `/` pill is what replaced the fifth, its
+    // Search chip.
+    try s.key("3");
+    const pipelines = try s.draw();
+    for ([_][]const u8{ "Target branch", "Pipeline type", "Trigger type" }) |dead_chip| {
+        try t.expect(!has(scr, dead_chip));
+        try t.expect(!has(pipelines, dead_chip));
+    }
+    // `Branch ▾` was the fourth; the pipelines tree's column header is
+    // the only `BRANCH` on the screen.
+    try t.expect(!has(pipelines, "Branch ▾"));
+    try t.expect(!has(pipelines, "[ Branch"));
+    try t.expect(has(pipelines, "REPO / BRANCH"));
 }
 
 test "a click on a row selects that row and toggles a header; the strip switches tabs; the hints fire" {
