@@ -948,9 +948,11 @@ test "a long injected range keeps its tree between windows and lets go of it at 
 
 test "a highlights query that fans out past the cursor's 16-bit capture-list ids finishes instead of reading a freed list" {
     const gpa = testing.allocator;
-    // The Haskell fixture end to end, sixty times over: the second copy's
-    // module header is an error, and the query's open-ended patterns hold
-    // more than 65535 matches in progress across what follows.
+    // The 54-byte Haskell fixture end to end, some 2400 times over. Every
+    // `module Main where` after the first is an error, so one parent ends
+    // up with thousands of error children, and the query's open-ended
+    // patterns hold more matches in progress across them than the cursor's
+    // 16-bit ids can name.
     const e = table.entries[table.find("hs").?];
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(gpa);

@@ -353,9 +353,10 @@ pub const QueryCursor = opaque {
     /// (`didExceedMatchLimit`), so a query that reaches it may paint
     /// differently than it would with more room — there is no exact answer
     /// to hold it to, since the uncapped query is the one that crashes.
-    /// What was measured: of the 60 grammars' fixtures, once and repeated
-    /// to 128 KB, that Haskell text (not valid Haskell: every copy after
-    /// the first is a parse error) is the only one that reaches 256; on it
+    /// What was measured: of the 42 grammars' fixtures, once and repeated
+    /// to 128 KB, that Haskell text (a 54-byte module pasted ~2400 times,
+    /// not valid Haskell: every copy after the first is a parse error) is
+    /// the only one that reaches 256; on it
     /// the whole-file captures agree at 256, 1024 and 4096, but one 19 KB
     /// window in six differs between 256 and 1024. Every other grammar
     /// never reaches the cap, where it changes nothing.
