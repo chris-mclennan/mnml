@@ -100,6 +100,12 @@ pub const Line = struct {
 /// Directives from the leading comment block.
 pub const Header = struct {
     requires_network: bool = false,
+    /// `# requires: macos` (also `linux`, `windows`): the file only runs
+    /// on that OS, and is announced as skipped anywhere else. For a
+    /// screen only one platform can paint — the first-launch wizard's
+    /// Option-as-Alt fix writes ghostty's `macos-option-as-alt`, which
+    /// exists nowhere else, so elsewhere the row says there is no fix.
+    requires_os: ?std.Target.Os.Tag = null,
     width: ?u16 = null,
     height: ?u16 = null,
     /// `# env: NAME=value` lines, in order; slices of the text parsed.
@@ -366,7 +372,13 @@ pub fn parseHeader(text: []const u8) Header {
         if (line.len == 0) continue;
         if (line[0] != '#') break;
         const after_hash = trim(std.mem.trimStart(u8, line, "#"));
-        if (std.ascii.eqlIgnoreCase(after_hash, "requires: network")) h.requires_network = true;
+        if (std.ascii.startsWithIgnoreCase(after_hash, "requires:")) {
+            const what = trim(after_hash["requires:".len..]);
+            if (std.ascii.eqlIgnoreCase(what, "network")) h.requires_network = true;
+            if (std.ascii.eqlIgnoreCase(what, "macos")) h.requires_os = .macos;
+            if (std.ascii.eqlIgnoreCase(what, "linux")) h.requires_os = .linux;
+            if (std.ascii.eqlIgnoreCase(what, "windows")) h.requires_os = .windows;
+        }
         if (std.ascii.startsWithIgnoreCase(after_hash, "height:")) {
             h.height = std.fmt.parseInt(u16, trim(after_hash["height:".len..]), 10) catch null;
         }
@@ -580,6 +592,10 @@ test "header directives come only from the leading comment block" {
     try t.expect(parseHeader("# requires: network\nopen x\n").requires_network);
     try t.expect(parseHeader("#   Requires: Network  \n\n# more\nopen x\n").requires_network);
     try t.expect(!parseHeader("open x\n# requires: network\n").requires_network);
+    try t.expectEqual(@as(?std.Target.Os.Tag, .macos), parseHeader("# requires: macos\nopen x\n").requires_os);
+    try t.expectEqual(@as(?std.Target.Os.Tag, .linux), parseHeader("#  Requires: Linux \nopen x\n").requires_os);
+    try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("# requires: network\nopen x\n").requires_os);
+    try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("open x\n# requires: macos\n").requires_os);
     try t.expectEqual(@as(?u16, 120), parseHeader("# width: 120\n").width);
     try t.expectEqual(@as(?u16, null), parseHeader("# width: wide\n").width);
     try t.expectEqual(@as(?u16, 14), parseHeader("# height: 14\n").height);

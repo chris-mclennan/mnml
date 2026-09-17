@@ -6,6 +6,7 @@
 # also carries the Space hint in every terminal (the dump does not
 # depend on where it was cut). Elsewhere (Linux, Windows) Space says
 # there is no auto-fix.
+# requires: macos
 # env: HOME=${MNML_E2E_WORKSPACE}/home
 # env: TERM_PROGRAM=ghostty
 # env: XDG_CONFIG_HOME=
