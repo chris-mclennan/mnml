@@ -312,7 +312,14 @@ pub const Session = struct {
         handler.effects.write_pty = onWritePty;
         self.stream = .init(.{ .handler = handler, .allocator = gpa });
 
-        const th = try std.Thread.spawn(.{ .stack_size = 256 * 1024 }, readerMain, .{ shared, gpa });
+        // 1 MiB, not the 256 KiB this once asked for: glibc rejects a
+        // thread stack smaller than its static TLS block plus a few pages,
+        // and on Debian 13 (both x86_64 and aarch64) that floor sits
+        // between 256 KiB and 320 KiB — well above `PTHREAD_STACK_MIN`.
+        // `pthread_create` then returns EINVAL, which std treats as
+        // `unreachable`, so every pty pane aborted the process on Linux.
+        // The reader needs a few KiB; the number only has to clear glibc.
+        const th = try std.Thread.spawn(.{ .stack_size = 1024 * 1024 }, readerMain, .{ shared, gpa });
         th.detach();
         return self;
     }
