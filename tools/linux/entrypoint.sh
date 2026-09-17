@@ -56,6 +56,13 @@ if [ "$PHASE" = build ] || [ "$PHASE" = all ]; then
   step "zig build" zig build --summary failures
   step "zig build -Dpartial=false" zig build -Dpartial=false --summary failures
   step "zig build glyph-audit" zig build glyph-audit
+  # `arena-audit` landed on main after this branch forked; run it when the
+  # tree being tested has it rather than failing on an unknown step.
+  if zig build --help 2>/dev/null | grep -q '^ *arena-audit'; then
+    step "zig build arena-audit" zig build arena-audit
+  else
+    hr "zig build arena-audit"; echo "[skipped — no such step in this tree]"
+  fi
   step "zig build -Doptimize=ReleaseSafe" zig build -Doptimize=ReleaseSafe --summary failures
 fi
 
