@@ -26,6 +26,7 @@
 //! whether or not all of it is inside.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const ts = @import("tree_sitter");
 const table = @import("table.zig");
@@ -205,6 +206,8 @@ pub const Highlighter = struct {
     /// that straddles the window is walked, and one enclosing node with
     /// thousands of children fills the pool on its own.
     dropped_matches: bool = false,
+    /// How many windows ever ran into the cap.
+    drops: u64 = 0,
     /// What this highlighter has been made to do, for the tests that hold
     /// a motion to "no parse, and no query wider than a viewport": parses
     /// run by `parse`, windows built, and the widest of them in bytes.
@@ -430,7 +433,12 @@ pub const Highlighter = struct {
                 }
             }
         }
-        if (cursor.didExceedMatchLimit()) self.dropped_matches = true;
+        if (cursor.didExceedMatchLimit()) {
+            self.dropped_matches = true;
+            self.drops += 1;
+            // Never silent: a debug build says which grammar, and where.
+            if (builtin.mode == .Debug) std.log.warn("highlight: {s} ran into the query cursor's match cap over bytes [{d}, {d}); some matches were dropped", .{ table.entries[self.root.?].key, lo, hi });
+        }
         if (depth + 1 >= max_depth) return;
         const inj = l.injections orelse return;
         const content_idx = l.inj_content orelse return;
@@ -786,7 +794,7 @@ fn repeated(gpa: Allocator, unit: []const u8, min_len: usize) ![]u8 {
     return out.toOwnedSlice(gpa);
 }
 
-test "a window paints its bytes exactly as the whole file does: every grammar whose queries keep every match, injections included" {
+test "a window paints its bytes exactly as the whole file does: every grammar, injections included, none of them near the match cap" {
     const gpa = testing.allocator;
     var prng = std.Random.DefaultPrng.init(0x77696e64);
     const rand = prng.random();
@@ -798,13 +806,10 @@ test "a window paints its bytes exactly as the whole file does: every grammar wh
         defer gpa.free(text);
         // The reference: every span of the file, from a highlighter that
         // has seen nothing else. It is a reference only while every query
-        // behind it kept every match. One that ran into the cursor's cap
+        // behind it kept every match: one that ran into the cursor's cap
         // let some go, and what a capped query paints moves with the cap
-        // and the range (measured: one 19 KB window in six of this very
-        // Haskell text differs between a cap of 256 and one of 1024). Such
-        // a text has no exact answer to hold a window to — the uncapped
-        // query is the one that crashes — so it is excused from the
-        // comparison BY NAME below, never silently.
+        // and the range. Such a text has no exact answer to hold a window
+        // to, so it is reported and fails the test, never skipped.
         var ref = Highlighter.init(gpa);
         defer ref.deinit();
         ref.setLanguage(i);
@@ -838,15 +843,15 @@ test "a window paints its bytes exactly as the whole file does: every grammar wh
             try testing.expect(h.covers(lo, hi));
         }
         for (&h.windows) |*w| try testing.expect(w.hi - w.lo <= 3001 + 2 * window_margin);
-        if (capped) {
-            std.debug.print("note: {s} ran into the match cap on this text; its windows were not compared with the whole file\n", .{e.key});
-            try excused.append(gpa, e.key);
-        }
+        if (capped) try excused.append(gpa, e.key);
     }
-    // Exactly the Haskell text is excused. A second name here means
-    // another grammar lost its exact comparison and nobody chose that.
-    try testing.expectEqual(@as(usize, 1), excused.items.len);
-    try testing.expectEqualStrings("hs", excused.items[0]);
+    // No grammar's query nears the cap on its fixture repeated to 128 KB
+    // (Haskell's did, until its misplaced paren was corrected): every one
+    // was compared exactly. A name here is a grammar that lost that.
+    if (excused.items.len != 0) {
+        for (excused.items) |k| std.debug.print("{s} ran into the match cap; its windows were not compared with the whole file\n", .{k});
+        return error.GrammarReachedMatchCap;
+    }
 }
 
 /// `(row, column)` of byte `at`, the way `InputEdit` wants it.
@@ -964,26 +969,42 @@ test "a long injected range keeps its tree between windows and lets go of it at 
     try testing.expectEqual(@as(usize, 0), h.injected.items.len);
 }
 
-test "a highlights query that fans out past the cursor's 16-bit capture-list ids finishes instead of reading a freed list" {
+test "the match cap is a crash guard: a query that fans out past the cursor's 16-bit capture-list ids finishes instead of reading a freed list" {
     const gpa = testing.allocator;
-    // The 54-byte Haskell fixture end to end, some 2400 times over. Every
-    // `module Main where` after the first is an error, so one parent ends
-    // up with thousands of error children, and the query's open-ended
-    // patterns hold more matches in progress across them than the cursor's
-    // 16-bit ids can name.
+    // The 54-byte Haskell fixture pasted some 2400 times, and the two
+    // patterns tree-sitter-haskell 0.23.1 shipped with a misplaced paren
+    // (`src/highlight/queries/haskell.scm` corrects them): `match: (_)`
+    // as a third, unanchored sibling keeps a match in progress per
+    // signature - more than the cursor's 16-bit ids can name. Without a
+    // cap that reads a freed capture list; at 65535 it runs for minutes.
     const e = table.entries[table.find("hs").?];
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(gpa);
     while (text.items.len < 128 * 1024) try text.appendSlice(gpa, e.fixture);
+    const parser = try ts.Parser.init();
+    defer parser.deinit();
+    try parser.setLanguage(e.language());
+    const tree = parser.parseString(null, text.items).?;
+    defer tree.deinit();
+    const broken =
+        \\((decl/signature name: (variable) @_name type: (type))
+        \\  . (decl name: (variable) @variable) match: (_)
+        \\  (#eq? @_name @variable))
+    ;
+    const q = try ts.Query.init(e.language(), broken, null);
+    defer q.deinit();
+    const cursor = try ts.QueryCursor.init();
+    defer cursor.deinit();
+    cursor.exec(q, tree.rootNode());
+    var ci: u32 = 0;
+    var n: usize = 0;
+    while (cursor.nextCapture(&ci)) |_| n += 1;
+    try testing.expect(cursor.didExceedMatchLimit());
+    // And the query as shipped, corrected, over the same text: every
+    // match kept.
     var h = Highlighter.init(gpa);
     defer h.deinit();
     h.setLanguage(table.find("hs").?);
     try testing.expect((try h.highlightAll(text.items)).len > 1000);
-    // And the cap is what it ran into: the same query, by hand.
-    const cursor = try ts.QueryCursor.init();
-    defer cursor.deinit();
-    cursor.exec(h.langs[h.root.?].?.highlights, h.rootNode().?);
-    var ci: u32 = 0;
-    while (cursor.nextCapture(&ci)) |_| {}
-    try testing.expect(cursor.didExceedMatchLimit());
+    try testing.expectEqual(@as(u64, 0), h.drops);
 }

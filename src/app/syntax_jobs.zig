@@ -336,4 +336,6 @@ test "G, gg, page-down and a search on a large document start no parse and build
     try testing.expect(hl.windows_built > built_before);
     try testing.expect(hl.widest_window <= 64 * 1024);
     try testing.expect(hl.widest_window < text.len / 8);
+    // And none of them ran into the query cursor's match cap.
+    try testing.expectEqual(@as(u64, 0), hl.drops);
 }

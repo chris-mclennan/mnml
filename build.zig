@@ -907,7 +907,8 @@ const grammars = [_]Grammar{
     .{ .name = "lua", .dep = "ts_lua", .scanner = true },
     .{ .name = "scala", .dep = "ts_scala", .scanner = true },
     .{ .name = "elixir", .dep = "ts_elixir", .scanner = true, .queries = &.{ "highlights", "injections" } },
-    .{ .name = "haskell", .dep = "ts_haskell", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    // Its highlights query is shipped corrected from src/highlight/queries/ (see the file).
+    .{ .name = "haskell", .dep = "ts_haskell", .scanner = true, .queries = &.{"injections"} },
     // php/ is the HTML-embedding grammar mnml uses; the crate's php_only/ is not built.
     .{ .name = "php", .dep = "ts_php", .src = "php/src", .scanner = true, .include_src = true, .queries = &.{ "highlights", "injections" } },
     .{ .name = "make", .dep = "ts_make" },
@@ -943,6 +944,7 @@ const LocalQuery = struct {
 };
 
 const local_queries = [_]LocalQuery{
+    .{ .out = "haskell/highlights.scm", .src = "src/highlight/queries/haskell.scm" },
     .{ .out = "hcl/highlights.scm", .src = "src/highlight/queries/hcl.scm" },
     .{ .out = "proto/highlights.scm", .src = "src/highlight/queries/proto.scm" },
     .{ .out = "vue/highlights.scm", .src = "src/highlight/queries/vue.scm" },
