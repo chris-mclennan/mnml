@@ -199,7 +199,9 @@ pub const History = struct {
         if (self.redo.top()) |e| try widen(self.gpa, e, live, a, b);
     }
 
-    fn widen(gpa: Allocator, e: *Entry, live: []const u8, a: usize, b: usize) Allocator.Error!void {
+    /// Widen one hull spelled against `live` over `[a, b)`, which is about
+    /// to be replaced. The document's saved state is kept the same way.
+    pub fn widen(gpa: Allocator, e: *Entry, live: []const u8, a: usize, b: usize) Allocator.Error!void {
         const n = live.len;
         std.debug.assert(a <= b and b <= n and e.p + e.s <= n);
         // A state equal to the text shares all of it; where the shared

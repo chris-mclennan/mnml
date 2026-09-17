@@ -3220,7 +3220,7 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
         }
     }
     ed.setCursor(ed.byteAtCol(rect.r0, rect.c0));
-    e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+    e.buf.doc.recomputeDirty();
     e.syntax.dirty = true;
     _ = app;
 }
@@ -3257,7 +3257,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
             try ed.splice(at, at, typed);
         }
         ed.setCursor(b.start_byte);
-        e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+        e.buf.doc.recomputeDirty();
         e.syntax.dirty = true;
         app.needs_render = true;
     }
@@ -3286,7 +3286,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
                 try ed.splice(at, at, with_nl);
             }
         }
-        e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+        e.buf.doc.recomputeDirty();
         e.syntax.dirty = true;
         app.needs_render = true;
     }
@@ -3323,7 +3323,7 @@ fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!v
             try ed.splice(del_start, del_end, "");
             const row = @min(r0, ed.lineCount() - 1);
             ed.setCursor(ed.firstNonWs(row));
-            e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+            e.buf.doc.recomputeDirty();
             e.syntax.dirty = true;
         },
         else => {},

@@ -317,7 +317,7 @@ fn printMemReport(app: *App) void {
         for (h.redo.items.items[h.redo.head..]) |s| redo_bytes += s.mid.len;
         std.debug.print("mem-report: doc {s}: text {d} MB (cap {d}) | saved {d} MB | lines {d} MB | undo {d} entries {d} KB | redo {d} entries {d} KB | kept spans {d}\n", .{
             d.path orelse "(scratch)",                   mb(d.text.items.len),
-            mb(d.text.capacity),                         mb(d.saved_text.len),
+            mb(d.text.capacity),                         mb(d.savedBytes()),
             mb(d.line_starts.capacity * @sizeOf(usize)), h.undoLen(),
             mb(undo_bytes),                              h.redoLen(),
             mb(redo_bytes),                              e.syntax.hl.keptSpanCount(),

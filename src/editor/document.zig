@@ -179,8 +179,11 @@ pub const Document = struct {
     /// Owned. Null for a scratch document.
     path: ?[]u8 = null,
     dirty: bool = false,
-    /// The text as of the last load / save — `dirty` is a comparison.
-    saved_text: []u8,
+    /// The text as of the last load / save — `dirty` is a comparison —
+    /// kept as what differs from the live text (`undo.Entry`'s hull, told
+    /// of every splice as the history's tops are), not as a second copy
+    /// of the file.
+    saved: undo.Entry = .{ .p = 0, .s = 0, .mid = &.{}, .cursor = 0, .anchor = null, .seq = 0 },
     /// `m<letter>` positions — a buffer's, in vim — as byte offsets:
     /// `spliceBy` moves them with the text (`:help mark-motions`), a
     /// mark inside a deleted range landing at the deletion's start.
@@ -221,10 +224,10 @@ pub const Document = struct {
     pub fn create(gpa: Allocator, text: []const u8) Allocator.Error!*Document {
         const doc = try gpa.create(Document);
         errdefer gpa.destroy(doc);
-        doc.* = .{ .gpa = gpa, .history = .init(gpa), .saved_text = try gpa.dupe(u8, text) };
-        errdefer gpa.free(doc.saved_text);
+        doc.* = .{ .gpa = gpa, .history = .init(gpa) };
         try doc.text.appendSlice(gpa, text);
         errdefer doc.text.deinit(gpa);
+        doc.saved.p = text.len;
         // The history spells its states against the text.
         doc.history.live = &doc.text;
         try doc.rebuildLineIndex();
@@ -240,7 +243,7 @@ pub const Document = struct {
         self.edits.items.deinit(gpa);
         self.history.deinit();
         if (self.path) |p| gpa.free(p);
-        gpa.free(self.saved_text);
+        gpa.free(self.saved.mid);
         self.marks.deinit(gpa);
         if (self.language) |l| gpa.free(l);
         self.views.deinit(gpa);
@@ -370,6 +373,7 @@ pub const Document = struct {
         // The history's two top states share bytes with the text; they
         // take what this edit is about to change before it does.
         try self.history.beforeSplice(start, end);
+        try undo.History.widen(gpa, &self.saved, self.text.items, start, end);
         try self.text.replaceRange(gpa, start, end - start, new);
 
         const ls = &self.line_starts;
@@ -596,14 +600,23 @@ pub const Document = struct {
 
     /// Record the current text as the on-disk text.
     pub fn markSaved(self: *Document) Allocator.Error!void {
-        const copy = try self.gpa.dupe(u8, self.text.items);
-        self.gpa.free(self.saved_text);
-        self.saved_text = copy;
+        self.gpa.free(self.saved.mid);
+        self.saved.mid = &.{};
+        self.saved.p = self.text.items.len;
+        self.saved.s = 0;
         self.dirty = false;
     }
 
+    /// `dirty` is whether the text differs from the saved text: the
+    /// stretch the saved state does not share with it, compared.
     pub fn recomputeDirty(self: *Document) void {
-        self.dirty = !std.mem.eql(u8, self.text.items, self.saved_text);
+        const t = self.text.items;
+        self.dirty = !std.mem.eql(u8, self.saved.mid, t[self.saved.p .. t.len - self.saved.s]);
+    }
+
+    /// Bytes the saved state holds (none while the text is as saved).
+    pub fn savedBytes(self: *const Document) usize {
+        return self.saved.mid.len;
     }
 
     /// True when `path` names this document's file.
@@ -631,6 +644,46 @@ test "a document is shared by its views and dropped with the last one" {
     b.deinit();
     try testing.expectEqual(@as(u32, 1), doc.refs);
     doc.release();
+}
+
+test "dirty is a comparison with the saved text, kept as what differs — not as a second copy" {
+    const gpa = testing.allocator;
+    const big = try gpa.alloc(u8, 1 << 20);
+    defer gpa.free(big);
+    @memset(big, 'a');
+    const doc = try Document.create(gpa, big);
+    doc.retain();
+    defer doc.release();
+    doc.recomputeDirty();
+    try testing.expect(!doc.dirty);
+    try testing.expectEqual(@as(usize, 0), doc.savedBytes());
+    // Type in the middle: dirty, and the saved state holds a few bytes.
+    try doc.spliceBy(5000, 5000, "xyz", null);
+    doc.recomputeDirty();
+    try testing.expect(doc.dirty);
+    try testing.expect(doc.savedBytes() < 16);
+    // Take it back out: the same text as saved is clean again.
+    try doc.spliceBy(5000, 5003, "", null);
+    doc.recomputeDirty();
+    try testing.expect(!doc.dirty);
+    // A same-length change is still a change.
+    try doc.spliceBy(10, 11, "b", null);
+    doc.recomputeDirty();
+    try testing.expect(doc.dirty);
+    // Saving makes the text as it stands the saved text.
+    try doc.markSaved();
+    try testing.expect(!doc.dirty);
+    try testing.expectEqual(@as(usize, 0), doc.savedBytes());
+    try doc.spliceBy(10, 11, "a", null);
+    doc.recomputeDirty();
+    try testing.expect(doc.dirty);
+    // A wholesale replacement by the saved text is clean too.
+    const back = try gpa.dupe(u8, doc.bytes());
+    defer gpa.free(back);
+    back[10] = 'b';
+    try doc.setTextBy(back, null);
+    doc.recomputeDirty();
+    try testing.expect(!doc.dirty);
 }
 
 test "Splice.shift: before stays, after moves by the delta, inside lands on the start" {
