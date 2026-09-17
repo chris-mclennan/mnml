@@ -885,10 +885,15 @@ test "a blank row sits between one section and the next — none before the firs
         try testing.expect(seen);
     }
     // The hint under VARIABLES is row 2; j lands on WATCH's header (4),
-    // never on the gap (3); k walks back over it.
-    try testing.expect(all[2] == .hint);
-    try testing.expect(all[3] == .gap);
-    try testing.expect(all[4] == .header);
+    // never on the gap (3); k walks back over it. `screenText` rendered a
+    // frame, and a frame resets the frame arena `all` was built on, so the
+    // rows are taken again rather than read through a dangling slice —
+    // which macOS's allocator happened to keep readable and Linux's did
+    // not (a segfault, not a failed assert).
+    const after = try rows(&app, app.frame.allocator());
+    try testing.expect(after[2] == .hint);
+    try testing.expect(after[3] == .gap);
+    try testing.expect(after[4] == .header);
     app.debug_panel.list.cursor = 2;
     try app.handle(.{ .key = Key.char('j') });
     try testing.expectEqual(@as(usize, 4), app.debug_panel.list.cursor);

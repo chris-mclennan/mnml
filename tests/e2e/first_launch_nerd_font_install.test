@@ -22,6 +22,10 @@ key space
 expect screen lacks "First-launch setup"
 expect screen contains "install: nerd font"
 expect screen contains "watch the `install: nerd font` pane"
+# The macOS arm is one shim (`brew`); the Linux arm chains three (curl,
+# unzip, fc-cache), each holding `MNML_SHIM_SLEEP` — more than the 3 s an
+# expectation is retried for. Wait for the chain rather than race it.
+wait 4000
 # exit 0: the ghostty hint, and the wizard returns
 expect screen contains "Symbols Nerd Font Mono installed"
 expect screen contains "First-launch setup"

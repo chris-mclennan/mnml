@@ -784,6 +784,13 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             try out.flush();
             continue;
         }
+        // `# requires: macos` and friends: a screen only one platform can
+        // paint is announced as skipped elsewhere, not failed.
+        if (header.requires_os) |os| if (os != builtin.os.tag) {
+            try out.print("⊘ e2e SKIP (needs {t}): {s}\n", .{ os, path });
+            try out.flush();
+            continue;
+        };
         var one: [1]Size = undefined;
         const sizes: []const Size = if (header.width != null or header.height != null) blk: {
             one[0] = .{ .cols = header.width orelse content_size.cols, .rows = header.height orelse content_size.rows };

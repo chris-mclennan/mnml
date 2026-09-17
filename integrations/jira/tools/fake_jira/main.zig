@@ -837,7 +837,15 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     var body_buf: [8192]u8 = undefined;
     const body_reader = request.readerExpectNone(&body_buf);
     const body_store = arena.alloc(u8, 256 * 1024) catch return false;
-    const n = body_reader.readSliceShort(body_store) catch 0;
+    // `readerExpectNone` hands back `Reader.ending` for a method
+    // with no body — a `@constCast` of a const global. Reading from
+    // it writes `seek` back through that const pointer: a segfault
+    // on Linux, silently tolerated on macOS. Only read a body the
+    // method can actually carry.
+    const n = if (request.head.method.requestHasBody())
+        body_reader.readSliceShort(body_store) catch 0
+    else
+        0;
     const stop = std.mem.startsWith(u8, pathOf(target), "/__shutdown");
     const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
         Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };

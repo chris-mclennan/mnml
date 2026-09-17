@@ -411,7 +411,15 @@ const FakeServer = struct {
         }
         var body_buf: [4096]u8 = undefined;
         const body_reader = request.readerExpectNone(&body_buf);
-        const n = body_reader.readSliceShort(&saw_body) catch 0;
+        // `readerExpectNone` hands back `Reader.ending` for a method
+        // with no body — a `@constCast` of a const global. Reading from
+        // it writes `seek` back through that const pointer: a segfault
+        // on Linux, silently tolerated on macOS. Only read a body the
+        // method can actually carry.
+        const n = if (request.head.method.requestHasBody())
+            body_reader.readSliceShort(&saw_body) catch 0
+        else
+            0;
         saw_body_len = n;
         request.respond(reply_fixture, .{ .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} }) catch return;
     }

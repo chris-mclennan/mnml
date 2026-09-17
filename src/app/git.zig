@@ -4617,6 +4617,29 @@ const Fixture = struct {
             std.debug.print("git {s} failed: {s}\n", .{ args[0], res.stderr });
             return error.GitFailed;
         }
+        if (std.mem.eql(u8, args[0], "init")) try f.identify();
+    }
+
+    /// Give the fixture's repository an identity of its own. The `-c`
+    /// prefix above only reaches the test's own git; the app commits
+    /// through a child process that carries none, so on a machine with no
+    /// global identity — a container, a CI runner, anything but the
+    /// developer's own Mac — git refused with "Author identity unknown"
+    /// and the toast under test came back with that sentence appended.
+    fn identify(f: *Fixture) !void {
+        const settings = [_][2][]const u8{
+            .{ "user.email", "t@mnml.dev" },
+            .{ "user.name", "tester" },
+            .{ "commit.gpgsign", "false" },
+        };
+        for (settings) |kv| {
+            const res = std.process.run(testing.allocator, testing.io, .{
+                .argv = &.{ "git", "config", kv[0], kv[1] },
+                .cwd = .{ .path = f.root },
+            }) catch continue;
+            testing.allocator.free(res.stdout);
+            testing.allocator.free(res.stderr);
+        }
     }
 
     /// Tick until no git job is outstanding (or `max` ticks pass).

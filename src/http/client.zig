@@ -337,10 +337,16 @@ fn sleepMs(io: Io, ms: u64) void {
 /// unreachable, a name that does not resolve) reads as reqwest's does
 /// in Rust — `connection failed: error sending request for url (<url>)`
 /// — with the cause after it; the URL is what the user looks for.
+///
+/// The resolver's error is not the same one on every platform: a name
+/// that does not exist is `UnknownHostName` on macOS and
+/// `NoAddressReturned` on glibc. Missing one of them cost the URL — a
+/// Linux user saw a bare `NoAddressReturned` and no way to tell which
+/// request it belonged to.
 fn describe(gpa: Allocator, err: anyerror, url: []const u8) Allocator.Error![]u8 {
     const name = @errorName(err);
     switch (err) {
-        error.ConnectionRefused, error.ConnectionResetByPeer, error.ConnectionTimedOut, error.NetworkUnreachable, error.HostUnreachable, error.UnknownHostName, error.NameServerFailure, error.TemporaryNameServerFailure, error.HostLacksNetworkAddresses => return std.fmt.allocPrint(gpa, "connection failed: error sending request for url ({s}): {s}", .{ url, name }),
+        error.ConnectionRefused, error.ConnectionResetByPeer, error.ConnectionTimedOut, error.NetworkUnreachable, error.HostUnreachable, error.UnknownHostName, error.NameServerFailure, error.TemporaryNameServerFailure, error.HostLacksNetworkAddresses, error.NoAddressReturned, error.ResolvConfParseFailed, error.DetectingNetworkConfigurationFailed => return std.fmt.allocPrint(gpa, "connection failed: error sending request for url ({s}): {s}", .{ url, name }),
         else => {},
     }
     const prefix: []const u8 = switch (err) {

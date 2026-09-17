@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      linux_corpus:
+        description: "Also run the whole .test corpus on Linux (~12 min)"
+        type: boolean
+        default: false
 
 # Checkout and build only; the token needs nothing but read.
 permissions:
@@ -81,6 +87,61 @@ jobs:
       - name: mnml-zig --version
         shell: bash
         run: ./zig-out/bin/mnml-zig --version
+
+  # Linux, natively — the ubuntu runner IS Linux, so no container here;
+  # `tools/linux/run.sh` is the same sequence for a Mac. It earns its own
+  # job because the `check` matrix above stops at the gate: the parts that
+  # only ever broke on Linux were the corpus (a resolver error spelled
+  # differently, a filesystem enumeration order) and the pty (a thread
+  # stack glibc refused). Build + unit + gate + mouse always; the corpus
+  # behind the workflow_dispatch flag, because it is ~12 minutes.
+  linux:
+    name: linux (native) · gate · pty · corpus?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: linux-native
+
+      - name: zig build
+        run: zig build --summary failures
+
+      - name: zig build -Dpartial=false
+        run: zig build -Dpartial=false --summary failures
+
+      - name: zig build glyph-audit
+        run: zig build glyph-audit
+
+      - name: zig build test -Doptimize=ReleaseSafe
+        run: zig build test -Doptimize=ReleaseSafe --summary failures
+
+      - name: zig build -Doptimize=ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe --summary failures
+
+      - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
+        env:
+          MNML_E2E_ALLOW_SHELL: "1"
+        run: ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
+
+      # A container and a runner both give a real pty; this is the only
+      # place the terminal path (capability probe, mouse mode, SGR report,
+      # the hit map at real coordinates) is exercised at all.
+      - name: tools/pty-mouse-check.py
+        run: python3 tools/pty-mouse-check.py
+
+      - name: the whole corpus
+        if: ${{ inputs.linux_corpus }}
+        env:
+          MNML_E2E_ALLOW_SHELL: "1"
+        run: ./zig-out/bin/mnml-zig test
+
+      - name: the integration suites
+        run: |
+          (cd integrations/jira && zig build test --summary failures)
+          (cd integrations/bitbucket && zig build test --summary failures)
 
   # Cross-compile the exe and every test binary for each shipped target
   # (E7): Zig only analyses target-gated code when that target is built, so

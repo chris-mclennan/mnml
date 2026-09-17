@@ -333,10 +333,11 @@ fn editorOf(app: *App, pane: PaneId) SetError!*EditorPane {
 
 fn push(app: *App, item: Item) SetError!void {
     const st = &app.script_decor;
-    if (st.items.items.len >= max_items) {
-        item.free(app.gpa);
-        return error.TooMany;
-    }
+    // The item's strings stay the CALLER's: every `add*` below wraps this
+    // call in an `errdefer` that frees exactly what it adopted. Freeing
+    // here too was a double free on the budget path — the DebugAllocator
+    // caught it on Linux and not on macOS.
+    if (st.items.items.len >= max_items) return error.TooMany;
     try st.items.append(app.gpa, item);
     app.needs_render = true;
 }
