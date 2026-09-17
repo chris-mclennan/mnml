@@ -990,7 +990,15 @@ pub const Loopback = struct {
             var body_buf: [4096]u8 = undefined;
             const body_reader = request.readerExpectNone(&body_buf);
             const body_store = arena.alloc(u8, 64 * 1024) catch return;
-            const got = body_reader.readSliceShort(body_store) catch 0;
+            // `readerExpectNone` hands back `Reader.ending` for a method
+            // with no body — a `@constCast` of a const global. Reading from
+            // it writes `seek` back through that const pointer: a segfault
+            // on Linux, silently tolerated on macOS. Only read a body the
+            // method can actually carry.
+            const got = if (request.head.method.requestHasBody())
+                body_reader.readSliceShort(body_store) catch 0
+            else
+                0;
             const res = lb.store.handle(arena, request.head.method, target, authorization, body_store[0..got]) catch
                 fake.Response{ .status = 500, .body = "{}" };
             request.respond(res.body, .{
