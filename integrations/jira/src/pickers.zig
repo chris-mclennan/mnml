@@ -239,14 +239,14 @@ test "a field picker filters as typed, keeps the cursor on a visible row, and mo
     var p = FieldPicker.init(testing.allocator, .assignee);
     defer p.deinit();
     try testing.expect(p.current() == null);
-    try p.setItems(&.{ .{ .id = "", .label = "— Unassign —" }, .{ .id = "a1", .label = "Grace Hopper" }, .{ .id = "a2", .label = "Katherine Johnson" }, .{ .id = "a3", .label = "Alan Turing" } });
+    try p.setItems(&.{ .{ .id = "", .label = "— Unassign —" }, .{ .id = "a1", .label = "Grace Hopper" }, .{ .id = "a2", .label = "Dennis Hopper" }, .{ .id = "a3", .label = "Alan Turing" } });
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     try testing.expectEqual(@as(usize, 4), (try p.visible(a.allocator())).len);
     try p.move(1);
     try p.move(1);
     try testing.expectEqualStrings("a2", p.current().?.id);
-    try p.insert("chr");
+    try p.insert("gra");
     const vis = try p.visible(a.allocator());
     try testing.expectEqual(@as(usize, 1), vis.len);
     try testing.expectEqualStrings("a1", p.current().?.id);
@@ -254,7 +254,7 @@ test "a field picker filters as typed, keeps the cursor on a visible row, and mo
     try p.backspace();
     try p.backspace();
     try testing.expectEqual(@as(usize, 4), (try p.visible(a.allocator())).len);
-    try p.insert("mclennan");
+    try p.insert("hopper");
     try p.move(5);
     try testing.expectEqualStrings("a2", p.current().?.id);
     try p.move(-5);

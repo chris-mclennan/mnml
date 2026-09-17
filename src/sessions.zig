@@ -3221,14 +3221,14 @@ test "the summary rows: the ticket chip from ui.ticket_prefixes, hidden by an al
     const c = f.cardAt(0);
     try testing.expectEqualStrings("plain-9", c.key);
     // The ticket: the prefix without case, digits required, the first hit.
-    try testing.expect(detectTicket(&.{}, &.{"TE-9"}) == null);
-    try testing.expectEqualStrings("ENG-1234", detectTicket(&.{ "TKT-", "TE-" }, &.{"Review ENG-1234 and te-5"}).?);
-    try testing.expectEqualStrings("te-5", detectTicket(&.{"TE-"}, &.{ "", "TE-foo te-5" }).?);
-    try testing.expect(detectTicket(&.{"TE-"}, &.{"TE-foo"}) == null);
-    app.cfg.ui.ticket_prefixes = &.{"TE-"};
-    try app.sessions.setAlias(testing.allocator, "plain-9", "review TE-77 today");
+    try testing.expect(detectTicket(&.{}, &.{"ABC-9"}) == null);
+    try testing.expectEqualStrings("ABC-1234", detectTicket(&.{ "TKT-", "ABC-" }, &.{"Review ABC-1234 and abc-5"}).?);
+    try testing.expectEqualStrings("abc-5", detectTicket(&.{"ABC-"}, &.{ "", "ABC-foo abc-5" }).?);
+    try testing.expect(detectTicket(&.{"ABC-"}, &.{"ABC-foo"}) == null);
+    app.cfg.ui.ticket_prefixes = &.{"ABC-"};
+    try app.sessions.setAlias(testing.allocator, "plain-9", "review ABC-77 today");
     var v = try cardView(app, arena, c);
-    try testing.expectEqualStrings("review TE-77 today", v.name);
+    try testing.expectEqualStrings("review ABC-77 today", v.name);
     // An alias hides the chip (Rust: `display_name.is_none()`).
     try testing.expect(v.ticket == null);
     try app.sessions.setAlias(testing.allocator, "plain-9", "");
