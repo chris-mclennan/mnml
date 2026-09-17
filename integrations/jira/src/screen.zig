@@ -1165,7 +1165,7 @@ fn padRight(arena: Allocator, s: []const u8, w: usize) []const u8 {
     return out;
 }
 
-/// `MG` from `Marco Gomez`; one letter for a single name.
+/// `MG` from `Mary Goode`; one letter for a single name.
 pub fn initials(buf: []u8, name: []const u8) []const u8 {
     var n: usize = 0;
     var it = std.mem.tokenizeScalar(u8, name, ' ');
@@ -1318,7 +1318,7 @@ fn colOfText(arena: Allocator, f: *const Frame, y: u16, needle: []const u8) Allo
 
 test "initials, the fixVersion pill's value and the hard wrap" {
     var buf: [8]u8 = undefined;
-    try testing.expectEqualStrings("MG", initials(&buf, "Marco Gomez"));
+    try testing.expectEqualStrings("MG", initials(&buf, "Mary Goode"));
     try testing.expectEqualStrings("A", initials(&buf, "ada"));
     try testing.expectEqualStrings("?", initials(&buf, ""));
     try testing.expectEqualStrings("13.16.0", fixVersionOf("project = ENG AND fixVersion = \"13.16.0\" ORDER BY rank").?);

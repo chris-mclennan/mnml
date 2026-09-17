@@ -1,10 +1,13 @@
 #!/bin/bash
 set -eu
 ROOT=/private/tmp/walk
+# The workspace the walk copies: any real multi-repo folder of yours.
+WALK_WS="${WALK_WS:?set WALK_WS to the workspace folder the walk should copy}"
+WALK_PNG="${WALK_PNG:-}"
 rm -rf "$ROOT"; mkdir -p "$ROOT/pristine" "$ROOT/home/bin" "$ROOT/home/.claude/projects" "$ROOT/out"
 # 1. workspace copy (keep .git; drop the heavy dirs and stale IPC)
 rsync -a --exclude node_modules --exclude target --exclude zig-out --exclude .mnml/ipc --exclude .mnml/ipc-zig --exclude .mnml/chrome-profile \
-  /Users/chrismclennan/Projects/work-workspace/ "$ROOT/pristine/ws/"
+  "$WALK_WS"/ "$ROOT/pristine/ws/"
 # sample files of every language the walk opens (the workspace has none of these)
 S="$ROOT/pristine/ws/walk-samples"; mkdir -p "$S" "$ROOT/pristine/ws/requests"
 cat >"$S/sample.ts" <<'T'
@@ -139,7 +142,7 @@ nested:
   b: ~
 T
 cp /Users/chrismclennan/Projects/mnml-zig-worktrees/chrome-fixture/ws/requests/demo.http "$ROOT/pristine/ws/requests/demo.http"
-cp /Users/chrismclennan/Projects/work-workspace/scratchpad/sample-logo-400.png "$S/sample.png"
+[ -n "$WALK_PNG" ] && cp "$WALK_PNG" "$S/sample.png"
 # 2. data roots: private copies of the REAL ~/.config/mnml (both apps read it; Rust config.toml, Zig config.zon)
 cp -R /Users/chrismclennan/.config/mnml "$ROOT/pristine/rs-data"
 cp -R /Users/chrismclennan/.config/mnml "$ROOT/pristine/zig-data"

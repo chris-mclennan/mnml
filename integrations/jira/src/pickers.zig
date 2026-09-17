@@ -239,7 +239,7 @@ test "a field picker filters as typed, keeps the cursor on a visible row, and mo
     var p = FieldPicker.init(testing.allocator, .assignee);
     defer p.deinit();
     try testing.expect(p.current() == null);
-    try p.setItems(&.{ .{ .id = "", .label = "— Unassign —" }, .{ .id = "a1", .label = "Chris McLennan" }, .{ .id = "a2", .label = "Nora McLennan" }, .{ .id = "a3", .label = "James Meyer" } });
+    try p.setItems(&.{ .{ .id = "", .label = "— Unassign —" }, .{ .id = "a1", .label = "Grace Hopper" }, .{ .id = "a2", .label = "Katherine Johnson" }, .{ .id = "a3", .label = "Alan Turing" } });
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     try testing.expectEqual(@as(usize, 4), (try p.visible(a.allocator())).len);

@@ -1,19 +1,20 @@
 # The Jira spec — every screen of the reference tracker
 
 The reference is `mnml-tracker-jira` **v0.2.24** (the current source of
-`mnml-integrations/apps/mnml-tracker-jira`, built on 2026-09-15 into a
-scratch target dir — the binary on the author's PATH is v0.2.22 from
-2026-08-21, which predates the JQL editor, the Board picker, the Epic
-filter and the Work-toolbar Type chip). Its screens are cut from the offline server by `tools/jira-diff.sh`.
+`mnml-integrations/apps/mnml-tracker-jira`). This file is the inventory
+it was read into: every screen, the surfaces on each, the columns and
+their content, the keys and the clicks that reach them. The rows below
+name each screen by the capture it is read from.
 
-The dumps are the spec for **what is there** — the screens, the
-surfaces on each, the columns and their content, the keys and the
-clicks that reach them — not for the exact bytes: the port renders the
-same content in mnml-zig's own chrome.
+Screens are cut from the offline server only — `tools/jira-diff.sh` runs
+the reference and `mnml-jira` against `mnml-fake-jira` (project ENG,
+invented people) through the same scripted session and leaves both
+sides' dumps in its output folder. No capture of a real site belongs in
+this repository: a live run is for the eyes of whoever runs it, in a
+scratch folder, and only ever with GET requests.
 
-`steps-*.txt` beside the dumps are the scripts that cut them; the
-capture tool's step grammar is in its docstring. `tools/jira-diff.sh`
-runs the same tool against the offline server for both apps.
+The inventory is the spec for **what is there**, not for the exact
+bytes: `mnml-jira` renders the same content in mnml-zig's own chrome.
 
 ## The three families
 
