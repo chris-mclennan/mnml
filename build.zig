@@ -118,6 +118,10 @@ pub fn build(b: *std.Build) void {
     const partial = b.option(bool, "partial", "Allow command ids without runners (spike builds)") orelse true;
     const build_options = b.addOptions();
     build_options.addOption(bool, "partial", partial);
+    // `-Dmem-report`: count live bytes (the app's allocator, tree-sitter's
+    // malloc) and print where a headless session's memory was as it ends.
+    const mem_report = b.option(bool, "mem-report", "Count live bytes per subsystem; a headless session prints the table to stderr as it ends") orelse false;
+    build_options.addOption(bool, "mem_report", mem_report);
 
     // ── e2e: IPC namespacing ──
     // Where the file-IPC channel lives under `<ws>/.mnml/`. Rust mnml owns

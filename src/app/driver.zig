@@ -6,6 +6,7 @@
 //! the mode label or `none`, every live pane's title + dirty flag.
 
 const std = @import("std");
+const mem_report = @import("../core/mem_report.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -293,10 +294,36 @@ pub const AppDriver = struct {
     fn vDeinit(p: *anyopaque) void {
         const self = cast(p);
         const gpa = self.gpa;
+        if (mem_report.enabled) printMemReport(&self.app);
         self.app.deinit();
         gpa.destroy(self);
     }
 };
+
+/// `-Dmem-report`: where the session's memory is as it ends — the two
+/// counters, then each open document's parts by their own sizes.
+fn printMemReport(app: *App) void {
+    const mb = mem_report.mb;
+    std.debug.print("mem-report: app live {d} MB (peak {d}) | tree-sitter live {d} MB (peak {d})\n", .{
+        mb(mem_report.app.live.load(.monotonic)),         mb(mem_report.app.peak.load(.monotonic)),
+        mb(mem_report.tree_sitter.live.load(.monotonic)), mb(mem_report.tree_sitter.peak.load(.monotonic)),
+    });
+    for (app.docs.entries.items) |e| {
+        const d = e.doc;
+        const h = &d.history;
+        var undo_bytes: usize = 0;
+        for (h.undo.items.items[h.undo.head..]) |s| undo_bytes += s.text.len;
+        var redo_bytes: usize = 0;
+        for (h.redo.items.items[h.redo.head..]) |s| redo_bytes += s.text.len;
+        std.debug.print("mem-report: doc {s}: text {d} MB (cap {d}) | saved {d} MB | lines {d} MB | undo {d} entries {d} MB | redo {d} entries {d} MB | kept spans {d}\n", .{
+            d.path orelse "(scratch)",                   mb(d.text.items.len),
+            mb(d.text.capacity),                         mb(d.saved_text.len),
+            mb(d.line_starts.capacity * @sizeOf(usize)), h.undoLen(),
+            mb(undo_bytes),                              h.redoLen(),
+            mb(redo_bytes),                              e.syntax.hl.keptSpanCount(),
+        });
+    }
+}
 
 /// What `main.app_factory` points at. `input_style` is the `--input`
 /// flag for the terminal / headless paths (null = the config's choice);
