@@ -29,3 +29,15 @@ expect screen contains "󰂨 …"
 command bitbucket_prs.refresh
 wait 2500
 expect screen contains "2 open pull requests you authored, 1 still unapproved"
+
+# The corpus shares one data root: leave it as it was found, or the
+# INTEGRATIONS rows every later script counts are this one's too.
+command integrations.show_installed
+key x
+expect screen contains "Remove integration"
+expect screen contains "bitbucket_prs"
+key enter
+expect screen contains "Remove Bitbucket PRs?"
+key r
+expect screen contains "removed bitbucket_prs"
+expect screen lacks "Bitbucket PRs"
