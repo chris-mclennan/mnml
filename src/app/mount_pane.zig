@@ -126,7 +126,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     const ipc_dir = try ipcDir(app);
     const sock = try host.socketPath(gpa, ipc_dir, next_id);
     defer gpa.free(sock);
-    var env = try host.envFor(gpa, &app.env, .{ .socket_path = sock, .workspace = app.workspace, .theme = app.theme.name, .ipc_dir = ipc_dir });
+    var env = try host.envFor(gpa, &app.env, .{ .socket_path = sock, .workspace = app.workspace, .theme = app.theme.name, .ipc_dir = ipc_dir, .data_root = app.data_root });
     defer env.deinit();
     for (opts.extra_env) |pair| try env.put(pair.name, pair.value);
 

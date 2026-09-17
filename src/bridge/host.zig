@@ -443,6 +443,11 @@ pub const EnvVars = struct {
     workspace: []const u8,
     theme: []const u8,
     ipc_dir: []const u8,
+    /// The host's data root. An integration reads its config, its token
+    /// and its caches under the same root its host uses — a host on a
+    /// private root (a dev profile, the corpus) must never have its
+    /// panes reading the user's real `~/.config/mnml`.
+    data_root: []const u8 = "",
 };
 
 /// The child's environment: the host's, plus the mount contract.
@@ -453,6 +458,7 @@ pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVar
     try env.put("MNML_WORKSPACE", vars.workspace);
     try env.put("MNML_THEME", vars.theme);
     try env.put("MNML_IPC_DIR", vars.ipc_dir);
+    if (vars.data_root.len > 0) try env.put("MNML_DATA_ROOT", vars.data_root);
     var pbuf: [4]u8 = undefined;
     try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "2");
     return env;
@@ -500,6 +506,10 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     var env = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig" });
     defer env.deinit();
     try testing.expectEqualStrings("/s.sock", env.get("MNML_MOUNT_SOCKET").?);
+    try testing.expect(env.get("MNML_DATA_ROOT") == null);
+    var rooted = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig", .data_root = "/private/root" });
+    defer rooted.deinit();
+    try testing.expectEqualStrings("/private/root", rooted.get("MNML_DATA_ROOT").?);
     try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
     try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
     try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
