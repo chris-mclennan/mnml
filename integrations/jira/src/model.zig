@@ -518,6 +518,15 @@ test "a linked PR knows its approvals and its openness; a pipeline its label, da
     const pr = try LinkedPr.fromJson(a.allocator(), v);
     try testing.expectEqual(@as(u16, 1), pr.approvals());
     try testing.expect(pr.isApproved() and pr.isMerged() and !pr.isOpen());
+    // Openness is the three states the reference gives a Merge chip to.
+    for ([_][]const u8{ "OPEN", "open", "DRAFT", "IN_REVIEW" }) |st| {
+        const open_pr: LinkedPr = .{ .status = st };
+        try testing.expect(open_pr.isOpen() and !open_pr.isMerged() and !open_pr.isApproved());
+    }
+    for ([_][]const u8{ "DECLINED", "SUPERSEDED", "" }) |st| {
+        const shut: LinkedPr = .{ .status = st };
+        try testing.expect(!shut.isOpen() and !shut.isMerged());
+    }
     var p: Pipeline = .{ .state = "COMPLETED", .result = "SUCCESSFUL", .created_on = "2026-07-29T10:23:11.000+0000", .duration_secs = 225 };
     var buf: [16]u8 = undefined;
     try testing.expectEqualStrings("SUCCESSFUL", p.stateLabel());
