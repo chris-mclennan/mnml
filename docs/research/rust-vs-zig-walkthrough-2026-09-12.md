@@ -3,7 +3,7 @@
 The Rust IDE (`mnml` 0.2.21, `target/release/mnml` at `7e95aea0c-dirty`) and
 the Zig successor (`mnml-zig` 0.3.0-dev at `c4675a7`) were driven headless
 over the file-IPC on the **same real workspace** — a private copy of
-`~/Projects/work-workspace` (its `.git` kept) — with **private copies
+`~/Projects/acmeco-workspace` (its `.git` kept) — with **private copies
 of the user's real data root** (`~/.config/mnml`: Rust reads its
 `config.toml`, Zig its `config.zon`, both list the same workspaces, themes,
 integrations, bookmarks and HTTP history), a private `HOME` whose `.claude`
@@ -27,7 +27,7 @@ were not re-investigated.
 
 ## 1. Method
 
-- **Workspace.** `rsync` of `~/Projects/work-workspace` (excluding
+- **Workspace.** `rsync` of `~/Projects/acmeco-workspace` (excluding
   `node_modules`, `target`, `zig-out`, the stale `.mnml/ipc*`, and the 12 MB
   `.mnml/chrome-profile`) into `/private/tmp/walk/pristine/ws`. The workspace
   has no `.ts/.go/.rs/.lua/.zon/.toml/.yml` files, so a `walk-samples/` dir of
@@ -158,7 +158,7 @@ tttl.co-customer-web-app`). On Rust `git.graph` from there is a no-op on
 screen (`status.json`: focus `pane→tree`, panes unchanged). On Zig the pane
 list loses `ws` and gains `mnml` at the end, `activePane=12`: the graph on
 screen is `~/Projects/mnml`'s (`fix(find): standard-profile Enter steps t…`,
-`Chris McLennan`, `09/10 09:09`), the tab strip scrolls to `… 󰊢 mnml 󰅖`, while
+`<author>`, `09/10 09:09`), the tab strip scrolls to `… 󰊢 mnml 󰅖`, while
 the sidebar pill still says `ws 󰅀`. `06-graph-enter` then opens a
 `commit 25e1bc3` detail pane for that foreign repo (Zig-only `git.graph_detail`).
 ```

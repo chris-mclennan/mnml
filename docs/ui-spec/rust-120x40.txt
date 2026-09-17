@@ -24,7 +24,7 @@
    │                          │                                   ^K     which-key menu
    │  acmeco-site            │                                      ^N     new file
    │                          │                                    ^B     toggle tree
-   │  example.net             │                                        ^Q     quit
+   │  example.net            │                                        ^Q     quit
    │──────────────────────────│
    │ Sidebar                ⋮ │                                 mnml 0.2.21 · 9d5049b52
    │                          │

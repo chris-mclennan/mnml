@@ -160,7 +160,7 @@ acceptance. `api = 1` freezes at the end of step 3.
    - **Community** = any git URL or archive, installed by hand, shown under
      its own heading with a "community" badge. Same trust dialog, same claims.
    - **Private** = scripts from a source the user configures (a company repo,
-     a path), like the private integrations an employer installs from outside.
+     a path), like the private integrations a company installs from outside.
    - One code path: a script is a directory with `script.zon`; where it came
      from is a field on the row and a filter in the panel. The SCRIPTS panel
      gains the three tabs the INTEGRATIONS panel has (installed · marketplace
