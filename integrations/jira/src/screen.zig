@@ -576,7 +576,7 @@ pub const Painter = struct {
                 },
                 .show_more => |sm| {
                     _ = p.put(key_c.x + 6, y, 2, if (p.ui.ascii) "..." else "⋯", muted);
-                    const label = p.fmt("Show all {d} PRs ↴", .{sm.hidden});
+                    const label = p.fmt("Show all {d} {s} ↴", .{ sm.hidden, if (sm.hidden == 1) "PR" else "PRs" });
                     _ = p.putFit(sum_c.x, y, sum_c.w -| 1, label, if (is_cur) accent else accent_plain);
                     try p.hitAdd(.{ .x = 0, .y = y, .w = w, .h = 1 }, .{ .show_more = idx });
                 },
