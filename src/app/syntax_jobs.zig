@@ -154,6 +154,17 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job) Io.Cance
     events.post(io, .{ .syntax = result });
 }
 
+/// Free a tree that has been replaced, off the UI thread: the nodes it
+/// does not share with its successor are its alone to free, and at 100 MB
+/// that is tens of milliseconds. On this thread only if no task can start.
+fn dispose(app: *App, old: *ts.Tree) void {
+    app.syntax_jobs.group.concurrent(app.io, disposer, .{old}) catch old.deinit();
+}
+
+fn disposer(old: *ts.Tree) Io.Cancelable!void {
+    old.deinit();
+}
+
 /// A parse came back. Adopt its tree if its document still wants it.
 pub fn handle(app: *App, r: *Result) void {
     defer r.destroy(app.gpa);
@@ -174,7 +185,7 @@ pub fn handle(app: *App, r: *Result) void {
             return;
         }
         r.tree = null;
-        s.hl.adopt(tree);
+        if (s.hl.swap(tree)) |old| dispose(app, old);
         // What was typed while it parsed: the tree is told, as the one it
         // replaces was.
         for (edits.since(p.base_seq)) |sp| s.hl.edit(syntax_mod.inputEdit(sp));

@@ -306,10 +306,19 @@ pub const Highlighter = struct {
     /// The caller tells it about any edit made since the text it was
     /// parsed from (`edit`).
     pub fn adopt(self: *Highlighter, fresh: *ts.Tree) void {
-        if (self.tree) |old| old.deinit();
+        if (self.swap(fresh)) |old| old.deinit();
+    }
+
+    /// `adopt`, handing the tree it replaces to the caller instead of
+    /// freeing it: letting go of a large tree's unshared nodes is work (tens
+    /// of milliseconds at 100 MB) that need not happen on the thread that
+    /// paints.
+    pub fn swap(self: *Highlighter, fresh: *ts.Tree) ?*ts.Tree {
+        const old = self.tree;
         self.tree = fresh;
         self.stale = false;
         self.newGeneration();
+        return old;
     }
 
     /// Spans held right now, across every kept window — what the
