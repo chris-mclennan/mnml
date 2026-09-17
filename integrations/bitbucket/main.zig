@@ -330,7 +330,7 @@ fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c
     return gpa.dupe(u8, api.default_base_url);
 }
 
-const no_token_text = "no Bitbucket token: set BITBUCKET_API_TOKEN (or BITBUCKET_APP_PASSWORD / BITBUCKET_PERSONAL_TOKEN), or write it to <config dir>/token";
+const no_token_text = "no Bitbucket token: set BITBUCKET_ACCESS_TOKEN, or write it to <config dir>/token (BITBUCKET_API_TOKEN / BITBUCKET_APP_PASSWORD / BITBUCKET_PERSONAL_TOKEN also resolve, in that order, between the two)";
 
 fn nowSecs(io: Io) i64 {
     return Io.Timestamp.now(io, .real).toSeconds();

@@ -2,19 +2,26 @@
 //! token and a Bitbucket app password the same way —
 //! `Authorization: Basic base64(email:token)` — so what separates
 //! them is the scope you granted and the rate-limit bucket they draw
-//! from, not the request. Resolution is the reference's, first hit
-//! wins:
+//! from, not the request.
 //!
-//!   1. `BITBUCKET_API_TOKEN` — an Atlassian API token (recommended)
-//!   2. `BITBUCKET_APP_PASSWORD` — a Bitbucket app password
-//!   3. `BITBUCKET_PERSONAL_TOKEN` — either kind, often exported as
+//! **The rule: `BITBUCKET_ACCESS_TOKEN` when it is set, else the token
+//! file.** Set it and it is the token — every read and the one write
+//! (`a`, approve) — so there is one variable to export and one thing
+//! to revoke. Unset, the token comes from `<config dir>/token`.
+//!
+//! In full, first hit wins, the reference's three variables kept
+//! between them so a machine already exporting one keeps working:
+//!
+//!   1. `BITBUCKET_ACCESS_TOKEN` — the one to use
+//!   2. `BITBUCKET_API_TOKEN` — an Atlassian API token
+//!   3. `BITBUCKET_APP_PASSWORD` — a Bitbucket app password
+//!   4. `BITBUCKET_PERSONAL_TOKEN` — either kind, often exported as
 //!      `email:token`; only the half after the colon is the token
-//!   4. `<config dir>/token` — one line, `chmod 600`
+//!   5. `<config dir>/token` — one line, `chmod 600`
 //!
-//! `BITBUCKET_ACCESS_TOKEN`, when set, is what `a` (approve) sends
-//! instead — the one write the pane has, on the token you keep for
-//! writes. Unset, approve goes out on the read token as the reference
-//! does.
+//! The approve token is `BITBUCKET_ACCESS_TOKEN` when set and the read
+//! token otherwise, which under the rule above is the same token: a
+//! read-only machine simply never has a write to send.
 //!
 //! **A token is never printed.** `Source.label` names where it came
 //! from and `describe` says how long it is; the test below holds that
@@ -24,8 +31,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const env_names = [_][]const u8{ "BITBUCKET_API_TOKEN", "BITBUCKET_APP_PASSWORD", "BITBUCKET_PERSONAL_TOKEN" };
 pub const write_env_name = "BITBUCKET_ACCESS_TOKEN";
+/// In resolution order. `BITBUCKET_ACCESS_TOKEN` leads: set, it is the
+/// token, and the file below is what answers when it is not.
+pub const env_names = [_][]const u8{ write_env_name, "BITBUCKET_API_TOKEN", "BITBUCKET_APP_PASSWORD", "BITBUCKET_PERSONAL_TOKEN" };
 pub const file_name = "token";
 
 pub const Source = union(enum) {
@@ -146,7 +155,45 @@ pub fn describe(gpa: Allocator, tk: *const Tokens) Allocator.Error![]u8 {
 
 const t = std.testing;
 
-test "the environment resolves in the reference's order, and email:token keeps only the token" {
+test "BITBUCKET_ACCESS_TOKEN is the token when it is set, and the file is the token when it is not" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "from-the-file\n" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    // Unset: the file.
+    {
+        var tk = try resolve(t.allocator, t.io, &env, dir);
+        defer tk.deinit();
+        try t.expectEqualStrings("from-the-file", tk.read);
+        try t.expect(std.mem.endsWith(u8, tk.read_source.label(), "token"));
+        try t.expectEqualStrings("from-the-file", tk.write);
+        try t.expectEqual(Source.same_as_read, tk.write_source);
+    }
+    // Set: it wins over the file and over every reference variable,
+    // and it is the approve token too.
+    try env.put("BITBUCKET_API_TOKEN", "api-tok");
+    try env.put("BITBUCKET_APP_PASSWORD", "app-pw");
+    try env.put("BITBUCKET_PERSONAL_TOKEN", "me@x.com:legacy");
+    try env.put("BITBUCKET_ACCESS_TOKEN", "access-tok");
+    {
+        var tk = try resolve(t.allocator, t.io, &env, dir);
+        defer tk.deinit();
+        try t.expectEqualStrings("access-tok", tk.read);
+        try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", tk.read_source.label());
+        try t.expectEqualStrings("access-tok", tk.write);
+        try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", tk.write_source.label());
+    }
+    // Empty is not set.
+    try env.put("BITBUCKET_ACCESS_TOKEN", "");
+    var tk = try resolve(t.allocator, t.io, &env, dir);
+    defer tk.deinit();
+    try t.expectEqualStrings("api-tok", tk.read);
+}
+
+test "the reference's variables still resolve, under ACCESS_TOKEN, and email:token keeps only the token" {
     try t.expectEqualStrings("ATATT-abc", stripEmailPrefix("me@example.com:ATATT-abc"));
     try t.expectEqualStrings("ATATT-abc", stripEmailPrefix("ATATT-abc"));
     var env = std.process.Environ.Map.init(t.allocator);
@@ -161,18 +208,25 @@ test "the environment resolves in the reference's order, and email:token keeps o
         try t.expectEqual(Source.same_as_read, tk.write_source);
     }
     try env.put("BITBUCKET_APP_PASSWORD", "app-pw");
-    try env.put("BITBUCKET_ACCESS_TOKEN", "write-tok");
     {
         var tk = try resolve(t.allocator, t.io, &env, "/nonexistent");
         defer tk.deinit();
         try t.expectEqualStrings("app-pw", tk.read);
-        try t.expectEqualStrings("write-tok", tk.write);
+        try t.expectEqualStrings("app-pw", tk.write);
     }
     try env.put("BITBUCKET_API_TOKEN", "api-tok");
+    {
+        var tk = try resolve(t.allocator, t.io, &env, "/nonexistent");
+        defer tk.deinit();
+        try t.expectEqualStrings("api-tok", tk.read);
+        try t.expectEqualStrings("BITBUCKET_API_TOKEN", tk.read_source.label());
+    }
+    // And above all three, the rule's own variable.
+    try env.put("BITBUCKET_ACCESS_TOKEN", "access-tok");
     var tk = try resolve(t.allocator, t.io, &env, "/nonexistent");
     defer tk.deinit();
-    try t.expectEqualStrings("api-tok", tk.read);
-    try t.expectEqualStrings("BITBUCKET_API_TOKEN", tk.read_source.label());
+    try t.expectEqualStrings("access-tok", tk.read);
+    try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", tk.read_source.label());
 }
 
 test "the token file is read when the environment is empty, and an empty file is not a token" {
@@ -205,13 +259,33 @@ test "the Basic header is the base64 of email:token" {
 test "the diagnostic block names the source and the length and never the token" {
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
-    try env.put("BITBUCKET_API_TOKEN", "ATATT-super-secret-value");
-    try env.put("BITBUCKET_ACCESS_TOKEN", "ATATT-write-secret-value");
+    try env.put("BITBUCKET_ACCESS_TOKEN", "ATATT-access-secret-value");
     var tk = try resolve(t.allocator, t.io, &env, "/nonexistent");
     defer tk.deinit();
     const text = try describe(t.allocator, &tk);
     defer t.allocator.free(text);
-    try t.expect(std.mem.indexOf(u8, text, "BITBUCKET_API_TOKEN") != null);
-    try t.expect(std.mem.indexOf(u8, text, "24 chars, not shown") != null);
+    // `--check` prints this block: the variable it came from, how long
+    // it is, and not one byte of it.
+    try t.expect(std.mem.indexOf(u8, text, "token source: BITBUCKET_ACCESS_TOKEN") != null);
+    try t.expect(std.mem.indexOf(u8, text, "25 chars, not shown") != null);
+    try t.expect(std.mem.indexOf(u8, text, "approve token: BITBUCKET_ACCESS_TOKEN") != null);
     try t.expect(std.mem.indexOf(u8, text, "secret") == null);
+
+    // From the file, `--check` names the file and its length, and the
+    // approve token says it is the same one.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "ATATT-file-secret-value\n" });
+    var bare = std.process.Environ.Map.init(t.allocator);
+    defer bare.deinit();
+    var ftk = try resolve(t.allocator, t.io, &bare, dir);
+    defer ftk.deinit();
+    const ftext = try describe(t.allocator, &ftk);
+    defer t.allocator.free(ftext);
+    try t.expect(std.mem.indexOf(u8, ftext, "/token") != null);
+    try t.expect(std.mem.indexOf(u8, ftext, "23 chars, not shown") != null);
+    try t.expect(std.mem.indexOf(u8, ftext, "approve token: the read token") != null);
+    try t.expect(std.mem.indexOf(u8, ftext, "secret") == null);
 }

@@ -76,20 +76,35 @@ comments do not survive, as in the reference.
 
 ## Auth
 
-The reference's resolution, first hit wins: `BITBUCKET_API_TOKEN`,
-`BITBUCKET_APP_PASSWORD`, `BITBUCKET_PERSONAL_TOKEN` (`email:token` is
-fine — only the half after the colon is used), then
-`<config dir>/token`. `BITBUCKET_ACCESS_TOKEN`, when set, is what `a`
-(approve) sends instead — otherwise approve goes out on the read token,
-as the reference does. Scopes: **Pull requests: Read**, **Account: Read**
-for the mine / reviewing tabs and the chip, **Pull requests: Write** for
-approve.
+**`BITBUCKET_ACCESS_TOKEN` when it is set, else `<config dir>/token`.**
+One variable to export, one file otherwise, and the same token for the
+reads and for the one write the pane has (`a`, approve).
 
-A token is never printed:
+The reference's three variables still resolve, between those two, so a
+machine that already exports one keeps working — first hit wins:
+
+| | |
+|---|---|
+| `BITBUCKET_ACCESS_TOKEN` | the rule's variable; also the approve token |
+| `BITBUCKET_API_TOKEN` | an Atlassian scoped API token |
+| `BITBUCKET_APP_PASSWORD` | a Bitbucket app password |
+| `BITBUCKET_PERSONAL_TOKEN` | either kind; `email:token` is fine — only the half after the colon is used |
+| `<config dir>/token` | one line, `chmod 600` |
+
+Scopes: **Pull requests: Read**, **Account: Read** for the mine /
+reviewing tabs and the chip, **Pull requests: Write** for approve.
+
+A token is never printed — `--check` names the variable or the file it
+came from and how many characters it is, and nothing else:
 
 ```sh
 mnml-bitbucket --check      # config, token source + length, whoami, the tabs
 mnml-bitbucket --diag       # the same as a tree, with the rate bucket
+```
+
+```
+token source: BITBUCKET_ACCESS_TOKEN (loaded, 25 chars, not shown)
+approve token: BITBUCKET_ACCESS_TOKEN (25 chars, not shown)
 ```
 
 ## Keys
