@@ -363,16 +363,22 @@ pub const Buffer = struct {
         const h = &self.editor.doc.history;
         if (h.undoLen() <= undo_before) return;
         var at = cursor_before;
-        if (h.undoTextAt(undo_before)) |old| {
+        // The entry's state, read through its hull against the text as
+        // it now is — never built. (Out of memory: the cursor the key
+        // started from stands.)
+        if (h.undoViewAt(self.gpa, undo_before) catch null) |old| {
+            defer self.gpa.free(old.mid);
             const now = self.editor.bytes();
-            const n = @min(old.len, now.len);
-            var prefix: usize = 0;
-            while (prefix < n and old[prefix] == now[prefix]) prefix += 1;
+            const old_len = old.len();
+            const n = @min(old_len, now.len);
+            // The run the two share up to the hull is equal by construction.
+            var prefix: usize = @min(old.p, n);
+            while (prefix < n and old.at(prefix) == now[prefix]) prefix += 1;
             // A change that starts at a line's `\n` (a deleted last
             // line) begins on the line after it, where the cursor was.
-            const changed = if (prefix < old.len and old[prefix] == '\n') prefix + 1 else prefix;
-            const changed_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(changed, old.len)], '\n')) |i| i + 1 else 0;
-            const cursor_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(cursor_before, old.len)], '\n')) |i| i + 1 else 0;
+            const changed = if (prefix < old_len and old.at(prefix) == '\n') prefix + 1 else prefix;
+            const changed_line_start = if (old.lastIndexOfScalar(changed, '\n')) |i| i + 1 else 0;
+            const cursor_line_start = if (old.lastIndexOfScalar(cursor_before, '\n')) |i| i + 1 else 0;
             if (changed_line_start < cursor_line_start) at = changed_line_start;
         }
         h.setUndoCursor(undo_before, at);

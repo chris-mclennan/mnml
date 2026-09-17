@@ -398,18 +398,11 @@ pub const Editor = struct {
     /// Drop the most recent checkpoint — a "mutation" that turned out to be
     /// a no-op.
     pub fn popCheckpoint(self: *Editor) void {
-        if (self.doc.history.popUndo()) |s| self.doc.history.freeSnapshot(s);
+        self.doc.history.dropUndo();
     }
 
     fn snapshot(self: *const Editor) undo.SnapshotSource {
         return .{ .text = self.doc.text.items, .cursor = self.cursor, .anchor = self.anchor };
-    }
-
-    pub fn restore(self: *Editor, s: undo.Snapshot) Allocator.Error!void {
-        try self.setText(s.text);
-        self.setCursor(s.cursor);
-        self.anchor = if (s.anchor) |a| self.snapBoundary(a) else null;
-        self.in_insert_run = false;
     }
 
     /// Everything between `beginAtomic` and `endAtomic` undoes as one step.

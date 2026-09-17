@@ -225,6 +225,8 @@ pub const Document = struct {
         errdefer gpa.free(doc.saved_text);
         try doc.text.appendSlice(gpa, text);
         errdefer doc.text.deinit(gpa);
+        // The history spells its states against the text.
+        doc.history.live = &doc.text;
         try doc.rebuildLineIndex();
         return doc;
     }
@@ -305,7 +307,14 @@ pub const Document = struct {
         const old = self.text.items;
         const hull = diffHull(old, text);
         if (hull.start == old.len and hull.start == text.len) return;
-        try self.spliceBy(hull.start, old.len - hull.suffix, text[hull.start .. text.len - hull.suffix], by);
+        try self.replaceSpanBy(hull.start, old.len - hull.suffix, text[hull.start .. text.len - hull.suffix], by);
+    }
+
+    /// `spliceBy`, for a splice that stands for a wholesale replacement
+    /// (a reload, an undo, a redo): stamped so, and no view's open run of
+    /// typed chars survives it.
+    pub fn replaceSpanBy(self: *Document, start: usize, end: usize, new: []const u8, by: ?*const Editor) Allocator.Error!void {
+        try self.spliceBy(start, end, new, by);
         self.edits.replaced_at = self.edits.head();
         for (self.views.items) |v| if (v != by) {
             v.in_insert_run = false;
@@ -358,6 +367,9 @@ pub const Document = struct {
         try self.edits.items.ensureUnusedCapacity(gpa, 1);
         const start_pt = self.pointAt(start);
         const old_end_pt = self.pointAt(end);
+        // The history's two top states share bytes with the text; they
+        // take what this edit is about to change before it does.
+        try self.history.beforeSplice(start, end);
         try self.text.replaceRange(gpa, start, end - start, new);
 
         const ls = &self.line_starts;

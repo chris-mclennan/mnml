@@ -312,10 +312,10 @@ fn printMemReport(app: *App) void {
         const d = e.doc;
         const h = &d.history;
         var undo_bytes: usize = 0;
-        for (h.undo.items.items[h.undo.head..]) |s| undo_bytes += s.text.len;
+        for (h.undo.items.items[h.undo.head..]) |s| undo_bytes += s.mid.len;
         var redo_bytes: usize = 0;
-        for (h.redo.items.items[h.redo.head..]) |s| redo_bytes += s.text.len;
-        std.debug.print("mem-report: doc {s}: text {d} MB (cap {d}) | saved {d} MB | lines {d} MB | undo {d} entries {d} MB | redo {d} entries {d} MB | kept spans {d}\n", .{
+        for (h.redo.items.items[h.redo.head..]) |s| redo_bytes += s.mid.len;
+        std.debug.print("mem-report: doc {s}: text {d} MB (cap {d}) | saved {d} MB | lines {d} MB | undo {d} entries {d} KB | redo {d} entries {d} KB | kept spans {d}\n", .{
             d.path orelse "(scratch)",                   mb(d.text.items.len),
             mb(d.text.capacity),                         mb(d.saved_text.len),
             mb(d.line_starts.capacity * @sizeOf(usize)), h.undoLen(),
