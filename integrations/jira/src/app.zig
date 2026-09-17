@@ -1003,8 +1003,9 @@ pub const App = struct {
                 error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
             }) {
                 .ok => {
-                    a.closeTransition();
+                    // The words are the picker's; say them before it goes.
                     a.say("{s} → {s}", .{ key, to_name });
+                    a.closeTransition();
                     a.invalidateDetail(key);
                     try a.refreshActive();
                     if (a.details_visible) try a.ensureFocusedDetail();
@@ -1049,11 +1050,11 @@ pub const App = struct {
             }
         }
         if (errors.items.len == 0) {
-            a.closeTransition();
-            a.clearSelection();
             if (skipped.items.len > 0) {
                 a.say("{d} ticket(s) → {s} · skipped {d}: {s}", .{ ok, to_name, skipped.items.len, try std.mem.join(arena, ", ", skipped.items) });
             } else a.say("{d} ticket(s) → {s}", .{ ok, to_name });
+            a.closeTransition();
+            a.clearSelection();
         } else {
             try p.fail(try std.fmt.allocPrint(arena, "{d} ok · {d} skipped · {d} failed — {s}", .{ ok, skipped.items.len, errors.items.len, try std.mem.join(arena, " / ", errors.items) }));
         }
@@ -1411,22 +1412,22 @@ pub const App = struct {
             .team => {
                 const it = p.current() orelse return;
                 t.team = try a.keep(it.id);
-                a.closePicker();
                 a.say("team filter: {s}", .{if (it.id.len == 0) "(cleared)" else it.label});
+                a.closePicker();
                 try a.refreshActive();
             },
             .issue_type => {
                 const it = p.current() orelse return;
                 t.issue_type = try a.keep(it.id);
-                a.closePicker();
                 a.say("type filter: {s}", .{if (it.id.len == 0) "(cleared)" else it.label});
+                a.closePicker();
                 try a.clampCursor();
             },
             .label => {
                 const it = p.current() orelse return;
                 t.label = try a.keep(it.id);
-                a.closePicker();
                 a.say("label filter: {s}", .{if (it.id.len == 0) "(cleared)" else it.label});
+                a.closePicker();
                 try a.clampCursor();
             },
             .tab_fix_version => {
@@ -1436,8 +1437,8 @@ pub const App = struct {
                     return;
                 }
                 t.jql = try a.keep(try jira.fixVersionJql(arena, t.cfg.project, it.id, ""));
-                a.closePicker();
                 a.say("tab view: fixVersion = {s}", .{it.id});
+                a.closePicker();
                 try a.refreshActive();
             },
             .action => {
