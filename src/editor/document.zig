@@ -222,11 +222,21 @@ pub const Document = struct {
     owner: ?Owner = null,
 
     pub fn create(gpa: Allocator, text: []const u8) Allocator.Error!*Document {
+        const copy = try gpa.dupe(u8, text);
+        errdefer gpa.free(copy);
+        return createOwning(gpa, copy);
+    }
+
+    /// `create`, taking `text` (gpa-owned) as the document's text rather
+    /// than copying it: a file read into memory is not held twice while
+    /// it opens. On error the caller still owns `text`.
+    pub fn createOwning(gpa: Allocator, text: []u8) Allocator.Error!*Document {
         const doc = try gpa.create(Document);
         errdefer gpa.destroy(doc);
         doc.* = .{ .gpa = gpa, .history = .init(gpa) };
-        try doc.text.appendSlice(gpa, text);
-        errdefer doc.text.deinit(gpa);
+        doc.text = .fromOwnedSlice(text);
+        // The caller keeps `text` on error: only the index is ours to undo.
+        errdefer doc.line_starts.deinit(gpa);
         // The history spells its states against the text.
         doc.history.live = &doc.text;
         try doc.rebuildLineIndex();

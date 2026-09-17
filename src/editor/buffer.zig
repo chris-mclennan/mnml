@@ -82,8 +82,20 @@ pub const Buffer = struct {
     /// width is the document's indent until a `.editorconfig` says
     /// otherwise.
     pub fn init(gpa: Allocator, text: []const u8, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
-        const doc = try Document.create(gpa, text);
-        errdefer doc.destroy();
+        const copy = try gpa.dupe(u8, text);
+        errdefer gpa.free(copy);
+        return initOwning(gpa, copy, style, cfg);
+    }
+
+    /// `init`, taking the (gpa-owned) text instead of copying it. On
+    /// error the caller still owns `text`.
+    pub fn initOwning(gpa: Allocator, text: []u8, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
+        const doc = try Document.createOwning(gpa, text);
+        errdefer {
+            // Hand the text back before the document goes.
+            doc.text = .empty;
+            doc.destroy();
+        }
         doc.tab_width = @max(cfg.tab_width, 1);
         doc.indent_unit = @max(cfg.tab_width, 1);
         return initOn(gpa, doc, style, cfg);
@@ -129,11 +141,17 @@ pub const Buffer = struct {
     /// app decides whether that means "new file".
     pub fn load(gpa: Allocator, io: Io, path: []const u8, style: input.Style, cfg: input.Config) LoadError!Buffer {
         const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
-        defer gpa.free(raw);
         const eol = detectEol(raw);
-        const text = if (eol == .lf) raw else try normalizeEol(gpa, raw);
-        defer if (eol != .lf) gpa.free(text);
-        var buf = try init(gpa, text, style, cfg);
+        // What was read becomes the document's text — a large file is in
+        // memory once while it opens, not three times.
+        const text = if (eol == .lf) raw else blk: {
+            defer gpa.free(raw);
+            break :blk try normalizeEol(gpa, raw);
+        };
+        var buf = initOwning(gpa, text, style, cfg) catch |err| {
+            gpa.free(text);
+            return err;
+        };
         errdefer buf.deinit();
         buf.doc.eol = eol;
         try buf.setPath(path);
