@@ -653,6 +653,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("integrations/jira/tools/fake_jira/main.zig"),
         .target = target,
         .optimize = optimize,
+        // `--pid-file` writes `std.c.getpid()`. macOS always links libc, so
+        // the call compiles there without asking; every other target needs
+        // the dependency spelled out or it is a compile error.
+        .link_libc = true,
     });
     const fake_jira = b.addExecutable(.{ .name = "mnml-fake-jira", .root_module = fake_jira_mod });
     const fake_jira_install = b.addInstallArtifact(fake_jira, .{});
