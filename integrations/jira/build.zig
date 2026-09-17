@@ -28,6 +28,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tools/fake_jira/main.zig"),
         .target = target,
         .optimize = optimize,
+        // `--pid-file` writes `std.c.getpid()`: libc, spelled out for every
+        // target but macOS.
+        .link_libc = true,
     });
     const fake = b.addExecutable(.{ .name = "mnml-fake-jira", .root_module = fake_mod });
     b.installArtifact(fake);
