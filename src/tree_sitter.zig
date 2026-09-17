@@ -45,6 +45,26 @@ pub const InputEncoding = enum(c_uint) {
     custom = 3,
 };
 
+/// `TSInput`: how the runtime reads the text.
+pub const Input = extern struct {
+    payload: ?*anyopaque,
+    read: *const fn (payload: ?*anyopaque, byte_index: u32, position: Point, bytes_read: *u32) callconv(.c) ?[*]const u8,
+    encoding: InputEncoding,
+    decode: ?*const anyopaque,
+};
+
+/// `TSParseState` / `TSParseOptions`: the progress callback of a parse.
+pub const ParseState = extern struct {
+    payload: ?*anyopaque,
+    current_byte_offset: u32,
+    has_error: bool,
+};
+
+pub const ParseOptions = extern struct {
+    payload: ?*anyopaque,
+    progress_callback: ?*const fn (state: *ParseState) callconv(.c) bool,
+};
+
 pub const QueryError = enum(c_uint) {
     none = 0,
     syntax = 1,
@@ -163,6 +183,36 @@ pub const Parser = opaque {
     pub fn parseString(p: *Parser, old: ?*const Tree, src: []const u8) ?*Tree {
         return ts_parser_parse_string(p, old, src.ptr, @intCast(src.len));
     }
+    /// `parseString` that can be told to stop: `keep_going` is asked as the
+    /// parse advances and a `false` abandons it (null comes back, and the
+    /// parser must be `reset` before it parses again). The text is read in
+    /// place through the runtime's read callback — never copied.
+    pub fn parseCancelable(p: *Parser, old: ?*const Tree, src: []const u8, ctx: ?*anyopaque, keep_going: *const fn (ctx: ?*anyopaque) bool) ?*Tree {
+        var job: CancelableParse = .{ .src = src, .ctx = ctx, .keep_going = keep_going };
+        return ts_parser_parse_with_options(p, old, .{ .payload = &job, .read = CancelableParse.read, .encoding = .utf8, .decode = null }, .{ .payload = &job, .progress_callback = CancelableParse.progress });
+    }
+
+    const CancelableParse = struct {
+        src: []const u8,
+        ctx: ?*anyopaque,
+        keep_going: *const fn (ctx: ?*anyopaque) bool,
+
+        fn read(payload: ?*anyopaque, byte_index: u32, _: Point, bytes_read: *u32) callconv(.c) ?[*]const u8 {
+            const self: *CancelableParse = @ptrCast(@alignCast(payload.?));
+            if (byte_index >= self.src.len) {
+                bytes_read.* = 0;
+                return self.src.ptr;
+            }
+            bytes_read.* = @intCast(self.src.len - byte_index);
+            return self.src.ptr + byte_index;
+        }
+
+        fn progress(state: *ParseState) callconv(.c) bool {
+            const self: *CancelableParse = @ptrCast(@alignCast(state.payload.?));
+            return !self.keep_going(self.ctx);
+        }
+    };
+
     /// Restrict parsing to `ranges` (injections). Empty slice restores the whole document.
     pub fn setIncludedRanges(p: *Parser, ranges: []const Range) error{OverlappingRanges}!void {
         if (!ts_parser_set_included_ranges(p, ranges.ptr, @intCast(ranges.len))) return error.OverlappingRanges;
@@ -402,6 +452,7 @@ pub extern fn ts_parser_delete(self: *Parser) void;
 pub extern fn ts_parser_set_language(self: *Parser, language: *const Language) bool;
 pub extern fn ts_parser_set_included_ranges(self: *Parser, ranges: [*]const Range, count: u32) bool;
 pub extern fn ts_parser_parse_string(self: *Parser, old_tree: ?*const Tree, string: [*]const u8, length: u32) ?*Tree;
+pub extern fn ts_parser_parse_with_options(self: *Parser, old_tree: ?*const Tree, input: Input, options: ParseOptions) ?*Tree;
 pub extern fn ts_parser_reset(self: *Parser) void;
 
 pub extern fn ts_tree_copy(self: *const Tree) *Tree;
