@@ -3596,7 +3596,15 @@ test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring o
 }
 
 test "leader chain: the second key of `space e` is the chord's, not the editor's; esc cancels a pending leader silently" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    // A workspace of its own with a file in it: `space f f` only opens the
+    // picker when the scan finds something, and the ambient `/tmp` this
+    // once used is full on a developer's Mac and empty in a container.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "one\n" });
+    var ws_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = ws_buf[0..try tmp.dir.realPath(std.testing.io, &ws_buf)];
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = ws, .cols = 60, .rows = 12 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"editor.use_vim" });

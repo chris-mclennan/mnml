@@ -1098,7 +1098,14 @@ test "findOnPath: the platform delimiter splits PATH; PATHEXT adds the Windows e
     const n = try tmp.dir.realPath(t.io, &buf);
     const root = buf[0..n];
     try tmp.dir.writeFile(t.io, .{ .sub_path = "plain", .data = "" });
+    // Both spellings: on a case-insensitive filesystem (macOS, Windows)
+    // the second write lands on the first file and there is one `tool.cmd`
+    // that the upper-cased PATHEXT entry still finds; on a case-sensitive
+    // one (Linux) there are two files, and `.CMD` finds the one it names.
+    // With only the lower-cased file, the `.CMD` lookup below passed on
+    // macOS and failed on Linux.
     try tmp.dir.writeFile(t.io, .{ .sub_path = "tool.cmd", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "tool.CMD", .data = "" });
 
     var env: std.process.Environ.Map = .init(t.allocator);
     defer env.deinit();
@@ -1120,8 +1127,8 @@ test "findOnPath: the platform delimiter splits PATH; PATHEXT adds the Windows e
     // `pathOf` says where: the directory it was found in, the extension it took.
     var where: [std.fs.max_path_bytes]u8 = undefined;
     try t.expectEqualStrings(abs, pathOf(t.io, &env, &where, "plain").?);
-    // The PATHEXT spelling comes back (`tool.CMD`); a case-insensitive
-    // filesystem finds the lower-cased file under it.
+    // The PATHEXT spelling comes back (`tool.CMD`), whichever of the two
+    // files the filesystem resolved it to.
     const cmd = try std.fs.path.join(t.allocator, &.{ root, "tool.cmd" });
     defer t.allocator.free(cmd);
     try t.expect(std.ascii.eqlIgnoreCase(cmd, pathOf(t.io, &env, &where, "tool").?));
