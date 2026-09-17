@@ -1564,7 +1564,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     const first_vis: u32 = @intCast(@min(e.view.scroll_line, line_count - 1));
     const last_vis: u32 = @intCast(@min(e.view.scroll_line + rows, line_count) -| 1);
     try decor.onFrame(app, id, e, first_vis, last_vis);
-    const base_spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
+    const base_spans = try e.syntax.styledSpans(ed, arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
     const tinted = try conflicts.tintSpans(app, arena, e, try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line), &app.theme);
     // A script's `mnml.decor.highlight` goes over everything the
     // grammar, the server and a conflict marker put down.

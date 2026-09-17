@@ -239,7 +239,7 @@ pub const AppDriver = struct {
         }
         const first: usize = e.view.scroll_line;
         const last = @min(first + @max(app.pane_rows, 1), ed.lineCount()) -| 1;
-        return e.syntax.countIn(ed.lineStart(@min(first, ed.lineCount() - 1)), ed.lineEnd(last));
+        return e.syntax.countIn(ed, ed.lineStart(@min(first, ed.lineCount() - 1)), ed.lineEnd(last)) catch null;
     }
 
     /// The tier-2 IPC commands: toasts, and command registration.
