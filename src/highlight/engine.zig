@@ -205,6 +205,12 @@ pub const Highlighter = struct {
     /// that straddles the window is walked, and one enclosing node with
     /// thousands of children fills the pool on its own.
     dropped_matches: bool = false,
+    /// What this highlighter has been made to do, for the tests that hold
+    /// a motion to "no parse, and no query wider than a viewport": parses
+    /// run by `parse`, windows built, and the widest of them in bytes.
+    parses: u64 = 0,
+    windows_built: u64 = 0,
+    widest_window: usize = 0,
 
     pub fn init(gpa: Allocator) Highlighter {
         return .{ .gpa = gpa };
@@ -287,6 +293,7 @@ pub const Highlighter = struct {
     pub fn parse(self: *Highlighter, text: []const u8) void {
         const entry = self.root orelse return;
         const l = self.lang(entry) orelse return;
+        self.parses += 1;
         l.parser.setIncludedRanges(&.{}) catch {};
         const fresh = l.parser.parseString(self.tree, text) orelse {
             self.invalidate();
@@ -367,6 +374,8 @@ pub const Highlighter = struct {
 
     fn build(self: *Highlighter, w: *Window, l: *Lang, tree: *ts.Tree, text: []const u8, lo: usize, hi: usize) Allocator.Error!void {
         const n = hi - lo;
+        self.windows_built += 1;
+        self.widest_window = @max(self.widest_window, n);
         self.dropped_matches = false;
         try self.paint.resize(self.gpa, n);
         @memset(self.paint.items, .none);

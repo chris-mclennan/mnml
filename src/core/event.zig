@@ -29,6 +29,7 @@ const font_scan = @import("../app/font_scan.zig");
 const transfers = @import("../app/transfers.zig");
 const grep = @import("../app/grep.zig");
 const script_task = @import("../app/script_task.zig");
+const syntax_jobs = @import("../app/syntax_jobs.zig");
 
 pub const PtyId = u32;
 
@@ -162,6 +163,9 @@ pub const AppEvent = union(enum) {
     /// A hidden script task's output lines or its exit. Owned;
     /// `script_task.handle` destroys it.
     script_task: *script_task.Event,
+    /// A document's parse, finished on a worker. Owned;
+    /// `syntax_jobs.handle` adopts the tree and destroys the rest.
+    syntax: *syntax_jobs.Result,
 
     /// A worker failed. `msg` is gpa-owned and freed by the handler.
     err: struct { source: Source, msg: []u8 },
@@ -189,6 +193,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .tests => |r| r.destroy(gpa),
         .grep => |r| r.destroy(gpa),
         .script_task => |r| r.destroy(gpa),
+        .syntax => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),
         .lsp => |l| l.msg.destroy(gpa),
         .dap => |d| d.msg.destroy(gpa),

@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const mem_report = @import("../core/mem_report.zig");
+const syntax_mod = @import("syntax.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -233,7 +234,7 @@ pub const AppDriver = struct {
         const app = &cast(p).app;
         const e = app.activeEditor() orelse return null;
         const ed = e.buf.editor;
-        if (e.syntax.dirty) {
+        if (e.syntax.dirty and !syntax_mod.Syntax.onWorker(ed.len())) {
             e.syntax.refresh(ed) catch return null;
             e.syntax.dirty = false;
             e.syntax.since_ms = null;

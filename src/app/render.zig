@@ -76,6 +76,7 @@ const Config = @import("../config/Config.zig");
 const flash = @import("flash.zig");
 const wizard_ui = @import("../ui/wizard.zig");
 const syntax = @import("syntax.zig");
+const syntax_jobs = @import("syntax_jobs.zig");
 const sticky = @import("sticky.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
@@ -1593,18 +1594,35 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // once, a large file's first frame paints unhighlighted rather than
     // wait on it. A structural query that already parsed the current
     // text (the outline, a text object) leaves nothing to do.
+    // A document past `Syntax.worker_min_bytes` is not parsed here at
+    // all: the gate hands it to a worker and the frame paints with the
+    // tree it has (`syntax_jobs.zig`).
     if (e.syntax.dirty and e.syntax.since_ms == null) e.syntax.since_ms = app.now_ms;
     _ = e.syntax.absorb(ed);
     if (e.syntax.dirty and (e.syntax.isCurrent() or e.syntax.parseDue(app.now_ms, ed.len()))) {
-        if (!e.syntax.isCurrent()) try e.syntax.refresh(ed);
-        e.syntax.dirty = false;
-        e.syntax.since_ms = null;
+        var settled = true;
+        if (!e.syntax.isCurrent()) {
+            if (!syntax.Syntax.onWorker(ed.len())) {
+                try e.syntax.refresh(ed);
+            } else if (e.syntax.pending != null) {
+                // One job at a time; its result restarts the gate.
+                settled = false;
+            } else if (!e.syntax.hasLanguage()) {
+                // Nothing to parse.
+            } else if (!syntax_jobs.start(app, e.syntax, ed.doc)) {
+                try e.syntax.refresh(ed);
+            }
+        }
+        if (settled) {
+            e.syntax.dirty = false;
+            e.syntax.since_ms = null;
+        }
     }
     // The decorations are an edit-log consumer too: a record dropped
     // before `script_decor` moved its anchors across it would leave
     // them sitting still while the text moved (`script_decor.minSeen`).
     try script_decor.syncPane(app, id);
-    ed.doc.edits.trim(@min(e.syntax.seen_seq, script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));
+    ed.doc.edits.trim(@min(e.syntax.trimFloor(), script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));
     // Spans around the viewport and around the cursor — the view may
     // scroll to the cursor inside `draw`, so both are covered. Two
     // ranges when they are apart (`G` from the top of a long file), not

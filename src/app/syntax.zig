@@ -80,6 +80,18 @@ pub fn keyForPath(path: []const u8) ?[]const u8 {
     return keyFor(path, "");
 }
 
+/// A splice as tree-sitter wants to hear it.
+pub fn inputEdit(sp: editor_mod.Splice) ts.InputEdit {
+    return .{
+        .start_byte = @intCast(sp.start),
+        .old_end_byte = @intCast(sp.old_end),
+        .new_end_byte = @intCast(sp.new_end),
+        .start_point = .{ .row = sp.start_pt.row, .column = sp.start_pt.col },
+        .old_end_point = .{ .row = sp.old_end_pt.row, .column = sp.old_end_pt.col },
+        .new_end_point = .{ .row = sp.new_end_pt.row, .column = sp.new_end_pt.col },
+    };
+}
+
 pub const Syntax = struct {
     hl: highlight.Highlighter,
     /// Set by every path that mutates the text (and a theme change); the
@@ -94,13 +106,47 @@ pub const Syntax = struct {
     /// The seq the kept tree was parsed at; a structural query reparses
     /// when the log moved past it.
     parsed_seq: ?u64 = null,
+    /// A worker is parsing this document (`syntax_jobs.zig`): the job's
+    /// id, the seq of the text it was handed, and the way to call it off.
+    pending: ?Pending = null,
+
+    pub const Pending = struct { id: u64, base_seq: u64, ticket: *@import("syntax_jobs.zig").Ticket };
+
+    /// A document longer than this is never parsed by the frame that
+    /// paints it — a worker does it (`syntax_jobs.zig`). It decides WHERE
+    /// the parse runs, never whether: every file is parsed and
+    /// highlighted in full. At ~70 ms per MB for a first parse and ~6 ms
+    /// per MB for a reparse, a megabyte is where a parse starts to be
+    /// felt in a frame.
+    pub const worker_min_bytes: usize = 1 << 20;
+
+    pub fn onWorker(text_len: usize) bool {
+        return text_len > worker_min_bytes;
+    }
 
     pub fn init(gpa: Allocator) Syntax {
         return .{ .hl = highlight.Highlighter.init(gpa) };
     }
 
     pub fn deinit(self: *Syntax) void {
+        self.callOff();
         self.hl.deinit();
+    }
+
+    /// Tell the worker (if one is parsing this document) that its tree is
+    /// not wanted; whatever it posts finds nobody waiting.
+    pub fn callOff(self: *Syntax) void {
+        const p = self.pending orelse return;
+        p.ticket.cancel.store(true, .release);
+        p.ticket.release(self.hl.gpa);
+        self.pending = null;
+    }
+
+    /// The oldest edit-log seq this document's syntax still needs: what
+    /// it has folded in, or — while a worker parses — the text that was
+    /// handed over, so the edits made since can be told to its tree.
+    pub fn trimFloor(self: *const Syntax) u64 {
+        return if (self.pending) |p| @min(p.base_seq, self.seen_seq) else self.seen_seq;
     }
 
     /// Pick the grammar for `path` (+ `text` for a shebang). A file with
@@ -108,7 +154,10 @@ pub const Syntax = struct {
     pub fn setLanguage(self: *Syntax, path: ?[]const u8, text: []const u8) void {
         const key_name = keyFor(path, text);
         const idx = if (key_name) |k| table.find(k) else null;
-        if (idx != self.hl.root) self.parsed_seq = null;
+        if (idx != self.hl.root) {
+            self.parsed_seq = null;
+            self.callOff();
+        }
         self.hl.setLanguage(idx);
     }
 
@@ -127,22 +176,15 @@ pub const Syntax = struct {
     /// reparse can catch up.
     pub fn absorb(self: *Syntax, ed: *const Editor) bool {
         if (ed.doc.edits.lostSince(self.seen_seq)) {
-            // The tree goes, and every window built from it with it.
+            // The tree goes, and every window built from it with it — and
+            // a worker's tree of the text before would be no use either.
+            self.callOff();
             self.hl.invalidate();
             self.seen_seq = ed.doc.edits.head();
             self.parsed_seq = null;
             return true;
         }
-        for (ed.doc.edits.since(self.seen_seq)) |sp| {
-            self.hl.edit(.{
-                .start_byte = @intCast(sp.start),
-                .old_end_byte = @intCast(sp.old_end),
-                .new_end_byte = @intCast(sp.new_end),
-                .start_point = .{ .row = sp.start_pt.row, .column = sp.start_pt.col },
-                .old_end_point = .{ .row = sp.old_end_pt.row, .column = sp.old_end_pt.col },
-                .new_end_point = .{ .row = sp.new_end_pt.row, .column = sp.new_end_pt.col },
-            });
-        }
+        for (ed.doc.edits.since(self.seen_seq)) |sp| self.hl.edit(inputEdit(sp));
         self.seen_seq = ed.doc.edits.head();
         return false;
     }
@@ -171,10 +213,14 @@ pub const Syntax = struct {
     }
 
     /// Make the tree current for a structural query, whatever the timer
-    /// says. Null when there is no grammar.
+    /// says. Null when there is no grammar. A document whose parses run
+    /// on a worker is never parsed here: the answer comes from the tree
+    /// it has — told of every edit, possibly not reparsed since — or is
+    /// null while its first parse is still running.
     fn fresh(self: *Syntax, ed: *const Editor) ?ts.Node {
         if (!self.hl.hasLanguage()) return null;
         _ = self.absorb(ed);
+        if (onWorker(ed.len())) return self.hl.rootNode();
         if (self.parsed_seq == null or self.parsed_seq.? != self.seen_seq or self.hl.tree == null) {
             self.refresh(ed) catch return null;
         }
@@ -184,10 +230,12 @@ pub const Syntax = struct {
     /// The highlighter's spans over `[lo, hi)`. They are built for the
     /// range asked (and a margin), not the file, so the cost of a frame
     /// follows the viewport. When the range is outside everything kept
-    /// and the tree has been told of edits it has not parsed, it parses
-    /// first: a fresh window is never read off a stale tree.
+    /// and the tree has been told of edits it has not parsed, a small
+    /// document parses first; one whose parses run on a worker reads the
+    /// window off the tree it has (its nodes sit where the text now is)
+    /// and is repainted when the worker's tree lands.
     fn spansOver(self: *Syntax, ed: *const Editor, lo: usize, hi: usize) Allocator.Error![]const highlight.engine.Span {
-        if (self.hl.stale and !self.hl.covers(lo, @min(hi, ed.len()))) try self.refresh(ed);
+        if (self.hl.stale and !onWorker(ed.len()) and !self.hl.covers(lo, @min(hi, ed.len()))) try self.refresh(ed);
         return self.hl.spansIn(ed.bytes(), lo, hi);
     }
 
