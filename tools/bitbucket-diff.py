@@ -174,7 +174,9 @@ def run_zig(args, tmp, fake_url_file, family, keys, out_dir, name):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--oracle", default=os.environ.get("MNML_BB_ORACLE_BIN", "/Users/chrismclennan/Projects/mnml-integrations/target/release/mnml-forge-bitbucket-oracle"))
+    ap.add_argument("--oracle", default=os.environ.get(
+        "MNML_BB_ORACLE_BIN",
+        os.path.expanduser("~/Projects/mnml-integrations/target/release/mnml-forge-bitbucket-oracle")))
     ap.add_argument("--zig", default=os.path.join(ROOT, "zig-out", "bin", "mnml-zig"))
     ap.add_argument("--zig-bb", default=os.path.join(ROOT, "zig-out", "bin", "mnml-bitbucket"))
     ap.add_argument("--fake", default=os.path.join(ROOT, "zig-out", "bin", "mnml-fake-bitbucket"))

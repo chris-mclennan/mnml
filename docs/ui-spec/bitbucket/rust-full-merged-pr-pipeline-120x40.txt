@@ -1,0 +1,40 @@
+┌ bitbucket ───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1.Open + Draft (5) │ 2.Merged (4) │ 3.Pipelines (9)                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ [ 󰍉 Search ]  [ Status: Merged ▾ ]  [ Author ▾ ]  [ Target branch ▾ ]                                    [ 󰑐 Refresh ]
+   REPO / #PR                  STATE      AUTHOR             BRANCH                 UPDATED      TITLE
+ ▼ api                         1 PRs      Sam K              sam/drop-exporter      2026-09-17   #1100 · Drop the legacy
+   ▼ #1100                     MERGED     Sam K              sam/drop-exporter      2026-09-17   Drop the legacy exporte
+                                                                                                   ✓ SUCCESSFUL  #412  o
+ ▼ web                         1 PRs      Dana R             dana/footer            2026-09-15   #801 · Tidy the footer
+                                                                                                 [ Show 1 more older ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ PR #1100: 1 pipeline(s) on merge commit              d detail  ·  a approve  ·  m open↔merged  ·  r refresh  ·  q quit

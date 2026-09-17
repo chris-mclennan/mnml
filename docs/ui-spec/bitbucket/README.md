@@ -1,24 +1,44 @@
 # The Bitbucket reference — every screen, every key
 
 The inventory the Zig integration (`integrations/bitbucket/`) is built
-from. The oracle is the Rust `mnml-forge-bitbucket` (0.3.29) run live
-with the user's real config, read-only, on a private rate bucket, and
-the Rust mnml it mounts in. Every `rust-*.txt` here is a screen cut
-with `tools/rust-capture.py` (a pty and a small VT renderer; there is
-no tmux on the build machine). The screens are the spec for **what is
-there** — every surface, action, column and key — not the bytes: the
-port paints the same content in mnml-zig's chrome (the caps header and
-chips, the `▌` marker, the theme roles, the keymap-generated hint row).
+from. The oracle is the Rust `mnml-forge-bitbucket` (0.3.29), built with
+a base-URL override and run **against the offline fake server**
+(`integrations/bitbucket/tools/fake_bitbucket/`, the `mnml-fake-bitbucket`
+binary) — an invented workspace `acme` with repos `api` and `web`,
+people `Chris M` / `Dana R` / `Sam K`, and ticket keys like `ENG-4210`.
+No screen here was ever cut against the live Bitbucket API, and none may
+be: a capture of somebody's real workspace must not reach a committed
+file.
 
-The config the captures ran on is the user's
-`~/.config/mnml-forge-bitbucket.toml` with `repos` trimmed to four
-(`app-a`, `acmeco-playwright`, `app-c`, `example.net`) — under
-the shared bucket (0.22 requests/s) the thirteen-repo prefetch takes
-four to twenty minutes and paints nothing until it is done. Every
-request was a GET; the keys that write the config (`x` `H` `s` `alt+↑↓`)
-ran against a scratch copy of it, and `a` (approve) was never pressed
-on the live site — its screen is documented from `app.rs` and
-exercised on the fake server.
+Re-cut the whole set with
+
+```sh
+zig build                       # mnml-fake-bitbucket
+tools/bitbucket-capture.py      # → docs/ui-spec/bitbucket/rust-*.txt
+tools/bitbucket-capture.py --only rust-full-merged-120x40   # just one
+```
+
+`MNML_BB_ORACLE_BIN` names the oracle build; each run gets its own
+scratch `HOME` (so the keys that rewrite the config — `x` `H` `s`
+`alt+↑↓` — cannot touch a real one) and its own rate-limit bucket. The
+driver underneath is `tools/rust-capture.py` (a pty and a small VT
+renderer; there is no tmux on the build machine).
+
+The screens are the spec for **what is there** — every surface, action,
+column and key — not the bytes: the port paints the same content in
+mnml-zig's chrome (the caps header and chips, the `▌` marker, the theme
+roles, the keymap-generated hint row).
+
+Five screens the reference shows only *while a fetch is in flight*
+(`rust-full-detail-loading`, `rust-c-detail-loading`,
+`rust-full-refresh-in-flight`, `rust-full-merged-pr-fetching`,
+`rust-full-click-author-chip-refreshing`) have no capture: the fake
+server answers on the loopback faster than a frame, so the state never
+paints. Their content is in the rows below instead. The eight
+`rust-mnml-*` screens — the app inside the **Rust** mnml, and two cut
+from the user's own running instance — are gone for the same reason the
+rest were re-cut: they were live. Re-cutting them needs a Rust mnml
+driven headless against the fake server, which this tool does not do.
 
 ## The app's own screens (`MNML_PANE=1`, 120×40 unless noted)
 
@@ -45,14 +65,14 @@ hint chips on the right).
 | refresh | `rust-full-refresh-in-flight` → `rust-full-after-refresh` | `r` or the Refresh pill | status `refreshing <tab>…` then `<tab> · N repos, M PRs` (`(K errored)` when some repo failed); the UI freezes during the fetch |
 | the Search chip | `rust-full-click-search-chip` | click `[ 󰍉 Search ]` | status `filter not wired yet (round-1 visual)` — a dead placeholder, like Target branch / Branch / Pipeline type / Trigger type |
 | the Status chip | `rust-full-click-status-chip` | click | cycles to the next tab |
-| the Author chip | `rust-full-click-author-chip-refreshing` → `rust-full-click-author-chip` | click | toggles mine-only: `[ Author: Chris McLennan ▾ ]`, refetches with `author.account_id = me` (open + one merged peek), status `<tab>: filter → Authored by me`; click again → `All` |
+| the Author chip | `rust-full-click-author-chip` (the `…-refreshing` frame is too brief to catch offline) | click | toggles mine-only: `[ Author: Chris M ▾ ]`, refetches with `author.account_id = me` (open + one merged peek), status `<tab>: filter → Authored by me`; click again → `All` |
 | tab keys | `rust-full-tab-key` | `Tab` / `Shift+Tab` / `1`–`9` | the strip's highlight moves |
 | paging | `rust-full-pgdn`, `rust-full-home`, `rust-c-pgdn/pgup/end` | `PageDown` / `PageUp` / `Home`,`g` / `End`,`G` | ±10 rows, the ends |
 | hide a repo | `rust-c-hide-repo` | `x` on a tree row | the repo's rows go, status `hid adx (H to un-hide all)`, `hidden_repos` written to the TOML (comments dropped) |
 | un-hide | `rust-c-unhide-all` | `H` | the repos return (collapsed), status `un-hid 1 repo(s)`; `nothing hidden` when the list is empty |
 | scope | `rust-c-scope-cycle-1/2/3` | `s` | status `scope: explicit` → `scope: all` → `scope: recent`; written to the TOML; the tabs refetch |
 | reorder | `rust-c-reorder-down`, `-up` | `alt+↓` / `alt+↑` on a tree row | the repo swaps places; `repo_order` written |
-| mine-only launch | `rust-mine-120x40`, `rust-mine-pr-row`, `-end`, `-show-all` | `--only prs-mine` (the statusline chip's click) | one tab `Mine`; `[ Author: Chris McLennan ▾ ]`; each repo shows my open PRs plus one merged peek; `[ Show 76 more merged ]` |
+| mine-only launch | `rust-mine-120x40`, `rust-mine-pr-row`, `-end`, `-show-all` | `--only prs-mine` (the statusline chip's click) | one tab `Mine`; `[ Author: Chris M ▾ ]`; each repo shows my open PRs plus one merged peek; `[ Show N more merged ]` |
 | open on the web | (not pressed live — it opens the user's browser) | `o` / `Enter` on a non-tree row | `webbrowser::open(url)`; status `opened <url>` / `open failed: <e>`; PR → its html link, branch → `…/branch/<name>`, pipeline → `…/pipelines/results/<n>`, repo header → `…/pull-requests` or `…/branches` |
 | copy the URL | (not pressed live — it writes the clipboard) | `y` | `pbcopy` / `xclip` / `wl-copy` / `clip`; status `copied <url>` / `copy failed: <e>` |
 | approve | (not pressed live) | `a` with the detail open | `POST …/approve` or `DELETE` when `✓ you approved`; status `approved ws/repo#id` / `unapproved …` / `approval toggle failed: <e>`; `approve needs Account:Read on the app password` when whoami failed |
@@ -78,28 +98,28 @@ workspace, email, refresh, scope, whoami, the tabs, then a live probe.
 `--diag` is the same as a tree with the runtime. `--prefetch` emits the
 tabs' rows as JSON for the Rust mnml's prefetch worker.
 
-## What the app paints into the Rust mnml (`rust-mnml-*`)
+## What the app paints into the Rust mnml
 
-Cut from a Rust mnml run headless with the user's real manifests
-(`rust-mnml-integrations-sidebar-375x90` and `rust-mnml-statusline-375x90`
-are from the user's running instance, via its IPC channel):
+Read from the reference's manifests and `install.rs`. The screens that
+once stood here were cut live and are gone (see the top of this file);
+the facts are the spec, and the mnml-zig side of each is covered by
+`tests/e2e/integrations_bitbucket_*.test`:
 
-* **INTEGRATIONS rows** (`rust-mnml-integrations-160x48`): two rows,
+* **INTEGRATIONS rows**: two rows,
   `󰂨 Bitbucket Pipelines / bitbucket_pipelines.open` and `󰂨 Bitbucket PRs 0.3.2… / bitbucket_prs.open`,
   both `category = forge`, `in_palette_bar = false` (no palette-bar chip).
-* **the pane** (`rust-mnml-prs-160x48`, `rust-mnml-pipelines-160x48`):
+* **the pane**:
   a `:term` pane titled `󰂨 Bitbucket PRs`, the app's own screen inside
   it (`MNML_PANE=1`: no outer border); it reads `Bitbucket · loading…`
-  for the minutes the prefetch takes (`rust-mnml-prs-loading`).
-* **the statusline chip** (`rust-mnml-start` → `rust-mnml-prs`): the
+  for the minutes the prefetch takes.
+* **the statusline chip**: the
   manifest's `[[statusline_segments]]` `bitbucket_prs_mine`, glyph `󰂨`,
   colour `#8BBF4E`, right side, fed by `[[values_sources]]`
   `mnml-forge-bitbucket --values` every 300 s (staggered 2 s × index,
   clamped 30–3600 s). It reads `󰂨 …` (comment colour, "waiting for
   first poll") until the poll answers, then `󰂨 {open_mine}({unapproved_mine})`
   in the manifest's colour, `󰂨 !` in red when the poll fails with no
-  prior value (what the captures show — the poll's 10 s timeout under
-  the shared bucket), the last value in yellow when a later poll
+  prior value (the poll's 10 s timeout under a busy shared bucket), the last value in yellow when a later poll
   fails, `󰂨 ⧗` in yellow when the binary is missing. Tooltip: `Open
   PRs you authored (last 90 days, non-release) — parens = still-needs-review
   count. Click to open the mine-only PRs tab.` Click →

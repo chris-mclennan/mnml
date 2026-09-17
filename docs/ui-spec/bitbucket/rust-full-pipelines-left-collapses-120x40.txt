@@ -1,0 +1,40 @@
+┌ bitbucket ───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1.Open + Draft (5) │ 2.Merged (4) │ 3.Pipelines (2)                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ [ Branch ▾ ]  [ Pipeline type ▾ ]  [ Status: Pipelines ▾ ]  [ Trigger type ▾ ]
+   REPO / BRANCH                         STATE          BUILD    RESULT     DATE
+ ▶ api                                   4 branches
+ ▶ web                                   3 branches
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Open + Draft · 5 rows              o open on web  ·  d detail  ·  a approve  ·  m open↔merged  ·  r refresh  ·  q quit

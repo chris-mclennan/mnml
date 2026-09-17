@@ -1,0 +1,24 @@
+┌ bitbucket ───────────────────────────────────────────────────────────────────┐
+│ 1.Open + Draft (5) │ 2.Merged (4) │ 3.Pipelines (9)                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+ [ 󰍉 Search ]  [ Status: Open ▾ ]  [ Author ▾ ]  [ Target branch ▾ ]
+   R STAT AUT BRAN UPDA TITLE               ┌ acme/api#1234 ───────────────────┐
+ ▼ a 2 PR Chr chri 2026 #1234 · Fix the logi│OPEN · chris/fix-login → main     │
+     OPEN Chr chri 2026 Fix the login redire│author: Chris M · updated:        │
+ ▼ w 1 PR Chr chri 2026 #820 · Redesign the │2026-09-17                        │
+     OPEN Chr chri 2026 Redesign the empty s│○ not approved · 1 total          │
+                        [ Show 1 more older │                                  │
+                                            │Fix the login redirect            │
+                                            │                                  │
+                                            │Fixes ENG-4210. The redirect      │
+                                            │dropped the query string when the │
+                                            │session had expired.              │
+                                            │                                  │
+                                            │comments (3, most-recent first):  │
+                                            │                                  │
+                                            │  Chris M · 2026-09-01            │
+                                            │    Good point, pushed an escape. │
+                                            │                                  │
+                                            │  Sam K · 2026-09-01              │
+                                            └──────────────────────────────────┘
+ Open + Draft · 5 rows     a approve  ·  m open↔merged  ·  r refresh  ·  q quit
