@@ -488,3 +488,26 @@ test "every grammar highlights its fixture through the engine" {
         }
     }
 }
+
+test "a highlights query that fans out past the cursor's 16-bit capture-list ids finishes instead of reading a freed list" {
+    const gpa = testing.allocator;
+    // The Haskell fixture end to end, sixty times over: the second copy's
+    // module header is an error, and the query's open-ended patterns hold
+    // more than 65535 matches in progress across what follows.
+    const e = table.entries[table.find("hs").?];
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(gpa);
+    while (text.items.len < 128 * 1024) try text.appendSlice(gpa, e.fixture);
+    var h = Highlighter.init(gpa);
+    defer h.deinit();
+    h.setLanguage(table.find("hs").?);
+    try h.refresh(text.items);
+    try testing.expect(h.spans.items.len > 1000);
+    // And the cap is what it ran into: the same query, by hand.
+    const cursor = try ts.QueryCursor.init();
+    defer cursor.deinit();
+    cursor.exec(h.langs[h.root.?].?.highlights, h.rootNode().?);
+    var ci: u32 = 0;
+    while (cursor.nextCapture(&ci)) |_| {}
+    try testing.expect(cursor.didExceedMatchLimit());
+}

@@ -336,8 +336,22 @@ pub const Query = opaque {
 };
 
 pub const QueryCursor = opaque {
+    /// The most in-progress matches a cursor may hold. The runtime names
+    /// each one's capture list with a 16-bit id and reserves the top value
+    /// for "none", yet leaves the pool unbounded by default — a pattern
+    /// that fans out past 65535 states hands two of them the same list
+    /// and the cursor reads freed memory. At the cap it drops the oldest
+    /// state instead (`didExceedMatchLimit`).
+    pub const max_match_limit: u32 = std.math.maxInt(u16);
+
+    /// A cursor whose pool is capped at `max_match_limit`.
     pub fn init() error{OutOfMemory}!*QueryCursor {
-        return ts_query_cursor_new() orelse error.OutOfMemory;
+        const c = ts_query_cursor_new() orelse return error.OutOfMemory;
+        ts_query_cursor_set_match_limit(c, max_match_limit);
+        return c;
+    }
+    pub fn didExceedMatchLimit(c: *const QueryCursor) bool {
+        return ts_query_cursor_did_exceed_match_limit(c);
     }
     pub fn deinit(c: *QueryCursor) void {
         ts_query_cursor_delete(c);
@@ -415,6 +429,8 @@ pub extern fn ts_query_predicates_for_pattern(self: *const Query, pattern_index:
 pub extern fn ts_query_cursor_new() ?*QueryCursor;
 pub extern fn ts_query_cursor_delete(self: *QueryCursor) void;
 pub extern fn ts_query_cursor_exec(self: *QueryCursor, query: *const Query, node: Node) void;
+pub extern fn ts_query_cursor_set_match_limit(self: *QueryCursor, limit: u32) void;
+pub extern fn ts_query_cursor_did_exceed_match_limit(self: *const QueryCursor) bool;
 pub extern fn ts_query_cursor_set_byte_range(self: *QueryCursor, start_byte: u32, end_byte: u32) bool;
 pub extern fn ts_query_cursor_next_match(self: *QueryCursor, match: *QueryMatch) bool;
 pub extern fn ts_query_cursor_next_capture(self: *QueryCursor, match: *QueryMatch, capture_index: *u32) bool;
