@@ -336,13 +336,34 @@ pub const Query = opaque {
 };
 
 pub const QueryCursor = opaque {
-    /// The most in-progress matches a cursor may hold. The runtime names
-    /// each one's capture list with a 16-bit id and reserves the top value
-    /// for "none", yet leaves the pool unbounded by default — a pattern
-    /// that fans out past 65535 states hands two of them the same list
-    /// and the cursor reads freed memory. At the cap it drops the oldest
-    /// state instead (`didExceedMatchLimit`).
-    pub const max_match_limit: u32 = std.math.maxInt(u16);
+    /// The most in-progress matches a cursor may hold. Two reasons it is
+    /// not left at the runtime's default (unbounded):
+    ///
+    /// - the runtime names each match's capture list with a 16-bit id and
+    ///   keeps the top value for "none", so past 65535 live matches two of
+    ///   them share a list and the cursor reads a freed one (a segfault in
+    ///   `ts_query_cursor__compare_captures`);
+    /// - every step compares the live matches of a pattern pairwise, so the
+    ///   cost of a step grows with the square of the pool. Measured on the
+    ///   one shipped input that fills it (the Haskell fixture repeated to
+    ///   128 KB): 99 ms at 256, 473 ms at 1024, 3.0 s at 4096, and no end
+    ///   in sight at 16384.
+    ///
+    /// At the cap the runtime drops the oldest in-progress match
+    /// (`didExceedMatchLimit`), so a query that reaches it may paint
+    /// differently than it would with more room — there is no exact answer
+    /// to hold it to, since the uncapped query is the one that crashes.
+    /// What was measured: of the 60 grammars' fixtures, once and repeated
+    /// to 128 KB, that Haskell text (not valid Haskell: every copy after
+    /// the first is a parse error) is the only one that reaches 256; on it
+    /// the whole-file captures agree at 256, 1024 and 4096, but one 19 KB
+    /// window in six differs between 256 and 1024. Every other grammar
+    /// never reaches the cap, where it changes nothing.
+    ///
+    /// 1024 keeps the worst measured query under half a second and leaves
+    /// four times the room of 256. Whether a real file of any language
+    /// reaches it is not known.
+    pub const max_match_limit: u32 = 1024;
 
     /// A cursor whose pool is capped at `max_match_limit`.
     pub fn init() error{OutOfMemory}!*QueryCursor {
