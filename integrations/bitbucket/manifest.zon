@@ -1,43 +1,38 @@
-// The Bitbucket integration's manifest — one file, two readers:
-// `mnml-bitbucket --install` writes it into mnml's data root
-// (`@import`ed by main.zig, so the binary and the file cannot drift),
-// and the INTEGRATIONS section's Dev tab reads it beside build.zig to
-// list the folder before anything is built.
+// The Bitbucket integration's first manifest, the PRs chip — one
+// file, two readers: `mnml-bitbucket --install` writes it into mnml's
+// data root (`@import`ed by main.zig, so the binary and the file cannot
+// drift), and the INTEGRATIONS section's Dev tab reads it beside
+// build.zig to list the folder before anything is built. The second
+// chip, Pipelines, is `manifest_pipelines.zon` beside this one;
+// `--install` writes both, as the reference ships two.
 //
-// The four commands are the ones the brief names. Three open the pane
-// on a particular tab; `bitbucket.refresh` is headless — it recomputes
-// the review-queue count and republishes the statusline segment and the
-// activity badge over the Tier-2 file-IPC channel without a pane, which
-// is what the mount protocol cannot do (a host has no way to send a
-// command *into* a running mount).
+// The keys mirror the reference's `bitbucket_prs.toml`: the id, the
+// label, the chip (nf-md-bitbucket, `BP`, blue, off the palette bar),
+// the two open commands, the auth fields, the values source and the
+// statusline segment.
 .{
-    .id = "bitbucket",
-    .label = "Bitbucket",
-    .description = "Bitbucket Cloud pull requests: your review queue, the detail, the diff, and approve / comment / merge",
-    .version = "0.1.0",
+    .id = "bitbucket_prs",
+    .label = "Bitbucket PRs",
+    .description = "Bitbucket: open + merged pull requests across the workspace",
+    .version = "0.2.0",
     .binary = "mnml-bitbucket",
+    .args = .{ "--only", "prs" },
     .category = "forge",
-    .chip = .{ .glyph = "\u{f00a8}", .fallback = "BB", .color = "blue", .tooltip = "Bitbucket pull requests" }, // nf-md-bitbucket
+    .chip = .{ .glyph = "\u{f00a8}", .fallback = "BP", .color = "blue", .tooltip = "Bitbucket pull requests", .in_palette_bar = false },
     .commands = .{
-        .{ .id = "bitbucket.open", .title = "Bitbucket: pull requests", .keys = .{"ctrl+k b"} },
-        .{ .id = "bitbucket.my_prs", .title = "Bitbucket: pull requests I opened", .args = .{ "--tab", "mine" } },
-        .{ .id = "bitbucket.review_queue", .title = "Bitbucket: pull requests to review", .args = .{ "--tab", "reviewing" }, .keys = .{"ctrl+k r"} },
-        .{ .id = "bitbucket.refresh", .title = "Bitbucket: refresh the review-queue count", .ex = "term mnml-bitbucket --refresh --workspace {{workspace}}" },
-    },
-    .context_menu = .{
-        .{ .target = "pane", .title = "Bitbucket: pull requests to review", .command = "bitbucket.review_queue" },
+        .{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open", .keys = .{"space i b"} },
+        .{ .id = "bitbucket_prs.open_mine", .title = "Bitbucket PRs: open (mine only)", .args = .{ "--only", "prs-mine" } },
+        .{ .id = "bitbucket_prs.refresh", .title = "Bitbucket PRs: refresh the statusline chip", .ex = "term mnml-bitbucket --refresh --workspace {{workspace}}" },
     },
     .statusline = .{
-        .{ .id = "review", .text = "BB", .color = "blue", .click_command = "bitbucket.review_queue", .priority = 60 },
-    },
-    .settings = .{
-        .{ .key = "diff", .label = "Diff in the detail", .options = .{ "on", "off" }, .default = "on", .help = "Fetch and show the unified diff; D folds it away for one pull request" },
-        .{ .key = "detail", .label = "Open with the detail", .options = .{ "closed", "open" }, .default = "closed", .help = "Whether the detail panel is showing when the pane opens" },
+        .{ .id = "prs_mine", .text = "\u{f00a8} …", .color = "green", .click_command = "bitbucket_prs.open_mine", .priority = 60 },
     },
     .auth = .{
-        .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Atlassian scoped API token — its own rate-limit bucket, revocable on its own. Needs Pull requests: Read, and Account: Read for the mine / reviewing tabs." },
-        .{ .key = "app_password", .label = "Bitbucket app password", .kind = .secret, .env_fallback = "BITBUCKET_APP_PASSWORD", .help_url = "https://bitbucket.org/account/settings/app-passwords/", .help = "The legacy path. Set this or an API token above; the token wins when both are set." },
-        .{ .key = "access_token", .label = "Write token (approve / comment / merge)", .kind = .secret, .env_fallback = "BITBUCKET_ACCESS_TOKEN", .help = "Optional second token used only for writes. Without one the read token is borrowed, and BITBUCKET_REQUIRE_WRITE_TOKEN=1 refuses writes instead." },
-        .{ .key = "email", .label = "Atlassian account email", .kind = .email, .env_fallback = "BITBUCKET_EMAIL", .help = "The username half of Basic auth. Also settable as `email` in config.zon.", .required = true },
+        .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Preferred. Atlassian scoped API token — fresh rate-limit bucket, per-integration revoke. Either this OR an app password is required." },
+        .{ .key = "app_password", .label = "Bitbucket app password", .kind = .secret, .env_fallback = "BITBUCKET_APP_PASSWORD", .help_url = "https://bitbucket.org/account/settings/app-passwords/", .help = "Legacy path. Set this OR an api_token above (api_token wins if both are set). Scopes: Repositories:Read + Pull requests:Read + Pipelines:Read." },
+        .{ .key = "username", .label = "Bitbucket username (optional)", .kind = .text, .env_fallback = "BITBUCKET_USERNAME", .help = "Optional. Only needed if your app password requires Basic auth (username + password); leave blank for token-only auth." },
+    },
+    .values_sources = .{
+        .{ .id = "bitbucket_values", .command = "mnml-bitbucket --values", .poll_interval_secs = 300 },
     },
 }

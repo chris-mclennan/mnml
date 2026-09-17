@@ -1,103 +1,107 @@
-//! `<data root>/integrations/bitbucket/config.zon` — the private-source
-//! install path from the Zig integrations plan: the manifest that mnml
-//! reads is public (`<data root>/integrations/bitbucket.zon`, written by
-//! `--install`), and everything about *your* workspace lives in a
-//! separate file beside it that nothing else reads. First run writes a
-//! commented scaffold and says so; no token ever goes in here (that is
-//! `auth.zig`).
+//! `<data root>/integrations/bitbucket/config.zon` — the private half
+//! of the install. The manifests mnml reads (`bitbucket_prs.zon`,
+//! `bitbucket_pipelines.zon`, written by `--install`) are public; this
+//! file is *your* workspace and nothing else reads it. Its keys are the
+//! reference's TOML keys by name — `email`, `workspace`, `repos`,
+//! `scope`, `recent_window_days`, `hidden_repos`, `repo_order`,
+//! `chip_stale_after_days`, `chip_excluded_branch_patterns`, the
+//! `tabs` with their `kind` / `repo` / `state` / `mode` / `q` — so a
+//! `mnml-forge-bitbucket.toml` converts line for line.
 //!
-//! A tab is `kind` / `mode` / `fallback`:
+//! Tabs come in six kinds. Three see the whole workspace and take
+//! their repos from the top-level scope: `workspace_open_prs`,
+//! `workspace_merged_prs`, `workspace_pipelines`. Three are the older
+//! per-repo shapes: `pull_requests` (one repo's list, or `mode = .mine`
+//! / `.reviewing` across the workspace), `pipelines`, `branches`.
 //!
-//!   * `kind` is what the tab lists. `.pull_requests` today; the field
-//!     exists so a pipelines or branches tab is additive.
-//!   * `mode` is whose pull requests: `.repo` (one repo's list),
-//!     `.mine` (PRs you opened), `.reviewing` (PRs you are a reviewer
-//!     on). `.mine` and `.reviewing` resolve your `account_id` through
-//!     `/2.0/user`, which needs **Account: Read** on the token.
-//!   * `fallback` is what the tab shows when `mode` cannot run — the
-//!     token has no Account: Read, or `/2.0/user` failed. `.none`
-//!     leaves the tab empty and says why; `.repo` drops to this tab's
-//!     `repo`; `.workspace` drops to every OPEN PR in `repos`.
-//!
-//! Bitbucket Cloud has no workspace-wide pull-request endpoint, so a
-//! `.mine` / `.reviewing` / `.workspace` tab fans out one query per
-//! repo in `repos`. That list is required for those modes: enumerating
-//! a 100-repo workspace on every refresh is what lands an account in
-//! 429s.
+//! The runtime keys that change this file — `x` hides a repo, `H`
+//! un-hides them all, `s` cycles the scope, `alt+↑` / `alt+↓` reorder
+//! — rewrite it whole through `save`; hand-written comments do not
+//! survive that, as they do not in the reference.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const Kind = enum { pull_requests };
+pub const Kind = enum {
+    workspace_open_prs,
+    workspace_merged_prs,
+    workspace_pipelines,
+    pull_requests,
+    pipelines,
+    branches,
 
-pub const Mode = enum { repo, mine, reviewing, workspace };
+    /// The workspace-wide kinds take their repos from `scope`.
+    pub fn isWorkspaceWide(k: Kind) bool {
+        return k == .workspace_open_prs or k == .workspace_merged_prs or k == .workspace_pipelines;
+    }
+
+    /// The `--only` family a kind belongs to.
+    pub fn family(k: Kind) Family {
+        return switch (k) {
+            .workspace_open_prs, .workspace_merged_prs, .pull_requests => .prs,
+            .workspace_pipelines, .pipelines => .pipelines,
+            .branches => .branches,
+        };
+    }
+
+    pub fn isPrs(k: Kind) bool {
+        return k.family() == .prs;
+    }
+};
+
+/// What `--only` narrows to.
+pub const Family = enum { prs, pipelines, branches };
 
 pub const State = enum { OPEN, MERGED, DECLINED, SUPERSEDED };
 
-pub const Fallback = enum { none, repo, workspace };
+/// `mode` on a `pull_requests` tab: `.none` is a per-repo list.
+pub const Mode = enum { none, mine, reviewing };
+
+pub const Scope = enum {
+    all,
+    recent,
+    explicit,
+
+    /// `s` cycles all → recent → explicit → all.
+    pub fn next(s: Scope) Scope {
+        return switch (s) {
+            .all => .recent,
+            .recent => .explicit,
+            .explicit => .all,
+        };
+    }
+};
 
 pub const Tab = struct {
     name: []const u8,
     kind: Kind = .pull_requests,
-    mode: Mode = .repo,
-    fallback: Fallback = .none,
-    /// The repo slug for `mode = .repo` (and for `fallback = .repo`).
-    repo: []const u8 = "",
-    /// Override the top-level workspace for this tab.
+    /// Overrides the top-level workspace for this tab.
     workspace: []const u8 = "",
+    /// The repo slug a per-repo kind reads.
+    repo: []const u8 = "",
+    /// The PR state a `pull_requests` tab lists.
     state: State = .OPEN,
-    /// Raw Bitbucket Query Language layered under the mode's own
-    /// predicate — `updated_on >= 2026-01-01`.
+    mode: Mode = .none,
+    /// Raw Bitbucket Query Language layered under the mode's own.
     q: []const u8 = "",
+    /// A workspace PR tab that keeps only the account's own pull
+    /// requests — what `--only prs-mine` synthesises.
+    mine_only: bool = false,
 };
 
-/// Cross-links out of a pull request. Each section names the mnml
-/// command to run when the sibling integration is installed, and the
-/// URL to open in a browser when it is not.
-pub const Jira = struct {
-    enabled: bool = true,
-    /// The command the jira integration registers. mnml runs it when
-    /// `<data root>/integrations/jira.zon` exists.
-    command: []const u8 = "jira.open",
-    /// `https://you.atlassian.net` — the browser fallback's base.
-    base_url: []const u8 = "",
-    /// Only these project keys count as issue keys. Empty means any
-    /// `ABC-123`-shaped token, which over-matches on a PR that quotes
-    /// an error code.
-    project_keys: []const []const u8 = &.{},
-};
-
-pub const Github = struct {
-    enabled: bool = false,
-    command: []const u8 = "github.open",
-    /// `https://github.com/<owner>` — a mirror of the same source.
-    base_url: []const u8 = "",
-};
-
-/// mnml itself: what the pane may do to the editor's workspace.
-pub const Mnml = struct {
-    /// `c` checks the PR's source branch out in the workspace. Off
-    /// refuses with a reason rather than touching the working tree.
-    allow_checkout: bool = true,
-    /// An mnml command to run after a successful checkout — the git
-    /// section's refresh, usually.
-    after_checkout_command: []const u8 = "git.refresh",
-};
-
-/// The token bucket every request passes through, and how a 429 is
-/// answered. Bitbucket's ceiling is per-account, so a burst from a
-/// fan-out is what trips it.
+/// The shared bucket's knobs and where it lives (`ratelimit.zig`).
 pub const Rate = struct {
-    /// Minimum gap between two requests.
-    min_interval_ms: u32 = 200,
-    /// Attempts per request, retries included.
+    rate_per_sec: f64 = 0.22,
+    capacity: f64 = 40.0,
+    /// Attempts per request on a 429, retries included.
     max_attempts: u8 = 3,
     /// Used when a 429 carries no `Retry-After`.
     default_backoff_secs: u32 = 15,
-    /// A `Retry-After` longer than this is clamped, so one stubborn
-    /// repo cannot park the pane.
+    /// A `Retry-After` longer than this is clamped.
     max_backoff_secs: u32 = 30,
+    /// The state file; empty means the shared one (see `ratelimit.zig`).
+    state_path: []const u8 = "",
 };
 
 pub const Config = struct {
@@ -105,27 +109,38 @@ pub const Config = struct {
     email: []const u8 = "",
     /// The default workspace slug (`bitbucket.org/<workspace>/<repo>`).
     workspace: []const u8 = "",
-    /// The repos a `.mine` / `.reviewing` / `.workspace` tab queries.
-    repos: []const []const u8 = &.{},
-    /// Never listed, whatever a tab asks for.
+    /// A scoped access token cannot read `/2.0/user`; naming the
+    /// account here skips that call.
+    account_id: []const u8 = "",
+    /// 0 disables the auto-refresh; `r` still works.
+    refresh_interval_secs: u32 = 60,
+    /// Which repos the workspace-wide tabs see.
+    scope: Scope = .recent,
+    /// A repo with activity in the last this-many days is "recent".
+    recent_window_days: u32 = 14,
+    /// The allow-list `scope = .explicit` uses.
+    explicit_repos: []const []const u8 = &.{},
+    /// Never listed, whatever the scope says.
     hidden_repos: []const []const u8 = &.{},
-    /// 0 disables the tab's auto-refresh; `r` still works.
-    refresh_interval_secs: u32 = 300,
-    /// Rows per API page. Bitbucket caps this at 50.
-    page_len: u32 = 50,
+    /// Repos listed here render first, in this order.
+    repo_order: []const []const u8 = &.{},
+    /// The statusline chip counts only PRs updated this recently
+    /// (0: all of them) …
+    chip_stale_after_days: u32 = 90,
+    /// … and not those whose source branch matches one of these —
+    /// `^prefix` anchors at the start, anything else is a substring.
+    chip_excluded_branch_patterns: []const []const u8 = &.{ "^release/", "^hotfix/" },
+    /// When set, both the chip and the workspace tabs read only these
+    /// repos and never enumerate the workspace.
+    repos: []const []const u8 = &.{},
+    tabs: []const Tab = &.{},
     /// Override the API base — the fake server, or a test double.
     /// `$BITBUCKET_BASE_URL` wins over this.
     base_url: []const u8 = "",
     rate: Rate = .{},
-    tabs: []const Tab = &.{},
-    jira: Jira = .{},
-    github: Github = .{},
-    mnml: Mnml = .{},
 
-    /// A repo is listed unless it is hidden.
     pub fn isHidden(c: Config, slug: []const u8) bool {
-        for (c.hidden_repos) |h| if (std.mem.eql(u8, h, slug)) return true;
-        return false;
+        return contains(c.hidden_repos, slug);
     }
 
     /// The workspace a tab queries: its own override, else the default.
@@ -134,10 +149,23 @@ pub const Config = struct {
     }
 };
 
+pub fn contains(list: []const []const u8, s: []const u8) bool {
+    for (list) |x| if (std.mem.eql(u8, x, s)) return true;
+    return false;
+}
+
+/// The reference's default three tabs, for a scaffold and for a
+/// `--only` launch that finds a family missing.
+pub const default_tabs = [_]Tab{
+    .{ .name = "Open + Draft", .kind = .workspace_open_prs },
+    .{ .name = "Merged", .kind = .workspace_merged_prs },
+    .{ .name = "Pipelines", .kind = .workspace_pipelines },
+};
+
 pub const ValidateError = error{Invalid};
 
-/// The rule the loader and `--check` both apply. `why` gets a line the
-/// pane can paint.
+/// The rule the loader and `--check` both apply. `why` gets a line
+/// the pane can paint.
 pub fn validate(c: Config, why: *[]const u8) ValidateError!void {
     if (std.mem.trim(u8, c.email, " ").len == 0) {
         why.* = "`email` is required — your Atlassian account email";
@@ -147,12 +175,12 @@ pub fn validate(c: Config, why: *[]const u8) ValidateError!void {
         why.* = "`workspace` is required — the slug in bitbucket.org/<workspace>/<repo>";
         return error.Invalid;
     }
-    if (c.tabs.len == 0) {
-        why.* = "at least one `.tabs` entry is required";
+    if (c.scope == .explicit and c.explicit_repos.len == 0) {
+        why.* = "`scope = .explicit` needs a non-empty `explicit_repos`";
         return error.Invalid;
     }
-    if (c.page_len == 0 or c.page_len > 50) {
-        why.* = "`page_len` must be 1–50 (Bitbucket's cap)";
+    if (c.tabs.len == 0) {
+        why.* = "at least one `.tabs` entry is required";
         return error.Invalid;
     }
     for (c.tabs) |tab| {
@@ -160,17 +188,16 @@ pub fn validate(c: Config, why: *[]const u8) ValidateError!void {
             why.* = "a tab needs a `name`";
             return error.Invalid;
         }
-        if (tab.mode == .repo and tab.repo.len == 0 and tab.q.len == 0) {
-            why.* = "a `mode = .repo` tab needs a `repo` (or a raw `q`)";
-            return error.Invalid;
-        }
-        if (tab.fallback == .repo and tab.repo.len == 0) {
-            why.* = "a `fallback = .repo` tab needs a `repo` to fall back to";
-            return error.Invalid;
-        }
-        if ((tab.mode == .mine or tab.mode == .reviewing or tab.mode == .workspace or tab.fallback == .workspace) and c.repos.len == 0) {
-            why.* = "`repos` is required for a mine / reviewing / workspace tab — Bitbucket has no workspace-wide PR endpoint";
-            return error.Invalid;
+        switch (tab.kind) {
+            .workspace_open_prs, .workspace_merged_prs, .workspace_pipelines => {},
+            .pull_requests => if (tab.mode == .none and tab.repo.len == 0 and tab.q.len == 0) {
+                why.* = "a `pull_requests` tab needs a `repo`, a `mode` or a `q`";
+                return error.Invalid;
+            },
+            .pipelines, .branches => if (tab.repo.len == 0) {
+                why.* = "a `pipelines` / `branches` tab needs a `repo`";
+                return error.Invalid;
+            },
         }
     }
 }
@@ -188,7 +215,7 @@ pub fn dataRoot(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.E
     return null;
 }
 
-fn nonEmpty(v: ?[]const u8) ?[]const u8 {
+pub fn nonEmpty(v: ?[]const u8) ?[]const u8 {
     const s = v orelse return null;
     return if (s.len == 0) null else s;
 }
@@ -207,10 +234,8 @@ pub fn configPath(gpa: Allocator, env: *const std.process.Environ.Map) PathError
 
 pub const LoadError = error{ NoConfig, Scaffolded, Malformed, Invalid, ReadFailed, WriteFailed } || PathError;
 
-/// `why` outlives `load`'s arena, so the one reason that is not a string
-/// literal — the path the scaffold went to — is copied here rather than
-/// left pointing into memory the error path has already freed. (It did
-/// point there; Debug happened to survive it and ReleaseSafe did not.)
+/// `why` outlives `load`'s arena, so the one reason that is not a
+/// string literal — the path the scaffold went to — is copied here.
 threadlocal var why_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
 
 pub const Loaded = struct {
@@ -235,7 +260,6 @@ pub fn load(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[
     const a = arena.allocator();
     const owned_path = try a.dupe(u8, p);
     gpa.free(p);
-
     const text = Io.Dir.cwd().readFileAllocOptions(io, owned_path, a, .unlimited, .of(u8), 0) catch |err| switch (err) {
         error.FileNotFound => {
             scaffold(io, owned_path) catch {
@@ -250,14 +274,36 @@ pub fn load(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[
             return error.ReadFailed;
         },
     };
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(a);
-    const cfg = std.zon.parse.fromSliceAlloc(Config, a, text, &diag, .{ .free_on_error = false }) catch {
+    const cfg = parseText(a, text) catch {
         why.* = "config.zon does not parse — check the trailing commas and the field names";
         return error.Malformed;
     };
     try validate(cfg, why);
     return .{ .arena = arena, .config = cfg, .path = owned_path };
+}
+
+pub fn parseText(arena: Allocator, text: [:0]const u8) !Config {
+    var diag: std.zon.parse.Diagnostics = .{};
+    defer diag.deinit(arena);
+    return std.zon.parse.fromSliceAlloc(Config, arena, text, &diag, .{ .free_on_error = false });
+}
+
+/// The config as ZON, owned — what `save` writes.
+pub fn render(gpa: Allocator, c: Config) Allocator.Error![]u8 {
+    var out: Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    out.writer.writeAll("// mnml-bitbucket — rewritten by the pane (x / H / s / alt+↑↓); see the README.\n") catch return error.OutOfMemory;
+    std.zon.stringify.serialize(c, .{ .emit_default_optional_fields = false }, &out.writer) catch return error.OutOfMemory;
+    out.writer.writeByte('\n') catch return error.OutOfMemory;
+    return out.toOwnedSlice() catch error.OutOfMemory;
+}
+
+/// Rewrite the file from `c` (a runtime change persisting).
+pub fn save(gpa: Allocator, io: Io, path: []const u8, c: Config) !void {
+    const text = try render(gpa, c);
+    defer gpa.free(text);
+    if (std.fs.path.dirname(path)) |dir| try Io.Dir.cwd().createDirPath(io, dir);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text });
 }
 
 /// Write the commented template. Used by first run and by `--scaffold`.
@@ -267,40 +313,52 @@ pub fn scaffold(io: Io, p: []const u8) !void {
 }
 
 pub const template =
-    \\// mnml-bitbucket — your Bitbucket Cloud workspace. Edit and
-    \\// re-open the pane (`bitbucket.refresh` re-reads this file).
+    \\// mnml-bitbucket — your Bitbucket Cloud workspace. The keys are the
+    \\// reference's `mnml-forge-bitbucket.toml` keys by name.
     \\//
-    \\// No token goes in here. Set BITBUCKET_API_TOKEN (read) and
-    \\// BITBUCKET_ACCESS_TOKEN (write), or drop them in
-    \\// <this folder>/token and <this folder>/token.write — see the
-    \\// README's "Auth" section.
+    \\// No token goes in here: set BITBUCKET_API_TOKEN (or an app
+    \\// password / BITBUCKET_PERSONAL_TOKEN), or drop it in
+    \\// <this folder>/token — see the README's "Auth" section.
     \\.{
     \\    .email = "you@example.com",
     \\    .workspace = "your-workspace-slug",
+    \\    // A scoped access token cannot read /2.0/user; name the account
+    \\    // here to skip that call.
+    \\    // .account_id = "",
     \\
-    \\    // Bitbucket has no workspace-wide PR endpoint: a mine /
-    \\    // reviewing / workspace tab queries each of these in turn.
-    \\    // Keep it to the repos you actually watch.
-    \\    .repos = .{ "api", "web" },
-    \\    // .hidden_repos = .{ "archived-thing" },
+    \\    // Auto-refresh in seconds; 0 disables (`r` still works).
+    \\    .refresh_interval_secs = 60,
     \\
-    \\    .refresh_interval_secs = 300,
-    \\    .page_len = 50,
+    \\    // Which repos the workspace-wide tabs see: .all, .recent (touched
+    \\    // in the last `recent_window_days`), or .explicit (only
+    \\    // `explicit_repos`). `s` in the pane cycles this.
+    \\    .scope = .recent,
+    \\    .recent_window_days = 14,
+    \\    // .explicit_repos = .{ "frontend", "backend" },
     \\
-    \\    // Tabs are switched with 1-9 / Tab. `kind` is what the tab
-    \\    // lists, `mode` is whose PRs, `fallback` is what to show when
-    \\    // the mode cannot run (no Account: Read on the token).
+    \\    // When set, the tabs and the statusline chip read only these
+    \\    // repos and never enumerate the workspace — the cheap path.
+    \\    .repos = .{},
+    \\    // Never listed; `x` on a repo row adds to this, `H` clears it.
+    \\    .hidden_repos = .{},
+    \\    // Listed first, in this order; alt+↑ / alt+↓ rewrite it.
+    \\    .repo_order = .{},
+    \\
+    \\    // The statusline chip: PRs you authored, updated in the last
+    \\    // 90 days, not on a release/hotfix branch.
+    \\    .chip_stale_after_days = 90,
+    \\    .chip_excluded_branch_patterns = .{ "^release/", "^hotfix/" },
+    \\
+    \\    // 1-9 / tab switch tabs. The three workspace-wide kinds are the
+    \\    // recommended set; per-repo kinds (.pull_requests / .pipelines /
+    \\    // .branches) take a `.repo`.
     \\    .tabs = .{
-    \\        .{ .name = "Mine", .mode = .mine, .fallback = .workspace },
-    \\        .{ .name = "Review queue", .mode = .reviewing, .fallback = .none },
-    \\        .{ .name = "api", .mode = .repo, .repo = "api", .state = .OPEN },
+    \\        .{ .name = "Open + Draft", .kind = .workspace_open_prs },
+    \\        .{ .name = "Merged", .kind = .workspace_merged_prs },
+    \\        .{ .name = "Pipelines", .kind = .workspace_pipelines },
+    \\        // .{ .name = "api PRs", .kind = .pull_requests, .repo = "api", .state = .OPEN },
+    \\        // .{ .name = "Mine", .kind = .pull_requests, .mode = .mine },
     \\    },
-    \\
-    \\    // A PR's issue keys open the jira integration when it is
-    \\    // installed, and this base URL in a browser when it is not.
-    \\    .jira = .{ .enabled = true, .command = "jira.open", .base_url = "", .project_keys = .{} },
-    \\    .github = .{ .enabled = false },
-    \\    .mnml = .{ .allow_checkout = true, .after_checkout_command = "git.refresh" },
     \\}
     \\
 ;
@@ -309,134 +367,96 @@ pub const template =
 
 const t = std.testing;
 
-fn parseText(arena: Allocator, text: [:0]const u8) !Config {
-    return std.zon.parse.fromSliceAlloc(Config, arena, text, null, .{ .free_on_error = false });
-}
-
 test "the scaffold parses and validates once the placeholders are real" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const z = try arena.allocator().dupeZ(u8, template);
-    var cfg = try parseText(arena.allocator(), z);
+    const cfg = try parseText(arena.allocator(), z);
     var why: []const u8 = "";
     try validate(cfg, &why);
     try t.expectEqual(@as(usize, 3), cfg.tabs.len);
-    try t.expectEqual(Mode.mine, cfg.tabs[0].mode);
-    try t.expectEqual(Fallback.workspace, cfg.tabs[0].fallback);
-    try t.expectEqual(Mode.reviewing, cfg.tabs[1].mode);
-    try t.expectEqual(Mode.repo, cfg.tabs[2].mode);
-    try t.expectEqual(State.OPEN, cfg.tabs[2].state);
-    try t.expectEqualStrings("api", cfg.tabs[2].repo);
-    try t.expectEqualStrings("jira.open", cfg.jira.command);
-    try t.expect(cfg.mnml.allow_checkout);
-    try t.expectEqualStrings("git.refresh", cfg.mnml.after_checkout_command);
-    // The tab workspace falls through to the top-level one.
-    try t.expectEqualStrings("your-workspace-slug", cfg.tabWorkspace(cfg.tabs[0]));
-    cfg.tabs = &.{.{ .name = "x", .workspace = "other", .repo = "r" }};
-    try t.expectEqualStrings("other", cfg.tabWorkspace(cfg.tabs[0]));
+    try t.expectEqual(Kind.workspace_open_prs, cfg.tabs[0].kind);
+    try t.expectEqual(Kind.workspace_pipelines, cfg.tabs[2].kind);
+    try t.expectEqual(Scope.recent, cfg.scope);
+    try t.expectEqual(@as(u32, 14), cfg.recent_window_days);
+    try t.expectEqual(@as(u32, 90), cfg.chip_stale_after_days);
+    try t.expectEqualStrings("^release/", cfg.chip_excluded_branch_patterns[0]);
 }
 
-test "validate names what is missing rather than failing silently" {
+test "the reference's TOML converts key for key" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const cfg = try parseText(arena.allocator(),
+        \\.{ .email = "me@x.com", .workspace = "acme", .account_id = "acct-1", .refresh_interval_secs = 60,
+        \\   .scope = .recent, .recent_window_days = 14, .repos = .{ "api", "web" },
+        \\   .tabs = .{ .{ .name = "Open + Draft", .kind = .workspace_open_prs }, .{ .name = "api", .kind = .pull_requests, .repo = "api", .state = .OPEN },
+        \\              .{ .name = "Mine", .kind = .pull_requests, .mode = .mine }, .{ .name = "builds", .kind = .pipelines, .repo = "api" } } }
+    );
     var why: []const u8 = "";
-    const ok: Config = .{
-        .email = "a@b.com",
-        .workspace = "ws",
-        .repos = &.{"api"},
-        .tabs = &.{.{ .name = "Mine", .mode = .mine }},
-    };
-    try validate(ok, &why);
+    try validate(cfg, &why);
+    try t.expectEqualStrings("acct-1", cfg.account_id);
+    try t.expectEqual(Mode.mine, cfg.tabs[2].mode);
+    try t.expectEqual(Kind.pipelines, cfg.tabs[3].kind);
+    try t.expect(cfg.tabs[0].kind.isWorkspaceWide());
+    try t.expectEqual(Family.pipelines, cfg.tabs[3].kind.family());
+}
 
-    var bad = ok;
-    bad.email = "  ";
-    try t.expectError(error.Invalid, validate(bad, &why));
+test "validate names the missing key" {
+    var why: []const u8 = "";
+    try t.expectError(error.Invalid, validate(.{ .workspace = "w", .tabs = &default_tabs }, &why));
     try t.expect(std.mem.indexOf(u8, why, "email") != null);
-
-    bad = ok;
-    bad.workspace = "";
-    try t.expectError(error.Invalid, validate(bad, &why));
-    try t.expect(std.mem.indexOf(u8, why, "workspace") != null);
-
-    bad = ok;
-    bad.tabs = &.{};
-    try t.expectError(error.Invalid, validate(bad, &why));
+    try t.expectError(error.Invalid, validate(.{ .email = "e", .workspace = "w" }, &why));
     try t.expect(std.mem.indexOf(u8, why, "tabs") != null);
-
-    bad = ok;
-    bad.page_len = 200;
-    try t.expectError(error.Invalid, validate(bad, &why));
-    try t.expect(std.mem.indexOf(u8, why, "page_len") != null);
-
-    // A repo tab with neither a repo nor a raw query has nothing to ask for.
-    bad = ok;
-    bad.tabs = &.{.{ .name = "Repo", .mode = .repo }};
-    try t.expectError(error.Invalid, validate(bad, &why));
-    try t.expect(std.mem.indexOf(u8, why, "`repo`") != null);
-    bad.tabs = &.{.{ .name = "Repo", .mode = .repo, .q = "state = \"OPEN\"" }};
-    try validate(bad, &why);
-
-    // A mine tab with no `repos` has nothing to fan out over.
-    bad = ok;
-    bad.repos = &.{};
-    try t.expectError(error.Invalid, validate(bad, &why));
-    try t.expect(std.mem.indexOf(u8, why, "repos") != null);
-
-    // `fallback = .repo` with no repo would fall back to nothing.
-    bad = ok;
-    bad.tabs = &.{.{ .name = "Mine", .mode = .mine, .fallback = .repo }};
-    try t.expectError(error.Invalid, validate(bad, &why));
-    try t.expect(std.mem.indexOf(u8, why, "fall back") != null);
+    try t.expectError(error.Invalid, validate(.{ .email = "e", .workspace = "w", .tabs = &.{.{ .name = "x", .kind = .pipelines }} }, &why));
+    try t.expect(std.mem.indexOf(u8, why, "repo") != null);
+    try t.expectError(error.Invalid, validate(.{ .email = "e", .workspace = "w", .scope = .explicit, .tabs = &default_tabs }, &why));
+    try t.expect(std.mem.indexOf(u8, why, "explicit_repos") != null);
+    try validate(.{ .email = "e", .workspace = "w", .tabs = &.{.{ .name = "x", .kind = .pull_requests, .mode = .reviewing }} }, &why);
 }
 
-test "hidden repos subtract from whatever a tab asks for" {
-    const c: Config = .{ .hidden_repos = &.{ "old", "legacy" } };
-    try t.expect(c.isHidden("old"));
-    try t.expect(c.isHidden("legacy"));
-    try t.expect(!c.isHidden("api"));
-}
-
-test "the config path follows MNML_BITBUCKET_CONFIG, then the data root" {
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    try t.expectError(error.NoHome, configPath(t.allocator, &env));
-    try env.put("HOME", "/h");
-    const a = try configPath(t.allocator, &env);
-    defer t.allocator.free(a);
-    try t.expectEqualStrings("/h/.config/mnml/integrations/bitbucket/config.zon", a);
-    try env.put("MNML_DATA_ROOT", "/r");
-    const b = try configPath(t.allocator, &env);
-    defer t.allocator.free(b);
-    try t.expectEqualStrings("/r/integrations/bitbucket/config.zon", b);
-    try env.put("MNML_BITBUCKET_CONFIG", "/tmp/x.zon");
-    const c = try configPath(t.allocator, &env);
-    defer t.allocator.free(c);
-    try t.expectEqualStrings("/tmp/x.zon", c);
-}
-
-test "first load writes the scaffold and says so; the second reads it back" {
+test "save rewrites the file and load reads the same config back" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "cfg", "config.zon" });
+    defer t.allocator.free(path);
+    try save(t.allocator, t.io, path, .{
+        .email = "me@x.com",
+        .workspace = "acme",
+        .hidden_repos = &.{"old"},
+        .repo_order = &.{ "web", "api" },
+        .scope = .all,
+        .tabs = &default_tabs,
+    });
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
-    try env.put("MNML_DATA_ROOT", root);
+    try env.put("MNML_BITBUCKET_CONFIG", path);
+    var why: []const u8 = "";
+    var loaded = try load(t.allocator, t.io, &env, &why);
+    defer loaded.deinit();
+    try t.expectEqualStrings("old", loaded.config.hidden_repos[0]);
+    try t.expectEqualStrings("web", loaded.config.repo_order[0]);
+    try t.expectEqual(Scope.all, loaded.config.scope);
+    try t.expectEqual(@as(usize, 3), loaded.config.tabs.len);
+    try t.expectEqualStrings("Merged", loaded.config.tabs[1].name);
+}
 
+test "a missing config is scaffolded and reported with its path" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "never", "config.zon" });
+    defer t.allocator.free(path);
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_BITBUCKET_CONFIG", path);
     var why: []const u8 = "";
     try t.expectError(error.Scaffolded, load(t.allocator, t.io, &env, &why));
-    try t.expect(std.mem.endsWith(u8, why, "/integrations/bitbucket/config.zon"));
-    // The scaffold is there but still has the placeholder workspace, so
-    // the next load is a validation failure, not a parse failure.
-    var why2: []const u8 = "";
-    var loaded = try load(t.allocator, t.io, &env, &why2);
+    try t.expectEqualStrings(path, why);
+    // The scaffold's placeholders are non-empty, so a second load parses it.
+    var loaded = try load(t.allocator, t.io, &env, &why);
     defer loaded.deinit();
     try t.expectEqualStrings("you@example.com", loaded.config.email);
-    try t.expectEqual(@as(usize, 2), loaded.config.repos.len);
-
-    // Garbage is a named parse failure, never a crash.
-    const p = try configPath(t.allocator, &env);
-    defer t.allocator.free(p);
-    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = p, .data = ".{ this is not zon" });
-    var why3: []const u8 = "";
-    try t.expectError(error.Malformed, load(t.allocator, t.io, &env, &why3));
-    try t.expect(std.mem.indexOf(u8, why3, "does not parse") != null);
 }

@@ -806,7 +806,11 @@ fn runLeaderHit(app: *App, hit: LeaderHit) Allocator.Error!void {
             else => {},
         },
         .dead => |d| app.toast("{s}: not a command in this build", .{d.id}),
-        .group => {
+        .dyn => |d| command.runNamed(app, d.id) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .group, .dyn_group => {
             app.overlay.deinit(app.gpa);
             var state: whichkey.State = .{};
             @memcpy(state.path[0..hit.len], hit.path[0..hit.len]);
@@ -1146,15 +1150,17 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             if (c >= 128 or w.len >= whichkey.max_depth) return closeOverlay(app);
             w.path[w.len] = @intCast(c);
             w.len += 1;
-            const node = whichkey.lookupIn(w.slice(), app.input_style == .vim) orelse {
+            // The installed integrations' chords are rows here too, so
+            // `<leader>ib` is reachable by looking as well as by typing.
+            const node = (try whichkey.lookupWith(app.frame.allocator(), &app.dyn_commands, w.slice(), app.input_style == .vim)) orelse {
                 // A dead end says so rather than vanishing.
                 const path = app.frame.allocator().dupe(u8, w.slice()) catch "";
                 closeOverlay(app);
                 app.toast("no leader mapping: <leader>{s}", .{path});
                 return;
             };
-            switch (node.*) {
-                .group => app.needs_render = true,
+            switch (node) {
+                .group, .dyn_group => app.needs_render = true,
                 .dead => |d| {
                     closeOverlay(app);
                     app.toast("{s}: not a command in this build", .{d.id});
@@ -1162,6 +1168,14 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
                 .cmd => |cmd| {
                     closeOverlay(app);
                     command.run(app, .{ .static = cmd.id }) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {},
+                    };
+                },
+                .dyn => |d| {
+                    const id = app.frame.allocator().dupe(u8, d.id) catch "";
+                    closeOverlay(app);
+                    command.runNamed(app, id) catch |err| switch (err) {
                         error.OutOfMemory => return error.OutOfMemory,
                         else => {},
                     };
@@ -1929,7 +1943,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .picker => try cmd_picker.accept(app, i),
                 .help => try help_app.click(app, i),
                 .which_key => |*w| {
-                    const kids = whichkey.continuations(app.frame.allocator(), w.slice(), app.input_style == .vim);
+                    const kids = try whichkey.kidsWith(app.frame.allocator(), &app.dyn_commands, w.slice(), app.input_style == .vim);
                     if (i >= kids.len) return;
                     try overlayKey(app, Key.char(kids[i].key));
                 },

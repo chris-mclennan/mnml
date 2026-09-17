@@ -1,423 +1,967 @@
-//! One function: turn the `App` into a frame. Kept apart from both
-//! `app.zig` (which knows what is true) and `view.zig` (which knows
-//! what a line reads like) so the layout decisions — where the detail
-//! goes, what an overlay covers — live in one place with their own
-//! tests.
+//! One function: turn the `App` into a frame, registering every click
+//! target in the same statement as the cells it covers. The pane is
+//! mnml's own panel shape, so it looks native inside mnml-zig rather
+//! than like a transplanted table:
 //!
-//! The pane is four bands: the tab strip, the filter line, the body,
-//! and the footer. The body is the list, or the list beside the detail
-//! when there is room for both, or the detail alone when there is not.
-//! An overlay — the confirm, the comment prompt, the key help — is
-//! painted over the bottom of the body rather than replacing it, so you
-//! can still see the pull request you are about to merge.
+//!   row 0   the caps header — `BITBUCKET PRS  (4 repos · 64 PRs)` and,
+//!           right-anchored, the chips: `author: all` (the PR family),
+//!           the pipelines pages (the pipelines family), the refresh glyph
+//!   row 1   the tab strip, when the launch kept more than one tab —
+//!           `1 Open + Draft (47)  2 Merged (32)  3 Pipelines (18)`
+//!   row 2   the filter pill — `󰍉 / filter`
+//!   row 3   the column header
+//!   rows    the list: the `▌` marker on the cursor's row, the reference's
+//!           columns, a merged PR's pipeline sub-line, the show-more footer,
+//!           a scrollbar when the list is longer than the pane; with `d`, the
+//!           detail beside it (or over it below 100 columns)
+//!   last    the hint row — the status on the left, and on the right the
+//!           keys that apply to the focused row, generated from the one
+//!           keymap table so nothing here can drift from what a key does
+//!
+//! Overlays paint last, so they win the click: a row's right-click
+//! menu, and the `?` key sheet.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
 const app_mod = @import("app.zig");
+const tabs = @import("tabs.zig");
 const view = @import("view.zig");
+const keymap = @import("keymap.zig");
+const hit = @import("hit.zig");
+const cfg = @import("config.zig");
+const theme_mod = @import("theme.zig");
+
 const App = app_mod.App;
+const Style = sdk.Style;
+const Theme = theme_mod.Theme;
 
 /// The narrowest pane that gets the list and the detail side by side.
 pub const split_min_cols: u16 = 100;
-/// The list's share when they are side by side.
+/// The list's share when they are side by side (the reference's 55/45).
 pub const list_share_pct: u16 = 55;
 
-pub fn paint(arena: Allocator, f: *sdk.Frame, a: *App) Allocator.Error!void {
-    f.clear(.{});
-    a.cols = f.cols;
-    a.rows = f.rows;
-    if (f.rows == 0 or f.cols == 0) return;
+pub const marker = "▌";
+pub const filter_glyph_nerd = "\u{F0349}";
+pub const refresh_glyph_nerd = "\u{eb37}";
+pub const refresh_glyph_ascii = "\u{21ba}";
 
-    const tab = a.activeTab();
+pub const Box = struct { x: u16, y: u16, w: u16, h: u16 };
 
-    // ── the tab strip ────────────────────────────────────────────────
-    const infos = try arena.alloc(view.TabInfo, a.tabs.len);
-    for (a.tabs, infos) |*ts, *slot| slot.* = .{
-        .name = ts.tab.name,
-        .count = if (ts.fetched) ts.visible.len else null,
-        .fallback_note = ts.fallback_note,
-    };
-    _ = f.text(0, 0, f.cols, try view.tabStrip(arena, infos, a.active), view.Tone.header.style());
+/// A rectangle on the frame with the hit map alongside.
+const Painter = struct {
+    f: *sdk.Frame,
+    app: *App,
+    th: Theme,
+    nerd: bool,
 
-    // ── the filter line ──────────────────────────────────────────────
-    if (f.rows > 1) {
-        const line = try view.filterLine(arena, .{
-            .query = a.filter_buf.items,
-            .editing = a.mode == .filter,
-            .matched = tab.visible.len,
-            .total = tab.rows.len,
-        });
-        _ = f.text(0, 1, f.cols, line, view.Tone.dim.style());
+    fn text(p: *Painter, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
+        return p.f.text(x, y, max_w, s, style);
     }
 
-    // ── the body ─────────────────────────────────────────────────────
-    const body_top: u16 = 2;
-    const body_height = f.rows -| body_top -| 1;
-    if (body_height > 0) {
-        const split = a.show_detail and f.cols >= split_min_cols;
-        const list_w: u16 = if (split) @max(30, (f.cols * list_share_pct) / 100) else f.cols;
-        if (!a.show_detail or split) {
-            try paintList(arena, f, a, tab, .{ .x = 0, .y = body_top, .width = list_w, .height = body_height });
-        }
-        if (a.show_detail) {
-            const x: u16 = if (split) list_w + 1 else 0;
-            const w: u16 = if (split) f.cols -| (list_w + 1) else f.cols;
-            try paintDetail(arena, f, a, .{ .x = x, .y = body_top, .width = w, .height = body_height });
-            if (split) {
-                var y: u16 = body_top;
-                while (y < body_top + body_height) : (y += 1) f.put(list_w, y, "│", view.Tone.dim.style());
-            }
-        }
-        try paintOverlay(arena, f, a, .{ .x = 0, .y = body_top, .width = f.cols, .height = body_height });
+    fn fill(p: *Painter, b: Box, style: Style) void {
+        p.f.fill(b.x, b.y, b.w, b.h, style);
     }
 
-    // ── the footer ───────────────────────────────────────────────────
-    if (f.rows > 2) {
-        const text = if (a.status.len > 0) a.status else footer_keys;
-        _ = f.text(0, f.rows - 1, f.cols, text, view.Tone.dim.style());
+    fn target(p: *Painter, x: u16, y: u16, w: u16, tg: hit.Target) void {
+        p.app.hits.add(.{ .x = x, .y = y, .w = w, .h = 1 }, tg);
     }
-}
 
-pub const footer_keys = "enter open · y url · Y branch · d detail · a approve · x changes · c comment · m merge · C checkout · i issue · r refresh · ? keys · q quit";
-
-fn paintList(arena: Allocator, f: *sdk.Frame, a: *App, tab: *app_mod.TabState, box: view.Box) Allocator.Error!void {
-    if (tab.error_text.len > 0) {
-        const lines = [_]view.Line{
-            .{ .text = tab.tab.name, .tone = .header },
-            .{ .text = "" },
-            .{ .text = tab.error_text, .tone = .bad },
-            .{ .text = "" },
-            .{ .text = "r retries · see the README's Auth section", .tone = .dim },
-        };
-        view.paintLines(f, &lines, box, 0, null);
-        return;
+    fn width(s: []const u8) u16 {
+        var n: u16 = 0;
+        var it = std.unicode.Utf8View.initUnchecked(s).iterator();
+        while (it.nextCodepoint()) |cp| n += if (sdk.frame.isWide(cp)) 2 else 1;
+        return n;
     }
-    const rows = try arena.alloc(view.Row, tab.visible.len);
-    for (tab.visible, rows) |i, *slot| slot.* = tab.rows[i];
-    const lines = try view.listLines(arena, .{
-        .rows = rows,
-        .selected = tab.selected,
-        .cols = box.width,
-        .show_repo = tab.tab.mode != .repo,
-        .me_account_id = a.me_account_id,
-        .empty_message = if (!tab.fetched) "loading…" else emptyMessage(tab),
-    });
-    // Line 0 is the column header and does not scroll; the rows do.
-    if (lines.len > 0) view.paintLines(f, lines[0..1], .{ .x = box.x, .y = box.y, .width = box.width, .height = 1 }, 0, null);
-    const body: view.Box = .{ .x = box.x, .y = box.y + 1, .width = box.width, .height = box.height -| 1 };
-    if (lines.len > 1) view.paintLines(f, lines[1..], body, tab.scroll, if (tab.visible.len == 0) null else tab.selected);
-
-    // The per-repo failures sit under the rows rather than replacing
-    // them: a 403 on one archived repo must be visible, not fatal.
-    if (tab.notes.len > 0 and box.height > 2) {
-        var y = box.y + box.height -| @as(u16, @intCast(@min(tab.notes.len, 3)));
-        for (tab.notes[0..@min(tab.notes.len, 3)]) |note| {
-            f.fill(box.x, y, box.width, 1, .{});
-            _ = f.text(box.x, y, box.width, try std.fmt.allocPrint(arena, "! {s}", .{note}), view.Tone.warn.style());
-            y += 1;
-        }
-    }
-}
-
-fn emptyMessage(tab: *app_mod.TabState) []const u8 {
-    return switch (tab.tab.mode) {
-        .mine => "No open pull requests you opened.",
-        .reviewing => "Nothing waiting on your review.",
-        .repo, .workspace => "No pull requests here.",
-    };
-}
-
-fn paintDetail(arena: Allocator, f: *sdk.Frame, a: *App, box: view.Box) Allocator.Error!void {
-    const d = a.detail orelse {
-        const lines = [_]view.Line{.{ .text = "(nothing focused)", .tone = .dim }};
-        view.paintLines(f, &lines, box, 0, null);
-        return;
-    };
-    if (d.error_text.len > 0) {
-        const lines = [_]view.Line{
-            .{ .text = "detail", .tone = .section },
-            .{ .text = "" },
-            .{ .text = d.error_text, .tone = .bad },
-        };
-        view.paintLines(f, &lines, box, 0, null);
-        return;
-    }
-    const lines = try view.detailLines(arena, .{
-        .pr = d.pr,
-        .workspace = d.key.workspace,
-        .repo = d.key.repo,
-        .reviewers = d.reviewers,
-        .builds = d.builds,
-        .files = d.files,
-        .diff = d.diff,
-        .activity = d.activity,
-        .jira_keys = d.jira_keys,
-        .me_account_id = a.me_account_id,
-        .cols = box.width,
-        .show_diff = a.show_diff,
-        .loading = d.loading,
-    });
-    const max_scroll = lines.len -| box.height;
-    if (a.detail) |*live| live.scroll = @min(live.scroll, max_scroll);
-    view.paintLines(f, lines, box, if (a.detail) |live| live.scroll else 0, null);
-}
-
-fn paintOverlay(arena: Allocator, f: *sdk.Frame, a: *App, box: view.Box) Allocator.Error!void {
-    const lines: []const view.Line = switch (a.mode) {
-        .confirm => try view.confirmLines(arena, .{ .title = a.pending_detail, .detail = "" }),
-        .prompt => blk: {
-            var out: std.ArrayList(view.Line) = .empty;
-            try out.append(arena, .{ .text = "comment", .tone = .section });
-            const before = a.prompt_buf.items[0..a.prompt_cursor];
-            const after = a.prompt_buf.items[a.prompt_cursor..];
-            try out.append(arena, .{ .text = try std.fmt.allocPrint(arena, "> {s}▏{s}", .{ before, after }), .tone = .normal });
-            try out.append(arena, .{ .text = "enter post · esc cancel · ←→ move · ctrl+u clear", .tone = .dim });
-            break :blk try out.toOwnedSlice(arena);
-        },
-        .help => help_lines,
-        else => return,
-    };
-    if (lines.len == 0) return;
-    const h: u16 = @intCast(@min(lines.len + 2, box.height));
-    const top = box.y + box.height -| h;
-    var y = top;
-    while (y < top + h) : (y += 1) f.fill(box.x, y, box.width, 1, view.Tone.dim.style());
-    view.paintLines(f, lines, .{ .x = box.x + 1, .y = top + 1, .width = box.width -| 2, .height = h -| 1 }, 0, null);
-}
-
-pub const help_lines = &[_]view.Line{
-    .{ .text = "keys", .tone = .section },
-    .{ .text = "1-9 / tab / shift+tab   switch tab" },
-    .{ .text = "j k ↑ ↓ g G             move · ctrl+d ctrl+u page (or scroll the detail)" },
-    .{ .text = "enter o                 open in a browser" },
-    .{ .text = "y Y                     copy the URL · copy the branch" },
-    .{ .text = "d D                     detail · fold the diff" },
-    .{ .text = "a A                     approve · withdraw the approval" },
-    .{ .text = "x X                     request changes · withdraw the request" },
-    .{ .text = "c                       comment" },
-    .{ .text = "m s                     merge · cycle the merge strategy" },
-    .{ .text = "C                       check the branch out in the workspace" },
-    .{ .text = "i                       open the next issue key" },
-    .{ .text = "/ esc                   filter · clear" },
-    .{ .text = "r q                     refresh · quit" },
-    .{ .text = "", .tone = .dim },
-    .{ .text = "any key closes this", .tone = .dim },
 };
+
+pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Allocator.Error!void {
+    f.clear(.{ .fg = app.theme.fg, .bg = app.theme.bg });
+    app.cols = f.cols;
+    app.rows = f.rows;
+    app.hits.reset();
+    if (f.rows == 0 or f.cols == 0) return;
+    var p: Painter = .{ .f = f, .app = app, .th = app.theme, .nerd = nerd_font };
+    // The header's `N of M` is derived from the rows, and the header
+    // paints first: resolve them once here so it reads this frame's
+    // numbers rather than the last one's.
+    _ = try app.visible(arena);
+    var y: u16 = 0;
+    try paintHeader(arena, &p, y);
+    y += 1;
+    if (app.showTabStrip() and y < f.rows) {
+        try paintTabStrip(arena, &p, y);
+        y += 1;
+    }
+    if (y < f.rows) {
+        paintFilter(&p, y);
+        y += 1;
+    }
+    const hint_y = f.rows - 1;
+    if (y < hint_y) {
+        const body: Box = .{ .x = 0, .y = y, .w = f.cols, .h = hint_y - y };
+        try paintBody(arena, &p, body);
+    }
+    try paintHintRow(arena, &p, hint_y);
+    if (app.mode == .menu) try paintMenu(arena, &p);
+    if (app.mode == .help) try paintSheet(arena, &p);
+}
+
+// ─── the header ──────────────────────────────────────────────────────────
+
+fn familyLabel(app: *App) []const u8 {
+    return switch (app.family()) {
+        .prs => "BITBUCKET PRS",
+        .pipelines => "BITBUCKET PIPELINES",
+        .branches => "BITBUCKET BRANCHES",
+    };
+}
+
+fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    const ts = app.activeTab();
+    var x: u16 = 1;
+    const label = familyLabel(app);
+    x += p.text(x, y, p.f.cols -| x, label, th.label());
+    // The subtitle: the reference's status count, dim.
+    var sub: []const u8 = "";
+    if (ts.loading) {
+        const done = app.progressDone();
+        const total = app.progressTotal();
+        sub = if (total > 0) try std.fmt.allocPrint(arena, "  loading… {d}/{d} repos", .{ done, total }) else "  loading…";
+    } else if (app.narrowed()) {
+        // Narrowed: the count says how much of the tab is hidden, the
+        // way the sibling integrations' caps headers do.
+        sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
+    } else if (ts.fetched) {
+        sub = switch (ts.data) {
+            .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs{s})", .{ ts.repos, ts.items, if (ts.errored > 0) " · some errored" else "" }),
+            .repo_tree => try std.fmt.allocPrint(arena, "  ({d} repos)", .{ts.repos}),
+            .pull_requests => try std.fmt.allocPrint(arena, "  ({d} PRs)", .{ts.items}),
+            .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
+            .branches => try std.fmt.allocPrint(arena, "  ({d} branches)", .{ts.items}),
+        };
+    }
+    // The chips, laid right to left, each dropped whole when it would
+    // cross the title.
+    const refresh_text = if (p.nerd) " " ++ refresh_glyph_nerd ++ " " else " " ++ refresh_glyph_ascii ++ " ";
+    var right = p.f.cols;
+    const rw = Painter.width(refresh_text);
+    if (right >= x + rw + 2) {
+        right -= rw;
+        _ = p.text(right, y, rw, refresh_text, th.refresh());
+        p.target(right, y, rw, .{ .chip = .refresh });
+    }
+    const Chip = struct { text: []const u8, target: hit.Chip, active: bool };
+    var chips: [6]Chip = undefined;
+    var n: usize = 0;
+    switch (app.family()) {
+        .prs => {
+            const kind_ok = ts.spec.kind == .workspace_open_prs or ts.spec.kind == .workspace_merged_prs;
+            if (kind_ok) {
+                const who = if (ts.spec.mine_only) (if (app.me_display_name.len > 0) app.me_display_name else "me") else "all";
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .author, .active = ts.spec.mine_only };
+                n += 1;
+            }
+        },
+        .pipelines => {
+            chips[n] = .{ .text = " usage ", .target = .usage, .active = false };
+            n += 1;
+            chips[n] = .{ .text = " caches ", .target = .caches, .active = false };
+            n += 1;
+            chips[n] = .{ .text = " schedules ", .target = .schedules, .active = false };
+            n += 1;
+            chips[n] = .{ .text = " run pipeline ", .target = .run_pipeline, .active = false };
+            n += 1;
+        },
+        .branches => {},
+    }
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const c = chips[i];
+        const w = Painter.width(c.text);
+        if (right < x + w + 2) break;
+        right -= w + 1;
+        _ = p.text(right, y, w, c.text, if (c.active) th.chipActive() else th.chip());
+        p.target(right, y, w, .{ .chip = c.target });
+    }
+    if (sub.len > 0) _ = p.text(x, y, right -| x -| 1, sub, th.dimText());
+}
+
+// ─── the tab strip ───────────────────────────────────────────────────────
+
+fn paintTabStrip(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    var x: u16 = 1;
+    for (app.tabs, 0..) |*ts, i| {
+        const count = if (ts.fetched) try std.fmt.allocPrint(arena, " {d} {s} ({d}) ", .{ i + 1, ts.spec.name, tabCount(ts) }) else try std.fmt.allocPrint(arena, " {d} {s} ", .{ i + 1, ts.spec.name });
+        const w = Painter.width(count);
+        if (x + w > p.f.cols) break;
+        const style = if (i == app.active) th.tabActive() else th.tabInactive();
+        _ = p.text(x, y, w, count, style);
+        p.target(x, y, w, .{ .tab = i });
+        x += w + 1;
+    }
+}
+
+/// The reference's tab count: the rows a tree shows, the items of a list.
+fn tabCount(ts: *const app_mod.TabState) usize {
+    return switch (ts.data) {
+        .repo_pr_tree => ts.items,
+        .repo_tree => ts.repos,
+        else => ts.items,
+    };
+}
+
+// ─── the filter pill ─────────────────────────────────────────────────────
+
+fn paintFilter(p: *Painter, y: u16) void {
+    const app = p.app;
+    const th = p.th;
+    if (p.f.cols < 6) return;
+    const editing = app.mode == .filter;
+    const pill: Box = .{ .x = 1, .y = y, .w = p.f.cols - 2, .h = 1 };
+    const style = if (editing) th.chipActiveSoft() else th.chip();
+    p.fill(pill, style);
+    var x: u16 = pill.x + 1;
+    x += p.text(x, y, 2, if (p.nerd) filter_glyph_nerd else "/", .{ .fg = th.accent, .bg = style.bg });
+    x += 1;
+    const q = app.filter.items;
+    if (q.len == 0) {
+        _ = p.text(x, y, pill.w -| 4, if (editing) "type to filter…" else "/ filter", .{ .fg = th.muted, .bg = style.bg });
+    } else {
+        const used = p.text(x, y, pill.w -| 4, q, .{ .fg = th.fg, .bg = style.bg });
+        if (editing) {
+            const caret_x = x + Painter.width(q[0..@min(app.filter_caret, q.len)]);
+            if (caret_x <= x + used) _ = p.text(caret_x, y, 1, "▏", .{ .fg = th.accent, .bg = style.bg });
+        }
+    }
+    if (editing and q.len == 0) _ = p.text(x, y, 1, "▏", .{ .fg = th.accent, .bg = style.bg });
+    p.target(pill.x, y, pill.w, .{ .chip = .filter });
+}
+
+// ─── the body ────────────────────────────────────────────────────────────
+
+fn paintBody(arena: Allocator, p: *Painter, body: Box) Allocator.Error!void {
+    const app = p.app;
+    const split = app.detail_visible and body.w >= split_min_cols;
+    const list_w: u16 = if (split) @max(30, (body.w * list_share_pct) / 100) else body.w;
+    if (!app.detail_visible or split) {
+        try paintList(arena, p, .{ .x = body.x, .y = body.y, .w = list_w, .h = body.h });
+    }
+    if (app.detail_visible) {
+        const x: u16 = if (split) body.x + list_w + 1 else body.x;
+        const w: u16 = if (split) body.w -| (list_w + 1) else body.w;
+        if (split) {
+            var yy = body.y;
+            while (yy < body.y + body.h) : (yy += 1) p.f.put(body.x + list_w, yy, "│", .{ .fg = p.th.border });
+        }
+        try paintDetail(arena, p, .{ .x = x, .y = body.y, .w = w, .h = body.h });
+    }
+}
+
+fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    const ts = app.activeTab();
+    if (box.h == 0 or box.w < 4) return;
+    // A tab that failed paints the reason instead of an empty list.
+    if (ts.error_text.len > 0) {
+        _ = p.text(box.x + 2, box.y, box.w -| 2, ts.spec.name, th.label());
+        if (box.h > 2) _ = p.text(box.x + 2, box.y + 2, box.w -| 2, ts.error_text, th.bad());
+        if (box.h > 4) _ = p.text(box.x + 2, box.y + 4, box.w -| 2, "r retries · see the README's Auth section", th.mutedText());
+        return;
+    }
+    const inner_w = box.w -| 2; // the marker column and a cell of air
+    const cols = try view.fit(arena, view.tableOf(ts.data), inner_w -| 1);
+    const header = try view.headerSpans(arena, cols, th);
+    paintSpans(p, box.x + 2, box.y, inner_w -| 1, header);
+    if (box.h < 2) return;
+    const list: Box = .{ .x = box.x, .y = box.y + 1, .w = box.w, .h = box.h - 1 };
+    const v = try app.visible(arena);
+    if (v.rows.len == 0) {
+        const msg: []const u8 = if (ts.loading) "loading…" else if (!ts.fetched) "not fetched yet — r" else if (app.filter.items.len > 0) "No matches — esc clears" else emptyMessage(ts.spec.kind);
+        _ = p.text(list.x + 2, list.y, list.w -| 2, msg, th.mutedText());
+        return;
+    }
+    // The scroll window follows the cursor over cells, not rows — a
+    // merged PR opened to its pipeline is two cells tall.
+    if (ts.selected >= v.rows.len) ts.selected = v.rows.len - 1;
+    const needs_bar = v.cells > list.h;
+    const text_w = if (needs_bar) list.w -| 2 else list.w;
+    var first = ts.scroll;
+    if (first > ts.selected) first = ts.selected;
+    // Push the window down until the cursor's cells fit.
+    while (true) {
+        var used: usize = 0;
+        var i = first;
+        while (i <= ts.selected) : (i += 1) used += v.rows[i].height();
+        if (used <= list.h or first >= ts.selected) break;
+        first += 1;
+    }
+    // Never leave blank rows under a full list.
+    while (first > 0) {
+        var used: usize = 0;
+        var i = first - 1;
+        while (i < v.rows.len) : (i += 1) {
+            used += v.rows[i].height();
+            if (used > list.h) break;
+        }
+        if (used > list.h) break;
+        first -= 1;
+    }
+    ts.scroll = first;
+    var y = list.y;
+    var idx = first;
+    while (idx < v.rows.len and y < list.y + list.h) : (idx += 1) {
+        const row = v.rows[idx];
+        const selected = idx == ts.selected;
+        const h = row.height();
+        const ground = if (selected) th.cursorRow() else th.text();
+        p.fill(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, ground);
+        if (selected) _ = p.text(list.x, y, 1, marker, th.marker());
+        const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
+        paintSpans(p, list.x + 2, y, text_w -| 2, spans);
+        p.app.hits.add(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, .{ .row = idx });
+        if (h == 2 and y + 1 < list.y + list.h) {
+            const sub = try view.subLineSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
+            paintSpans(p, list.x + 2, y + 1, text_w -| 2, sub);
+        }
+        y += h;
+    }
+    if (needs_bar) paintScrollbar(p, .{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h);
+}
+
+fn cellsBefore(rows: []const tabs.VisibleRow, first: usize) usize {
+    var n: usize = 0;
+    for (rows[0..@min(first, rows.len)]) |r| n += r.height();
+    return n;
+}
+
+fn emptyMessage(kind: cfg.Kind) []const u8 {
+    return switch (kind) {
+        .pull_requests, .workspace_open_prs, .workspace_merged_prs => "(no PRs match this tab)",
+        .pipelines => "(no pipelines have run on this repo)",
+        .branches => "(no branches in this repo)",
+        .workspace_pipelines => "(no repos in scope)",
+    };
+}
+
+/// A thumb sized to the window over a dim track.
+fn paintScrollbar(p: *Painter, bar: Box, total: usize, first: usize, visible: usize) void {
+    if (bar.h == 0 or total == 0) return;
+    const track: Style = .{ .fg = p.th.border };
+    var y = bar.y;
+    while (y < bar.y + bar.h) : (y += 1) p.f.put(bar.x, y, "│", track);
+    const thumb_h: usize = @max(1, (visible * bar.h) / total);
+    const max_first = total -| visible;
+    const thumb_y: usize = if (max_first == 0) 0 else (first * (bar.h - @min(thumb_h, bar.h))) / max_first;
+    var i: usize = 0;
+    while (i < thumb_h and thumb_y + i < bar.h) : (i += 1) p.f.put(bar.x, bar.y + @as(u16, @intCast(thumb_y + i)), "█", .{ .fg = p.th.muted });
+}
+
+/// Spans left to right; a span with `w` pads or clips to it.
+fn paintSpans(p: *Painter, x0: u16, y: u16, max_w: u16, spans: []const view.Span) void {
+    var x = x0;
+    const end = x0 + max_w;
+    for (spans) |s| {
+        if (x >= end) break;
+        const room = end - x;
+        if (s.w == 0) {
+            x += p.text(x, y, room, s.text, s.style);
+        } else {
+            const w = @min(s.w, room);
+            p.fill(.{ .x = x, .y = y, .w = w, .h = 1 }, s.style);
+            _ = p.text(x, y, w, s.text, s.style);
+            x += w;
+        }
+    }
+}
+
+// ─── the detail ──────────────────────────────────────────────────────────
+
+fn paintDetail(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    if (box.w < 6 or box.h == 0) return;
+    p.app.hits.add(.{ .x = box.x, .y = box.y, .w = box.w, .h = box.h }, .detail);
+    const inner_x = box.x + 1;
+    const inner_w = box.w -| 2;
+    const rows = (try app.visible(arena)).rows;
+    const key = app.focusedKey(rows) orelse {
+        _ = p.text(inner_x, box.y, inner_w, "(no PR focused)", th.mutedText());
+        return;
+    };
+    var kbuf: [256]u8 = undefined;
+    const title = App.keyText(&kbuf, key);
+    const entry = app.focusedDetail(rows) orelse {
+        _ = p.text(inner_x, box.y, inner_w, title, th.accentText());
+        const msg: []const u8 = if (app.detailInFlight(rows)) "loading detail…" else "(no detail cached — press d to refresh)";
+        if (box.h > 1) _ = p.text(inner_x, box.y + 1, inner_w, msg, th.mutedText());
+        return;
+    };
+    const me = if (app.config.account_id.len > 0) app.config.account_id else app.me_account_id;
+    const lines = try view.detailLines(arena, entry, title, me, inner_w, th);
+    const max_scroll = lines.len -| box.h;
+    if (app.detail_scroll > max_scroll) app.detail_scroll = max_scroll;
+    var y = box.y;
+    var i = app.detail_scroll;
+    while (i < lines.len and y < box.y + box.h) : (i += 1) {
+        paintSpans(p, inner_x, y, inner_w, lines[i].spans);
+        y += 1;
+    }
+    if (lines.len > box.h) paintScrollbar(p, .{ .x = box.x + box.w - 1, .y = box.y, .w = 1, .h = box.h }, lines.len, app.detail_scroll, box.h);
+}
+
+// ─── the hint row ─────────────────────────────────────────────────────────
+
+/// What the hint row says when a mode owns the keyboard: the keys that
+/// mode answers to, not the list's. The list's own row comes from the
+/// keymap table below.
+fn modeHint(app: *App) ?[]const u8 {
+    return switch (app.mode) {
+        .list => null,
+        .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
+        .menu => "↑↓ / jk move · ⏎ run · esc close",
+        .help => "j k scroll · any other key closes",
+    };
+}
+
+fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    if (modeHint(app)) |line| {
+        const status = app.status.items;
+        var x: u16 = 1;
+        if (status.len > 0) x += p.text(x, y, p.f.cols / 2, status, th.mutedText()) + 2;
+        const w = Painter.width(line);
+        const at: u16 = if (p.f.cols -| w > x) p.f.cols -| w else x;
+        _ = p.text(at, y, p.f.cols -| at, line, th.dimText());
+        return;
+    }
+    const rows = (try app.visible(arena)).rows;
+    const ctx = app.keyContext(rows);
+    const hs = try view.hints(arena, ctx);
+    // The status on the left takes what the hints leave.
+    const sep = " · ";
+    const sep_w: u16 = 3;
+    var widths = try arena.alloc(u16, hs.len);
+    var total: u16 = 0;
+    for (hs, 0..) |h, i| {
+        widths[i] = Painter.width(h.key) + 1 + Painter.width(h.title);
+        total += widths[i] + if (i + 1 < hs.len) sep_w else 0;
+    }
+    const status = app.status.items;
+    const status_w: u16 = @min(Painter.width(status) + 2, p.f.cols / 2);
+    var first: usize = 0;
+    // Drop hints from the front until the row fits, keeping `q`.
+    while (first < hs.len and total + status_w > p.f.cols) {
+        total -= widths[first] + if (first + 1 < hs.len) sep_w else 0;
+        first += 1;
+    }
+    if (status.len > 0) _ = p.text(1, y, p.f.cols -| 1 -| total, status, th.mutedText());
+    var x: u16 = p.f.cols -| total;
+    var i = first;
+    while (i < hs.len) : (i += 1) {
+        const h = hs[i];
+        const start = x;
+        x += p.text(x, y, p.f.cols -| x, h.key, .{ .fg = th.fg, .mods = .{ .bold = true } });
+        x += p.text(x, y, p.f.cols -| x, " ", th.dimText());
+        x += p.text(x, y, p.f.cols -| x, h.title, th.dimText());
+        p.target(start, y, x - start, .{ .hint = h.action });
+        if (i + 1 < hs.len) x += p.text(x, y, p.f.cols -| x, sep, th.dimText());
+    }
+}
+
+// ─── overlays ────────────────────────────────────────────────────────────
+
+fn paintMenu(arena: Allocator, p: *Painter) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    const m = app.menu orelse return;
+    var w: u16 = 0;
+    for (m.items) |a| {
+        const b = keymap.bindingOf(a) orelse continue;
+        w = @max(w, Painter.width(b.title) + Painter.width(keymap.keyLabel(b.keys[0])) + 5);
+    }
+    const h: u16 = @intCast(m.items.len + 2);
+    const x: u16 = if (m.col + w + 2 <= p.f.cols) m.col else p.f.cols -| (w + 2);
+    const y: u16 = if (m.y + 1 + h <= p.f.rows) m.y + 1 else m.y -| h;
+    const box: Box = .{ .x = x, .y = y, .w = w + 2, .h = h };
+    p.fill(box, .{ .fg = th.fg, .bg = th.cursor_line });
+    paintFrame(p, box, th.overlayBorder());
+    for (m.items, 0..) |a, i| {
+        const b = keymap.bindingOf(a) orelse continue;
+        const row_y = y + 1 + @as(u16, @intCast(i));
+        const selected = i == m.selected;
+        const style: Style = if (selected) th.chipActive() else .{ .fg = th.fg, .bg = th.cursor_line };
+        p.fill(.{ .x = x + 1, .y = row_y, .w = w, .h = 1 }, style);
+        const line = try std.fmt.allocPrint(arena, " {s}", .{b.title});
+        _ = p.text(x + 1, row_y, w, line, style);
+        const key = keymap.keyLabel(b.keys[0]);
+        _ = p.text(x + 1 + w -| (Painter.width(key) + 1), row_y, Painter.width(key), key, .{ .fg = if (selected) style.fg else th.muted, .bg = style.bg });
+        p.app.hits.add(.{ .x = x, .y = row_y, .w = w + 2, .h = 1 }, .{ .menu_item = i });
+    }
+}
+
+fn paintFrame(p: *Painter, b: Box, style: Style) void {
+    if (b.w < 2 or b.h < 2) return;
+    const right = b.x + b.w - 1;
+    const bottom = b.y + b.h - 1;
+    p.f.put(b.x, b.y, "┌", style);
+    p.f.put(right, b.y, "┐", style);
+    p.f.put(b.x, bottom, "└", style);
+    p.f.put(right, bottom, "┘", style);
+    var x = b.x + 1;
+    while (x < right) : (x += 1) {
+        p.f.put(x, b.y, "─", style);
+        p.f.put(x, bottom, "─", style);
+    }
+    var y = b.y + 1;
+    while (y < bottom) : (y += 1) {
+        p.f.put(b.x, y, "│", style);
+        p.f.put(right, y, "│", style);
+    }
+}
+
+/// The key sheet: mnml's help shape — a centred box, a section
+/// header per group, `key  title` rows, the hint at the bottom.
+fn paintSheet(arena: Allocator, p: *Painter) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    const w: u16 = @min(p.f.cols -| 4, 70);
+    const h: u16 = @min(p.f.rows -| 2, 40);
+    if (w < 20 or h < 6) return;
+    const x = (p.f.cols - w) / 2;
+    const y = (p.f.rows - h) / 2;
+    const box: Box = .{ .x = x, .y = y, .w = w, .h = h };
+    p.fill(box, .{ .fg = th.fg, .bg = th.cursor_line });
+    paintFrame(p, box, th.overlayBorder());
+    _ = p.text(x + 2, y, 10, " Keys ", .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
+    p.app.hits.add(.{ .x = x, .y = y, .w = w, .h = h }, .sheet);
+    // The rows: a header per section, then its bindings.
+    const Row = union(enum) { section: []const u8, binding: keymap.Binding };
+    var rows: std.ArrayList(Row) = .empty;
+    for (keymap.sections) |sec| {
+        try rows.append(arena, .{ .section = sec });
+        for (&keymap.table) |b| if (std.mem.eql(u8, b.section, sec)) try rows.append(arena, .{ .binding = b });
+    }
+    const body_h = h -| 3;
+    const max_scroll = rows.items.len -| body_h;
+    if (app.help_scroll > max_scroll) app.help_scroll = max_scroll;
+    var ry = y + 1;
+    var i = app.help_scroll;
+    while (i < rows.items.len and ry < y + 1 + body_h) : (i += 1) {
+        switch (rows.items[i]) {
+            .section => |name| {
+                const line = try std.fmt.allocPrint(arena, "── {s} ──", .{name});
+                _ = p.text(x + 2, ry, w -| 4, line, .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
+            },
+            .binding => |b| {
+                var keys: std.ArrayList(u8) = .empty;
+                for (b.keys, 0..) |k, ki| {
+                    if (ki > 0) try keys.appendSlice(arena, " ");
+                    try keys.appendSlice(arena, keymap.keyLabel(k));
+                }
+                _ = p.text(x + 4, ry, 14, keys.items, .{ .fg = th.accent, .bg = th.cursor_line });
+                const scope: []const u8 = switch (b.scope) {
+                    .any => "",
+                    .tree => "  (tree)",
+                    .row => "  (row)",
+                    .detail => "  (detail open)",
+                };
+                const line = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.title, scope });
+                _ = p.text(x + 19, ry, w -| 21, line, .{ .fg = th.fg, .bg = th.cursor_line });
+            },
+        }
+        ry += 1;
+    }
+    _ = p.text(x + 2, y + h - 2, w -| 4, "j/k scroll · any other key closes", .{ .fg = th.muted, .bg = th.cursor_line });
+}
+
+// ─── the text of a frame, for the tests ──────────────────────────────────
+
+/// Row `y` as text, a wide glyph's tail skipped.
+pub fn rowText(arena: Allocator, f: *sdk.Frame, y: u16) Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var x: u16 = 0;
+    while (x < f.cols) : (x += 1) {
+        const s = f.slots[@as(usize, y) * f.cols + x].symbol();
+        if (s.len == 0) continue;
+        try out.appendSlice(arena, s);
+    }
+    return std.mem.trimEnd(u8, try out.toOwnedSlice(arena), " ");
+}
+
+pub fn screenText(arena: Allocator, f: *sdk.Frame) Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var y: u16 = 0;
+    while (y < f.rows) : (y += 1) {
+        if (y > 0) try out.append(arena, '\n');
+        try out.appendSlice(arena, try rowText(arena, f, y));
+    }
+    return out.toOwnedSlice(arena);
+}
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
-const cfg = @import("config.zig");
-const api = @import("api.zig");
-const listener = @import("../tools/fake_bitbucket/listener.zig");
+const Rig = app_mod.Rig;
+
+const acme: cfg.Config = .{ .email = "me@x.com", .workspace = "acme", .repos = &.{ "api", "web" }, .refresh_interval_secs = 0, .tabs = &cfg.default_tabs };
 
 const Screen = struct {
-    srv: *listener.Server,
-    client: api.Client,
-    app: App,
+    rig: *Rig,
     frame: sdk.Frame,
     arena: std.heap.ArenaAllocator,
 
-    fn init(cols: u16, rows: u16, tabs: []const cfg.Tab) !*Screen {
+    fn init(cols: u16, rows: u16, config: cfg.Config, opts: app_mod.Options) !*Screen {
         const s = try t.allocator.create(Screen);
-        s.arena = std.heap.ArenaAllocator.init(t.allocator);
-        s.srv = try listener.Server.start(t.allocator, t.io, 0);
-        const base = try s.srv.baseUrl(t.allocator);
-        defer t.allocator.free(base);
-        s.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "read", "write", .{ .min_interval_ms = 0 });
-        s.app = try App.init(t.allocator, t.io, .{
-            .email = "me@x.com",
-            .workspace = "acme",
-            .repos = &.{ "api", "web" },
-            .tabs = tabs,
-            .jira = .{ .enabled = true, .base_url = "https://acme.atlassian.net", .project_keys = &.{"TE"} },
-        }, &s.client);
+        s.rig = try Rig.init(config, opts);
         s.frame = try sdk.Frame.init(t.allocator, cols, rows);
-        try s.app.switchTab(0);
+        s.arena = std.heap.ArenaAllocator.init(t.allocator);
         return s;
     }
 
     fn deinit(s: *Screen) void {
         s.frame.deinit();
-        s.app.deinit();
-        s.client.deinit();
-        s.srv.stop();
+        s.rig.deinit();
         s.arena.deinit();
         t.allocator.destroy(s);
     }
 
     fn draw(s: *Screen) ![]const u8 {
         _ = s.arena.reset(.retain_capacity);
-        try paint(s.arena.allocator(), &s.frame, &s.app);
-        var out: std.Io.Writer.Allocating = .init(s.arena.allocator());
+        try paint(s.arena.allocator(), &s.frame, &s.rig.app, true);
+        return screenText(s.arena.allocator(), &s.frame);
+    }
+
+    fn key(s: *Screen, spec: []const u8) !void {
+        _ = try s.rig.key(spec);
+    }
+
+    fn click(s: *Screen, col: u16, row: u16, button: App.Button) !void {
+        _ = try s.rig.app.click(col, row, button);
+        try s.rig.drain();
+    }
+
+    fn rowOf(s: *Screen, text: []const u8) !u16 {
+        const scr = try s.draw();
+        var it = std.mem.splitScalar(u8, scr, '\n');
         var y: u16 = 0;
-        while (y < s.frame.rows) : (y += 1) {
-            if (y > 0) out.writer.writeByte('\n') catch return error.OutOfMemory;
-            out.writer.writeAll(try view.rowText(s.arena.allocator(), &s.frame, y)) catch return error.OutOfMemory;
-        }
-        return out.written();
+        while (it.next()) |line| : (y += 1) if (std.mem.indexOf(u8, line, text) != null) return y;
+        std.debug.print("no row contains `{s}`:\n{s}\n", .{ text, scr });
+        return error.NoSuchRow;
     }
 };
 
-test "the pane paints a tab strip, a filter line, the list and a footer" {
-    const s = try Screen.init(120, 24, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer s.deinit();
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "▸1 api (2)") != null);
-    try t.expect(std.mem.indexOf(u8, text, "/ filter · r refresh") != null);
-    try t.expect(std.mem.indexOf(u8, text, "PR") != null);
-    try t.expect(std.mem.indexOf(u8, text, "#1234") != null);
-    try t.expect(std.mem.indexOf(u8, text, "Fix the login redirect") != null);
-    try t.expect(std.mem.indexOf(u8, text, "#1198") != null);
-    // A repo tab does not spend a column saying which repo it is.
-    try t.expect(std.mem.indexOf(u8, text, "REPO") == null);
-    // The footer carries the status the refresh set.
-    try t.expect(std.mem.indexOf(u8, text, "api: 2 pull requests") != null);
+fn has(scr: []const u8, needle: []const u8) bool {
+    return std.mem.indexOf(u8, scr, needle) != null;
 }
 
-test "a mine tab does show the repo column, because its rows come from several" {
-    const s = try Screen.init(120, 24, &.{.{ .name = "Mine", .mode = .mine }});
+test "the pane paints the header, the strip, the pill, the reference's columns, the rows and the hint row" {
+    const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "REPO") != null);
-    try t.expect(std.mem.indexOf(u8, text, "api ") != null);
-    try t.expect(std.mem.indexOf(u8, text, "web ") != null);
+    const scr = try s.draw();
+    try t.expect(has(scr, "BITBUCKET PRS"));
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
+    try t.expect(has(scr, " 1 Open + Draft (3) "));
+    try t.expect(has(scr, " 2 Merged (2) "));
+    try t.expect(has(scr, " 3 Pipelines (2)"));
+    try t.expect(has(scr, "/ filter"));
+    try t.expect(has(scr, "REPO / #PR"));
+    try t.expect(has(scr, "STATE"));
+    try t.expect(has(scr, "AUTHOR"));
+    try t.expect(has(scr, "BRANCH"));
+    try t.expect(has(scr, "UPDATED"));
+    try t.expect(has(scr, "TITLE"));
+    try t.expect(has(scr, "▌ ▾ api"));
+    try t.expect(has(scr, "2 PRs"));
+    try t.expect(has(scr, "#1234"));
+    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "chris/fix-login"));
+    try t.expect(has(scr, "[ Show 1 more older ]"));
+    try t.expect(has(scr, "author: all"));
+    try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
+    try t.expect(has(scr, "⏎ expand"));
+    try t.expect(has(scr, "q quit"));
+    // The reference paints four chips that do nothing when clicked
+    // (`filter not wired yet (round-1 visual)`). None of them is here,
+    // on either family — the `/` pill is what replaced the fifth, its
+    // Search chip.
+    try s.key("3");
+    const pipelines = try s.draw();
+    for ([_][]const u8{ "Target branch", "Pipeline type", "Trigger type" }) |dead_chip| {
+        try t.expect(!has(scr, dead_chip));
+        try t.expect(!has(pipelines, dead_chip));
+    }
+    // `Branch ▾` was the fourth; the pipelines tree's column header is
+    // the only `BRANCH` on the screen.
+    try t.expect(!has(pipelines, "Branch ▾"));
+    try t.expect(!has(pipelines, "[ Branch"));
+    try t.expect(has(pipelines, "REPO / BRANCH"));
 }
 
-test "the detail sits beside the list on a wide pane and replaces it on a narrow one" {
-    const wide = try Screen.init(160, 30, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer wide.deinit();
-    _ = try wide.app.key("d");
-    const wide_text = try wide.draw();
-    // Both surfaces, and the rule between them.
-    try t.expect(std.mem.indexOf(u8, wide_text, "acme/api#1234") != null);
-    try t.expect(std.mem.indexOf(u8, wide_text, "#1198") != null);
-    try t.expect(std.mem.indexOf(u8, wide_text, "│") != null);
+test "a click on a row selects that row and toggles a header; the strip switches tabs; the hints fire" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const y_1234 = try s.rowOf("OPEN       Chris M");
+    try s.click(10, y_1234, .left);
+    try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
+    var scr = try s.draw();
+    try t.expect(has(scr, "▌      #1234"));
+    const y_api = try s.rowOf("▾ api");
+    try s.click(3, y_api, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "▸ api"));
+    // The header keeps its preview of #1234; the PR row itself is gone.
+    try t.expect(has(scr, "#1234 · Fix the login"));
+    try t.expect(!has(scr, "Fix the login redirect"));
+    // The strip.
+    const hit_tab = s.rig.app.hits.rectOf(.{ .tab = 1 }).?;
+    try s.click(hit_tab.x + 2, hit_tab.y, .left);
+    try t.expectEqual(@as(usize, 1), s.rig.app.active);
+    scr = try s.draw();
+    try t.expect(has(scr, "MERGED"));
+    try t.expect(has(scr, "#1100"));
+    // A hint word is a key: `q` quits.
+    _ = try s.draw();
+    const hint_q = s.rig.app.hits.rectOf(.{ .hint = .quit }).?;
+    try t.expect(!(try s.rig.app.click(hint_q.x, hint_q.y, .left)));
+}
 
-    const narrow = try Screen.init(80, 24, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
+test "a merged PR opens to its post-merge pipeline line under enter, and the detail paints beside the list" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    try s.key("2");
+    try s.key("j");
+    var scr = try s.draw();
+    try t.expect(has(scr, "▸ #1100"));
+    try s.key("enter");
+    scr = try s.draw();
+    try t.expect(has(scr, "▾ #1100"));
+    try t.expect(has(scr, "✓ SUCCESSFUL"));
+    try t.expect(has(scr, "#412"));
+    try t.expect(has(scr, "on main"));
+    try s.key("d");
+    scr = try s.draw();
+    try t.expect(has(scr, "acme/api#1100"));
+    try t.expect(has(scr, "MERGED · sam/drop-exporter → main"));
+    try t.expect(has(scr, "author: Sam K"));
+    try t.expect(has(scr, "✓ you approved · 1 total"));
+    try t.expect(has(scr, "(no description)"));
+    try t.expect(has(scr, "comments (0, most-recent first):"));
+    try t.expect(has(scr, "│"));
+    // Below 100 columns the detail takes the body.
+    const narrow = try Screen.init(80, 24, acme, .{});
     defer narrow.deinit();
-    _ = try narrow.app.key("d");
-    const narrow_text = try narrow.draw();
-    try t.expect(std.mem.indexOf(u8, narrow_text, "acme/api#1234") != null);
-    try t.expect(std.mem.indexOf(u8, narrow_text, "│") == null);
-    // The list is gone; only the detail is on the body.
-    try t.expect(std.mem.indexOf(u8, narrow_text, "Bump the client timeout") == null);
+    try narrow.key("j");
+    try narrow.key("d");
+    const nscr = try narrow.draw();
+    try t.expect(has(nscr, "acme/api#1234"));
+    try t.expect(has(nscr, "○ not approved · 1 total"));
+    try t.expect(has(nscr, "Nice catch"));
+    try t.expect(!has(nscr, "REPO / #PR"));
 }
 
-test "the detail's own sections are on the screen, not just in the line builder" {
-    const s = try Screen.init(160, 40, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
+test "the pipelines tree paints the reference's columns and glyphs; the pipelines chips are on the header" {
+    const s = try Screen.init(120, 40, acme, .{ .only = .pipelines });
     defer s.deinit();
-    _ = try s.app.key("d");
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "reviewers") != null);
-    try t.expect(std.mem.indexOf(u8, text, "Dana R") != null);
-    try t.expect(std.mem.indexOf(u8, text, "builds") != null);
-    try t.expect(std.mem.indexOf(u8, text, "Pipeline #412") != null);
-    try t.expect(std.mem.indexOf(u8, text, "files (2)") != null);
-    try t.expect(std.mem.indexOf(u8, text, "issues: [1] ENG-4210") != null);
+    const scr = try s.draw();
+    try t.expect(has(scr, "BITBUCKET PIPELINES"));
+    try t.expect(!has(scr, " 1 Pipelines"));
+    try t.expect(has(scr, "REPO / BRANCH"));
+    try t.expect(has(scr, "BUILD"));
+    try t.expect(has(scr, "RESULT"));
+    try t.expect(has(scr, "▾ api"));
+    try t.expect(has(scr, "4 branches"));
+    try t.expect(has(scr, "main"));
+    try t.expect(has(scr, "COMPLETED"));
+    try t.expect(has(scr, "#412"));
+    try t.expect(has(scr, "✓ SUCCESSFUL"));
+    try t.expect(has(scr, "✗ FAILED"));
+    try t.expect(has(scr, "IN_PROGRESS"));
+    try t.expect(has(scr, "run pipeline"));
+    try t.expect(has(scr, "usage"));
+    try t.expect(s.rig.app.hits.rectOf(.{ .chip = .usage }) != null);
 }
 
-test "a confirm covers the bottom of the body and leaves the list visible above it" {
-    const s = try Screen.init(120, 24, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
+test "the key sheet, the row menu and the filter paint as overlays that take the click" {
+    const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
-    _ = try s.app.key("m");
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "Merge acme/api#1234") != null);
-    try t.expect(std.mem.indexOf(u8, text, "strategy: squash") != null);
-    try t.expect(std.mem.indexOf(u8, text, "y confirm · esc cancel") != null);
-    // The row it is about is still on screen.
-    try t.expect(std.mem.indexOf(u8, text, "Fix the login redirect") != null);
-}
-
-test "the comment prompt shows the caret where the cursor actually is" {
-    const s = try Screen.init(120, 24, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer s.deinit();
-    _ = try s.app.key("c");
-    for ("abc") |ch| _ = try s.app.key(&[_]u8{ch});
-    _ = try s.app.key("left");
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "> ab▏c") != null);
-    try t.expect(std.mem.indexOf(u8, text, "enter post · esc cancel") != null);
-}
-
-test "the key help lists every action the footer advertises" {
-    const s = try Screen.init(120, 30, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer s.deinit();
-    _ = try s.app.key("?");
-    const text = try s.draw();
-    for ([_][]const u8{ "switch tab", "open in a browser", "approve", "request changes", "comment", "merge", "check the branch out", "filter" }) |needle| {
-        if (std.mem.indexOf(u8, text, needle) == null) {
-            std.debug.print("the key help does not mention `{s}`\n", .{needle});
-            return error.MissingKeyHelp;
-        }
-    }
-}
-
-test "a tab that failed paints the reason instead of an empty list" {
-    const s = try Screen.init(120, 24, &.{.{ .name = "Mine", .mode = .mine, .fallback = .none }});
-    defer s.deinit();
-    // The first fetch already resolved the account; take the token's
-    // Account: Read away and ask again, which is what an expired or
-    // re-scoped token looks like from the pane.
-    s.srv.denyUser(true);
-    s.app.me_account_id = "";
-    s.app.whoami_tried = false;
-    try s.app.refreshActive();
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "Account: Read") != null);
-    try t.expect(std.mem.indexOf(u8, text, "r retries") != null);
-}
-
-test "a per-repo failure shows under the rows it did not stop" {
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-    var client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "tok", .{ .min_interval_ms = 0 });
-    defer client.deinit();
-    var a = try App.init(t.allocator, t.io, .{
-        .email = "me@x.com",
-        .workspace = "acme",
-        .repos = &.{ "api", "ghost" },
-        .tabs = &.{.{ .name = "All", .mode = .workspace }},
-    }, &client);
-    defer a.deinit();
-    var frame = try sdk.Frame.init(t.allocator, 120, 24);
-    defer frame.deinit();
-    try a.switchTab(0);
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    try paint(arena.allocator(), &frame, &a);
-    var out: std.Io.Writer.Allocating = .init(arena.allocator());
-    var y: u16 = 0;
-    while (y < frame.rows) : (y += 1) {
-        out.writer.writeAll(try view.rowText(arena.allocator(), &frame, y)) catch return error.OutOfMemory;
-        out.writer.writeByte('\n') catch return error.OutOfMemory;
-    }
-    try t.expect(std.mem.indexOf(u8, out.written(), "! ghost: no such repo") != null);
-    try t.expect(std.mem.indexOf(u8, out.written(), "Fix the login redirect") != null);
+    try s.key("?");
+    var scr = try s.draw();
+    try t.expect(has(scr, " Keys "));
+    try t.expect(has(scr, "── tree ──"));
+    try t.expect(has(scr, "hide this repo (persists)"));
+    try t.expect(has(scr, "approve / withdraw the approval"));
+    try s.click(60, 20, .left);
+    try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
+    _ = try s.draw();
+    const y_1234 = try s.rowOf("OPEN       Chris M");
+    try s.click(10, y_1234, .right);
+    scr = try s.draw();
+    try t.expect(has(scr, "the pull request's detail"));
+    try t.expect(has(scr, "open on the web"));
+    const item = s.rig.app.hits.rectOf(.{ .menu_item = 1 }).?;
+    try s.click(item.x + 2, item.y, .left);
+    try t.expect(std.mem.startsWith(u8, s.rig.app.status.items, "opened https://bitbucket.org/acme/api/pull-requests/1234"));
+    try s.key("/");
+    for ("login") |c| try s.key(&[_]u8{c});
+    scr = try s.draw();
+    try t.expect(has(scr, "login▏"));
+    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(!has(scr, "Redesign the empty"));
 }
 
 test "the pane paints at every size the gate runs, and at one below them" {
     for ([_][2]u16{ .{ 30, 10 }, .{ 80, 24 }, .{ 120, 40 }, .{ 200, 60 } }) |size| {
-        const s = try Screen.init(size[0], size[1], &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
+        const s = try Screen.init(size[0], size[1], acme, .{});
         defer s.deinit();
         _ = try s.draw();
-        _ = try s.app.key("d");
+        try s.key("d");
         _ = try s.draw();
-        _ = try s.app.key("m");
+        try s.key("?");
         _ = try s.draw();
-        _ = try s.app.key("esc");
-        _ = try s.app.key("?");
+        try s.key("esc");
+        try s.key("3");
         _ = try s.draw();
     }
 }
 
-test "a one-row pane paints its tab strip and nothing else, rather than reaching past the frame" {
-    const s = try Screen.init(20, 1, &.{.{ .name = "api", .mode = .repo, .repo = "api" }});
+test "the `/` filter: the header reads N of M while narrowed and the hint row changes with the mode" {
+    const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
-    const text = try s.draw();
-    try t.expect(std.mem.indexOf(u8, text, "1 api") != null);
-    try t.expect(std.mem.indexOf(u8, text, "\n") == null);
+    // Unnarrowed the header carries the tab's own count and the hint
+    // row is the keymap's.
+    var scr = try s.draw();
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
+    try t.expect(!has(scr, " of "));
+    try t.expect(has(scr, "q quit"));
+
+    // `/` opens the pill and hands the keyboard to the filter: the row
+    // says what the filter answers to, not what the list does.
+    try s.key("/");
+    scr = try s.draw();
+    try t.expect(has(scr, "type to filter"));
+    try t.expect(has(scr, "⏎ commit"));
+    try t.expect(has(scr, "esc clear"));
+    try t.expect(!has(scr, "q quit"));
+
+    // Typing narrows live — before Enter commits anything.
+    for ("empty") |c| try s.key(&[_]u8{c});
+    scr = try s.draw();
+    try t.expect(has(scr, "(1 of 2)"));
+    try t.expect(has(scr, "Redesign the empty"));
+    // #1234 is gone as a row — the api header still previews it, which
+    // is why the row count, not the title, is what proves the narrowing.
+    try t.expectEqual(@as(usize, 1), s.rig.app.filter_shown);
+    try t.expectEqual(@as(usize, 2), s.rig.app.filter_total);
+
+    // Enter commits: the query stays, the narrowed count stays, the
+    // hint row goes back to the list's keys.
+    try s.key("enter");
+    scr = try s.draw();
+    try t.expect(has(scr, "(1 of 2)"));
+    try t.expect(has(scr, "empty"));
+    try t.expect(has(scr, "q quit"));
+    try t.expect(!has(scr, "type to filter"));
+
+    // Esc clears and leaves.
+    try s.key("esc");
+    scr = try s.draw();
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
+    try t.expect(!has(scr, " of 2)"));
+
+    // The menu and the sheet own the row the same way.
+    try s.key("j");
+    try s.click(6, try s.rowOf("#1234"), .right);
+    scr = try s.draw();
+    try t.expect(has(scr, "⏎ run"));
+    try s.key("esc");
+    try s.key("?");
+    scr = try s.draw();
+    try t.expect(has(scr, "scroll"));
+}
+
+/// Right-click the row the painter registered at `i` — through the
+/// real hit map, so a row whose rectangle is wrong or missing fails
+/// here rather than passing on a hand-built map.
+fn rightClickRow(s: *Screen, i: usize) !void {
+    _ = try s.draw();
+    const r = s.rig.app.hits.rectOf(.{ .row = i }) orelse return error.NoHitForRow;
+    try s.click(r.x + 2, r.y, .right);
+}
+
+fn menuItems(s: *Screen) []const app_mod.Action {
+    return if (s.rig.app.menu) |m| m.items else &.{};
+}
+
+test "a right-click offers the actions of the row kind under it — every kind, off the painted hit map" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    var rows = try s.rig.rows();
+
+    // The tree is api(#1234), web(#820), [ Show 1 more older ].
+    try t.expect(rows[0] == .repo_header);
+    try t.expect(rows[1] == .pr);
+    try t.expect(rows[rows.len - 1] == .show_more);
+
+    // A repo row: fold it, open it, copy it, hide it, move it.
+    try rightClickRow(s, 0);
+    try t.expectEqual(app_mod.Mode.menu, s.rig.app.mode);
+    try t.expectEqual(@as(usize, 0), s.rig.app.menu.?.row);
+    try t.expectEqualSlices(app_mod.Action, &.{ .activate, .open_web, .yank_url, .hide_repo, .reorder_up, .reorder_down }, menuItems(s));
+    try s.key("esc");
+
+    // A PR row: its detail, its page, its URL. No approve — the
+    // reference binds `a` only with the detail open, so the menu
+    // cannot offer it either.
+    try rightClickRow(s, 1);
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url }, menuItems(s));
+    try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
+    try s.key("esc");
+
+    // The same row with the detail open gains the one write.
+    try s.key("d");
+    try rightClickRow(s, 1);
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .toggle_approval }, menuItems(s));
+    try s.key("esc");
+    try s.key("d");
+
+    // The `[ Show N more older ]` footer lifts the window and nothing else.
+    try rightClickRow(s, rows.len - 1);
+    try t.expectEqualSlices(app_mod.Action, &.{.activate}, menuItems(s));
+    try s.key("esc");
+
+    // A merged PR carries its post-merge pipeline line, so `Enter` is
+    // on its menu where an open PR's has none.
+    try s.key("m");
+    rows = try s.rig.rows();
+    var merged: ?usize = null;
+    for (rows, 0..) |r, i| if (r == .pr) {
+        merged = i;
+        break;
+    };
+    try rightClickRow(s, merged.?);
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate }, menuItems(s));
+    try s.key("esc");
+
+    // A branch row on the pipelines tree: the run's page and its URL.
+    try s.key("3");
+    rows = try s.rig.rows();
+    var branch: ?usize = null;
+    for (rows, 0..) |r, i| if (r == .branch) {
+        branch = i;
+        break;
+    };
+    try rightClickRow(s, branch.?);
+    try t.expectEqualSlices(app_mod.Action, &.{ .open_web, .yank_url }, menuItems(s));
+    try t.expectEqual(branch.?, s.rig.app.tabs[2].selected);
+    try s.key("esc");
+    try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
 }

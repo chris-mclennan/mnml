@@ -1,26 +1,29 @@
-//! mnml-bitbucket — the Bitbucket Cloud pull-request pane, written on
-//! `mnml-sdk`. Tabs of pull requests (a repo's, the ones you opened,
-//! the ones waiting on your review), a detail with the reviewers, the
-//! build statuses, the diffstat, the diff and the comment threads, and
-//! the actions: open, copy, approve, request changes, comment, merge,
-//! and check the branch out in mnml's workspace.
+//! mnml-bitbucket — the Bitbucket Cloud viewer, written on `mnml-sdk`:
+//! pull requests and pipeline runs, workspace-scoped, with the
+//! reference's tabs (per-repo, mine, workspace-wide trees), its detail,
+//! its one write (approve), and the chip the statusline shows.
 //!
-//!   mnml-bitbucket --install      write the manifest (then `integrations.refresh`)
-//!   mnml-bitbucket --uninstall    delete it
+//!   mnml-bitbucket --install      write both manifests (PRs, Pipelines) + the config scaffold
+//!   mnml-bitbucket --uninstall    delete both manifests
 //!   mnml-bitbucket --version
 //!   mnml-bitbucket --scaffold     write config.zon and say where
 //!   mnml-bitbucket --check        resolved config + auth + a live whoami
 //!   mnml-bitbucket --diag         the whole tree, for a bug report
-//!   mnml-bitbucket --refresh      headless: republish the review-queue
-//!                                 count as a statusline segment + badge
-//!   mnml-bitbucket --tab mine     open focused on that tab
+//!   mnml-bitbucket --values       {"open_mine":N,"unapproved_mine":K,"approved_mine":A}
+//!   mnml-bitbucket --list-prs --json
+//!   mnml-bitbucket --find-pipeline-for-pr --owner O --repo R --branch B --json
+//!   mnml-bitbucket --refresh [--workspace W]   republish the chip over Tier-2 IPC, headless
+//!   mnml-bitbucket --prefetch     fetch every tab and cache it for the next pane open
+//!   mnml-bitbucket --only prs|prs-mine|pipelines|branches   one family of tabs
 //!   mnml-bitbucket                connect to `$MNML_MOUNT_SOCKET` and paint
 //!
-//! The manifest is `manifest.zon` beside this file, `@import`ed so the
-//! binary and the Dev tab read one definition.
+//! The pane never blocks on the network: a reader thread turns the
+//! mount's messages into events, a worker thread runs the fetches, a
+//! ticker keeps the auto-refresh, and the main loop takes one event at
+//! a time — commits a result, answers a key, paints.
 //!
-//! **No token is ever printed.** `--check` and `--diag` name where each
-//! one came from and how long it is; `auth.zig` has the test that holds
+//! **No token is ever printed.** `--check` and `--diag` name where it
+//! came from and how long it is; `auth.zig` has the test that holds
 //! that line.
 
 const std = @import("std");
@@ -31,14 +34,98 @@ const sdk = @import("mnml_sdk");
 const cfg = @import("src/config.zig");
 const auth = @import("src/auth.zig");
 const api = @import("src/api.zig");
+const ratelimit = @import("src/ratelimit.zig");
+const cache_mod = @import("src/cache.zig");
+const fetch = @import("src/fetch.zig");
 const app_mod = @import("src/app.zig");
 const screen = @import("src/screen.zig");
-const view = @import("src/view.zig");
-const links = @import("src/links.zig");
+const model = @import("src/model.zig");
+const theme_mod = @import("src/theme.zig");
 const os = @import("src/os.zig");
 const j = @import("src/json.zig");
 
 pub const spec: sdk.Manifest = @import("manifest.zon");
+pub const spec_pipelines: sdk.Manifest = @import("manifest_pipelines.zon");
+
+/// The segment the pane and `--refresh` republish: the manifest's
+/// entry keyed by mnml as `<id>.<segment id>`.
+pub const segment_id = "bitbucket_prs.prs_mine";
+pub const segment_color = "green";
+pub const segment_click = "bitbucket_prs.open_mine";
+
+const Opts = struct {
+    install: bool = false,
+    uninstall: bool = false,
+    version: bool = false,
+    scaffold: bool = false,
+    check: bool = false,
+    diag: bool = false,
+    values: bool = false,
+    list_prs: bool = false,
+    find_pipeline: bool = false,
+    json: bool = false,
+    refresh: bool = false,
+    prefetch: bool = false,
+    help: bool = false,
+    only: ?[]const u8 = null,
+    owner: []const u8 = "",
+    repo: []const u8 = "",
+    branch: []const u8 = "",
+    workspace: []const u8 = "",
+};
+
+fn parseArgs(args: []const []const u8) !Opts {
+    var o: Opts = .{};
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.eql(u8, a, "--install")) {
+            o.install = true;
+        } else if (std.mem.eql(u8, a, "--uninstall")) {
+            o.uninstall = true;
+        } else if (std.mem.eql(u8, a, "--version")) {
+            o.version = true;
+        } else if (std.mem.eql(u8, a, "--scaffold")) {
+            o.scaffold = true;
+        } else if (std.mem.eql(u8, a, "--check")) {
+            o.check = true;
+        } else if (std.mem.eql(u8, a, "--diag")) {
+            o.diag = true;
+        } else if (std.mem.eql(u8, a, "--values")) {
+            o.values = true;
+        } else if (std.mem.eql(u8, a, "--list-prs")) {
+            o.list_prs = true;
+        } else if (std.mem.eql(u8, a, "--find-pipeline-for-pr")) {
+            o.find_pipeline = true;
+        } else if (std.mem.eql(u8, a, "--json")) {
+            o.json = true;
+        } else if (std.mem.eql(u8, a, "--refresh")) {
+            o.refresh = true;
+        } else if (std.mem.eql(u8, a, "--prefetch")) {
+            o.prefetch = true;
+        } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
+            o.help = true;
+        } else if (std.mem.eql(u8, a, "--only") and i + 1 < args.len) {
+            i += 1;
+            o.only = args[i];
+        } else if (std.mem.eql(u8, a, "--owner") and i + 1 < args.len) {
+            i += 1;
+            o.owner = args[i];
+        } else if (std.mem.eql(u8, a, "--repo") and i + 1 < args.len) {
+            i += 1;
+            o.repo = args[i];
+        } else if (std.mem.eql(u8, a, "--branch") and i + 1 < args.len) {
+            i += 1;
+            o.branch = args[i];
+        } else if (std.mem.eql(u8, a, "--workspace") and i + 1 < args.len) {
+            i += 1;
+            o.workspace = args[i];
+        } else {
+            return error.UnknownArgument;
+        }
+    }
+    return o;
+}
 
 pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
@@ -46,349 +133,819 @@ pub fn main(init: std.process.Init) !u8 {
     const env = init.environ_map;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
-    const args = try init.minimal.args.toSlice(arena_state.allocator());
+    const arena = arena_state.allocator();
+    const args = try init.minimal.args.toSlice(arena);
 
-    var out_buf: [4096]u8 = undefined;
-    var out_w: std.Io.File.Writer = .init(.stdout(), io, &out_buf);
+    var out_buf: [8192]u8 = undefined;
+    var out_w: Io.File.Writer = .init(.stdout(), io, &out_buf);
     const stdout = &out_w.interface;
-    var err_buf: [1024]u8 = undefined;
-    var err_w: std.Io.File.Writer = .init(.stderr(), io, &err_buf);
+    defer stdout.flush() catch {};
+    var err_buf: [2048]u8 = undefined;
+    var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
     const stderr = &err_w.interface;
+    defer stderr.flush() catch {};
 
-    var want_tab: []const u8 = "";
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.eql(u8, a, "--install")) {
-            const path = sdk.manifest.write(gpa, io, env, spec) catch |err| {
-                try stderr.print("mnml-bitbucket: could not write the manifest: {s}\n", .{@errorName(err)});
-                try stderr.flush();
-                return 1;
-            };
-            defer gpa.free(path);
-            try stdout.print("mnml-bitbucket: wrote {s}\n", .{path});
-            // The config is private to this machine and lives beside
-            // the manifest, not inside it; scaffold it now so the first
-            // run has something to edit rather than an error.
-            if (cfg.configPath(gpa, env) catch null) |p| {
-                defer gpa.free(p);
-                if (Io.Dir.cwd().access(io, p, .{})) |_| {
-                    try stdout.print("mnml-bitbucket: config already at {s}\n", .{p});
-                } else |_| {
-                    cfg.scaffold(io, p) catch {};
-                    try stdout.print("mnml-bitbucket: wrote the config scaffold to {s} — set `email`, `workspace` and `repos`\n", .{p});
-                }
-            }
-            try stdout.flush();
-            return 0;
-        }
-        if (std.mem.eql(u8, a, "--uninstall")) {
-            const went = sdk.manifest.remove(gpa, io, env, spec.id) catch |err| {
-                try stderr.print("mnml-bitbucket: could not remove the manifest: {s}\n", .{@errorName(err)});
-                try stderr.flush();
-                return 1;
-            };
-            try stdout.print("mnml-bitbucket: {s} (the config stays; delete it by hand)\n", .{if (went) "removed the manifest" else "nothing to remove"});
-            try stdout.flush();
-            return 0;
-        }
-        if (std.mem.eql(u8, a, "--version")) {
-            try stdout.print("mnml-bitbucket {s} (bridge protocol {d})\n", .{ spec.version, sdk.protocol });
-            try stdout.flush();
-            return 0;
-        }
-        if (std.mem.eql(u8, a, "--scaffold")) {
-            const p = cfg.configPath(gpa, env) catch {
-                try stderr.writeAll("mnml-bitbucket: no HOME, XDG_CONFIG_HOME or MNML_DATA_ROOT to write into\n");
-                try stderr.flush();
-                return 1;
-            };
-            defer gpa.free(p);
-            cfg.scaffold(io, p) catch {
-                try stderr.print("mnml-bitbucket: could not write {s}\n", .{p});
-                try stderr.flush();
-                return 1;
-            };
-            try stdout.print("{s}\n", .{p});
-            try stdout.flush();
-            return 0;
-        }
-        if (std.mem.eql(u8, a, "--check")) return diagnose(gpa, io, env, stdout, false);
-        if (std.mem.eql(u8, a, "--diag")) return diagnose(gpa, io, env, stdout, true);
-        if (std.mem.eql(u8, a, "--refresh")) {
-            // `--workspace {{workspace}}` is how the manifest's ex line
-            // hands over mnml's workspace: a `term` child does not get
-            // `MNML_IPC_DIR`, so without it the refresh can count but
-            // has nowhere to publish the count.
-            var workspace: []const u8 = "";
-            var k: usize = i + 1;
-            while (k + 1 < args.len) : (k += 1) {
-                if (std.mem.eql(u8, args[k], "--workspace")) workspace = args[k + 1];
-            }
-            return refreshCounts(gpa, io, env, stdout, workspace);
-        }
-        if (std.mem.eql(u8, a, "--workspace") and i + 1 < args.len) {
-            i += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, a, "--tab") and i + 1 < args.len) {
-            i += 1;
-            want_tab = args[i];
-            continue;
-        }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
-            try stdout.writeAll(usage);
-            try stdout.flush();
-            return 0;
-        }
+    const opts = parseArgs(args) catch {
+        try stderr.print("mnml-bitbucket: unknown argument (see --help)\n{s}", .{usage});
+        return 2;
+    };
+    if (opts.help) {
+        try stdout.writeAll(usage);
+        return 0;
     }
+    if (opts.version) {
+        try stdout.print("mnml-bitbucket {s} (bridge protocol {d})\n", .{ spec.version, sdk.protocol });
+        return 0;
+    }
+    if (opts.install) return install(gpa, io, env, stdout, stderr);
+    if (opts.uninstall) return uninstall(gpa, io, env, stdout, stderr);
+    if (opts.scaffold) {
+        const p = cfg.configPath(gpa, env) catch {
+            try stderr.writeAll("mnml-bitbucket: no HOME, XDG_CONFIG_HOME or MNML_DATA_ROOT to write into\n");
+            return 1;
+        };
+        defer gpa.free(p);
+        cfg.scaffold(io, p) catch {
+            try stderr.print("mnml-bitbucket: could not write {s}\n", .{p});
+            return 1;
+        };
+        try stdout.print("{s}\n", .{p});
+        return 0;
+    }
+    if (opts.check or opts.diag) return diagnose(gpa, io, env, stdout, opts.diag);
+    if (opts.values) return valuesCmd(gpa, io, env, stdout, stderr);
+    if (opts.list_prs) {
+        if (!opts.json) {
+            try stderr.writeAll("--list-prs requires --json (only shape supported v1)\n");
+            return 2;
+        }
+        return listPrsCmd(gpa, io, env, stdout, stderr);
+    }
+    if (opts.find_pipeline) {
+        if (!opts.json) {
+            try stderr.writeAll("--find-pipeline-for-pr requires --json\n");
+            return 2;
+        }
+        if (opts.owner.len == 0 or opts.repo.len == 0 or opts.branch.len == 0) {
+            try stderr.writeAll("--owner, --repo and --branch are required\n");
+            return 2;
+        }
+        return findPipelineCmd(gpa, io, env, stdout, stderr, opts.owner, opts.repo, opts.branch);
+    }
+    if (opts.refresh) return refreshCmd(gpa, io, env, stdout, stderr, opts.workspace);
+    if (opts.prefetch) return prefetchCmd(gpa, io, env, stdout, stderr);
 
     const mount = sdk.Mount.connectEnv(gpa, io, env) catch |err| switch (err) {
         error.NoSocket => {
-            try stderr.writeAll("mnml-bitbucket is an mnml integration: open it from mnml (bitbucket.open), or run `mnml-bitbucket --install` / `--check`.\n");
-            try stderr.flush();
+            try stderr.writeAll("mnml-bitbucket is an mnml integration: open it from mnml (bitbucket_prs.open / bitbucket_pipelines.open), or run `mnml-bitbucket --install` / `--check`.\n");
             return 2;
         },
         else => return err,
     };
-    defer mount.destroy();
-    return pane(gpa, io, env, mount, want_tab);
+    return pane(gpa, io, env, mount, opts);
 }
 
 const usage =
-    \\mnml-bitbucket — Bitbucket Cloud pull requests as an mnml pane.
+    \\mnml-bitbucket — Bitbucket Cloud pull requests + pipelines as an mnml pane.
     \\
-    \\  --install / --uninstall   register with mnml (and scaffold the config)
+    \\  --install / --uninstall   register both chips with mnml (and scaffold the config)
     \\  --version
     \\  --scaffold                write config.zon and print its path
     \\  --check                   resolved config + auth + a live whoami
     \\  --diag                    the whole tree, for a bug report
-    \\  --refresh [--workspace W] republish the review-queue count, headless
-    \\  --tab mine|reviewing|NAME open focused on that tab
+    \\  --values                  {"open_mine":N,"unapproved_mine":K,"approved_mine":A}
+    \\  --list-prs --json         every open PR the per-repo tabs list
+    \\  --find-pipeline-for-pr --owner O --repo R --branch B --json
+    \\  --refresh [--workspace W] republish the statusline chip, headless
+    \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
+    \\  --only prs|prs-mine|pipelines|branches   one family of tabs
     \\
 ;
 
-// ─── the pane ────────────────────────────────────────────────────────────
+// ─── install ─────────────────────────────────────────────────────────────
 
-fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, want_tab: []const u8) !u8 {
-    var frame = try sdk.Frame.init(gpa, mount.geometry.cols, mount.geometry.rows);
-    defer frame.deinit();
-    try mount.setTitle("bitbucket");
-
-    var ipc_opt = try sdk.Ipc.fromEnv(gpa, io, env);
-    defer if (ipc_opt) |*x| x.deinit();
-    if (ipc_opt) |*ipc| {
-        // The four commands, registered on the live channel as well as
-        // declared in the manifest: a pane opened from the Dev tab
-        // before an install still puts them on the palette.
-        for (spec.commands) |c| ipc.registerCommand(c.id, c.title, c.group, c.keys) catch {};
+fn install(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, stdout: *Io.Writer, stderr: *Io.Writer) !u8 {
+    for ([_]sdk.Manifest{ spec, spec_pipelines }) |m| {
+        const path = sdk.manifest.write(gpa, io, env, m) catch |err| {
+            try stderr.print("mnml-bitbucket: could not write the manifest for {s}: {s}\n", .{ m.id, @errorName(err) });
+            return 1;
+        };
+        defer gpa.free(path);
+        try stdout.print("mnml-bitbucket: wrote {s}\n", .{path});
     }
-
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-
-    // Config and auth first; a pane with neither paints the setup
-    // screen and says what to do about it.
-    var why: []const u8 = "";
-    var loaded = cfg.load(gpa, io, env, &why) catch {
-        return setupLoop(gpa, mount, &frame, &arena, why);
-    };
-    defer loaded.deinit();
-
-    const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
-    var tokens = try auth.resolve(gpa, io, env, config_dir);
-    defer tokens.deinit();
-    if (!tokens.hasRead()) return setupLoop(gpa, mount, &frame, &arena, no_token_text);
-
-    const base_url = try resolveBaseUrl(gpa, io, env, loaded.config);
-    defer gpa.free(base_url);
-    var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, tokens.write, loaded.config.rate);
-    defer client.deinit();
-    client.write_refusal = tokens.writeRefusal();
-
-    var app = try app_mod.App.init(gpa, io, loaded.config, &client);
-    defer app.deinit();
-    app.cols = frame.cols;
-    app.rows = frame.rows;
-    app.workspace_dir = env.get("MNML_WORKSPACE") orelse ".";
-    app.jira_installed = links.installed(gpa, io, env, "jira");
-    app.github_installed = links.installed(gpa, io, env, "github");
-    app.show_diff = !std.mem.eql(u8, env.get("MNML_SETTING_DIFF") orelse "on", "off");
-    app.show_detail = std.mem.eql(u8, env.get("MNML_SETTING_DETAIL") orelse "closed", "open");
-
-    try app.switchTab(pickTab(loaded.config, want_tab));
-    try drain(gpa, io, env, mount, &ipc_opt, &app);
-    publishCounts(&ipc_opt, &app);
-
-    _ = arena.reset(.retain_capacity);
-    try screen.paint(arena.allocator(), &frame, &app);
-    try mount.send(&frame);
-
-    var msg_arena = std.heap.ArenaAllocator.init(gpa);
-    defer msg_arena.deinit();
-    while (true) {
-        _ = msg_arena.reset(.retain_capacity);
-        const msg = (try mount.next(msg_arena.allocator())) orelse break;
-        var running = true;
-        switch (msg) {
-            .hello, .focus => {},
-            .goodbye => break,
-            .resize => |r| {
-                try frame.resize(r.geometry.cols, r.geometry.rows);
-                app.cols = r.geometry.cols;
-                app.rows = r.geometry.rows;
-            },
-            .input => |in| switch (in.event) {
-                .key => |k| running = try app.key(k.spec),
-                .paste => |p| try app.paste(p.text),
-                .click => |c| running = try click(gpa, &app, c.col, c.row, c.button == .right),
-                .scroll => |s| running = try app.key(if (s.dy > 0) "k" else "j"),
-                .hover => {},
-            },
+    // The config is private to this machine and lives beside the
+    // manifests, not inside them; scaffold it now so the first run
+    // has something to edit rather than an error.
+    if (cfg.configPath(gpa, env) catch null) |p| {
+        defer gpa.free(p);
+        if (Io.Dir.cwd().access(io, p, .{})) |_| {
+            try stdout.print("mnml-bitbucket: config already at {s}\n", .{p});
+        } else |_| {
+            cfg.scaffold(io, p) catch {};
+            try stdout.print("mnml-bitbucket: wrote the config scaffold to {s} — set `email`, `workspace` and `repos`\n", .{p});
         }
-        try drain(gpa, io, env, mount, &ipc_opt, &app);
-        if (!running) break;
-        publishCounts(&ipc_opt, &app);
-        _ = arena.reset(.retain_capacity);
-        try screen.paint(arena.allocator(), &frame, &app);
-        try mount.send(&frame);
     }
-    if (ipc_opt) |*ipc| ipc.statuslineClearSegment("bitbucket.review") catch {};
-    mount.bye();
     return 0;
 }
 
-/// Row 0 is the tab strip; row 2 is the column header; the rows below
-/// are the list. A right-click on a row opens its detail.
-fn click(gpa: Allocator, app: *app_mod.App, col: u16, row: u16, right: bool) Allocator.Error!bool {
-    if (row == 0) {
-        if (tabAtColumn(gpa, app, col)) |idx| try app.switchTab(idx);
-        return true;
+fn uninstall(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, stdout: *Io.Writer, stderr: *Io.Writer) !u8 {
+    var any = false;
+    for ([_][]const u8{ spec.id, spec_pipelines.id }) |id| {
+        const went = sdk.manifest.remove(gpa, io, env, id) catch |err| {
+            try stderr.print("mnml-bitbucket: could not remove {s}: {s}\n", .{ id, @errorName(err) });
+            return 1;
+        };
+        any = any or went;
     }
-    if (row < 3) return true;
-    const tab = app.activeTab();
-    const wanted = tab.scroll + (row - 3);
-    if (wanted >= tab.visible.len) return true;
-    _ = app.select(wanted);
-    if (right) return app.key("d");
-    return true;
+    try stdout.print("mnml-bitbucket: {s} (the config stays; delete it by hand)\n", .{if (any) "removed the manifests" else "nothing to remove"});
+    return 0;
 }
 
-/// Run what the last event queued: toasts and commands over the mount,
-/// progress over the file channel, a browser and a clipboard through
-/// the machine.
-fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, ipc_opt: *?sdk.Ipc, app: *app_mod.App) !void {
+// ─── a session: config, tokens, the client ───────────────────────────────
+
+const Session = struct {
+    loaded: cfg.Loaded,
+    tokens: auth.Tokens,
+    limiter: ratelimit.Limiter,
+    client: api.Client,
+    base_url: []u8,
+
+    fn deinit(s: *Session, gpa: Allocator) void {
+        s.client.deinit();
+        s.limiter.deinit();
+        s.tokens.deinit();
+        s.loaded.deinit();
+        gpa.free(s.base_url);
+    }
+};
+
+const SessionError = error{ NoConfig, NoToken } || Allocator.Error;
+
+/// Load everything a command needs; `why` explains a refusal.
+fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[]const u8) SessionError!Session {
+    var loaded = cfg.load(gpa, io, env, why) catch return error.NoConfig;
+    errdefer loaded.deinit();
+    const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
+    var tokens = try auth.resolve(gpa, io, env, config_dir);
+    errdefer tokens.deinit();
+    if (!tokens.hasRead()) {
+        why.* = no_token_text;
+        return error.NoToken;
+    }
+    const base_url = try resolveBaseUrl(gpa, io, env, loaded.config);
+    errdefer gpa.free(base_url);
+    const state_path = if (loaded.config.rate.state_path.len > 0) try gpa.dupe(u8, loaded.config.rate.state_path) else try ratelimit.statePath(gpa, io, env);
+    defer gpa.free(state_path);
+    var limiter = try ratelimit.Limiter.init(gpa, io, state_path, .{ .rate = loaded.config.rate.rate_per_sec, .capacity = loaded.config.rate.capacity });
+    errdefer limiter.deinit();
+    var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, if (tokens.write_source == .env) tokens.write else "", loaded.config.rate);
+    errdefer client.deinit();
+    return .{ .loaded = loaded, .tokens = tokens, .limiter = limiter, .client = client, .base_url = base_url };
+}
+
+/// `$BITBUCKET_BASE_URL` — literally, or `@<path>` naming a file that
+/// holds it (the fake server writes its port there) — then the
+/// config's, then the real API.
+fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c: cfg.Config) Allocator.Error![]u8 {
+    if (cfg.nonEmpty(env.get("BITBUCKET_BASE_URL"))) |v| {
+        if (v[0] == '@') {
+            var attempts: u32 = 0;
+            while (attempts < 50) : (attempts += 1) {
+                if (Io.Dir.cwd().readFileAlloc(io, v[1..], gpa, .limited(4096))) |text| {
+                    const trimmed = std.mem.trim(u8, text, " \r\n\t");
+                    if (trimmed.len > 0) {
+                        const out = try gpa.dupe(u8, trimmed);
+                        gpa.free(text);
+                        return out;
+                    }
+                    gpa.free(text);
+                } else |_| {}
+                io.sleep(.fromMilliseconds(100), .awake) catch {};
+            }
+            return gpa.dupe(u8, api.default_base_url);
+        }
+        return gpa.dupe(u8, v);
+    }
+    if (c.base_url.len > 0) return gpa.dupe(u8, c.base_url);
+    return gpa.dupe(u8, api.default_base_url);
+}
+
+const no_token_text = "no Bitbucket token: set BITBUCKET_ACCESS_TOKEN, or write it to <config dir>/token (BITBUCKET_API_TOKEN / BITBUCKET_APP_PASSWORD / BITBUCKET_PERSONAL_TOKEN also resolve, in that order, between the two)";
+
+fn nowSecs(io: Io) i64 {
+    return Io.Timestamp.now(io, .real).toSeconds();
+}
+
+// ─── --check / --diag ────────────────────────────────────────────────────
+
+fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, full: bool) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch |err| {
+        const p = cfg.configPath(gpa, env) catch null;
+        defer if (p) |x| gpa.free(x);
+        try out.print("config: {s}\n", .{p orelse "(no data root)"});
+        try out.print("{s}: {s}\n", .{ @errorName(err), why });
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    const c = s.loaded.config;
+    const tk = try auth.describe(gpa, &s.tokens);
+    defer gpa.free(tk);
+    if (!full) {
+        try out.print("config: {s}\n{s}", .{ s.loaded.path, tk });
+        try out.print("workspace: {s}\nemail: {s}\nrefresh_interval_secs: {d}\nscope: {s}\nrecent_window_days: {d}\n", .{ c.workspace, c.email, c.refresh_interval_secs, @tagName(c.scope), c.recent_window_days });
+    } else {
+        try out.print("mnml-bitbucket · diagnostics\n\nAuth\n  ├─ {s}  ├─ email: {s}\n", .{ tk, c.email });
+    }
+    var progress: fetch.Progress = .{};
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, c.account_id);
+    defer worker.deinit();
+    var job = try fetch.makeJob(gpa, nowSecs(io), .whoami);
+    defer job.deinit();
+    var res = try worker.run(&job);
+    defer res.deinit();
+    const who = res.payload.whoami;
+    if (who.error_text.len > 0) {
+        try out.print("{s}whoami: {s} {s}\n", .{ if (full) "  └─ " else "", if (full) "✗" else "FAIL —", who.error_text });
+        if (full) try out.writeAll("     mine-only filters, --values, and workspace repo enumeration all depend on this succeeding.\n");
+    } else {
+        try out.print("{s}whoami: {s} {s} (account_id: {s})\n", .{ if (full) "  └─ " else "", if (full) "✓" else "ok —", who.display_name, if (who.account_id.len > 0) who.account_id else "<none>" });
+    }
+    if (full) {
+        try out.print("\nConfig\n  ├─ path: {s}\n  ├─ workspace: {s}\n  ├─ scope: {s}\n  ├─ recent_window_days: {d}\n  ├─ refresh_interval_secs: {d}\n", .{ s.loaded.path, c.workspace, @tagName(c.scope), c.recent_window_days, c.refresh_interval_secs });
+        if (c.repos.len == 0) {
+            try out.writeAll("  ├─ repos allowlist: (none — enumerating all)\n");
+        } else {
+            try out.print("  ├─ repos allowlist: {d} entries\n", .{c.repos.len});
+            for (c.repos[0..@min(c.repos.len, 5)]) |r| try out.print("  │   {s}\n", .{r});
+            if (c.repos.len > 5) try out.print("  │   … and {d} more\n", .{c.repos.len - 5});
+        }
+        try out.print("  └─ tabs: {d}\n", .{c.tabs.len});
+    }
+    for (c.tabs, 0..) |tab, i| {
+        const shape = switch (tab.kind) {
+            .pull_requests => if (tab.mode != .none) try std.fmt.allocPrint(gpa, "mode={s}", .{@tagName(tab.mode)}) else if (tab.repo.len > 0) try std.fmt.allocPrint(gpa, "repo={s}", .{tab.repo}) else try gpa.dupe(u8, "q=<custom>"),
+            else => try std.fmt.allocPrint(gpa, "kind={s}", .{@tagName(tab.kind)}),
+        };
+        defer gpa.free(shape);
+        if (full) {
+            try out.print("      {d}. {s} ({s}, state={s})\n", .{ i + 1, tab.name, shape, @tagName(tab.state) });
+        } else {
+            try out.print("  tab {d} ({s}): {s}, state={s}\n", .{ i + 1, tab.name, shape, @tagName(tab.state) });
+        }
+    }
+    if (full) {
+        if (s.limiter.status()) |st| {
+            try out.print("\nRate bucket\n  ├─ file: {s}\n  ├─ tokens: {d:.1} of {d:.0}\n  ├─ rate: {d:.2}/s (baseline {d:.2})\n  ├─ throttles: {d}\n  └─ cooldown: {d:.0}s\n", .{ s.limiter.path, st.tokens, st.capacity, st.rate, st.baseline_rate, st.throttles, st.cooldown_remaining_secs });
+        }
+        try out.print("\nRuntime\n  ├─ integration: {s}\n  ├─ api: {s}\n  └─ os/arch: {s} / {s}\n", .{ spec.version, s.base_url, @tagName(@import("builtin").os.tag), @tagName(@import("builtin").cpu.arch) });
+    }
+    return 0;
+}
+
+// ─── --values / --refresh ────────────────────────────────────────────────
+
+fn computeValues(gpa: Allocator, io: Io, s: *Session) !fetch.Result {
+    var progress: fetch.Progress = .{};
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id);
+    defer worker.deinit();
+    const c = s.loaded.config;
+    var job = try fetch.makeJob(gpa, nowSecs(io), .{ .values = .{
+        .scope = fetch.scopeOf(c, c.workspace, 1),
+        .stale_after_days = c.chip_stale_after_days,
+        .excluded_branch_patterns = c.chip_excluded_branch_patterns,
+    } });
+    defer job.deinit();
+    return worker.run(&job);
+}
+
+/// The reference's `--values`: the JSON a statusline poller reads.
+/// Non-zero on any failure, with a line on stderr.
+fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch {
+        try err.print("mnml-bitbucket --values: {s}\n", .{why});
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    var res = try computeValues(gpa, io, &s);
+    defer res.deinit();
+    const v = res.payload.values;
+    if (v.error_text.len > 0) {
+        try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
+        return 1;
+    }
+    try out.print("{{\"open_mine\":{d},\"unapproved_mine\":{d},\"approved_mine\":{d}}}\n", .{ v.open_mine, v.unapproved_mine, v.approved_mine });
+    return 0;
+}
+
+/// The chip's text for a values result: `󰂨 4(2)`, or `󰂨 !` on a failure.
+pub fn segmentText(buf: []u8, v: fetch.ValuesResult) []const u8 {
+    if (v.error_text.len > 0) return app_mod.App.chip_glyph ++ " !";
+    return std.fmt.bufPrint(buf, app_mod.App.chip_glyph ++ " {d}({d})", .{ v.open_mine, v.unapproved_mine }) catch app_mod.App.chip_glyph;
+}
+
+/// The Tier-2 lines that put the chip on the statusline and the
+/// count on the INTEGRATIONS badge — what the pane and `--refresh`
+/// both send. The unit test below pins the JSON.
+pub fn publishSegment(ipc: *const sdk.Ipc, v: fetch.ValuesResult) sdk.ipc.Error!void {
+    var buf: [64]u8 = undefined;
+    try ipc.statuslineSetSegment(.{
+        .id = segment_id,
+        .text = segmentText(&buf, v),
+        .color = if (v.error_text.len > 0) "red" else segment_color,
+        .click_command = segment_click,
+        .priority = 60,
+    });
+    try ipc.setActivityBadge("integrations", @intCast(@min(v.open_mine, std.math.maxInt(u32))));
+}
+
+/// The channel a headless run publishes on: `$MNML_IPC_DIR`, else
+/// `<workspace>/.mnml/ipc-zig` — a `term` child does not inherit the
+/// variable, which is why the ex line passes `--workspace`.
+fn ipcFor(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, workspace: []const u8) Allocator.Error!?sdk.Ipc {
+    if (try sdk.Ipc.fromEnv(gpa, io, env)) |ipc| return ipc;
+    if (workspace.len == 0) return null;
+    const dir = try std.fs.path.join(gpa, &.{ workspace, ".mnml", "ipc-zig" });
+    defer gpa.free(dir);
+    if (Io.Dir.cwd().access(io, dir, .{})) |_| {} else |_| return null;
+    return try sdk.Ipc.init(gpa, io, dir);
+}
+
+fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer, workspace: []const u8) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch {
+        try err.print("mnml-bitbucket --refresh: {s}\n", .{why});
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    var res = try computeValues(gpa, io, &s);
+    defer res.deinit();
+    const v = res.payload.values;
+    var ipc = try ipcFor(gpa, io, env, workspace);
+    defer if (ipc) |*x| x.deinit();
+    if (ipc) |*x| publishSegment(x, v) catch {};
+    if (v.error_text.len > 0) {
+        try err.print("mnml-bitbucket --refresh: {s}\n", .{v.error_text});
+        return 1;
+    }
+    try out.print("{d} open pull requests you authored, {d} still unapproved{s}\n", .{ v.open_mine, v.unapproved_mine, if (ipc == null) " (no IPC channel found — pass --workspace)" else "" });
+    return 0;
+}
+
+// ─── --list-prs / --find-pipeline-for-pr ─────────────────────────────────
+
+fn writeJsonString(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
+    try w.writeByte('"');
+    for (s) |c| switch (c) {
+        '"' => try w.writeAll("\\\""),
+        '\\' => try w.writeAll("\\\\"),
+        '\n' => try w.writeAll("\\n"),
+        '\r' => try w.writeAll("\\r"),
+        '\t' => try w.writeAll("\\t"),
+        0x00...0x08, 0x0b, 0x0c, 0x0e...0x1f => try w.print("\\u{x:0>4}", .{c}),
+        else => try w.writeByte(c),
+    };
+    try w.writeByte('"');
+}
+
+/// The reference's cross-host list: every open PR the per-repo
+/// `pull_requests` tabs list, deduped, in mnml's `SiblingPr` shape.
+fn listPrsCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch {
+        try err.print("mnml-bitbucket --list-prs: {s}\n", .{why});
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    try out.writeAll("{\"host\":\"bitbucket\",\"prs\":[");
+    var n: usize = 0;
+    for (s.loaded.config.tabs) |tab| {
+        if (tab.kind != .pull_requests or tab.repo.len == 0) continue;
+        const ws = s.loaded.config.tabWorkspace(tab);
+        var reply = try s.client.listPrs(gpa, ws, tab.repo, @tagName(tab.state), tab.q, 50);
+        defer reply.deinit(gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
+                for (try model.parsePullRequests(a, v)) |pr| {
+                    const key = try std.fmt.allocPrint(a, "{s}/{s}#{d}", .{ ws, tab.repo, pr.id });
+                    if (seen.contains(key)) continue;
+                    try seen.put(a, key, {});
+                    if (n > 0) try out.writeByte(',');
+                    n += 1;
+                    var ubuf: [256]u8 = undefined;
+                    try out.print("{{\"id\":\"{d}\",\"url\":", .{pr.id});
+                    try writeJsonString(out, pr.url(&ubuf, ws, tab.repo));
+                    try out.print(",\"owner\":\"{s}\",\"repo\":\"{s}\",\"title\":", .{ ws, tab.repo });
+                    try writeJsonString(out, pr.title);
+                    try out.writeAll(",\"author\":");
+                    try writeJsonString(out, pr.author);
+                    try out.writeAll(",\"source_branch\":");
+                    try writeJsonString(out, pr.source_branch);
+                    try out.writeAll(",\"dest_branch\":");
+                    try writeJsonString(out, pr.dest_branch);
+                    try out.writeAll(",\"state\":");
+                    const lower = try std.ascii.allocLowerString(a, pr.state);
+                    try writeJsonString(out, lower);
+                    try out.writeAll(",\"updated_at\":");
+                    try writeJsonString(out, pr.updated_on);
+                    try out.print(",\"remote_url_https\":\"https://bitbucket.org/{s}/{s}.git\",\"remote_url_ssh\":\"git@bitbucket.org:{s}/{s}.git\"}}", .{ ws, tab.repo, ws, tab.repo });
+                }
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                try err.print("tab '{s}' skipped: {s}\n", .{ tab.name, f.describe(&buf) });
+            },
+        }
+    }
+    try out.writeAll("]}\n");
+    return 0;
+}
+
+fn findPipelineCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer, owner: []const u8, repo: []const u8, branch: []const u8) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch {
+        try err.print("mnml-bitbucket --find-pipeline-for-pr: {s}\n", .{why});
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    var reply = try s.client.listPipelines(gpa, owner, repo, 50);
+    defer reply.deinit(gpa);
+    switch (reply) {
+        .ok => |body| {
+            var arena_state = std.heap.ArenaAllocator.init(gpa);
+            defer arena_state.deinit();
+            const v = std.json.parseFromSliceLeaky(j.Value, arena_state.allocator(), body.bytes, .{}) catch {
+                try out.writeAll("{\"url\":null}\n");
+                return 0;
+            };
+            for (try model.parsePipelines(arena_state.allocator(), v)) |p| if (std.mem.eql(u8, p.ref_name, branch)) {
+                try out.print("{{\"url\":\"https://bitbucket.org/{s}/{s}/pipelines/results/{d}\"}}\n", .{ owner, repo, p.build_number });
+                return 0;
+            };
+            try out.writeAll("{\"url\":null}\n");
+            return 0;
+        },
+        .failed => |f| {
+            var buf: [256]u8 = undefined;
+            try err.print("listing pipelines for {s}/{s}: {s}\n", .{ owner, repo, f.describe(&buf) });
+            return 1;
+        },
+    }
+}
+
+// ─── --prefetch ──────────────────────────────────────────────────────────
+
+/// Fetch every configured tab once and leave the bodies in the pane's
+/// cache, so the next `bitbucket_prs.open` paints rows instead of
+/// `loading… 0/13 repos` for the minutes the shared bucket takes.
+///
+/// It walks the same `App` the pane does, so what is warmed is exactly
+/// what the pane will ask for, and every request goes through the same
+/// shared limiter — a poller running this is one more well-behaved
+/// process on the bucket, not a second opinion about it.
+///
+/// Exit: 0 the cache is complete · 2 it ran and some repo failed (the
+/// cache holds the rest) · 1 it could not run at all.
+fn prefetchCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch |e| {
+        try err.print("mnml-bitbucket --prefetch: {s}\n", .{if (e == error.NoToken) no_token_text else why});
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    var cache = try cache_mod.Cache.init(gpa, io, s.loaded.path, .fill);
+    defer cache.deinit();
+    // A repo that left the config must not keep answering from a file.
+    cache.clear();
+    s.client.cache = &cache;
+    s.client.now_secs = nowSecs(io);
+
+    var app = try app_mod.App.init(gpa, io, s.loaded.config, s.loaded.path, .{});
+    defer app.deinit();
+    if (app.tabs.len == 0) {
+        try err.print("mnml-bitbucket --prefetch: no tabs in {s}\n", .{s.loaded.path});
+        return 1;
+    }
+    app.now_secs = s.client.now_secs;
+    var progress: fetch.Progress = .{};
+    app.progress = &progress;
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id);
+    defer worker.deinit();
+
+    try app.startup();
+    while (true) {
+        const jobs = app.takeJobs();
+        if (jobs.len == 0) break;
+        defer gpa.free(jobs);
+        for (jobs) |*job| {
+            defer job.deinit();
+            var res = try worker.run(job);
+            try app.commit(&res);
+        }
+    }
+    const fx = app.takeEffects();
+    app.freeEffects(fx);
+
+    var repos: usize = 0;
+    var rows: usize = 0;
+    var errored: usize = 0;
+    var dead_tabs: usize = 0;
+    for (app.tabs) |ts| {
+        repos += ts.repos;
+        rows += ts.items;
+        errored += ts.errored;
+        if (ts.error_text.len > 0) dead_tabs += 1;
+    }
+    try out.print("prefetched {d} tab(s) · {d} repos · {d} rows · {d} requests · {d} cache entries in {s}\n", .{ app.tabs.len, repos, rows, s.client.sent, cache.writes, cache.dir });
+    if (dead_tabs == app.tabs.len or cache.writes == 0) {
+        try err.print("mnml-bitbucket --prefetch: nothing could be fetched{s}\n", .{if (app.tabs[0].error_text.len > 0) app.tabs[0].error_text else ""});
+        return 1;
+    }
+    if (errored > 0 or dead_tabs > 0) {
+        try err.print("mnml-bitbucket --prefetch: {d} repo(s) and {d} tab(s) failed; the cache holds the rest\n", .{ errored, dead_tabs });
+        return 2;
+    }
+    return 0;
+}
+
+// ─── the pane ────────────────────────────────────────────────────────────
+
+/// A host message copied off the reader's arena.
+const HostEvent = union(enum) {
+    key: []u8,
+    paste: []u8,
+    click: struct { col: u16, row: u16, button: sdk.wire.Button },
+    scroll: struct { col: u16, row: u16, dy: i16 },
+    resize: sdk.wire.Geometry,
+    focus: bool,
+    goodbye,
+    other,
+};
+
+const Event = union(enum) {
+    host: HostEvent,
+    result: *fetch.Result,
+    tick,
+    host_gone,
+};
+
+const EventQueue = Io.Queue(Event);
+const JobQueue = Io.Queue(*fetch.Job);
+
+fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    while (true) {
+        _ = arena.reset(.retain_capacity);
+        const msg = (mount.next(arena.allocator()) catch null) orelse {
+            q.putOneUncancelable(io, .host_gone) catch {};
+            return;
+        };
+        const ev: HostEvent = switch (msg) {
+            .hello => .other,
+            .focus => |f| .{ .focus = f },
+            .goodbye => .goodbye,
+            .resize => |r| .{ .resize = r.geometry },
+            .input => |in| switch (in.event) {
+                .key => |k| .{ .key = gpa.dupe(u8, k.spec) catch continue },
+                .paste => |p| .{ .paste = gpa.dupe(u8, p.text) catch continue },
+                .click => |c| .{ .click = .{ .col = c.col, .row = c.row, .button = c.button } },
+                .scroll => |s| .{ .scroll = .{ .col = s.col, .row = s.row, .dy = s.dy } },
+                .hover => .other,
+            },
+        };
+        q.putOneUncancelable(io, .{ .host = ev }) catch return;
+        if (ev == .goodbye) return;
+    }
+}
+
+fn workerThread(gpa: Allocator, io: Io, worker: *fetch.Worker, jobs: *JobQueue, events: *EventQueue) void {
+    while (true) {
+        const job = jobs.getOneUncancelable(io) catch return;
+        defer {
+            job.deinit();
+            gpa.destroy(job);
+        }
+        const res = gpa.create(fetch.Result) catch continue;
+        res.* = worker.run(job) catch {
+            gpa.destroy(res);
+            continue;
+        };
+        events.putOneUncancelable(io, .{ .result = res }) catch {
+            res.deinit();
+            gpa.destroy(res);
+            return;
+        };
+    }
+}
+
+fn tickerThread(io: Io, q: *EventQueue) void {
+    while (true) {
+        io.sleep(.fromMilliseconds(1000), .awake) catch return;
+        q.putOneUncancelable(io, .tick) catch return;
+    }
+}
+
+fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, opts: Opts) !u8 {
+    var frame = try sdk.Frame.init(gpa, mount.geometry.cols, mount.geometry.rows);
+    defer frame.deinit();
+    const nerd = mount.hello.capabilities.nerd_font and !mount.hello.capabilities.ascii;
+
+    var only: ?cfg.Family = null;
+    var mine = false;
+    if (opts.only) |o| {
+        if (std.mem.eql(u8, o, "prs") or std.mem.eql(u8, o, "pull_requests")) {
+            only = .prs;
+        } else if (std.mem.eql(u8, o, "prs-mine")) {
+            only = .prs;
+            mine = true;
+        } else if (std.mem.eql(u8, o, "pipelines")) {
+            only = .pipelines;
+        } else if (std.mem.eql(u8, o, "branches")) {
+            only = .branches;
+        }
+    }
+    const title: []const u8 = if (only) |fam| switch (fam) {
+        .prs => if (mine) "bitbucket · mine" else "bitbucket · PRs",
+        .pipelines => "bitbucket · pipelines",
+        .branches => "bitbucket · branches",
+    } else "bitbucket";
+    try mount.setTitle(title);
+
+    var why: []const u8 = "";
+    var session = openSession(gpa, io, env, &why) catch |err| {
+        return setupLoop(gpa, mount, &frame, if (err == error.NoToken) no_token_text else why, err == error.NoConfig);
+    };
+    defer session.deinit(gpa);
+    session.client.limiter = &session.limiter;
+    // Whatever `--prefetch` last left behind answers the startup fetch
+    // — each URL once, so the first refresh after it is live.
+    var cache = try cache_mod.Cache.init(gpa, io, session.loaded.path, .prime);
+    defer cache.deinit();
+    session.client.cache = &cache;
+    session.client.now_secs = nowSecs(io);
+
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
+    defer app.deinit();
+    if (app.tabs.len == 0) {
+        const msg = try std.fmt.allocPrint(gpa, "--only {s}: no tabs of that family in {s} (check the `tabs` entries and their `kind`)", .{ opts.only orelse "?", session.loaded.path });
+        defer gpa.free(msg);
+        return setupLoop(gpa, mount, &frame, msg, false);
+    }
+    app.theme = theme_mod.Theme.fromHello(mount.hello.palette);
+    app.cols = frame.cols;
+    app.rows = frame.rows;
+    app.now_secs = nowSecs(io);
+
+    var progress: fetch.Progress = .{};
+    app.progress = &progress;
+    var worker = fetch.Worker.init(gpa, io, &session.client, &progress, session.loaded.config.account_id);
+    defer worker.deinit();
+
+    var event_buf: [256]Event = undefined;
+    var events = EventQueue.init(&event_buf);
+    var job_buf: [64]*fetch.Job = undefined;
+    var jobs = JobQueue.init(&job_buf);
+
+    var ipc_opt = try sdk.Ipc.fromEnv(gpa, io, env);
+    defer if (ipc_opt) |*x| x.deinit();
+
+    const reader = try std.Thread.spawn(.{}, readerThread, .{ gpa, io, mount, &events });
+    reader.detach();
+    const worker_thread = try std.Thread.spawn(.{}, workerThread, .{ gpa, io, &worker, &jobs, &events });
+    worker_thread.detach();
+    const ticker = try std.Thread.spawn(.{}, tickerThread, .{ io, &events });
+    ticker.detach();
+
+    try app.startup();
+    try dispatchJobs(gpa, io, &app, &jobs);
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    try screen.paint(arena.allocator(), &frame, &app, nerd);
+    try mount.send(&frame);
+
+    var running = true;
+    while (running) {
+        const ev = events.getOneUncancelable(io) catch break;
+        switch (ev) {
+            .host => |h| switch (h) {
+                .key => |k| {
+                    defer gpa.free(k);
+                    running = try app.keyPress(k);
+                },
+                .paste => |p| {
+                    defer gpa.free(p);
+                    try app.paste(p);
+                },
+                .click => |c| running = try app.click(c.col, c.row, switch (c.button) {
+                    .left => .left,
+                    .middle => .middle,
+                    .right => .right,
+                }),
+                .scroll => |s| try app.wheel(s.col, s.row, s.dy),
+                .resize => |g| {
+                    try frame.resize(g.cols, g.rows);
+                    app.cols = g.cols;
+                    app.rows = g.rows;
+                },
+                .goodbye => running = false,
+                .focus, .other => {},
+            },
+            .result => |r| {
+                app.now_secs = nowSecs(io);
+                try app.commit(r);
+                gpa.destroy(r);
+            },
+            .tick => try app.tick(nowSecs(io)),
+            .host_gone => running = false,
+        }
+        try dispatchJobs(gpa, io, &app, &jobs);
+        running = drain(gpa, io, env, mount, &ipc_opt, &app) and running;
+        _ = arena.reset(.retain_capacity);
+        try screen.paint(arena.allocator(), &frame, &app, nerd);
+        try mount.send(&frame);
+    }
+    events.close(io);
+    jobs.close(io);
+    mount.bye();
+    // The reader and the worker are detached and may be blocked on the
+    // socket or the network; the process exit ends them.
+    return 0;
+}
+
+fn dispatchJobs(gpa: Allocator, io: Io, app: *app_mod.App, jobs: *JobQueue) Allocator.Error!void {
+    const taken = app.takeJobs();
+    defer gpa.free(taken);
+    for (taken) |job| {
+        const boxed = try gpa.create(fetch.Job);
+        boxed.* = job;
+        jobs.putOneUncancelable(io, boxed) catch {
+            boxed.deinit();
+            gpa.destroy(boxed);
+        };
+    }
+}
+
+/// Run what the last event queued: toasts over the mount, the browser
+/// and the clipboard through the machine, the chip over the file
+/// channel. False when the app asked to quit.
+fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, ipc_opt: *?sdk.Ipc, app: *app_mod.App) bool {
+    var alive = true;
     const taken = app.takeEffects();
-    defer app.resetEffects(taken);
+    defer app.freeEffects(taken);
     for (taken) |e| switch (e) {
         .toast => |x| mount.toast(switch (x.level) {
             .info => .info,
             .warn => .warn,
             .err => .@"error",
         }, x.text) catch {},
-        .command => |id| mount.command(id) catch {},
         .open_url => |url| {
             if (os.openUrl(gpa, io, url)) |whynot| mount.toast(.warn, whynot) catch {};
         },
         .copy => |text| {
             if (os.copy(gpa, io, env, text)) |whynot| mount.toast(.warn, whynot) catch {};
         },
-        .progress_start => |x| if (ipc_opt.*) |*ipc| ipc.progressStart(x.id, x.label) catch {},
-        .progress_update => |x| if (ipc_opt.*) |*ipc| ipc.progressUpdate(x.id, x.label, x.percent) catch {},
-        .progress_end => |x| if (ipc_opt.*) |*ipc| ipc.progressEnd(x.id, if (x.ok) .success else .failed) catch {},
-        .quit => {},
+        .segment => if (ipc_opt.*) |*ipc| {
+            if (app.values) |v| publishSegment(ipc, v) catch {};
+        },
+        .quit => alive = false,
     };
+    return alive;
 }
 
-/// The statusline segment and the activity badge, from whichever tab
-/// is the review queue.
-fn publishCounts(ipc_opt: *?sdk.Ipc, app: *app_mod.App) void {
-    const ipc = if (ipc_opt.*) |*x| x else return;
-    var count: ?usize = null;
-    for (app.tabs) |*ts| {
-        if (ts.tab.mode == .reviewing and ts.fetched) count = ts.rows.len;
-    }
-    const n = count orelse return;
-    var buf: [32]u8 = undefined;
-    ipc.statuslineSetSegment(.{
-        .id = "bitbucket.review",
-        .text = std.fmt.bufPrint(&buf, "BB·{d}", .{n}) catch "BB",
-        .color = if (n > 0) "blue" else "comment",
-        .click_command = "bitbucket.review_queue",
-        .priority = 60,
-    }) catch {};
-    ipc.setActivityBadge("integrations", @intCast(n)) catch {};
-}
-
-/// Which tab `--tab` asked for: a mode name, a tab name, or the first.
-fn pickTab(config: cfg.Config, want: []const u8) usize {
-    if (want.len == 0) return 0;
-    for (config.tabs, 0..) |tab, idx| {
-        if (std.ascii.eqlIgnoreCase(@tagName(tab.mode), want)) return idx;
-    }
-    for (config.tabs, 0..) |tab, idx| {
-        if (std.ascii.eqlIgnoreCase(tab.name, want)) return idx;
-    }
-    return 0;
-}
-
-/// The tab whose label covers column `col` of the strip. The arithmetic
-/// mirrors `view.tabStrip`, which is the one place the label is built.
-fn tabAtColumn(gpa: Allocator, app: *app_mod.App, col: u16) ?usize {
-    _ = gpa;
-    var x: u16 = 0;
-    for (app.tabs, 0..) |*ts, idx| {
-        var w: u16 = 2 + digits(idx + 1) + @as(u16, @intCast(ts.tab.name.len)); // "▸N name"
-        if (ts.fetched) w += 3 + digits(ts.visible.len); // " (N)"
-        if (ts.fallback_note.len > 0) w += 3 + @as(u16, @intCast(ts.fallback_note.len));
-        if (col >= x and col < x + w) return idx;
-        x += w + 2;
-    }
-    return null;
-}
-
-fn digits(n: usize) u16 {
-    var d: u16 = 1;
-    var v = n;
-    while (v >= 10) : (v /= 10) d += 1;
-    return d;
-}
-
-// ─── the setup screen ────────────────────────────────────────────────────
-
-const no_token_text = "no Bitbucket token: set BITBUCKET_API_TOKEN (or BITBUCKET_APP_PASSWORD), or drop one in the config folder's `token` file";
-
-/// A pane that cannot run yet: say what is missing, where, and take a
-/// key. Exiting straight to mnml's banner would hide the reason.
-fn setupLoop(gpa: Allocator, mount: *sdk.Mount, frame: *sdk.Frame, arena: *std.heap.ArenaAllocator, reason: []const u8) !u8 {
+/// A pane with no config or no token paints the setup screen and
+/// waits for `q`.
+fn setupLoop(gpa: Allocator, mount: *sdk.Mount, frame: *sdk.Frame, why: []const u8, scaffolded: bool) !u8 {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const th = theme_mod.Theme.fromHello(mount.hello.palette);
+    paintSetup(frame, th, why, scaffolded);
+    try mount.send(frame);
     while (true) {
         _ = arena.reset(.retain_capacity);
-        frame.clear(.{});
-        const lines = [_]view.Line{
-            .{ .text = "BITBUCKET — setup", .tone = .accent },
-            .{ .text = "" },
-            .{ .text = reason, .tone = .warn },
-            .{ .text = "" },
-            .{ .text = "1. edit config.zon: `email`, `workspace`, `repos`, `tabs`", .tone = .normal },
-            .{ .text = "2. export BITBUCKET_API_TOKEN (Pull requests: Read, Account: Read)", .tone = .normal },
-            .{ .text = "3. optionally export BITBUCKET_ACCESS_TOKEN for the writes", .tone = .normal },
-            .{ .text = "" },
-            .{ .text = "`mnml-bitbucket --check` prints the whole picture.", .tone = .dim },
-            .{ .text = "q closes this pane; reopen it once the config is there", .tone = .dim },
-        };
-        view.paintLines(frame, &lines, .{ .width = frame.cols, .height = frame.rows }, 0, null);
-        try mount.send(frame);
-        var msg_arena = std.heap.ArenaAllocator.init(gpa);
-        defer msg_arena.deinit();
-        const msg = (try mount.next(msg_arena.allocator())) orelse break;
+        const msg = (try mount.next(arena.allocator())) orelse break;
         switch (msg) {
             .goodbye => break,
-            .resize => |r| try frame.resize(r.geometry.cols, r.geometry.rows),
+            .resize => |r| {
+                try frame.resize(r.geometry.cols, r.geometry.rows);
+                paintSetup(frame, th, why, scaffolded);
+                try mount.send(frame);
+            },
             .input => |in| switch (in.event) {
-                .key => |k| {
-                    if (std.mem.eql(u8, k.spec, "q")) break;
-                    if (std.mem.eql(u8, k.spec, "r")) mount.toast(.info, "reopen the pane to pick the config up") catch {};
-                },
+                .key => |k| if (std.mem.eql(u8, k.spec, "q") or std.mem.eql(u8, k.spec, "esc")) break,
                 else => {},
             },
             else => {},
@@ -398,438 +955,91 @@ fn setupLoop(gpa: Allocator, mount: *sdk.Mount, frame: *sdk.Frame, arena: *std.h
     return 0;
 }
 
-// ─── the headless subcommands ────────────────────────────────────────────
-
-fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, config: cfg.Config) Allocator.Error![]u8 {
-    const from_env = env.get("BITBUCKET_BASE_URL") orelse "";
-    if (from_env.len > 0) {
-        // `@<path>` reads the URL out of a file — the fake server
-        // writes one with `--url-file`, so a test never has to pick a
-        // port. The file may not be there yet; wait a moment for it.
-        if (from_env[0] == '@') {
-            const path = from_env[1..];
-            var tries: u8 = 0;
-            while (tries < 30) : (tries += 1) {
-                if (Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(4096))) |text| {
-                    defer gpa.free(text);
-                    const trimmed = std.mem.trim(u8, text, " \t\r\n");
-                    if (trimmed.len > 0) return gpa.dupe(u8, trimmed);
-                } else |_| {}
-                io.sleep(.fromMilliseconds(100), .awake) catch {};
-            }
-            return gpa.dupe(u8, api.default_base_url);
-        }
-        return gpa.dupe(u8, from_env);
-    }
-    if (config.base_url.len > 0) return gpa.dupe(u8, config.base_url);
-    return gpa.dupe(u8, api.default_base_url);
-}
-
-fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, w: *Io.Writer, full: bool) !u8 {
-    try w.print("mnml-bitbucket {s} (bridge protocol {d})\n\n", .{ spec.version, sdk.protocol });
-    var why: []const u8 = "";
-    var loaded = cfg.load(gpa, io, env, &why) catch |err| {
-        try w.print("config: {s}\n  {s}\n", .{ @errorName(err), why });
-        try w.flush();
-        return 1;
-    };
-    defer loaded.deinit();
-    const c = loaded.config;
-    try w.print("config:      {s}\n", .{loaded.path});
-    try w.print("email:       {s}\n", .{c.email});
-    try w.print("workspace:   {s}\n", .{c.workspace});
-    try w.print("repos:       {d} ({s}{s})\n", .{
-        c.repos.len,
-        if (c.repos.len > 0) c.repos[0] else "none",
-        if (c.repos.len > 1) ", …" else "",
-    });
-    try w.print("tabs:        {d}\n", .{c.tabs.len});
-    if (full) for (c.tabs) |tab| {
-        try w.print("  · {s}  kind={s} mode={s} fallback={s} repo={s} state={s}\n", .{
-            tab.name,
-            @tagName(tab.kind),
-            @tagName(tab.mode),
-            @tagName(tab.fallback),
-            if (tab.repo.len > 0) tab.repo else "—",
-            @tagName(tab.state),
-        });
-    };
-
-    const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
-    var tokens = try auth.resolve(gpa, io, env, config_dir);
-    defer tokens.deinit();
-    const described = try auth.describe(gpa, &tokens);
-    defer gpa.free(described);
-    try w.writeAll(described);
-    if (tokens.writeRefusal()) |r| try w.print("writes:      refused — {s}\n", .{r});
-
-    if (full) {
-        try w.print("jira:        {s} (installed: {s})\n", .{
-            if (c.jira.enabled) "on" else "off",
-            if (links.installed(gpa, io, env, "jira")) "yes" else "no",
-        });
-        try w.print("github:      {s} (installed: {s})\n", .{
-            if (c.github.enabled) "on" else "off",
-            if (links.installed(gpa, io, env, "github")) "yes" else "no",
-        });
-        try w.print("checkout:    {s}\n", .{if (c.mnml.allow_checkout) "allowed" else "off"});
-    }
-
-    if (!tokens.hasRead()) {
-        try w.writeAll("\nno read token — nothing to verify against Bitbucket.\n");
-        try w.flush();
-        return 1;
-    }
-    const base = try resolveBaseUrl(gpa, io, env, c);
-    defer gpa.free(base);
-    try w.print("api:         {s}\n", .{base});
-    var client = try api.Client.init(gpa, io, base, c.email, tokens.read, tokens.write, c.rate);
-    defer client.deinit();
-    var reply = try client.whoami(gpa);
-    defer reply.deinit(gpa);
-    switch (reply) {
-        .ok => |b| {
-            var parsed = std.json.parseFromSlice(std.json.Value, gpa, b.bytes, .{}) catch {
-                try w.writeAll("whoami:      answered, but not with JSON\n");
-                try w.flush();
-                return 1;
-            };
-            defer parsed.deinit();
-            try w.print("whoami:      {s} ({s})\n", .{ j.str(parsed.value, "display_name"), j.str(parsed.value, "account_id") });
-            try w.flush();
-            return 0;
-        },
-        .failed => |f| {
-            var buf: [96]u8 = undefined;
-            try w.print("whoami:      {s} — {s}\n", .{ f.shortLabel(&buf), f.message });
-            try w.flush();
-            return 1;
-        },
-    }
-}
-
-/// `--refresh`: count the review queue and republish the segment and
-/// the badge, with no pane. This is what `bitbucket.refresh` runs.
-/// The file-IPC channel: `$MNML_IPC_DIR` when mnml set it (a mount
-/// child always has it), else mnml's default under the workspace the
-/// ex line passed. mnml's own subdir is a build option, so both
-/// spellings are tried and the one that exists wins.
-fn openIpc(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, workspace: []const u8) Allocator.Error!?sdk.Ipc {
-    if (try sdk.Ipc.fromEnv(gpa, io, env)) |x| return x;
-    const ws = if (workspace.len > 0) workspace else env.get("MNML_WORKSPACE") orelse return null;
-    for ([_][]const u8{ "ipc-zig", "ipc" }) |subdir| {
-        const dir = try std.fs.path.join(gpa, &.{ ws, ".mnml", subdir });
-        defer gpa.free(dir);
-        if (Io.Dir.cwd().access(io, dir, .{})) |_| return try sdk.Ipc.init(gpa, io, dir) else |_| {}
-    }
-    return null;
-}
-
-fn refreshCounts(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, w: *Io.Writer, workspace: []const u8) !u8 {
-    var why: []const u8 = "";
-    var loaded = cfg.load(gpa, io, env, &why) catch |err| {
-        try w.print("mnml-bitbucket --refresh: {s}: {s}\n", .{ @errorName(err), why });
-        try w.flush();
-        return 1;
-    };
-    defer loaded.deinit();
-    const c = loaded.config;
-    const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
-    var tokens = try auth.resolve(gpa, io, env, config_dir);
-    defer tokens.deinit();
-    if (!tokens.hasRead()) {
-        try w.writeAll("mnml-bitbucket --refresh: no read token\n");
-        try w.flush();
-        return 1;
-    }
-    const base = try resolveBaseUrl(gpa, io, env, c);
-    defer gpa.free(base);
-    var client = try api.Client.init(gpa, io, base, c.email, tokens.read, tokens.write, c.rate);
-    defer client.deinit();
-
-    var who = try client.whoami(gpa);
-    defer who.deinit(gpa);
-    if (who != .ok) {
-        try w.writeAll("mnml-bitbucket --refresh: the token cannot read the account (Account: Read)\n");
-        try w.flush();
-        return 1;
-    }
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, who.ok.bytes, .{}) catch {
-        try w.writeAll("mnml-bitbucket --refresh: /2.0/user did not answer JSON\n");
-        try w.flush();
-        return 1;
-    };
-    defer parsed.deinit();
-    const predicate = try api.reviewerPredicate(gpa, j.str(parsed.value, "account_id"));
-    defer gpa.free(predicate);
-
-    var count: usize = 0;
-    for (c.repos) |slug| {
-        if (c.isHidden(slug)) continue;
-        var reply = try client.listPrs(gpa, c.workspace, slug, .OPEN, predicate, c.page_len);
-        defer reply.deinit(gpa);
-        if (reply != .ok) continue;
-        var page = std.json.parseFromSlice(std.json.Value, gpa, reply.ok.bytes, .{}) catch continue;
-        defer page.deinit();
-        count += j.array(page.value, "values").len;
-    }
-
-    if (try openIpc(gpa, io, env, workspace)) |ipc_const| {
-        var ipc = ipc_const;
-        defer ipc.deinit();
-        var buf: [32]u8 = undefined;
-        ipc.statuslineSetSegment(.{
-            .id = "bitbucket.review",
-            .text = std.fmt.bufPrint(&buf, "BB·{d}", .{count}) catch "BB",
-            .color = if (count > 0) "blue" else "comment",
-            .click_command = "bitbucket.review_queue",
-            .priority = 60,
-        }) catch {};
-        ipc.setActivityBadge("integrations", @intCast(count)) catch {};
-    }
-    try w.print("{d} pull requests waiting on your review\n", .{count});
-    try w.flush();
-    return 0;
+fn paintSetup(f: *sdk.Frame, th: theme_mod.Theme, why: []const u8, scaffolded: bool) void {
+    f.clear(.{ .fg = th.fg, .bg = th.bg });
+    _ = f.text(1, 0, f.cols -| 1, "BITBUCKET — setup", th.label());
+    _ = f.text(1, 2, f.cols -| 1, if (scaffolded) "wrote the config scaffold — edit config.zon, then reopen the pane:" else "the pane cannot start:", th.text());
+    _ = f.text(3, 3, f.cols -| 3, why, th.warn());
+    _ = f.text(1, 5, f.cols -| 1, "1. edit config.zon: set `email`, `workspace` and `repos`", th.text());
+    _ = f.text(1, 6, f.cols -| 1, "2. export BITBUCKET_API_TOKEN (or write it to <config dir>/token)", th.text());
+    _ = f.text(1, 7, f.cols -| 1, "3. mnml-bitbucket --check", th.text());
+    _ = f.text(1, f.rows -| 1, f.cols -| 1, "q closes", th.mutedText());
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
+const t = std.testing;
+
 test {
+    _ = @import("src/dates.zig");
     _ = @import("src/json.zig");
-    _ = @import("src/model.zig");
+    _ = @import("src/os.zig");
+    _ = @import("src/ratelimit.zig");
     _ = @import("src/config.zig");
     _ = @import("src/auth.zig");
+    _ = @import("src/model.zig");
     _ = @import("src/api.zig");
-    _ = @import("src/git.zig");
-    _ = @import("src/links.zig");
-    _ = @import("src/view.zig");
+    _ = @import("src/tabs.zig");
+    _ = @import("src/keymap.zig");
+    _ = @import("src/hit.zig");
+    _ = @import("src/theme.zig");
+    _ = @import("src/fetch.zig");
     _ = @import("src/app.zig");
-    _ = @import("src/os.zig");
+    _ = @import("src/view.zig");
     _ = @import("src/screen.zig");
 }
 
-const t = std.testing;
-const listener = @import("tools/fake_bitbucket/listener.zig");
-
-test "the manifest names the pane command first, with a chip, a segment, settings and the auth fields" {
-    try t.expectEqualStrings("bitbucket", spec.id);
+test "both manifests name the reference's ids, chips and commands, and validate" {
+    try t.expectEqualStrings("bitbucket_prs", spec.id);
+    try t.expectEqualStrings("bitbucket_pipelines", spec_pipelines.id);
     try t.expectEqualStrings("mnml-bitbucket", spec.binary);
-    try t.expectEqualStrings("bitbucket.open", spec.commands[0].id);
-    try t.expect(spec.commands[0].ex == null);
-    // The four the brief names, in the order the palette shows them.
-    const ids = [_][]const u8{ "bitbucket.open", "bitbucket.my_prs", "bitbucket.review_queue", "bitbucket.refresh" };
-    try t.expectEqual(ids.len, spec.commands.len);
-    for (ids, spec.commands) |want, got| try t.expectEqualStrings(want, got.id);
-    // my_prs and review_queue open the binary on a tab; refresh is the
-    // headless one and carries a run line instead.
-    try t.expectEqualStrings("--tab", spec.commands[1].args[0]);
-    try t.expectEqualStrings("mine", spec.commands[1].args[1]);
-    try t.expectEqualStrings("reviewing", spec.commands[2].args[1]);
-    try t.expect(spec.commands[3].line() != null);
-    try t.expect(spec.chip != null);
-    try t.expectEqualStrings("BB", spec.chip.?.fallback);
-    try t.expectEqual(@as(usize, 1), spec.statusline.len);
-    try t.expectEqualStrings("bitbucket.review_queue", spec.statusline[0].click_command.?);
-    try t.expectEqual(@as(usize, 2), spec.settings.len);
-    try t.expectEqualStrings("diff", spec.settings[0].key);
-    try t.expectEqual(@as(usize, 4), spec.auth.len);
-    try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", spec.auth[2].env_fallback.?);
+    try t.expectEqualStrings("bitbucket_prs.open", spec.commands[0].id);
+    try t.expectEqualStrings("bitbucket_prs.open_mine", spec.commands[1].id);
+    try t.expectEqualStrings("bitbucket_pipelines.open", spec_pipelines.commands[0].id);
+    try t.expectEqualStrings("BP", spec.chip.?.fallback);
+    try t.expectEqualStrings("BL", spec_pipelines.chip.?.fallback);
+    try t.expectEqualStrings("prs_mine", spec.statusline[0].id);
+    try t.expectEqualStrings(segment_click, spec.statusline[0].click_command.?);
+    try t.expectEqual(@as(usize, 3), spec.auth.len);
     var why: []const u8 = "";
     try sdk.manifest.validate(spec, &why);
+    try sdk.manifest.validate(spec_pipelines, &why);
+    for ([_]sdk.Manifest{ spec, spec_pipelines }) |m| {
+        const text = try sdk.manifest.render(t.allocator, m);
+        defer t.allocator.free(text);
+        var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_state.deinit();
+        const z = try arena_state.allocator().dupeZ(u8, text);
+        const back = try std.zon.parse.fromSliceAlloc(sdk.Manifest, arena_state.allocator(), z, null, .{ .free_on_error = false });
+        try t.expectEqualStrings(m.id, back.id);
+    }
 }
 
-test "the manifest renders and parses back to the same shape" {
-    const text = try sdk.manifest.render(t.allocator, spec);
-    defer t.allocator.free(text);
-    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena_state.deinit();
-    const z = try arena_state.allocator().dupeZ(u8, text);
-    const back = try std.zon.parse.fromSliceAlloc(sdk.Manifest, arena_state.allocator(), z, null, .{ .free_on_error = false });
-    try t.expectEqualStrings(spec.id, back.id);
-    try t.expectEqualStrings("bitbucket.open", back.commands[0].id);
-    try t.expectEqualStrings("term mnml-bitbucket --refresh --workspace {{workspace}}", back.commands[3].line().?);
-    try t.expectEqualStrings("review", back.statusline[0].id);
-    try t.expectEqualStrings("BB", back.chip.?.fallback);
-}
-
-test "--tab picks by mode name, then by tab name, and falls back to the first" {
-    const config: cfg.Config = .{
-        .tabs = &.{
-            .{ .name = "Everything", .mode = .workspace },
-            .{ .name = "Mine", .mode = .mine },
-            .{ .name = "Review queue", .mode = .reviewing },
-        },
-    };
-    try t.expectEqual(@as(usize, 0), pickTab(config, ""));
-    try t.expectEqual(@as(usize, 1), pickTab(config, "mine"));
-    try t.expectEqual(@as(usize, 2), pickTab(config, "reviewing"));
-    try t.expectEqual(@as(usize, 2), pickTab(config, "Review queue"));
-    try t.expectEqual(@as(usize, 2), pickTab(config, "review queue"));
-    // A name nothing answers to opens the first tab rather than none.
-    try t.expectEqual(@as(usize, 0), pickTab(config, "nonsense"));
-}
-
-test "the base URL is the environment's, then the config's, then Bitbucket's" {
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    const fallback = try resolveBaseUrl(t.allocator, t.io, &env, .{});
-    defer t.allocator.free(fallback);
-    try t.expectEqualStrings(api.default_base_url, fallback);
-
-    const from_config = try resolveBaseUrl(t.allocator, t.io, &env, .{ .base_url = "https://example.test/2.0" });
-    defer t.allocator.free(from_config);
-    try t.expectEqualStrings("https://example.test/2.0", from_config);
-
-    try env.put("BITBUCKET_BASE_URL", "http://127.0.0.1:9/2.0");
-    const from_env = try resolveBaseUrl(t.allocator, t.io, &env, .{ .base_url = "https://example.test/2.0" });
-    defer t.allocator.free(from_env);
-    try t.expectEqualStrings("http://127.0.0.1:9/2.0", from_env);
-}
-
-test "an @file base URL is read out of the file the fake server wrote" {
+test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment and the badge" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    const url_file = try std.fs.path.join(t.allocator, &.{ dir, "bb.url" });
-    defer t.allocator.free(url_file);
-    try tmp.dir.writeFile(t.io, .{ .sub_path = "bb.url", .data = "http://127.0.0.1:41234/2.0\n" });
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    const at = try std.fmt.allocPrint(t.allocator, "@{s}", .{url_file});
-    defer t.allocator.free(at);
-    try env.put("BITBUCKET_BASE_URL", at);
-    const got = try resolveBaseUrl(t.allocator, t.io, &env, .{});
+    var ipc = try sdk.Ipc.init(t.allocator, t.io, dir);
+    defer ipc.deinit();
+    try publishSegment(&ipc, .{ .open_mine = 4, .unapproved_mine = 2, .approved_mine = 2 });
+    try publishSegment(&ipc, .{ .error_text = "HTTP 401: auth" });
+    const got = try tmp.dir.readFileAlloc(t.io, "command", t.allocator, .unlimited);
     defer t.allocator.free(got);
-    try t.expectEqualStrings("http://127.0.0.1:41234/2.0", got);
+    try t.expectEqualStrings(
+        "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 4(2)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30}\n" ++
+            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":4}\n" ++
+            "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} !\",\"color\":\"red\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30}\n" ++
+            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":0}\n",
+        got,
+    );
 }
 
-test "--check prints the config, the token sources and the whoami, and never the token" {
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-
-    var tmp = t.tmpDir(.{});
-    defer tmp.cleanup();
-    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    try tmp.dir.createDirPath(t.io, "integrations/bitbucket");
-    try tmp.dir.writeFile(t.io, .{
-        .sub_path = "integrations/bitbucket/config.zon",
-        .data =
-        \\.{ .email = "me@example.com", .workspace = "acme", .repos = .{"api"},
-        \\   .tabs = .{ .{ .name = "Review queue", .mode = .reviewing } } }
-        ,
-    });
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    try env.put("MNML_DATA_ROOT", root);
-    try env.put("BITBUCKET_API_TOKEN", "ATATT-super-secret-value");
-    try env.put("BITBUCKET_BASE_URL", base);
-
-    var out: Io.Writer.Allocating = .init(t.allocator);
-    defer out.deinit();
-    try t.expectEqual(@as(u8, 0), try diagnose(t.allocator, t.io, &env, &out.writer, true));
-    const text = out.written();
-    try t.expect(std.mem.indexOf(u8, text, "me@example.com") != null);
-    try t.expect(std.mem.indexOf(u8, text, "workspace:   acme") != null);
-    try t.expect(std.mem.indexOf(u8, text, "mode=reviewing") != null);
-    try t.expect(std.mem.indexOf(u8, text, "BITBUCKET_API_TOKEN") != null);
-    try t.expect(std.mem.indexOf(u8, text, "whoami:      Chris M (acct-chris)") != null);
-    // The secret is nowhere in the diagnostic, whole or in part.
-    try t.expect(std.mem.indexOf(u8, text, "ATATT-super-secret-value") == null);
-    try t.expect(std.mem.indexOf(u8, text, "secret") == null);
-}
-
-test "--check on a first run writes the scaffold, says so, and exits non-zero" {
-    var tmp = t.tmpDir(.{});
-    defer tmp.cleanup();
-    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    try env.put("MNML_DATA_ROOT", root);
-    var out: Io.Writer.Allocating = .init(t.allocator);
-    defer out.deinit();
-    try t.expectEqual(@as(u8, 1), try diagnose(t.allocator, t.io, &env, &out.writer, false));
-    try t.expect(std.mem.indexOf(u8, out.written(), "Scaffolded") != null);
-    try t.expect(std.mem.indexOf(u8, out.written(), "config.zon") != null);
-}
-
-test "--refresh counts the review queue and publishes a segment and a badge" {
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-
-    var tmp = t.tmpDir(.{});
-    defer tmp.cleanup();
-    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
-    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    try tmp.dir.createDirPath(t.io, "integrations/bitbucket");
-    try tmp.dir.createDirPath(t.io, "ipc");
-    try tmp.dir.writeFile(t.io, .{
-        .sub_path = "integrations/bitbucket/config.zon",
-        .data =
-        \\.{ .email = "me@example.com", .workspace = "acme", .repos = .{ "api", "web" },
-        \\   .tabs = .{ .{ .name = "Review queue", .mode = .reviewing } } }
-        ,
-    });
-    const ipc_dir = try std.fs.path.join(t.allocator, &.{ root, "ipc" });
-    defer t.allocator.free(ipc_dir);
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    try env.put("MNML_DATA_ROOT", root);
-    try env.put("BITBUCKET_API_TOKEN", "tok");
-    try env.put("BITBUCKET_BASE_URL", base);
-    try env.put("MNML_IPC_DIR", ipc_dir);
-
-    var out: Io.Writer.Allocating = .init(t.allocator);
-    defer out.deinit();
-    try t.expectEqual(@as(u8, 0), try refreshCounts(t.allocator, t.io, &env, &out.writer, ""));
-    try t.expectEqualStrings("1 pull requests waiting on your review\n", out.written());
-
-    const lines = try tmp.dir.readFileAlloc(t.io, "ipc/command", t.allocator, .unlimited);
-    defer t.allocator.free(lines);
-    try t.expect(std.mem.indexOf(u8, lines, "\"cmd\":\"statusline-set-segment\"") != null);
-    try t.expect(std.mem.indexOf(u8, lines, "\"id\":\"bitbucket.review\"") != null);
-    try t.expect(std.mem.indexOf(u8, lines, "\"text\":\"BB·1\"") != null);
-    try t.expect(std.mem.indexOf(u8, lines, "\"click_command\":\"bitbucket.review_queue\"") != null);
-    try t.expect(std.mem.indexOf(u8, lines, "\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":1") != null);
-}
-
-test "a click on the tab strip lands on the tab whose label is under the pointer" {
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-    var client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "tok", .{ .min_interval_ms = 0 });
-    defer client.deinit();
-    var app = try app_mod.App.init(t.allocator, t.io, .{
-        .email = "me@x.com",
-        .workspace = "acme",
-        .repos = &.{"api"},
-        .tabs = &.{
-            .{ .name = "api", .mode = .repo, .repo = "api" },
-            .{ .name = "web", .mode = .repo, .repo = "web" },
-        },
-    }, &client);
-    defer app.deinit();
-    app.rows = 24;
-    app.cols = 120;
-    try app.switchTab(0);
-    // " 1 api (2)" is ten cells wide (the ▸ on the active one is one
-    // cell); "web" starts two cells later.
-    try t.expectEqual(@as(usize, 0), tabAtColumn(t.allocator, &app, 2).?);
-    try t.expectEqual(@as(usize, 1), tabAtColumn(t.allocator, &app, 13).?);
-    try t.expect(tabAtColumn(t.allocator, &app, 110) == null);
-    _ = try click(t.allocator, &app, 13, 0, false);
-    try t.expectEqual(@as(usize, 1), app.active);
-    // A click in the body picks the row under the pointer; a
-    // right-click opens its detail.
-    _ = try click(t.allocator, &app, 0, 3, false);
-    try t.expectEqual(@as(usize, 0), app.activeTab().selected);
-    _ = try click(t.allocator, &app, 0, 99, false); // past the last row: nothing
-    try t.expectEqual(@as(usize, 0), app.activeTab().selected);
+test "--only spells the reference's families; the last one wins; an unknown flag is refused" {
+    const o = try parseArgs(&.{ "mnml-bitbucket", "--only", "prs", "--only", "prs-mine" });
+    try t.expectEqualStrings("prs-mine", o.only.?);
+    const f = try parseArgs(&.{ "mnml-bitbucket", "--find-pipeline-for-pr", "--owner", "acme", "--repo", "api", "--branch", "main", "--json" });
+    try t.expect(f.find_pipeline and f.json);
+    try t.expectEqualStrings("main", f.branch);
+    try t.expectError(error.UnknownArgument, parseArgs(&.{ "mnml-bitbucket", "--nope" }));
 }

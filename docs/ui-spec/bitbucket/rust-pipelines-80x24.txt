@@ -1,0 +1,24 @@
+┌ bitbucket ───────────────────────────────────────────────────────────────────┐
+│ 1.Open + Draft (5) │ 2.Merged (4) │ 3.Pipelines (9)                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+ [ Branch ▾ ]  [ Pipeline type ▾ ]  [ Status: Pipelines ▾ ]  [ Trigger type ▾ ]
+   REPO / BRANCH                 STATE          BUILD    RESULT     DATE
+ ▼ api                           4 branches
+     main                        COMPLETED      #412     SUCCESSFUL 2026-09-17
+     develop                     COMPLETED      #411     FAILED     2026-09-16
+     release/1.2                 COMPLETED      #405     STOPPED    2026-09-07
+     chris/fix-login             IN_PROGRESS    #413                2026-09-17
+ ▼ web                           3 branches
+     main                        COMPLETED      #70      SUCCESSFUL 2026-09-14
+     staging                     —
+     chris/empty-state           PENDING        #77                 2026-09-17
+
+
+
+
+
+
+
+
+
+ Open + Draft · 5 rows     a approve  ·  m open↔merged  ·  r refresh  ·  q quit

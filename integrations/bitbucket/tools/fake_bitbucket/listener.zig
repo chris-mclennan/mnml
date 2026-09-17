@@ -117,16 +117,25 @@ pub const Server = struct {
         }
         var body_buf: [64 * 1024]u8 = undefined;
         var body: []const u8 = "";
-        if (request.head.content_length) |n| {
-            if (n > 0 and n <= body_buf.len) {
-                const br = request.readerExpectContinue(&.{}) catch request.readerExpectNone(&.{});
-                const got = br.readSliceShort(body_buf[0..@intCast(n)]) catch 0;
-                body = body_buf[0..got];
+        // Only read a body the method can actually carry. For a method
+        // with none, `readerExpectNone` hands back `Reader.ending` — a
+        // `@constCast` of a const global — and reading from it writes
+        // `seek` back through that const pointer: a segfault on Linux,
+        // silently tolerated on macOS.
+        if (request.head.method.requestHasBody()) {
+            if (request.head.content_length) |n| {
+                if (n > 0 and n <= body_buf.len) {
+                    const br = request.readerExpectContinue(&.{}) catch request.readerExpectNone(&.{});
+                    const got = br.readSliceShort(body_buf[0..@intCast(n)]) catch 0;
+                    body = body_buf[0..got];
+                }
             }
         }
 
         self.state_lock.lockUncancelable(self.io);
         _ = self.arena.reset(.retain_capacity);
+        // Every relative date is written against the real clock.
+        self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
         const reply = bb.handle(self.arena.allocator(), &self.state, .{
             .method = method,
             .target = target,

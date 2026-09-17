@@ -1,37 +1,43 @@
 # env: MNML_MARKETPLACE_LOCAL=market
 # env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
 # env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
 # env: BITBUCKET_API_TOKEN=corpus-read-token
-# The manifest's statusline segment, and the headless refresh behind it.
-# `bitbucket.refresh` runs the binary in a task pane; it counts the
-# review queue and writes a `statusline-set-segment` line on the Tier-2
-# file-IPC channel, which is what puts `BB·1` on mnml's statusline with
-# no pane open at all.
+# The statusline chip — docs/ui-spec/bitbucket/README.md's "statusline"
+# screen. The reference's manifest paints `󰂨 …` until its values poll
+# answers, then `󰂨 N(K)` (N open PRs you authored, K still unapproved),
+# `󰂨 !` on a failure; a click opens the mine-only tab. Here the
+# manifest's own segment is the resting `󰂨 …`, and `bitbucket_prs.refresh`
+# — the headless run behind the chip — counts the queue and writes the
+# `statusline-set-segment` + `set-activity-badge` lines on the Tier-2
+# file channel, the JSON main.zig's unit test pins byte for byte.
 #
-# The corpus asserts the count, not the painted segment: the e2e App is
-# in-process and does not poll the file channel, so a segment written by
-# a child never reaches this screen. The JSON that goes down the channel
-# is asserted byte for byte in main.zig's `--refresh` unit test instead.
-shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 120 >/dev/null 2>&1 &
-write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .rate = .{ .min_interval_ms = 0 }, .tabs = .{ .{ .name = \"Review\", .mode = .reviewing } } }"
-write market/bitbucket.zon ".{ .id = \"bitbucket\", .label = \"Bitbucket\", .version = \"0.1.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .description = \"Bitbucket Cloud pull requests\", .statusline = .{ .{ .id = \"review\", .text = \"BB\", .color = \"blue\", .click_command = \"bitbucket.review_queue\" } }, .commands = .{ .{ .id = \"bitbucket.review_queue\", .title = \"Bitbucket: pull requests to review\" }, .{ .id = \"bitbucket.refresh\", .title = \"Bitbucket: refresh the review-queue count\", .ex = \"term $MNML_BITBUCKET_INTEGRATION --refresh --workspace {{workspace}}\" } } }"
+# The corpus asserts the count the refresh reports, not the repainted
+# segment: the e2e App is in-process and does not poll the file channel,
+# so a segment written by a child never reaches this screen.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .statusline = .{ .{ .id = \"prs_mine\", .text = \"\u{f00a8} …\", .color = \"green\", .click_command = \"bitbucket_prs.open_mine\" } }, .commands = .{ .{ .id = \"bitbucket_prs.open_mine\", .title = \"Bitbucket PRs: open (mine only)\", .args = .{ \"--only\", \"prs-mine\" } }, .{ .id = \"bitbucket_prs.refresh\", .title = \"Bitbucket PRs: refresh the statusline chip\", .ex = \"term $MNML_BITBUCKET_INTEGRATION --refresh --workspace {{workspace}}\" } } }"
 command integrations.show_marketplace
 key i
-expect screen contains "installed bitbucket"
+expect screen contains "installed bitbucket_prs"
 # The manifest's own segment is on the statusline the moment it installs.
-expect screen contains "BB"
-# The headless refresh counts the queue.
-command bitbucket.refresh
+expect screen contains "󰂨 …"
+# The headless refresh counts my open PRs across the two repos: #1234
+# (Dana approved it) and the draft #820 (nobody has) → 2 open, 1
+# unapproved — the reference's `{open_mine}({unapproved_mine})`.
+command bitbucket_prs.refresh
 wait 2500
-expect screen contains "1 pull requests waiting on your review"
-# Clean up so the size sweep starts from an empty data root. The four
-# first-party rows sit above the manifests: walk down to this one.
+expect screen contains "2 open pull requests you authored, 1 still unapproved"
+
+# The corpus shares one data root: leave it as it was found, or the
+# INTEGRATIONS rows every later script counts are this one's too.
 command integrations.show_installed
-key down
-key down
-key down
-key down
 key x
-expect screen contains "Remove Bitbucket?"
+expect screen contains "Remove integration"
+expect screen contains "bitbucket_prs"
+key enter
+expect screen contains "Remove Bitbucket PRs?"
 key r
-expect screen contains "removed bitbucket"
+expect screen contains "removed bitbucket_prs"
+expect screen lacks "Bitbucket PRs"

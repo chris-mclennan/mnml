@@ -921,71 +921,52 @@ line at the top of this page is today's.)*
 ## Integration — bitbucket
 
 `integrations/bitbucket/` against the Rust `mnml-forge-bitbucket`
-(0.3.x, `mnml-integrations/apps/mnml-forge-bitbucket`, ~9k lines). Same
-convention as the rest of this page: every row was checked by reading
+(0.3.29, `mnml-integrations/apps/mnml-forge-bitbucket`, ~9k lines),
+rebuilt from the reference's own screens: `docs/ui-spec/bitbucket/`
+holds every screen of the running app (and what it paints into the
+Rust mnml), cut with `tools/rust-capture.py`, and
+`tools/bitbucket-diff.sh` runs both apps on the fake server and
+prints the content that differs per screen (0 differing facts over 7
+screens at the time of writing). The shape is the reference's — two
+chips, its tabs, its columns, its keys, its one write (approve) and no
+other — painted in mnml-zig's chrome. Every row was checked by reading
 both trees, and a row is `done` only when a Zig file names it.
-
-The Rust app and this one do not have the same shape. The Rust one grew
-a repo tree with per-branch pipeline status, workspace-wide scope
-cycling and a prefetch cache; this one was asked for the pull-request
-surface *in full* — the detail, the diff, the threads and the actions —
-which the Rust app stops short of (its README lists merge and decline as
-"not wired", and it has no diff, no diffstat, no build statuses and no
-comment posting). So the table runs both ways: rows the Rust app has and
-this one cuts, and rows this one adds.
 
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
-| Configurable `[[tabs]]`, switched 1-9 / Tab | done | `src/config.zig` `Tab`, `src/app.zig` `switchTab` | `config.zon` rather than TOML |
-| Tab `kind` | done | `config.zig` `Kind` | one value (`.pull_requests`); the field exists so a second kind is additive |
-| Tab `mode` — per-repo / mine / reviewing | done | `config.zig` `Mode`, `app.zig` `refreshActive` | plus `.workspace` (every repo in `repos`, any author) |
-| Tab `fallback` | done | `config.zig` `Fallback`, `app.zig` `refreshActive` | new: what the tab shows when `mode` cannot run (no Account: Read). The Rust app synthesised a mine tab for `--only prs-mine`; this generalises it and says which fallback ran in the tab strip |
-| Per-tab `state` filter (OPEN / MERGED / DECLINED / SUPERSEDED) | done | `config.zig` `State` | |
-| Per-tab raw BBQL `q` | done | `api.zig` `andPredicates` | layered under the mode's predicate, as in Rust |
-| Per-tab `workspace` override | done | `config.zig` `tabWorkspace` | |
-| PR list columns: repo, id, state, author, branches, updated | done | `src/view.zig` `listLines` | |
-| PR list columns: reviewers / approvals, build status | done | `view.zig` `Columns.votes` / `.build` | new — the Rust list has neither |
-| Column dropping as the pane narrows | done | `view.zig` `Columns.fit` | new; tested at 40 / 80 / 120 / 200 |
-| Newest-first merge across repos | done | `app.zig` `newerFirst` | |
-| Per-repo failure is a note, not a blank tab | done | `app.zig` `notes`, `src/screen.zig` `paintList` | Rust dropped per-repo errors silently on the mine / reviewing path |
-| Detail: description | done | `view.zig` `detailLines` | |
-| Detail: reviewers with approval state | done | `model.zig` `reviewerRoster`, `view.zig` | Rust showed a count chip, not the roster |
-| Detail: build statuses | done | `api.zig` `statuses`, `model.zig` `BuildStatus` | new |
-| Detail: activity, inline vs top-level threads | done | `api.zig` `activity`, `model.zig` `Activity`, `view.zig` `activityInto` | new: Rust fetched `/comments` and rendered a flat list ("threading is v0.3") |
-| Detail: diffstat | done | `api.zig` `diffstat`, `model.zig` `DiffstatEntry` | new |
-| Detail: diff, read-only, hunked | done | `api.zig` `diff`, `view.zig` `diffInto` | new; `D` folds it away |
-| Detail: the repo's file glyphs on the diffstat | cut | — | the glyph table is mnml's, not the SDK's; the diffstat uses the status glyphs (`~ + - →`) instead. A sibling cannot reach `src/ui`, and copying the table into an integration is the drift this repo's conventions exist to stop |
-| Open in browser | done | `src/os.zig` `openUrl`, `app.zig` `openInBrowser` | |
-| Copy the URL (`y`) | done | `os.zig` `copy` | |
-| Copy the branch (`Y`) | done | `app.zig` `copyBranch` | new |
-| Approve / unapprove | done | `api.zig` `approve` / `unapprove` | Rust had this; the confirm is new |
-| Request changes / withdraw | done | `api.zig` `requestChanges` / `withdrawChanges` | new |
-| Comment (a prompt) | done | `api.zig` `comment`, `app.zig` `promptKey` | new; a real text field (cursor, arrows, delete, paste) |
-| Merge, confirmed, naming the strategy | done | `api.zig` `merge`, `app.zig` `beginMerge` | new — the Rust README lists merge as "not wired"; `s` cycles squash / merge commit / fast-forward |
-| Check the branch out in the workspace | done | `src/git.zig` `check` / `checkout` | new; refuses unless `origin` is that repo and the tree is clean |
-| Filter | done | `app.zig` `applyFilter` / `matches` | across every painted column; the Rust app had chips, not a text filter |
-| Refresh with progress | done | `app.zig` `refreshActive`, `main.zig` `drain` | Tier-2 `progress-start` / `-update` / `-end`, one update per repo |
-| Rate limiting: gate, 429 retry, `Retry-After` | done | `api.zig` `gate` / `send` | in-process |
-| Rate limiting: cross-process bucket shared with other tools | cut | — | Rust's `mnml_ratelimit` flocks a JSON file shared with a Python fleet. Nothing else on this machine speaks that file yet, and a lock protocol with one participant is a liability; the note lands in the README's Rate limiting section |
-| Auth: API token / app password / legacy combined / file | done | `src/auth.zig` `resolve` | same four, same order |
-| Auth: read / write split | done | `auth.zig` `write_env_names`, `api.zig` `Side` | new; the employer's convention. `BITBUCKET_REQUIRE_WRITE_TOKEN=1` refuses the borrow |
-| Auth: never logged | done | `auth.zig` `describe` + its test | the test asserts the secret appears nowhere in the whole diagnostic |
-| `--check` | done | `main.zig` `diagnose` | |
-| `--diag` | done | `main.zig` `diagnose(full)` | |
-| `--install` / `--uninstall` | done | `main.zig`, `manifest.zon` | one manifest, not Rust's two split chips |
-| Statusline segment with a live count | done | `manifest.zon` `.statusline`, `main.zig` `publishCounts` | Rust needed a raw-TOML append because its bridge had no schema for it; here it is a manifest field |
-| Activity badge | done | `main.zig` `publishCounts` | new |
-| Cross-links: `[jira]` | done | `src/links.zig` `scanKeys` / `jiraTarget` | the sibling's command when jira is installed, a browser link when it is not |
-| Cross-links: `[github]`, `[mnml]` | done | `links.zig` `githubTarget`, `config.zig` `Mnml` | |
-| Pipelines tab (`kind = "pipelines"`) | cut | — | not in the brief's surface. `kind` exists so it is additive rather than a rewrite; the Rust shape (build number / state / branch / commit / trigger / duration) ports directly |
-| Branches tab (`kind = "branches"`) | cut | — | the Rust app itself retired this one in 0.3 ("accidentally shipped by an earlier iteration") |
-| `workspace_pipelines` repo tree, expand / collapse, hide, reorder, scope cycling | cut | — | the tree surface belongs with the pipelines tab; without it the `scope` / `repo_order` / `hidden_repos` machinery has one consumer. `hidden_repos` is kept (config only) because a workspace tab needs it |
-| Runtime config writes (`x` hide, `H` unhide, Alt-↑/↓ reorder, `s` scope) | cut | — | all four belong to the repo tree above. A pane that rewrites its own config file is also a thing to add deliberately, not as a side effect |
-| Prefetch cache (`--prefetch`, `[[prefetch]]`) | cut | — | mnml-zig has no prefetch worker; `--refresh` covers the one thing it bought that is visible (the statusline count) without a cache file |
-| `--values` JSON for a `[[values_sources]]` poll | cut | — | the Zig manifest has `values_sources` as a parsed-but-not-wired field (`docs/SDK.md`); `--refresh` writes the segment directly instead, which needs no polling contract |
-| `--list-prs` / `--find-pipeline-for-pr` headless JSON | cut | — | they existed for a cross-host `pr.picker` in Rust mnml that has no counterpart here |
-| Auto-refresh every `refresh_interval_secs` | done | `app.zig` `refreshIfStale` | a mount has no timer (the host wakes a sibling on input only), so the interval is checked on the way into a list key rather than fired by a clock: a pane left open over lunch re-fetches on the first key. `0` disables it; `r` always works |
-| Pagination past the first page | cut | — | the Rust app has the same limit and says so in its README; `page_len` is Bitbucket's cap of 50 |
+| Two chips: Bitbucket PRs, Bitbucket Pipelines | done | `manifest.zon`, `manifest_pipelines.zon`, `main.zig` `install` | the reference's two TOML manifests key for key: ids, labels, chips (`BP` blue / `BL` green, off the palette bar), commands, auth fields, the values source, the segment |
+| Config keys by name (`email` … `repos`, `[[tabs]]`) | done | `src/config.zig` | `config.zon` mirrors `mnml-forge-bitbucket.toml`; the README has the table |
+| Tab kinds: `workspace_open_prs` / `workspace_merged_prs` / `workspace_pipelines` / `pull_requests` / `pipelines` / `branches` | done | `config.zig` `Kind`, `src/tabs.zig`, `src/fetch.zig` `refresh` | |
+| `--only prs` / `prs-mine` / `pipelines` / `branches` | done | `main.zig` `pane`, `src/app.zig` `App.init` | `prs-mine` synthesises a mine-only tree when the config has no mine tab, as the reference |
+| Scope: `all` / `recent` / `explicit`, `repos` allow-list, `hidden_repos`, `repo_order` | done | `fetch.zig` `resolveScope` | cached per generation, shared by the three workspace tabs |
+| The open tree: repo headers with a preview / `last merged` / an error label, PR rows, auto-expand on first fetch | done | `fetch.zig` `prsByRepo`, `tabs.zig` `visibleRows`, `src/view.zig` `rowSpans` | |
+| The 24-hour window and `[ Show N more older ]`, mine's one merged peek and `[ Show N more merged ]`, the merged cap of 20 | done | `tabs.zig` `visiblePrs` | |
+| The merged tree; a merged PR opened to its post-merge pipeline line | done | `app.zig` `togglePrPipeline`, `view.zig` `subLineSpans`, `model.zig` `pipelinesOnCommit` | |
+| The pipelines tree: branches paired with their newest run, curated (majors, one per `release/*` family, the newest feature, 14-day staleness), repos by newest run | done | `fetch.zig` `pipelinesTree`, `model.zig` `curateBranches` | |
+| Flat tabs: a repo's PRs, `mode = mine` / `reviewing` across the workspace, a repo's pipelines, a repo's branches | done | `fetch.zig` `flatPrs`, `view.zig` `pr_flat_cols` … | |
+| The reference's columns, name for name | done | `view.zig` `*_cols` | dropped whole below their width instead of squeezed |
+| Tree keys: `⏎`/`␣` `→`/`l` `←`/`h` `e` `c` | done | `app.zig` `activate` / `expand` / `collapse`, `run` | |
+| Persisting keys: `x` hide, `H` un-hide, `s` scope, `alt+↑`/`↓` reorder | done | `app.zig` `hideFocused` … `reorder`, `config.zig` `save` | rewrites `config.zon` whole, as the reference rewrites its TOML |
+| `o` open on the web, `y` copy the URL, per row kind | done | `app.zig` `focusedUrl`, `src/os.zig` | |
+| The detail (`d`): state · branches, author · updated, the approval line, title, description, comments most-recent first; `ctrl+u`/`ctrl+d`; follows the cursor | done | `fetch.zig` `detail`, `view.zig` `detailLines`, `src/screen.zig` `paintDetail` | beside the list at 100 columns, over it below |
+| Approve / withdraw (`a`, detail open) | done | `api.zig` `approve` / `unapprove`, `app.zig` `toggleApproval` | the one write; `BITBUCKET_ACCESS_TOKEN` is used for it when set, else the read token as the reference |
+| Tabs: `m` open↔merged, `tab` `backtab` `1`–`9`, the Author chip (mine ↔ all), the refresh chip | done | `app.zig` `switchTab` / `toggleMineOnly`, `screen.zig` `paintHeader` | the reference's `Status` chip is the strip / `m` |
+| The pipelines pages: run pipeline / schedules / caches / usage | done | `app.zig` `openPipelinesPage` | header chips, as the reference's toolbar |
+| `r` refresh, auto-refresh every `refresh_interval_secs` | done | `app.zig` `refreshActive` / `tick`, `main.zig` `tickerThread` | a real clock: the ticker wakes the loop every second |
+| Progress while a fetch runs | done | `fetch.zig` `Progress`, `screen.zig` `paintHeader` | new: the reference freezes for the minutes a prefetch takes |
+| Rate limiting: the cross-process bucket shared with the reference and the Python scripts, 429 retry honouring `Retry-After`, penalise | done | `src/ratelimit.zig`, `api.zig` `send` | the same file, keys and rules as `mnml_ratelimit` |
+| Per-repo failure as a labelled row (`429 · retry in 30s` / `auth failed` / `no such repo`) | done | `api.zig` `Failure.shortLabel`, `view.zig` | |
+| Auth: API token / app password / legacy combined / file, never printed | done | `src/auth.zig` | |
+| `--check`, `--diag`, `--values`, `--list-prs --json`, `--find-pipeline-for-pr --json` | done | `main.zig` | the reference's shapes |
+| The statusline chip `󰂨 N(K)` (`!` on failure), the INTEGRATIONS badge | done | `main.zig` `publishSegment`, `app.zig` `commit(.values)` | over Tier-2 from the pane every 300 s and from `--refresh`; the reference had the Rust mnml poll `--values` |
+| The key sheet (`?`) and the hint row, generated from the one keymap table | done | `src/keymap.zig`, `view.zig` `hints`, `screen.zig` `paintSheet` | the reference's footer was hand-written and had no sheet |
+| Every row / tab / chip / hint word a hit target sized to its cells | done | `src/hit.zig`, `screen.zig` | tests click through the map |
+| A `/` filter | done | `app.zig` `filterKey` | new — the reference's Search chip is a dead placeholder (listed for the user's decision) |
+| A right-click row menu | done | `app.zig` `menuFor`, `screen.zig` `paintMenu` | new (listed for the user's decision) |
+| The four placeholder chips (`Target branch`, `Branch`, `Pipeline type`, `Trigger type`) | cut | — | they do nothing in the reference (`filter not wired yet`); listed for the user's decision |
+| `--prefetch` / prefetch hydration | cut | — | mnml-zig has no prefetch worker; the pane fetches on a thread and paints progress instead |
+| The reference's `Status` chip | folded | — | the tab strip and `m` |
+| Merge / decline / request changes / comment / checkout | absent by design | — | the reference has none of them |
 
-Counts: 39 `done`, 0 `partial`, 10 `cut`, 0 `missing` — of which 16 of
-the `done` rows are behaviour the Rust app does not have.
+Counts: 27 `done`, 2 `cut`, 1 folded — none of the `done` rows is a
+write the reference lacks.

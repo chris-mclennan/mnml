@@ -1,1758 +1,1612 @@
-//! The pane's state machine: tabs, selection, filter, detail, the
-//! confirms in front of every write, and the prompt a comment is typed
-//! into. Everything a key does ends here.
+//! The pane's state and what a key or a click does to it. Nothing here
+//! paints (`screen.zig`) and nothing here talks to the network
+//! (`fetch.zig` runs on the worker): the app turns input into changes
+//! of state, queues the jobs it needs, commits their results when they
+//! land, and queues the effects the loop carries out — a toast, a
+//! browser, the clipboard, a statusline segment.
 //!
-//! The one structural decision worth stating: **the app never performs
-//! a side effect itself.** A key that should toast, run an mnml
-//! command, open a browser or put something on the clipboard appends an
-//! `Effect`; `main.zig` drains the queue after each key and carries it
-//! out over the mount. That is what lets the whole keymap — including
-//! approve, merge and checkout — be driven in a unit test with no
-//! socket, no browser and no clipboard, while the same code path runs
-//! for real in the pane.
+//! The tabs are the reference's: resolved from the config, filtered by
+//! `--only` to one family, with a `Mine` tab synthesised for
+//! `--only prs-mine` when the config has none. The keys are the
+//! reference's (`keymap.zig`). Where the reference persisted a change
+//! (`x`, `H`, `s`, `alt+↑↓`) so does this, through `config.save`.
 //!
-//! Fetches, by contrast, are synchronous and on the loop. A pane that
-//! is waiting for Bitbucket says so on its own footer and on mnml's
-//! statusline (a Tier-2 progress effect), and a fan-out over ten repos
-//! takes as long as it takes. The alternative — a worker thread — buys
-//! nothing while `mount.next` is the thing that blocks.
+//! Everything the screen paints is derived here on demand: the visible
+//! rows of the active tab (`visible`), filtered by the `/` query, the
+//! focused row's pull request, the hint row's context.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const cfg = @import("config.zig");
-const api = @import("api.zig");
 const model = @import("model.zig");
-const view = @import("view.zig");
-const links = @import("links.zig");
-const gitmod = @import("git.zig");
-const j = @import("json.zig");
+const tabs = @import("tabs.zig");
+const fetch = @import("fetch.zig");
+const keymap = @import("keymap.zig");
+const hit = @import("hit.zig");
+const theme_mod = @import("theme.zig");
+const dates = @import("dates.zig");
 
+pub const Action = keymap.Action;
+pub const Theme = theme_mod.Theme;
+
+pub const ToastLevel = enum { info, warn, err };
+
+/// What the loop does on the app's behalf after an event.
 pub const Effect = union(enum) {
-    toast: struct { level: Level, text: []const u8 },
-    /// Ask mnml to run a command by id.
-    command: []const u8,
+    toast: struct { level: ToastLevel, text: []const u8 },
     open_url: []const u8,
     copy: []const u8,
-    progress_start: struct { id: []const u8, label: []const u8 },
-    progress_update: struct { id: []const u8, label: []const u8, percent: u8 },
-    progress_end: struct { id: []const u8, ok: bool },
-    /// The pane is done; the loop says bye.
+    /// The statusline chip: `󰂨 4(2)`, or the reference's `!` / `…`.
+    segment: struct { text: []const u8, tooltip: []const u8 },
     quit,
-
-    pub const Level = enum { info, warn, err };
 };
 
-pub const Mode = enum { list, filter, confirm, prompt, help };
+pub const Mode = enum { list, filter, help, menu };
 
-/// What a confirm, once accepted, will do.
-pub const Pending = enum {
-    approve,
-    withdraw_approval,
-    request_changes,
-    withdraw_changes,
-    merge,
-    checkout,
-};
-
-pub const PromptKind = enum { comment };
-
-/// One tab's fetched state. Each owns an arena: a refresh frees the
-/// last result wholesale rather than untangling who owns which string.
 pub const TabState = struct {
-    tab: cfg.Tab,
-    arena: std.heap.ArenaAllocator,
-    rows: []const view.Row = &.{},
-    /// Indices into `rows` that pass the filter.
-    visible: []const usize = &.{},
+    spec: tabs.TabSpec,
+    data: tabs.TabData,
+    /// Owns `data`; replaced by the next refresh.
+    data_arena: ?std.heap.ArenaAllocator = null,
+    expanded: tabs.Expanded,
+    show_all: bool = false,
     selected: usize = 0,
     scroll: usize = 0,
-    /// Set when the whole tab failed; per-repo failures go in `notes`.
-    error_text: []const u8 = "",
-    /// "workspace" / "repo" when `mode` could not run and `fallback` did.
-    fallback_note: []const u8 = "",
-    /// One line per repo that failed, kept so a 403 on one archived
-    /// repo is visible rather than silently missing rows.
-    notes: []const []const u8 = &.{},
     fetched: bool = false,
-    last_fetch_ms: i64 = 0,
+    loading: bool = false,
+    /// The whole fetch failed.
+    error_text: []u8 = &.{},
+    /// `Open + Draft · 4 repos, 64 PRs`, owned.
+    status: []u8 = &.{},
+    repos: usize = 0,
+    items: usize = 0,
+    errored: usize = 0,
 
-    pub fn deinit(self: *TabState) void {
-        self.arena.deinit();
-        self.* = undefined;
+    fn deinit(ts: *TabState, gpa: Allocator) void {
+        if (ts.data_arena) |*a| a.deinit();
+        ts.expanded.deinit();
+        gpa.free(ts.error_text);
+        gpa.free(ts.status);
+        ts.* = undefined;
     }
 
-    pub fn focused(self: *const TabState) ?model.Pr {
-        if (self.visible.len == 0) return null;
-        const i = @min(self.selected, self.visible.len - 1);
-        return self.rows[self.visible[i]].pr;
+    fn setText(gpa: Allocator, slot: *[]u8, text: []const u8) Allocator.Error!void {
+        const copy = try gpa.dupe(u8, text);
+        gpa.free(slot.*);
+        slot.* = copy;
     }
 };
 
-/// The focused PR's detail, fetched lazily and kept until the focus
-/// moves.
-pub const Detail = struct {
+pub const DetailEntry = struct {
     arena: std.heap.ArenaAllocator,
-    key: Key,
-    pr: model.Pr,
-    reviewers: []const model.Participant = &.{},
-    builds: []const model.BuildStatus = &.{},
-    files: []const model.DiffstatEntry = &.{},
-    diff: []const u8 = "",
-    activity: []const model.Activity = &.{},
-    jira_keys: []const links.Key = &.{},
-    scroll: usize = 0,
-    loading: bool = false,
+    pr: model.PullRequest,
+    comments: []const model.Comment,
     error_text: []const u8 = "",
+};
 
-    pub const Key = struct {
-        workspace: []const u8,
-        repo: []const u8,
-        id: i64,
+pub const PrPipelines = struct {
+    arena: std.heap.ArenaAllocator,
+    pipelines: []const model.Pipeline,
+    error_text: []const u8 = "",
+};
 
-        pub fn eql(a: Key, b: Key) bool {
-            return a.id == b.id and std.mem.eql(u8, a.repo, b.repo) and std.mem.eql(u8, a.workspace, b.workspace);
-        }
-    };
+/// A right-click menu over a row: the actions that apply to it.
+pub const Menu = struct {
+    row: usize,
+    col: u16,
+    y: u16,
+    items: []const Action,
+    selected: usize = 0,
+};
 
-    pub fn deinit(self: *Detail) void {
-        self.arena.deinit();
-        self.* = undefined;
-    }
+pub const Options = struct {
+    /// `--only prs` / `pipelines` / `branches`; null keeps every tab.
+    only: ?cfg.Family = null,
+    /// `--only prs-mine`: keep the `mode = mine` tabs, or synthesise one.
+    mine: bool = false,
+    workspace_dir: []const u8 = ".",
 };
 
 pub const App = struct {
     gpa: Allocator,
     io: Io,
     config: cfg.Config,
-    client: *api.Client,
+    config_path: []const u8,
+    /// The lists a runtime key rewrites (owned copies; `config` is
+    /// re-pointed at them before a save).
+    hidden: std.ArrayList([]u8) = .empty,
+    order: std.ArrayList([]u8) = .empty,
+    scope: cfg.Scope,
+    /// Bumped when the scope inputs change; the worker's cache key.
+    scope_gen: u32 = 1,
+    /// The pane's workspace, for links.
+    workspace_dir: []const u8,
     tabs: []TabState,
     active: usize = 0,
-    mode: Mode = .list,
-    /// The pane's geometry, from the mount's hello / resize.
+    /// `--only` was given: the strip shows only when it still has two.
+    only: ?cfg.Family,
+    me_account_id: []u8 = &.{},
+    me_display_name: []u8 = &.{},
+    theme: Theme = .{},
     cols: u16 = 80,
     rows: u16 = 24,
-
-    /// `/2.0/user`, once. "" until then.
-    me_account_id: []const u8 = "",
-    me_display_name: []const u8 = "",
-    whoami_tried: bool = false,
-    whoami_error: []const u8 = "",
-
-    show_detail: bool = false,
-    show_diff: bool = true,
-    detail: ?Detail = null,
-
-    filter_buf: std.ArrayList(u8) = .empty,
-    prompt_buf: std.ArrayList(u8) = .empty,
-    prompt_cursor: usize = 0,
-    prompt_kind: PromptKind = .comment,
-    pending: ?Pending = null,
-    pending_detail: []const u8 = "",
-
-    merge_strategy: api.Client.MergeStrategy = .squash,
-    close_source_branch: bool = true,
-
-    /// Which Jira key `i` opens next.
-    issue_cursor: usize = 0,
-
-    /// mnml's workspace directory — where a checkout would happen.
-    workspace_dir: []const u8 = ".",
-    jira_installed: bool = false,
-    github_installed: bool = false,
-
-    status: []const u8 = "",
+    now_secs: i64 = 0,
+    detail_visible: bool = false,
+    detail_scroll: usize = 0,
+    details: std.StringHashMapUnmanaged(*DetailEntry) = .empty,
+    detail_in_flight: ?[]u8 = null,
+    pr_pipelines: std.StringHashMapUnmanaged(*PrPipelines) = .empty,
+    filter: std.ArrayList(u8) = .empty,
+    filter_caret: usize = 0,
+    /// Set by `visible`: the content rows shown, of the rows the tab
+    /// has. The header paints `N of M` from them while narrowed.
+    filter_shown: usize = 0,
+    filter_total: usize = 0,
+    mode: Mode = .list,
+    menu: ?Menu = null,
+    menu_items: [12]Action = undefined,
+    help_scroll: usize = 0,
+    /// The transient line the hint row shows on the left, owned.
+    status: std.ArrayList(u8) = .empty,
     effects: std.ArrayList(Effect) = .empty,
-    /// Owns every string the effects point at; reset when the queue is
-    /// drained.
-    fx_arena: std.heap.ArenaAllocator,
-    /// Owns the footer line. Separate from `fx_arena` on purpose: the
-    /// loop drains the effects *before* it paints, so a status kept on
-    /// the effect arena would be freed a moment before the frame that
-    /// was supposed to show it.
-    status_arena: std.heap.ArenaAllocator,
-    /// Owns `me_*` and `whoami_error`.
-    ident_arena: std.heap.ArenaAllocator,
+    effect_arena: std.heap.ArenaAllocator,
+    jobs: std.ArrayList(fetch.Job) = .empty,
+    /// The frame's scratch: visible rows, formatted text.
+    frame_arena: std.heap.ArenaAllocator,
+    hits: hit.HitMap,
+    last_refresh_secs: i64 = 0,
+    /// The last statusline values, for the chip.
+    values: ?fetch.ValuesResult = null,
+    values_at_secs: i64 = 0,
+    values_requested: bool = false,
+    /// Set by `commit` when a refresh landed, so a test can wait on it.
+    refreshes_landed: u32 = 0,
+    /// The worker's progress, read by the header while a tab loads.
+    progress: ?*const fetch.Progress = null,
 
-    pub fn init(gpa: Allocator, io: Io, config: cfg.Config, client: *api.Client) Allocator.Error!App {
-        const tabs = try gpa.alloc(TabState, config.tabs.len);
-        for (config.tabs, tabs) |tab, *slot| slot.* = .{ .tab = tab, .arena = std.heap.ArenaAllocator.init(gpa) };
-        return .{
+    pub fn init(gpa: Allocator, io: Io, config: cfg.Config, config_path: []const u8, opts: Options) Allocator.Error!App {
+        var app: App = .{
             .gpa = gpa,
             .io = io,
             .config = config,
-            .client = client,
-            .tabs = tabs,
-            .fx_arena = std.heap.ArenaAllocator.init(gpa),
-            .status_arena = std.heap.ArenaAllocator.init(gpa),
-            .ident_arena = std.heap.ArenaAllocator.init(gpa),
+            .config_path = config_path,
+            .scope = config.scope,
+            .workspace_dir = opts.workspace_dir,
+            .tabs = &.{},
+            .only = opts.only,
+            .effect_arena = std.heap.ArenaAllocator.init(gpa),
+            .frame_arena = std.heap.ArenaAllocator.init(gpa),
+            .hits = hit.HitMap.init(gpa),
+        };
+        errdefer app.deinit();
+        for (config.hidden_repos) |h| try app.hidden.append(gpa, try gpa.dupe(u8, h));
+        for (config.repo_order) |o| try app.order.append(gpa, try gpa.dupe(u8, o));
+        app.syncConfigLists();
+
+        var list: std.ArrayList(TabState) = .empty;
+        errdefer {
+            for (list.items) |*ts| ts.deinit(gpa);
+            list.deinit(gpa);
+        }
+        for (config.tabs) |tab| {
+            if (opts.only) |fam| if (tab.kind.family() != fam) continue;
+            if (opts.mine and tab.mode != .mine) continue;
+            try list.append(gpa, newTab(gpa, tabs.TabSpec.resolve(config, tab)));
+        }
+        if (opts.mine and list.items.len == 0) {
+            // The reference synthesises a mine-only tree so the chip's
+            // click lands on "my" PRs whatever the config has.
+            try list.append(gpa, newTab(gpa, .{ .kind = .workspace_open_prs, .name = "Mine", .workspace = config.workspace, .mine_only = true }));
+        }
+        app.tabs = try list.toOwnedSlice(gpa);
+        return app;
+    }
+
+    fn newTab(gpa: Allocator, spec: tabs.TabSpec) TabState {
+        return .{ .spec = spec, .data = tabs.TabData.emptyFor(spec.kind), .expanded = tabs.Expanded.init(gpa) };
+    }
+
+    pub fn deinit(app: *App) void {
+        const gpa = app.gpa;
+        for (app.tabs) |*ts| ts.deinit(gpa);
+        gpa.free(app.tabs);
+        for (app.hidden.items) |h| gpa.free(h);
+        app.hidden.deinit(gpa);
+        for (app.order.items) |o| gpa.free(o);
+        app.order.deinit(gpa);
+        gpa.free(app.me_account_id);
+        gpa.free(app.me_display_name);
+        var dit = app.details.iterator();
+        while (dit.next()) |e| {
+            gpa.free(e.key_ptr.*);
+            e.value_ptr.*.arena.deinit();
+            gpa.destroy(e.value_ptr.*);
+        }
+        app.details.deinit(gpa);
+        if (app.detail_in_flight) |k| gpa.free(k);
+        var pit = app.pr_pipelines.iterator();
+        while (pit.next()) |e| {
+            gpa.free(e.key_ptr.*);
+            e.value_ptr.*.arena.deinit();
+            gpa.destroy(e.value_ptr.*);
+        }
+        app.pr_pipelines.deinit(gpa);
+        app.filter.deinit(gpa);
+        app.status.deinit(gpa);
+        app.effects.deinit(gpa);
+        app.effect_arena.deinit();
+        for (app.jobs.items) |*j| j.deinit();
+        app.jobs.deinit(gpa);
+        app.frame_arena.deinit();
+        app.hits.deinit();
+        app.* = undefined;
+    }
+
+    /// `config.hidden_repos` / `repo_order` follow the owned lists.
+    fn syncConfigLists(app: *App) void {
+        app.config.hidden_repos = @ptrCast(app.hidden.items);
+        app.config.repo_order = @ptrCast(app.order.items);
+        app.config.scope = app.scope;
+    }
+
+    // ─── what the loop asks ──────────────────────────────────────────
+
+    pub fn progressDone(app: *const App) u32 {
+        return if (app.progress) |p| p.done.load(.acquire) else 0;
+    }
+
+    pub fn progressTotal(app: *const App) u32 {
+        return if (app.progress) |p| p.total.load(.acquire) else 0;
+    }
+
+    pub fn activeTab(app: *App) *TabState {
+        return &app.tabs[app.active];
+    }
+
+    /// The strip shows when there is more than one tab.
+    pub fn showTabStrip(app: *const App) bool {
+        return app.tabs.len > 1;
+    }
+
+    pub fn family(app: *const App) cfg.Family {
+        return app.tabs[app.active].spec.kind.family();
+    }
+
+    /// Queue the startup chain: the account, then every tab (the
+    /// reference prefetches all of them), then the statusline values.
+    pub fn startup(app: *App) Allocator.Error!void {
+        if (app.config.account_id.len == 0) try app.enqueue(.whoami);
+        for (app.tabs, 0..) |*ts, i| {
+            ts.loading = true;
+            try app.enqueue(.{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } });
+        }
+        try app.requestValues();
+        app.last_refresh_secs = app.now_secs;
+    }
+
+    fn scopeInputs(app: *App, workspace: []const u8) fetch.ScopeInputs {
+        app.syncConfigLists();
+        return fetch.scopeOf(app.config, workspace, app.scope_gen);
+    }
+
+    fn enqueue(app: *App, kind: fetch.Job.Kind) Allocator.Error!void {
+        try app.jobs.append(app.gpa, try fetch.makeJob(app.gpa, app.now_secs, kind));
+    }
+
+    /// The jobs queued since the last take; the caller owns them.
+    pub fn takeJobs(app: *App) []fetch.Job {
+        const out = app.jobs.toOwnedSlice(app.gpa) catch return &.{};
+        return out;
+    }
+
+    /// The effects queued since the last take; valid until the next
+    /// event.
+    pub fn takeEffects(app: *App) []const Effect {
+        const out = app.effects.toOwnedSlice(app.gpa) catch return &.{};
+        return out;
+    }
+
+    pub fn freeEffects(app: *App, taken: []const Effect) void {
+        app.gpa.free(taken);
+        _ = app.effect_arena.reset(.retain_capacity);
+    }
+
+    fn effect(app: *App, e: Effect) void {
+        app.effects.append(app.gpa, e) catch {};
+    }
+
+    fn toast(app: *App, level: ToastLevel, comptime fmt: []const u8, args: anytype) void {
+        const text = std.fmt.allocPrint(app.effect_arena.allocator(), fmt, args) catch return;
+        app.effect(.{ .toast = .{ .level = level, .text = text } });
+    }
+
+    /// The reference's status line: kept on the hint row's left and
+    /// shown as a toast.
+    pub fn setStatus(app: *App, comptime fmt: []const u8, args: anytype) void {
+        app.status.clearRetainingCapacity();
+        const text = std.fmt.allocPrint(app.gpa, fmt, args) catch return;
+        defer app.gpa.free(text);
+        app.status.appendSlice(app.gpa, text) catch {};
+    }
+
+    fn say(app: *App, level: ToastLevel, comptime fmt: []const u8, args: anytype) void {
+        app.setStatus(fmt, args);
+        app.toast(level, fmt, args);
+    }
+
+    /// Every second from the loop: the auto-refresh and the values
+    /// cadence.
+    pub fn tick(app: *App, now_secs: i64) Allocator.Error!void {
+        app.now_secs = now_secs;
+        const every: i64 = app.config.refresh_interval_secs;
+        if (every > 0 and now_secs - app.last_refresh_secs >= every and !app.activeTab().loading) {
+            try app.refreshActive();
+        }
+        if (app.values != null and now_secs - app.values_at_secs >= values_every_secs and !app.values_requested) try app.requestValues();
+    }
+
+    /// The reference polls the chip every five minutes.
+    pub const values_every_secs: i64 = 300;
+
+    fn requestValues(app: *App) Allocator.Error!void {
+        app.values_requested = true;
+        try app.enqueue(.{ .values = .{
+            .scope = app.scopeInputs(app.config.workspace),
+            .stale_after_days = app.config.chip_stale_after_days,
+            .excluded_branch_patterns = app.config.chip_excluded_branch_patterns,
+        } });
+    }
+
+    // ─── the rows ────────────────────────────────────────────────────
+
+    /// The active tab's rows, filtered by the `/` query. On the frame
+    /// arena; call once per event. Also records what the header's
+    /// `N of M` reads: the content rows kept, of the content rows the
+    /// tab would show unfiltered (a repo header and the `Show N more`
+    /// footer are chrome and count as neither).
+    pub fn visible(app: *App, a: Allocator) Allocator.Error!tabs.View {
+        const ts = app.activeTab();
+        const all = try tabs.visibleRows(a, .{ .spec = ts.spec, .data = ts.data, .expanded = &ts.expanded, .show_all = ts.show_all, .now_secs = app.now_secs });
+        app.filter_total = countContent(all.rows);
+        if (app.filter.items.len == 0) {
+            app.filter_shown = app.filter_total;
+            return all;
+        }
+        var kept: std.ArrayList(tabs.VisibleRow) = .empty;
+        var cells: usize = 0;
+        for (all.rows) |r| {
+            if (r == .repo_header or r == .show_more or app.rowMatches(r)) {
+                try kept.append(a, r);
+                cells += r.height();
+            }
+        }
+        const out: tabs.View = .{ .rows = try kept.toOwnedSlice(a), .cells = cells };
+        app.filter_shown = countContent(out.rows);
+        return out;
+    }
+
+    fn countContent(rows: []const tabs.VisibleRow) usize {
+        var n: usize = 0;
+        for (rows) |r| if (r != .repo_header and r != .show_more) {
+            n += 1;
+        };
+        return n;
+    }
+
+    /// True while the `/` query is hiding something — what the header's
+    /// `N of M` and the hint row's context both key off.
+    pub fn narrowed(app: *const App) bool {
+        return app.filter.items.len > 0;
+    }
+
+    fn rowMatches(app: *App, r: tabs.VisibleRow) bool {
+        const q = app.filter.items;
+        const ts = app.activeTab();
+        var buf: [512]u8 = undefined;
+        const text = rowSearchText(ts, r, &buf);
+        return std.ascii.indexOfIgnoreCase(text, q) != null;
+    }
+
+    /// The words a filter can match on a row.
+    pub fn rowSearchText(ts: *const TabState, r: tabs.VisibleRow, buf: []u8) []const u8 {
+        return switch (r) {
+            .repo_header => |h| switch (ts.data) {
+                .repo_pr_tree => |repos| repos[h.repo].slug,
+                .repo_tree => |repos| repos[h.repo].slug,
+                else => "",
+            },
+            .pr => |p| blk: {
+                const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
+                break :blk std.fmt.bufPrint(buf, "#{d} {s} {s} {s} {s}", .{ pr.id, pr.title, pr.author, pr.source_branch, pr.state }) catch pr.title;
+            },
+            .branch => |b| ts.data.repo_tree[b.repo].branches[b.idx].name,
+            .show_more => "",
+            .flat => |i| switch (ts.data) {
+                .pull_requests => |list| std.fmt.bufPrint(buf, "#{d} {s} {s} {s} {s} {s}", .{ list[i].id, list[i].title, list[i].author, list[i].source_branch, list[i].state, list[i].repo_full }) catch list[i].title,
+                .pipelines => |list| std.fmt.bufPrint(buf, "#{d} {s} {s} {s}", .{ list[i].build_number, list[i].stateLabel(), list[i].ref_name, list[i].trigger }) catch list[i].ref_name,
+                .branches => |list| std.fmt.bufPrint(buf, "{s} {s} {s}", .{ list[i].name, list[i].authorLabel(), list[i].summaryLine() }) catch list[i].name,
+                else => "",
+            },
         };
     }
 
-    pub fn deinit(self: *App) void {
-        for (self.tabs) |*tab| tab.deinit();
-        self.gpa.free(self.tabs);
-        if (self.detail) |*d| d.deinit();
-        self.filter_buf.deinit(self.gpa);
-        self.prompt_buf.deinit(self.gpa);
-        self.effects.deinit(self.gpa);
-        self.fx_arena.deinit();
-        self.status_arena.deinit();
-        self.ident_arena.deinit();
-        self.* = undefined;
+    /// The pull request under the cursor, with its repo slug.
+    pub fn focusedPr(app: *App, rows: []const tabs.VisibleRow) ?struct { slug: []const u8, pr: model.PullRequest } {
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return null;
+        return switch (rows[ts.selected]) {
+            .pr => |p| .{ .slug = ts.data.repo_pr_tree[p.repo].slug, .pr = ts.data.repo_pr_tree[p.repo].prs[p.idx] },
+            .flat => |i| switch (ts.data) {
+                .pull_requests => |list| .{ .slug = list[i].repoSlug(), .pr = list[i] },
+                else => null,
+            },
+            else => null,
+        };
     }
 
-    pub fn activeTab(self: *App) *TabState {
-        return &self.tabs[@min(self.active, self.tabs.len - 1)];
+    pub fn focusedKey(app: *App, rows: []const tabs.VisibleRow) ?fetch.PrKey {
+        const f = app.focusedPr(rows) orelse return null;
+        const ws = if (f.pr.workspaceSlug().len > 0) f.pr.workspaceSlug() else app.activeTab().spec.workspace;
+        return .{ .workspace = ws, .repo = if (f.pr.repoSlug().len > 0) f.pr.repoSlug() else f.slug, .id = f.pr.id };
     }
 
-    // ─── effects ─────────────────────────────────────────────────────
-
-    fn push(self: *App, e: Effect) void {
-        self.effects.append(self.gpa, e) catch {};
+    pub fn keyText(buf: []u8, k: fetch.PrKey) []const u8 {
+        return std.fmt.bufPrint(buf, "{s}/{s}#{d}", .{ k.workspace, k.repo, k.id }) catch buf[0..0];
     }
 
-    pub fn toast(self: *App, level: Effect.Level, comptime fmt: []const u8, args: anytype) void {
-        const text = std.fmt.allocPrint(self.fx_arena.allocator(), fmt, args) catch return;
-        self.push(.{ .toast = .{ .level = level, .text = text } });
-        self.say(fmt, args);
+    /// The detail cached for the focused PR, if any.
+    pub fn focusedDetail(app: *App, rows: []const tabs.VisibleRow) ?*DetailEntry {
+        const k = app.focusedKey(rows) orelse return null;
+        var buf: [256]u8 = undefined;
+        return app.details.get(keyText(&buf, k));
     }
 
-    /// The footer line. One at a time, so the arena is reset each time
-    /// rather than grown.
-    pub fn say(self: *App, comptime fmt: []const u8, args: anytype) void {
-        _ = self.status_arena.reset(.retain_capacity);
-        self.status = std.fmt.allocPrint(self.status_arena.allocator(), fmt, args) catch "";
+    pub fn detailInFlight(app: *App, rows: []const tabs.VisibleRow) bool {
+        const k = app.focusedKey(rows) orelse return false;
+        var buf: [256]u8 = undefined;
+        const key = keyText(&buf, k);
+        return if (app.detail_in_flight) |f| std.mem.eql(u8, f, key) else false;
     }
 
-    /// Hand the queue to the caller; it is empty afterwards. The
-    /// strings stay valid until the next `resetEffects`.
-    pub fn takeEffects(self: *App) []const Effect {
-        return self.effects.toOwnedSlice(self.gpa) catch &.{};
+    /// The pipelines fetched for a merged PR, if any.
+    pub fn prPipelinesOf(app: *App, slug: []const u8, id: i64) ?*PrPipelines {
+        var buf: [256]u8 = undefined;
+        const key = std.fmt.bufPrint(&buf, "{s}#{d}", .{ slug, id }) catch return null;
+        return app.pr_pipelines.get(key);
     }
 
-    /// Free what the last drain handed out. Called once the caller is
-    /// done with the slice.
-    pub fn resetEffects(self: *App, taken: []const Effect) void {
-        self.gpa.free(taken);
-        _ = self.fx_arena.reset(.retain_capacity);
+    /// What the focused row would open on the web.
+    pub fn focusedUrl(app: *App, a: Allocator, rows: []const tabs.VisibleRow) Allocator.Error!?[]const u8 {
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return null;
+        const ws = ts.spec.workspace;
+        return switch (rows[ts.selected]) {
+            .repo_header => |h| switch (ts.data) {
+                .repo_pr_tree => |repos| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pull-requests", .{ ws, repos[h.repo].slug }),
+                .repo_tree => |repos| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/branches", .{ ws, repos[h.repo].slug }),
+                else => null,
+            },
+            .pr => |p| blk: {
+                const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
+                var buf: [256]u8 = undefined;
+                break :blk try a.dupe(u8, pr.url(&buf, ws, ts.data.repo_pr_tree[p.repo].slug));
+            },
+            .branch => |b| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/branch/{s}", .{ ws, ts.data.repo_tree[b.repo].slug, ts.data.repo_tree[b.repo].branches[b.idx].name }),
+            .show_more => null,
+            .flat => |i| switch (ts.data) {
+                .pull_requests => |list| blk: {
+                    var buf: [256]u8 = undefined;
+                    break :blk try a.dupe(u8, list[i].url(&buf, ws, list[i].repoSlug()));
+                },
+                .pipelines => |list| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines/results/{d}", .{ ws, ts.spec.repo, list[i].build_number }),
+                .branches => |list| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/branch/{s}", .{ ws, ts.spec.repo, list[i].name }),
+                else => null,
+            },
+        };
     }
 
-    // ─── keys ────────────────────────────────────────────────────────
+    /// The bindings' context for the focused row.
+    pub fn keyContext(app: *App, rows: []const tabs.VisibleRow) keymap.Context {
+        const ts = app.activeTab();
+        const on_row = ts.selected < rows.len and rows[ts.selected] != .show_more;
+        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detail_visible };
+    }
 
-    /// One key spec, in mnml's grammar. Returns true when the pane
-    /// should keep running.
-    pub fn key(self: *App, raw: []const u8) Allocator.Error!bool {
-        var buf: [8]u8 = undefined;
-        const spec = normalizeSpec(raw, &buf);
-        // A mount has no timer: the host only wakes a sibling on input.
-        // So `refresh_interval_secs` is checked here, on the way into a
-        // list key — a pane left open over lunch re-fetches on the
-        // first key rather than showing an hour-old queue. Only in
-        // `.list`: a refresh underneath a confirm would move the row it
-        // is about.
-        if (self.mode == .list) try self.refreshIfStale();
-        switch (self.mode) {
-            .filter => return self.filterKey(spec),
-            .prompt => return self.promptKey(spec),
-            .confirm => return self.confirmKey(spec),
+    // ─── input ───────────────────────────────────────────────────────
+
+    /// One key from mnml. False means the pane is done.
+    pub fn keyPress(app: *App, spec: []const u8) Allocator.Error!bool {
+        _ = app.frame_arena.reset(.retain_capacity);
+        const a = app.frame_arena.allocator();
+        switch (app.mode) {
+            .filter => return app.filterKey(spec),
             .help => {
-                self.mode = .list;
+                if (std.mem.eql(u8, spec, "j") or std.mem.eql(u8, spec, "down")) {
+                    app.help_scroll += 1;
+                } else if (std.mem.eql(u8, spec, "k") or std.mem.eql(u8, spec, "up")) {
+                    app.help_scroll -|= 1;
+                } else {
+                    app.mode = .list;
+                    app.help_scroll = 0;
+                }
                 return true;
             },
-            .list => return self.listKey(spec),
+            .menu => return app.menuKey(a, spec),
+            .list => {},
         }
+        const view = try app.visible(a);
+        const action = keymap.lookup(spec, app.keyContext(view.rows)) orelse return true;
+        return app.run(a, action, view.rows);
     }
 
-    /// Re-fetch the active tab when `refresh_interval_secs` has passed
-    /// since it last did. 0 disables it; `r` always works.
-    pub fn refreshIfStale(self: *App) Allocator.Error!void {
-        const secs = self.config.refresh_interval_secs;
-        if (secs == 0) return;
-        const tab = self.activeTab();
-        if (!tab.fetched) return;
-        const age = nowMs(self.io) - tab.last_fetch_ms;
-        if (age < @as(i64, secs) * 1000) return;
-        try self.refreshActive();
-    }
-
-    fn listKey(self: *App, spec: []const u8) Allocator.Error!bool {
-        const tab = self.activeTab();
-        if (eq(spec, "q")) {
-            self.push(.quit);
-            return false;
-        }
-        if (eq(spec, "?")) {
-            self.mode = .help;
-            return true;
-        }
-        if (spec.len == 1 and spec[0] >= '1' and spec[0] <= '9') {
-            const want = @as(usize, spec[0] - '1');
-            if (want < self.tabs.len) try self.switchTab(want);
-            return true;
-        }
-        if (eq(spec, "tab")) {
-            try self.switchTab((self.active + 1) % self.tabs.len);
-            return true;
-        }
-        if (eq(spec, "backtab")) {
-            try self.switchTab(if (self.active == 0) self.tabs.len - 1 else self.active - 1);
-            return true;
-        }
-        if (eq(spec, "j") or eq(spec, "down")) return self.move(1);
-        if (eq(spec, "k") or eq(spec, "up")) return self.move(-1);
-        // With the detail open these scroll it; otherwise they page the
-        // list. j / k always move the selection, detail or not — losing
-        // the ability to walk the list is not worth a second scroll key.
-        if (eq(spec, "ctrl+d") or eq(spec, "pagedown")) return self.page(1);
-        if (eq(spec, "ctrl+u") or eq(spec, "pageup")) return self.page(-1);
-        if (eq(spec, "g") or eq(spec, "home")) return self.moveTo(0);
-        if (eq(spec, "G") or eq(spec, "end")) return self.moveTo(if (tab.visible.len == 0) 0 else tab.visible.len - 1);
-        if (eq(spec, "/")) {
-            self.mode = .filter;
-            return true;
-        }
-        if (eq(spec, "esc")) {
-            if (self.filter_buf.items.len > 0) {
-                self.filter_buf.clearRetainingCapacity();
-                self.applyFilter(tab);
-                self.say("filter cleared", .{});
-            } else if (self.show_detail) {
-                self.show_detail = false;
-            }
-            return true;
-        }
-        if (eq(spec, "r")) {
-            try self.refreshActive();
-            return true;
-        }
-        if (eq(spec, "d")) {
-            self.show_detail = !self.show_detail;
-            if (self.show_detail) try self.ensureDetail();
-            return true;
-        }
-        if (eq(spec, "D")) {
-            self.show_diff = !self.show_diff;
-            return true;
-        }
-        if (eq(spec, "enter") or eq(spec, "o")) return self.openInBrowser();
-        if (eq(spec, "y")) return self.copyUrl();
-        if (eq(spec, "Y")) return self.copyBranch();
-        if (eq(spec, "i")) return self.openIssue();
-        if (eq(spec, "a")) return self.beginVote(.approve);
-        if (eq(spec, "A")) return self.beginVote(.withdraw_approval);
-        if (eq(spec, "x")) return self.beginVote(.request_changes);
-        if (eq(spec, "X")) return self.beginVote(.withdraw_changes);
-        if (eq(spec, "m")) return self.beginMerge();
-        if (eq(spec, "s")) {
-            self.merge_strategy = switch (self.merge_strategy) {
-                .squash => .merge_commit,
-                .merge_commit => .fast_forward,
-                .fast_forward => .squash,
-            };
-            self.say("merge strategy: {s}", .{self.merge_strategy.label()});
-            return true;
-        }
-        if (eq(spec, "C")) return self.beginCheckout();
-        if (eq(spec, "c")) return self.beginComment();
-        return true;
-    }
-
-    fn filterKey(self: *App, spec: []const u8) Allocator.Error!bool {
-        const tab = self.activeTab();
-        if (eq(spec, "esc")) {
-            self.filter_buf.clearRetainingCapacity();
-            self.mode = .list;
-            self.applyFilter(tab);
-            return true;
-        }
-        if (eq(spec, "enter")) {
-            self.mode = .list;
-            return true;
-        }
-        if (eq(spec, "backspace")) {
-            if (self.filter_buf.items.len > 0) _ = self.filter_buf.pop();
-            self.applyFilter(tab);
-            return true;
-        }
-        if (eq(spec, "ctrl+u")) {
-            self.filter_buf.clearRetainingCapacity();
-            self.applyFilter(tab);
-            return true;
-        }
-        if (eq(spec, "space")) {
-            try self.filter_buf.append(self.gpa, ' ');
-            self.applyFilter(tab);
-            return true;
-        }
-        if (isText(spec)) {
-            try self.filter_buf.appendSlice(self.gpa, spec);
-            self.applyFilter(tab);
-        }
-        return true;
-    }
-
-    fn promptKey(self: *App, spec: []const u8) Allocator.Error!bool {
-        if (eq(spec, "esc")) {
-            self.prompt_buf.clearRetainingCapacity();
-            self.prompt_cursor = 0;
-            self.mode = .list;
-            self.say("cancelled", .{});
-            return true;
-        }
-        if (eq(spec, "enter")) {
-            self.mode = .list;
-            try self.submitPrompt();
-            return true;
-        }
-        if (eq(spec, "left")) {
-            self.prompt_cursor -|= 1;
-            return true;
-        }
-        if (eq(spec, "right")) {
-            if (self.prompt_cursor < self.prompt_buf.items.len) self.prompt_cursor += 1;
-            return true;
-        }
-        if (eq(spec, "home") or eq(spec, "ctrl+a")) {
-            self.prompt_cursor = 0;
-            return true;
-        }
-        if (eq(spec, "end") or eq(spec, "ctrl+e")) {
-            self.prompt_cursor = self.prompt_buf.items.len;
-            return true;
-        }
-        if (eq(spec, "backspace")) {
-            if (self.prompt_cursor > 0) {
-                _ = self.prompt_buf.orderedRemove(self.prompt_cursor - 1);
-                self.prompt_cursor -= 1;
-            }
-            return true;
-        }
-        if (eq(spec, "delete")) {
-            if (self.prompt_cursor < self.prompt_buf.items.len) _ = self.prompt_buf.orderedRemove(self.prompt_cursor);
-            return true;
-        }
-        if (eq(spec, "ctrl+u")) {
-            self.prompt_buf.clearRetainingCapacity();
-            self.prompt_cursor = 0;
-            return true;
-        }
-        if (eq(spec, "space")) return self.insert(" ");
-        if (isText(spec)) return self.insert(spec);
-        return true;
-    }
-
-    /// Text arriving as a bracketed paste, which is one event however
-    /// long it is.
-    pub fn paste(self: *App, text: []const u8) Allocator.Error!void {
-        switch (self.mode) {
-            .prompt => _ = try self.insert(text),
+    /// Run an action on the focused row.
+    pub fn run(app: *App, a: Allocator, action: Action, rows_in: []const tabs.VisibleRow) Allocator.Error!bool {
+        var rows = rows_in;
+        const ts = app.activeTab();
+        const before = app.focusedKey(rows);
+        switch (action) {
+            .quit => {
+                app.effect(.quit);
+                return false;
+            },
+            .refresh => try app.refreshActive(),
+            .up => app.move(rows, -1),
+            .down => app.move(rows, 1),
+            .page_up => app.move(rows, -10),
+            .page_down => app.move(rows, 10),
+            .home => app.move(rows, -@as(isize, @intCast(rows.len)) - 1),
+            .end => app.move(rows, @as(isize, @intCast(rows.len)) + 1),
+            .activate => try app.activate(a, rows),
+            .expand => try app.expand(a, rows),
+            .collapse => try app.collapse(a, rows),
+            .expand_all => {
+                switch (ts.data) {
+                    .repo_pr_tree => |repos| for (repos) |r| try ts.expanded.setRepo(r.slug, true),
+                    .repo_tree => |repos| for (repos) |r| try ts.expanded.setRepo(r.slug, true),
+                    else => {},
+                }
+            },
+            .collapse_all => {
+                ts.expanded.clearRepos();
+                ts.selected = 0;
+            },
+            .hide_repo => try app.hideFocused(rows),
+            .unhide_all => try app.unhideAll(),
+            .cycle_scope => try app.cycleScope(),
+            .reorder_up => try app.reorder(rows, -1),
+            .reorder_down => try app.reorder(rows, 1),
+            .open_web => {
+                if (try app.focusedUrl(app.effect_arena.allocator(), rows)) |url| {
+                    app.effect(.{ .open_url = url });
+                    app.say(.info, "opened {s}", .{url});
+                } else app.say(.warn, "no URL for this row", .{});
+            },
+            .yank_url => {
+                if (try app.focusedUrl(app.effect_arena.allocator(), rows)) |url| {
+                    app.effect(.{ .copy = url });
+                    app.say(.info, "copied {s}", .{url});
+                } else app.say(.warn, "no URL for this row", .{});
+            },
+            .next_tab, .toggle_merged => try app.switchTab((app.active + 1) % app.tabs.len),
+            .prev_tab => try app.switchTab(if (app.active == 0) app.tabs.len - 1 else app.active - 1),
+            .tab_1, .tab_2, .tab_3, .tab_4, .tab_5, .tab_6, .tab_7, .tab_8, .tab_9 => {
+                const n = action.tabNumber().?;
+                if (n < app.tabs.len) try app.switchTab(n);
+            },
+            .toggle_detail => {
+                app.detail_visible = !app.detail_visible;
+                app.detail_scroll = 0;
+                if (app.detail_visible) try app.ensureDetail(rows);
+            },
+            .detail_up => app.detail_scroll -|= 4,
+            .detail_down => app.detail_scroll += 4,
+            .toggle_approval => try app.toggleApproval(rows),
             .filter => {
-                try self.filter_buf.appendSlice(self.gpa, text);
-                self.applyFilter(self.activeTab());
+                app.mode = .filter;
+                app.filter_caret = app.filter.items.len;
+            },
+            .help => app.mode = .help,
+            .escape => {
+                if (app.filter.items.len > 0) {
+                    app.filter.clearRetainingCapacity();
+                    app.filter_caret = 0;
+                    ts.selected = 0;
+                } else if (app.detail_visible) {
+                    app.detail_visible = false;
+                }
+            },
+        }
+        // The cursor moved with the detail open: fetch the new PR's.
+        if (app.detail_visible) {
+            rows = (try app.visible(a)).rows;
+            const after = app.focusedKey(rows);
+            if (!sameKey(before, after)) {
+                app.detail_scroll = 0;
+                try app.ensureDetail(rows);
+            }
+        }
+        return true;
+    }
+
+    fn sameKey(x: ?fetch.PrKey, y: ?fetch.PrKey) bool {
+        if (x == null or y == null) return x == null and y == null;
+        return x.?.id == y.?.id and std.mem.eql(u8, x.?.repo, y.?.repo) and std.mem.eql(u8, x.?.workspace, y.?.workspace);
+    }
+
+    fn move(app: *App, rows: []const tabs.VisibleRow, delta: isize) void {
+        const ts = app.activeTab();
+        if (rows.len == 0) {
+            ts.selected = 0;
+            return;
+        }
+        const cur: isize = @intCast(@min(ts.selected, rows.len - 1));
+        const next = std.math.clamp(cur + delta, 0, @as(isize, @intCast(rows.len)) - 1);
+        ts.selected = @intCast(next);
+    }
+
+    pub fn select(app: *App, rows: []const tabs.VisibleRow, idx: usize) void {
+        if (rows.len == 0) return;
+        app.activeTab().selected = @min(idx, rows.len - 1);
+    }
+
+    /// Enter / space: a repo header toggles, a merged PR opens its
+    /// pipeline line, the footer lifts the filter, a flat row opens.
+    fn activate(app: *App, a: Allocator, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return;
+        switch (rows[ts.selected]) {
+            .repo_header => |h| try ts.expanded.toggleRepo(slugOf(ts, h.repo)),
+            .pr => |p| try app.togglePrPipeline(ts.data.repo_pr_tree[p.repo].slug, ts.data.repo_pr_tree[p.repo].prs[p.idx]),
+            .branch => {},
+            .show_more => ts.show_all = true,
+            .flat => {
+                if (try app.focusedUrl(app.effect_arena.allocator(), rows)) |url| {
+                    app.effect(.{ .open_url = url });
+                    app.say(.info, "opened {s}", .{url});
+                }
+            },
+        }
+        _ = a;
+    }
+
+    fn slugOf(ts: *const TabState, repo: usize) []const u8 {
+        return switch (ts.data) {
+            .repo_pr_tree => |repos| repos[repo].slug,
+            .repo_tree => |repos| repos[repo].slug,
+            else => "",
+        };
+    }
+
+    /// Right / l: open the repo, or step into its first child; open a
+    /// merged PR's pipeline line.
+    fn expand(app: *App, a: Allocator, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return;
+        switch (rows[ts.selected]) {
+            .repo_header => |h| {
+                const slug = slugOf(ts, h.repo);
+                if (!ts.expanded.hasRepo(slug)) {
+                    try ts.expanded.setRepo(slug, true);
+                } else {
+                    const after = try app.visible(a);
+                    if (ts.selected + 1 < after.rows.len and after.rows[ts.selected + 1] != .repo_header) ts.selected += 1;
+                }
+            },
+            .pr => |p| {
+                const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
+                if (pr.isMerged() and pr.merge_commit.len > 0 and !p.sub) try app.togglePrPipeline(ts.data.repo_pr_tree[p.repo].slug, pr);
             },
             else => {},
         }
     }
 
-    fn insert(self: *App, text: []const u8) Allocator.Error!bool {
-        try self.prompt_buf.insertSlice(self.gpa, self.prompt_cursor, text);
-        self.prompt_cursor += text.len;
-        return true;
-    }
-
-    fn confirmKey(self: *App, spec: []const u8) Allocator.Error!bool {
-        if (eq(spec, "esc") or eq(spec, "n") or eq(spec, "q")) {
-            self.pending = null;
-            self.mode = .list;
-            self.say("cancelled", .{});
-            return true;
+    /// Left / h: close the repo, or step up to it; close a merged PR's
+    /// pipeline line.
+    fn collapse(app: *App, a: Allocator, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        _ = a;
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return;
+        switch (rows[ts.selected]) {
+            .repo_header => |h| try ts.expanded.setRepo(slugOf(ts, h.repo), false),
+            .pr => |p| {
+                if (p.sub) {
+                    try ts.expanded.setPr(ts.data.repo_pr_tree[p.repo].slug, ts.data.repo_pr_tree[p.repo].prs[p.idx].id, false);
+                } else if (tabs.headerRowOf(rows, p.repo)) |hr| {
+                    try ts.expanded.setRepo(ts.data.repo_pr_tree[p.repo].slug, false);
+                    ts.selected = hr;
+                }
+            },
+            .branch => |b| if (tabs.headerRowOf(rows, b.repo)) |hr| {
+                try ts.expanded.setRepo(ts.data.repo_tree[b.repo].slug, false);
+                ts.selected = hr;
+            },
+            else => {},
         }
-        if (eq(spec, "y") or eq(spec, "enter")) {
-            const what = self.pending orelse {
-                self.mode = .list;
-                return true;
-            };
-            self.pending = null;
-            self.mode = .list;
-            try self.perform(what);
+    }
+
+    /// A merged PR's post-merge pipeline line: open it (fetching the
+    /// pipelines on its merge commit the first time) or close it.
+    fn togglePrPipeline(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
+        if (!pr.isMerged() or pr.merge_commit.len == 0) return;
+        const ts = app.activeTab();
+        if (ts.expanded.hasPr(slug, pr.id)) {
+            try ts.expanded.setPr(slug, pr.id, false);
+            return;
         }
-        return true;
+        try ts.expanded.setPr(slug, pr.id, true);
+        if (app.prPipelinesOf(slug, pr.id) != null) return;
+        app.setStatus("fetching pipeline for PR #{d} on {s}…", .{ pr.id, pr.merge_commit[0..@min(pr.merge_commit.len, 7)] });
+        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = pr.merge_commit } });
     }
 
-    /// A page of whichever surface has the focus.
-    fn page(self: *App, direction: i64) bool {
-        const step: i64 = @intCast(@max(self.bodyHeight() / 2, 1));
-        if (self.show_detail and self.detail != null) {
-            const d = &self.detail.?;
-            if (direction < 0) d.scroll -|= @intCast(step) else d.scroll += @intCast(step);
-            return true;
+    // ─── the persisting keys ─────────────────────────────────────────
+
+    fn persist(app: *App) void {
+        app.syncConfigLists();
+        cfg.save(app.gpa, app.io, app.config_path, app.config) catch {
+            app.say(.err, "could not write {s}", .{app.config_path});
+        };
+    }
+
+    /// `x`: hide the focused repo — off the tree and into `hidden_repos`.
+    fn hideFocused(app: *App, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return;
+        const repo = tabs.repoOf(rows[ts.selected]) orelse return;
+        const slug = slugOf(ts, repo);
+        if (!cfg.contains(@ptrCast(app.hidden.items), slug)) try app.hidden.append(app.gpa, try app.gpa.dupe(u8, slug));
+        app.scope_gen += 1;
+        app.persist();
+        // The row goes now; the next fetch will not bring it back.
+        try app.dropRepo(slug);
+        try app.refreshWorkspaceTabs();
+        app.say(.info, "hid {s} (H to un-hide all)", .{slug});
+    }
+
+    /// Remove a repo's row from every tree in place.
+    fn dropRepo(app: *App, slug: []const u8) Allocator.Error!void {
+        for (app.tabs) |*ts| switch (ts.data) {
+            .repo_pr_tree => |repos| {
+                var kept: std.ArrayList(model.RepoPrs) = .empty;
+                const a = if (ts.data_arena) |*ar| ar.allocator() else app.gpa;
+                for (repos) |r| if (!std.mem.eql(u8, r.slug, slug)) try kept.append(a, r);
+                ts.data = .{ .repo_pr_tree = try kept.toOwnedSlice(a) };
+                if (ts.selected > 0) ts.selected -= 1;
+            },
+            .repo_tree => |repos| {
+                var kept: std.ArrayList(model.RepoPipelines) = .empty;
+                const a = if (ts.data_arena) |*ar| ar.allocator() else app.gpa;
+                for (repos) |r| if (!std.mem.eql(u8, r.slug, slug)) try kept.append(a, r);
+                ts.data = .{ .repo_tree = try kept.toOwnedSlice(a) };
+                if (ts.selected > 0) ts.selected -= 1;
+            },
+            else => {},
+        };
+    }
+
+    /// `H`: clear `hidden_repos`.
+    fn unhideAll(app: *App) Allocator.Error!void {
+        const n = app.hidden.items.len;
+        if (n == 0) {
+            app.say(.info, "nothing hidden", .{});
+            return;
         }
-        return self.move(direction * step);
+        for (app.hidden.items) |h| app.gpa.free(h);
+        app.hidden.clearRetainingCapacity();
+        app.scope_gen += 1;
+        app.persist();
+        try app.refreshWorkspaceTabs();
+        app.say(.info, "un-hid {d} repo(s)", .{n});
     }
 
-    fn move(self: *App, delta: i64) bool {
-        const tab = self.activeTab();
-        if (tab.visible.len == 0) return true;
-        const last: i64 = @intCast(tab.visible.len - 1);
-        var next: i64 = @as(i64, @intCast(tab.selected)) + delta;
-        next = std.math.clamp(next, 0, last);
-        return self.moveTo(@intCast(next));
+    /// `s`: all → recent → explicit → all (explicit with no list is
+    /// skipped, as the config would refuse it).
+    fn cycleScope(app: *App) Allocator.Error!void {
+        var next = app.scope.next();
+        if (next == .explicit and app.config.explicit_repos.len == 0) next = next.next();
+        app.scope = next;
+        app.scope_gen += 1;
+        app.persist();
+        try app.refreshWorkspaceTabs();
+        app.say(.info, "scope: {s}", .{@tagName(next)});
     }
 
-    /// Put the cursor on a visible row — what a click does.
-    pub fn select(self: *App, index: usize) bool {
-        return self.moveTo(index);
-    }
-
-    fn moveTo(self: *App, index: usize) bool {
-        const tab = self.activeTab();
-        if (tab.visible.len == 0) return true;
-        const before = tab.selected;
-        tab.selected = @min(index, tab.visible.len - 1);
-        tab.scroll = view.scrollFor(tab.selected, self.bodyHeight(), tab.visible.len, tab.scroll);
-        if (before != tab.selected) {
-            self.issue_cursor = 0;
-            if (self.show_detail) self.ensureDetail() catch {};
+    /// `alt+↑` / `alt+↓`: move the focused repo in `repo_order` and in
+    /// the tree.
+    fn reorder(app: *App, rows: []const tabs.VisibleRow, delta: isize) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.selected >= rows.len) return;
+        const repo = tabs.repoOf(rows[ts.selected]) orelse return;
+        const n = ts.data.len();
+        const target_i: isize = @as(isize, @intCast(repo)) + delta;
+        if (target_i < 0 or target_i >= @as(isize, @intCast(n))) return;
+        const target: usize = @intCast(target_i);
+        switch (ts.data) {
+            .repo_pr_tree => |repos| std.mem.swap(model.RepoPrs, &@constCast(repos)[repo], &@constCast(repos)[target]),
+            .repo_tree => |repos| std.mem.swap(model.RepoPipelines, &@constCast(repos)[repo], &@constCast(repos)[target]),
+            else => return,
         }
-        return true;
+        // The order list is the tree's order, whole.
+        for (app.order.items) |o| app.gpa.free(o);
+        app.order.clearRetainingCapacity();
+        var i: usize = 0;
+        while (i < n) : (i += 1) try app.order.append(app.gpa, try app.gpa.dupe(u8, slugOf(ts, i)));
+        app.scope_gen += 1;
+        app.persist();
+        _ = app.frame_arena.reset(.retain_capacity);
+        const after = try app.visible(app.frame_arena.allocator());
+        if (tabs.headerRowOf(after.rows, target)) |hr| ts.selected = hr;
     }
 
-    /// Rows available to the list: the pane minus the tab strip, the
-    /// filter line, the column header and the footer.
-    pub fn bodyHeight(self: *const App) u16 {
-        return self.rows -| 4;
+    fn refreshWorkspaceTabs(app: *App) Allocator.Error!void {
+        for (app.tabs, 0..) |*ts, i| if (ts.spec.kind.isWorkspaceWide()) try app.refreshTab(i);
     }
+
+    // ─── tabs and refresh ────────────────────────────────────────────
+
+    pub fn switchTab(app: *App, idx: usize) Allocator.Error!void {
+        if (idx >= app.tabs.len) return;
+        app.active = idx;
+        app.detail_scroll = 0;
+        const ts = app.activeTab();
+        if (!ts.fetched and !ts.loading) try app.refreshTab(idx);
+    }
+
+    pub fn refreshActive(app: *App) Allocator.Error!void {
+        try app.refreshTab(app.active);
+        app.last_refresh_secs = app.now_secs;
+    }
+
+    pub fn refreshTab(app: *App, idx: usize) Allocator.Error!void {
+        const ts = &app.tabs[idx];
+        if (ts.loading) return;
+        ts.loading = true;
+        app.setStatus("refreshing {s}…", .{ts.spec.name});
+        try app.enqueue(.{ .refresh = .{ .tab = idx, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } });
+        if (app.detail_visible) app.invalidateFocusedDetail();
+    }
+
+    /// The `author:` chip: mine ↔ all on a workspace PR tab.
+    pub fn toggleMineOnly(app: *App) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (!ts.spec.kind.isWorkspaceWide() or ts.spec.kind == .workspace_pipelines) {
+            app.say(.warn, "Author filter not supported on this tab", .{});
+            return;
+        }
+        ts.spec.mine_only = !ts.spec.mine_only;
+        ts.fetched = false;
+        try app.refreshTab(app.active);
+        app.say(.info, "{s}: filter → {s}", .{ ts.spec.name, if (ts.spec.mine_only) "Authored by me" else "All" });
+    }
+
+    // ─── the detail and approve ──────────────────────────────────────
+
+    fn ensureDetail(app: *App, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        const k = app.focusedKey(rows) orelse return;
+        var buf: [256]u8 = undefined;
+        const key = keyText(&buf, k);
+        if (app.details.contains(key)) return;
+        if (app.detail_in_flight) |f| if (std.mem.eql(u8, f, key)) return;
+        if (app.detail_in_flight) |f| app.gpa.free(f);
+        app.detail_in_flight = try app.gpa.dupe(u8, key);
+        try app.enqueue(.{ .detail = k });
+    }
+
+    fn invalidateFocusedDetail(app: *App) void {
+        _ = app.frame_arena.reset(.retain_capacity);
+        const rows = (app.visible(app.frame_arena.allocator()) catch return).rows;
+        const k = app.focusedKey(rows) orelse return;
+        var buf: [256]u8 = undefined;
+        const key = keyText(&buf, k);
+        if (app.details.fetchRemove(key)) |kv| {
+            app.gpa.free(kv.key);
+            kv.value.arena.deinit();
+            app.gpa.destroy(kv.value);
+        }
+    }
+
+    /// `a`: approve, or withdraw when the account already did.
+    fn toggleApproval(app: *App, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        if (!app.detail_visible) return;
+        const k = app.focusedKey(rows) orelse return;
+        const me = if (app.config.account_id.len > 0) app.config.account_id else app.me_account_id;
+        if (me.len == 0) {
+            app.say(.warn, "approve needs Account:Read on the token (or `account_id` in config.zon)", .{});
+            return;
+        }
+        const entry = app.focusedDetail(rows) orelse {
+            app.say(.warn, "detail not loaded yet — press d", .{});
+            return;
+        };
+        const withdraw = entry.pr.approvedBy(me);
+        var buf: [256]u8 = undefined;
+        app.setStatus("{s} {s}…", .{ if (withdraw) "unapproving" else "approving", keyText(&buf, k) });
+        try app.enqueue(.{ .approve = .{ .key = k, .withdraw = withdraw } });
+    }
+
+    // ─── results ─────────────────────────────────────────────────────
+
+    /// A job's result, on the app's thread. Takes the result's arena.
+    pub fn commit(app: *App, res: *fetch.Result) Allocator.Error!void {
+        var keep_arena = false;
+        defer if (!keep_arena) res.arena.deinit();
+        switch (res.payload) {
+            .whoami => |w| {
+                if (w.error_text.len > 0) {
+                    app.say(.warn, "{s}", .{w.error_text});
+                } else {
+                    app.gpa.free(app.me_account_id);
+                    app.me_account_id = try app.gpa.dupe(u8, w.account_id);
+                    app.gpa.free(app.me_display_name);
+                    app.me_display_name = try app.gpa.dupe(u8, w.display_name);
+                }
+            },
+            .refresh => |r| {
+                if (r.tab >= app.tabs.len) return;
+                const ts = &app.tabs[r.tab];
+                ts.loading = false;
+                app.refreshes_landed += 1;
+                if (r.data) |data| {
+                    if (ts.data_arena) |*old| old.deinit();
+                    ts.data_arena = res.arena;
+                    keep_arena = true;
+                    ts.data = data;
+                    ts.fetched = true;
+                    ts.show_all = false;
+                    ts.repos = r.repos;
+                    ts.items = r.items;
+                    ts.errored = r.errored;
+                    try TabState.setText(app.gpa, &ts.error_text, "");
+                    try TabState.setText(app.gpa, &ts.status, r.status);
+                    // The trees open every repo on their first fetch and
+                    // keep the user's choices after that.
+                    switch (data) {
+                        .repo_pr_tree => |repos| {
+                            const slugs = try app.frame_arena.allocator().alloc([]const u8, repos.len);
+                            for (repos, slugs) |rp, *s| s.* = rp.slug;
+                            try ts.expanded.carryOver(slugs);
+                        },
+                        .repo_tree => |repos| {
+                            const slugs = try app.frame_arena.allocator().alloc([]const u8, repos.len);
+                            for (repos, slugs) |rp, *s| s.* = rp.slug;
+                            try ts.expanded.carryOver(slugs);
+                        },
+                        else => {},
+                    }
+                    // A message set after the refresh was queued (`hid api`)
+                    // outlives it, as it does in the reference.
+                    if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{r.status});
+                } else {
+                    try TabState.setText(app.gpa, &ts.error_text, r.error_text);
+                    try TabState.setText(app.gpa, &ts.status, r.status);
+                    app.say(.err, "error: {s}", .{r.error_text});
+                }
+                _ = app.frame_arena.reset(.retain_capacity);
+                const rows = (try app.visible(app.frame_arena.allocator())).rows;
+                if (rows.len == 0) ts.selected = 0 else ts.selected = @min(ts.selected, rows.len - 1);
+            },
+            .detail => |d| {
+                var buf: [256]u8 = undefined;
+                const key = keyText(&buf, d.key);
+                if (app.detail_in_flight) |f| if (std.mem.eql(u8, f, key)) {
+                    app.gpa.free(f);
+                    app.detail_in_flight = null;
+                };
+                if (d.pr) |pr| {
+                    const entry = try app.gpa.create(DetailEntry);
+                    entry.* = .{ .arena = res.arena, .pr = pr, .comments = d.comments };
+                    keep_arena = true;
+                    if (app.details.fetchRemove(key)) |kv| {
+                        app.gpa.free(kv.key);
+                        kv.value.arena.deinit();
+                        app.gpa.destroy(kv.value);
+                    }
+                    try app.details.put(app.gpa, try app.gpa.dupe(u8, key), entry);
+                } else {
+                    app.say(.err, "{s}", .{d.error_text});
+                }
+            },
+            .pr_pipelines => |p| {
+                var buf: [256]u8 = undefined;
+                const key = std.fmt.bufPrint(&buf, "{s}#{d}", .{ p.slug, p.id }) catch return;
+                const entry = try app.gpa.create(PrPipelines);
+                entry.* = .{ .arena = res.arena, .pipelines = p.pipelines, .error_text = p.error_text };
+                keep_arena = true;
+                if (app.pr_pipelines.fetchRemove(key)) |kv| {
+                    app.gpa.free(kv.key);
+                    kv.value.arena.deinit();
+                    app.gpa.destroy(kv.value);
+                }
+                try app.pr_pipelines.put(app.gpa, try app.gpa.dupe(u8, key), entry);
+                if (p.error_text.len > 0) {
+                    app.say(.err, "PR #{d} {s}", .{ p.id, p.error_text });
+                } else {
+                    app.setStatus("PR #{d}: {d} pipeline(s) on merge commit", .{ p.id, p.pipelines.len });
+                }
+            },
+            .approve => |ap| {
+                var buf: [256]u8 = undefined;
+                const key = keyText(&buf, ap.key);
+                if (ap.error_text.len > 0) {
+                    app.say(.err, "{s}", .{ap.error_text});
+                } else {
+                    app.say(.info, "{s} {s}", .{ if (ap.withdrew) "unapproved" else "approved", key });
+                    if (app.details.fetchRemove(key)) |kv| {
+                        app.gpa.free(kv.key);
+                        kv.value.arena.deinit();
+                        app.gpa.destroy(kv.value);
+                    }
+                    if (app.detail_visible) {
+                        _ = app.frame_arena.reset(.retain_capacity);
+                        const rows = (try app.visible(app.frame_arena.allocator())).rows;
+                        try app.ensureDetail(rows);
+                    }
+                }
+            },
+            .values => |v| {
+                app.values_requested = false;
+                app.values_at_secs = app.now_secs;
+                app.values = v;
+                const a = app.effect_arena.allocator();
+                if (v.error_text.len > 0) {
+                    app.effect(.{ .segment = .{ .text = chip_glyph ++ " !", .tooltip = try std.fmt.allocPrint(a, "last error: {s}", .{v.error_text}) } });
+                } else {
+                    app.effect(.{ .segment = .{
+                        .text = try std.fmt.allocPrint(a, chip_glyph ++ " {d}({d})", .{ v.open_mine, v.unapproved_mine }),
+                        .tooltip = chip_tooltip,
+                    } });
+                }
+            },
+        }
+    }
+
+    /// nf-md-bitbucket, the reference's chip glyph.
+    pub const chip_glyph = "\u{f00a8}";
+    pub const chip_tooltip = "Open PRs you authored (last 90 days, non-release) — parens = still-needs-review count. Click to open the mine-only PRs tab.";
 
     // ─── the filter ──────────────────────────────────────────────────
 
-    pub fn applyFilter(self: *App, tab: *TabState) void {
-        const q = self.filter_buf.items;
-        var keep: std.ArrayList(usize) = .empty;
-        const a = tab.arena.allocator();
-        for (tab.rows, 0..) |row, i| {
-            if (q.len == 0 or matches(row.pr, q)) keep.append(a, i) catch {};
+    fn filterKey(app: *App, spec: []const u8) Allocator.Error!bool {
+        const f = &app.filter;
+        if (std.mem.eql(u8, spec, "esc")) {
+            f.clearRetainingCapacity();
+            app.filter_caret = 0;
+            app.mode = .list;
+        } else if (std.mem.eql(u8, spec, "enter")) {
+            app.mode = .list;
+        } else if (std.mem.eql(u8, spec, "backspace")) {
+            if (app.filter_caret > 0) {
+                const start = prevBoundary(f.items, app.filter_caret);
+                f.replaceRange(app.gpa, start, app.filter_caret - start, &.{}) catch {};
+                app.filter_caret = start;
+            }
+        } else if (std.mem.eql(u8, spec, "delete")) {
+            if (app.filter_caret < f.items.len) {
+                const end = nextBoundary(f.items, app.filter_caret);
+                f.replaceRange(app.gpa, app.filter_caret, end - app.filter_caret, &.{}) catch {};
+            }
+        } else if (std.mem.eql(u8, spec, "left")) {
+            app.filter_caret = prevBoundary(f.items, app.filter_caret);
+        } else if (std.mem.eql(u8, spec, "right")) {
+            app.filter_caret = nextBoundary(f.items, app.filter_caret);
+        } else if (std.mem.eql(u8, spec, "home")) {
+            app.filter_caret = 0;
+        } else if (std.mem.eql(u8, spec, "end")) {
+            app.filter_caret = f.items.len;
+        } else if (std.mem.eql(u8, spec, "ctrl+u")) {
+            f.clearRetainingCapacity();
+            app.filter_caret = 0;
+        } else if (std.mem.eql(u8, spec, "space")) {
+            try f.insertSlice(app.gpa, app.filter_caret, " ");
+            app.filter_caret += 1;
+        } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "up")) {
+            app.mode = .list;
+            return app.keyPress(spec);
+        } else if (printable(spec)) {
+            try f.insertSlice(app.gpa, app.filter_caret, spec);
+            app.filter_caret += spec.len;
+        } else if (std.mem.startsWith(u8, spec, "shift+") and spec.len == 7) {
+            const up = std.ascii.toUpper(spec[6]);
+            try f.insert(app.gpa, app.filter_caret, up);
+            app.filter_caret += 1;
         }
-        tab.visible = keep.toOwnedSlice(a) catch &.{};
-        if (tab.selected >= tab.visible.len) tab.selected = tab.visible.len -| 1;
-        tab.scroll = view.scrollFor(tab.selected, self.bodyHeight(), tab.visible.len, tab.scroll);
-    }
-
-    /// Case-insensitive, over every column the list paints — a filter
-    /// that only looked at the title would not find `#1234`.
-    pub fn matches(pr: model.Pr, q: []const u8) bool {
-        var idbuf: [16]u8 = undefined;
-        const id_text = std.fmt.bufPrint(&idbuf, "#{d}", .{pr.id}) catch "";
-        const haystacks = [_][]const u8{
-            pr.title,       pr.author, pr.repo_full_name, pr.source_branch,
-            pr.dest_branch, pr.state,  id_text,
-        };
-        for (haystacks) |h| {
-            if (std.ascii.indexOfIgnoreCase(h, q) != null) return true;
-        }
-        return false;
-    }
-
-    // ─── actions ─────────────────────────────────────────────────────
-
-    fn focusedKey(self: *App) ?Detail.Key {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return null;
-        const ws = if (pr.workspace().len > 0) pr.workspace() else self.config.tabWorkspace(tab.tab);
-        const repo = if (pr.repo().len > 0) pr.repo() else tab.tab.repo;
-        return .{ .workspace = ws, .repo = repo, .id = pr.id };
-    }
-
-    fn openInBrowser(self: *App) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse {
-            self.say("nothing focused", .{});
-            return true;
-        };
-        const a = self.fx_arena.allocator();
-        const url = if (pr.html_url.len > 0)
-            try a.dupe(u8, pr.html_url)
-        else blk: {
-            const k = self.focusedKey().?;
-            break :blk try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pull-requests/{d}", .{ k.workspace, k.repo, k.id });
-        };
-        self.push(.{ .open_url = url });
-        self.say("opened {s}", .{url});
+        app.activeTab().selected = 0;
         return true;
     }
 
-    fn copyUrl(self: *App) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return true;
-        const a = self.fx_arena.allocator();
-        const url = if (pr.html_url.len > 0) try a.dupe(u8, pr.html_url) else blk: {
-            const k = self.focusedKey().?;
-            break :blk try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pull-requests/{d}", .{ k.workspace, k.repo, k.id });
-        };
-        self.push(.{ .copy = url });
-        self.say("copied the URL", .{});
-        return true;
+    /// A bracketed paste lands in the filter when it has the keys.
+    pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
+        if (app.mode != .filter) return;
+        var clean: std.ArrayList(u8) = .empty;
+        defer clean.deinit(app.gpa);
+        for (text) |c| if (c != '\n' and c != '\r') try clean.append(app.gpa, c);
+        try app.filter.insertSlice(app.gpa, app.filter_caret, clean.items);
+        app.filter_caret += clean.items.len;
     }
 
-    fn copyBranch(self: *App) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return true;
-        if (pr.source_branch.len == 0) {
-            self.say("this PR has no source branch", .{});
-            return true;
-        }
-        self.push(.{ .copy = try self.fx_arena.allocator().dupe(u8, pr.source_branch) });
-        self.say("copied {s}", .{pr.source_branch});
-        return true;
+    fn printable(spec: []const u8) bool {
+        if (spec.len == 0) return false;
+        if (std.mem.indexOfScalar(u8, spec, '+') != null and spec.len > 1) return false;
+        if (spec.len == 1) return spec[0] >= 0x20 and spec[0] < 0x7f;
+        // A multi-byte code point arrives as itself.
+        return std.unicode.utf8ValidateSlice(spec) and (std.unicode.utf8CountCodepoints(spec) catch 2) == 1;
     }
 
-    fn openIssue(self: *App) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return true;
-        var scratch = std.heap.ArenaAllocator.init(self.gpa);
-        defer scratch.deinit();
-        const both = try std.mem.concat(scratch.allocator(), u8, &.{ pr.title, "\n", pr.description });
-        const keys = try links.scanKeys(scratch.allocator(), both, self.config.jira.project_keys);
-        if (keys.len == 0) {
-            self.say("no issue key on this pull request", .{});
-            return true;
+    fn prevBoundary(s: []const u8, i: usize) usize {
+        var j = i;
+        while (j > 0) {
+            j -= 1;
+            if (s[j] & 0xC0 != 0x80) return j;
         }
-        const k = keys[self.issue_cursor % keys.len];
-        self.issue_cursor = (self.issue_cursor + 1) % keys.len;
-        const a = self.fx_arena.allocator();
-        switch (try links.jiraTarget(a, self.config.jira, k.text, self.jira_installed)) {
-            .command => |id| {
-                self.push(.{ .command = try a.dupe(u8, id) });
-                self.say("{s} → {s}", .{ k.text, id });
-            },
-            .url => |u| {
-                self.push(.{ .open_url = u });
-                self.say("{s} → {s}", .{ k.text, u });
-            },
-            .unavailable => |why| self.toast(.warn, "{s}: {s}", .{ k.text, why }),
-        }
-        return true;
+        return 0;
     }
 
-    fn beginVote(self: *App, what: Pending) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return true;
-        if (self.client.rate.max_attempts == 0) {} // keep `self.client` used on every path
-        const k = self.focusedKey().?;
-        const a = self.fx_arena.allocator();
-        const title = switch (what) {
-            .approve => "Approve",
-            .withdraw_approval => "Withdraw your approval on",
-            .request_changes => "Request changes on",
-            .withdraw_changes => "Withdraw your change request on",
-            else => "Act on",
-        };
-        self.pending = what;
-        self.pending_detail = try std.fmt.allocPrint(a, "{s} {s}/{s}#{d}?", .{ title, k.workspace, k.repo, k.id });
-        self.mode = .confirm;
-        _ = pr;
-        return true;
+    fn nextBoundary(s: []const u8, i: usize) usize {
+        var j = i + 1;
+        while (j < s.len and s[j] & 0xC0 == 0x80) j += 1;
+        return @min(j, s.len);
     }
 
-    fn beginMerge(self: *App) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return true;
-        if (!std.mem.eql(u8, pr.state, "OPEN")) {
-            self.toast(.warn, "#{d} is {s} — only an OPEN pull request can be merged", .{ pr.id, pr.state });
-            return true;
-        }
-        const k = self.focusedKey().?;
-        self.pending = .merge;
-        self.pending_detail = try std.fmt.allocPrint(self.fx_arena.allocator(), "Merge {s}/{s}#{d} — strategy: {s} · close source branch: {s} (s cycles the strategy)", .{
-            k.workspace,
-            k.repo,
-            k.id,
-            self.merge_strategy.label(),
-            if (self.close_source_branch) "yes" else "no",
-        });
-        self.mode = .confirm;
-        return true;
-    }
+    // ─── the row menu ────────────────────────────────────────────────
 
-    fn beginCheckout(self: *App) Allocator.Error!bool {
-        const tab = self.activeTab();
-        const pr = tab.focused() orelse return true;
-        const k = self.focusedKey().?;
-        const facts = try gitmod.facts(self.gpa, self.io, self.workspace_dir, self.config.mnml.allow_checkout);
-        defer self.gpa.free(facts.origin);
-        switch (gitmod.check(facts, k.workspace, k.repo)) {
-            .refuse => |r| {
-                self.toast(.warn, "cannot check out {s}: {s}", .{ pr.source_branch, r.message() });
-                return true;
-            },
-            .go => {},
-        }
-        self.pending = .checkout;
-        self.pending_detail = try std.fmt.allocPrint(self.fx_arena.allocator(), "Check out {s} in {s}?", .{ pr.source_branch, self.workspace_dir });
-        self.mode = .confirm;
-        return true;
-    }
-
-    fn beginComment(self: *App) Allocator.Error!bool {
-        if (self.activeTab().focused() == null) return true;
-        self.prompt_kind = .comment;
-        self.prompt_buf.clearRetainingCapacity();
-        self.prompt_cursor = 0;
-        self.mode = .prompt;
-        return true;
-    }
-
-    fn submitPrompt(self: *App) Allocator.Error!void {
-        const text = std.mem.trim(u8, self.prompt_buf.items, " \t\r\n");
-        if (text.len == 0) {
-            self.say("nothing to post", .{});
-            return;
-        }
-        const k = self.focusedKey() orelse return;
-        if (self.client.writeRefused()) |why| {
-            self.toast(.err, "{s}", .{why});
-            return;
-        }
-        var reply = try self.client.comment(self.gpa, k.workspace, k.repo, k.id, text, "", null);
-        defer reply.deinit(self.gpa);
-        switch (reply) {
-            .ok => {
-                self.toast(.info, "commented on {s}/{s}#{d}", .{ k.workspace, k.repo, k.id });
-                self.prompt_buf.clearRetainingCapacity();
-                self.prompt_cursor = 0;
-                self.invalidateDetail();
-                if (self.show_detail) try self.ensureDetail();
-            },
-            .failed => |f| self.reportFailure("comment", f),
-        }
-    }
-
-    fn perform(self: *App, what: Pending) Allocator.Error!void {
-        const k = self.focusedKey() orelse return;
-        if (what == .checkout) {
-            var scratch = std.heap.ArenaAllocator.init(self.gpa);
-            defer scratch.deinit();
-            const pr = self.activeTab().focused().?;
-            const out = try gitmod.checkout(scratch.allocator(), self.io, self.workspace_dir, pr.source_branch);
-            if (out.ok) {
-                self.toast(.info, "{s}", .{out.message});
-                if (self.config.mnml.after_checkout_command.len > 0) {
-                    self.push(.{ .command = try self.fx_arena.allocator().dupe(u8, self.config.mnml.after_checkout_command) });
-                }
-            } else self.toast(.err, "{s}", .{out.message});
-            return;
-        }
-        if (self.client.writeRefused()) |why| {
-            self.toast(.err, "{s}", .{why});
-            return;
-        }
-        var reply = switch (what) {
-            .approve => try self.client.approve(self.gpa, k.workspace, k.repo, k.id),
-            .withdraw_approval => try self.client.unapprove(self.gpa, k.workspace, k.repo, k.id),
-            .request_changes => try self.client.requestChanges(self.gpa, k.workspace, k.repo, k.id),
-            .withdraw_changes => try self.client.withdrawChanges(self.gpa, k.workspace, k.repo, k.id),
-            .merge => try self.client.merge(self.gpa, k.workspace, k.repo, k.id, self.merge_strategy, self.close_source_branch),
-            .checkout => unreachable,
-        };
-        defer reply.deinit(self.gpa);
-        const label = switch (what) {
-            .approve => "approved",
-            .withdraw_approval => "withdrew your approval on",
-            .request_changes => "requested changes on",
-            .withdraw_changes => "withdrew your change request on",
-            .merge => "merged",
-            .checkout => unreachable,
-        };
-        switch (reply) {
-            .ok => {
-                self.toast(.info, "{s} {s}/{s}#{d}", .{ label, k.workspace, k.repo, k.id });
-                self.invalidateDetail();
-                try self.refreshActive();
-                if (self.show_detail) try self.ensureDetail();
-            },
-            .failed => |f| self.reportFailure(label, f),
-        }
-    }
-
-    fn reportFailure(self: *App, what: []const u8, f: api.Failure) void {
-        var buf: [96]u8 = undefined;
-        self.toast(.err, "{s} failed: {s} — {s}", .{ what, f.shortLabel(&buf), f.message });
-    }
-
-    // ─── fetching ────────────────────────────────────────────────────
-
-    pub fn switchTab(self: *App, index: usize) Allocator.Error!void {
-        if (index >= self.tabs.len) return;
-        self.active = index;
-        const tab = self.activeTab();
-        if (!tab.fetched) try self.refreshActive();
-        self.applyFilter(tab);
-        if (self.show_detail) try self.ensureDetail();
-    }
-
-    /// `/2.0/user`, once per run. A tab whose mode needs it and cannot
-    /// have it falls back rather than showing an empty list with no
-    /// explanation.
-    fn ensureIdentity(self: *App) Allocator.Error!bool {
-        if (self.me_account_id.len > 0) return true;
-        if (self.whoami_tried) return false;
-        self.whoami_tried = true;
-        var reply = try self.client.whoami(self.gpa);
-        defer reply.deinit(self.gpa);
-        switch (reply) {
-            .ok => |b| {
-                var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, b.bytes, .{}) catch {
-                    self.whoami_error = "/2.0/user did not answer JSON";
-                    return false;
-                };
-                defer parsed.deinit();
-                const a = self.ident_arena.allocator();
-                self.me_account_id = try a.dupe(u8, j.str(parsed.value, "account_id"));
-                self.me_display_name = try a.dupe(u8, j.str(parsed.value, "display_name"));
-                if (self.me_account_id.len == 0) {
-                    self.whoami_error = "/2.0/user answered without an account_id — the token needs Account: Read";
-                    return false;
-                }
-                return true;
-            },
-            .failed => |f| {
-                var buf: [96]u8 = undefined;
-                self.whoami_error = try std.fmt.allocPrint(self.ident_arena.allocator(), "/2.0/user: {s} — a mine / reviewing tab needs Account: Read", .{f.shortLabel(&buf)});
-                return false;
-            },
-        }
-    }
-
-    /// One query in a tab's fan-out.
-    const Query = struct {
-        workspace: []const u8,
-        repo: []const u8,
-        state: cfg.State,
-        bbql: []const u8,
-    };
-
-    pub fn refreshActive(self: *App) Allocator.Error!void {
-        const tab = self.activeTab();
-        _ = tab.arena.reset(.retain_capacity);
-        const a = tab.arena.allocator();
-        tab.rows = &.{};
-        tab.visible = &.{};
-        tab.error_text = "";
-        tab.notes = &.{};
-        tab.fallback_note = "";
-        tab.fetched = true;
-        tab.last_fetch_ms = nowMs(self.io);
-
-        var mode = tab.tab.mode;
-        if (mode == .mine or mode == .reviewing) {
-            if (!try self.ensureIdentity()) {
-                switch (tab.tab.fallback) {
-                    .none => {
-                        tab.error_text = try a.dupe(u8, self.whoami_error);
-                        self.applyFilter(tab);
-                        return;
-                    },
-                    .repo => {
-                        mode = .repo;
-                        tab.fallback_note = "repo";
-                    },
-                    .workspace => {
-                        mode = .workspace;
-                        tab.fallback_note = "workspace";
-                    },
+    /// The actions a right-click offers on a row.
+    pub fn menuFor(app: *App, rows: []const tabs.VisibleRow, idx: usize) []const Action {
+        var n: usize = 0;
+        const ts = app.activeTab();
+        if (idx >= rows.len) return app.menu_items[0..0];
+        const push = struct {
+            fn f(items: *[12]Action, count: *usize, a: Action) void {
+                if (count.* < items.len) {
+                    items[count.*] = a;
+                    count.* += 1;
                 }
             }
-        }
-
-        const predicate: []const u8 = switch (mode) {
-            .mine => try api.authorPredicate(a, self.me_account_id),
-            .reviewing => try api.reviewerPredicate(a, self.me_account_id),
-            .repo, .workspace => "",
-        };
-        const bbql = try api.andPredicates(a, predicate, tab.tab.q);
-
-        var queries: std.ArrayList(Query) = .empty;
-        const ws = self.config.tabWorkspace(tab.tab);
-        switch (mode) {
-            .repo => try queries.append(a, .{ .workspace = ws, .repo = tab.tab.repo, .state = tab.tab.state, .bbql = bbql }),
-            .mine, .reviewing, .workspace => for (self.config.repos) |slug| {
-                if (self.config.isHidden(slug)) continue;
-                try queries.append(a, .{ .workspace = ws, .repo = slug, .state = tab.tab.state, .bbql = bbql });
+        }.f;
+        switch (rows[idx]) {
+            .repo_header => {
+                push(&app.menu_items, &n, .activate);
+                push(&app.menu_items, &n, .open_web);
+                push(&app.menu_items, &n, .yank_url);
+                push(&app.menu_items, &n, .hide_repo);
+                push(&app.menu_items, &n, .reorder_up);
+                push(&app.menu_items, &n, .reorder_down);
+            },
+            .pr => |p| {
+                push(&app.menu_items, &n, .toggle_detail);
+                push(&app.menu_items, &n, .open_web);
+                push(&app.menu_items, &n, .yank_url);
+                const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
+                if (pr.isMerged() and pr.merge_commit.len > 0) push(&app.menu_items, &n, .activate);
+                if (app.detail_visible) push(&app.menu_items, &n, .toggle_approval);
+            },
+            .branch => {
+                push(&app.menu_items, &n, .open_web);
+                push(&app.menu_items, &n, .yank_url);
+            },
+            .show_more => push(&app.menu_items, &n, .activate),
+            .flat => {
+                if (ts.data == .pull_requests) push(&app.menu_items, &n, .toggle_detail);
+                push(&app.menu_items, &n, .open_web);
+                push(&app.menu_items, &n, .yank_url);
             },
         }
+        return app.menu_items[0..n];
+    }
 
-        const progress_label = try std.fmt.allocPrint(self.fx_arena.allocator(), "Bitbucket · {s}", .{tab.tab.name});
-        self.push(.{ .progress_start = .{ .id = "bitbucket.refresh", .label = progress_label } });
+    fn menuKey(app: *App, a: Allocator, spec: []const u8) Allocator.Error!bool {
+        var m = app.menu orelse {
+            app.mode = .list;
+            return true;
+        };
+        if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "q")) {
+            app.menu = null;
+            app.mode = .list;
+        } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) {
+            if (m.selected + 1 < m.items.len) m.selected += 1;
+            app.menu = m;
+        } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) {
+            m.selected -|= 1;
+            app.menu = m;
+        } else if (std.mem.eql(u8, spec, "enter")) {
+            return app.runMenuItem(a, m.selected);
+        }
+        return true;
+    }
 
-        var rows: std.ArrayList(view.Row) = .empty;
-        var notes: std.ArrayList([]const u8) = .empty;
-        for (queries.items, 0..) |q, i| {
-            const pct: u8 = @intCast(@min(99, (i * 100) / @max(queries.items.len, 1)));
-            self.push(.{ .progress_update = .{ .id = "bitbucket.refresh", .label = q.repo, .percent = pct } });
-            var reply = try self.client.listPrs(self.gpa, q.workspace, q.repo, q.state, q.bbql, self.config.page_len);
-            defer reply.deinit(self.gpa);
-            switch (reply) {
-                .failed => |f| {
-                    var buf: [96]u8 = undefined;
-                    try notes.append(a, try std.fmt.allocPrint(a, "{s}: {s}", .{ q.repo, f.shortLabel(&buf) }));
-                    continue;
+    fn runMenuItem(app: *App, a: Allocator, item: usize) Allocator.Error!bool {
+        const m = app.menu orelse return true;
+        app.menu = null;
+        app.mode = .list;
+        if (item >= m.items.len) return true;
+        const view = try app.visible(a);
+        app.select(view.rows, m.row);
+        return app.run(a, m.items[item], view.rows);
+    }
+
+    // ─── the mouse ───────────────────────────────────────────────────
+
+    pub const Button = enum { left, middle, right };
+
+    /// A click, routed through the hit map the last paint registered.
+    pub fn click(app: *App, col: u16, row: u16, button: Button) Allocator.Error!bool {
+        _ = app.frame_arena.reset(.retain_capacity);
+        const a = app.frame_arena.allocator();
+        const target = app.hits.at(col, row);
+        if (app.mode == .menu) {
+            if (target) |tg| switch (tg) {
+                .menu_item => |i| return app.runMenuItem(a, i),
+                else => {},
+            };
+            app.menu = null;
+            app.mode = .list;
+            return true;
+        }
+        if (app.mode == .help) {
+            app.mode = .list;
+            return true;
+        }
+        if (app.mode == .filter and (target == null or target.? != .chip)) app.mode = .list;
+        const tg = target orelse return true;
+        const view = try app.visible(a);
+        switch (tg) {
+            .tab => |i| try app.switchTab(i),
+            .chip => |c| switch (c) {
+                .refresh => try app.refreshActive(),
+                .author => try app.toggleMineOnly(),
+                .filter => {
+                    app.mode = .filter;
+                    app.filter_caret = app.filter.items.len;
                 },
-                .ok => |b| {
-                    var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, b.bytes, .{}) catch {
-                        try notes.append(a, try std.fmt.allocPrint(a, "{s}: the response was not JSON", .{q.repo}));
-                        continue;
-                    };
-                    defer parsed.deinit();
-                    for (j.array(parsed.value, "values")) |v| {
-                        var pr = try model.Pr.fromValue(a, v);
-                        pr = try dupePr(a, pr);
-                        if (pr.repo_full_name.len == 0) {
-                            pr.repo_full_name = try std.fmt.allocPrint(a, "{s}/{s}", .{ q.workspace, q.repo });
-                        }
-                        try rows.append(a, .{ .pr = pr });
+                .run_pipeline, .schedules, .caches, .usage => try app.openPipelinesPage(c),
+            },
+            .row => |i| {
+                app.select(view.rows, i);
+                if (button == .right) {
+                    const items = app.menuFor(view.rows, i);
+                    if (items.len > 0) {
+                        app.menu = .{ .row = i, .col = col, .y = row, .items = items };
+                        app.mode = .menu;
                     }
-                },
-            }
+                } else if (i < view.rows.len) {
+                    // A click on a tree row is the reference's: select
+                    // it and toggle it; a flat row only selects.
+                    switch (view.rows[i]) {
+                        .repo_header, .show_more => try app.activate(a, view.rows),
+                        .pr => |p| {
+                            const pr = app.activeTab().data.repo_pr_tree[p.repo].prs[p.idx];
+                            if (pr.isMerged() and pr.merge_commit.len > 0) try app.activate(a, view.rows);
+                        },
+                        else => {},
+                    }
+                }
+                if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
+            },
+            .hint => |action| return app.run(a, action, view.rows),
+            .menu_item, .sheet, .detail => {},
         }
-        self.push(.{ .progress_end = .{ .id = "bitbucket.refresh", .ok = notes.items.len == 0 } });
-
-        const slice = try rows.toOwnedSlice(a);
-        // Newest first, across repos: the per-repo responses are each
-        // sorted, the merge is not.
-        std.mem.sort(view.Row, slice, {}, newerFirst);
-        tab.rows = slice;
-        tab.notes = try notes.toOwnedSlice(a);
-        if (tab.selected >= slice.len) tab.selected = slice.len -| 1;
-        self.applyFilter(tab);
-        self.say("{s}: {d} pull requests", .{ tab.tab.name, slice.len });
+        return true;
     }
 
-    fn newerFirst(_: void, a: view.Row, b: view.Row) bool {
-        return std.mem.order(u8, a.pr.updated_on, b.pr.updated_on) == .gt;
-    }
-
-    pub fn invalidateDetail(self: *App) void {
-        if (self.detail) |*d| {
-            d.deinit();
-            self.detail = null;
+    /// A wheel notch: the detail scrolls under the pointer, the list
+    /// otherwise (three rows a notch, as the reference).
+    pub fn wheel(app: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
+        _ = app.frame_arena.reset(.retain_capacity);
+        const a = app.frame_arena.allocator();
+        if (app.mode == .help) {
+            if (dy > 0) app.help_scroll -|= 3 else app.help_scroll += 3;
+            return;
         }
-    }
-
-    /// Fetch the focused PR's detail if it is not already the one
-    /// cached. Five requests: the PR, its activity, its diffstat, its
-    /// diff and its build statuses.
-    pub fn ensureDetail(self: *App) Allocator.Error!void {
-        const k = self.focusedKey() orelse {
-            self.invalidateDetail();
+        if (app.hits.at(col, row)) |tg| if (tg == .detail) {
+            if (dy > 0) app.detail_scroll -|= 3 else app.detail_scroll += 3;
             return;
         };
-        if (self.detail) |d| if (d.key.eql(k) and !d.loading) return;
-        self.invalidateDetail();
+        const view = try app.visible(a);
+        app.move(view.rows, if (dy > 0) -3 else 3);
+        if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
+    }
 
-        var arena = std.heap.ArenaAllocator.init(self.gpa);
-        const a = arena.allocator();
-        var d: Detail = .{
-            .arena = arena,
-            .key = .{
-                .workspace = a.dupe(u8, k.workspace) catch k.workspace,
-                .repo = a.dupe(u8, k.repo) catch k.repo,
-                .id = k.id,
-            },
-            .pr = self.activeTab().focused().?,
-        };
-
-        var reply = try self.client.prDetail(self.gpa, k.workspace, k.repo, k.id);
-        defer reply.deinit(self.gpa);
-        switch (reply) {
-            .failed => |f| {
-                var buf: [96]u8 = undefined;
-                d.error_text = std.fmt.allocPrint(a, "detail: {s} — {s}", .{ f.shortLabel(&buf), f.message }) catch "detail failed";
-                d.arena = arena;
-                self.detail = d;
-                return;
-            },
-            .ok => |b| {
-                var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, b.bytes, .{}) catch {
-                    d.error_text = "the detail response was not JSON";
-                    d.arena = arena;
-                    self.detail = d;
+    /// The pipelines family's chips open Bitbucket's pages.
+    fn openPipelinesPage(app: *App, c: hit.Chip) Allocator.Error!void {
+        const ts = app.activeTab();
+        const ws = ts.spec.workspace;
+        const a = app.effect_arena.allocator();
+        const url: []const u8 = switch (c) {
+            .usage => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/workspace/settings/plans-billing/pipelines-minutes", .{ws}),
+            .run_pipeline, .schedules, .caches => blk: {
+                if (ts.spec.repo.len == 0) {
+                    app.say(.warn, "repo-scoped action — switch to a repo tab first", .{});
                     return;
+                }
+                break :blk switch (c) {
+                    .run_pipeline => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines", .{ ws, ts.spec.repo }),
+                    .schedules => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/schedules", .{ ws, ts.spec.repo }),
+                    else => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/caches", .{ ws, ts.spec.repo }),
                 };
-                defer parsed.deinit();
-                d.pr = try dupePr(a, try model.Pr.fromValue(a, parsed.value));
-                d.reviewers = try d.pr.reviewerRoster(a);
             },
-        }
-
-        const both = try std.mem.concat(a, u8, &.{ d.pr.title, "\n", d.pr.description });
-        d.jira_keys = try links.scanKeys(a, both, self.config.jira.project_keys);
-
-        var act = try self.client.activity(self.gpa, k.workspace, k.repo, k.id);
-        defer act.deinit(self.gpa);
-        if (act == .ok) {
-            var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, act.ok.bytes, .{}) catch null;
-            if (parsed) |*p| {
-                defer p.deinit();
-                var list: std.ArrayList(model.Activity) = .empty;
-                for (j.array(p.value, "values")) |v| {
-                    try list.append(a, try dupeActivity(a, model.Activity.fromValue(v)));
-                }
-                d.activity = try list.toOwnedSlice(a);
-            }
-        }
-
-        var ds = try self.client.diffstat(self.gpa, k.workspace, k.repo, k.id);
-        defer ds.deinit(self.gpa);
-        if (ds == .ok) {
-            var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, ds.ok.bytes, .{}) catch null;
-            if (parsed) |*p| {
-                defer p.deinit();
-                var list: std.ArrayList(model.DiffstatEntry) = .empty;
-                for (j.array(p.value, "values")) |v| {
-                    const e = model.DiffstatEntry.fromValue(v);
-                    try list.append(a, .{
-                        .status = try a.dupe(u8, e.status),
-                        .path = try a.dupe(u8, e.path),
-                        .old_path = try a.dupe(u8, e.old_path),
-                        .added = e.added,
-                        .removed = e.removed,
-                    });
-                }
-                d.files = try list.toOwnedSlice(a);
-            }
-        }
-
-        if (self.show_diff) {
-            var df = try self.client.diff(self.gpa, k.workspace, k.repo, k.id);
-            defer df.deinit(self.gpa);
-            if (df == .ok) d.diff = try a.dupe(u8, df.ok.bytes);
-        }
-
-        if (d.pr.source_commit.len > 0) {
-            var st = try self.client.statuses(self.gpa, k.workspace, k.repo, d.pr.source_commit);
-            defer st.deinit(self.gpa);
-            if (st == .ok) {
-                var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, st.ok.bytes, .{}) catch null;
-                if (parsed) |*p| {
-                    defer p.deinit();
-                    var list: std.ArrayList(model.BuildStatus) = .empty;
-                    for (j.array(p.value, "values")) |v| {
-                        const b = model.BuildStatus.fromValue(v);
-                        try list.append(a, .{
-                            .key = try a.dupe(u8, b.key),
-                            .name = try a.dupe(u8, b.name),
-                            .state = try a.dupe(u8, b.state),
-                            .url = try a.dupe(u8, b.url),
-                        });
-                    }
-                    d.builds = try list.toOwnedSlice(a);
-                }
-            }
-        }
-        d.arena = arena;
-        self.detail = d;
-        // The list row shows the worst build state the detail found.
-        self.stampBuild(d.builds);
-    }
-
-    /// Put the focused row's build glyph on the list, so a red pipeline
-    /// is visible without opening the detail.
-    fn stampBuild(self: *App, builds: []const model.BuildStatus) void {
-        if (builds.len == 0) return;
-        const tab = self.activeTab();
-        if (tab.visible.len == 0) return;
-        const row_index = tab.visible[@min(tab.selected, tab.visible.len - 1)];
-        var worst = builds[0];
-        for (builds) |b| {
-            if (std.ascii.eqlIgnoreCase(b.state, "FAILED")) worst = b;
-        }
-        const mutable: []view.Row = @constCast(tab.rows);
-        mutable[row_index].build = .{
-            .key = tab.arena.allocator().dupe(u8, worst.key) catch "",
-            .name = tab.arena.allocator().dupe(u8, worst.name) catch "",
-            .state = tab.arena.allocator().dupe(u8, worst.state) catch "",
+            else => return,
         };
+        app.effect(.{ .open_url = url });
+        app.say(.info, "opened {s}", .{url});
     }
 };
-
-fn nowMs(io: Io) i64 {
-    return Io.Timestamp.now(io, .awake).toMilliseconds();
-}
-
-/// A PR parsed off a `std.json.Parsed` points into it; the tab's arena
-/// has to own the strings that outlive the parse.
-fn dupePr(a: Allocator, pr: model.Pr) Allocator.Error!model.Pr {
-    var out = pr;
-    out.title = try a.dupe(u8, pr.title);
-    out.state = try a.dupe(u8, pr.state);
-    out.updated_on = try a.dupe(u8, pr.updated_on);
-    out.author = try a.dupe(u8, pr.author);
-    out.author_account_id = try a.dupe(u8, pr.author_account_id);
-    out.source_branch = try a.dupe(u8, pr.source_branch);
-    out.dest_branch = try a.dupe(u8, pr.dest_branch);
-    out.repo_full_name = try a.dupe(u8, pr.repo_full_name);
-    out.html_url = try a.dupe(u8, pr.html_url);
-    out.description = try a.dupe(u8, pr.description);
-    out.merge_commit = try a.dupe(u8, pr.merge_commit);
-    out.source_commit = try a.dupe(u8, pr.source_commit);
-    out.participants = try dupeParticipants(a, pr.participants);
-    out.reviewers = try dupeParticipants(a, pr.reviewers);
-    return out;
-}
-
-fn dupeParticipants(a: Allocator, list: []const model.Participant) Allocator.Error![]const model.Participant {
-    const out = try a.alloc(model.Participant, list.len);
-    for (list, out) |p, *slot| slot.* = .{
-        .display_name = try a.dupe(u8, p.display_name),
-        .account_id = try a.dupe(u8, p.account_id),
-        .role = try a.dupe(u8, p.role),
-        .approval = p.approval,
-    };
-    return out;
-}
-
-fn dupeActivity(a: Allocator, act: model.Activity) Allocator.Error!model.Activity {
-    var out = act;
-    out.author = try a.dupe(u8, act.author);
-    out.created_on = try a.dupe(u8, act.created_on);
-    out.text = try a.dupe(u8, act.text);
-    out.inline_path = try a.dupe(u8, act.inline_path);
-    return out;
-}
-
-fn eq(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, a, b);
-}
-
-/// mnml folds an uppercase letter into `shift+<lower>` before it reaches
-/// a mount (`core/key.zig`'s `Chord.of`), and reports a back-tab as
-/// `backtab` rather than `shift+tab`. The keymap above is written the
-/// way a user says it — `D`, `shift+tab` — so both spellings are folded
-/// back here, once, rather than doubled at twenty comparisons.
-pub fn normalizeSpec(raw: []const u8, buf: *[8]u8) []const u8 {
-    if (std.mem.eql(u8, raw, "shift+tab")) return "backtab";
-    if (!std.mem.startsWith(u8, raw, "shift+")) return raw;
-    const rest = raw["shift+".len..];
-    if (rest.len == 1 and rest[0] >= 'a' and rest[0] <= 'z') {
-        buf[0] = rest[0] - ('a' - 'A');
-        return buf[0..1];
-    }
-    // `shift+/` is a `?` on a US layout, and `?` is the help key; every
-    // other punctuation arrives unshifted, so this is the one pair
-    // worth folding rather than a whole layout table.
-    if (std.mem.eql(u8, rest, "/")) return "?";
-    return raw;
-}
-
-/// A key spec that is one printable character is text; `ctrl+x` and
-/// `enter` are not.
-fn isText(spec: []const u8) bool {
-    if (spec.len == 0 or spec.len > 4) return false;
-    if (std.mem.indexOfScalar(u8, spec, '+') != null) return false;
-    if (spec.len == 1) return spec[0] >= 0x20 and spec[0] != 0x7f;
-    // A multi-byte code point typed directly.
-    return spec[0] >= 0x80;
-}
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const api = @import("api.zig");
 const listener = @import("../tools/fake_bitbucket/listener.zig");
 
-const Harness = struct {
+/// An app on the fake server, with a worker run synchronously: what
+/// the loop does across threads, done inline.
+pub const Rig = struct {
     srv: *listener.Server,
     client: api.Client,
+    progress: fetch.Progress = .{},
+    worker: fetch.Worker,
     app: App,
     arena: std.heap.ArenaAllocator,
+    config_path: []u8,
+    tmp: std.testing.TmpDir,
 
-    fn init(tabs: []const cfg.Tab) !*Harness {
-        const h = try t.allocator.create(Harness);
-        h.arena = std.heap.ArenaAllocator.init(t.allocator);
-        h.srv = try listener.Server.start(t.allocator, t.io, 0);
-        const base = try h.srv.baseUrl(t.allocator);
+    pub fn init(config: cfg.Config, opts: Options) !*Rig {
+        const r = try t.allocator.create(Rig);
+        errdefer t.allocator.destroy(r);
+        r.tmp = t.tmpDir(.{});
+        var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+        const dir = pbuf[0..try r.tmp.dir.realPath(t.io, &pbuf)];
+        r.config_path = try std.fs.path.join(t.allocator, &.{ dir, "config.zon" });
+        r.arena = std.heap.ArenaAllocator.init(t.allocator);
+        r.srv = try listener.Server.start(t.allocator, t.io, 0);
+        const base = try r.srv.baseUrl(t.allocator);
         defer t.allocator.free(base);
-        h.client = try api.Client.init(t.allocator, t.io, base, "me@example.com", "read-tok", "write-tok", .{ .min_interval_ms = 0 });
-        const config: cfg.Config = .{
-            .email = "me@example.com",
-            .workspace = "acme",
-            .repos = &.{ "api", "web" },
-            .tabs = tabs,
-            .jira = .{ .enabled = true, .base_url = "https://acme.atlassian.net", .project_keys = &.{"TE"} },
-        };
-        h.app = try App.init(t.allocator, t.io, config, &h.client);
-        h.app.rows = 40;
-        h.app.cols = 120;
-        return h;
+        r.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+        r.progress = .{};
+        r.worker = fetch.Worker.init(t.allocator, t.io, &r.client, &r.progress, config.account_id);
+        r.app = try App.init(t.allocator, t.io, config, r.config_path, opts);
+        r.app.now_secs = Io.Timestamp.now(t.io, .real).toSeconds();
+        r.app.cols = 120;
+        r.app.rows = 40;
+        try r.app.startup();
+        try r.drain();
+        return r;
     }
 
-    fn deinit(h: *Harness) void {
-        h.app.deinit();
-        h.client.deinit();
-        h.srv.stop();
-        h.arena.deinit();
-        t.allocator.destroy(h);
+    pub fn deinit(r: *Rig) void {
+        r.app.deinit();
+        r.worker.deinit();
+        r.client.deinit();
+        r.srv.stop();
+        r.arena.deinit();
+        t.allocator.free(r.config_path);
+        r.tmp.cleanup();
+        t.allocator.destroy(r);
     }
 
-    /// Run a key and drop whatever it queued, keeping the strings alive
-    /// on the harness arena so a test can look at them.
-    fn key(h: *Harness, spec: []const u8) !bool {
-        return h.app.key(spec);
+    /// Run every queued job and commit its result.
+    pub fn drain(r: *Rig) !void {
+        while (true) {
+            const jobs = r.app.takeJobs();
+            if (jobs.len == 0) break;
+            defer t.allocator.free(jobs);
+            for (jobs) |*job| {
+                defer job.deinit();
+                var res = try r.worker.run(job);
+                try r.app.commit(&res);
+            }
+        }
+        const fx = r.app.takeEffects();
+        r.app.freeEffects(fx);
     }
 
-    fn effects(h: *Harness) []const Effect {
-        return h.app.effects.items;
+    pub fn key(r: *Rig, spec: []const u8) !bool {
+        const alive = try r.app.keyPress(spec);
+        try r.drain();
+        return alive;
     }
 
-    fn sawToast(h: *Harness, needle: []const u8) bool {
-        for (h.effects()) |e| switch (e) {
-            .toast => |x| if (std.mem.indexOf(u8, x.text, needle) != null) return true,
-            else => {},
-        };
-        return false;
-    }
-
-    fn sawCopy(h: *Harness, needle: []const u8) bool {
-        for (h.effects()) |e| switch (e) {
-            .copy => |x| if (std.mem.indexOf(u8, x, needle) != null) return true,
-            else => {},
-        };
-        return false;
-    }
-
-    fn sawUrl(h: *Harness, needle: []const u8) bool {
-        for (h.effects()) |e| switch (e) {
-            .open_url => |x| if (std.mem.indexOf(u8, x, needle) != null) return true,
-            else => {},
-        };
-        return false;
-    }
-
-    fn sawCommand(h: *Harness, id: []const u8) bool {
-        for (h.effects()) |e| switch (e) {
-            .command => |x| if (std.mem.eql(u8, x, id)) return true,
-            else => {},
-        };
-        return false;
+    pub fn rows(r: *Rig) ![]const tabs.VisibleRow {
+        _ = r.arena.reset(.retain_capacity);
+        return (try r.app.visible(r.arena.allocator())).rows;
     }
 };
 
-test "a repo tab lists that repo's open PRs, newest first" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    const tab = h.app.activeTab();
-    try t.expectEqual(@as(usize, 2), tab.rows.len);
-    try t.expectEqual(@as(usize, 2), tab.visible.len);
-    // #1234's updated_on is later than #1198's, so it leads.
-    try t.expectEqual(@as(i64, 1234), tab.rows[0].pr.id);
-    try t.expectEqualStrings("acme/api", tab.rows[0].pr.repo_full_name);
-    try t.expectEqualStrings("", tab.error_text);
-    try t.expectEqual(@as(usize, 0), tab.notes.len);
+const acme: cfg.Config = .{ .email = "me@x.com", .workspace = "acme", .repos = &.{ "api", "web" }, .refresh_interval_secs = 0, .tabs = &cfg.default_tabs };
+
+test "startup prefetches every tab, opens the trees, and the keys walk the rows the way the reference does" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    try t.expectEqual(@as(usize, 3), r.app.tabs.len);
+    for (r.app.tabs) |ts| try t.expect(ts.fetched);
+    try t.expectEqualStrings("acct-chris", r.app.me_account_id);
+    try t.expectEqualStrings("Open + Draft · 2 repos, 3 PRs", r.app.tabs[0].status);
+    // Both repos open on the first fetch: api, #1234 (fresh), web, #820, and a footer for #1198 (30 h old).
+    var rows = try r.rows();
+    try t.expectEqual(@as(usize, 5), rows.len);
+    try t.expect(rows[4] == .show_more);
+    _ = try r.key("j");
+    try t.expectEqual(@as(usize, 1), r.app.tabs[0].selected);
+    _ = try r.key("shift+g");
+    try t.expectEqual(@as(usize, 4), r.app.tabs[0].selected);
+    // Enter on the footer lifts the filter: #1198 appears.
+    _ = try r.key("enter");
+    rows = try r.rows();
+    try t.expectEqual(@as(usize, 5), rows.len);
+    try t.expect(rows[4] == .pr);
+    // `c` collapses everything; `e` opens it again; `h` on a PR row steps up to its repo.
+    _ = try r.key("c");
+    try t.expectEqual(@as(usize, 2), (try r.rows()).len);
+    _ = try r.key("e");
+    _ = try r.key("g");
+    _ = try r.key("j");
+    _ = try r.key("h");
+    rows = try r.rows();
+    try t.expectEqual(@as(usize, 0), r.app.tabs[0].selected);
+    try t.expect(!r.app.tabs[0].expanded.hasRepo("api"));
+    _ = try r.key("l");
+    try t.expect(r.app.tabs[0].expanded.hasRepo("api"));
+    _ = try r.key("l");
+    try t.expectEqual(@as(usize, 1), r.app.tabs[0].selected);
+    // `m` goes to Merged, `3` to Pipelines, tab wraps, `1` is back.
+    _ = try r.key("m");
+    try t.expectEqual(@as(usize, 1), r.app.active);
+    _ = try r.key("3");
+    try t.expectEqual(@as(usize, 2), r.app.active);
+    try t.expectEqual(cfg.Family.pipelines, r.app.family());
+    _ = try r.key("tab");
+    try t.expectEqual(@as(usize, 0), r.app.active);
+    _ = try r.key("backtab");
+    try t.expectEqual(@as(usize, 2), r.app.active);
+    // The pipelines tree: two repos open, api's four branches under it.
+    rows = try r.rows();
+    try t.expectEqual(@as(usize, 9), rows.len);
+    try t.expect(rows[1] == .branch);
+    try t.expect(!(try r.key("q")));
 }
 
-test "a mine tab resolves the account and fans out over the configured repos" {
-    const h = try Harness.init(&.{.{ .name = "Mine", .mode = .mine }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    try t.expectEqualStrings("acct-chris", h.app.me_account_id);
-    const tab = h.app.activeTab();
-    // Two repos, two PRs authored by the account (api#1234 and web#820).
-    try t.expectEqual(@as(usize, 2), tab.rows.len);
-    var ids: [2]i64 = undefined;
-    for (tab.rows, 0..) |row, i| ids[i] = row.pr.id;
-    try t.expect((ids[0] == 1234 and ids[1] == 820) or (ids[0] == 820 and ids[1] == 1234));
-}
-
-test "a reviewing tab asks for the PRs the account reviews, not the ones it wrote" {
-    const h = try Harness.init(&.{.{ .name = "Review queue", .mode = .reviewing }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    const tab = h.app.activeTab();
-    try t.expectEqual(@as(usize, 1), tab.rows.len);
-    try t.expectEqual(@as(i64, 1198), tab.rows[0].pr.id);
-}
-
-test "a mine tab with no Account: Read falls back the way the tab asked, and says which" {
-    // A token that reads pull requests but not the account: exactly
-    // what a Bitbucket app password without Account: Read does.
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-    var client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "read-tok", .{ .min_interval_ms = 0 });
-    defer client.deinit();
-
-    srv.denyUser(true);
-
-    // `.none`: the tab is empty and explains itself.
-    {
-        var app = try App.init(t.allocator, t.io, .{
-            .email = "a@b.c",
-            .workspace = "acme",
-            .repos = &.{"api"},
-            .tabs = &.{.{ .name = "Mine", .mode = .mine, .fallback = .none }},
-        }, &client);
-        defer app.deinit();
-        try app.switchTab(0);
-        try t.expectEqual(@as(usize, 0), app.activeTab().rows.len);
-        try t.expect(std.mem.indexOf(u8, app.activeTab().error_text, "Account: Read") != null);
-        try t.expectEqualStrings("", app.activeTab().fallback_note);
-    }
-    // `.workspace`: the same tab shows every open PR instead, and the
-    // tab strip says so.
-    {
-        var app = try App.init(t.allocator, t.io, .{
-            .email = "a@b.c",
-            .workspace = "acme",
-            .repos = &.{"api"},
-            .tabs = &.{.{ .name = "Mine", .mode = .mine, .fallback = .workspace }},
-        }, &client);
-        defer app.deinit();
-        try app.switchTab(0);
-        try t.expectEqualStrings("workspace", app.activeTab().fallback_note);
-        try t.expectEqual(@as(usize, 2), app.activeTab().rows.len);
-        try t.expectEqualStrings("", app.activeTab().error_text);
-    }
-}
-
-test "a repo that fails leaves a note and does not blank the rest of the tab" {
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-    var client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "tok", .{ .min_interval_ms = 0 });
-    defer client.deinit();
-    var app = try App.init(t.allocator, t.io, .{
-        .email = "a@b.c",
-        .workspace = "acme",
-        // `ghost` is not in the fake workspace: a 404 on one of three.
-        .repos = &.{ "api", "ghost", "web" },
-        .tabs = &.{.{ .name = "All", .mode = .workspace }},
-    }, &client);
-    defer app.deinit();
-    try app.switchTab(0);
-    const tab = app.activeTab();
-    try t.expectEqual(@as(usize, 3), tab.rows.len); // api's two + web's one
-    try t.expectEqual(@as(usize, 1), tab.notes.len);
-    try t.expect(std.mem.indexOf(u8, tab.notes[0], "ghost") != null);
-    try t.expect(std.mem.indexOf(u8, tab.notes[0], "no such repo") != null);
-}
-
-test "moving the selection, paging and the g / G ends" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    try t.expectEqual(@as(usize, 0), h.app.activeTab().selected);
-    _ = try h.key("j");
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().selected);
-    _ = try h.key("j"); // clamped at the end
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().selected);
-    _ = try h.key("g");
-    try t.expectEqual(@as(usize, 0), h.app.activeTab().selected);
-    _ = try h.key("G");
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().selected);
-    _ = try h.key("k");
-    try t.expectEqual(@as(usize, 0), h.app.activeTab().selected);
-    _ = try h.key("up"); // clamped at the top
-    try t.expectEqual(@as(usize, 0), h.app.activeTab().selected);
-}
-
-test "the filter narrows the list across every column, and esc puts it back" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    try t.expectEqual(@as(usize, 2), h.app.activeTab().visible.len);
-    _ = try h.key("/");
-    try t.expectEqual(Mode.filter, h.app.mode);
-    for ("login") |c| _ = try h.key(&[_]u8{c});
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().visible.len);
-    try t.expectEqual(@as(i64, 1234), h.app.activeTab().focused().?.id);
-    // A filter on the id, and on the author, and on the branch.
-    _ = try h.key("ctrl+u");
-    for ("1198") |c| _ = try h.key(&[_]u8{c});
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().visible.len);
-    _ = try h.key("ctrl+u");
-    for ("dana") |c| _ = try h.key(&[_]u8{c});
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().visible.len);
-    // Enter keeps it; esc from the list clears it.
-    _ = try h.key("enter");
-    try t.expectEqual(Mode.list, h.app.mode);
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().visible.len);
-    _ = try h.key("esc");
-    try t.expectEqual(@as(usize, 2), h.app.activeTab().visible.len);
-    // A filter that matches nothing leaves nothing focused rather than
-    // pointing at a row that is not there.
-    _ = try h.key("/");
-    for ("zzz") |c| _ = try h.key(&[_]u8{c});
-    try t.expectEqual(@as(usize, 0), h.app.activeTab().visible.len);
-    try t.expect(h.app.activeTab().focused() == null);
-    // And no action on an empty list is a crash.
-    _ = try h.key("esc");
-    _ = try h.key("enter");
-}
-
-test "backspace and a paste both reach the filter" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("/");
-    for ("loginX") |c| _ = try h.key(&[_]u8{c});
-    try t.expectEqual(@as(usize, 0), h.app.activeTab().visible.len);
-    _ = try h.key("backspace");
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().visible.len);
-    _ = try h.key("ctrl+u");
-    try h.app.paste("timeout");
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().visible.len);
-    try t.expectEqual(@as(i64, 1198), h.app.activeTab().focused().?.id);
-}
-
-test "enter opens the PR in a browser, y copies its URL and Y its branch" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("enter");
-    try t.expect(h.sawUrl("bitbucket.org/acme/api/pull-requests/1234"));
-    _ = try h.key("y");
-    try t.expect(h.sawCopy("pull-requests/1234"));
-    _ = try h.key("Y");
-    try t.expect(h.sawCopy("chris/fix-login"));
-}
-
-test "i sends a Jira key to the browser when no jira integration is installed, and cycles the keys" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("i");
-    try t.expect(h.sawUrl("https://acme.atlassian.net/browse/ENG-4210"));
-    // With the sibling installed, the same key runs its command instead.
-    h.app.jira_installed = true;
-    _ = try h.key("i");
-    try t.expect(h.sawCommand("jira.open"));
-    // A PR with no key says so rather than opening nothing.
-    _ = try h.key("j");
-    _ = try h.key("i");
-    try t.expect(std.mem.indexOf(u8, h.app.status, "no issue key") != null);
-}
-
-test "approve is confirmed first, then goes out on the write token and shows up on the server" {
-    const h = try Harness.init(&.{.{ .name = "Review queue", .mode = .reviewing }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    try t.expectEqual(@as(i64, 1198), h.app.activeTab().focused().?.id);
-
-    _ = try h.key("a");
-    try t.expectEqual(Mode.confirm, h.app.mode);
-    try t.expect(std.mem.indexOf(u8, h.app.pending_detail, "Approve acme/api#1198?") != null);
-    // Escaping the confirm changes nothing on the server.
-    _ = try h.key("esc");
-    try t.expectEqual(Mode.list, h.app.mode);
-    try t.expectEqual(@as(@TypeOf(h.srv.snapshot().votes[0]), .none), h.srv.snapshot().voteFor(1198));
-
-    _ = try h.key("a");
-    _ = try h.key("y");
-    try t.expectEqual(Mode.list, h.app.mode);
-    try t.expectEqual(@as(@TypeOf(h.srv.snapshot().votes[0]), .approved), h.srv.snapshot().voteFor(1198));
-    try t.expect(h.sawToast("approved acme/api#1198"));
-}
-
-test "request changes and the two withdrawals are the same shape" {
-    const h = try Harness.init(&.{.{ .name = "Review queue", .mode = .reviewing }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("x");
-    try t.expect(std.mem.indexOf(u8, h.app.pending_detail, "Request changes on") != null);
-    _ = try h.key("y");
-    try t.expectEqual(@as(@TypeOf(h.srv.snapshot().votes[0]), .changes_requested), h.srv.snapshot().voteFor(1198));
-    _ = try h.key("X");
-    _ = try h.key("y");
-    try t.expectEqual(@as(@TypeOf(h.srv.snapshot().votes[0]), .none), h.srv.snapshot().voteFor(1198));
-}
-
-test "the merge confirm names the strategy, s cycles it, and a non-open PR is refused outright" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("m");
-    try t.expect(std.mem.indexOf(u8, h.app.pending_detail, "Merge acme/api#1234") != null);
-    try t.expect(std.mem.indexOf(u8, h.app.pending_detail, "strategy: squash") != null);
-    try t.expect(std.mem.indexOf(u8, h.app.pending_detail, "close source branch: yes") != null);
-    _ = try h.key("esc");
-    _ = try h.key("s");
-    try t.expect(std.mem.indexOf(u8, h.app.status, "merge commit") != null);
-    _ = try h.key("m");
-    try t.expect(std.mem.indexOf(u8, h.app.pending_detail, "strategy: merge commit") != null);
-    _ = try h.key("y");
-    try t.expect(h.srv.snapshot().isMerged(1234));
-    try t.expect(h.sawToast("merged acme/api#1234"));
-    // The refresh after the merge moved it out of the OPEN tab.
-    try t.expectEqual(@as(usize, 1), h.app.activeTab().rows.len);
-
-    // A MERGED PR cannot be merged again, and the pane says why before
-    // asking for a confirm it would only have to take back.
-    const merged = try Harness.init(&.{.{ .name = "merged", .mode = .repo, .repo = "api", .state = .MERGED }});
-    defer merged.deinit();
-    try merged.app.switchTab(0);
-    _ = try merged.key("m");
-    try t.expectEqual(Mode.list, merged.app.mode);
-    try t.expect(merged.sawToast("only an OPEN pull request can be merged"));
-}
-
-test "c opens a prompt with a full text field, and enter posts the comment" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("c");
-    try t.expectEqual(Mode.prompt, h.app.mode);
-    for ("shp t") |ch| _ = try h.key(if (ch == ' ') "space" else &[_]u8{ch});
-    // The field is not append-only: move left, insert, delete forward.
-    _ = try h.key("home");
-    _ = try h.key("right");
-    _ = try h.key("right");
-    _ = try h.key("i");
-    try t.expectEqualStrings("ship t", h.app.prompt_buf.items);
-    _ = try h.key("end");
-    try h.app.paste("his");
-    try t.expectEqualStrings("ship this", h.app.prompt_buf.items);
-    _ = try h.key("backspace");
-    try t.expectEqualStrings("ship thi", h.app.prompt_buf.items);
-    _ = try h.key("left");
-    _ = try h.key("delete");
-    try t.expectEqualStrings("ship th", h.app.prompt_buf.items);
-
-    _ = try h.key("enter");
-    try t.expectEqual(Mode.list, h.app.mode);
-    try t.expectEqual(@as(usize, 1), h.srv.snapshot().comment_count);
-    try t.expectEqualStrings("ship th", h.srv.snapshot().comments[0].text);
-    try t.expect(h.sawToast("commented on acme/api#1234"));
-}
-
-test "esc abandons the comment and posts nothing; an empty comment posts nothing either" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("c");
-    for ("nope") |ch| _ = try h.key(&[_]u8{ch});
-    _ = try h.key("esc");
-    try t.expectEqual(@as(usize, 0), h.srv.snapshot().comment_count);
-    _ = try h.key("c");
-    _ = try h.key("space");
-    _ = try h.key("enter");
-    try t.expectEqual(@as(usize, 0), h.srv.snapshot().comment_count);
-    try t.expect(std.mem.indexOf(u8, h.app.status, "nothing to post") != null);
-}
-
-test "the detail fetches the PR, its reviewers, its builds, its diffstat, its diff and its threads" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("d");
-    try t.expect(h.app.show_detail);
-    const d = h.app.detail.?;
+test "the detail follows the cursor, and `a` approves then withdraws on the fake server" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    _ = try r.key("j");
+    _ = try r.key("d");
+    try t.expect(r.app.detail_visible);
+    var rows = try r.rows();
+    const d = r.app.focusedDetail(rows).?;
     try t.expectEqual(@as(i64, 1234), d.pr.id);
-    try t.expectEqual(@as(usize, 2), d.reviewers.len);
-    try t.expectEqual(@as(usize, 2), d.builds.len);
-    try t.expectEqual(@as(usize, 2), d.files.len);
-    try t.expect(std.mem.startsWith(u8, d.diff, "diff --git"));
-    // Three comments plus two votes in the stream.
-    try t.expect(d.activity.len >= 3);
-    try t.expectEqual(@as(usize, 1), d.jira_keys.len);
-    try t.expectEqualStrings("ENG-4210", d.jira_keys[0].text);
-    // The list row picked up the failed build.
-    try t.expectEqualStrings("FAILED", h.app.activeTab().rows[0].build.?.state);
-
-    // Moving the selection re-fetches for the newly focused PR.
-    _ = try h.key("j");
-    try t.expectEqual(@as(i64, 1198), h.app.detail.?.pr.id);
-    // D folds the diff away without dropping the detail.
-    _ = try h.key("D");
-    try t.expect(!h.app.show_diff);
-    // d closes it.
-    _ = try h.key("d");
-    try t.expect(!h.app.show_detail);
+    try t.expectEqual(@as(usize, 3), d.comments.len);
+    // #1234 is mine and Dana approved it; I have not.
+    try t.expect(!d.pr.approvedBy("acct-chris"));
+    _ = try r.key("a");
+    try t.expectEqual(server.State.Vote.approved, r.srv.snapshot().voteFor(1234));
+    rows = try r.rows();
+    try t.expect(r.app.focusedDetail(rows).?.pr.approvedBy("acct-chris"));
+    try t.expect(std.mem.startsWith(u8, r.app.status.items, "approved acme/api#1234"));
+    _ = try r.key("a");
+    try t.expectEqual(server.State.Vote.none, r.srv.snapshot().voteFor(1234));
+    // Moving to web's #820 fetches that detail.
+    _ = try r.key("j");
+    _ = try r.key("j");
+    rows = try r.rows();
+    try t.expectEqual(@as(i64, 820), r.app.focusedDetail(rows).?.pr.id);
+    // Without the detail open `a` is not bound.
+    _ = try r.key("d");
+    try t.expect(!r.app.detail_visible);
+    _ = try r.key("a");
+    try t.expectEqual(server.State.Vote.none, r.srv.snapshot().voteFor(820));
 }
 
-test "a detail that fails to fetch keeps the pane alive and says what went wrong" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    // Point the client at a dead port so the detail's fetch fails.
-    h.client.gpa.free(h.client.base_url);
-    h.client.base_url = try t.allocator.dupe(u8, "http://127.0.0.1:1/2.0");
-    _ = try h.key("d");
-    try t.expect(h.app.detail != null);
-    try t.expect(std.mem.indexOf(u8, h.app.detail.?.error_text, "network error") != null);
+test "the persisting keys rewrite config.zon: hide, un-hide, scope, reorder" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    _ = try r.app.keyPress("x");
+    try t.expectEqualStrings("hid api (H to un-hide all)", r.app.status.items);
+    try r.drain();
+    try t.expectEqual(@as(usize, 1), r.app.hidden.items.len);
+    var text = try Io.Dir.cwd().readFileAlloc(t.io, r.config_path, t.allocator, .limited(1 << 16));
+    try t.expect(std.mem.indexOf(u8, text, ".hidden_repos = .{\"api\"}") != null or std.mem.indexOf(u8, text, ".hidden_repos = .{ \"api\" }") != null);
+    t.allocator.free(text);
+    // The tree refetched without api.
+    try t.expectEqual(@as(usize, 1), r.app.tabs[0].data.repo_pr_tree.len);
+    try t.expectEqualStrings("web", r.app.tabs[0].data.repo_pr_tree[0].slug);
+    _ = try r.app.keyPress("shift+h");
+    try t.expectEqualStrings("un-hid 1 repo(s)", r.app.status.items);
+    try r.drain();
+    try t.expectEqual(@as(usize, 2), r.app.tabs[0].data.repo_pr_tree.len);
+    _ = try r.key("shift+h");
+    try t.expectEqualStrings("nothing hidden", r.app.status.items);
+    // recent → (explicit skipped: no list) → all → recent.
+    _ = try r.app.keyPress("s");
+    try t.expectEqualStrings("scope: all", r.app.status.items);
+    try t.expectEqual(cfg.Scope.all, r.app.scope);
+    try r.drain();
+    _ = try r.app.keyPress("s");
+    try t.expectEqualStrings("scope: recent", r.app.status.items);
+    try r.drain();
+    // alt+down on api moves it under web and writes the order.
+    _ = try r.key("g");
+    _ = try r.key("alt+down");
+    try t.expectEqualStrings("web", r.app.tabs[0].data.repo_pr_tree[0].slug);
+    try t.expectEqualStrings("web", r.app.order.items[0]);
+    text = try Io.Dir.cwd().readFileAlloc(t.io, r.config_path, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".repo_order") != null);
+    // The cursor followed the repo.
+    const rows = try r.rows();
+    try t.expect(rows[r.app.tabs[0].selected] == .repo_header);
+    try t.expectEqual(@as(usize, 1), rows[r.app.tabs[0].selected].repo_header.repo);
 }
 
-test "a write with no token at all is refused before a request goes out" {
-    const srv = try listener.Server.start(t.allocator, t.io, 0);
-    defer srv.stop();
-    const base = try srv.baseUrl(t.allocator);
-    defer t.allocator.free(base);
-    // A read token but no write token, with the borrow turned off.
-    var client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{ .min_interval_ms = 0 });
-    defer client.deinit();
-    client.write_refusal = "no write token: set BITBUCKET_ACCESS_TOKEN";
-    var app = try App.init(t.allocator, t.io, .{
-        .email = "a@b.c",
-        .workspace = "acme",
-        .repos = &.{"api"},
-        .tabs = &.{.{ .name = "api", .mode = .repo, .repo = "api" }},
-    }, &client);
-    defer app.deinit();
-    try app.switchTab(0);
-    const before = client.sent;
-    _ = try app.key("a");
-    _ = try app.key("y");
-    try t.expectEqual(before, client.sent);
-    try t.expect(std.mem.indexOf(u8, app.status, "BITBUCKET_ACCESS_TOKEN") != null);
-    try t.expectEqual(@as(@TypeOf(srv.snapshot().votes[0]), .none), srv.snapshot().voteFor(1234));
+test "`--only` keeps one family; `--only prs-mine` synthesises a Mine tab; the strip shows only with two tabs" {
+    const p = try Rig.init(acme, .{ .only = .pipelines });
+    defer p.deinit();
+    try t.expectEqual(@as(usize, 1), p.app.tabs.len);
+    try t.expect(!p.app.showTabStrip());
+    const prs = try Rig.init(acme, .{ .only = .prs });
+    defer prs.deinit();
+    try t.expectEqual(@as(usize, 2), prs.app.tabs.len);
+    try t.expect(prs.app.showTabStrip());
+    const mine = try Rig.init(acme, .{ .only = .prs, .mine = true });
+    defer mine.deinit();
+    try t.expectEqual(@as(usize, 1), mine.app.tabs.len);
+    try t.expectEqualStrings("Mine", mine.app.tabs[0].spec.name);
+    try t.expect(mine.app.tabs[0].spec.mine_only);
+    // Two repos with my PRs, one each; a merged peek would need a
+    // stateless tab.
+    try t.expectEqual(@as(usize, 2), mine.app.tabs[0].data.repo_pr_tree.len);
 }
 
-test "checkout refuses when the workspace is not a clone of the PR's repo, and never asks to confirm" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    var tmp = t.tmpDir(.{});
-    defer tmp.cleanup();
-    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
-    h.app.workspace_dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    // The scratch dir is inside this checkout, so git answers about
-    // mnml-zig — which is not acme/api either way.
-    _ = try h.key("C");
-    try t.expectEqual(Mode.list, h.app.mode);
-    try t.expect(h.sawToast("cannot check out chris/fix-login"));
-    // And with checkout switched off in config, the refusal names that.
-    h.app.config.mnml.allow_checkout = false;
-    _ = try h.key("C");
-    try t.expect(h.sawToast("allow_checkout"));
+test "the filter narrows the rows and esc clears it; the statusline values land as a segment effect" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    _ = try r.key("/");
+    try t.expectEqual(Mode.filter, r.app.mode);
+    for ("empty") |c| _ = try r.key(&[_]u8{c});
+    _ = try r.key("enter");
+    try t.expectEqualStrings("empty", r.app.filter.items);
+    // Headers stay; only web's #820 "Redesign the empty state" matches (#1198 is behind the footer anyway).
+    var rows = try r.rows();
+    try t.expectEqual(@as(usize, 4), rows.len);
+    try t.expect(rows[3] == .show_more or rows[3] == .pr);
+    _ = try r.key("esc");
+    rows = try r.rows();
+    try t.expectEqual(@as(usize, 5), rows.len);
+    // The values chip: my two open PRs, one still unapproved.
+    try t.expectEqual(@as(usize, 2), r.app.values.?.open_mine);
+    try t.expectEqual(@as(usize, 1), r.app.values.?.unapproved_mine);
 }
 
-test "tabs switch by number and by Tab, and each fetches once" {
-    const h = try Harness.init(&.{
-        .{ .name = "Mine", .mode = .mine },
-        .{ .name = "Review queue", .mode = .reviewing },
-        .{ .name = "api", .mode = .repo, .repo = "api" },
-    });
-    defer h.deinit();
-    try h.app.switchTab(0);
-    try t.expect(h.app.tabs[0].fetched);
-    try t.expect(!h.app.tabs[1].fetched);
-    _ = try h.key("2");
-    try t.expectEqual(@as(usize, 1), h.app.active);
-    try t.expect(h.app.tabs[1].fetched);
-    const fetched_at = h.app.tabs[1].last_fetch_ms;
-    _ = try h.key("1");
-    _ = try h.key("2");
-    try t.expectEqual(fetched_at, h.app.tabs[1].last_fetch_ms); // not re-fetched
-    _ = try h.key("tab");
-    try t.expectEqual(@as(usize, 2), h.app.active);
-    _ = try h.key("tab");
-    try t.expectEqual(@as(usize, 0), h.app.active);
-    _ = try h.key("shift+tab");
-    try t.expectEqual(@as(usize, 2), h.app.active);
-    // A number past the end does nothing rather than panicking.
-    _ = try h.key("9");
-    try t.expectEqual(@as(usize, 2), h.app.active);
-    // r re-fetches the active tab.
-    _ = try h.key("r");
-    try t.expect(h.app.tabs[2].fetched);
+test "a click selects the row it lands on, a right-click opens its menu, the author chip toggles mine-only" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    // The hit map is the painter's; stand in for one frame here.
+    r.app.hits.reset();
+    r.app.hits.add(.{ .x = 0, .y = 4, .w = 120, .h = 1 }, .{ .row = 0 });
+    r.app.hits.add(.{ .x = 0, .y = 5, .w = 120, .h = 1 }, .{ .row = 1 });
+    r.app.hits.add(.{ .x = 0, .y = 6, .w = 120, .h = 1 }, .{ .row = 2 });
+    r.app.hits.add(.{ .x = 100, .y = 0, .w = 12, .h = 1 }, .{ .chip = .author });
+    r.app.hits.add(.{ .x = 30, .y = 1, .w = 10, .h = 1 }, .{ .tab = 1 });
+    _ = try r.app.click(5, 5, .left);
+    try t.expectEqual(@as(usize, 1), r.app.tabs[0].selected);
+    // A click on the repo header toggles it, as the reference does.
+    _ = try r.app.click(5, 4, .left);
+    try t.expect(!r.app.tabs[0].expanded.hasRepo("api"));
+    _ = try r.app.click(5, 4, .left);
+    try t.expect(r.app.tabs[0].expanded.hasRepo("api"));
+    _ = try r.app.click(5, 5, .right);
+    try t.expectEqual(Mode.menu, r.app.mode);
+    try t.expectEqual(Action.toggle_detail, r.app.menu.?.items[0]);
+    _ = try r.key("esc");
+    try t.expectEqual(Mode.list, r.app.mode);
+    _ = try r.app.click(35, 1, .left);
+    try t.expectEqual(@as(usize, 1), r.app.active);
+    _ = try r.app.click(31, 1, .left);
+    _ = try r.app.click(105, 0, .left);
+    try t.expectEqualStrings("Merged: filter → Authored by me", r.app.status.items);
+    try r.drain();
+    try t.expect(r.app.tabs[1].spec.mine_only);
+    _ = try r.app.click(105, 0, .left);
+    try r.drain();
+    try t.expect(!r.app.tabs[1].spec.mine_only);
 }
 
-test "a stale tab re-fetches on the next key, and a fresh one does not" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    h.app.config.refresh_interval_secs = 300;
-    try h.app.switchTab(0);
-    const first = h.app.activeTab().last_fetch_ms;
-    _ = try h.key("j");
-    try t.expectEqual(first, h.app.activeTab().last_fetch_ms);
-    // Pretend the pane has been open for an hour.
-    h.app.activeTab().last_fetch_ms -= 3600 * 1000;
-    _ = try h.key("k");
-    try t.expect(h.app.activeTab().last_fetch_ms > first - 3600 * 1000);
-    // 0 turns it off: an ancient tab stays put until `r`.
-    h.app.config.refresh_interval_secs = 0;
-    h.app.activeTab().last_fetch_ms = 0;
-    _ = try h.key("j");
-    try t.expectEqual(@as(i64, 0), h.app.activeTab().last_fetch_ms);
-    _ = try h.key("r");
-    try t.expect(h.app.activeTab().last_fetch_ms > 0);
-}
-
-test "a refresh brackets itself with a progress effect mnml can paint" {
-    const h = try Harness.init(&.{.{ .name = "Mine", .mode = .mine }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    var started = false;
-    var ended = false;
-    var updates: usize = 0;
-    for (h.effects()) |e| switch (e) {
-        .progress_start => |x| {
-            started = std.mem.indexOf(u8, x.label, "Mine") != null;
-        },
-        .progress_update => updates += 1,
-        .progress_end => |x| ended = x.ok,
-        else => {},
-    };
-    try t.expect(started);
-    try t.expect(ended);
-    try t.expectEqual(@as(usize, 2), updates); // one per repo
-}
-
-test "q quits and ? opens the key help, which any key closes" {
-    const h = try Harness.init(&.{.{ .name = "api", .mode = .repo, .repo = "api" }});
-    defer h.deinit();
-    try h.app.switchTab(0);
-    _ = try h.key("?");
-    try t.expectEqual(Mode.help, h.app.mode);
-    _ = try h.key("j");
-    try t.expectEqual(Mode.list, h.app.mode);
-    try t.expect(!try h.key("q"));
-    var saw_quit = false;
-    for (h.effects()) |e| if (e == .quit) {
-        saw_quit = true;
-    };
-    try t.expect(saw_quit);
-}
-
-test "an uppercase letter arrives as shift+<lower>, and a back-tab as backtab" {
-    var buf: [8]u8 = undefined;
-    try t.expectEqualStrings("D", normalizeSpec("shift+d", &buf));
-    try t.expectEqualStrings("A", normalizeSpec("shift+a", &buf));
-    try t.expectEqualStrings("?", normalizeSpec("shift+/", &buf));
-    try t.expectEqualStrings("backtab", normalizeSpec("shift+tab", &buf));
-    try t.expectEqualStrings("backtab", normalizeSpec("backtab", &buf));
-    // Anything else is left exactly as it arrived.
-    try t.expectEqualStrings("d", normalizeSpec("d", &buf));
-    try t.expectEqualStrings("ctrl+shift+p", normalizeSpec("ctrl+shift+p", &buf));
-    try t.expectEqualStrings("shift+f5", normalizeSpec("shift+f5", &buf));
-}
-
-test "the shifted spelling of a key does what the plain one does" {
-    const h = try Harness.init(&.{
-        .{ .name = "api", .mode = .repo, .repo = "api" },
-        .{ .name = "web", .mode = .repo, .repo = "web" },
-    });
-    defer h.deinit();
-    try h.app.switchTab(0);
-    try t.expect(h.app.show_diff);
-    _ = try h.key("shift+d");
-    try t.expect(!h.app.show_diff);
-    _ = try h.key("tab");
-    try t.expectEqual(@as(usize, 1), h.app.active);
-    _ = try h.key("shift+tab");
-    try t.expectEqual(@as(usize, 0), h.app.active);
-    _ = try h.key("shift+/");
-    try t.expectEqual(Mode.help, h.app.mode);
-}
-
-test "a key spec is text only when it is one printable character" {
-    try t.expect(isText("a"));
-    try t.expect(isText("Z"));
-    try t.expect(isText("/"));
-    try t.expect(isText("é"));
-    try t.expect(!isText("ctrl+u"));
-    try t.expect(!isText("enter"));
-    try t.expect(!isText("esc"));
-    try t.expect(!isText(""));
-}
+const server = @import("../tools/fake_bitbucket/server.zig");

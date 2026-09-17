@@ -60,7 +60,7 @@ fields. An unknown **tag** is an error.
 
 | tag | payload | when |
 |---|---|---|
-| `hello` | `{protocol, geometry, theme, workspace, capabilities}` | once, first |
+| `hello` | `{protocol, geometry, theme, workspace, capabilities, palette?}` | once, first |
 | `resize` | `{geometry}` | the pane's body changed size |
 | `input` | `{event}` | the user did something (below) |
 | `focus` | `true` / `false` | the pane gained / lost the keyboard |
@@ -81,6 +81,15 @@ cares can pick indices itself. `nerd_font=false` / `ascii=true` say to
 use plain glyphs.
 
 `geometry` is the pane's **body** in cells: the tab strip is not yours.
+
+`hello.palette` (optional) carries the host theme's roles as colours —
+`fg`, `bg`, `muted`, `accent`, `border`, `panel_bg`, `cursor_line`,
+`chip_fg` / `chip_bg`, `chip_active_fg` / `chip_active_bg`, and the named
+`red green yellow orange blue cyan purple comment` — each `{"rgb":[r,g,b]}`
+/ `{"index":n}` or null. A sibling that paints with them looks native in
+whatever theme it is mounted in; one that ignores them (or a host that
+predates the field) gets the terminal palette through `Color.index` as
+before.
 
 ### `InputEvent`
 

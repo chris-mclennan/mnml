@@ -1,0 +1,41 @@
+# the headless surfaces, against the fake server (tools/bitbucket-capture.py)
+
+$ mnml-forge-bitbucket --values
+{"open_mine":2,"unapproved_mine":1,"approved_mine":1}
+
+$ mnml-forge-bitbucket --list-prs --json
+{"host":"bitbucket","prs":[]}
+
+$ mnml-forge-bitbucket --find-pipeline-for-pr --owner acme --repo api --branch main --json
+{"url":"https://bitbucket.org/acme/api/pipelines/results/412"}
+
+$ mnml-forge-bitbucket --check
+config: /var/folders/md/rtcqqnkn661bgwnl4h__tgz80000gn/T/bb-capture-drxzjxq7/home-headless/.config/mnml-forge-bitbucket.toml
+token source: env: BITBUCKET_API_TOKEN (loaded, 1 chars)
+workspace: acme
+email: me@example.com
+refresh_interval_secs: 0
+scope: recent
+recent_window_days: 14
+whoami: ok — Chris M (account_id: acct-chris)
+  tab 1 (Open + Draft): kind=workspace_open_prs, state=OPEN
+  tab 2 (Merged): kind=workspace_merged_prs, state=OPEN
+  tab 3 (Pipelines): kind=workspace_pipelines, state=OPEN
+
+── live workspace fetch ──
+repos_with_activity: 2 total
+  api — updated_on="2026-09-17T05:54:01.000000+00:00"
+  web — updated_on="2026-09-16T06:54:01.000000+00:00"
+
+OPEN PRs (first 3 repos = ["api", "web"]):
+  ok, 3 prs
+    #1234 Fix the login redirect
+    #820 Redesign the empty state
+    #1198 Bump the client timeout to 30s
+
+MERGED PRs (same 3 repos):
+  ok, 2 prs
+
+PIPELINES tree (same 3 repos):
+  api — 6 branches, first branch has pipeline: true
+  web — 3 branches, first branch has pipeline: true

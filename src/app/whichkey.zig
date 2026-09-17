@@ -16,12 +16,22 @@ pub const Node = union(enum) {
     cmd: struct { id: CommandId, label: []const u8 },
     group: struct { label: []const u8, kids: []const Entry },
     dead: struct { id: []const u8, label: []const u8 },
+    /// A command an installed integration registered, with the chord
+    /// its manifest declared. The strings belong to the registry, which
+    /// outlives the frame.
+    dyn: struct { id: []const u8, label: []const u8 },
+    /// The step into a deeper integration chord (`<leader>ij` on the
+    /// way to `<leader>ijw`). Its children are read from the registry
+    /// the same way, so there is no tree to keep in step.
+    dyn_group: struct { label: []const u8 },
 
     pub fn label(n: *const Node) []const u8 {
         return switch (n.*) {
             .cmd => |c| c.label,
             .group => |g| g.label,
             .dead => |d| d.label,
+            .dyn => |d| d.label,
+            .dyn_group => |g| g.label,
         };
     }
 };
@@ -298,10 +308,88 @@ pub fn lookupIn(path: []const u8, vim: bool) ?*const Node {
                     if (k.key == ch and (vim or !k.vim_only)) break &k.node;
                 } else return null;
             },
-            .cmd, .dead => return null,
+            .cmd, .dead, .dyn, .dyn_group => return null,
         }
     }
     return node;
+}
+
+// ─── the rows an installed integration adds ─────────────────────────────
+
+/// The continuation an integration's chord contributes at `path`, if
+/// any: `<leader>ib` seen from `"i"` is the leaf `b`, and `<leader>ijw`
+/// seen from `"i"` is the step `j`. Only all-ASCII, unmodified,
+/// space-led chords take part — anything else is a chord, not a leader
+/// row, and is left to the keymap.
+fn dynEntryAt(spec: []const u8, path: []const u8, id: []const u8, title: []const u8, owner: []const u8) ?Entry {
+    var it = std.mem.splitScalar(u8, spec, ' ');
+    const head = it.next() orelse return null;
+    if (!std.mem.eql(u8, head, "space")) return null;
+    var rest: [max_depth + 1]u8 = undefined;
+    var n: usize = 0;
+    while (it.next()) |tok| {
+        if (tok.len != 1 or tok[0] < 0x21 or tok[0] > 0x7e) return null;
+        if (n == rest.len) return null;
+        rest[n] = tok[0];
+        n += 1;
+    }
+    if (n <= path.len) return null;
+    if (!std.mem.eql(u8, rest[0..path.len], path)) return null;
+    const key = rest[path.len];
+    if (n == path.len + 1) return .{ .key = key, .node = .{ .dyn = .{ .id = id, .label = title } } };
+    return .{ .key = key, .node = .{ .dyn_group = .{ .label = owner } } };
+}
+
+/// Every integration row at `path`, in registration order, skipping a
+/// key the static tree already owns — the built-in wins, so installing
+/// something can never take a chord out from under the editor.
+pub fn dynamicKids(arena: std.mem.Allocator, reg: *const command.DynRegistry, path: []const u8, static_kids: []const Entry) std.mem.Allocator.Error![]const Entry {
+    var out: std.ArrayList(Entry) = .empty;
+    var slot: u32 = 0;
+    while (reg.at(slot)) |c| : (slot += 1) {
+        const owner = switch (c.owner) {
+            .integration => |name| name,
+            else => "plugin",
+        };
+        for (c.keys) |spec| {
+            const e = dynEntryAt(spec, path, c.id, c.title, owner) orelse continue;
+            var taken = false;
+            for (static_kids) |k| {
+                if (k.key == e.key) taken = true;
+            }
+            for (out.items) |k| {
+                if (k.key == e.key) taken = true;
+            }
+            if (!taken) try out.append(arena, e);
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The node at `path` counting the integrations' rows — what the popup
+/// descends through and what a press resolves against.
+pub fn lookupWith(arena: std.mem.Allocator, reg: *const command.DynRegistry, path: []const u8, vim: bool) std.mem.Allocator.Error!?Node {
+    if (lookupIn(path, vim)) |n| return n.*;
+    if (path.len == 0) return null;
+    const parent = path[0 .. path.len - 1];
+    // The parent must itself exist, statically or as a step.
+    if ((try lookupWith(arena, reg, parent, vim)) == null) return null;
+    const statics = continuations(arena, parent, vim);
+    for (try dynamicKids(arena, reg, parent, statics)) |e| {
+        if (e.key == path[path.len - 1]) return e.node;
+    }
+    return null;
+}
+
+/// `continuations` plus the integrations' rows.
+pub fn kidsWith(arena: std.mem.Allocator, reg: *const command.DynRegistry, path: []const u8, vim: bool) std.mem.Allocator.Error![]const Entry {
+    const statics = continuations(arena, path, vim);
+    const dyns = try dynamicKids(arena, reg, path, statics);
+    if (dyns.len == 0) return statics;
+    var out = try arena.alloc(Entry, statics.len + dyns.len);
+    @memcpy(out[0..statics.len], statics);
+    @memcpy(out[statics.len..], dyns);
+    return out;
 }
 
 /// The continuations at `path` for the profile; empty when it is not
@@ -310,7 +398,7 @@ pub fn continuations(arena: std.mem.Allocator, path: []const u8, vim: bool) []co
     const n = lookupIn(path, vim) orelse return &.{};
     const kids = switch (n.*) {
         .group => |g| g.kids,
-        .cmd, .dead => return &.{},
+        .cmd, .dead, .dyn, .dyn_group => return &.{},
     };
     if (vim) return kids;
     var any = false;
@@ -334,7 +422,10 @@ pub fn continuations(arena: std.mem.Allocator, path: []const u8, vim: bool) []co
 /// entries out, as that profile's popup does.
 pub fn chordCount(n: *const Node, vim: bool) u16 {
     return switch (n.*) {
-        .cmd, .dead => 1,
+        .cmd, .dead, .dyn => 1,
+        // A step's rows are the registry's; the popup counts them when
+        // it paints the row, not here.
+        .dyn_group => 1,
         .group => |g| blk: {
             var sum: u16 = 0;
             for (g.kids) |k| {
@@ -478,7 +569,7 @@ fn leavesUnder(n: *const Node, vim: bool) u16 {
         n_stack -= 1;
         const node = stack[n_stack];
         switch (node.*) {
-            .cmd, .dead => leaves += 1,
+            .cmd, .dead, .dyn, .dyn_group => leaves += 1,
             .group => |g| for (g.kids) |*k| {
                 if (!vim and k.vim_only) continue;
                 stack[n_stack] = &k.node;
@@ -491,7 +582,7 @@ fn leavesUnder(n: *const Node, vim: bool) u16 {
 
 fn expectUniqueKeys(n: *const Node) !void {
     switch (n.*) {
-        .cmd, .dead => {},
+        .cmd, .dead, .dyn, .dyn_group => {},
         .group => |g| {
             for (g.kids, 0..) |a, i| {
                 for (g.kids[i + 1 ..]) |b| if (a.key == b.key) {
@@ -532,4 +623,84 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
     try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expect(app.overlay == .none);
     try t.expectEqualStrings("no leader mapping: <leader>\\", app.lastToast().?);
+}
+
+test "an installed integration's chord is a row under +integrations, and a built-in row still wins" {
+    const t = std.testing;
+    const app_mod = @import("../app.zig");
+    var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The two chords the Bitbucket manifests declare, a Jira-shaped
+    // deeper one, and one that collides with a built-in row.
+    _ = try app.dyn_commands.register(.{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open", .keys = &.{"space i b"}, .owner = .{ .integration = "bitbucket_prs" } });
+    _ = try app.dyn_commands.register(.{ .id = "bitbucket_pipelines.open", .title = "Bitbucket Pipelines: open", .keys = &.{"space i l"}, .owner = .{ .integration = "bitbucket_pipelines" } });
+    _ = try app.dyn_commands.register(.{ .id = "jira_work.open", .title = "Jira Work: open", .keys = &.{"space i j w"}, .owner = .{ .integration = "jira_work" } });
+    _ = try app.dyn_commands.register(.{ .id = "greedy.open", .title = "Greedy", .keys = &.{"space i d"}, .owner = .{ .integration = "greedy" } });
+
+    const kids = try kidsWith(arena, &app.dyn_commands, "i", true);
+    var saw_b = false;
+    var saw_l = false;
+    var saw_j = false;
+    var d_is_static = false;
+    for (kids) |k| switch (k.key) {
+        'b' => {
+            saw_b = true;
+            try t.expectEqualStrings("bitbucket_prs.open", k.node.dyn.id);
+            try t.expectEqualStrings("Bitbucket PRs: open", k.node.label());
+        },
+        'l' => {
+            saw_l = true;
+            try t.expectEqualStrings("bitbucket_pipelines.open", k.node.dyn.id);
+        },
+        // The three-deep chord shows as the step it is, labelled by the
+        // integration that owns it.
+        'j' => {
+            saw_j = true;
+            try t.expectEqualStrings("jira_work", k.node.dyn_group.label);
+        },
+        // `i d` is `integrations.show_details`: the built-in keeps it.
+        'd' => d_is_static = k.node == .cmd,
+        else => {},
+    };
+    try t.expect(saw_b and saw_l and saw_j);
+    try t.expect(d_is_static);
+
+    // Resolution by path, which is what a press in the popup uses.
+    try t.expectEqualStrings("bitbucket_prs.open", (try lookupWith(arena, &app.dyn_commands, "ib", true)).?.dyn.id);
+    try t.expectEqualStrings("bitbucket_pipelines.open", (try lookupWith(arena, &app.dyn_commands, "il", true)).?.dyn.id);
+    try t.expect((try lookupWith(arena, &app.dyn_commands, "ij", true)).? == .dyn_group);
+    try t.expectEqualStrings("jira_work.open", (try lookupWith(arena, &app.dyn_commands, "ijw", true)).?.dyn.id);
+    try t.expect((try lookupWith(arena, &app.dyn_commands, "iz", true)) == null);
+    // A chord that is not leader-led is not a row.
+    _ = try app.dyn_commands.register(.{ .id = "other.open", .title = "Other", .keys = &.{"ctrl+alt+o"}, .owner = .{ .integration = "other" } });
+    try t.expectEqual(kids.len, (try kidsWith(arena, &app.dyn_commands, "i", true)).len);
+
+    // And the popup walks to it: <leader> i b runs the command.
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    try t.expectEqualStrings("i", app.overlay.which_key.slice());
+    try app.handle(.{ .key = app_mod.Key.char('b') });
+    try t.expect(app.overlay == .none);
+}
+
+test "no built-in chord claims `space i b` or `space i l`, so the Bitbucket manifests cannot shadow one" {
+    const t = std.testing;
+    const specs = @import("../commands/specs.zig");
+    for (specs.specs) |s| {
+        const lists = [_][]const []const u8{ s.keys.vim, s.keys.standard, s.keys.both };
+        for (lists) |list| {
+            for (list) |k| {
+                try t.expect(!std.mem.eql(u8, k, "space i b"));
+                try t.expect(!std.mem.eql(u8, k, "space i l"));
+            }
+        }
+    }
+    // Nor does the leader tree carry a row on those paths.
+    try t.expect(lookup("ib") == null);
+    try t.expect(lookup("il") == null);
+    try t.expect(lookup("i") != null);
 }
