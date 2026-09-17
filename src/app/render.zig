@@ -1493,6 +1493,59 @@ pub fn breadcrumbDir(app: *App, arena: Allocator, path: []const u8, idx: usize) 
     return try std.fs.path.join(arena, parts.items);
 }
 
+/// The line ranges (inclusive) a frame needs spans for: a screen either
+/// side of the viewport, and a screen either side of the cursor. One
+/// range when they meet, two when they do not — never the lines between.
+pub const SpanLineRanges = struct {
+    items: [2][2]usize = undefined,
+    len: usize = 0,
+
+    pub fn slice(r: *const SpanLineRanges) []const [2]usize {
+        return r.items[0..r.len];
+    }
+};
+
+pub fn spanLineRanges(scroll_line: usize, cur_line: usize, rows: usize, line_count: usize) SpanLineRanges {
+    const last = line_count -| 1;
+    const view: [2]usize = .{ @min(scroll_line -| rows, last), @min(scroll_line + 2 * rows, last) };
+    const cur: [2]usize = .{ @min(cur_line -| rows, last), @min(cur_line + rows, last) };
+    var out: SpanLineRanges = .{};
+    if (cur[0] <= view[1] + 1 and view[0] <= cur[1] + 1) {
+        out.items[0] = .{ @min(view[0], cur[0]), @max(view[1], cur[1]) };
+        out.len = 1;
+    } else {
+        out.items[0] = if (view[0] < cur[0]) view else cur;
+        out.items[1] = if (view[0] < cur[0]) cur else view;
+        out.len = 2;
+    }
+    return out;
+}
+
+test "spanLineRanges: one range while the cursor is near the viewport, two when it is far — never the lines between" {
+    // Cursor inside the viewport: the old hull, unchanged.
+    const near = spanLineRanges(100, 110, 40, 2_000_000);
+    try std.testing.expectEqual(@as(usize, 1), near.len);
+    try std.testing.expectEqual([2]usize{ 60, 180 }, near.items[0]);
+    // `G` from the top of a two-million-line file: two screens' worth.
+    const far = spanLineRanges(0, 1_999_999, 40, 2_000_000);
+    try std.testing.expectEqual(@as(usize, 2), far.len);
+    try std.testing.expectEqual([2]usize{ 0, 80 }, far.items[0]);
+    try std.testing.expectEqual([2]usize{ 1_999_959, 1_999_999 }, far.items[1]);
+    var lines: usize = 0;
+    for (far.slice()) |r| lines += r[1] - r[0] + 1;
+    try std.testing.expect(lines <= 4 * 40);
+    // `gg` from the end: the same, the other way round, still ascending.
+    const back = spanLineRanges(1_999_960, 0, 40, 2_000_000);
+    try std.testing.expectEqual(@as(usize, 2), back.len);
+    try std.testing.expect(back.items[0][1] < back.items[1][0]);
+    // Touching ranges merge; a short file is one range.
+    try std.testing.expectEqual(@as(usize, 1), spanLineRanges(0, 121, 40, 2_000_000).len);
+    try std.testing.expectEqual(@as(usize, 2), spanLineRanges(0, 122, 40, 2_000_000).len);
+    const short = spanLineRanges(0, 9, 40, 10);
+    try std.testing.expectEqual(@as(usize, 1), short.len);
+    try std.testing.expectEqual([2]usize{ 0, 9 }, short.items[0]);
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
@@ -1552,20 +1605,26 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // them sitting still while the text moved (`script_decor.minSeen`).
     try script_decor.syncPane(app, id);
     ed.doc.edits.trim(@min(e.syntax.seen_seq, script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));
-    // Spans for a window around the viewport and the cursor — the view
-    // may scroll to the cursor inside `draw`, so both are covered.
+    // Spans around the viewport and around the cursor — the view may
+    // scroll to the cursor inside `draw`, so both are covered. Two
+    // ranges when they are apart (`G` from the top of a long file), not
+    // the stretch between them: that stretch is the file.
     const line_count = ed.lineCount();
     const rows: usize = @max(rect.h, 1);
-    const cur_line = ed.currentLine();
-    const lo_line = @min(@min(e.view.scroll_line -| rows, cur_line -| rows), line_count - 1);
-    const hi_line = @min(@max(e.view.scroll_line + 2 * rows, cur_line + rows), line_count - 1);
+    const ranges = spanLineRanges(e.view.scroll_line, ed.currentLine(), rows, line_count);
     // The server's decorations for the visible lines (idle-debounced),
     // and its semantic tokens laid over the grammar's spans.
     const first_vis: u32 = @intCast(@min(e.view.scroll_line, line_count - 1));
     const last_vis: u32 = @intCast(@min(e.view.scroll_line + rows, line_count) -| 1);
     try decor.onFrame(app, id, e, first_vis, last_vis);
-    const base_spans = try e.syntax.styledSpans(ed, arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
-    const tinted = try conflicts.tintSpans(app, arena, e, try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line), &app.theme);
+    var layered: []const editor_view.Span = &.{};
+    for (ranges.slice()) |r| {
+        const base_spans = try e.syntax.styledSpans(ed, arena, &app.theme, ed.lineStart(r[0]), ed.lineEnd(r[1]));
+        const with_server = try semantic_app.layer(app, arena, e, &app.theme, base_spans, r[0], r[1]);
+        // Ascending and disjoint, so one after the other stays sorted.
+        layered = if (layered.len == 0) with_server else try std.mem.concat(arena, editor_view.Span, &.{ layered, with_server });
+    }
+    const tinted = try conflicts.tintSpans(app, arena, e, layered, &app.theme);
     // A script's `mnml.decor.highlight` goes over everything the
     // grammar, the server and a conflict marker put down.
     const spans = try @import("highlight").engine.layerSpans(editor_view.Span, arena, tinted, try script_decor.highlightsFor(app, arena, id, e, &app.theme));
@@ -1619,7 +1678,11 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .show_whitespace = app.cfg.ui.show_whitespace,
         .highlight_trailing_ws = app.cfg.ui.highlight_trailing_ws,
         .bracket_rainbow = app.cfg.ui.bracket_rainbow,
-        .word_matches = if (app.cfg.ui.highlight_word_under_cursor) try wordMatches(arena, ed, ed.lineStart(lo_line), ed.lineEnd(hi_line)) else &.{},
+        .word_matches = if (app.cfg.ui.highlight_word_under_cursor) blk: {
+            var found: []const editor_view.Range = &.{};
+            for (ranges.slice()) |r| found = try std.mem.concat(arena, editor_view.Range, &.{ found, try wordMatches(arena, ed, ed.lineStart(r[0]), ed.lineEnd(r[1])) });
+            break :blk found;
+        } else &.{},
         .todo_keywords = app.cfg.ui.highlight_todo_keywords,
         .color_column = app.cfg.ui.color_column,
         .render_markdown = app.cfg.ui.render_markdown and e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?),
