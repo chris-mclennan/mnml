@@ -246,6 +246,8 @@ pub fn build(b: *std.Build) void {
     const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight, .filters = test_filters, .test_runner = test_runner });
     unit_step.dependOn(&b.addRunArtifact(ts_tests).step);
     unit_step.dependOn(&b.addRunArtifact(highlight_tests).step);
+    const highlight_test_step = b.step("highlight-test", "Run the highlight module's tests only (grammars, queries, the engine)");
+    highlight_test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
 
     // ── docs + check (cutover prep) ─────────────────────────────────────
     // `zig build docs` regenerates docs/commands.md from the comptime spec
