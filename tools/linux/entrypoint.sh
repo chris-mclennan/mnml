@@ -70,14 +70,21 @@ if [ "$PHASE" = unit ] || [ "$PHASE" = all ]; then
   step "zig build test -Doptimize=ReleaseSafe" zig build test -Doptimize=ReleaseSafe --summary failures
 fi
 
+# The gate and the corpus run on the ReleaseSafe binary — the one that
+# ships, and the one docs/CONTRIBUTING.md's gate names. A Debug binary is
+# slow enough that the Lua budget (20 ms an entry) trips on a script the
+# example set ships, which looks like a corpus failure and is not one.
+if [ "$PHASE" = gate ] || [ "$PHASE" = corpus ]; then
+  step "zig build -Doptimize=ReleaseSafe (the binary the gate runs on)" \
+    zig build -Doptimize=ReleaseSafe --summary failures
+fi
+
 if [ "$PHASE" = gate ] || [ "$PHASE" = all ]; then
-  [ -x ./zig-out/bin/mnml-zig ] || step "zig build (for the gate)" zig build --summary failures
   MNML_E2E_ALLOW_SHELL=1 step "gate --sizes 80x24,120x40,200x60" \
     ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
 fi
 
 if [ "$PHASE" = corpus ] || [ "$PHASE" = all ]; then
-  [ -x ./zig-out/bin/mnml-zig ] || step "zig build (for the corpus)" zig build --summary failures
   hr "the full corpus"
   echo "+ MNML_E2E_ALLOW_SHELL=1 ./zig-out/bin/mnml-zig test"
   t0=$(date +%s)
