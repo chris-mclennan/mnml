@@ -15,7 +15,7 @@ ARG ZIG_VERSION=0.16.0
 # for the text, Symbols Nerd Font for the icon codepoints.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash ca-certificates curl file fontconfig fonts-noto-core git less \
-        procps python3 rsync tar unzip xz-utils \
+        nodejs npm procps python3 rsync tar unzip xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Symbols Nerd Font Mono — the icon half of the glyph checks. Pinned, so a
