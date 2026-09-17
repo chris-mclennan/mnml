@@ -171,6 +171,13 @@ pub const History = struct {
     /// The document's text — the base of both top entries. Null for a
     /// history on its own (a test): the live text is then empty.
     live: ?*const std.ArrayList(u8) = null,
+    /// Set while `u` / Ctrl-R restores a state taken from that stack. The
+    /// entry under the one taken is spelled against the state being
+    /// restored, not the live text, so the restoring splice is not its
+    /// business — and once the splice lands the live text IS that state.
+    /// Re-spelling it through the hop instead would fold two changes at
+    /// opposite ends of a file into one hull the size of the file.
+    hopping: enum { none, undo, redo } = .none,
 
     pub const default_limit = 2000;
 
@@ -195,13 +202,11 @@ pub const History = struct {
     /// afterwards. Nothing else in either stack refers to the live text.
     pub fn beforeSplice(self: *History, a: usize, b: usize) Allocator.Error!void {
         const live = self.liveText();
-        if (self.undo.top()) |e| try widen(self.gpa, e, live, a, b);
-        if (self.redo.top()) |e| try widen(self.gpa, e, live, a, b);
+        if (self.hopping != .undo) if (self.undo.top()) |e| try widen(self.gpa, e, live, a, b);
+        if (self.hopping != .redo) if (self.redo.top()) |e| try widen(self.gpa, e, live, a, b);
     }
 
-    /// Widen one hull spelled against `live` over `[a, b)`, which is about
-    /// to be replaced. The document's saved state is kept the same way.
-    pub fn widen(gpa: Allocator, e: *Entry, live: []const u8, a: usize, b: usize) Allocator.Error!void {
+    fn widen(gpa: Allocator, e: *Entry, live: []const u8, a: usize, b: usize) Allocator.Error!void {
         const n = live.len;
         std.debug.assert(a <= b and b <= n and e.p + e.s <= n);
         // A state equal to the text shares all of it; where the shared
@@ -329,14 +334,13 @@ pub const History = struct {
         below.mid = mid;
     }
 
-    /// The undo stack's top as an entry against the live text. Caller
-    /// frees `mid`.
-    pub fn takeUndo(self: *History) ?Entry {
-        return self.take(&self.undo);
-    }
-
-    pub fn takeRedo(self: *History) ?Entry {
-        return self.take(&self.redo);
+    /// The top entry, to be RESTORED by the caller: nothing under it is
+    /// re-spelled (see `hopping`). Caller frees `mid`.
+    fn takeToRestore(self: *History, ring: *Ring) ?Entry {
+        if (ring.len() == 0) return null;
+        var t = ring.items.pop().?;
+        tighten(self.gpa, &t, self.liveText());
+        return t;
     }
 
     /// The top state, whole. Caller owns the snapshot: `freeSnapshot` it.
@@ -464,8 +468,10 @@ pub fn undoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const h = &ed.doc.history;
     if (h.undoLen() == 0) return;
     try h.pushRedo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
-    const e = h.takeUndo().?;
+    const e = h.takeToRestore(&h.undo).?;
     defer h.gpa.free(e.mid);
+    h.hopping = .undo;
+    defer h.hopping = .none;
     try hop(ed, e);
     out.buffer_changed = true;
 }
@@ -474,8 +480,10 @@ pub fn redoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const h = &ed.doc.history;
     if (h.redoLen() == 0) return;
     try h.pushUndo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
-    const e = h.takeRedo().?;
+    const e = h.takeToRestore(&h.redo).?;
     defer h.gpa.free(e.mid);
+    h.hopping = .redo;
+    defer h.hopping = .none;
     try hop(ed, e);
     out.buffer_changed = true;
 }
@@ -605,11 +613,31 @@ test "a keystroke's undo entry costs the bytes it touched, not a copy of the tex
     }
     try testing.expectEqual(@as(usize, 50), ed.doc.history.undoLen());
     try testing.expect(ed.doc.history.bytes() < 4096);
-    for (0..50) |_| try undoOp(ed, &out);
+    for (0..50) |_| {
+        try undoOp(ed, &out);
+        try testing.expect(ed.doc.history.bytes() < 4096);
+    }
     try testing.expectEqualSlices(u8, big, ed.bytes());
-    try testing.expect(ed.doc.history.bytes() < 4096);
-    for (0..50) |_| try redoOp(ed, &out);
+    for (0..50) |_| {
+        try redoOp(ed, &out);
+        try testing.expect(ed.doc.history.bytes() < 4096);
+    }
     try testing.expectEqual(@as(usize, (1 << 20) + 50), ed.len());
+    // One at the top, one at the very end, and back: two small entries
+    // and two small splices — never the file between them.
+    try ed.checkpoint();
+    try ed.splice(0, 0, "ZQJ");
+    try ed.checkpoint();
+    try ed.splice(ed.len(), ed.len(), "QJZ\n");
+    const seq_before = ed.doc.edits.head();
+    try undoOp(ed, &out);
+    try undoOp(ed, &out);
+    try testing.expect(ed.doc.history.bytes() < 4096);
+    for (ed.doc.edits.since(seq_before)) |sp| try testing.expect(sp.old_end - sp.start < 16);
+    try redoOp(ed, &out);
+    try redoOp(ed, &out);
+    try testing.expect(ed.doc.history.bytes() < 4096);
+    try testing.expect(std.mem.startsWith(u8, ed.bytes(), "ZQJ") and std.mem.endsWith(u8, ed.bytes(), "QJZ\n"));
 }
 
 /// The history as it was: a stack of whole copies. The oracle.

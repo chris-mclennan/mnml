@@ -15,6 +15,7 @@ const editor_mod = @import("editor.zig");
 const Editor = editor_mod.Editor;
 const Pos = editor_mod.Pos;
 const undo = @import("undo.zig");
+const Saved = @import("saved.zig").Saved;
 const editorconfig = @import("editorconfig.zig");
 
 /// A (row, byte column) position — what tree-sitter's `InputEdit` wants.
@@ -180,10 +181,9 @@ pub const Document = struct {
     path: ?[]u8 = null,
     dirty: bool = false,
     /// The text as of the last load / save — `dirty` is a comparison —
-    /// kept as what differs from the live text (`undo.Entry`'s hull, told
-    /// of every splice as the history's tops are), not as a second copy
-    /// of the file.
-    saved: undo.Entry = .{ .p = 0, .s = 0, .mid = &.{}, .cursor = 0, .anchor = null, .seq = 0 },
+    /// kept as what differs from the live text (`saved.zig`), not as a
+    /// second copy of the file.
+    saved: Saved = .{},
     /// `m<letter>` positions — a buffer's, in vim — as byte offsets:
     /// `spliceBy` moves them with the text (`:help mark-motions`), a
     /// mark inside a deleted range landing at the deletion's start.
@@ -227,7 +227,6 @@ pub const Document = struct {
         doc.* = .{ .gpa = gpa, .history = .init(gpa) };
         try doc.text.appendSlice(gpa, text);
         errdefer doc.text.deinit(gpa);
-        doc.saved.p = text.len;
         // The history spells its states against the text.
         doc.history.live = &doc.text;
         try doc.rebuildLineIndex();
@@ -243,7 +242,7 @@ pub const Document = struct {
         self.edits.items.deinit(gpa);
         self.history.deinit();
         if (self.path) |p| gpa.free(p);
-        gpa.free(self.saved.mid);
+        self.saved.deinit(gpa);
         self.marks.deinit(gpa);
         if (self.language) |l| gpa.free(l);
         self.views.deinit(gpa);
@@ -373,7 +372,7 @@ pub const Document = struct {
         // The history's two top states share bytes with the text; they
         // take what this edit is about to change before it does.
         try self.history.beforeSplice(start, end);
-        try undo.History.widen(gpa, &self.saved, self.text.items, start, end);
+        try self.saved.beforeSplice(gpa, self.text.items, start, end, new.len);
         try self.text.replaceRange(gpa, start, end - start, new);
 
         const ls = &self.line_starts;
@@ -600,23 +599,19 @@ pub const Document = struct {
 
     /// Record the current text as the on-disk text.
     pub fn markSaved(self: *Document) Allocator.Error!void {
-        self.gpa.free(self.saved.mid);
-        self.saved.mid = &.{};
-        self.saved.p = self.text.items.len;
-        self.saved.s = 0;
+        self.saved.reset(self.gpa);
         self.dirty = false;
     }
 
     /// `dirty` is whether the text differs from the saved text: the
-    /// stretch the saved state does not share with it, compared.
+    /// stretches the two do not share, compared.
     pub fn recomputeDirty(self: *Document) void {
-        const t = self.text.items;
-        self.dirty = !std.mem.eql(u8, self.saved.mid, t[self.saved.p .. t.len - self.saved.s]);
+        self.dirty = self.saved.differs(self.gpa, self.text.items);
     }
 
     /// Bytes the saved state holds (none while the text is as saved).
     pub fn savedBytes(self: *const Document) usize {
-        return self.saved.mid.len;
+        return self.saved.bytes();
     }
 
     /// True when `path` names this document's file.
@@ -662,6 +657,10 @@ test "dirty is a comparison with the saved text, kept as what differs — not as
     doc.recomputeDirty();
     try testing.expect(doc.dirty);
     try testing.expect(doc.savedBytes() < 16);
+    // An edit at the far end too: still a few bytes, not the file between.
+    try doc.spliceBy(doc.len(), doc.len(), "tail", null);
+    try testing.expect(doc.savedBytes() < 16);
+    try doc.spliceBy(doc.len() - 4, doc.len(), "", null);
     // Take it back out: the same text as saved is clean again.
     try doc.spliceBy(5000, 5003, "", null);
     doc.recomputeDirty();
