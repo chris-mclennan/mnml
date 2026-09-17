@@ -1768,23 +1768,30 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             // +find (7)` — the way the reference plugin's header reads.
             const path = w.slice();
             const vim = app.input_style == .vim;
-            const here = whichkey.lookupIn(path, vim);
+            const here = try whichkey.lookupWith(ui.arena, &app.dyn_commands, path, vim);
             const title: []const u8 = if (path.len == 0 or here == null)
                 "<leader>"
+            else if (here.? == .dyn_group)
+                ui.fmt("<leader>{s}  +{s}", .{ path, here.?.label() })
             else
-                ui.fmt("<leader>{s}  {s} ({d})", .{ path, here.?.label(), whichkey.chordCount(here.?, vim) });
+                ui.fmt("<leader>{s}  {s} ({d})", .{ path, here.?.label(), whichkey.chordCount(&here.?, vim) });
             // A group row wears its own face; a leaf wears the face of
             // the group it lives in, which `which_key` paints dimmer.
             const leaf_glyph = whichkey_glyph.forGroup(if (here) |n| n.label() else "").pick(ui.ascii);
-            const kids = whichkey.continuations(ui.arena, path, vim);
+            const kids = try whichkey.kidsWith(ui.arena, &app.dyn_commands, path, vim);
             const entries = try ui.arena.alloc(which_key.Entry, kids.len);
             for (kids, 0..) |*k, i| {
                 const key = try ui.arena.alloc(u8, 1);
                 key[0] = k.key;
-                const is_group = k.node == .group;
+                const is_group = k.node == .group or k.node == .dyn_group;
+                const label: []const u8 = switch (k.node) {
+                    .group => ui.fmt("{s} ({d})", .{ k.node.label(), whichkey.chordCount(&k.node, vim) }),
+                    .dyn_group => ui.fmt("+{s}", .{k.node.label()}),
+                    else => k.node.label(),
+                };
                 entries[i] = .{
                     .key = key,
-                    .label = if (is_group) ui.fmt("{s} ({d})", .{ k.node.label(), whichkey.chordCount(&k.node, vim) }) else k.node.label(),
+                    .label = label,
                     .is_group = is_group,
                     .glyph = if (is_group) whichkey_glyph.forGroup(k.node.label()).pick(ui.ascii) else leaf_glyph,
                     .id = @intCast(i),
