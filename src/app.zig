@@ -2845,6 +2845,7 @@ test {
     _ = @import("app/macros_store.zig");
     _ = @import("app/find_history.zig");
     _ = @import("app/syntax_jobs.zig");
+    _ = @import("app/conflict_cache.zig");
     _ = @import("app/auto_refresh.zig");
     _ = @import("app/clock.zig");
     _ = @import("app/coverage.zig");

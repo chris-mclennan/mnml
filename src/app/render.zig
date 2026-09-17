@@ -1547,6 +1547,48 @@ test "spanLineRanges: one range while the cursor is near the viewport, two when 
     try std.testing.expectEqual([2]usize{ 0, 9 }, short.items[0]);
 }
 
+test "a frame over a large document walks none of its text: no line index rebuilt, no marker looked for, whatever the keys" {
+    const gpa = std.testing.allocator;
+    const conflict_cache = @import("conflict_cache.zig");
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try @import("../core/command.zig").run(&app, .{ .static = .@"editor.use_vim" });
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(gpa);
+    var i: usize = 0;
+    while (text.items.len < 4 << 20) : (i += 1) {
+        const line = try std.fmt.allocPrint(gpa, "line {d}: a << b && c < d, plain text with no marker\n", .{i});
+        defer gpa.free(line);
+        try text.appendSlice(gpa, line);
+    }
+    try e.buf.editor.setText(text.items);
+    e.buf.editor.setCursor(0);
+    app.now_ms = 1000;
+    // The first frame may look the text over once (is there a marker?).
+    try app.render();
+    const lines_before = editor_view.line_index_bytes_scanned;
+    const marker_before = conflict_cache.bytes_scanned;
+    const steps = [_][]const u8{ "G", "g", "g", "ctrl+f", "ctrl+f", "i", "Z", "Q", "esc", "G", "o", "J", "esc", "u", "g", "g" };
+    for (steps) |spec| {
+        try app.handle(.{ .key = keymap.parseKeySpec(spec).? });
+        app.now_ms += 5;
+        try app.tick(app.now_ms);
+        try app.render();
+    }
+    // The keys did what they say: `ZQ` typed two pages down and kept, the
+    // `o J` line opened at the end and undone.
+    try std.testing.expectEqual(text.items.len + 2, e.buf.editor.len());
+    try std.testing.expect(std.mem.indexOf(u8, e.buf.editor.bytes()[0 .. 64 * 1024], "ZQ") != null);
+    try std.testing.expectEqual(@as(usize, 0), e.buf.editor.currentLine());
+    // Sixteen frames and four edits over four megabytes: no index walked,
+    // and only the edited lines looked at for a marker.
+    try std.testing.expectEqual(lines_before, editor_view.line_index_bytes_scanned);
+    try std.testing.expect(conflict_cache.bytes_scanned - marker_before < 4096);
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
@@ -1622,6 +1664,9 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // before `script_decor` moved its anchors across it would leave
     // them sitting still while the text moved (`script_decor.minSeen`).
     try script_decor.syncPane(app, id);
+    // So are the document's conflict regions: a marker can only appear
+    // where the log says the text changed.
+    try conflicts.sync(app, e);
     ed.doc.edits.trim(@min(e.syntax.trimFloor(), script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));
     // Spans around the viewport and around the cursor — the view may
     // scroll to the cursor inside `draw`, so both are covered. Two
@@ -1661,6 +1706,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     }
     const doc: editor_view.Doc = .{
         .text = e.buf.editor.bytes(),
+        .line_starts = e.buf.doc.line_starts.items,
         .cursor = e.buf.editor.cursor,
         .anchor = e.buf.editor.anchor,
         .extra_cursors = e.buf.editor.extra_cursors.items,

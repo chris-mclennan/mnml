@@ -88,11 +88,30 @@ pub fn actionOf(id: u32) ?Hit {
 
 // ─── regions ────────────────────────────────────────────────────────────
 
-/// The buffer's regions, or none when it holds no marker.
-pub fn regionsOf(arena: Allocator, e: *const EditorPane) Allocator.Error![]Region {
-    const text = e.buf.editor.bytes();
-    if (!parse.hasConflictMarker(text)) return &.{};
-    return parse.parseConflicts(arena, text);
+/// Bring the document's cached regions up to the text as it is. An
+/// edit-log consumer: the frame calls this before it trims the log.
+pub fn sync(app: *App, e: *const EditorPane) Allocator.Error!void {
+    if (app.docs.entryOf(e.buf.doc)) |entry| try entry.conflicts.sync(app.gpa, e.buf.doc);
+}
+
+/// Whether the buffer has a conflict marker at all (`parse.
+/// hasConflictMarker`'s answer, from the cache).
+pub fn hasMarker(app: *App, e: *const EditorPane) Allocator.Error!bool {
+    const entry = app.docs.entryOf(e.buf.doc) orelse return parse.hasConflictMarker(e.buf.editor.bytes());
+    try entry.conflicts.sync(app.gpa, e.buf.doc);
+    return entry.conflicts.has_marker;
+}
+
+/// The buffer's regions, or none when it holds no marker. Worked out
+/// once per text generation (`conflict_cache.zig`), not per call.
+pub fn regionsOf(app: *App, arena: Allocator, e: *const EditorPane) Allocator.Error![]Region {
+    const entry = app.docs.entryOf(e.buf.doc) orelse {
+        const text = e.buf.editor.bytes();
+        if (!parse.hasConflictMarker(text)) return &.{};
+        return parse.parseConflicts(arena, text);
+    };
+    try entry.conflicts.sync(app.gpa, e.buf.doc);
+    return arena.dupe(Region, entry.conflicts.regions);
 }
 
 /// The region the cursor is in, if any.
@@ -133,9 +152,8 @@ fn sideText(e: *const EditorPane, r: Region, side: enum { ours, theirs, base }) 
 /// bytes no span covers get one of their own. The marker lines take the
 /// muted colour, bold.
 pub fn tintSpans(app: *App, arena: Allocator, e: *const EditorPane, base: []const editor_view.Span, theme: *const Theme) Allocator.Error![]const editor_view.Span {
-    const regions = try regionsOf(arena, e);
+    const regions = try regionsOf(app, arena, e);
     if (regions.len == 0) return base;
-    _ = app;
     const p = theme.palette;
     const ours_bg = diff_view.blendOver(p.green, p.bg, 40, p.bg2);
     const theirs_bg = diff_view.blendOver(p.blue, p.bg, 40, p.bg2);
@@ -180,7 +198,7 @@ fn tintLines(arena: Allocator, out: *std.ArrayListUnmanaged(editor_view.Span), e
 
 /// The header rows: one above each region's `<<<<<<<` line.
 pub fn virtualLinesFor(app: *App, arena: Allocator, e: *const EditorPane, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.VirtualLine {
-    const regions = try regionsOf(arena, e);
+    const regions = try regionsOf(app, arena, e);
     if (regions.len == 0) return &.{};
     const p = theme.palette;
     var out: std.ArrayListUnmanaged(editor_view.VirtualLine) = .empty;
@@ -231,7 +249,7 @@ pub fn mergeVirtualLines(arena: Allocator, a: []const editor_view.VirtualLine, b
 /// cursor into it). The cursor lands on the region's first line.
 pub fn resolve(app: *App, pane: PaneId, e: *EditorPane, idx: usize, action: Action) CommandError!void {
     const arena = app.frame.allocator();
-    const regions = try regionsOf(arena, e);
+    const regions = try regionsOf(app, arena, e);
     if (idx >= regions.len) return app.diag.fail(arena, "conflict {d}: gone", .{idx + 1});
     const r = regions[idx];
     const ed = e.buf.editor;
@@ -257,7 +275,7 @@ pub fn resolve(app: *App, pane: PaneId, e: *EditorPane, idx: usize, action: Acti
     const owned = try arena.dupe(u8, text);
     _ = try app.applyOps(e, &.{.{ .replace_range = .{ .start = range[0], .end = range[1], .text = owned } }});
     ed.placeCursor(@min(r.start, ed.lineCount() -| 1), 0);
-    const left = (try regionsOf(arena, e)).len;
+    const left = (try regionsOf(app, arena, e)).len;
     if (left == 0) {
         app.toast("conflict {d}: {s} — none left, save stages {s}", .{ idx + 1, action.label(), std.fs.path.basename(e.buf.doc.path orelse "") });
     } else app.toast("conflict {d}: {s} — {d} left", .{ idx + 1, action.label(), left });
@@ -268,7 +286,7 @@ pub fn resolve(app: *App, pane: PaneId, e: *EditorPane, idx: usize, action: Acti
 pub fn jump(app: *App, forward: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try app.requireEditor();
-    const regions = try regionsOf(arena, e);
+    const regions = try regionsOf(app, arena, e);
     if (regions.len == 0) return app.diag.fail(arena, "no conflict markers in this buffer", .{});
     const ed = e.buf.editor;
     const line: u32 = @intCast(ed.currentLine());
@@ -298,7 +316,7 @@ pub fn jump(app: *App, forward: bool) CommandError!void {
 pub fn pick(app: *App, action: Action) CommandError!void {
     const id = app.active orelse return error.NoActivePane;
     const e = try app.requireEditor();
-    const regions = try regionsOf(app.frame.allocator(), e);
+    const regions = try regionsOf(app, app.frame.allocator(), e);
     const idx = regionAtCursor(regions, e) orelse return app.diag.fail(app.frame.allocator(), "the cursor is not inside a conflict block ( ]x jumps to one)", .{});
     try resolve(app, id, e, idx, action);
 }
@@ -320,12 +338,11 @@ pub const KeyOutcome = enum { pass, consumed, replay_c };
 /// the dispatcher to feed the `c` first. Standard: `alt+1..3`.
 pub fn interceptKey(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!KeyOutcome {
     const st = &app.git;
-    const text = e.buf.editor.bytes();
-    if (!parse.hasConflictMarker(text)) {
+    if (!try hasMarker(app, e)) {
         st.conflict_c_pending = false;
         return .pass;
     }
-    const regions = try regionsOf(app.frame.allocator(), e);
+    const regions = try regionsOf(app, app.frame.allocator(), e);
     const idx = regionAtCursor(regions, e);
     if (st.conflict_c_pending) {
         st.conflict_c_pending = false;
@@ -382,7 +399,7 @@ fn conflictedRel(app: *App, e: *const EditorPane) ?struct { repo: *client.Repo, 
 /// After a save: a conflicted file with no marker left is `git add`ed.
 pub fn afterSave(app: *App, e: *EditorPane) CommandError!void {
     const hit = conflictedRel(app, e) orelse return;
-    if (parse.hasConflictMarker(e.buf.editor.bytes())) return;
+    if (try hasMarker(app, e)) return;
     app.toast("resolved {s}: marked with git add", .{hit.rel});
     try git.submitOp(app, hit.repo, .{ .stage = try app.gpa.dupe(u8, hit.rel) });
 }
@@ -398,7 +415,7 @@ pub fn openConflicted(app: *App, rel: []const u8) CommandError!void {
         else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
     };
     const e = app.panes.editor(id) orelse return;
-    const regions = try regionsOf(arena, e);
+    const regions = try regionsOf(app, arena, e);
     if (regions.len == 0) return app.toast("{s}: no conflict markers (already resolved? save to stage it)", .{rel});
     e.buf.editor.placeCursor(regions[0].start, 0);
     e.view.scroll_line = @intCast(regions[0].start -| app.pane_rows / 3);
@@ -450,7 +467,7 @@ pub fn aiContextReady(app: *App, path: []const u8, base: []const u8, ours: []con
     st.conflict_ai = null;
     const e = app.panes.editor(w.pane) orelse return;
     const arena = app.frame.allocator();
-    const regions = try regionsOf(arena, e);
+    const regions = try regionsOf(app, arena, e);
     if (w.region >= regions.len) {
         app.toast("AI resolve: the block is gone", .{});
         return;

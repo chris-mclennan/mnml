@@ -16,6 +16,7 @@ const Allocator = std.mem.Allocator;
 const editor_mod = @import("../editor/editor.zig");
 const Document = editor_mod.Document;
 const syntax = @import("syntax.zig");
+const conflict_cache = @import("conflict_cache.zig");
 
 pub const DocStore = struct {
     gpa: Allocator,
@@ -25,6 +26,8 @@ pub const DocStore = struct {
     pub const Entry = struct {
         doc: *Document,
         syntax: syntax.Syntax,
+        /// The document's merge-conflict regions, per text generation.
+        conflicts: conflict_cache.Cache = .{},
     };
 
     pub fn create(gpa: Allocator) Allocator.Error!*DocStore {
@@ -39,6 +42,7 @@ pub const DocStore = struct {
         const gpa = self.gpa;
         for (self.entries.items) |e| {
             e.syntax.deinit();
+            e.conflicts.deinit(gpa);
             e.doc.destroy();
             gpa.destroy(e);
         }
@@ -86,6 +90,7 @@ pub const DocStore = struct {
             if (e.doc != doc) continue;
             _ = self.entries.swapRemove(i);
             e.syntax.deinit();
+            e.conflicts.deinit(self.gpa);
             e.doc.destroy();
             self.gpa.destroy(e);
             return;

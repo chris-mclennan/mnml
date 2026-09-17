@@ -86,6 +86,10 @@ pub const LineGround = struct { line: u32, style: Style };
 
 pub const Doc = struct {
     text: []const u8,
+    /// The byte offset of every line's first char (`[0] == 0`, one entry
+    /// per `\n`), when the caller keeps one — the editor does. Without
+    /// it the view walks the whole text for one, every frame.
+    line_starts: ?[]const usize = null,
     /// Byte offset.
     cursor: usize,
     /// Selection tail; `null` = no selection.
@@ -321,14 +325,24 @@ pub fn drawBreadcrumb(ui: Ui, pane: PaneId, area: Rect, names: []const []const u
 
 /// Byte ranges of every line, excluding the newline. Built on the frame
 /// arena; a document always has at least one line.
+/// Bytes of text walked to build a line index (`Lines.build`) since the
+/// process started — what a test reads to show a frame over a large
+/// document walked none.
+pub var line_index_bytes_scanned: usize = 0;
+
 pub const Lines = struct {
-    starts: []const u32,
+    /// Built from the text (`build`) when the caller has no index.
+    starts: []const u32 = &.{},
+    /// The document's own line index, borrowed (`from`): the editor keeps
+    /// one, spliced with every edit, so a frame never rebuilds it.
+    index: ?[]const usize = null,
     text_len: u32,
-    /// Lines painted: `starts.len`, less the phantom line a trailing
+    /// Lines painted: every line, less the phantom line a trailing
     /// `\n` would open — see `hidePhantom`.
     shown: u32,
 
     pub fn build(arena: Allocator, text: []const u8) Allocator.Error!Lines {
+        line_index_bytes_scanned += text.len;
         var n: usize = 1;
         for (text) |c| if (c == '\n') {
             n += 1;
@@ -343,13 +357,26 @@ pub const Lines = struct {
         return .{ .starts = starts, .text_len = @intCast(text.len), .shown = @intCast(n) };
     }
 
+    /// Over an index the caller keeps: `[0] == 0`, one entry per `\n`.
+    pub fn from(index: []const usize, text_len: usize) Lines {
+        return .{ .index = index, .text_len = @intCast(text_len), .shown = @intCast(index.len) };
+    }
+
+    fn total(l: Lines) usize {
+        return if (l.index) |ix| ix.len else l.starts.len;
+    }
+
+    fn startAt(l: Lines, i: usize) u32 {
+        return if (l.index) |ix| @intCast(ix[i]) else l.starts[i];
+    }
+
     /// A trailing `\n` terminates the last line rather than opening an
     /// empty line N+1 (the editor counts it that way; `G` cannot reach
     /// it) — unless the cursor, the anchor or an extra cursor sits at
     /// EOF, in which case the row stays so they have somewhere to paint.
     pub fn hidePhantom(l: *Lines, doc: Doc) void {
-        if (l.starts.len < 2 or l.text_len == 0 or doc.text[l.text_len - 1] != '\n') return;
-        const phantom: u32 = @intCast(l.starts.len - 1);
+        if (l.total() < 2 or l.text_len == 0 or doc.text[l.text_len - 1] != '\n') return;
+        const phantom: u32 = @intCast(l.total() - 1);
         if (l.lineOf(doc.cursor) == phantom) return;
         if (doc.anchor) |a| if (l.lineOf(a) == phantom) return;
         for (doc.extra_cursors) |c| if (l.lineOf(c) == phantom) return;
@@ -361,13 +388,13 @@ pub const Lines = struct {
     }
 
     pub fn start(l: Lines, line: u32) u32 {
-        return l.starts[line];
+        return l.startAt(line);
     }
 
     /// One past the last byte of the line's text (the newline's offset,
     /// or the text length on the last line).
     pub fn end(l: Lines, line: u32) u32 {
-        if (line + 1 < l.starts.len) return l.starts[line + 1] - 1;
+        if (line + 1 < l.total()) return l.startAt(line + 1) - 1;
         return l.text_len;
     }
 
@@ -379,10 +406,10 @@ pub const Lines = struct {
     /// last line).
     pub fn lineOf(l: Lines, off: usize) u32 {
         var lo: usize = 0;
-        var hi: usize = l.starts.len;
+        var hi: usize = l.total();
         while (hi - lo > 1) {
             const mid = lo + (hi - lo) / 2;
-            if (l.starts[mid] <= off) lo = mid else hi = mid;
+            if (l.startAt(mid) <= off) lo = mid else hi = mid;
         }
         return @intCast(lo);
     }
@@ -762,7 +789,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     ui.fill(area, t.bg);
     if (area.isEmpty()) return null;
 
-    var lines = try Lines.build(ui.arena, doc.text);
+    var lines = if (doc.line_starts) |ix| Lines.from(ix, doc.text.len) else try Lines.build(ui.arena, doc.text);
     lines.hidePhantom(doc);
     const total = lines.count();
     const gutter_w = @min(gutterWidth(doc, total), area.w);
@@ -1369,6 +1396,39 @@ test "lines index" {
     const e = try Lines.build(arena.allocator(), "");
     try testing.expectEqual(@as(u32, 1), e.count());
     try testing.expectEqual(@as(u32, 0), e.end(0));
+}
+
+test "a borrowed line index answers as the built one does, and a frame drawn over it walks no text for one" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{ "ab\ncd\n\nlast", "", "\n", "one\n", "a\n\n" }) |text| {
+        const built = try Lines.build(arena.allocator(), text);
+        const ix = try arena.allocator().alloc(usize, built.starts.len);
+        for (built.starts, 0..) |v, i| ix[i] = v;
+        const borrowed = Lines.from(ix, text.len);
+        try testing.expectEqual(built.count(), borrowed.count());
+        var line: u32 = 0;
+        while (line < built.count()) : (line += 1) {
+            try testing.expectEqual(built.start(line), borrowed.start(line));
+            try testing.expectEqual(built.end(line), borrowed.end(line));
+        }
+        for (0..text.len + 2) |off| try testing.expectEqual(built.lineOf(off), borrowed.lineOf(off));
+    }
+    // The same frame, either way — and only the one without an index
+    // walks the text.
+    var f = try Fixture.init(20, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a\nb\nc\n");
+    const before = line_index_bytes_scanned;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(line_index_bytes_scanned > before);
+    try f.expectRows(&.{ "   1 a", "   2 b", "   3 c" });
+    d.line_starts = &.{ 0, 2, 4, 6 };
+    const mid = line_index_bytes_scanned;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expectEqual(mid, line_index_bytes_scanned);
+    try f.expectRows(&.{ "   1 a", "   2 b", "   3 c" });
 }
 
 test "gutter width follows the line count with a 3-digit floor" {
