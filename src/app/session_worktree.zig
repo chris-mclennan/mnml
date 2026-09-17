@@ -611,6 +611,14 @@ const RepoFixture = struct {
         errdefer app.deinit();
         var f: RepoFixture = .{ .tmp = tmp, .root = root, .repo = repo, .app = app };
         try f.sh(repo, &.{ "init", "-q", "-b", "main" });
+        // The `-c` prefix below only reaches the test's own git. `merge`
+        // makes a commit through a child process that carries none, so on
+        // a machine with no global identity — a container, a CI runner —
+        // git refused with "Author identity unknown". The repository gets
+        // its own.
+        try f.sh(repo, &.{ "config", "user.email", "t@mnml.dev" });
+        try f.sh(repo, &.{ "config", "user.name", "t" });
+        try f.sh(repo, &.{ "config", "commit.gpgsign", "false" });
         try tmp.dir.writeFile(t.io, .{ .sub_path = "repo/a.txt", .data = "one\n" });
         try f.sh(repo, &.{ "add", "a.txt" });
         try f.sh(repo, &.{ "commit", "-q", "-m", "first" });
