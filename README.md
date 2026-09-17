@@ -17,7 +17,17 @@ mechanics"). Same commands, same `.test` corpus, same asset names minus the
 
 ## Install
 
-Prebuilt, no toolchain — macOS and Linux (x86_64, aarch64), Windows (x86_64):
+Prebuilt, no toolchain — macOS and Linux (x86_64, aarch64), Windows (x86_64).
+
+macOS (aarch64) and Linux are **verified**: the whole gate — the unit
+suite, the width sweep, the `.test` corpus, the pty mouse check and
+packaging — runs on both (`tools/linux/run.sh`, and see
+`docs/CONTRIBUTING.md` → *Running the gate on Linux*). Windows is
+**compiled, not yet run**: `zig build gate-build -Dtarget=x86_64-windows-gnu`
+builds the exe and every test binary on each merge, which is enough to
+catch a target-gated branch that does not compile and not enough to catch
+one that does not work.
+
 
 ```sh
 # macOS / Linux — into ~/.local/bin (MNML_INSTALL_DIR to change it)
@@ -97,7 +107,9 @@ the width sweep and the corpus on that build, the Windows gate-build, the
 glyph audit, `tools/run-sh-check.sh`, `tools/pty-mouse-check.py`, and
 `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when chrome
 changed. `./run.sh check` runs all of it but the Windows gate-build and the
-two pty scripts.
+two pty scripts. `tools/linux/run.sh all` runs the same sequence inside a
+Linux container — do that for anything touching a process, a thread, a
+path, a filesystem assumption or a spawned tool.
 
 ## The `.test` oracle
 

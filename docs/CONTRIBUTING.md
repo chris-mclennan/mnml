@@ -280,6 +280,52 @@ it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus; 6, 8 and
 gate, the sweep, `tests/e2e/defaults.test` and the corpus on the exe of that
 invocation).
 
+## Running the gate on Linux
+
+Everything above runs on the author's Mac. The Linux and Windows targets
+are otherwise only ever *compiled* (`gate-build`), and a target that
+compiles is not a target that runs: the first Linux run of this gate found
+a `pthread_create` that refused the pty reader's stack — every terminal
+pane aborted the process — plus a `@constCast` const global written
+through, a double free, a test that only passes on a case-insensitive
+filesystem, and four more.
+
+`tools/linux/run.sh` is that run, in a container, from a Mac or from
+Linux:
+
+```sh
+tools/linux/run.sh all        # build · -Dpartial=false · glyph-audit · arena-audit
+                              #   · ReleaseSafe · the unit suite · the gate · the corpus
+tools/linux/run.sh build      # the four builds
+tools/linux/run.sh unit       # zig build test -Doptimize=ReleaseSafe
+tools/linux/run.sh gate       # the sweep at 80x24,120x40,200x60
+tools/linux/run.sh corpus     # the whole .test corpus (~12 min)
+tools/linux/run.sh mouse      # tools/pty-mouse-check.py, on a real pty
+tools/linux/run.sh fmt        # zig fmt --check
+tools/linux/run.sh shell      # a prompt in the container
+tools/linux/run.sh raw CMD…   # anything, in the container
+```
+
+It needs `docker` (or `podman`, via `MNML_LINUX_ENGINE=podman`). The image
+is a current Debian with the pinned Zig, `git`, `python3`, `bash`,
+`nodejs`/`npm` — the corpus drives `npm test` — and both font sets the
+glyph checks want. The repo is mounted **read-only** and rsync'd into a
+container-local copy, so a Linux run never touches the host's
+`.zig-cache` or `zig-out`; the package cache and the build cache are
+docker volumes, so only the first run pays for fetching dependencies.
+
+Give the VM room. A single `-Doptimize=ReleaseSafe` compile of
+`mnml-zig` is OOM-killed under 8 GB (`error: process terminated with
+signal KILL`), and the two build caches together want ~15 GB of disk:
+
+```sh
+colima stop && colima start --cpu 8 --memory 24 --disk 85   # or Docker Desktop's Resources pane
+```
+
+A file whose screen only one platform can paint carries
+`# requires: macos` (or `linux` / `windows`) in its header block and is
+announced as skipped elsewhere, the way `# requires: network` already is.
+
 ## Spec dumps
 
 The same-look tracks are measured against the Rust editor's screen,
