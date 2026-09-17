@@ -82,6 +82,10 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     app.hits.reset();
     if (f.rows == 0 or f.cols == 0) return;
     var p: Painter = .{ .f = f, .app = app, .th = app.theme, .nerd = nerd_font };
+    // The header's `N of M` is derived from the rows, and the header
+    // paints first: resolve them once here so it reads this frame's
+    // numbers rather than the last one's.
+    _ = try app.visible(arena);
     var y: u16 = 0;
     try paintHeader(arena, &p, y);
     y += 1;
@@ -126,6 +130,10 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         const done = app.progressDone();
         const total = app.progressTotal();
         sub = if (total > 0) try std.fmt.allocPrint(arena, "  loading… {d}/{d} repos", .{ done, total }) else "  loading…";
+    } else if (app.narrowed()) {
+        // Narrowed: the count says how much of the tab is hidden, the
+        // way the sibling integrations' caps headers do.
+        sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
     } else if (ts.fetched) {
         sub = switch (ts.data) {
             .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs{s})", .{ ts.repos, ts.items, if (ts.errored > 0) " · some errored" else "" }),
@@ -409,9 +417,30 @@ fn paintDetail(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
 
 // ─── the hint row ─────────────────────────────────────────────────────────
 
+/// What the hint row says when a mode owns the keyboard: the keys that
+/// mode answers to, not the list's. The list's own row comes from the
+/// keymap table below.
+fn modeHint(app: *App) ?[]const u8 {
+    return switch (app.mode) {
+        .list => null,
+        .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
+        .menu => "↑↓ / jk move · ⏎ run · esc close",
+        .help => "j k scroll · any other key closes",
+    };
+}
+
 fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     const app = p.app;
     const th = p.th;
+    if (modeHint(app)) |line| {
+        const status = app.status.items;
+        var x: u16 = 1;
+        if (status.len > 0) x += p.text(x, y, p.f.cols / 2, status, th.mutedText()) + 2;
+        const w = Painter.width(line);
+        const at: u16 = if (p.f.cols -| w > x) p.f.cols -| w else x;
+        _ = p.text(at, y, p.f.cols -| at, line, th.dimText());
+        return;
+    }
     const rows = (try app.visible(arena)).rows;
     const ctx = app.keyContext(rows);
     const hs = try view.hints(arena, ctx);
@@ -788,4 +817,59 @@ test "the pane paints at every size the gate runs, and at one below them" {
         try s.key("3");
         _ = try s.draw();
     }
+}
+
+test "the `/` filter: the header reads N of M while narrowed and the hint row changes with the mode" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    // Unnarrowed the header carries the tab's own count and the hint
+    // row is the keymap's.
+    var scr = try s.draw();
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
+    try t.expect(!has(scr, " of "));
+    try t.expect(has(scr, "q quit"));
+
+    // `/` opens the pill and hands the keyboard to the filter: the row
+    // says what the filter answers to, not what the list does.
+    try s.key("/");
+    scr = try s.draw();
+    try t.expect(has(scr, "type to filter"));
+    try t.expect(has(scr, "⏎ commit"));
+    try t.expect(has(scr, "esc clear"));
+    try t.expect(!has(scr, "q quit"));
+
+    // Typing narrows live — before Enter commits anything.
+    for ("empty") |c| try s.key(&[_]u8{c});
+    scr = try s.draw();
+    try t.expect(has(scr, "(1 of 2)"));
+    try t.expect(has(scr, "Redesign the empty"));
+    // #1234 is gone as a row — the api header still previews it, which
+    // is why the row count, not the title, is what proves the narrowing.
+    try t.expectEqual(@as(usize, 1), s.rig.app.filter_shown);
+    try t.expectEqual(@as(usize, 2), s.rig.app.filter_total);
+
+    // Enter commits: the query stays, the narrowed count stays, the
+    // hint row goes back to the list's keys.
+    try s.key("enter");
+    scr = try s.draw();
+    try t.expect(has(scr, "(1 of 2)"));
+    try t.expect(has(scr, "empty"));
+    try t.expect(has(scr, "q quit"));
+    try t.expect(!has(scr, "type to filter"));
+
+    // Esc clears and leaves.
+    try s.key("esc");
+    scr = try s.draw();
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
+    try t.expect(!has(scr, " of 2)"));
+
+    // The menu and the sheet own the row the same way.
+    try s.key("j");
+    try s.click(6, try s.rowOf("#1234"), .right);
+    scr = try s.draw();
+    try t.expect(has(scr, "⏎ run"));
+    try s.key("esc");
+    try s.key("?");
+    scr = try s.draw();
+    try t.expect(has(scr, "scroll"));
 }

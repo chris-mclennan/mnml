@@ -139,6 +139,10 @@ pub const App = struct {
     pr_pipelines: std.StringHashMapUnmanaged(*PrPipelines) = .empty,
     filter: std.ArrayList(u8) = .empty,
     filter_caret: usize = 0,
+    /// Set by `visible`: the content rows shown, of the rows the tab
+    /// has. The header paints `N of M` from them while narrowed.
+    filter_shown: usize = 0,
+    filter_total: usize = 0,
     mode: Mode = .list,
     menu: ?Menu = null,
     menu_items: [12]Action = undefined,
@@ -357,11 +361,18 @@ pub const App = struct {
     // ─── the rows ────────────────────────────────────────────────────
 
     /// The active tab's rows, filtered by the `/` query. On the frame
-    /// arena; call once per event.
+    /// arena; call once per event. Also records what the header's
+    /// `N of M` reads: the content rows kept, of the content rows the
+    /// tab would show unfiltered (a repo header and the `Show N more`
+    /// footer are chrome and count as neither).
     pub fn visible(app: *App, a: Allocator) Allocator.Error!tabs.View {
         const ts = app.activeTab();
         const all = try tabs.visibleRows(a, .{ .spec = ts.spec, .data = ts.data, .expanded = &ts.expanded, .show_all = ts.show_all, .now_secs = app.now_secs });
-        if (app.filter.items.len == 0) return all;
+        app.filter_total = countContent(all.rows);
+        if (app.filter.items.len == 0) {
+            app.filter_shown = app.filter_total;
+            return all;
+        }
         var kept: std.ArrayList(tabs.VisibleRow) = .empty;
         var cells: usize = 0;
         for (all.rows) |r| {
@@ -370,7 +381,23 @@ pub const App = struct {
                 cells += r.height();
             }
         }
-        return .{ .rows = try kept.toOwnedSlice(a), .cells = cells };
+        const out: tabs.View = .{ .rows = try kept.toOwnedSlice(a), .cells = cells };
+        app.filter_shown = countContent(out.rows);
+        return out;
+    }
+
+    fn countContent(rows: []const tabs.VisibleRow) usize {
+        var n: usize = 0;
+        for (rows) |r| if (r != .repo_header and r != .show_more) {
+            n += 1;
+        };
+        return n;
+    }
+
+    /// True while the `/` query is hiding something — what the header's
+    /// `N of M` and the hint row's context both key off.
+    pub fn narrowed(app: *const App) bool {
+        return app.filter.items.len > 0;
     }
 
     fn rowMatches(app: *App, r: tabs.VisibleRow) bool {
