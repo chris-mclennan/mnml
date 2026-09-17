@@ -147,7 +147,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
         if (app.active != pane_id) break;
         const cur = pane.buf.editor;
         // Map what is left through the edits the last command made.
-        if (cur.doc.edits.lostSince(seen)) {
+        if (cur.doc.edits.replacedSince(seen)) {
             app.in_global = false;
             app.toast("{s} — stopped after {d}: the text was replaced wholesale", .{ label, ran });
             break;

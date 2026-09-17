@@ -330,9 +330,17 @@ test "spans follow the text through the edit log: shifted at once, reparsed on r
     const reparsed = try s.hl.spansIn(ed.bytes(), 0, ed.len());
     try testing.expect(reparsed.len > before);
     try testing.expectEqual(@as(u32, 0), reparsed[0].start);
-    // A wholesale replacement is reported as lost.
+    // A wholesale replacement is one more edit the tree is told about.
     try ed.setText("struct S;\n");
+    try testing.expect(!s.absorb(ed));
+    try testing.expect(s.hl.tree != null and s.hl.stale);
+    try s.refresh(ed);
+    try testing.expect((try s.hl.spansIn(ed.bytes(), 0, ed.len())).len > 0);
+    // A log that lost track is reported, and takes the tree with it.
+    try ed.splice(0, 0, "// c\n");
+    ed.doc.edits.markLost();
     try testing.expect(s.absorb(ed));
+    try testing.expect(s.hl.tree == null);
     try testing.expectEqual(@as(usize, 0), s.hl.keptSpanCount());
     try testing.expectEqual(@as(usize, 0), (try s.hl.spansIn(ed.bytes(), 0, ed.len())).len);
     try s.refresh(ed);
@@ -404,10 +412,13 @@ test "the first frame after opening a 6000-line file paints without a parse; the
     const ed_now = e.buf.editor;
     try testing.expect((try e.syntax.hl.spansIn(ed_now.bytes(), 0, ed_now.len())).len > 6000);
     try testing.expect(app.nextDeadlineMs() == null or app.nextDeadlineMs().? > 1000 + idle_ms);
-    // A small file parses on its first frame (a replacement marks the
-    // syntax dirty as every text-changing path does).
+    // A replacement is an edit like any other: the tree is told what
+    // changed and the reparse waits out the idle gate.
     try e.buf.editor.setText("fn small() {}\n");
     e.syntax.dirty = true;
+    try app.render();
+    try testing.expect(e.syntax.dirty);
+    app.now_ms += idle_ms;
     try app.render();
     try testing.expect(e.syntax.parsed_seq != null);
     try testing.expect(!e.syntax.dirty);

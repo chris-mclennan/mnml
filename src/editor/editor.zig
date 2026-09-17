@@ -158,8 +158,9 @@ pub const Editor = struct {
         return self.doc.text.items.len;
     }
 
-    /// Replace the whole text (file reload, undo restore). Resets the
-    /// selection and clamps the cursor; the other views clamp theirs.
+    /// Replace the whole text (a file reload). Resets the selection and
+    /// clamps the cursor; the other views' positions shift along
+    /// (`Document.setTextBy`).
     pub fn setText(self: *Editor, text: []const u8) Allocator.Error!void {
         try self.doc.setTextBy(text, self);
         self.anchor = null;
@@ -229,23 +230,6 @@ pub const Editor = struct {
         }
         self.folds.reIndex(self.gpa) catch {};
         self.line_shifts.append(self.gpa, .{ .row = start_row, .delta = row_delta }) catch {};
-    }
-
-    /// The document was replaced wholesale by another view (its undo, a
-    /// reload): nothing maps, so every position clamps into the new text.
-    pub fn onDocumentReplaced(self: *Editor) void {
-        self.cursor = self.snapBoundary(self.cursor);
-        if (self.anchor) |a| self.anchor = self.snapBoundary(a);
-        if (self.block_anchor) |a| self.block_anchor = self.snapBoundary(a);
-        if (self.last_selection) |ls| self.last_selection = .{ self.snapBoundary(ls[0]), self.snapBoundary(ls[1]) };
-        if (self.extra_cursors.items.len != 0) self.normalizeExtras();
-        const lines = self.lineCount();
-        var i: usize = 0;
-        while (i < self.folds.count()) {
-            if (self.folds.values()[i] >= lines) self.folds.orderedRemoveAt(i) else i += 1;
-        }
-        self.folds.reIndex(self.gpa) catch {};
-        self.in_insert_run = false;
     }
 
     /// The row shifts since the last call, oldest first. Frame arena.
@@ -640,7 +624,7 @@ test "inferSingleEdit covers insert, backspace, forward delete" {
     try std.testing.expect(inferSingleEdit(10, 8, 3, 9) == null);
 }
 
-test "the edit log records every splice with points, marks wholesale replacements lost, and trims" {
+test "the edit log records every splice with points, a wholesale replacement as one stamped record, and trims" {
     const ed = try Editor.init(std.testing.allocator, "ab\ncd");
     defer ed.deinit();
     try ed.splice(1, 1, "X\nY");
@@ -656,13 +640,26 @@ test "the edit log records every splice with points, marks wholesale replacement
     try std.testing.expect(!ed.doc.edits.lostSince(0));
     ed.doc.edits.trim(1);
     try std.testing.expectEqual(@as(usize, 1), ed.doc.edits.items.items.len);
+    // A wholesale replacement is one precise record — what differs
+    // between the two texts — stamped as a replacement for the consumers
+    // that must not map positions across one. Nothing is lost.
     try ed.setText("fresh");
-    try std.testing.expect(ed.doc.edits.lostSince(2));
-    try std.testing.expect(!ed.doc.edits.lostSince(ed.doc.edits.head()));
+    try std.testing.expect(!ed.doc.edits.lostSince(2));
+    try std.testing.expect(ed.doc.edits.replacedSince(2));
+    try std.testing.expect(!ed.doc.edits.replacedSince(ed.doc.edits.head()));
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.edits.since(2).len);
+    // The same text again changes nothing, not even the seq.
+    const head = ed.doc.edits.head();
+    try ed.setText("fresh");
+    try std.testing.expectEqual(head, ed.doc.edits.head());
+    // Only a log that overflowed (or was marked so) is lost.
+    ed.doc.edits.markLost();
+    try std.testing.expect(ed.doc.edits.lostSince(head));
+    try std.testing.expect(ed.doc.edits.replacedSince(head));
     try std.testing.expectEqual(@as(usize, 0), ed.doc.edits.since(0).len);
 }
 
-test "a splice through one view moves the other view's cursor, anchor, extras and folds; a replace clamps" {
+test "a splice through one view moves the other view's cursor, anchor, extras and folds; so does a replacement" {
     const gpa = std.testing.allocator;
     const a = try Editor.init(gpa, "one\ntwo\nthree\nfour\n");
     defer a.deinit();
@@ -691,7 +688,8 @@ test "a splice through one view moves the other view's cursor, anchor, extras an
     try a.splice(13, 19, "");
     try std.testing.expectEqual(@as(usize, 13), b.cursor);
     try std.testing.expectEqual(@as(usize, 0), b.extra_cursors.items.len);
-    // A replaces the document wholesale: B clamps into it.
+    // A replaces the document wholesale — one splice of what differs — and
+    // B's cursor, past the end of it, lands on the new end.
     try a.setText("ab");
     try std.testing.expectEqual(@as(usize, 2), b.cursor);
     try std.testing.expectEqual(@as(usize, 0), b.folds.count());

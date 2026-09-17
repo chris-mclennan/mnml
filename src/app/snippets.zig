@@ -370,7 +370,7 @@ pub fn afterEdit(app: *App, pane_id: PaneId, e: *EditorPane) void {
     const sess = if (app.snippets.session) |*s| s else return;
     if (sess.pane != pane_id) return;
     const ed = e.buf.editor;
-    if (ed.doc.edits.lostSince(sess.seen_seq)) return app.snippets.endSession();
+    if (ed.doc.edits.replacedSince(sess.seen_seq)) return app.snippets.endSession();
     for (ed.doc.edits.since(sess.seen_seq)) |sp| {
         for (sess.stops) |*s| {
             s.pos = shift(s.pos, sp.start, sp.old_end, sp.new_end);

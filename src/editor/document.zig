@@ -59,6 +59,13 @@ pub const EditLog = struct {
     items: std.ArrayList(Splice) = .empty,
     next_seq: u64 = 1,
     lost_at: u64 = 0,
+    /// The seq of the last splice that stood for a wholesale replacement
+    /// (a reload, an undo, a redo). The record itself is precise — the
+    /// tree and the language server map across it — but a consumer whose
+    /// positions belong to the text as it was TYPED (a snippet's tab
+    /// stops, `:g`'s targets, a script's anchors) treats it as the end
+    /// of what it can follow.
+    replaced_at: u64 = 0,
 
     pub const cap = 4096;
 
@@ -80,6 +87,12 @@ pub const EditLog = struct {
         return self.lost_at > seen;
     }
 
+    /// True when the text was replaced wholesale after `seen` — whether
+    /// the log described it (`replaced_at`) or lost it.
+    pub fn replacedSince(self: *const EditLog, seen: u64) bool {
+        return self.replaced_at > seen or self.lost_at > seen;
+    }
+
     /// The seq a consumer is current at once it has applied `since(seen)`.
     pub fn head(self: *const EditLog) u64 {
         return self.next_seq - 1;
@@ -95,7 +108,8 @@ pub const EditLog = struct {
         self.items.items.len -= n;
     }
 
-    fn markLost(self: *EditLog) void {
+    /// The records no longer describe the text: every consumer rebuilds.
+    pub fn markLost(self: *EditLog) void {
         self.items.clearRetainingCapacity();
         self.lost_at = self.next_seq;
         self.next_seq += 1;
@@ -277,17 +291,45 @@ pub const Document = struct {
         return self.text.items.len;
     }
 
-    /// Replace the whole text (file reload, undo restore). No edit
-    /// record: the log is marked lost. Every view but `by` clamps its
-    /// positions into the new text.
+    /// Replace the whole text (a file reload, a formatter's answer). The
+    /// two texts are compared and what differs — everything between
+    /// their common prefix and common suffix, widened to char boundaries
+    /// — goes through `spliceBy` as ONE precise edit: the line index is
+    /// patched, the highlighter's tree is told what moved instead of
+    /// being thrown away, and the language server hears a range. The
+    /// record is also stamped as a replacement (`EditLog.replacedSince`)
+    /// for the consumers that must not map positions across one. Every
+    /// view but `by` has its positions shifted along. Identical text
+    /// changes nothing.
     pub fn setTextBy(self: *Document, text: []const u8, by: ?*const Editor) Allocator.Error!void {
-        self.text.clearRetainingCapacity();
-        try self.text.appendSlice(self.gpa, text);
-        try self.rebuildLineIndex();
-        self.edits.markLost();
-        for (self.views.items) |v| if (v != by) v.onDocumentReplaced();
-        var marks = self.marks.valueIterator();
-        while (marks.next()) |m| m.* = self.snapBoundary(m.*);
+        const old = self.text.items;
+        const hull = diffHull(old, text);
+        if (hull.start == old.len and hull.start == text.len) return;
+        try self.spliceBy(hull.start, old.len - hull.suffix, text[hull.start .. text.len - hull.suffix], by);
+        self.edits.replaced_at = self.edits.head();
+        for (self.views.items) |v| if (v != by) {
+            v.in_insert_run = false;
+        };
+    }
+
+    /// Where two texts differ: the length of their common prefix and of
+    /// their common suffix (never overlapping), each pulled back to a
+    /// char boundary in BOTH texts so the stretch between is spliceable.
+    pub const Hull = struct { start: usize, suffix: usize };
+
+    pub fn diffHull(old: []const u8, new: []const u8) Hull {
+        const n = @min(old.len, new.len);
+        var p = std.mem.indexOfDiff(u8, old[0..n], new[0..n]) orelse n;
+        while (p > 0 and (!boundaryIn(old, p) or !boundaryIn(new, p))) p -= 1;
+        const room = n - p;
+        var sfx: usize = 0;
+        while (sfx < room and old[old.len - 1 - sfx] == new[new.len - 1 - sfx]) sfx += 1;
+        while (sfx > 0 and (!boundaryIn(old, old.len - sfx) or !boundaryIn(new, new.len - sfx))) sfx -= 1;
+        return .{ .start = p, .suffix = sfx };
+    }
+
+    fn boundaryIn(t: []const u8, b: usize) bool {
+        return b >= t.len or (t[b] & 0xC0) != 0x80;
     }
 
     /// Mark `letter`'s (row, char col), or null when it is not set.
