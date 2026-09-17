@@ -23,6 +23,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const cfg = @import("config.zig");
 const ratelimit = @import("ratelimit.zig");
+const cache_mod = @import("cache.zig");
 
 pub const default_base_url = "https://api.bitbucket.org/2.0";
 pub const user_agent = "mnml-bitbucket/0.2.0";
@@ -123,6 +124,12 @@ pub const Client = struct {
     write_header: []u8,
     rate: cfg.Rate,
     limiter: ?*ratelimit.Limiter = null,
+    /// The prefetch cache (`cache.zig`). In `.prime` it answers the
+    /// first GET for each URL without a request; in `.fill` it records
+    /// every one that succeeds. Null is the same as `.off`.
+    cache: ?*cache_mod.Cache = null,
+    /// The clock the cache ages entries against; the pane sets it.
+    now_secs: i64 = 0,
     /// Requests actually sent, retries included — the diagnostics and
     /// the rate-limit tests both read it.
     sent: u32 = 0,
@@ -167,6 +174,15 @@ pub const Client = struct {
     pub fn send(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
         const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ self.base_url, path });
         defer gpa.free(url);
+        // A prefetched GET is answered off the disk: no token spent, no
+        // round trip, so the pane's first paint is the prefetch's.
+        if (method == .GET) {
+            if (self.cache) |c| {
+                if (try c.take(gpa, url, self.now_secs)) |bytes| {
+                    return .{ .ok = .{ .status = 200, .bytes = bytes } };
+                }
+            }
+        }
         var attempt: u8 = 0;
         while (true) {
             attempt += 1;
@@ -174,7 +190,12 @@ pub const Client = struct {
             self.sent += 1;
             var reply = try self.once(gpa, method, url, payload, side);
             switch (reply) {
-                .ok => return reply,
+                .ok => |body| {
+                    if (method == .GET) {
+                        if (self.cache) |c| c.put(url, body.bytes, self.now_secs);
+                    }
+                    return reply;
+                },
                 .failed => |f| {
                     if (!f.isRateLimited()) return reply;
                     const wait = @min(f.retry_after_secs orelse self.rate.default_backoff_secs, self.rate.max_backoff_secs);
@@ -450,4 +471,53 @@ test "a 429 is retried after Retry-After and penalises the bucket; the last atte
     try t.expect(r.failed.isRateLimited());
     try t.expectEqual(@as(u32, 2), client.sent);
     try t.expectEqual(@as(u32, 2), lim.status().?.throttles);
+}
+
+test "a prefetched GET answers the first ask off the disk and the refresh goes out; a write is never cached" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const cfg_path = try std.fs.path.join(t.allocator, &.{ dir, "config.zon" });
+    defer t.allocator.free(cfg_path);
+
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+
+    // `--prefetch`: the bodies land in the cache, and a write does not.
+    var fill = try cache_mod.Cache.init(t.allocator, t.io, cfg_path, .fill);
+    defer fill.deinit();
+    var filler = try Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{});
+    defer filler.deinit();
+    filler.cache = &fill;
+    filler.now_secs = 1000;
+    var warm = try filler.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    defer warm.deinit(t.allocator);
+    try t.expect(warm == .ok);
+    var voted = try filler.approve(t.allocator, "acme", "api", 1198);
+    defer voted.deinit(t.allocator);
+    try t.expectEqual(@as(u32, 1), fill.writes);
+    try t.expectEqual(@as(u32, 2), filler.sent);
+
+    // The pane: the same request is served without a round trip.
+    var prime = try cache_mod.Cache.init(t.allocator, t.io, cfg_path, .prime);
+    defer prime.deinit();
+    var pane_client = try Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{});
+    defer pane_client.deinit();
+    pane_client.cache = &prime;
+    pane_client.now_secs = 1010;
+    var first = try pane_client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    defer first.deinit(t.allocator);
+    try t.expectEqual(@as(u32, 0), pane_client.sent);
+    try t.expectEqualStrings(warm.ok.bytes, first.ok.bytes);
+    // The refresh is live.
+    var second = try pane_client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    defer second.deinit(t.allocator);
+    try t.expectEqual(@as(u32, 1), pane_client.sent);
+    // A URL the prefetch never saw is fetched as usual.
+    var other = try pane_client.listPipelines(t.allocator, "acme", "api", 100);
+    defer other.deinit(t.allocator);
+    try t.expectEqual(@as(u32, 2), pane_client.sent);
 }

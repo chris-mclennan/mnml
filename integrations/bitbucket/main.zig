@@ -13,6 +13,7 @@
 //!   mnml-bitbucket --list-prs --json
 //!   mnml-bitbucket --find-pipeline-for-pr --owner O --repo R --branch B --json
 //!   mnml-bitbucket --refresh [--workspace W]   republish the chip over Tier-2 IPC, headless
+//!   mnml-bitbucket --prefetch     fetch every tab and cache it for the next pane open
 //!   mnml-bitbucket --only prs|prs-mine|pipelines|branches   one family of tabs
 //!   mnml-bitbucket                connect to `$MNML_MOUNT_SOCKET` and paint
 //!
@@ -34,6 +35,7 @@ const cfg = @import("src/config.zig");
 const auth = @import("src/auth.zig");
 const api = @import("src/api.zig");
 const ratelimit = @import("src/ratelimit.zig");
+const cache_mod = @import("src/cache.zig");
 const fetch = @import("src/fetch.zig");
 const app_mod = @import("src/app.zig");
 const screen = @import("src/screen.zig");
@@ -63,6 +65,7 @@ const Opts = struct {
     find_pipeline: bool = false,
     json: bool = false,
     refresh: bool = false,
+    prefetch: bool = false,
     help: bool = false,
     only: ?[]const u8 = null,
     owner: []const u8 = "",
@@ -98,6 +101,8 @@ fn parseArgs(args: []const []const u8) !Opts {
             o.json = true;
         } else if (std.mem.eql(u8, a, "--refresh")) {
             o.refresh = true;
+        } else if (std.mem.eql(u8, a, "--prefetch")) {
+            o.prefetch = true;
         } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             o.help = true;
         } else if (std.mem.eql(u8, a, "--only") and i + 1 < args.len) {
@@ -188,6 +193,7 @@ pub fn main(init: std.process.Init) !u8 {
         return findPipelineCmd(gpa, io, env, stdout, stderr, opts.owner, opts.repo, opts.branch);
     }
     if (opts.refresh) return refreshCmd(gpa, io, env, stdout, stderr, opts.workspace);
+    if (opts.prefetch) return prefetchCmd(gpa, io, env, stdout, stderr);
 
     const mount = sdk.Mount.connectEnv(gpa, io, env) catch |err| switch (err) {
         error.NoSocket => {
@@ -211,6 +217,7 @@ const usage =
     \\  --list-prs --json         every open PR the per-repo tabs list
     \\  --find-pipeline-for-pr --owner O --repo R --branch B --json
     \\  --refresh [--workspace W] republish the statusline chip, headless
+    \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
     \\  --only prs|prs-mine|pipelines|branches   one family of tabs
     \\
 ;
@@ -597,6 +604,82 @@ fn findPipelineCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, 
     }
 }
 
+// ─── --prefetch ──────────────────────────────────────────────────────────
+
+/// Fetch every configured tab once and leave the bodies in the pane's
+/// cache, so the next `bitbucket_prs.open` paints rows instead of
+/// `loading… 0/13 repos` for the minutes the shared bucket takes.
+///
+/// It walks the same `App` the pane does, so what is warmed is exactly
+/// what the pane will ask for, and every request goes through the same
+/// shared limiter — a poller running this is one more well-behaved
+/// process on the bucket, not a second opinion about it.
+///
+/// Exit: 0 the cache is complete · 2 it ran and some repo failed (the
+/// cache holds the rest) · 1 it could not run at all.
+fn prefetchCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer) !u8 {
+    var why: []const u8 = "";
+    var s = openSession(gpa, io, env, &why) catch |e| {
+        try err.print("mnml-bitbucket --prefetch: {s}\n", .{if (e == error.NoToken) no_token_text else why});
+        return 1;
+    };
+    defer s.deinit(gpa);
+    s.client.limiter = &s.limiter;
+    var cache = try cache_mod.Cache.init(gpa, io, s.loaded.path, .fill);
+    defer cache.deinit();
+    // A repo that left the config must not keep answering from a file.
+    cache.clear();
+    s.client.cache = &cache;
+    s.client.now_secs = nowSecs(io);
+
+    var app = try app_mod.App.init(gpa, io, s.loaded.config, s.loaded.path, .{});
+    defer app.deinit();
+    if (app.tabs.len == 0) {
+        try err.print("mnml-bitbucket --prefetch: no tabs in {s}\n", .{s.loaded.path});
+        return 1;
+    }
+    app.now_secs = s.client.now_secs;
+    var progress: fetch.Progress = .{};
+    app.progress = &progress;
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id);
+    defer worker.deinit();
+
+    try app.startup();
+    while (true) {
+        const jobs = app.takeJobs();
+        if (jobs.len == 0) break;
+        defer gpa.free(jobs);
+        for (jobs) |*job| {
+            defer job.deinit();
+            var res = try worker.run(job);
+            try app.commit(&res);
+        }
+    }
+    const fx = app.takeEffects();
+    app.freeEffects(fx);
+
+    var repos: usize = 0;
+    var rows: usize = 0;
+    var errored: usize = 0;
+    var dead_tabs: usize = 0;
+    for (app.tabs) |ts| {
+        repos += ts.repos;
+        rows += ts.items;
+        errored += ts.errored;
+        if (ts.error_text.len > 0) dead_tabs += 1;
+    }
+    try out.print("prefetched {d} tab(s) · {d} repos · {d} rows · {d} requests · {d} cache entries in {s}\n", .{ app.tabs.len, repos, rows, s.client.sent, cache.writes, cache.dir });
+    if (dead_tabs == app.tabs.len or cache.writes == 0) {
+        try err.print("mnml-bitbucket --prefetch: nothing could be fetched{s}\n", .{if (app.tabs[0].error_text.len > 0) app.tabs[0].error_text else ""});
+        return 1;
+    }
+    if (errored > 0 or dead_tabs > 0) {
+        try err.print("mnml-bitbucket --prefetch: {d} repo(s) and {d} tab(s) failed; the cache holds the rest\n", .{ errored, dead_tabs });
+        return 2;
+    }
+    return 0;
+}
+
 // ─── the pane ────────────────────────────────────────────────────────────
 
 /// A host message copied off the reader's arena.
@@ -707,6 +790,12 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     };
     defer session.deinit(gpa);
     session.client.limiter = &session.limiter;
+    // Whatever `--prefetch` last left behind answers the startup fetch
+    // — each URL once, so the first refresh after it is live.
+    var cache = try cache_mod.Cache.init(gpa, io, session.loaded.path, .prime);
+    defer cache.deinit();
+    session.client.cache = &cache;
+    session.client.now_secs = nowSecs(io);
 
     var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
     defer app.deinit();

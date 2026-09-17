@@ -129,6 +129,47 @@ does the same with no pane open (`--refresh --workspace {{workspace}}`;
 a `term` child does not inherit `MNML_IPC_DIR`, so the workspace names
 the channel). `--values` prints the reference's JSON for a poller.
 
+## Prefetch — and the contract a poller runs it under
+
+`mnml-bitbucket --prefetch` fetches every configured tab once, through
+the same shared bucket as everything else, and writes each 2xx GET body
+to `<config dir>/cache/` — one file per URL, with the URL and the time
+in its first line. The pane, on open, serves each GET from that
+directory **once**: the startup fetch lands off the disk, so the first
+paint is rows instead of `loading… 0/13 repos`, and every request after
+that (a refresh, `r`, the auto-refresh, a detail) goes to the API, so
+nothing shown is more than one open stale. An entry older than an hour
+is ignored. `--prefetch` clears the directory before it starts, so a
+repo that left the config cannot keep answering.
+
+**The poller contract.** mnml-zig has no prefetch worker yet; scheduling
+this is its own track. Whatever runs it — a host poller, `launchd`,
+`cron`, a `systemd` timer — the contract is:
+
+```sh
+mnml-bitbucket --prefetch          # MNML_DATA_ROOT / MNML_BITBUCKET_CONFIG as the pane sees them
+```
+
+* **Output.** One line on stdout:
+  `prefetched 3 tab(s) · 13 repos · 212 rows · 44 requests · 44 cache entries in <dir>`.
+  Anything that went wrong is a line on stderr. Nothing else is
+  printed, and no token is ever printed.
+* **Exit codes.** `0` the cache is complete · `2` it ran and some repos
+  failed (the cache holds the rest — a normal outcome under a 429, and
+  not a reason to alert) · `1` it could not run at all (no config, no
+  token, no tab, nothing fetched). Only `1` is worth surfacing.
+* **How often.** One pass costs about `1 + tabs × (1 + repos)` requests
+  — 44 for the thirteen-repo, three-tab config. The shared bucket
+  refills at 0.22 requests/s, so that pass is ~200 s of the machine's
+  whole Bitbucket budget. **Ten to fifteen minutes between passes** is
+  the intended cadence: it leaves three quarters of the bucket for the
+  panes and the scripts, and stays inside the cache's one-hour
+  freshness. **Five minutes is the floor** — below that the passes
+  overlap the budget and every other process on the bucket starts
+  waiting. Never run two passes at once.
+* **It is safe to run while a pane is open**: the limiter is
+  cross-process, and the pane re-reads the cache only on its next open.
+
 ## Rate limiting
 
 Every request passes the shared token bucket the reference and the
