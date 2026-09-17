@@ -873,3 +873,82 @@ test "the `/` filter: the header reads N of M while narrowed and the hint row ch
     scr = try s.draw();
     try t.expect(has(scr, "scroll"));
 }
+
+/// Right-click the row the painter registered at `i` — through the
+/// real hit map, so a row whose rectangle is wrong or missing fails
+/// here rather than passing on a hand-built map.
+fn rightClickRow(s: *Screen, i: usize) !void {
+    _ = try s.draw();
+    const r = s.rig.app.hits.rectOf(.{ .row = i }) orelse return error.NoHitForRow;
+    try s.click(r.x + 2, r.y, .right);
+}
+
+fn menuItems(s: *Screen) []const app_mod.Action {
+    return if (s.rig.app.menu) |m| m.items else &.{};
+}
+
+test "a right-click offers the actions of the row kind under it — every kind, off the painted hit map" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    var rows = try s.rig.rows();
+
+    // The tree is api(#1234), web(#820), [ Show 1 more older ].
+    try t.expect(rows[0] == .repo_header);
+    try t.expect(rows[1] == .pr);
+    try t.expect(rows[rows.len - 1] == .show_more);
+
+    // A repo row: fold it, open it, copy it, hide it, move it.
+    try rightClickRow(s, 0);
+    try t.expectEqual(app_mod.Mode.menu, s.rig.app.mode);
+    try t.expectEqual(@as(usize, 0), s.rig.app.menu.?.row);
+    try t.expectEqualSlices(app_mod.Action, &.{ .activate, .open_web, .yank_url, .hide_repo, .reorder_up, .reorder_down }, menuItems(s));
+    try s.key("esc");
+
+    // A PR row: its detail, its page, its URL. No approve — the
+    // reference binds `a` only with the detail open, so the menu
+    // cannot offer it either.
+    try rightClickRow(s, 1);
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url }, menuItems(s));
+    try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
+    try s.key("esc");
+
+    // The same row with the detail open gains the one write.
+    try s.key("d");
+    try rightClickRow(s, 1);
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .toggle_approval }, menuItems(s));
+    try s.key("esc");
+    try s.key("d");
+
+    // The `[ Show N more older ]` footer lifts the window and nothing else.
+    try rightClickRow(s, rows.len - 1);
+    try t.expectEqualSlices(app_mod.Action, &.{.activate}, menuItems(s));
+    try s.key("esc");
+
+    // A merged PR carries its post-merge pipeline line, so `Enter` is
+    // on its menu where an open PR's has none.
+    try s.key("m");
+    rows = try s.rig.rows();
+    var merged: ?usize = null;
+    for (rows, 0..) |r, i| if (r == .pr) {
+        merged = i;
+        break;
+    };
+    try rightClickRow(s, merged.?);
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate }, menuItems(s));
+    try s.key("esc");
+
+    // A branch row on the pipelines tree: the run's page and its URL.
+    try s.key("3");
+    rows = try s.rig.rows();
+    var branch: ?usize = null;
+    for (rows, 0..) |r, i| if (r == .branch) {
+        branch = i;
+        break;
+    };
+    try rightClickRow(s, branch.?);
+    try t.expectEqualSlices(app_mod.Action, &.{ .open_web, .yank_url }, menuItems(s));
+    try t.expectEqual(branch.?, s.rig.app.tabs[2].selected);
+    try s.key("esc");
+    try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
+}
