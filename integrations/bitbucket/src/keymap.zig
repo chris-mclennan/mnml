@@ -24,7 +24,7 @@ pub const Action = enum {
     home,
     end,
     /// Enter / space on a tree row: expand or collapse it; on a
-    /// `[ Show N more ]` row, lift the filter; on a flat row, open.
+    /// `Show more (N)` row, lift the filter; on a flat row, open.
     activate,
     open_web,
     yank_url,

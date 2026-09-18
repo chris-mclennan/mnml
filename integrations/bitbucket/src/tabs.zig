@@ -8,7 +8,7 @@
 //! * a PR tab shows only the state it advertises (an Open tab never
 //!   leaks a merged row in through a mine-only peek);
 //! * a workspace tab keeps pull requests updated in the last 24 hours
-//!   and hides the rest behind a `[ Show N more older ]` footer row,
+//!   and hides the rest behind a `Show more (N)` footer row,
 //!   which `show_all` lifts — up to twenty merged rows per repo;
 //! * a mine-only tab shows every open PR plus one merged peek.
 //!
@@ -174,7 +174,7 @@ pub const Expanded = struct {
     }
 };
 
-/// The reference's cap on merged rows revealed by `[ Show N more ]`.
+/// The reference's cap on merged rows revealed by `Show more (N)`.
 pub const show_all_merged_cap: usize = 20;
 
 pub const VisibleRow = union(enum) {
@@ -185,7 +185,7 @@ pub const VisibleRow = union(enum) {
     pr: struct { repo: usize, idx: usize, sub: bool },
     /// A branch under an expanded repo of the pipelines tree.
     branch: struct { repo: usize, idx: usize },
-    /// `[ Show N more older ]` / `[ Show N more merged ]`.
+    /// `Show more (N)`, over the rows the cap hid.
     show_more: struct { hidden: usize, merged: bool },
     /// A row of a flat list.
     flat: usize,
@@ -368,7 +368,7 @@ test "a mine tab shows every open PR and one merged peek; show_all caps merged a
     // An Open tab: the merged peek is not eligible, so 3 open rows and no footer.
     const v = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
     try t.expectEqual(@as(usize, 4), v.rows.len);
-    // A per-repo tab with no state: 3 open + 1 peek + a `Show 26 more merged` footer.
+    // A per-repo tab with no state: 3 open + 1 peek + a `Show more (26)` footer.
     const any: TabSpec = .{ .kind = .pull_requests, .name = "Mine", .workspace = "acme", .state = "", .mine_only = true };
     const peek = try visibleRows(a, .{ .spec = any, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
     try t.expectEqual(@as(usize, 6), peek.rows.len);

@@ -278,8 +278,10 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
                 cells[i] = "";
                 styles[i] = dim;
             }
-            cells[5] = try std.fmt.allocPrint(a, "[ Show {d} more {s} ]", .{ s.hidden, if (s.merged) "merged" else "older" });
-            styles[5] = cellStyle(c, .{ .fg = th.yellow, .mods = .{ .bold = true } });
+            // The fold row's words are the toolkit's: `Show more (N)` in
+            // the bright foreground, the same row the Jira tree paints.
+            cells[5] = try std.fmt.allocPrint(a, "\u{22ef}  Show more ({d})", .{s.hidden});
+            styles[5] = cellStyle(c, th.bright());
             n = 6;
         },
         .flat => |i| switch (ts.data) {

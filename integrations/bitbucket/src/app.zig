@@ -16,6 +16,7 @@
 //! focused row's pull request, the hint row's context.
 
 const std = @import("std");
+const sdk = @import("mnml_sdk");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const cfg = @import("config.zig");
@@ -134,6 +135,10 @@ pub const App = struct {
     now_secs: i64 = 0,
     detail_visible: bool = false,
     detail_scroll: usize = 0,
+    /// How many lines the detail panel painted last frame, and how many
+    /// fit — what turns a press on its scrollbar into a position.
+    detail_lines: usize = 0,
+    detail_rows: usize = 0,
     details: std.StringHashMapUnmanaged(*DetailEntry) = .empty,
     detail_in_flight: ?[]u8 = null,
     pr_pipelines: std.StringHashMapUnmanaged(*PrPipelines) = .empty,
@@ -363,7 +368,7 @@ pub const App = struct {
     /// The active tab's rows, filtered by the `/` query. On the frame
     /// arena; call once per event. Also records what the header's
     /// `N of M` reads: the content rows kept, of the content rows the
-    /// tab would show unfiltered (a repo header and the `Show N more`
+    /// tab would show unfiltered (a repo header and the `Show more (N)`
     /// footer are chrome and count as neither).
     pub fn visible(app: *App, a: Allocator) Allocator.Error!tabs.View {
         const ts = app.activeTab();
@@ -1243,6 +1248,12 @@ pub const App = struct {
             return true;
         }
         if (app.mode == .help) {
+            // A row of the sheet runs its chord; anywhere else closes.
+            if (target) |tg| if (tg == .sheet_row) {
+                app.mode = .list;
+                const rows = (try app.visible(a)).rows;
+                return app.run(a, tg.sheet_row, rows);
+            };
             app.mode = .list;
             return true;
         }
@@ -1282,7 +1293,17 @@ pub const App = struct {
                 }
                 if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
             },
-            .hint => |action| return app.run(a, action, view.rows),
+            // A hint entry and a key-sheet row both run exactly what
+            // their chord runs: the pointer reaches what the keyboard
+            // does, and there is no second table to keep in step.
+            .hint, .sheet_row => |action| return app.run(a, action, view.rows),
+            .detail_close => app.detail_visible = false,
+            // A press or a drag anywhere on the track goes there: the
+            // bar is a control, not a decoration.
+            .detail_bar => {
+                const r = app.hits.rectOf(hit.Target.detail_bar) orelse return true;
+                app.detail_scroll = sdk.pane.scrollAt(r, app.detail_lines, app.detail_rows, row);
+            },
             .menu_item, .sheet, .detail => {},
         }
         return true;
@@ -1297,9 +1318,12 @@ pub const App = struct {
             if (dy > 0) app.help_scroll -|= 3 else app.help_scroll += 3;
             return;
         }
-        if (app.hits.at(col, row)) |tg| if (tg == .detail) {
-            if (dy > 0) app.detail_scroll -|= 3 else app.detail_scroll += 3;
-            return;
+        if (app.hits.at(col, row)) |tg| switch (tg) {
+            .detail, .detail_close, .detail_bar => {
+                if (dy > 0) app.detail_scroll -|= 3 else app.detail_scroll += 3;
+                return;
+            },
+            else => {},
         };
         const view = try app.visible(a);
         app.move(view.rows, if (dy > 0) -3 else 3);

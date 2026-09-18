@@ -16,7 +16,7 @@ is the inventory), painted in mnml-zig's own chrome.
        #1234                   OPEN       Chris M        chris/fix-login    2026-09-01   Fix the login redirect
        #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
   ▾ web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
-                                                                                          [ Show 1 more older ]
+                                                                                                Show more (1)
  Open + Draft · 2 repos, 5 PRs       ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
 
@@ -138,7 +138,7 @@ does. The keys are the reference's:
 | | |
 |---|---|
 | `j` `k` `↑` `↓` · `⇞` `⇟` · `g` `G` `⇱` `⇲` | move |
-| `⏎` `␣` | expand / collapse a repo; open a merged PR's post-merge pipeline line; lift the `[ Show N more ]` footer |
+| `⏎` `␣` | expand / collapse a repo; open a merged PR's post-merge pipeline line; lift the `Show more (N)` footer |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
 | `e` `c` | expand / collapse every repo |
 | `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
