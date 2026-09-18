@@ -15,3 +15,5 @@ docs/ui-spec/fixtures/large.rs
 docs/research/compare/*/step-*
 docs/research/compare/*/*.log
 docs/research/compare/*/fixture.txt
+__pycache__/
+*.pyc
