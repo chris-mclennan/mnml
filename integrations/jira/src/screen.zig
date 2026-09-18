@@ -2039,3 +2039,112 @@ test "every hint entry and every key-sheet row runs what its chord runs" {
     try a.click(row.x, row.y, false);
     try testing.expect(a.active != was);
 }
+
+/// The theme a colour test paints in: a `cursor_line` that is nothing
+/// else on the screen, so "this cell is on the cursor row" is a fact
+/// and not a coincidence.
+fn bandedUi() Ui {
+    return .{ .th = Theme.fromHelloBranded(.{
+        .fg = .{ .rgb = .{ 200, 200, 200 } },
+        .bg = .{ .rgb = .{ 10, 10, 10 } },
+        .muted = .{ .rgb = .{ 90, 90, 90 } },
+        .accent = .{ .rgb = .{ 97, 175, 239 } },
+        .cursor_line = .{ .rgb = .{ 44, 50, 60 } },
+        .chip_bg = .{ .rgb = .{ 45, 45, 45 } },
+        .chip_active_bg = .{ .rgb = .{ 152, 195, 121 } },
+    }, "blue") };
+}
+
+/// Every cell of `y` between `x0` and `x1` carries `want` as its
+/// ground, bar the ones in `allow` — a chip on a row brings its own,
+/// and that is the one thing that may sit on top of the band.
+fn expectBand(f: *const Frame, y: u16, x0: u16, x1: u16, want: sdk.Color, allow: []const sdk.Color) !void {
+    var x = x0;
+    while (x < x1) : (x += 1) {
+        const got = bgAt(f, x, y);
+        if (got != null and std.meta.eql(got.?, want)) continue;
+        if (got != null) {
+            var ok = false;
+            for (allow) |c| ok = ok or std.meta.eql(got.?, c);
+            if (ok) continue;
+        }
+        std.debug.print("row {d} breaks at column {d}: `{s}` on {any}, wanted {any}\n", .{ y, x, cellAt(f, x, y).symbol(), got, want });
+        return error.RowNotBanded;
+    }
+}
+
+/// …and no cell of it does.
+fn expectNoBand(f: *const Frame, y: u16, x0: u16, x1: u16, want: sdk.Color) !void {
+    var x = x0;
+    while (x < x1) : (x += 1) {
+        const got = bgAt(f, x, y);
+        if (got != null and std.meta.eql(got.?, want)) {
+            std.debug.print("row {d} is banded at column {d}, and should not be\n", .{ y, x });
+            return error.RowBanded;
+        }
+    }
+}
+
+test "the cursor row is a filled band across the whole row, on the tree, the kanban and a picker" {
+    const ui = bandedUi();
+    const band = ui.th.cursor_line;
+    // A row's `[ Open ]` / `[ Merge ]` chips paint on their own ground;
+    // everything else on the row belongs to the band.
+    const chip_grounds = [_]sdk.Color{ ui.th.chip_bg, ui.th.chip_active_bg };
+    {
+        const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+        defer h.stop();
+        const a = &h.app;
+        try a.ensureLoaded();
+        var f = try Frame.init(testing.allocator, 120, 40);
+        defer f.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const ar = arena.allocator();
+        try paint(ar, &f, a, ui);
+        // The tree: the cursor is on the first group header.
+        const cur = (try findRow(ar, &f, "In PR Review (1)")).?;
+        try expectBand(&f, cur, 0, 120, band, &.{});
+        try expectNoBand(&f, cur + 1, 0, 120, band);
+        // Move it onto a ticket row and the band moves with it.
+        _ = try a.onKey("j");
+        try paint(ar, &f, a, ui);
+        try expectNoBand(&f, cur, 0, 120, band);
+        try expectBand(&f, cur + 1, 0, 120, band, &chip_grounds);
+        // The picker over the list: its rows band the same way.
+        _ = try a.onKey("a");
+        try paint(ar, &f, a, ui);
+        try testing.expect(a.picker != null);
+        const pr = a.hits.rectOf(hit.Target{ .picker_row = 0 }).?;
+        try expectBand(&f, pr.y, pr.x, pr.x + pr.w, band, &.{});
+        const next = a.hits.rectOf(hit.Target{ .picker_row = 1 }).?;
+        try expectNoBand(&f, next.y, next.x, next.x + next.w, band);
+    }
+    {
+        const h = try app_mod.Harness.start(.{ .tabs = &app_mod.board_tabs, .team_field_id = "customfield_10056" }, .boards);
+        defer h.stop();
+        const a = &h.app;
+        try a.ensureLoaded();
+        var f = try Frame.init(testing.allocator, 120, 40);
+        defer f.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const ar = arena.allocator();
+        try paint(ar, &f, a, ui);
+        // The kanban: the cursor's card bands across the card's width,
+        // and the card beside it in the next column does not.
+        const card = a.hits.rectOf(hit.Target{ .card = 0 }).?;
+        try expectBand(&f, card.y, card.x, card.x + card.w, band, &.{});
+        var other: ?Rect = null;
+        var i: u32 = 1;
+        while (i < 9) : (i += 1) {
+            if (a.hits.rectOf(hit.Target{ .card = i })) |rr| {
+                if (rr.y != card.y or rr.x != card.x) {
+                    other = rr;
+                    break;
+                }
+            }
+        }
+        try expectNoBand(&f, other.?.y, other.?.x, other.?.x + other.?.w, band);
+    }
+}
