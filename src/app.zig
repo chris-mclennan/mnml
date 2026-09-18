@@ -1112,6 +1112,10 @@ pub const App = struct {
     /// Reach it through `flash.current`, which drops a stale one.
     flash: ?flash_mod.State = null,
     cmd_complete: ?CmdComplete = null,
+    /// The app's own `:` line (`app/cmdline.zig`) — the one `Ctrl+;`
+    /// and a click on the bottom row open, in either profile and from
+    /// any focus. The vim handler's per-buffer `:` is separate.
+    cmdline: ?@import("app/cmdline.zig").State = null,
     /// The line range a `!` filter prompt applies to.
     filter_rows: ?[2]usize = null,
     /// vim `:set ic` / `noic`; null = smart case.
@@ -1610,6 +1614,7 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
+        if (self.cmdline) |*c| c.deinit(gpa);
         if (self.preview_hl) |*h| h.deinit();
         if (self.flash) |*f| f.deinit(gpa);
         for (self.recent.items) |r| gpa.free(r);
@@ -2682,6 +2687,7 @@ pub const App = struct {
 
 test {
     _ = @import("app/trust.zig");
+    _ = @import("app/cmdline.zig");
     _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
     _ = @import("app/first_launch.zig");

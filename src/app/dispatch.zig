@@ -17,6 +17,8 @@ const keymap = @import("../core/keymap.zig");
 const key_mod = @import("../core/key.zig");
 const Key = key_mod.Key;
 const Chord = key_mod.Chord;
+const cmdline_mod = @import("cmdline.zig");
+const cmdline_bar_mod = @import("../ui/cmdline_bar.zig");
 const Mouse = key_mod.Mouse;
 const input = @import("../input/mod.zig");
 const edit_op = @import("../editor/edit_op.zig");
@@ -150,6 +152,19 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     switch (app.overlay) {
         .none => {},
         else => return overlayKey(app, k),
+    }
+    // // changed (bottom-row): the app's own `:` line owns the keyboard
+    // while it is open — it is opened from any focus, so no focused
+    // handler gets a say — and the chord that opens it is read here,
+    // ABOVE the chord chain. A half-typed leader sequence in a pane
+    // would otherwise swallow `Ctrl+;` into `app.chord` and the line
+    // would never appear (the bug Rust's own `Ctrl+;` was moved up to
+    // fix: it worked in tree focus and failed in pane focus).
+    if (app.cmdline != null and try cmdline_mod.key(app, k)) return;
+    if (opensCommandLine(app, k)) {
+        app.chord.clear(app.gpa);
+        cmdline_mod.open(app);
+        return;
     }
     if (app.find_bar != null) return findBarKey(app, k);
     // Armed flash labels take the next key ahead of everything the
@@ -2218,6 +2233,35 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 }
                 return;
             }
+            // // changed (bottom-row): the row under the statusline.
+            // Handled above the overlay close so a click there does not
+            // also tear down a picker the user is looking at.
+            switch (@as(render.Button, @enumFromInt(id))) {
+                // The bar: opens the `:` line. Already open, a click is
+                // a no-op — the user is typing on it.
+                .cmdline_bar => {
+                    if (app.cmdline == null) cmdline_mod.open(app);
+                    return;
+                },
+                // The `⟳ … running…` indicator: stop what it reports.
+                .cmdline_inflight => return runCmd(app, .@"http.abort"),
+                // The echoed toast's `[name]`: the pane it names. Read
+                // off the live toast rather than a rect captured last
+                // frame — the toast may have aged out since.
+                .cmdline_mention => {
+                    const msg = app.lastToast() orelse return;
+                    const name = cmdline_bar_mod.mentionName(msg) orelse return;
+                    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| {
+                        if (std.mem.indexOf(u8, pane.title(), name) != null) {
+                            app.showPane(@intCast(i));
+                            return;
+                        }
+                    };
+                    app.toast("no pane named {s}", .{name});
+                    return;
+                },
+                else => {},
+            }
             if (app.overlay != .none) closeOverlay(app);
             // The palette bar's integration chips.
             if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
@@ -3126,6 +3170,16 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             if (app.panes.editor(pane_id)) |live| _ = try app.applyOps(live, &.{.select_clear});
         },
     }
+}
+
+/// Whether `k` is the chord bound to `app.command_line` in the active
+/// profile. Read through the keymap rather than hard-coded, so a
+/// `[keys.*]` rebinding of the command moves the global with it.
+fn opensCommandLine(app: *const App, k: Key) bool {
+    return switch (app.keymap.resolveSeq(&.{Chord.of(k)})) {
+        .run => |target| target == .static and target.static == .@"app.command_line",
+        else => false,
+    };
 }
 
 /// Run an ex line; a failure toasts the reason (or the error name).

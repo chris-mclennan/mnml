@@ -24,10 +24,12 @@ const ex = @import("ex.zig");
 const settings = @import("settings.zig");
 const find = @import("find.zig");
 const transfers = @import("transfers.zig");
+const cmdline_mod = @import("cmdline.zig");
 
 pub const table = .{
     .@"app.quit" = &quit,
     .@"app.restart" = &restart,
+    .@"app.command_line" = &commandLine,
     .@"whichkey.leader" = &leader,
     .noop = &noop,
     .@"noop.info" = &noopInfo,
@@ -163,6 +165,12 @@ fn quit(app: *App) CommandError!void {
     } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// `Ctrl+;` — the app's own `:` line (`app/cmdline.zig`), from any
+/// focus and in either keymap profile. Already open, it stays as it is.
+fn commandLine(app: *App) CommandError!void {
+    cmdline_mod.open(app);
 }
 
 /// Exit 75: the `run.sh` loop rebuilds and relaunches.

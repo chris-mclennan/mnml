@@ -1,0 +1,60 @@
+# width: 120
+# height: 40
+# The bottom row — the one under the statusline. `Ctrl+;` opens the `:`
+# line from ANY focus and in EITHER keymap profile, and a click anywhere
+# on the row does the same for a user who does not know the chord.
+# `app.command_line` is the command behind both.
+
+write notes.txt "alpha beta gamma\nsecond line here\n"
+open notes.txt
+
+# The row starts blank.
+expect screen lacks ":▏"
+
+# ── pane focus (standard profile) ──
+key ctrl+;
+expect screen contains ":▏"
+# It really is a `:` line: typing runs an ex command.
+type noh
+expect screen contains ":noh▏"
+key esc
+expect screen lacks ":noh▏"
+
+# ── tree focus ──
+command view.focus_tree
+key ctrl+;
+expect screen contains ":▏"
+key esc
+
+# (The mid-chord case — `Ctrl+;` while a chord chain is half typed — is a
+# unit test in `app/cmdline.zig`: this harness expires any pending chain
+# between steps, so a `.test` cannot hold one across two keys.)
+
+# ── the vim profile binds it too ──
+command editor.use_vim
+key ctrl+;
+expect screen contains ":▏"
+key esc
+command editor.use_standard
+
+# ── a click anywhere on the row opens it; a click while it is open is a
+#    no-op, so the half-typed line survives ──
+click 60 39
+expect screen contains ":▏"
+type w
+expect screen contains ":w▏"
+click 10 39
+expect screen contains ":w▏"
+
+# Enter runs the line: `:w` writes the buffer.
+key enter
+expect screen lacks ":w▏"
+expect file notes.txt contains "alpha beta gamma"
+
+# The line edits at the caret, not only at the end.
+key ctrl+;
+type set
+key left
+key X
+expect screen contains ":seX▏t"
+key esc
