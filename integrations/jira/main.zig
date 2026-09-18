@@ -378,6 +378,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.resize(frame.cols, frame.rows);
     var ipc = try sdk.Ipc.fromEnv(gpa, io, env);
     defer if (ipc) |*i| i.deinit();
+    // The channel a `[ view ]` press asks for a session on.
+    if (ipc) |*i| app.setIpc(i);
 
     // A prefetch cache paints before any fetch.
     if (env.get(prefetch_env)) |cache| if (cache.len > 0) {
@@ -433,6 +435,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             break;
         }
         try app.drainRefresh();
+        // One spinner counter for the whole pane, so every button that
+        // is mid-dispatch turns together.
+        if (app.actions.anyRunning()) app.spin +%= 1;
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;

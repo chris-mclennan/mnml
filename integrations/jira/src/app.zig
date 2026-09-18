@@ -204,6 +204,15 @@ pub const App = struct {
     /// group — a test, `--dump` — a refetch runs inline, which is what
     /// makes those two deterministic.
     refresh: RefreshSlot,
+    /// What every row's action button says now, keyed by the ticket or
+    /// the PR rather than the row, so a refetch that moves the row keeps
+    /// what was pressed on it.
+    actions: sdk.pane.ActionStore,
+    /// The channel a `[ view ]` press asks the host to focus a session
+    /// on. Null outside a host, where the button is not offered.
+    ipc: ?*const sdk.Ipc = null,
+    /// Turns the spinner on every button that is mid-dispatch.
+    spin: usize = 0,
     group: ?*Io.Group = null,
     /// The ticket the cursor was on when the in-flight refetch started,
     /// so it can go back on it when the rows are swapped.
@@ -254,7 +263,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa) };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -269,6 +278,12 @@ pub const App = struct {
     /// inline so the next line sees its result.
     pub fn setGroup(a: *App, group: *Io.Group) void {
         a.group = group;
+    }
+
+    /// The Tier-2 channel. A `[ view ]` press goes down it as a
+    /// `focus-session` line; without one the button stays on its word.
+    pub fn setIpc(a: *App, ipc: *const sdk.Ipc) void {
+        a.ipc = ipc;
     }
 
     /// Close the result queue. The pane calls this BEFORE cancelling the
@@ -313,6 +328,7 @@ pub const App = struct {
         a.kanban_expanded.deinit(a.gpa);
         a.hits.deinit(a.gpa);
         a.refresh.deinit(a.io, RefreshResult.drop);
+        a.actions.deinit();
         a.keys.deinit();
         a.* = undefined;
     }
@@ -1866,7 +1882,39 @@ pub const App = struct {
         var buf: [24]u8 = undefined;
         const d = dispatch.Dispatch.forTicket(kind, iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), a.isoNow(&buf));
         const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
-        a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
+        try a.fireAndRecord(arena, iss.key, kind, d, paths);
+    }
+
+    /// Fire a dispatch and leave the outcome on the row's button: a
+    /// `[ view ]` that focuses the session it started, or a red cross
+    /// carrying the reason into the hint row.
+    fn fireAndRecord(a: *App, arena: Allocator, row_key: []const u8, action: []const u8, d: dispatch.Dispatch, paths: dispatch.Paths) Allocator.Error!void {
+        const out = try dispatch.fireOutcome(arena, a.io, d, paths);
+        a.say("{s}", .{out.text});
+        if (out.fired) {
+            // What the pane can say about the session it started: the
+            // directory it runs in and the first line of its prompt.
+            const prompt = try d.prompt(arena);
+            const first = prompt[0 .. std.mem.indexOfScalar(u8, prompt, '\n') orelse prompt.len];
+            try a.actions.set(row_key, action, .{ .state = .view, .detail = try arena.dupe(u8, first) });
+        } else {
+            try a.actions.set(row_key, action, .{ .state = .failed, .detail = out.text });
+        }
+    }
+
+    /// A press on a button that already started a session: ask the host
+    /// to bring it to the front.
+    pub fn focusSessionFor(a: *App, row_key: []const u8, action: []const u8) Allocator.Error!void {
+        const e = a.actions.get(row_key, action);
+        const ipc = a.ipc orelse {
+            a.setStatus("view: no mnml channel to focus a session on", .{});
+            return;
+        };
+        ipc.focusSession(.{ .cwd = a.cfg.dispatch_workspace, .prompt_line = e.detail }) catch |err| {
+            a.say("view failed: {s}", .{@errorName(err)});
+            return;
+        };
+        a.say("{s} {s}: asked mnml to focus its session", .{ row_key, action });
     }
 
     pub fn dispatchReview(a: *App) Allocator.Error!void {
@@ -2339,9 +2387,14 @@ pub const App = struct {
             .action => |x| {
                 const iss = a.tab().issue(x.issue) orelse return;
                 const buttons = dispatch.buttonsForTicket(iss);
-                if (x.button < buttons.len) {
-                    try a.selectIssue(x.issue);
-                    try a.dispatchTicket(buttons[x.button].kind());
+                if (x.button >= buttons.len) return;
+                const kind = buttons[x.button].kind();
+                try a.selectIssue(x.issue);
+                // What the press means is what the button says: a word
+                // dispatches, a `[ view ]` focuses what it started.
+                switch (sdk.pane.action.pressOf(a.actions.state(iss.key, kind))) {
+                    .focus_session => try a.focusSessionFor(iss.key, kind),
+                    .dispatch, .retry => try a.dispatchTicket(kind),
                 }
             },
             .tab => |i| try a.switchTab(i),
@@ -2834,6 +2887,56 @@ test "Work: the assignee picker assigns, the fixVersion picker sets, watching to
     try testing.expectEqual(comments + 1, h.store.find("ENG-1").?.comments.items.len);
     const d = a.detailOf("ENG-1").?;
     try testing.expect(std.mem.indexOf(u8, d.comments[d.comments.len - 1].body, "on it") != null);
+}
+
+test "a row's action button keeps what its press left, by ticket, across a refetch" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const h = try Harness.start(.{ .tabs = &work_tabs, .dispatch_workspace = root }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Nothing pressed: every button is on its own word.
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state("ENG-5", "triage"));
+    // With nowhere to dispatch to, the press leaves a cross and the
+    // reason on the button rather than a status that scrolls away.
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    // Copied: `focusedKey` borrows from the tab's data arena, which the
+    // refetch below replaces.
+    const key = try arena.allocator().dupe(u8, (try a.focusedKey(arena.allocator())).?);
+    try a.dispatchTicket("triage");
+    try testing.expectEqual(sdk.pane.ActionState.failed, a.actions.state(key, "triage"));
+    try testing.expect(std.mem.indexOf(u8, a.actions.get(key, "triage").detail, "nothing to dispatch to") != null);
+
+    // With both channels there, the press starts a session and the
+    // button becomes the door to it.
+    try tmp.dir.createDirPath(testing.io, ".claude");
+    try tmp.dir.createDirPath(testing.io, ".mnml/" ++ dispatch.ipc_subdir);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/" ++ dispatch.ipc_subdir ++ "/command", .data = "" });
+    try a.dispatchTicket("triage");
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    // What it remembers is the prompt's first line — all a `term` line
+    // can say about the session it started.
+    try testing.expect(std.mem.startsWith(u8, a.actions.get(key, "triage").detail, "/agents:developer "));
+    // A second action on the same ticket is its own button.
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state(key, "fix"));
+
+    // A refetch moves the rows; the button follows its ticket.
+    try a.refreshActive();
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    // And a press on it now asks for the session rather than dispatching
+    // again — without a channel it says so instead of pretending.
+    try a.focusSessionFor(key, "triage");
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "no mnml channel") != null);
 }
 
 test "a refetch on the group keeps the old rows, the keys and the cursor, and lands on a later tick" {

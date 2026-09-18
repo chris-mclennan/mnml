@@ -13,6 +13,8 @@
 //!   text    widths and fitting, counted the way `Frame` paints
 //!   work    the one-job channel a pane refetches through, so a slow
 //!           fetch never freezes its keys or its repaint
+//!   action  a row's action button and what a press leaves behind on
+//!           it — the spinner, the `view` it becomes, the ✗ it wears
 //!
 //! Ten lines put a pane in mnml's chrome:
 //!
@@ -33,6 +35,7 @@ const hit = @import("pane/hit.zig");
 
 pub const theme = @import("pane/theme.zig");
 pub const work = @import("pane/work.zig");
+pub const action = @import("pane/action.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
 
@@ -48,6 +51,8 @@ pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
 pub const Slot = work.Slot;
+pub const ActionState = action.State;
+pub const ActionStore = action.Store;
 
 test {
     _ = hit;
@@ -55,6 +60,7 @@ test {
     _ = chrome;
     _ = text;
     _ = work;
+    _ = action;
     // The anti-drift test: the shared elements painted from two panes'
     // target vocabularies must come out cell for cell identical.
     _ = @import("pane/consistency_test.zig");

@@ -295,6 +295,10 @@ const Loop = struct {
                 d.ipcCommand(cmd) catch {};
                 return ev(arena, &.{ .{ "event", "notify" }, .{ "title", n.title }, .{ "body", n.body } });
             },
+            .focus_session => |f| {
+                d.ipcCommand(cmd) catch {};
+                return ev(arena, &.{ .{ "event", "focus_session" }, .{ "cwd", f.cwd orelse "" }, .{ "prompt_line", f.prompt_line orelse "" } });
+            },
             .open_pty => |p| {
                 d.ipcCommand(cmd) catch {};
                 return ev(arena, &.{ .{ "event", "open_pty" }, .{ "exe", p.command[0] } });

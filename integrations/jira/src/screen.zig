@@ -641,12 +641,20 @@ pub const Painter = struct {
         }
     }
 
+    /// The row's action buttons, each wearing what its last press left:
+    /// its word, a spinner, the `[ view ]` that focuses the session it
+    /// started, or a red cross. The state is keyed by the ticket, so a
+    /// refetch that moves the row brings it along.
     fn paintActions(p: *Painter, x0: u16, y: u16, max_w: u16, issue_idx: usize, iss: model.Issue) Allocator.Error!void {
         var x = x0;
         for (dispatch.buttonsForTicket(iss), 0..) |b, bi| {
-            const lw = text.width(b.label());
+            const st = p.a.actions.state(iss.key, b.kind());
+            var buf: [48]u8 = undefined;
+            const word = std.mem.trim(u8, b.label(), "[] ");
+            const cap = sdk.pane.action.caption(&buf, st, word, p.a.spin, p.ui.ascii);
+            const lw = text.width(cap);
             if (x + lw > x0 + max_w) break;
-            _ = p.put(x, y, lw, b.label(), p.s.chip_style);
+            _ = p.put(x, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, st));
             try p.hitAdd(.{ .x = x, .y = y, .w = lw, .h = 1 }, .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } });
             x += lw + 1;
         }
@@ -870,6 +878,24 @@ pub const Painter = struct {
         if (status.len > 0) {
             x += p.putFit(x, y, w -| x, status, p.s.plain);
             x += 2;
+        }
+        // A button that failed keeps its reason where it can be read:
+        // the status moves on, the row's cross does not.
+        if (a.hasTabs() and status.len == 0) {
+            var scratch = std.heap.ArenaAllocator.init(a.gpa);
+            defer scratch.deinit();
+            if (a.focusedKey(scratch.allocator()) catch null) |k| {
+                const iss = for (a.tabConst().issues) |i| {
+                    if (std.mem.eql(u8, i.key, k)) break i;
+                } else null;
+                if (iss) |i| for (dispatch.buttonsForTicket(i)) |b| {
+                    const e = a.actions.get(i.key, b.kind());
+                    if (e.state != .failed or e.detail.len == 0) continue;
+                    x += p.putFit(x, y, w -| x, p.fmt("{s}: {s}", .{ i.key, e.detail }), p.s.err_style);
+                    x += 2;
+                    break;
+                };
+            }
         }
         if (hint.len > 0) {
             _ = p.putFit(x, y, w -| x, hint, p.s.muted);
