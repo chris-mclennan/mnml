@@ -65,10 +65,9 @@ pub fn build(app: *App, text_in: []const u8, path: ?[]const u8, hit: ?Hit) Alloc
         const key = syntax.keyFor(path, text);
         h.setLanguage(if (key) |k| hl_table.find(k) else null);
         h.invalidate();
-        h.refresh(text) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-        break :blk h.spans.items;
+        // The slice is the highlighter's until its next call; nothing
+        // below asks it for anything more before the rows are built.
+        break :blk try h.highlightAll(text);
     };
 
     var rows: std.ArrayListUnmanaged([]Segment) = .empty;

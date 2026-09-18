@@ -118,6 +118,10 @@ pub fn build(b: *std.Build) void {
     const partial = b.option(bool, "partial", "Allow command ids without runners (spike builds)") orelse true;
     const build_options = b.addOptions();
     build_options.addOption(bool, "partial", partial);
+    // `-Dmem-report`: count live bytes (the app's allocator, tree-sitter's
+    // malloc) and print where a headless session's memory was as it ends.
+    const mem_report = b.option(bool, "mem-report", "Count live bytes per subsystem; a headless session prints the table to stderr as it ends") orelse false;
+    build_options.addOption(bool, "mem_report", mem_report);
 
     // ── e2e: IPC namespacing ──
     // Where the file-IPC channel lives under `<ws>/.mnml/`. Rust mnml owns
@@ -246,6 +250,8 @@ pub fn build(b: *std.Build) void {
     const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight, .filters = test_filters, .test_runner = test_runner });
     unit_step.dependOn(&b.addRunArtifact(ts_tests).step);
     unit_step.dependOn(&b.addRunArtifact(highlight_tests).step);
+    const highlight_test_step = b.step("highlight-test", "Run the highlight module's tests only (grammars, queries, the engine)");
+    highlight_test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
 
     // ── docs + check (cutover prep) ─────────────────────────────────────
     // `zig build docs` regenerates docs/commands.md from the comptime spec
@@ -901,7 +907,8 @@ const grammars = [_]Grammar{
     .{ .name = "lua", .dep = "ts_lua", .scanner = true },
     .{ .name = "scala", .dep = "ts_scala", .scanner = true },
     .{ .name = "elixir", .dep = "ts_elixir", .scanner = true, .queries = &.{ "highlights", "injections" } },
-    .{ .name = "haskell", .dep = "ts_haskell", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    // Its highlights query is shipped corrected from src/highlight/queries/ (see the file).
+    .{ .name = "haskell", .dep = "ts_haskell", .scanner = true, .queries = &.{"injections"} },
     // php/ is the HTML-embedding grammar mnml uses; the crate's php_only/ is not built.
     .{ .name = "php", .dep = "ts_php", .src = "php/src", .scanner = true, .include_src = true, .queries = &.{ "highlights", "injections" } },
     .{ .name = "make", .dep = "ts_make" },
@@ -937,6 +944,7 @@ const LocalQuery = struct {
 };
 
 const local_queries = [_]LocalQuery{
+    .{ .out = "haskell/highlights.scm", .src = "src/highlight/queries/haskell.scm" },
     .{ .out = "hcl/highlights.scm", .src = "src/highlight/queries/hcl.scm" },
     .{ .out = "proto/highlights.scm", .src = "src/highlight/queries/proto.scm" },
     .{ .out = "vue/highlights.scm", .src = "src/highlight/queries/vue.scm" },

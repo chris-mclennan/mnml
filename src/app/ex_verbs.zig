@@ -147,7 +147,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
         if (app.active != pane_id) break;
         const cur = pane.buf.editor;
         // Map what is left through the edits the last command made.
-        if (cur.doc.edits.lostSince(seen)) {
+        if (cur.doc.edits.replacedSince(seen)) {
             app.in_global = false;
             app.toast("{s} — stopped after {d}: the text was replaced wholesale", .{ label, ran });
             break;
@@ -515,7 +515,6 @@ pub fn shell(app: *App, range: ?Range, args_in: []const u8) CommandError!void {
 
 /// The `:!` output pane: a scratch buffer kept for the next run.
 pub fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!void {
-    const gpa = app.gpa;
     const body = try std.mem.concat(app.frame.allocator(), u8, &.{ "$ ", cmd, "\n", text });
     const id: PaneId = blk: {
         if (app.shell_pane) |id| if (app.panes.editor(id)) |e| if (e.buf.doc.path == null) {
@@ -528,10 +527,7 @@ pub fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!voi
     };
     const e = app.panes.editor(id).?;
     try e.buf.editor.setText(body);
-    const saved = try gpa.dupe(u8, body);
-    gpa.free(e.buf.doc.saved_text);
-    e.buf.doc.saved_text = saved;
-    e.buf.doc.dirty = false;
+    try e.buf.doc.markSaved();
     e.buf.editor.setCursor(0);
     e.syntax.dirty = true;
     app.needs_render = true;

@@ -82,8 +82,20 @@ pub const Buffer = struct {
     /// width is the document's indent until a `.editorconfig` says
     /// otherwise.
     pub fn init(gpa: Allocator, text: []const u8, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
-        const doc = try Document.create(gpa, text);
-        errdefer doc.destroy();
+        const copy = try gpa.dupe(u8, text);
+        errdefer gpa.free(copy);
+        return initOwning(gpa, copy, style, cfg);
+    }
+
+    /// `init`, taking the (gpa-owned) text instead of copying it. On
+    /// error the caller still owns `text`.
+    pub fn initOwning(gpa: Allocator, text: []u8, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
+        const doc = try Document.createOwning(gpa, text);
+        errdefer {
+            // Hand the text back before the document goes.
+            doc.text = .empty;
+            doc.destroy();
+        }
         doc.tab_width = @max(cfg.tab_width, 1);
         doc.indent_unit = @max(cfg.tab_width, 1);
         return initOn(gpa, doc, style, cfg);
@@ -129,11 +141,17 @@ pub const Buffer = struct {
     /// app decides whether that means "new file".
     pub fn load(gpa: Allocator, io: Io, path: []const u8, style: input.Style, cfg: input.Config) LoadError!Buffer {
         const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
-        defer gpa.free(raw);
         const eol = detectEol(raw);
-        const text = if (eol == .lf) raw else try normalizeEol(gpa, raw);
-        defer if (eol != .lf) gpa.free(text);
-        var buf = try init(gpa, text, style, cfg);
+        // What was read becomes the document's text — a large file is in
+        // memory once while it opens, not three times.
+        const text = if (eol == .lf) raw else blk: {
+            defer gpa.free(raw);
+            break :blk try normalizeEol(gpa, raw);
+        };
+        var buf = initOwning(gpa, text, style, cfg) catch |err| {
+            gpa.free(text);
+            return err;
+        };
         errdefer buf.deinit();
         buf.doc.eol = eol;
         try buf.setPath(path);
@@ -363,16 +381,22 @@ pub const Buffer = struct {
         const h = &self.editor.doc.history;
         if (h.undoLen() <= undo_before) return;
         var at = cursor_before;
-        if (h.undoTextAt(undo_before)) |old| {
+        // The entry's state, read through its hull against the text as
+        // it now is — never built. (Out of memory: the cursor the key
+        // started from stands.)
+        if (h.undoViewAt(self.gpa, undo_before) catch null) |old| {
+            defer self.gpa.free(old.mid);
             const now = self.editor.bytes();
-            const n = @min(old.len, now.len);
-            var prefix: usize = 0;
-            while (prefix < n and old[prefix] == now[prefix]) prefix += 1;
+            const old_len = old.len();
+            const n = @min(old_len, now.len);
+            // The run the two share up to the hull is equal by construction.
+            var prefix: usize = @min(old.p, n);
+            while (prefix < n and old.at(prefix) == now[prefix]) prefix += 1;
             // A change that starts at a line's `\n` (a deleted last
             // line) begins on the line after it, where the cursor was.
-            const changed = if (prefix < old.len and old[prefix] == '\n') prefix + 1 else prefix;
-            const changed_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(changed, old.len)], '\n')) |i| i + 1 else 0;
-            const cursor_line_start = if (std.mem.lastIndexOfScalar(u8, old[0..@min(cursor_before, old.len)], '\n')) |i| i + 1 else 0;
+            const changed = if (prefix < old_len and old.at(prefix) == '\n') prefix + 1 else prefix;
+            const changed_line_start = if (old.lastIndexOfScalar(changed, '\n')) |i| i + 1 else 0;
+            const cursor_line_start = if (old.lastIndexOfScalar(cursor_before, '\n')) |i| i + 1 else 0;
             if (changed_line_start < cursor_line_start) at = changed_line_start;
         }
         h.setUndoCursor(undo_before, at);

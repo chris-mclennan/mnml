@@ -45,6 +45,26 @@ pub const InputEncoding = enum(c_uint) {
     custom = 3,
 };
 
+/// `TSInput`: how the runtime reads the text.
+pub const Input = extern struct {
+    payload: ?*anyopaque,
+    read: *const fn (payload: ?*anyopaque, byte_index: u32, position: Point, bytes_read: *u32) callconv(.c) ?[*]const u8,
+    encoding: InputEncoding,
+    decode: ?*const anyopaque,
+};
+
+/// `TSParseState` / `TSParseOptions`: the progress callback of a parse.
+pub const ParseState = extern struct {
+    payload: ?*anyopaque,
+    current_byte_offset: u32,
+    has_error: bool,
+};
+
+pub const ParseOptions = extern struct {
+    payload: ?*anyopaque,
+    progress_callback: ?*const fn (state: *ParseState) callconv(.c) bool,
+};
+
 pub const QueryError = enum(c_uint) {
     none = 0,
     syntax = 1,
@@ -163,6 +183,36 @@ pub const Parser = opaque {
     pub fn parseString(p: *Parser, old: ?*const Tree, src: []const u8) ?*Tree {
         return ts_parser_parse_string(p, old, src.ptr, @intCast(src.len));
     }
+    /// `parseString` that can be told to stop: `keep_going` is asked as the
+    /// parse advances and a `false` abandons it (null comes back, and the
+    /// parser must be `reset` before it parses again). The text is read in
+    /// place through the runtime's read callback — never copied.
+    pub fn parseCancelable(p: *Parser, old: ?*const Tree, src: []const u8, ctx: ?*anyopaque, keep_going: *const fn (ctx: ?*anyopaque) bool) ?*Tree {
+        var job: CancelableParse = .{ .src = src, .ctx = ctx, .keep_going = keep_going };
+        return ts_parser_parse_with_options(p, old, .{ .payload = &job, .read = CancelableParse.read, .encoding = .utf8, .decode = null }, .{ .payload = &job, .progress_callback = CancelableParse.progress });
+    }
+
+    const CancelableParse = struct {
+        src: []const u8,
+        ctx: ?*anyopaque,
+        keep_going: *const fn (ctx: ?*anyopaque) bool,
+
+        fn read(payload: ?*anyopaque, byte_index: u32, _: Point, bytes_read: *u32) callconv(.c) ?[*]const u8 {
+            const self: *CancelableParse = @ptrCast(@alignCast(payload.?));
+            if (byte_index >= self.src.len) {
+                bytes_read.* = 0;
+                return self.src.ptr;
+            }
+            bytes_read.* = @intCast(self.src.len - byte_index);
+            return self.src.ptr + byte_index;
+        }
+
+        fn progress(state: *ParseState) callconv(.c) bool {
+            const self: *CancelableParse = @ptrCast(@alignCast(state.payload.?));
+            return !self.keep_going(self.ctx);
+        }
+    };
+
     /// Restrict parsing to `ranges` (injections). Empty slice restores the whole document.
     pub fn setIncludedRanges(p: *Parser, ranges: []const Range) error{OverlappingRanges}!void {
         if (!ts_parser_set_included_ranges(p, ranges.ptr, @intCast(ranges.len))) return error.OverlappingRanges;
@@ -336,8 +386,38 @@ pub const Query = opaque {
 };
 
 pub const QueryCursor = opaque {
+    /// The most in-progress matches a cursor may hold — a crash guard.
+    /// Two reasons it is not left at the runtime's default (unbounded):
+    ///
+    /// - the runtime names each match's capture list with a 16-bit id and
+    ///   keeps the top value for "none", so past 65535 live matches two of
+    ///   them share a list and the cursor reads a freed one (a segfault in
+    ///   `ts_query_cursor__compare_captures`);
+    /// - every step compares the live matches of a pattern pairwise, so the
+    ///   cost of a step grows with the square of the pool: 99 ms at 256,
+    ///   473 ms at 1024, 3.0 s at 4096, unfinished after 15 s at 16384 on
+    ///   the one query that was found to fan out.
+    ///
+    /// At the cap the runtime drops the oldest in-progress match
+    /// (`didExceedMatchLimit`), which would change colours — so no shipped
+    /// query may reach it. The one that did (tree-sitter-haskell 0.23.1's
+    /// highlights, a misplaced paren leaving `match: (_)` an unanchored
+    /// third sibling) is shipped corrected in `src/highlight/queries/`;
+    /// after that no grammar's query nears 256 on its fixture repeated to
+    /// 128 KB, nor on 128 KB of valid Haskell (16 ms, ~133k captures), and
+    /// the engine's window test fails if one ever does. A debug build logs
+    /// the grammar and range whenever a window runs into the cap
+    /// (`engine.Highlighter.drops`).
+    pub const max_match_limit: u32 = 1024;
+
+    /// A cursor whose pool is capped at `max_match_limit`.
     pub fn init() error{OutOfMemory}!*QueryCursor {
-        return ts_query_cursor_new() orelse error.OutOfMemory;
+        const c = ts_query_cursor_new() orelse return error.OutOfMemory;
+        ts_query_cursor_set_match_limit(c, max_match_limit);
+        return c;
+    }
+    pub fn didExceedMatchLimit(c: *const QueryCursor) bool {
+        return ts_query_cursor_did_exceed_match_limit(c);
     }
     pub fn deinit(c: *QueryCursor) void {
         ts_query_cursor_delete(c);
@@ -366,6 +446,7 @@ pub extern fn ts_parser_delete(self: *Parser) void;
 pub extern fn ts_parser_set_language(self: *Parser, language: *const Language) bool;
 pub extern fn ts_parser_set_included_ranges(self: *Parser, ranges: [*]const Range, count: u32) bool;
 pub extern fn ts_parser_parse_string(self: *Parser, old_tree: ?*const Tree, string: [*]const u8, length: u32) ?*Tree;
+pub extern fn ts_parser_parse_with_options(self: *Parser, old_tree: ?*const Tree, input: Input, options: ParseOptions) ?*Tree;
 pub extern fn ts_parser_reset(self: *Parser) void;
 
 pub extern fn ts_tree_copy(self: *const Tree) *Tree;
@@ -415,6 +496,8 @@ pub extern fn ts_query_predicates_for_pattern(self: *const Query, pattern_index:
 pub extern fn ts_query_cursor_new() ?*QueryCursor;
 pub extern fn ts_query_cursor_delete(self: *QueryCursor) void;
 pub extern fn ts_query_cursor_exec(self: *QueryCursor, query: *const Query, node: Node) void;
+pub extern fn ts_query_cursor_set_match_limit(self: *QueryCursor, limit: u32) void;
+pub extern fn ts_query_cursor_did_exceed_match_limit(self: *const QueryCursor) bool;
 pub extern fn ts_query_cursor_set_byte_range(self: *QueryCursor, start_byte: u32, end_byte: u32) bool;
 pub extern fn ts_query_cursor_next_match(self: *QueryCursor, match: *QueryMatch) bool;
 pub extern fn ts_query_cursor_next_capture(self: *QueryCursor, match: *QueryMatch, capture_index: *u32) bool;

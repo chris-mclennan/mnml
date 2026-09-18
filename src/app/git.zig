@@ -4756,7 +4756,7 @@ test "conflicts: the status pane lists the file under Conflicts; its row opens t
     try statusAct(&f.app, sp, .diff);
     const e = f.app.activeEditor().?;
     const id = f.app.active.?;
-    const regions = try conflicts.regionsOf(f.app.frame.allocator(), e);
+    const regions = try conflicts.regionsOf(&f.app, f.app.frame.allocator(), e);
     try testing.expectEqual(@as(usize, 2), regions.len);
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
     txt = try f.screen();
@@ -4777,7 +4777,7 @@ test "conflicts: the status pane lists the file under Conflicts; its row opens t
     try conflicts.click(&f.app, id, conflicts.hitId(0, .ours));
     try conflicts.click(&f.app, id, conflicts.hitId(0, .theirs));
     try testing.expectEqualStrings("one\ntwo-ours\nthree\nfour\nfive\nsix\nseven\neight\nnine-theirs\nten\n", e.buf.editor.bytes());
-    try testing.expect((try conflicts.regionsOf(f.app.frame.allocator(), e)).len == 0);
+    try testing.expect((try conflicts.regionsOf(&f.app, f.app.frame.allocator(), e)).len == 0);
     // The save stages it: the status's conflicted count drops to zero.
     try command.run(&f.app, .{ .static = .@"file.save" });
     try f.settle(2000);

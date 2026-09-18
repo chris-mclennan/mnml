@@ -242,7 +242,7 @@ pub fn syncPane(app: *App, pane: PaneId) Allocator.Error!void {
     tr.doc = ptr;
     const head = doc.edits.head();
     if (tr.seen == head) return;
-    if (doc.edits.lostSince(tr.seen)) {
+    if (doc.edits.replacedSince(tr.seen)) {
         // An undo, a reload: the log cannot say what moved, so every
         // item goes back to the byte it was last seen at, clamped into
         // the text — which is exactly where an undo puts it back.

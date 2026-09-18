@@ -36,10 +36,16 @@ pub const FrameArena = struct {
         self.arena.deinit();
     }
 
-    /// Reset for a new iteration. Capacity is retained so a steady-state
-    /// frame allocates nothing from the backing allocator.
+    /// What a reset keeps. A steady-state frame is well under this; a
+    /// one-off giant frame gives its memory back instead of pinning it
+    /// for the life of the process.
+    pub const retain_limit = 8 << 20;
+
+    /// Reset for a new iteration. Capacity is retained (up to
+    /// `retain_limit`) so a steady-state frame allocates nothing from
+    /// the backing allocator.
     pub fn begin(self: *FrameArena) void {
-        _ = self.arena.reset(.retain_capacity);
+        _ = self.arena.reset(.{ .retain_with_limit = retain_limit });
     }
 
     pub fn allocator(self: *FrameArena) Allocator {
@@ -120,6 +126,20 @@ test "frame arena: begin frees everything from the previous iteration" {
     // testing allocator would flag a leak if `begin` lost track of it.
     const b = try frame.allocator().alloc(u8, 16);
     try std.testing.expectEqual(@as(usize, 16), b.len);
+}
+
+test "frame arena: one giant frame does not pin its memory — the next begin gives back all but the retain limit" {
+    var frame = FrameArena.init(std.testing.allocator);
+    defer frame.deinit();
+    _ = try frame.allocator().alloc(u8, 4 * FrameArena.retain_limit);
+    try std.testing.expect(frame.arena.queryCapacity() >= 4 * FrameArena.retain_limit);
+    frame.begin();
+    try std.testing.expect(frame.arena.queryCapacity() <= FrameArena.retain_limit);
+    // A small frame keeps what it had: nothing to allocate next time.
+    _ = try frame.allocator().alloc(u8, 4096);
+    const kept = frame.arena.queryCapacity();
+    frame.begin();
+    try std.testing.expectEqual(kept, frame.arena.queryCapacity());
 }
 
 test "snapshot arena: replace adopts the incoming dataset" {

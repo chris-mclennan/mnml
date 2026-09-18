@@ -93,6 +93,7 @@ const lsp = @import("app/lsp.zig");
 const script_decor = @import("app/script_decor.zig");
 const idle = @import("app/idle.zig");
 const script_task = @import("app/script_task.zig");
+const syntax_jobs = @import("app/syntax_jobs.zig");
 const http_app = @import("app/http.zig");
 const http_panel = @import("app/http_panel.zig");
 const request_pane = @import("app/request_pane.zig");
@@ -921,6 +922,8 @@ pub const App = struct {
     /// the outline's column is open.
     outline_panel: ?PaneId = null,
     todos: todos.State,
+    /// The parse workers of documents too large to parse in a frame.
+    syntax_jobs: syntax_jobs.State = .{},
     notes: notes.State,
     findings: findings.State,
     sessions: sessions.State,
@@ -1534,6 +1537,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
+        self.syntax_jobs.deinit(self.io);
         self.transfers.deinit(gpa, self.io);
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
@@ -2429,6 +2433,7 @@ pub const App = struct {
             .tests => |result| try tests_pane.handle(self, result),
             .grep => |result| try grep.handle(self, result),
             .script_task => |t| script_task.handle(self, t),
+            .syntax => |r| syntax_jobs.handle(self, r),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -2570,7 +2575,9 @@ pub const App = struct {
         if (self.theme_auto_poll_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A pane waiting out the highlight idle gate wants a frame then.
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| if (e.syntax.dirty) {
+            // (A document a worker is parsing wakes the loop with its
+            // result, not with a deadline.)
+            .editor => |*e| if (e.syntax.dirty and e.syntax.pending == null) {
                 const due = (e.syntax.since_ms orelse self.now_ms) + syntax.idle_ms;
                 next = @min(next orelse std.math.maxInt(i64), due);
             },
@@ -2837,6 +2844,8 @@ test {
     _ = @import("app/undo_store.zig");
     _ = @import("app/macros_store.zig");
     _ = @import("app/find_history.zig");
+    _ = @import("app/syntax_jobs.zig");
+    _ = @import("app/conflict_cache.zig");
     _ = @import("app/auto_refresh.zig");
     _ = @import("app/clock.zig");
     _ = @import("app/coverage.zig");

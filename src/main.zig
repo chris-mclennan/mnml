@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
+const mem_report = @import("core/mem_report.zig");
 const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
 const app_driver = @import("app/driver.zig");
@@ -540,7 +541,11 @@ fn parseOnly(gpa: Allocator, io: Io, roots: []const []const u8, w: *Io.Writer) !
 /// through `<ws>/.mnml/<subdir>/`. `MNML_COLS` / `MNML_ROWS` size it,
 /// `MNML_IPC_DIR` relocates the channel. Exit 75 asks the wrapper to
 /// rebuild and relaunch.
-fn headlessSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
+fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
+    // `-Dmem-report`: every byte of the session goes through the counter.
+    var counting: mem_report.Counting = .{ .child = gpa_in };
+    const gpa = if (mem_report.enabled) counting.allocator() else gpa_in;
+    if (mem_report.enabled) mem_report.installTreeSitter();
     var use_stub = false;
     var workspace: ?[]const u8 = null;
     var i: usize = 0;
@@ -601,6 +606,7 @@ test {
     _ = @import("editor/editor.zig");
     _ = @import("editor/editorconfig.zig");
     _ = @import("editor/undo.zig");
+    _ = @import("editor/saved.zig");
     _ = @import("editor/motion.zig");
     _ = @import("editor/insert.zig");
     _ = @import("editor/delete.zig");

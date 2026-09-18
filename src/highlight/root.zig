@@ -75,6 +75,43 @@ test "every fixture parses without an ERROR node" {
     }
 }
 
+test "parseCancelable: the tree parseString builds, read in place; told to stop, it stops" {
+    const gpa = testing.allocator;
+    const e = table.entries[table.find("rs").?];
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(gpa);
+    while (text.items.len < 256 * 1024) try text.appendSlice(gpa, e.fixture);
+    const parser = try ts.Parser.init();
+    defer parser.deinit();
+    try parser.setLanguage(e.language());
+    const plain = parser.parseString(null, text.items).?;
+    defer plain.deinit();
+    const Ctx = struct {
+        asked: usize = 0,
+        stop_after: usize,
+        fn keepGoing(p: ?*anyopaque) bool {
+            const c: *@This() = @ptrCast(@alignCast(p.?));
+            c.asked += 1;
+            return c.asked <= c.stop_after;
+        }
+    };
+    var go: Ctx = .{ .stop_after = std.math.maxInt(usize) };
+    const same = parser.parseCancelable(null, text.items, &go, Ctx.keepGoing).?;
+    defer same.deinit();
+    const a = plain.rootNode().sexp();
+    defer ts.Node.freeSexp(a);
+    const b = same.rootNode().sexp();
+    defer ts.Node.freeSexp(b);
+    try testing.expectEqualStrings(a, b);
+    try testing.expect(go.asked > 0);
+    // Refused part-way: no tree, and the parser is usable again after a reset.
+    var stop: Ctx = .{ .stop_after = 2 };
+    try testing.expect(parser.parseCancelable(null, text.items, &stop, Ctx.keepGoing) == null);
+    parser.reset();
+    const again = parser.parseString(null, e.fixture).?;
+    again.deinit();
+}
+
 test "highlights queries produce captures on their fixtures" {
     const parser = try ts.Parser.init();
     defer parser.deinit();

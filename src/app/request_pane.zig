@@ -625,7 +625,7 @@ pub const RequestPane = struct {
     /// Spans for the body viewer, on the frame arena.
     pub fn responseSpans(self: *RequestPane, arena: Allocator, theme: *const @import("../ui/theme.zig")) Allocator.Error![]editor_view.Span {
         const ed = self.resp_editor orelse return &.{};
-        return self.resp_syntax.styledSpans(arena, theme, 0, ed.len());
+        return self.resp_syntax.styledSpans(ed, arena, theme, 0, ed.len());
     }
 
     /// The field the `{{` completion edits: the focused text field, or

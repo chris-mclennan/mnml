@@ -97,16 +97,15 @@ pub fn load(app: *App, e: *EditorPane, file: []const u8) Allocator.Error!bool {
 pub fn capture(arena: Allocator, ed: *const @import("../editor/editor.zig").Editor) Allocator.Error!Stored {
     return .{
         .text_hash = hash(ed.bytes()),
-        .undo = try tail(arena, ed.doc.history.undo),
-        .redo = try tail(arena, ed.doc.history.redo),
+        .undo = try tail(arena, &ed.doc.history, .undo),
+        .redo = try tail(arena, &ed.doc.history, .redo),
     };
 }
 
-fn tail(arena: Allocator, ring: anytype) Allocator.Error![]const Snap {
-    const live = ring.items.items[ring.head..];
-    const start = live.len -| limit;
-    const out = try arena.alloc(Snap, live.len - start);
-    for (live[start..], 0..) |s, i| out[i] = .{ .text = s.text, .cursor = s.cursor, .anchor = s.anchor };
+fn tail(arena: Allocator, h: *const undo.History, which: @TypeOf(.enum_literal)) Allocator.Error![]const Snap {
+    const states = try h.tailStates(arena, which, limit);
+    const out = try arena.alloc(Snap, states.len);
+    for (states, 0..) |s, i| out[i] = .{ .text = s.text, .cursor = s.cursor, .anchor = s.anchor };
     return out;
 }
 
