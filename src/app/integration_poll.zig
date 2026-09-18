@@ -324,7 +324,9 @@ fn buildJob(
         .source_id = try gpa.dupe(u8, src.id),
         .argv = try argv.toOwnedSlice(gpa),
         .prefetch_argv = prefetch,
-        .cwd = try gpa.dupe(u8, app.workspace),
+        // An empty workspace would be an empty `cwd` and a spawn that
+        // fails for a reason no backoff can fix.
+        .cwd = try gpa.dupe(u8, if (app.workspace.len > 0) app.workspace else "."),
         .env = env,
         .interval_secs = clampInterval(src.poll_interval_secs, app.cfg.integrations.poll.min_interval_secs),
         .stagger_secs = staggerFor(index),
