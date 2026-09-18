@@ -1018,6 +1018,36 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
     try testing.expect(b.colOf(38, sl.seg_dyn_base) != null);
     try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
+
+    // The publisher's own words are the hover: a count is worth little
+    // without what it counts.
+    // A manifest's segment is keyed `<integration>.<segment>`, which is
+    // how the poller knows whose chip it is.
+    _ = b.app.ipc_fx.clearSegment(testing.allocator, "jira");
+    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.assigned", .text = "TE-1", .side = .left, .priority = 5, .max_width = 8, .tooltip = "Jira · 7 open items — 4 In Progress" });
+    const hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expectEqualStrings("Jira · 7 open items — 4 In Progress", hover.title);
+
+    // A poll in flight puts `⟳` on that integration's chip, so a chip
+    // that has gone quiet is visibly being asked rather than stale.
+    const job = try testing.allocator.create(integration_poll.Job);
+    job.* = .{
+        .integration_id = try testing.allocator.dupe(u8, "jira_work"),
+        .source_id = try testing.allocator.dupe(u8, "v"),
+        .argv = &.{},
+        .cwd = try testing.allocator.dupe(u8, "."),
+        .env = std.process.Environ.Map.init(testing.allocator),
+        .interval_secs = 300,
+        .stagger_secs = 0,
+    };
+    try b.app.integration_poll.jobs.append(b.app.gpa, job);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph) == null);
+    job.shared.in_flight.store(true, .release);
+    b.app.needs_render = true;
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph ++ " TE-1") != null);
+    // …and the hover now offers the way to ask again by hand.
+    const busy_hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expect(std.mem.indexOf(u8, busy_hover.detail orelse "", "Refresh now") != null);
 }
 
 // ─── the narrow rule, at four widths ─────────────────────────────────────
