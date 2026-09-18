@@ -117,7 +117,7 @@ pub fn unresolvedThreads(comments: []const Comment) usize {
         if (c.deleted or c.resolved or c.parent_id != 0) continue;
         var replied = false;
         for (comments) |other| {
-            if (other.deleted) continue;
+            if (other.deleted or other.parent_id == 0) continue;
             if (other.parent_id == c.id) replied = true;
         }
         if (!replied) n += 1;
@@ -614,6 +614,13 @@ test "a thread is waiting on someone only when nobody resolved it and nobody rep
         .{ .id = 21, .parent_id = 20, .deleted = true },
     }));
     try t.expectEqual(@as(usize, 0), unresolvedThreads(&.{}));
+    // An id of zero is not an id. Without the guard every top-level
+    // comment (parent 0) would look like a reply to it and the count
+    // would silently come out low.
+    try t.expectEqual(@as(usize, 2), unresolvedThreads(&.{
+        .{ .id = 0, .body = "malformed" },
+        .{ .id = 30, .body = "waiting" },
+    }));
 }
 
 test "the two keys behind that rule are read off Bitbucket's own shape" {
