@@ -55,6 +55,11 @@ pub const TabState = struct {
     selected: usize = 0,
     scroll: usize = 0,
     fetched: bool = false,
+    /// The PR the cursor was on when the refetch started — `ws/repo#id`,
+    /// so the cursor can go back on it when the rows are swapped even
+    /// though its row moved. Empty when it was not on one.
+    keep_key_buf: [256]u8 = undefined,
+    keep_key_len: usize = 0,
     loading: bool = false,
     /// The whole fetch failed.
     error_text: []u8 = &.{},
@@ -866,6 +871,19 @@ pub const App = struct {
     pub fn refreshTab(app: *App, idx: usize) Allocator.Error!void {
         const ts = &app.tabs[idx];
         if (ts.loading) return;
+        // The cursor survives the swap: remember the PR it is on, since
+        // the row it sits on will have moved by the time the new rows
+        // land.
+        ts.keep_key_len = 0;
+        if (idx == app.active) {
+            _ = app.frame_arena.reset(.retain_capacity);
+            if (app.visible(app.frame_arena.allocator())) |view| {
+                if (app.focusedKey(view.rows)) |k| {
+                    const txt = keyText(&ts.keep_key_buf, k);
+                    ts.keep_key_len = txt.len;
+                }
+            } else |_| {}
+        }
         ts.loading = true;
         app.setStatus("refreshing {s}…", .{ts.spec.name});
         try app.enqueue(.{ .refresh = .{ .tab = idx, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } });
@@ -990,6 +1008,20 @@ pub const App = struct {
                 _ = app.frame_arena.reset(.retain_capacity);
                 const rows = (try app.visible(app.frame_arena.allocator())).rows;
                 if (rows.len == 0) ts.selected = 0 else ts.selected = @min(ts.selected, rows.len - 1);
+                // Put the cursor back on the PR it was on. Its row will
+                // have moved — a merge, a new PR above it — so the key
+                // is what is followed, not the index.
+                if (r.tab == app.active and ts.keep_key_len > 0 and rows.len > 0) {
+                    const want = ts.keep_key_buf[0..ts.keep_key_len];
+                    const was = ts.selected;
+                    for (rows, 0..) |_, i| {
+                        ts.selected = i;
+                        var buf: [256]u8 = undefined;
+                        const k = app.focusedKey(rows) orelse continue;
+                        if (std.mem.eql(u8, keyText(&buf, k), want)) break;
+                    } else ts.selected = was;
+                }
+                ts.keep_key_len = 0;
             },
             .detail => |d| {
                 var buf: [256]u8 = undefined;
@@ -1496,6 +1528,42 @@ test "startup prefetches every tab, opens the trees, and the keys walk the rows 
     try t.expectEqual(@as(usize, 9), rows.len);
     try t.expect(rows[1] == .branch);
     try t.expect(!(try r.key("q")));
+}
+
+test "a refetch keeps the old rows on screen and puts the cursor back on the PR it was on, not the row index" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    const ts = &r.app.tabs[0];
+    // Sit on a PR and remember which one it is.
+    _ = try r.key("j");
+    var rows = try r.rows();
+    const before = r.app.focusedKey(rows).?;
+    var kbuf: [256]u8 = undefined;
+    const want = try t.allocator.dupe(u8, App.keyText(&kbuf, before));
+    defer t.allocator.free(want);
+
+    // Start a refetch without running it: the rows on screen are still
+    // the old ones, the tab still reads as fetched, and the header says
+    // it is refreshing rather than replacing them with `loading…`.
+    try r.app.refreshTab(0);
+    try t.expect(ts.loading);
+    try t.expect(ts.fetched);
+    try t.expectEqual(rows.len, (try r.rows()).len);
+    try t.expect(ts.keep_key_len > 0);
+    try t.expectEqualStrings(want, ts.keep_key_buf[0..ts.keep_key_len]);
+    // The cursor moves while the fetch is out; the key is what decides
+    // where it lands, not where it happens to be now.
+    ts.selected = 0;
+
+    try r.drain();
+    try t.expect(!ts.loading);
+    rows = try r.rows();
+    const after = r.app.focusedKey(rows).?;
+    var abuf: [256]u8 = undefined;
+    try t.expectEqualStrings(want, App.keyText(&abuf, after));
+    // And the remembered key is cleared, so the next refetch reads the
+    // cursor fresh.
+    try t.expectEqual(@as(usize, 0), ts.keep_key_len);
 }
 
 test "the detail follows the cursor, and `a` approves then withdraws on the fake server" {

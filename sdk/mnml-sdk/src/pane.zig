@@ -11,6 +11,8 @@
 //!           ground, `Show more (N)`, a detail panel with its `×` and
 //!           scrollbar, and the hint row where every entry is a hit
 //!   text    widths and fitting, counted the way `Frame` paints
+//!   work    the one-job channel a pane refetches through, so a slow
+//!           fetch never freezes its keys or its repaint
 //!
 //! Ten lines put a pane in mnml's chrome:
 //!
@@ -30,6 +32,7 @@
 const hit = @import("pane/hit.zig");
 
 pub const theme = @import("pane/theme.zig");
+pub const work = @import("pane/work.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
 
@@ -44,12 +47,14 @@ pub const Ui = chrome.Ui;
 pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
+pub const Slot = work.Slot;
 
 test {
     _ = hit;
     _ = theme;
     _ = chrome;
     _ = text;
+    _ = work;
     // The anti-drift test: the shared elements painted from two panes'
     // target vocabularies must come out cell for cell identical.
     _ = @import("pane/consistency_test.zig");

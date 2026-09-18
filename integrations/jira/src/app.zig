@@ -95,6 +95,51 @@ pub const TabState = struct {
     }
 };
 
+/// One ticket's linked PRs, fetched beside the search rather than after
+/// it — the per-row calls are most of a refetch's wall time and they do
+/// not belong on the loop either.
+pub const PrBatch = struct { key: []const u8, list: []const model.LinkedPr };
+
+/// Everything a refetch needs, and nothing the loop can change under it
+/// while it runs. The client is a copy: it holds no per-call state, and
+/// its limiter is the cross-process bucket, which is built to be shared.
+pub const RefreshJob = struct {
+    idx: usize,
+    client: jira.Client,
+    /// Owns `jql` and `extra_jql`; freed by whoever runs the job.
+    arena: std.heap.ArenaAllocator,
+    jql: []const u8,
+    board_id: u64,
+    extra_jql: ?[]const u8,
+    extra_fields: []const []const u8,
+    team_field_id: []const u8,
+    /// Tree tabs show linked PRs, so the job fetches them too.
+    want_prs: bool,
+
+    pub fn deinit(j: *RefreshJob) void {
+        j.arena.deinit();
+    }
+};
+
+/// What comes back. The arena owns the JSON the issues slice into, so
+/// it becomes the tab's on success and is dropped on failure — the old
+/// rows stay on screen either way until this is applied.
+pub const RefreshResult = struct {
+    idx: usize,
+    arena: std.heap.ArenaAllocator,
+    issues: []const Issue = &.{},
+    /// Empty when the search answered.
+    error_text: []const u8 = "",
+    prs: []const PrBatch = &.{},
+
+    pub fn drop(r: RefreshResult) void {
+        var arena = r.arena;
+        arena.deinit();
+    }
+};
+
+pub const RefreshSlot = sdk.pane.Slot(RefreshResult);
+
 pub const Filter = struct { edit: TextEdit, editing: bool };
 
 pub const Comment = struct { key: []const u8, edit: TextEdit, posting: bool = false, error_text: []const u8 = "" };
@@ -155,6 +200,15 @@ pub const App = struct {
     cols: u16 = 80,
     rows: u16 = 24,
     last_refresh_ms: i64 = 0,
+    /// The one refetch in flight, and the group it runs on. With no
+    /// group — a test, `--dump` — a refetch runs inline, which is what
+    /// makes those two deterministic.
+    refresh: RefreshSlot,
+    group: ?*Io.Group = null,
+    /// The ticket the cursor was on when the in-flight refetch started,
+    /// so it can go back on it when the rows are swapped.
+    keep_key_buf: [64]u8 = undefined,
+    keep_key_len: usize = 0,
     quit: bool = false,
     /// The count the statusline segment shows; null until a work tab loaded.
     assigned_open: ?usize = null,
@@ -200,7 +254,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -208,6 +262,20 @@ pub const App = struct {
     /// line. Set by the caller right after `init`; empty outside a host.
     pub fn setIpcDir(a: *App, dir: []const u8) void {
         a.ipc_dir = dir;
+    }
+
+    /// The group a refetch runs on. Set by the pane loop right after
+    /// `init`; left null by a test and by `--dump`, where a refetch runs
+    /// inline so the next line sees its result.
+    pub fn setGroup(a: *App, group: *Io.Group) void {
+        a.group = group;
+    }
+
+    /// Close the result queue. The pane calls this BEFORE cancelling the
+    /// group: a worker parked on a put into a live queue never sees the
+    /// cancel, and the cancel then never returns.
+    pub fn closeRefresh(a: *App) void {
+        a.refresh.q.close(a.io);
     }
 
     /// The config file a vars edit is written back into.
@@ -244,6 +312,7 @@ pub const App = struct {
         a.board_names.deinit(a.gpa);
         a.kanban_expanded.deinit(a.gpa);
         a.hits.deinit(a.gpa);
+        a.refresh.deinit(a.io, RefreshResult.drop);
         a.keys.deinit();
         a.* = undefined;
     }
@@ -413,10 +482,34 @@ pub const App = struct {
         a.last_refresh_ms = a.nowMs();
     }
 
+    /// Start a refetch of `idx`. With a group it goes to a worker and
+    /// this returns at once — the pane keeps its old rows, its keys and
+    /// its repaint while the site is asked. Without one it runs inline.
     pub fn refreshTab(a: *App, idx: usize) Allocator.Error!void {
+        var job = (try a.prepareRefresh(idx)) orelse return;
+        if (a.group) |g| {
+            if (!a.refresh.claim()) {
+                // One is already in flight; a second would only race it.
+                job.deinit();
+                return;
+            }
+            g.concurrent(a.io, refreshWorker, .{ a.io, a.gpa, &a.refresh, job }) catch {
+                a.refresh.abandon();
+                job.deinit();
+                return;
+            };
+            return;
+        }
+        var res = runRefresh(job);
+        try a.applyRefresh(&res);
+    }
+
+    /// What a refetch needs, read off the tab before anything can move:
+    /// the identity to search as, the query, and where the cursor is.
+    /// Null when the tab cannot be searched at all.
+    fn prepareRefresh(a: *App, idx: usize) Allocator.Error!?RefreshJob {
         const t = &a.tabs[idx];
         try a.ensureMe();
-        // The reference seeds the assignee filter with "me" once.
         // The reference seeds the assignee filter with "me" once; on its
         // tree tabs the filter is inert, so the seed only lands where it
         // shows (flat and kanban) — here the chips work on trees too.
@@ -426,96 +519,171 @@ pub const App = struct {
         }
         if (t.jql.len == 0) try a.resolveJql(t);
         // The cursor survives a refetch: remember the ticket it is on.
-        var keep_key: ?[]const u8 = null;
-        var keep_buf: [64]u8 = undefined;
+        a.keep_key_len = 0;
         if (idx == a.active) {
             var pre = std.heap.ArenaAllocator.init(a.gpa);
             defer pre.deinit();
-            if (try a.focusedKey(pre.allocator())) |k| if (k.len <= keep_buf.len) {
-                @memcpy(keep_buf[0..k.len], k);
-                keep_key = keep_buf[0..k.len];
+            if (try a.focusedKey(pre.allocator())) |k| if (k.len <= a.keep_key_buf.len) {
+                @memcpy(a.keep_key_buf[0..k.len], k);
+                a.keep_key_len = k.len;
             };
         }
-        // The issues slice into the JSON they came from, so the fetch
-        // lands in a fresh arena that becomes the tab's on success and
-        // is dropped on failure (the old issues stay on screen).
-        var next = std.heap.ArenaAllocator.init(a.gpa);
-        errdefer next.deinit();
-        const arena = next.allocator();
-        const extra: []const []const u8 = if (a.cfg.team_field_id.len > 0) &.{a.cfg.team_field_id} else &.{};
-        const answer: jira.Answer([]const Value) = blk: {
-            if (t.board_id != 0) {
-                var clauses: std.ArrayList([]const u8) = .empty;
-                if (t.team.len > 0) try clauses.append(arena, try a.teamFilterClause(arena, t.team));
-                if (t.selected_sprint) |sp| try clauses.append(arena, try std.fmt.allocPrint(arena, "sprint = {d}", .{sp}));
-                if (t.quick_filters) |qfs| for (qfs) |qf| {
-                    for (t.active_quick_filters.items) |id| if (id == qf.id and std.mem.trim(u8, qf.jql, " ").len > 0) {
-                        try clauses.append(arena, try std.fmt.allocPrint(arena, "({s})", .{std.mem.trim(u8, qf.jql, " ")}));
-                    };
+        var job: RefreshJob = .{
+            .idx = idx,
+            .client = a.client.*,
+            .arena = std.heap.ArenaAllocator.init(a.gpa),
+            .jql = "",
+            .board_id = t.board_id,
+            .extra_jql = null,
+            .extra_fields = &.{},
+            .team_field_id = a.cfg.team_field_id,
+            .want_prs = t.cfg.isTree(),
+        };
+        errdefer job.deinit();
+        const arena = job.arena.allocator();
+        // On the job's arena, not a temporary: the job outlives this
+        // frame the moment it goes to a worker.
+        if (a.cfg.team_field_id.len > 0) {
+            const one = try arena.alloc([]const u8, 1);
+            one[0] = a.cfg.team_field_id;
+            job.extra_fields = one;
+        }
+        if (t.board_id != 0) {
+            var clauses: std.ArrayList([]const u8) = .empty;
+            if (t.team.len > 0) try clauses.append(arena, try a.teamFilterClause(arena, t.team));
+            if (t.selected_sprint) |sp| try clauses.append(arena, try std.fmt.allocPrint(arena, "sprint = {d}", .{sp}));
+            if (t.quick_filters) |qfs| for (qfs) |qf| {
+                for (t.active_quick_filters.items) |id| if (id == qf.id and std.mem.trim(u8, qf.jql, " ").len > 0) {
+                    try clauses.append(arena, try std.fmt.allocPrint(arena, "({s})", .{std.mem.trim(u8, qf.jql, " ")}));
                 };
-                const extra_jql: ?[]const u8 = if (clauses.items.len == 0) null else try std.mem.join(arena, " AND ", clauses.items);
-                break :blk jira.boardIssues(a.client, arena, t.board_id, extra_jql, extra) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.Transport => jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
-                };
-            }
-            const q = try a.teamClause(arena, t.jql, t.team);
-            break :blk jira.search(a.client, arena, q, extra) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Transport => jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
             };
+            if (clauses.items.len > 0) job.extra_jql = try std.mem.join(arena, " AND ", clauses.items);
+        } else {
+            job.jql = try arena.dupe(u8, try a.teamClause(arena, t.jql, t.team));
+        }
+        return job;
+    }
+
+    /// The whole of a refetch, on whichever thread runs it: the search,
+    /// then one linked-PR call per unresolved ticket on a tree tab. It
+    /// touches nothing but its own job and its own arena.
+    pub fn runRefresh(job_in: RefreshJob) RefreshResult {
+        var job = job_in;
+        // The job's arena holds the query and the extra fields, so it is
+        // freed only after the last call that reads them.
+        defer job.deinit();
+        var client = job.client;
+        var arena = std.heap.ArenaAllocator.init(job.arena.child_allocator);
+        const ar = arena.allocator();
+        const answer: jira.Answer([]const Value) = blk: {
+            if (job.board_id != 0) {
+                break :blk jira.boardIssues(&client, ar, job.board_id, job.extra_jql, job.extra_fields) catch
+                    jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
+            }
+            break :blk jira.search(&client, ar, job.jql, job.extra_fields) catch
+                jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
         };
         switch (answer) {
             .failed => |f| {
-                t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{f.message});
-                a.setStatus("error: {s}", .{f.message});
-                next.deinit();
+                const msg = ar.dupe(u8, f.message) catch "out of memory";
+                return .{ .idx = job.idx, .arena = arena, .error_text = msg };
             },
             .ok => |vals| {
-                t.issues = try jira.parseIssues(arena, vals, a.cfg.team_field_id);
-                t.data.deinit();
-                t.data = next;
-                t.fetched = true;
-                t.last_error = "";
-                // An action's message outlives the refetch it triggers;
-                // an empty status gets the tab's summary.
-                if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
-                if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
-                    a.assigned_open = t.issues.len;
-                    a.segment_dirty = true;
+                const issues = jira.parseIssues(ar, vals, job.team_field_id) catch {
+                    return .{ .idx = job.idx, .arena = arena, .error_text = "out of memory" };
                 };
-                // The reference auto-expands unresolved tickets on tree tabs
-                // and fetches their PRs; the kanban does the fetch too but
-                // never shows it, so only the tree pays for it here.
-                if (t.tree) |*st| if (t.cfg.isTree()) {
-                    for (t.issues) |iss| if (iss.isUnresolved()) {
-                        try st.setExpanded(iss.key, true);
-                        try a.ensurePrs(idx, iss.key);
-                    };
-                };
-                if (t.sprints == null and t.board_id != 0) try a.loadSprints(idx);
-                try a.aggregateAssignees(t);
-                // Put the cursor back on the ticket it was on (its row
-                // may have moved), else on the first row.
-                if (idx == a.active) {
-                    if (t.cfg.isTree()) {
-                        t.selected = 0;
-                        if (keep_key) |k| {
-                            var post = std.heap.ArenaAllocator.init(a.gpa);
-                            defer post.deinit();
-                            if (try a.treeRows(post.allocator())) |r| if (tree.rowOfKey(r.rows, t.issues, k)) |ri| {
-                                t.selected = ri;
-                            };
+                var prs: std.ArrayList(PrBatch) = .empty;
+                if (job.want_prs) {
+                    for (issues) |iss| {
+                        if (!iss.isUnresolved() or iss.id.len == 0) continue;
+                        switch (jira.pullRequests(&client, ar, iss.id) catch continue) {
+                            .ok => |list| prs.append(ar, .{ .key = iss.key, .list = list }) catch {},
+                            .failed => {},
                         }
-                    } else {
-                        t.selected = 0;
-                        if (keep_key) |k| for (t.issues, 0..) |iss, i| if (std.mem.eql(u8, iss.key, k)) {
-                            t.selected = i;
-                        };
-                        try a.clampCursor();
                     }
                 }
+                return .{ .idx = job.idx, .arena = arena, .issues = issues, .prs = prs.items };
             },
+        }
+    }
+
+    /// The worker task. Everything it needs is in the job; the only
+    /// thing it touches of the App's is the slot, which is a channel.
+    fn refreshWorker(io: Io, gpa: Allocator, slot: *RefreshSlot, job: RefreshJob) Io.Cancelable!void {
+        _ = gpa;
+        const res = runRefresh(job);
+        slot.finish(io, res) catch |err| {
+            // The pane is going away, or this task was cancelled: the
+            // result has nowhere to go, so it is freed here rather than
+            // leaked, and a cancel is passed on rather than swallowed.
+            res.drop();
+            if (err == error.Canceled) return error.Canceled;
+            return;
+        };
+    }
+
+    /// Take a finished refetch, if one has landed, and apply it.
+    pub fn drainRefresh(a: *App) Allocator.Error!void {
+        var res = a.refresh.take(a.io) orelse return;
+        try a.applyRefresh(&res);
+    }
+
+    /// Swap a refetch's rows in. The only place the tab's data changes,
+    /// and always on the loop.
+    fn applyRefresh(a: *App, res: *RefreshResult) Allocator.Error!void {
+        const idx = res.idx;
+        if (idx >= a.tabs.len) {
+            res.drop();
+            return;
+        }
+        const t = &a.tabs[idx];
+        if (res.error_text.len > 0) {
+            t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{res.error_text});
+            a.setStatus("error: {s}", .{res.error_text});
+            res.drop();
+            return;
+        }
+        t.issues = res.issues;
+        t.data.deinit();
+        t.data = res.arena;
+        t.fetched = true;
+        t.last_error = "";
+        // An action's message outlives the refetch it triggers;
+        // an empty status gets the tab's summary.
+        if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
+        if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
+            a.assigned_open = t.issues.len;
+            a.segment_dirty = true;
+        };
+        // The reference auto-expands unresolved tickets on tree tabs and
+        // shows their linked PRs; the job fetched them alongside the
+        // search, so nothing here goes back to the site.
+        if (t.tree) |*st| if (t.cfg.isTree()) {
+            for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
+            for (res.prs) |batch| try st.putPrs(batch.key, batch.list);
+        };
+        if (t.sprints == null and t.board_id != 0) try a.loadSprints(idx);
+        try a.aggregateAssignees(t);
+        // Put the cursor back on the ticket it was on (its row may have
+        // moved), else on the first row.
+        if (idx == a.active) {
+            const keep_key: ?[]const u8 = if (a.keep_key_len > 0) a.keep_key_buf[0..a.keep_key_len] else null;
+            if (t.cfg.isTree()) {
+                t.selected = 0;
+                if (keep_key) |k| {
+                    var post = std.heap.ArenaAllocator.init(a.gpa);
+                    defer post.deinit();
+                    if (try a.treeRows(post.allocator())) |r| if (tree.rowOfKey(r.rows, t.issues, k)) |ri| {
+                        t.selected = ri;
+                    };
+                }
+            } else {
+                t.selected = 0;
+                if (keep_key) |k| for (t.issues, 0..) |iss, i| if (std.mem.eql(u8, iss.key, k)) {
+                    t.selected = i;
+                };
+                try a.clampCursor();
+            }
         }
     }
 
@@ -2523,8 +2691,9 @@ test "Work: the assigned tab loads the three tickets, auto-expands them with the
     try testing.expectEqualStrings("In PR Review", r.rows[0].group.status);
     try testing.expect(!r.rows[1].ticket.bumped);
     try testing.expect(r.rows[2] == .pr and r.rows[3] == .pr);
-    // The last auto-expanded ticket's PR count is the status, as in the reference.
-    try testing.expect(std.mem.endsWith(u8, a.status.items, "linked PR(s)"));
+    // The linked PRs now arrive with the search rather than after it, so
+    // the status a refetch leaves is the tab's summary.
+    try testing.expectEqualStrings("Assigned · 3 issues", a.status.items);
     // The focused row starts on the first group; j reaches the ticket.
     _ = try a.onKey("j");
     try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
@@ -2665,6 +2834,53 @@ test "Work: the assignee picker assigns, the fixVersion picker sets, watching to
     try testing.expectEqual(comments + 1, h.store.find("ENG-1").?.comments.items.len);
     const d = a.detailOf("ENG-1").?;
     try testing.expect(std.mem.indexOf(u8, d.comments[d.comments.len - 1].body, "on it") != null);
+}
+
+test "a refetch on the group keeps the old rows, the keys and the cursor, and lands on a later tick" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    // Put the cursor on a ticket, then refetch on a worker.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    _ = try a.onKey("j");
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+
+    var group: Io.Group = .init;
+    a.setGroup(&group);
+    defer {
+        // The queue closes before the group is cancelled, the way the
+        // pane's own shutdown does it.
+        a.closeRefresh();
+        group.cancel(testing.io);
+        a.group = null;
+    }
+    try a.refreshActive();
+    try testing.expect(a.refresh.busy());
+    // The rows on screen are still the old ones, and the keys still work.
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expect(a.tab().fetched);
+    _ = try a.onKey("d");
+    try testing.expect(a.details_visible);
+    _ = try a.onKey("d");
+    // A second refresh while one is in flight is refused rather than raced.
+    try a.refreshActive();
+    try testing.expect(a.refresh.busy());
+
+    // It lands on a later tick, with the cursor back on its ticket.
+    var spins: usize = 0;
+    while (a.refresh.busy() and spins < 2000) : (spins += 1) {
+        try a.drainRefresh();
+        if (!a.refresh.busy()) break;
+        testing.io.sleep(.fromMilliseconds(2), .awake) catch break;
+    }
+    try testing.expect(!a.refresh.busy());
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+    // The PRs came with the search: the tree has them without another call.
+    try testing.expect(a.tab().tree.?.prs("ENG-2") != null);
 }
 
 test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {

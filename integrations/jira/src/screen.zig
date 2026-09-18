@@ -246,6 +246,12 @@ pub const Painter = struct {
         else
             " (loading…)";
         x += p.put(x, y, p.cols() -| x, sub, p.s.muted);
+        // A refetch runs on a worker: the rows on screen are the ones
+        // from last time, and this says so rather than letting them read
+        // as current.
+        if (p.a.refresh.busy() and t.fetched) {
+            x += p.put(x, y, p.cols() -| x, if (p.ui.ascii) " refreshing..." else " refreshing…", p.s.muted);
+        }
         if (p.a.selection.count() > 0) {
             x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
         }
@@ -874,20 +880,25 @@ pub const Painter = struct {
         // each one a click target that runs what its key runs, and a
         // trailing `? keys` that opens the sheet.
         const list = try keymap.hints(p.arena, a.context());
+        const keys_entry = "\u{b7} ? keys";
+        const kw = text.width(keys_entry);
+        // `? keys` is the one entry that has to survive: it is the door
+        // to every chord the row could not fit. Its room is taken out
+        // first, so which of the others fit no longer turns on how long
+        // the status happens to be.
+        const room = w -| kw;
         for (list, 0..) |b, i| {
             var kb: [16]u8 = undefined;
             const label = if (b.short.len > 0) b.short else b.label;
             const key = keymap.displayKey(&kb, b.keys[0]);
             const entry = if (i == 0) p.fmt("{s} {s}", .{ key, label }) else p.fmt("· {s} {s}", .{ key, label });
             const ew = text.width(entry);
-            if (x + ew > w) break;
+            if (x + ew > room) break;
             const at = x;
             x += p.put(x, y, ew, entry, p.s.muted) + 1;
             const lead: u16 = if (i == 0) 0 else 2;
             try p.hitAdd(.{ .x = at + lead, .y = y, .w = ew -| lead, .h = 1 }, .{ .hint = b.action });
         }
-        const keys_entry = "\u{b7} ? keys";
-        const kw = text.width(keys_entry);
         if (x + kw <= w) {
             _ = p.put(x, y, kw, keys_entry, p.s.muted);
             try p.hitAdd(.{ .x = x + 2, .y = y, .w = kw - 2, .h = 1 }, .{ .hint = .help });

@@ -306,7 +306,6 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer box.deinit(io);
     var group: Io.Group = .init;
     try group.concurrent(io, inbox.Inbox.reader, .{ io, &box, mount });
-    defer group.cancel(io);
 
     // The setup screens first: a config or a token missing paints what
     // to do and waits for r (try again) or q. The config's strings live
@@ -364,7 +363,18 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     // Where a saved vars edit is spliced back into.
     app.setConfigPath(rd.path);
-    defer app.deinit();
+    // Refetches go to a task on this group, so a search and its per-row
+    // calls never hold the loop.
+    app.setGroup(&group);
+    defer {
+        // The order matters: a worker parked on a put into a live queue
+        // never sees the cancel, and the cancel then never returns. The
+        // queue closes first, the group stops, and only then is
+        // anything the workers were writing into freed.
+        app.closeRefresh();
+        group.cancel(io);
+        app.deinit();
+    }
     app.resize(frame.cols, frame.rows);
     var ipc = try sdk.Ipc.fromEnv(gpa, io, env);
     defer if (ipc) |*i| i.deinit();
@@ -381,7 +391,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer paint_arena.deinit();
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    // The first fetch, after the first paint.
+    // The first fetch is started after the first paint and lands on a
+    // later tick; until it does the pane paints its empty rows and
+    // answers keys, rather than freezing on a socket.
     try app.ensureLoaded();
     app.last_refresh_ms = app.nowMs();
     try repaint(&paint_arena, &frame, &app, ui);
@@ -420,11 +432,15 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             mount.bye();
             break;
         }
+        try app.drainRefresh();
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
         publishSide(&app, mount, if (ipc) |*i| i else null);
-        _ = box.wait(io, 500);
+        // While a refetch is in flight the loop wakes sooner, so its
+        // rows land as soon as they arrive rather than up to half a
+        // second later.
+        _ = box.wait(io, if (app.refresh.busy()) 60 else 500);
     }
     return 0;
 }

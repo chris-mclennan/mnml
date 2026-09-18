@@ -142,7 +142,7 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     x += p.text(x, y, p.f.cols -| x, label, th.label());
     // The subtitle: the reference's status count, dim.
     var sub: []const u8 = "";
-    if (ts.loading) {
+    if (ts.loading and !ts.fetched) {
         const done = app.progressDone();
         const total = app.progressTotal();
         sub = if (total > 0) try std.fmt.allocPrint(arena, "  loading… {d}/{d} repos", .{ done, total }) else "  loading…";
@@ -158,6 +158,13 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
             .branches => try std.fmt.allocPrint(arena, "  ({d} branches)", .{ts.items}),
         };
+    }
+    // A refetch over rows that are already there keeps the count and
+    // says it is refreshing beside it, rather than replacing what is on
+    // screen with `loading…`: the rows below are last time's, and they
+    // stay readable while the new ones are fetched.
+    if (ts.loading and ts.fetched) {
+        sub = try std.fmt.allocPrint(arena, "{s}{s}", .{ sub, if (p.nerd) "  refreshing…" else "  refreshing..." });
     }
     // The chips, laid right to left, each dropped whole when it would
     // cross the title.
