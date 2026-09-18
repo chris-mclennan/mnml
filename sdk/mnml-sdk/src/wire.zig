@@ -79,6 +79,20 @@ pub const Palette = struct {
     comment: ?Color = null,
 };
 
+/// How a pane marks the tab that is on. One extra row under the
+/// labels, in the pane's brand colour, spanning exactly the active
+/// label's cells:
+///
+///   block  `▀` upper half-block, the rest of the row empty — flush
+///          against the label's baseline, no air
+///   rule   `━` heavy under the active label, over a muted `─` track
+///          across the rest of the strip
+///   line   `─` under the active label only, the rest empty
+///
+/// The host's `ui.tab_indicator`. A host that predates the field sends
+/// none and every pane draws `block`.
+pub const TabIndicator = enum { block, rule, line };
+
 /// The first message after connect.
 pub const Hello = struct {
     protocol: u8 = protocol,
@@ -90,6 +104,8 @@ pub const Hello = struct {
     capabilities: Capabilities = .{},
     /// The theme's roles as colours; null from a host that has none.
     palette: ?Palette = null,
+    /// How the tab strip marks the tab that is on.
+    tab_indicator: TabIndicator = .block,
 };
 
 pub const Button = enum { left, middle, right };
@@ -378,6 +394,13 @@ test "every host message round-trips" {
     try testing.expect(!hello.hello.capabilities.rgb);
     try testing.expect(hello.hello.capabilities.ascii);
     try testing.expect(hello.hello.capabilities.nerd_font);
+    // A host that predates the field sends none and the pane draws the
+    // default rather than nothing.
+    try testing.expectEqual(TabIndicator.block, hello.hello.tab_indicator);
+    const ruled = try roundTrip(HostMessage, arena, .{ .hello = .{ .geometry = .{ .cols = 1, .rows = 1 }, .tab_indicator = .rule } });
+    try testing.expectEqual(TabIndicator.rule, ruled.hello.tab_indicator);
+    const old_host = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2}}}");
+    try testing.expectEqual(TabIndicator.block, old_host.hello.tab_indicator);
 
     const resize = try roundTrip(HostMessage, arena, .{ .resize = .{ .geometry = .{ .cols = 10, .rows = 3 } } });
     try testing.expectEqual(@as(u16, 3), resize.resize.geometry.rows);
@@ -465,7 +488,7 @@ test "the JSON shape is the documented one" {
     const gpa = testing.allocator;
     const hello = try encode(gpa, HostMessage{ .hello = .{ .geometry = .{ .cols = 8, .rows = 2 } } });
     defer gpa.free(hello);
-    try testing.expectEqualStrings("{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false}}}", hello);
+    try testing.expectEqualStrings("{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false},\"tab_indicator\":\"block\"}}", hello);
     const bye = try encode(gpa, @as(SiblingMessage, .bye));
     defer gpa.free(bye);
     try testing.expectEqualStrings("{\"bye\":{}}", bye);

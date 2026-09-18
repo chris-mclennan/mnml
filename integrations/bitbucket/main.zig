@@ -981,6 +981,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     app.cols = frame.cols;
     app.rows = frame.rows;
     app.now_secs = nowSecs(io);
+    app.tab_indicator = mount.hello.tab_indicator;
 
     var progress: fetch.Progress = .{};
     app.progress = &progress;

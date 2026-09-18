@@ -223,6 +223,9 @@ pub const App = struct {
     /// The pane has the keyboard. A session that ends while it does not
     /// is worth a notification.
     focused: bool = true,
+    /// How the tab strip marks the tab that is on — the host's
+    /// `ui.tab_indicator`, off `hello`.
+    tab_indicator: sdk.wire.TabIndicator = .block,
     /// Sessions this pane started and wants told about, waiting to go
     /// out over the mount.
     watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,

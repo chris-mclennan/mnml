@@ -16,6 +16,7 @@ const theme_mod = @import("theme.zig");
 const hit = @import("hit.zig");
 const text_mod = @import("text.zig");
 const build_mod = @import("build.zig");
+const wire_mod = @import("../wire.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
@@ -26,6 +27,9 @@ pub const fit = text_mod.fit;
 
 /// What the host told us about the terminal.
 pub const Ui = struct {
+    /// How the tab strip marks the tab that is on — the host's
+    /// `ui.tab_indicator`, off `hello`.
+    tab_indicator: wire_mod.TabIndicator = .block,
     ascii: bool = false,
     nerd: bool = true,
 
@@ -55,6 +59,19 @@ pub const scroll_track = "\u{2502}"; // │
 pub const scroll_thumb = "\u{2588}"; // █
 pub const more_glyph = "\u{22ef}"; // ⋯
 pub const more_ascii = "...";
+
+/// The glyphs the three tab indicators are drawn from. The heavy and
+/// light rules are box-drawing and the block is a half-block: all
+/// three are in every terminal font, and each has an ascii stand-in.
+pub const tab_block = "\u{2580}"; // ▀
+pub const tab_rule_active = "\u{2501}"; // ━
+pub const tab_rule = "\u{2500}"; // ─
+pub const tab_block_ascii = "=";
+pub const tab_rule_active_ascii = "=";
+pub const tab_rule_ascii = "-";
+/// Below this the pane cannot spare a row for the indicator, and the
+/// active label wears the terminal's underline attribute instead.
+pub const tab_rule_min_rows: u16 = 12;
 
 pub const placeholder_unfocused = "/ filter";
 pub const placeholder_focused = "type to filter\u{2026}";
@@ -182,15 +199,57 @@ pub fn Painter(comptime Target: type) type {
 
         // ─── the tab strip ───────────────────────────────────────────
 
-        pub fn tabStrip(p: *Self, x0: u16, y: u16, list: []const TabSpec) Allocator.Error!void {
+        /// The tab strip, and the row under it that marks the tab that
+        /// is on.
+        ///
+        /// The active tab used to be marked with a `▌` to its left —
+        /// mnml's own cursor glyph, doing a second job in a place that
+        /// is not a list. It reads as a browser's tabs now: the label
+        /// in the pane's brand colour, and an indicator on the row
+        /// beneath spanning exactly its cells. Which of the three
+        /// shapes is the host's `ui.tab_indicator`, carried on `hello`.
+        ///
+        /// Returns the rows it used — 2 normally, 1 in a pane too short
+        /// to spend one on the indicator, where the active label
+        /// carries the terminal's own underline attribute instead.
+        pub fn tabStrip(p: *Self, x0: u16, y: u16, list: []const TabSpec) Allocator.Error!u16 {
+            const ruled = p.rows() >= tab_rule_min_rows and y + 1 < p.rows();
             var x = x0;
+            var active_x: u16 = 0;
+            var active_w: u16 = 0;
             for (list) |t| {
                 const w = width(t.label);
                 if (x + w > p.cols()) break;
-                _ = p.put(x, y, w, t.label, if (t.active) p.th.tabActive() else p.th.tabInactive());
+                var style: Style = if (t.active) .{ .fg = p.th.brand, .mods = .{ .bold = true } } else p.th.tabInactive();
+                // No room for the indicator: the attribute says it.
+                if (t.active and !ruled) style.mods.underline = true;
+                _ = p.put(x, y, w, t.label, style);
                 try p.mark(.{ .x = x, .y = y, .w = w, .h = 1 }, t.target);
+                if (t.active) {
+                    active_x = x;
+                    active_w = w;
+                }
                 x += w + 1;
             }
+            if (!ruled) return 1;
+            // Only `rule` lays a track across the strip; the other two
+            // leave the row empty either side of the active label.
+            if (p.ui.tab_indicator == .rule) {
+                const right = @min(x, p.cols());
+                var i = x0;
+                const track = if (p.ui.ascii) tab_rule_ascii else tab_rule;
+                while (i < right) : (i += 1) _ = p.put(i, y + 1, 1, track, p.th.mutedText());
+            }
+            const glyph = switch (p.ui.tab_indicator) {
+                .block => if (p.ui.ascii) tab_block_ascii else tab_block,
+                .rule => if (p.ui.ascii) tab_rule_active_ascii else tab_rule_active,
+                .line => if (p.ui.ascii) tab_rule_ascii else tab_rule,
+            };
+            var i = active_x;
+            while (i < active_x + active_w and i < p.cols()) : (i += 1) {
+                _ = p.put(i, y + 1, 1, glyph, .{ .fg = p.th.brand });
+            }
+            return 2;
         }
 
         // ─── the filter pill ─────────────────────────────────────────
@@ -421,6 +480,89 @@ pub fn scrollAt(bar: Rect, total: usize, visible: usize, row: u16) usize {
     const rel: usize = @min(row -| bar.y, bar.h - 1);
     const max_first = total - visible;
     return @min(max_first, (rel * total) / bar.h);
+}
+
+/// The three indicators, painted through the real `tabStrip`.
+fn stripRows(gpa: Allocator, ind: wire_mod.TabIndicator, ascii: bool, rows: u16) ![2][]const u8 {
+    const Target = union(enum) { tab: u8 };
+    var f = try frame_mod.Frame.init(gpa, 40, rows);
+    defer f.deinit();
+    var hits: hit.Map(Target) = .{};
+    defer hits.deinit(gpa);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var p: Painter(Target) = .{
+        .f = &f,
+        .gpa = gpa,
+        .arena = arena.allocator(),
+        .hits = &hits,
+        .th = .{ .brand = .{ .index = 5 } },
+        .ui = .{ .tab_indicator = ind, .ascii = ascii },
+    };
+    const used = try p.tabStrip(1, 0, &.{
+        .{ .label = " 1 One ", .target = .{ .tab = 0 }, .active = true },
+        .{ .label = " 2 Two ", .target = .{ .tab = 1 } },
+    });
+    var out: [2][]const u8 = .{ "", "" };
+    out[0] = try rowOf(gpa, &f, 0);
+    out[1] = if (used == 2) try rowOf(gpa, &f, 1) else "";
+    return out;
+}
+
+fn rowOf(gpa: Allocator, f: *frame_mod.Frame, y: u16) ![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var x: u16 = 0;
+    while (x < f.cols) : (x += 1) try out.appendSlice(gpa, f.slots[@as(usize, y) * f.cols + x].symbol());
+    return out.toOwnedSlice(gpa);
+}
+
+test "the tab indicator draws all three shapes under the active label, and only `rule` lays a track" {
+    const gpa = std.testing.allocator;
+    // `block`: the half-block under `  1 One `, nothing either side.
+    {
+        const r = try stripRows(gpa, .block, false, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expect(std.mem.indexOf(u8, r[0], "1 One") != null);
+        try std.testing.expectEqualStrings(" " ++ (tab_block ** 7) ++ " " ** 32, r[1]);
+    }
+    // `rule`: heavy under the active label, a light track over the rest
+    // of the strip and nothing past its right edge.
+    {
+        const r = try stripRows(gpa, .rule, false, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings(" " ++ (tab_rule_active ** 7) ++ tab_rule ** 9 ++ " " ** 23, r[1]);
+    }
+    // `line`: the light rule under the active label only.
+    {
+        const r = try stripRows(gpa, .line, false, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings(" " ++ (tab_rule ** 7) ++ " " ** 32, r[1]);
+    }
+    // ascii: a stand-in for each, so a terminal without the font still
+    // says which tab is on.
+    {
+        const r = try stripRows(gpa, .block, true, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings(" " ++ ("=" ** 7) ++ " " ** 32, r[1]);
+    }
+    {
+        const r = try stripRows(gpa, .line, true, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings(" " ++ ("-" ** 7) ++ " " ** 32, r[1]);
+    }
+    // A pane too short for the extra row spends none: the label wears
+    // the terminal's underline attribute instead.
+    {
+        const r = try stripRows(gpa, .block, false, 6);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings("", r[1]);
+    }
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────

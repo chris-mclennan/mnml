@@ -256,13 +256,22 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
             const geometry = currentGeometry(app, ev.pane, p);
             p.cols = geometry.cols;
             p.rows = geometry.rows;
-            p.send(.{ .hello = .{
-                .geometry = geometry,
-                .theme = app.theme.name,
-                .workspace = app.workspace,
-                .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons },
-                .palette = paletteOf(&app.theme),
-            } });
+            p.send(.{
+                .hello = .{
+                    .geometry = geometry,
+                    .theme = app.theme.name,
+                    .workspace = app.workspace,
+                    .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons },
+                    .palette = paletteOf(&app.theme),
+                    // The pane's tab strip marks its active tab the way the
+                    // rest of mnml does, rather than picking for itself.
+                    .tab_indicator = switch (app.cfg.ui.tab_indicator) {
+                        .block => .block,
+                        .rule => .rule,
+                        .line => .line,
+                    },
+                },
+            });
             m.greeted = true;
             const focused = app.active == ev.pane and app.focus == .pane;
             p.send(.{ .focus = focused });

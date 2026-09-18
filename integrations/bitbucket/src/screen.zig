@@ -92,7 +92,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
         .app = app,
         .th = app.theme,
         .nerd = nerd_font,
-        .c = .{ .f = f, .gpa = app.hits.gpa, .arena = arena, .hits = &app.hits.inner, .th = app.theme, .ui = .{ .nerd = nerd_font } },
+        .c = .{ .f = f, .gpa = app.hits.gpa, .arena = arena, .hits = &app.hits.inner, .th = app.theme, .ui = .{ .nerd = nerd_font, .ascii = !nerd_font, .tab_indicator = app.tab_indicator } },
     };
     // The app-colour stripe down column 0 — the pane's identity, from
     // the toolkit. Painted under everything: a row that puts its own
@@ -106,8 +106,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     try paintHeader(arena, &p, y);
     y += 1;
     if (app.showTabStrip() and y < f.rows) {
-        try paintTabStrip(arena, &p, y);
-        y += 1;
+        y += try paintTabStrip(arena, &p, y);
     }
     if (y < f.rows) {
         try paintFilter(&p, y);
@@ -227,19 +226,17 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
 
 // ─── the tab strip ───────────────────────────────────────────────────────
 
-fn paintTabStrip(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
+/// The strip, from the toolkit — the same two rows the tracker pane
+/// paints, so the active tab is underlined the same way in both.
+/// Returns the rows it used.
+fn paintTabStrip(arena: Allocator, p: *Painter, y: u16) Allocator.Error!u16 {
     const app = p.app;
-    const th = p.th;
-    var x: u16 = 1;
+    var list: std.ArrayList(Chrome.TabSpec) = .empty;
     for (app.tabs, 0..) |*ts, i| {
         const count = if (ts.fetched) try std.fmt.allocPrint(arena, " {d} {s} ({d}) ", .{ i + 1, ts.spec.name, tabCount(ts) }) else try std.fmt.allocPrint(arena, " {d} {s} ", .{ i + 1, ts.spec.name });
-        const w = Painter.width(count);
-        if (x + w > p.f.cols) break;
-        const style = if (i == app.active) th.tabActive() else th.tabInactive();
-        _ = p.text(x, y, w, count, style);
-        p.target(x, y, w, .{ .tab = i });
-        x += w + 1;
+        try list.append(arena, .{ .label = count, .target = .{ .tab = i }, .active = i == app.active });
     }
+    return p.c.tabStrip(1, y, list.items);
 }
 
 /// The reference's tab count: the rows a tree shows, the items of a list.
@@ -830,10 +827,14 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     // (`filter not wired yet (round-1 visual)`). None of them is here,
     // on either family — the `/` pill is what replaced the fifth, its
     // Search chip.
+    // `draw` resets the screen arena, so the first screen has to be
+    // taken out of it before the second one is drawn.
+    const first = try t.allocator.dupe(u8, scr);
+    defer t.allocator.free(first);
     try s.key("3");
     const pipelines = try s.draw();
     for ([_][]const u8{ "Target branch", "Pipeline type", "Trigger type" }) |dead_chip| {
-        try t.expect(!has(scr, dead_chip));
+        try t.expect(!has(first, dead_chip));
         try t.expect(!has(pipelines, dead_chip));
     }
     // `Branch ▾` was the fourth; the pipelines tree's column header is
@@ -905,7 +906,10 @@ test "a PR folds out to its builds under enter, one row per run, and the detail 
     const nscr = try narrow.draw();
     try t.expect(has(nscr, "acme/api#1234"));
     try t.expect(has(nscr, "○ not approved · 1 total"));
-    try t.expect(has(nscr, "Nice catch"));
+    // A comment's body, wrapped into the narrow panel. (Dana's "Nice
+    // catch" is the oldest of the three and now sits one row below the
+    // fold — the tab strip's rule costs the body a row.)
+    try t.expect(has(nscr, "withQuery needs to escape"));
     try t.expect(!has(nscr, "REPO / #PR"));
 }
 

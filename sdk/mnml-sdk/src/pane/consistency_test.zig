@@ -222,11 +222,11 @@ fn paintTracker(r: *Rig(TrackerTarget)) !void {
         .{ .text = " ? ", .target = .{ .chip = 0 } },
         .{ .text = p.refreshChipText(), .target = .{ .chip = 1 } },
     });
-    try p.tabStrip(1, 1, &.{
+    _ = try p.tabStrip(1, 1, &.{
         .{ .label = " 1 First (3) ", .target = .{ .tab = 0 }, .active = true },
         .{ .label = " 2 Second (4) ", .target = .{ .tab = 1 } },
     });
-    try p.filterPill(.{ .x = 1, .y = 2, .w = cols - 2, .h = 1 }, "vouch", 5, true, .filter);
+    try p.filterPill(.{ .x = 1, .y = 3, .w = cols - 2, .h = 1 }, "vouch", 5, true, .filter);
     try p.rowGround(.{ .x = 0, .y = 4, .w = cols, .h = 1 }, false, .{ .row = 0 });
     try p.rowGround(.{ .x = 0, .y = 5, .w = cols, .h = 2 }, true, .{ .row = 1 });
     try p.showMoreRow(.{ .x = 0, .y = 7, .w = cols, .h = 1 }, 12, 7, .{ .show_more = 1 });
@@ -257,11 +257,11 @@ fn paintForge(r: *Rig(ForgeTarget)) !void {
         .{ .text = " ? ", .target = .{ .chip = .{ .kind = 0 } } },
         .{ .text = p.refreshChipText(), .target = .{ .chip = .{ .kind = 1 } } },
     });
-    try p.tabStrip(1, 1, &.{
+    _ = try p.tabStrip(1, 1, &.{
         .{ .label = " 1 First (3) ", .target = .{ .tab = 0 }, .active = true },
         .{ .label = " 2 Second (4) ", .target = .{ .tab = 1 } },
     });
-    try p.filterPill(.{ .x = 1, .y = 2, .w = cols - 2, .h = 1 }, "vouch", 5, true, .filter);
+    try p.filterPill(.{ .x = 1, .y = 3, .w = cols - 2, .h = 1 }, "vouch", 5, true, .filter);
     try p.rowGround(.{ .x = 0, .y = 4, .w = cols, .h = 1 }, false, .{ .row = 0 });
     try p.rowGround(.{ .x = 0, .y = 5, .w = cols, .h = 2 }, true, .{ .row = 1 });
     try p.showMoreRow(.{ .x = 0, .y = 7, .w = cols, .h = 1 }, 12, 7, .{ .show_more = 1 });
@@ -333,6 +333,11 @@ test "the elements the panes share are actually on the screen, so the comparison
     try testing.expect(std.mem.indexOf(u8, scr, "PANE") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "(2 of 9)") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "1 First (3)") != null);
+    // The default indicator: the block under the tab that is on. The
+    // heavy rule belongs to `rule`, which is not the default, so it is
+    // nowhere on this screen. (The light one is: box frames use it.)
+    try testing.expect(std.mem.indexOf(u8, scr, chrome.tab_block) != null);
+    try testing.expect(std.mem.indexOf(u8, scr, chrome.tab_rule_active) == null);
     try testing.expect(std.mem.indexOf(u8, scr, "vouch") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "Show more (7)") != null);
     try testing.expect(std.mem.indexOf(u8, scr, chrome.close_glyph) != null);

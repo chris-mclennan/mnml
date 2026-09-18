@@ -38,13 +38,16 @@ pub const Ui = struct {
     ascii: bool = false,
     nerd: bool = true,
     th: Theme = .{},
+    /// How the tab strip marks the tab that is on — the host's
+    /// `ui.tab_indicator`, off `hello`.
+    tab_indicator: sdk.wire.TabIndicator = .block,
 
     pub fn glyph(u: Ui, nerd_g: []const u8, fallback: []const u8) []const u8 {
         return if (u.ascii or !u.nerd) fallback else nerd_g;
     }
 
     pub fn chrome(u: Ui) sdk.pane.Ui {
-        return .{ .ascii = u.ascii, .nerd = u.nerd };
+        return .{ .ascii = u.ascii, .nerd = u.nerd, .tab_indicator = u.tab_indicator };
     }
 };
 
@@ -184,7 +187,7 @@ pub const Painter = struct {
             return;
         }
         try p.paintHeader();
-        try p.paintTabs();
+        p.lay.toolbar_y = p.lay.tabs_y + try p.paintTabs();
         const t = p.a.tab();
         p.lay.list_w = p.cols();
         if (p.a.details_visible and p.cols() >= 60 and !t.cfg.isKanban()) {
@@ -301,19 +304,21 @@ pub const Painter = struct {
         }
     }
 
-    fn paintTabs(p: *Painter) Allocator.Error!void {
+    /// The strip, from the toolkit — the same two rows the forge pane
+    /// paints. It used to mark the active tab with mnml's own cursor
+    /// `▌`, a glyph doing a second job in a place that is not a list;
+    /// the underline says it instead. Returns the rows it used.
+    fn paintTabs(p: *Painter) Allocator.Error!u16 {
         const y = p.lay.tabs_y;
-        var x: u16 = 0;
+        var list: std.ArrayList(Chrome.TabSpec) = .empty;
         for (p.a.tabs, 0..) |*t, i| {
-            const is_active = i == p.a.active;
-            const label = p.fmt("{d} {s}", .{ i + 1, t.cfg.name });
-            const w = text.width(label) + 2;
-            if (x + w > p.cols()) break;
-            if (is_active) _ = p.put(x, y, 1, p.marker(), p.s.accent);
-            _ = p.put(x + 1, y, w - 1, label, if (is_active) p.s.bold else p.s.muted);
-            try p.hitAdd(.{ .x = x, .y = y, .w = w, .h = 1 }, .{ .tab = @intCast(i) });
-            x += w + 1;
+            try list.append(p.arena, .{
+                .label = p.fmt(" {d} {s} ", .{ i + 1, t.cfg.name }),
+                .target = .{ .tab = @intCast(i) },
+                .active = i == p.a.active,
+            });
         }
+        return p.c.tabStrip(1, y, list.items);
     }
 
     // ─── the toolbar chips ───────────────────────────────────────────
@@ -1615,57 +1620,63 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     const r0 = try rowText(ar, &f, 0);
     try testing.expect(std.mem.startsWith(u8, r0, "▌JIRA WORK (3)"));
     try testing.expect(std.mem.endsWith(u8, r0, " ?"));
-    try testing.expectEqualStrings("\u{258c}1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
-    const r2 = try rowText(ar, &f, 2);
+    try testing.expectEqualStrings("\u{258c} 1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
+    // The strip's indicator: the default `block` under the tab that
+    // is on, and no `▌` mark beside the label any more.
+    const rule = try rowText(ar, &f, 2);
+    try testing.expect(std.mem.startsWith(u8, rule, "\u{258c}\u{2580}\u{2580}"));
+    try testing.expect(std.mem.indexOf(u8, rule, "\u{2501}") == null);
+    const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " basic ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " assignee: All ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " status: All") != null);
     try testing.expect(std.mem.indexOf(u8, r0, "\u{eb37}") != null);
     try testing.expect(std.mem.indexOf(u8, r2, "/ filter") != null);
-    const r3 = try rowText(ar, &f, 3);
+    const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.startsWith(u8, r3, "▌ KEY"));
     try testing.expect(std.mem.indexOf(u8, r3, "SUMMARY") != null);
     // The first group is the cursor: marker, chevron, name and count.
-    const r4 = try rowText(ar, &f, 4);
+    const r4 = try rowText(ar, &f, 5);
     try testing.expect(std.mem.startsWith(u8, r4, "\u{258c}\u{F47C} In PR Review (1)"));
     // ENG-2 under it with its two PRs, then the buttons.
-    const r5 = try rowText(ar, &f, 5);
+    const r5 = try rowText(ar, &f, 6);
     try testing.expect(std.mem.indexOf(u8, r5, "ENG-2") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "In PR Review") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "Ada Lovelace") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "Card form validates on blur") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "[ Review ]") != null);
-    const r6 = try rowText(ar, &f, 6);
+    const r6 = try rowText(ar, &f, 7);
     try testing.expect(std.mem.indexOf(u8, r6, "MERGED") != null);
     try testing.expect(std.mem.indexOf(u8, r6, "[ Open ]") != null);
     try testing.expect(std.mem.indexOf(u8, r6, "[ Merge ]") == null);
-    const r7 = try rowText(ar, &f, 7);
+    const r7 = try rowText(ar, &f, 8);
     try testing.expect(std.mem.indexOf(u8, r7, "OPEN") != null);
     try testing.expect(std.mem.indexOf(u8, r7, "[ Open ] [ Review ] [ Merge ]") != null);
-    const merge_x = (try colOfText(ar, &f, 7, "[ Merge ]")).?;
+    const merge_x = (try colOfText(ar, &f, 8, "[ Merge ]")).?;
     // Nothing has judged this pull request, so `[ Merge ]` is dim and
     // is NOT a `pr_button`: a stray click there cannot merge anything.
     // It still answers, with the reason it is dim.
-    try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 7).?);
-    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 7, "[ Open ]")).? + 2, 7).?);
+    try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 8).?);
+    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 8, "[ Open ]")).? + 2, 8).?);
     // The hint row comes from the bindings, not a string.
     const last = try rowText(ar, &f, 39);
     try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select") != null);
-    // Every painted row is a hit, and a click on row 6 selects that row.
-    try testing.expectEqual(hit.Target{ .row = 2 }, a.hits.at(30, 6).?);
+    // Every painted row is a hit, and a click on the ticket's row
+    // selects that row.
+    try testing.expectEqual(hit.Target{ .row = 1 }, a.hits.at(30, 6).?);
     try testing.expectEqual(hit.Target{ .tab = 1 }, a.hits.at(14, 1).?);
     try testing.expectEqual(hit.Target{ .chip = .help }, a.hits.at(118, 0).?);
-    const review_x = (try colOfText(ar, &f, 5, "[ Review ]")).?;
-    try testing.expectEqual(hit.Target{ .action = .{ .issue = 1, .button = 0 } }, a.hits.at(review_x + 2, 5).?);
-    try a.click(30, 6, false);
+    const review_x = (try colOfText(ar, &f, 6, "[ Review ]")).?;
+    try testing.expectEqual(hit.Target{ .action = .{ .issue = 1, .button = 0 } }, a.hits.at(review_x + 2, 6).?);
+    try a.click(30, 7, false);
     try testing.expectEqual(@as(usize, 2), a.tab().selected);
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 6), "\u{258c}"));
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 7), "\u{258c}"));
     // The chevron on the group folds it.
-    try a.click(1, 4, false);
+    try a.click(1, 5, false);
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 4), "\u{258c}\u{F460} In PR Review (1)"));
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "ENG-2") == null);
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 5), "\u{258c}\u{F460} In PR Review (1)"));
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 6), "ENG-2") == null);
 }
 
 test "Work: the detail pane, the filter pill while typing, the bulk marks, and the pickers over the list" {
@@ -1685,7 +1696,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     try testing.expect((try findRow(ar, &f, "ENG-2  Card form validates on blur")) != null);
     try testing.expect((try findRow(ar, &f, "★ watching (2 total)")) != null);
     try testing.expect((try findRow(ar, &f, "── comments (2)")) != null);
-    try testing.expectEqual(hit.Target.detail, a.hits.at(100, 10).?);
+    try testing.expectEqual(hit.Target.detail, a.hits.at(100, 11).?);
     _ = try a.onKey("d");
     // The filter pill while typing, then committed.
     _ = try a.onKey("/");
@@ -1693,7 +1704,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     _ = try a.onKey("o");
     _ = try a.onKey("u");
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 2), "\u{F0349} vou▏") != null);
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} vou▏") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "type to filter · Enter commit · Esc cancel") != null);
     _ = try a.onKey("enter");
     try paint(ar, &f, a, .{});
@@ -1706,7 +1717,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     _ = try a.onKey("shift+s");
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 0), "1 selected") != null);
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "ENG-2 ✓") != null);
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 6), "ENG-2 ✓") != null);
     // The assignee picker over the list: title, filter line, rows, hits.
     _ = try a.onKey("a");
     try paint(ar, &f, a, .{});
@@ -1732,7 +1743,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA FIX VERSIONS (8)"));
-    const r2 = try rowText(ar, &f, 2);
+    const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 13.16.0 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " ⓧ") != null);
     // The `space:` placeholder is gone: it named the tab's project and did nothing.
@@ -1778,12 +1789,12 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (3 of 9)"));
-    const r2 = try rowText(ar, &f, 2);
+    const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " board: Checkout board ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " sprint: Sprint 4 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " [?] ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " SB ") != null);
-    const r3 = try rowText(ar, &f, 3);
+    const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.indexOf(u8, r3, " quick filters ") != null or std.mem.indexOf(u8, r2, " quick filters ") != null);
     const top = (try findRow(ar, &f, " To Do (")).?;
     const top_row = try rowText(ar, &f, top);
@@ -1798,8 +1809,8 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, head_y + 1), "Checkout rewrite") != null);
     try testing.expectEqual(hit.Target{ .card = 0 }, a.hits.at(head_x + 6, head_y + 1).?);
     // An avatar click toggles that assignee into the filter.
-    const sb_x = (try colOfText(ar, &f, 2, " SB ")).?;
-    try a.click(sb_x + 1, 2, false);
+    const sb_x = (try colOfText(ar, &f, 3, " SB ")).?;
+    try a.click(sb_x + 1, 3, false);
     try testing.expectEqual(@as(usize, 2), a.tab().active_assignees.count());
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (4 of 9)"));
@@ -1829,12 +1840,13 @@ test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shri
     defer arena.deinit();
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
-    const r2 = try rowText(ar, &f, 2);
-    const r3 = try rowText(ar, &f, 3);
+    const r2 = try rowText(ar, &f, 3);
+    const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.indexOf(u8, r2, " basic ") != null);
-    // Whatever did not fit on row 2 is whole on row 3, never clipped.
+    // Whatever did not fit on the toolbar's first row is whole on its
+    // second, never clipped.
     try testing.expect(std.mem.indexOf(u8, r3, " status: All") != null or std.mem.indexOf(u8, r2, " status: All") != null);
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 4), "KEY") != null or std.mem.indexOf(u8, r3, "KEY") != null);
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "KEY") != null or std.mem.indexOf(u8, r3, "KEY") != null);
     try testing.expect((try findRow(ar, &f, "ENG-2")) != null);
     const last = try rowText(ar, &f, 23);
     try testing.expect(std.mem.indexOf(u8, last, "t transition") != null);

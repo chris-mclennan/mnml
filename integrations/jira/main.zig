@@ -299,6 +299,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .ascii = mount.hello.capabilities.ascii,
         .nerd = mount.hello.capabilities.nerd_font,
         .th = sdk.pane.Theme.fromHelloBranded(mount.hello.palette, chipColorOf(family)),
+        .tab_indicator = mount.hello.tab_indicator,
     };
     try mount.setTitle(if (family) |f| f.label() else "Jira");
 
