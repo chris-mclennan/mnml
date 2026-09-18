@@ -66,9 +66,11 @@ pub const more_ascii = "...";
 pub const tab_block = "\u{2580}"; // ▀
 pub const tab_rule_active = "\u{2501}"; // ━
 pub const tab_rule = "\u{2500}"; // ─
+pub const tab_quarter = "\u{2582}"; // ▂ — a slim bar at the foot of the row
 pub const tab_block_ascii = "=";
 pub const tab_rule_active_ascii = "=";
 pub const tab_rule_ascii = "-";
+pub const tab_quarter_ascii = "_";
 /// Below this the pane cannot spare a row for the indicator, and the
 /// active label wears the terminal's underline attribute instead.
 pub const tab_rule_min_rows: u16 = 12;
@@ -244,6 +246,7 @@ pub fn Painter(comptime Target: type) type {
                 .block => if (p.ui.ascii) tab_block_ascii else tab_block,
                 .rule => if (p.ui.ascii) tab_rule_active_ascii else tab_rule_active,
                 .line => if (p.ui.ascii) tab_rule_ascii else tab_rule,
+                .quarter => if (p.ui.ascii) tab_quarter_ascii else tab_quarter,
             };
             var i = active_x;
             while (i < active_x + active_w and i < p.cols()) : (i += 1) {
@@ -516,7 +519,7 @@ fn rowOf(gpa: Allocator, f: *frame_mod.Frame, y: u16) ![]const u8 {
     return out.toOwnedSlice(gpa);
 }
 
-test "the tab indicator draws all three shapes under the active label, and only `rule` lays a track" {
+test "the tab indicator draws each shape under the active label, and only `rule` lays a track" {
     const gpa = std.testing.allocator;
     // `block`: the half-block under `  1 One `, nothing either side.
     {
@@ -540,6 +543,13 @@ test "the tab indicator draws all three shapes under the active label, and only 
         defer gpa.free(r[0]);
         defer gpa.free(r[1]);
         try std.testing.expectEqualStrings(" " ++ (tab_rule ** 7) ++ " " ** 32, r[1]);
+    }
+    // `quarter`: a slim bar at the foot of the row, under the active label only.
+    {
+        const r = try stripRows(gpa, .quarter, false, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings(" " ++ (tab_quarter ** 7) ++ " " ** 32, r[1]);
     }
     // ascii: a stand-in for each, so a terminal without the font still
     // says which tab is on.
