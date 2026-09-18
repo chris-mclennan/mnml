@@ -1157,6 +1157,9 @@ pub const specs = [_]Spec{
     // ── ZON view: a .zon file as a tree of fields, edited in place ──
     .{ .id = "zon.view", .title = "ZON: view the file as a tree of fields (edit in place)", .group = "zon" },
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
+    // ── the bottom row (bottom-row) ──
+    .{ .id = "app.command_line", .title = "Open the `:` command line (any focus, either keymap profile)", .group = "app", .keys = .{ .both = &.{"ctrl+;"} } },
+    .{ .id = "toast.run_action", .title = "Toast: take up the newest message's offer (the ` Install ` button)", .group = "toast", .keys = .{ .both = &.{"ctrl+shift+a"} } },
 };
 
 test "1077 specs, unique ids" {
@@ -1182,7 +1185,8 @@ test "1077 specs, unique ids" {
     // + six SEARCH section commands (refresh / open / open_split /
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
-    // + the two per-buffer highlight overrides (highlight-limit).
-    try std.testing.expectEqual(@as(usize, 1078), specs.len);
+    // + `app.command_line` (the bottom row's `:` line) and
+    // `toast.run_action` (bottom-row).
+    try std.testing.expectEqual(@as(usize, 1080), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

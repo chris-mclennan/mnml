@@ -1,0 +1,268 @@
+//! The bottom row's own `:` line — the one the whole app shares, as
+//! against the per-editor `:` the vim handler owns.
+//!
+//! The vim handler's `:` belongs to a buffer: it needs an editor pane,
+//! and it needs the vim profile. Neither holds when the tree has the
+//! keys, when a terminal pane is focused, or when the user is in the
+//! standard profile at all — and in every one of those a `:` line is
+//! still the shortest way to a command. So this state lives on the app,
+//! opens from any focus in either profile, and paints on the same row
+//! (`render.drawCmdline` prefers it), which is how the reference editor
+//! splits the two as well.
+//!
+//! Two ways in, both of them deliberately hard to miss:
+//!
+//!   * `Ctrl+;` — a global chord, dispatched above the chord chain so a
+//!     half-typed leader sequence cannot swallow it;
+//!   * a click anywhere on the bottom row, which is otherwise dead
+//!     space and gives the mouse a route to the `:` line without
+//!     knowing the chord at all.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const Key = @import("../core/key.zig").Key;
+
+/// The typed line and the caret inside it, both owned by the app.
+pub const State = struct {
+    text: std.ArrayListUnmanaged(u8) = .empty,
+    /// Byte offset of the caret within `text`.
+    caret: usize = 0,
+
+    pub fn deinit(self: *State, gpa: Allocator) void {
+        self.text.deinit(gpa);
+    }
+};
+
+/// Open the line, empty. Already open is a no-op — a second `Ctrl+;`
+/// (or a second click on the row) must not wipe what is half typed.
+pub fn open(app: *App) void {
+    if (app.cmdline != null) return;
+    app.cmdline = .{};
+    app.needs_render = true;
+}
+
+pub fn close(app: *App) void {
+    if (app.cmdline) |*c| c.deinit(app.gpa);
+    app.cmdline = null;
+    app.needs_render = true;
+}
+
+/// Insert `text` at the caret — a typed char, or a paste. Control
+/// characters and newlines are dropped so a multi-line paste stays one
+/// line (the `:` line has nowhere to put the rest).
+pub fn insert(app: *App, text: []const u8) Allocator.Error!void {
+    const c = &(app.cmdline orelse return);
+    var at = c.caret;
+    for (text) |ch| {
+        if (ch == '\n' or ch == '\r' or ch < 0x20) continue;
+        try c.text.insert(app.gpa, at, ch);
+        at += 1;
+    }
+    c.caret = at;
+    app.needs_render = true;
+}
+
+/// Run the line and close. An empty line just closes, as vim's Enter
+/// on an empty `:` does.
+fn commit(app: *App) Allocator.Error!void {
+    const c = &(app.cmdline orelse return);
+    const line = try app.frame.allocator().dupe(u8, std.mem.trim(u8, c.text.items, " \t"));
+    close(app);
+    if (line.len == 0) return;
+    const dispatch = @import("dispatch.zig");
+    try dispatch.runExLine(app, line);
+}
+
+/// The line's keys while it is open. Returns false for a key it does
+/// not want, so the caller can carry on with it.
+pub fn key(app: *App, k: Key) Allocator.Error!bool {
+    const c = &(app.cmdline orelse return false);
+    switch (k.code) {
+        .esc => {
+            close(app);
+            return true;
+        },
+        .enter => {
+            try commit(app);
+            return true;
+        },
+        .backspace => {
+            if (c.caret > 0) {
+                const start = prevBoundary(c.text.items, c.caret);
+                c.text.replaceRange(app.gpa, start, c.caret - start, &.{}) catch return error.OutOfMemory;
+                c.caret = start;
+            } else close(app);
+            app.needs_render = true;
+            return true;
+        },
+        .delete => {
+            if (c.caret < c.text.items.len) {
+                const end = nextBoundary(c.text.items, c.caret);
+                c.text.replaceRange(app.gpa, c.caret, end - c.caret, &.{}) catch return error.OutOfMemory;
+            }
+            app.needs_render = true;
+            return true;
+        },
+        .left => {
+            c.caret = prevBoundary(c.text.items, c.caret);
+            app.needs_render = true;
+            return true;
+        },
+        .right => {
+            c.caret = nextBoundary(c.text.items, c.caret);
+            app.needs_render = true;
+            return true;
+        },
+        .home => {
+            c.caret = 0;
+            app.needs_render = true;
+            return true;
+        },
+        .end => {
+            c.caret = c.text.items.len;
+            app.needs_render = true;
+            return true;
+        },
+        .char => |cp| {
+            // `Ctrl+;` again while it is open: leave it alone rather
+            // than typing a `;`, so the chord is idempotent.
+            if (k.mods.ctrl and cp == ';') return true;
+            if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+            var buf: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(cp, &buf) catch return true;
+            try insert(app, buf[0..n]);
+            return true;
+        },
+        else => return false,
+    }
+}
+
+/// The line as the row paints it: `:` then the text with the caret
+/// mark set into it, the shape the vim `:` line uses too.
+pub fn display(app: *const App, arena: Allocator, ascii: bool) Allocator.Error!?[]const u8 {
+    const c = app.cmdline orelse return null;
+    const caret = @min(c.caret, c.text.items.len);
+    return try std.fmt.allocPrint(arena, ":{s}{s}{s}", .{
+        c.text.items[0..caret],
+        if (ascii) "|" else "▏",
+        c.text.items[caret..],
+    });
+}
+
+fn prevBoundary(s: []const u8, at: usize) usize {
+    if (at == 0) return 0;
+    var i = @min(at, s.len);
+    i -= 1;
+    while (i > 0 and s[i] & 0xC0 == 0x80) i -= 1;
+    return i;
+}
+
+fn nextBoundary(s: []const u8, at: usize) usize {
+    if (at >= s.len) return s.len;
+    var i = at + 1;
+    while (i < s.len and s[i] & 0xC0 == 0x80) i += 1;
+    return i;
+}
+
+// ── tests ──
+
+const t = std.testing;
+
+test "the line types, edits at the caret, and runs on Enter" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try t.expect(app.cmdline == null);
+    open(&app);
+    try t.expect(app.cmdline != null);
+    // A second open keeps what is typed.
+    try insert(&app, "noh");
+    open(&app);
+    try t.expectEqualStrings("noh", app.cmdline.?.text.items);
+
+    // The caret walks and edits mid-line.
+    try t.expect(try key(&app, Key.named(.left)));
+    try t.expect(try key(&app, Key.char('X')));
+    try t.expectEqualStrings("noXh", app.cmdline.?.text.items);
+    try t.expect(try key(&app, Key.named(.backspace)));
+    try t.expectEqualStrings("noh", app.cmdline.?.text.items);
+    try t.expect(try key(&app, Key.named(.home)));
+    try t.expectEqual(@as(usize, 0), app.cmdline.?.caret);
+    try t.expect(try key(&app, Key.named(.end)));
+    try t.expectEqual(@as(usize, 3), app.cmdline.?.caret);
+
+    // The paint shape carries the caret mark.
+    const shown = (try display(&app, app.frame.allocator(), false)).?;
+    try t.expectEqualStrings(":noh▏", shown);
+
+    // Enter runs it and closes.
+    try t.expect(try key(&app, Key.named(.enter)));
+    try t.expect(app.cmdline == null);
+    try t.expectEqualStrings("noh", app.cmd_history.getLast());
+}
+
+test "Esc drops the line, backspace on an empty line closes it, an empty Enter just closes" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    open(&app);
+    try insert(&app, "wq");
+    try t.expect(try key(&app, Key.named(.esc)));
+    try t.expect(app.cmdline == null);
+    try t.expectEqual(@as(usize, 0), app.cmd_history.items.len);
+
+    open(&app);
+    try t.expect(try key(&app, Key.named(.backspace)));
+    try t.expect(app.cmdline == null);
+
+    open(&app);
+    try t.expect(try key(&app, Key.named(.enter)));
+    try t.expect(app.cmdline == null);
+    try t.expectEqual(@as(usize, 0), app.cmd_history.items.len);
+}
+
+test "the chord opens the line from any focus and outranks a half-typed chord chain" {
+    const dispatch = @import("dispatch.zig");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    // Pane focus.
+    try dispatch.key(&app, Key.ctrl(';'));
+    try t.expect(app.cmdline != null);
+    try t.expect(try key(&app, Key.named(.esc)));
+
+    // Tree focus.
+    app.focus = .tree;
+    app.tree.visible = true;
+    try dispatch.key(&app, Key.ctrl(';'));
+    try t.expect(app.cmdline != null);
+    try t.expect(try key(&app, Key.named(.esc)));
+
+    // Mid-chord: `ctrl+k` leaves a chain pending. The chord still opens
+    // the line, and the dangling chain goes — the reference editor moved
+    // this above its own chord dispatch for exactly this report (it
+    // worked in tree focus and failed in a pane, where a leader chord
+    // was left hanging).
+    app.focus = .{ .pane = app.active.? };
+    try dispatch.key(&app, Key.ctrl('k'));
+    try t.expect(app.chord.len > 0);
+    try dispatch.key(&app, Key.ctrl(';'));
+    try t.expect(app.cmdline != null);
+    try t.expectEqual(@as(usize, 0), app.chord.len);
+
+    // The vim profile binds it too.
+    try t.expect(try key(&app, Key.named(.esc)));
+    try app.setInputStyle(.vim);
+    try dispatch.key(&app, Key.ctrl(';'));
+    try t.expect(app.cmdline != null);
+    try t.expect(try key(&app, Key.named(.esc)));
+}
+
+test "a paste stays on one line and control characters are dropped" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    open(&app);
+    try insert(&app, "set num\nber\ttail");
+    try t.expectEqualStrings("set numbertail", app.cmdline.?.text.items);
+}

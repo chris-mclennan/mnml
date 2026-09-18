@@ -1,0 +1,64 @@
+# width: 120
+# height: 40
+# `Ctrl+Q` with unsaved work raises a box that NAMES what is unsaved and
+# offers Save all / Quit anyway / Cancel. Cancel has the focus, so Enter
+# on a box you did not mean to raise is safe. Esc cancels, a second
+# `Ctrl+Q` quits anyway, and a clean workspace never sees the box.
+
+write one.txt "one\n"
+write two.txt "two\n"
+open one.txt
+open two.txt
+
+# Clean: no box. (`app.quit` would end the run, so the screen is the
+# check: nothing is raised on the way to the dirty case.)
+expect screen lacks "Quit mnml?"
+
+type CHANGED
+expect dirty true
+key ctrl+q
+expect screen contains "Quit mnml?"
+expect screen contains "Unsaved: two.txt"
+expect screen contains "Save all"
+expect screen contains "Quit anyway"
+expect screen contains "Cancel"
+
+# Esc cancels; the work is still there.
+key esc
+expect screen lacks "Quit mnml?"
+expect dirty true
+expect file two.txt lacks "CHANGED"
+
+# Both buffers dirty: the box names both, in pane order.
+command buffer.prev
+expect pane "one.txt"
+type CHANGED
+key ctrl+q
+expect screen contains "Unsaved: one.txt, two.txt"
+
+# A click on Cancel answers it too.
+click 74 15
+expect screen lacks "Quit mnml?"
+expect dirty true
+
+# The hotkey letters fire their own button: `c` is Cancel.
+key ctrl+q
+expect screen contains "Quit mnml?"
+key c
+expect screen lacks "Quit mnml?"
+expect dirty true
+
+# The arrows move the focus off Cancel and Enter fires what they land on
+# — left once from Cancel is Quit anyway, twice is Save all.
+key ctrl+q
+key left
+key left
+key enter
+expect screen lacks "Quit mnml?"
+expect file one.txt contains "CHANGED"
+expect file two.txt contains "CHANGED"
+expect dirty false
+
+# (`Quit anyway`, the `q` hotkey and a SECOND `Ctrl+Q` all end the
+# session, which this harness cannot assert on — `cmd_app.zig` covers
+# all three, and that the on-disk files are untouched.)

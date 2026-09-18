@@ -236,6 +236,10 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
         .detail = "click puts it back · right-click drops the offer",
     };
     if (id >= toast_mod.button_base) return .{ .title = "Toast", .detail = "click dismisses · right-click: dismiss / copy / dismiss all" };
+    // // changed (bottom-row): the row under the statusline.
+    if (id == @intFromEnum(render.Button.cmdline_bar)) return .{ .title = "Command line", .detail = "click opens the `:` line (Ctrl+;)" };
+    if (id == @intFromEnum(render.Button.cmdline_inflight)) return .{ .title = "Work in flight", .detail = "click aborts every in-flight send (http.abort)" };
+    if (id == @intFromEnum(render.Button.cmdline_mention)) return .{ .title = "The pane this message names", .detail = "click reveals it" };
     if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
         const list = try integrations.chips(app, arena);
         const i = id - integrations_view.chip_base;

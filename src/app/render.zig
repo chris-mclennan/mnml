@@ -29,6 +29,8 @@ const context = @import("../ui/context.zig");
 const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
+const cmdline_bar = @import("../ui/cmdline_bar.zig");
+const cmdline_mod = @import("cmdline.zig");
 const statusline_app = @import("statusline.zig");
 const messages = @import("messages.zig");
 const stress = @import("stress.zig");
@@ -186,6 +188,13 @@ pub const Button = enum(u32) {
     /// // changed (bottom-dock): the dock's `×` — it hides the dock,
     /// as the `×` on Rust's bottom-panel header does.
     bottom_close = 22,
+    /// // changed (bottom-row): the row under the statusline. The bar
+    /// itself opens the `:` line; the `⟳ … running…` indicator aborts
+    /// the work it reports; the echoed toast's `[name]` reveals the
+    /// pane it names.
+    cmdline_bar = 23,
+    cmdline_inflight = 24,
+    cmdline_mention = 25,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -492,7 +501,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     if (app.zen) try drawFullscreenMark(app, ui, panes_area);
     if (!app.zen) try dock.draw(app, ui, dock_area);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
-    drawCmdline(app, ui, fr.cmdline);
+    try drawCmdline(app, ui, fr.cmdline);
     // The stack sits on the panes' last row, against the statusline, as
     // Rust's does. The Undo chip takes that row when it is up, and so
     // does the flash cue (`drawFlashCue`, right-aligned there): the
@@ -1869,19 +1878,53 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
 }
 // ── statusline ──
 
-/// The `:` line while it is open; blank otherwise (vim's cmdline row).
-fn drawCmdline(app: *App, ui: Ui, area: Rect) void {
+/// The row under the statusline: an open `:` line, else the newest
+/// toast echoed beside whatever async work is in flight, else a click
+/// target that opens the `:` line (`ui/cmdline_bar.zig`).
+fn drawCmdline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     if (area.isEmpty()) return;
-    ui.fill(area, app.theme.bg);
-    const e = app.activeEditor() orelse return;
-    const line = e.buf.input.cmdlineGet() orelse return;
-    const caret = @min(e.buf.input.cmdlineCaret() orelse line.len, line.len);
-    // The caret is drawn (`▏`, as Rust's cmdline bar drew it — the
-    // corpus reads `:▏wq`) and the terminal cursor sits on it.
-    const shown = ui.fmt(":{s}{s}{s}", .{ line[0..caret], if (ui.ascii) "|" else "▏", line[caret..] });
-    _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(shown, area.w), app.theme.fg);
-    const cx: u16 = area.x + 1 + @as(u16, @intCast(@min(ui.width(line[0..caret]), area.w -| 1)));
-    app.cursor_pos = .{ .x = cx, .y = area.y };
+    // The app's own `:` line wins over a buffer's, whatever the focus:
+    // `Ctrl+;` opens it from the tree and from a terminal pane too, and
+    // an editor's pending state must not paint over it.
+    var line: ?[]const u8 = try cmdline_mod.display(app, ui.arena, ui.ascii);
+    if (line == null) if (app.activeEditor()) |e| {
+        if (e.buf.input.cmdlineGet()) |l| {
+            const caret = @min(e.buf.input.cmdlineCaret() orelse l.len, l.len);
+            line = ui.fmt(":{s}{s}{s}", .{ l[0..caret], if (ui.ascii) "|" else "▏", l[caret..] });
+        }
+    };
+    const model: cmdline_bar.Model = .{
+        .line = line,
+        .toast = if (line == null) app.lastToast() else null,
+        .inflight = if (line == null) inflightNames(app, ui.arena) catch null else null,
+    };
+    if (cmdline_bar.draw(ui, area, model, cmdline_bar_hits)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
+}
+
+pub const cmdline_bar_hits: cmdline_bar.Hits = .{
+    .bar = @intFromEnum(Button.cmdline_bar),
+    .inflight = @intFromEnum(Button.cmdline_inflight),
+    .mention = @intFromEnum(Button.cmdline_mention),
+};
+
+/// `bench (12/100 · 5s), sync (3s)` — the async HTTP work in flight,
+/// each with how long it has been going, or null when there is none.
+/// A toast fades in three seconds; a bench does not, so this is the
+/// only lasting signal that something is still running.
+pub fn inflightNames(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    const secs = struct {
+        fn f(now: i64, started: i64) i64 {
+            return @divTrunc(@max(now - started, 0), 1000);
+        }
+    }.f;
+    if (app.http.bench) |*b| try parts.append(arena, try std.fmt.allocPrint(arena, "bench ({d}/{d} · {d}s)", .{ b.samples.items.len, b.total, secs(app.now_ms, b.started_ms) }));
+    if (app.http.fan) |*f| try parts.append(arena, try std.fmt.allocPrint(arena, "envs ({d}/{d} · {d}s)", .{ f.done, f.total, secs(app.now_ms, f.started_ms) }));
+    if (app.http.sync_running) try parts.append(arena, "sync");
+    if (app.http.chain_running) try parts.append(arena, "chain");
+    if (app.http.sending > 0) try parts.append(arena, try std.fmt.allocPrint(arena, "send ×{d}", .{app.http.sending}));
+    if (parts.items.len == 0) return null;
+    return try std.mem.join(arena, ", ", parts.items);
 }
 
 /// The prompt, the confirm, the picker and the which-key popup are

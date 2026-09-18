@@ -126,8 +126,10 @@ test "smoke: app.quit with a dirty buffer raises the confirm overlay; Cancel kee
     try t.expect(s.app.overlay == .confirm);
     const txt = try s.screen();
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, "Unsaved changes") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "unsaved changes.") != null);
+    // // changed (bottom-row): the quit box names the buffers.
+    try t.expect(std.mem.indexOf(u8, txt, "Quit mnml?") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "Unsaved: notes.txt") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "Quit anyway") != null);
     try s.keys("c");
     try t.expect(s.app.overlay == .none);
     try t.expect(!s.app.quit);

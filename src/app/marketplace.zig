@@ -707,7 +707,21 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
         .failed => |msg| {
             defer r.destroy(gpa);
             st.fetching = false;
-            if (st.installing) |cur| gpa.free(cur);
+            // // changed (bottom-row): a failed install carries the way
+            // back to the entry, where its source and version say why —
+            // the id is gone from the state a line later.
+            if (st.installing) |cur| {
+                defer gpa.free(cur);
+                st.installing = null;
+                const action: app_mod.ToastAction = .{ .marketplace = .{
+                    .label = try gpa.dupe(u8, "Marketplace"),
+                    .id = try gpa.dupe(u8, cur),
+                } };
+                errdefer action.deinit(gpa);
+                try app.toastWithAction(.err, action, "{s}", .{msg});
+                app.needs_render = true;
+                return;
+            }
             st.installing = null;
             try app.toastLevel(.err, "{s}", .{msg});
         },

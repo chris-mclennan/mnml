@@ -27,7 +27,16 @@ const Style = vaxis.Style;
 
 pub const Level = enum { info, warn, err };
 
-pub const Toast = struct { text: []const u8, level: Level = .info };
+pub const Toast = struct {
+    text: []const u8,
+    level: Level = .info,
+    /// The label of the offer attached to the message, if it has one —
+    /// painted as a ` label ` button on its own row inside the box, with
+    /// its own hit. A message that reports a missing dependency and then
+    /// vanishes leaves the user to copy a command out of a widget that
+    /// is already gone.
+    action: ?[]const u8 = null,
+};
 
 pub const max_width: u16 = 64;
 pub const max_visible: usize = 5;
@@ -36,6 +45,11 @@ pub const right_margin: u16 = 1;
 pub const max_text: u16 = max_width - 4;
 /// `.button(button_base + i)` dismisses toast `i`.
 pub const button_base: u32 = 0x7000_0000;
+/// `.button(action_base + i)` runs toast `i`'s offer; `.button(close_base
+/// + i)` is its ` × `. Both sit above the dismiss range, so a dispatcher
+/// reads them before the catch-all `>= button_base` arm.
+pub const action_base: u32 = 0x7400_0000;
+pub const close_base: u32 = 0x7800_0000;
 /// The Undo chip's hit: one below the toasts' range.
 pub const undo_button: u32 = button_base - 1;
 
@@ -117,27 +131,53 @@ pub fn wrap(ui: Ui, s: []const u8, cap_in: u16) []const []const u8 {
 /// at the box's inner width (`max_text` chars, less on a narrow
 /// screen) up to `max_lines` rows; the box is as wide as its longest
 /// line and the pads, at most `max_width`, at most the area less two.
-fn paintBox(ui: Ui, area: Rect, bottom: u16, text_in: []const u8, border: Style, hit_id: ?u32) ?Rect {
+fn paintBox(ui: Ui, area: Rect, bottom: u16, toast: Toast, border: Style, idx: ?usize) ?Rect {
     const t = ui.theme;
     const cap: u16 = @min(max_text, (area.w -| 2) -| 4);
     if (cap < 2) return null;
-    const lines = wrap(ui, text_in, cap);
+    const lines = wrap(ui, toast.text, cap);
     var longest: u16 = 0;
     for (lines) |l| longest = @max(longest, @as(u16, @intCast(@min(charCount(l), cap))));
+    // The offer is a row of its own inside the box, so it needs to fit
+    // there too. On the bottom BORDER a filled button straddling a
+    // 1-cell rule reads as detached — outside the box, not in it.
+    const action = if (toast.action) |a| buttonLabel(ui, a, cap) else null;
+    if (action) |a| longest = @max(longest, @as(u16, @intCast(@min(charCount(a), cap))));
     const w = @min(longest + 4, @min(max_width, area.w -| 2));
     if (w < 6) return null;
-    const h: u16 = @intCast(lines.len + 2);
+    const h: u16 = @intCast(lines.len + 2 + @as(usize, if (action != null) 1 else 0));
     if (bottom < area.y + h) return null;
     const r = Rect.init(area.right() - right_margin - w, bottom - h, w, h);
     ui.fill(r, t.overlay_bg);
     const kind: @import("border.zig").Kind = if (ui.ascii) .ascii else .single;
     const inner = ui.canvas.border(r, kind, border, null);
-    // The close mark sits in the top edge, three cells before the corner.
-    if (w >= 8) _ = ui.putStr(r.right() - 4, r.y, 3, if (ui.ascii) " x " else " × ", border);
     const fg = Theme.onBg(t.fg, t.overlay_bg.bg);
     for (lines, 0..) |line, i| _ = ui.putStr(inner.x + 1, inner.y + @as(u16, @intCast(i)), inner.w -| 1, line, fg);
-    if (hit_id) |id| ui.hit(r, .{ .button = id });
+    // The box's own hit goes down first so the two above it win.
+    if (idx) |i| ui.hit(r, .{ .button = button_base + @as(u32, @intCast(i)) });
+    // The close mark sits in the top edge, three cells before the
+    // corner: it costs the message no width and is a three-cell target
+    // rather than one.
+    if (w >= 8) {
+        _ = ui.putStr(r.right() - 4, r.y, 3, if (ui.ascii) " x " else " × ", border);
+        if (idx) |i| ui.hit(Rect.init(r.right() - 4, r.y, 3, 1), .{ .button = close_base + @as(u32, @intCast(i)) });
+    }
+    if (action) |a| {
+        const y = inner.y + @as(u16, @intCast(lines.len));
+        var style = Theme.onBg(t.chip_active, t.palette.green);
+        style.bold = true;
+        const bw = ui.putStr(inner.x + 1, y, inner.w -| 1, a, style);
+        if (bw > 0 and idx != null) ui.hit(Rect.init(inner.x + 1, y, bw, 1), .{ .button = action_base + @as(u32, @intCast(idx.?)) });
+    }
     return r;
+}
+
+/// ` Install ` — the offer's label, padded into a button and clipped to
+/// what the box can hold.
+fn buttonLabel(ui: Ui, label: []const u8, cap: u16) []const u8 {
+    const room = cap -| 2;
+    const clipped = if (charCount(label) > room) label[0..byteAt(label, room)] else label;
+    return ui.fmt(" {s} ", .{clipped});
 }
 
 /// Newest first in `toasts`: index 0 lands closest to the bottom.
@@ -148,13 +188,13 @@ pub fn draw(ui: Ui, area: Rect, toasts: []const Toast) void {
     const overflow = toasts.len > max_visible;
     const take = if (overflow) max_visible - 1 else @min(toasts.len, max_visible);
     for (toasts[0..take], 0..) |toast, i| {
-        const r = paintBox(ui, area, bottom, toast.text, borderStyle(t, toast.level), button_base + @as(u32, @intCast(i))) orelse return;
+        const r = paintBox(ui, area, bottom, toast, borderStyle(t, toast.level), i) orelse return;
         bottom = r.y;
     }
     if (overflow) {
         const hidden = toasts.len - take;
         const more = if (ui.ascii) ui.fmt("+{d} more...", .{hidden}) else ui.fmt("+{d} more…", .{hidden});
-        _ = paintBox(ui, area, bottom, more, borderStyle(t, .info), null);
+        _ = paintBox(ui, area, bottom, .{ .text = more }, borderStyle(t, .info), null);
     }
 }
 
@@ -275,7 +315,9 @@ test "a long text wraps to the box, a newline breaks a line, past four lines it 
     for (&burst, 0..) |*b, i| b.* = .{ .text = if (i == 0) "eight" else "older" };
     draw(f.ui(), f.full(), &burst);
     try f.expectContains("+4 more…");
-    try testing.expectEqual(@as(usize, 4), f.hits.items.items.len);
+    // Four boxes, two hits each: the box itself and the ` × ` in its
+    // top edge. The `+K more…` chip has neither.
+    try testing.expectEqual(@as(usize, 8), f.hits.items.items.len);
     var ui = f.ui();
     ui.ascii = true;
     draw(ui, f.full(), &burst);
@@ -302,6 +344,34 @@ test "wrap: words, a hard cut of a long word, the newline, the ellipsis in the c
     try testing.expectEqual(max_lines, d.len);
     try testing.expectEqualStrings("7 …", d[3]);
     try testing.expectEqualStrings("", wrap(ui, "", 10)[0]);
+}
+
+test "an offer paints as a button on its own row inside the box, with its own hit" {
+    var f = try Fixture.init(60, 12);
+    defer f.deinit();
+    draw(f.ui(), f.full(), &.{.{ .text = "missing: zls (brew install zls)", .action = "Install", .level = .warn }});
+    var buf: [256]u8 = undefined;
+    // Four rows: the top edge with the close mark, the message, the
+    // button, the bottom edge. The button is INSIDE, not on the rule.
+    const r = f.hits.items.items[0].rect;
+    try testing.expectEqual(@as(u16, 4), r.h);
+    try testing.expect(std.mem.endsWith(u8, f.row(r.y, &buf), "─ × ┐"));
+    try testing.expect(std.mem.indexOf(u8, f.row(r.y + 1, &buf), "missing: zls") != null);
+    try testing.expect(std.mem.indexOf(u8, f.row(r.y + 2, &buf), " Install ") != null);
+    try testing.expect(std.mem.endsWith(u8, f.row(r.y + 3, &buf), "┘"));
+    // Three hits over the box: the box itself, then the `×` and the
+    // button over it, both of which must win where they sit.
+    try testing.expectEqual(button_base, f.hits.at(r.x + 1, r.y + 1).?.button);
+    try testing.expectEqual(close_base, f.hits.at(r.right() - 3, r.y).?.button);
+    try testing.expectEqual(action_base, f.hits.at(r.x + 2, r.y + 2).?.button);
+    // Past the button's own width the box's dismiss answers again.
+    try testing.expectEqual(button_base, f.hits.at(r.right() - 2, r.y + 2).?.button);
+    try testing.expect(f.bgEql(r.x + 2, r.y + 2, .{ .bg = f.theme.palette.green }));
+    // No offer, no extra row.
+    f.hits.reset();
+    draw(f.ui(), f.full(), &.{.{ .text = "missing: zls (brew install zls)" }});
+    try testing.expectEqual(@as(u16, 3), f.hits.items.items[0].rect.h);
+    try f.expectLacks(" Install ");
 }
 
 test "no room, no paint" {
