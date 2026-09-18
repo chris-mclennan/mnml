@@ -1954,6 +1954,13 @@ pub const App = struct {
         const target = a.hits.at(col, row);
         if (a.help) {
             a.help = false;
+            // A row of the sheet runs its chord on the way out; anywhere
+            // else on the sheet just closes it.
+            if (target) |tg| if (tg == .help_row) {
+                var kb: [16]u8 = undefined;
+                const b = keymap.bindingOf(tg.help_row);
+                try a.act(tg.help_row, if (b) |bb| keymap.displayKey(&kb, bb.keys[0]) else "");
+            };
             return;
         }
         if (a.jql != null) {
@@ -2167,6 +2174,17 @@ pub const App = struct {
     }
 
     /// A wheel notch; positive is up.
+    /// The pointer moved with a button held. Only the detail panel's
+    /// scrollbar tracks it: everything else on the pane acts on the
+    /// press, and a drag that started elsewhere must not move things
+    /// under the pointer on its way past.
+    pub fn drag(a: *App, col: u16, row: u16) Allocator.Error!void {
+        const tg = a.hits.at(col, row) orelse return;
+        if (tg != .detail_bar) return;
+        const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
+        a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
+    }
+
     pub fn wheel(a: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
         const steps: i32 = if (dy > 0) -3 else 3;
         if (a.modal != null) {

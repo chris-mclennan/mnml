@@ -791,6 +791,8 @@ const HostEvent = union(enum) {
     key: []u8,
     paste: []u8,
     click: struct { col: u16, row: u16, button: sdk.wire.Button },
+    /// A move with a button held; a plain hover never reaches the app.
+    drag: struct { col: u16, row: u16 },
     scroll: struct { col: u16, row: u16, dy: i16 },
     resize: sdk.wire.Geometry,
     focus: bool,
@@ -827,7 +829,7 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
                 .paste => |p| .{ .paste = gpa.dupe(u8, p.text) catch continue },
                 .click => |c| .{ .click = .{ .col = c.col, .row = c.row, .button = c.button } },
                 .scroll => |s| .{ .scroll = .{ .col = s.col, .row = s.row, .dy = s.dy } },
-                .hover => .other,
+                .hover => |h| if (h.dragging) HostEvent{ .drag = .{ .col = h.col, .row = h.row } } else .other,
             },
         };
         q.putOneUncancelable(io, .{ .host = ev }) catch return;
@@ -963,6 +965,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                     .middle => .middle,
                     .right => .right,
                 }),
+                // A drag along the detail panel's scrollbar: the same
+                // jump a press there makes, once per move.
+                .drag => |d| try app.drag(d.col, d.row),
                 .scroll => |s| try app.wheel(s.col, s.row, s.dy),
                 .resize => |g| {
                     try frame.resize(g.cols, g.rows);

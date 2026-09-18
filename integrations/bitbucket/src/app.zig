@@ -1311,6 +1311,16 @@ pub const App = struct {
 
     /// A wheel notch: the detail scrolls under the pointer, the list
     /// otherwise (three rows a notch, as the reference).
+    /// The pointer moved with a button held. Only the detail panel's
+    /// scrollbar tracks it: everything else acts on the press, and a
+    /// drag that started elsewhere must not move things on its way past.
+    pub fn drag(app: *App, col: u16, row: u16) Allocator.Error!void {
+        const tg = app.hits.at(col, row) orelse return;
+        if (tg != .detail_bar) return;
+        const r = app.hits.rectOf(hit.Target.detail_bar) orelse return;
+        app.detail_scroll = sdk.pane.scrollAt(r, app.detail_lines, app.detail_rows, row);
+    }
+
     pub fn wheel(app: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
         _ = app.frame_arena.reset(.retain_capacity);
         const a = app.frame_arena.allocator();

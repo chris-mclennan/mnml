@@ -1734,3 +1734,78 @@ test "every chevron column folds under the mouse — the group's, the ticket's a
         }
     }
 }
+
+test "the detail panel's × closes it and its scrollbar answers a press and a drag" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // Short on purpose: the detail has more lines than rows, which is
+    // when a scrollbar has anything to say.
+    var f = try Frame.init(testing.allocator, 120, 12);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    // The cursor starts on a group row, which has no detail: step onto
+    // the ticket under it first.
+    _ = try a.onKey("j");
+    try a.toggleDetails();
+    try paint(ar, &f, a, .{});
+    try testing.expect(a.details_visible);
+    // The bar is there, and it is a target rather than a decoration.
+    const bar = a.hits.rectOf(hit.Target.detail_bar) orelse {
+        std.debug.print("no scrollbar; lines={d} rows={d} visible={}\n{s}\n", .{ a.details_lines, a.details_rows, a.details_visible, try screenText(ar, &f) });
+        return error.NoScrollbar;
+    };
+    try testing.expect(a.details_lines > a.details_rows);
+    try testing.expectEqual(@as(u16, 0), a.details_scroll);
+    // A press near the bottom of the track goes there; a drag back up
+    // comes back. `scrollAt` clamps to the last window.
+    try a.click(bar.x, bar.bottom() - 1, false);
+    const deep = a.details_scroll;
+    try testing.expect(deep > 0);
+    try a.drag(bar.x, bar.y);
+    try testing.expectEqual(@as(u16, 0), a.details_scroll);
+    // A drag that is not over the bar moves nothing.
+    a.details_scroll = deep;
+    try a.drag(1, bar.y);
+    try testing.expectEqual(deep, a.details_scroll);
+    // The × closes the panel; Esc still does too.
+    const close = a.hits.rectOf(hit.Target.detail_close) orelse return error.NoCloseChip;
+    try a.click(close.x, close.y, false);
+    try testing.expect(!a.details_visible);
+}
+
+test "every hint entry and every key-sheet row runs what its chord runs" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    // `d detail` on the hint row opens the detail pane, as `d` does.
+    const d = a.hits.rectOf(hit.Target{ .hint = .toggle_details }) orelse return error.NoHint;
+    try testing.expect(!a.details_visible);
+    try a.click(d.x, d.y, false);
+    try testing.expect(a.details_visible);
+    try a.click(d.x, d.y, false);
+    try testing.expect(!a.details_visible);
+    // `? keys` at the end opens the sheet.
+    const keys = a.hits.rectOf(hit.Target{ .hint = .help }) orelse return error.NoKeysHint;
+    try a.click(keys.x, keys.y, false);
+    try testing.expect(a.help);
+    // And a row of the sheet runs its own chord — `Tab` switches tab.
+    try paint(ar, &f, a, .{});
+    const row = a.hits.rectOf(hit.Target{ .help_row = .next_tab }) orelse {
+        std.debug.print("no sheet row for next_tab\n{s}\n", .{try screenText(ar, &f)});
+        return error.NoSheetRow;
+    };
+    const was = a.active;
+    try a.click(row.x, row.y, false);
+    try testing.expect(a.active != was);
+}

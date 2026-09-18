@@ -404,7 +404,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                     .click => |c| try app.click(c.col, c.row, c.button == .right),
                     .scroll => |s| try app.wheel(s.col, s.row, s.dy),
                     .paste => |p| try app.paste(p.text),
-                    .hover => {},
+                    // A drag along the detail panel's scrollbar: the
+                    // same jump a press there makes, once per move.
+                    .hover => |h| if (h.dragging) try app.drag(h.col, h.row),
                 },
             }
             if (ended) break;
