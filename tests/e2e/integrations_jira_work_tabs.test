@@ -30,11 +30,10 @@ expect screen contains "installed jira_work from"
 wait 1200
 expect screen lacks "installed jira_work from"
 command jira_work.open
-# The pane is a separate process whose first search is synchronous: it
-# spawns, is handed its geometry, searches, and fetches each unresolved
-# ticket's linked PRs before it can paint a count. On a loaded machine
-# that outlasts an expect's own 3 s budget, so the wait is what covers
-# the startup and the expects below only cover the jitter.
+# The pane spawns and mounts; its first search runs on a worker, so the
+# rows land on a later tick. The pickers and the detail are still
+# fetched on the loop, so a loaded machine can still outlast an expect's
+# 3 s budget — hence the margin.
 wait 8000
 command view.toggle_tree
 command view.focus_pane
