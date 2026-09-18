@@ -151,6 +151,7 @@ pub const root: Node = .{
                 cmd('l', .@"git.graph", "commit graph"),
                 cmd('i', .@"git.rebase_interactive_onto", "interactive rebase onto…"),
                 cmd('e', .@"git.explain_branch", "explain branch changes (ai)"),
+                cmd('r', .@"git.push_start_pr", "push + start a PR"),
                 cmd('s', .@"git.status_pane", "status / staging"),
                 cmd('t', .@"git.status_pane", "git status"),
                 cmd('m', .@"git.ai_commit", "ai (Claude) commit message"),

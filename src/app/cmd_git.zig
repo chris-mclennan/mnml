@@ -116,6 +116,7 @@ pub const table = .{
     .@"git.rebase_plan" = &rebasePlan,
     .@"git.rebase_interactive_onto" = &rebaseInteractiveOnto,
     .@"git.explain_branch" = &explainBranch,
+    .@"git.push_start_pr" = &pushStartPr,
     .@"git.fixup" = &fixup,
     .@"git.squash" = &squash,
     .@"git.drop" = &drop,
@@ -782,6 +783,13 @@ fn rebaseInteractiveOnto(app: *App) CommandError!void {
 fn explainBranch(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     try git.explainBranch(app, try verbBranch(app, "explain"));
+}
+
+/// `git.push_start_pr`: the branches panel's row when the panel has the
+/// focus, else the checked-out branch.
+fn pushStartPr(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.pushStartPr(app, try verbBranch(app, "push and start PR"));
 }
 
 fn fixup(app: *App) CommandError!void {

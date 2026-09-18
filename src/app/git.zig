@@ -1329,6 +1329,12 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             } else {
                 app.toast("{s}", .{op.desc});
             }
+            // git-menus: *Push and start PR* — the forge's page opens
+            // once the push landed, never before it.
+            if (op.ok and op.url.len > 0) {
+                openExternal(app, op.url);
+                app.toast("{s}", .{op.url});
+            }
             if (op.refresh) try afterChange(app, repo);
         },
         .log_line => |l| {
@@ -2896,6 +2902,51 @@ pub fn pushBranch(app: *App, name: []const u8) CommandError!void {
     errdefer gpa.free(r);
     app.toast("pushing {s} to {s}\u{2026}", .{ name, remote });
     try submitOp(app, repo, .{ .push_branch = .{ .remote = r, .branch = try gpa.dupe(u8, name) } });
+}
+
+/// `git.push_start_pr` (git-menus): the branch goes up (`push -u`, never
+/// a force), and when the remote's host has a new-pull-request page the
+/// push's success opens it in the browser. A host with no shape on file
+/// is pushed and said — never sent to a guessed URL.
+pub const PrTarget = struct { remote: []const u8, url: []const u8 };
+
+/// Which remote *Push and start PR* pushes to, and the forge's new-PR
+/// page it opens after — both read off the rail. `url` is empty when
+/// the remote's host has no shape on file (`git/remote.zig`), and the
+/// verb then pushes and says so rather than guessing one. Allocates on
+/// `arena`.
+pub fn prTarget(app: *App, arena: Allocator, name: []const u8) CommandError!PrTarget {
+    const b = railBranch(app, name);
+    if (b) |br| if (br.remote) return app.diag.fail(arena, "push and start PR: {s} is a remote branch \u{2014} start from the local one", .{name});
+    var remote: []const u8 = "";
+    if (b) |br| if (br.upstream.len > 0) if (std.mem.indexOfScalar(u8, br.upstream, '/')) |sl| {
+        remote = br.upstream[0..sl];
+    };
+    if (remote.len == 0 and app.git.rail_remotes.len > 0) remote = app.git.rail_remotes[0].name;
+    if (remote.len == 0) return app.diag.fail(arena, "push and start PR: {s} has no remote \u{2014} add one first", .{name});
+    var url: []const u8 = "";
+    for (app.git.rail_remotes) |r| if (std.mem.eql(u8, r.name, remote)) {
+        url = (try remote_mod.newPrUrl(arena, r.url, name)) orelse "";
+    };
+    return .{ .remote = remote, .url = url };
+}
+
+pub fn pushStartPr(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    const repo = try requireRepo(app);
+    const t = try prTarget(app, app.frame.allocator(), name);
+    const r_owned = try gpa.dupe(u8, t.remote);
+    errdefer gpa.free(r_owned);
+    const b_owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(b_owned);
+    const u_owned = try gpa.dupe(u8, t.url);
+    errdefer gpa.free(u_owned);
+    if (t.url.len == 0) {
+        app.toast("pushing {s} to {s}\u{2026} (no new-PR page for that host \u{2014} open it yourself)", .{ name, t.remote });
+    } else {
+        app.toast("pushing {s} to {s}, then the new PR page\u{2026}", .{ name, t.remote });
+    }
+    try submitOp(app, repo, .{ .push_start_pr = .{ .remote = r_owned, .branch = b_owned, .url = u_owned } });
 }
 
 /// `Push --force-with-lease…`: the confirm names the risk. Rust refused
@@ -5892,6 +5943,64 @@ test "explainBranch: the base is the checked-out branch, or its upstream on the 
     try branchExplainReady(&f.app, "feature", "main", "");
     try testing.expect(std.mem.indexOf(u8, f.app.lastToast().?, "nothing main does not already have") != null);
     try testing.expectEqual(before, f.app.panes.count());
+}
+
+test "push and start PR: the remote and the forge page come off the rail, a remote row is refused, an unknown host has no page; the page opens only once the push landed" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    const app = &f.app;
+    const arena = app.frame.allocator();
+    var branches = [_]parse.Branch{
+        .{ .name = "main", .time = 0, .current = true, .remote = false, .sha = "aaaa111" },
+        .{ .name = "feat/eng-12", .time = 0, .current = false, .remote = false, .sha = "bbbb222", .upstream = "fork/feat/eng-12" },
+        .{ .name = "origin/main", .time = 0, .current = false, .remote = true, .sha = "aaaa111" },
+    };
+    var remotes = [_]parse.Remote{
+        .{ .name = "origin", .url = "git@github.com:acme/widget.git", .provider = .github },
+        .{ .name = "fork", .url = "https://git.acme-corp.example/~me/widget", .provider = .other },
+    };
+    app.git.rail_branches = &branches;
+    app.git.rail_remotes = &remotes;
+
+    // No upstream: the first remote, and its forge's page.
+    const main_t = try prTarget(app, arena, "main");
+    try testing.expectEqualStrings("origin", main_t.remote);
+    try testing.expectEqualStrings("https://github.com/acme/widget/compare/main?expand=1", main_t.url);
+    // An upstream names the remote — here one whose host has no shape.
+    const feat_t = try prTarget(app, arena, "feat/eng-12");
+    try testing.expectEqualStrings("fork", feat_t.remote);
+    try testing.expectEqualStrings("", feat_t.url);
+    // A remote row is not a branch to push.
+    try testing.expectError(error.Failed, prTarget(app, arena, "origin/main"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "is a remote branch") != null);
+    app.diag.clear();
+    // With no remote at all there is nowhere to push.
+    app.git.rail_remotes = &.{};
+    try testing.expectError(error.Failed, prTarget(app, arena, "main"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "no remote") != null);
+    app.diag.clear();
+    app.git.rail_remotes = &remotes;
+
+    // The page opens on the push's own result, never before it. A
+    // browser that cannot start says so — which is the proof it was
+    // reached; a failed push carries no page at all.
+    app.cfg.ui.external_browser = "mnml-test-no-such-browser";
+    const repo = try requireRepo(app);
+    const failed = try client.Result.create(testing.allocator, repo.id);
+    failed.payload = .{ .op = .{ .desc = "pushed main to origin", .ok = false, .msg = "rejected", .url = "https://github.com/acme/widget/compare/main?expand=1" } };
+    try handle(app, failed);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "github.com") == null);
+    const landed = try client.Result.create(testing.allocator, repo.id);
+    landed.payload = .{ .op = .{ .desc = "pushed main to origin", .ok = true, .url = "https://github.com/acme/widget/compare/main?expand=1" } };
+    try handle(app, landed);
+    try testing.expectEqualStrings("https://github.com/acme/widget/compare/main?expand=1", app.lastToast().?);
+    app.git.rail_branches = &.{};
+    app.git.rail_remotes = &.{};
 }
 
 test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {

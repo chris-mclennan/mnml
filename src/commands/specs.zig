@@ -1093,6 +1093,7 @@ pub const specs = [_]Spec{
     // git-menus: the branches panel's GitKraken rows.
     .{ .id = "git.rebase_interactive_onto", .title = "Git: interactive rebase onto the panel's branch row / the graph's commit — the plan modal over everything HEAD has that it does not", .group = "git", .keys = .{ .vim = &.{"space g i"} } },
     .{ .id = "git.explain_branch", .title = "Git: explain a branch's changes with Claude \u{2014} the commits it has that the checked-out branch does not, in a read-only pane", .group = "git", .keys = .{ .vim = &.{"space g e"} } },
+    .{ .id = "git.push_start_pr", .title = "Git: push the branch (push -u, never a force) and open the forge's new-pull-request page", .group = "git", .keys = .{ .vim = &.{"space g r"} } },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },

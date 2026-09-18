@@ -163,6 +163,10 @@ pub const Job = union(enum) {
     /// `push -u remote branch`: a branch that is not checked out, to its
     /// remote (git-panel).
     push_branch: struct { remote: []u8, branch: []u8 },
+    /// // changed (git-menus): *Push and start PR* — the same `push -u`
+    /// as `push_branch`, and on success the forge's new-PR page, which
+    /// the handler opens in the browser. Never a force push.
+    push_start_pr: struct { remote: []u8, branch: []u8, url: []u8 },
     /// `stash push`: everything (with untracked files), the index only,
     /// some paths, or the tree with the index kept (`stashArgs`).
     stash: StashPush,
@@ -337,6 +341,11 @@ pub const Job = union(enum) {
                 gpa.free(p.remote);
                 gpa.free(p.branch);
             },
+            .push_start_pr => |p| {
+                gpa.free(p.remote);
+                gpa.free(p.branch);
+                gpa.free(p.url);
+            },
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
@@ -388,7 +397,9 @@ pub const Result = struct {
         list: struct { kind: ListKind, items: []const []const u8 },
         /// A mutating command finished. `desc` is the past-tense toast
         /// (`staged src/a.zig`); `msg` is git's own words when it failed.
-        op: struct { desc: []const u8, ok: bool, msg: []const u8 = "", refresh: bool = true },
+        /// `url` (git-menus) is a page a successful op opens in the
+        /// browser — *Push and start PR*'s new-pull-request page.
+        op: struct { desc: []const u8, ok: bool, msg: []const u8 = "", refresh: bool = true, url: []const u8 = "" },
         url: []const u8,
         head_sha: []const u8,
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
@@ -1167,6 +1178,15 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         else
             try simple(repo, io, r, &.{ "tag", t.name, t.start }, try std.fmt.allocPrint(arena, "tagged {s} at {s}", .{ t.name, t.start })),
         .push_branch => |p| try simple(repo, io, r, &.{ "push", "-u", p.remote, p.branch }, try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote })),
+        .push_start_pr => |p| {
+            const out = try git(repo, io, arena, &.{ "push", "-u", p.remote, p.branch }, null);
+            r.payload = .{ .op = .{
+                .desc = try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote }),
+                .ok = out.ok,
+                .msg = out.reason(),
+                .url = if (out.ok) try arena.dupe(u8, p.url) else "",
+            } };
+        },
         .tag_delete => |name| try simple(repo, io, r, &.{ "tag", "-d", name }, try std.fmt.allocPrint(arena, "deleted tag {s}", .{name})),
         .cherry_pick => |sha| try simple(repo, io, r, &.{ "cherry-pick", sha }, try std.fmt.allocPrint(arena, "cherry-picked {s}", .{sha[0..@min(7, sha.len)]})),
         .revert => |sha| try simple(repo, io, r, &.{ "revert", "--no-edit", sha }, try std.fmt.allocPrint(arena, "reverted {s}", .{sha[0..@min(7, sha.len)]})),

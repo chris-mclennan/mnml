@@ -1145,6 +1145,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 try b.act("Pull (fast-forward if possible)", .pull, br.idx, false);
                 try b.act("Push", .push, br.idx, false);
                 try b.act("Push --force-with-lease\u{2026}", .push_force, br.idx, false);
+                try b.act("Push and start PR", .push_start_pr, br.idx, false);
                 try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
                 try b.act(try b.fmt("Open worktree from {s}\u{2026}", .{name}), .branch_worktree, br.idx, true);
                 try b.act("Create branch here\u{2026}", .new_branch, br.idx, true);
@@ -1159,6 +1160,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act(try b.fmt("Checkout {s}", .{name}), .checkout, br.idx, false);
             try b.act("Pull (fast-forward if possible)", .fast_forward, br.idx, true);
             try b.act("Push", .push_branch, br.idx, false);
+            try b.act("Push and start PR", .push_start_pr, br.idx, false);
             try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
             try b.act(try b.fmt("Merge {s} into {s}", .{ name, head }), .merge, br.idx, true);
             try b.act(try b.fmt("Rebase {s} onto {s}", .{ head, name }), .rebase, br.idx, false);
@@ -1375,6 +1377,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .tag_here => break :blk git.tagAt(app, name, false),
             .tag_annotated_here => break :blk git.tagAt(app, name, true),
             .push_branch => break :blk git.pushBranch(app, name),
+            .push_start_pr => break :blk git.pushStartPr(app, name),
             .copy_sha => {
                 if (b.sha.len == 0) break :blk app.diag.fail(arena, "copy sha: {s} has none on the rail yet", .{name});
                 try app.clipboard.setYank(b.sha, false);
@@ -2247,18 +2250,18 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try expectMenu(app, 0, &.{ "Fold", "Refresh" });
     try testing.expectEqualStrings("LOCAL", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Interactive rebase main onto feature\u{2026}", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Push and start PR", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Interactive rebase main onto feature\u{2026}", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("feature", app.overlay.menu.title);
     // The Reset row opens to the right: soft / mixed / hard, each an
     // act on feature; the row itself runs nothing.
-    const reset_row = app.overlay.menu.items[10];
+    const reset_row = app.overlay.menu.items[11];
     try testing.expect(reset_row.action == .none);
     try testing.expectEqual(@as(usize, 3), reset_row.submenu.len);
     try testing.expectEqual(command.GitPaletteWhat.reset_soft, reset_row.submenu[0].action.git_palette.what);
     try testing.expectEqual(command.GitPaletteWhat.reset_hard, reset_row.submenu[2].action.git_palette.what);
     try testing.expectEqual(@as(u32, 1), reset_row.submenu[2].action.git_palette.idx);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 2, &.{ "Pull (fast-forward if possible)", "Push", "Push --force-with-lease\u{2026}", "Set upstream\u{2026}", "Open worktree from main\u{2026}", "Create branch here\u{2026}", "Revert commit", "Rename main\u{2026}", "Delete on the remote\u{2026}", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 2, &.{ "Pull (fast-forward if possible)", "Push", "Push --force-with-lease\u{2026}", "Push and start PR", "Set upstream\u{2026}", "Open worktree from main\u{2026}", "Create branch here\u{2026}", "Revert commit", "Rename main\u{2026}", "Delete on the remote\u{2026}", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("\u{25CF} main", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
     try expectMenu(app, 5, &.{ "Fetch", "Copy URL" });
@@ -2304,7 +2307,7 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     // menu was opened on feature, the confirm names feature.
     try testing.expectEqual(@as(usize, 0), st.cursor);
     try openRowMenu(app, 1, 3, 3);
-    const hard = app.overlay.menu.items[10].submenu[2];
+    const hard = app.overlay.menu.items[11].submenu[2];
     try testing.expectEqualStrings("Hard (discard the changes)\u{2026}", hard.label);
     try dispatch.runMenuActionForTest(app, hard.action);
     try testing.expect(app.git.confirm == .reset_hard);
