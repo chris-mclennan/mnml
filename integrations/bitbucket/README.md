@@ -179,9 +179,13 @@ nothing shown is more than one open stale. An entry older than an hour
 is ignored. `--prefetch` clears the directory before it starts, so a
 repo that left the config cannot keep answering.
 
-**The poller contract.** mnml-zig has no prefetch worker yet; scheduling
-this is its own track. Whatever runs it — a host poller, `launchd`,
-`cron`, a `systemd` timer — the contract is:
+**The poller contract.** mnml-zig's host poller runs a manifest's
+`values_sources` line — `mnml-bitbucket --values --workspace <ws>`,
+which is one request-shaped call, not this. `--prefetch` is the whole-
+pane warm and is off by that poller unless a source sets
+`.prefetch = true`, precisely because of the cadence below. Whatever
+runs it — mnml's poller with that flag, `launchd`, `cron`, a `systemd`
+timer — the contract is:
 
 ```sh
 mnml-bitbucket --prefetch          # MNML_DATA_ROOT / MNML_BITBUCKET_CONFIG as the pane sees them
@@ -206,6 +210,13 @@ mnml-bitbucket --prefetch          # MNML_DATA_ROOT / MNML_BITBUCKET_CONFIG as t
   waiting. Never run two passes at once.
 * **It is safe to run while a pane is open**: the limiter is
   cross-process, and the pane re-reads the cache only on its next open.
+  mnml's poller skips a source whose pane is open anyway — that pane is
+  already publishing the same segment.
+
+**Merge-ready**, for the follow-up track that will paint it: a pull
+request is merge-ready when it is approved by its required reviewers,
+every task on it is resolved, it has no conflicts, its latest pipeline
+is green, and every comment is either resolved or replied to.
 
 ## Rate limiting
 

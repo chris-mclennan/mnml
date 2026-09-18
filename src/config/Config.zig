@@ -657,6 +657,21 @@ pub const Integrations = struct {
     /// expanded. A workspace with `sdk/mnml-sdk` adds its own
     /// `integrations/` by itself.
     dev_roots: []const []const u8 = &.{},
+    /// The statusline poller (`app/integration_poll.zig`): what keeps a
+    /// manifest's chip counts live with no pane open.
+    poll: Poll = .{},
+};
+
+pub const Poll = struct {
+    /// Off means a chip only moves when its pane or its refresh command
+    /// says so — which is what mnml did before the poller existed.
+    enabled: bool = true,
+    /// The floor under every manifest's `poll_interval_secs`: the
+    /// user's say in how hard their own API budget may be spent. The
+    /// poller's own floor (30 s) still applies underneath.
+    min_interval_secs: u32 = 60,
+};
+
 /// // changed (lua-install): installed Lua scripts — the SCRIPTS
 /// section's three tabs, exactly as `marketplace` + `integrations`
 /// feed the INTEGRATIONS section's.

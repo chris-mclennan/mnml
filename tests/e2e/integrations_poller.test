@@ -1,0 +1,54 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_INTEGRATION_POLL=1
+# env: POLL_SCRIPT=${MNML_E2E_WORKSPACE}/poller.sh
+# The statusline poller: a manifest's chip count moves with no pane
+# open. Until this landed nothing ran a manifest's `values_sources`
+# line, so the `󰌃 N` and PR-count chips were whatever they were when a
+# pane was last open.
+#
+# The integration here is a shell script standing in for
+# `mnml-bitbucket --values`: it records that it ran and publishes its
+# own `statusline-set-segment` over the Tier-2 file channel, which is
+# exactly the contract the real ones follow — the host runs the line
+# and parses nothing.
+#
+# `MNML_INTEGRATION_POLL=1` is the corpus's opt-in; a test App does not
+# spawn children on a timer otherwise. The interval clamps to the
+# minute floor, but the first run of a source fires at once (its
+# stagger is zero), which is what this asserts.
+write poller.sh "#!/bin/sh\nn=$(cat \"$MNML_E2E_WORKSPACE/count\" 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > \"$MNML_E2E_WORKSPACE/count\"\necho \"ran $n\" >> \"$MNML_E2E_WORKSPACE/runs.log\"\nmkdir -p \"$MNML_IPC_DIR\"\nprintf '{\"cmd\":\"statusline-set-segment\",\"id\":\"acme_prs.count\",\"text\":\"ACME %s\",\"color\":\"green\",\"click_command\":\"acme_prs.open\"}\\n' \"$n\" >> \"$MNML_IPC_DIR/command\"\n"
+shell chmod +x poller.sh
+write market/acme_prs.zon ".{ .id = \"acme_prs\", .label = \"Acme PRs\", .version = \"0.1.0\", .binary = \"$POLL_SCRIPT\", .description = \"a stand-in integration with a values source\", .statusline = .{ .{ .id = \"count\", .text = \"ACME …\", .color = \"green\", .click_command = \"acme_prs.open\" } }, .commands = .{ .{ .id = \"acme_prs.open\", .title = \"Acme PRs: open\" } }, .values_sources = .{ .{ .id = \"acme_values\", .command = \"$POLL_SCRIPT --values\", .poll_interval_secs = 1 } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed acme_prs"
+# The manifest's own resting text is on the statusline the moment it
+# installs — the chip before anything has been counted.
+expect screen contains "ACME …"
+
+# No pane is opened, no command is run. The poller's first run fires on
+# its own, the script publishes over the channel, and the chip moves.
+wait 4000
+expect file runs.log contains "ran 1"
+expect screen contains "ACME 1"
+expect screen lacks "ACME …"
+
+# `integrations.poll_now` — the palette verb and the segment's
+# right-click *Refresh now* — wakes the worker without waiting out the
+# interval.
+command integrations.poll_now
+expect screen contains "refreshing 1 source"
+wait 4000
+expect file runs.log contains "ran 2"
+expect screen contains "ACME 2"
+
+# The corpus shares one data root: leave it as it was found.
+command integrations.show_installed
+key x
+expect screen contains "Remove integration"
+expect screen contains "acme_prs"
+key enter
+expect screen contains "Remove Acme PRs?"
+key r
+expect screen contains "removed acme_prs"
+expect screen lacks "Acme PRs"

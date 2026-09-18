@@ -46,6 +46,7 @@ const lsp = @import("lsp.zig");
 const usage_pane = @import("usage_pane.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
+const integration_poll = @import("integration_poll.zig");
 const transfers = @import("transfers.zig");
 const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
@@ -255,11 +256,14 @@ fn isDark(c: Color) bool {
 /// A host segment: its named colour as the ground (the muted colour
 /// when it names none), dark or light text for contrast, its slot as
 /// the hit.
-fn dynSeg(ui: Ui, r: ipc.effects.Rendered) Seg {
+fn dynSeg(ui: Ui, r: ipc.effects.Rendered, busy: bool) Seg {
     const p = &ui.theme.palette;
     const bg = if (r.color) |c| integrations_view.paletteColor(ui.theme, c) else p.comment;
     const fg = if (isDark(bg)) p.fg else p.bg_darker;
-    return Seg.init(ui.fmt(" {s} ", .{r.text}), fg, bg).withHit(sl.seg_dyn_base + r.index);
+    // A poll in flight: the chip says it is being asked rather than
+    // sitting there stale with an answer from ten minutes ago.
+    const spin: []const u8 = if (!busy) "" else if (ui.ascii) integration_poll.busy_glyph_ascii ++ " " else integration_poll.busy_glyph ++ " ";
+    return Seg.init(ui.fmt(" {s}{s} ", .{ spin, r.text }), fg, bg).withHit(sl.seg_dyn_base + r.index);
 }
 
 /// The counts the branch chip shows, NvChad style: a file is added,
@@ -417,7 +421,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
 
     // ── host segments, left lane ──
     const budget = dynamicLaneBudget(area.w);
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| try push(&left, arena, dynSeg(ui, r));
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| try push(&left, arena, dynSeg(ui, r, app.integration_poll.segmentBusy(r.id)));
 
     // ── branch, PR ──
     if (try branchSeg(app, ui)) |s| try push(&left, arena, s);
@@ -476,7 +480,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
 
     // ── right lane ──
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| try push(&right, arena, dynSeg(ui, r));
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| try push(&right, arena, dynSeg(ui, r, app.integration_poll.segmentBusy(r.id)));
     for (try app.script().segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
     if (tests_pane.find(app)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),

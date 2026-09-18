@@ -124,6 +124,7 @@ const auto_refresh = @import("app/auto_refresh.zig");
 const clock = @import("app/clock.zig");
 const coverage = @import("app/coverage.zig");
 const now_playing = @import("app/now_playing.zig");
+const integration_poll = @import("app/integration_poll.zig");
 const menu_bar = @import("app/menu_bar.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
@@ -1045,6 +1046,9 @@ pub const App = struct {
     /// The statusline coverage chip (`app/coverage.zig`).
     coverage: coverage.State = .{},
     now_playing: now_playing.State = .{},
+    /// The statusline poller (`app/integration_poll.zig`): a manifest's
+    /// counts stay live with no pane open.
+    integration_poll: integration_poll.State = .{},
     /// The menu bar: the open menu, where its words painted (`app/menu_bar.zig`).
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
@@ -1542,6 +1546,7 @@ pub const App = struct {
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
         self.now_playing.deinit(self.io);
+        self.integration_poll.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.search_section.deinit(gpa, self.io);
         self.grep_picker.deinit(gpa, self.io);
@@ -2563,6 +2568,7 @@ pub const App = struct {
         sessions.tick(self, now);
         clock.tick(self);
         now_playing.tick(self, now);
+        integration_poll.tick(self);
         if (self.click_echo) |e| if (now >= e.until_ms) {
             self.click_echo = null;
             self.needs_render = true;
@@ -2862,6 +2868,7 @@ test {
     _ = @import("app/clock.zig");
     _ = @import("app/coverage.zig");
     _ = @import("app/now_playing.zig");
+    _ = @import("app/integration_poll.zig");
     _ = @import("app/menu_bar.zig");
     _ = @import("app/browser_open.zig");
     _ = @import("app/glyph_audit.zig");

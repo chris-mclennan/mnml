@@ -224,6 +224,7 @@ pub const specs = [_]Spec{
     .{ .id = "pr.picker", .title = "PRs: cross-host fuzzy picker (Enter ⇒ URL · Tab ⇒ pipeline)", .group = "pr" },
     .{ .id = "pr.refresh", .title = "PRs: refresh cross-host cache (background)", .group = "pr" },
     .{ .id = "integrations.refresh_binary_cache", .title = "Integrations: refresh installed-binary detection", .group = "integrations" },
+    .{ .id = "integrations.poll_now", .title = "Integrations: poll every statusline values source now", .group = "integrations" },
     .{ .id = "integrations.dismiss_toml_notice", .title = "Integrations: don't show the mnml 0.2 manifests notice again", .group = "integrations" },
     .{ .id = "integrations.audit_shadowed_binaries", .title = "Integrations: audit + fix shadowed integration binaries (PATH order)", .group = "integrations" },
     .{ .id = "integrations.audit_glyphs", .title = "Integrations: audit glyphs (report drift, no changes)", .group = "integrations" },
@@ -1168,6 +1169,6 @@ test "1068 specs, unique ids" {
     // + six SEARCH section commands (refresh / open / open_split /
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice).
-    try std.testing.expectEqual(@as(usize, 1068), specs.len);
+    try std.testing.expectEqual(@as(usize, 1069), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

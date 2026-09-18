@@ -9,7 +9,8 @@
 //!   mnml-bitbucket --scaffold     write config.zon and say where
 //!   mnml-bitbucket --check        resolved config + auth + a live whoami
 //!   mnml-bitbucket --diag         the whole tree, for a bug report
-//!   mnml-bitbucket --values       {"open_mine":N,"unapproved_mine":K,"approved_mine":A}
+//!   mnml-bitbucket --values [--workspace W]   {"open_mine":N,…}; with a
+//!                                 workspace, the chip is republished too
 //!   mnml-bitbucket --list-prs --json
 //!   mnml-bitbucket --find-pipeline-for-pr --owner O --repo R --branch B --json
 //!   mnml-bitbucket --refresh [--workspace W]   republish the chip over Tier-2 IPC, headless
@@ -173,7 +174,7 @@ pub fn main(init: std.process.Init) !u8 {
         return 0;
     }
     if (opts.check or opts.diag) return diagnose(gpa, io, env, stdout, opts.diag);
-    if (opts.values) return valuesCmd(gpa, io, env, stdout, stderr);
+    if (opts.values) return valuesCmd(gpa, io, env, stdout, stderr, opts.workspace);
     if (opts.list_prs) {
         if (!opts.json) {
             try stderr.writeAll("--list-prs requires --json (only shape supported v1)\n");
@@ -213,7 +214,7 @@ const usage =
     \\  --scaffold                write config.zon and print its path
     \\  --check                   resolved config + auth + a live whoami
     \\  --diag                    the whole tree, for a bug report
-    \\  --values                  {"open_mine":N,"unapproved_mine":K,"approved_mine":A}
+    \\  --values [--workspace W]  {"open_mine":N,…}; republishes the chip with a workspace
     \\  --list-prs --json         every open PR the per-repo tabs list
     \\  --find-pipeline-for-pr --owner O --repo R --branch B --json
     \\  --refresh [--workspace W] republish the statusline chip, headless
@@ -432,9 +433,13 @@ fn computeValues(gpa: Allocator, io: Io, s: *Session) !fetch.Result {
     return worker.run(&job);
 }
 
-/// The reference's `--values`: the JSON a statusline poller reads.
+/// The reference's `--values`: the JSON a statusline poller reads —
+/// and, with `--workspace W`, the segment published over that
+/// workspace's channel too, the way the tracker's `--values` does. The
+/// host's poller runs exactly this line, so the chip moves with no pane
+/// open and the host parses nothing.
 /// Non-zero on any failure, with a line on stderr.
-fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer) !u8 {
+fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer, workspace: []const u8) !u8 {
     var why: []const u8 = "";
     var s = openSession(gpa, io, env, &why) catch {
         try err.print("mnml-bitbucket --values: {s}\n", .{why});
@@ -445,6 +450,9 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     var res = try computeValues(gpa, io, &s);
     defer res.deinit();
     const v = res.payload.values;
+    var ipc = try ipcFor(gpa, io, env, workspace);
+    defer if (ipc) |*x| x.deinit();
+    if (ipc) |*x| publishSegment(x, v) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
         return 1;

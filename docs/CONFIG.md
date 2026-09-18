@@ -475,6 +475,20 @@ otherwise. Copy what you need; leave the rest out.
         // expanded. A workspace with sdk/mnml-sdk adds its own
         // integrations/ by itself.
         .dev_roots = .{ "../my-integrations" },
+        // The statusline poller: what keeps a manifest's chip counts
+        // live with no pane open. It runs each manifest's
+        // `values_sources` command (`mnml-bitbucket --values`) on that
+        // source's interval, staggered, backing off on a failure, and
+        // never while a pane of that integration is open.
+        .poll = .{
+            // Off means a chip moves only when its pane or its refresh
+            // command says so.
+            .enabled = true,
+            // The floor under every manifest's own poll_interval_secs —
+            // your say in how hard your API budget may be spent. The
+            // poller's own 30-second floor still applies underneath.
+            .min_interval_secs = 60,
+        },
     },
 
     // ── workspaces ─────────────────────────────────────────────────────
