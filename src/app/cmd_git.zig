@@ -114,6 +114,7 @@ pub const table = .{
     .@"git.op_abort" = &opAbort,
     .@"git.op_skip" = &opSkip,
     .@"git.rebase_plan" = &rebasePlan,
+    .@"git.rebase_interactive_onto" = &rebaseInteractiveOnto,
     .@"git.fixup" = &fixup,
     .@"git.squash" = &squash,
     .@"git.drop" = &drop,
@@ -760,6 +761,19 @@ fn opSkip(app: *App) CommandError!void {
 fn rebasePlan(app: *App) CommandError!void {
     const g = try requireGraph(app);
     try git.openPlan(app, g);
+}
+
+/// `git.rebase_interactive_onto`: the plan modal over everything HEAD
+/// has that the target does not. The target is the branches panel's
+/// branch row when the panel has the focus, else the graph's selected
+/// commit.
+fn rebaseInteractiveOnto(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    if (app.focus == .panel and app.focus.panel == .git) {
+        if (try git_palette.cursorBranch(app)) |b| return git.openPlanOnto(app, g, b);
+    }
+    const c = g.selected() orelse return app.diag.fail(arena(app), "rebase: select a commit, or a branch row in the branches panel", .{});
+    try git.openPlanOnto(app, g, c.hash);
 }
 
 fn fixup(app: *App) CommandError!void {

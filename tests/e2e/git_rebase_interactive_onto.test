@@ -1,0 +1,46 @@
+# `git.rebase_interactive_onto` — the branches panel's *Interactive
+# rebase main onto base…* and the graph's *Interactive rebase onto this
+# commit…*. Both open the plan modal `git.rebase_plan` opens, over the
+# commits between the target and HEAD rather than over the selection,
+# and Enter on it runs the todo through mnml's sequence editor.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "first"
+shell git branch base
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+write c.txt "three\n"
+shell git add c.txt
+shell git commit -q -m "third"
+command view.activity_git
+wait 1200
+expect screen contains "󰘬 base"
+# The branches panel's row: the menu offers the interactive rebase and
+# it plans `second`, `third` onto `base` — two commits, not the one
+# under the cursor.
+rightclick 6 8
+expect screen contains "Interactive rebase main onto base…"
+key down
+key down
+key down
+key down
+key down
+key down
+key enter
+wait 600
+expect screen contains "Rebase plan · 2 commits onto"
+expect screen contains "second"
+expect screen contains "third"
+# `j` then `d`: `third` is dropped; Enter runs the plan.
+key j
+key d
+key enter
+wait 3000
+expect screen lacks "third"
+shell test "$(git rev-list --count HEAD)" = 2
+shell test ! -f c.txt

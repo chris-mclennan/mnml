@@ -3776,6 +3776,45 @@ pub fn openPlan(app: *App, g: *GraphPane) CommandError!void {
     app.needs_render = true;
 }
 
+/// The commit `onto` names: a ref on one of the graph's rows
+/// (`feature`, `origin/feature`, `v1.0`) first, then a hash prefix.
+fn ontoIndex(g: *const GraphPane, onto: []const u8) ?usize {
+    for (g.commits, 0..) |c, i| if (refsName(c.refs, onto)) return i;
+    return graph_view.findByHashPrefix(g.commits, onto);
+}
+
+/// `git.rebase_interactive_onto`: the same plan modal `git.rebase_plan`
+/// opens, over the commits between `onto` and HEAD rather than over
+/// whatever is selected — the branches panel's *Interactive rebase HEAD
+/// onto <branch>* and the graph's *Interactive rebase onto this
+/// commit*. `onto` itself stays put and becomes the plan's base, so
+/// Enter runs `rebase -i <onto>` with the todo the modal holds.
+pub fn openPlanOnto(app: *App, g: *GraphPane, onto: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const base = ontoIndex(g, onto) orelse return app.diag.fail(arena, "rebase: `{s}` is not in the open graph", .{onto});
+    const head = headIndex(app, g) orelse return app.diag.fail(arena, "rebase: HEAD is not in the list", .{});
+    if (base == head) return app.diag.fail(arena, "rebase: `{s}` is HEAD \u{2014} there is nothing to replay onto it", .{onto});
+    var sel: std.ArrayListUnmanaged(usize) = .empty;
+    var at = head;
+    while (at != base) {
+        try sel.append(arena, at);
+        const c = g.commits[at];
+        const parent = if (c.parents.len > 0) indexOfSha(g, c.parents[0]) else null;
+        at = parent orelse return app.diag.fail(arena, "rebase: `{s}` is not on HEAD's first-parent line", .{onto});
+    }
+    const plan = try buildPlan(app, g, sel.items);
+    g.closePlan();
+    g.plan = plan;
+    g.detail_focus = false;
+    g.wip_focused = false;
+    // Asked from the branches panel, the focus is the panel's: the modal
+    // would paint and take no keys. The graph's pane takes it back.
+    if (app.active) |id| if (activeGraph(app)) |ag| if (ag == g) {
+        app.focus = .{ .pane = id };
+    };
+    app.needs_render = true;
+}
+
 /// A direct verb on the selection — no modal. `fixup` / `squash` fold
 /// each selected commit into the commit before it (the plan reaches
 /// one commit further down for that); `drop` drops; `reword` takes
@@ -4288,6 +4327,7 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Cherry-pick onto HEAD", .action = .{ .command = .@"git.cherry_pick" }, .separator_before = true },
         .{ .label = "Revert", .action = .{ .command = .@"git.revert" } },
         .{ .label = "Rebase plan\u{2026}", .action = .{ .command = .@"git.rebase_plan" }, .separator_before = true },
+        .{ .label = "Interactive rebase onto this commit\u{2026}", .action = .{ .command = .@"git.rebase_interactive_onto" } },
         .{ .label = "Fixup into the commit before", .action = .{ .command = .@"git.fixup" } },
         .{ .label = "Squash into the commit before", .action = .{ .command = .@"git.squash" } },
         .{ .label = "Reword\u{2026}", .action = .{ .command = .@"git.reword" } },
@@ -5714,6 +5754,66 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expect(refsName("HEAD -> main, origin/main, tag: v1", "origin/main"));
     try testing.expect(refsName("HEAD -> main", "main"));
     try testing.expect(!refsName("HEAD -> main, origin/main", "main2"));
+}
+
+test "openPlanOnto: a branch row's interactive rebase plans everything HEAD has that the row does not, oldest first, with the row as the base; a hash reaches the same plan; HEAD itself, an unknown ref and a commit off the first-parent line each refuse by name" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    // `base` stays on the first commit: the plan replays what came after.
+    try f.sh(&.{ "branch", "base" });
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "third" });
+    // A side branch, off main's first-parent line.
+    try f.sh(&.{ "checkout", "-q", "-b", "side", "HEAD~1" });
+    try f.write("d.txt", "four\n");
+    try f.sh(&.{ "add", "d.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "aside" });
+    try f.sh(&.{ "checkout", "-q", "main" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+
+    try openPlanOnto(&f.app, g, "base");
+    try testing.expect(g.plan != null);
+    try testing.expectEqual(@as(usize, 2), g.plan.?.rows.items.len);
+    try testing.expectEqualStrings("second", g.commits[g.plan.?.rows.items[0].ci].subject);
+    try testing.expectEqualStrings("third", g.commits[g.plan.?.rows.items[1].ci].subject);
+    // The base is `base`'s own commit — `rebase -i <base>` replays the two.
+    const base_ci = ontoIndex(g, "base").?;
+    try testing.expectEqualStrings(g.commits[base_ci].hash, g.plan.?.base.?);
+    for (g.plan.?.rows.items) |r| try testing.expect(r.marked);
+    g.closePlan();
+
+    // The same commit by hash prefix.
+    try openPlanOnto(&f.app, g, g.commits[base_ci].hash[0..7]);
+    try testing.expectEqual(@as(usize, 2), g.plan.?.rows.items.len);
+    g.closePlan();
+
+    // HEAD itself: nothing to replay.
+    try testing.expectError(error.Failed, openPlanOnto(&f.app, g, "main"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "is HEAD") != null);
+    f.app.diag.clear();
+    // A ref the graph does not carry.
+    try testing.expectError(error.Failed, openPlanOnto(&f.app, g, "no-such-branch"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "not in the open graph") != null);
+    f.app.diag.clear();
+    // `side` is off main's first-parent line.
+    try testing.expectError(error.Failed, openPlanOnto(&f.app, g, "side"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "first-parent") != null);
+    f.app.diag.clear();
+    try testing.expect(g.plan == null);
 }
 
 test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {

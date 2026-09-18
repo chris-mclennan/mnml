@@ -1090,6 +1090,8 @@ pub const specs = [_]Spec{
     // git-more2: the graph's detail file rows (audit #101).
     .{ .id = "git.graph_detail_open", .title = "Graph: open the detail column's file — its diff in the commit, or the working tree's (Enter)", .group = "git" },
     .{ .id = "git.graph_file_at_rev", .title = "Graph: open the detail column's file as the selected commit had it (a scratch copy)", .group = "git" },
+    // git-menus: the branches panel's GitKraken rows.
+    .{ .id = "git.rebase_interactive_onto", .title = "Git: interactive rebase onto the panel's branch row / the graph's commit — the plan modal over everything HEAD has that it does not", .group = "git", .keys = .{ .vim = &.{"space g i"} } },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },

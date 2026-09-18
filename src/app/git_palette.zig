@@ -1161,6 +1161,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
             try b.act(try b.fmt("Merge {s} into {s}", .{ name, head }), .merge, br.idx, true);
             try b.act(try b.fmt("Rebase {s} onto {s}", .{ head, name }), .rebase, br.idx, false);
+            try b.act(try b.fmt("Interactive rebase {s} onto {s}\u{2026}", .{ head, name }), .rebase_interactive, br.idx, false);
             try b.act(try b.fmt("Open worktree from {s}\u{2026}", .{name}), .branch_worktree, br.idx, true);
             try b.act("Create branch here\u{2026}", .new_branch, br.idx, true);
             try b.act("Cherry pick commit", .cherry_pick, br.idx, false);
@@ -1355,6 +1356,9 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .checkout => break :blk if (b.remote) checkoutTracking(app, name) else git.submitOp(app, repo, .{ .checkout = try gpa.dupe(u8, name) }),
             .merge => break :blk git.submitOp(app, repo, .{ .merge = try gpa.dupe(u8, name) }),
             .rebase => break :blk git.submitOp(app, repo, .{ .rebase = try gpa.dupe(u8, name) }),
+            // The plan modal over `name..HEAD`; the graph must be open,
+            // which in git mode it is (one tab per repo).
+            .rebase_interactive => break :blk git.openPlanOnto(app, git.activeGraph(app) orelse break :blk app.diag.fail(arena, "rebase: open the commit graph first (git.graph)", .{}), name),
             // From the row's branch, not HEAD (the current row's is HEAD).
             .new_branch => break :blk git.newBranchFrom(app, name),
             .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{name})),
@@ -2239,11 +2243,11 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try expectMenu(app, 0, &.{ "Fold", "Refresh" });
     try testing.expectEqualStrings("LOCAL", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Interactive rebase main onto feature\u{2026}", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("feature", app.overlay.menu.title);
     // The Reset row opens to the right: soft / mixed / hard, each an
     // act on feature; the row itself runs nothing.
-    const reset_row = app.overlay.menu.items[9];
+    const reset_row = app.overlay.menu.items[10];
     try testing.expect(reset_row.action == .none);
     try testing.expectEqual(@as(usize, 3), reset_row.submenu.len);
     try testing.expectEqual(command.GitPaletteWhat.reset_soft, reset_row.submenu[0].action.git_palette.what);
@@ -2296,7 +2300,7 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     // menu was opened on feature, the confirm names feature.
     try testing.expectEqual(@as(usize, 0), st.cursor);
     try openRowMenu(app, 1, 3, 3);
-    const hard = app.overlay.menu.items[9].submenu[2];
+    const hard = app.overlay.menu.items[10].submenu[2];
     try testing.expectEqualStrings("Hard (discard the changes)\u{2026}", hard.label);
     try dispatch.runMenuActionForTest(app, hard.action);
     try testing.expect(app.git.confirm == .reset_hard);

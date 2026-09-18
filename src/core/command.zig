@@ -773,6 +773,19 @@ pub const GitPaletteWhat = enum {
     tag_here,
     tag_annotated_here,
     push_branch,
+    /// // changed (git-menus): the GitKraken rows the branches panel
+    /// was missing — the plan modal over `row..HEAD`, an AI summary of
+    /// the commits the row has that its base does not, and a push that
+    /// opens the forge's new-PR page.
+    rebase_interactive,
+    explain_branch,
+    push_start_pr,
+    /// // changed (git-menus): a WORKTREES row — the tree on a new tab
+    /// page, removed with its branch, locked / unlocked.
+    worktree_open_tab,
+    worktree_remove_branch,
+    worktree_lock,
+    worktree_unlock,
 };
 
 pub const MenuItem = struct {

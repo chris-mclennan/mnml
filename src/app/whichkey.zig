@@ -149,6 +149,7 @@ pub const root: Node = .{
                 cmd('A', .@"git.diff_all", "diff all vs HEAD (multi-file)"),
                 cmd('b', .@"git.blame_toggle", "blame toggle"),
                 cmd('l', .@"git.graph", "commit graph"),
+                cmd('i', .@"git.rebase_interactive_onto", "interactive rebase onto…"),
                 cmd('s', .@"git.status_pane", "status / staging"),
                 cmd('t', .@"git.status_pane", "git status"),
                 cmd('m', .@"git.ai_commit", "ai (Claude) commit message"),
