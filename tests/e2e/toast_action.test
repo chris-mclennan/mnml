@@ -18,3 +18,14 @@ expect screen contains " Install "
 click 116 34
 expect screen lacks "iftop is not on PATH"
 expect screen lacks " Install "
+
+# `Ctrl+Shift+A` is the keyboard's way to the button, and it reaches the
+# command in BOTH profiles — it was unbound in either before this. With
+# nothing offering anything it says so rather than acting. (Taking up a
+# real offer is `cmd_app.zig`'s test: here it would run a real install.)
+key ctrl+shift+a
+expect screen contains "no message on screen is offering anything"
+command editor.use_vim
+command toast.dismiss_all
+key ctrl+shift+a
+expect screen contains "no message on screen is offering anything"
