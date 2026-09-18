@@ -23,7 +23,7 @@ command view.focus_pane
 expect screen contains "JIRA FIX VERSIONS (8)"
 expect screen contains "1 Current Release"
 expect screen lacks "Assigned"
-expect screen contains " space: ENG "
+expect screen lacks " space: "
 expect screen contains " fixVersion: 13.16.0 "
 expect screen contains " ⓧ "
 # status_order puts Testing first; ENG-2 is bumped into it by its

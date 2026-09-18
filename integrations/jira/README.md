@@ -13,7 +13,7 @@ port was built against.
 ```
 ▌JIRA WORK (3)                                                                                                      ?
 ▌1 Assigned   2 Recently Done
-▌ basic   jql   󰍉 / filter   space: —   assignee: All   type: —   status: All
+▌ basic   jql   󰍉 / filter   assignee: All   type: —   status: All
 ▌ KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
 ▌ In PR Review (1)
 ▌    ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form validates on blur                [ Review ]
@@ -104,7 +104,7 @@ the box works without copying it.
 **Jira Work / Jira Fix Versions — the tree.** The caps header with the
 count (`JIRA WORK (3)`, `(1 of 3)` under a filter), the tab strip with
 the marker on the active tab, the toolbar as mode chips (`basic`,
-`jql`, the search pill, `space: TE`, `assignee: Me`, `type: —`,
+`jql`, the search pill, `assignee: Me`, `type: —`,
 `status: All`, and on a release tab `fixVersion: 13.16.0` with its `ⓧ`)
 that wrap to a second row instead of clipping, the column header, then
 one group per status in the tab's `status_order`, each ticket under it

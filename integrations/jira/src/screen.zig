@@ -324,7 +324,6 @@ pub const Painter = struct {
         try out.append(arena, .{ .text_ = " basic ", .target = .basic, .style = if (!t.show_jql) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = " jql ", .target = .jql, .style = if (t.show_jql) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
-        try out.append(arena, .{ .text_ = try chipText(arena, "space", if (t.cfg.project.len > 0) t.cfg.project else "—"), .target = .space, .style = p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "status", t.scope.label()), .target = .status, .style = if (t.scope != .all) p.s.chip_active else p.s.chip_style });
@@ -1536,7 +1535,8 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     const r2 = try rowText(ar, &f, 2);
     try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 13.16.0 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " ⓧ") != null);
-    try testing.expect(std.mem.indexOf(u8, r2, " space: ENG ") != null);
+    // The `space:` placeholder is gone: it named the tab's project and did nothing.
+    try testing.expect(std.mem.indexOf(u8, r2, " space: ") == null);
     const star_y = (try findRow(ar, &f, "ENG-2 ★")).?;
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, star_y), "Testing") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "f switch the release") != null);

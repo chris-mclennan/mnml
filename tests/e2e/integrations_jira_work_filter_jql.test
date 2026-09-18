@@ -51,7 +51,7 @@ expect screen lacks "ENG-2"
 # The scope chip and the assignee chip are on the toolbar as mode chips.
 expect screen contains " status: All "
 expect screen contains " assignee: All "
-expect screen contains " space: — "
+expect screen lacks " space: "
 # r refetches and the cursor stays on its ticket.
 key j
 key r
