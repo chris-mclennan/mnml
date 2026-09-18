@@ -426,18 +426,15 @@ pub const App = struct {
     }
 
     /// Every second from the loop: the auto-refresh and the values
-    /// cadence. Also the one readiness look the row under the cursor
-    /// is owed, and the spinner on a merge that is running.
+    /// cadence, and the spinner on a merge that is running.
+    ///
+    /// Readiness is deliberately NOT asked for here. Rebuilding the
+    /// rows every second to find the one under the cursor is work the
+    /// pane does not need to repeat: the cursor only moves when
+    /// something moves it, so `select` asks then.
     pub fn tick(app: *App, now_secs: i64) Allocator.Error!void {
         app.now_secs = now_secs;
         if (app.actions.anyRunning()) app.spin +%= 1;
-        {
-            var scratch = std.heap.ArenaAllocator.init(app.gpa);
-            defer scratch.deinit();
-            if (app.visible(scratch.allocator())) |v| {
-                if (app.focusedPr(v.rows)) |f| try app.ensureReadiness(f.slug, f.pr);
-            } else |_| {}
-        }
         const every: i64 = app.config.refresh_interval_secs;
         if (every > 0 and now_secs - app.last_refresh_secs >= every and !app.activeTab().loading) {
             try app.refreshActive();
@@ -812,11 +809,16 @@ pub const App = struct {
         const cur: isize = @intCast(@min(ts.selected, rows.len - 1));
         const next = std.math.clamp(cur + delta, 0, @as(isize, @intCast(rows.len)) - 1);
         ts.selected = @intCast(next);
+        // The row it landed on gets its one readiness look.
+        app.onCursorRow(rows) catch {};
     }
 
     pub fn select(app: *App, rows: []const tabs.VisibleRow, idx: usize) void {
         if (rows.len == 0) return;
         app.activeTab().selected = @min(idx, rows.len - 1);
+        // The row it landed on gets its one readiness look, so the
+        // `[ Merge ]` under the cursor can say what it knows.
+        app.onCursorRow(rows) catch {};
     }
 
     /// Enter / space: a repo header toggles, a pull request folds out

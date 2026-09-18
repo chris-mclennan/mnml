@@ -932,14 +932,17 @@ test "the cursor's PR row grows its buttons, the Merge is dim, and hovering it s
     // and the title is the column that would otherwise pay.
     try t.expectEqual(@as(usize, 1), std.mem.count(u8, scr, "[ Merge ]"));
 
-    // Nothing has judged it, so the button registers `merge_blocked`
-    // rather than a `pr_button`: a stray click cannot merge anything.
+    // Landing on the row took its one readiness look, and #1234 is
+    // blocked: the button registers `merge_blocked` rather than a
+    // `pr_button`, so a stray click cannot merge anything.
     const at = s.rig.app.hits.rectOf(.{ .merge_blocked = 1 }).?;
     try t.expect(s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .merge } }) == null);
     // …and the pointer resting on it puts the reason on the hint row.
+    // Sam asked for changes on #1234, which outranks every other
+    // condition.
     s.rig.app.hover(at.x + 2, at.y);
     scr = try s.draw();
-    try t.expect(has(scr, "Merge: not checked yet"));
+    try t.expect(has(scr, "Merge: a reviewer asked for changes"));
 
     // Judged and blocked: the reason names the condition and its count.
     const ts = s.rig.app.activeTab();
