@@ -2727,7 +2727,7 @@ test "a row menu keeps its labels while open: the frame arena's reuse cannot scr
     seed(app);
     app.frame.deinit();
     app.frame = alloc.FrameArena.init(fba.allocator());
-    // Row 1 is the `feature` branch: fifteen of its rows name it.
+    // Row 1 is the `feature` branch: most of its rows name it.
     try openRowMenu(app, 1, 3, 3);
     try testing.expect(app.overlay == .menu);
     app.frame.begin();
@@ -2736,8 +2736,8 @@ test "a row menu keeps its labels while open: the frame arena's reuse cannot scr
         @memset(chunk, 'X');
     }
     try testing.expectEqualStrings("Checkout feature", app.overlay.menu.items[0].label);
-    try testing.expectEqualStrings("Merge feature into main", app.overlay.menu.items[4].label);
-    try testing.expectEqualStrings("Delete feature\u{2026}", app.overlay.menu.items[12].label);
+    try testing.expectEqualStrings("Merge feature into main", app.overlay.menu.items[5].label);
+    try testing.expectEqualStrings("Delete feature\u{2026}", app.overlay.menu.items[14].label);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
     app.frame.deinit();

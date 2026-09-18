@@ -25,6 +25,7 @@ key down
 key down
 key down
 key down
+key down
 key enter
 wait 400
 expect screen contains "delete branch feat?"
@@ -37,6 +38,7 @@ shell test -d wt
 shell git rev-parse --verify -q refs/heads/feat
 # Force takes it: the tree and its branch both go.
 rightclick 6 15
+key down
 key down
 key down
 key down

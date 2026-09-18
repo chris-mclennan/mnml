@@ -1154,7 +1154,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1068 specs, unique ids" {
+test "1075 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1177,6 +1177,6 @@ test "1068 specs, unique ids" {
     // + six SEARCH section commands (refresh / open / open_split /
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice).
-    try std.testing.expectEqual(@as(usize, 1069), specs.len);
+    try std.testing.expectEqual(@as(usize, 1076), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

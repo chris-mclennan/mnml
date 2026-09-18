@@ -42,6 +42,8 @@ key down
 key down
 key down
 key down
+key down
+key down
 key enter
 wait 300
 expect screen contains "is the main worktree"
@@ -50,6 +52,8 @@ expect screen contains "▌ 󰌢 LOCAL"
 rightclick 6 15
 expect screen contains "Open this worktree"
 expect screen contains "Remove this worktree…"
+key down
+key down
 key down
 key down
 key down
