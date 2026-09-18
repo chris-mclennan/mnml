@@ -18,7 +18,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const highlight = @import("highlight");
 const ts = highlight.ts;
-const table = highlight.table;
+/// The grammar table (`highlight.table`); `table` itself is this
+/// module's command-runner table.
+const grammars = highlight.table;
 const structure = highlight.structure;
 const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
@@ -42,13 +44,13 @@ pub const sync_parse_max_bytes: usize = 32 * 1024;
 pub fn keyFor(path: ?[]const u8, text: []const u8) ?[]const u8 {
     if (path) |p| {
         const base = std.fs.path.basename(p);
-        if (table.keyForFilename(base)) |k| return k;
+        if (grammars.keyForFilename(base)) |k| return k;
         const ext = std.fs.path.extension(base);
         if (ext.len > 1 and ext.len - 1 <= 32) {
             var lower: [32]u8 = undefined;
             const e = std.ascii.lowerString(&lower, ext[1..]);
-            if (table.keyForExtension(e)) |k| return k;
-            if (table.find(e)) |i| return table.entries[i].key;
+            if (grammars.keyForExtension(e)) |k| return k;
+            if (grammars.find(e)) |i| return grammars.entries[i].key;
         }
     }
     return keyForShebang(text);
@@ -109,6 +111,26 @@ pub const Syntax = struct {
     /// A worker is parsing this document (`syntax_jobs.zig`): the job's
     /// id, the seq of the text it was handed, and the way to call it off.
     pending: ?Pending = null,
+    /// The grammar the document's name (and shebang) picks, kept even
+    /// while highlighting is off for it, so turning it back on needs no
+    /// re-detection.
+    lang: ?usize = null,
+    /// Highlighting is off for THIS document: no parse, no tree, no
+    /// spans, no injections — every consumer takes the no-grammar path.
+    /// Set when the file opens over `editor.highlight_max_bytes`
+    /// (`applyLimit`), or by hand (`editor.highlight_toggle_file`).
+    /// Per document, never persisted.
+    off: bool = false,
+    /// The file was over the limit when it opened — what the statusline
+    /// chip reports, and why the toast fired. A hand-switched buffer
+    /// under the limit has this false and `off` true.
+    over_limit: bool = false,
+    /// What the limit was measured against: the document's size when it
+    /// opened. The chip's ` · 12 MB`.
+    size_bytes: usize = 0,
+    /// The limit in force when this document opened, for the toast and
+    /// the chip's hover.
+    limit_bytes: u64 = 0,
 
     pub const Pending = struct { id: u64, base_seq: u64, ticket: *@import("syntax_jobs.zig").Ticket };
 
@@ -153,12 +175,71 @@ pub const Syntax = struct {
     /// no grammar has no spans and stays that way until a rename.
     pub fn setLanguage(self: *Syntax, path: ?[]const u8, text: []const u8) void {
         const key_name = keyFor(path, text);
-        const idx = if (key_name) |k| table.find(k) else null;
-        if (idx != self.hl.root) {
+        self.useLanguage(if (key_name) |k| grammars.find(k) else null);
+    }
+
+    /// `setLanguage` on an index already picked. The highlighter is told
+    /// nothing while highlighting is off for this document: `off` is the
+    /// same state as "no grammar for this file", so folds, the outline,
+    /// the sticky context and the text objects all take the path they
+    /// take for a plain-text file.
+    fn useLanguage(self: *Syntax, idx: ?usize) void {
+        self.lang = idx;
+        const want = if (self.off) null else idx;
+        if (want != self.hl.root) {
             self.parsed_seq = null;
             self.callOff();
         }
-        self.hl.setLanguage(idx);
+        self.hl.setLanguage(want);
+    }
+
+    /// On open: decide whether this document is highlighted at all.
+    /// `limit` of 0 is no limit — the shipped default, and every file is
+    /// parsed in full. Over the limit the file opens with no tree-sitter
+    /// at all; `overLimit` then tells the statusline to say so.
+    pub fn applyLimit(self: *Syntax, size: usize, limit: u64) void {
+        self.size_bytes = size;
+        self.limit_bytes = limit;
+        self.over_limit = limit != 0 and size > limit;
+        self.setOff(self.over_limit);
+    }
+
+    /// Turn highlighting off for this document (dropping the tree, the
+    /// spans and any parse under way) or back on (the next frame parses,
+    /// on a worker for a large file as any other does).
+    pub fn setOff(self: *Syntax, off: bool) void {
+        if (self.off == off) return;
+        self.off = off;
+        if (off) {
+            self.callOff();
+            self.hl.invalidate();
+            self.parsed_seq = null;
+        }
+        self.useLanguage(self.lang);
+        self.dirty = !off;
+        self.since_ms = null;
+    }
+
+    /// Whether the statusline shows this document's highlight chip: a
+    /// file that opened over the limit (on or off), or any buffer
+    /// switched off by hand. A normal buffer has no chip.
+    pub fn showsChip(self: *const Syntax) bool {
+        return self.over_limit or self.off;
+    }
+
+    /// `12 MB`, `512 KB`, `73 B` — the chip's and the toast's sizes. A
+    /// whole number of units keeps no decimal (`4 MB`, not `4.0 MB`).
+    pub fn sizeLabel(buf: []u8, n: u64) []const u8 {
+        const mb: u64 = 1024 * 1024;
+        if (n >= mb) {
+            if (n % mb == 0) return std.fmt.bufPrint(buf, "{d} MB", .{n / mb}) catch "?";
+            return std.fmt.bufPrint(buf, "{d:.1} MB", .{@as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(mb))}) catch "?";
+        }
+        if (n >= 1024) {
+            if (n % 1024 == 0) return std.fmt.bufPrint(buf, "{d} KB", .{n / 1024}) catch "?";
+            return std.fmt.bufPrint(buf, "{d:.1} KB", .{@as(f64, @floatFromInt(n)) / 1024.0}) catch "?";
+        }
+        return std.fmt.bufPrint(buf, "{d} B", .{n}) catch "?";
     }
 
     pub fn hasLanguage(self: *const Syntax) bool {
@@ -168,7 +249,7 @@ pub const Syntax = struct {
     /// The table key of the grammar in use (`rs`, `tsx`), or null.
     pub fn key(self: *const Syntax) ?[]const u8 {
         const i = self.hl.root orelse return null;
-        return table.entries[i].key;
+        return grammars.entries[i].key;
     }
 
     /// Fold the editor's edits since the last call into the tree and the
@@ -294,10 +375,76 @@ pub const Syntax = struct {
     }
 };
 
+// ── the commands ──
+
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const EditorPane = app_mod.EditorPane;
+const command = @import("../core/command.zig");
+
+pub const table = .{
+    .@"editor.highlight_this_file" = &highlightThisFile,
+    .@"editor.highlight_toggle_file" = &highlightToggleFile,
+};
+
+/// The name the chip and the toasts use for the active buffer.
+fn bufferName(e: *const EditorPane) []const u8 {
+    if (e.buf.doc.path) |p| return std.fs.path.basename(p);
+    return "[scratch]";
+}
+
+/// The toast a file over the limit opens with: what was skipped, why,
+/// and the two ways to undo it.
+pub fn announceLimit(app: *App, name: []const u8, s: *const Syntax) void {
+    var size_buf: [24]u8 = undefined;
+    var limit_buf: [24]u8 = undefined;
+    app.toast("highlighting off for {s} ({s} > {s}); click the chip or run editor.highlight_this_file to turn it on", .{
+        name,
+        Syntax.sizeLabel(&size_buf, s.size_bytes),
+        Syntax.sizeLabel(&limit_buf, s.limit_bytes),
+    });
+}
+
+/// `editor.highlight_this_file`: highlight the active buffer after all,
+/// whatever the limit said. A file already highlighted is left alone and
+/// says so.
+fn highlightThisFile(app: *App) command.CommandError!void {
+    const e = app.activeEditor() orelse {
+        app.toast("no editor", .{});
+        return;
+    };
+    if (!e.syntax.off) {
+        app.toast("highlighting is already on for {s}", .{bufferName(e)});
+        return;
+    }
+    try setHighlight(app, e, true);
+}
+
+/// `editor.highlight_toggle_file`: the same switch both ways, for ANY
+/// buffer — one giant file opened once can be switched off without a
+/// config change.
+fn highlightToggleFile(app: *App) command.CommandError!void {
+    const e = app.activeEditor() orelse {
+        app.toast("no editor", .{});
+        return;
+    };
+    try setHighlight(app, e, e.syntax.off);
+}
+
+/// Flip one buffer's highlighting and say what happened. The size is the
+/// document's now, so a chip on a file that grew reads true.
+pub fn setHighlight(app: *App, e: *EditorPane, on: bool) Allocator.Error!void {
+    const s = e.syntax;
+    s.size_bytes = e.buf.editor.len();
+    s.setOff(!on);
+    var buf: [24]u8 = undefined;
+    app.toast("highlighting {s} for {s} ({s})", .{ if (on) "on" else "off", bufferName(e), Syntax.sizeLabel(&buf, s.size_bytes) });
+    app.needs_render = true;
+}
+
 // ── tests ──
 
 const testing = std.testing;
-const App = @import("../app.zig").App;
 const screen_mod = @import("../ipc/screen.zig");
 
 test "language detection: filename, extension (tsx is tsx), shebang" {
@@ -497,4 +644,152 @@ test "structural queries refresh the tree themselves" {
     plain.setLanguage("/ws/notes.txt", "");
     try testing.expect(plain.objectRange(ed, .function, 0, false) == null);
     try testing.expect((try plain.symbols(ed, arena.allocator())) == null);
+}
+
+// ── the size limit (`editor.highlight_max_bytes`) ──
+
+/// An App on `tmp` with `limit` as the ceiling.
+fn limitApp(tmp: *std.testing.TmpDir, buf: []u8, limit: u64) !App {
+    const n = try tmp.dir.realPath(testing.io, buf);
+    var cfg: @import("../config/root.zig").Config = .{};
+    cfg.editor.highlight_max_bytes = limit;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .cfg = cfg, .workspace = buf[0..n], .data_root = buf[0..n], .cols = 120, .rows = 40 });
+    app.tree.visible = false;
+    return app;
+}
+
+/// Exactly `bytes` of plausible Rust, written to `tmp` as `name` — the
+/// size is exact so the chip's and the toast's labels are too.
+fn writeRust(tmp: *std.testing.TmpDir, name: []const u8, bytes: usize) !void {
+    const unit = "pub fn one(x: u32) -> u32 {\n    let y: u32 = x + 1;\n    y\n}\n";
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    try text.ensureTotalCapacity(testing.allocator, bytes + unit.len);
+    while (text.items.len < bytes) text.appendSliceAssumeCapacity(unit);
+    text.shrinkRetainingCapacity(bytes);
+    if (bytes > 0) text.items[bytes - 1] = '\n';
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = text.items });
+}
+
+fn openIn(app: *App, tmp: *std.testing.TmpDir, root: []const u8, name: []const u8) !*app_mod.EditorPane {
+    _ = tmp;
+    const p = try std.fs.path.join(testing.allocator, &.{ root, name });
+    defer testing.allocator.free(p);
+    _ = try app.openEditor(p);
+    return app.activeEditor().?;
+}
+
+test "a file over editor.highlight_max_bytes opens with no tree-sitter at all, and never quietly" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try limitApp(&tmp, &buf, 4 * 1024 * 1024);
+    defer app.deinit();
+    const root = app.workspace;
+    try writeRust(&tmp, "big.rs", 5 * 1024 * 1024);
+    const e = try openIn(&app, &tmp, root, "big.rs");
+    // The grammar is known — and deliberately not in force.
+    try testing.expect(e.syntax.lang != null);
+    try testing.expect(e.syntax.off);
+    try testing.expect(e.syntax.over_limit);
+    try testing.expect(!e.syntax.hasLanguage());
+    try app.render();
+    // No job was ever handed to a worker, and there is no tree to read.
+    try testing.expectEqual(@as(u64, 0), app.syntax_jobs.started);
+    try testing.expect(e.syntax.pending == null);
+    try testing.expect(e.syntax.hl.tree == null);
+    try testing.expect(e.syntax.keptRoot() == null);
+    try testing.expectEqual(@as(usize, 0), e.syntax.hl.keptSpanCount());
+    const ed = e.buf.editor;
+    try testing.expectEqual(@as(usize, 0), try e.syntax.countIn(ed, 0, ed.len()));
+    // Everything a tree would have answered falls back to its no-tree path.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expect(e.syntax.objectRange(ed, .function, 40, false) == null);
+    try testing.expect((try e.syntax.symbols(ed, arena.allocator())) == null);
+    try testing.expectEqual(@as(usize, 0), (try e.syntax.scopeChain(ed, arena.allocator(), 4)).len);
+    // The toast said so, by name and by size.
+    const msg = app.toasts.items[app.toasts.items.len - 1].text;
+    try testing.expect(std.mem.indexOf(u8, msg, "highlighting off for big.rs") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "(5 MB > 4 MB)") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "editor.highlight_this_file") != null);
+    // And the chip is asked for.
+    try testing.expect(e.syntax.showsChip());
+    // Editing still works — the buffer is a buffer.
+    try ed.splice(0, 0, "// still editable\n");
+    try testing.expect(std.mem.startsWith(u8, ed.bytes(), "// still editable"));
+}
+
+test "the limit is off by default: the same file at limit 0 keeps its grammar" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try limitApp(&tmp, &buf, 0);
+    defer app.deinit();
+    const root = app.workspace;
+    try writeRust(&tmp, "big.rs", 5 * 1024 * 1024);
+    const e = try openIn(&app, &tmp, root, "big.rs");
+    try testing.expect(!e.syntax.off);
+    try testing.expect(!e.syntax.over_limit);
+    try testing.expect(!e.syntax.showsChip());
+    try testing.expect(e.syntax.hasLanguage());
+    try testing.expectEqualStrings("rs", e.syntax.key().?);
+}
+
+test "editor.highlight_this_file parses the file the limit skipped; a second run says it is already on" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    // A limit small enough that a quick file trips it: the switch is the
+    // same one a 5 MB file gets, and the parse costs a millisecond.
+    var app = try limitApp(&tmp, &buf, 1024);
+    defer app.deinit();
+    const root = app.workspace;
+    try writeRust(&tmp, "mid.rs", 8 * 1024);
+    const e = try openIn(&app, &tmp, root, "mid.rs");
+    try testing.expect(e.syntax.off and e.syntax.over_limit);
+    const ed = e.buf.editor;
+    try testing.expectEqual(@as(usize, 0), try e.syntax.countIn(ed, 0, ed.len()));
+    try command.run(&app, .{ .static = .@"editor.highlight_this_file" });
+    try testing.expect(!e.syntax.off);
+    // Still over the limit — so the chip stays, now reading `on`.
+    try testing.expect(e.syntax.over_limit and e.syntax.showsChip());
+    try app.render();
+    try testing.expect(e.syntax.hl.tree != null);
+    try testing.expect((try e.syntax.countIn(ed, 0, ed.len())) > 10);
+    const on_msg = app.toasts.items[app.toasts.items.len - 1].text;
+    try testing.expect(std.mem.indexOf(u8, on_msg, "highlighting on for mid.rs") != null);
+    // Asking again changes nothing and says why.
+    try command.run(&app, .{ .static = .@"editor.highlight_this_file" });
+    try testing.expect(!e.syntax.off);
+    try testing.expect(std.mem.indexOf(u8, app.toasts.items[app.toasts.items.len - 1].text, "already on") != null);
+}
+
+test "editor.highlight_toggle_file switches any buffer: a small file loses its tree and gets it back" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try limitApp(&tmp, &buf, 0);
+    defer app.deinit();
+    const root = app.workspace;
+    try writeRust(&tmp, "small.rs", 2 * 1024);
+    const e = try openIn(&app, &tmp, root, "small.rs");
+    const ed = e.buf.editor;
+    try app.render();
+    const spans = try e.syntax.countIn(ed, 0, ed.len());
+    try testing.expect(spans > 10);
+    try testing.expect(!e.syntax.showsChip());
+    // Off: the tree and the spans go, and the chip appears without a limit.
+    try command.run(&app, .{ .static = .@"editor.highlight_toggle_file" });
+    try testing.expect(e.syntax.off and !e.syntax.over_limit and e.syntax.showsChip());
+    try testing.expect(e.syntax.hl.tree == null);
+    try app.render();
+    try testing.expect(e.syntax.hl.tree == null);
+    try testing.expectEqual(@as(usize, 0), try e.syntax.countIn(ed, 0, ed.len()));
+    try testing.expect(std.mem.indexOf(u8, app.toasts.items[app.toasts.items.len - 1].text, "highlighting off for small.rs") != null);
+    // On again: the next frame parses and the chip goes.
+    try command.run(&app, .{ .static = .@"editor.highlight_toggle_file" });
+    try testing.expect(!e.syntax.off and !e.syntax.showsChip());
+    try app.render();
+    try testing.expectEqual(spans, try e.syntax.countIn(ed, 0, ed.len()));
 }

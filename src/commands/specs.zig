@@ -987,6 +987,11 @@ pub const specs = [_]Spec{
     .{ .id = "layout.merge_to_tabs", .title = "Layout: merge splits into tabs (splits→tabs)", .group = "view" },
     .{ .id = "layout.spread_to_splits", .title = "Layout: spread tabs into splits (tabs→splits)", .group = "view" },
     .{ .id = "editor.input_mode_menu", .title = "Open mode menu (vim / standard)", .group = "editor" },
+    // The `editor.highlight_max_bytes` override, per buffer: turn this
+    // file's highlighting on after the limit skipped it, or switch any
+    // buffer either way.
+    .{ .id = "editor.highlight_this_file", .title = "Highlighting: turn it on for this file (over `editor.highlight_max_bytes`)", .group = "editor" },
+    .{ .id = "editor.highlight_toggle_file", .title = "Highlighting: toggle it for this file only", .group = "editor" },
     .{ .id = "view.workspace_menu", .title = "Open workspace menu", .group = "view" },
     .{ .id = "git.branch_menu", .title = "Open branch menu", .group = "git" },
     // Zig-only: the rail / status-pane row menu names these (D5: a menu
@@ -1154,7 +1159,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1075 specs, unique ids" {
+test "1077 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1176,7 +1181,8 @@ test "1075 specs, unique ids" {
     // + the SESSIONS history chip's two verbs (sessions-card)
     // + six SEARCH section commands (refresh / open / open_split /
     // copy_path / copy_line / open_pane)
-    // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice).
-    try std.testing.expectEqual(@as(usize, 1076), specs.len);
+    // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
+    // + the two per-buffer highlight overrides (highlight-limit).
+    try std.testing.expectEqual(@as(usize, 1078), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
