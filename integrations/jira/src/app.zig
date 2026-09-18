@@ -1782,11 +1782,10 @@ pub const App = struct {
             };
             if (outcome == .written) wrote += 1;
         }
-        // The tab picks the change up without a reload: the JQL is the
-        // user's own text with the new values interpolated.
-        // Everything the editor knows is read out BEFORE it is closed:
-        // `closeVars` frees it, and the lines below used to reach back
-        // into it afterwards.
+        // The tab picks the change up without a reload: its JQL is the
+        // user's own text with the new values interpolated. Everything
+        // the editor knows is read out BEFORE `closeVars` frees it —
+        // the lines below used to reach back into it afterwards.
         const tab_idx = e.tab_idx;
         const t = &a.tabs[tab_idx];
         t.vars = try dupeVars(a.keys.allocator(), try e.asVars(arena));

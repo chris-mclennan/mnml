@@ -198,9 +198,11 @@ questions a working day asks:
 An editable tab wears its vars as header chips (`project: ENG`,
 `versions: 1.2.0 +1`). **`E`**, or a click on any of them, opens a small
 editor: `↑↓` move, `⏎` types into the focused value, `a` adds one, `d`
-removes one, `s` (or `Ctrl+S`) saves, `Esc` cancels. A save splices each var back
-into `config.zon` one span at a time, so every comment and every key the
-edit did not name is left exactly where it was — and the tab re-runs its
+removes one, `s` (or `Ctrl+S`) saves, `Esc` cancels. `s` as well as
+`Ctrl+S` because `Ctrl+S` is the host's own save chord and a mounted
+pane cannot count on seeing it. A save splices each var back into
+`config.zon` one span at a time, so every comment and every key the edit
+did not name is left exactly where it was — and the tab re-runs its
 query without a reload. The JQL itself is not editable here on purpose:
 a release list changes every few weeks, the query around it almost
 never.
@@ -210,8 +212,9 @@ never.
 The Work chip's manifest declares **two** segments, because they are
 two numbers about two different things.
 
-**`jira_work.assigned`** — `󰌃 N`: open items assigned to you, the
-Assigned tab's count. A click runs `jira_work.open`.
+**`jira_work.assigned`** — `󰌃 N`: open items assigned to you — the
+count of the `work_open` (or `work_assigned`) tab. A click runs
+`jira_work.open`.
 
 **`jira_work.qa_actionable`** — ` K`: the tab you have set up as **QA
 Actionable Now** — the first `.kind = .jql_editable` tab, whatever it is
