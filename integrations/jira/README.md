@@ -83,7 +83,7 @@ example.
 | — | `.token_file = "~/…"` | port only: a file holding the token |
 | — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (this is the default) |
 | — | `.api = .v3` | port only: `.v2` for a site that answers `410` |
-| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the limiter's numbers (the reference's) |
+| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all |
 | — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`BITBUCKET_ACCESS_TOKEN`) |
 | — | `.open_command = "open"` | port only: the browser command |
 
@@ -179,12 +179,28 @@ toggles its selection.
 
 ## The statusline
 
-The Work chip's manifest declares a statusline segment
-(`jira_work.assigned`: `󰌃`, `#1B5DCF`, a click runs `jira_work.open`).
-The pane replaces it live with `󰌃 N` — the count of the Assigned tab —
-over mnml's Tier-2 IPC after every refresh; `mnml-jira --values
---workspace <ws>` does the same from outside the pane and prints
-`{"assigned_open": N}` for a poller.
+The Work chip's manifest declares **two** segments, because they are
+two numbers about two different things.
+
+**`jira_work.assigned`** — `󰌃 N`: open items assigned to you, the
+Assigned tab's count. A click runs `jira_work.open`.
+
+**`jira_work.qa_actionable`** — ` K`: the tab you have set up as **QA
+Actionable Now**. There is no tab *kind* for it yet (that is its own
+track), so the tab is found by name — "QA Actionable Now",
+"qa_actionable", "QA actionable" all count — and its own `jql` is what
+runs. With no such tab the key is `null` and the chip is not published
+at all, which is not the same as a zero.
+
+Each chip's hover is its breakdown by status —
+`Jira · 7 open items assigned to me — 3 In Progress · 2 In Review ·
+2 To Do` — so a number that moved says what moved.
+
+The pane publishes the first over mnml's Tier-2 IPC after every
+refresh. `mnml-jira --values --workspace <ws>` publishes both from
+outside the pane and prints `{"assigned_open":N,"qa_actionable":K}` for
+a poller; mnml's own poller runs exactly that line on the manifest's
+interval, so the chips move with no pane open.
 
 ## The dispatch queue
 

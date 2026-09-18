@@ -26,6 +26,7 @@ const cfg = @import("config.zig");
 const model = @import("model.zig");
 const tabs = @import("tabs.zig");
 const dates = @import("dates.zig");
+const review_cache = @import("review_cache.zig");
 const j = @import("json.zig");
 
 /// What the workspace-wide fetches need to know, copied onto the job.
@@ -64,7 +65,18 @@ pub const Job = struct {
     }
 };
 
-pub const Whoami = struct { account_id: []const u8 = "", display_name: []const u8 = "", error_text: []const u8 = "" };
+pub const Whoami = struct {
+    account_id: []const u8 = "",
+    display_name: []const u8 = "",
+    error_text: []const u8 = "",
+    /// Which question was asked. An access token has no `/2.0/user` to
+    /// answer, so the probe is `/2.0/workspaces/<slug>` instead and no
+    /// `account_id` comes back — the `mine` / `reviewing` tabs then
+    /// need `account_id` set in `config.zon`.
+    via: Via = .account,
+
+    pub const Via = enum { account, workspace };
+};
 
 pub const RefreshResult = struct {
     tab: usize,
@@ -87,7 +99,21 @@ pub const PrPipelinesResult = struct { tab: usize, slug: []const u8, id: i64, pi
 
 pub const ApproveResult = struct { key: PrKey, withdrew: bool, error_text: []const u8 = "" };
 
-pub const ValuesResult = struct { open_mine: usize = 0, unapproved_mine: usize = 0, approved_mine: usize = 0, error_text: []const u8 = "" };
+pub const ValuesResult = struct {
+    open_mine: usize = 0,
+    unapproved_mine: usize = 0,
+    approved_mine: usize = 0,
+    /// Review threads across those pull requests that are still waiting
+    /// on someone — not resolved and not replied to. Null when the
+    /// count was not asked for (`review_cache` absent) or when every
+    /// comments request for it failed, which is not the same as zero.
+    unresolved_comments: ?usize = null,
+    /// How the count was paid for: answered off the cache, or a
+    /// request. `--values` says so, so the cadence can be judged.
+    comment_hits: u32 = 0,
+    comment_requests: u32 = 0,
+    error_text: []const u8 = "",
+};
 
 pub const Result = struct {
     arena: std.heap.ArenaAllocator,
@@ -133,6 +159,14 @@ pub const Worker = struct {
     me_display_name: []u8 = &.{},
     /// A configured `account_id` wins over whoami.
     configured_account_id: []const u8 = "",
+    /// The default workspace slug. Only the access-token whoami stand-in
+    /// reads it — `/2.0/workspaces/<slug>` is what that token can answer.
+    workspace: []const u8 = "",
+    /// Hands `--values` the second figure: review threads still waiting
+    /// on someone. Null leaves it uncounted — the pane does not want a
+    /// comments request per pull request on every refresh, only the
+    /// statusline run does. The caller owns it.
+    review_cache: ?*review_cache.Cache = null,
     scope_gen: ?u32 = null,
     scope_arena: ?std.heap.ArenaAllocator = null,
     scope_repos: []const []const u8 = &.{},
@@ -140,8 +174,8 @@ pub const Worker = struct {
     /// failure — the result copies it.
     failure_buf: [512]u8 = undefined,
 
-    pub fn init(gpa: Allocator, io: Io, client: *api.Client, progress: *Progress, configured_account_id: []const u8) Worker {
-        return .{ .gpa = gpa, .io = io, .client = client, .progress = progress, .configured_account_id = configured_account_id };
+    pub fn init(gpa: Allocator, io: Io, client: *api.Client, progress: *Progress, configured_account_id: []const u8, workspace: []const u8) Worker {
+        return .{ .gpa = gpa, .io = io, .client = client, .progress = progress, .configured_account_id = configured_account_id, .workspace = workspace };
     }
 
     pub fn deinit(w: *Worker) void {
@@ -176,6 +210,11 @@ pub const Worker = struct {
     // ─── the account ─────────────────────────────────────────────────
 
     fn whoami(w: *Worker, a: Allocator) Allocator.Error!Whoami {
+        // An access token belongs to a repository, a project or a
+        // workspace, so `/2.0/user` 401s for it however good it is.
+        // Ask the workspace instead: it proves the token reaches
+        // Bitbucket, which is all `--check` needs to say.
+        if (w.client.read_kind == .access_token) return w.workspaceProbe(a);
         var reply = try w.client.whoami(w.gpa);
         defer reply.deinit(w.gpa);
         switch (reply) {
@@ -192,6 +231,30 @@ pub const Worker = struct {
             .failed => |f| {
                 var buf: [256]u8 = undefined;
                 return .{ .error_text = try std.fmt.allocPrint(a, "whoami failed: {s}", .{f.describe(&buf)}) };
+            },
+        }
+    }
+
+    /// The access-token stand-in for `whoami`: `GET /2.0/workspaces/
+    /// <slug>`. It answers with the workspace, never an account, so
+    /// `account_id` stays empty on purpose.
+    fn workspaceProbe(w: *Worker, a: Allocator) Allocator.Error!Whoami {
+        if (w.workspace.len == 0) {
+            return .{ .via = .workspace, .error_text = "this is an access token, which has no account — set `workspace` in config.zon so the token can be checked against it" };
+        }
+        var reply = try w.client.workspaceProbe(w.gpa, w.workspace);
+        defer reply.deinit(w.gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return .{ .via = .workspace, .error_text = "the workspace probe's reply is not JSON" };
+                const name = j.str(v, "name");
+                const slug = j.str(v, "slug");
+                const shown = if (name.len > 0) name else if (slug.len > 0) slug else w.workspace;
+                return .{ .via = .workspace, .display_name = try a.dupe(u8, shown) };
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                return .{ .via = .workspace, .error_text = try std.fmt.allocPrint(a, "workspace {s} failed: {s}", .{ w.workspace, f.describe(&buf) }) };
             },
         }
     }
@@ -580,7 +643,12 @@ pub const Worker = struct {
             if (me.error_text.len > 0) return .{ .error_text = me.error_text };
         }
         const me = w.accountId();
-        if (me.len == 0) return .{ .error_text = "/2.0/user returned no account_id" };
+        if (me.len == 0) return .{
+            .error_text = if (w.client.read_kind == .access_token)
+                "an access token has no account: set `account_id` in config.zon so --values knows whose pull requests to count"
+            else
+                "/2.0/user returned no account_id",
+        };
         var q: Io.Writer.Allocating = .init(a);
         q.writer.print("state = \"OPEN\" AND author.account_id = \"{s}\"", .{me}) catch return error.OutOfMemory;
         if (stale_after_days > 0) {
@@ -607,6 +675,10 @@ pub const Worker = struct {
         var open: usize = 0;
         var approved: usize = 0;
         var failures: usize = 0;
+        // The pull requests kept, so the comment pass can walk them
+        // without a second listing.
+        const Mine = struct { repo: []const u8, id: i64, updated_on: []const u8 };
+        var mine: std.ArrayList(Mine) = .empty;
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
@@ -623,13 +695,48 @@ pub const Worker = struct {
                         if (excluded) continue;
                         open += 1;
                         approved += @intFromBool(pr.approvalCount() > 0);
+                        try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on });
                     }
                 },
                 .failed => failures += 1,
             }
         }
         if (failures > 0 and failures == repos.len) return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
-        return .{ .open_mine = open, .unapproved_mine = open - approved, .approved_mine = approved };
+        var out: ValuesResult = .{ .open_mine = open, .unapproved_mine = open - approved, .approved_mine = approved };
+        // The second figure, when a cache was handed over to pay for it.
+        if (w.review_cache) |rc| {
+            var unresolved: usize = 0;
+            var counted: usize = 0;
+            var live: std.ArrayList([]const u8) = .empty;
+            for (mine.items) |m| {
+                const k = try rc.key(scope.workspace, m.repo, m.id);
+                try live.append(a, k);
+                if (rc.get(k, m.updated_on)) |n| {
+                    unresolved += n;
+                    counted += 1;
+                    continue;
+                }
+                var reply = try w.client.prComments(w.gpa, scope.workspace, m.repo, m.id);
+                defer reply.deinit(w.gpa);
+                switch (reply) {
+                    .ok => |body| {
+                        const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
+                        const n = model.unresolvedThreads(try model.parseComments(a, v));
+                        unresolved += n;
+                        counted += 1;
+                        try rc.put(k, m.updated_on, n);
+                    },
+                    // One repo's comments failing is not a reason to
+                    // drop the whole figure; every one failing is.
+                    .failed => {},
+                }
+            }
+            rc.save(w.io, live.items);
+            out.comment_hits = rc.hits;
+            out.comment_requests = rc.misses;
+            if (mine.items.len == 0 or counted > 0) out.unresolved_comments = unresolved;
+        }
+        return out;
     }
 };
 
@@ -719,7 +826,7 @@ const Rig = struct {
         const base = try r.srv.baseUrl(t.allocator);
         defer t.allocator.free(base);
         r.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
-        r.worker = Worker.init(t.allocator, t.io, &r.client, &r.progress, "");
+        r.worker = Worker.init(t.allocator, t.io, &r.client, &r.progress, "", "acme");
         return r;
     }
 
@@ -901,4 +1008,45 @@ test "the detail, the merged PR's pipeline, approve and withdraw, and the status
     var none = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 0, .excluded_branch_patterns = &.{"^chris/"} } });
     defer none.deinit();
     try t.expectEqual(@as(usize, 0), none.payload.values.open_mine);
+}
+
+test "the review figure: threads waiting on someone, counted once and then answered off the cache" {
+    const r = try Rig.init();
+    defer r.deinit();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const config_path = try std.fs.path.join(t.allocator, &.{ dir, "config.zon" });
+    defer t.allocator.free(config_path);
+
+    // Without a cache the figure is not asked for at all: the pane does
+    // not want a comments request per pull request on every refresh.
+    var plain = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 90, .excluded_branch_patterns = &.{} } });
+    defer plain.deinit();
+    try t.expect(plain.payload.values.unresolved_comments == null);
+
+    var rc = try review_cache.Cache.open(t.allocator, t.io, config_path);
+    defer rc.deinit();
+    r.worker.review_cache = &rc;
+    // My two open PRs: #1234 has three comments — one unreplied
+    // (Dana's), one that Chris answered, and that answer — so one
+    // thread is waiting. #820 has none.
+    var first = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 90, .excluded_branch_patterns = &.{} } });
+    defer first.deinit();
+    try t.expectEqual(@as(?usize, 1), first.payload.values.unresolved_comments);
+    try t.expectEqual(@as(u32, 0), first.payload.values.comment_hits);
+    try t.expectEqual(@as(u32, 2), first.payload.values.comment_requests);
+    const sent_after_first = r.client.sent;
+
+    // Nothing moved, so the second run pays for no comments request at
+    // all — the whole reason the cache exists. It still sends the PR
+    // listings.
+    var second = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 90, .excluded_branch_patterns = &.{} } });
+    defer second.deinit();
+    try t.expectEqual(@as(?usize, 1), second.payload.values.unresolved_comments);
+    try t.expectEqual(@as(u32, 2), second.payload.values.comment_hits);
+    try t.expectEqual(@as(u32, 2), second.payload.values.comment_requests);
+    // Two repo listings, and not one comments request.
+    try t.expectEqual(@as(u32, 2), r.client.sent - sent_after_first);
 }

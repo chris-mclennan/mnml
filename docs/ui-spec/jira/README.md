@@ -142,7 +142,8 @@ mnml to open a terminal pane: `{"cmd":"term","args":["sh","-c","claude
 KEY (Type) — summary\nurl: …\nMNML_EOF"]}` appended to
 `<dispatch_workspace>/.mnml/ipc/command` (each channel only when its
 directory exists; the status line reports `implement → queue + pane`, or
-which failed, or `no dispatch channels available`). The slash command is
+which failed, or `nothing to dispatch to …`, naming both channels it
+looked for). The slash command is
 `/agents:developer` for implement / fix / triage, `/agents:reviewer
 <pr_url or key>` for review, `/agents:tester KEY mode=ticket` for test.
 Not captured live — it writes into the author's agent workspace.

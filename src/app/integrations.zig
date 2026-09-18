@@ -67,6 +67,7 @@ const list_panel = @import("../ui/list_panel.zig");
 const view = @import("../ui/integrations_view.zig");
 const config = @import("../config/root.zig");
 const launchers = @import("launchers.zig");
+const integration_poll = @import("integration_poll.zig");
 
 pub const settings_file = "integration-settings.zon";
 pub const Tab = view.Tab;
@@ -508,6 +509,7 @@ pub const IntegrationsPane = struct {
 
 pub const table = .{
     .@"integrations.refresh" = &refreshCmd,
+    .@"integrations.poll_now" = &integration_poll.pollNow,
     .@"integrations.refresh_binary_cache" = &refreshCmd,
     .@"integrations.dismiss_toml_notice" = &dismissTomlNotice,
     .@"integrations.show_installed" = &showInstalled,
@@ -582,6 +584,9 @@ pub fn refresh(app: *App) Allocator.Error!void {
     for (st.list) |*inst| try registerCommands(app, arena, inst);
     try app.keymap.rebuildPrefixes();
     try setSegments(app);
+    // The schedule follows the manifests: an install, an uninstall or a
+    // disable changes what the poller runs without a restart.
+    try integration_poll.restart(app);
     for (st.problems) |p| try app.toastLevel(.warn, "integrations: {s}", .{p});
     try noticeToml(app);
     if (st.panel.cursor >= st.list.len) st.panel.cursor = st.list.len -| 1;
@@ -790,6 +795,7 @@ fn setSegments(app: *App) Allocator.Error!void {
                 .color = seg.color,
                 .click_command = seg.click_command,
                 .priority = seg.priority,
+                .tooltip = seg.tooltip,
             });
             try st.segment_ids.append(gpa, id);
         }

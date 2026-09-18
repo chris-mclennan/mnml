@@ -92,11 +92,38 @@ pub const Comment = struct {
     parent_id: i64 = 0,
     inline_path: []const u8 = "",
     inline_line: i64 = 0,
+    /// Someone marked the thread resolved (Bitbucket's `resolution`
+    /// object is present).
+    resolved: bool = false,
+    /// A deleted comment keeps its slot in the page with no content.
+    deleted: bool = false,
 
     pub fn createdDate(c: Comment) []const u8 {
         return dates.date(c.created_on);
     }
 };
+
+/// How many review threads on one pull request are still waiting on
+/// someone: a top-level comment that nobody has marked resolved and
+/// that nobody — the author included — has replied to.
+///
+/// A reply is an answer whoever wrote it: "I disagree" closes the loop
+/// as surely as a fix does, and Bitbucket's resolve button is used
+/// unevenly across teams, so counting only `resolution` would call
+/// every answered thread unanswered.
+pub fn unresolvedThreads(comments: []const Comment) usize {
+    var n: usize = 0;
+    for (comments) |c| {
+        if (c.deleted or c.resolved or c.parent_id != 0) continue;
+        var replied = false;
+        for (comments) |other| {
+            if (other.deleted or other.parent_id == 0) continue;
+            if (other.parent_id == c.id) replied = true;
+        }
+        if (!replied) n += 1;
+    }
+    return n;
+}
 
 pub const Pipeline = struct {
     uuid: []const u8 = "",
@@ -279,6 +306,8 @@ pub fn parseComments(arena: Allocator, page: j.Value) Allocator.Error![]const Co
             .parent_id = if (j.path(v, "parent.id")) |p| (j.asInt(p) orelse 0) else 0,
             .inline_path = j.pathStr(v, "inline.path"),
             .inline_line = if (j.path(v, "inline.to")) |p| (j.asInt(p) orelse 0) else 0,
+            .resolved = j.path(v, "resolution") != null,
+            .deleted = j.boolean(v, "deleted", false),
         });
     }
     return out.toOwnedSlice(arena);
@@ -555,4 +584,64 @@ test "recency and the chip's branch patterns" {
     try t.expect(!branchMatches("^release/", "feat/release/x"));
     try t.expect(branchMatches("hotfix", "my/hotfix/x"));
     try t.expect(!branchMatches("", "anything"));
+}
+
+test "a thread is waiting on someone only when nobody resolved it and nobody replied" {
+    const threads = [_]Comment{
+        // Nobody has answered this one: it is waiting.
+        .{ .id = 1, .author = "Dana R", .body = "this has bitten us twice" },
+        // Answered — by anyone. A reply closes the loop whoever wrote
+        // it: "I disagree" is an answer as much as a fix is.
+        .{ .id = 2, .author = "Sam K", .body = "escape the value here" },
+        .{ .id = 3, .author = "Chris M", .body = "pushed an escape", .parent_id = 2 },
+        // Marked resolved, never replied to: not waiting.
+        .{ .id = 4, .author = "Ada L", .body = "nit: name", .resolved = true },
+        // Deleted: gone, not waiting.
+        .{ .id = 5, .author = "Ada L", .body = "", .deleted = true },
+    };
+    try t.expectEqual(@as(usize, 1), unresolvedThreads(&threads));
+
+    // A reply is not itself a thread, so a page of nothing but replies
+    // counts nothing.
+    try t.expectEqual(@as(usize, 0), unresolvedThreads(&.{
+        .{ .id = 10, .parent_id = 9 },
+        .{ .id = 11, .parent_id = 9 },
+    }));
+    // A deleted REPLY does not answer anything — the thread is waiting
+    // again.
+    try t.expectEqual(@as(usize, 1), unresolvedThreads(&.{
+        .{ .id = 20, .body = "still?" },
+        .{ .id = 21, .parent_id = 20, .deleted = true },
+    }));
+    try t.expectEqual(@as(usize, 0), unresolvedThreads(&.{}));
+    // An id of zero is not an id. Without the guard every top-level
+    // comment (parent 0) would look like a reply to it and the count
+    // would silently come out low.
+    try t.expectEqual(@as(usize, 2), unresolvedThreads(&.{
+        .{ .id = 0, .body = "malformed" },
+        .{ .id = 30, .body = "waiting" },
+    }));
+}
+
+test "the two keys behind that rule are read off Bitbucket's own shape" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const page =
+        \\{"pagelen":50,"size":3,"values":[
+        \\{"id":1,"user":{"display_name":"Dana R"},"created_on":"2026-09-01T10:00:00+00:00","content":{"raw":"open"}},
+        \\{"id":2,"user":{"display_name":"Sam K"},"created_on":"2026-09-01T11:00:00+00:00","content":{"raw":"done"},"resolution":{"type":"pullrequest_comment_resolution","user":{"display_name":"Sam K"}}},
+        \\{"id":3,"user":{"display_name":"Ada L"},"created_on":"2026-09-01T12:00:00+00:00","content":{"raw":""},"deleted":true}
+        \\]}
+    ;
+    const v = try std.json.parseFromSliceLeaky(j.Value, a, page, .{});
+    const cs = try parseComments(a, v);
+    try t.expectEqual(@as(usize, 3), cs.len);
+    // An open thread has no `resolution` key at all, which is what
+    // "present means resolved" rests on.
+    try t.expect(!cs[0].resolved);
+    try t.expect(!cs[0].deleted);
+    try t.expect(cs[1].resolved);
+    try t.expect(cs[2].deleted);
+    try t.expectEqual(@as(usize, 1), unresolvedThreads(cs));
 }

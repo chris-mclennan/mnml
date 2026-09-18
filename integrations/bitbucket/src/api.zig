@@ -22,6 +22,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const cfg = @import("config.zig");
+const auth = @import("auth.zig");
 const ratelimit = @import("ratelimit.zig");
 const cache_mod = @import("cache.zig");
 
@@ -122,6 +123,9 @@ pub const Client = struct {
     base_url: []u8,
     read_header: []u8,
     write_header: []u8,
+    /// What the read token is, so the caller can ask the right
+    /// question of it: an access token has no `/2.0/user`.
+    read_kind: auth.Kind = .account,
     rate: cfg.Rate,
     limiter: ?*ratelimit.Limiter = null,
     /// The prefetch cache (`cache.zig`). In `.prime` it answers the
@@ -143,14 +147,19 @@ pub const Client = struct {
         write_token: []const u8,
         rate: cfg.Rate,
     ) Allocator.Error!Client {
-        const auth = @import("auth.zig");
         const trimmed = std.mem.trimEnd(u8, if (base_url.len > 0) base_url else default_base_url, "/");
+        const write = if (write_token.len > 0) write_token else read_token;
         return .{
             .gpa = gpa,
             .io = io,
             .base_url = try gpa.dupe(u8, trimmed),
-            .read_header = try auth.basicHeader(gpa, email, read_token),
-            .write_header = try auth.basicHeader(gpa, email, if (write_token.len > 0) write_token else read_token),
+            // The scheme comes off each token's own kind: an account
+            // credential goes out Basic, an `ATCTT…` access token
+            // Bearer. Either sent the other way is a 401 that says
+            // nothing about whether the token is good.
+            .read_header = try auth.authHeader(gpa, email, read_token),
+            .write_header = try auth.authHeader(gpa, email, write),
+            .read_kind = auth.kindOf(read_token),
             .rate = rate,
         };
     }
@@ -282,9 +291,20 @@ pub const Client = struct {
 
     // ─── the endpoints ───────────────────────────────────────────────
 
-    /// `GET /user` — the account the token belongs to.
+    /// `GET /user` — the account the token belongs to. An access token
+    /// belongs to no account and 401s here; ask `workspaceProbe`
+    /// instead, which `read_kind` says when.
     pub fn whoami(self: *Client, gpa: Allocator) Allocator.Error!Reply {
         return self.send(gpa, .GET, "/user", null, .read);
+    }
+
+    /// `GET /workspaces/{slug}` — the cheapest thing an access token
+    /// can answer, so `--check` still has something to prove the token
+    /// works with.
+    pub fn workspaceProbe(self: *Client, gpa: Allocator, workspace: []const u8) Allocator.Error!Reply {
+        const path = try std.fmt.allocPrint(gpa, "/workspaces/{s}", .{workspace});
+        defer gpa.free(path);
+        return self.send(gpa, .GET, path, null, .read);
     }
 
     /// `GET /repositories/{ws}` — every repo with its `updated_on`,
@@ -444,6 +464,59 @@ test "against the fake server: whoami, the lists, approve and unapprove, a 404 a
     defer missing.deinit(t.allocator);
     var buf: [64]u8 = undefined;
     try t.expectEqualStrings("no such repo", missing.failed.shortLabel(&buf));
+}
+
+test "against the fake server: an access token goes out as a Bearer and an account credential as Basic — the user's 401 reproduced" {
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+
+    // The bug: an `ATCTT…` access token sent the account way. The
+    // server answers exactly as Bitbucket did for the user — 401, with
+    // nothing to say the token itself is fine.
+    {
+        var wrong = try Client.init(t.allocator, t.io, base, "me@x.com", "", "", .{});
+        defer wrong.deinit();
+        t.allocator.free(wrong.read_header);
+        wrong.read_header = try auth.basicHeader(t.allocator, "me@x.com", "ATCTTaccess-token");
+        var r = try wrong.whoami(t.allocator);
+        defer r.deinit(t.allocator);
+        try t.expect(r == .failed);
+        try t.expectEqual(@as(u16, 401), r.failed.status.?);
+        try t.expectEqual(server.Credential.basic_with_access_token, srv.snapshot().last_credential);
+    }
+
+    // The fix: the same token, scheme chosen off its own kind.
+    {
+        var client = try Client.init(t.allocator, t.io, base, "me@x.com", "ATCTTaccess-token", "", .{});
+        defer client.deinit();
+        try t.expectEqual(auth.Kind.access_token, client.read_kind);
+        try t.expect(std.mem.startsWith(u8, client.read_header, "Bearer "));
+        // `/2.0/user` still 401s — an access token has no account —
+        // so the workspace is what it can be checked against.
+        var who = try client.whoami(t.allocator);
+        defer who.deinit(t.allocator);
+        try t.expect(who == .failed);
+        var ws = try client.workspaceProbe(t.allocator, "acme");
+        defer ws.deinit(t.allocator);
+        try t.expect(ws == .ok);
+        try t.expect(std.mem.indexOf(u8, ws.ok.bytes, "\"slug\":\"acme\"") != null);
+        try t.expectEqual(server.Credential.bearer_access_token, srv.snapshot().last_credential);
+    }
+
+    // And an account credential keeps going out Basic, to `/2.0/user`.
+    {
+        var client = try Client.init(t.allocator, t.io, base, "me@x.com", "ATATTaccount-token", "", .{});
+        defer client.deinit();
+        try t.expectEqual(auth.Kind.account, client.read_kind);
+        try t.expect(std.mem.startsWith(u8, client.read_header, "Basic "));
+        var who = try client.whoami(t.allocator);
+        defer who.deinit(t.allocator);
+        try t.expect(who == .ok);
+        try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-chris") != null);
+        try t.expectEqual(server.Credential.basic_account, srv.snapshot().last_credential);
+    }
 }
 
 test "a 429 is retried after Retry-After and penalises the bucket; the last attempt's failure is returned" {

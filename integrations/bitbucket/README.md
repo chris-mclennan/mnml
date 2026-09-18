@@ -80,6 +80,27 @@ comments do not survive, as in the reference.
 One variable to export, one file otherwise, and the same token for the
 reads and for the one write the pane has (`a`, approve).
 
+Bitbucket takes two kinds of token and they are **not** interchangeable
+on the wire, which is what the one exception to that rule is about:
+
+| token | header | `/2.0/user` |
+|---|---|---|
+| an account credential — an Atlassian API token (`ATATT…`) or an app password | `Basic base64(email:token)` | answers, with your account |
+| an access token (`ATCTT…`) — repository, project or workspace scoped | `Bearer <token>` | 401s: it belongs to no person |
+
+Send either one the other way round and Bitbucket answers **401**, with
+nothing to say the token itself was fine. `mnml-bitbucket` reads the
+kind off the token and picks the scheme, and `--check` says which it
+used and why — you never choose.
+
+The exception: an access token has no account, so the `mine` /
+`reviewing` tabs, the chip and `--values` have nothing to filter by.
+When an account credential is available too, **reads take it** and
+`BITBUCKET_ACCESS_TOKEN` stays the approve token. With only an access
+token exported, reads use it and `--check` reports the workspace it
+reached instead of a person — set `account_id` in `config.zon` for the
+`mine` tabs.
+
 The reference's three variables still resolve, between those two, so a
 machine that already exports one keeps working — first hit wins:
 
@@ -103,8 +124,9 @@ mnml-bitbucket --diag       # the same as a tree, with the rate bucket
 ```
 
 ```
-token source: BITBUCKET_ACCESS_TOKEN (loaded, 25 chars, not shown)
-approve token: BITBUCKET_ACCESS_TOKEN (25 chars, not shown)
+token source: BITBUCKET_PERSONAL_TOKEN (loaded, 25 chars, not shown)
+auth scheme: Basic base64(email:token) — an account credential (an Atlassian API token or an app password) authenticates as a person
+approve token: BITBUCKET_ACCESS_TOKEN (192 chars, not shown) · Bearer <token>
 ```
 
 ## Keys
@@ -132,17 +154,39 @@ it paints — a click on a row selects that row (and toggles a repo
 header or a merged PR, as the reference does), a right-click opens the
 row's menu, the wheel moves the cursor or scrolls the detail under it.
 
-## The statusline chip
+## The statusline chips
 
-The PRs manifest declares the segment `bitbucket_prs.prs_mine`
-(`󰂨 …` at rest, click → the mine-only tab). The pane recounts it every
-five minutes and publishes `󰂨 N(K)` — N open PRs you authored in the
-last `chip_stale_after_days`, off the excluded branches, K still
-without an approval — over the Tier-2 file channel, with the count on
-the INTEGRATIONS badge; `󰂨 !` in red on a failure. `bitbucket_prs.refresh`
-does the same with no pane open (`--refresh --workspace {{workspace}}`;
-a `term` child does not inherit `MNML_IPC_DIR`, so the workspace names
-the channel). `--values` prints the reference's JSON for a poller.
+Two, because they are two numbers about two different things.
+
+**`bitbucket_prs.prs_mine`** — `󰂨 N(K)`: N open pull requests you
+authored in the last `chip_stale_after_days`, off the excluded
+branches, K of them still without an approval. `󰂨 …` at rest, `󰂨 !` in
+red on a failure. A click opens the mine-only tab.
+
+**`bitbucket_prs.reviews_mine`** — ` M`: review threads across those
+pull requests that are still **waiting on someone** — neither marked
+resolved nor replied to. A reply is an answer whoever wrote it ("I
+disagree" closes a loop as surely as a fix does) and the resolve button
+is used unevenly across teams, so counting only `resolution` would call
+every answered thread unanswered. Blank at rest: it is published only
+once the count has been taken, because a zero before then would read as
+"nothing outstanding".
+
+Each chip's hover says what its number counts, and the review one says
+what the count cost — how many pull requests were answered off the
+cache. See **Prefetch** below for why that matters: the review figure is
+one `…/comments` request per pull request whose `updated_on` has
+changed since the last run, and none for the rest, which is what keeps
+a five-minute poll inside the bucket.
+
+The pane recounts and publishes every five minutes over the Tier-2 file
+channel, with the open count on the INTEGRATIONS badge.
+`bitbucket_prs.refresh` and `--values --workspace W` do the same with no
+pane open (a `term` child does not inherit `MNML_IPC_DIR`, so the
+workspace names the channel), and mnml's own poller runs the latter on
+the manifest's interval. `--values` also prints the JSON:
+`{"open_mine":N,"unapproved_mine":K,"approved_mine":A,"unresolved_comments":M}`,
+where `unresolved_comments` is `null` when the count was not taken.
 
 ## Prefetch — and the contract a poller runs it under
 
@@ -157,9 +201,13 @@ nothing shown is more than one open stale. An entry older than an hour
 is ignored. `--prefetch` clears the directory before it starts, so a
 repo that left the config cannot keep answering.
 
-**The poller contract.** mnml-zig has no prefetch worker yet; scheduling
-this is its own track. Whatever runs it — a host poller, `launchd`,
-`cron`, a `systemd` timer — the contract is:
+**The poller contract.** mnml-zig's host poller runs a manifest's
+`values_sources` line — `mnml-bitbucket --values --workspace <ws>`,
+which is one request-shaped call, not this. `--prefetch` is the whole-
+pane warm and is off by that poller unless a source sets
+`.prefetch = true`, precisely because of the cadence below. Whatever
+runs it — mnml's poller with that flag, `launchd`, `cron`, a `systemd`
+timer — the contract is:
 
 ```sh
 mnml-bitbucket --prefetch          # MNML_DATA_ROOT / MNML_BITBUCKET_CONFIG as the pane sees them
@@ -184,6 +232,13 @@ mnml-bitbucket --prefetch          # MNML_DATA_ROOT / MNML_BITBUCKET_CONFIG as t
   waiting. Never run two passes at once.
 * **It is safe to run while a pane is open**: the limiter is
   cross-process, and the pane re-reads the cache only on its next open.
+  mnml's poller skips a source whose pane is open anyway — that pane is
+  already publishing the same segment.
+
+**Merge-ready**, for the follow-up track that will paint it: a pull
+request is merge-ready when it is approved by its required reviewers,
+every task on it is resolved, it has no conflicts, its latest pipeline
+is green, and every comment is either resolved or replied to.
 
 ## Rate limiting
 

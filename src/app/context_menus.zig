@@ -1069,6 +1069,26 @@ pub fn openWrapMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu(if (on) "Wrap · on" else "Wrap · off", rows, x, y);
 }
 
+/// A manifest's own statusline chip (Zig-only — the Rust host's
+/// dynamic segments took a left click and nothing else). The rows are
+/// what you can do to a chip that is showing a number: ask for a fresh
+/// one, run whatever the chip's click runs, or go to the integration
+/// that owns it.
+pub fn openIntegrationSegmentMenu(app: *App, slot: u32, x: u16, y: u16) Allocator.Error!void {
+    const segs = app.ipc_fx.segments.items;
+    if (slot >= segs.len) return;
+    const seg = segs[slot];
+    const polled = app.integration_poll.jobForSegment(seg.id) != null;
+    const a = app.frame.allocator();
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    if (polled) try rows.append(a, .{ .label = "Refresh now", .action = .{ .command = .@"integrations.poll_now" } });
+    if (seg.click_command != null) try rows.append(a, .{ .label = "Open", .action = .{ .dyn = slot }, .separator_before = polled });
+    try rows.append(a, .{ .label = "Integrations…", .action = .{ .command = .@"integrations.show_installed" }, .separator_before = rows.items.len > 0 });
+    const built = try items(app, rows.items);
+    errdefer app.gpa.free(built);
+    try app.openMenu(seg.id, built, x, y);
+}
+
 /// The test chip (Rust `statusline_test_chip`).
 pub fn openTestMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{

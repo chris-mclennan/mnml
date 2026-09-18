@@ -22,6 +22,9 @@ pub const Segment = struct {
     priority: u8 = 100,
     min_width: u16 = 4,
     max_width: u16 = 30,
+    /// The hover text: what this number counts, and its breakdown. A
+    /// chip that says `󰂨 4(2)` and nothing else makes the reader guess.
+    tooltip: ?[]const u8 = null,
 };
 
 pub const Error = error{ NoChannel, WriteFailed } || Allocator.Error;
@@ -98,6 +101,7 @@ pub const Ipc = struct {
             .priority = seg.priority,
             .min_width = seg.min_width,
             .max_width = seg.max_width,
+            .tooltip = seg.tooltip,
         });
     }
 

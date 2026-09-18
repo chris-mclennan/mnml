@@ -46,6 +46,7 @@ const lsp = @import("lsp.zig");
 const usage_pane = @import("usage_pane.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
+const integration_poll = @import("integration_poll.zig");
 const transfers = @import("transfers.zig");
 const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
@@ -255,11 +256,14 @@ fn isDark(c: Color) bool {
 /// A host segment: its named colour as the ground (the muted colour
 /// when it names none), dark or light text for contrast, its slot as
 /// the hit.
-fn dynSeg(ui: Ui, r: ipc.effects.Rendered) Seg {
+fn dynSeg(ui: Ui, r: ipc.effects.Rendered, busy: bool) Seg {
     const p = &ui.theme.palette;
     const bg = if (r.color) |c| integrations_view.paletteColor(ui.theme, c) else p.comment;
     const fg = if (isDark(bg)) p.fg else p.bg_darker;
-    return Seg.init(ui.fmt(" {s} ", .{r.text}), fg, bg).withHit(sl.seg_dyn_base + r.index);
+    // A poll in flight: the chip says it is being asked rather than
+    // sitting there stale with an answer from ten minutes ago.
+    const spin: []const u8 = if (!busy) "" else if (ui.ascii) integration_poll.busy_glyph_ascii ++ " " else integration_poll.busy_glyph ++ " ";
+    return Seg.init(ui.fmt(" {s}{s} ", .{ spin, r.text }), fg, bg).withHit(sl.seg_dyn_base + r.index);
 }
 
 /// The counts the branch chip shows, NvChad style: a file is added,
@@ -417,7 +421,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
 
     // ── host segments, left lane ──
     const budget = dynamicLaneBudget(area.w);
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| try push(&left, arena, dynSeg(ui, r));
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| try push(&left, arena, dynSeg(ui, r, app.integration_poll.segmentBusy(r.id)));
 
     // ── branch, PR ──
     if (try branchSeg(app, ui)) |s| try push(&left, arena, s);
@@ -476,7 +480,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
 
     // ── right lane ──
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| try push(&right, arena, dynSeg(ui, r));
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| try push(&right, arena, dynSeg(ui, r, app.integration_poll.segmentBusy(r.id)));
     for (try app.script().segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
     if (tests_pane.find(app)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
@@ -1014,6 +1018,36 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
     try testing.expect(b.colOf(38, sl.seg_dyn_base) != null);
     try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
+
+    // The publisher's own words are the hover: a count is worth little
+    // without what it counts.
+    // A manifest's segment is keyed `<integration>.<segment>`, which is
+    // how the poller knows whose chip it is.
+    _ = b.app.ipc_fx.clearSegment(testing.allocator, "jira");
+    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.assigned", .text = "TE-1", .side = .left, .priority = 5, .max_width = 8, .tooltip = "Jira · 7 open items — 4 In Progress" });
+    const hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expectEqualStrings("Jira · 7 open items — 4 In Progress", hover.title);
+
+    // A poll in flight puts `⟳` on that integration's chip, so a chip
+    // that has gone quiet is visibly being asked rather than stale.
+    const job = try testing.allocator.create(integration_poll.Job);
+    job.* = .{
+        .integration_id = try testing.allocator.dupe(u8, "jira_work"),
+        .source_id = try testing.allocator.dupe(u8, "v"),
+        .argv = &.{},
+        .cwd = try testing.allocator.dupe(u8, "."),
+        .env = std.process.Environ.Map.init(testing.allocator),
+        .interval_secs = 300,
+        .stagger_secs = 0,
+    };
+    try b.app.integration_poll.jobs.append(b.app.gpa, job);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph) == null);
+    job.shared.in_flight.store(true, .release);
+    b.app.needs_render = true;
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph ++ " TE-1") != null);
+    // …and the hover now offers the way to ask again by hand.
+    const busy_hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expect(std.mem.indexOf(u8, busy_hover.detail orelse "", "Refresh now") != null);
 }
 
 // ─── the narrow rule, at four widths ─────────────────────────────────────

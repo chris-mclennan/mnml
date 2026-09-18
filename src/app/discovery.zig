@@ -267,7 +267,21 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         },
         else => {},
     }
-    if (seg >= statusline.seg_dyn_base) return .{ .title = "Integration segment", .detail = "click runs the segment's command" };
+    if (seg >= statusline.seg_dyn_base) {
+        // The publisher's own words when it sent any — a count is worth
+        // little without what it counts.
+        const slot = seg - statusline.seg_dyn_base;
+        const segs = app.ipc_fx.segments.items;
+        if (slot < segs.len) {
+            const polled = app.integration_poll.jobForSegment(segs[slot].id) != null;
+            if (segs[slot].tooltip) |tip| return .{
+                .title = try arena.dupe(u8, tip),
+                .detail = if (polled) "click runs the segment's command · right-click: Refresh now" else "click runs the segment's command",
+            };
+            if (polled) return .{ .title = "Integration segment", .detail = "click runs the segment's command · right-click: Refresh now" };
+        }
+        return .{ .title = "Integration segment", .detail = "click runs the segment's command" };
+    }
     const id = statusline_app.SegId.of(seg) orelse return null;
     return switch (id) {
         .branch => blk: {

@@ -108,6 +108,10 @@ pub const StatuslineSegment = struct {
     color: ?[]const u8 = null,
     click_command: ?[]const u8 = null,
     priority: u8 = 100,
+    /// What the chip means, on hover, before anything has counted. A
+    /// run replaces it with the live breakdown by sending `tooltip` on
+    /// its `statusline-set-segment` line.
+    tooltip: ?[]const u8 = null,
 };
 
 /// A discrete-choice row in mnml's settings overlay, under the
@@ -134,8 +138,19 @@ pub const AuthField = struct {
 
 pub const ValuesSource = struct {
     id: []const u8,
+    /// What the host runs on the interval — `mnml-bitbucket --values`.
+    /// The host appends `--workspace <ws>` when the line does not carry
+    /// one; the integration publishes its own statusline segment over
+    /// that workspace's channel.
     command: []const u8,
+    /// How often, in seconds. The host clamps it to its own floor and
+    /// ceiling and to the user's `integrations.poll.min_interval_secs`.
     poll_interval_secs: u32 = 300,
+    /// Also warm the pane's cache after a successful values run
+    /// (`--prefetch`). Off by default: prefetch is one request per tab
+    /// per repo where `--values` is one, which is the wrong shape for
+    /// something that runs on a timer against a rate-limited API.
+    prefetch: bool = false,
 };
 
 pub const Manifest = struct {

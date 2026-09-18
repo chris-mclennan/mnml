@@ -21,7 +21,10 @@
         .{ .key = "email", .label = "Atlassian account email", .kind = .email, .required = true, .env_fallback = "JIRA_EMAIL", .help = "The email you use to sign in to Jira. Pairs with the API token for HTTP Basic auth." },
         .{ .key = "api_token", .label = "Jira API token", .kind = .secret, .required = true, .env_fallback = "JIRA_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Create at id.atlassian.com → Security → API tokens. This is different from your Atlassian account password." },
     },
-    .values_sources = .{
-        .{ .id = "jira_boards_values", .command = "mnml-jira --values --only boards", .poll_interval_secs = 300 },
-    },
+    // No values source, and no statusline segment for one to feed.
+    // `--values` answers one question — how many items are assigned to
+    // you — whatever `--only` says, so a source here would have the
+    // poller ask Jira the same thing three times every five minutes and
+    // republish the Work chip three times with it. One binary, three
+    // manifests, one poll.
 }

@@ -1,167 +1,144 @@
-//! A token bucket in front of every Jira call — the shape
-//! `crates/mnml-ratelimit` gives the Rust tracker, in one file.
+//! The shared token bucket every Jira call passes through —
+//! `mnml_sdk.ratelimit`, bound to this service.
 //!
-//! Atlassian Cloud answers `429` with a `Retry-After` and expects a
-//! client to pace itself; a refresh that fans out over a dozen tabs can
-//! trip that in a second. `Limiter` hands out permits at a steady rate
-//! with a burst allowance, so a burst of tab requests goes straight
-//! through and a long grind is spread out. A `429` (or a 5xx) folds in a
-//! server-directed pause on top: `penalise` pushes the next permit out
-//! by what the header asked for, doubling per consecutive failure up to
-//! `max_backoff_ms`, and `succeeded` clears it.
+//! It used to be a bucket per process, which is the wrong unit: three
+//! Jira panes and the statusline poller each held their own idea of the
+//! budget, so four processes pacing themselves perfectly still spent
+//! four times the allowance and Atlassian answered all four with a 429.
+//! The bucket now lives in one file — `<root>/jira-ratelimit.json`,
+//! flock'd, with the same six keys the Bitbucket bucket and the Rust
+//! crate use — so every pane, the poller and anything else on the
+//! machine take turns on ONE allowance, and one 429 parks all of them.
 //!
-//! The clock is a parameter (`nowMs`), so the tests run in no time at
-//! all and the caller decides whether a wait actually sleeps.
+//! The mechanism is the SDK module's; this file says which service it
+//! is, turns the user's `rate` block into the bucket's numbers, and
+//! keeps the two HTTP-shaped helpers that are about Jira's replies
+//! rather than about the bucket.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const shared = @import("mnml_sdk").ratelimit;
+const config = @import("config.zig");
 
-pub const Options = struct {
-    /// Permits per second, steady state. 0 disables the limiter.
-    rate_per_sec: f64 = 5.0,
-    /// How many permits may be spent at once after an idle spell.
-    burst: u32 = 5,
-    /// The ceiling on the server-directed pause.
-    max_backoff_ms: u64 = 60_000,
-    /// The pause a `429` with no `Retry-After` gets.
-    default_retry_after_ms: u64 = 1_000,
-};
+pub const service = "jira";
 
-pub const Limiter = struct {
-    opts: Options,
-    /// Permits in the bucket, as a float so a fractional refill counts.
-    tokens: f64,
-    /// When the bucket was last refilled.
-    last_ms: u64,
-    /// No permit before this instant — a `Retry-After`, or our backoff.
-    blocked_until_ms: u64 = 0,
-    /// Consecutive failures; the backoff doubles with it.
-    strikes: u32 = 0,
+pub const Config = shared.Config;
+pub const State = shared.State;
+pub const Status = shared.Status;
+pub const Limiter = shared.Limiter;
+pub const parseState = shared.parseState;
+pub const renderState = shared.renderState;
 
-    pub fn init(opts: Options, now_ms: u64) Limiter {
-        return .{ .opts = opts, .tokens = @floatFromInt(opts.burst), .last_ms = now_ms };
-    }
+/// Jira's preset — the Rust crate's constants.
+pub const default_config: Config = .jira;
 
-    /// How long the caller must wait before its next call, in ms. 0 means
-    /// go now — and spends the permit. A non-zero answer spends nothing:
-    /// sleep that long and ask again.
-    pub fn acquire(l: *Limiter, now_ms: u64) u64 {
-        if (l.opts.rate_per_sec <= 0) return 0;
-        if (now_ms < l.blocked_until_ms) return l.blocked_until_ms - now_ms;
-        l.refill(now_ms);
-        if (l.tokens >= 1.0) {
-            l.tokens -= 1.0;
-            return 0;
-        }
-        const need = 1.0 - l.tokens;
-        const ms = need / l.opts.rate_per_sec * 1000.0;
-        return @max(@as(u64, @intFromFloat(@ceil(ms))), 1);
-    }
+/// The user's `rate` block as the bucket's numbers. The two names that
+/// differ do so because the file is shared: `burst` is the bucket's
+/// capacity, `cooldown_secs` the park a 429 with no `Retry-After` gets.
+pub fn configFrom(rate: config.Rate) Config {
+    var c = default_config;
+    if (rate.per_sec > 0) c.rate = rate.per_sec;
+    if (rate.burst > 0) c.capacity = @floatFromInt(rate.burst);
+    if (rate.cooldown_secs > 0) c.default_cooldown_secs = @floatFromInt(rate.cooldown_secs);
+    if (rate.max_block_secs > 0) c.max_block_secs = @floatFromInt(rate.max_block_secs);
+    return c;
+}
 
-    fn refill(l: *Limiter, now_ms: u64) void {
-        if (now_ms <= l.last_ms) {
-            l.last_ms = now_ms;
-            return;
-        }
-        const elapsed: f64 = @floatFromInt(now_ms - l.last_ms);
-        l.tokens = @min(@as(f64, @floatFromInt(l.opts.burst)), l.tokens + elapsed / 1000.0 * l.opts.rate_per_sec);
-        l.last_ms = now_ms;
-    }
+/// Where the shared bucket lives. Owned.
+pub fn statePath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error![]u8 {
+    return shared.statePath(gpa, io, env, service);
+}
 
-    /// The server pushed back. `retry_after_ms` is the header's value
-    /// when it sent one. The pause doubles per consecutive strike.
-    pub fn penalise(l: *Limiter, now_ms: u64, retry_after_ms: ?u64) void {
-        l.strikes +|= 1;
-        const base = retry_after_ms orelse l.opts.default_retry_after_ms;
-        const shift: u6 = @intCast(@min(l.strikes - 1, 16));
-        const scaled = std.math.mul(u64, base, @as(u64, 1) << shift) catch l.opts.max_backoff_ms;
-        const wait = @min(scaled, l.opts.max_backoff_ms);
-        l.blocked_until_ms = @max(l.blocked_until_ms, now_ms + wait);
-        l.tokens = 0;
-    }
+/// Whether a status is worth a `penalize` — the two Jira answers that
+/// mean "slow down", never a 4xx we caused.
+pub fn shouldPenalise(status: u16) bool {
+    return status == 429 or (status >= 500 and status <= 599);
+}
 
-    /// A call came back fine: forget the strikes.
-    pub fn succeeded(l: *Limiter) void {
-        l.strikes = 0;
-    }
-
-    /// Whether a status is worth a `penalise` — the two Jira answers that
-    /// mean "slow down", never a 4xx we caused.
-    pub fn shouldPenalise(status: u16) bool {
-        return status == 429 or (status >= 500 and status <= 599);
-    }
-};
-
-/// `Retry-After` as milliseconds. Jira sends whole seconds; a date form
-/// (RFC 7231 allows one) is not parsed — the caller's default stands.
-pub fn parseRetryAfter(value: []const u8) ?u64 {
+/// `Retry-After` as seconds, which is what `penalize` takes. Jira sends
+/// whole seconds; a date form (RFC 7231 allows one) is not parsed — the
+/// caller's default cooldown stands.
+pub fn parseRetryAfter(value: []const u8) ?f64 {
     const trimmed = std.mem.trim(u8, value, " \t\r\n");
     if (trimmed.len == 0) return null;
     const secs = std.fmt.parseInt(u32, trimmed, 10) catch return null;
-    return @as(u64, secs) * 1000;
+    return @floatFromInt(secs);
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
 
-test "the burst goes straight through, then the rate paces the rest" {
-    var l = Limiter.init(.{ .rate_per_sec = 2.0, .burst = 3 }, 0);
-    try testing.expectEqual(@as(u64, 0), l.acquire(0));
-    try testing.expectEqual(@as(u64, 0), l.acquire(0));
-    try testing.expectEqual(@as(u64, 0), l.acquire(0));
-    // The bucket is empty: the fourth waits half a second at 2/s.
-    try testing.expectEqual(@as(u64, 500), l.acquire(0));
-    // Waiting that long makes the permit available and spends it.
-    try testing.expectEqual(@as(u64, 0), l.acquire(500));
-    try testing.expectEqual(@as(u64, 500), l.acquire(500));
-    // A long idle refills to the burst, never past it.
-    try testing.expectEqual(@as(u64, 0), l.acquire(60_000));
-    try testing.expectEqual(@as(u64, 0), l.acquire(60_000));
-    try testing.expectEqual(@as(u64, 0), l.acquire(60_000));
-    try testing.expectEqual(@as(u64, 500), l.acquire(60_000));
+test "the Jira bucket is the SDK's, at this service's own file" {
+    try testing.expectApproxEqAbs(@as(f64, 0.33), default_config.rate, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 60.0), default_config.capacity, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 45.0), default_config.default_cooldown_secs, 1e-12);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/nonexistent-home");
+    try env.put("MNML_DATA_ROOT", "/data");
+    {
+        const p = try statePath(testing.allocator, testing.io, &env);
+        defer testing.allocator.free(p);
+        try testing.expectEqualStrings("/data/ratelimit/jira.json", p);
+    }
+    try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
+    const p = try statePath(testing.allocator, testing.io, &env);
+    defer testing.allocator.free(p);
+    // The name the Rust crate and the Python script write, so a pane, a
+    // poller and a script all land on one file.
+    try testing.expectEqualStrings("/shared/jira-ratelimit.json", p);
 }
 
-test "rate 0 disables the limiter" {
-    var l = Limiter.init(.{ .rate_per_sec = 0 }, 0);
-    var i: usize = 0;
-    while (i < 100) : (i += 1) try testing.expectEqual(@as(u64, 0), l.acquire(0));
+test "the user's rate block becomes the bucket's numbers, and an unset field keeps the preset" {
+    const tuned = configFrom(.{ .per_sec = 1.5, .burst = 10, .cooldown_secs = 20, .max_block_secs = 30 });
+    try testing.expectApproxEqAbs(@as(f64, 1.5), tuned.rate, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), tuned.capacity, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 20.0), tuned.default_cooldown_secs, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 30.0), tuned.max_block_secs, 1e-12);
+    // The penalty shape is never the user's to set — it is what the
+    // other processes on the file expect.
+    try testing.expectApproxEqAbs(default_config.penalty_factor, tuned.penalty_factor, 1e-12);
+    try testing.expectApproxEqAbs(default_config.min_rate, tuned.min_rate, 1e-12);
+    const zeroed = configFrom(.{ .per_sec = 0, .burst = 0, .cooldown_secs = 0, .max_block_secs = 0 });
+    try testing.expectApproxEqAbs(default_config.rate, zeroed.rate, 1e-12);
+    try testing.expectApproxEqAbs(default_config.capacity, zeroed.capacity, 1e-12);
 }
 
-test "a 429 pauses for Retry-After and doubles per strike; a success clears it" {
-    var l = Limiter.init(.{ .rate_per_sec = 100, .burst = 10, .max_backoff_ms = 8_000 }, 0);
-    l.penalise(0, 2_000);
-    try testing.expectEqual(@as(u64, 2_000), l.acquire(0));
-    try testing.expectEqual(@as(u64, 1_000), l.acquire(1_000));
-    // A second strike doubles: 4 s from now, which is past the first pause.
-    l.penalise(1_000, 2_000);
-    try testing.expectEqual(@as(u64, 4_000), l.acquire(1_000));
-    l.succeeded();
-    l.penalise(10_000, 2_000);
-    try testing.expectEqual(@as(u64, 2_000), l.acquire(10_000));
-    // The ceiling holds however many strikes pile up.
-    var i: usize = 0;
-    while (i < 20) : (i += 1) l.penalise(10_000, 2_000);
-    try testing.expectEqual(@as(u64, 8_000), l.acquire(10_000));
-}
-
-test "a 429 with no header takes the default pause" {
-    var l = Limiter.init(.{ .default_retry_after_ms = 750 }, 0);
-    l.penalise(0, null);
-    try testing.expectEqual(@as(u64, 750), l.acquire(0));
+test "a pane and the poller share one Jira bucket: three tokens between them, and one 429 parks both" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const path = try std.fs.path.join(testing.allocator, &.{ dir, "jira-ratelimit.json" });
+    defer testing.allocator.free(path);
+    const cfg = configFrom(.{ .per_sec = 0.5, .burst = 3, .max_block_secs = 1 });
+    var pane = try Limiter.init(testing.allocator, testing.io, path, .{ .capacity = cfg.capacity, .rate = cfg.rate, .max_block_secs = 0.2 });
+    defer pane.deinit();
+    var poller = try Limiter.init(testing.allocator, testing.io, path, .{ .capacity = cfg.capacity, .rate = cfg.rate, .max_block_secs = 0.2 });
+    defer poller.deinit();
+    try testing.expect(pane.acquire());
+    try testing.expect(poller.acquire());
+    try testing.expect(pane.acquire());
+    try testing.expect(!poller.acquire());
+    poller.penalize(30);
+    try testing.expect(!pane.acquire());
+    try testing.expectEqual(@as(u32, 1), pane.status().?.throttles);
 }
 
 test "only 429 and 5xx are worth a penalty" {
-    try testing.expect(Limiter.shouldPenalise(429));
-    try testing.expect(Limiter.shouldPenalise(500));
-    try testing.expect(Limiter.shouldPenalise(503));
-    try testing.expect(!Limiter.shouldPenalise(200));
-    try testing.expect(!Limiter.shouldPenalise(401));
-    try testing.expect(!Limiter.shouldPenalise(404));
+    try testing.expect(shouldPenalise(429));
+    try testing.expect(shouldPenalise(500));
+    try testing.expect(shouldPenalise(503));
+    try testing.expect(!shouldPenalise(200));
+    try testing.expect(!shouldPenalise(401));
+    try testing.expect(!shouldPenalise(404));
 }
 
-test "Retry-After: whole seconds; a date form is not parsed" {
-    try testing.expectEqual(@as(?u64, 3_000), parseRetryAfter("3"));
-    try testing.expectEqual(@as(?u64, 0), parseRetryAfter(" 0 "));
+test "Retry-After: whole seconds, which is what penalize takes; a date form is not parsed" {
+    try testing.expectEqual(@as(?f64, 3), parseRetryAfter("3"));
+    try testing.expectEqual(@as(?f64, 0), parseRetryAfter(" 0 "));
     try testing.expect(parseRetryAfter("Wed, 21 Oct 2015 07:28:00 GMT") == null);
     try testing.expect(parseRetryAfter("") == null);
 }

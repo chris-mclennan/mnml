@@ -26,6 +26,7 @@ const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
 const marketplace = @import("../app/marketplace.zig");
 const font_scan = @import("../app/font_scan.zig");
+const ipc_command = @import("../ipc/command.zig");
 const transfers = @import("../app/transfers.zig");
 const grep = @import("../app/grep.zig");
 const script_task = @import("../app/script_task.zig");
@@ -100,9 +101,35 @@ pub const StatuslineSegment = struct { _todo: u8 = 0 }; // TODO(statusline)
 /// What the terminal loop's IPC tail posts (`tui/loop.zig`): the two
 /// lifecycle lines a wrapper drops in `<ws>/.mnml/<ipc>/command` —
 /// `{"cmd":"quit"}` and `{"cmd":"restart"}` (`run.sh stop` / `restart`).
-/// The rest of the command set is the headless loop's; the tail
-/// acknowledges it as `unsupported` and drops it.
-pub const IpcCommand = enum { quit, restart };
+/// One command off the file channel, owned. The tail parses onto the
+/// event's own arena because a posted event outlives the poll that read
+/// it; `App.handle` destroys it.
+///
+/// It used to be an `enum { quit, restart }` and the terminal loop
+/// refused everything else — so an integration's `statusline-set-segment`
+/// worked under the headless driver and was answered `unsupported` in
+/// the app the user was actually looking at. The whole command set
+/// travels now; what the loop refuses is decided by `ipc.allow_input`,
+/// not by the shape of this type.
+pub const IpcCommand = struct {
+    arena: std.heap.ArenaAllocator,
+    cmd: ipc_command.Command,
+
+    pub fn create(gpa: std.mem.Allocator, line: []const u8) std.mem.Allocator.Error!*IpcCommand {
+        const self = try gpa.create(IpcCommand);
+        errdefer gpa.destroy(self);
+        self.* = .{ .arena = std.heap.ArenaAllocator.init(gpa), .cmd = undefined };
+        errdefer self.arena.deinit();
+        self.cmd = try ipc_command.parse(self.arena.allocator(), line);
+        return self;
+    }
+
+    pub fn destroy(self: *IpcCommand) void {
+        const gpa = self.arena.child_allocator;
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
+};
 
 pub const AppEvent = union(enum) {
     key: key.Key,
@@ -135,7 +162,7 @@ pub const AppEvent = union(enum) {
     /// The latest Nerd Fonts release (or why the lookup failed). Owned;
     /// `font_scan.handle` adopts or frees it.
     fonts: *font_scan.Result,
-    ipc: IpcCommand,
+    ipc: *IpcCommand,
     /// A mounted integration spoke (or its stream ended). Owned;
     /// `mount_pane.handle` reads it and `destroy`s it on every path.
     mount: *bridge_host.Event,

@@ -365,7 +365,21 @@ pub const default_integration_icons = [_]IntegrationIcon{
 // ─── small fixed sections ────────────────────────────────────────────────
 
 pub const Session = struct { restore: bool = true };
-pub const Ipc = struct { write_screen: bool = false };
+pub const Ipc = struct {
+    write_screen: bool = false,
+    /// Whether the file channel may drive INPUT at a live terminal —
+    /// `key`, `type`, `click`, `scroll`, `drag`, `mouse_*`, `hover`.
+    /// Off: a host that writes one is told so, and told this is the
+    /// switch. The tier-2 set an integration actually needs (segments,
+    /// badges, toasts, progress, notify, register-command, open-pty,
+    /// run-command) is always taken — it is what the SDK promises.
+    ///
+    /// Typing into someone's editor from a file on disk is a different
+    /// kind of power from moving a number on their statusline, which is
+    /// why the two are not one switch. The headless loop is the driver
+    /// and takes everything regardless.
+    allow_input: bool = false,
+};
 
 pub const CloudRunDefaults = struct {
     agent_id: []const u8 = "",
@@ -643,6 +657,19 @@ pub const Integrations = struct {
     /// expanded. A workspace with `sdk/mnml-sdk` adds its own
     /// `integrations/` by itself.
     dev_roots: []const []const u8 = &.{},
+    /// The statusline poller (`app/integration_poll.zig`): what keeps a
+    /// manifest's chip counts live with no pane open.
+    poll: Poll = .{},
+};
+
+pub const Poll = struct {
+    /// Off means a chip only moves when its pane or its refresh command
+    /// says so — which is what mnml did before the poller existed.
+    enabled: bool = true,
+    /// The floor under every manifest's `poll_interval_secs`: the
+    /// user's say in how hard their own API budget may be spent. The
+    /// poller's own floor (30 s) still applies underneath.
+    min_interval_secs: u32 = 60,
 };
 
 /// // changed (lua-install): installed Lua scripts — the SCRIPTS

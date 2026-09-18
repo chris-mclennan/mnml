@@ -58,6 +58,8 @@ pub const Raw = struct {
     priority: ?Num(u8) = null,
     min_width: ?Num(u16) = null,
     max_width: ?Num(u16) = null,
+    /// `statusline-set-segment`: the hover text.
+    tooltip: ?[]const u8 = null,
     /// `notify`.
     sound: ?bool = null,
     source: ?[]const u8 = null,
@@ -139,6 +141,12 @@ pub const Command = union(enum) {
         priority: u8,
         min_width: u16,
         max_width: u16,
+        /// The hover text — what the chip's number means, and its
+        /// breakdown. The Rust host's line has no such key (its
+        /// tooltips are static, on the manifest), so this is mnml-zig's
+        /// own: a count worth publishing every five minutes is worth
+        /// saying what it counts.
+        tooltip: ?[]const u8,
     },
     statusline_clear_segment: []const u8,
     notify: struct {
@@ -259,6 +267,7 @@ fn fromRaw(raw: Raw) ?Command {
             .priority = val(u8, raw.priority) orelse 100,
             .min_width = val(u16, raw.min_width) orelse 4,
             .max_width = val(u16, raw.max_width) orelse 30,
+            .tooltip = raw.tooltip,
         } },
         .@"statusline-clear-segment" => .{ .statusline_clear_segment = raw.id orelse return null },
         .notify => .{ .notify = .{

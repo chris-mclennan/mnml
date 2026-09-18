@@ -2135,9 +2135,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
                     _ => {},
-                } else if (seg >= statusline.seg_dyn_base and !right) {
-                    // A host's segment: its `click_command`, on a left click.
-                    try ipc.effects.clickSegment(app, seg - statusline.seg_dyn_base);
+                } else if (seg >= statusline.seg_dyn_base) {
+                    // A host's segment: its `click_command` on a left
+                    // click, its own menu on a right one.
+                    const slot = seg - statusline.seg_dyn_base;
+                    if (right) try context_menus.openIntegrationSegmentMenu(app, slot, m.x, m.y) else try ipc.effects.clickSegment(app, slot);
                 },
             }
         },
