@@ -62,6 +62,10 @@ pub const State = struct {
     /// Set when a write arrived; the corpus proves the write token
     /// reached the wire without ever printing it.
     last_auth_was_write: bool = false,
+    /// How the last request authenticated — the scheme, never the
+    /// token. A test asserts the pane chose Bearer for an access token
+    /// and Basic for an account one.
+    last_credential: Credential = .none,
     /// The clock every relative date is written against, as seconds
     /// since the epoch; the listener stamps the real one before each
     /// request, a test sets its own.
@@ -351,9 +355,11 @@ pub const Request = struct {
 /// Answer one request. `arena` owns the reply body.
 pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
     st.served += 1;
-    if (!hasCredentials(req.authorization)) {
+    const cred = classify(req.authorization);
+    st.last_credential = cred;
+    if (cred.rejection()) |message| {
         st.unauthorized += 1;
-        return .{ .status = 401, .body = "{\"type\":\"error\",\"error\":{\"message\":\"no Basic credentials\"}}" };
+        return .{ .status = 401, .body = try std.fmt.allocPrint(arena, "{{\"type\":\"error\",\"error\":{{\"message\":\"{s}\"}}}}", .{message}) };
     }
     if (st.rate_limit_next > 0) {
         st.rate_limit_next -= 1;
@@ -368,9 +374,26 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
     const query = if (q_at) |i| req.target[i + 1 ..] else "";
 
     if (std.mem.eql(u8, path, "/2.0/user")) {
+        // An access token belongs to a repository, a project or a
+        // workspace — never to a person — so there is no account for
+        // this route to answer with. Bitbucket says so with a 401,
+        // which is why a `--check` that probes `/2.0/user` with one
+        // reads as "bad token" when the token is in fact fine.
+        if (cred == .bearer_access_token) return .{ .status = 401, .body = "{\"type\":\"error\",\"error\":{\"message\":\"This API is not accessible for this authentication method\"}}" };
         if (st.deny_user) return .{ .status = 403, .body = "{\"type\":\"error\",\"error\":{\"message\":\"This token is not authorized to access the account\"}}" };
         return json(arena,
             \\{"display_name":"Chris M","account_id":"acct-chris","nickname":"chrism","type":"user"}
+        );
+    }
+
+    // `/2.0/workspaces/<slug>` — the probe an access token *can*
+    // answer, and what `--check` asks when there is no account to ask
+    // about.
+    if (std.mem.startsWith(u8, path, "/2.0/workspaces/")) {
+        const slug = path["/2.0/workspaces/".len..];
+        if (!std.mem.eql(u8, slug, workspace)) return notFound(arena);
+        return json(arena,
+            \\{"slug":"acme","name":"Acme","uuid":"{ws-acme}","type":"workspace"}
         );
     }
 
@@ -489,20 +512,64 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
     return notFound(arena);
 }
 
-/// `Basic base64(user:token)` with a token that is not empty. The
-/// shape is all that matters — any token authenticates — but an empty
-/// one is the mistake worth answering 401 to, because that is exactly
-/// what a missing environment variable produces.
-pub fn hasCredentials(header: []const u8) bool {
-    if (!std.mem.startsWith(u8, header, "Basic ")) return false;
+/// Bitbucket Cloud takes two kinds of token and they are not
+/// interchangeable on the wire:
+///
+///   - an **account** credential — an Atlassian API token or a
+///     Bitbucket app password — goes over `Basic base64(email:token)`;
+///   - an **access token** — repository, project or workspace scoped,
+///     spelled `ATCTT…` — goes over `Bearer <token>`.
+///
+/// Present either one the other way round and Bitbucket answers 401,
+/// with no hint that the token itself is good. That 401 is what this
+/// server exists to reproduce, so the pane can be held to getting the
+/// scheme right without a live call.
+pub const access_token_prefix = "ATCTT";
+
+pub const Credential = enum {
+    /// No header, or one whose shape says nothing.
+    none,
+    /// `Basic base64(email:token)` — an Atlassian API token or an app
+    /// password. The account credential.
+    basic_account,
+    /// `Basic base64(email:ATCTT…)` — an access token sent the account
+    /// way. Bitbucket rejects this.
+    basic_with_access_token,
+    /// `Bearer ATCTT…` — an access token, sent correctly.
+    bearer_access_token,
+    /// `Bearer <an account token>` — the account credential sent the
+    /// access-token way. Bitbucket rejects this too.
+    bearer_without_access_token,
+
+    /// The message Bitbucket answers 401 with, or null when the
+    /// credential is accepted.
+    pub fn rejection(c: Credential) ?[]const u8 {
+        return switch (c) {
+            .none => "no credentials",
+            .basic_with_access_token => "Access tokens cannot be used with Basic authentication; send them as a Bearer token",
+            .bearer_without_access_token => "Bearer authentication requires an access token",
+            .basic_account, .bearer_access_token => null,
+        };
+    }
+};
+
+pub fn classify(header: []const u8) Credential {
+    if (std.mem.startsWith(u8, header, "Bearer ")) {
+        const tok = std.mem.trim(u8, header["Bearer ".len..], " ");
+        if (tok.len == 0) return .none;
+        return if (std.mem.startsWith(u8, tok, access_token_prefix)) .bearer_access_token else .bearer_without_access_token;
+    }
+    if (!std.mem.startsWith(u8, header, "Basic ")) return .none;
     const b64 = std.mem.trim(u8, header["Basic ".len..], " ");
     var buf: [512]u8 = undefined;
     const dec = std.base64.standard.Decoder;
-    const n = dec.calcSizeForSlice(b64) catch return false;
-    if (n == 0 or n > buf.len) return false;
-    dec.decode(buf[0..n], b64) catch return false;
-    const colon = std.mem.indexOfScalar(u8, buf[0..n], ':') orelse return false;
-    return colon + 1 < n;
+    const n = dec.calcSizeForSlice(b64) catch return .none;
+    if (n == 0 or n > buf.len) return .none;
+    dec.decode(buf[0..n], b64) catch return .none;
+    const colon = std.mem.indexOfScalar(u8, buf[0..n], ':') orelse return .none;
+    const token = buf[colon + 1 .. n];
+    if (token.len == 0) return .none;
+    return if (std.mem.startsWith(u8, token, access_token_prefix)) .basic_with_access_token else .basic_account;
 }
 
 fn json(arena: Allocator, body: []const u8) Allocator.Error!Reply {
@@ -943,10 +1010,56 @@ test "a repo the workspace does not have is a 404, not an empty list" {
 }
 
 test "an Authorization header with no token, or none at all, is a 401 before anything is routed" {
-    try t.expect(hasCredentials("Basic bWU6dG9r"));
-    try t.expect(!hasCredentials("Basic Og=="));
-    try t.expect(!hasCredentials("Bearer abc"));
-    try t.expect(!hasCredentials(""));
+    try t.expectEqual(Credential.basic_account, classify("Basic bWU6dG9r"));
+    try t.expectEqual(Credential.none, classify("Basic Og=="));
+    try t.expectEqual(Credential.none, classify("Bearer "));
+    try t.expectEqual(Credential.none, classify(""));
+    try t.expect(Credential.basic_account.rejection() == null);
+    try t.expect(Credential.none.rejection() != null);
+}
+
+test "the scheme has to match the token kind: an access token over Basic 401s, and so does an account token over Bearer" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `Basic base64(me@x.com:ATCTTsecret)` — the shape mnml-bitbucket
+    // was sending, and the 401 the user saw.
+    const basic_access = "Basic " ++ "bWVAeC5jb206QVRDVFRzZWNyZXQ=";
+    try t.expectEqual(Credential.basic_with_access_token, classify(basic_access));
+    var st: State = .{};
+    const bad = try handle(a, &st, .{ .method = .GET, .target = "/2.0/user", .authorization = basic_access });
+    try t.expectEqual(@as(u16, 401), bad.status);
+    try t.expectEqual(@as(u32, 1), st.unauthorized);
+
+    // The same token as a Bearer authenticates.
+    const bearer = "Bearer ATCTTsecret";
+    try t.expectEqual(Credential.bearer_access_token, classify(bearer));
+    const ok = try handle(a, &st, .{ .method = .GET, .target = "/2.0/repositories/acme", .authorization = bearer });
+    try t.expectEqual(@as(u16, 200), ok.status);
+    try t.expectEqual(Credential.bearer_access_token, st.last_credential);
+
+    // And an account token sent as a Bearer is the mirror mistake.
+    try t.expectEqual(Credential.bearer_without_access_token, classify("Bearer ATATTaccount"));
+    const mirror = try handle(a, &st, .{ .method = .GET, .target = "/2.0/user", .authorization = "Bearer ATATTaccount" });
+    try t.expectEqual(@as(u16, 401), mirror.status);
+}
+
+test "an access token has no account, so /2.0/user 401s for it and /2.0/workspaces/<slug> is the probe that answers" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var st: State = .{};
+    const bearer = "Bearer ATCTTsecret";
+    const who = try handle(a, &st, .{ .method = .GET, .target = "/2.0/user", .authorization = bearer });
+    try t.expectEqual(@as(u16, 401), who.status);
+    try t.expect(std.mem.indexOf(u8, who.body, "not accessible for this authentication method") != null);
+    // The workspace probe answers for both kinds.
+    const ws = try handle(a, &st, .{ .method = .GET, .target = "/2.0/workspaces/acme", .authorization = bearer });
+    try t.expectEqual(@as(u16, 200), ws.status);
+    try t.expect(std.mem.indexOf(u8, ws.body, "\"slug\":\"acme\"") != null);
+    try t.expectEqual(@as(u16, 200), (try call(a, &st, .GET, "/2.0/workspaces/acme", "")).status);
+    // A workspace that is not this one is a 404, not a blanket yes.
+    try t.expectEqual(@as(u16, 404), (try call(a, &st, .GET, "/2.0/workspaces/other", "")).status);
 }
 
 test "a request with no Basic credentials is a 401 before anything is routed" {

@@ -80,6 +80,27 @@ comments do not survive, as in the reference.
 One variable to export, one file otherwise, and the same token for the
 reads and for the one write the pane has (`a`, approve).
 
+Bitbucket takes two kinds of token and they are **not** interchangeable
+on the wire, which is what the one exception to that rule is about:
+
+| token | header | `/2.0/user` |
+|---|---|---|
+| an account credential — an Atlassian API token (`ATATT…`) or an app password | `Basic base64(email:token)` | answers, with your account |
+| an access token (`ATCTT…`) — repository, project or workspace scoped | `Bearer <token>` | 401s: it belongs to no person |
+
+Send either one the other way round and Bitbucket answers **401**, with
+nothing to say the token itself was fine. `mnml-bitbucket` reads the
+kind off the token and picks the scheme, and `--check` says which it
+used and why — you never choose.
+
+The exception: an access token has no account, so the `mine` /
+`reviewing` tabs, the chip and `--values` have nothing to filter by.
+When an account credential is available too, **reads take it** and
+`BITBUCKET_ACCESS_TOKEN` stays the approve token. With only an access
+token exported, reads use it and `--check` reports the workspace it
+reached instead of a person — set `account_id` in `config.zon` for the
+`mine` tabs.
+
 The reference's three variables still resolve, between those two, so a
 machine that already exports one keeps working — first hit wins:
 
@@ -103,8 +124,9 @@ mnml-bitbucket --diag       # the same as a tree, with the rate bucket
 ```
 
 ```
-token source: BITBUCKET_ACCESS_TOKEN (loaded, 25 chars, not shown)
-approve token: BITBUCKET_ACCESS_TOKEN (25 chars, not shown)
+token source: BITBUCKET_PERSONAL_TOKEN (loaded, 25 chars, not shown)
+auth scheme: Basic base64(email:token) — an account credential (an Atlassian API token or an app password) authenticates as a person
+approve token: BITBUCKET_ACCESS_TOKEN (192 chars, not shown) · Bearer <token>
 ```
 
 ## Keys

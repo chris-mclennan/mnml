@@ -359,18 +359,30 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
         try out.print("mnml-bitbucket · diagnostics\n\nAuth\n  ├─ {s}  ├─ email: {s}\n", .{ tk, c.email });
     }
     var progress: fetch.Progress = .{};
-    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, c.account_id);
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, c.account_id, c.workspace);
     defer worker.deinit();
     var job = try fetch.makeJob(gpa, nowSecs(io), .whoami);
     defer job.deinit();
     var res = try worker.run(&job);
     defer res.deinit();
     const who = res.payload.whoami;
+    // Name the question that was actually asked. An access token has
+    // no account, so the probe is the workspace, and saying "whoami"
+    // there would be the same lie that sent the user hunting a good
+    // token in the first place.
+    const probe = switch (who.via) {
+        .account => "whoami",
+        .workspace => "workspace probe",
+    };
     if (who.error_text.len > 0) {
-        try out.print("{s}whoami: {s} {s}\n", .{ if (full) "  └─ " else "", if (full) "✗" else "FAIL —", who.error_text });
+        try out.print("{s}{s}: {s} {s}\n", .{ if (full) "  └─ " else "", probe, if (full) "✗" else "FAIL —", who.error_text });
         if (full) try out.writeAll("     mine-only filters, --values, and workspace repo enumeration all depend on this succeeding.\n");
-    } else {
-        try out.print("{s}whoami: {s} {s} (account_id: {s})\n", .{ if (full) "  └─ " else "", if (full) "✓" else "ok —", who.display_name, if (who.account_id.len > 0) who.account_id else "<none>" });
+    } else switch (who.via) {
+        .account => try out.print("{s}whoami: {s} {s} (account_id: {s})\n", .{ if (full) "  └─ " else "", if (full) "✓" else "ok —", who.display_name, if (who.account_id.len > 0) who.account_id else "<none>" }),
+        .workspace => {
+            try out.print("{s}workspace probe: {s} {s} reached — an access token has no account to ask about\n", .{ if (full) "  └─ " else "", if (full) "✓" else "ok —", who.display_name });
+            if (c.account_id.len == 0) try out.print("{s}set `account_id` in {s}: the `mine` / `reviewing` tabs and --values cannot resolve it from an access token\n", .{ if (full) "     " else "  note: ", s.loaded.path });
+        },
     }
     if (full) {
         try out.print("\nConfig\n  ├─ path: {s}\n  ├─ workspace: {s}\n  ├─ scope: {s}\n  ├─ recent_window_days: {d}\n  ├─ refresh_interval_secs: {d}\n", .{ s.loaded.path, c.workspace, @tagName(c.scope), c.recent_window_days, c.refresh_interval_secs });
@@ -408,7 +420,7 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
 
 fn computeValues(gpa: Allocator, io: Io, s: *Session) !fetch.Result {
     var progress: fetch.Progress = .{};
-    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id);
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id, s.loaded.config.workspace);
     defer worker.deinit();
     const c = s.loaded.config;
     var job = try fetch.makeJob(gpa, nowSecs(io), .{ .values = .{
@@ -641,7 +653,7 @@ fn prefetchCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out:
     app.now_secs = s.client.now_secs;
     var progress: fetch.Progress = .{};
     app.progress = &progress;
-    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id);
+    var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id, s.loaded.config.workspace);
     defer worker.deinit();
 
     try app.startup();
@@ -811,7 +823,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
 
     var progress: fetch.Progress = .{};
     app.progress = &progress;
-    var worker = fetch.Worker.init(gpa, io, &session.client, &progress, session.loaded.config.account_id);
+    var worker = fetch.Worker.init(gpa, io, &session.client, &progress, session.loaded.config.account_id, session.loaded.config.workspace);
     defer worker.deinit();
 
     var event_buf: [256]Event = undefined;

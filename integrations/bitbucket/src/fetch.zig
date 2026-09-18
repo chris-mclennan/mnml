@@ -64,7 +64,18 @@ pub const Job = struct {
     }
 };
 
-pub const Whoami = struct { account_id: []const u8 = "", display_name: []const u8 = "", error_text: []const u8 = "" };
+pub const Whoami = struct {
+    account_id: []const u8 = "",
+    display_name: []const u8 = "",
+    error_text: []const u8 = "",
+    /// Which question was asked. An access token has no `/2.0/user` to
+    /// answer, so the probe is `/2.0/workspaces/<slug>` instead and no
+    /// `account_id` comes back — the `mine` / `reviewing` tabs then
+    /// need `account_id` set in `config.zon`.
+    via: Via = .account,
+
+    pub const Via = enum { account, workspace };
+};
 
 pub const RefreshResult = struct {
     tab: usize,
@@ -133,6 +144,9 @@ pub const Worker = struct {
     me_display_name: []u8 = &.{},
     /// A configured `account_id` wins over whoami.
     configured_account_id: []const u8 = "",
+    /// The default workspace slug. Only the access-token whoami stand-in
+    /// reads it — `/2.0/workspaces/<slug>` is what that token can answer.
+    workspace: []const u8 = "",
     scope_gen: ?u32 = null,
     scope_arena: ?std.heap.ArenaAllocator = null,
     scope_repos: []const []const u8 = &.{},
@@ -140,8 +154,8 @@ pub const Worker = struct {
     /// failure — the result copies it.
     failure_buf: [512]u8 = undefined,
 
-    pub fn init(gpa: Allocator, io: Io, client: *api.Client, progress: *Progress, configured_account_id: []const u8) Worker {
-        return .{ .gpa = gpa, .io = io, .client = client, .progress = progress, .configured_account_id = configured_account_id };
+    pub fn init(gpa: Allocator, io: Io, client: *api.Client, progress: *Progress, configured_account_id: []const u8, workspace: []const u8) Worker {
+        return .{ .gpa = gpa, .io = io, .client = client, .progress = progress, .configured_account_id = configured_account_id, .workspace = workspace };
     }
 
     pub fn deinit(w: *Worker) void {
@@ -176,6 +190,11 @@ pub const Worker = struct {
     // ─── the account ─────────────────────────────────────────────────
 
     fn whoami(w: *Worker, a: Allocator) Allocator.Error!Whoami {
+        // An access token belongs to a repository, a project or a
+        // workspace, so `/2.0/user` 401s for it however good it is.
+        // Ask the workspace instead: it proves the token reaches
+        // Bitbucket, which is all `--check` needs to say.
+        if (w.client.read_kind == .access_token) return w.workspaceProbe(a);
         var reply = try w.client.whoami(w.gpa);
         defer reply.deinit(w.gpa);
         switch (reply) {
@@ -192,6 +211,30 @@ pub const Worker = struct {
             .failed => |f| {
                 var buf: [256]u8 = undefined;
                 return .{ .error_text = try std.fmt.allocPrint(a, "whoami failed: {s}", .{f.describe(&buf)}) };
+            },
+        }
+    }
+
+    /// The access-token stand-in for `whoami`: `GET /2.0/workspaces/
+    /// <slug>`. It answers with the workspace, never an account, so
+    /// `account_id` stays empty on purpose.
+    fn workspaceProbe(w: *Worker, a: Allocator) Allocator.Error!Whoami {
+        if (w.workspace.len == 0) {
+            return .{ .via = .workspace, .error_text = "this is an access token, which has no account — set `workspace` in config.zon so the token can be checked against it" };
+        }
+        var reply = try w.client.workspaceProbe(w.gpa, w.workspace);
+        defer reply.deinit(w.gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return .{ .via = .workspace, .error_text = "the workspace probe's reply is not JSON" };
+                const name = j.str(v, "name");
+                const slug = j.str(v, "slug");
+                const shown = if (name.len > 0) name else if (slug.len > 0) slug else w.workspace;
+                return .{ .via = .workspace, .display_name = try a.dupe(u8, shown) };
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                return .{ .via = .workspace, .error_text = try std.fmt.allocPrint(a, "workspace {s} failed: {s}", .{ w.workspace, f.describe(&buf) }) };
             },
         }
     }
@@ -580,7 +623,12 @@ pub const Worker = struct {
             if (me.error_text.len > 0) return .{ .error_text = me.error_text };
         }
         const me = w.accountId();
-        if (me.len == 0) return .{ .error_text = "/2.0/user returned no account_id" };
+        if (me.len == 0) return .{
+            .error_text = if (w.client.read_kind == .access_token)
+                "an access token has no account: set `account_id` in config.zon so --values knows whose pull requests to count"
+            else
+                "/2.0/user returned no account_id",
+        };
         var q: Io.Writer.Allocating = .init(a);
         q.writer.print("state = \"OPEN\" AND author.account_id = \"{s}\"", .{me}) catch return error.OutOfMemory;
         if (stale_after_days > 0) {
@@ -719,7 +767,7 @@ const Rig = struct {
         const base = try r.srv.baseUrl(t.allocator);
         defer t.allocator.free(base);
         r.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
-        r.worker = Worker.init(t.allocator, t.io, &r.client, &r.progress, "");
+        r.worker = Worker.init(t.allocator, t.io, &r.client, &r.progress, "", "acme");
         return r;
     }
 

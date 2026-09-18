@@ -1362,7 +1362,7 @@ pub const Rig = struct {
         defer t.allocator.free(base);
         r.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
         r.progress = .{};
-        r.worker = fetch.Worker.init(t.allocator, t.io, &r.client, &r.progress, config.account_id);
+        r.worker = fetch.Worker.init(t.allocator, t.io, &r.client, &r.progress, config.account_id, config.workspace);
         r.app = try App.init(t.allocator, t.io, config, r.config_path, opts);
         r.app.now_secs = Io.Timestamp.now(t.io, .real).toSeconds();
         r.app.cols = 120;
