@@ -274,11 +274,10 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         const segs = app.ipc_fx.segments.items;
         if (slot < segs.len) {
             const polled = app.integration_poll.jobForSegment(segs[slot].id) != null;
-            if (segs[slot].tooltip) |tip| return .{
-                .title = try arena.dupe(u8, tip),
-                .detail = if (polled) "click runs the segment's command · right-click: Refresh now" else "click runs the segment's command",
-            };
-            if (polled) return .{ .title = "Integration segment", .detail = "click runs the segment's command · right-click: Refresh now" };
+            const busy = polled and app.integration_poll.segmentBusy(segs[slot].id);
+            const detail: []const u8 = if (busy) "refreshing… · click runs the segment's command · right-click: Refresh now" else if (polled) "click runs the segment's command · right-click: Refresh now" else "click runs the segment's command";
+            if (segs[slot].tooltip) |tip| return .{ .title = try arena.dupe(u8, tip), .detail = detail };
+            if (polled) return .{ .title = "Integration segment", .detail = detail };
         }
         return .{ .title = "Integration segment", .detail = "click runs the segment's command" };
     }
