@@ -1,12 +1,24 @@
-//! The one forge call the tree makes: a merged pull request's post-merge
-//! pipelines — the reference's `bitbucket.rs`. A PR URL is parsed into
-//! workspace / repo / id, the PR's `merge_commit.hash` fetched, and the
-//! repo's recent pipelines filtered client-side by that hash (the
-//! `?target.commit.hash=` filter is unreliable on that endpoint; the
-//! PR API returns a 12-char short hash and the pipelines API a full
-//! one, so either prefix matches the other). The token is a repository
-//! / workspace access token from `$BITBUCKET_ACCESS_TOKEN`; without it
-//! the row says so.
+//! The one forge call the tree makes: the pipelines that ran on the
+//! commit a pull request is about. A PR URL is parsed into workspace /
+//! repo / id, the PR fetched, and the repo's recent pipelines filtered
+//! client-side by its commit (the `?target.commit.hash=` filter is
+//! unreliable on that endpoint; the PR API returns a 12-char short hash
+//! and the pipelines API a full one, so either prefix matches the
+//! other).
+//!
+//! Which commit: a MERGED pull request's `merge_commit.hash` — what
+//! actually landed — and an OPEN one's `source.commit.hash`, the head
+//! of the branch under review. An open PR's builds are the ones you
+//! want before you merge it, and they used to be unreachable: the row
+//! answered "PR not merged — no merge commit" and stopped.
+//!
+//! Two requests, and the second is skipped whenever it can be. The PR
+//! detail carries `updated_on`, which Bitbucket moves when anything on
+//! the pull request does; a caller that already has pipelines for that
+//! stamp gets `.unchanged` back and pays one request instead of two.
+//!
+//! The token is a repository / workspace access token from
+//! `$BITBUCKET_ACCESS_TOKEN`; without it the row says so.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -38,8 +50,23 @@ pub fn parsePrUrl(url: []const u8) ?PrRef {
     return .{ .workspace = ws, .repo = repo, .id = raw_id[0..n] };
 }
 
+/// The runs on one pull request's commit, and what they are keyed by.
+pub const Runs = struct {
+    pipelines: []const model.Pipeline = &.{},
+    /// The commit they ran on — the merge commit, or the source head.
+    commit: []const u8 = "",
+    /// True when `commit` is the merge commit rather than the branch head.
+    on_merge: bool = false,
+    /// The pull request's `updated_on` when they were read: the key a
+    /// caller hands back to skip the second request next time.
+    updated_on: []const u8 = "",
+};
+
 pub const Outcome = union(enum) {
-    ok: []const model.Pipeline,
+    ok: Runs,
+    /// The pull request has not moved since `known_updated_on`, so what
+    /// the caller already has is still right. One request, not two.
+    unchanged,
     /// The sentence the tree row paints.
     failed: []const u8,
 };
@@ -52,9 +79,10 @@ pub const Client = struct {
     /// Empty = no token.
     token: []const u8,
 
-    /// The whole flow for one PR URL.
-    pub fn pipelinesForPrUrl(c: *Client, arena: Allocator, pr_url: []const u8) Allocator.Error!Outcome {
-        if (c.token.len == 0) return .{ .failed = "BITBUCKET_ACCESS_TOKEN not set — needed to fetch post-merge pipelines" };
+    /// The whole flow for one PR URL. `known_updated_on` is the stamp
+    /// the caller already has runs for — empty when it has none.
+    pub fn pipelinesForPrUrl(c: *Client, arena: Allocator, pr_url: []const u8, known_updated_on: []const u8) Allocator.Error!Outcome {
+        if (c.token.len == 0) return .{ .failed = "BITBUCKET_ACCESS_TOKEN not set — needed to fetch a pull request's pipelines" };
         const ref = parsePrUrl(pr_url) orelse {
             if (std.mem.indexOf(u8, pr_url, "github.com") != null) return .{ .failed = "GitHub PR pipeline lookup not supported yet" };
             return .{ .failed = "not a bitbucket PR URL" };
@@ -64,8 +92,16 @@ pub const Client = struct {
             .ok => |v| v,
             .failed => |f| return .{ .failed = try std.fmt.allocPrint(arena, "bitbucket PR detail {s}", .{f}) },
         };
-        const hash = json.getStrOr(pr, "merge_commit.hash", "");
-        if (hash.len == 0) return .{ .failed = "PR not merged — no merge commit" };
+        const updated_on = json.getStrOr(pr, "updated_on", "");
+        // Bitbucket moves `updated_on` when anything on the pull
+        // request does, a push included. Nothing has: the runs the
+        // caller holds are still the right ones.
+        if (known_updated_on.len > 0 and updated_on.len > 0 and std.mem.eql(u8, known_updated_on, updated_on)) return .unchanged;
+        // A merged pull request is about what landed; an open one is
+        // about the head of the branch under review.
+        const merge = json.getStrOr(pr, "merge_commit.hash", "");
+        const hash = if (merge.len > 0) merge else json.getStrOr(pr, "source.commit.hash", "");
+        if (hash.len == 0) return .{ .failed = "the PR names no commit to look up builds on" };
         const list_url = try std.fmt.allocPrint(arena, "{s}/repositories/{s}/{s}/pipelines/?pagelen=60&sort=-created_on", .{ c.base_url, ref.workspace, ref.repo });
         const page = switch (try c.get(arena, list_url)) {
             .ok => |v| v,
@@ -77,7 +113,12 @@ pub const Client = struct {
             if (!sameCommit(pl.commit, hash)) continue;
             try out.append(arena, pl);
         }
-        return .{ .ok = try out.toOwnedSlice(arena) };
+        return .{ .ok = .{
+            .pipelines = try out.toOwnedSlice(arena),
+            .commit = hash,
+            .on_merge = merge.len > 0,
+            .updated_on = updated_on,
+        } };
     }
 
     const Got = union(enum) { ok: Value, failed: []const u8 };
@@ -139,11 +180,11 @@ test "without a token the outcome names the variable; a non-forge URL is named t
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     var c: Client = .{ .gpa = testing.allocator, .io = testing.io, .base_url = "http://127.0.0.1:1", .token = "" };
-    const none = try c.pipelinesForPrUrl(a.allocator(), "https://bitbucket.org/a/b/pull-requests/1");
+    const none = try c.pipelinesForPrUrl(a.allocator(), "https://bitbucket.org/a/b/pull-requests/1", "");
     try testing.expect(std.mem.indexOf(u8, none.failed, "BITBUCKET_ACCESS_TOKEN not set") != null);
     c.token = "x";
-    const gh = try c.pipelinesForPrUrl(a.allocator(), "https://github.com/a/b/pull/1");
+    const gh = try c.pipelinesForPrUrl(a.allocator(), "https://github.com/a/b/pull/1", "");
     try testing.expectEqualStrings("GitHub PR pipeline lookup not supported yet", gh.failed);
-    const other = try c.pipelinesForPrUrl(a.allocator(), "https://example.com/x");
+    const other = try c.pipelinesForPrUrl(a.allocator(), "https://example.com/x", "");
     try testing.expectEqualStrings("not a bitbucket PR URL", other.failed);
 }

@@ -15,6 +15,7 @@ const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
 const hit = @import("hit.zig");
 const text_mod = @import("text.zig");
+const build_mod = @import("build.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
@@ -244,6 +245,29 @@ pub fn Painter(comptime Target: type) type {
             const label = p.fmt("Show more ({d})", .{hidden});
             _ = p.putFit(label_x, rect.y, rect.right() -| label_x, label, p.th.bright());
             try p.mark(rect, target);
+        }
+
+        /// One build line under a pull-request row, indented to
+        /// `label_x`: `✓ SUCCESSFUL · main · 4h · #412`, the state's
+        /// colour, the whole line a hit so a click opens that run's
+        /// page. `note` covers the three lines that are not a run —
+        /// fetching, none, the reason there are none.
+        pub fn buildRow(p: *Self, rect: Rect, label_x: u16, run: build_mod.Run, now_secs: i64, target: Target) Allocator.Error!void {
+            if (rect.isEmpty()) return;
+            var buf: [192]u8 = undefined;
+            const line = build_mod.caption(&buf, run, now_secs, p.ui.ascii);
+            _ = p.putFit(label_x, rect.y, rect.right() -| label_x, line, build_mod.styleOf(p.th, run.state));
+            try p.mark(rect, target);
+        }
+
+        /// The stand-in where a build line would be: `→ fetching…`,
+        /// `→ no pipeline ran on abc1234`, `→ <why>`. `bad` paints it
+        /// in the error colour; everything else is a dim aside.
+        pub fn buildNote(p: *Self, rect: Rect, label_x: u16, text: []const u8, bad: bool) void {
+            if (rect.isEmpty()) return;
+            const arrow = if (p.ui.ascii) "-> " else "\u{2192} ";
+            const x = label_x + p.put(label_x, rect.y, 3, arrow, p.th.dimText());
+            _ = p.putFit(x, rect.y, rect.right() -| x, text, if (bad) p.th.bad() else p.th.dimText());
         }
 
         // ─── the scrollbar ───────────────────────────────────────────

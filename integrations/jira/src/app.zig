@@ -220,6 +220,9 @@ pub const App = struct {
     watch_arena: std.heap.ArenaAllocator,
     /// Turns the spinner on every button that is mid-dispatch.
     spin: usize = 0,
+    /// Wall-clock seconds, when something has pinned them (a test);
+    /// zero means read the clock (`nowSecs`).
+    now_secs: i64 = 0,
     group: ?*Io.Group = null,
     /// The ticket the cursor was on when the in-flight refetch started,
     /// so it can go back on it when the rows are swapped.
@@ -366,6 +369,14 @@ pub const App = struct {
 
     pub fn nowMs(a: *App) i64 {
         return Io.Timestamp.now(a.io, .real).toMilliseconds();
+    }
+
+    /// Wall-clock seconds — the clock a build line's age is measured
+    /// against. A test pins `now_secs` so its ages do not drift with
+    /// the day it runs on.
+    pub fn nowSecs(a: *App) i64 {
+        if (a.now_secs != 0) return a.now_secs;
+        return @divFloor(a.nowMs(), 1000);
     }
 
     pub fn tab(a: *App) *TabState {
@@ -883,21 +894,42 @@ pub const App = struct {
         }
     }
 
+    /// The builds under one pull-request row. Cached against the pull
+    /// request's own `updated_on`: while the PR has not moved, the runs
+    /// on screen are still the right ones and the pipelines list is not
+    /// asked for again. `force` is what `r` on the row means — go and
+    /// look anyway.
     pub fn ensurePipelines(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        return a.loadPipelines(key, pr, false);
+    }
+
+    pub fn loadPipelines(a: *App, key: []const u8, pr: model.LinkedPr, force: bool) Allocator.Error!void {
         const t = a.tab();
         const st = &(t.tree orelse return);
-        if (st.pipelines(key, pr.id) != null or st.pipelineError(key, pr.id) != null) return;
+        const have = st.pipelines(key, pr.id) != null or st.pipelineError(key, pr.id) != null;
+        if (have and !force) return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        a.setStatus("fetching pipeline for {s} {s}…", .{ key, pr.id });
-        switch (try a.forge.pipelinesForPrUrl(scratch.allocator(), pr.url)) {
-            .ok => |list| {
-                try st.putPipelines(key, pr.id, list);
-                a.setStatus("{s} {s}: {d} pipeline(s) on merge commit", .{ key, pr.id, list.len });
+        a.setStatus("fetching builds for {s} {s}…", .{ key, pr.id });
+        const known = if (st.pipelineMeta(key, pr.id)) |m| m.updated_on else "";
+        switch (try a.forge.pipelinesForPrUrl(scratch.allocator(), pr.url, known)) {
+            .ok => |runs| {
+                try st.putPipelines(key, pr.id, runs.pipelines);
+                try st.putPipelineMeta(key, pr.id, .{ .updated_on = runs.updated_on, .commit = runs.commit, .on_merge = runs.on_merge });
+                a.setStatus("{s} {s}: {d} build(s) on {s} {s}", .{
+                    key,
+                    pr.id,
+                    runs.pipelines.len,
+                    if (runs.on_merge) "merge commit" else "branch head",
+                    runs.commit[0..@min(runs.commit.len, 7)],
+                });
             },
+            // One request, not two: nothing on the pull request has
+            // moved, so the runs already on screen still stand.
+            .unchanged => a.setStatus("{s} {s}: unchanged since the last look", .{ key, pr.id }),
             .failed => |why| {
                 try st.putPipelineError(key, pr.id, why);
-                a.setStatus("{s} {s} pipeline lookup: {s}", .{ key, pr.id, why });
+                a.setStatus("{s} {s} build lookup: {s}", .{ key, pr.id, why });
             },
         }
     }
@@ -1050,8 +1082,49 @@ pub const App = struct {
                 const key = t.issues[p.issue_idx].key;
                 if (st.prs(key)) |prs| if (p.pr_idx < prs.len and prs[p.pr_idx].url.len > 0) try a.openUrl(prs[p.pr_idx].url);
             },
+            // A build line is a door to that run's page.
+            .pipeline => |pl| try a.openBuild(pl),
             .show_more => |s| try st.showAll(t.issues[s.issue_idx].key),
             else => {},
+        }
+        try a.clampCursor();
+    }
+
+    /// The run a build line stands for, in the browser. Bitbucket
+    /// spells it `…/<ws>/<repo>/pipelines/results/<number>`; the
+    /// workspace and the repo come off the pull request's own URL.
+    fn openBuild(a: *App, pl: @FieldType(tree.Row, "pipeline")) Allocator.Error!void {
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        const key = t.issues[pl.issue_idx].key;
+        const prs = st.prs(key) orelse return;
+        if (pl.pr_idx >= prs.len) return;
+        const pr = prs[pl.pr_idx];
+        const list = st.pipelines(key, pr.id) orelse return;
+        if (pl.pipeline_idx >= list.len) return;
+        const ref = bitbucket.parsePrUrl(pr.url) orelse {
+            a.setStatus("no build page: {s} is not a bitbucket PR URL", .{pr.id});
+            return;
+        };
+        var buf: [256]u8 = undefined;
+        const url = sdk.pane.build.pageUrl(&buf, ref.workspace, ref.repo, list[pl.pipeline_idx].build_number);
+        if (url.len > 0) try a.openUrl(url);
+    }
+
+    /// Fold a pull request's builds in or out, fetching them the first
+    /// time. What `[ Open ]` and the row's chevron both do.
+    pub fn togglePrBuilds(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        if (pr.url.len == 0) {
+            a.setStatus("{s}: this PR has no URL to look up builds on", .{pr.id});
+            return;
+        }
+        if (st.isPrExpanded(key, pr.id)) {
+            try st.setPrExpanded(key, pr.id, false);
+        } else {
+            try st.setPrExpanded(key, pr.id, true);
+            try a.ensurePipelines(key, pr);
         }
         try a.clampCursor();
     }
@@ -1076,7 +1149,7 @@ pub const App = struct {
                 const prs = st.prs(key) orelse return;
                 if (p.pr_idx >= prs.len) return;
                 const pr = prs[p.pr_idx];
-                if (!pr.isMerged()) return;
+                if (pr.url.len == 0) return;
                 if (!st.isPrExpanded(key, pr.id)) {
                     try st.setPrExpanded(key, pr.id, true);
                     try a.ensurePipelines(key, pr);
@@ -2531,7 +2604,7 @@ pub const App = struct {
                 const prs = st.prs(key) orelse return;
                 if (p.pr_idx >= prs.len) return;
                 const pr = prs[p.pr_idx];
-                if (!pr.isMerged()) return;
+                if (pr.url.len == 0) return;
                 if (st.isPrExpanded(key, pr.id)) {
                     try st.setPrExpanded(key, pr.id, false);
                 } else {
@@ -2559,7 +2632,12 @@ pub const App = struct {
         if (p.pr_idx >= prs.len) return;
         switch (which) {
             .review => try a.dispatchReview(),
-            .open => if (prs[p.pr_idx].url.len > 0) try a.openUrl(prs[p.pr_idx].url),
+            // `[ Open ]` opens the ROW, not a browser: its builds fold
+            // out under it. The PR itself is still one Enter away (and
+            // the row menu's "open in browser"), which is where a link
+            // belongs — a chip labelled Open that threw the reader into
+            // a browser had no way back.
+            .open => try a.togglePrBuilds(t.issues[p.issue_idx].key, prs[p.pr_idx]),
             .merge => a.say("merge: use the Bitbucket pane (m) — this pane opens the PR", .{}),
         }
     }
@@ -2693,6 +2771,8 @@ pub const Harness = struct {
     client: *jira.Client,
     app: App,
     base: []const u8,
+    /// `<base>/2.0` — where the forge corner of the fake lives.
+    forge_base: []const u8,
 
     pub fn start(cfg_in: config.Config, family: ?config.Family) !*Harness {
         const io = testing.io;
@@ -2707,6 +2787,11 @@ pub const Harness = struct {
         h.group = .init;
         try h.group.concurrent(io, jira.Loopback.serve, .{ io, &h.lb });
         h.base = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}", .{h.server.socket.address.getPort()});
+        // The forge lives under `/2.0` on Bitbucket and on the fake, so
+        // the pane's forge calls must carry it here too — without it
+        // every one of them landed on the Jira half of the fake and
+        // came back 401, which is why nothing ever exercised them.
+        h.forge_base = try std.fmt.allocPrint(testing.allocator, "{s}/2.0", .{h.base});
         const authorization = try auth.basicHeader(testing.allocator, "fake@acme.com", "fake-token");
         defer testing.allocator.free(authorization);
         h.client = try testing.allocator.create(jira.Client);
@@ -2715,8 +2800,8 @@ pub const Harness = struct {
         cfg.jira_url = h.base;
         cfg.email = "fake@acme.com";
         cfg.refresh_interval_secs = 0;
-        cfg.bitbucket_api_url = h.base;
-        h.app = try App.init(testing.allocator, io, cfg, family, h.client, .{ .gpa = testing.allocator, .io = io, .base_url = h.base, .token = "fake-forge" });
+        cfg.bitbucket_api_url = h.forge_base;
+        h.app = try App.init(testing.allocator, io, cfg, family, h.client, .{ .gpa = testing.allocator, .io = io, .base_url = h.forge_base, .token = "fake-forge" });
         h.app.resize(120, 40);
         return h;
     }
@@ -2734,6 +2819,7 @@ pub const Harness = struct {
         h.store.deinit();
         testing.allocator.destroy(h.store);
         testing.allocator.free(h.base);
+        testing.allocator.free(h.forge_base);
         testing.allocator.destroy(h);
     }
 };
@@ -2806,6 +2892,71 @@ test "Work: the assigned tab loads the three tickets, auto-expands them with the
     try testing.expectEqualStrings("ENG-12", a.tab().issues[0].key);
     _ = try a.onKey("1");
     try testing.expectEqual(@as(usize, 0), a.active);
+}
+
+test "every PR row folds out to its builds — an open one on its branch head — and the second look costs one request, not two" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    const st = &(a.tab().tree.?);
+    const prs = st.prs("ENG-2").?;
+    try testing.expectEqual(@as(usize, 2), prs.len);
+    // #2023 merged, #2044 open — and it is the OPEN one that used to
+    // answer "PR not merged — no merge commit" and show nothing.
+    try testing.expect(prs[0].isMerged());
+    try testing.expect(prs[1].isOpen());
+
+    const before = h.store.requests;
+    try a.togglePrBuilds("ENG-2", prs[1]);
+    // The PR detail, then the pipelines list: two requests the first time.
+    try testing.expectEqual(@as(usize, 2), h.store.requests - before);
+    const runs = st.pipelines("ENG-2", prs[1].id).?;
+    // Both runs on the branch head, newest first; nothing from the
+    // other branches in the same repo.
+    try testing.expectEqual(@as(usize, 2), runs.len);
+    try testing.expectEqual(@as(i64, 414), runs[0].build_number);
+    try testing.expectEqual(@as(i64, 413), runs[1].build_number);
+    try testing.expectEqualStrings("feat/trim", runs[0].branch);
+    const meta = st.pipelineMeta("ENG-2", prs[1].id).?;
+    try testing.expect(!meta.on_merge);
+    try testing.expect(meta.updated_on.len > 0);
+
+    // Fold shut, fold open: nothing is asked for again.
+    try a.togglePrBuilds("ENG-2", prs[1]);
+    try a.togglePrBuilds("ENG-2", prs[1]);
+    try testing.expectEqual(@as(usize, 2), h.store.requests - before);
+    // A deliberate re-look costs ONE request: the PR has not moved, so
+    // the pipelines list is not asked for at all.
+    try a.loadPipelines("ENG-2", prs[1], true);
+    try testing.expectEqual(@as(usize, 3), h.store.requests - before);
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "unchanged") != null);
+
+    // The merged one still folds out to what landed.
+    try a.togglePrBuilds("ENG-2", prs[0]);
+    const merged_runs = st.pipelines("ENG-2", prs[0].id).?;
+    try testing.expectEqual(@as(usize, 1), merged_runs.len);
+    try testing.expectEqual(@as(i64, 412), merged_runs[0].build_number);
+    try testing.expect(st.pipelineMeta("ENG-2", prs[0].id).?.on_merge);
+
+    // The rows: a build line per run under its PR.
+    const rows = (try a.treeRows(ar)).?.rows;
+    var builds: usize = 0;
+    for (rows) |row| builds += @intFromBool(row == .pipeline);
+    try testing.expectEqual(@as(usize, 3), builds);
+
+    // And the line itself is the toolkit's, so both panes read alike.
+    a.now_secs = sdk.pane.build.parseEpoch(runs[0].created_on).? + 3600;
+    var buf: [128]u8 = undefined;
+    try testing.expectEqualStrings("\u{23f5} IN_PROGRESS \u{b7} feat/trim \u{b7} 1h \u{b7} #414", sdk.pane.build.caption(&buf, .{
+        .state = runs[0].stateLabel(),
+        .branch = runs[0].branch,
+        .created_on = runs[0].created_on,
+        .number = runs[0].build_number,
+    }, a.nowSecs(), false));
 }
 
 test "Work: the filter narrows the tree (unlike the reference), the scope chip cycles, and Esc unwinds without quitting early" {

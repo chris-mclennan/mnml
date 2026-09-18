@@ -582,7 +582,11 @@ pub const Painter = struct {
                     if (pr_ref.pr_idx >= prs.len) continue;
                     const pr = prs[pr_ref.pr_idx];
                     const cx = key_c.x + 6;
-                    if (pr.isMerged()) {
+                    // Every PR folds out to its builds — an open one to
+                    // the runs on its branch head, a merged one to the
+                    // runs on what landed. Only a PR with no URL has
+                    // nothing to look them up on.
+                    if (pr.url.len > 0) {
                         _ = p.put(cx, y, 2, p.chevron(st.isPrExpanded(iss.key, pr.id)), p.s.accent_plain);
                         try p.hitAdd(.{ .x = cx, .y = y, .w = 2, .h = 1 }, .{ .chevron = idx });
                     }
@@ -613,14 +617,22 @@ pub const Painter = struct {
                     _ = p.putFit(sum_c.x, y, sw -| 1, title, base);
                 },
                 .pr_loading => _ = p.put(key_c.x + 6, y, w -| (key_c.x + 6), "… fetching linked PRs", p.s.muted),
-                .pipeline_loading => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ fetching pipelines…", p.s.muted),
-                .pipeline_empty => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ no pipelines on the merge commit", p.s.muted),
+                .pipeline_loading => p.c.buildNote(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, "fetching builds\u{2026}", false),
+                .pipeline_empty => |pe| {
+                    const iss = t.issues[pe.issue_idx];
+                    const st = &(t.tree.?);
+                    const prs = st.prs(iss.key) orelse continue;
+                    const meta = if (pe.pr_idx < prs.len) st.pipelineMeta(iss.key, prs[pe.pr_idx].id) else null;
+                    const on: []const u8 = if (meta) |m| m.commit[0..@min(m.commit.len, 7)] else "";
+                    const note = if (on.len > 0) p.fmt("no build ran on {s}", .{on}) else "no build ran on this commit";
+                    p.c.buildNote(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, note, false);
+                },
                 .pipeline_error => |pe| {
                     const iss = t.issues[pe.issue_idx];
                     const st = &(t.tree.?);
                     const prs = st.prs(iss.key) orelse continue;
                     const why = if (pe.pr_idx < prs.len) st.pipelineError(iss.key, prs[pe.pr_idx].id) orelse "?" else "?";
-                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), p.fmt("→ {s}", .{why}), p.s.warn_style);
+                    p.c.buildNote(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, why, true);
                 },
                 .pipeline => |pl| {
                     const iss = t.issues[pl.issue_idx];
@@ -630,9 +642,15 @@ pub const Painter = struct {
                     const list = st.pipelines(iss.key, prs[pl.pr_idx].id) orelse continue;
                     if (pl.pipeline_idx >= list.len) continue;
                     const pipe = list[pl.pipeline_idx];
-                    var dbuf: [32]u8 = undefined;
-                    const line = p.fmt("→ #{d} {s}  {s}  {s}  {s}", .{ pipe.build_number, pipe.stateLabel(), pipe.branchLabel(), pipe.createdDate(), pipe.durationLabel(&dbuf) });
-                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), line, pipelineStyle(p.ui.th, pipe));
+                    // The toolkit's build line, so this pane and the
+                    // Bitbucket one read the same: state, branch, age,
+                    // number — and the whole line opens that run.
+                    try p.c.buildRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, .{
+                        .state = pipe.stateLabel(),
+                        .branch = pipe.branch,
+                        .created_on = pipe.created_on,
+                        .number = pipe.build_number,
+                    }, a.nowSecs(), .{ .row = idx });
                 },
                 // The fold row, from the toolkit: `⋯  Show more (N)`
                 // with the label in the bright foreground a key wears.
@@ -1314,10 +1332,6 @@ fn statusStyle(th: Theme, iss: model.Issue, base: Style) Style {
 /// merged, red declined.
 fn prStyle(th: Theme, status: []const u8) Style {
     return th.prState(status);
-}
-
-fn pipelineStyle(th: Theme, pipe: model.Pipeline) Style {
-    return th.pipelineState(pipe.result);
 }
 
 // ─── small text helpers ──────────────────────────────────────────────────

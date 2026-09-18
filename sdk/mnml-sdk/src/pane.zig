@@ -13,6 +13,8 @@
 //!   text    widths and fitting, counted the way `Frame` paints
 //!   work    the one-job channel a pane refetches through, so a slow
 //!           fetch never freezes its keys or its repaint
+//!   build   the build lines under a pull-request row — one pipeline
+//!           run each, `state · branch · age · #n`
 //!   action  a row's action button and what a press leaves behind on
 //!           it — the spinner it turns while its session runs, the
 //!           `⏸` when that session stops to ask something, the `view`
@@ -38,6 +40,7 @@ const hit = @import("pane/hit.zig");
 pub const theme = @import("pane/theme.zig");
 pub const work = @import("pane/work.zig");
 pub const action = @import("pane/action.zig");
+pub const build = @import("pane/build.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
 
@@ -53,6 +56,8 @@ pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
 pub const Slot = work.Slot;
+pub const BuildRun = build.Run;
+pub const buildCaption = build.caption;
 pub const ActionState = action.State;
 pub const ActionStore = action.Store;
 pub const actionStateOf = action.fromSessionState;
@@ -65,6 +70,7 @@ test {
     _ = text;
     _ = work;
     _ = action;
+    _ = build;
     // The anti-drift test: the shared elements painted from two panes'
     // target vocabularies must come out cell for cell identical.
     _ = @import("pane/consistency_test.zig");

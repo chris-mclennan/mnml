@@ -7,11 +7,19 @@
 //! out of one fixture: project `ENG`, twelve tickets across an epic, a
 //! sprint, a backlog and two releases, six assignees, a team select, a
 //! five-state workflow, a scrum board with sprints and quick filters
-//! and a kanban board without, and one merged PR with a pipeline.
-//! Nothing is random and nothing reads the clock: the same requests
-//! always produce the same answers, except where a request
-//! deliberately changed something — a transition, a comment, an
-//! assignment, a fix version, a watch — which shows up in the next read.
+//! and a kanban board without, and three forge pull requests — one
+//! merged with a build on its merge commit, one open with two builds
+//! on its branch head — so a PR row has builds to fold out whichever
+//! state it is in. Nothing is random: the same requests always produce
+//! the same answers, except where a request deliberately changed
+//! something — a transition, a comment, an assignment, a fix version,
+//! a watch — which shows up in the next read.
+//!
+//! The one thing that does read the clock is the forge corner's dates.
+//! They are written relative to `Store.now_secs` (stamped from the real
+//! clock before each request, or set by a test), because a build line
+//! shows an AGE: a fixture written as an absolute date would read `52w`
+//! a year later.
 //!
 //!   mnml-fake-jira [--port N] [--port-file P] [--pid-file P]
 //!                  [--life-secs N] [--parent-pid N] [--no-auth] [--quiet]
@@ -121,6 +129,10 @@ pub const Store = struct {
     /// When set, every route answers this status with a Jira error body.
     fail_with: ?u16 = null,
     requests: usize = 0,
+    /// The clock the forge corner's relative dates are written against.
+    /// The listener stamps the real one before each request; a test
+    /// sets its own, so a build line's age is the same every run.
+    now_secs: i64 = 1_789_500_000,
 
     pub fn init(gpa: Allocator) Allocator.Error!Store {
         var s: Store = .{ .gpa = gpa, .owned = std.heap.ArenaAllocator.init(gpa) };
@@ -515,21 +527,57 @@ pub const Store = struct {
     // ── the forge corner ─────────────────────────────────────────────────
 
     fn forge(s: *Store, arena: Allocator, path: []const u8, authorization: ?[]const u8) Allocator.Error!Response {
-        _ = s;
-        _ = arena;
         const a = authorization orelse "";
         if (!std.mem.eql(u8, a, expected_forge_auth)) return .{ .status = 401, .body = "{\"type\":\"error\",\"error\":{\"message\":\"Access token expired.\"}}" };
-        if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pullrequests/2023")) return .{ .status = 200, .body = "{\"id\":2023,\"state\":\"MERGED\",\"merge_commit\":{\"hash\":\"abc123def456\"}}" };
-        if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pullrequests/2044")) return .{ .status = 200, .body = "{\"id\":2044,\"state\":\"OPEN\"}" };
-        if (std.mem.eql(u8, path, "/2.0/repositories/acme/ops/pullrequests/3001")) return .{ .status = 200, .body = "{\"id\":3001,\"state\":\"MERGED\",\"merge_commit\":{\"hash\":\"9f9f9f9f9f9f\"}}" };
-        if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pipelines/")) return .{ .status = 200, .body =
-        \\{"values":[
-        \\ {"uuid":"{p412}","build_number":412,"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"created_on":"2026-09-14T15:00:00.000000+00:00","duration_in_seconds":225,"target":{"ref_name":"main","commit":{"hash":"abc123def456789012345678901234567890abcd"}}},
-        \\ {"uuid":"{p411}","build_number":411,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"created_on":"2026-09-14T14:00:00.000000+00:00","duration_in_seconds":80,"target":{"ref_name":"feat/blur-validation","commit":{"hash":"1111111111111111111111111111111111111111"}}}
-        \\]}
-        };
+        // A pull request carries `updated_on` (the key a caller skips
+        // the pipelines request on), the merge commit when it merged,
+        // and the source head while it is open — an OPEN PR's builds
+        // are the ones a reviewer wants.
+        if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pullrequests/2023")) return s.forgePr(arena, 2023, "MERGED", "abc123def456", "feat/blur-validation", "2222222222222222", 30);
+        if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pullrequests/2044")) return s.forgePr(arena, 2044, "OPEN", "", "feat/trim", "3333333333333333", 2);
+        if (std.mem.eql(u8, path, "/2.0/repositories/acme/ops/pullrequests/3001")) return s.forgePr(arena, 3001, "MERGED", "9f9f9f9f9f9f", "chore/rotate-keys", "4444444444444444", 50);
+        if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pipelines/")) return s.forgePipelines(arena);
         if (std.mem.eql(u8, path, "/2.0/repositories/acme/ops/pipelines/")) return .{ .status = 200, .body = "{\"values\":[]}" };
         return .{ .status = 404, .body = "{\"type\":\"error\",\"error\":{\"message\":\"Resource not found\"}}" };
+    }
+
+    /// One forge pull request. `merge` is its merge commit when it
+    /// landed; `head` is its source head either way.
+    fn forgePr(s: *Store, arena: Allocator, id: u32, state: []const u8, merge: []const u8, branch: []const u8, head: []const u8, age_hours: i64) Allocator.Error!Response {
+        var out: Io.Writer.Allocating = .init(arena);
+        const w = &out.writer;
+        w.print("{{\"id\":{d},\"state\":\"{s}\",\"updated_on\":\"", .{ id, state }) catch return error.OutOfMemory;
+        try writeIso(w, s.now_secs - age_hours * 3600);
+        w.print("\",\"source\":{{\"branch\":{{\"name\":\"{s}\"}},\"commit\":{{\"hash\":\"{s}\"}}}}", .{ branch, head }) catch return error.OutOfMemory;
+        if (merge.len > 0) w.print(",\"merge_commit\":{{\"hash\":\"{s}\"}}", .{merge}) catch return error.OutOfMemory;
+        w.writeAll("}") catch return error.OutOfMemory;
+        return .{ .status = 200, .body = try out.toOwnedSlice() };
+    }
+
+    /// The repo's recent runs, newest first: one on the merged PR's
+    /// merge commit, one on the open PR's branch head (so an open row
+    /// has builds to fold out), and one that belongs to neither.
+    fn forgePipelines(s: *Store, arena: Allocator) Allocator.Error!Response {
+        const Run = struct { n: u32, state: []const u8, result: []const u8, ref: []const u8, hash: []const u8, secs: u32, age_h: i64 };
+        const runs = [_]Run{
+            .{ .n = 414, .state = "IN_PROGRESS", .result = "", .ref = "feat/trim", .hash = "3333333333333333", .secs = 0, .age_h = 1 },
+            .{ .n = 413, .state = "COMPLETED", .result = "FAILED", .ref = "feat/trim", .hash = "3333333333333333", .secs = 64, .age_h = 5 },
+            .{ .n = 412, .state = "COMPLETED", .result = "SUCCESSFUL", .ref = "main", .hash = "abc123def456789012345678901234567890abcd", .secs = 225, .age_h = 28 },
+            .{ .n = 411, .state = "COMPLETED", .result = "FAILED", .ref = "feat/blur-validation", .hash = "1111111111111111111111111111111111111111", .secs = 80, .age_h = 30 },
+        };
+        var out: Io.Writer.Allocating = .init(arena);
+        const w = &out.writer;
+        w.writeAll("{\"values\":[") catch return error.OutOfMemory;
+        for (runs, 0..) |r, i| {
+            if (i > 0) w.writeByte(',') catch return error.OutOfMemory;
+            w.print("{{\"uuid\":\"{{p{d}}}\",\"build_number\":{d},\"state\":{{\"name\":\"{s}\"", .{ r.n, r.n, r.state }) catch return error.OutOfMemory;
+            if (r.result.len > 0) w.print(",\"result\":{{\"name\":\"{s}\"}}", .{r.result}) catch return error.OutOfMemory;
+            w.writeAll("},\"created_on\":\"") catch return error.OutOfMemory;
+            try writeIso(w, s.now_secs - r.age_h * 3600);
+            w.print("\",\"duration_in_seconds\":{d},\"target\":{{\"ref_name\":\"{s}\",\"commit\":{{\"hash\":\"{s}\"}}}}}}", .{ r.secs, r.ref, r.hash }) catch return error.OutOfMemory;
+        }
+        w.writeAll("]}") catch return error.OutOfMemory;
+        return .{ .status = 200, .body = try out.toOwnedSlice() };
     }
 
     // ── the issue shape ──────────────────────────────────────────────────
@@ -720,6 +768,19 @@ fn err(arena: Allocator, status: u16, message: []const u8) Allocator.Error!Respo
     try writeJsonString(&out.writer, message);
     out.writer.writeAll("],\"errors\":{}}") catch return error.OutOfMemory;
     return .{ .status = status, .body = try out.toOwnedSlice() };
+}
+
+/// `YYYY-MM-DDTHH:MM:SS+00:00` for a wall-clock second — the shape
+/// Bitbucket writes, so a relative fixture date reads like a real one.
+fn writeIso(w: *Io.Writer, secs: i64) Allocator.Error!void {
+    const es = std.time.epoch.EpochSeconds{ .secs = @intCast(@max(secs, 0)) };
+    const yd = es.getEpochDay().calculateYearDay();
+    const md = yd.calculateMonthDay();
+    const ds = es.getDaySeconds();
+    w.print("{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}+00:00", .{
+        yd.year,              md.month.numeric(),      md.day_index + 1,
+        ds.getHoursIntoDay(), ds.getMinutesIntoHour(), ds.getSecondsIntoMinute(),
+    }) catch return error.OutOfMemory;
 }
 
 fn writeJsonString(w: *Io.Writer, s: []const u8) Allocator.Error!void {
@@ -981,6 +1042,10 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     var writer = stream.writer(io, &wbuf);
     var http = std.http.Server.init(&reader.interface, &writer.interface);
     var request = http.receiveHead() catch return false;
+    // The forge corner writes its dates relative to now, so a build
+    // line's age is the same on every run rather than drifting with
+    // the day the fixture was written.
+    store.now_secs = Io.Timestamp.now(io, .real).toSeconds();
     var authorization: ?[]const u8 = null;
     var it = request.iterateHeaders();
     while (it.next()) |h| {
