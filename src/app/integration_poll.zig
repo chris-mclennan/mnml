@@ -42,9 +42,19 @@
 //! segment's right-click "Refresh now" both wake every worker at once.
 //!
 //! Cancellation: `App.deinit` and every rescan cancel the group, which
-//! interrupts the sleep the worker spends nearly all its life in. A
-//! child that is mid-run is killed by the worker's own `defer`, so no
-//! poller outlives the app.
+//! interrupts the sleep the worker spends nearly all its life in, and
+//! `cancel` does not return until every worker has — which is why the
+//! jobs are only freed after it. A child that is mid-run is killed by
+//! its pid, taken before the wait: a cancelled `Child.wait` clears
+//! `child.id` WITHOUT killing anything, so the `child.kill` that looks
+//! like it covers that path sees a null id and does nothing. Nothing
+//! this starts outlives the app; the test at the bottom holds that.
+//!
+//! A test App starts no workers — `native_notify` is off — so nothing
+//! spawns children on a timer by accident. The corpus opts in with
+//! `MNML_INTEGRATION_POLL=1`, because the one thing worth proving about
+//! a poller is that the chip moves with no pane open, and only a real
+//! run proves it.
 
 const std = @import("std");
 const Io = std.Io;
