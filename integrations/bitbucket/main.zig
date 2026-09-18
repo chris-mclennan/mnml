@@ -84,6 +84,14 @@ const Opts = struct {
     prefetch: bool = false,
     help: bool = false,
     only: ?[]const u8 = null,
+    /// `--dump --steps FILE [--size WxH]`: the headless driver — the
+    /// same App and the same paint as the pane, driven by a step
+    /// script, with every `snap` printed as text. `--dump-style` adds
+    /// each snap's row backgrounds, which the text cannot carry.
+    dump: bool = false,
+    dump_style: bool = false,
+    steps: ?[]const u8 = null,
+    size: ?[]const u8 = null,
     owner: []const u8 = "",
     repo: []const u8 = "",
     branch: []const u8 = "",
@@ -119,6 +127,17 @@ fn parseArgs(args: []const []const u8) !Opts {
             o.refresh = true;
         } else if (std.mem.eql(u8, a, "--prefetch")) {
             o.prefetch = true;
+        } else if (std.mem.eql(u8, a, "--dump")) {
+            o.dump = true;
+        } else if (std.mem.eql(u8, a, "--dump-style")) {
+            o.dump = true;
+            o.dump_style = true;
+        } else if (std.mem.eql(u8, a, "--steps") and i + 1 < args.len) {
+            i += 1;
+            o.steps = args[i];
+        } else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
+            i += 1;
+            o.size = args[i];
         } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             o.help = true;
         } else if (std.mem.eql(u8, a, "--only") and i + 1 < args.len) {
@@ -210,6 +229,7 @@ pub fn main(init: std.process.Init) !u8 {
     }
     if (opts.refresh) return refreshCmd(gpa, io, env, stdout, stderr, opts.workspace);
     if (opts.prefetch) return prefetchCmd(gpa, io, env, stdout, stderr);
+    if (opts.dump) return dumpCmd(gpa, io, env, arena, stdout, stderr, opts);
 
     const mount = sdk.Mount.connectEnv(gpa, io, env) catch |err| switch (err) {
         error.NoSocket => {
@@ -233,6 +253,11 @@ const usage =
     \\  --list-prs --json         every open PR the per-repo tabs list
     \\  --find-pipeline-for-pr --owner O --repo R --branch B --json
     \\  --refresh [--workspace W] republish the statusline chip, headless
+    \\  --dump --steps FILE [--size WxH] [--only F]
+    \\                           play a step script at the pane with no mnml and
+    \\                           print every `snap` as text
+    \\  --dump-style             the same, plus each snap's row backgrounds
+    \\                           run-length coded (`bg  6: 0-119 #31353d`)
     \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
     \\  --only prs|prs-mine|prs-awaiting|pipelines|branches   one family of tabs
     \\
@@ -827,6 +852,189 @@ fn prefetchCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out:
         return 2;
     }
     return 0;
+}
+
+/// The palette `--dump` paints with. A dump has no host and so no
+/// `hello.palette`; painting with the 16-colour fallback makes a style
+/// dump read `i0` where the pane in mnml has a real colour, which is no
+/// use for checking that a row's ground is the one the theme asked for.
+/// These are mnml's own default (onedark) roles.
+const dump_palette: sdk.wire.Palette = .{
+    .fg = .{ .rgb = .{ 0xab, 0xb2, 0xbf } },
+    .bg = .{ .rgb = .{ 0x1e, 0x22, 0x2a } },
+    .muted = .{ .rgb = .{ 0x5c, 0x63, 0x70 } },
+    .accent = .{ .rgb = .{ 0x61, 0xaf, 0xef } },
+    .border = .{ .rgb = .{ 0x31, 0x35, 0x3d } },
+    .panel_bg = .{ .rgb = .{ 0x22, 0x26, 0x2e } },
+    .cursor_line = .{ .rgb = .{ 0x31, 0x35, 0x3d } },
+    .chip_bg = .{ .rgb = .{ 0x2d, 0x31, 0x39 } },
+    .chip_active_fg = .{ .rgb = .{ 0x1e, 0x22, 0x2a } },
+    .chip_active_bg = .{ .rgb = .{ 0x61, 0xaf, 0xef } },
+    .red = .{ .rgb = .{ 0xe0, 0x6c, 0x75 } },
+    .green = .{ .rgb = .{ 0x98, 0xc3, 0x79 } },
+    .yellow = .{ .rgb = .{ 0xe5, 0xc0, 0x7b } },
+    .orange = .{ .rgb = .{ 0xd1, 0x9a, 0x66 } },
+    .blue = .{ .rgb = .{ 0x61, 0xaf, 0xef } },
+    .cyan = .{ .rgb = .{ 0x56, 0xb6, 0xc2 } },
+    .purple = .{ .rgb = .{ 0xc6, 0x78, 0xdd } },
+    .comment = .{ .rgb = .{ 0x5c, 0x63, 0x70 } },
+};
+
+/// `--dump --steps FILE [--size WxH] [--only F]`: the same App and the
+/// same paint as the pane, driven by the step grammar the Jira pane's
+/// dump uses (`key`, `type`, `click`, `rclick`, `clickon`, `rclickon`,
+/// `scroll`, `snap`, `expect`, `quit`; the waits are no-ops since every
+/// fetch runs inline here). Each `snap NAME` prints `=== NAME` and the
+/// screen, one row per line; `--dump-style` adds the row backgrounds,
+/// which the text cannot carry.
+fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, opts: Opts) !u8 {
+    var why: []const u8 = "";
+    var session = openSession(gpa, io, env, &why) catch |e| {
+        try err.print("mnml-bitbucket --dump: {s}\n", .{if (e == error.NoToken) no_token_text else why});
+        return 1;
+    };
+    defer session.deinit(gpa);
+    session.client.limiter = &session.limiter;
+    session.client.now_secs = nowSecs(io);
+
+    var cols: u16 = 120;
+    var rows: u16 = 40;
+    if (opts.size) |sz| if (std.mem.indexOfScalar(u8, sz, 'x')) |x| {
+        cols = std.fmt.parseInt(u16, sz[0..x], 10) catch cols;
+        rows = std.fmt.parseInt(u16, sz[x + 1 ..], 10) catch rows;
+    };
+    var only: ?cfg.Family = null;
+    var mine = false;
+    var awaiting = false;
+    if (opts.only) |o| {
+        if (std.mem.eql(u8, o, "prs") or std.mem.eql(u8, o, "pull_requests")) {
+            only = .prs;
+        } else if (std.mem.eql(u8, o, "prs-mine")) {
+            only = .prs;
+            mine = true;
+        } else if (std.mem.eql(u8, o, "prs-awaiting")) {
+            only = .prs;
+            awaiting = true;
+        } else if (std.mem.eql(u8, o, "pipelines")) {
+            only = .pipelines;
+        } else if (std.mem.eql(u8, o, "branches")) {
+            only = .branches;
+        }
+    }
+
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse "" });
+    defer app.deinit();
+    if (app.tabs.len == 0) {
+        try err.print("mnml-bitbucket --dump: no tabs of that family in {s}\n", .{session.loaded.path});
+        return 1;
+    }
+    app.theme = theme_mod.Theme.fromHelloBranded(dump_palette, if (spec.chip) |c| c.color else "");
+    app.now_secs = session.client.now_secs;
+    var progress: fetch.Progress = .{};
+    app.progress = &progress;
+    var worker = fetch.Worker.init(gpa, io, &session.client, &progress, session.loaded.config.account_id, session.loaded.config.workspace);
+    defer worker.deinit();
+
+    var frame = try sdk.Frame.init(gpa, cols, rows);
+    defer frame.deinit();
+    var paint_arena = std.heap.ArenaAllocator.init(gpa);
+    defer paint_arena.deinit();
+
+    try app.startup();
+    try dumpDrain(gpa, &app, &worker);
+    try dumpPaint(&paint_arena, &frame, &app);
+
+    const steps_src = if (opts.steps) |path| try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) else "snap screen\n";
+    var lines = std.mem.splitScalar(u8, steps_src, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const sp = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
+        const verb = line[0..sp];
+        const rest = std.mem.trimStart(u8, line[sp..], " ");
+        if (std.mem.eql(u8, verb, "key")) {
+            _ = try app.keyPress(rest);
+        } else if (std.mem.eql(u8, verb, "type")) {
+            var it = std.unicode.Utf8View.initUnchecked(rest).iterator();
+            while (it.nextCodepointSlice()) |cp| {
+                if (cp.len == 1 and cp[0] == ' ') {
+                    _ = try app.keyPress("space");
+                } else if (cp.len == 1 and std.ascii.isUpper(cp[0])) {
+                    var kb: [8]u8 = undefined;
+                    _ = try app.keyPress(std.fmt.bufPrint(&kb, "shift+{c}", .{std.ascii.toLower(cp[0])}) catch cp);
+                } else _ = try app.keyPress(cp);
+            }
+        } else if (std.mem.eql(u8, verb, "click") or std.mem.eql(u8, verb, "rclick")) {
+            var it = std.mem.tokenizeScalar(u8, rest, ' ');
+            const x = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            const y = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            _ = try app.click(x, y, if (std.mem.eql(u8, verb, "rclick")) .right else .left);
+        } else if (std.mem.eql(u8, verb, "clickon") or std.mem.eql(u8, verb, "rclickon")) {
+            if (try dumpFind(arena, &frame, rest)) |at| {
+                _ = try app.click(at.x, at.y, if (std.mem.eql(u8, verb, "rclickon")) .right else .left);
+            } else try err.print("mnml-bitbucket --dump: {s} '{s}': not on screen\n", .{ verb, rest });
+        } else if (std.mem.eql(u8, verb, "scroll")) {
+            var it = std.mem.tokenizeScalar(u8, rest, ' ');
+            const x = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            const y = std.fmt.parseInt(u16, it.next() orelse "0", 10) catch 0;
+            const dir = it.next() orelse "down";
+            try app.wheel(x, y, if (std.mem.eql(u8, dir, "up")) 1 else -1);
+        } else if (std.mem.eql(u8, verb, "snap")) {
+            try dumpDrain(gpa, &app, &worker);
+            try dumpPaint(&paint_arena, &frame, &app);
+            try out.print("=== {s}\n", .{rest});
+            try out.writeAll(try screen.screenText(arena, &frame));
+            if (opts.dump_style) {
+                try out.writeAll("\n--- bg\n");
+                try out.writeAll(try sdk.frame.bgDump(arena, &frame));
+            }
+        } else if (std.mem.eql(u8, verb, "expect")) {
+            try dumpDrain(gpa, &app, &worker);
+            try dumpPaint(&paint_arena, &frame, &app);
+            if ((try dumpFind(arena, &frame, rest)) == null) {
+                try err.print("mnml-bitbucket --dump: expect '{s}': not on screen\n", .{rest});
+                return 1;
+            }
+        } else if (std.mem.eql(u8, verb, "quit")) {
+            break;
+        }
+        try dumpDrain(gpa, &app, &worker);
+        try dumpPaint(&paint_arena, &frame, &app);
+    }
+    return 0;
+}
+
+/// Run every queued job inline and commit its result — the pane's
+/// worker thread, minus the thread.
+fn dumpDrain(gpa: Allocator, app: *app_mod.App, worker: *fetch.Worker) !void {
+    while (true) {
+        const jobs = app.takeJobs();
+        if (jobs.len == 0) break;
+        defer gpa.free(jobs);
+        for (jobs) |*job| {
+            defer job.deinit();
+            var res = try worker.run(job);
+            try app.commit(&res);
+        }
+    }
+    const fx = app.takeEffects();
+    app.freeEffects(fx);
+}
+
+fn dumpPaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_mod.App) !void {
+    _ = paint_arena.reset(.retain_capacity);
+    try screen.paint(paint_arena.allocator(), frame, app, true);
+}
+
+fn dumpFind(arena: Allocator, frame: *sdk.Frame, needle: []const u8) !?struct { x: u16, y: u16 } {
+    var y: u16 = 0;
+    while (y < frame.rows) : (y += 1) {
+        const row = try screen.rowText(arena, frame, y);
+        if (std.mem.indexOf(u8, row, needle)) |byte| {
+            return .{ .x = @intCast(std.unicode.utf8CountCodepoints(row[0..byte]) catch byte), .y = y };
+        }
+    }
+    return null;
 }
 
 // ─── the pane ────────────────────────────────────────────────────────────

@@ -197,6 +197,45 @@ pub const Frame = struct {
     }
 };
 
+/// Every row's BACKGROUNDS, run-length coded, one line per row:
+///
+/// ```text
+/// bg  6: 0-119 #2c323c
+/// bg  7: 0-0 #61afef | 1-119 -
+/// ```
+///
+/// `-` is the pane's own ground (no background of the cell's own),
+/// `#rrggbb` a true colour, `i8` an ANSI index. A screen dump is text
+/// and carries no colour, so this is what makes "the cursor row is a
+/// filled band" checkable from outside the process — `--dump-style`
+/// prints it after each `snap`.
+pub fn bgDump(arena: Allocator, f: *const Frame) Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var buf: [64]u8 = undefined;
+    var y: u16 = 0;
+    while (y < f.rows) : (y += 1) {
+        try out.appendSlice(arena, std.fmt.bufPrint(&buf, "bg {d:>3}:", .{y}) catch "bg ?:");
+        var x: u16 = 0;
+        var first = true;
+        while (x < f.cols) {
+            const here = f.slots[@as(usize, y) * f.cols + x].style.bg;
+            var run = x + 1;
+            while (run < f.cols and std.meta.eql(f.slots[@as(usize, y) * f.cols + run].style.bg, here)) run += 1;
+            if (!first) try out.appendSlice(arena, " |");
+            try out.appendSlice(arena, std.fmt.bufPrint(&buf, " {d}-{d} ", .{ x, run - 1 }) catch " ");
+            const word: []const u8 = if (here) |c| switch (c) {
+                .rgb => |v| std.fmt.bufPrint(&buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ v[0], v[1], v[2] }) catch "#??????",
+                .index => |i| std.fmt.bufPrint(&buf, "i{d}", .{i}) catch "i?",
+            } else "-";
+            try out.appendSlice(arena, word);
+            first = false;
+            x = run;
+        }
+        try out.append(arena, '\n');
+    }
+    return out.toOwnedSlice(arena);
+}
+
 /// The wide ranges a terminal renders two cells wide.
 pub fn isWide(cp: u21) bool {
     return (cp >= 0x1100 and cp <= 0x115F) or
@@ -256,6 +295,21 @@ test "a null bg leaves the ground alone; a real one replaces it" {
     // And `fill` is still absolute: a null bg there means the default.
     f.fill(0, 0, 8, 1, .{});
     try testing.expect(f.at(0, 0).style.bg == null);
+}
+
+test "bgDump run-length codes each row's grounds, and says which cells have none" {
+    var f = try Frame.init(testing.allocator, 6, 2);
+    defer f.deinit();
+    f.fill(0, 0, 6, 1, .{ .bg = .{ .rgb = .{ 0x2c, 0x32, 0x3c } } });
+    f.fill(0, 1, 1, 1, .{ .bg = .{ .index = 4 } });
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const dump = try bgDump(arena_state.allocator(), &f);
+    try testing.expectEqualStrings(
+        \\bg   0: 0-5 #2c323c
+        \\bg   1: 0-0 i4 | 1-5 -
+        \\
+    , dump);
 }
 
 test "take: full first, then only the dirty rows, then nothing; resize makes the next one full" {

@@ -110,6 +110,11 @@ pub const Args = struct {
     /// `--dump --steps FILE [--size WxH]`: the headless driver behind
     /// tools/jira-diff.sh — the pane painted to stdout, no mnml.
     dump: bool = false,
+    /// `--dump-style`: each `snap` also prints the row backgrounds,
+    /// run-length coded. A screen dump is text and carries no colour,
+    /// so this is what makes "the cursor row is a filled band"
+    /// checkable from outside the process.
+    dump_style: bool = false,
     steps: ?[]const u8 = null,
     size: ?[]const u8 = null,
     unknown: ?[]const u8 = null,
@@ -132,6 +137,9 @@ pub fn parseArgs(argv: []const []const u8) Args {
             a.workspace = argv[i];
         } else if (std.mem.eql(u8, s, "--dump")) {
             a.dump = true;
+        } else if (std.mem.eql(u8, s, "--dump-style")) {
+            a.dump = true;
+            a.dump_style = true;
         } else if (std.mem.eql(u8, s, "--steps") and i + 1 < argv.len) {
             i += 1;
             a.steps = argv[i];
@@ -160,6 +168,8 @@ pub const usage =
     \\  --dump --steps FILE [--size WxH] [--only F]
     \\                            play a step script at the pane with no mnml and
     \\                            print every `snap` as text (tools/jira-diff.sh)
+    \\  --dump-style              the same, plus each snap's row backgrounds
+    \\                            run-length coded (`bg  6: 0-119 #2c323c`)
     \\
 ;
 
@@ -911,8 +921,9 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer frame.deinit();
     var paint_arena = std.heap.ArenaAllocator.init(gpa);
     defer paint_arena.deinit();
+    const ui: screen.Ui = .{ .th = sdk.pane.Theme.fromHelloBranded(dump_palette, chipColorOf(args.only)) };
     try app.ensureLoaded();
-    try repaint(&paint_arena, &frame, &app, .{});
+    try repaint(&paint_arena, &frame, &app, ui);
     var lines = std.mem.splitScalar(u8, steps_src, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
@@ -956,11 +967,15 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             const dir = it.next() orelse "down";
             try app.wheel(x, y, if (std.mem.eql(u8, dir, "up")) 1 else -1);
         } else if (std.mem.eql(u8, verb, "snap")) {
-            try repaint(&paint_arena, &frame, &app, .{});
+            try repaint(&paint_arena, &frame, &app, ui);
             try out.print("=== {s}\n", .{rest});
             try out.writeAll(try screen.screenText(arena, &frame));
+            if (args.dump_style) {
+                try out.writeAll("\n--- bg\n");
+                try out.writeAll(try sdk.frame.bgDump(arena, &frame));
+            }
         } else if (std.mem.eql(u8, verb, "expect")) {
-            try repaint(&paint_arena, &frame, &app, .{});
+            try repaint(&paint_arena, &frame, &app, ui);
             if ((try findOnScreen(arena, &frame, rest)) == null) {
                 try err.print("mnml-jira --dump: expect '{s}': not on screen\n", .{rest});
                 return 1;
@@ -969,11 +984,38 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             break;
         }
         // wait / settle / waitfor / waitsoft / find: nothing to wait for.
-        try repaint(&paint_arena, &frame, &app, .{});
+        try repaint(&paint_arena, &frame, &app, ui);
         if (app.quit) break;
     }
     return 0;
 }
+
+/// The palette `--dump` paints with. A dump has no host and so no
+/// `hello.palette`, and painting with the 16-colour fallback makes a
+/// style dump read `i0` where the pane in mnml has a real colour —
+/// which is no use for checking that a row's ground is the one the
+/// theme asked for. These are mnml's own default (onedark) roles, the
+/// shape every host palette has.
+const dump_palette: sdk.wire.Palette = .{
+    .fg = .{ .rgb = .{ 0xab, 0xb2, 0xbf } },
+    .bg = .{ .rgb = .{ 0x1e, 0x22, 0x2a } },
+    .muted = .{ .rgb = .{ 0x5c, 0x63, 0x70 } },
+    .accent = .{ .rgb = .{ 0x61, 0xaf, 0xef } },
+    .border = .{ .rgb = .{ 0x31, 0x35, 0x3d } },
+    .panel_bg = .{ .rgb = .{ 0x22, 0x26, 0x2e } },
+    .cursor_line = .{ .rgb = .{ 0x31, 0x35, 0x3d } },
+    .chip_bg = .{ .rgb = .{ 0x2d, 0x31, 0x39 } },
+    .chip_active_fg = .{ .rgb = .{ 0x1e, 0x22, 0x2a } },
+    .chip_active_bg = .{ .rgb = .{ 0x61, 0xaf, 0xef } },
+    .red = .{ .rgb = .{ 0xe0, 0x6c, 0x75 } },
+    .green = .{ .rgb = .{ 0x98, 0xc3, 0x79 } },
+    .yellow = .{ .rgb = .{ 0xe5, 0xc0, 0x7b } },
+    .orange = .{ .rgb = .{ 0xd1, 0x9a, 0x66 } },
+    .blue = .{ .rgb = .{ 0x61, 0xaf, 0xef } },
+    .cyan = .{ .rgb = .{ 0x56, 0xb6, 0xc2 } },
+    .purple = .{ .rgb = .{ 0xc6, 0x78, 0xdd } },
+    .comment = .{ .rgb = .{ 0x5c, 0x63, 0x70 } },
+};
 
 const At = struct { x: u16, y: u16 };
 
