@@ -1,0 +1,66 @@
+# Jira Work — the three tabs a working day asks for. `work_open` is what
+# is on my plate (and the count the statusline chip carries),
+# `work_reported` is what I filed that is still open, and `jql_editable`
+# is my own query with the parts that change per release pulled out into
+# `.vars`, which it wears as header chips beside the door that edits
+# them.
+#
+# What this file covers is the mounted pane: the three kinds on the
+# strip, the editable tab's own query with its holes filled, and its
+# chips. The vars EDITOR itself — add, rename, remove, and the save that
+# splices the values back into config.zon with its comments intact — is
+# covered by the unit tests in src/varsedit.zig and src/app.zig (which
+# write a real hand-written file through the real splice and read it
+# back) and by the `--dump` screens, because under this driver a
+# mounted pane that restarts keeps painting its dead generation's last
+# frame, which no assertion here can see past.
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18731 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{\n    // keep this comment\n    .jira_url = \"http://127.0.0.1:18731\",\n    .email = \"fake@acme.com\",\n    .refresh_interval_secs = 0,\n    .tabs = .{\n        .{\n            // the one that changes every release\n            .name = \"QA Actionable now\",\n            .kind = .jql_editable,\n            .jql = \"project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC\",\n            .vars = .{\n                .{ .name = \"project\", .value = \"ENG\" },\n                .{ .name = \"versions\", .values = .{ \"13.15.0\", \"13.17.0\" } },\n            },\n        },\n        .{ .name = \"My open work items\", .kind = .work_open },\n        .{ .name = \"Reported by me\", .kind = .work_reported },\n    },\n}\n"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+expect screen lacks "installed jira_work from"
+command jira_work.open
+# The pane spawns, is handed its geometry, and runs its first search —
+# the tickets plus each one's linked PRs — before it can say how many it
+# found. The expect's own 3 s budget starts after this.
+wait 6000
+command view.toggle_tree
+command view.focus_pane
+# The count comes only after the first search, so it is asserted first:
+# everything below is about a pane that has finished loading and been
+# given its real width.
+# The editable tab is first, so its own JQL — the holes filled from its
+# vars — is what the first search ran: the two tickets in those two
+# fixVersions and nothing else.
+expect screen contains "JIRA WORK (2)"
+expect screen contains "ENG-5"
+expect screen contains "ENG-8"
+# All three kinds are on the strip.
+expect screen contains "1 QA Actionable now"
+expect screen contains "2 My open work items"
+expect screen contains "3 Reported by me"
+# The vars are chips on the header, beside the door that edits them.
+expect screen contains " project: ENG "
+expect screen contains " versions: 13.15.0 +1 "
+expect screen contains " E edit "
+# q ends the pane.
+key q
+wait 500
+key x
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

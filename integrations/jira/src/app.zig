@@ -21,6 +21,7 @@ const hit = @import("hit.zig");
 const keymap = @import("keymap.zig");
 const pickers = @import("pickers.zig");
 const textedit = @import("textedit.zig");
+const varsedit = @import("varsedit.zig");
 const os = @import("os.zig");
 
 pub const Issue = model.Issue;
@@ -32,6 +33,13 @@ pub const AssigneeSummary = struct { account_id: []const u8, display_name: []con
 
 pub const TabState = struct {
     cfg: config.Tab,
+    /// Where this tab sits in the config FILE's `.tabs` list. `--only`
+    /// filters the App's list, so its index is not the file's, and the
+    /// file's is what a splice path has to name.
+    file_idx: usize = 0,
+    /// The tab's `{name}` holes, as they stand now. Starts as the
+    /// config's and is replaced by a saved vars edit.
+    vars: []const config.Var = &.{},
     /// The resolved JQL; replaced by the JQL editor and the tab-version picker.
     jql: []const u8,
     /// Owns the issues; reset on every refresh.
@@ -112,6 +120,10 @@ pub const App = struct {
     /// where a dispatched `term` line has to go. Borrowed from the
     /// environment, empty outside a host.
     ipc_dir: []const u8 = "",
+    /// The config file this pane was loaded from — where a saved vars
+    /// edit is spliced back into. Empty means the editor can still run
+    /// but cannot save, and says so.
+    cfg_path: []const u8 = "",
     /// Small owned strings: keys in sets, the status, resolved JQLs.
     keys: std.heap.ArenaAllocator,
     tabs: []TabState,
@@ -131,6 +143,7 @@ pub const App = struct {
     comment: ?Comment = null,
     selection: std.StringHashMapUnmanaged(void) = .empty,
     modal: ?Modal = null,
+    vars: ?varsedit.Editor = null,
     help: bool = false,
     help_scroll: usize = 0,
     me: ?model.User = null,
@@ -156,12 +169,27 @@ pub const App = struct {
     pub fn init(gpa: Allocator, io: Io, cfg: config.Config, family: ?config.Family, client: *jira.Client, forge: bitbucket.Client) Allocator.Error!App {
         var keys = std.heap.ArenaAllocator.init(gpa);
         errdefer keys.deinit();
-        const cfg_tabs = try config.tabsOfFamily(keys.allocator(), cfg.tabs, family);
+        // The file indices come along: `--only` drops tabs, so the
+        // position in this list is not the position in `.tabs`, and the
+        // vars editor writes through the file's.
+        var file_idx: std.ArrayList(usize) = .empty;
+        var cfg_list: std.ArrayList(config.Tab) = .empty;
+        for (cfg.tabs, 0..) |c, i| {
+            if (family) |f| {
+                const k = c.kind orelse continue;
+                if (k.family() != f) continue;
+            }
+            try cfg_list.append(keys.allocator(), c);
+            try file_idx.append(keys.allocator(), i);
+        }
+        const cfg_tabs = cfg_list.items;
         const tabs = try gpa.alloc(TabState, cfg_tabs.len);
         errdefer gpa.free(tabs);
-        for (cfg_tabs, tabs) |c, *t| {
+        for (cfg_tabs, file_idx.items, tabs) |c, fi, *t| {
             t.* = .{
                 .cfg = c,
+                .file_idx = fi,
+                .vars = c.vars,
                 .jql = (try c.staticJql(keys.allocator())) orelse "",
                 .data = std.heap.ArenaAllocator.init(gpa),
                 .meta = std.heap.ArenaAllocator.init(gpa),
@@ -180,6 +208,11 @@ pub const App = struct {
     /// line. Set by the caller right after `init`; empty outside a host.
     pub fn setIpcDir(a: *App, dir: []const u8) void {
         a.ipc_dir = dir;
+    }
+
+    /// The config file a vars edit is written back into.
+    pub fn setConfigPath(a: *App, path: []const u8) void {
+        a.cfg_path = path;
     }
 
     pub fn deinit(a: *App) void {
@@ -206,6 +239,7 @@ pub const App = struct {
         if (a.picker) |*p| p.deinit();
         if (a.comment) |*c| c.edit.deinit();
         if (a.modal) |*m| m.arena.deinit();
+        if (a.vars) |*v| v.deinit();
         a.selection.deinit(a.gpa);
         a.board_names.deinit(a.gpa);
         a.kanban_expanded.deinit(a.gpa);
@@ -251,7 +285,7 @@ pub const App = struct {
 
     pub fn context(a: *const App) keymap.Context {
         const t = a.tabConst();
-        return .{ .shape = t.shape(), .fix_versions = t.cfg.isFixVersions(), .detail_open = a.details_visible };
+        return .{ .shape = t.shape(), .fix_versions = t.cfg.isFixVersions(), .editable_jql = t.cfg.isEditableJql(), .detail_open = a.details_visible };
     }
 
     pub fn isKanban(a: *const App) bool {
@@ -446,10 +480,10 @@ pub const App = struct {
                 // An action's message outlives the refetch it triggers;
                 // an empty status gets the tab's summary.
                 if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
-                if (t.cfg.kind == .work_assigned) {
+                if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
                     a.assigned_open = t.issues.len;
                     a.segment_dirty = true;
-                }
+                };
                 // The reference auto-expands unresolved tickets on tree tabs
                 // and fetches their PRs; the kanban does the fetch too but
                 // never shows it, so only the tree pays for it here.
@@ -531,10 +565,10 @@ pub const App = struct {
                 t.last_error = "";
                 took = true;
                 n += 1;
-                if (t.cfg.kind == .work_assigned) {
+                if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
                     a.assigned_open = t.issues.len;
                     a.segment_dirty = true;
-                }
+                };
                 if (t.tree) |*st| if (t.cfg.isTree()) {
                     for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
                 };
@@ -1695,6 +1729,80 @@ pub const App = struct {
         a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
     }
 
+    // ─── the vars editor ─────────────────────────────────────────────────
+
+    /// `E` on a `jql_editable` tab. The JQL stays where the user wrote
+    /// it; what this edits is the list of things it interpolates.
+    pub fn openVars(a: *App) Allocator.Error!void {
+        if (!a.hasTabs()) return;
+        const t = a.tab();
+        if (!t.cfg.isEditableJql()) {
+            a.setStatus("E: this tab has no vars (it is not a `jql_editable` tab)", .{});
+            return;
+        }
+        if (t.vars.len == 0) {
+            a.setStatus("E: `{s}` has no `.vars` to edit — add some beside its `.jql`", .{t.cfg.name});
+            return;
+        }
+        a.closeVars();
+        a.vars = try varsedit.Editor.init(a.gpa, a.active, t.file_idx, t.cfg.name, t.vars);
+    }
+
+    pub fn closeVars(a: *App) void {
+        if (a.vars) |*v| v.deinit();
+        a.vars = null;
+    }
+
+    /// Write every var back into the config file, one splice per var so
+    /// only those spans move and every comment around them survives,
+    /// then re-expand the tab's JQL and refetch.
+    pub fn saveVars(a: *App) Allocator.Error!void {
+        const e = &(a.vars orelse return);
+        if (a.cfg_path.len == 0) {
+            e.error_text = "no config file to save into";
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        var idx_buf: [24]u8 = undefined;
+        const tab_key = std.fmt.bufPrint(&idx_buf, "[{d}]", .{e.file_idx}) catch "[0]";
+        var wrote: usize = 0;
+        for (0..e.boxes.items.len) |vi| {
+            const one = (try e.literalFor(arena, vi)) orelse continue;
+            var var_buf: [24]u8 = undefined;
+            const var_key = std.fmt.bufPrint(&var_buf, "[{d}]", .{vi}) catch continue;
+            const path = [_][]const u8{ "tabs", tab_key, "vars", var_key, one.key };
+            const outcome = sdk.zon_edit.persistScalar(a.gpa, a.io, a.cfg_path, &path, one.literal) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    e.error_text = try a.keep(try std.fmt.allocPrint(arena, "{s}: {s}", .{ e.boxes.items[vi].name, @errorName(err) }));
+                    return;
+                },
+            };
+            if (outcome == .written) wrote += 1;
+        }
+        // The tab picks the change up without a reload: the JQL is the
+        // user's own text with the new values interpolated.
+        // Everything the editor knows is read out BEFORE it is closed:
+        // `closeVars` frees it, and the lines below used to reach back
+        // into it afterwards.
+        const tab_idx = e.tab_idx;
+        const t = &a.tabs[tab_idx];
+        t.vars = try dupeVars(a.keys.allocator(), try e.asVars(arena));
+        var edited = t.cfg;
+        edited.vars = t.vars;
+        t.jql = (try edited.staticJql(a.keys.allocator())) orelse t.jql;
+        t.cfg = edited;
+        const name = t.cfg.name;
+        a.closeVars();
+        if (wrote == 0) a.say("{s}: vars unchanged", .{name}) else a.say("{s}: {d} var(s) saved to {s}", .{ name, wrote, a.cfg_path });
+        if (tab_idx == a.active) {
+            t.fetched = false;
+            try a.refreshActive();
+        }
+    }
+
     // ─── the detail modal ────────────────────────────────────────────────
 
     pub fn openModal(a: *App, key: []const u8) Allocator.Error!void {
@@ -1794,6 +1902,36 @@ pub const App = struct {
         }
         if (a.modal != null) {
             if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "q")) a.closeModal() else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) a.modalScroll(2) else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) a.modalScroll(-2) else if (std.mem.eql(u8, spec, "pagedown")) a.modalScroll(10) else if (std.mem.eql(u8, spec, "pageup")) a.modalScroll(-10);
+            return true;
+        }
+        if (a.vars) |*v| {
+            if (v.edit != null) {
+                // Typing a value: the line editor owns every key but
+                // Enter (commit) and Esc (drop this one edit).
+                if (std.mem.eql(u8, spec, "esc")) {
+                    v.cancelEdit();
+                } else if (std.mem.eql(u8, spec, "enter")) {
+                    try v.commitEdit();
+                } else _ = try v.edit.?.key(spec);
+                return true;
+            }
+            if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "q")) {
+                a.closeVars();
+            } else if (std.mem.eql(u8, spec, "ctrl+s") or std.mem.eql(u8, spec, "s")) {
+                // `s` as well as Ctrl+S: Ctrl+S is the host's own save
+                // chord, and a mounted pane cannot count on seeing it.
+                try a.saveVars();
+            } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) {
+                v.move(-1);
+            } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) {
+                v.move(1);
+            } else if (std.mem.eql(u8, spec, "enter") or std.mem.eql(u8, spec, "e")) {
+                try v.beginEdit();
+            } else if (std.mem.eql(u8, spec, "a")) {
+                try v.addValue();
+            } else if (std.mem.eql(u8, spec, "d") or std.mem.eql(u8, spec, "x") or std.mem.eql(u8, spec, "delete")) {
+                try v.removeValue();
+            }
             return true;
         }
         if (a.comment) |*c| {
@@ -1908,6 +2046,7 @@ pub const App = struct {
             .detail_scroll_down => a.details_scroll +|= 4,
             .filter => try a.openFilter(),
             .jql_editor => try a.openJql(),
+            .vars_editor => try a.openVars(),
             .transition => try a.openTransition(),
             .watch => try a.toggleWatch(),
             .comment => try a.openComment(),
@@ -1942,6 +2081,10 @@ pub const App = struct {
     }
 
     pub fn paste(a: *App, text_in: []const u8) Allocator.Error!void {
+        if (a.vars) |*v| {
+            if (v.edit) |*t| try t.insert(text_in);
+            return;
+        }
         if (a.jql) |*e| try e.insert(text_in) else if (a.comment) |*c| try c.edit.insert(text_in) else if (a.filter) |*f| {
             if (f.editing) try f.edit.insert(text_in);
         } else if (a.picker) |*p| try p.insert(text_in);
@@ -2003,6 +2146,19 @@ pub const App = struct {
             }
             return;
         }
+        if (a.vars) |*v| {
+            switch (target orelse hit.Target.vars_close) {
+                .vars_row => |i| {
+                    if (v.edit != null) try v.commitEdit();
+                    v.cursor = i;
+                    try v.beginEdit();
+                },
+                .vars_save => try a.saveVars(),
+                .vars_body => {},
+                else => a.closeVars(),
+            }
+            return;
+        }
         if (a.comment != null) return;
         const tg = target orelse return;
         switch (tg) {
@@ -2054,6 +2210,9 @@ pub const App = struct {
                 a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
             },
             .column, .detail, .comment, .help_body, .picker_row, .picker_body, .modal_close, .modal_body, .jql_text, .jql_body => {},
+            // Only reachable while the overlay is up, and that branch
+            // returns above.
+            .vars_row, .vars_save, .vars_close, .vars_body => {},
         }
     }
 
@@ -2154,6 +2313,7 @@ pub const App = struct {
                 if (a.jql != null) try a.closeJql(false);
             },
             .jql => try a.openJql(),
+            .vars => try a.openVars(),
             .search => try a.openFilter(),
             .assignee, .overflow => try a.openAssignees(),
             .type => try a.openIssueType(),
@@ -2192,6 +2352,10 @@ pub const App = struct {
             if (steps > 0) a.help_scroll += 3 else a.help_scroll -|= 3;
             return;
         }
+        if (a.vars) |*v| {
+            v.move(steps);
+            return;
+        }
         switch (a.hits.at(col, row) orelse hit.Target.help_body) {
             .column => |c| a.scrollColumn(c, steps),
             .detail, .detail_close, .detail_bar => {
@@ -2208,6 +2372,18 @@ pub const App = struct {
         return @max(w -| 2, 1);
     }
 };
+
+/// `vars` copied onto `arena` — the App's `keys` arena outlives the
+/// scratch the editor rendered them on.
+fn dupeVars(arena: Allocator, vars: []const config.Var) Allocator.Error![]const config.Var {
+    const out = try arena.alloc(config.Var, vars.len);
+    for (vars, out) |src, *dst| {
+        const vals = try arena.alloc([]const u8, src.values.len);
+        for (src.values, vals) |v, *d| d.* = try arena.dupe(u8, v);
+        dst.* = .{ .name = try arena.dupe(u8, src.name), .value = try arena.dupe(u8, src.value), .values = vals };
+    }
+    return out;
+}
 
 /// The reference's `strip_fix_version`: drop `fixVersion = "…"` and the
 /// connector beside it.
@@ -2309,6 +2485,22 @@ pub const work_tabs = [_]config.Tab{
 
 pub const fixv_tabs = [_]config.Tab{
     .{ .name = "Current Release", .kind = .fix_version_tree, .project = "ENG", .mode = .current_release, .status_order = &.{ "Testing", "In PR Review", "In Progress", "To Do", "Done" }, .bumps = .{ .pr_approved = "Testing", .no_open_prs = "Testing", .release_cut = &.{.{ .status = "Done", .target = "top" }} } },
+};
+
+/// A Work family with the three kinds the pane ships: the open-work
+/// count, what you filed, and an editable-JQL tab with two holes.
+pub const editable_tabs = [_]config.Tab{
+    .{ .name = "My open work items", .kind = .work_open },
+    .{ .name = "Reported by me", .kind = .work_reported },
+    .{
+        .name = "QA Actionable now",
+        .kind = .jql_editable,
+        .jql = "project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC",
+        .vars = &.{
+            .{ .name = "project", .value = "ENG" },
+            .{ .name = "versions", .values = &.{ "13.16.0", "13.15.0" } },
+        },
+    },
 };
 
 pub const board_tabs = [_]config.Tab{
@@ -2474,6 +2666,122 @@ test "Work: the assignee picker assigns, the fixVersion picker sets, watching to
     try testing.expectEqual(comments + 1, h.store.find("ENG-1").?.comments.items.len);
     const d = a.detailOf("ENG-1").?;
     try testing.expect(std.mem.indexOf(u8, d.comments[d.comments.len - 1].body, "on it") != null);
+}
+
+test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {
+    const h = try Harness.start(.{ .tabs = &editable_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // `work_open` is the same query as `work_assigned` under the name it
+    // reads as, and it is what the statusline chip counts.
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expectEqual(@as(?usize, 3), a.assigned_open);
+    try testing.expect(std.mem.indexOf(u8, a.tab().jql, "assignee = currentUser()") != null);
+    try testing.expectEqual(@as(usize, 3), a.tabs.len);
+    // The file indices survive `--only`: all three are work tabs here.
+    try testing.expectEqual(@as(usize, 2), a.tabs[2].file_idx);
+
+    try a.switchTab(1);
+    try testing.expect(std.mem.indexOf(u8, a.tab().jql, "reporter = currentUser()") != null);
+
+    // The editable tab's JQL is the user's, with the holes filled.
+    try a.switchTab(2);
+    try testing.expectEqualStrings(
+        "project = ENG AND fixVersion in (\"13.16.0\", \"13.15.0\") ORDER BY updated DESC",
+        a.tab().jql,
+    );
+}
+
+test "E on an editable tab edits the vars, saves them into the config file's own spans, and the JQL follows" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const cfg_path = try std.fs.path.join(testing.allocator, &.{ root, "config.zon" });
+    defer testing.allocator.free(cfg_path);
+    // A hand-written file, comments and all — what a save must not eat.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "config.zon", .data =
+        \\// my jira config — keep my comments
+        \\.{
+        \\    .jira_url = "https://x",
+        \\    .email = "me@acme.com",
+        \\    .tabs = .{
+        \\        .{ .name = "My open work items", .kind = .work_open },
+        \\        .{ .name = "Reported by me", .kind = .work_reported },
+        \\        .{
+        \\            // the one that changes every release
+        \\            .name = "QA Actionable now",
+        \\            .kind = .jql_editable,
+        \\            .jql = "project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC",
+        \\            .vars = .{
+        \\                .{ .name = "project", .value = "ENG" },
+        \\                .{ .name = "versions", .values = .{ "13.16.0", "13.15.0" } },
+        \\            },
+        \\        },
+        \\    },
+        \\}
+        \\
+    });
+
+    const h = try Harness.start(.{ .tabs = &editable_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    a.setConfigPath(cfg_path);
+    try a.ensureLoaded();
+    try a.switchTab(2);
+
+    // E opens the editor on the vars, not on the JQL.
+    _ = try a.onKey("shift+e");
+    try testing.expect(a.vars != null);
+    try testing.expect(a.jql == null);
+    const e = &(a.vars.?);
+    // project, ENG, versions, 13.16.0, 13.15.0, + add
+    try testing.expectEqual(@as(usize, 6), e.rows.items.len);
+
+    // Add a version: `a` lands on the add line and types into it.
+    e.cursor = 3;
+    _ = try a.onKey("a");
+    try testing.expect(a.vars.?.edit != null);
+    for ("14.0.0") |c| _ = try a.onKey(if (c == '.') "." else &[_]u8{c});
+    _ = try a.onKey("enter");
+    try testing.expectEqual(@as(usize, 3), a.vars.?.boxes.items[1].values.items.len);
+
+    // Remove the first one.
+    a.vars.?.cursor = 3;
+    _ = try a.onKey("d");
+    try testing.expectEqual(@as(usize, 2), a.vars.?.boxes.items[1].values.items.len);
+
+    // s (and Ctrl+S) writes it back and closes.
+    _ = try a.onKey("s");
+    try testing.expect(a.vars == null);
+    const after = try tmp.dir.readFileAlloc(testing.io, "config.zon", testing.allocator, .unlimited);
+    defer testing.allocator.free(after);
+    try testing.expect(std.mem.indexOf(u8, after, ".values = .{ \"13.15.0\", \"14.0.0\" }") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "13.16.0") == null);
+    // Both comments survived, and so did everything the edit did not name.
+    try testing.expect(std.mem.indexOf(u8, after, "// my jira config — keep my comments") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "// the one that changes every release") != null);
+    try testing.expect(std.mem.indexOf(u8, after, ".value = \"ENG\"") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "{project}") != null);
+
+    // And the live tab is already running the new query.
+    try testing.expectEqualStrings(
+        "project = ENG AND fixVersion in (\"13.15.0\", \"14.0.0\") ORDER BY updated DESC",
+        a.tab().jql,
+    );
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "var(s) saved") != null);
+    // The save refetched the tab it edited — the count is the new
+    // query's, not the old one's. (This is what reading the editor
+    // after closing it used to skip.)
+    try testing.expect(a.tab().fetched);
+
+    // Esc on a tab without vars says so rather than opening an empty box.
+    try a.switchTab(0);
+    _ = try a.onKey("shift+e");
+    try testing.expect(a.vars == null);
+    try testing.expect(a.jql != null);
+    _ = try a.onKey("esc");
 }
 
 test "Fix Versions: the release resolves to 13.16.0, status_order and bumps group the tree, f switches the release, F assigns" {

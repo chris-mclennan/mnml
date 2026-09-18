@@ -22,6 +22,7 @@ const dispatch = @import("dispatch.zig");
 const hit = @import("hit.zig");
 const keymap = @import("keymap.zig");
 const pickers = @import("pickers.zig");
+const varsedit = @import("varsedit.zig");
 const text = @import("text.zig");
 const filters = @import("filters.zig");
 
@@ -213,6 +214,7 @@ pub const Painter = struct {
         if (p.a.transition != null) try p.paintTransition();
         if (p.a.picker != null) try p.paintPicker();
         if (p.a.modal != null) try p.paintModal();
+        if (p.a.vars != null) try p.paintVars();
         if (p.a.help) try p.paintHelp();
     }
 
@@ -222,7 +224,7 @@ pub const Painter = struct {
         _ = p.put(1, 2, p.cols() -| 1, "No tabs for this scope.", p.s.bold);
         const cli = if (p.a.family) |f| f.cli() else "work";
         _ = p.putFit(1, 3, p.cols() -| 1, p.fmt("Add a `.tabs` entry whose kind belongs to `--only {s}` in the config, then press r.", .{cli}), p.s.muted);
-        _ = p.putFit(1, 4, p.cols() -| 1, "Kinds: work_assigned · work_recently_done · work_recent · work_unified · filter · fix_version_tree · board_active_sprint · board_backlog.", p.s.muted);
+        _ = p.putFit(1, 4, p.cols() -| 1, "Kinds: work_open · work_reported · work_assigned · work_recently_done · work_recent · work_unified · jql_editable · filter · fix_version_tree · board_active_sprint · board_backlog.", p.s.muted);
         try p.hitAdd(.{ .x = 0, .y = 0, .w = p.cols(), .h = p.rows() -| 1 }, .help_body);
     }
 
@@ -323,6 +325,14 @@ pub const Painter = struct {
         }
         try out.append(arena, .{ .text_ = " basic ", .target = .basic, .style = if (!t.show_jql) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = " jql ", .target = .jql, .style = if (t.show_jql) p.s.chip_active else p.s.chip_style });
+        // An editable tab wears its vars: the values the JQL
+        // interpolates are what changes, so they are on the header
+        // rather than a level down, and `E` (or any of them) opens the
+        // editor.
+        if (t.cfg.isEditableJql()) {
+            for (t.vars) |v| try out.append(arena, .{ .text_ = try chipText(arena, v.name, try varSummary(arena, v)), .target = .vars, .style = p.s.chip_style });
+            try out.append(arena, .{ .text_ = " E edit ", .target = .vars, .style = p.s.chip_style });
+        }
         try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
@@ -1005,6 +1015,71 @@ pub const Painter = struct {
         _ = p.putFit(ix + 2, r.bottom() - 2, iw -| 2, "1-9 jump · ↑↓/jk move · Enter commit · Esc cancel", p.s.muted);
     }
 
+    /// The vars editor. One line per value under its var's name, an
+    /// `+ add` line under a list, and the line under the cursor turns
+    /// into a text field when it is being typed into.
+    fn paintVars(p: *Painter) Allocator.Error!void {
+        const e = &(p.a.vars.?);
+        const rows_needed: u16 = @intCast(@min(@as(usize, 40), e.rows.items.len + 6));
+        const r = p.centred(62, @max(rows_needed, 8));
+        try p.box(r, p.fmt(" vars — {s} ", .{e.tab_name}), p.s.border);
+        try p.hitAdd(r, .vars_body);
+        const ix = r.x + 2;
+        const iw = r.w -| 4;
+        const list_y = r.y + 1;
+        const list_h: usize = r.h -| 4;
+        const start = if (e.cursor >= list_h) e.cursor + 1 - list_h else 0;
+        var y = list_y;
+        var i = start;
+        while (i < e.rows.items.len and y < list_y + list_h) : ({
+            i += 1;
+            y += 1;
+        }) {
+            const row = e.rows.items[i];
+            const is_cur = i == e.cursor;
+            const typing = is_cur and e.edit != null;
+            switch (row) {
+                .name => |vi| {
+                    _ = p.putFit(ix, y, iw, e.boxes.items[vi].name, p.s.bold);
+                    continue;
+                },
+                .value => |v| {
+                    if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                    if (typing) {
+                        try p.paintVarField(ix + 2, y, iw -| 2, e);
+                    } else {
+                        const txt = e.valueText(v.v, v.i);
+                        _ = p.putFit(ix + 2, y, iw -| 2, if (txt.len > 0) txt else "(empty)", if (txt.len > 0) p.s.plain else p.s.muted);
+                    }
+                },
+                .add => {
+                    if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                    if (typing) {
+                        try p.paintVarField(ix + 2, y, iw -| 2, e);
+                    } else _ = p.putFit(ix + 2, y, iw -| 2, "+ add", p.s.muted);
+                },
+            }
+            try p.hitAdd(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, .{ .vars_row = @intCast(i) });
+        }
+        if (e.error_text.len > 0) _ = p.putFit(ix, r.bottom() - 3, iw, e.error_text, p.s.err_style);
+        const save = " s save ";
+        const sw = text.width(save);
+        _ = p.put(r.right() -| (sw + 2), r.bottom() - 2, sw, save, p.s.chip_style);
+        try p.hitAdd(.{ .x = r.right() -| (sw + 2), .y = r.bottom() - 2, .w = sw, .h = 1 }, .vars_save);
+        // The save is the chip beside this row, so the words here are the
+        // ones that have nowhere else to be said.
+        _ = p.putFit(ix, r.bottom() - 2, iw -| (sw + 2), "↑↓ move · ⏎ edit · a add · d remove · Esc cancel", p.s.muted);
+    }
+
+    /// The line being typed into, with the caret where the cursor is.
+    fn paintVarField(p: *Painter, x: u16, y: u16, w: u16, e: *const varsedit.Editor) Allocator.Error!void {
+        const t = &(e.edit.?);
+        const txt = t.text();
+        _ = p.put(x, y, w, txt, p.s.plain);
+        const caret_x = x + text.width(txt[0..@min(t.cursor, txt.len)]);
+        if (caret_x < x + w) _ = p.put(caret_x, y, 1, "▏", p.s.accent_plain);
+    }
+
     fn paintModal(p: *Painter) Allocator.Error!void {
         const m = &(p.a.modal.?);
         const r = p.centred(@max(p.cols() * 4 / 5, 40), @max(p.rows() * 4 / 5, 8));
@@ -1213,6 +1288,14 @@ fn pipelineStyle(th: Theme, pipe: model.Pipeline) Style {
 /// ` key: value ` — mnml's mode chip.
 pub fn chipText(arena: Allocator, key: []const u8, value: []const u8) Allocator.Error![]const u8 {
     return std.fmt.allocPrint(arena, " {s}: {s} ", .{ key, value });
+}
+
+/// What a var chip says: the one value, or how many are in the list and
+/// the first of them — the header has room for the shape, not the set.
+fn varSummary(arena: Allocator, v: config.Var) Allocator.Error![]const u8 {
+    if (v.values.len == 0) return if (v.value.len > 0) v.value else "—";
+    if (v.values.len == 1) return v.values[0];
+    return std.fmt.allocPrint(arena, "{s} +{d}", .{ v.values[0], v.values.len - 1 });
 }
 
 pub fn upperOf(arena: Allocator, s: []const u8) []const u8 {

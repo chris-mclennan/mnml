@@ -40,6 +40,7 @@ pub const pickers = @import("src/pickers.zig");
 pub const inbox = @import("src/inbox.zig");
 pub const app_mod = @import("src/app.zig");
 pub const textedit = @import("src/textedit.zig");
+pub const varsedit = @import("src/varsedit.zig");
 pub const screen = @import("src/screen.zig");
 pub const bitbucket = @import("src/bitbucket.zig");
 pub const json = @import("src/json.zig");
@@ -80,9 +81,10 @@ pub const segment_click = "jira_work.open";
 pub const segment_priority: u8 = 60;
 
 /// The second figure: the tab the user configures as "QA Actionable
-/// Now". There is no tab *kind* for it yet (that is its own track), so
-/// it is found by name; without such a tab the chip is not published
-/// at all rather than showing a zero that means "not configured".
+/// Now" — a `jql_editable` tab, or, for a config written before that
+/// kind existed, one found by name. Without such a tab the chip is not
+/// published at all rather than showing a zero that means "not
+/// configured".
 pub const qa_segment_id = "jira_work.qa_actionable";
 pub const qa_segment_glyph = "\u{ed7a}"; // nf-fa-clipboard_check
 pub const qa_segment_color = "#C678DD";
@@ -262,7 +264,7 @@ pub fn configPath(arena: Allocator, io: Io, env: *const std.process.Environ.Map,
 // ─── the pane ────────────────────────────────────────────────────────────
 
 const Setup = union(enum) {
-    ready: struct { cfg: config.Config, token: auth.Token },
+    ready: struct { cfg: config.Config, token: auth.Token, path: []const u8 },
     /// A setup screen: its title and its lines.
     problem: struct { title: []const u8, lines: []const []const u8 },
 };
@@ -281,7 +283,7 @@ fn setup(arena: Allocator, io: Io, env: *const std.process.Environ.Map, cfg_path
     }
     const token = try auth.resolve(arena, io, env, .{ .config_path = loaded.config.token_file, .env_name = loaded.config.token_env, .data_root = data_root });
     switch (token) {
-        .ok => |t| return .{ .ready = .{ .cfg = loaded.config, .token = t } },
+        .ok => |t| return .{ .ready = .{ .cfg = loaded.config, .token = t, .path = loaded.path } },
         .missing => |m| return .{ .problem = .{ .title = "No Jira API token.", .lines = try auth.explain(arena, m) } },
     }
 }
@@ -360,6 +362,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
+    // Where a saved vars edit is spliced back into.
+    app.setConfigPath(rd.path);
     defer app.deinit();
     app.resize(frame.cols, frame.rows);
     var ipc = try sdk.Ipc.fromEnv(gpa, io, env);
@@ -491,11 +495,13 @@ pub fn breakdownText(arena: Allocator, lead: []const u8, counts: []const StatusC
     return w.toOwnedSlice() catch error.OutOfMemory;
 }
 
-/// The tab the user has set up as QA Actionable Now, by name. A tab
-/// *kind* for it is the next track; until then the name is the
-/// contract, matched loosely so "QA Actionable Now", "qa_actionable"
-/// and "QA actionable" all count.
+/// The tab the second figure counts: the first `jql_editable` tab —
+/// the kind that exists for exactly this — else one whose name says so,
+/// matched loosely so "QA Actionable Now", "qa_actionable" and "QA
+/// actionable" all count. The name match is what keeps a config written
+/// before the kind existed working.
 pub fn qaTab(tabs: []const config.Tab) ?config.Tab {
+    for (tabs) |t| if (t.isEditableJql()) return t;
     for (tabs) |t| if (nameIsQaActionable(t.name)) return t;
     return null;
 }
@@ -696,9 +702,9 @@ fn diag(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
 /// chips move with no pane open.
 ///
 /// The second figure is the tab the user has set up as QA Actionable
-/// Now. There is no tab kind for it yet, so it is found by name; with
-/// no such tab the key is `null` and the chip is not published, which
-/// is not the same as a zero.
+/// Now — a `jql_editable` tab, else one found by name; with no such tab
+/// the key is `null` and the chip is not published, which is not the
+/// same as a zero.
 fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
     const c = loaded.config;
     const t: auth.Token = switch (token) {
@@ -1094,6 +1100,16 @@ test "the breakdown is by status, most common first, and the tooltip reads as a 
     try testing.expectEqualStrings("Jira · 0 open items assigned to me", try breakdownText(arena, "Jira · 0 open items assigned to me", &.{}));
 }
 
+test "the QA figure prefers the jql_editable tab, then a name, and comes from no other tab" {
+    // The kind wins wherever there is one, whatever the tab is called.
+    const kinded = [_]config.Tab{
+        .{ .name = "Assigned to me", .kind = .work_open },
+        .{ .name = "Whatever I called it", .kind = .jql_editable, .jql = "project = {p}", .vars = &.{.{ .name = "p", .value = "ENG" }} },
+        .{ .name = "QA Actionable Now", .jql = "status = \"Ready for QA\"" },
+    };
+    try testing.expectEqualStrings("Whatever I called it", qaTab(&kinded).?.name);
+}
+
 test "the QA figure comes from a tab found by name, loosely, and from no other tab" {
     try testing.expect(qaTab(&.{}) == null);
     try testing.expect(qaTab(&.{.{ .name = "Assigned to me" }}) == null);
@@ -1105,8 +1121,8 @@ test "the QA figure comes from a tab found by name, loosely, and from no other t
     };
     const found = qaTab(&tabs).?;
     try testing.expectEqualStrings("QA Actionable Now", found.name);
-    // The name is the contract until a tab kind exists for it, so it is
-    // matched the way a user would write it.
+    // A config written before `jql_editable` existed still works: the
+    // name is matched the way a user would write it.
     try testing.expect(qaTab(&.{.{ .name = "qa_actionable" }}) != null);
     try testing.expect(qaTab(&.{.{ .name = "qa-actionable-now" }}) != null);
     try testing.expect(qaTab(&.{.{ .name = "My QA Actionable queue" }}) != null);

@@ -18,6 +18,8 @@ pub const Chip = enum {
     help,
     basic,
     jql,
+    /// A `jql_editable` tab's `E` chip — the vars editor's door.
+    vars,
     search,
     assignee,
     type,
@@ -65,6 +67,11 @@ pub const Target = union(enum) {
     /// The detail modal's close chip and body.
     modal_close,
     modal_body,
+    /// The vars editor: a line, its `save` chip, and the box itself.
+    vars_row: u32,
+    vars_save,
+    vars_close,
+    vars_body,
     /// The JQL editor's text: the cell index the click maps to.
     jql_text: struct { col: u16, row: u16 },
     jql_body,
