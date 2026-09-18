@@ -601,10 +601,11 @@ test "the schedule is one job per values source: the manifest's own binary, its 
     try integrations.refresh(&app);
     try testing.expect(app.integrations.list[0].binary_found);
 
-    // `refresh` does not start workers in a test App (`native_notify` is
-    // off), so the schedule is built here and inspected.
-    try build(&app);
+    // `integrations.refresh` builds the schedule; what it does not do in
+    // a test App is start the workers (`native_notify` is off and the
+    // corpus's opt-in is not set), so the jobs can be inspected at rest.
     const st = &app.integration_poll;
+    try testing.expect(!st.running);
     try testing.expectEqual(@as(usize, 1), st.jobs.items.len);
     const job = st.jobs.items[0];
     try testing.expectEqualStrings("acme_prs", job.integration_id);
