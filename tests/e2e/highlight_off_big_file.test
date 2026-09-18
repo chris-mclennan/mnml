@@ -24,9 +24,13 @@ command editor.highlight_toggle_file
 expect screen contains "highlight off"
 expect screen contains "highlighting off for big.rs"
 
-# On again — the chip flips and the spans come back (the parse of a file
-# this size runs on a worker, so give it room beyond the poll budget).
+# On again. This buffer is not over a limit — nothing is configured — so
+# the chip goes rather than flipping to `highlight on` (a file the limit
+# skipped keeps it, reading `on`; that case is pinned in the statusline's
+# own tests). The spans come back: the parse of a file this size runs on
+# a worker, so give it room beyond the poll budget.
 command editor.highlight_this_file
-expect screen contains "highlight on"
+expect screen contains "highlighting on for big.rs"
+expect screen lacks "highlight off ·"
 wait 3000
 expect highlights at_least 1
