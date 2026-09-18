@@ -1590,3 +1590,72 @@ test "the JQL editor paints its box with the caret and a click places it" {
     _ = try a.onKey("esc");
     try testing.expect(a.jql == null);
 }
+
+/// Every cell that carries a fold chevron in this frame.
+const ChevronAt = struct { x: u16, y: u16, open: bool };
+
+fn chevronsOf(arena: Allocator, f: *const Frame) Allocator.Error![]const ChevronAt {
+    var out: std.ArrayList(ChevronAt) = .empty;
+    var y: u16 = 0;
+    while (y < f.rows) : (y += 1) {
+        var x: u16 = 0;
+        while (x < f.cols) : (x += 1) {
+            const sym = f.slots[@as(usize, y) * f.cols + x].symbol();
+            if (std.mem.eql(u8, sym, open_glyph)) try out.append(arena, .{ .x = x, .y = y, .open = true });
+            if (std.mem.eql(u8, sym, closed_glyph)) try out.append(arena, .{ .x = x, .y = y, .open = false });
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+fn chevronAt(arena: Allocator, f: *const Frame, x: u16, y: u16) Allocator.Error!?bool {
+    _ = arena;
+    if (y >= f.rows or x >= f.cols) return null;
+    const sym = f.slots[@as(usize, y) * f.cols + x].symbol();
+    if (std.mem.eql(u8, sym, open_glyph)) return true;
+    if (std.mem.eql(u8, sym, closed_glyph)) return false;
+    return null;
+}
+
+test "every chevron column folds under the mouse — the group's, the ticket's and the merged PR's" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    // A merged PR's chevron is the one that used to launch a browser
+    // instead of expanding: open ENG-2's so the sweep below covers it.
+    const start = try chevronsOf(ar, &f);
+    try testing.expect(start.len >= 3);
+    // Both cells of every chevron's two-cell target, one at a time: the
+    // glyph flips on the click and flips back on the next one, so the
+    // pointer can fold anything the keyboard can.
+    var col_off: u16 = 0;
+    while (col_off < 2) : (col_off += 1) {
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            try paint(ar, &f, a, .{});
+            const list = try chevronsOf(ar, &f);
+            if (i >= list.len) break;
+            const c = list[i];
+            try a.click(c.x + col_off, c.y, false);
+            try paint(ar, &f, a, .{});
+            const after = try chevronAt(ar, &f, c.x, c.y);
+            if (after == null) {
+                std.debug.print("chevron at {d},{d} (open={}) vanished after a click on column +{d}\n{s}\n", .{ c.x, c.y, c.open, col_off, try screenText(ar, &f) });
+                return error.ChevronDidNotFold;
+            }
+            if (after.? == c.open) {
+                std.debug.print("chevron at {d},{d} did not fold on a click on column +{d} (still open={})\n{s}\n", .{ c.x, c.y, col_off, c.open, try screenText(ar, &f) });
+                return error.ChevronDidNotFold;
+            }
+            // Put it back so the next chevron is where it was.
+            try a.click(c.x + col_off, c.y, false);
+        }
+    }
+}

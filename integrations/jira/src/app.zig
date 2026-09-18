@@ -2056,11 +2056,46 @@ pub const App = struct {
         if (right) try a.toggleSelection();
     }
 
+    /// A press on a row's `\u{25b8}` / `\u{25be}`. A fold, never the row's
+    /// Enter: on a group and a ticket the two happen to agree, but on a
+    /// merged PR row Enter opens the PR in the browser — so routing the
+    /// chevron through `treeActivate` made the one chevron that has
+    /// something to reveal (the post-merge pipelines) launch a browser
+    /// instead of expanding, which reads as "the mouse cannot fold".
     fn clickChevron(a: *App, i: u32) Allocator.Error!void {
         const t = a.tab();
         if (!t.cfg.isTree()) return;
         t.selected = i;
-        try a.treeActivate();
+        try a.afterMove();
+        try a.treeToggleFold();
+    }
+
+    /// Expand what is closed, close what is open — for whatever row the
+    /// cursor is on. The chevron's action, and nothing else's.
+    pub fn treeToggleFold(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const row = (try a.focusedRow(scratch.allocator())) orelse return;
+        const t = a.tab();
+        const st = &(t.tree.?);
+        switch (row) {
+            .group, .ticket, .show_more => try a.treeActivate(),
+            .pr => |p| {
+                const key = t.issues[p.issue_idx].key;
+                const prs = st.prs(key) orelse return;
+                if (p.pr_idx >= prs.len) return;
+                const pr = prs[p.pr_idx];
+                if (!pr.isMerged()) return;
+                if (st.isPrExpanded(key, pr.id)) {
+                    try st.setPrExpanded(key, pr.id, false);
+                } else {
+                    try st.setPrExpanded(key, pr.id, true);
+                    try a.ensurePipelines(key, pr);
+                }
+                try a.clampCursor();
+            },
+            else => try a.treeCollapse(),
+        }
     }
 
     fn clickPrButton(a: *App, row: u32, which: hit.PrButton) Allocator.Error!void {
