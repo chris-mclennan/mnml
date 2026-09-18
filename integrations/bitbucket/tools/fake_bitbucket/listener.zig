@@ -206,3 +206,14 @@ test "a request with no credentials comes back 401 over the wire too" {
     try t.expectEqual(@as(u16, 401), @intFromEnum(res.status));
     try t.expectEqual(@as(u32, 1), srv.snapshot().unauthorized);
 }
+
+test "stop wakes an accept nobody ever connected to — what makes --lifetime-secs real" {
+    const io = t.io;
+    const srv = try Server.start(t.allocator, io, 0);
+    // No client, ever: the accept thread is parked. `stop` knocks on the
+    // port itself, so the join comes back instead of holding the process
+    // open until someone kills it.
+    const started = Io.Timestamp.now(io, .real).toMilliseconds();
+    srv.stop();
+    try t.expect(Io.Timestamp.now(io, .real).toMilliseconds() - started < 5000);
+}

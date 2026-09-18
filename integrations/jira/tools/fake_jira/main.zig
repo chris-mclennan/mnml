@@ -863,15 +863,56 @@ pub fn main(init: std.process.Init) !u8 {
         Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = s }) catch {};
     }
 
-    const started = Io.Timestamp.now(io, .real).toMilliseconds();
-    while (true) {
+    var reaper: Reaper = .{ .io = io, .port = bound, .life_secs = life_secs };
+    if (life_secs > 0) {
+        const th = std.Thread.spawn(.{}, Reaper.run, .{&reaper}) catch null;
+        if (th) |t| t.detach();
+    }
+    serveUntil(gpa, io, &store, &server, &reaper);
+    return 0;
+}
+
+/// The deadline, made real. The accept blocks, so a server nobody talks
+/// to never came back to look at the clock — which is how a `--life-secs`
+/// run outlived the test that started it by hours. The reaper sleeps out
+/// the life, raises the flag and then knocks on the port itself, so the
+/// blocking accept returns and the loop sees the flag.
+const Reaper = struct {
+    io: Io,
+    port: u16,
+    life_secs: u32,
+    expired: std.atomic.Value(bool) = .init(false),
+
+    fn run(r: *Reaper) void {
+        var left = r.life_secs;
+        while (left > 0) : (left -= 1) r.io.sleep(.fromMilliseconds(1000), .awake) catch break;
+        r.expired.store(true, .release);
+        r.knock();
+    }
+
+    /// One connection that asks for nothing — the accept's alarm clock.
+    fn knock(r: *Reaper) void {
+        const addr: Io.net.IpAddress = .{ .ip4 = .loopback(r.port) };
+        if (addr.connect(r.io, .{ .mode = .stream })) |s| s.close(r.io) else |_| {}
+    }
+
+    fn done(r: *const Reaper) bool {
+        return r.expired.load(.acquire);
+    }
+};
+
+/// Serve until a client asks us to stop or the life runs out.
+fn serveUntil(gpa: Allocator, io: Io, store: *Store, server: *Io.net.Server, reaper: *Reaper) void {
+    while (!reaper.done()) {
         const stream = server.accept(io) catch break;
-        const stop = serveOne(gpa, io, &store, stream);
+        if (reaper.done()) {
+            stream.close(io);
+            break;
+        }
+        const stop = serveOne(gpa, io, store, stream);
         stream.close(io);
         if (stop) break;
-        if (life_secs > 0 and Io.Timestamp.now(io, .real).toMilliseconds() - started > @as(i64, life_secs) * 1000) break;
     }
-    return 0;
 }
 
 /// One request. True means the client asked us to stop.
@@ -1074,4 +1115,47 @@ test "--fail-with turns every Jira route into that status; target parsing; /__sh
     try testing.expectEqualStrings("project = ENG", try urlDecode(a.allocator(), "project%20%3D%20ENG"));
     try testing.expectEqual(@as(u16, 404), (try call(&store, a.allocator(), .GET, "/rest/api/3/nope", "")).status);
     try testing.expectEqual(@as(u16, 200), (try call(&store, a.allocator(), .GET, "/__shutdown", "")).status);
+}
+
+/// `serveUntil` on a thread of its own, so a test can put a bound on it:
+/// a deadline that does not work is a hang, and a hang is not a verdict.
+const ServeProbe = struct {
+    gpa: Allocator,
+    io: Io,
+    store: *Store,
+    server: *Io.net.Server,
+    reaper: *Reaper,
+    returned: std.atomic.Value(bool) = .init(false),
+
+    fn run(p: *ServeProbe) void {
+        serveUntil(p.gpa, p.io, p.store, p.server, p.reaper);
+        p.returned.store(true, .release);
+    }
+};
+
+test "--life-secs is a real deadline: a server nobody talks to is gone when the life runs out" {
+    const io = testing.io;
+    var store = try Store.init(testing.allocator);
+    defer store.deinit();
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var reaper: Reaper = .{ .io = io, .port = server.socket.address.getPort(), .life_secs = 1 };
+    var probe: ServeProbe = .{ .gpa = testing.allocator, .io = io, .store = &store, .server = &server, .reaper = &reaper };
+    const serving = try std.Thread.spawn(.{}, ServeProbe.run, .{&probe});
+    const reaping = try std.Thread.spawn(.{}, Reaper.run, .{&reaper});
+    // Nothing ever connects: the accept blocks, and only the reaper's
+    // knock brings it back. Five seconds is five lives.
+    var waited: u32 = 0;
+    while (waited < 5000 and !probe.returned.load(.acquire)) : (waited += 50) io.sleep(.fromMilliseconds(50), .awake) catch {};
+    const served = probe.returned.load(.acquire);
+    if (!served) {
+        // Let the threads out before the failure unwinds the stack the
+        // probe points into.
+        reaper.expired.store(true, .release);
+        reaper.knock();
+    }
+    serving.join();
+    reaping.join();
+    try testing.expect(served);
 }
