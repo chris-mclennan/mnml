@@ -563,8 +563,25 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         const hint = client.installHint(cmd);
         if (mode != .ignore) try recordMissing(app, spec.name, cmd, hint, from_default);
         if (mode == .toast) {
+            // // changed (bottom-row): with a known install command the
+            // message carries an ` Install ` button that runs it in a
+            // VISIBLE terminal pane. Printing the command and then
+            // fading out left the user retyping it from memory — a
+            // message that names a missing dependency should offer to
+            // fetch it. Never a silent background install: the pane
+            // shows the command, its output and its exit status.
+            //
+            // A hint may list two ways (`brew install llvm  /  apt
+            // install clangd`); the button runs the first, which is the
+            // one for the platform we are on.
             if (hint) |h| {
-                try app.toastLevel(.warn, "LSP: {s} not installed — `{s}`", .{ cmd, h });
+                const run = std.mem.trim(u8, if (std.mem.indexOf(u8, h, "  /  ")) |slash| h[0..slash] else h, " ");
+                const action: app_mod.ToastAction = .{ .run_in_terminal = .{
+                    .label = try app.gpa.dupe(u8, "Install"),
+                    .cmd = try app.gpa.dupe(u8, run),
+                } };
+                errdefer action.deinit(app.gpa);
+                try app.toastWithAction(.warn, action, "LSP: {s} not installed — `{s}`", .{ cmd, h });
             } else {
                 try app.toastLevel(.warn, "LSP: {s} not installed — install it on PATH", .{cmd});
             }

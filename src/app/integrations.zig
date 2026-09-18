@@ -631,6 +631,14 @@ fn noticeToml(app: *App) Allocator.Error!void {
     if (!tomlNoticeDue(app) or st.toml_noticed) return;
     st.toml_noticed = true;
     app.toastReplaceLevel(toml_toast_id, .warn, "{s}", .{try tomlNoticeText(app, app.frame.allocator())});
+    // // changed (bottom-row): the message says where 0.3 integrations
+    // come from, so it carries the way there. The Marketplace tab, not
+    // an install: the description, version and source are readable
+    // before anything is fetched.
+    app.attachToastAction(toml_toast_id, .{ .marketplace = .{
+        .label = try app.gpa.dupe(u8, "Marketplace"),
+        .id = try app.gpa.dupe(u8, ""),
+    } });
 }
 
 /// `integrations.dismiss_toml_notice`: *Don't show again* —
@@ -1451,6 +1459,21 @@ fn showInstalled(app: *App) CommandError!void {
 
 fn showMarketplace(app: *App) CommandError!void {
     return showTab(app, .marketplace);
+}
+
+/// // changed (bottom-row): the Marketplace tab, filtered to one entry
+/// — where an actionable toast's ` Marketplace ` button lands. The row,
+/// not an install: the description, version and source are readable
+/// there before anything is fetched.
+pub fn revealInMarketplace(app: *App, id: []const u8) CommandError!void {
+    try showTab(app, .marketplace);
+    const st = &app.integrations;
+    st.panel.filter.clearRetainingCapacity();
+    try st.panel.filter.appendSlice(app.gpa, id);
+    st.panel.filter_caret = st.panel.filter.items.len;
+    st.panel.cursor = 0;
+    st.panel.scroll = 0;
+    app.needs_render = true;
 }
 
 fn showDevCmd(app: *App) CommandError!void {

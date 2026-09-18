@@ -2213,6 +2213,26 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 if (m.button == .right) app.dropUndo() else try app.takeUndo();
                 return;
             }
+            // // changed (bottom-row): a toast's own controls, read
+            // before the catch-all dismiss arm below it.
+            if (id >= toast_mod.action_base) {
+                const from_close = id >= toast_mod.close_base;
+                const i = id - (if (from_close) toast_mod.close_base else toast_mod.action_base);
+                if (i >= app.toasts.items.len) return;
+                const at = app.toasts.items.len - 1 - i;
+                if (from_close) {
+                    app.dismissToastAt(at);
+                    return;
+                }
+                // The offer, not a dismiss: losing the thing you meant
+                // to act on is the worse mistake, since the box is then
+                // gone. Taken by value first — running it may toast.
+                const action = app.toasts.items[at].action orelse return;
+                app.toasts.items[at].action = null;
+                defer action.deinit(app.gpa);
+                app.dismissToastAt(at);
+                return app.runToastAction(action);
+            }
             if (id >= toast_mod.button_base) {
                 // Toasts: newest first as painted; index i is the i-th from the end.
                 const i = id - toast_mod.button_base;

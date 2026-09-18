@@ -826,6 +826,43 @@ pub const ChordChain = struct {
 };
 
 pub const ToastLevel = enum { info, warn, err };
+
+/// The thing to DO about a message, offered on the toast that carries
+/// it as a ` label ` button.
+///
+/// A toast that reports a missing dependency and then vanishes leaves
+/// the user to copy a command out of a widget that is already gone. The
+/// two shapes are deliberately the only two: neither installs anything
+/// behind the user's back.
+pub const ToastAction = union(enum) {
+    /// Run a command in a VISIBLE terminal pane — never a silent
+    /// background install. The user sees the command, its output and
+    /// its exit status; a three-second widget is not the place to hide
+    /// `brew install` behind one click.
+    run_in_terminal: struct { label: []u8, cmd: []u8 },
+    /// Open the integration's marketplace row, where its description,
+    /// version and source are readable before anything is fetched.
+    marketplace: struct { label: []u8, id: []u8 },
+
+    pub fn label(self: ToastAction) []const u8 {
+        return switch (self) {
+            inline else => |a| a.label,
+        };
+    }
+
+    pub fn deinit(self: ToastAction, gpa: Allocator) void {
+        switch (self) {
+            inline else => |a| {
+                gpa.free(a.label);
+                switch (self) {
+                    .run_in_terminal => |r| gpa.free(r.cmd),
+                    .marketplace => |m| gpa.free(m.id),
+                }
+            },
+        }
+    }
+};
+
 pub const Toast = struct {
     text: []u8,
     level: ToastLevel,
@@ -835,6 +872,9 @@ pub const Toast = struct {
     /// The same text again while this one is up bumps this instead of
     /// stacking a twin.
     repeats: u32 = 1,
+    /// What to do about the message. Owned — never the frame arena: the
+    /// toast outlives the frame it was made on.
+    action: ?ToastAction = null,
 };
 
 /// How long the Undo chip stays offered.
@@ -1694,6 +1734,65 @@ pub const App = struct {
     fn freeToast(gpa: Allocator, t: Toast) void {
         gpa.free(t.text);
         if (t.id) |id| gpa.free(id);
+        if (t.action) |a| a.deinit(gpa);
+    }
+
+    /// A toast that carries something to DO about itself. The offer is
+    /// attached to the box the message landed in — including the box a
+    /// repeat coalesced into, so a dependency that goes missing three
+    /// times keeps one offer and gains a count.
+    pub fn toastWithAction(self: *App, level: ToastLevel, action: ToastAction, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+        const s = try std.fmt.allocPrint(self.gpa, fmt, args);
+        defer self.gpa.free(s);
+        try self.toastLevel(level, "{s}", .{s});
+        // `toastLevel` may have dropped it (inside `:g`) or coalesced it
+        // into an older box; find the one that holds this text.
+        var i = self.toasts.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (std.mem.eql(u8, self.toasts.items[i].text, s)) {
+                if (self.toasts.items[i].action) |old| old.deinit(self.gpa);
+                self.toasts.items[i].action = action;
+                return;
+            }
+        }
+        action.deinit(self.gpa);
+    }
+
+    /// Attach an offer to the toast with `id` (a `toastReplace*` one).
+    /// Takes ownership either way: a toast that is no longer up frees it
+    /// rather than leaking.
+    pub fn attachToastAction(self: *App, id: []const u8, action: ToastAction) void {
+        for (self.toasts.items) |*t| if (t.id) |tid| if (std.mem.eql(u8, tid, id)) {
+            if (t.action) |old| old.deinit(self.gpa);
+            t.action = action;
+            return;
+        };
+        action.deinit(self.gpa);
+    }
+
+    /// Perform a toast's offer.
+    pub fn runToastAction(self: *App, action: ToastAction) Allocator.Error!void {
+        switch (action) {
+            // A VISIBLE pane, not a background spawn: the user sees the
+            // command, its output and whether it worked.
+            .run_in_terminal => |r| {
+                const cmd = try self.frame.allocator().dupe(u8, r.cmd);
+                @import("app/cmd_term.zig").termEx(self, cmd) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => self.toast("could not start `{s}`", .{cmd}),
+                };
+            },
+            // The marketplace row, NOT a direct install: the
+            // description, version and source are visible there first.
+            .marketplace => |m| {
+                const id = try self.frame.allocator().dupe(u8, m.id);
+                @import("app/integrations.zig").revealInMarketplace(self, id) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => self.toast("could not open the marketplace for {s}", .{id}),
+                };
+            },
+        }
     }
 
     /// Queue a toast. Formatting failure drops the toast rather than the frame.
@@ -2676,11 +2775,15 @@ pub const App = struct {
         // toast.draw wants the newest first: index 0 lands nearest the
         // statusline and the oldest is what folds into "+K more…".
         var i = self.toasts.items.len;
-        while (i > 0) : (i -= 1) try out.append(arena, .{ .text = self.toasts.items[i - 1].text, .level = switch (self.toasts.items[i - 1].level) {
-            .info => .info,
-            .warn => .warn,
-            .err => .err,
-        } });
+        while (i > 0) : (i -= 1) try out.append(arena, .{
+            .text = self.toasts.items[i - 1].text,
+            .level = switch (self.toasts.items[i - 1].level) {
+                .info => .info,
+                .warn => .warn,
+                .err => .err,
+            },
+            .action = if (self.toasts.items[i - 1].action) |a| a.label() else null,
+        });
         return out.items;
     }
 };

@@ -1,0 +1,20 @@
+# width: 120
+# height: 40
+# env: PATH=/nonexistent
+# A message that names a missing dependency offers to fetch it: the box
+# carries an ` Install ` button, and the ` × ` in its top edge puts the
+# box away. (PATH is emptied so the tool is missing whatever the machine
+# has installed. The button is NOT clicked here — it would run a real
+# install; `cmd_app.zig` covers the click against `printf hi`.)
+
+write notes.txt "alpha\n"
+open notes.txt
+
+command tools.iftop
+expect screen contains "iftop is not on PATH"
+expect screen contains " Install "
+
+# The ` × ` set into the box's top edge puts it away.
+click 116 34
+expect screen lacks "iftop is not on PATH"
+expect screen lacks " Install "

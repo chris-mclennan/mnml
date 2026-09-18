@@ -36,6 +36,7 @@ pub const table = .{
     .@"scratch.new" = &scratchNew,
     .@"scratch.from_clipboard" = &scratchFromClipboard,
     .@"toast.dismiss_all" = &toastDismissAll,
+    .@"toast.run_action" = &toastRunAction,
     .@"toast.dismiss_current" = &toastDismissCurrent,
     .@"file.open_recent_0" = recentRunner(0),
     .@"file.open_recent_1" = recentRunner(1),
@@ -165,6 +166,22 @@ fn quit(app: *App) CommandError!void {
     } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// `Ctrl+Shift+A` — take up the newest message's offer, the keyboard's
+/// way to the ` Install ` button a toast paints. The newest is the one
+/// on screen nearest the statusline, which is the one the chord is for.
+fn toastRunAction(app: *App) CommandError!void {
+    var i = app.toasts.items.len;
+    while (i > 0) {
+        i -= 1;
+        const action = app.toasts.items[i].action orelse continue;
+        app.toasts.items[i].action = null;
+        defer action.deinit(app.gpa);
+        app.dismissToastAt(i);
+        return app.runToastAction(action);
+    }
+    return app.diag.fail(app.frame.allocator(), "no message on screen is offering anything", .{});
 }
 
 /// `Ctrl+;` — the app's own `:` line (`app/cmdline.zig`), from any
@@ -744,7 +761,15 @@ fn toolRunner(comptime bin: []const u8) CommandFn {
     return &struct {
         fn run(app: *App) CommandError!void {
             if (onPath(app, bin)) return cmd_term.termEx(app, bin);
-            return app.diag.fail(app.frame.allocator(), "{s} is not on PATH — {s}{s}", .{ bin, installHintPrefix(), bin });
+            // // changed (bottom-row): the hint is a button, not just
+            // prose. It was a diag — the message named the command and
+            // then went away, leaving the user to retype it.
+            const action: app_mod.ToastAction = .{ .run_in_terminal = .{
+                .label = try app.gpa.dupe(u8, "Install"),
+                .cmd = try std.fmt.allocPrint(app.gpa, "{s}{s}", .{ installHintPrefix(), bin }),
+            } };
+            errdefer action.deinit(app.gpa);
+            try app.toastWithAction(.warn, action, "{s} is not on PATH — {s}{s}", .{ bin, installHintPrefix(), bin });
         }
     }.run;
 }
@@ -777,6 +802,51 @@ pub fn onPath(app: *App, bin: []const u8) bool {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "an offer runs in a VISIBLE pane, the chord takes the newest one, and an unclaimed offer is freed" {
+    // A real pty and a login shell: POSIX.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+
+    // Nothing offering anything: the chord says so rather than acting.
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"toast.run_action" }));
+
+    try app.toastWithAction(.warn, .{ .run_in_terminal = .{
+        .label = try app.gpa.dupe(u8, "Install"),
+        .cmd = try app.gpa.dupe(u8, "printf hi"),
+    } }, "missing: nothing-at-all (printf hi)", .{});
+    try t.expectEqualStrings("Install", app.toasts.items[app.toasts.items.len - 1].action.?.label());
+    // The view the box paints carries the label.
+    const shown = try app.visibleToasts(app.frame.allocator());
+    try t.expectEqualStrings("Install", shown[0].action.?);
+
+    // The chord takes it: a VISIBLE pane, titled with the command, not
+    // a silent background install. The box goes with it.
+    try command.run(&app, .{ .static = .@"toast.run_action" });
+    try t.expectEqualStrings("printf hi", app.panes.get(app.active.?).?.title());
+    for (app.toasts.items) |item| try t.expect(item.action == null);
+
+    // An offer attached to a message that never landed is freed, not
+    // leaked — the testing allocator is the check.
+    app.in_global = true;
+    try app.toastWithAction(.warn, .{ .marketplace = .{
+        .label = try app.gpa.dupe(u8, "Marketplace"),
+        .id = try app.gpa.dupe(u8, "jira"),
+    } }, "swallowed inside :g", .{});
+    app.in_global = false;
+    // So is one replaced by a second offer on the same message.
+    try app.toastWithAction(.info, .{ .marketplace = .{
+        .label = try app.gpa.dupe(u8, "Marketplace"),
+        .id = try app.gpa.dupe(u8, "jira"),
+    } }, "same text twice", .{});
+    try app.toastWithAction(.info, .{ .marketplace = .{
+        .label = try app.gpa.dupe(u8, "Marketplace"),
+        .id = try app.gpa.dupe(u8, "bitbucket"),
+    } }, "same text twice", .{});
+}
 
 test "keys.doctor opens the wizard on its Keyboard section" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
@@ -871,8 +941,15 @@ test "small commands: recent jumps, scratch from the register, fold navigation, 
     try app.env.put("PATH", bin);
     try t.expect(onPath(&app, "htop"));
     try t.expect(!onPath(&app, "btop"));
-    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"tools.btop" }));
-    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "btop is not on PATH") != null);
+    // // changed (bottom-row): the miss is a toast carrying an
+    // ` Install ` button, not a bare diag — the hint used to name the
+    // command and then fade, leaving the user to retype it.
+    try command.run(&app, .{ .static = .@"tools.btop" });
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "btop is not on PATH") != null);
+    const offer = app.toasts.items[app.toasts.items.len - 1].action.?;
+    try t.expectEqualStrings("Install", offer.label());
+    try t.expect(std.mem.endsWith(u8, offer.run_in_terminal.cmd, "btop"));
+    app.dismissToasts();
     // Recent commands picker re-runs the newest command; the picker
     // itself is not in its own list.
     try command.run(&app, .{ .static = .@"view.toggle_line_numbers" });
