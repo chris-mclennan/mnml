@@ -50,6 +50,9 @@ pub const Action = enum {
     dispatch_fix,
     dispatch_triage,
     dispatch_review,
+    /// Merge the pull request under the cursor — through a Claude Code
+    /// session, and only when it may.
+    merge_pr,
     detail_modal,
     card_expand,
     help,
@@ -130,6 +133,7 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{"shift+x"}, .action = .dispatch_fix, .label = "dispatch: fix", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"shift+t"}, .action = .dispatch_triage, .label = "dispatch: triage", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"shift+v"}, .action = .dispatch_review, .label = "dispatch: review the PR", .section = .dispatch, .where = .fix_versions },
+    .{ .keys = &.{"shift+m"}, .action = .merge_pr, .label = "merge the PR (through Claude Code)", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"/"}, .action = .filter, .label = "filter", .section = .filters, .hint = 8 },
     .{ .keys = &.{"shift+e"}, .action = .vars_editor, .label = "edit the tab's vars", .section = .filters, .where = .editable_jql },
     .{ .keys = &.{"shift+e"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters, .where = .fixed_jql },
@@ -271,6 +275,8 @@ test "the reference's chords resolve per context: f / F / V / T / space / > / c"
     try testing.expectEqual(Action.fix_version, resolve("shift+f", fixv_ctx).?);
     try testing.expectEqual(Action.tab_fix_version, resolve("shift+v", kanban_ctx).?);
     try testing.expectEqual(Action.dispatch_review, resolve("shift+v", fixv_ctx).?);
+    // The chip is a convenience; the key is the guarantee.
+    try testing.expectEqual(Action.merge_pr, resolve("shift+m", fixv_ctx).?);
     try testing.expectEqual(Action.team, resolve("shift+t", tree_ctx).?);
     try testing.expectEqual(Action.dispatch_triage, resolve("shift+t", fixv_ctx).?);
     try testing.expectEqual(Action.tree_activate, resolve("space", tree_ctx).?);

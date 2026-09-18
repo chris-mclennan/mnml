@@ -349,7 +349,9 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // The buttons take their cells off the row's right end BEFORE
         // the words are painted, so a title is shortened rather than
         // painted over.
-        const bw = rowButtonsWidth(p, text_w, row, selected);
+        // The buttons come out of the LAST column's width, so a row
+        // never trades its title for them.
+        const bw = rowButtonsWidth(p, if (cols.len > 0) cols[cols.len - 1].w else 0, row, selected);
         paintSpans(p, list.x + 2, y, text_w -| 2 -| bw, spans);
         if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
         y += h;
@@ -364,14 +366,17 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
 /// hover reads for its reason and a click answers with the same
 /// sentence. A button that is always pressable teaches nothing.
 const open_caption = "[ Open ]";
+/// Cells the title keeps when a row carries its buttons.
+const title_floor: u16 = 16;
 
 /// What one row's buttons will take, or 0 when the row has none.
 ///
-/// Only the row under the CURSOR carries them. This table is dense —
-/// at eighty or a hundred and twenty columns the title is the column
-/// that would pay for them — and a reader reaches any row's buttons by
-/// moving onto it, which is the same key that fetches its readiness.
-fn rowButtonsWidth(p: *Painter, w: u16, row: tabs.VisibleRow, selected: bool) u16 {
+/// Only the row under the CURSOR carries them, and only when the title
+/// column can give up their cells and still say something — this table
+/// is dense, and a title clipped to `Rede` is worse than no button.
+/// `M` merges the focused pull request whether or not the button fits,
+/// so a narrow pane loses the convenience and not the action.
+fn rowButtonsWidth(p: *Painter, title_w: u16, row: tabs.VisibleRow, selected: bool) u16 {
     const app = p.app;
     if (!selected or row != .pr) return 0;
     const repos = switch (app.activeTab().data) {
@@ -391,7 +396,7 @@ fn rowButtonsWidth(p: *Painter, w: u16, row: tabs.VisibleRow, selected: bool) u1
         total += 1 + Painter.width(shown);
     }
     // Below this the row keeps its words instead.
-    if (w < total + 30) return 0;
+    if (title_w < total + title_floor) return 0;
     return total + 1;
 }
 
@@ -914,7 +919,10 @@ test "a PR folds out to its builds under enter, one row per run, and the detail 
 }
 
 test "the cursor's PR row grows its buttons, the Merge is dim, and hovering it says why" {
-    const s = try Screen.init(120, 40, acme, .{});
+    // Wide enough for the row to give up the cells: at 120 the title
+    // would pay for them, so the buttons are not offered there and the
+    // `M` key and the row menu carry the action instead.
+    const s = try Screen.init(200, 40, acme, .{});
     defer s.deinit();
     // The cursor onto #1234.
     try s.key("j");
@@ -1200,14 +1208,14 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     // No approve: the reference binds `a` only with the detail open, so
     // the menu cannot offer it either.
     try rightClickRow(s, 1);
-    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate }, menuItems(s));
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate, .merge_pr }, menuItems(s));
     try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
     try s.key("esc");
 
     // The same row with the detail open gains the one write.
     try s.key("d");
     try rightClickRow(s, 1);
-    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate, .toggle_approval }, menuItems(s));
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate, .merge_pr, .toggle_approval }, menuItems(s));
     try s.key("esc");
     try s.key("d");
 

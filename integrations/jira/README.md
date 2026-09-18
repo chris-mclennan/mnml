@@ -175,7 +175,7 @@ the next step and waits for `r`.
 | any | `t` · `a` · `w` · `.` | transition · assignee · watch / unwatch · actions |
 | Work, Boards | `f` · `V` · `T` | fix version on the ticket · tab-view fix version · team |
 | Fix Versions | `f` · `F` | switch the release · fix version on the ticket |
-| Fix Versions | `I` `X` `T` `V` | dispatch implement / fix / triage / review (`V` on a PR row) |
+| Fix Versions | `I` `X` `T` `V` `M` | dispatch implement / fix / triage / review · merge the PR through Claude Code (`V` / `M` on a PR row) |
 | detail open | `c` | comment |
 | any | `d` / `D` | detail pane / detail modal |
 | any | `/` · `E` · `?` | filter · JQL editor · keys |

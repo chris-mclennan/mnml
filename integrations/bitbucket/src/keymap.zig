@@ -47,6 +47,9 @@ pub const Action = enum {
     toggle_approval,
     /// The `awaiting:` chip — show only what is waiting on my review.
     toggle_awaiting,
+    /// Merge the focused pull request — through a Claude Code session,
+    /// and only when it may.
+    merge_pr,
     expand,
     collapse,
     expand_all,
@@ -117,6 +120,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .detail, .hint = true, .section = "row" },
     .{ .keys = &.{"ctrl+d"}, .action = .detail_down, .title = "scroll the detail down", .scope = .detail, .section = "row" },
     .{ .keys = &.{"ctrl+u"}, .action = .detail_up, .title = "scroll the detail up", .scope = .detail, .section = "row" },
+    .{ .keys = &.{"shift+m"}, .action = .merge_pr, .title = "merge (through Claude Code)", .scope = .row, .section = "row" },
     .{ .keys = &.{"shift+a"}, .action = .toggle_awaiting, .title = "only what is awaiting my review", .section = "tabs" },
     .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .hint = true, .section = "tabs" },
     .{ .keys = &.{"tab"}, .action = .next_tab, .title = "next tab", .section = "tabs" },
@@ -240,6 +244,9 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     // The chip and the key are the same door: a chip nobody can reach
     // from the keyboard is half a feature.
     try t.expectEqual(Action.toggle_awaiting, lookup("shift+a", .{}).?);
+    // The button is a convenience; the key is the guarantee. A pane
+    // too narrow to paint `[ Merge ]` must still be able to merge.
+    try t.expectEqual(Action.merge_pr, lookup("shift+m", .{ .on_row = true }).?);
     try t.expect(lookup("z", tree) == null);
 }
 

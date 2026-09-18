@@ -770,6 +770,7 @@ pub const App = struct {
             .detail_down => app.detail_scroll += 4,
             .toggle_approval => try app.toggleApproval(rows),
             .toggle_awaiting => try app.toggleAwaiting(),
+            .merge_pr => if (app.focusedPr(rows)) |f| try app.pressMerge(f.slug, f.pr),
             .filter => {
                 app.mode = .filter;
                 app.filter_caret = app.filter.items.len;
@@ -1698,6 +1699,9 @@ pub const App = struct {
                 push(&app.menu_items, &n, .yank_url);
                 const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
                 if (pr.buildCommit().len > 0) push(&app.menu_items, &n, .activate);
+                // The inline `[ Merge ]` only fits a wide pane, so the
+                // menu carries it at every width.
+                if (pr.isOpen()) push(&app.menu_items, &n, .merge_pr);
                 if (app.detail_visible) push(&app.menu_items, &n, .toggle_approval);
             },
             // A build line offers its own page and nothing else — the

@@ -2604,6 +2604,11 @@ pub const App = struct {
             .dispatch_fix => try a.dispatchTicket("fix"),
             .dispatch_triage => try a.dispatchTicket("triage"),
             .dispatch_review => try a.dispatchReview(),
+            .merge_pr => {
+                var scratch = std.heap.ArenaAllocator.init(a.gpa);
+                defer scratch.deinit();
+                if (try a.focusedPrRow(scratch.allocator())) |f| try a.pressMerge(f.key, f.pr) else a.setStatus("no PR under cursor", .{});
+            },
             .detail_modal => {
                 var scratch = std.heap.ArenaAllocator.init(a.gpa);
                 defer scratch.deinit();

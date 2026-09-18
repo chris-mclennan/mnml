@@ -63,7 +63,11 @@ def facts(text):
             out.add(f"pr:#{pid}:author={author.strip()}")
             out.add(f"pr:#{pid}:branch={branch[:18]}")
             out.add(f"pr:#{pid}:updated={date}")
-            out.add(f"pr:#{pid}:title={title.strip()[:16]}")
+            # The cursor's row carries its action chips at the right
+            # end; they are not part of the title, and the reference
+            # has no equivalent, so they come off before the compare.
+            bare = re.sub(r"\s*\[ (Open|Merge|Review|view|.) \].*$", "", title).strip()
+            out.add(f"pr:#{pid}:title={bare[:16]}")
             continue
         m = re.match(r"^(\S+)\s+(COMPLETED|PENDING|IN_PROGRESS|HALTED|STOPPED)\s+#(\d+)(?:\s+[✓✗⊘? ]*\s*(SUCCESSFUL|FAILED|STOPPED|ERROR))?\s*(\d{4}-\d{2}-\d{2})?", s)
         if m and "/" in m.group(1) or (m and m.group(1) in ("main", "master", "develop", "staging", "release")):

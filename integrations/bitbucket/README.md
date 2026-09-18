@@ -151,7 +151,7 @@ does. The keys are the reference's:
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the detail · scroll it |
 | `a` | approve / withdraw (with the detail open) |
-| `[ Open ]` `[ Merge ]` | on the cursor's PR row: fold out its builds · merge it through Claude Code (dim until it can) |
+| `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
 | `A` · `m` · `⇥` `⇤` · `1`–`9` | awaiting my review · open ↔ merged · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
@@ -188,8 +188,12 @@ to know to ask.
 ## Merging — and why the button is usually dim
 
 The row under the cursor carries `[ Open ]` and, on an open pull
-request, `[ Merge ]`. Only that row: the table is dense, and the title
-is the column that would otherwise pay for them.
+request, `[ Merge ]` — only that row, and only when the title column
+can give up their cells and still say something (a title clipped to
+`Rede` is worse than no button, so below about 140 columns they are
+not offered). `M` merges the focused pull request at any width, and the
+row's right-click menu carries it too: the inline button is the
+convenience, the key is the guarantee.
 
 `[ Merge ]` is **dim and not a click target** until the pull request can
 actually merge. Five conditions, in the order a reader thinks about
