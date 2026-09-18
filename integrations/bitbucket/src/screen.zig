@@ -335,12 +335,8 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // column 0 (bright on the cursor's row) and the row's own hit,
         // in one statement — the same one the Jira tree paints.
         try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
-        const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
+        const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected, .ascii = !p.nerd });
         paintSpans(p, list.x + 2, y, text_w -| 2, spans);
-        if (h == 2 and y + 1 < list.y + list.h) {
-            const sub = try view.subLineSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
-            paintSpans(p, list.x + 2, y + 1, text_w -| 2, sub);
-        }
         y += h;
     }
     if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
@@ -720,7 +716,9 @@ test "a click on a row selects that row and toggles a header; the strip switches
     try s.click(10, y_1234, .left);
     try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
     var scr = try s.draw();
-    try t.expect(has(scr, "▌      #1234"));
+    // The cursor's marker, the row's own chevron (every PR has builds
+    // to fold out now), then its number.
+    try t.expect(has(scr, "▌   \u{25b8} #1234"));
     const y_api = try s.rowOf("▾ api");
     try s.click(3, y_api, .left);
     scr = try s.draw();
@@ -741,7 +739,7 @@ test "a click on a row selects that row and toggles a header; the strip switches
     try t.expect(!(try s.rig.app.click(hint_q.x, hint_q.y, .left)));
 }
 
-test "a merged PR opens to its post-merge pipeline line under enter, and the detail paints beside the list" {
+test "a PR folds out to its builds under enter, one row per run, and the detail paints beside the list" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     try s.key("2");
@@ -750,10 +748,11 @@ test "a merged PR opens to its post-merge pipeline line under enter, and the det
     try t.expect(has(scr, "▸ #1100"));
     try s.key("enter");
     scr = try s.draw();
-    try t.expect(has(scr, "▾ #1100"));
-    try t.expect(has(scr, "✓ SUCCESSFUL"));
-    try t.expect(has(scr, "#412"));
-    try t.expect(has(scr, "on main"));
+    try t.expect(has(scr, "\u{25be} #1100"));
+    // The toolkit's build line, the same one the Jira pane paints:
+    // state, branch, age, number.
+    try t.expect(has(scr, "\u{2713} SUCCESSFUL \u{b7} main \u{b7} "));
+    try t.expect(has(scr, "\u{b7} #412"));
     try s.key("d");
     scr = try s.draw();
     try t.expect(has(scr, "acme/api#1100"));
@@ -773,6 +772,52 @@ test "a merged PR opens to its post-merge pipeline line under enter, and the det
     try t.expect(has(nscr, "○ not approved · 1 total"));
     try t.expect(has(nscr, "Nice catch"));
     try t.expect(!has(nscr, "REPO / #PR"));
+}
+
+test "an OPEN PR folds out to the builds on its branch head; a second open costs nothing while it has not moved" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    // The cursor onto #1234, the open pull request the account authored.
+    try s.key("j");
+    var scr = try s.draw();
+    try t.expect(has(scr, "\u{25b8} #1234"));
+    const served = s.rig.srv.state.served;
+    try s.key("enter");
+    try s.rig.drain();
+    scr = try s.draw();
+    try t.expect(has(scr, "\u{25be} #1234"));
+    // One run on `chris/fix-login`'s head, in the toolkit's words.
+    try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} chris/fix-login \u{b7} "));
+    try t.expect(has(scr, "\u{b7} #413"));
+    // One request paid for it: the repo's pipelines list.
+    try t.expectEqual(@as(u32, 1), s.rig.srv.state.served - served);
+
+    // Fold shut and open again: nothing is asked for, because the pull
+    // request has not moved since the runs were read.
+    try s.key("enter");
+    try s.rig.drain();
+    try s.key("enter");
+    try s.rig.drain();
+    try t.expectEqual(@as(u32, 1), s.rig.srv.state.served - served);
+    scr = try s.draw();
+    try t.expect(has(scr, "\u{b7} #413"));
+
+    // The build line is a door: Enter on it opens that run's page.
+    const rows = try s.rig.rows();
+    var build_row: ?usize = null;
+    for (rows, 0..) |r, i| if (r == .build) {
+        build_row = i;
+        break;
+    };
+    s.rig.app.tabs[0].selected = build_row.?;
+    // Straight at the app: the rig's own `key` drains the effects,
+    // and the effect IS what this asserts.
+    _ = try s.rig.app.keyPress("enter");
+    const fx = s.rig.app.takeEffects();
+    defer s.rig.app.freeEffects(fx);
+    // The page, and the toast that says which page.
+    try t.expectEqual(@as(usize, 2), fx.len);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/pipelines/results/413", fx[0].open_url);
 }
 
 test "the pipelines tree paints the reference's columns and glyphs; the pipelines chips are on the header" {
@@ -926,18 +971,19 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try t.expectEqualSlices(app_mod.Action, &.{ .activate, .open_web, .yank_url, .hide_repo, .reorder_up, .reorder_down }, menuItems(s));
     try s.key("esc");
 
-    // A PR row: its detail, its page, its URL. No approve — the
-    // reference binds `a` only with the detail open, so the menu
-    // cannot offer it either.
+    // A PR row: its detail, its page, its URL, and Enter — which folds
+    // out its builds, on an open pull request as much as a merged one.
+    // No approve: the reference binds `a` only with the detail open, so
+    // the menu cannot offer it either.
     try rightClickRow(s, 1);
-    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url }, menuItems(s));
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate }, menuItems(s));
     try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
     try s.key("esc");
 
     // The same row with the detail open gains the one write.
     try s.key("d");
     try rightClickRow(s, 1);
-    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .toggle_approval }, menuItems(s));
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate, .toggle_approval }, menuItems(s));
     try s.key("esc");
     try s.key("d");
 
@@ -946,8 +992,8 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try t.expectEqualSlices(app_mod.Action, &.{.activate}, menuItems(s));
     try s.key("esc");
 
-    // A merged PR carries its post-merge pipeline line, so `Enter` is
-    // on its menu where an open PR's has none.
+    // A merged PR folds out to the runs on what landed — the same
+    // Enter, a different commit.
     try s.key("m");
     rows = try s.rig.rows();
     var merged: ?usize = null;

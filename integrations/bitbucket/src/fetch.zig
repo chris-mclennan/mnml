@@ -54,7 +54,7 @@ pub const Job = struct {
         whoami,
         refresh: struct { tab: usize, spec: tabs.TabSpec, scope: ScopeInputs },
         detail: PrKey,
-        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8 },
+        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8 = "" },
         approve: struct { key: PrKey, withdraw: bool },
         values: struct { scope: ScopeInputs, stale_after_days: u32, excluded_branch_patterns: []const []const u8 },
     };
@@ -95,7 +95,16 @@ pub const RefreshResult = struct {
 
 pub const DetailResult = struct { key: PrKey, pr: ?model.PullRequest = null, comments: []const model.Comment = &.{}, error_text: []const u8 = "" };
 
-pub const PrPipelinesResult = struct { tab: usize, slug: []const u8, id: i64, pipelines: []const model.Pipeline = &.{}, error_text: []const u8 = "" };
+pub const PrPipelinesResult = struct {
+    tab: usize,
+    slug: []const u8,
+    id: i64,
+    pipelines: []const model.Pipeline = &.{},
+    /// The `updated_on` the caller asked on behalf of, echoed back so
+    /// the app can key what it stores by it.
+    updated_on: []const u8 = "",
+    error_text: []const u8 = "",
+};
 
 pub const ApproveResult = struct { key: PrKey, withdrew: bool, error_text: []const u8 = "" };
 
@@ -200,7 +209,7 @@ pub const Worker = struct {
             .whoami => .{ .whoami = try w.whoami(a) },
             .refresh => |r| .{ .refresh = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs) },
             .detail => |k| .{ .detail = try w.detail(a, k) },
-            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash) },
+            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash, p.updated_on) },
             .approve => |ap| .{ .approve = try w.approve(a, ap.key, ap.withdraw) },
             .values => |v| .{ .values = try w.values(a, v.scope, v.stale_after_days, v.excluded_branch_patterns, job.now_secs) },
         };
@@ -597,8 +606,8 @@ pub const Worker = struct {
         return .{ .key = k, .pr = pr, .comments = comments };
     }
 
-    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8) Allocator.Error!PrPipelinesResult {
-        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id };
+    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8) Allocator.Error!PrPipelinesResult {
+        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id, .updated_on = try a.dupe(u8, updated_on) };
         var reply = try w.client.listPipelines(w.gpa, workspace, slug, 60);
         defer reply.deinit(w.gpa);
         switch (reply) {
@@ -762,7 +771,7 @@ pub fn makeJob(gpa: Allocator, now_secs: i64, kind: Job.Kind) Allocator.Error!Jo
         .whoami => .whoami,
         .refresh => |r| .{ .refresh = .{ .tab = r.tab, .spec = try dupeSpec(a, r.spec), .scope = try dupeScope(a, r.scope) } },
         .detail => |k| .{ .detail = try dupeKey(a, k) },
-        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash) } },
+        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash), .updated_on = try a.dupe(u8, p.updated_on) } },
         .approve => |ap| .{ .approve = .{ .key = try dupeKey(a, ap.key), .withdraw = ap.withdraw } },
         .values => |v| .{ .values = .{ .scope = try dupeScope(a, v.scope), .stale_after_days = v.stale_after_days, .excluded_branch_patterns = try dupeList(a, v.excluded_branch_patterns) } },
     };
@@ -966,8 +975,8 @@ test "flat tabs: a repo's list, a mine list across the allow-list, pipelines and
     try t.expectEqual(@as(i64, 1198), reviewing.payload.refresh.data.?.pull_requests[0].id);
     var pl = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pipelines, .name = "builds", .workspace = "acme", .repo = "api" }, .scope = acme_scope } });
     defer pl.deinit();
-    try t.expectEqual(@as(usize, 4), pl.payload.refresh.data.?.pipelines.len);
-    try t.expectEqualStrings("builds · 4 pipelines", pl.payload.refresh.status);
+    try t.expectEqual(@as(usize, 5), pl.payload.refresh.data.?.pipelines.len);
+    try t.expectEqualStrings("builds · 5 pipelines", pl.payload.refresh.status);
     var br = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .branches, .name = "heads", .workspace = "acme", .repo = "web" }, .scope = acme_scope } });
     defer br.deinit();
     try t.expectEqual(@as(usize, 3), br.payload.refresh.data.?.branches.len);

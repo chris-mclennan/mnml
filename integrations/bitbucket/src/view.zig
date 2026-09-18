@@ -162,6 +162,8 @@ pub const RowCtx = struct {
     th: Theme,
     row: tabs.VisibleRow,
     selected: bool,
+    /// The host said it has no nerd font: plain glyphs, plain separators.
+    ascii: bool = false,
 };
 
 fn cellStyle(c: RowCtx, base: Style) Style {
@@ -232,8 +234,8 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
         .pr => |p| {
             const r = ts.data.repo_pr_tree[p.repo];
             const pr = r.prs[p.idx];
-            const expandable = pr.isMerged() and pr.merge_commit.len > 0;
-            const caret: []const u8 = if (!expandable) "  " else if (p.sub) expander(true) else expander(false);
+            const expandable = pr.buildCommit().len > 0;
+            const caret: []const u8 = if (!expandable) "  " else if (p.open) expander(true) else expander(false);
             cells[0] = try std.fmt.allocPrint(a, "  {s} #{d}", .{ caret, pr.id });
             styles[0] = cellStyle(c, th.number());
             cells[1] = pr.state;
@@ -248,6 +250,10 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             styles[5] = base;
             n = 6;
         },
+        // A build line is not a table row: it is one line under the
+        // pull request it belongs to, in the toolkit's own words.
+        .build => return buildSpans(a, c),
+        .build_note => return buildNoteSpans(a, c),
         .branch => |b| {
             const br = ts.data.repo_tree[b.repo].branches[b.idx];
             cells[0] = try std.fmt.allocPrint(a, "    {s}", .{br.name});
@@ -367,37 +373,51 @@ pub fn expander(open: bool) []const u8 {
     return if (open) "▾" else "▸";
 }
 
-/// The second line of a merged PR opened to its pipeline: the run on
-/// its merge commit, or why there is none yet.
-pub fn subLineSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
-    var out: std.ArrayList(Span) = .empty;
-    const p = c.row.pr;
-    const r = c.ts.data.repo_pr_tree[p.repo];
-    const pr = r.prs[p.idx];
-    const th = c.th;
-    const sha = pr.merge_commit[0..@min(pr.merge_commit.len, 7)];
-    const dest = orQ(pr.dest_branch);
-    const dim = cellStyle(c, th.mutedText());
+/// One build line under a pull-request row — the toolkit's, so this
+/// pane and the Jira one read the same. The whole line is the row, so
+/// the spans are one span.
+pub fn buildSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
+    const b = c.row.build;
+    const r = c.ts.data.repo_pr_tree[b.repo];
+    const pr = r.prs[b.idx];
     const cached = c.app.prPipelinesOf(r.slug, pr.id);
-    if (cached == null) {
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "        → fetching pipeline for {s} on {s}…", .{ sha, dest }), .style = dim });
-    } else if (cached.?.error_text.len > 0) {
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "        → {s}", .{cached.?.error_text}), .style = cellStyle(c, th.bad()) });
-    } else if (cached.?.pipelines.len == 0) {
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "        → no pipeline ran on {s} ({s})", .{ sha, dest }), .style = dim });
-    } else {
-        const latest = cached.?.pipelines[0];
-        const label = latest.stateLabel();
-        var dbuf: [16]u8 = undefined;
-        const st = cellStyle(c, th.pipelineState(label));
-        try out.append(a, .{ .text = "        ", .style = dim });
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "{s} ", .{model.glyphFor(label)}), .style = st });
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "{s} ", .{label}), .style = .{ .fg = st.fg, .bg = st.bg, .mods = .{ .bold = true } }, .w = 12 });
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "#{d}", .{latest.build_number}), .style = cellStyle(c, th.number()) });
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "  on {s}  ", .{dest}), .style = cellStyle(c, th.text()) });
-        const more = if (cached.?.pipelines.len > 1) try std.fmt.allocPrint(a, "  (+{d} more)", .{cached.?.pipelines.len - 1}) else "";
-        try out.append(a, .{ .text = try std.fmt.allocPrint(a, "{s}  {s}{s}", .{ latest.createdDate(), latest.durationLabel(&dbuf), more }), .style = dim });
-    }
+    var out: std.ArrayList(Span) = .empty;
+    const runs = if (cached) |e| e.pipelines else &.{};
+    if (b.run >= runs.len) return out.toOwnedSlice(a);
+    const run = runs[b.run];
+    const label = run.stateLabel();
+    var buf: [192]u8 = undefined;
+    const line = sdk.pane.build.caption(&buf, .{
+        .state = label,
+        .branch = run.branchLabel(),
+        .created_on = run.created_on,
+        .number = run.build_number,
+    }, c.app.now_secs, c.ascii);
+    try out.append(a, .{ .text = build_indent, .style = cellStyle(c, c.th.mutedText()) });
+    try out.append(a, .{ .text = try a.dupe(u8, line), .style = cellStyle(c, sdk.pane.build.styleOf(c.th, label)) });
+    return out.toOwnedSlice(a);
+}
+
+/// The indent a build line hangs at, under its pull request's `#id`.
+pub const build_indent = "      ";
+
+/// The line where a build line would be when there is not one.
+pub fn buildNoteSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
+    const b = c.row.build_note;
+    const r = c.ts.data.repo_pr_tree[b.repo];
+    const pr = r.prs[b.idx];
+    const sha = pr.buildCommit()[0..@min(pr.buildCommit().len, 7)];
+    const cached = c.app.prPipelinesOf(r.slug, pr.id);
+    var out: std.ArrayList(Span) = .empty;
+    const arrow = if (c.ascii) "-> " else "\u{2192} ";
+    const text: []const u8 = switch (b.kind) {
+        .loading => try std.fmt.allocPrint(a, "fetching builds on {s}\u{2026}", .{sha}),
+        .none => try std.fmt.allocPrint(a, "no build ran on {s}", .{sha}),
+        .failed => if (cached) |e| e.error_text else "the build lookup failed",
+    };
+    try out.append(a, .{ .text = build_indent, .style = cellStyle(c, c.th.mutedText()) });
+    try out.append(a, .{ .text = arrow, .style = cellStyle(c, c.th.mutedText()) });
+    try out.append(a, .{ .text = text, .style = cellStyle(c, if (b.kind == .failed) c.th.bad() else c.th.mutedText()) });
     return out.toOwnedSlice(a);
 }
 

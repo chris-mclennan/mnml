@@ -10,6 +10,11 @@
 //! belongs to is `acct-chris` (Chris M) — so "PRs I opened" returns
 //! two and "PRs to review" returns one.
 //!
+//! Every pull request carries its source commit, and there is at least
+//! one pipeline run on each open one's branch head as well as on the
+//! merged one's merge commit — so a PR row has builds to fold out in
+//! either state.
+//!
 //! Pipelines and branches are faked too, per repo, with their dates
 //! relative to `State.now_secs` so the pane's recency rules (the 24-hour
 //! window on a PR, the 14-day staleness on a feature branch) see the
@@ -304,6 +309,9 @@ pub const pipelines = [_]PipelineFixture{
     .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "chris/fix-login", .commit = "abc1234def5678", .age_hours = 1 },
     .{ .repo = "api", .build_number = 412, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "9999mergecommit", .duration_secs = 312, .age_hours = 4 },
     .{ .repo = "api", .build_number = 411, .state = "COMPLETED", .result = "FAILED", .ref_name = "develop", .commit = "1212121212", .trigger = "schedule", .duration_secs = 95, .age_hours = 20 },
+    // On the OPEN pull request #1198's branch head, so an open row has
+    // builds to fold out — what a reviewer wants before merging.
+    .{ .repo = "api", .build_number = 410, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "dana/timeout", .commit = "bbb2222ccc3333", .duration_secs = 120, .age_hours = 29 },
     .{ .repo = "api", .build_number = 405, .state = "COMPLETED", .result = "STOPPED", .ref_name = "release/1.2", .commit = "3434343434", .duration_secs = 40, .age_hours = 24 * 10 },
     .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "chris/empty-state", .commit = "ddd4444eee5555", .age_hours = 1 },
     .{ .repo = "web", .build_number = 70, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "8888mergecommit", .duration_secs = 200, .age_hours = 24 * 3 },

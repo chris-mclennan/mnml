@@ -95,6 +95,9 @@ pub const PrPipelines = struct {
     arena: std.heap.ArenaAllocator,
     pipelines: []const model.Pipeline,
     error_text: []const u8 = "",
+    /// The pull request's `updated_on` when these runs were read — the
+    /// key that says whether they are still the right ones.
+    updated_on: []const u8 = "",
 };
 
 /// A right-click menu over a row: the actions that apply to it.
@@ -377,7 +380,14 @@ pub const App = struct {
     /// footer are chrome and count as neither).
     pub fn visible(app: *App, a: Allocator) Allocator.Error!tabs.View {
         const ts = app.activeTab();
-        const all = try tabs.visibleRows(a, .{ .spec = ts.spec, .data = ts.data, .expanded = &ts.expanded, .show_all = ts.show_all, .now_secs = app.now_secs });
+        const all = try tabs.visibleRows(a, .{
+            .spec = ts.spec,
+            .data = ts.data,
+            .expanded = &ts.expanded,
+            .show_all = ts.show_all,
+            .now_secs = app.now_secs,
+            .builds = try app.buildsFor(a, ts),
+        });
         app.filter_total = countContent(all.rows);
         if (app.filter.items.len == 0) {
             app.filter_shown = app.filter_total;
@@ -394,6 +404,26 @@ pub const App = struct {
         const out: tabs.View = .{ .rows = try kept.toOwnedSlice(a), .cells = cells };
         app.filter_shown = countContent(out.rows);
         return out;
+    }
+
+    /// What has been fetched for each expanded pull request, so the
+    /// rows know how many build lines to lay out. Only the expanded
+    /// ones, which is at most a handful.
+    fn buildsFor(app: *App, a: Allocator, ts: *const TabState) Allocator.Error![]const tabs.BuildsOf {
+        const repos = switch (ts.data) {
+            .repo_pr_tree => |r| r,
+            else => return &.{},
+        };
+        var out: std.ArrayList(tabs.BuildsOf) = .empty;
+        for (repos) |r| {
+            if (!ts.expanded.hasRepo(r.slug)) continue;
+            for (r.prs) |pr| {
+                if (!ts.expanded.hasPr(r.slug, pr.id)) continue;
+                const e = app.prPipelinesOf(r.slug, pr.id) orelse continue;
+                try out.append(a, .{ .slug = r.slug, .id = pr.id, .runs = e.pipelines.len, .failed = e.error_text.len > 0 });
+            }
+        }
+        return out.toOwnedSlice(a);
     }
 
     fn countContent(rows: []const tabs.VisibleRow) usize {
@@ -430,6 +460,13 @@ pub const App = struct {
                 const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
                 break :blk std.fmt.bufPrint(buf, "#{d} {s} {s} {s} {s}", .{ pr.id, pr.title, pr.author, pr.source_branch, pr.state }) catch pr.title;
             },
+            // A build line filters on the same words it paints, so a
+            // `/FAILED` finds the runs as well as the rows.
+            .build => |b| blk: {
+                const pr = ts.data.repo_pr_tree[b.repo].prs[b.idx];
+                break :blk std.fmt.bufPrint(buf, "#{d} {s} build {d}", .{ pr.id, pr.title, b.run }) catch pr.title;
+            },
+            .build_note => |b| ts.data.repo_pr_tree[b.repo].prs[b.idx].title,
             .branch => |b| ts.data.repo_tree[b.repo].branches[b.idx].name,
             .show_more => "",
             .flat => |i| switch (ts.data) {
@@ -502,6 +539,17 @@ pub const App = struct {
                 var buf: [256]u8 = undefined;
                 break :blk try a.dupe(u8, pr.url(&buf, ws, ts.data.repo_pr_tree[p.repo].slug));
             },
+            // A build line is a door to that run's page.
+            .build => |b| blk: {
+                const slug = ts.data.repo_pr_tree[b.repo].slug;
+                const pr = ts.data.repo_pr_tree[b.repo].prs[b.idx];
+                const runs = app.prPipelinesOf(slug, pr.id) orelse break :blk null;
+                if (b.run >= runs.pipelines.len) break :blk null;
+                break :blk try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines/results/{d}", .{ ws, slug, runs.pipelines[b.run].build_number });
+            },
+            // The note where a build line would be opens the pull
+            // request's own pipelines page — the place to go and see why.
+            .build_note => |b| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines", .{ ws, ts.data.repo_pr_tree[b.repo].slug }),
             .branch => |b| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/branch/{s}", .{ ws, ts.data.repo_tree[b.repo].slug, ts.data.repo_tree[b.repo].branches[b.idx].name }),
             .show_more => null,
             .flat => |i| switch (ts.data) {
@@ -660,17 +708,18 @@ pub const App = struct {
         app.activeTab().selected = @min(idx, rows.len - 1);
     }
 
-    /// Enter / space: a repo header toggles, a merged PR opens its
-    /// pipeline line, the footer lifts the filter, a flat row opens.
+    /// Enter / space: a repo header toggles, a pull request folds out
+    /// to its builds, a build line opens that run's page, the footer
+    /// lifts the fold, a flat row opens.
     fn activate(app: *App, a: Allocator, rows: []const tabs.VisibleRow) Allocator.Error!void {
         const ts = app.activeTab();
         if (ts.selected >= rows.len) return;
         switch (rows[ts.selected]) {
             .repo_header => |h| try ts.expanded.toggleRepo(slugOf(ts, h.repo)),
-            .pr => |p| try app.togglePrPipeline(ts.data.repo_pr_tree[p.repo].slug, ts.data.repo_pr_tree[p.repo].prs[p.idx]),
+            .pr => |p| try app.togglePrBuilds(ts.data.repo_pr_tree[p.repo].slug, ts.data.repo_pr_tree[p.repo].prs[p.idx]),
             .branch => {},
             .show_more => ts.show_all = true,
-            .flat => {
+            .build, .build_note, .flat => {
                 if (try app.focusedUrl(app.effect_arena.allocator(), rows)) |url| {
                     app.effect(.{ .open_url = url });
                     app.say(.info, "opened {s}", .{url});
@@ -705,14 +754,14 @@ pub const App = struct {
             },
             .pr => |p| {
                 const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
-                if (pr.isMerged() and pr.merge_commit.len > 0 and !p.sub) try app.togglePrPipeline(ts.data.repo_pr_tree[p.repo].slug, pr);
+                if (pr.buildCommit().len > 0 and !p.open) try app.togglePrBuilds(ts.data.repo_pr_tree[p.repo].slug, pr);
             },
             else => {},
         }
     }
 
-    /// Left / h: close the repo, or step up to it; close a merged PR's
-    /// pipeline line.
+    /// Left / h: close the repo, or step up to it; fold a pull
+    /// request's builds back in, or step up from one of them.
     fn collapse(app: *App, a: Allocator, rows: []const tabs.VisibleRow) Allocator.Error!void {
         _ = a;
         const ts = app.activeTab();
@@ -720,12 +769,23 @@ pub const App = struct {
         switch (rows[ts.selected]) {
             .repo_header => |h| try ts.expanded.setRepo(slugOf(ts, h.repo), false),
             .pr => |p| {
-                if (p.sub) {
+                if (p.open) {
                     try ts.expanded.setPr(ts.data.repo_pr_tree[p.repo].slug, ts.data.repo_pr_tree[p.repo].prs[p.idx].id, false);
                 } else if (tabs.headerRowOf(rows, p.repo)) |hr| {
                     try ts.expanded.setRepo(ts.data.repo_pr_tree[p.repo].slug, false);
                     ts.selected = hr;
                 }
+            },
+            // From a build line, `h` folds the pull request it hangs
+            // under and puts the cursor back on it.
+            .build, .build_note => {
+                const pr_ref = tabs.prOf(rows[ts.selected]).?;
+                try ts.expanded.setPr(ts.data.repo_pr_tree[pr_ref.repo].slug, ts.data.repo_pr_tree[pr_ref.repo].prs[pr_ref.idx].id, false);
+                var i = ts.selected;
+                while (i > 0) : (i -= 1) if (rows[i - 1] == .pr) {
+                    ts.selected = i - 1;
+                    break;
+                };
             },
             .branch => |b| if (tabs.headerRowOf(rows, b.repo)) |hr| {
                 try ts.expanded.setRepo(ts.data.repo_tree[b.repo].slug, false);
@@ -735,19 +795,43 @@ pub const App = struct {
         }
     }
 
-    /// A merged PR's post-merge pipeline line: open it (fetching the
-    /// pipelines on its merge commit the first time) or close it.
-    fn togglePrPipeline(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
-        if (!pr.isMerged() or pr.merge_commit.len == 0) return;
+    /// A pull request's builds: fold them out (fetching the runs on
+    /// the commit it is about the first time) or fold them back in.
+    ///
+    /// The fetch is keyed by the pull request's `updated_on`. Bitbucket
+    /// moves it when anything on the PR does, a push included, so a
+    /// pull request that has not moved since its runs were read costs
+    /// nothing to open again — and one that has is re-read without the
+    /// user having to know to ask.
+    fn togglePrBuilds(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
+        const hash = pr.buildCommit();
+        if (hash.len == 0) {
+            app.say(.warn, "PR #{d} names no commit to look up builds on", .{pr.id});
+            return;
+        }
         const ts = app.activeTab();
         if (ts.expanded.hasPr(slug, pr.id)) {
             try ts.expanded.setPr(slug, pr.id, false);
             return;
         }
         try ts.expanded.setPr(slug, pr.id, true);
-        if (app.prPipelinesOf(slug, pr.id) != null) return;
-        app.setStatus("fetching pipeline for PR #{d} on {s}…", .{ pr.id, pr.merge_commit[0..@min(pr.merge_commit.len, 7)] });
-        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = pr.merge_commit } });
+        if (app.prPipelinesOf(slug, pr.id)) |had| {
+            if (std.mem.eql(u8, had.updated_on, pr.updated_on)) return;
+            // It moved: the runs on screen are last time's.
+            app.dropPrPipelines(slug, pr.id);
+        }
+        app.setStatus("fetching builds for PR #{d} on {s}…", .{ pr.id, hash[0..@min(hash.len, 7)] });
+        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = hash, .updated_on = pr.updated_on } });
+    }
+
+    fn dropPrPipelines(app: *App, slug: []const u8, id: i64) void {
+        var buf: [256]u8 = undefined;
+        const key = std.fmt.bufPrint(&buf, "{s}#{d}", .{ slug, id }) catch return;
+        if (app.pr_pipelines.fetchRemove(key)) |kv| {
+            app.gpa.free(kv.key);
+            kv.value.arena.deinit();
+            app.gpa.destroy(kv.value);
+        }
     }
 
     // ─── the persisting keys ─────────────────────────────────────────
@@ -1048,7 +1132,7 @@ pub const App = struct {
                 var buf: [256]u8 = undefined;
                 const key = std.fmt.bufPrint(&buf, "{s}#{d}", .{ p.slug, p.id }) catch return;
                 const entry = try app.gpa.create(PrPipelines);
-                entry.* = .{ .arena = res.arena, .pipelines = p.pipelines, .error_text = p.error_text };
+                entry.* = .{ .arena = res.arena, .pipelines = p.pipelines, .error_text = p.error_text, .updated_on = p.updated_on };
                 keep_arena = true;
                 if (app.pr_pipelines.fetchRemove(key)) |kv| {
                     app.gpa.free(kv.key);
@@ -1214,8 +1298,14 @@ pub const App = struct {
                 push(&app.menu_items, &n, .open_web);
                 push(&app.menu_items, &n, .yank_url);
                 const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
-                if (pr.isMerged() and pr.merge_commit.len > 0) push(&app.menu_items, &n, .activate);
+                if (pr.buildCommit().len > 0) push(&app.menu_items, &n, .activate);
                 if (app.detail_visible) push(&app.menu_items, &n, .toggle_approval);
+            },
+            // A build line offers its own page and nothing else — the
+            // row menu must never fire an action the row cannot do.
+            .build, .build_note => {
+                push(&app.menu_items, &n, .open_web);
+                push(&app.menu_items, &n, .yank_url);
             },
             .branch => {
                 push(&app.menu_items, &n, .open_web);
