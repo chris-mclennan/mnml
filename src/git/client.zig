@@ -200,6 +200,11 @@ pub const Job = union(enum) {
     /// delete branch* — `worktree remove` then `branch -d`, or both
     /// forced when the confirm's Force choice was taken.
     worktree_remove_branch: struct { path: []u8, branch: []u8, force: bool },
+    /// // changed (git-menus): `worktree lock [--reason <r>]` /
+    /// `worktree unlock` — a locked tree refuses `worktree remove` and
+    /// `prune`, and the panel paints the lock the porcelain reports.
+    worktree_lock: struct { path: []u8, reason: []u8 },
+    worktree_unlock: []u8,
     // ── branch verbs (git-more2) ──
     /// `branch -m from to`.
     branch_rename: struct { from: []u8, to: []u8 },
@@ -319,6 +324,11 @@ pub const Job = union(enum) {
                 gpa.free(w.path);
                 gpa.free(w.branch);
             },
+            .worktree_lock => |w| {
+                gpa.free(w.path);
+                gpa.free(w.reason);
+            },
+            .worktree_unlock => |p| gpa.free(p),
             .checkout_force => |s| gpa.free(s),
             .push_force => {},
             .rerun => |argv| {
@@ -1262,6 +1272,14 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             } else try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
         },
         .worktree_remove => |p| try simple(repo, io, r, &.{ "worktree", "remove", "--force", p }, try std.fmt.allocPrint(arena, "worktree removed: {s}", .{p})),
+        .worktree_lock => |w| {
+            if (w.reason.len > 0) {
+                try simple(repo, io, r, &.{ "worktree", "lock", "--reason", w.reason, w.path }, try std.fmt.allocPrint(arena, "worktree locked: {s} ({s})", .{ w.path, w.reason }));
+            } else {
+                try simple(repo, io, r, &.{ "worktree", "lock", w.path }, try std.fmt.allocPrint(arena, "worktree locked: {s}", .{w.path}));
+            }
+        },
+        .worktree_unlock => |p| try simple(repo, io, r, &.{ "worktree", "unlock", p }, try std.fmt.allocPrint(arena, "worktree unlocked: {s}", .{p})),
         .worktree_remove_branch => |w| {
             const rm = if (w.force)
                 try git(repo, io, arena, &.{ "worktree", "remove", "--force", w.path }, null)

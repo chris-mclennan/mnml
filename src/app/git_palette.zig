@@ -1347,6 +1347,11 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Open this worktree", .worktree_open, w.idx, false);
             try b.act("Open worktree in new tab", .worktree_open_tab, w.idx, false);
             try b.act("Open shell here", .worktree_shell, w.idx, false);
+            if (wt.locked) {
+                try b.act("Unlock worktree", .worktree_unlock, w.idx, false);
+            } else {
+                try b.act("Lock worktree\u{2026}", .worktree_lock, w.idx, false);
+            }
             try b.act("Copy path", .worktree_copy_path, w.idx, false);
             try b.act("New worktree\u{2026}", .worktree_new, w.idx, false);
             // sessions-worktree: a session's tree merges and removes
@@ -1429,13 +1434,15 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 app.toast("copied {s}", .{url});
                 break :blk;
             },
-            .worktree_open, .worktree_open_tab, .worktree_shell, .worktree_copy_path, .worktree_remove, .worktree_remove_branch, .session_merge, .session_remove => {
+            .worktree_open, .worktree_open_tab, .worktree_shell, .worktree_copy_path, .worktree_remove, .worktree_remove_branch, .worktree_lock, .worktree_unlock, .session_merge, .session_remove => {
                 if (a.idx >= gs.rail_worktrees.len) break :blk;
                 const wt = gs.rail_worktrees[a.idx];
                 switch (a.what) {
                     .worktree_open => break :blk openWorktree(app, wt),
                     .worktree_open_tab => break :blk openWorktreeInTab(app, wt),
                     .worktree_remove_branch => break :blk confirmRemoveWorktreeBranch(app, wt),
+                    .worktree_lock => break :blk git.lockWorktreePrompt(app, wt.path, wt.label()),
+                    .worktree_unlock => break :blk git.unlockWorktree(app, wt.path),
                     .session_merge, .session_remove => {
                         const e = app.sessions.worktrees.byPath(wt.path) orelse break :blk app.diag.fail(arena, "{s} is no session worktree", .{wt.path});
                         break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*, false);
@@ -2368,7 +2375,10 @@ fn lastToastText(app: *App) []const u8 {
     return app.lastToast() orelse "";
 }
 
-const worktree_menu = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}", "Remove worktree and delete branch\u{2026}" };
+/// The WORKTREES menu, whose lock row reads the tree's own state: the
+/// seed's main tree is unlocked, its linked tree locked.
+const worktree_menu_unlocked = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Lock worktree\u{2026}", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}", "Remove worktree and delete branch\u{2026}" };
+const worktree_menu_locked = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Unlock worktree", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}", "Remove worktree and delete branch\u{2026}" };
 
 test "row menus: one shape per row kind, built from the row under the pointer while the cursor stays; the main tree and the tree on show keep Remove and are refused by name; a prefix-only remote keeps Copy URL and says so; Reset targets the row, not the cursor; a stale index opens nothing; under All repos a right-click on another repo's row switches nothing and its rows carry the repo, which the act switches to" {
     var t = try TestApp.initWith(&.{ "alpha", "beta" });
@@ -2406,10 +2416,10 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try app.handle(.{ .key = Key.named(.esc) });
     // The main tree (the workspace, on show) and the locked linked tree:
     // the same five rows.
-    try expectMenu(app, 11, &worktree_menu);
+    try expectMenu(app, 11, &worktree_menu_unlocked);
     try testing.expect(std.mem.startsWith(u8, app.overlay.menu.title, "main  "));
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 12, &worktree_menu);
+    try expectMenu(app, 12, &worktree_menu_locked);
     try testing.expect(std.mem.startsWith(u8, app.overlay.menu.title, "fix  /repo/wt-fix"));
     try app.handle(.{ .key = Key.named(.esc) });
     try expectMenu(app, 15, &.{ "Show files (Enter)", "Apply (keep)", "Pop (apply + drop)", "Drop\u{2026}", "Branch from stash\u{2026}", "Rename\u{2026}" });

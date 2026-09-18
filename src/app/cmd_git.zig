@@ -119,6 +119,8 @@ pub const table = .{
     .@"git.push_start_pr" = &pushStartPr,
     .@"git.worktree_open_tab" = &worktreeOpenTab,
     .@"git.worktree_remove_delete_branch" = &worktreeRemoveDeleteBranch,
+    .@"git.worktree_lock" = &worktreeLock,
+    .@"git.worktree_unlock" = &worktreeUnlock,
     .@"git.fixup" = &fixup,
     .@"git.squash" = &squash,
     .@"git.drop" = &drop,
@@ -808,6 +810,24 @@ fn worktreeRemoveDeleteBranch(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     const w = (try git_palette.cursorWorktree(app)) orelse return app.diag.fail(arena(app), "remove worktree and delete branch: put the branches panel's cursor on a WORKTREES row first", .{});
     try git_palette.confirmRemoveWorktreeBranch(app, w);
+}
+
+/// `git.worktree_lock` / `git.worktree_unlock`: the branches panel's
+/// WORKTREES row. Locking asks for an optional reason first.
+fn worktreeLock(app: *App) CommandError!void {
+    const w = try cursorWorktreeRow(app, "lock worktree");
+    try git.lockWorktreePrompt(app, w.path, w.label());
+}
+
+fn worktreeUnlock(app: *App) CommandError!void {
+    const w = try cursorWorktreeRow(app, "unlock worktree");
+    if (!w.locked) return app.diag.fail(arena(app), "unlock worktree: {s} is not locked", .{w.path});
+    try git.unlockWorktree(app, w.path);
+}
+
+fn cursorWorktreeRow(app: *App, what: []const u8) CommandError!@import("../git/parse.zig").Worktree {
+    _ = try git.requireRepo(app);
+    return (try git_palette.cursorWorktree(app)) orelse app.diag.fail(arena(app), "{s}: put the branches panel's cursor on a WORKTREES row first", .{what});
 }
 
 fn fixup(app: *App) CommandError!void {

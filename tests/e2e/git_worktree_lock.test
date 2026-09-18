@@ -1,0 +1,43 @@
+# A WORKTREES row's *Lock worktree…* / *Unlock worktree*: the row reads
+# the tree's real lock state off `git worktree list --porcelain`, so the
+# menu offers the one verb that applies. Locking asks for an optional
+# reason; a locked tree refuses `worktree remove`. Rows at 120x40: LOCAL
+# 7, feat 8, main 9, gap 10, REMOTE 11, gap 12, WORKTREES 13, main (ws)
+# 14, feat (wt) 15.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nwt/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git worktree add -q wt -b feat
+command view.activity_git
+wait 1200
+expect screen contains "󰐅 feat (wt)"
+# Unlocked: the menu offers the lock, and the reason box names the tree.
+rightclick 6 15
+expect screen contains "Lock worktree…"
+expect screen lacks "Unlock worktree"
+key down
+key down
+key down
+key enter
+wait 400
+expect screen contains "Lock feat — a reason (optional)"
+type keep for the release
+key enter
+wait 2500
+expect screen contains "worktree locked"
+shell git worktree list --porcelain | grep -q "^locked keep for the release$"
+# Locked: the row's menu now offers the unlock, and only that.
+rightclick 6 15
+expect screen contains "Unlock worktree"
+expect screen lacks "Lock worktree…"
+key down
+key down
+key down
+key enter
+wait 2500
+expect screen contains "worktree unlocked"
+shell test -z "$(git worktree list --porcelain | grep '^locked' || true)"

@@ -135,6 +135,9 @@ pub const PromptKind = enum {
     stash_branch,
     /// A stash's new message (`State.verb_branch` is its ref).
     stash_rename,
+    /// // changed (git-menus): `worktree lock --reason` — the note, if
+    /// any (`State.verb_branch` holds the tree's path).
+    worktree_lock,
 };
 
 /// What the next stash prompt pushes (`git.stash_staged` / `_file` /
@@ -2485,6 +2488,13 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             const ref = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "stash rename: the stash is gone", .{});
             try submitOp(app, try requireRepo(app), .{ .stash_rename = .{ .ref = try gpa.dupe(u8, ref), .msg = try gpa.dupe(u8, text) } });
         },
+        .worktree_lock => {
+            // The reason is optional: an empty box locks the tree plain.
+            const path = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "lock worktree: the tree is gone", .{});
+            const p_owned = try gpa.dupe(u8, path);
+            errdefer gpa.free(p_owned);
+            try submitOp(app, try requireRepo(app), .{ .worktree_lock = .{ .path = p_owned, .reason = try gpa.dupe(u8, text) } });
+        },
         .new_branch => {
             if (text.len == 0) return;
             const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
@@ -2819,6 +2829,22 @@ pub fn logEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
 }
 
 // ─── the branch verbs (git-more2) ───────────────────────────────────────
+
+/// A WORKTREES row's *Lock worktree…* (git-menus): the reason box, whose
+/// accept locks the tree (an empty box locks it plain). A locked tree
+/// refuses `worktree remove` and `worktree prune`, and the panel paints
+/// the lock the porcelain reports.
+pub fn lockWorktreePrompt(app: *App, path: []const u8, label: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbBranch(app, path);
+    try openPromptOwned(app, .worktree_lock, try std.fmt.allocPrint(app.frame.allocator(), "Lock {s} \u{2014} a reason (optional)", .{label}));
+}
+
+/// *Unlock worktree*: no prompt, nothing to lose.
+pub fn unlockWorktree(app: *App, path: []const u8) CommandError!void {
+    const repo = try requireRepo(app);
+    try submitOp(app, repo, .{ .worktree_unlock = try app.gpa.dupe(u8, path) });
+}
 
 fn setVerbBranch(app: *App, name: []const u8) Allocator.Error!void {
     if (app.git.verb_branch) |b| app.gpa.free(b);
