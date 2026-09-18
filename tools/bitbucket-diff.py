@@ -63,7 +63,11 @@ def facts(text):
             out.add(f"pr:#{pid}:author={author.strip()}")
             out.add(f"pr:#{pid}:branch={branch[:18]}")
             out.add(f"pr:#{pid}:updated={date}")
-            out.add(f"pr:#{pid}:title={title.strip()[:16]}")
+            # The cursor's row carries its action chips at the right
+            # end; they are not part of the title, and the reference
+            # has no equivalent, so they come off before the compare.
+            bare = re.sub(r"\s*\[ (Open|Merge|Review|view|.) \].*$", "", title).strip()
+            out.add(f"pr:#{pid}:title={bare[:16]}")
             continue
         m = re.match(r"^(\S+)\s+(COMPLETED|PENDING|IN_PROGRESS|HALTED|STOPPED)\s+#(\d+)(?:\s+[✓✗⊘? ]*\s*(SUCCESSFUL|FAILED|STOPPED|ERROR))?\s*(\d{4}-\d{2}-\d{2})?", s)
         if m and "/" in m.group(1) or (m and m.group(1) in ("main", "master", "develop", "staging", "release")):
@@ -77,9 +81,15 @@ def facts(text):
         m = re.search(r"\[ Show (\d+) more (older|merged) \]", s)
         if m:
             out.add(f"footer:show {m.group(1)} more {m.group(2)}")
-        m = re.search(r"(✓|✗|⊘|→)\s*(SUCCESSFUL|FAILED|STOPPED|no pipeline ran|fetching pipeline)\s*(#\d+)?", s)
-        if m and s.startswith(("→", "✓", "✗", "⊘")) or (m and "on " in s and m.group(3)):
-            out.add(f"subline:{m.group(2)}:{m.group(3) or ''}")
+        # The build line under a pull request. The reference writes
+        # `✓ SUCCESSFUL #412 on main …`; the Zig pane writes the
+        # toolkit's `✓ SUCCESSFUL · main · 4h · #412`. Same facts, two
+        # orders — so the run's number is looked for anywhere on the
+        # line rather than only right after the state.
+        m = re.search(r"(✓|✗|⊘|⏵|→)\s*(SUCCESSFUL|FAILED|STOPPED|IN_PROGRESS|PENDING|no pipeline ran|no build ran|fetching pipeline|fetching builds)", s)
+        if m and (s.startswith(("→", "✓", "✗", "⊘", "⏵")) or "on " in s):
+            build = re.search(r"#(\d+)", s)
+            out.add(f"subline:{m.group(2)}:{'#' + build.group(1) if build else ''}")
         # The tab strip is chrome: the reference hides it under --only,
         # the Zig pane shows it for two tabs. Not a content fact.
         m = re.match(r"^(?:[A-Za-z]+/)?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#(\d+)\s*$", s.strip("┌┐─ "))

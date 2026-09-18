@@ -2,6 +2,10 @@
     .jira_url = "http://127.0.0.1:PORT",
     .email = "fake@acme.com",
     .refresh_interval_secs = 0,
+    // The fake's own forge corner. Without this the default is
+    // api.bitbucket.org, so expanding a PR row in a dump run left the
+    // machine and 401'd against the real Bitbucket.
+    .bitbucket_api_url = "http://127.0.0.1:PORT/2.0",
     .team_field_id = "customfield_10056",
     .team_field_name = "Team",
     .tabs = .{

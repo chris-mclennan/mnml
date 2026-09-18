@@ -30,9 +30,59 @@ const view = @import("../ui/mount_view.zig");
 const vaxis = @import("vaxis");
 const Theme = @import("../ui/theme.zig");
 const pty_pane = @import("pty_pane.zig");
+const sessions_table = @import("sessions_table.zig");
+const sessions_mod = @import("../sessions.zig");
 const build_options = @import("build_options");
 
 pub const supported = host.supported;
+
+/// One session a pane asked to be told about. `key` is the pane's own
+/// name for the button that started it and goes back out untouched;
+/// the three selector fields are matched the way `focus-session`
+/// matches, because they are the only names a dispatched `term` line
+/// can carry. `sent` is the last state the pane heard, so the host
+/// speaks on the edge and stays quiet in between.
+pub const Watch = struct {
+    key: []u8,
+    id: []u8,
+    cwd: []u8,
+    prompt_line: []u8,
+    sent: ?wire.SessionState = null,
+    /// The session the watch matched, once it has matched one. A watch
+    /// sticks to its session rather than re-matching every scan: a
+    /// second dispatch with the same prompt must not steal the first
+    /// one's button.
+    matched: []u8 = &.{},
+
+    pub fn deinit(w: *Watch, gpa: Allocator) void {
+        gpa.free(w.key);
+        gpa.free(w.id);
+        gpa.free(w.cwd);
+        gpa.free(w.prompt_line);
+        gpa.free(w.matched);
+    }
+
+    pub fn selector(w: *const Watch) sessions_table.Selector {
+        return .{
+            .id = if (w.id.len > 0) w.id else null,
+            .cwd = if (w.cwd.len > 0) w.cwd else null,
+            .prompt_line = if (w.prompt_line.len > 0) w.prompt_line else null,
+        };
+    }
+};
+
+/// The four states a pane is told about, from the scan's six. A
+/// session with a process is running unless it stopped to ask
+/// something; one without is done, or failed when its transcript ended
+/// on an error.
+pub fn stateOf(s: sessions_mod.AgentState) wire.SessionState {
+    return switch (s) {
+        .waiting => .waiting,
+        .streaming, .tool_call, .idle => .running,
+        .failed => .failed,
+        .done => .done,
+    };
+}
 
 pub const MountPane = struct {
     gpa: Allocator,
@@ -55,12 +105,16 @@ pub const MountPane = struct {
     rows: u16 = 0,
     focus_sent: ?bool = null,
     generation: u32,
+    /// Sessions this pane started and wants told about.
+    watches: std.ArrayListUnmanaged(Watch) = .empty,
 
     pub fn deinit(self: *MountPane, gpa: Allocator) void {
         if (self.mount) |m| {
             m.close();
             m.destroy();
         }
+        for (self.watches.items) |*w| w.deinit(gpa);
+        self.watches.deinit(gpa);
         self.grid.deinit(gpa);
         gpa.free(self.label);
         if (self.title_buf) |t| gpa.free(t);
@@ -202,13 +256,22 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
             const geometry = currentGeometry(app, ev.pane, p);
             p.cols = geometry.cols;
             p.rows = geometry.rows;
-            p.send(.{ .hello = .{
-                .geometry = geometry,
-                .theme = app.theme.name,
-                .workspace = app.workspace,
-                .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons },
-                .palette = paletteOf(&app.theme),
-            } });
+            p.send(.{
+                .hello = .{
+                    .geometry = geometry,
+                    .theme = app.theme.name,
+                    .workspace = app.workspace,
+                    .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons },
+                    .palette = paletteOf(&app.theme),
+                    // The pane's tab strip marks its active tab the way the
+                    // rest of mnml does, rather than picking for itself.
+                    .tab_indicator = switch (app.cfg.ui.tab_indicator) {
+                        .block => .block,
+                        .rule => .rule,
+                        .line => .line,
+                    },
+                },
+            });
             m.greeted = true;
             const focused = app.active == ev.pane and app.focus == .pane;
             p.send(.{ .focus = focused });
@@ -233,10 +296,104 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
             .warn => .warn,
             .@"error" => .err,
         }, "{s}: {s}", .{ p.title(), t.text }),
+        .watch_session => |req| {
+            // The event's four strings become the watch's, or are
+            // freed here — `Event.destroy` frees them either way, so
+            // they are copied rather than adopted.
+            try addWatch(app, p, req.key, req.id, req.cwd, req.prompt_line);
+            // Answer at once with what the scan already knows, so a
+            // button does not sit on the press's own guess until the
+            // next cadence comes round.
+            notifyOne(app, p, &p.watches.items[p.watches.items.len - 1]);
+        },
         .bye => try p.setExit("exited"),
         .closed => |reason| try p.setExit(reason),
     }
     app.needs_render = true;
+}
+
+/// Take (or replace) a watch under `key`. A second press on the same
+/// button follows the newer session rather than doubling the list.
+fn addWatch(app: *App, p: *MountPane, key: []const u8, id: []const u8, cwd: []const u8, prompt_line: []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    for (p.watches.items, 0..) |*w, i| {
+        if (!std.mem.eql(u8, w.key, key)) continue;
+        w.deinit(gpa);
+        _ = p.watches.orderedRemove(i);
+        break;
+    }
+    const k = try gpa.dupe(u8, key);
+    errdefer gpa.free(k);
+    const sid = try gpa.dupe(u8, id);
+    errdefer gpa.free(sid);
+    const c = try gpa.dupe(u8, cwd);
+    errdefer gpa.free(c);
+    const l = try gpa.dupe(u8, prompt_line);
+    errdefer gpa.free(l);
+    try p.watches.append(gpa, .{ .key = k, .id = sid, .cwd = c, .prompt_line = l });
+}
+
+/// The session one watch is about: the one it already matched, else
+/// the newest the selector picks out. Several sessions can share a cwd
+/// and a prompt line; the newest is the one the press just started.
+fn sessionFor(app: *App, w: *const Watch) ?sessions_mod.Item {
+    if (w.matched.len > 0) {
+        for (app.sessions.items) |it| if (std.mem.eql(u8, it.session_id, w.matched)) return it;
+        // The session left the listing (older than the scan's window):
+        // nothing more to say about it.
+        return null;
+    }
+    const sel = w.selector();
+    var best: ?sessions_mod.Item = null;
+    for (app.sessions.items) |it| {
+        if (!sel.matches(it)) continue;
+        if (best) |b| if (b.last_activity_s >= it.last_activity_s) continue;
+        best = it;
+    }
+    return best;
+}
+
+/// Send one watch's state if it moved. Silent when nothing matched yet
+/// — a dispatch whose session has not appeared in a scan is simply not
+/// news.
+fn notifyOne(app: *App, p: *MountPane, w: *Watch) void {
+    const it = sessionFor(app, w) orelse return;
+    if (w.matched.len == 0) {
+        w.matched = app.gpa.dupe(u8, it.session_id) catch return;
+    }
+    const state = stateOf(it.state);
+    if (w.sent) |had| if (had == state) return;
+    w.sent = state;
+    p.send(.{
+        .session_state = .{
+            .key = w.key,
+            .state = state,
+            .session_id = it.session_id,
+            // The session's last word: on a failure it is the reason, on a
+            // pause it is the question.
+            .detail = firstLine(it.last_assistant_msg orelse ""),
+        },
+    });
+}
+
+/// The first line of a message, clipped — a pane puts it on one row.
+pub fn firstLine(s: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, s, '\n') orelse s.len;
+    return s[0..@min(end, 200)];
+}
+
+/// After a sessions snapshot: every mount pane hears about every watch
+/// of its own that moved. Called from `sessions.handle`.
+pub fn notifySessionWatches(app: *App) void {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+        .mount => |*mp| {
+            // A pane whose sibling has gone hears nothing more; one
+            // that never connected simply drops the send.
+            if (mp.exit != null) continue;
+            for (mp.watches.items) |*w| notifyOne(app, mp, w);
+        },
+        else => {},
+    };
 }
 
 /// The pane's body size as the last frame laid it out — or the app's
@@ -468,6 +625,109 @@ test "a mounted sample integration paints, answers keys and clicks, and leaves o
     try testing.expect(std.mem.indexOf(u8, txt, "[exited] — any key closes") != null);
     try testing.expect(try handleKey(&app, id, p, .{ .code = .{ .char = 'x' } }));
     try testing.expect(app.panes.get(id) == null);
+}
+
+/// A mount pane with no socket behind it: `send` drops on the floor,
+/// which is all this test needs — what is asserted is the edge logic,
+/// not the bytes.
+fn paneOnly(app: *App, label: []const u8) Allocator.Error!*MountPane {
+    const id = try app.panes.add(.{ .mount = .{
+        .gpa = app.gpa,
+        .mount = null,
+        .label = try app.gpa.dupe(u8, label),
+        .generation = 0,
+    } });
+    return app.panes.get(id).?.asMount().?;
+}
+
+fn seedSessions(app: *App, items: []const sessions_mod.Item) !void {
+    const r = try sessions_mod.ScanResult.create(testing.allocator, app.sessions.generation);
+    const a = r.arena.allocator();
+    const rows = try a.alloc(sessions_mod.Item, items.len);
+    for (items, 0..) |it, i| rows[i] = try sessions_mod.dupeItem(a, it);
+    r.items = rows;
+    r.at_s = @divFloor(app.now_ms, 1000);
+    try sessions_mod.handle(app, r);
+    app.sessions.scanned_once = true;
+}
+
+fn fakeSession(id: []const u8, state: sessions_mod.AgentState, cwd: []const u8, user: []const u8, said: ?[]const u8) sessions_mod.Item {
+    return fakeSessionAt(id, state, 100, cwd, user, said);
+}
+
+fn fakeSessionAt(id: []const u8, state: sessions_mod.AgentState, at: i64, cwd: []const u8, user: []const u8, said: ?[]const u8) sessions_mod.Item {
+    var it = sessions_mod.testItem(id, state, at, "ws", user);
+    it.cwd = cwd;
+    it.last_assistant_msg = said;
+    return it;
+}
+
+test "a pane that watches a session it started is told when it runs, when it stops to ask, and when it ends" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/w/acme", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const p = try paneOnly(&app, "jira");
+
+    // The pane names the button; the two names a dispatched `term`
+    // line can carry are how the host finds the session.
+    try addWatch(&app, p, "ENG-2\x1ftriage", "", "/w/acme", "/agents:developer ENG-2");
+    const w = &p.watches.items[0];
+    // Nothing has been scanned: nothing to say yet.
+    notifySessionWatches(&app);
+    try testing.expect(w.sent == null);
+
+    try seedSessions(&app, &.{
+        fakeSession("sid-1", .streaming, "/w/acme", "/agents:developer ENG-2 — go", null),
+        // A session in the same directory with a different prompt is
+        // not this button's.
+        fakeSession("sid-other", .waiting, "/w/acme", "/agents:reviewer PR-9", "?"),
+    });
+    try testing.expectEqual(wire.SessionState.running, p.watches.items[0].sent.?);
+    try testing.expectEqualStrings("sid-1", p.watches.items[0].matched);
+
+    // The edge only: a second snapshot in the same state says nothing
+    // new, and `sent` stays where it was.
+    try seedSessions(&app, &.{fakeSession("sid-1", .tool_call, "/w/acme", "/agents:developer ENG-2 — go", null)});
+    try testing.expectEqual(wire.SessionState.running, p.watches.items[0].sent.?);
+
+    // It stops to ask something, then ends.
+    try seedSessions(&app, &.{fakeSession("sid-1", .waiting, "/w/acme", "/agents:developer ENG-2 — go", "Shall I run the migration?\nmore")});
+    try testing.expectEqual(wire.SessionState.waiting, p.watches.items[0].sent.?);
+    try seedSessions(&app, &.{fakeSession("sid-1", .done, "/w/acme", "/agents:developer ENG-2 — go", "done")});
+    try testing.expectEqual(wire.SessionState.done, p.watches.items[0].sent.?);
+
+    // Once matched, the watch sticks to ITS session: a newer one
+    // started later with the same prompt does not steal the button.
+    try seedSessions(&app, &.{
+        fakeSession("sid-1", .done, "/w/acme", "/agents:developer ENG-2 — go", "done"),
+        // Newer, so the selector on its own would pick it: what keeps
+        // the button on sid-1 is that the watch already matched.
+        fakeSessionAt("sid-2", .streaming, 900, "/w/acme", "/agents:developer ENG-2 — go again", null),
+    });
+    try testing.expectEqualStrings("sid-1", p.watches.items[0].matched);
+    try testing.expectEqual(wire.SessionState.done, p.watches.items[0].sent.?);
+
+    // A second watch under the same key replaces the first — a button
+    // pressed twice follows the newer session, and the list does not
+    // grow.
+    try addWatch(&app, p, "ENG-2\x1ftriage", "", "/w/acme", "/agents:developer ENG-2 — go again");
+    try testing.expectEqual(@as(usize, 1), p.watches.items.len);
+    try testing.expect(p.watches.items[0].sent == null);
+    notifySessionWatches(&app);
+    try testing.expectEqualStrings("sid-2", p.watches.items[0].matched);
+    try testing.expectEqual(wire.SessionState.running, p.watches.items[0].sent.?);
+}
+
+test "the six states the scan derives become the four a button can wear; a line is its first line, clipped" {
+    try testing.expectEqual(wire.SessionState.waiting, stateOf(.waiting));
+    try testing.expectEqual(wire.SessionState.running, stateOf(.streaming));
+    try testing.expectEqual(wire.SessionState.running, stateOf(.tool_call));
+    try testing.expectEqual(wire.SessionState.running, stateOf(.idle));
+    try testing.expectEqual(wire.SessionState.done, stateOf(.done));
+    try testing.expectEqual(wire.SessionState.failed, stateOf(.failed));
+    try testing.expectEqualStrings("first", firstLine("first\nsecond\nthird"));
+    try testing.expectEqualStrings("", firstLine(""));
+    try testing.expectEqual(@as(usize, 200), firstLine("x" ** 400).len);
 }
 
 test "a binary that does not exist fails at open with a diag, not a pane" {

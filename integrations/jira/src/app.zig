@@ -211,8 +211,28 @@ pub const App = struct {
     /// The channel a `[ view ]` press asks the host to focus a session
     /// on. Null outside a host, where the button is not offered.
     ipc: ?*const sdk.Ipc = null,
+    /// Sessions this pane started and wants told about, waiting to go
+    /// out over the mount; the loop drains them after each pass. The
+    /// arena owns their strings for the life of the pane — a watch is
+    /// small and there is one per press, so it is never freed
+    /// individually.
+    watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,
+    watch_arena: std.heap.ArenaAllocator,
     /// Turns the spinner on every button that is mid-dispatch.
     spin: usize = 0,
+    /// Wall-clock seconds, when something has pinned them (a test);
+    /// zero means read the clock (`nowSecs`).
+    now_secs: i64 = 0,
+    /// The merge confirm, when one is up.
+    merge: ?MergeConfirm = null,
+    /// What the pointer is over, when it is worth saying — the reason a
+    /// dim `[ Merge ]` is dim. A fixed buffer: the pointer moves many
+    /// times a second and an arena would grow with every move of it.
+    hover_buf: [192]u8 = undefined,
+    hover_len: usize = 0,
+    /// The pane has the keyboard. A merge that ends while it does not
+    /// is worth a notification.
+    focused: bool = true,
     group: ?*Io.Group = null,
     /// The ticket the cursor was on when the in-flight refetch started,
     /// so it can go back on it when the rows are swapped.
@@ -228,6 +248,22 @@ pub const App = struct {
     toast_pending: bool = false,
 
     const DetailEntry = struct { arena: std.heap.ArenaAllocator, detail: model.IssueDetail };
+
+    /// One queued `watch_session`, in the wire's own shape.
+    pub const WatchRequest = struct { key: []const u8, cwd: []const u8, prompt_line: []const u8 };
+
+    /// The merge confirm that is up: everything it names, owned.
+    pub const MergeConfirm = struct {
+        arena: std.heap.ArenaAllocator,
+        row_key: []const u8,
+        confirm: sdk.pane.merge.Confirm,
+        allowed: []const sdk.pane.merge.Strategy,
+
+        pub fn deinit(c: *MergeConfirm) void {
+            c.arena.deinit();
+            c.* = undefined;
+        }
+    };
 
     pub fn init(gpa: Allocator, io: Io, cfg: config.Config, family: ?config.Family, client: *jira.Client, forge: bitbucket.Client) Allocator.Error!App {
         var keys = std.heap.ArenaAllocator.init(gpa);
@@ -263,7 +299,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa) };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa), .watch_arena = std.heap.ArenaAllocator.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -323,12 +359,15 @@ pub const App = struct {
         if (a.comment) |*c| c.edit.deinit();
         if (a.modal) |*m| m.arena.deinit();
         if (a.vars) |*v| v.deinit();
+        if (a.merge) |*m| m.deinit();
         a.selection.deinit(a.gpa);
         a.board_names.deinit(a.gpa);
         a.kanban_expanded.deinit(a.gpa);
         a.hits.deinit(a.gpa);
         a.refresh.deinit(a.io, RefreshResult.drop);
         a.actions.deinit();
+        a.watch_out.deinit(a.gpa);
+        a.watch_arena.deinit();
         a.keys.deinit();
         a.* = undefined;
     }
@@ -354,6 +393,14 @@ pub const App = struct {
 
     pub fn nowMs(a: *App) i64 {
         return Io.Timestamp.now(a.io, .real).toMilliseconds();
+    }
+
+    /// Wall-clock seconds — the clock a build line's age is measured
+    /// against. A test pins `now_secs` so its ages do not drift with
+    /// the day it runs on.
+    pub fn nowSecs(a: *App) i64 {
+        if (a.now_secs != 0) return a.now_secs;
+        return @divFloor(a.nowMs(), 1000);
     }
 
     pub fn tab(a: *App) *TabState {
@@ -871,21 +918,42 @@ pub const App = struct {
         }
     }
 
+    /// The builds under one pull-request row. Cached against the pull
+    /// request's own `updated_on`: while the PR has not moved, the runs
+    /// on screen are still the right ones and the pipelines list is not
+    /// asked for again. `force` is what `r` on the row means — go and
+    /// look anyway.
     pub fn ensurePipelines(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        return a.loadPipelines(key, pr, false);
+    }
+
+    pub fn loadPipelines(a: *App, key: []const u8, pr: model.LinkedPr, force: bool) Allocator.Error!void {
         const t = a.tab();
         const st = &(t.tree orelse return);
-        if (st.pipelines(key, pr.id) != null or st.pipelineError(key, pr.id) != null) return;
+        const have = st.pipelines(key, pr.id) != null or st.pipelineError(key, pr.id) != null;
+        if (have and !force) return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        a.setStatus("fetching pipeline for {s} {s}…", .{ key, pr.id });
-        switch (try a.forge.pipelinesForPrUrl(scratch.allocator(), pr.url)) {
-            .ok => |list| {
-                try st.putPipelines(key, pr.id, list);
-                a.setStatus("{s} {s}: {d} pipeline(s) on merge commit", .{ key, pr.id, list.len });
+        a.setStatus("fetching builds for {s} {s}…", .{ key, pr.id });
+        const known = if (st.pipelineMeta(key, pr.id)) |m| m.updated_on else "";
+        switch (try a.forge.pipelinesForPrUrl(scratch.allocator(), pr.url, known)) {
+            .ok => |runs| {
+                try st.putPipelines(key, pr.id, runs.pipelines);
+                try st.putPipelineMeta(key, pr.id, .{ .updated_on = runs.updated_on, .commit = runs.commit, .on_merge = runs.on_merge });
+                a.setStatus("{s} {s}: {d} build(s) on {s} {s}", .{
+                    key,
+                    pr.id,
+                    runs.pipelines.len,
+                    if (runs.on_merge) "merge commit" else "branch head",
+                    runs.commit[0..@min(runs.commit.len, 7)],
+                });
             },
+            // One request, not two: nothing on the pull request has
+            // moved, so the runs already on screen still stand.
+            .unchanged => a.setStatus("{s} {s}: unchanged since the last look", .{ key, pr.id }),
             .failed => |why| {
                 try st.putPipelineError(key, pr.id, why);
-                a.setStatus("{s} {s} pipeline lookup: {s}", .{ key, pr.id, why });
+                a.setStatus("{s} {s} build lookup: {s}", .{ key, pr.id, why });
             },
         }
     }
@@ -1038,8 +1106,218 @@ pub const App = struct {
                 const key = t.issues[p.issue_idx].key;
                 if (st.prs(key)) |prs| if (p.pr_idx < prs.len and prs[p.pr_idx].url.len > 0) try a.openUrl(prs[p.pr_idx].url);
             },
+            // A build line is a door to that run's page.
+            .pipeline => |pl| try a.openBuild(pl),
             .show_more => |s| try st.showAll(t.issues[s.issue_idx].key),
             else => {},
+        }
+        try a.clampCursor();
+    }
+
+    /// The run a build line stands for, in the browser. Bitbucket
+    /// spells it `…/<ws>/<repo>/pipelines/results/<number>`; the
+    /// workspace and the repo come off the pull request's own URL.
+    fn openBuild(a: *App, pl: @FieldType(tree.Row, "pipeline")) Allocator.Error!void {
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        const key = t.issues[pl.issue_idx].key;
+        const prs = st.prs(key) orelse return;
+        if (pl.pr_idx >= prs.len) return;
+        const pr = prs[pl.pr_idx];
+        const list = st.pipelines(key, pr.id) orelse return;
+        if (pl.pipeline_idx >= list.len) return;
+        const ref = bitbucket.parsePrUrl(pr.url) orelse {
+            a.setStatus("no build page: {s} is not a bitbucket PR URL", .{pr.id});
+            return;
+        };
+        var buf: [256]u8 = undefined;
+        const url = sdk.pane.build.pageUrl(&buf, ref.workspace, ref.repo, list[pl.pipeline_idx].build_number);
+        if (url.len > 0) try a.openUrl(url);
+    }
+
+    // ─── may it merge? ───────────────────────────────────────────────
+
+    /// What is known about this pull request's readiness. One that has
+    /// moved since the look is unchecked again.
+    pub fn readinessOf(a: *App, key: []const u8, pr: model.LinkedPr) sdk.pane.merge.Readiness {
+        const t = a.tabConst();
+        const st = &(t.tree orelse return .{});
+        const e = @constCast(st).readinessOf(key, pr.id) orelse return .{};
+        return e.readiness;
+    }
+
+    /// Ask, once, whether this pull request may merge — for the row the
+    /// reader is actually on, and never again while the PR has not
+    /// moved. The row's own builds pay for the pipeline half when they
+    /// are already open and fresh.
+    pub fn ensureReadiness(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        if (!pr.isOpen() or pr.url.len == 0) return;
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        const known: []const u8 = if (st.readinessOf(key, pr.id)) |e| e.updated_on else "";
+        var known_build: ?bool = null;
+        if (st.pipelineMeta(key, pr.id)) |m| if (known.len == 0 or std.mem.eql(u8, m.updated_on, known)) {
+            if (st.pipelines(key, pr.id)) |runs| {
+                known_build = runs.len > 0 and std.ascii.eqlIgnoreCase(runs[0].stateLabel(), "SUCCESSFUL");
+            }
+        };
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        switch (try a.forge.readinessForPrUrl(scratch.allocator(), pr.url, known, @max(a.cfg.required_approvals, 1), known_build)) {
+            .ok => |got| try st.putReadiness(key, pr.id, .{ .updated_on = got.updated_on, .readiness = got.readiness }),
+            // It has not moved: what is on screen still stands.
+            .unchanged => {},
+            .failed => |why| a.setStatus("{s} {s}: {s}", .{ key, pr.id, why }),
+        }
+    }
+
+    /// The pull request under the cursor, when the cursor is on one.
+    pub fn focusedPrRow(a: *App, arena: Allocator) Allocator.Error!?struct { key: []const u8, pr: model.LinkedPr } {
+        const row = (try a.focusedRow(arena)) orelse return null;
+        const p = switch (row) {
+            .pr => |x| x,
+            else => return null,
+        };
+        const t = a.tab();
+        const key = t.issues[p.issue_idx].key;
+        const prs = (t.tree orelse return null).prs(key) orelse return null;
+        if (p.pr_idx >= prs.len) return null;
+        return .{ .key = key, .pr = prs[p.pr_idx] };
+    }
+
+    /// A press on a row's `[ Merge ]`.
+    pub fn pressMerge(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        var kbuf: [256]u8 = undefined;
+        const row_key = std.fmt.bufPrint(&kbuf, "{s}\u{0}{s}", .{ key, pr.id }) catch return;
+        switch (sdk.pane.action.pressOf(a.actions.state(row_key, "merge"))) {
+            .focus_session => return a.focusSessionFor(row_key, "merge"),
+            .dispatch, .retry => {},
+        }
+        // Only when nothing is known: a press must not re-ask for a
+        // judgment the row already carries.
+        if (!a.readinessOf(key, pr).checked) try a.ensureReadiness(key, pr);
+        const r = a.readinessOf(key, pr);
+        if (!r.ready()) {
+            var rbuf: [192]u8 = undefined;
+            a.say("{s}", .{r.hoverText(&rbuf)});
+            return;
+        }
+        if (a.merge) |*m| m.deinit();
+        // The arena goes into the struct FIRST, and everything is
+        // allocated through the handle taken from it THERE: an
+        // `ArenaAllocator`'s `allocator()` binds to the address it was
+        // taken from, so a local one copied into a field leaks every
+        // allocation made before the copy.
+        a.merge = .{
+            .arena = std.heap.ArenaAllocator.init(a.gpa),
+            .row_key = "",
+            .confirm = .{ .title = "", .source = "", .target = "", .strategy = .merge_commit, .url = "" },
+            .allowed = &.{},
+        };
+        const m = &a.merge.?;
+        const ar = m.arena.allocator();
+        m.allowed = try ar.dupe(sdk.pane.merge.Strategy, &.{ .merge_commit, .squash, .fast_forward });
+        m.row_key = try ar.dupe(u8, row_key);
+        m.confirm = .{
+            .title = try ar.dupe(u8, if (pr.name.len > 0) pr.name else pr.url),
+            .source = try ar.dupe(u8, if (pr.source_branch.len > 0) pr.source_branch else "?"),
+            .target = try ar.dupe(u8, if (pr.dest_branch.len > 0) pr.dest_branch else "?"),
+            .strategy = m.allowed[0],
+            .url = try ar.dupe(u8, pr.url),
+        };
+    }
+
+    pub fn closeMerge(a: *App) void {
+        if (a.merge) |*m| m.deinit();
+        a.merge = null;
+    }
+
+    pub fn cycleMergeStrategy(a: *App) void {
+        const m = &(a.merge orelse return);
+        m.confirm.strategy = m.confirm.strategy.next(m.allowed);
+    }
+
+    /// Confirmed: the merge runs as a Claude Code session, like every
+    /// other action this pane dispatches — the pane never calls the
+    /// merge API itself.
+    pub fn acceptMerge(a: *App) Allocator.Error!void {
+        const m = a.merge orelse return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const prompt = try sdk.pane.merge.prompt(arena, m.confirm);
+        const first = prompt[0 .. std.mem.indexOfScalar(u8, prompt, '\n') orelse prompt.len];
+        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
+        const row_key = try arena.dupe(u8, m.row_key);
+        const out = try dispatch.firePrompt(arena, a.io, "merge", prompt, paths);
+        a.say("{s}", .{out.text});
+        if (out.fired) {
+            try a.actions.set(row_key, "merge", .{ .state = .running, .prompt_line = first });
+            try a.watchSession(row_key, "merge", first);
+        } else {
+            try a.actions.set(row_key, "merge", .{ .state = .failed, .detail = out.text });
+        }
+        a.closeMerge();
+    }
+
+    /// The pointer moved. Leaves the sentence a dim `[ Merge ]` owes
+    /// the reader, for one pass.
+    pub fn hoverNote(a: *const App) []const u8 {
+        return a.hover_buf[0..a.hover_len];
+    }
+
+    pub fn hover(a: *App, col: u16, row: u16) Allocator.Error!void {
+        a.hover_len = 0;
+        const target = a.hits.at(col, row) orelse return;
+        const idx = switch (target) {
+            .merge_blocked => |i| i,
+            else => return,
+        };
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const r = (try a.treeRows(scratch.allocator())) orelse return;
+        if (idx >= r.rows.len) return;
+        const pr_ref = switch (r.rows[idx]) {
+            .pr => |p| p,
+            else => return,
+        };
+        const t = a.tab();
+        const key = t.issues[pr_ref.issue_idx].key;
+        const prs = (t.tree.?).prs(key) orelse return;
+        if (pr_ref.pr_idx >= prs.len) return;
+        var buf: [192]u8 = undefined;
+        const note = a.readinessOf(key, prs[pr_ref.pr_idx]).hoverText(&buf);
+        const n = @min(note.len, a.hover_buf.len);
+        @memcpy(a.hover_buf[0..n], note[0..n]);
+        a.hover_len = n;
+    }
+
+    /// The confirm's keys while it is up: Enter merges, ←→ picks the
+    /// strategy, anything else cancels.
+    fn mergeKey(a: *App, spec: []const u8) Allocator.Error!void {
+        if (std.mem.eql(u8, spec, "enter")) {
+            try a.acceptMerge();
+        } else if (std.mem.eql(u8, spec, "left") or std.mem.eql(u8, spec, "h") or std.mem.eql(u8, spec, "right") or std.mem.eql(u8, spec, "l")) {
+            a.cycleMergeStrategy();
+        } else {
+            a.closeMerge();
+        }
+    }
+
+    /// Fold a pull request's builds in or out, fetching them the first
+    /// time. What `[ Open ]` and the row's chevron both do.
+    pub fn togglePrBuilds(a: *App, key: []const u8, pr: model.LinkedPr) Allocator.Error!void {
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        if (pr.url.len == 0) {
+            a.setStatus("{s}: this PR has no URL to look up builds on", .{pr.id});
+            return;
+        }
+        if (st.isPrExpanded(key, pr.id)) {
+            try st.setPrExpanded(key, pr.id, false);
+        } else {
+            try st.setPrExpanded(key, pr.id, true);
+            try a.ensurePipelines(key, pr);
         }
         try a.clampCursor();
     }
@@ -1064,7 +1342,7 @@ pub const App = struct {
                 const prs = st.prs(key) orelse return;
                 if (p.pr_idx >= prs.len) return;
                 const pr = prs[p.pr_idx];
-                if (!pr.isMerged()) return;
+                if (pr.url.len == 0) return;
                 if (!st.isPrExpanded(key, pr.id)) {
                     try st.setPrExpanded(key, pr.id, true);
                     try a.ensurePipelines(key, pr);
@@ -1886,8 +2164,13 @@ pub const App = struct {
     }
 
     /// Fire a dispatch and leave the outcome on the row's button: a
-    /// `[ view ]` that focuses the session it started, or a red cross
-    /// carrying the reason into the hint row.
+    /// spinner that turns for as long as the session runs, or a red
+    /// cross carrying the reason into the hint row.
+    ///
+    /// The button starts on `running` rather than `view` because that
+    /// is what it is — a session was started and has not ended. What
+    /// happens to it after is the host's to say: the watch queued here
+    /// goes out on the next pass and `session_state` lines come back.
     fn fireAndRecord(a: *App, arena: Allocator, row_key: []const u8, action: []const u8, d: dispatch.Dispatch, paths: dispatch.Paths) Allocator.Error!void {
         const out = try dispatch.fireOutcome(arena, a.io, d, paths);
         a.say("{s}", .{out.text});
@@ -1896,21 +2179,58 @@ pub const App = struct {
             // directory it runs in and the first line of its prompt.
             const prompt = try d.prompt(arena);
             const first = prompt[0 .. std.mem.indexOfScalar(u8, prompt, '\n') orelse prompt.len];
-            try a.actions.set(row_key, action, .{ .state = .view, .detail = try arena.dupe(u8, first) });
+            try a.actions.set(row_key, action, .{ .state = .running, .prompt_line = try arena.dupe(u8, first) });
+            try a.watchSession(row_key, action, first);
         } else {
             try a.actions.set(row_key, action, .{ .state = .failed, .detail = out.text });
         }
     }
 
-    /// A press on a button that already started a session: ask the host
-    /// to bring it to the front.
+    /// Queue a `watch_session` for the button that just dispatched. The
+    /// pane loop sends it over the mount; the host matches the session
+    /// the same way `focus-session` does and answers on every edge.
+    fn watchSession(a: *App, row_key: []const u8, action: []const u8, prompt_line: []const u8) Allocator.Error!void {
+        var buf: [320]u8 = undefined;
+        const key = sdk.pane.actionWatchKey(&buf, row_key, action);
+        if (key.len == 0) return;
+        const arena = a.watch_arena.allocator();
+        try a.watch_out.append(a.gpa, .{
+            .key = try arena.dupe(u8, key),
+            .cwd = try arena.dupe(u8, a.cfg.dispatch_workspace),
+            .prompt_line = try arena.dupe(u8, prompt_line),
+        });
+    }
+
+    /// A `session_state` line from the host: the button it names takes
+    /// the host's word for what its session is doing.
+    pub fn onSessionState(a: *App, key: []const u8, state: sdk.wire.SessionState, session_id: []const u8, detail: []const u8) Allocator.Error!void {
+        if (!try a.actions.applyState(key, sdk.pane.actionStateOf(state), session_id, detail)) return;
+        // A merge that ENDS while the pane does not have the keyboard
+        // is worth telling the user about: it is the one thing here
+        // that changed a repository.
+        const ended = state == .done or state == .failed;
+        if (!ended or a.focused) return;
+        const pair = sdk.pane.action.splitWatchKey(key) orelse return;
+        if (!std.mem.eql(u8, pair.action, "merge")) return;
+        const ipc = a.ipc orelse return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        const title = try std.fmt.allocPrint(arena, "Merge {s}", .{if (state == .done) "finished" else "failed"});
+        const body = try std.fmt.allocPrint(arena, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" });
+        ipc.notify(title, body, if (state == .failed) .@"error" else .info, state == .failed) catch {};
+    }
+
+    /// A press on a button whose session is live or finished: ask the
+    /// host to bring it to the front. The host's own id when it has
+    /// given one, else the two names a dispatched `term` line carries.
     pub fn focusSessionFor(a: *App, row_key: []const u8, action: []const u8) Allocator.Error!void {
         const e = a.actions.get(row_key, action);
         const ipc = a.ipc orelse {
             a.setStatus("view: no mnml channel to focus a session on", .{});
             return;
         };
-        ipc.focusSession(.{ .cwd = a.cfg.dispatch_workspace, .prompt_line = e.detail }) catch |err| {
+        ipc.focusSession(.{ .id = e.session, .cwd = a.cfg.dispatch_workspace, .prompt_line = e.prompt_line }) catch |err| {
             a.say("view failed: {s}", .{@errorName(err)});
             return;
         };
@@ -2105,6 +2425,12 @@ pub const App = struct {
 
     /// One key from the host. Returns false when nothing took it.
     pub fn onKey(a: *App, spec: []const u8) Allocator.Error!bool {
+        // The confirm owns the keyboard while it is up: it is the only
+        // overlay behind which something irreversible is waiting.
+        if (a.merge != null) {
+            try a.mergeKey(spec);
+            return true;
+        }
         if (a.help) {
             if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "?") or std.mem.eql(u8, spec, "q") or std.mem.eql(u8, spec, "f1")) {
                 a.help = false;
@@ -2278,6 +2604,11 @@ pub const App = struct {
             .dispatch_fix => try a.dispatchTicket("fix"),
             .dispatch_triage => try a.dispatchTicket("triage"),
             .dispatch_review => try a.dispatchReview(),
+            .merge_pr => {
+                var scratch = std.heap.ArenaAllocator.init(a.gpa);
+                defer scratch.deinit();
+                if (try a.focusedPrRow(scratch.allocator())) |f| try a.pressMerge(f.key, f.pr) else a.setStatus("no PR under cursor", .{});
+            },
             .detail_modal => {
                 var scratch = std.heap.ArenaAllocator.init(a.gpa);
                 defer scratch.deinit();
@@ -2374,6 +2705,15 @@ pub const App = struct {
             }
             return;
         }
+        if (a.merge != null) {
+            switch (target orelse .confirm_body) {
+                .confirm_ok => try a.acceptMerge(),
+                .confirm_cancel => a.closeMerge(),
+                .confirm_body => {},
+                else => a.closeMerge(),
+            }
+            return;
+        }
         if (a.comment != null) return;
         const tg = target orelse return;
         switch (tg) {
@@ -2384,6 +2724,21 @@ pub const App = struct {
                 try a.treeActivate();
             },
             .pr_button => |b| try a.clickPrButton(b.row, b.which),
+            // A dim `[ Merge ]` is not a `pr_button`: a click on one
+            // says which condition fails rather than doing anything.
+            .merge_blocked => |i| {
+                a.tab().selected = i;
+                var scratch = std.heap.ArenaAllocator.init(a.gpa);
+                defer scratch.deinit();
+                if (try a.focusedPrRow(scratch.allocator())) |f| {
+                    try a.ensureReadiness(f.key, f.pr);
+                    var buf: [192]u8 = undefined;
+                    a.say("{s}", .{a.readinessOf(f.key, f.pr).hoverText(&buf)});
+                }
+            },
+            .confirm_ok => try a.acceptMerge(),
+            .confirm_cancel => a.closeMerge(),
+            .confirm_body => {},
             .action => |x| {
                 const iss = a.tab().issue(x.issue) orelse return;
                 const buttons = dispatch.buttonsForTicket(iss);
@@ -2491,7 +2846,7 @@ pub const App = struct {
                 const prs = st.prs(key) orelse return;
                 if (p.pr_idx >= prs.len) return;
                 const pr = prs[p.pr_idx];
-                if (!pr.isMerged()) return;
+                if (pr.url.len == 0) return;
                 if (st.isPrExpanded(key, pr.id)) {
                     try st.setPrExpanded(key, pr.id, false);
                 } else {
@@ -2519,8 +2874,13 @@ pub const App = struct {
         if (p.pr_idx >= prs.len) return;
         switch (which) {
             .review => try a.dispatchReview(),
-            .open => if (prs[p.pr_idx].url.len > 0) try a.openUrl(prs[p.pr_idx].url),
-            .merge => a.say("merge: use the Bitbucket pane (m) — this pane opens the PR", .{}),
+            // `[ Open ]` opens the ROW, not a browser: its builds fold
+            // out under it. The PR itself is still one Enter away (and
+            // the row menu's "open in browser"), which is where a link
+            // belongs — a chip labelled Open that threw the reader into
+            // a browser had no way back.
+            .open => try a.togglePrBuilds(t.issues[p.issue_idx].key, prs[p.pr_idx]),
+            .merge => try a.pressMerge(t.issues[p.issue_idx].key, prs[p.pr_idx]),
         }
     }
 
@@ -2653,6 +3013,8 @@ pub const Harness = struct {
     client: *jira.Client,
     app: App,
     base: []const u8,
+    /// `<base>/2.0` — where the forge corner of the fake lives.
+    forge_base: []const u8,
 
     pub fn start(cfg_in: config.Config, family: ?config.Family) !*Harness {
         const io = testing.io;
@@ -2667,6 +3029,11 @@ pub const Harness = struct {
         h.group = .init;
         try h.group.concurrent(io, jira.Loopback.serve, .{ io, &h.lb });
         h.base = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}", .{h.server.socket.address.getPort()});
+        // The forge lives under `/2.0` on Bitbucket and on the fake, so
+        // the pane's forge calls must carry it here too — without it
+        // every one of them landed on the Jira half of the fake and
+        // came back 401, which is why nothing ever exercised them.
+        h.forge_base = try std.fmt.allocPrint(testing.allocator, "{s}/2.0", .{h.base});
         const authorization = try auth.basicHeader(testing.allocator, "fake@acme.com", "fake-token");
         defer testing.allocator.free(authorization);
         h.client = try testing.allocator.create(jira.Client);
@@ -2675,8 +3042,8 @@ pub const Harness = struct {
         cfg.jira_url = h.base;
         cfg.email = "fake@acme.com";
         cfg.refresh_interval_secs = 0;
-        cfg.bitbucket_api_url = h.base;
-        h.app = try App.init(testing.allocator, io, cfg, family, h.client, .{ .gpa = testing.allocator, .io = io, .base_url = h.base, .token = "fake-forge" });
+        cfg.bitbucket_api_url = h.forge_base;
+        h.app = try App.init(testing.allocator, io, cfg, family, h.client, .{ .gpa = testing.allocator, .io = io, .base_url = h.forge_base, .token = "fake-forge" });
         h.app.resize(120, 40);
         return h;
     }
@@ -2694,6 +3061,7 @@ pub const Harness = struct {
         h.store.deinit();
         testing.allocator.destroy(h.store);
         testing.allocator.free(h.base);
+        testing.allocator.free(h.forge_base);
         testing.allocator.destroy(h);
     }
 };
@@ -2766,6 +3134,160 @@ test "Work: the assigned tab loads the three tickets, auto-expands them with the
     try testing.expectEqualStrings("ENG-12", a.tab().issues[0].key);
     _ = try a.onKey("1");
     try testing.expectEqual(@as(usize, 0), a.active);
+}
+
+test "every PR row folds out to its builds — an open one on its branch head — and the second look costs one request, not two" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    const st = &(a.tab().tree.?);
+    const prs = st.prs("ENG-2").?;
+    try testing.expectEqual(@as(usize, 2), prs.len);
+    // #2023 merged, #2044 open — and it is the OPEN one that used to
+    // answer "PR not merged — no merge commit" and show nothing.
+    try testing.expect(prs[0].isMerged());
+    try testing.expect(prs[1].isOpen());
+
+    const before = h.store.requests;
+    try a.togglePrBuilds("ENG-2", prs[1]);
+    // The PR detail, then the pipelines list: two requests the first time.
+    try testing.expectEqual(@as(usize, 2), h.store.requests - before);
+    const runs = st.pipelines("ENG-2", prs[1].id).?;
+    // Both runs on the branch head, newest first; nothing from the
+    // other branches in the same repo.
+    try testing.expectEqual(@as(usize, 2), runs.len);
+    try testing.expectEqual(@as(i64, 414), runs[0].build_number);
+    try testing.expectEqual(@as(i64, 413), runs[1].build_number);
+    try testing.expectEqualStrings("feat/trim", runs[0].branch);
+    const meta = st.pipelineMeta("ENG-2", prs[1].id).?;
+    try testing.expect(!meta.on_merge);
+    try testing.expect(meta.updated_on.len > 0);
+
+    // Fold shut, fold open: nothing is asked for again.
+    try a.togglePrBuilds("ENG-2", prs[1]);
+    try a.togglePrBuilds("ENG-2", prs[1]);
+    try testing.expectEqual(@as(usize, 2), h.store.requests - before);
+    // A deliberate re-look costs ONE request: the PR has not moved, so
+    // the pipelines list is not asked for at all.
+    try a.loadPipelines("ENG-2", prs[1], true);
+    try testing.expectEqual(@as(usize, 3), h.store.requests - before);
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "unchanged") != null);
+
+    // The merged one still folds out to what landed.
+    try a.togglePrBuilds("ENG-2", prs[0]);
+    const merged_runs = st.pipelines("ENG-2", prs[0].id).?;
+    try testing.expectEqual(@as(usize, 1), merged_runs.len);
+    try testing.expectEqual(@as(i64, 412), merged_runs[0].build_number);
+    try testing.expect(st.pipelineMeta("ENG-2", prs[0].id).?.on_merge);
+
+    // The rows: a build line per run under its PR.
+    const rows = (try a.treeRows(ar)).?.rows;
+    var builds: usize = 0;
+    for (rows) |row| builds += @intFromBool(row == .pipeline);
+    try testing.expectEqual(@as(usize, 3), builds);
+
+    // And the line itself is the toolkit's, so both panes read alike.
+    a.now_secs = sdk.pane.build.parseEpoch(runs[0].created_on).? + 3600;
+    var buf: [128]u8 = undefined;
+    try testing.expectEqualStrings("\u{23f5} IN_PROGRESS \u{b7} feat/trim \u{b7} 1h \u{b7} #414", sdk.pane.build.caption(&buf, .{
+        .state = runs[0].stateLabel(),
+        .branch = runs[0].branch,
+        .created_on = runs[0].created_on,
+        .number = runs[0].build_number,
+    }, a.nowSecs(), false));
+}
+
+test "a PR row's Merge is dim until the pull request may merge, and says which condition fails" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const st = &(a.tab().tree.?);
+    const prs = st.prs("ENG-2").?;
+    const open_pr = prs[1]; // #2044, OPEN
+    try testing.expect(open_pr.isOpen());
+
+    // Nothing looked at: dim, and it says exactly that rather than
+    // claiming a blocker nobody checked.
+    var buf: [192]u8 = undefined;
+    try testing.expect(!a.readinessOf("ENG-2", open_pr).ready());
+    try testing.expectEqualStrings("Merge: not checked yet \u{2014} open the row to look", a.readinessOf("ENG-2", open_pr).hoverText(&buf));
+
+    const before = h.store.requests;
+    try a.ensureReadiness("ENG-2", open_pr);
+    const spent = h.store.requests - before;
+    // The detail, the diffstat, the comments, the pipelines.
+    try testing.expectEqual(@as(usize, 4), spent);
+    const got = a.readinessOf("ENG-2", open_pr);
+    try testing.expect(got.checked);
+    // The fake's #2044 has two open tasks and one unanswered comment,
+    // and its newest run is IN_PROGRESS — the earliest unmet condition
+    // is the one named.
+    try testing.expect(!got.ready());
+    try testing.expectEqualStrings("Merge: 0 of 1 approvals", got.hoverText(&buf));
+
+    // A second look while it has not moved costs ONE request — the PR
+    // detail, which is what says it has not moved.
+    try a.ensureReadiness("ENG-2", open_pr);
+    try testing.expectEqual(spent + 1, h.store.requests - before);
+
+    // A press on a dim button starts nothing and says why.
+    try a.pressMerge("ENG-2", open_pr);
+    try testing.expect(a.merge == null);
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "approvals") != null);
+}
+
+test "a ready PR opens the named confirm, and confirming dispatches a Claude Code session" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, ".mnml/" ++ dispatch.ipc_subdir);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/" ++ dispatch.ipc_subdir ++ "/command", .data = "" });
+    const h = try Harness.start(.{ .tabs = &work_tabs, .dispatch_workspace = root }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const st = &(a.tab().tree.?);
+    const pr = st.prs("ENG-2").?[1];
+
+    // Stand the judgment up as clean: what this asserts is what the
+    // pane does once it IS ready.
+    try st.putReadiness("ENG-2", pr.id, .{
+        .updated_on = "2026-01-01T00:00:00+00:00",
+        .readiness = .{ .approvals = 1, .required = 1, .conflicts = false, .build_green = true, .checked = true },
+    });
+    try testing.expect(a.readinessOf("ENG-2", pr).ready());
+
+    try a.pressMerge("ENG-2", pr);
+    const m = a.merge.?;
+    try testing.expectEqualStrings("Follow-up: trim the whitespace", m.confirm.title);
+    try testing.expectEqualStrings("feat/trim", m.confirm.source);
+    try testing.expectEqualStrings("main", m.confirm.target);
+    try testing.expectEqual(sdk.pane.merge.Strategy.merge_commit, m.confirm.strategy);
+    a.cycleMergeStrategy();
+    try testing.expectEqual(sdk.pane.merge.Strategy.squash, a.merge.?.confirm.strategy);
+
+    try a.acceptMerge();
+    try testing.expect(a.merge == null);
+    var kbuf: [256]u8 = undefined;
+    const row_key = try std.fmt.bufPrint(&kbuf, "ENG-2\u{0}{s}", .{pr.id});
+    try testing.expectEqual(sdk.pane.ActionState.running, a.actions.state(row_key, "merge"));
+    try testing.expectEqual(@as(usize, 1), a.watch_out.items.len);
+
+    // What was written is a `term` line seeding Claude Code with the
+    // prompt — the pane merged nothing itself.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const line = try tmp.dir.readFileAlloc(testing.io, ".mnml/" ++ dispatch.ipc_subdir ++ "/command", arena.allocator(), .unlimited);
+    try testing.expect(std.mem.indexOf(u8, line, "\"cmd\":\"term\"") != null);
+    try testing.expect(std.mem.indexOf(u8, line, "/agents:merge-pr https://bitbucket.org/acme/checkout/pull-requests/2044") != null);
+    try testing.expect(std.mem.indexOf(u8, line, "merge_strategy: squash") != null);
+    try testing.expect(std.mem.indexOf(u8, line, "$BITBUCKET_ACCESS_TOKEN") != null);
 }
 
 test "Work: the filter narrows the tree (unlike the reference), the scope chip cycles, and Esc unwinds without quitting early" {
@@ -2923,12 +3445,35 @@ test "a row's action button keeps what its press left, by ticket, across a refet
     try tmp.dir.createDirPath(testing.io, ".mnml/" ++ dispatch.ipc_subdir);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/" ++ dispatch.ipc_subdir ++ "/command", .data = "" });
     try a.dispatchTicket("triage");
-    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    // A session was STARTED, not finished: the button turns a spinner
+    // and waits for the host to say what happened to it.
+    try testing.expectEqual(sdk.pane.ActionState.running, a.actions.state(key, "triage"));
     // What it remembers is the prompt's first line — all a `term` line
     // can say about the session it started.
-    try testing.expect(std.mem.startsWith(u8, a.actions.get(key, "triage").detail, "/agents:developer "));
+    try testing.expect(std.mem.startsWith(u8, a.actions.get(key, "triage").prompt_line, "/agents:developer "));
+    // …and the same two names go out as a `watch_session`, so the host
+    // can find the session it just started.
+    try testing.expectEqual(@as(usize, 1), a.watch_out.items.len);
+    var kbuf: [320]u8 = undefined;
+    try testing.expectEqualStrings(sdk.pane.actionWatchKey(&kbuf, key, "triage"), a.watch_out.items[0].key);
+    try testing.expectEqualStrings(root, a.watch_out.items[0].cwd);
+    try testing.expect(std.mem.startsWith(u8, a.watch_out.items[0].prompt_line, "/agents:developer "));
     // A second action on the same ticket is its own button.
     try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state(key, "fix"));
+
+    // The host's word moves it: the session stops to ask something,
+    // then ends. The question lands where the reason for a failure
+    // does — on the button, for the hint row.
+    const watch_key = try arena.allocator().dupe(u8, a.watch_out.items[0].key);
+    try a.onSessionState(watch_key, .waiting, "sid-77", "Do you want me to run the migration?");
+    try testing.expectEqual(sdk.pane.ActionState.waiting, a.actions.state(key, "triage"));
+    try testing.expectEqualStrings("Do you want me to run the migration?", a.actions.get(key, "triage").detail);
+    try a.onSessionState(watch_key, .done, "sid-77", "");
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    try testing.expectEqualStrings("sid-77", a.actions.get(key, "triage").session);
+    // A line for a button this pane does not have changes nothing.
+    try a.onSessionState(sdk.pane.actionWatchKey(&kbuf, "ENG-999", "triage"), .failed, "", "boom");
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state("ENG-999", "triage"));
 
     // A refetch moves the rows; the button follows its ticket.
     try a.refreshActive();

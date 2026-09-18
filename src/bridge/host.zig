@@ -136,6 +136,10 @@ pub const Event = struct {
         cursor: ?wire.Cursor,
         command: []u8,
         toast: struct { level: wire.ToastLevel, text: []u8 },
+        /// The sibling started a session and wants to be told what it
+        /// does next. One `key` per button; a second watch under a key
+        /// replaces the first.
+        watch_session: struct { key: []u8, id: []u8, cwd: []u8, prompt_line: []u8 },
         /// The sibling said goodbye.
         bye,
         /// The stream ended without one; the reason is for the banner.
@@ -146,6 +150,12 @@ pub const Event = struct {
         switch (self.kind) {
             .title, .command, .closed => |s| gpa.free(s),
             .toast => |t| gpa.free(t.text),
+            .watch_session => |w| {
+                gpa.free(w.key);
+                gpa.free(w.id);
+                gpa.free(w.cwd);
+                gpa.free(w.prompt_line);
+            },
             .connected, .frame, .cursor, .bye => {},
         }
         gpa.destroy(self);
@@ -415,6 +425,27 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
             .toast => |t| {
                 const copy = gpa.dupe(u8, t.text) catch continue;
                 post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .toast = .{ .level = t.level, .text = copy } } });
+            },
+            .watch_session => |req| {
+                // Four owned strings or none: a half-allocated watch
+                // would be freed wrong.
+                const key = gpa.dupe(u8, req.key) catch continue;
+                const id = gpa.dupe(u8, req.selector.id) catch {
+                    gpa.free(key);
+                    continue;
+                };
+                const cwd = gpa.dupe(u8, req.selector.cwd) catch {
+                    gpa.free(key);
+                    gpa.free(id);
+                    continue;
+                };
+                const line = gpa.dupe(u8, req.selector.prompt_line) catch {
+                    gpa.free(key);
+                    gpa.free(id);
+                    gpa.free(cwd);
+                    continue;
+                };
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .watch_session = .{ .key = key, .id = id, .cwd = cwd, .prompt_line = line } } });
             },
             .bye => {
                 post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .bye });

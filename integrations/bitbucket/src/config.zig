@@ -104,6 +104,10 @@ pub const Rate = struct {
     state_path: []const u8 = "",
 };
 
+/// Spelled as Bitbucket spells `merge_strategy`, so a config reads
+/// like the API it ends up in.
+pub const MergeStrategy = enum { merge_commit, squash, fast_forward };
+
 pub const Config = struct {
     /// Your Atlassian account email — the username half of Basic auth.
     email: []const u8 = "",
@@ -127,6 +131,13 @@ pub const Config = struct {
     /// The statusline chip counts only PRs updated this recently
     /// (0: all of them) …
     chip_stale_after_days: u32 = 90,
+    /// Approvals a pull request needs before `[ Merge ]` stops being
+    /// dim. Bitbucket keeps this per repository and the API does not
+    /// offer it, so it is stated here rather than guessed at.
+    required_approvals: usize = 1,
+    /// The merge strategies this workspace allows, in the order the
+    /// confirm offers them. Every repo allows a merge commit.
+    merge_strategies: []const MergeStrategy = &.{ .merge_commit, .squash, .fast_forward },
     /// … and not those whose source branch matches one of these —
     /// `^prefix` anchors at the start, anything else is a substring.
     chip_excluded_branch_patterns: []const []const u8 = &.{ "^release/", "^hotfix/" },

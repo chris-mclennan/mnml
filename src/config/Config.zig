@@ -168,6 +168,7 @@ pub const SectionSide = struct {
 pub const DiagStyle = enum { count, dot, off };
 pub const CoverageChipMode = enum { both, feature, code, ticker };
 pub const ExpandIndicator = enum { chevron, triangle };
+pub const TabIndicator = enum { block, rule, line };
 pub const TopBarClusterMode = enum { auto, expanded, compact };
 pub const TabBarAiIcon = enum { none, claude_code, codex, both };
 pub const AiLayoutMode = enum { grid, tabs };
@@ -293,6 +294,13 @@ pub const Ui = struct {
     bufferline_diag_style: DiagStyle = .count,
     coverage_chip_mode: CoverageChipMode = .feature,
     expand_indicator: ExpandIndicator = .chevron,
+    /// How a mounted integration's tab strip marks the tab that is on
+    /// — one row under the labels, in the pane's brand colour, over
+    /// exactly the active label's cells. `block` is the flush upper
+    /// half-block, `rule` a heavy mark over a light track across the
+    /// strip, `line` a light mark under the active label alone. Sent
+    /// to every pane on `hello`.
+    tab_indicator: TabIndicator = .block,
     /// Clamped to `hover_help_height_min..max` on load.
     hover_help_height: u16 = 8,
     terminal_label: []const u8 = "terminal",

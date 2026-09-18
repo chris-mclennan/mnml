@@ -92,7 +92,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
         .app = app,
         .th = app.theme,
         .nerd = nerd_font,
-        .c = .{ .f = f, .gpa = app.hits.gpa, .arena = arena, .hits = &app.hits.inner, .th = app.theme, .ui = .{ .nerd = nerd_font } },
+        .c = .{ .f = f, .gpa = app.hits.gpa, .arena = arena, .hits = &app.hits.inner, .th = app.theme, .ui = .{ .nerd = nerd_font, .ascii = !nerd_font, .tab_indicator = app.tab_indicator } },
     };
     // The app-colour stripe down column 0 — the pane's identity, from
     // the toolkit. Painted under everything: a row that puts its own
@@ -106,8 +106,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     try paintHeader(arena, &p, y);
     y += 1;
     if (app.showTabStrip() and y < f.rows) {
-        try paintTabStrip(arena, &p, y);
-        y += 1;
+        y += try paintTabStrip(arena, &p, y);
     }
     if (y < f.rows) {
         try paintFilter(&p, y);
@@ -121,6 +120,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     try paintHintRow(arena, &p, hint_y);
     if (app.mode == .menu) try paintMenu(arena, &p);
     if (app.mode == .help) try paintSheet(arena, &p);
+    if (app.mode == .confirm) try paintMergeConfirm(&p);
 }
 
 // ─── the header ──────────────────────────────────────────────────────────
@@ -146,6 +146,10 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         const done = app.progressDone();
         const total = app.progressTotal();
         sub = if (total > 0) try std.fmt.allocPrint(arena, "  loading… {d}/{d} repos", .{ done, total }) else "  loading…";
+    } else if (app.awaiting_only) {
+        // The chip is narrowing the tab: say so, or the header goes on
+        // claiming a count the rows plainly do not add up to.
+        sub = try std.fmt.allocPrint(arena, "  ({d} of {d} awaiting my review)", .{ app.awaitingCount(), ts.items });
     } else if (app.narrowed()) {
         // Narrowed: the count says how much of the tab is hidden, the
         // way the sibling integrations' caps headers do.
@@ -182,6 +186,14 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     switch (app.family()) {
         .prs => {
             const kind_ok = ts.spec.kind == .workspace_open_prs or ts.spec.kind == .workspace_merged_prs;
+            // What is waiting on YOU, beside what you authored. The
+            // count is off the participants already on screen, so the
+            // chip costs nothing and can say its number at rest.
+            const waiting = app.awaitingCount();
+            if (waiting > 0 or app.awaiting_only) {
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .awaiting, .active = app.awaiting_only };
+                n += 1;
+            }
             if (kind_ok) {
                 const who = if (ts.spec.mine_only) (if (app.me_display_name.len > 0) app.me_display_name else "me") else "all";
                 chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .author, .active = ts.spec.mine_only };
@@ -214,19 +226,17 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
 
 // ─── the tab strip ───────────────────────────────────────────────────────
 
-fn paintTabStrip(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
+/// The strip, from the toolkit — the same two rows the tracker pane
+/// paints, so the active tab is underlined the same way in both.
+/// Returns the rows it used.
+fn paintTabStrip(arena: Allocator, p: *Painter, y: u16) Allocator.Error!u16 {
     const app = p.app;
-    const th = p.th;
-    var x: u16 = 1;
+    var list: std.ArrayList(Chrome.TabSpec) = .empty;
     for (app.tabs, 0..) |*ts, i| {
         const count = if (ts.fetched) try std.fmt.allocPrint(arena, " {d} {s} ({d}) ", .{ i + 1, ts.spec.name, tabCount(ts) }) else try std.fmt.allocPrint(arena, " {d} {s} ", .{ i + 1, ts.spec.name });
-        const w = Painter.width(count);
-        if (x + w > p.f.cols) break;
-        const style = if (i == app.active) th.tabActive() else th.tabInactive();
-        _ = p.text(x, y, w, count, style);
-        p.target(x, y, w, .{ .tab = i });
-        x += w + 1;
+        try list.append(arena, .{ .label = count, .target = .{ .tab = i }, .active = i == app.active });
     }
+    return p.c.tabStrip(1, y, list.items);
 }
 
 /// The reference's tab count: the rows a tree shows, the items of a list.
@@ -335,15 +345,99 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // column 0 (bright on the cursor's row) and the row's own hit,
         // in one statement — the same one the Jira tree paints.
         try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
-        const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
-        paintSpans(p, list.x + 2, y, text_w -| 2, spans);
-        if (h == 2 and y + 1 < list.y + list.h) {
-            const sub = try view.subLineSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
-            paintSpans(p, list.x + 2, y + 1, text_w -| 2, sub);
-        }
+        const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected, .ascii = !p.nerd });
+        // The buttons take their cells off the row's right end BEFORE
+        // the words are painted, so a title is shortened rather than
+        // painted over.
+        // The buttons come out of the LAST column's width, so a row
+        // never trades its title for them.
+        const bw = rowButtonsWidth(p, if (cols.len > 0) cols[cols.len - 1].w else 0, row, selected);
+        paintSpans(p, list.x + 2, y, text_w -| 2 -| bw, spans);
+        if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
         y += h;
     }
     if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
+}
+
+/// `[ Open ] [ Merge ]` at the right end of a pull-request row.
+///
+/// `[ Merge ]` is dim and registers NO `pr_button` target until the
+/// pull request may actually merge — only `merge_blocked`, which a
+/// hover reads for its reason and a click answers with the same
+/// sentence. A button that is always pressable teaches nothing.
+const open_caption = "[ Open ]";
+/// Cells the title keeps when a row carries its buttons.
+const title_floor: u16 = 16;
+
+/// What one row's buttons will take, or 0 when the row has none.
+///
+/// Only the row under the CURSOR carries them, and only when the title
+/// column can give up their cells and still say something — this table
+/// is dense, and a title clipped to `Rede` is worse than no button.
+/// `M` merges the focused pull request whether or not the button fits,
+/// so a narrow pane loses the convenience and not the action.
+fn rowButtonsWidth(p: *Painter, title_w: u16, row: tabs.VisibleRow, selected: bool) u16 {
+    const app = p.app;
+    if (!selected or row != .pr) return 0;
+    const repos = switch (app.activeTab().data) {
+        .repo_pr_tree => |r| r,
+        else => return 0,
+    };
+    if (row.pr.repo >= repos.len or row.pr.idx >= repos[row.pr.repo].prs.len) return 0;
+    const pr = repos[row.pr.repo].prs[row.pr.idx];
+    var total = Painter.width(open_caption);
+    if (pr.isOpen()) {
+        var kbuf: [256]u8 = undefined;
+        const row_key = app_mod.App.prRowKey(&kbuf, repos[row.pr.repo].slug, pr.id);
+        var abuf: [32]u8 = undefined;
+        var mbuf: [16]u8 = undefined;
+        const state = app.actions.state(row_key, "merge");
+        const shown = if (state == .idle) sdk.pane.merge.caption(&mbuf) else sdk.pane.action.caption(&abuf, state, sdk.pane.merge.label, app.spin, !p.nerd);
+        total += 1 + Painter.width(shown);
+    }
+    // Below this the row keeps its words instead.
+    if (title_w < total + title_floor) return 0;
+    return total + 1;
+}
+
+fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, row: tabs.VisibleRow) Allocator.Error!void {
+    const app = p.app;
+    const repos = switch (app.activeTab().data) {
+        .repo_pr_tree => |r| r,
+        else => return,
+    };
+    const slug = repos[row.pr.repo].slug;
+    const pr = repos[row.pr.repo].prs[row.pr.idx];
+    var kbuf: [256]u8 = undefined;
+    const row_key = app_mod.App.prRowKey(&kbuf, slug, pr.id);
+
+    var x = x0 + w -| bw + 1;
+    const ow = Painter.width(open_caption);
+    _ = p.text(x, y, ow, open_caption, p.th.chip());
+    p.target(x, y, ow, .{ .pr_button = .{ .row = idx, .which = .open } });
+    x += ow + 1;
+    // A merged or declined pull request has nothing to merge.
+    if (!pr.isOpen()) return;
+    const state = app.actions.state(row_key, "merge");
+    var abuf: [32]u8 = undefined;
+    var mbuf: [16]u8 = undefined;
+    const shown = if (state == .idle) sdk.pane.merge.caption(&mbuf) else sdk.pane.action.caption(&abuf, state, sdk.pane.merge.label, app.spin, !p.nerd);
+    const mw = Painter.width(shown);
+    if (state != .idle) {
+        // Once a merge session exists the button follows IT: the
+        // spinner, the `⏸`, the `[ view ]`, the `✗` — readiness has
+        // had its say.
+        _ = p.text(x, y, mw, shown, sdk.pane.action.styleOf(p.th, state));
+        p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
+        return;
+    }
+    const r = app.readinessOf(slug, pr);
+    _ = p.text(x, y, mw, shown, sdk.pane.merge.styleOf(p.th, r));
+    if (sdk.pane.merge.isPressable(r)) {
+        p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
+    } else {
+        p.target(x, y, mw, .{ .merge_blocked = idx });
+    }
 }
 
 fn cellsBefore(rows: []const tabs.VisibleRow, first: usize) usize {
@@ -377,6 +471,38 @@ fn paintSpans(p: *Painter, x0: u16, y: u16, max_w: u16, spans: []const view.Span
             x += w;
         }
     }
+}
+
+/// The merge confirm: what it is about, in its own words.
+fn paintMergeConfirm(p: *Painter) Allocator.Error!void {
+    const c = p.app.merge_confirm orelse return;
+    const w: u16 = @min(p.f.cols -| 6, 72);
+    const h: u16 = 8;
+    if (p.f.cols < 24 or p.f.rows < h + 2) return;
+    const box: sdk.pane.Rect = .{
+        .x = (p.f.cols -| w) / 2,
+        .y = (p.f.rows -| h) / 2,
+        .w = w,
+        .h = h,
+    };
+    var hbuf: [160]u8 = undefined;
+    var bbuf: [160]u8 = undefined;
+    var sbuf: [160]u8 = undefined;
+    try p.c.confirmBox(
+        box,
+        c.confirm.heading(&hbuf),
+        &.{
+            c.confirm.title,
+            c.confirm.branchLine(&bbuf),
+            c.confirm.strategyLine(&sbuf),
+            "merged by a Claude Code session, not by this pane",
+        },
+        " Merge ",
+        .confirm_ok,
+        " Cancel ",
+        .confirm_cancel,
+        .confirm_body,
+    );
 }
 
 // ─── the detail ──────────────────────────────────────────────────────────
@@ -431,6 +557,7 @@ fn modeHint(app: *App) ?[]const u8 {
         .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
         .menu => "↑↓ / jk move · ⏎ run · esc close",
         .help => "j k scroll · any other key closes",
+        .confirm => "⏎ merge through Claude Code · ←→ strategy · esc cancel",
     };
 }
 
@@ -447,6 +574,12 @@ fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         return;
     }
     const rows = (try app.visible(arena)).rows;
+    // A dim `[ Merge ]` owes the reader a reason, and the hint row is
+    // where it goes: the pointer is already there.
+    if (app.hoverNote().len > 0) {
+        _ = p.text(1, y, p.f.cols -| 2, app.hoverNote(), th.warn());
+        return;
+    }
     const ctx = app.keyContext(rows);
     const hs = try view.hints(arena, ctx);
     // The status on the left takes what the hints leave.
@@ -699,10 +832,14 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     // (`filter not wired yet (round-1 visual)`). None of them is here,
     // on either family — the `/` pill is what replaced the fifth, its
     // Search chip.
+    // `draw` resets the screen arena, so the first screen has to be
+    // taken out of it before the second one is drawn.
+    const first = try t.allocator.dupe(u8, scr);
+    defer t.allocator.free(first);
     try s.key("3");
     const pipelines = try s.draw();
     for ([_][]const u8{ "Target branch", "Pipeline type", "Trigger type" }) |dead_chip| {
-        try t.expect(!has(scr, dead_chip));
+        try t.expect(!has(first, dead_chip));
         try t.expect(!has(pipelines, dead_chip));
     }
     // `Branch ▾` was the fourth; the pipelines tree's column header is
@@ -720,7 +857,9 @@ test "a click on a row selects that row and toggles a header; the strip switches
     try s.click(10, y_1234, .left);
     try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
     var scr = try s.draw();
-    try t.expect(has(scr, "▌      #1234"));
+    // The cursor's marker, the row's own chevron (every PR has builds
+    // to fold out now), then its number.
+    try t.expect(has(scr, "▌   \u{25b8} #1234"));
     const y_api = try s.rowOf("▾ api");
     try s.click(3, y_api, .left);
     scr = try s.draw();
@@ -741,7 +880,7 @@ test "a click on a row selects that row and toggles a header; the strip switches
     try t.expect(!(try s.rig.app.click(hint_q.x, hint_q.y, .left)));
 }
 
-test "a merged PR opens to its post-merge pipeline line under enter, and the detail paints beside the list" {
+test "a PR folds out to its builds under enter, one row per run, and the detail paints beside the list" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     try s.key("2");
@@ -750,10 +889,11 @@ test "a merged PR opens to its post-merge pipeline line under enter, and the det
     try t.expect(has(scr, "▸ #1100"));
     try s.key("enter");
     scr = try s.draw();
-    try t.expect(has(scr, "▾ #1100"));
-    try t.expect(has(scr, "✓ SUCCESSFUL"));
-    try t.expect(has(scr, "#412"));
-    try t.expect(has(scr, "on main"));
+    try t.expect(has(scr, "\u{25be} #1100"));
+    // The toolkit's build line, the same one the Jira pane paints:
+    // state, branch, age, number.
+    try t.expect(has(scr, "\u{2713} SUCCESSFUL \u{b7} main \u{b7} "));
+    try t.expect(has(scr, "\u{b7} #412"));
     try s.key("d");
     scr = try s.draw();
     try t.expect(has(scr, "acme/api#1100"));
@@ -771,8 +911,148 @@ test "a merged PR opens to its post-merge pipeline line under enter, and the det
     const nscr = try narrow.draw();
     try t.expect(has(nscr, "acme/api#1234"));
     try t.expect(has(nscr, "○ not approved · 1 total"));
-    try t.expect(has(nscr, "Nice catch"));
+    // A comment's body, wrapped into the narrow panel. (Dana's "Nice
+    // catch" is the oldest of the three and now sits one row below the
+    // fold — the tab strip's rule costs the body a row.)
+    try t.expect(has(nscr, "withQuery needs to escape"));
     try t.expect(!has(nscr, "REPO / #PR"));
+}
+
+test "the cursor's PR row grows its buttons, the Merge is dim, and hovering it says why" {
+    // Wide enough for the row to give up the cells: at 120 the title
+    // would pay for them, so the buttons are not offered there and the
+    // `M` key and the row menu carry the action instead.
+    const s = try Screen.init(200, 40, acme, .{});
+    defer s.deinit();
+    // The cursor onto #1234.
+    try s.key("j");
+    var scr = try s.draw();
+    try t.expect(has(scr, "[ Open ] [ Merge ]"));
+    // Only the row under the cursor carries them: the table is dense,
+    // and the title is the column that would otherwise pay.
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, scr, "[ Merge ]"));
+
+    // Landing on the row took its one readiness look, and #1234 is
+    // blocked: the button registers `merge_blocked` rather than a
+    // `pr_button`, so a stray click cannot merge anything.
+    const at = s.rig.app.hits.rectOf(.{ .merge_blocked = 1 }).?;
+    try t.expect(s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .merge } }) == null);
+    // …and the pointer resting on it puts the reason on the hint row.
+    // Sam asked for changes on #1234, which outranks every other
+    // condition.
+    s.rig.app.hover(at.x + 2, at.y);
+    scr = try s.draw();
+    try t.expect(has(scr, "Merge: a reviewer asked for changes"));
+
+    // Judged and blocked: the reason names the condition and its count.
+    const ts = s.rig.app.activeTab();
+    const pr = ts.data.repo_pr_tree[0].prs[0];
+    try s.rig.app.putReadiness("api#1234", pr.updated_on, .{ .approvals = 1, .required = 2, .conflicts = false, .build_green = true, .checked = true });
+    s.rig.app.hover(at.x + 2, at.y);
+    scr = try s.draw();
+    try t.expect(has(scr, "Merge: 1 of 2 approvals"));
+
+    // Ready: the button becomes a real target, and the pointer moving
+    // off it takes the sentence away with it.
+    try s.rig.app.putReadiness("api#1234", pr.updated_on, .{ .approvals = 2, .required = 2, .conflicts = false, .build_green = true, .checked = true });
+    scr = try s.draw();
+    try t.expect(s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .merge } }) != null);
+    s.rig.app.hover(0, 0);
+    scr = try s.draw();
+    try t.expect(!has(scr, "Merge: "));
+
+    // Confirming it names the pull request rather than asking "are you
+    // sure?" about nothing in particular.
+    try s.rig.app.pressMerge("api", pr);
+    scr = try s.draw();
+    try t.expect(has(scr, "Merge acme/api/pull-requests/1234"));
+    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "chris/fix-login \u{2192} main"));
+    try t.expect(has(scr, "strategy: merge commit"));
+    try t.expect(has(scr, "merged by a Claude Code session, not by this pane"));
+    try t.expect(has(scr, " Merge "));
+    try t.expect(has(scr, " Cancel "));
+    // Esc takes it away without doing anything.
+    try s.key("esc");
+    scr = try s.draw();
+    try t.expect(!has(scr, "Merge acme/api/pull-requests/1234"));
+}
+
+test "the awaiting chip says its count, narrows the tab, and the header says what it narrowed" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    var scr = try s.draw();
+    // At rest: the chip carries its number beside `author:`.
+    try t.expect(has(scr, "awaiting: 1"));
+    try t.expect(has(scr, "author: all"));
+    try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
+    try t.expect(has(scr, "#1234"));
+
+    // `A` is the same door the chip is — a chip nobody can reach from
+    // the keyboard is half a feature. (mnml spells it `shift+a`.)
+    try s.key("shift+a");
+    scr = try s.draw();
+    try t.expect(has(scr, "(1 of 3 awaiting my review)"));
+    // Only Dana's #1198, which I am a reviewer on and have not voted.
+    try t.expect(has(scr, "#1198"));
+    try t.expect(!has(scr, "Fix the login redirect"));
+    // …and it is 30 hours old, so the 24-hour window the tree usually
+    // folds it behind is lifted rather than hiding the very thing the
+    // chip is for.
+    try t.expect(!has(scr, "Show more"));
+
+    // The chip itself toggles it back.
+    const chip = s.rig.app.hits.rectOf(.{ .chip = .awaiting }).?;
+    try s.click(chip.x + 1, chip.y, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
+    try t.expect(has(scr, "Fix the login redirect"));
+}
+
+test "an OPEN PR folds out to the builds on its branch head; a second open costs nothing while it has not moved" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    // The cursor onto #1234, the open pull request the account authored.
+    try s.key("j");
+    var scr = try s.draw();
+    try t.expect(has(scr, "\u{25b8} #1234"));
+    const served = s.rig.srv.state.served;
+    try s.key("enter");
+    try s.rig.drain();
+    scr = try s.draw();
+    try t.expect(has(scr, "\u{25be} #1234"));
+    // One run on `chris/fix-login`'s head, in the toolkit's words.
+    try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} chris/fix-login \u{b7} "));
+    try t.expect(has(scr, "\u{b7} #413"));
+    // One request paid for it: the repo's pipelines list.
+    try t.expectEqual(@as(u32, 1), s.rig.srv.state.served - served);
+
+    // Fold shut and open again: nothing is asked for, because the pull
+    // request has not moved since the runs were read.
+    try s.key("enter");
+    try s.rig.drain();
+    try s.key("enter");
+    try s.rig.drain();
+    try t.expectEqual(@as(u32, 1), s.rig.srv.state.served - served);
+    scr = try s.draw();
+    try t.expect(has(scr, "\u{b7} #413"));
+
+    // The build line is a door: Enter on it opens that run's page.
+    const rows = try s.rig.rows();
+    var build_row: ?usize = null;
+    for (rows, 0..) |r, i| if (r == .build) {
+        build_row = i;
+        break;
+    };
+    s.rig.app.tabs[0].selected = build_row.?;
+    // Straight at the app: the rig's own `key` drains the effects,
+    // and the effect IS what this asserts.
+    _ = try s.rig.app.keyPress("enter");
+    const fx = s.rig.app.takeEffects();
+    defer s.rig.app.freeEffects(fx);
+    // The page, and the toast that says which page.
+    try t.expectEqual(@as(usize, 2), fx.len);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/pipelines/results/413", fx[0].open_url);
 }
 
 test "the pipelines tree paints the reference's columns and glyphs; the pipelines chips are on the header" {
@@ -926,18 +1206,19 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try t.expectEqualSlices(app_mod.Action, &.{ .activate, .open_web, .yank_url, .hide_repo, .reorder_up, .reorder_down }, menuItems(s));
     try s.key("esc");
 
-    // A PR row: its detail, its page, its URL. No approve — the
-    // reference binds `a` only with the detail open, so the menu
-    // cannot offer it either.
+    // A PR row: its detail, its page, its URL, and Enter — which folds
+    // out its builds, on an open pull request as much as a merged one.
+    // No approve: the reference binds `a` only with the detail open, so
+    // the menu cannot offer it either.
     try rightClickRow(s, 1);
-    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url }, menuItems(s));
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate, .merge_pr }, menuItems(s));
     try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
     try s.key("esc");
 
     // The same row with the detail open gains the one write.
     try s.key("d");
     try rightClickRow(s, 1);
-    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .toggle_approval }, menuItems(s));
+    try t.expectEqualSlices(app_mod.Action, &.{ .toggle_detail, .open_web, .yank_url, .activate, .merge_pr, .toggle_approval }, menuItems(s));
     try s.key("esc");
     try s.key("d");
 
@@ -946,8 +1227,8 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try t.expectEqualSlices(app_mod.Action, &.{.activate}, menuItems(s));
     try s.key("esc");
 
-    // A merged PR carries its post-merge pipeline line, so `Enter` is
-    // on its menu where an open PR's has none.
+    // A merged PR folds out to the runs on what landed — the same
+    // Enter, a different commit.
     try s.key("m");
     rows = try s.rig.rows();
     var merged: ?usize = null;

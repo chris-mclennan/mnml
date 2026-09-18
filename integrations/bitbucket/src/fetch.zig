@@ -27,6 +27,8 @@ const model = @import("model.zig");
 const tabs = @import("tabs.zig");
 const dates = @import("dates.zig");
 const review_cache = @import("review_cache.zig");
+const sdk = @import("mnml_sdk");
+const merge = sdk.pane.merge;
 const j = @import("json.zig");
 
 /// What the workspace-wide fetches need to know, copied onto the job.
@@ -54,8 +56,23 @@ pub const Job = struct {
         whoami,
         refresh: struct { tab: usize, spec: tabs.TabSpec, scope: ScopeInputs },
         detail: PrKey,
-        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8 },
+        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8 = "" },
         approve: struct { key: PrKey, withdraw: bool },
+        /// May this pull request merge? One cached look per open PR,
+        /// keyed by its `updated_on`.
+        readiness: struct {
+            tab: usize,
+            key: PrKey,
+            updated_on: []const u8,
+            /// The commit the build has to be green on.
+            source_commit: []const u8,
+            /// Approvals the repo asks for.
+            required: usize = 1,
+            /// The pane already has fresh runs for this commit and
+            /// says whether the newest is green, so the pipelines list
+            /// is not asked for twice.
+            known_build: ?bool = null,
+        },
         values: struct { scope: ScopeInputs, stale_after_days: u32, excluded_branch_patterns: []const []const u8 },
     };
 
@@ -95,14 +112,46 @@ pub const RefreshResult = struct {
 
 pub const DetailResult = struct { key: PrKey, pr: ?model.PullRequest = null, comments: []const model.Comment = &.{}, error_text: []const u8 = "" };
 
-pub const PrPipelinesResult = struct { tab: usize, slug: []const u8, id: i64, pipelines: []const model.Pipeline = &.{}, error_text: []const u8 = "" };
+pub const PrPipelinesResult = struct {
+    tab: usize,
+    slug: []const u8,
+    id: i64,
+    pipelines: []const model.Pipeline = &.{},
+    /// The `updated_on` the caller asked on behalf of, echoed back so
+    /// the app can key what it stores by it.
+    updated_on: []const u8 = "",
+    error_text: []const u8 = "",
+};
 
 pub const ApproveResult = struct { key: PrKey, withdrew: bool, error_text: []const u8 = "" };
+
+pub const ReadinessResult = struct {
+    tab: usize,
+    key: PrKey,
+    /// The `updated_on` this was true at — the cache key.
+    updated_on: []const u8 = "",
+    readiness: merge.Readiness = .{},
+    error_text: []const u8 = "",
+};
+
+/// The three titles a segment's hover text names. A count with no
+/// names behind it makes the reader open the pane to find out which
+/// four; three titles answer it where the pointer already is.
+pub const tooltip_titles: usize = 3;
 
 pub const ValuesResult = struct {
     open_mine: usize = 0,
     unapproved_mine: usize = 0,
     approved_mine: usize = 0,
+    /// Open pull requests where the account is a reviewer and has not
+    /// voted — what is waiting on YOU rather than on someone else.
+    /// Counted out of the same listing as `open_mine`: one BBQL asks
+    /// for both sets, so the third figure costs no extra request.
+    reviews_pending: usize = 0,
+    /// The top three by title behind each figure, newest first.
+    open_titles: []const []const u8 = &.{},
+    comment_titles: []const []const u8 = &.{},
+    awaiting_titles: []const []const u8 = &.{},
     /// Review threads across those pull requests that are still waiting
     /// on someone — not resolved and not replied to. Null when the
     /// count was not asked for (`review_cache` absent) or when every
@@ -125,6 +174,7 @@ pub const Result = struct {
         detail: DetailResult,
         pr_pipelines: PrPipelinesResult,
         approve: ApproveResult,
+        readiness: ReadinessResult,
         values: ValuesResult,
     };
 
@@ -200,8 +250,9 @@ pub const Worker = struct {
             .whoami => .{ .whoami = try w.whoami(a) },
             .refresh => |r| .{ .refresh = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs) },
             .detail => |k| .{ .detail = try w.detail(a, k) },
-            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash) },
+            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash, p.updated_on) },
             .approve => |ap| .{ .approve = try w.approve(a, ap.key, ap.withdraw) },
+            .readiness => |r| .{ .readiness = try w.readiness(a, r.tab, r.key, r.updated_on, r.source_commit, r.required, r.known_build) },
             .values => |v| .{ .values = try w.values(a, v.scope, v.stale_after_days, v.excluded_branch_patterns, job.now_secs) },
         };
         return .{ .arena = arena, .payload = payload };
@@ -597,8 +648,8 @@ pub const Worker = struct {
         return .{ .key = k, .pr = pr, .comments = comments };
     }
 
-    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8) Allocator.Error!PrPipelinesResult {
-        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id };
+    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8) Allocator.Error!PrPipelinesResult {
+        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id, .updated_on = try a.dupe(u8, updated_on) };
         var reply = try w.client.listPipelines(w.gpa, workspace, slug, 60);
         defer reply.deinit(w.gpa);
         switch (reply) {
@@ -631,6 +682,92 @@ pub const Worker = struct {
         };
     }
 
+    // ─── may it merge? ───────────────────────────────────────────────
+
+    /// The five conditions, in one cached look: the pull request's own
+    /// detail (approvals, open tasks), its diffstat (a 555 is a
+    /// conflict), its comments (through the review cache, so a pull
+    /// request that has not moved costs nothing), and — only when the
+    /// caller has no fresh runs of its own — the pipelines list.
+    ///
+    /// Never called from `--values`: the statusline run counts, it does
+    /// not judge, and readiness would multiply its request budget by
+    /// the number of open pull requests.
+    fn readiness(w: *Worker, a: Allocator, tab: usize, key: PrKey, updated_on: []const u8, source_commit: []const u8, required: usize, known_build: ?bool) Allocator.Error!ReadinessResult {
+        const k: PrKey = .{ .workspace = try a.dupe(u8, key.workspace), .repo = try a.dupe(u8, key.repo), .id = key.id };
+        var out: ReadinessResult = .{ .tab = tab, .key = k, .updated_on = try a.dupe(u8, updated_on) };
+        var r: merge.Readiness = .{ .required = @max(required, 1), .checked = true };
+
+        var reply = try w.client.prDetail(w.gpa, key.workspace, key.repo, key.id);
+        defer reply.deinit(w.gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch {
+                    out.error_text = "the detail is not JSON";
+                    return out;
+                };
+                const pr = try model.parsePullRequest(a, v);
+                r.approvals = pr.approvalCount();
+                for (pr.participants) |p| if (std.ascii.eqlIgnoreCase(p.state, "changes_requested")) {
+                    r.changes_requested = true;
+                };
+                r.open_tasks = @intCast(@max(j.int(v, "task_count", 0), 0));
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                out.error_text = try std.fmt.allocPrint(a, "readiness: {s}", .{f.describe(&buf)});
+                return out;
+            },
+        }
+
+        // The diffstat's STATUS is the answer; its body is not read.
+        var dreply = try w.client.prDiffstat(w.gpa, key.workspace, key.repo, key.id);
+        defer dreply.deinit(w.gpa);
+        r.conflicts = dreply != .ok;
+
+        // The comments, through the same cache the statusline figure
+        // uses: a pull request that has not moved costs no request.
+        var counted = false;
+        if (w.review_cache) |rc| {
+            const ck = try rc.key(key.workspace, key.repo, key.id);
+            if (rc.get(ck, updated_on)) |n| {
+                r.unanswered_comments = n;
+                counted = true;
+            }
+        }
+        if (!counted) {
+            var creply = try w.client.prComments(w.gpa, key.workspace, key.repo, key.id);
+            defer creply.deinit(w.gpa);
+            if (creply == .ok) {
+                if (std.json.parseFromSliceLeaky(j.Value, a, creply.ok.bytes, .{})) |v| {
+                    const n = model.unresolvedThreads(try model.parseComments(a, v));
+                    r.unanswered_comments = n;
+                    if (w.review_cache) |rc| try rc.put(try rc.key(key.workspace, key.repo, key.id), updated_on, n);
+                } else |_| {}
+            } else {
+                // A comments request that failed is not "no comments":
+                // say so rather than calling the pull request ready.
+                out.error_text = "readiness: the comments could not be read";
+                r.unanswered_comments = 1;
+            }
+        }
+
+        if (known_build) |green| {
+            r.build_green = green;
+        } else {
+            var preply = try w.client.listPipelines(w.gpa, key.workspace, key.repo, 60);
+            defer preply.deinit(w.gpa);
+            if (preply == .ok) {
+                if (std.json.parseFromSliceLeaky(j.Value, a, preply.ok.bytes, .{})) |v| {
+                    const on = try model.pipelinesOnCommit(a, try model.parsePipelines(a, v), source_commit);
+                    r.build_green = on.len > 0 and std.ascii.eqlIgnoreCase(on[0].stateLabel(), "SUCCESSFUL");
+                } else |_| {}
+            }
+        }
+        out.readiness = r;
+        return out;
+    }
+
     // ─── the statusline values ───────────────────────────────────────
 
     /// The reference's `--values`: OPEN PRs the account authored, updated
@@ -649,8 +786,12 @@ pub const Worker = struct {
             else
                 "/2.0/user returned no account_id",
         };
+        // One predicate for both sets: the pull requests the account
+        // authored AND the ones it is a reviewer on. Asking separately
+        // would double the requests for a figure that is already in the
+        // payload.
         var q: Io.Writer.Allocating = .init(a);
-        q.writer.print("state = \"OPEN\" AND author.account_id = \"{s}\"", .{me}) catch return error.OutOfMemory;
+        q.writer.print("state = \"OPEN\" AND (author.account_id = \"{s}\" OR reviewers.account_id = \"{s}\")", .{ me, me }) catch return error.OutOfMemory;
         if (stale_after_days > 0) {
             var buf: [10]u8 = undefined;
             q.writer.print(" AND updated_on >= {s}", .{dates.writeDate(&buf, now_secs - @as(i64, stale_after_days) * 86_400)}) catch return error.OutOfMemory;
@@ -677,8 +818,11 @@ pub const Worker = struct {
         var failures: usize = 0;
         // The pull requests kept, so the comment pass can walk them
         // without a second listing.
-        const Mine = struct { repo: []const u8, id: i64, updated_on: []const u8 };
+        const Mine = struct { repo: []const u8, id: i64, updated_on: []const u8, title: []const u8 };
         var mine: std.ArrayList(Mine) = .empty;
+        var open_titles: std.ArrayList([]const u8) = .empty;
+        var awaiting_titles: std.ArrayList([]const u8) = .empty;
+        var awaiting: usize = 0;
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
@@ -693,27 +837,44 @@ pub const Worker = struct {
                             excluded = true;
                         };
                         if (excluded) continue;
-                        open += 1;
-                        approved += @intFromBool(pr.approvalCount() > 0);
-                        try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on });
+                        // The one listing carries both sets; which
+                        // figure a row belongs to is the author's id.
+                        if (std.mem.eql(u8, pr.author_id, me)) {
+                            open += 1;
+                            approved += @intFromBool(pr.approvalCount() > 0);
+                            if (open_titles.items.len < tooltip_titles) try open_titles.append(a, pr.title);
+                            try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on, .title = pr.title });
+                        } else if (pr.awaitingApproval(me)) {
+                            awaiting += 1;
+                            if (awaiting_titles.items.len < tooltip_titles) try awaiting_titles.append(a, pr.title);
+                        }
                     }
                 },
                 .failed => failures += 1,
             }
         }
         if (failures > 0 and failures == repos.len) return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
-        var out: ValuesResult = .{ .open_mine = open, .unapproved_mine = open - approved, .approved_mine = approved };
+        var out: ValuesResult = .{
+            .open_mine = open,
+            .unapproved_mine = open - approved,
+            .approved_mine = approved,
+            .reviews_pending = awaiting,
+            .open_titles = try open_titles.toOwnedSlice(a),
+            .awaiting_titles = try awaiting_titles.toOwnedSlice(a),
+        };
         // The second figure, when a cache was handed over to pay for it.
         if (w.review_cache) |rc| {
             var unresolved: usize = 0;
             var counted: usize = 0;
             var live: std.ArrayList([]const u8) = .empty;
+            var comment_titles: std.ArrayList([]const u8) = .empty;
             for (mine.items) |m| {
                 const k = try rc.key(scope.workspace, m.repo, m.id);
                 try live.append(a, k);
                 if (rc.get(k, m.updated_on)) |n| {
                     unresolved += n;
                     counted += 1;
+                    if (n > 0 and comment_titles.items.len < tooltip_titles) try comment_titles.append(a, m.title);
                     continue;
                 }
                 var reply = try w.client.prComments(w.gpa, scope.workspace, m.repo, m.id);
@@ -724,6 +885,7 @@ pub const Worker = struct {
                         const n = model.unresolvedThreads(try model.parseComments(a, v));
                         unresolved += n;
                         counted += 1;
+                        if (n > 0 and comment_titles.items.len < tooltip_titles) try comment_titles.append(a, m.title);
                         try rc.put(k, m.updated_on, n);
                     },
                     // One repo's comments failing is not a reason to
@@ -732,6 +894,7 @@ pub const Worker = struct {
                 }
             }
             rc.save(w.io, live.items);
+            out.comment_titles = try comment_titles.toOwnedSlice(a);
             out.comment_hits = rc.hits;
             out.comment_requests = rc.misses;
             if (mine.items.len == 0 or counted > 0) out.unresolved_comments = unresolved;
@@ -762,8 +925,16 @@ pub fn makeJob(gpa: Allocator, now_secs: i64, kind: Job.Kind) Allocator.Error!Jo
         .whoami => .whoami,
         .refresh => |r| .{ .refresh = .{ .tab = r.tab, .spec = try dupeSpec(a, r.spec), .scope = try dupeScope(a, r.scope) } },
         .detail => |k| .{ .detail = try dupeKey(a, k) },
-        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash) } },
+        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash), .updated_on = try a.dupe(u8, p.updated_on) } },
         .approve => |ap| .{ .approve = .{ .key = try dupeKey(a, ap.key), .withdraw = ap.withdraw } },
+        .readiness => |r| .{ .readiness = .{
+            .tab = r.tab,
+            .key = try dupeKey(a, r.key),
+            .updated_on = try a.dupe(u8, r.updated_on),
+            .source_commit = try a.dupe(u8, r.source_commit),
+            .required = r.required,
+            .known_build = r.known_build,
+        } },
         .values => |v| .{ .values = .{ .scope = try dupeScope(a, v.scope), .stale_after_days = v.stale_after_days, .excluded_branch_patterns = try dupeList(a, v.excluded_branch_patterns) } },
     };
     return .{ .arena = arena, .kind = copied, .now_secs = now_secs };
@@ -966,8 +1137,8 @@ test "flat tabs: a repo's list, a mine list across the allow-list, pipelines and
     try t.expectEqual(@as(i64, 1198), reviewing.payload.refresh.data.?.pull_requests[0].id);
     var pl = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .pipelines, .name = "builds", .workspace = "acme", .repo = "api" }, .scope = acme_scope } });
     defer pl.deinit();
-    try t.expectEqual(@as(usize, 4), pl.payload.refresh.data.?.pipelines.len);
-    try t.expectEqualStrings("builds · 4 pipelines", pl.payload.refresh.status);
+    try t.expectEqual(@as(usize, 5), pl.payload.refresh.data.?.pipelines.len);
+    try t.expectEqualStrings("builds · 5 pipelines", pl.payload.refresh.status);
     var br = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .branches, .name = "heads", .workspace = "acme", .repo = "web" }, .scope = acme_scope } });
     defer br.deinit();
     try t.expectEqual(@as(usize, 3), br.payload.refresh.data.?.branches.len);

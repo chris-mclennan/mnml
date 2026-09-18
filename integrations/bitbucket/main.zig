@@ -15,7 +15,7 @@
 //!   mnml-bitbucket --find-pipeline-for-pr --owner O --repo R --branch B --json
 //!   mnml-bitbucket --refresh [--workspace W]   republish the chip over Tier-2 IPC, headless
 //!   mnml-bitbucket --prefetch     fetch every tab and cache it for the next pane open
-//!   mnml-bitbucket --only prs|prs-mine|pipelines|branches   one family of tabs
+//!   mnml-bitbucket --only prs|prs-mine|prs-awaiting|pipelines|branches
 //!   mnml-bitbucket                connect to `$MNML_MOUNT_SOCKET` and paint
 //!
 //! The pane never blocks on the network: a reader thread turns the
@@ -61,6 +61,13 @@ pub const segment_click = "bitbucket_prs.open_mine";
 pub const review_segment_id = "bitbucket_prs.reviews_mine";
 pub const review_segment_glyph = "\u{f075}"; // nf-fa-comment
 pub const review_segment_color = "yellow";
+
+/// The third figure: open pull requests waiting on YOUR review. Its own
+/// chip again, because it is the one of the three that is your move.
+pub const awaiting_segment_id = "bitbucket_prs.reviews_pending";
+pub const awaiting_segment_glyph = "\u{f0e5}"; // nf-fa-comment_o
+pub const awaiting_segment_color = "orange";
+pub const awaiting_segment_click = "bitbucket_prs.open_awaiting";
 
 const Opts = struct {
     install: bool = false,
@@ -227,7 +234,7 @@ const usage =
     \\  --find-pipeline-for-pr --owner O --repo R --branch B --json
     \\  --refresh [--workspace W] republish the statusline chip, headless
     \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
-    \\  --only prs|prs-mine|pipelines|branches   one family of tabs
+    \\  --only prs|prs-mine|prs-awaiting|pipelines|branches   one family of tabs
     \\
 ;
 
@@ -476,7 +483,7 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
         try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
         return 1;
     }
-    try out.print("{{\"open_mine\":{d},\"unapproved_mine\":{d},\"approved_mine\":{d},\"unresolved_comments\":", .{ v.open_mine, v.unapproved_mine, v.approved_mine });
+    try out.print("{{\"open_mine\":{d},\"unapproved_mine\":{d},\"approved_mine\":{d},\"reviews_pending\":{d},\"unresolved_comments\":", .{ v.open_mine, v.unapproved_mine, v.approved_mine, v.reviews_pending });
     if (v.unresolved_comments) |n| try out.print("{d}", .{n}) else try out.writeAll("null");
     try out.writeAll("}\n");
     return 0;
@@ -493,14 +500,33 @@ pub fn reviewText(buf: []u8, unresolved: usize) []const u8 {
     return std.fmt.bufPrint(buf, review_segment_glyph ++ " {d}", .{unresolved}) catch review_segment_glyph;
 }
 
+/// The awaiting chip's text: ` 2`, the pull requests waiting on you.
+pub fn awaitingText(buf: []u8, n: usize) []const u8 {
+    return std.fmt.bufPrint(buf, awaiting_segment_glyph ++ " {d}", .{n}) catch awaiting_segment_glyph;
+}
+
+/// ` — “Fix the login redirect”, “Bump the client timeout”`, or nothing
+/// when there are no titles. A count alone sends the reader into the
+/// pane to find out WHICH; the names answer it under the pointer.
+pub fn titleTail(arena: Allocator, titles: []const []const u8) Allocator.Error![]const u8 {
+    if (titles.len == 0) return "";
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll(" \u{2014} ") catch return error.OutOfMemory;
+    for (titles, 0..) |title, i| {
+        if (i > 0) out.writer.writeAll(", ") catch return error.OutOfMemory;
+        out.writer.print("\u{201c}{s}\u{201d}", .{title}) catch return error.OutOfMemory;
+    }
+    return out.toOwnedSlice() catch return error.OutOfMemory;
+}
+
 /// What the PR chip means, on hover. A number with no sentence behind
 /// it makes the reader guess, and these two are easy to mix up.
 pub fn segmentTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error![]const u8 {
     if (v.error_text.len > 0) return std.fmt.allocPrint(arena, "Bitbucket: {s}", .{v.error_text});
     return std.fmt.allocPrint(
         arena,
-        "Bitbucket · {d} open pull request{s} you authored — {d} still unapproved, {d} approved",
-        .{ v.open_mine, if (v.open_mine == 1) "" else "s", v.unapproved_mine, v.approved_mine },
+        "Bitbucket · {d} open pull request{s} you authored — {d} still unapproved, {d} approved{s}",
+        .{ v.open_mine, if (v.open_mine == 1) "" else "s", v.unapproved_mine, v.approved_mine, try titleTail(arena, v.open_titles) },
     );
 }
 
@@ -509,8 +535,18 @@ pub fn segmentTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error![
 pub fn reviewTooltip(arena: Allocator, v: fetch.ValuesResult, unresolved: usize) Allocator.Error![]const u8 {
     return std.fmt.allocPrint(
         arena,
-        "Bitbucket · {d} review thread{s} across your open pull requests still waiting on someone (neither resolved nor replied to) — {d} of {d} counted off the cache",
-        .{ unresolved, if (unresolved == 1) "" else "s", v.comment_hits, v.comment_hits + v.comment_requests },
+        "Bitbucket · {d} review thread{s} across your open pull requests still waiting on someone (neither resolved nor replied to) — {d} of {d} counted off the cache{s}",
+        .{ unresolved, if (unresolved == 1) "" else "s", v.comment_hits, v.comment_hits + v.comment_requests, try titleTail(arena, v.comment_titles) },
+    );
+}
+
+/// What the awaiting chip means: the pull requests you are a reviewer
+/// on and have not voted.
+pub fn awaitingTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(
+        arena,
+        "Bitbucket · {d} open pull request{s} waiting on YOUR review — you are a reviewer and have not approved{s}",
+        .{ v.reviews_pending, if (v.reviews_pending == 1) "" else "s", try titleTail(arena, v.awaiting_titles) },
     );
 }
 
@@ -544,6 +580,15 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
             .tooltip = try reviewTooltip(arena, v, n),
         });
     }
+    var abuf: [64]u8 = undefined;
+    try ipc.statuslineSetSegment(.{
+        .id = awaiting_segment_id,
+        .text = awaitingText(&abuf, v.reviews_pending),
+        .color = if (v.reviews_pending > 0) awaiting_segment_color else "green",
+        .click_command = awaiting_segment_click,
+        .priority = 58,
+        .tooltip = try awaitingTooltip(arena, v),
+    });
     try ipc.setActivityBadge("integrations", @intCast(@min(v.open_mine, std.math.maxInt(u32))));
 }
 
@@ -791,8 +836,11 @@ const HostEvent = union(enum) {
     key: []u8,
     paste: []u8,
     click: struct { col: u16, row: u16, button: sdk.wire.Button },
-    /// A move with a button held; a plain hover never reaches the app.
+    /// A move with a button held.
     drag: struct { col: u16, row: u16 },
+    /// A plain move: what a dim button's reason hangs off.
+    hover: struct { col: u16, row: u16 },
+    session_state: struct { key: []u8, state: sdk.wire.SessionState, session_id: []u8, detail: []u8 },
     scroll: struct { col: u16, row: u16, dy: i16 },
     resize: sdk.wire.Geometry,
     focus: bool,
@@ -821,6 +869,13 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
         };
         const ev: HostEvent = switch (msg) {
             .hello => .other,
+            // The host's word on the merge session this pane started.
+            .session_state => |ss| .{ .session_state = .{
+                .key = gpa.dupe(u8, ss.key) catch continue,
+                .state = ss.state,
+                .session_id = gpa.dupe(u8, ss.session_id) catch continue,
+                .detail = gpa.dupe(u8, ss.detail) catch continue,
+            } },
             .focus => |f| .{ .focus = f },
             .goodbye => .goodbye,
             .resize => |r| .{ .resize = r.geometry },
@@ -829,7 +884,9 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
                 .paste => |p| .{ .paste = gpa.dupe(u8, p.text) catch continue },
                 .click => |c| .{ .click = .{ .col = c.col, .row = c.row, .button = c.button } },
                 .scroll => |s| .{ .scroll = .{ .col = s.col, .row = s.row, .dy = s.dy } },
-                .hover => |h| if (h.dragging) HostEvent{ .drag = .{ .col = h.col, .row = h.row } } else .other,
+                // A plain move matters now: the pointer resting on a
+                // dim `[ Merge ]` is what makes it say why.
+                .hover => |h| if (h.dragging) HostEvent{ .drag = .{ .col = h.col, .row = h.row } } else HostEvent{ .hover = .{ .col = h.col, .row = h.row } },
             },
         };
         q.putOneUncancelable(io, .{ .host = ev }) catch return;
@@ -871,12 +928,18 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
 
     var only: ?cfg.Family = null;
     var mine = false;
+    var awaiting = false;
     if (opts.only) |o| {
         if (std.mem.eql(u8, o, "prs") or std.mem.eql(u8, o, "pull_requests")) {
             only = .prs;
         } else if (std.mem.eql(u8, o, "prs-mine")) {
             only = .prs;
             mine = true;
+        } else if (std.mem.eql(u8, o, "prs-awaiting")) {
+            // What the `reviews_pending` chip's click opens: the PR
+            // family with the awaiting filter already on.
+            only = .prs;
+            awaiting = true;
         } else if (std.mem.eql(u8, o, "pipelines")) {
             only = .pipelines;
         } else if (std.mem.eql(u8, o, "branches")) {
@@ -888,7 +951,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     // qualifier after it. `spec.label` / `spec_pipelines.label` are the
     // manifests themselves, so the two cannot drift.
     const title: []const u8 = if (only) |fam| switch (fam) {
-        .prs => if (mine) spec.label ++ " · mine" else spec.label,
+        .prs => if (mine) spec.label ++ " · mine" else if (awaiting) spec.label ++ " · awaiting me" else spec.label,
         .pipelines => spec_pipelines.label,
         .branches => "Bitbucket Branches",
     } else spec.label;
@@ -907,7 +970,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     session.client.cache = &cache;
     session.client.now_secs = nowSecs(io);
 
-    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
     defer app.deinit();
     if (app.tabs.len == 0) {
         const msg = try std.fmt.allocPrint(gpa, "--only {s}: no tabs of that family in {s} (check the `tabs` entries and their `kind`)", .{ opts.only orelse "?", session.loaded.path });
@@ -918,6 +981,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     app.cols = frame.cols;
     app.rows = frame.rows;
     app.now_secs = nowSecs(io);
+    app.tab_indicator = mount.hello.tab_indicator;
 
     var progress: fetch.Progress = .{};
     app.progress = &progress;
@@ -968,6 +1032,13 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 // A drag along the detail panel's scrollbar: the same
                 // jump a press there makes, once per move.
                 .drag => |d| try app.drag(d.col, d.row),
+                .hover => |hv| app.hover(hv.col, hv.row),
+                .session_state => |ss| {
+                    defer gpa.free(ss.key);
+                    defer gpa.free(ss.session_id);
+                    defer gpa.free(ss.detail);
+                    try app.onSessionState(ss.key, ss.state, ss.session_id, ss.detail);
+                },
                 .scroll => |s| try app.wheel(s.col, s.row, s.dy),
                 .resize => |g| {
                     try frame.resize(g.cols, g.rows);
@@ -975,7 +1046,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                     app.rows = g.rows;
                 },
                 .goodbye => running = false,
-                .focus, .other => {},
+                .focus => |f| app.focused = f,
+                .other => {},
             },
             .result => |r| {
                 app.now_secs = nowSecs(io);
@@ -1017,6 +1089,12 @@ fn dispatchJobs(gpa: Allocator, io: Io, app: *app_mod.App, jobs: *JobQueue) Allo
 /// channel. False when the app asked to quit.
 fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, ipc_opt: *?sdk.Ipc, app: *app_mod.App) bool {
     var alive = true;
+    // The sessions this pane just started and wants told about. They
+    // go out before the effects that started them are freed.
+    for (app.watch_out.items) |w| {
+        mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
+    }
+    app.watch_out.clearRetainingCapacity();
     const taken = app.takeEffects();
     defer app.freeEffects(taken);
     for (taken) |e| switch (e) {
@@ -1032,11 +1110,43 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
             if (os.copy(gpa, io, env, text)) |whynot| mount.toast(.warn, whynot) catch {};
         },
         .segment => if (ipc_opt.*) |*ipc| {
-            if (app.values) |v| publishSegment(ipc, v) catch {};
+            if (app.values) |v| {
+                var arena_state = std.heap.ArenaAllocator.init(gpa);
+                defer arena_state.deinit();
+                // All three chips, the way `--values` publishes them.
+                // Only the first used to move from inside the pane, so
+                // the other two sat at whatever the last poll left.
+                publishSegments(ipc, arena_state.allocator(), v) catch {};
+            }
+        },
+        // The one destructive action either pane offers goes through a
+        // Claude Code session, so it is a `term` line like any other
+        // dispatch — and the pane then watches what it does.
+        .dispatch => |d| {
+            if (ipc_opt.*) |*ipc| {
+                dispatchSession(gpa, ipc, d.prompt) catch {
+                    mount.toast(.warn, "could not write the dispatch") catch {};
+                };
+            } else mount.toast(.warn, "no mnml channel to dispatch a session on") catch {};
+        },
+        .focus_session => |f| if (ipc_opt.*) |*ipc| {
+            ipc.focusSession(.{ .id = f.id, .cwd = f.cwd, .prompt_line = f.prompt_line }) catch {};
+        },
+        .notify => |n| if (ipc_opt.*) |*ipc| {
+            ipc.notify(n.title, n.text, if (n.bad) .@"error" else .info, n.bad) catch {};
         },
         .quit => alive = false,
     };
     return alive;
+}
+
+/// One `term` line: `claude` seeded with the prompt over a heredoc,
+/// the same shape the tracker's dispatch queue writes.
+fn dispatchSession(gpa: Allocator, ipc: *const sdk.Ipc, prompt: []const u8) !void {
+    const shell = try std.fmt.allocPrint(gpa, "claude <<'MNML_EOF'\n{s}\nMNML_EOF", .{prompt});
+    defer gpa.free(shell);
+    const argv = [_][]const u8{ "sh", "-c", shell };
+    try ipc.line(.{ .cmd = "term", .args = &argv });
 }
 
 /// A pane with no config or no token paints the setup screen and
@@ -1108,20 +1218,32 @@ test "both manifests name the reference's ids, chips and commands, and validate"
     try t.expectEqualStrings("mnml-bitbucket", spec.binary);
     try t.expectEqualStrings("bitbucket_prs.open", spec.commands[0].id);
     try t.expectEqualStrings("bitbucket_prs.open_mine", spec.commands[1].id);
+    try t.expectEqualStrings("bitbucket_prs.open_awaiting", spec.commands[2].id);
     try t.expectEqualStrings("bitbucket_pipelines.open", spec_pipelines.commands[0].id);
     try t.expectEqualStrings("BP", spec.chip.?.fallback);
     try t.expectEqualStrings("BL", spec_pipelines.chip.?.fallback);
-    // Two chips: how many of mine are open, and how many threads on
-    // them are waiting on a human. The ids the binary publishes on are
-    // the manifest's slots prefixed with the manifest id — a mismatch
-    // is a chip that never moves, and only running it would show that.
-    try t.expectEqual(@as(usize, 2), spec.statusline.len);
+    // Three chips, three questions: how many of mine are open, how
+    // many threads on them are waiting on a human, and how many are
+    // waiting on ME. The ids the binary publishes on are the
+    // manifest's slots prefixed with the manifest id — a mismatch is a
+    // chip that never moves, and only running it would show that.
+    try t.expectEqual(@as(usize, 3), spec.statusline.len);
     try t.expectEqualStrings("prs_mine", spec.statusline[0].id);
     try t.expectEqualStrings("reviews_mine", spec.statusline[1].id);
+    try t.expectEqualStrings("reviews_pending", spec.statusline[2].id);
     for (spec.statusline) |seg| try t.expect(seg.tooltip != null);
     try t.expectEqualStrings(segment_id, spec.id ++ "." ++ "prs_mine");
     try t.expectEqualStrings(review_segment_id, spec.id ++ "." ++ "reviews_mine");
+    try t.expectEqualStrings(awaiting_segment_id, spec.id ++ "." ++ "reviews_pending");
     try t.expectEqualStrings(segment_click, spec.statusline[0].click_command.?);
+    // The third chip's click must name a command the manifest has —
+    // a chip that opens nothing is a chip nobody can tell is broken.
+    try t.expectEqualStrings(awaiting_segment_click, spec.statusline[2].click_command.?);
+    var found_click = false;
+    for (spec.commands) |c| if (std.mem.eql(u8, c.id, awaiting_segment_click)) {
+        found_click = true;
+    };
+    try t.expect(found_click);
     try t.expectEqual(@as(usize, 3), spec.auth.len);
     var why: []const u8 = "";
     try sdk.manifest.validate(spec, &why);
@@ -1157,7 +1279,7 @@ test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment and the
     );
 }
 
-test "the two chips carry their counts and what they mean; the review chip is absent when it was not counted" {
+test "the three chips carry their counts, what they mean and WHICH; the review chip is absent when it was not counted" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1168,14 +1290,19 @@ test "the two chips carry their counts and what they mean; the review chip is ab
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Counted: both chips, each with the sentence behind its number.
+    // Counted: all three chips, each with the sentence behind its
+    // number and the top three names behind the sentence.
     try publishSegments(&ipc, arena, .{
         .open_mine = 4,
         .unapproved_mine = 2,
         .approved_mine = 2,
+        .reviews_pending = 2,
         .unresolved_comments = 3,
         .comment_hits = 3,
         .comment_requests = 1,
+        .open_titles = &.{ "Fix the login redirect", "Redesign the empty state" },
+        .comment_titles = &.{"Fix the login redirect"},
+        .awaiting_titles = &.{ "Bump the client timeout to 30s", "Tidy the footer links" },
     });
     var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
@@ -1186,6 +1313,14 @@ test "the two chips carry their counts and what they mean; the review chip is ab
     // What it cost is part of the sentence: the reader is the one
     // paying the rate limit.
     try t.expect(std.mem.indexOf(u8, got, "3 of 4 counted off the cache") != null);
+    // The third chip, and the names behind each of the three. A count
+    // on its own sends the reader into the pane to find out which.
+    try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.reviews_pending\"") != null);
+    try t.expect(std.mem.indexOf(u8, got, awaiting_segment_glyph ++ " 2") != null);
+    try t.expect(std.mem.indexOf(u8, got, "2 open pull requests waiting on YOUR review") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\u{201c}Bump the client timeout to 30s\u{201d}, \u{201c}Tidy the footer links\u{201d}") != null);
+    try t.expect(std.mem.indexOf(u8, got, "2 approved \u{2014} \u{201c}Fix the login redirect\u{201d}, \u{201c}Redesign the empty state\u{201d}") != null);
+    try t.expect(std.mem.indexOf(u8, got, "counted off the cache \u{2014} \u{201c}Fix the login redirect\u{201d}") != null);
 
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".
@@ -1193,8 +1328,14 @@ test "the two chips carry their counts and what they mean; the review chip is ab
     try publishSegments(&ipc, arena, .{ .open_mine = 1, .unapproved_mine = 0, .approved_mine = 1 });
     got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "bitbucket_prs.reviews_mine") == null);
-    // One reads as one.
+    // One reads as one, and a figure with no names behind it simply
+    // says the number rather than trailing an empty dash.
     try t.expect(std.mem.indexOf(u8, got, "1 open pull request you authored") != null);
+    try t.expect(std.mem.indexOf(u8, got, "1 approved\"") != null);
+    // The awaiting chip is always published, zero included: it is a
+    // "nothing is waiting on you" that the reader can trust.
+    try t.expect(std.mem.indexOf(u8, got, "bitbucket_prs.reviews_pending") != null);
+    try t.expect(std.mem.indexOf(u8, got, "0 open pull requests waiting on YOUR review") != null);
 
     // A failure says so on the chip it belongs to.
     try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
@@ -1206,6 +1347,7 @@ test "the two chips carry their counts and what they mean; the review chip is ab
 test "--only spells the reference's families; the last one wins; an unknown flag is refused" {
     const o = try parseArgs(&.{ "mnml-bitbucket", "--only", "prs", "--only", "prs-mine" });
     try t.expectEqualStrings("prs-mine", o.only.?);
+    try t.expectEqualStrings("prs-awaiting", (try parseArgs(&.{ "mnml-bitbucket", "--only", "prs-awaiting" })).only.?);
     const f = try parseArgs(&.{ "mnml-bitbucket", "--find-pipeline-for-pr", "--owner", "acme", "--repo", "api", "--branch", "main", "--json" });
     try t.expect(f.find_pipeline and f.json);
     try t.expectEqualStrings("main", f.branch);

@@ -144,25 +144,107 @@ does. The keys are the reference's:
 | | |
 |---|---|
 | `j` `k` `↑` `↓` · `⇞` `⇟` · `g` `G` `⇱` `⇲` | move |
-| `⏎` `␣` | expand / collapse a repo; open a merged PR's post-merge pipeline line; lift the `Show more (N)` footer |
+| `⏎` `␣` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
 | `e` `c` | expand / collapse every repo |
 | `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the detail · scroll it |
 | `a` | approve / withdraw (with the detail open) |
-| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged · next / previous tab · a tab |
+| `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
+| `A` · `m` · `⇥` `⇤` · `1`–`9` | awaiting my review · open ↔ merged · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
 
 Mouse: every row, tab, chip and hint word is a hit target sized to what
 it paints — a click on a row selects that row (and toggles a repo
-header or a merged PR, as the reference does), a right-click opens the
-row's menu, the wheel moves the cursor or scrolls the detail under it.
+header or a pull request), a right-click opens the row's menu, the
+wheel moves the cursor or scrolls the detail under it.
+
+## Builds under a pull request
+
+Every pull request folds out to the pipeline runs on the commit it is
+about — a merged one to the runs on its merge commit, an open one to
+the runs on its **source head**, which are the builds you actually want
+before you merge it. One row per run:
+
+```
+▾ #1234    OPEN    Chris M   chris/fix-login   2026-09-18   Fix the login redirect
+      ⏵ IN_PROGRESS · chris/fix-login · 1h · #413
+      ✓ SUCCESSFUL · chris/fix-login · 5h · #412
+```
+
+State first, then the branch it ran on, then how long ago, then the
+run's number — the same line the Jira pane paints, out of the same
+toolkit code (`sdk.pane.build`). `⏎` on one opens that run's page; `h`
+folds the pull request back up.
+
+It costs **one** request per pull request, keyed by the PR's
+`updated_on`: Bitbucket moves that whenever anything on the pull
+request does, a push included, so folding the same row open twice costs
+nothing and one that has been pushed to is re-read without your having
+to know to ask.
+
+## Merging — and why the button is usually dim
+
+The row under the cursor carries `[ Open ]` and, on an open pull
+request, `[ Merge ]` — only that row, and only when the title column
+can give up their cells and still say something (a title clipped to
+`Rede` is worse than no button, so below about 140 columns they are
+not offered). `M` merges the focused pull request at any width, and the
+row's right-click menu carries it too: the inline button is the
+convenience, the key is the guarantee.
+
+`[ Merge ]` is **dim and not a click target** until the pull request can
+actually merge. Five conditions, in the order a reader thinks about
+them:
+
+| | |
+|---|---|
+| approvals | the required reviewers have approved (`required_approvals`, default 1) and nobody has asked for changes |
+| tasks | every task on the pull request is resolved |
+| conflicts | it still applies to its target (the diffstat answers 555 when it does not) |
+| build | the newest run on the **source** commit is green |
+| comments | every comment is resolved or replied to — the same rule the review chip counts by |
+
+Hovering a dim button, or clicking one, says which condition fails and
+its number: `Merge: 1 of 2 approvals`, `Merge: 2 tasks still open`.
+Every field starts in the state that blocks, so a pull request nobody
+has looked at is never ready by accident — it says `not checked yet`.
+
+The look costs **one cached round per open pull request**, keyed by its
+`updated_on`, taken for the row the cursor lands on and never again
+while the pull request has not moved: the PR detail, the diffstat, the
+comments (through the same cache the review chip uses, so an unmoved
+pull request pays nothing for them) and — only when the row's builds
+are not already open and fresh — the pipelines list. `--values` never
+does any of this: the statusline run counts, it does not judge.
+
+A ready button opens a confirm that **names** what it is about — the
+title, `source → target`, and the strategy (`←→` cycles the ones
+`merge_strategies` allows). Confirming does not call the merge API.
+It dispatches a **Claude Code session** whose prompt carries the pull
+request's URL and the chosen strategy and asks it to merge through the
+Bitbucket API with `$BITBUCKET_ACCESS_TOKEN` (the variable's name, never
+its value) and to report the outcome on its last line. The one
+destructive action this pane offers goes through the thing you already
+supervise — and the button then follows that session: a spinner while
+it runs, `⏸` when it stops to ask you something, `[ view ]` when it
+ends, a red `✗` with the reason when it fails. A merge that ends while
+the pane does not have the keyboard sends a notification.
+
+## Awaiting my approval
+
+The `awaiting: N` chip on the header counts the open pull requests you
+are a **reviewer** on and have not voted, and a click narrows the tab
+to exactly those. It reads `participants`, which every listing already
+carries, so the chip costs no request — and it lifts the 24-hour window
+the tree otherwise folds old rows behind, because something that has
+been waiting on you for three days is the whole point of it.
 
 ## The statusline chips
 
-Two, because they are two numbers about two different things.
+Three, because they are three numbers about three different things.
 
 **`bitbucket_prs.prs_mine`** — `󰂨 N(K)`: N open pull requests you
 authored in the last `chip_stale_after_days`, off the excluded
@@ -178,7 +260,15 @@ every answered thread unanswered. Blank at rest: it is published only
 once the count has been taken, because a zero before then would read as
 "nothing outstanding".
 
-Each chip's hover says what its number counts, and the review one says
+**`bitbucket_prs.reviews_pending`** — ` P`: open pull requests
+waiting on **your** review — you are a reviewer and have not approved.
+The one of the three that is your move. Counted out of the same listing
+as the first chip (one BBQL asks for both sets), so it costs no extra
+request. A click opens the pane with the awaiting filter already on.
+
+Each chip's hover says what its number counts, names the top three by
+title so you do not have to open the pane to find out which, and the
+review one says
 what the count cost — how many pull requests were answered off the
 cache. See **Prefetch** below for why that matters: the review figure is
 one `…/comments` request per pull request whose `updated_on` has
@@ -191,7 +281,7 @@ channel, with the open count on the INTEGRATIONS badge.
 pane open (a `term` child does not inherit `MNML_IPC_DIR`, so the
 workspace names the channel), and mnml's own poller runs the latter on
 the manifest's interval. `--values` also prints the JSON:
-`{"open_mine":N,"unapproved_mine":K,"approved_mine":A,"unresolved_comments":M}`,
+`{"open_mine":N,"unapproved_mine":K,"approved_mine":A,"reviews_pending":P,"unresolved_comments":M}`,
 where `unresolved_comments` is `null` when the count was not taken.
 
 ## Prefetch — and the contract a poller runs it under

@@ -38,13 +38,16 @@ pub const Ui = struct {
     ascii: bool = false,
     nerd: bool = true,
     th: Theme = .{},
+    /// How the tab strip marks the tab that is on — the host's
+    /// `ui.tab_indicator`, off `hello`.
+    tab_indicator: sdk.wire.TabIndicator = .block,
 
     pub fn glyph(u: Ui, nerd_g: []const u8, fallback: []const u8) []const u8 {
         return if (u.ascii or !u.nerd) fallback else nerd_g;
     }
 
     pub fn chrome(u: Ui) sdk.pane.Ui {
-        return .{ .ascii = u.ascii, .nerd = u.nerd };
+        return .{ .ascii = u.ascii, .nerd = u.nerd, .tab_indicator = u.tab_indicator };
     }
 };
 
@@ -184,7 +187,7 @@ pub const Painter = struct {
             return;
         }
         try p.paintHeader();
-        try p.paintTabs();
+        p.lay.toolbar_y = p.lay.tabs_y + try p.paintTabs();
         const t = p.a.tab();
         p.lay.list_w = p.cols();
         if (p.a.details_visible and p.cols() >= 60 and !t.cfg.isKanban()) {
@@ -216,6 +219,36 @@ pub const Painter = struct {
         if (p.a.modal != null) try p.paintModal();
         if (p.a.vars != null) try p.paintVars();
         if (p.a.help) try p.paintHelp();
+        // Last of all: the one overlay with something irreversible
+        // behind it wins every click while it is up.
+        if (p.a.merge != null) try p.paintMergeConfirm();
+    }
+
+    /// The merge confirm: what it is about, in its own words.
+    fn paintMergeConfirm(p: *Painter) Allocator.Error!void {
+        const m = p.a.merge orelse return;
+        const w: u16 = @min(p.cols() -| 6, 72);
+        const h: u16 = 8;
+        if (p.cols() < 24 or p.rows() < h + 2) return;
+        const rect: sdk.pane.Rect = .{ .x = (p.cols() -| w) / 2, .y = (p.rows() -| h) / 2, .w = w, .h = h };
+        var hbuf: [160]u8 = undefined;
+        var bbuf: [160]u8 = undefined;
+        var sbuf: [160]u8 = undefined;
+        try p.c.confirmBox(
+            rect,
+            m.confirm.heading(&hbuf),
+            &.{
+                m.confirm.title,
+                m.confirm.branchLine(&bbuf),
+                m.confirm.strategyLine(&sbuf),
+                "merged by a Claude Code session, not by this pane",
+            },
+            " Merge ",
+            .confirm_ok,
+            " Cancel ",
+            .confirm_cancel,
+            .confirm_body,
+        );
     }
 
     fn paintEmptyScope(p: *Painter) Allocator.Error!void {
@@ -271,19 +304,21 @@ pub const Painter = struct {
         }
     }
 
-    fn paintTabs(p: *Painter) Allocator.Error!void {
+    /// The strip, from the toolkit — the same two rows the forge pane
+    /// paints. It used to mark the active tab with mnml's own cursor
+    /// `▌`, a glyph doing a second job in a place that is not a list;
+    /// the underline says it instead. Returns the rows it used.
+    fn paintTabs(p: *Painter) Allocator.Error!u16 {
         const y = p.lay.tabs_y;
-        var x: u16 = 0;
+        var list: std.ArrayList(Chrome.TabSpec) = .empty;
         for (p.a.tabs, 0..) |*t, i| {
-            const is_active = i == p.a.active;
-            const label = p.fmt("{d} {s}", .{ i + 1, t.cfg.name });
-            const w = text.width(label) + 2;
-            if (x + w > p.cols()) break;
-            if (is_active) _ = p.put(x, y, 1, p.marker(), p.s.accent);
-            _ = p.put(x + 1, y, w - 1, label, if (is_active) p.s.bold else p.s.muted);
-            try p.hitAdd(.{ .x = x, .y = y, .w = w, .h = 1 }, .{ .tab = @intCast(i) });
-            x += w + 1;
+            try list.append(p.arena, .{
+                .label = p.fmt(" {d} {s} ", .{ i + 1, t.cfg.name }),
+                .target = .{ .tab = @intCast(i) },
+                .active = i == p.a.active,
+            });
         }
+        return p.c.tabStrip(1, y, list.items);
     }
 
     // ─── the toolbar chips ───────────────────────────────────────────
@@ -582,7 +617,11 @@ pub const Painter = struct {
                     if (pr_ref.pr_idx >= prs.len) continue;
                     const pr = prs[pr_ref.pr_idx];
                     const cx = key_c.x + 6;
-                    if (pr.isMerged()) {
+                    // Every PR folds out to its builds — an open one to
+                    // the runs on its branch head, a merged one to the
+                    // runs on what landed. Only a PR with no URL has
+                    // nothing to look them up on.
+                    if (pr.url.len > 0) {
                         _ = p.put(cx, y, 2, p.chevron(st.isPrExpanded(iss.key, pr.id)), p.s.accent_plain);
                         try p.hitAdd(.{ .x = cx, .y = y, .w = 2, .h = 1 }, .{ .chevron = idx });
                     }
@@ -602,7 +641,33 @@ pub const Painter = struct {
                     if (sw > bw + 12) {
                         sw -= bw;
                         var bx = sum_c.x + sw;
+                        const ready = a.readinessOf(iss.key, pr);
                         for (set) |b| {
+                            // `[ Merge ]` wears whatever its session
+                            // left once there is one; before that it is
+                            // dim, and not a target at all, until the
+                            // pull request may actually merge.
+                            if (b.which == .merge) {
+                                var kb: [256]u8 = undefined;
+                                const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
+                                const bst = a.actions.state(rk, "merge");
+                                var ab: [32]u8 = undefined;
+                                const cap = if (bst == .idle) b.label else sdk.pane.action.caption(&ab, bst, sdk.pane.merge.label, a.spin, p.ui.ascii);
+                                const lw = text.width(cap);
+                                if (bst != .idle) {
+                                    _ = p.put(bx, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, bst));
+                                    try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
+                                } else {
+                                    _ = p.put(bx, y, lw, cap, sdk.pane.merge.styleOf(p.ui.th, ready));
+                                    if (sdk.pane.merge.isPressable(ready)) {
+                                        try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
+                                    } else {
+                                        try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .merge_blocked = idx });
+                                    }
+                                }
+                                bx += lw + 1;
+                                continue;
+                            }
                             const lw = text.width(b.label);
                             _ = p.put(bx, y, lw, b.label, p.s.chip_style);
                             try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
@@ -613,14 +678,22 @@ pub const Painter = struct {
                     _ = p.putFit(sum_c.x, y, sw -| 1, title, base);
                 },
                 .pr_loading => _ = p.put(key_c.x + 6, y, w -| (key_c.x + 6), "… fetching linked PRs", p.s.muted),
-                .pipeline_loading => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ fetching pipelines…", p.s.muted),
-                .pipeline_empty => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ no pipelines on the merge commit", p.s.muted),
+                .pipeline_loading => p.c.buildNote(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, "fetching builds\u{2026}", false),
+                .pipeline_empty => |pe| {
+                    const iss = t.issues[pe.issue_idx];
+                    const st = &(t.tree.?);
+                    const prs = st.prs(iss.key) orelse continue;
+                    const meta = if (pe.pr_idx < prs.len) st.pipelineMeta(iss.key, prs[pe.pr_idx].id) else null;
+                    const on: []const u8 = if (meta) |m| m.commit[0..@min(m.commit.len, 7)] else "";
+                    const note = if (on.len > 0) p.fmt("no build ran on {s}", .{on}) else "no build ran on this commit";
+                    p.c.buildNote(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, note, false);
+                },
                 .pipeline_error => |pe| {
                     const iss = t.issues[pe.issue_idx];
                     const st = &(t.tree.?);
                     const prs = st.prs(iss.key) orelse continue;
                     const why = if (pe.pr_idx < prs.len) st.pipelineError(iss.key, prs[pe.pr_idx].id) orelse "?" else "?";
-                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), p.fmt("→ {s}", .{why}), p.s.warn_style);
+                    p.c.buildNote(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, why, true);
                 },
                 .pipeline => |pl| {
                     const iss = t.issues[pl.issue_idx];
@@ -630,9 +703,15 @@ pub const Painter = struct {
                     const list = st.pipelines(iss.key, prs[pl.pr_idx].id) orelse continue;
                     if (pl.pipeline_idx >= list.len) continue;
                     const pipe = list[pl.pipeline_idx];
-                    var dbuf: [32]u8 = undefined;
-                    const line = p.fmt("→ #{d} {s}  {s}  {s}  {s}", .{ pipe.build_number, pipe.stateLabel(), pipe.branchLabel(), pipe.createdDate(), pipe.durationLabel(&dbuf) });
-                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), line, pipelineStyle(p.ui.th, pipe));
+                    // The toolkit's build line, so this pane and the
+                    // Bitbucket one read the same: state, branch, age,
+                    // number — and the whole line opens that run.
+                    try p.c.buildRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, key_c.x + 10, .{
+                        .state = pipe.stateLabel(),
+                        .branch = pipe.branch,
+                        .created_on = pipe.created_on,
+                        .number = pipe.build_number,
+                    }, a.nowSecs(), .{ .row = idx });
                 },
                 // The fold row, from the toolkit: `⋯  Show more (N)`
                 // with the label in the bright foreground a key wears.
@@ -878,6 +957,12 @@ pub const Painter = struct {
         if (status.len > 0) {
             x += p.putFit(x, y, w -| x, status, p.s.plain);
             x += 2;
+        }
+        // A dim `[ Merge ]` owes the reader a reason, and the hint row
+        // is where it goes: the pointer is already there.
+        if (a.hoverNote().len > 0) {
+            _ = p.putFit(x, y, w -| x, a.hoverNote(), p.s.warn_style);
+            return;
         }
         // A button that failed keeps its reason where it can be read:
         // the status moves on, the row's cross does not.
@@ -1316,10 +1401,6 @@ fn prStyle(th: Theme, status: []const u8) Style {
     return th.prState(status);
 }
 
-fn pipelineStyle(th: Theme, pipe: model.Pipeline) Style {
-    return th.pipelineState(pipe.result);
-}
-
 // ─── small text helpers ──────────────────────────────────────────────────
 
 /// ` key: value ` — mnml's mode chip.
@@ -1539,53 +1620,63 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     const r0 = try rowText(ar, &f, 0);
     try testing.expect(std.mem.startsWith(u8, r0, "▌JIRA WORK (3)"));
     try testing.expect(std.mem.endsWith(u8, r0, " ?"));
-    try testing.expectEqualStrings("\u{258c}1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
-    const r2 = try rowText(ar, &f, 2);
+    try testing.expectEqualStrings("\u{258c} 1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
+    // The strip's indicator: the default `block` under the tab that
+    // is on, and no `▌` mark beside the label any more.
+    const rule = try rowText(ar, &f, 2);
+    try testing.expect(std.mem.startsWith(u8, rule, "\u{258c}\u{2580}\u{2580}"));
+    try testing.expect(std.mem.indexOf(u8, rule, "\u{2501}") == null);
+    const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " basic ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " assignee: All ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " status: All") != null);
     try testing.expect(std.mem.indexOf(u8, r0, "\u{eb37}") != null);
     try testing.expect(std.mem.indexOf(u8, r2, "/ filter") != null);
-    const r3 = try rowText(ar, &f, 3);
+    const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.startsWith(u8, r3, "▌ KEY"));
     try testing.expect(std.mem.indexOf(u8, r3, "SUMMARY") != null);
     // The first group is the cursor: marker, chevron, name and count.
-    const r4 = try rowText(ar, &f, 4);
+    const r4 = try rowText(ar, &f, 5);
     try testing.expect(std.mem.startsWith(u8, r4, "\u{258c}\u{F47C} In PR Review (1)"));
     // ENG-2 under it with its two PRs, then the buttons.
-    const r5 = try rowText(ar, &f, 5);
+    const r5 = try rowText(ar, &f, 6);
     try testing.expect(std.mem.indexOf(u8, r5, "ENG-2") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "In PR Review") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "Ada Lovelace") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "Card form validates on blur") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "[ Review ]") != null);
-    const r6 = try rowText(ar, &f, 6);
+    const r6 = try rowText(ar, &f, 7);
     try testing.expect(std.mem.indexOf(u8, r6, "MERGED") != null);
     try testing.expect(std.mem.indexOf(u8, r6, "[ Open ]") != null);
     try testing.expect(std.mem.indexOf(u8, r6, "[ Merge ]") == null);
-    const r7 = try rowText(ar, &f, 7);
+    const r7 = try rowText(ar, &f, 8);
     try testing.expect(std.mem.indexOf(u8, r7, "OPEN") != null);
     try testing.expect(std.mem.indexOf(u8, r7, "[ Open ] [ Review ] [ Merge ]") != null);
-    const merge_x = (try colOfText(ar, &f, 7, "[ Merge ]")).?;
-    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .merge } }, a.hits.at(merge_x + 2, 7).?);
+    const merge_x = (try colOfText(ar, &f, 8, "[ Merge ]")).?;
+    // Nothing has judged this pull request, so `[ Merge ]` is dim and
+    // is NOT a `pr_button`: a stray click there cannot merge anything.
+    // It still answers, with the reason it is dim.
+    try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 8).?);
+    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 8, "[ Open ]")).? + 2, 8).?);
     // The hint row comes from the bindings, not a string.
     const last = try rowText(ar, &f, 39);
     try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select") != null);
-    // Every painted row is a hit, and a click on row 6 selects that row.
-    try testing.expectEqual(hit.Target{ .row = 2 }, a.hits.at(30, 6).?);
+    // Every painted row is a hit, and a click on the ticket's row
+    // selects that row.
+    try testing.expectEqual(hit.Target{ .row = 1 }, a.hits.at(30, 6).?);
     try testing.expectEqual(hit.Target{ .tab = 1 }, a.hits.at(14, 1).?);
     try testing.expectEqual(hit.Target{ .chip = .help }, a.hits.at(118, 0).?);
-    const review_x = (try colOfText(ar, &f, 5, "[ Review ]")).?;
-    try testing.expectEqual(hit.Target{ .action = .{ .issue = 1, .button = 0 } }, a.hits.at(review_x + 2, 5).?);
-    try a.click(30, 6, false);
+    const review_x = (try colOfText(ar, &f, 6, "[ Review ]")).?;
+    try testing.expectEqual(hit.Target{ .action = .{ .issue = 1, .button = 0 } }, a.hits.at(review_x + 2, 6).?);
+    try a.click(30, 7, false);
     try testing.expectEqual(@as(usize, 2), a.tab().selected);
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 6), "\u{258c}"));
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 7), "\u{258c}"));
     // The chevron on the group folds it.
-    try a.click(1, 4, false);
+    try a.click(1, 5, false);
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 4), "\u{258c}\u{F460} In PR Review (1)"));
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "ENG-2") == null);
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 5), "\u{258c}\u{F460} In PR Review (1)"));
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 6), "ENG-2") == null);
 }
 
 test "Work: the detail pane, the filter pill while typing, the bulk marks, and the pickers over the list" {
@@ -1605,7 +1696,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     try testing.expect((try findRow(ar, &f, "ENG-2  Card form validates on blur")) != null);
     try testing.expect((try findRow(ar, &f, "★ watching (2 total)")) != null);
     try testing.expect((try findRow(ar, &f, "── comments (2)")) != null);
-    try testing.expectEqual(hit.Target.detail, a.hits.at(100, 10).?);
+    try testing.expectEqual(hit.Target.detail, a.hits.at(100, 11).?);
     _ = try a.onKey("d");
     // The filter pill while typing, then committed.
     _ = try a.onKey("/");
@@ -1613,7 +1704,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     _ = try a.onKey("o");
     _ = try a.onKey("u");
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 2), "\u{F0349} vou▏") != null);
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} vou▏") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "type to filter · Enter commit · Esc cancel") != null);
     _ = try a.onKey("enter");
     try paint(ar, &f, a, .{});
@@ -1626,7 +1717,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     _ = try a.onKey("shift+s");
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 0), "1 selected") != null);
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "ENG-2 ✓") != null);
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 6), "ENG-2 ✓") != null);
     // The assignee picker over the list: title, filter line, rows, hits.
     _ = try a.onKey("a");
     try paint(ar, &f, a, .{});
@@ -1652,7 +1743,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA FIX VERSIONS (8)"));
-    const r2 = try rowText(ar, &f, 2);
+    const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 13.16.0 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " ⓧ") != null);
     // The `space:` placeholder is gone: it named the tab's project and did nothing.
@@ -1698,12 +1789,12 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (3 of 9)"));
-    const r2 = try rowText(ar, &f, 2);
+    const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " board: Checkout board ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " sprint: Sprint 4 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " [?] ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " SB ") != null);
-    const r3 = try rowText(ar, &f, 3);
+    const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.indexOf(u8, r3, " quick filters ") != null or std.mem.indexOf(u8, r2, " quick filters ") != null);
     const top = (try findRow(ar, &f, " To Do (")).?;
     const top_row = try rowText(ar, &f, top);
@@ -1718,8 +1809,8 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, head_y + 1), "Checkout rewrite") != null);
     try testing.expectEqual(hit.Target{ .card = 0 }, a.hits.at(head_x + 6, head_y + 1).?);
     // An avatar click toggles that assignee into the filter.
-    const sb_x = (try colOfText(ar, &f, 2, " SB ")).?;
-    try a.click(sb_x + 1, 2, false);
+    const sb_x = (try colOfText(ar, &f, 3, " SB ")).?;
+    try a.click(sb_x + 1, 3, false);
     try testing.expectEqual(@as(usize, 2), a.tab().active_assignees.count());
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (4 of 9)"));
@@ -1749,12 +1840,13 @@ test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shri
     defer arena.deinit();
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
-    const r2 = try rowText(ar, &f, 2);
-    const r3 = try rowText(ar, &f, 3);
+    const r2 = try rowText(ar, &f, 3);
+    const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.indexOf(u8, r2, " basic ") != null);
-    // Whatever did not fit on row 2 is whole on row 3, never clipped.
+    // Whatever did not fit on the toolbar's first row is whole on its
+    // second, never clipped.
     try testing.expect(std.mem.indexOf(u8, r3, " status: All") != null or std.mem.indexOf(u8, r2, " status: All") != null);
-    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 4), "KEY") != null or std.mem.indexOf(u8, r3, "KEY") != null);
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "KEY") != null or std.mem.indexOf(u8, r3, "KEY") != null);
     try testing.expect((try findRow(ar, &f, "ENG-2")) != null);
     const last = try rowText(ar, &f, 23);
     try testing.expect(std.mem.indexOf(u8, last, "t transition") != null);

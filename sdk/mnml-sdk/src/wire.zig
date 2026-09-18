@@ -79,6 +79,20 @@ pub const Palette = struct {
     comment: ?Color = null,
 };
 
+/// How a pane marks the tab that is on. One extra row under the
+/// labels, in the pane's brand colour, spanning exactly the active
+/// label's cells:
+///
+///   block  `▀` upper half-block, the rest of the row empty — flush
+///          against the label's baseline, no air
+///   rule   `━` heavy under the active label, over a muted `─` track
+///          across the rest of the strip
+///   line   `─` under the active label only, the rest empty
+///
+/// The host's `ui.tab_indicator`. A host that predates the field sends
+/// none and every pane draws `block`.
+pub const TabIndicator = enum { block, rule, line };
+
 /// The first message after connect.
 pub const Hello = struct {
     protocol: u8 = protocol,
@@ -90,6 +104,8 @@ pub const Hello = struct {
     capabilities: Capabilities = .{},
     /// The theme's roles as colours; null from a host that has none.
     palette: ?Palette = null,
+    /// How the tab strip marks the tab that is on.
+    tab_indicator: TabIndicator = .block,
 };
 
 pub const Button = enum { left, middle, right };
@@ -109,12 +125,44 @@ pub const InputEvent = union(enum) {
     paste: struct { text: []const u8 },
 };
 
+/// What a session a pane started is doing now. The host derives it
+/// from the same scan the SESSIONS panel reads (`src/app/agents.zig`);
+/// the four a button can wear are all a pane needs.
+pub const SessionState = enum { running, waiting, done, failed };
+
+/// How a pane names a session it started, and how the host matches it:
+/// the host's own id when the pane was given one, else the working
+/// directory and the first line of the prompt together — which is all
+/// a dispatched `term` line can actually carry. Same rule as the
+/// `focus-session` IPC verb, deliberately: a button that can focus a
+/// session must be able to watch the same one.
+pub const SessionSelector = struct {
+    id: []const u8 = "",
+    cwd: []const u8 = "",
+    prompt_line: []const u8 = "",
+};
+
 pub const HostMessage = union(enum) {
     hello: Hello,
     resize: struct { geometry: Geometry },
     input: struct { event: InputEvent },
     /// The pane gained (true) or lost the keyboard.
     focus: bool,
+    /// A session the pane asked to watch changed state. `key` is the
+    /// pane's own name for the button that started it, echoed back
+    /// from the `watch_session` that asked. Sent on the edge only —
+    /// once when the host first matches a session, and again whenever
+    /// its state moves — so a pane can paint a live spinner rather
+    /// than guessing that `[ view ]` still means "running".
+    session_state: struct {
+        key: []const u8,
+        state: SessionState,
+        /// The host's id for the matched session, once there is one.
+        session_id: []const u8 = "",
+        /// The session's last output line — what a failed button puts
+        /// on the hint row.
+        detail: []const u8 = "",
+    },
     /// The host is going away; the sibling should exit.
     goodbye,
 };
@@ -236,6 +284,11 @@ pub const SiblingMessage = union(enum) {
     /// Run a command by id (a built-in, or one the sibling registered).
     command: struct { id: []const u8 },
     toast: struct { level: ToastLevel = .info, text: []const u8 },
+    /// "I just started this session; keep me posted." The host answers
+    /// with `session_state` lines carrying the same `key` back. A
+    /// second watch under a key replaces the first, so a button that
+    /// is pressed again follows the newer session.
+    watch_session: struct { key: []const u8, selector: SessionSelector },
     /// A clean exit.
     bye,
 };
@@ -341,6 +394,13 @@ test "every host message round-trips" {
     try testing.expect(!hello.hello.capabilities.rgb);
     try testing.expect(hello.hello.capabilities.ascii);
     try testing.expect(hello.hello.capabilities.nerd_font);
+    // A host that predates the field sends none and the pane draws the
+    // default rather than nothing.
+    try testing.expectEqual(TabIndicator.block, hello.hello.tab_indicator);
+    const ruled = try roundTrip(HostMessage, arena, .{ .hello = .{ .geometry = .{ .cols = 1, .rows = 1 }, .tab_indicator = .rule } });
+    try testing.expectEqual(TabIndicator.rule, ruled.hello.tab_indicator);
+    const old_host = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2}}}");
+    try testing.expectEqual(TabIndicator.block, old_host.hello.tab_indicator);
 
     const resize = try roundTrip(HostMessage, arena, .{ .resize = .{ .geometry = .{ .cols = 10, .rows = 3 } } });
     try testing.expectEqual(@as(u16, 3), resize.resize.geometry.rows);
@@ -361,6 +421,16 @@ test "every host message round-trips" {
 
     const focus = try roundTrip(HostMessage, arena, .{ .focus = false });
     try testing.expect(!focus.focus);
+    const ss = try roundTrip(HostMessage, arena, .{ .session_state = .{ .key = "ENG-2\u{1f}triage", .state = .waiting, .session_id = "abc-123", .detail = "Do you want to proceed?" } });
+    try testing.expectEqualStrings("ENG-2\u{1f}triage", ss.session_state.key);
+    try testing.expectEqual(SessionState.waiting, ss.session_state.state);
+    try testing.expectEqualStrings("abc-123", ss.session_state.session_id);
+    try testing.expectEqualStrings("Do you want to proceed?", ss.session_state.detail);
+    // The two optional halves default away, so a host that matched by
+    // cwd alone still round-trips.
+    const bare = try roundTrip(HostMessage, arena, .{ .session_state = .{ .key = "k", .state = .done } });
+    try testing.expectEqualStrings("", bare.session_state.session_id);
+    try testing.expectEqualStrings("", bare.session_state.detail);
     const bye = try roundTrip(HostMessage, arena, .goodbye);
     try testing.expect(bye == .goodbye);
 }
@@ -405,6 +475,11 @@ test "every sibling message round-trips; colours are externally tagged" {
     try testing.expectEqualStrings("file.save", cmd.command.id);
     const toast = try roundTrip(SiblingMessage, arena, .{ .toast = .{ .level = .warn, .text = "hmm" } });
     try testing.expectEqual(ToastLevel.warn, toast.toast.level);
+    const watch = try roundTrip(SiblingMessage, arena, .{ .watch_session = .{ .key = "acme/api#7\u{1f}merge", .selector = .{ .cwd = "/ws", .prompt_line = "/agents:developer ENG-2" } } });
+    try testing.expectEqualStrings("acme/api#7\u{1f}merge", watch.watch_session.key);
+    try testing.expectEqualStrings("/ws", watch.watch_session.selector.cwd);
+    try testing.expectEqualStrings("/agents:developer ENG-2", watch.watch_session.selector.prompt_line);
+    try testing.expectEqualStrings("", watch.watch_session.selector.id);
     const bye = try roundTrip(SiblingMessage, arena, .bye);
     try testing.expect(bye == .bye);
 }
@@ -413,7 +488,7 @@ test "the JSON shape is the documented one" {
     const gpa = testing.allocator;
     const hello = try encode(gpa, HostMessage{ .hello = .{ .geometry = .{ .cols = 8, .rows = 2 } } });
     defer gpa.free(hello);
-    try testing.expectEqualStrings("{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false}}}", hello);
+    try testing.expectEqualStrings("{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false},\"tab_indicator\":\"block\"}}", hello);
     const bye = try encode(gpa, @as(SiblingMessage, .bye));
     defer gpa.free(bye);
     try testing.expectEqualStrings("{\"bye\":{}}", bye);

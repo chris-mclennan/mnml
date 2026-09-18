@@ -402,6 +402,10 @@ pub const Config = struct {
     rate: Rate = .{},
     /// The forge the post-merge pipeline rows come from.
     bitbucket_api_url: []const u8 = "https://api.bitbucket.org/2.0",
+    /// Approvals a pull request needs before its `[ Merge ]` stops
+    /// being dim. Bitbucket keeps this per repository and the API does
+    /// not offer it, so it is stated here rather than guessed at.
+    required_approvals: usize = 1,
     bitbucket_token_env: []const u8 = "BITBUCKET_ACCESS_TOKEN",
     /// The browser opener; empty picks the platform's.
     open_command: []const u8 = "",

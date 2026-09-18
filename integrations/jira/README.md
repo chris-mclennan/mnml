@@ -166,7 +166,7 @@ the next step and waits for `r`.
 | any | `↑` `k` / `↓` `j`, PageUp / PageDown, `g` / `G`, Home / End | move |
 | detail open | `Ctrl+U` / `Ctrl+D` | scroll the detail pane |
 | tree | `Enter`, `Space` | fold a group · expand a ticket · open a PR · uncap a show-all row |
-| tree | `→` `l` / `←` `h` | expand / collapse (a merged PR row expands to its pipelines) |
+| tree | `→` `l` / `←` `h` | expand / collapse (every PR row expands to its builds) |
 | tree | `S` | select for a bulk action |
 | kanban | `Space` | select for a bulk action |
 | kanban | `>` | expand the card |
@@ -175,7 +175,7 @@ the next step and waits for `r`.
 | any | `t` · `a` · `w` · `.` | transition · assignee · watch / unwatch · actions |
 | Work, Boards | `f` · `V` · `T` | fix version on the ticket · tab-view fix version · team |
 | Fix Versions | `f` · `F` | switch the release · fix version on the ticket |
-| Fix Versions | `I` `X` `T` `V` | dispatch implement / fix / triage / review (`V` on a PR row) |
+| Fix Versions | `I` `X` `T` `V` `M` | dispatch implement / fix / triage / review · merge the PR through Claude Code (`V` / `M` on a PR row) |
 | detail open | `c` | comment |
 | any | `d` / `D` | detail pane / detail modal |
 | any | `/` · `E` · `?` | filter · JQL editor · keys |
@@ -234,6 +234,53 @@ outside the pane and prints `{"assigned_open":N,"qa_actionable":K}` for
 a poller; mnml's own poller runs exactly that line on the manifest's
 interval, so the chips move with no pane open.
 
+## Builds under a pull request
+
+Every PR row under a ticket folds out (its chevron, `l`, or the row's
+`[ Open ]` chip) to the pipeline runs on the commit it is about — a
+merged one to the runs on its merge commit, an open one to the runs on
+its **source head**, which are the builds a reviewer wants before
+merging. One row per run, in the toolkit's line so it reads the same as
+the Bitbucket pane's:
+
+```
+▾ #2044  OPEN   Follow-up: trim the whitespace                  [ Open ] [ Review ] [ Merge ]
+        ⏵ IN_PROGRESS · feat/trim · 1h · #414
+        ✗ FAILED · feat/trim · 5h · #413
+```
+
+`Enter` on a build row opens that run's page; `Enter` on the PR row
+still opens the pull request itself. It costs one Bitbucket request per
+pull request when nothing has changed — the PR detail carries
+`updated_on`, and the pipelines list is skipped whenever it has not
+moved.
+
+## Merging a PR — and why the button is usually dim
+
+`[ Merge ]` on a PR row is **dim and not a click target** until the
+pull request can actually merge. Five conditions, in the order a reader
+thinks about them: the required approvals (`required_approvals`,
+default 1) with nobody asking for changes, every task resolved, no
+conflicts, the newest run on the **source** commit green, and every
+comment resolved or replied to. Hovering a dim one — or clicking it —
+says which condition fails and its number, `Merge: 1 of 2 approvals`.
+A pull request nobody has looked at says `not checked yet` rather than
+inventing a blocker.
+
+The look costs one cached round per pull request against its own
+`updated_on`, taken when the button is pressed or the row is hovered,
+and reuses the row's builds for the pipeline half when they are already
+folded out.
+
+A ready button opens a confirm that **names** the pull request, its
+branches and the strategy (`←→` cycles). Confirming writes the same
+kind of `term` line every other action here writes: a **Claude Code
+session** that merges through the Bitbucket API with
+`$BITBUCKET_ACCESS_TOKEN` and reports the outcome on its last line.
+This pane never calls the merge API itself. The button then follows
+that session — spinner, `⏸`, `[ view ]`, red `✗` — and a merge that
+ends while the pane does not have the keyboard sends a notification.
+
 ## The dispatch queue
 
 `.` + Enter, `I` / `X` / `T` / `V` on a Fix Versions tab, or a card's
@@ -243,6 +290,14 @@ summary, jira_url, pr_url?, queued_at}` — to
 (`claude <<'MNML_EOF' /agents:developer KEY … MNML_EOF`) to
 `<dispatch_workspace>/.mnml/ipc/command`, each channel only when its
 directory exists; the status says which fired.
+
+The button then **follows the session it started**. mnml tells the pane
+what that session is doing (`watch_session` / `session_state`, see
+`docs/BRIDGE.md`), so `[ Triage ]` turns a spinner while it runs, shows
+`⏸` in the warning colour when it stops to ask you something — with the
+question on the hint row — becomes `[ view ]` when it ends, and wears a
+red `✗` with the reason when it fails. Pressing it again brings that
+session to the front rather than starting a second one.
 
 ## Tests
 

@@ -10,6 +10,11 @@
 //! belongs to is `acct-chris` (Chris M) — so "PRs I opened" returns
 //! two and "PRs to review" returns one.
 //!
+//! Every pull request carries its source commit, and there is at least
+//! one pipeline run on each open one's branch head as well as on the
+//! merged one's merge commit — so a PR row has builds to fold out in
+//! either state.
+//!
 //! Pipelines and branches are faked too, per repo, with their dates
 //! relative to `State.now_secs` so the pane's recency rules (the 24-hour
 //! window on a PR, the 14-day staleness on a feature branch) see the
@@ -120,6 +125,12 @@ pub const Fixture = struct {
     draft: bool = false,
     /// `updated_on` is this many hours before `State.now_secs`.
     age_hours: u32 = 3,
+    /// Tasks still open on the pull request — Bitbucket's `task_count`
+    /// counts the UNRESOLVED ones, which is what readiness reads.
+    open_tasks: u32 = 0,
+    /// It no longer merges cleanly into its target. Bitbucket says so
+    /// by answering the diffstat with a 555.
+    conflicts: bool = false,
     /// The merge commit's hash on a MERGED fixture.
     merge_sha: []const u8 = "",
     reviewers: []const Reviewer,
@@ -163,6 +174,7 @@ pub const fixtures = [_]Fixture{
         .author_name = me_display_name,
         .source_branch = "chris/fix-login",
         .source_sha = "abc1234def5678",
+        .open_tasks = 1,
         .description = "Fixes ENG-4210. The redirect dropped the query string when the session had expired.",
         .reviewers = &.{
             .{ .id = "acct-dana", .name = "Dana R", .vote = .approved },
@@ -237,6 +249,7 @@ pub const fixtures = [_]Fixture{
         .author_name = me_display_name,
         .source_branch = "chris/empty-state",
         .source_sha = "ddd4444eee5555",
+        .conflicts = true,
         .description = "Part of ENG-4300.",
         .draft = true,
         .reviewers = &.{},
@@ -304,6 +317,9 @@ pub const pipelines = [_]PipelineFixture{
     .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "chris/fix-login", .commit = "abc1234def5678", .age_hours = 1 },
     .{ .repo = "api", .build_number = 412, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "9999mergecommit", .duration_secs = 312, .age_hours = 4 },
     .{ .repo = "api", .build_number = 411, .state = "COMPLETED", .result = "FAILED", .ref_name = "develop", .commit = "1212121212", .trigger = "schedule", .duration_secs = 95, .age_hours = 20 },
+    // On the OPEN pull request #1198's branch head, so an open row has
+    // builds to fold out — what a reviewer wants before merging.
+    .{ .repo = "api", .build_number = 410, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "dana/timeout", .commit = "bbb2222ccc3333", .duration_secs = 120, .age_hours = 29 },
     .{ .repo = "api", .build_number = 405, .state = "COMPLETED", .result = "STOPPED", .ref_name = "release/1.2", .commit = "3434343434", .duration_secs = 40, .age_hours = 24 * 10 },
     .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "chris/empty-state", .commit = "ddd4444eee5555", .age_hours = 1 },
     .{ .repo = "web", .build_number = 70, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "8888mergecommit", .duration_secs = 200, .age_hours = 24 * 3 },
@@ -630,6 +646,10 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     const bbql = (try queryParam(arena, query, "q")) orelse "";
     const author_id = predicateValue(bbql, "author.account_id");
     const reviewer_id = predicateValue(bbql, "reviewers.account_id");
+    // `author… OR reviewers…` asks for both sets in ONE request — what
+    // the statusline run does so counting "waiting on my review" costs
+    // nothing extra. Anything else joining the two is an AND.
+    const either = author_id != null and reviewer_id != null and std.mem.indexOf(u8, bbql, " OR ") != null;
 
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
@@ -638,13 +658,16 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     for (&fixtures) |*f| {
         if (!std.mem.eql(u8, f.repo, repo)) continue;
         if (!std.mem.eql(u8, effectiveState(f, st), want_state)) continue;
-        if (author_id) |a| if (!std.mem.eql(u8, f.author_id, a)) continue;
-        if (reviewer_id) |r| {
-            var is = false;
-            for (f.reviewers) |rv| if (std.mem.eql(u8, rv.id, r)) {
-                is = true;
-            };
-            if (!is) continue;
+        const by_author = if (author_id) |a| std.mem.eql(u8, f.author_id, a) else false;
+        var by_reviewer = false;
+        if (reviewer_id) |r| for (f.reviewers) |rv| {
+            if (std.mem.eql(u8, rv.id, r)) by_reviewer = true;
+        };
+        if (either) {
+            if (!by_author and !by_reviewer) continue;
+        } else {
+            if (author_id != null and !by_author) continue;
+            if (reviewer_id != null and !by_reviewer) continue;
         }
         if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
         try writePr(w, f, st, .list);
@@ -678,7 +701,7 @@ fn writePr(w: *std.Io.Writer, f: *const Fixture, st: *const State, shape: Shape)
     }) catch return error.OutOfMemory;
     writeIso(w, st.now_secs - @as(i64, f.age_hours) * 3600) catch return error.OutOfMemory;
     w.writeAll("\"") catch return error.OutOfMemory;
-    w.print(",\"comment_count\":{d},\"task_count\":0", .{f.activity.len}) catch return error.OutOfMemory;
+    w.print(",\"comment_count\":{d},\"task_count\":{d}", .{ f.activity.len, f.open_tasks }) catch return error.OutOfMemory;
     w.print(",\"author\":{{\"display_name\":\"{s}\",\"account_id\":\"{s}\"}}", .{ f.author_name, f.author_id }) catch return error.OutOfMemory;
     w.print(",\"source\":{{\"branch\":{{\"name\":\"{s}\"}},\"commit\":{{\"hash\":\"{s}\"}},\"repository\":{{\"full_name\":\"{s}/{s}\"}}}}", .{
         f.source_branch, f.source_sha, workspace, f.repo,
@@ -825,6 +848,10 @@ fn comments(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Rep
 }
 
 fn diffstat(arena: Allocator, f: *const Fixture) Allocator.Error!Reply {
+    // Bitbucket answers the diffstat of a pull request that no longer
+    // applies with a 555, which is the only machine-readable "this
+    // conflicts" its v2 API offers.
+    if (f.conflicts) return .{ .status = 555, .body = try arena.dupe(u8, "{\"type\":\"error\",\"error\":{\"message\":\"Merge conflict\"}}") };
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
     w.writeAll("{\"values\":[") catch return error.OutOfMemory;

@@ -116,8 +116,9 @@ expect screen contains "unapproved acme/api#1234"
 expect screen contains "○ not approved · 1 total"
 key d
 
-# m is the reference's open↔merged toggle; a merged PR opens to the
-# pipeline that ran on its merge commit.
+# m is the reference's open↔merged toggle; a merged PR folds out to the
+# runs on its merge commit, one row per run, in the toolkit's line:
+# state, branch, age, number.
 key m
 expect screen contains " 2 Merged (2)"
 expect screen contains "MERGED"
@@ -126,9 +127,23 @@ expect screen contains "Drop the legacy"
 key j
 key enter
 wait 800
-expect screen contains "✓ SUCCESSFUL"
-expect screen contains "#412"
-expect screen contains "on main"
+expect screen contains "✓ SUCCESSFUL · main · "
+expect screen contains "· #412"
+
+# Back to Open, and the awaiting chip: what is waiting on MY review.
+# It narrows rows that are already loaded, so it costs no request, and
+# it lifts the 24-hour window the tree folds old rows behind.
+key 1
+wait 400
+expect screen contains "awaiting: 1"
+key shift+a
+wait 400
+expect screen contains "(1 of 3 awaiting my review)"
+expect screen contains "#1198"
+expect screen lacks "Fix the login redirect"
+key shift+a
+wait 400
+expect screen contains "Fix the login redirect"
 
 # The key sheet is the one keymap table; any other key closes it.
 type ?

@@ -1,18 +1,32 @@
-//! The one forge call the tree makes: a merged pull request's post-merge
-//! pipelines — the reference's `bitbucket.rs`. A PR URL is parsed into
-//! workspace / repo / id, the PR's `merge_commit.hash` fetched, and the
-//! repo's recent pipelines filtered client-side by that hash (the
-//! `?target.commit.hash=` filter is unreliable on that endpoint; the
-//! PR API returns a 12-char short hash and the pipelines API a full
-//! one, so either prefix matches the other). The token is a repository
-//! / workspace access token from `$BITBUCKET_ACCESS_TOKEN`; without it
-//! the row says so.
+//! The one forge call the tree makes: the pipelines that ran on the
+//! commit a pull request is about. A PR URL is parsed into workspace /
+//! repo / id, the PR fetched, and the repo's recent pipelines filtered
+//! client-side by its commit (the `?target.commit.hash=` filter is
+//! unreliable on that endpoint; the PR API returns a 12-char short hash
+//! and the pipelines API a full one, so either prefix matches the
+//! other).
+//!
+//! Which commit: a MERGED pull request's `merge_commit.hash` — what
+//! actually landed — and an OPEN one's `source.commit.hash`, the head
+//! of the branch under review. An open PR's builds are the ones you
+//! want before you merge it, and they used to be unreachable: the row
+//! answered "PR not merged — no merge commit" and stopped.
+//!
+//! Two requests, and the second is skipped whenever it can be. The PR
+//! detail carries `updated_on`, which Bitbucket moves when anything on
+//! the pull request does; a caller that already has pipelines for that
+//! stamp gets `.unchanged` back and pays one request instead of two.
+//!
+//! The token is a repository / workspace access token from
+//! `$BITBUCKET_ACCESS_TOKEN`; without it the row says so.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const json = @import("json.zig");
 const model = @import("model.zig");
+const sdk = @import("mnml_sdk");
+const merge = sdk.pane.merge;
 
 pub const Value = std.json.Value;
 
@@ -38,8 +52,32 @@ pub fn parsePrUrl(url: []const u8) ?PrRef {
     return .{ .workspace = ws, .repo = repo, .id = raw_id[0..n] };
 }
 
+/// The runs on one pull request's commit, and what they are keyed by.
+pub const Runs = struct {
+    pipelines: []const model.Pipeline = &.{},
+    /// The commit they ran on — the merge commit, or the source head.
+    commit: []const u8 = "",
+    /// True when `commit` is the merge commit rather than the branch head.
+    on_merge: bool = false,
+    /// The pull request's `updated_on` when they were read: the key a
+    /// caller hands back to skip the second request next time.
+    updated_on: []const u8 = "",
+};
+
+/// Whether one pull request may merge, and what it cost.
+pub const ReadinessOutcome = union(enum) {
+    ok: struct { readiness: merge.Readiness, updated_on: []const u8 },
+    /// It has not moved since `known_updated_on`: one request, and what
+    /// the caller holds still stands.
+    unchanged,
+    failed: []const u8,
+};
+
 pub const Outcome = union(enum) {
-    ok: []const model.Pipeline,
+    ok: Runs,
+    /// The pull request has not moved since `known_updated_on`, so what
+    /// the caller already has is still right. One request, not two.
+    unchanged,
     /// The sentence the tree row paints.
     failed: []const u8,
 };
@@ -52,9 +90,10 @@ pub const Client = struct {
     /// Empty = no token.
     token: []const u8,
 
-    /// The whole flow for one PR URL.
-    pub fn pipelinesForPrUrl(c: *Client, arena: Allocator, pr_url: []const u8) Allocator.Error!Outcome {
-        if (c.token.len == 0) return .{ .failed = "BITBUCKET_ACCESS_TOKEN not set — needed to fetch post-merge pipelines" };
+    /// The whole flow for one PR URL. `known_updated_on` is the stamp
+    /// the caller already has runs for — empty when it has none.
+    pub fn pipelinesForPrUrl(c: *Client, arena: Allocator, pr_url: []const u8, known_updated_on: []const u8) Allocator.Error!Outcome {
+        if (c.token.len == 0) return .{ .failed = "BITBUCKET_ACCESS_TOKEN not set — needed to fetch a pull request's pipelines" };
         const ref = parsePrUrl(pr_url) orelse {
             if (std.mem.indexOf(u8, pr_url, "github.com") != null) return .{ .failed = "GitHub PR pipeline lookup not supported yet" };
             return .{ .failed = "not a bitbucket PR URL" };
@@ -64,8 +103,16 @@ pub const Client = struct {
             .ok => |v| v,
             .failed => |f| return .{ .failed = try std.fmt.allocPrint(arena, "bitbucket PR detail {s}", .{f}) },
         };
-        const hash = json.getStrOr(pr, "merge_commit.hash", "");
-        if (hash.len == 0) return .{ .failed = "PR not merged — no merge commit" };
+        const updated_on = json.getStrOr(pr, "updated_on", "");
+        // Bitbucket moves `updated_on` when anything on the pull
+        // request does, a push included. Nothing has: the runs the
+        // caller holds are still the right ones.
+        if (known_updated_on.len > 0 and updated_on.len > 0 and std.mem.eql(u8, known_updated_on, updated_on)) return .unchanged;
+        // A merged pull request is about what landed; an open one is
+        // about the head of the branch under review.
+        const merged_sha = json.getStrOr(pr, "merge_commit.hash", "");
+        const hash = if (merged_sha.len > 0) merged_sha else json.getStrOr(pr, "source.commit.hash", "");
+        if (hash.len == 0) return .{ .failed = "the PR names no commit to look up builds on" };
         const list_url = try std.fmt.allocPrint(arena, "{s}/repositories/{s}/{s}/pipelines/?pagelen=60&sort=-created_on", .{ c.base_url, ref.workspace, ref.repo });
         const page = switch (try c.get(arena, list_url)) {
             .ok => |v| v,
@@ -77,7 +124,80 @@ pub const Client = struct {
             if (!sameCommit(pl.commit, hash)) continue;
             try out.append(arena, pl);
         }
-        return .{ .ok = try out.toOwnedSlice(arena) };
+        return .{ .ok = .{
+            .pipelines = try out.toOwnedSlice(arena),
+            .commit = hash,
+            .on_merge = merged_sha.len > 0,
+            .updated_on = updated_on,
+        } };
+    }
+
+    /// The five conditions, in one cached look: the pull request's own
+    /// detail (approvals, changes requested, open tasks), its diffstat
+    /// (a non-2xx is a conflict — Bitbucket answers 555), its comments,
+    /// and the newest run on the commit it is about. `known_build`
+    /// short-circuits the last one when the row's builds are already
+    /// open and fresh.
+    pub fn readinessForPrUrl(
+        c: *Client,
+        arena: Allocator,
+        pr_url: []const u8,
+        known_updated_on: []const u8,
+        required: usize,
+        known_build: ?bool,
+    ) Allocator.Error!ReadinessOutcome {
+        if (c.token.len == 0) return .{ .failed = "BITBUCKET_ACCESS_TOKEN not set — needed to judge a pull request" };
+        const ref = parsePrUrl(pr_url) orelse {
+            if (std.mem.indexOf(u8, pr_url, "github.com") != null) return .{ .failed = "GitHub merge readiness not supported yet" };
+            return .{ .failed = "not a bitbucket PR URL" };
+        };
+        const base = try std.fmt.allocPrint(arena, "{s}/repositories/{s}/{s}/pullrequests/{s}", .{ c.base_url, ref.workspace, ref.repo, ref.id });
+        const pr = switch (try c.get(arena, base)) {
+            .ok => |v| v,
+            .failed => |f| return .{ .failed = try std.fmt.allocPrint(arena, "bitbucket PR detail {s}", .{f}) },
+        };
+        const updated_on = json.getStrOr(pr, "updated_on", "");
+        if (known_updated_on.len > 0 and updated_on.len > 0 and std.mem.eql(u8, known_updated_on, updated_on)) return .unchanged;
+
+        var r: merge.Readiness = .{ .required = @max(required, 1), .checked = true };
+        for (json.array(pr, "participants")) |p| {
+            if (json.getBool(p, "approved") orelse false) r.approvals += 1;
+            const state = json.getStrOr(p, "state", "");
+            if (std.ascii.eqlIgnoreCase(state, "changes_requested")) r.changes_requested = true;
+        }
+        r.open_tasks = @intCast(@max(json.getInt(pr, "task_count") orelse 0, 0));
+
+        // The diffstat's STATUS is the answer; its body is not read.
+        const diffstat_url = try std.fmt.allocPrint(arena, "{s}/diffstat?pagelen=50", .{base});
+        r.conflicts = (try c.get(arena, diffstat_url)) != .ok;
+
+        const comments_url = try std.fmt.allocPrint(arena, "{s}/comments?pagelen=50", .{base});
+        switch (try c.get(arena, comments_url)) {
+            .ok => |page| r.unanswered_comments = unansweredThreads(page),
+            // A comments request that failed is not "no comments".
+            .failed => r.unanswered_comments = 1,
+        }
+
+        if (known_build) |green| {
+            r.build_green = green;
+        } else {
+            const merge_sha = json.getStrOr(pr, "merge_commit.hash", "");
+            const hash = if (merge_sha.len > 0) merge_sha else json.getStrOr(pr, "source.commit.hash", "");
+            const list_url = try std.fmt.allocPrint(arena, "{s}/repositories/{s}/{s}/pipelines/?pagelen=60&sort=-created_on", .{ c.base_url, ref.workspace, ref.repo });
+            switch (try c.get(arena, list_url)) {
+                .ok => |page| {
+                    var newest: ?model.Pipeline = null;
+                    for (json.array(page, "values")) |pv| {
+                        const pl = model.Pipeline.fromJson(pv);
+                        if (!sameCommit(pl.commit, hash)) continue;
+                        if (newest == null) newest = pl;
+                    }
+                    r.build_green = if (newest) |n| std.ascii.eqlIgnoreCase(n.stateLabel(), "SUCCESSFUL") else false;
+                },
+                .failed => r.build_green = false,
+            }
+        }
+        return .{ .ok = .{ .readiness = r, .updated_on = updated_on } };
     }
 
     const Got = union(enum) { ok: Value, failed: []const u8 };
@@ -109,6 +229,29 @@ pub const Client = struct {
     }
 };
 
+/// Comment threads on a pull request that are neither resolved nor
+/// replied to — the same rule the forge pane's review count uses: a
+/// reply is an answer whoever wrote it, and the resolve button is used
+/// unevenly across teams.
+pub fn unansweredThreads(page: Value) usize {
+    const values = json.array(page, "values");
+    var n: usize = 0;
+    for (values) |c| {
+        if (json.getBool(c, "deleted") orelse false) continue;
+        if (json.get(c, "resolution") != null) continue;
+        const id = json.getInt(c, "id") orelse 0;
+        if (id == 0) continue;
+        if ((json.getInt(c, "parent.id") orelse 0) != 0) continue;
+        var replied = false;
+        for (values) |other| {
+            if (json.getBool(other, "deleted") orelse false) continue;
+            if ((json.getInt(other, "parent.id") orelse 0) == id) replied = true;
+        }
+        if (!replied) n += 1;
+    }
+    return n;
+}
+
 /// One hash is a prefix of the other, case-insensitively.
 pub fn sameCommit(a: []const u8, b: []const u8) bool {
     if (a.len == 0 or b.len == 0) return false;
@@ -139,11 +282,11 @@ test "without a token the outcome names the variable; a non-forge URL is named t
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     var c: Client = .{ .gpa = testing.allocator, .io = testing.io, .base_url = "http://127.0.0.1:1", .token = "" };
-    const none = try c.pipelinesForPrUrl(a.allocator(), "https://bitbucket.org/a/b/pull-requests/1");
+    const none = try c.pipelinesForPrUrl(a.allocator(), "https://bitbucket.org/a/b/pull-requests/1", "");
     try testing.expect(std.mem.indexOf(u8, none.failed, "BITBUCKET_ACCESS_TOKEN not set") != null);
     c.token = "x";
-    const gh = try c.pipelinesForPrUrl(a.allocator(), "https://github.com/a/b/pull/1");
+    const gh = try c.pipelinesForPrUrl(a.allocator(), "https://github.com/a/b/pull/1", "");
     try testing.expectEqualStrings("GitHub PR pipeline lookup not supported yet", gh.failed);
-    const other = try c.pipelinesForPrUrl(a.allocator(), "https://example.com/x");
+    const other = try c.pipelinesForPrUrl(a.allocator(), "https://example.com/x", "");
     try testing.expectEqualStrings("not a bitbucket PR URL", other.failed);
 }

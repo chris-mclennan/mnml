@@ -8,8 +8,8 @@
 //
 // The keys mirror the reference's `bitbucket_prs.toml`: the id, the
 // label, the chip (nf-md-bitbucket, `BP`, blue, off the palette bar),
-// the two open commands, the auth fields, the values source and the
-// statusline segment.
+// the three open commands, the auth fields, the values source and the
+// three statusline segments.
 .{
     .id = "bitbucket_prs",
     .label = "Bitbucket PRs",
@@ -22,6 +22,7 @@
     .commands = .{
         .{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open", .keys = .{"space i b"} },
         .{ .id = "bitbucket_prs.open_mine", .title = "Bitbucket PRs: open (mine only)", .args = .{ "--only", "prs-mine" } },
+        .{ .id = "bitbucket_prs.open_awaiting", .title = "Bitbucket PRs: open (awaiting my approval)", .args = .{ "--only", "prs-awaiting" } },
         .{ .id = "bitbucket_prs.refresh", .title = "Bitbucket PRs: refresh the statusline chip", .ex = "term mnml-bitbucket --refresh --workspace {{workspace}}" },
     },
     .statusline = .{
@@ -30,6 +31,10 @@
         // only once the count has been taken, and a zero before then
         // would read as "nothing outstanding".
         .{ .id = "reviews_mine", .text = "", .color = "yellow", .click_command = "bitbucket_prs.open_mine", .priority = 59, .tooltip = "Bitbucket: review threads on your open pull requests that are neither resolved nor replied to." },
+        // The third figure, and the one that is your move: pull
+        // requests you are a reviewer on and have not voted. The
+        // example values below are invented.
+        .{ .id = "reviews_pending", .text = "\u{f0e5} 2", .color = "orange", .click_command = "bitbucket_prs.open_awaiting", .priority = 58, .tooltip = "Bitbucket: open pull requests waiting on YOUR review \u{2014} \u{201c}Fix the login redirect\u{201d}, \u{201c}Bump the client timeout\u{201d}. Hover after a poll for the live names." },
     },
     .auth = .{
         .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Preferred. Atlassian scoped API token — fresh rate-limit bucket, per-integration revoke. Either this OR an app password is required." },

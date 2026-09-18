@@ -180,9 +180,15 @@ pub const show_all_merged_cap: usize = 20;
 pub const VisibleRow = union(enum) {
     /// A tree's repo header; `repo` indexes the tree's rows.
     repo_header: struct { repo: usize },
-    /// A PR under an expanded repo; `sub` when its post-merge pipeline
-    /// line is open (the row is two cells tall).
-    pr: struct { repo: usize, idx: usize, sub: bool },
+    /// A PR under an expanded repo. `open` says its builds are folded
+    /// out below it.
+    pr: struct { repo: usize, idx: usize, open: bool },
+    /// One build under an expanded PR — the runs on the commit it is
+    /// about, newest first.
+    build: struct { repo: usize, idx: usize, run: usize },
+    /// Where a build line would be when there is not one: still
+    /// fetching, none ran, or the fetch failed.
+    build_note: struct { repo: usize, idx: usize, kind: NoteKind },
     /// A branch under an expanded repo of the pipelines tree.
     branch: struct { repo: usize, idx: usize },
     /// `Show more (N)`, over the rows the cap hid.
@@ -190,18 +196,35 @@ pub const VisibleRow = union(enum) {
     /// A row of a flat list.
     flat: usize,
 
-    pub fn height(r: VisibleRow) u16 {
-        return switch (r) {
-            .pr => |p| if (p.sub) 2 else 1,
-            else => 1,
-        };
+    /// Every row is one cell tall. The builds under a pull request
+    /// used to be a second cell on the PR's own row — one line, never
+    /// clickable, never reachable by the cursor. They are rows now.
+    pub fn height(_: VisibleRow) u16 {
+        return 1;
     }
 };
 
+pub const NoteKind = enum { loading, none, failed };
+
 pub const View = struct {
     rows: []const VisibleRow,
-    /// Cells the rows take in total (a PR with its sub-line is two).
+    /// Cells the rows take in total. One per row now that a build is a
+    /// row of its own; kept so the scroll window keeps speaking in
+    /// cells rather than growing a second unit.
     cells: usize,
+};
+
+/// What the app has fetched for one expanded pull request's builds —
+/// all `visibleRows` needs to know to lay the rows out. The app fills
+/// one of these per expanded PR each frame; there are never many.
+pub const BuildsOf = struct {
+    slug: []const u8,
+    id: i64,
+    /// The runs on the pull request's commit; null while the fetch is
+    /// still in flight.
+    runs: ?usize = null,
+    /// The fetch came back with a reason instead of runs.
+    failed: bool = false,
 };
 
 pub const VisibleCtx = struct {
@@ -210,6 +233,20 @@ pub const VisibleCtx = struct {
     expanded: *const Expanded,
     show_all: bool,
     now_secs: i64,
+    /// One entry per expanded pull request; an expanded PR missing from
+    /// it is still being fetched.
+    builds: []const BuildsOf = &.{},
+    /// The `awaiting:` chip is on: only the open pull requests `me` is
+    /// a reviewer on and has not voted. Read off `participants`, which
+    /// the listing already carries — the chip costs no request.
+    awaiting_only: bool = false,
+    /// The account the awaiting filter is about.
+    me: []const u8 = "",
+
+    pub fn buildsOf(c: VisibleCtx, slug: []const u8, id: i64) ?BuildsOf {
+        for (c.builds) |b| if (b.id == id and std.mem.eql(u8, b.slug, slug)) return b;
+        return null;
+    }
 };
 
 /// The PRs of one repo that show under its header, as indices into
@@ -222,8 +259,17 @@ pub fn visiblePrs(arena: Allocator, c: VisibleCtx, prs: []const model.PullReques
     var merged_peeked = false;
     for (prs, 0..) |pr, i| {
         if (want) |s| if (!std.ascii.eqlIgnoreCase(pr.state, s)) continue;
+        // The awaiting filter narrows before anything else counts: a
+        // row it hides was never eligible, so the fold row does not
+        // offer to reveal rows the chip is deliberately keeping out.
+        if (c.awaiting_only and !pr.awaitingApproval(c.me)) continue;
         eligible += 1;
-        if (c.show_all) {
+        // The chip is an explicit ask, so it lifts the 24-hour window
+        // the tree otherwise hides old rows behind: something that has
+        // been waiting on you for three days is exactly what it is for.
+        if (c.awaiting_only) {
+            try out.append(arena, i);
+        } else if (c.show_all) {
             if (pr.isMerged()) {
                 if (merged_kept >= show_all_merged_cap) continue;
                 merged_kept += 1;
@@ -257,9 +303,31 @@ pub fn visibleRows(arena: Allocator, c: VisibleCtx) Allocator.Error!View {
                 if (!c.expanded.hasRepo(r.slug)) continue;
                 for (try visiblePrs(arena, c, r.prs, &hidden)) |pi| {
                     const pr = r.prs[pi];
-                    const sub = pr.isMerged() and pr.merge_commit.len > 0 and c.expanded.hasPr(r.slug, pr.id);
-                    try out.append(arena, .{ .pr = .{ .repo = ri, .idx = pi, .sub = sub } });
-                    cells += if (sub) 2 else 1;
+                    // Every pull request folds out to its builds — an
+                    // open one to the runs on its branch head, a merged
+                    // one to the runs on what landed.
+                    const open = pr.buildCommit().len > 0 and c.expanded.hasPr(r.slug, pr.id);
+                    try out.append(arena, .{ .pr = .{ .repo = ri, .idx = pi, .open = open } });
+                    cells += 1;
+                    if (!open) continue;
+                    const b = c.buildsOf(r.slug, pr.id) orelse {
+                        try out.append(arena, .{ .build_note = .{ .repo = ri, .idx = pi, .kind = .loading } });
+                        cells += 1;
+                        continue;
+                    };
+                    if (b.failed) {
+                        try out.append(arena, .{ .build_note = .{ .repo = ri, .idx = pi, .kind = .failed } });
+                        cells += 1;
+                    } else if ((b.runs orelse 0) == 0) {
+                        try out.append(arena, .{ .build_note = .{ .repo = ri, .idx = pi, .kind = .none } });
+                        cells += 1;
+                    } else {
+                        var k: usize = 0;
+                        while (k < b.runs.?) : (k += 1) {
+                            try out.append(arena, .{ .build = .{ .repo = ri, .idx = pi, .run = k } });
+                            cells += 1;
+                        }
+                    }
                 }
             }
             if (!c.show_all and hidden > 0) {
@@ -309,7 +377,20 @@ pub fn repoOf(r: VisibleRow) ?usize {
     return switch (r) {
         .repo_header => |h| h.repo,
         .pr => |p| p.repo,
+        .build => |b| b.repo,
+        .build_note => |b| b.repo,
         .branch => |b| b.repo,
+        else => null,
+    };
+}
+
+/// The pull request a row belongs to — its own, or the one its build
+/// line hangs under.
+pub fn prOf(r: VisibleRow) ?struct { repo: usize, idx: usize } {
+    return switch (r) {
+        .pr => |p| .{ .repo = p.repo, .idx = p.idx },
+        .build => |b| .{ .repo = b.repo, .idx = b.idx },
+        .build_note => |b| .{ .repo = b.repo, .idx = b.idx },
         else => null,
     };
 }
@@ -379,7 +460,7 @@ test "a mine tab shows every open PR and one merged peek; show_all caps merged a
     try t.expectEqual(@as(usize, 24), lifted.rows.len);
 }
 
-test "a merged PR opened to its pipeline is two cells tall, and the pipelines tree lists branches" {
+test "an expanded PR's builds are rows of their own, one per run, open or merged" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -390,11 +471,46 @@ test "a merged PR opened to its pipeline is two cells tall, and the pipelines tr
     const prs = [_]model.PullRequest{ mkPr(3, "MERGED", fresh_iso), mkPr(4, "MERGED", fresh_iso) };
     const repos = [_]model.RepoPrs{.{ .slug = "api", .prs = &prs }};
     const spec: TabSpec = .{ .kind = .workspace_merged_prs, .name = "Merged", .workspace = "acme" };
-    const v = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
-    try t.expectEqual(@as(usize, 3), v.rows.len);
-    try t.expect(v.rows[1].pr.sub);
-    try t.expect(!v.rows[2].pr.sub);
-    try t.expectEqual(@as(usize, 4), v.cells);
+    // Nothing fetched yet: the expanded PR shows that it is fetching,
+    // rather than an empty gap that reads as "no builds".
+    const loading = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
+    try t.expectEqual(@as(usize, 4), loading.rows.len);
+    try t.expect(loading.rows[1].pr.open);
+    try t.expectEqual(NoteKind.loading, loading.rows[2].build_note.kind);
+    try t.expect(!loading.rows[3].pr.open);
+
+    // Two runs: two rows, each one cell tall and each its own row for
+    // the cursor and the pointer.
+    const two = [_]BuildsOf{.{ .slug = "api", .id = 3, .runs = 2 }};
+    const v = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now, .builds = &two });
+    try t.expectEqual(@as(usize, 5), v.rows.len);
+    try t.expectEqual(@as(usize, 0), v.rows[2].build.run);
+    try t.expectEqual(@as(usize, 1), v.rows[3].build.run);
+    try t.expectEqual(@as(usize, 5), v.cells);
+    try t.expectEqual(@as(usize, 1), v.rows[0].height());
+    try t.expectEqual(@as(usize, 0), prOf(v.rows[3]).?.repo);
+    // None, and failed, each say so in their own words.
+    const none = [_]BuildsOf{.{ .slug = "api", .id = 3, .runs = 0 }};
+    const nv = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now, .builds = &none });
+    try t.expectEqual(NoteKind.none, nv.rows[2].build_note.kind);
+    const bad = [_]BuildsOf{.{ .slug = "api", .id = 3, .runs = 0, .failed = true }};
+    const bv = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now, .builds = &bad });
+    try t.expectEqual(NoteKind.failed, bv.rows[2].build_note.kind);
+
+    // An OPEN pull request folds out the same way — on its branch head.
+    const open_prs = [_]model.PullRequest{.{ .id = 3, .state = "OPEN", .updated_on = fresh_iso, .source_commit = "head1234" }};
+    const open_repos = [_]model.RepoPrs{.{ .slug = "api", .prs = &open_prs }};
+    const ospec: TabSpec = .{ .kind = .workspace_open_prs, .name = "Open", .workspace = "acme" };
+    const ov = try visibleRows(a, .{ .spec = ospec, .data = .{ .repo_pr_tree = &open_repos }, .expanded = &ex, .show_all = false, .now_secs = now, .builds = &two });
+    try t.expect(ov.rows[1].pr.open);
+    try t.expectEqual(@as(usize, 4), ov.rows.len);
+    // …and one that names no commit at all has nothing to fold out.
+    const bare = [_]model.PullRequest{.{ .id = 3, .state = "OPEN", .updated_on = fresh_iso }};
+    const bare_repos = [_]model.RepoPrs{.{ .slug = "api", .prs = &bare }};
+    const bare_v = try visibleRows(a, .{ .spec = ospec, .data = .{ .repo_pr_tree = &bare_repos }, .expanded = &ex, .show_all = false, .now_secs = now, .builds = &two });
+    try t.expectEqual(@as(usize, 2), bare_v.rows.len);
+    try t.expect(!bare_v.rows[1].pr.open);
+
     try t.expectEqual(@as(?usize, 0), parentHeader(v.rows, 2));
     try t.expectEqual(@as(?usize, 0), headerRowOf(v.rows, 0));
 

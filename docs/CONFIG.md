@@ -210,6 +210,15 @@ otherwise. Copy what you need; leave the rest out.
         // `MNML_ARTIFACTS_HOME` when that is set, else your home directory.
         .coverage_chip_mode = .feature, // .both | .feature | .code | .ticker
         .expand_indicator = .chevron, // .chevron | .triangle
+        // How a mounted integration's tab strip marks the tab that is
+        // on: one row under the labels, in the pane's brand colour,
+        // over exactly the active label's cells.
+        //   .block  ▀ upper half-block, flush, the rest of the row empty
+        //   .rule   ━ heavy under the active label, ─ across the strip
+        //   .line   ─ under the active label only
+        // A pane under about twelve rows spends no row on it and
+        // underlines the active label instead.
+        .tab_indicator = .block, // .block | .rule | .line
         .hover_help_height = 8, // clamped to 3..20
         .terminal_label = "terminal",
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)

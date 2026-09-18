@@ -13,8 +13,15 @@
 //!   text    widths and fitting, counted the way `Frame` paints
 //!   work    the one-job channel a pane refetches through, so a slow
 //!           fetch never freezes its keys or its repaint
+//!   build   the build lines under a pull-request row — one pipeline
+//!           run each, `state · branch · age · #n`
+//!   merge   whether a pull request may merge, the dim button that
+//!           says which condition does not hold, and the Claude Code
+//!           session a press dispatches
 //!   action  a row's action button and what a press leaves behind on
-//!           it — the spinner, the `view` it becomes, the ✗ it wears
+//!           it — the spinner it turns while its session runs, the
+//!           `⏸` when that session stops to ask something, the `view`
+//!           it becomes when it ends, the ✗ it wears when it failed
 //!
 //! Ten lines put a pane in mnml's chrome:
 //!
@@ -36,6 +43,8 @@ const hit = @import("pane/hit.zig");
 pub const theme = @import("pane/theme.zig");
 pub const work = @import("pane/work.zig");
 pub const action = @import("pane/action.zig");
+pub const build = @import("pane/build.zig");
+pub const merge = @import("pane/merge.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
 
@@ -51,8 +60,14 @@ pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
 pub const Slot = work.Slot;
+pub const BuildRun = build.Run;
+pub const Readiness = merge.Readiness;
+pub const MergeStrategy = merge.Strategy;
+pub const buildCaption = build.caption;
 pub const ActionState = action.State;
 pub const ActionStore = action.Store;
+pub const actionStateOf = action.fromSessionState;
+pub const actionWatchKey = action.watchKey;
 
 test {
     _ = hit;
@@ -61,6 +76,8 @@ test {
     _ = text;
     _ = work;
     _ = action;
+    _ = build;
+    _ = merge;
     // The anti-drift test: the shared elements painted from two panes'
     // target vocabularies must come out cell for cell identical.
     _ = @import("pane/consistency_test.zig");

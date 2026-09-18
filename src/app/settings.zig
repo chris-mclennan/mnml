@@ -193,6 +193,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.debug_toolbar", .label = "Debug toolbar strip", .section = .ui, .scope = .home },
     .{ .path = "ui.bufferline_diag_style", .label = "Diag chip on tabs", .section = .ui, .scope = .home },
     .{ .path = "ui.expand_indicator", .label = "Expand indicator", .section = .ui, .scope = .home },
+    .{ .path = "ui.tab_indicator", .label = "Integration tab indicator", .section = .ui, .scope = .home },
     .{ .path = "ui.picker_position", .label = "Picker position", .section = .ui, .scope = .home },
     .{ .path = "ui.show_workspace_dots", .label = "Workspace dots", .section = .ui, .scope = .home },
     .{ .path = "ui.hover_help", .label = "Hover help", .section = .ui, .scope = .home },

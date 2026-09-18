@@ -181,6 +181,26 @@ pub fn fire(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error
     return (try fireOutcome(arena, io, d, paths)).text;
 }
 
+/// Fire a prompt that is not a ticket dispatch — the merge confirm's,
+/// which names a pull request rather than an issue. Only the pane
+/// channel: `queue.jsonl` is a ticket queue, and a merge is not a
+/// ticket.
+pub fn firePrompt(arena: Allocator, io: Io, kind: []const u8, prompt_text: []const u8, paths: Paths) Allocator.Error!Outcome {
+    const dir = paths.ipc_dir orelse return .{
+        .fired = false,
+        .text = try std.fmt.allocPrint(arena, "{s}: no mnml IPC channel ($MNML_IPC_DIR, else <ws>/.mnml/" ++ ipc_subdir ++ ")", .{kind}),
+    };
+    const cmd = try std.fs.path.join(arena, &.{ dir, "command" });
+    if (!fileExists(io, cmd)) return .{ .fired = false, .text = try std.fmt.allocPrint(arena, "{s}: no mnml IPC command file at {s}", .{ kind, cmd }) };
+    const shell = try std.fmt.allocPrint(arena, "claude <<'MNML_EOF'\n{s}\nMNML_EOF", .{prompt_text});
+    const args = [_][]const u8{ "sh", "-c", shell };
+    const line = try std.json.Stringify.valueAlloc(arena, .{ .cmd = "term", .args = &args }, .{});
+    appendLine(arena, io, dir, "command", line) catch |err| {
+        return .{ .fired = false, .text = try std.fmt.allocPrint(arena, "{s} failed: {s}", .{ kind, @errorName(err) }) };
+    };
+    return .{ .fired = true, .text = try std.fmt.allocPrint(arena, "{s} \u{2192} pane", .{kind}) };
+}
+
 pub fn fireOutcome(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error!Outcome {
     var fired: std.ArrayList([]const u8) = .empty;
     var errors: std.ArrayList([]const u8) = .empty;

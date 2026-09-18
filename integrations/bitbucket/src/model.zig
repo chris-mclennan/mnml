@@ -39,6 +39,9 @@ pub const PullRequest = struct {
     participants: []const Participant = &.{},
     /// The merge commit's hash on a MERGED PR; "" otherwise.
     merge_commit: []const u8 = "",
+    /// The head of the source branch — what an OPEN pull request's
+    /// builds ran on.
+    source_commit: []const u8 = "",
 
     pub fn updatedDate(pr: PullRequest) []const u8 {
         return dates.date(pr.updated_on);
@@ -63,11 +66,33 @@ pub const PullRequest = struct {
         return std.ascii.eqlIgnoreCase(pr.state, "OPEN");
     }
 
+    /// The commit this pull request's builds are about: what landed
+    /// once it merged, the head of the branch under review before
+    /// that. "" when the API named neither, which is the only reason a
+    /// row has nothing to fold out.
+    pub fn buildCommit(pr: PullRequest) []const u8 {
+        if (pr.merge_commit.len > 0) return pr.merge_commit;
+        return pr.source_commit;
+    }
+
     /// Participants who approved.
     pub fn approvalCount(pr: PullRequest) usize {
         var n: usize = 0;
         for (pr.participants) |p| n += @intFromBool(p.approved);
         return n;
+    }
+
+    /// Is this pull request waiting on `account_id`'s review? A
+    /// reviewer who has neither approved nor asked for changes has not
+    /// answered yet, and the author's own row is never waiting on them.
+    pub fn awaitingApproval(pr: PullRequest, account_id: []const u8) bool {
+        if (account_id.len == 0) return false;
+        if (std.mem.eql(u8, pr.author_id, account_id)) return false;
+        for (pr.participants) |p| {
+            if (!std.mem.eql(u8, p.account_id, account_id)) continue;
+            return !p.approved and !std.ascii.eqlIgnoreCase(p.state, "changes_requested");
+        }
+        return false;
     }
 
     pub fn approvedBy(pr: PullRequest, account_id: []const u8) bool {
@@ -285,6 +310,7 @@ pub fn parsePullRequest(arena: Allocator, v: j.Value) Allocator.Error!PullReques
         .description = j.renderable(v, "description"),
         .participants = try parts.toOwnedSlice(arena),
         .merge_commit = j.pathStr(v, "merge_commit.hash"),
+        .source_commit = j.pathStr(v, "source.commit.hash"),
     };
 }
 
@@ -465,7 +491,7 @@ const t = std.testing;
 const pr_json =
     \\{"id":7,"title":"Fix the thing","state":"OPEN","draft":false,"updated_on":"2026-09-15T12:00:00+00:00",
     \\ "author":{"display_name":"Chris M","account_id":"acct-chris"},
-    \\ "source":{"branch":{"name":"chris/fix"},"repository":{"full_name":"acme/api"}},
+    \\ "source":{"branch":{"name":"chris/fix"},"commit":{"hash":"head1234"},"repository":{"full_name":"acme/api"}},
     \\ "destination":{"branch":{"name":"main"},"repository":{"full_name":"acme/api"}},
     \\ "description":{"raw":"body text"},
     \\ "links":{"html":{"href":"https://bitbucket.org/acme/api/pull-requests/7"}},
@@ -491,6 +517,14 @@ test "a pull request reads its columns, its approvals and its repo halves" {
     try t.expect(!pr.approvedBy(""));
     try t.expectEqualStrings("body text", pr.description);
     try t.expectEqualStrings("abcdef123456", pr.merge_commit);
+    try t.expectEqualStrings("abcdef123456", pr.buildCommit());
+    // An OPEN pull request's builds are about its branch head.
+    var open_pr = pr;
+    open_pr.state = "OPEN";
+    open_pr.merge_commit = "";
+    open_pr.source_commit = "head9999";
+    try t.expectEqualStrings("head9999", open_pr.buildCommit());
+    try t.expectEqualStrings("", (PullRequest{}).buildCommit());
     var buf: [128]u8 = undefined;
     try t.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/7", pr.url(&buf, "acme", "api"));
     const bare = PullRequest{ .id = 9 };

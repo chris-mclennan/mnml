@@ -16,6 +16,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const config = @import("config.zig");
 const model = @import("model.zig");
+const sdk = @import("mnml_sdk");
 
 const Issue = model.Issue;
 const LinkedPr = model.LinkedPr;
@@ -38,6 +39,13 @@ pub const State = struct {
     pr_cache: std.StringHashMapUnmanaged([]const LinkedPr) = .empty,
     pipeline_cache: std.StringHashMapUnmanaged([]const Pipeline) = .empty,
     pipeline_errors: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// The pull request's `updated_on` when its runs were read, and the
+    /// commit they ran on. The stamp is the cache key: while it has not
+    /// moved, the pipelines list need not be asked for again.
+    pipeline_meta: std.StringHashMapUnmanaged(PipelineMeta) = .empty,
+    /// May each pull request merge, and the `updated_on` it was true
+    /// at. One cached look per PR, exactly like the runs above.
+    readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
 
     pub fn init(gpa: Allocator) State {
         return .{ .gpa = gpa, .owned = std.heap.ArenaAllocator.init(gpa) };
@@ -51,6 +59,8 @@ pub const State = struct {
         s.pr_cache.deinit(s.gpa);
         s.pipeline_cache.deinit(s.gpa);
         s.pipeline_errors.deinit(s.gpa);
+        s.pipeline_meta.deinit(s.gpa);
+        s.readiness.deinit(s.gpa);
         s.owned.deinit();
         s.* = undefined;
     }
@@ -170,6 +180,43 @@ pub const State = struct {
     pub fn putPipelineError(s: *State, issue_key: []const u8, pr_id: []const u8, message: []const u8) Allocator.Error!void {
         try s.pipeline_errors.put(s.gpa, try s.prKey(issue_key, pr_id), try s.keep(message));
     }
+
+    pub fn readinessOf(s: *State, issue_key: []const u8, pr_id: []const u8) ?ReadinessEntry {
+        var buf: [256]u8 = undefined;
+        const k = std.fmt.bufPrint(&buf, "{s}\x00{s}", .{ issue_key, pr_id }) catch return null;
+        return s.readiness.get(k);
+    }
+
+    pub fn putReadiness(s: *State, issue_key: []const u8, pr_id: []const u8, e: ReadinessEntry) Allocator.Error!void {
+        try s.readiness.put(s.gpa, try s.prKey(issue_key, pr_id), .{
+            .updated_on = try s.keep(e.updated_on),
+            .readiness = e.readiness,
+        });
+    }
+
+    pub fn pipelineMeta(s: *State, issue_key: []const u8, pr_id: []const u8) ?PipelineMeta {
+        var buf: [256]u8 = undefined;
+        const k = std.fmt.bufPrint(&buf, "{s}\x00{s}", .{ issue_key, pr_id }) catch return null;
+        return s.pipeline_meta.get(k);
+    }
+
+    pub fn putPipelineMeta(s: *State, issue_key: []const u8, pr_id: []const u8, meta: PipelineMeta) Allocator.Error!void {
+        try s.pipeline_meta.put(s.gpa, try s.prKey(issue_key, pr_id), .{
+            .updated_on = try s.keep(meta.updated_on),
+            .commit = try s.keep(meta.commit),
+            .on_merge = meta.on_merge,
+        });
+    }
+};
+
+/// What one readiness look found, and the stamp it was true at.
+pub const ReadinessEntry = struct { updated_on: []const u8, readiness: sdk.pane.merge.Readiness };
+
+/// What the cached runs of one pull request are keyed by.
+pub const PipelineMeta = struct {
+    updated_on: []const u8 = "",
+    commit: []const u8 = "",
+    on_merge: bool = false,
 };
 
 /// A row under a PR: the ticket and the PR it hangs from.
