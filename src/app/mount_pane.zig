@@ -297,10 +297,13 @@ pub fn wheel(p: *MountPane, row: u32, m: Mouse, rect: ?Rect, count: u16) void {
     p.send(.{ .input = .{ .event = .{ .scroll = .{ .col = col, .row = @intCast(@min(row, std.math.maxInt(u16))), .dy = if (m.kind == .scroll_up) n else -n } } } });
 }
 
+/// The pointer over the pane. A motion with a button held is a drag —
+/// the sibling hears the same event with `dragging` set, which is what
+/// lets it track a scrollbar the user is pulling.
 pub fn hover(p: *MountPane, row: u32, m: Mouse, rect: ?Rect) void {
     if (!p.alive()) return;
     const col: u16 = if (rect) |r| m.x -| r.x else m.x;
-    p.send(.{ .input = .{ .event = .{ .hover = .{ .col = col, .row = @intCast(@min(row, std.math.maxInt(u16))) } } } });
+    p.send(.{ .input = .{ .event = .{ .hover = .{ .col = col, .row = @intCast(@min(row, std.math.maxInt(u16))), .dragging = m.kind == .drag } } } });
 }
 
 // ─── frame ──────────────────────────────────────────────────────────────

@@ -11,20 +11,26 @@ reference, captured from the running tracker, and the inventory the
 port was built against.
 
 ```
- JIRA WORK (3)                                                            ? 
+▌JIRA WORK (3)                                                                                                      ?
 ▌1 Assigned   2 Recently Done
-  basic   jql   󰍉 / filter   space: —   assignee: All   type: —   status: All
-  KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
+▌ basic   jql   󰍉 / filter   space: —   assignee: All   type: —   status: All
+▌ KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
 ▌ In PR Review (1)
-     ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form validates on blur    [ Review ]
-         MERGED                                                  Validate the card form on blur                [ Open ]
-          OPEN                                                    Follow-up: trim the whitespace  [ Review ] [ Merge ] [ Open ]
-  In Progress (1)
-      ENG-1         In Progress   Ada Lovelace        2026-09-15  Checkout rewrite
-  To Do (1)
-      ENG-5         To Do         Ada Lovelace        2026-09-15  Basket total wrong with a voucher   [ Fix ] [ Triage ]
- ENG-5: 0 linked PR(s)  t transition · a assignee · S select for a bulk action · f fix version · d detail pane · …
+▌    ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form validates on blur                [ Review ]
+▌        MERGED                                                  Validate the card form on blur               [ Open ]
+▌         OPEN                                                   Follow-up: trim the whitespace  [ Open ] [ Review ] [ Merge ]
+▌ In Progress (1)
+▌     ENG-1         In Progress   Ada Lovelace        2026-09-15  Checkout rewrite
+▌ To Do (1)
+▌     ENG-5         To Do         Ada Lovelace        2026-09-15  Basket total wrong with a voucher  [ Triage ] [ Fix ]
+ ENG-5: 0 linked PR(s)  t transition · a assignee · S select · f fix version · d detail · . actions · / filter · ? keys
 ```
+
+Column 0 is the app-colour gutter the pane toolkit paints — Work blue,
+Fix Versions green, Boards magenta, off each chip's manifest colour —
+and the cursor's row lights it up. Every other colour on the screen is a
+role out of the host theme's `hello.palette`, so the pane wears the
+theme mnml is wearing.
 
 ## Install
 
@@ -103,7 +109,7 @@ the marker on the active tab, the toolbar as mode chips (`basic`,
 that wrap to a second row instead of clipping, the column header, then
 one group per status in the tab's `status_order`, each ticket under it
 with its columns, unresolved tickets auto-expanded with their linked PRs
-(`MERGED` / `OPEN` / `DECLINED`, the title, `[ Review ] [ Merge ] [ Open ]`
+(`MERGED` / `OPEN` / `DECLINED`, the title, `[ Open ] [ Review ] [ Merge ]`
 on an open one, `[ Open ]` on the rest), a merged PR expandable to its
 post-merge pipelines, three PRs per ticket then a `Show all N PRs ↴`
 row. A ticket a bump rule promoted carries `★` after its key and sits in

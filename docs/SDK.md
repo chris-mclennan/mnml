@@ -167,6 +167,54 @@ pane-relative cells; row 0 is your first row (the tab strip is not
 yours). The host folds a wheel burst into one `scroll` with `dy` the
 notch count (positive = up).
 
+## The pane toolkit — mnml's chrome
+
+`sdk.pane` is what every official integration paints out of, so two
+panes cannot drift into two design languages. It owns the caps header
+and its right-to-left chip ladder, the tab strip, the filter pill, the
+app-colour left gutter, the row ground (one row, or two for a row with
+a sub-line), the `Show more (N)` fold row, a detail panel with its `×`
+and a scrollbar, and a hint row where every `key label` is a click
+target. The hit map is generic over your own target union, so you keep
+your vocabulary and share the bookkeeping.
+
+```zig
+const Target = union(enum) { row: u32, filter, quit };
+var hits: sdk.pane.HitMap(Target) = .{};
+
+var p: sdk.pane.Painter(Target) = .{
+    .f = &frame, .gpa = gpa, .arena = arena, .hits = &hits,
+    // The theme the host sent, with your manifest chip colour as the brand.
+    .th = sdk.pane.Theme.fromHelloBranded(mount.hello.palette, "teal"),
+    .ui = .{ .nerd = mount.hello.capabilities.nerd_font, .ascii = mount.hello.capabilities.ascii },
+};
+p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = frame.rows - 1 }, cursor_y);
+_ = p.capsTitle(1, 0, "SAMPLE", "  (5)");
+try p.filterPill(.{ .x = 1, .y = 1, .w = frame.cols - 2, .h = 1 }, query, caret, editing, .filter);
+try p.rowGround(.{ .x = 0, .y = y, .w = frame.cols, .h = 1 }, y == cursor_y, .{ .row = i });
+try p.hintRow(frame.rows - 1, status, &.{.{ .key = "q", .title = "quit", .target = .quit }});
+```
+
+Two rules:
+
+* **Never an ANSI index.** `.{ .index = 6 }` paints whatever the
+  terminal calls colour 6, which is how a pane ends up teal in a theme
+  that has no teal in it. Every colour comes off `sdk.pane.Theme`, which
+  reads the host's `hello.palette` (see `Hello.palette` in
+  `docs/BRIDGE.md`) and falls back to the 16-colour palette when a host
+  sends none. State colours live there too: `prState`, `pipelineState`,
+  `ticketStatus`.
+* **Register the rectangle in the same statement as the paint.** Every
+  chrome call takes its target for that reason; dispatch is then one
+  `switch` on `hits.at(col, row)` and there is no second table to keep
+  in step. `hits.at` scans back to front, so an overlay painted after
+  the body wins the click.
+
+`sdk/mnml-sdk/src/pane/consistency_test.zig` paints every shared element
+from two different target vocabularies and compares the frames cell for
+cell — the test that notices when a change moves one pane and not the
+other.
+
 ## `--install` — the manifest
 
 mnml learns about an integration from
@@ -302,6 +350,11 @@ sdk/mnml-sdk/src/
   frame.zig      Frame: the cell grid + dirty-row tracking
   ipc.zig        Ipc: the tier-2 lines
   manifest.zig   Manifest + write/remove + the data-root rule
+  pane.zig       the pane toolkit's barrel (Theme, Painter, HitMap)
+  pane/theme.zig   the host theme's roles, the brand colour, state colours
+  pane/chrome.zig  Painter: header, tabs, pill, gutter, rows, detail, hints
+  pane/hit.zig     Rect + Map(Target), generic over your own union
+  pane/text.zig    widths and fitting, counted the way Frame paints
 sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
 integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)
 ```

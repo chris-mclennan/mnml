@@ -929,7 +929,7 @@ test "the chip reads the same accounts: single, compact and ticker, the detail a
     var app = try fx.app();
     defer app.deinit();
     const icons = [_]app_mod.Config.IntegrationIcon{
-        .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = "#D16D51", .label = "Claude Code", .enabled = true, .in_palette_bar = false },
+        .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = @import("../ui/brand.zig").claude_hex, .label = "Claude Code", .enabled = true, .in_palette_bar = false },
         .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{25c8}", .command = "ai.codex", .color = "", .label = "Codex", .enabled = true, .in_palette_bar = false },
     };
     app.cfg.ui.integration_icons = &icons;

@@ -6,6 +6,7 @@
 //! does it; the loop in `main.zig` paints between them.
 
 const std = @import("std");
+const sdk = @import("mnml_sdk");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const config = @import("config.zig");
@@ -118,6 +119,10 @@ pub const App = struct {
     status: std.ArrayList(u8) = .empty,
     details_visible: bool = false,
     details_scroll: u16 = 0,
+    /// How many lines the detail pane painted last frame, and how many
+    /// fit — what turns a press on its scrollbar into a position.
+    details_lines: usize = 0,
+    details_rows: u16 = 0,
     details: std.StringHashMapUnmanaged(*DetailEntry) = .empty,
     filter: ?Filter = null,
     jql: ?TextEdit = null,
@@ -1949,6 +1954,13 @@ pub const App = struct {
         const target = a.hits.at(col, row);
         if (a.help) {
             a.help = false;
+            // A row of the sheet runs its chord on the way out; anywhere
+            // else on the sheet just closes it.
+            if (target) |tg| if (tg == .help_row) {
+                var kb: [16]u8 = undefined;
+                const b = keymap.bindingOf(tg.help_row);
+                try a.act(tg.help_row, if (b) |bb| keymap.displayKey(&kb, bb.keys[0]) else "");
+            };
             return;
         }
         if (a.jql != null) {
@@ -2026,6 +2038,21 @@ pub const App = struct {
                 try a.selectIssue(i);
                 try a.toggleCard(a.tab().issues[i].key);
             },
+            // A `key label` on the hint row, and a row of the key sheet,
+            // run exactly what the key runs — the pointer reaches
+            // everything the keyboard does.
+            .hint, .help_row => |action| {
+                var kb: [16]u8 = undefined;
+                const b = keymap.bindingOf(action);
+                try a.act(action, if (b) |bb| keymap.displayKey(&kb, bb.keys[0]) else "");
+            },
+            .detail_close => if (a.details_visible) try a.toggleDetails(),
+            // A press or a drag anywhere on the track goes there: the
+            // bar is a control, not a decoration.
+            .detail_bar => {
+                const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
+                a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
+            },
             .column, .detail, .comment, .help_body, .picker_row, .picker_body, .modal_close, .modal_body, .jql_text, .jql_body => {},
         }
     }
@@ -2056,11 +2083,46 @@ pub const App = struct {
         if (right) try a.toggleSelection();
     }
 
+    /// A press on a row's `\u{25b8}` / `\u{25be}`. A fold, never the row's
+    /// Enter: on a group and a ticket the two happen to agree, but on a
+    /// merged PR row Enter opens the PR in the browser — so routing the
+    /// chevron through `treeActivate` made the one chevron that has
+    /// something to reveal (the post-merge pipelines) launch a browser
+    /// instead of expanding, which reads as "the mouse cannot fold".
     fn clickChevron(a: *App, i: u32) Allocator.Error!void {
         const t = a.tab();
         if (!t.cfg.isTree()) return;
         t.selected = i;
-        try a.treeActivate();
+        try a.afterMove();
+        try a.treeToggleFold();
+    }
+
+    /// Expand what is closed, close what is open — for whatever row the
+    /// cursor is on. The chevron's action, and nothing else's.
+    pub fn treeToggleFold(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const row = (try a.focusedRow(scratch.allocator())) orelse return;
+        const t = a.tab();
+        const st = &(t.tree.?);
+        switch (row) {
+            .group, .ticket, .show_more => try a.treeActivate(),
+            .pr => |p| {
+                const key = t.issues[p.issue_idx].key;
+                const prs = st.prs(key) orelse return;
+                if (p.pr_idx >= prs.len) return;
+                const pr = prs[p.pr_idx];
+                if (!pr.isMerged()) return;
+                if (st.isPrExpanded(key, pr.id)) {
+                    try st.setPrExpanded(key, pr.id, false);
+                } else {
+                    try st.setPrExpanded(key, pr.id, true);
+                    try a.ensurePipelines(key, pr);
+                }
+                try a.clampCursor();
+            },
+            else => try a.treeCollapse(),
+        }
     }
 
     fn clickPrButton(a: *App, row: u32, which: hit.PrButton) Allocator.Error!void {
@@ -2112,6 +2174,17 @@ pub const App = struct {
     }
 
     /// A wheel notch; positive is up.
+    /// The pointer moved with a button held. Only the detail panel's
+    /// scrollbar tracks it: everything else on the pane acts on the
+    /// press, and a drag that started elsewhere must not move things
+    /// under the pointer on its way past.
+    pub fn drag(a: *App, col: u16, row: u16) Allocator.Error!void {
+        const tg = a.hits.at(col, row) orelse return;
+        if (tg != .detail_bar) return;
+        const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
+        a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
+    }
+
     pub fn wheel(a: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
         const steps: i32 = if (dy > 0) -3 else 3;
         if (a.modal != null) {
@@ -2124,7 +2197,7 @@ pub const App = struct {
         }
         switch (a.hits.at(col, row) orelse hit.Target.help_body) {
             .column => |c| a.scrollColumn(c, steps),
-            .detail => {
+            .detail, .detail_close, .detail_bar => {
                 if (steps > 0) a.details_scroll +|= 3 else a.details_scroll -|= 3;
             },
             .picker_row, .picker_body => if (a.picker) |*p| try p.move(steps) else if (a.transition) |*t| t.move(steps),

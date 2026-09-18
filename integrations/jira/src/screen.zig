@@ -28,34 +28,66 @@ const filters = @import("filters.zig");
 const App = app_mod.App;
 const Frame = sdk.Frame;
 const Style = sdk.Style;
+const Theme = sdk.pane.Theme;
 const Rect = hit.Rect;
 
-/// What the host told us about the terminal.
+/// What the host told us about the terminal — and the theme it sends
+/// with its hello, so the pane paints in the theme it is mounted in.
 pub const Ui = struct {
     ascii: bool = false,
     nerd: bool = true,
+    th: Theme = .{},
 
     pub fn glyph(u: Ui, nerd_g: []const u8, fallback: []const u8) []const u8 {
         return if (u.ascii or !u.nerd) fallback else nerd_g;
     }
+
+    pub fn chrome(u: Ui) sdk.pane.Ui {
+        return .{ .ascii = u.ascii, .nerd = u.nerd };
+    }
 };
 
-// ─── the palette: index colours, straight to the terminal ────────────────
+// ─── the palette: the host theme's roles, never a terminal index ─────────
+//
+// An index here paints whatever the terminal happens to call that
+// number — which is how the toolbar came to be teal in a theme that has
+// no teal in it. Every style below resolves through `hello.palette`.
 
-pub const accent: Style = .{ .fg = .{ .index = 6 }, .mods = .{ .bold = true } };
-pub const accent_plain: Style = .{ .fg = .{ .index = 6 } };
-pub const muted: Style = .{ .mods = .{ .dim = true } };
-pub const bold: Style = .{ .mods = .{ .bold = true } };
-pub const plain: Style = .{};
-pub const chip_style: Style = .{ .mods = .{ .reverse = true } };
-pub const chip_active: Style = .{ .fg = .{ .index = 6 }, .mods = .{ .reverse = true, .bold = true } };
-pub const bulk: Style = .{ .fg = .{ .index = 5 }, .mods = .{ .bold = true } };
-pub const ok_style: Style = .{ .fg = .{ .index = 2 } };
-pub const warn_style: Style = .{ .fg = .{ .index = 3 } };
-pub const err_style: Style = .{ .fg = .{ .index = 1 } };
-pub const blue: Style = .{ .fg = .{ .index = 4 } };
-pub const star: Style = .{ .fg = .{ .index = 3 }, .mods = .{ .bold = true } };
-pub const border: Style = .{ .mods = .{ .dim = true } };
+pub const Styles = struct {
+    accent: Style,
+    accent_plain: Style,
+    muted: Style,
+    bold: Style,
+    plain: Style,
+    chip_style: Style,
+    chip_active: Style,
+    bulk: Style,
+    ok_style: Style,
+    warn_style: Style,
+    err_style: Style,
+    blue: Style,
+    star: Style,
+    border: Style,
+
+    pub fn of(th: Theme) Styles {
+        return .{
+            .accent = th.accentText(),
+            .accent_plain = th.accentPlain(),
+            .muted = th.dimText(),
+            .bold = th.bright(),
+            .plain = th.text(),
+            .chip_style = th.chip(),
+            .chip_active = th.chipActive(),
+            .bulk = .{ .fg = th.purple, .mods = .{ .bold = true } },
+            .ok_style = th.good(),
+            .warn_style = th.warn(),
+            .err_style = th.bad(),
+            .blue = .{ .fg = th.blue },
+            .star = .{ .fg = th.yellow, .mods = .{ .bold = true } },
+            .border = .{ .fg = th.border },
+        };
+    }
+};
 
 pub const marker_glyph = "\u{258c}";
 pub const marker_ascii = ">";
@@ -91,6 +123,12 @@ pub const Painter = struct {
     a: *App,
     arena: Allocator,
     ui: Ui,
+    /// The host theme's roles, resolved once for the frame.
+    s: Styles,
+    /// The shared pane chrome — the gutter, the fold row, the detail
+    /// panel's `\u{d7}` and scrollbar, the hint row. Both official
+    /// integrations paint these from the same code.
+    c: Chrome,
     lay: Layout = .{},
 
     fn cols(p: *const Painter) u16 {
@@ -138,6 +176,7 @@ pub const Painter = struct {
         p.a.hits.reset();
         if (p.rows() == 0 or p.cols() == 0) return;
         p.lay.status_y = p.rows() - 1;
+        p.c.gutter(.{ .x = 0, .y = 0, .w = 1, .h = p.lay.status_y }, null);
         if (!p.a.hasTabs()) {
             try p.paintEmptyScope();
             try p.paintStatus();
@@ -163,6 +202,10 @@ pub const Painter = struct {
         p.lay.body_h = p.lay.status_y -| y;
         if (t.cfg.isKanban()) try p.paintKanban() else try p.paintTree();
         if (p.lay.detail_x) |dx| try p.paintDetail(dx);
+        // The app-colour stripe down column 0 — the pane's identity, from
+        // the toolkit, so every mnml integration wears it the same way.
+        // It is painted UNDER the body: a row that puts its own marker
+        // there (the cursor's) still wins the cell.
         try p.paintStatus();
         // The overlays, back to front: the last painted is on top.
         if (p.a.comment != null) try p.paintComment();
@@ -175,11 +218,11 @@ pub const Painter = struct {
 
     fn paintEmptyScope(p: *Painter) Allocator.Error!void {
         const fam = if (p.a.family) |f| f.label() else "Jira";
-        _ = p.put(1, 0, p.cols(), upperOf(p.arena, fam), accent);
-        _ = p.put(1, 2, p.cols() -| 1, "No tabs for this scope.", bold);
+        _ = p.put(1, 0, p.cols(), upperOf(p.arena, fam), p.s.accent);
+        _ = p.put(1, 2, p.cols() -| 1, "No tabs for this scope.", p.s.bold);
         const cli = if (p.a.family) |f| f.cli() else "work";
-        _ = p.putFit(1, 3, p.cols() -| 1, p.fmt("Add a `.tabs` entry whose kind belongs to `--only {s}` in the config, then press r.", .{cli}), muted);
-        _ = p.putFit(1, 4, p.cols() -| 1, "Kinds: work_assigned · work_recently_done · work_recent · work_unified · filter · fix_version_tree · board_active_sprint · board_backlog.", muted);
+        _ = p.putFit(1, 3, p.cols() -| 1, p.fmt("Add a `.tabs` entry whose kind belongs to `--only {s}` in the config, then press r.", .{cli}), p.s.muted);
+        _ = p.putFit(1, 4, p.cols() -| 1, "Kinds: work_assigned · work_recently_done · work_recent · work_unified · filter · fix_version_tree · board_active_sprint · board_backlog.", p.s.muted);
         try p.hitAdd(.{ .x = 0, .y = 0, .w = p.cols(), .h = p.rows() -| 1 }, .help_body);
     }
 
@@ -190,7 +233,7 @@ pub const Painter = struct {
         const t = p.a.tab();
         const title = upperOf(p.arena, if (p.a.family) |f| f.label() else "Jira");
         var x: u16 = 1;
-        x += p.put(x, y, p.cols() -| x, title, accent);
+        x += p.put(x, y, p.cols() -| x, title, p.s.accent);
         var arena_mask = std.heap.ArenaAllocator.init(p.a.gpa);
         defer arena_mask.deinit();
         const shown = filters.countTrue(try p.a.mask(arena_mask.allocator(), t));
@@ -200,9 +243,9 @@ pub const Painter = struct {
             " (error)"
         else
             " (loading…)";
-        x += p.put(x, y, p.cols() -| x, sub, muted);
+        x += p.put(x, y, p.cols() -| x, sub, p.s.muted);
         if (p.a.selection.count() > 0) {
-            x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), bulk) + 1;
+            x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
         }
         // The right-end chips, dropped whole when they do not fit.
         const help_t = " ? ";
@@ -212,10 +255,10 @@ pub const Painter = struct {
         var rx = p.cols();
         if (rx >= x + hw + rw + 3) {
             rx -= hw + 1;
-            _ = p.put(rx, y, hw, help_t, chip_style);
+            _ = p.put(rx, y, hw, help_t, p.s.chip_style);
             try p.hitAdd(.{ .x = rx, .y = y, .w = hw, .h = 1 }, .{ .chip = .help });
             rx -= rw + 1;
-            _ = p.put(rx, y, rw, refresh_t, chip_style);
+            _ = p.put(rx, y, rw, refresh_t, p.s.chip_style);
             try p.hitAdd(.{ .x = rx, .y = y, .w = rw, .h = 1 }, .{ .chip = .refresh });
         }
     }
@@ -228,8 +271,8 @@ pub const Painter = struct {
             const label = p.fmt("{d} {s}", .{ i + 1, t.cfg.name });
             const w = text.width(label) + 2;
             if (x + w > p.cols()) break;
-            if (is_active) _ = p.put(x, y, 1, p.marker(), accent);
-            _ = p.put(x + 1, y, w - 1, label, if (is_active) bold else muted);
+            if (is_active) _ = p.put(x, y, 1, p.marker(), p.s.accent);
+            _ = p.put(x + 1, y, w - 1, label, if (is_active) p.s.bold else p.s.muted);
             try p.hitAdd(.{ .x = x, .y = y, .w = w, .h = 1 }, .{ .tab = @intCast(i) });
             x += w + 1;
         }
@@ -253,42 +296,42 @@ pub const Painter = struct {
             }
             break :blk try std.fmt.allocPrint(arena, " {s} {s} ", .{ glyph, placeholder_unfocused });
         };
-        const search_style: Style = if (a.filter != null) chip_active else chip_style;
+        const search_style: Style = if (a.filter != null) p.s.chip_active else p.s.chip_style;
         if (t.cfg.isKanban()) {
             const board_name = if (t.board_id != 0) try a.boardName(t.board_id) else "default";
-            try out.append(arena, .{ .text_ = try chipText(arena, "board", board_name), .target = .board, .style = chip_style });
+            try out.append(arena, .{ .text_ = try chipText(arena, "board", board_name), .target = .board, .style = p.s.chip_style });
             const sprint_name = blk: {
                 if (t.selected_sprint) |id| if (t.sprints) |list| for (list) |s| if (s.id == id) break :blk s.name;
                 if (t.cfg.kind == .board_backlog) break :blk "backlog";
                 if (t.sprints) |list| for (list) |s| if (std.ascii.eqlIgnoreCase(s.state, "active")) break :blk s.name;
                 break :blk "active";
             };
-            try out.append(arena, .{ .text_ = try chipText(arena, "sprint", sprint_name), .target = .sprint, .style = chip_style });
+            try out.append(arena, .{ .text_ = try chipText(arena, "sprint", sprint_name), .target = .sprint, .style = p.s.chip_style });
             try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
             // The avatar cluster is painted by paintToolbar itself.
-            try out.append(arena, .{ .text_ = " version ", .target = .version, .style = chip_style });
-            try out.append(arena, .{ .text_ = if (t.active_epics.count() > 0) try std.fmt.allocPrint(arena, " epic: {d} ", .{t.active_epics.count()}) else " epic ", .target = .epic, .style = if (t.active_epics.count() > 0) chip_active else chip_style });
-            try out.append(arena, .{ .text_ = if (t.issue_type.len > 0) try chipText(arena, "type", t.issue_type) else " type ", .target = .type, .style = if (t.issue_type.len > 0) chip_active else chip_style });
-            try out.append(arena, .{ .text_ = if (t.label.len > 0) try chipText(arena, "label", t.label) else " label ", .target = .label, .style = if (t.label.len > 0) chip_active else chip_style });
-            if (t.team.len > 0) try out.append(arena, .{ .text_ = try chipText(arena, "team", t.team), .target = .overflow, .style = chip_active });
+            try out.append(arena, .{ .text_ = " version ", .target = .version, .style = p.s.chip_style });
+            try out.append(arena, .{ .text_ = if (t.active_epics.count() > 0) try std.fmt.allocPrint(arena, " epic: {d} ", .{t.active_epics.count()}) else " epic ", .target = .epic, .style = if (t.active_epics.count() > 0) p.s.chip_active else p.s.chip_style });
+            try out.append(arena, .{ .text_ = if (t.issue_type.len > 0) try chipText(arena, "type", t.issue_type) else " type ", .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
+            try out.append(arena, .{ .text_ = if (t.label.len > 0) try chipText(arena, "label", t.label) else " label ", .target = .label, .style = if (t.label.len > 0) p.s.chip_active else p.s.chip_style });
+            if (t.team.len > 0) try out.append(arena, .{ .text_ = try chipText(arena, "team", t.team), .target = .overflow, .style = p.s.chip_active });
             const qf_n = t.active_quick_filters.items.len;
-            try out.append(arena, .{ .text_ = if (qf_n > 0) try std.fmt.allocPrint(arena, " quick filters: {d} ", .{qf_n}) else " quick filters ", .target = .quick_filters, .style = if (qf_n > 0) chip_active else chip_style });
+            try out.append(arena, .{ .text_ = if (qf_n > 0) try std.fmt.allocPrint(arena, " quick filters: {d} ", .{qf_n}) else " quick filters ", .target = .quick_filters, .style = if (qf_n > 0) p.s.chip_active else p.s.chip_style });
             const unassigned_on = t.active_assignees.contains(model.unassigned_sentinel);
-            try out.append(arena, .{ .text_ = " unassigned ", .target = .unassigned, .style = if (unassigned_on) chip_active else chip_style });
-            try out.append(arena, .{ .text_ = " settings ", .target = .settings, .style = chip_style });
+            try out.append(arena, .{ .text_ = " unassigned ", .target = .unassigned, .style = if (unassigned_on) p.s.chip_active else p.s.chip_style });
+            try out.append(arena, .{ .text_ = " settings ", .target = .settings, .style = p.s.chip_style });
             return out.toOwnedSlice(arena);
         }
-        try out.append(arena, .{ .text_ = " basic ", .target = .basic, .style = if (!t.show_jql) chip_active else chip_style });
-        try out.append(arena, .{ .text_ = " jql ", .target = .jql, .style = if (t.show_jql) chip_active else chip_style });
+        try out.append(arena, .{ .text_ = " basic ", .target = .basic, .style = if (!t.show_jql) p.s.chip_active else p.s.chip_style });
+        try out.append(arena, .{ .text_ = " jql ", .target = .jql, .style = if (t.show_jql) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
-        try out.append(arena, .{ .text_ = try chipText(arena, "space", if (t.cfg.project.len > 0) t.cfg.project else "—"), .target = .space, .style = chip_style });
-        try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) chip_active else chip_style });
-        try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) chip_active else chip_style });
-        try out.append(arena, .{ .text_ = try chipText(arena, "status", t.scope.label()), .target = .status, .style = if (t.scope != .all) chip_active else chip_style });
+        try out.append(arena, .{ .text_ = try chipText(arena, "space", if (t.cfg.project.len > 0) t.cfg.project else "—"), .target = .space, .style = p.s.chip_style });
+        try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
+        try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
+        try out.append(arena, .{ .text_ = try chipText(arena, "status", t.scope.label()), .target = .status, .style = if (t.scope != .all) p.s.chip_active else p.s.chip_style });
         if (t.cfg.isFixVersions()) {
             if (fixVersionOf(t.jql)) |v| {
-                try out.append(arena, .{ .text_ = try chipText(arena, "fixVersion", v), .target = .fixv_pill, .style = chip_active });
-                try out.append(arena, .{ .text_ = if (p.ui.ascii) " x " else " ⓧ ", .target = .fixv_remove, .style = chip_style });
+                try out.append(arena, .{ .text_ = try chipText(arena, "fixVersion", v), .target = .fixv_pill, .style = p.s.chip_active });
+                try out.append(arena, .{ .text_ = if (p.ui.ascii) " x " else " ⓧ ", .target = .fixv_remove, .style = p.s.chip_style });
             }
         }
         return out.toOwnedSlice(arena);
@@ -358,7 +401,7 @@ pub const Painter = struct {
                 x = 1;
             }
             const on = t.active_assignees.contains(s.account_id);
-            _ = p.put(x, y, w, p.fmt(" {s} ", .{ini}), if (on) chip_active else chip_style);
+            _ = p.put(x, y, w, p.fmt(" {s} ", .{ini}), if (on) p.s.chip_active else p.s.chip_style);
             try p.hitAdd(.{ .x = x, .y = y, .w = w, .h = 1 }, .{ .avatar = @intCast(i) });
             x += w + 1;
         }
@@ -369,7 +412,7 @@ pub const Painter = struct {
             used += 1;
             x = 1;
         }
-        _ = p.put(x, y, mw, more, chip_style);
+        _ = p.put(x, y, mw, more, p.s.chip_style);
         try p.hitAdd(.{ .x = x, .y = y, .w = mw, .h = 1 }, .{ .chip = .overflow });
         x += mw + 1;
         return .{ .x = x, .y = y, .rows = used };
@@ -434,17 +477,17 @@ pub const Painter = struct {
         const w = p.lay.list_w;
         if (h == 0) return;
         if (t.last_error.len > 0 and t.issues.len == 0) {
-            _ = p.putFit(2, y0, w -| 2, p.fmt("error: {s}", .{t.last_error}), err_style);
-            _ = p.putFit(2, y0 + 1, w -| 2, "press r to try again", muted);
+            _ = p.putFit(2, y0, w -| 2, p.fmt("error: {s}", .{t.last_error}), p.s.err_style);
+            _ = p.putFit(2, y0 + 1, w -| 2, "press r to try again", p.s.muted);
             return;
         }
         if (!t.fetched) {
-            _ = p.put(2, y0, w -| 2, "loading…", muted);
+            _ = p.put(2, y0, w -| 2, "loading…", p.s.muted);
             return;
         }
         const r = (try a.treeRows(p.arena)) orelse return;
         if (r.rows.len == 0) {
-            _ = p.put(2, y0, w -| 2, if (t.issues.len == 0) "no tickets" else "no tickets match the filter", muted);
+            _ = p.put(2, y0, w -| 2, if (t.issues.len == 0) "no tickets" else "no tickets match the filter", p.s.muted);
             return;
         }
         // Keep the cursor on screen.
@@ -463,16 +506,16 @@ pub const Painter = struct {
             const row = r.rows[i];
             const is_cur = i == t.selected;
             const idx: u32 = @intCast(i);
-            const base: Style = if (is_cur) bold else plain;
-            if (is_cur) _ = p.put(0, y, 1, p.marker(), accent);
+            const base: Style = if (is_cur) p.s.bold else p.s.plain;
+            if (is_cur) _ = p.put(0, y, 1, p.marker(), p.s.accent);
             try p.hitAdd(.{ .x = 0, .y = y, .w = w, .h = 1 }, .{ .row = idx });
             switch (row) {
                 .group => |g| {
                     const chev = p.chevron(g.expanded);
-                    _ = p.put(1, y, 2, chev, accent_plain);
+                    _ = p.put(1, y, 2, chev, p.s.accent_plain);
                     try p.hitAdd(.{ .x = 1, .y = y, .w = 2, .h = 1 }, .{ .chevron = idx });
                     const name = if (std.mem.eql(u8, g.status, tree.top_sentinel)) "Release cut" else g.status;
-                    _ = p.putFit(3, y, w -| 3, p.fmt("{s} ({d})", .{ name, g.count }), if (is_cur) accent else bold);
+                    _ = p.putFit(3, y, w -| 3, p.fmt("{s} ({d})", .{ name, g.count }), if (is_cur) p.s.accent else p.s.bold);
                 },
                 .ticket => |tk| {
                     const iss = t.issues[tk.issue_idx];
@@ -482,18 +525,18 @@ pub const Painter = struct {
                     // No chevron once the PRs are known to be none.
                     const show_chev = !(expanded and prs != null and prs.?.len == 0 and false) and (prs == null or prs.?.len > 0 or !expanded);
                     if (show_chev and !(prs != null and prs.?.len == 0)) {
-                        _ = p.put(key_c.x + 2, y, 2, p.chevron(expanded), accent_plain);
+                        _ = p.put(key_c.x + 2, y, 2, p.chevron(expanded), p.s.accent_plain);
                         try p.hitAdd(.{ .x = key_c.x + 2, .y = y, .w = 2, .h = 1 }, .{ .chevron = idx });
                     }
                     const selected_bulk = a.isSelected(iss.key);
                     var kx = key_c.x + 4;
-                    const key_style: Style = if (selected_bulk) bulk else if (is_cur) accent else accent_plain;
+                    const key_style: Style = if (selected_bulk) p.s.bulk else if (is_cur) p.s.accent else p.s.accent_plain;
                     kx += p.putFit(kx, y, key_c.w -| 6, iss.key, key_style);
-                    if (tk.bumped) kx += p.put(kx + 1, y, 2, if (p.ui.ascii) "*" else "★", star) + 1;
-                    if (selected_bulk) _ = p.put(kx + 1, y, 2, if (p.ui.ascii) "+" else "✓", bulk);
+                    if (tk.bumped) kx += p.put(kx + 1, y, 2, if (p.ui.ascii) "*" else "★", p.s.star) + 1;
+                    if (selected_bulk) _ = p.put(kx + 1, y, 2, if (p.ui.ascii) "+" else "✓", p.s.bulk);
                     for (layout) |c| switch (c.col) {
                         .key, .summary => {},
-                        .status => _ = p.putFit(c.x, y, c.w -| 1, tk.effective_status, statusStyle(iss, base)),
+                        .status => _ = p.putFit(c.x, y, c.w -| 1, tk.effective_status, statusStyle(p.ui.th, iss, base)),
                         .assignee => _ = p.putFit(c.x, y, c.w -| 1, iss.assigneeName(), base),
                         .reporter => _ = p.putFit(c.x, y, c.w -| 1, iss.reporterName(), base),
                         .priority => _ = p.putFit(c.x, y, c.w -| 1, iss.priority, base),
@@ -525,15 +568,17 @@ pub const Painter = struct {
                     const pr = prs[pr_ref.pr_idx];
                     const cx = key_c.x + 6;
                     if (pr.isMerged()) {
-                        _ = p.put(cx, y, 2, p.chevron(st.isPrExpanded(iss.key, pr.id)), accent_plain);
+                        _ = p.put(cx, y, 2, p.chevron(st.isPrExpanded(iss.key, pr.id)), p.s.accent_plain);
                         try p.hitAdd(.{ .x = cx, .y = y, .w = 2, .h = 1 }, .{ .chevron = idx });
                     }
-                    _ = p.putFit(cx + 2, y, key_c.w -| 8, pr.status, prStyle(pr.status));
-                    // The reference's chips at the right end of the summary:
-                    // `[ Review ] [ Merge ] [ Open ]` on an open PR, `[ Open ]`
+                    _ = p.putFit(cx + 2, y, key_c.w -| 8, pr.status, prStyle(p.ui.th, pr.status));
+                    // The chips at the right end of the summary:
+                    // `[ Open ] [ Review ] [ Merge ]` on an open PR, `[ Open ]`
                     // on a merged or declined one — here every one a hit.
                     const Btn = struct { label: []const u8, which: hit.PrButton };
-                    const open_set = [_]Btn{ .{ .label = "[ Review ]", .which = .review }, .{ .label = "[ Merge ]", .which = .merge }, .{ .label = "[ Open ]", .which = .open } };
+                    // Chronological: you open a PR, then it is reviewed,
+                    // then it merges.
+                    const open_set = [_]Btn{ .{ .label = "[ Open ]", .which = .open }, .{ .label = "[ Review ]", .which = .review }, .{ .label = "[ Merge ]", .which = .merge } };
                     const closed_set = [_]Btn{.{ .label = "[ Open ]", .which = .open }};
                     const set: []const Btn = if (pr.isOpen()) &open_set else &closed_set;
                     var bw: u16 = 0;
@@ -544,7 +589,7 @@ pub const Painter = struct {
                         var bx = sum_c.x + sw;
                         for (set) |b| {
                             const lw = text.width(b.label);
-                            _ = p.put(bx, y, lw, b.label, chip_style);
+                            _ = p.put(bx, y, lw, b.label, p.s.chip_style);
                             try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
                             bx += lw + 1;
                         }
@@ -552,15 +597,15 @@ pub const Painter = struct {
                     const title = if (pr.name.len > 0) pr.name else pr.url;
                     _ = p.putFit(sum_c.x, y, sw -| 1, title, base);
                 },
-                .pr_loading => _ = p.put(key_c.x + 6, y, w -| (key_c.x + 6), "… fetching linked PRs", muted),
-                .pipeline_loading => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ fetching pipelines…", muted),
-                .pipeline_empty => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ no pipelines on the merge commit", muted),
+                .pr_loading => _ = p.put(key_c.x + 6, y, w -| (key_c.x + 6), "… fetching linked PRs", p.s.muted),
+                .pipeline_loading => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ fetching pipelines…", p.s.muted),
+                .pipeline_empty => _ = p.put(key_c.x + 10, y, w -| (key_c.x + 10), "→ no pipelines on the merge commit", p.s.muted),
                 .pipeline_error => |pe| {
                     const iss = t.issues[pe.issue_idx];
                     const st = &(t.tree.?);
                     const prs = st.prs(iss.key) orelse continue;
                     const why = if (pe.pr_idx < prs.len) st.pipelineError(iss.key, prs[pe.pr_idx].id) orelse "?" else "?";
-                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), p.fmt("→ {s}", .{why}), warn_style);
+                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), p.fmt("→ {s}", .{why}), p.s.warn_style);
                 },
                 .pipeline => |pl| {
                     const iss = t.issues[pl.issue_idx];
@@ -572,14 +617,11 @@ pub const Painter = struct {
                     const pipe = list[pl.pipeline_idx];
                     var dbuf: [32]u8 = undefined;
                     const line = p.fmt("→ #{d} {s}  {s}  {s}  {s}", .{ pipe.build_number, pipe.stateLabel(), pipe.branchLabel(), pipe.createdDate(), pipe.durationLabel(&dbuf) });
-                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), line, pipelineStyle(pipe));
+                    _ = p.putFit(key_c.x + 10, y, w -| (key_c.x + 10), line, pipelineStyle(p.ui.th, pipe));
                 },
-                .show_more => |sm| {
-                    _ = p.put(key_c.x + 6, y, 2, if (p.ui.ascii) "..." else "⋯", muted);
-                    const label = p.fmt("Show all {d} {s} ↴", .{ sm.hidden, if (sm.hidden == 1) "PR" else "PRs" });
-                    _ = p.putFit(sum_c.x, y, sum_c.w -| 1, label, if (is_cur) accent else accent_plain);
-                    try p.hitAdd(.{ .x = 0, .y = y, .w = w, .h = 1 }, .{ .show_more = idx });
-                },
+                // The fold row, from the toolkit: `⋯  Show more (N)`
+                // with the label in the bright foreground a key wears.
+                .show_more => |sm| try p.c.showMoreRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, sum_c.x, sm.hidden, .{ .show_more = idx }),
             }
         }
     }
@@ -589,7 +631,7 @@ pub const Painter = struct {
         for (dispatch.buttonsForTicket(iss), 0..) |b, bi| {
             const lw = text.width(b.label());
             if (x + lw > x0 + max_w) break;
-            _ = p.put(x, y, lw, b.label(), chip_style);
+            _ = p.put(x, y, lw, b.label(), p.s.chip_style);
             try p.hitAdd(.{ .x = x, .y = y, .w = lw, .h = 1 }, .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } });
             x += lw + 1;
         }
@@ -605,12 +647,12 @@ pub const Painter = struct {
         const w = p.lay.list_w;
         if (h < 3 or w < 12) return;
         if (t.last_error.len > 0 and t.issues.len == 0) {
-            _ = p.putFit(2, y0, w -| 2, p.fmt("error: {s}", .{t.last_error}), err_style);
-            _ = p.putFit(2, y0 + 1, w -| 2, "press r to try again", muted);
+            _ = p.putFit(2, y0, w -| 2, p.fmt("error: {s}", .{t.last_error}), p.s.err_style);
+            _ = p.putFit(2, y0 + 1, w -| 2, "press r to try again", p.s.muted);
             return;
         }
         if (!t.fetched) {
-            _ = p.put(2, y0, w -| 2, "loading…", muted);
+            _ = p.put(2, y0, w -| 2, "loading…", p.s.muted);
             return;
         }
         const m = try a.mask(p.arena, t);
@@ -621,7 +663,7 @@ pub const Painter = struct {
             const cx: u16 = @intCast(c * col_w);
             const inner_w = col_w -| 2;
             const col: kanban.Col = @enumFromInt(c);
-            try p.box(.{ .x = cx, .y = y0, .w = col_w, .h = h }, p.fmt(" {s} ({d}) ", .{ col.title(), buckets[c].len }), border);
+            try p.box(.{ .x = cx, .y = y0, .w = col_w, .h = h }, p.fmt(" {s} ({d}) ", .{ col.title(), buckets[c].len }), p.s.border);
             try p.hitAdd(.{ .x = cx, .y = y0, .w = col_w, .h = h }, .{ .column = @intCast(c) });
             // The lines of every card, then the window the scroll shows.
             var lines: std.ArrayList(struct { issue: usize, line: kanban.CardLine, first: bool }) = .empty;
@@ -650,18 +692,18 @@ pub const Painter = struct {
                 const ln = lines.items[li];
                 const iss = t.issues[ln.issue];
                 const is_cur = ln.issue == t.selected;
-                const base: Style = if (is_cur) bold else plain;
+                const base: Style = if (is_cur) p.s.bold else p.s.plain;
                 const ix = cx + 1;
                 switch (ln.line) {
                     .head => {
-                        if (is_cur) _ = p.put(ix, y, 1, p.marker(), accent);
-                        _ = p.put(ix + 1, y, 2, p.chevron(a.isCardExpanded(iss.key)), accent_plain);
+                        if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                        _ = p.put(ix + 1, y, 2, p.chevron(a.isCardExpanded(iss.key)), p.s.accent_plain);
                         try p.hitAdd(.{ .x = ix, .y = y, .w = 3, .h = 1 }, .{ .card_chevron = @intCast(ln.issue) });
                         var kx = ix + 3;
-                        kx += p.put(kx, y, 2, kanban.typeGlyph(iss.issuetype, p.ui.ascii or !p.ui.nerd), muted) + 1;
-                        const key_style: Style = if (a.isSelected(iss.key)) bulk else if (is_cur) accent else accent_plain;
+                        kx += p.put(kx, y, 2, kanban.typeGlyph(iss.issuetype, p.ui.ascii or !p.ui.nerd), p.s.muted) + 1;
+                        const key_style: Style = if (a.isSelected(iss.key)) p.s.bulk else if (is_cur) p.s.accent else p.s.accent_plain;
                         kx += p.putFit(kx, y, inner_w -| (kx - ix), iss.key, key_style);
-                        if (a.isSelected(iss.key)) _ = p.put(kx + 1, y, 2, if (p.ui.ascii) "+" else "✓", bulk);
+                        if (a.isSelected(iss.key)) _ = p.put(kx + 1, y, 2, if (p.ui.ascii) "+" else "✓", p.s.bulk);
                         try p.hitAdd(.{ .x = ix + 3, .y = y, .w = inner_w -| 3, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .summary => |s| {
@@ -669,7 +711,7 @@ pub const Painter = struct {
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .assignee => |s| {
-                        _ = p.putFit(ix + 3, y, inner_w -| 3, p.fmt("· {s}", .{s}), muted);
+                        _ = p.putFit(ix + 3, y, inner_w -| 3, p.fmt("· {s}", .{s}), p.s.muted);
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .labels => {
@@ -677,17 +719,17 @@ pub const Painter = struct {
                         var lx = ix + 3;
                         for (iss.labels, 0..) |l, lidx| {
                             if (lidx == 4) {
-                                _ = p.put(lx, y, inner_w -| (lx - ix), p.fmt("+{d}", .{iss.labels.len - 4}), muted);
+                                _ = p.put(lx, y, inner_w -| (lx - ix), p.fmt("+{d}", .{iss.labels.len - 4}), p.s.muted);
                                 break;
                             }
                             const chip = p.fmt("#{s}", .{l});
                             if (lx + text.width(chip) > ix + inner_w) break;
-                            lx += p.put(lx, y, inner_w -| (lx - ix), chip, accent_plain) + 1;
+                            lx += p.put(lx, y, inner_w -| (lx - ix), chip, p.s.accent_plain) + 1;
                         }
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .hint => |hint_line| {
-                        _ = p.putFit(ix + 3, y, inner_w -| 3, hint_line, muted);
+                        _ = p.putFit(ix + 3, y, inner_w -| 3, hint_line, p.s.muted);
                         try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .actions => try p.paintActions(ix + 3, y, inner_w -| 3, ln.issue, iss),
@@ -706,18 +748,23 @@ pub const Painter = struct {
         const w = p.cols() -| dx;
         if (w < 8 or h < 2) return;
         var y = y0;
-        while (y < y0 + h) : (y += 1) _ = p.put(dx, y, 1, "│", border);
-        try p.hitAdd(.{ .x = dx, .y = y0, .w = w, .h = h }, .detail);
+        while (y < y0 + h) : (y += 1) _ = p.put(dx, y, 1, "│", p.s.border);
+        const panel: hit.Rect = .{ .x = dx, .y = y0, .w = w, .h = h };
         const x = dx + 1;
-        const iw = w -| 2;
-        _ = p.put(x, y0, iw, "DETAIL", accent);
+        const iw = w -| 3;
+        _ = p.put(x, y0, iw, "DETAIL", p.s.accent);
+        // The panel's own door for the pointer: the body takes the
+        // wheel, the `×` in the corner closes it (Esc still does too).
+        try p.c.detailPanel(panel, .detail, .detail_close);
         const idx = (try a.focusedIssueIdx(p.arena)) orelse {
-            _ = p.put(x, y0 + 1, iw, "no ticket under the cursor", muted);
+            _ = p.put(x, y0 + 1, iw, "no ticket under the cursor", p.s.muted);
             return;
         };
         const iss = a.tab().issues[idx];
         const lines = try p.detailLines(iss, iw);
         const avail: usize = h -| 1;
+        a.details_lines = lines.len;
+        a.details_rows = @intCast(avail);
         var start: usize = a.details_scroll;
         if (start > lines.len -| avail) start = lines.len -| avail;
         a.details_scroll = @intCast(start);
@@ -727,16 +774,22 @@ pub const Painter = struct {
             i += 1;
             y += 1;
         }) _ = p.put(x, y, iw, lines[i].s, lines[i].style);
+        // A scrollbar that means something: the thumb says where you
+        // are, and a press or a drag on the track goes there.
+        if (lines.len > avail) {
+            const bar: hit.Rect = .{ .x = panel.right() -| 1, .y = y0 + 1, .w = 1, .h = h -| 1 };
+            try p.c.scrollbar(bar, lines.len, start, avail, .detail_bar);
+        }
     }
 
-    const Line = struct { s: []const u8, style: Style = plain };
+    const Line = struct { s: []const u8, style: Style = .{} };
 
     fn detailLines(p: *Painter, iss: model.Issue, w: u16) Allocator.Error![]const Line {
         const a = p.a;
         var out: std.ArrayList(Line) = .empty;
         const arena = p.arena;
         var fb: [512]u8 = undefined;
-        try out.append(arena, .{ .s = try arena.dupe(u8, text.fit(&fb, p.fmt("{s}  {s}", .{ iss.key, iss.summary }), w)), .style = bold });
+        try out.append(arena, .{ .s = try arena.dupe(u8, text.fit(&fb, p.fmt("{s}  {s}", .{ iss.key, iss.summary }), w)), .style = p.s.bold });
         try out.append(arena, .{ .s = "" });
         const Field = struct { label: []const u8, value: []const u8 };
         const fields = [_]Field{
@@ -749,33 +802,33 @@ pub const Painter = struct {
             .{ .label = "sprint", .value = if (iss.sprint.len > 0) iss.sprint else "—" },
             .{ .label = "labels", .value = if (iss.labels.len > 0) try std.mem.join(arena, ", ", iss.labels) else "—" },
         };
-        for (fields) |f| try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "{s:>10}: {s}", .{ f.label, f.value }), .style = plain });
+        for (fields) |f| try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "{s:>10}: {s}", .{ f.label, f.value }), .style = p.s.plain });
         try out.append(arena, .{ .s = "" });
         const d = a.detailOf(iss.key);
         if (d) |det| {
             if (det.error_text.len > 0) {
-                try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "detail fetch failed: {s}", .{det.error_text}), .style = err_style });
+                try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "detail fetch failed: {s}", .{det.error_text}), .style = p.s.err_style });
             } else {
                 const w_line = if (det.watching)
                     try std.fmt.allocPrint(arena, "{s:>10}: {s} watching ({d} total)", .{ "watcher", if (p.ui.ascii) "*" else "★", det.watch_count })
                 else
                     try std.fmt.allocPrint(arena, "{s:>10}: {s} not watching ({d} total)", .{ "watcher", if (p.ui.ascii) "o" else "☆", det.watch_count });
-                try out.append(arena, .{ .s = w_line, .style = if (det.watching) star else muted });
+                try out.append(arena, .{ .s = w_line, .style = if (det.watching) p.s.star else p.s.muted });
                 try out.append(arena, .{ .s = "" });
-                try out.append(arena, .{ .s = "── description", .style = muted });
+                try out.append(arena, .{ .s = "── description", .style = p.s.muted });
                 const desc = if (std.mem.trim(u8, det.description, " \n").len > 0) det.description else "(no description)";
                 for (try text.wrap(arena, desc, w)) |l| try out.append(arena, .{ .s = l });
                 try out.append(arena, .{ .s = "" });
-                try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "── comments ({d})", .{det.comments.len}), .style = muted });
-                if (det.comments.len == 0) try out.append(arena, .{ .s = "(no comments)", .style = muted });
+                try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "── comments ({d})", .{det.comments.len}), .style = p.s.muted });
+                if (det.comments.len == 0) try out.append(arena, .{ .s = "(no comments)", .style = p.s.muted });
                 for (det.comments) |c| {
-                    try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "{s} · {s}", .{ c.author, text.dayOf(c.created) }), .style = accent_plain });
+                    try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "{s} · {s}", .{ c.author, text.dayOf(c.created) }), .style = p.s.accent_plain });
                     for (try text.wrap(arena, c.body, w)) |l| try out.append(arena, .{ .s = l });
                     try out.append(arena, .{ .s = "" });
                 }
             }
         } else {
-            try out.append(arena, .{ .s = "loading the detail…", .style = muted });
+            try out.append(arena, .{ .s = "loading the detail…", .style = p.s.muted });
         }
         return out.toOwnedSlice(arena);
     }
@@ -800,22 +853,35 @@ pub const Painter = struct {
             break :blk "";
         };
         if (status.len > 0) {
-            x += p.putFit(x, y, w -| x, status, plain);
+            x += p.putFit(x, y, w -| x, status, p.s.plain);
             x += 2;
         }
         if (hint.len > 0) {
-            _ = p.putFit(x, y, w -| x, hint, muted);
+            _ = p.putFit(x, y, w -| x, hint, p.s.muted);
             return;
         }
         // The section help row: `t transition · a assignee · …` from the
-        // bindings that apply, whole entries only, as many as fit.
-        for (try keymap.hints(p.arena, a.context()), 0..) |b, i| {
+        // bindings that apply, whole entries only, as many as fit —
+        // each one a click target that runs what its key runs, and a
+        // trailing `? keys` that opens the sheet.
+        const list = try keymap.hints(p.arena, a.context());
+        for (list, 0..) |b, i| {
             var kb: [16]u8 = undefined;
             const label = if (b.short.len > 0) b.short else b.label;
-            const entry = if (i == 0) p.fmt("{s} {s}", .{ keymap.displayKey(&kb, b.keys[0]), label }) else p.fmt("· {s} {s}", .{ keymap.displayKey(&kb, b.keys[0]), label });
+            const key = keymap.displayKey(&kb, b.keys[0]);
+            const entry = if (i == 0) p.fmt("{s} {s}", .{ key, label }) else p.fmt("· {s} {s}", .{ key, label });
             const ew = text.width(entry);
             if (x + ew > w) break;
-            x += p.put(x, y, ew, entry, muted) + 1;
+            const at = x;
+            x += p.put(x, y, ew, entry, p.s.muted) + 1;
+            const lead: u16 = if (i == 0) 0 else 2;
+            try p.hitAdd(.{ .x = at + lead, .y = y, .w = ew -| lead, .h = 1 }, .{ .hint = b.action });
+        }
+        const keys_entry = "\u{b7} ? keys";
+        const kw = text.width(keys_entry);
+        if (x + kw <= w) {
+            _ = p.put(x, y, kw, keys_entry, p.s.muted);
+            try p.hitAdd(.{ .x = x + 2, .y = y, .w = kw - 2, .h = 1 }, .{ .hint = .help });
         }
     }
 
@@ -847,7 +913,7 @@ pub const Painter = struct {
         _ = p.put(r.right() - 1, r.y, 1, tr, style);
         _ = p.put(r.x, r.bottom() - 1, 1, bl, style);
         _ = p.put(r.right() - 1, r.bottom() - 1, 1, br, style);
-        if (title.len > 0) _ = p.putFit(r.x + 1, r.y, r.w -| 2, title, accent);
+        if (title.len > 0) _ = p.putFit(r.x + 1, r.y, r.w -| 2, title, p.s.accent);
     }
 
     fn centred(p: *const Painter, w: u16, h: u16) Rect {
@@ -860,26 +926,26 @@ pub const Painter = struct {
         const pk = &(p.a.picker.?);
         const r = p.centred(60, 18);
         const title = if (pk.targets > 1) p.fmt(" {s} ({d} tickets) ", .{ pk.kind.title(), pk.targets }) else p.fmt(" {s} ", .{pk.kind.title()});
-        try p.box(r, title, border);
+        try p.box(r, title, p.s.border);
         try p.hitAdd(r, .picker_body);
         const ix = r.x + 2;
         const iw = r.w -| 4;
         // The filter line.
         const glyph = if (p.ui.ascii or !p.ui.nerd) search_ascii else search_nerd;
         var fx = ix;
-        fx += p.put(fx, r.y + 1, iw, glyph, accent_plain) + 1;
+        fx += p.put(fx, r.y + 1, iw, glyph, p.s.accent_plain) + 1;
         if (pk.filter.items.len > 0) {
-            fx += p.put(fx, r.y + 1, iw -| (fx - ix), pk.filter.items, plain);
-        } else fx += p.put(fx, r.y + 1, iw -| (fx - ix), if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused, muted);
-        _ = p.put(fx, r.y + 1, 1, "▏", accent_plain);
+            fx += p.put(fx, r.y + 1, iw -| (fx - ix), pk.filter.items, p.s.plain);
+        } else fx += p.put(fx, r.y + 1, iw -| (fx - ix), if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused, p.s.muted);
+        _ = p.put(fx, r.y + 1, 1, "▏", p.s.accent_plain);
         if (!pk.loaded) {
-            _ = p.put(ix, r.y + 3, iw, "loading…", muted);
+            _ = p.put(ix, r.y + 3, iw, "loading…", p.s.muted);
             return;
         }
         if (pk.error_text.len > 0) {
             for (try text.wrap(p.arena, pk.error_text, iw), 0..) |l, i| {
                 if (r.y + 3 + i >= r.bottom() - 2) break;
-                _ = p.put(ix, @intCast(r.y + 3 + i), iw, l, err_style);
+                _ = p.put(ix, @intCast(r.y + 3 + i), iw, l, p.s.err_style);
             }
         }
         const vis = try pk.visible(p.arena);
@@ -899,69 +965,69 @@ pub const Painter = struct {
             const it = pk.items[vis[k]];
             const is_cur = vis[k] == pk.selected;
             var x = ix;
-            if (is_cur) _ = p.put(x, y, 1, p.marker(), accent);
+            if (is_cur) _ = p.put(x, y, 1, p.marker(), p.s.accent);
             x += 2;
             if (pk.kind.multi()) {
                 const on = pk.isChecked(it.id);
-                x += p.put(x, y, 4, if (on) "[x] " else "[ ] ", if (on) accent_plain else muted);
+                x += p.put(x, y, 4, if (on) "[x] " else "[ ] ", if (on) p.s.accent_plain else p.s.muted);
             }
-            _ = p.putFit(x, y, iw -| (x - ix), it.label, if (is_cur) bold else plain);
+            _ = p.putFit(x, y, iw -| (x - ix), it.label, if (is_cur) p.s.bold else p.s.plain);
             try p.hitAdd(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, .{ .picker_row = @intCast(vis[k]) });
         }
-        if (vis.len == 0 and pk.error_text.len == 0) _ = p.put(ix, list_y, iw, "nothing matches", muted);
+        if (vis.len == 0 and pk.error_text.len == 0) _ = p.put(ix, list_y, iw, "nothing matches", p.s.muted);
         const hint = if (pk.kind.multi()) "type to filter · ↑↓ move · Space toggle · Enter commit · Esc cancel" else "type to filter · ↑↓ move · Enter commit · Esc cancel";
-        _ = p.putFit(ix, r.bottom() - 2, iw, hint, muted);
+        _ = p.putFit(ix, r.bottom() - 2, iw, hint, p.s.muted);
     }
 
     fn paintTransition(p: *Painter) Allocator.Error!void {
         const tp = &(p.a.transition.?);
         const r = p.centred(60, 14);
         const title = if (tp.targets > 1) p.fmt(" transition {s} (+{d} more) ", .{ tp.key, tp.targets - 1 }) else p.fmt(" transition {s} ", .{tp.key});
-        try p.box(r, title, border);
+        try p.box(r, title, p.s.border);
         try p.hitAdd(r, .picker_body);
         const ix = r.x + 1;
         const iw = r.w -| 2;
         const list = tp.transitions orelse {
-            _ = p.put(ix + 1, r.y + 1, iw, "loading…", muted);
+            _ = p.put(ix + 1, r.y + 1, iw, "loading…", p.s.muted);
             return;
         };
         var y = r.y + 1;
         for (list, 0..) |t, i| {
             if (y >= r.bottom() - 3) break;
             const is_cur = i == tp.selected;
-            if (is_cur) _ = p.put(ix, y, 1, p.marker(), accent);
+            if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
             const line = p.fmt("{d}. {s}  → {s}", .{ i + 1, t.name, t.to_name });
-            _ = p.putFit(ix + 2, y, iw -| 2, line, if (is_cur) bold else plain);
+            _ = p.putFit(ix + 2, y, iw -| 2, line, if (is_cur) p.s.bold else p.s.plain);
             try p.hitAdd(.{ .x = ix, .y = y, .w = iw, .h = 1 }, .{ .picker_row = @intCast(i) });
             y += 1;
         }
-        if (list.len == 0 and tp.error_text.len == 0) _ = p.put(ix + 2, r.y + 1, iw, "no transitions from here", muted);
-        if (tp.error_text.len > 0) _ = p.putFit(ix + 2, r.bottom() - 3, iw -| 2, tp.error_text, err_style);
-        _ = p.putFit(ix + 2, r.bottom() - 2, iw -| 2, "1-9 jump · ↑↓/jk move · Enter commit · Esc cancel", muted);
+        if (list.len == 0 and tp.error_text.len == 0) _ = p.put(ix + 2, r.y + 1, iw, "no transitions from here", p.s.muted);
+        if (tp.error_text.len > 0) _ = p.putFit(ix + 2, r.bottom() - 3, iw -| 2, tp.error_text, p.s.err_style);
+        _ = p.putFit(ix + 2, r.bottom() - 2, iw -| 2, "1-9 jump · ↑↓/jk move · Enter commit · Esc cancel", p.s.muted);
     }
 
     fn paintModal(p: *Painter) Allocator.Error!void {
         const m = &(p.a.modal.?);
         const r = p.centred(@max(p.cols() * 4 / 5, 40), @max(p.rows() * 4 / 5, 8));
-        try p.box(r, p.fmt(" {s} ", .{m.key}), border);
+        try p.box(r, p.fmt(" {s} ", .{m.key}), p.s.border);
         try p.hitAdd(r, .modal_body);
         const close_t = " × ";
         const cx = r.right() -| (text.width(close_t) + 1);
-        _ = p.put(cx, r.y + 1, text.width(close_t), if (p.ui.ascii) " x " else close_t, chip_style);
+        _ = p.put(cx, r.y + 1, text.width(close_t), if (p.ui.ascii) " x " else close_t, p.s.chip_style);
         try p.hitAdd(.{ .x = cx, .y = r.y + 1, .w = text.width(close_t), .h = 1 }, .modal_close);
         const ix = r.x + 1;
         const iw = r.w -| 2;
         if (m.error_text.len > 0) {
-            _ = p.putFit(ix + 1, r.y + 1, iw -| 2, p.fmt("could not load {s}: {s}", .{ m.key, m.error_text }), err_style);
+            _ = p.putFit(ix + 1, r.y + 1, iw -| 2, p.fmt("could not load {s}: {s}", .{ m.key, m.error_text }), p.s.err_style);
             return;
         }
         const v = m.data orelse {
-            _ = p.put(ix + 1, r.y + 1, iw, "loading…", muted);
+            _ = p.put(ix + 1, r.y + 1, iw, "loading…", p.s.muted);
             return;
         };
         const summary = try model.fieldDisplay(p.arena, v, "summary");
         const status = try model.fieldDisplay(p.arena, v, "status");
-        _ = p.putFit(ix + 1, r.y + 1, cx -| (ix + 2), p.fmt("{s} · {s}  [{s}]", .{ m.key, summary, status }), bold);
+        _ = p.putFit(ix + 1, r.y + 1, cx -| (ix + 2), p.fmt("{s} · {s}  [{s}]", .{ m.key, summary, status }), p.s.bold);
         // 40 / 60: the field table on the left, the description right.
         const left_w: u16 = @max(iw * 2 / 5, 16);
         const right_x = ix + left_w + 1;
@@ -975,7 +1041,7 @@ pub const Painter = struct {
             const label = p.a.cfg.detail_modal.resolveLabel(spec);
             const value = try model.fieldDisplay(p.arena, v, id);
             if (std.mem.eql(u8, id, "description") or std.mem.eql(u8, id, "environment")) {
-                try right.append(p.arena, .{ .s = label, .style = accent_plain });
+                try right.append(p.arena, .{ .s = label, .style = p.s.accent_plain });
                 for (try text.wrap(p.arena, value, right_w)) |l| try right.append(p.arena, .{ .s = l });
                 try right.append(p.arena, .{ .s = "" });
                 continue;
@@ -983,7 +1049,7 @@ pub const Painter = struct {
             const head = try std.fmt.allocPrint(p.arena, "{s} : ", .{padRight(p.arena, label, label_w)});
             const wrapped = try text.wrap(p.arena, value, @max(left_w -| @as(u16, @intCast(head.len)), 8));
             if (wrapped.len == 0) {
-                try left.append(p.arena, .{ .s = head, .style = muted });
+                try left.append(p.arena, .{ .s = head, .style = p.s.muted });
                 continue;
             }
             try left.append(p.arena, .{ .s = try std.fmt.allocPrint(p.arena, "{s}{s}", .{ head, wrapped[0] }) });
@@ -1001,7 +1067,7 @@ pub const Painter = struct {
             if (i < left.items.len) _ = p.putFit(ix + 1, y, left_w -| 1, left.items[i].s, left.items[i].style);
             if (i < right.items.len) _ = p.putFit(right_x, y, right_w, right.items[i].s, right.items[i].style);
         }
-        _ = p.putFit(ix + 1, r.bottom() - 1, iw -| 2, " j/k scroll · Esc close ", muted);
+        _ = p.putFit(ix + 1, r.bottom() - 1, iw -| 2, " j/k scroll · Esc close ", p.s.muted);
     }
 
     fn paintJql(p: *Painter) Allocator.Error!void {
@@ -1011,14 +1077,14 @@ pub const Painter = struct {
         const lines = try wrapHard(p.arena, e.text(), wrap_w);
         const bh: u16 = @intCast(@min(@max(lines.len, 1) + 2, @as(usize, p.rows() -| 4)));
         const r: Rect = .{ .x = (p.cols() -| bw) / 2, .y = p.lay.status_y -| (bh + 1), .w = bw, .h = bh };
-        try p.box(r, " JQL — type to edit · Enter run · Esc cancel ", border);
+        try p.box(r, " JQL — type to edit · Enter run · Esc cancel ", p.s.border);
         try p.hitAdd(r, .jql_body);
         const caret = e.cursorCodepoints();
         var cp: usize = 0;
         for (lines, 0..) |l, li| {
             if (li + 1 >= bh - 1) break;
             const y: u16 = @intCast(r.y + 1 + li);
-            _ = p.put(r.x + 1, y, wrap_w, l, plain);
+            _ = p.put(r.x + 1, y, wrap_w, l, p.s.plain);
             try p.hitAdd(.{ .x = r.x + 1, .y = y, .w = wrap_w, .h = 1 }, .{ .jql_text = .{ .col = 0, .row = @intCast(li) } });
             const n = std.unicode.utf8CountCodepoints(l) catch l.len;
             if (caret >= cp and caret <= cp + n and (caret < cp + n or li + 1 == lines.len or n < wrap_w)) {
@@ -1037,7 +1103,7 @@ pub const Painter = struct {
         const bx: u16 = if (p.lay.detail_x) |dx| dx else (p.cols() -| bw) / 2;
         const bh: u16 = @min(8, p.rows() -| 2);
         const r: Rect = .{ .x = bx, .y = p.lay.status_y -| bh, .w = bw, .h = bh };
-        try p.box(r, p.fmt(" comment on {s} ", .{c.key}), border);
+        try p.box(r, p.fmt(" comment on {s} ", .{c.key}), p.s.border);
         try p.hitAdd(r, .comment);
         const iw = r.w -| 2;
         const lines = try wrapHard(p.arena, c.edit.text(), iw);
@@ -1046,7 +1112,7 @@ pub const Painter = struct {
         var y = r.y + 1;
         for (lines, 0..) |l, li| {
             if (y >= r.bottom() - 1) break;
-            _ = p.put(r.x + 1, y, iw, l, plain);
+            _ = p.put(r.x + 1, y, iw, l, p.s.plain);
             const n = std.unicode.utf8CountCodepoints(l) catch l.len;
             if (caret >= cp and caret <= cp + n and (caret < cp + n or li + 1 == lines.len)) {
                 const cx: u16 = @intCast(r.x + 1 + @min(caret - cp, iw -| 1));
@@ -1056,19 +1122,19 @@ pub const Painter = struct {
             y += 1;
         }
         if (lines.len == 0) _ = p.put(r.x + 1, r.y + 1, 1, " ", .{ .mods = .{ .reverse = true } });
-        if (c.error_text.len > 0) _ = p.putFit(r.x + 1, r.bottom() - 2, iw, c.error_text, err_style);
-        _ = p.putFit(r.x + 1, r.bottom() - 1, iw, if (c.posting) " sending… " else " Enter newline · Enter on an empty line or Ctrl+S sends · Esc cancel ", muted);
+        if (c.error_text.len > 0) _ = p.putFit(r.x + 1, r.bottom() - 2, iw, c.error_text, p.s.err_style);
+        _ = p.putFit(r.x + 1, r.bottom() - 1, iw, if (c.posting) " sending… " else " Enter newline · Enter on an empty line or Ctrl+S sends · Esc cancel ", p.s.muted);
     }
 
     /// The key sheet, the built-in sections' way: `▾ ── name ── (n)`
     /// headers and `  chord  title` rows, from the bindings that apply.
     fn paintHelp(p: *Painter) Allocator.Error!void {
         const r = p.centred(84, 32);
-        try p.box(r, " KEYS ", border);
+        try p.box(r, " KEYS ", p.s.border);
         try p.hitAdd(r, .help_body);
         const ix = r.x + 1;
         const iw = r.w -| 2;
-        const HelpRow = struct { header: []const u8 = "", chord: []const u8 = "", label: []const u8 = "" };
+        const HelpRow = struct { header: []const u8 = "", chord: []const u8 = "", label: []const u8 = "", action: ?keymap.Action = null };
         var lines: std.ArrayList(HelpRow) = .empty;
         const ctx = p.a.context();
         const active = try keymap.active(p.arena, ctx);
@@ -1089,7 +1155,7 @@ pub const Painter = struct {
                 try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── {s} ── ({d})", .{ fold, section.title(), n }) });
                 for (active) |b| if (b.section == section) {
                     var buf: [64]u8 = undefined;
-                    try lines.append(p.arena, .{ .chord = try p.arena.dupe(u8, chordText(&buf, b)), .label = b.label });
+                    try lines.append(p.arena, .{ .chord = try p.arena.dupe(u8, chordText(&buf, b)), .label = b.label, .action = b.action });
                 };
                 try lines.append(p.arena, .{});
             }
@@ -1108,40 +1174,39 @@ pub const Painter = struct {
         }) {
             const l = lines.items[i];
             if (l.header.len > 0) {
-                _ = p.putFit(ix + 1, y, iw -| 1, l.header, bold);
+                _ = p.putFit(ix + 1, y, iw -| 1, l.header, p.s.bold);
             } else if (l.chord.len > 0) {
                 // The chord in the accent, padded to the column; the title plain.
-                _ = p.putFit(ix + 3, y, chord_w, l.chord, accent_plain);
-                _ = p.putFit(ix + 3 + chord_w + 2, y, iw -| (chord_w + 6), l.label, plain);
+                _ = p.putFit(ix + 3, y, chord_w, l.chord, p.s.accent_plain);
+                _ = p.putFit(ix + 3 + chord_w + 2, y, iw -| (chord_w + 6), l.label, p.s.plain);
+                // A row of the sheet runs what its chord runs: reading
+                // the keys and using them are the same gesture.
+                if (l.action) |act| try p.hitAdd(.{ .x = ix + 1, .y = y, .w = iw -| 1, .h = 1 }, .{ .help_row = act });
             }
         }
-        _ = p.putFit(ix + 1, r.bottom() - 2, iw -| 1, "j/k scroll · Esc close", muted);
+        _ = p.putFit(ix + 1, r.bottom() - 2, iw -| 1, "j/k scroll · Esc close", p.s.muted);
     }
 };
 
 // ─── styles by state ─────────────────────────────────────────────────────
 
-fn statusStyle(iss: model.Issue, base: Style) Style {
+fn statusStyle(th: Theme, iss: model.Issue, base: Style) Style {
     var s = base;
-    if (std.mem.eql(u8, iss.status_category, "done")) {
-        s.fg = .{ .index = 2 };
-    } else if (std.mem.eql(u8, iss.status_category, "indeterminate")) {
-        s.fg = .{ .index = 4 };
-    } else s.mods.dim = true;
+    const role = th.ticketStatus(iss.status_category);
+    s.fg = role.fg;
+    s.mods.dim = role.mods.dim;
     return s;
 }
 
-fn prStyle(status: []const u8) Style {
-    if (std.ascii.eqlIgnoreCase(status, "merged")) return ok_style;
-    if (std.ascii.eqlIgnoreCase(status, "open")) return warn_style;
-    if (std.ascii.eqlIgnoreCase(status, "declined")) return err_style;
-    return muted;
+/// A pull request's state, in the one mapping every mnml pane that
+/// shows a PR uses (`sdk.pane.Theme.prState`): green open, purple
+/// merged, red declined.
+fn prStyle(th: Theme, status: []const u8) Style {
+    return th.prState(status);
 }
 
-fn pipelineStyle(pipe: model.Pipeline) Style {
-    if (std.ascii.eqlIgnoreCase(pipe.result, "successful")) return ok_style;
-    if (std.ascii.eqlIgnoreCase(pipe.result, "failed") or std.ascii.eqlIgnoreCase(pipe.result, "error")) return err_style;
-    return muted;
+fn pipelineStyle(th: Theme, pipe: model.Pipeline) Style {
+    return th.pipelineState(pipe.result);
 }
 
 // ─── small text helpers ──────────────────────────────────────────────────
@@ -1259,21 +1324,31 @@ fn codepointAt(s: []const u8, idx: usize) []const u8 {
 
 /// A setup screen — no config, no token, a bad file: the title, the
 /// lines, and the keys that apply.
-pub fn paintNotice(f: *Frame, title: []const u8, lines: []const []const u8, hint: []const u8) void {
-    f.clear(.none);
-    _ = f.text(1, 0, f.cols -| 1, title, accent);
+pub fn paintNotice(f: *Frame, th: Theme, title: []const u8, lines: []const []const u8, hint: []const u8) void {
+    const s = Styles.of(th);
+    f.clear(.{ .fg = th.fg, .bg = th.bg });
+    _ = f.text(1, 0, f.cols -| 1, title, s.accent);
     var y: u16 = 2;
     for (lines) |l| {
         if (y + 1 >= f.rows) break;
-        _ = f.text(1, y, f.cols -| 1, l, if (l.len > 0 and l[0] == ' ') muted else plain);
+        _ = f.text(1, y, f.cols -| 1, l, if (l.len > 0 and l[0] == ' ') s.muted else s.plain);
         y += 1;
     }
-    if (f.rows > 0) _ = f.text(1, f.rows - 1, f.cols -| 1, hint, muted);
+    if (f.rows > 0) _ = f.text(1, f.rows - 1, f.cols -| 1, hint, s.muted);
 }
 
 /// Paint `a` onto `f` and fill its hit map.
+pub const Chrome = sdk.pane.Painter(hit.Target);
+
 pub fn paint(arena: Allocator, f: *Frame, a: *App, ui: Ui) Allocator.Error!void {
-    var p: Painter = .{ .f = f, .a = a, .arena = arena, .ui = ui };
+    var p: Painter = .{
+        .f = f,
+        .a = a,
+        .arena = arena,
+        .ui = ui,
+        .s = Styles.of(ui.th),
+        .c = .{ .f = f, .gpa = a.gpa, .arena = arena, .hits = &a.hits, .th = ui.th, .ui = ui.chrome() },
+    };
     try p.paint();
 }
 
@@ -1343,7 +1418,7 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     const r0 = try rowText(ar, &f, 0);
-    try testing.expect(std.mem.startsWith(u8, r0, " JIRA WORK (3)"));
+    try testing.expect(std.mem.startsWith(u8, r0, "▌JIRA WORK (3)"));
     try testing.expect(std.mem.endsWith(u8, r0, " ?"));
     try testing.expectEqualStrings("\u{258c}1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
     const r2 = try rowText(ar, &f, 2);
@@ -1353,7 +1428,7 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.indexOf(u8, r0, "\u{eb37}") != null);
     try testing.expect(std.mem.indexOf(u8, r2, "/ filter") != null);
     const r3 = try rowText(ar, &f, 3);
-    try testing.expect(std.mem.startsWith(u8, r3, "  KEY"));
+    try testing.expect(std.mem.startsWith(u8, r3, "▌ KEY"));
     try testing.expect(std.mem.indexOf(u8, r3, "SUMMARY") != null);
     // The first group is the cursor: marker, chevron, name and count.
     const r4 = try rowText(ar, &f, 4);
@@ -1371,7 +1446,7 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.indexOf(u8, r6, "[ Merge ]") == null);
     const r7 = try rowText(ar, &f, 7);
     try testing.expect(std.mem.indexOf(u8, r7, "OPEN") != null);
-    try testing.expect(std.mem.indexOf(u8, r7, "[ Review ] [ Merge ] [ Open ]") != null);
+    try testing.expect(std.mem.indexOf(u8, r7, "[ Open ] [ Review ] [ Merge ]") != null);
     const merge_x = (try colOfText(ar, &f, 7, "[ Merge ]")).?;
     try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .merge } }, a.hits.at(merge_x + 2, 7).?);
     // The hint row comes from the bindings, not a string.
@@ -1423,7 +1498,7 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "type to filter · Enter commit · Esc cancel") != null);
     _ = try a.onKey("enter");
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), " JIRA WORK (1 of 3)"));
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA WORK (1 of 3)"));
     try testing.expect((try findRow(ar, &f, "ENG-5")) != null);
     try testing.expect((try findRow(ar, &f, "ENG-2")) == null);
     _ = try a.onKey("esc");
@@ -1457,7 +1532,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     defer arena.deinit();
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), " JIRA FIX VERSIONS (8)"));
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA FIX VERSIONS (8)"));
     const r2 = try rowText(ar, &f, 2);
     try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 13.16.0 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " ⓧ") != null);
@@ -1502,7 +1577,7 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     defer arena.deinit();
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), " JIRA BOARDS (3 of 9)"));
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (3 of 9)"));
     const r2 = try rowText(ar, &f, 2);
     try testing.expect(std.mem.indexOf(u8, r2, " board: Checkout board ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " sprint: Sprint 4 ") != null);
@@ -1527,7 +1602,7 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try a.click(sb_x + 1, 2, false);
     try testing.expectEqual(@as(usize, 2), a.tab().active_assignees.count());
     try paint(ar, &f, a, .{});
-    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), " JIRA BOARDS (4 of 9)"));
+    try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (4 of 9)"));
     // The modal: title, the field table and the description.
     try a.click(head_x + 6, head_y + 1, false);
     try testing.expect(a.modal != null);
@@ -1589,4 +1664,148 @@ test "the JQL editor paints its box with the caret and a click places it" {
     try testing.expectEqual(@as(usize, 3), a.jql.?.cursor);
     _ = try a.onKey("esc");
     try testing.expect(a.jql == null);
+}
+
+/// Every cell that carries a fold chevron in this frame.
+const ChevronAt = struct { x: u16, y: u16, open: bool };
+
+fn chevronsOf(arena: Allocator, f: *const Frame) Allocator.Error![]const ChevronAt {
+    var out: std.ArrayList(ChevronAt) = .empty;
+    var y: u16 = 0;
+    while (y < f.rows) : (y += 1) {
+        var x: u16 = 0;
+        while (x < f.cols) : (x += 1) {
+            const sym = f.slots[@as(usize, y) * f.cols + x].symbol();
+            if (std.mem.eql(u8, sym, open_glyph)) try out.append(arena, .{ .x = x, .y = y, .open = true });
+            if (std.mem.eql(u8, sym, closed_glyph)) try out.append(arena, .{ .x = x, .y = y, .open = false });
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+fn chevronAt(arena: Allocator, f: *const Frame, x: u16, y: u16) Allocator.Error!?bool {
+    _ = arena;
+    if (y >= f.rows or x >= f.cols) return null;
+    const sym = f.slots[@as(usize, y) * f.cols + x].symbol();
+    if (std.mem.eql(u8, sym, open_glyph)) return true;
+    if (std.mem.eql(u8, sym, closed_glyph)) return false;
+    return null;
+}
+
+test "every chevron column folds under the mouse — the group's, the ticket's and the merged PR's" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    // A merged PR's chevron is the one that used to launch a browser
+    // instead of expanding: open ENG-2's so the sweep below covers it.
+    const start = try chevronsOf(ar, &f);
+    try testing.expect(start.len >= 3);
+    // Both cells of every chevron's two-cell target, one at a time: the
+    // glyph flips on the click and flips back on the next one, so the
+    // pointer can fold anything the keyboard can.
+    var col_off: u16 = 0;
+    while (col_off < 2) : (col_off += 1) {
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            try paint(ar, &f, a, .{});
+            const list = try chevronsOf(ar, &f);
+            if (i >= list.len) break;
+            const c = list[i];
+            try a.click(c.x + col_off, c.y, false);
+            try paint(ar, &f, a, .{});
+            const after = try chevronAt(ar, &f, c.x, c.y);
+            if (after == null) {
+                std.debug.print("chevron at {d},{d} (open={}) vanished after a click on column +{d}\n{s}\n", .{ c.x, c.y, c.open, col_off, try screenText(ar, &f) });
+                return error.ChevronDidNotFold;
+            }
+            if (after.? == c.open) {
+                std.debug.print("chevron at {d},{d} did not fold on a click on column +{d} (still open={})\n{s}\n", .{ c.x, c.y, col_off, c.open, try screenText(ar, &f) });
+                return error.ChevronDidNotFold;
+            }
+            // Put it back so the next chevron is where it was.
+            try a.click(c.x + col_off, c.y, false);
+        }
+    }
+}
+
+test "the detail panel's × closes it and its scrollbar answers a press and a drag" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // Short on purpose: the detail has more lines than rows, which is
+    // when a scrollbar has anything to say.
+    var f = try Frame.init(testing.allocator, 120, 12);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    // The cursor starts on a group row, which has no detail: step onto
+    // the ticket under it first.
+    _ = try a.onKey("j");
+    try a.toggleDetails();
+    try paint(ar, &f, a, .{});
+    try testing.expect(a.details_visible);
+    // The bar is there, and it is a target rather than a decoration.
+    const bar = a.hits.rectOf(hit.Target.detail_bar) orelse {
+        std.debug.print("no scrollbar; lines={d} rows={d} visible={}\n{s}\n", .{ a.details_lines, a.details_rows, a.details_visible, try screenText(ar, &f) });
+        return error.NoScrollbar;
+    };
+    try testing.expect(a.details_lines > a.details_rows);
+    try testing.expectEqual(@as(u16, 0), a.details_scroll);
+    // A press near the bottom of the track goes there; a drag back up
+    // comes back. `scrollAt` clamps to the last window.
+    try a.click(bar.x, bar.bottom() - 1, false);
+    const deep = a.details_scroll;
+    try testing.expect(deep > 0);
+    try a.drag(bar.x, bar.y);
+    try testing.expectEqual(@as(u16, 0), a.details_scroll);
+    // A drag that is not over the bar moves nothing.
+    a.details_scroll = deep;
+    try a.drag(1, bar.y);
+    try testing.expectEqual(deep, a.details_scroll);
+    // The × closes the panel; Esc still does too.
+    const close = a.hits.rectOf(hit.Target.detail_close) orelse return error.NoCloseChip;
+    try a.click(close.x, close.y, false);
+    try testing.expect(!a.details_visible);
+}
+
+test "every hint entry and every key-sheet row runs what its chord runs" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    // `d detail` on the hint row opens the detail pane, as `d` does.
+    const d = a.hits.rectOf(hit.Target{ .hint = .toggle_details }) orelse return error.NoHint;
+    try testing.expect(!a.details_visible);
+    try a.click(d.x, d.y, false);
+    try testing.expect(a.details_visible);
+    try a.click(d.x, d.y, false);
+    try testing.expect(!a.details_visible);
+    // `? keys` at the end opens the sheet.
+    const keys = a.hits.rectOf(hit.Target{ .hint = .help }) orelse return error.NoKeysHint;
+    try a.click(keys.x, keys.y, false);
+    try testing.expect(a.help);
+    // And a row of the sheet runs its own chord — `Tab` switches tab.
+    try paint(ar, &f, a, .{});
+    const row = a.hits.rectOf(hit.Target{ .help_row = .next_tab }) orelse {
+        std.debug.print("no sheet row for next_tab\n{s}\n", .{try screenText(ar, &f)});
+        return error.NoSheetRow;
+    };
+    const was = a.active;
+    try a.click(row.x, row.y, false);
+    try testing.expect(a.active != was);
 }

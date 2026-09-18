@@ -104,12 +104,24 @@ pub const FirstParty = struct {
 pub const first_party = [_]FirstParty{
     .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
     // Claude's mark is mnml's own baked glyph; the fallback is the idle
-    // char a user without the font still sees. `#D16D51` is the
-    // Anthropic brand orange as a literal — no theme role is it.
-    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = "#D16D51", .label = "Claude Code", .enabled = false, .in_palette_bar = false },
+    // char a user without the font still sees. The colour is Anthropic's
+    // brand orange as a literal — no theme role is it — and it comes
+    // from `ui/brand.zig`, the one place that spells it.
+    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = @import("../ui/brand.zig").claude_hex, .label = "Claude Code", .enabled = false, .in_palette_bar = false },
     .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
     .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
 };
+
+/// The manifest chip of an installed integration, by id — what a tab,
+/// a rail row or a palette-bar chip paints for it. Null when nothing by
+/// that id is installed, or when its manifest declares no chip.
+pub fn chipOf(app: *const App, id: []const u8) ?manifest_mod.Chip {
+    for (app.integrations.list) |*inst| {
+        if (!std.mem.eql(u8, inst.id(), id)) continue;
+        return inst.manifest.chip;
+    }
+    return null;
+}
 
 /// The first-party row with `id`, if it is one.
 pub fn firstPartyIndex(id: []const u8) ?usize {
@@ -3278,8 +3290,10 @@ test "the table: four rows in Rust's order, every glyph with a fallback, and `ui
         try testing.expect(command.by_name.get(fp.command) != null);
     }
     try testing.expect(firstPartyIndex("nope") == null);
-    // Claude's brand orange is a literal, not a theme role.
-    try testing.expectEqualStrings("#D16D51", first_party[1].color);
+    // Claude's brand orange is a literal, not a theme role, and it is
+    // spelled in exactly one place.
+    try testing.expectEqualStrings("#D97757", first_party[1].color);
+    try testing.expectEqualStrings(@import("../ui/brand.zig").claude_hex, first_party[1].color);
     // The config array is the storage for the same four, field for field.
     const icons = config.Config.default_integration_icons;
     try testing.expectEqual(first_party.len, icons.len);

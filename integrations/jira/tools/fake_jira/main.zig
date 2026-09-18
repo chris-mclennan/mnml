@@ -14,12 +14,15 @@
 //! assignment, a fix version, a watch — which shows up in the next read.
 //!
 //!   mnml-fake-jira [--port N] [--port-file P] [--pid-file P]
-//!                  [--life-secs N] [--no-auth] [--quiet] [--version]
+//!                  [--life-secs N] [--parent-pid N] [--no-auth] [--quiet]
+//!                  [--version]
 //!
 //! Loopback only. `--port 0` (the default) binds a free one, printed as
 //! `mnml-fake-jira: listening on 127.0.0.1:NNNNN` and written to
-//! `--port-file`. `--life-secs` bounds a server nobody stopped (it fires
-//! on a request; a hard stop is the `--pid-file` pid or `/__shutdown`).
+//! `--port-file`. `--life-secs` bounds a server nobody stopped, and
+//! `--parent-pid` ends one whose starter died — between them a killed
+//! test run leaves no server holding a port. A hard stop is the
+//! `--pid-file` pid or `/__shutdown`.
 //!
 //! `Store.handle` is the whole server as a pure function — method,
 //! target, auth header, body in; status, content type, body out — so
@@ -800,6 +803,7 @@ pub fn main(init: std.process.Init) !u8 {
     var pid_file: ?[]const u8 = null;
     var port_file: ?[]const u8 = null;
     var life_secs: u32 = 0;
+    var parent_pid: i32 = 0;
     var require_auth = true;
     var quiet = false;
 
@@ -824,6 +828,9 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--life-secs") and i + 1 < args.len) {
             i += 1;
             life_secs = std.fmt.parseInt(u32, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--parent-pid") and i + 1 < args.len) {
+            i += 1;
+            parent_pid = std.fmt.parseInt(i32, args[i], 10) catch 0;
         } else if (std.mem.eql(u8, a, "--pid-file") and i + 1 < args.len) {
             i += 1;
             pid_file = args[i];
@@ -863,15 +870,79 @@ pub fn main(init: std.process.Init) !u8 {
         Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = s }) catch {};
     }
 
-    const started = Io.Timestamp.now(io, .real).toMilliseconds();
-    while (true) {
+    var reaper: Reaper = .{ .io = io, .port = bound, .life_secs = life_secs, .parent_pid = parent_pid };
+    if (life_secs > 0 or parent_pid > 0) {
+        const th = std.Thread.spawn(.{}, Reaper.run, .{&reaper}) catch null;
+        if (th) |t| t.detach();
+    }
+    serveUntil(gpa, io, &store, &server, &reaper);
+    return 0;
+}
+
+/// The deadline, made real. The accept blocks, so a server nobody talks
+/// to never came back to look at the clock — which is how a `--life-secs`
+/// run outlived the test that started it by hours. The reaper sleeps out
+/// the life, raises the flag and then knocks on the port itself, so the
+/// blocking accept returns and the loop sees the flag.
+const Reaper = struct {
+    io: Io,
+    port: u16,
+    life_secs: u32,
+    /// Whoever started us. Zero means nobody claimed to. A server whose
+    /// starter is gone is an orphan holding a port, so it goes too —
+    /// that is what a killed test run leaves behind otherwise.
+    parent_pid: i32 = 0,
+    expired: std.atomic.Value(bool) = .init(false),
+
+    fn run(r: *Reaper) void {
+        // No life given but a parent named: watch the parent for as long
+        // as it lives.
+        var left: u32 = if (r.life_secs > 0) r.life_secs else std.math.maxInt(u32);
+        while (left > 0) : (left -= 1) {
+            r.io.sleep(.fromMilliseconds(1000), .awake) catch break;
+            // Somebody else called the run over (a test's recovery path,
+            // a second reaper): stop rather than sleep out the life.
+            if (r.expired.load(.acquire)) return;
+            if (r.orphaned()) break;
+        }
+        r.expired.store(true, .release);
+        r.knock();
+    }
+
+    /// True when the process that started us is gone. Signal 0 is the
+    /// POSIX liveness probe: it delivers nothing and answers ESRCH when
+    /// there is nobody there. (`SIG` has no zero member — the probe is
+    /// not a signal — so the number goes in as itself.)
+    fn orphaned(r: *const Reaper) bool {
+        if (r.parent_pid <= 0) return false;
+        if (@import("builtin").os.tag == .windows) return false;
+        const rc = std.c.kill(r.parent_pid, @enumFromInt(0));
+        return rc != 0 and std.c._errno().* == @intFromEnum(std.c.E.SRCH);
+    }
+
+    /// One connection that asks for nothing — the accept's alarm clock.
+    fn knock(r: *Reaper) void {
+        const addr: Io.net.IpAddress = .{ .ip4 = .loopback(r.port) };
+        if (addr.connect(r.io, .{ .mode = .stream })) |s| s.close(r.io) else |_| {}
+    }
+
+    fn done(r: *const Reaper) bool {
+        return r.expired.load(.acquire);
+    }
+};
+
+/// Serve until a client asks us to stop or the life runs out.
+fn serveUntil(gpa: Allocator, io: Io, store: *Store, server: *Io.net.Server, reaper: *Reaper) void {
+    while (!reaper.done()) {
         const stream = server.accept(io) catch break;
-        const stop = serveOne(gpa, io, &store, stream);
+        if (reaper.done()) {
+            stream.close(io);
+            break;
+        }
+        const stop = serveOne(gpa, io, store, stream);
         stream.close(io);
         if (stop) break;
-        if (life_secs > 0 and Io.Timestamp.now(io, .real).toMilliseconds() - started > @as(i64, life_secs) * 1000) break;
     }
-    return 0;
 }
 
 /// One request. True means the client asked us to stop.
@@ -1074,4 +1145,80 @@ test "--fail-with turns every Jira route into that status; target parsing; /__sh
     try testing.expectEqualStrings("project = ENG", try urlDecode(a.allocator(), "project%20%3D%20ENG"));
     try testing.expectEqual(@as(u16, 404), (try call(&store, a.allocator(), .GET, "/rest/api/3/nope", "")).status);
     try testing.expectEqual(@as(u16, 200), (try call(&store, a.allocator(), .GET, "/__shutdown", "")).status);
+}
+
+/// `serveUntil` on a thread of its own, so a test can put a bound on it:
+/// a deadline that does not work is a hang, and a hang is not a verdict.
+const ServeProbe = struct {
+    gpa: Allocator,
+    io: Io,
+    store: *Store,
+    server: *Io.net.Server,
+    reaper: *Reaper,
+    returned: std.atomic.Value(bool) = .init(false),
+
+    fn run(p: *ServeProbe) void {
+        serveUntil(p.gpa, p.io, p.store, p.server, p.reaper);
+        p.returned.store(true, .release);
+    }
+};
+
+test "--life-secs is a real deadline: a server nobody talks to is gone when the life runs out" {
+    const io = testing.io;
+    var store = try Store.init(testing.allocator);
+    defer store.deinit();
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var reaper: Reaper = .{ .io = io, .port = server.socket.address.getPort(), .life_secs = 1 };
+    var probe: ServeProbe = .{ .gpa = testing.allocator, .io = io, .store = &store, .server = &server, .reaper = &reaper };
+    const serving = try std.Thread.spawn(.{}, ServeProbe.run, .{&probe});
+    const reaping = try std.Thread.spawn(.{}, Reaper.run, .{&reaper});
+    // Nothing ever connects: the accept blocks, and only the reaper's
+    // knock brings it back. Five seconds is five lives.
+    var waited: u32 = 0;
+    while (waited < 5000 and !probe.returned.load(.acquire)) : (waited += 50) io.sleep(.fromMilliseconds(50), .awake) catch {};
+    const served = probe.returned.load(.acquire);
+    if (!served) {
+        // Let the threads out before the failure unwinds the stack the
+        // probe points into.
+        reaper.expired.store(true, .release);
+        reaper.knock();
+    }
+    serving.join();
+    reaping.join();
+    try testing.expect(served);
+}
+
+test "--parent-pid: a server whose starter is gone leaves too, deadline or no deadline" {
+    const io = testing.io;
+    var store = try Store.init(testing.allocator);
+    defer store.deinit();
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    // A pid that cannot be alive: nothing to knock on but the port.
+    // `--life-secs 0` on purpose — the parent is the whole deadline here.
+    var reaper: Reaper = .{ .io = io, .port = server.socket.address.getPort(), .life_secs = 0, .parent_pid = 0x7fff_fffe };
+    try testing.expect(reaper.orphaned());
+    // Our own process is alive, so that one is not an orphan.
+    var live: Reaper = .{ .io = io, .port = 0, .life_secs = 0, .parent_pid = @intCast(std.c.getpid()) };
+    try testing.expect(!live.orphaned());
+    // And a run with no parent named never calls itself orphaned.
+    var none: Reaper = .{ .io = io, .port = 0, .life_secs = 0 };
+    try testing.expect(!none.orphaned());
+
+    var probe: ServeProbe = .{ .gpa = testing.allocator, .io = io, .store = &store, .server = &server, .reaper = &reaper };
+    const serving = try std.Thread.spawn(.{}, ServeProbe.run, .{&probe});
+    const reaping = try std.Thread.spawn(.{}, Reaper.run, .{&reaper});
+    var waited: u32 = 0;
+    while (waited < 5000 and !probe.returned.load(.acquire)) : (waited += 50) io.sleep(.fromMilliseconds(50), .awake) catch {};
+    const served = probe.returned.load(.acquire);
+    if (!served) {
+        reaper.expired.store(true, .release);
+        reaper.knock();
+    }
+    serving.join();
+    reaping.join();
+    try testing.expect(served);
 }

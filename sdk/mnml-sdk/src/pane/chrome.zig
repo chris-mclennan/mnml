@@ -1,0 +1,487 @@
+//! The pane chrome every mnml integration paints — the caps header with
+//! its chip ladder, the tab strip, the filter pill, the app-colour left
+//! gutter, the row ground, a `Show more (N)` fold row, a detail panel
+//! with its `×` and its scrollbar, and the hint row. One implementation,
+//! so two panes cannot drift apart: an integration supplies the words
+//! and the targets, the toolkit decides what the chrome looks like.
+//!
+//! `Painter` is generic over the pane's own hit-target union, so every
+//! rectangle is registered in the same statement as the cells it covers
+//! and dispatch stays one lookup.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const frame_mod = @import("../frame.zig");
+const theme_mod = @import("theme.zig");
+const hit = @import("hit.zig");
+const text_mod = @import("text.zig");
+
+pub const Frame = frame_mod.Frame;
+pub const Style = frame_mod.Style;
+pub const Theme = theme_mod.Theme;
+pub const Rect = hit.Rect;
+pub const width = text_mod.width;
+pub const fit = text_mod.fit;
+
+/// What the host told us about the terminal.
+pub const Ui = struct {
+    ascii: bool = false,
+    nerd: bool = true,
+
+    pub fn glyph(u: Ui, nerd_g: []const u8, fallback: []const u8) []const u8 {
+        return if (u.ascii or !u.nerd) fallback else nerd_g;
+    }
+};
+
+// ─── the glyphs the chrome owns ──────────────────────────────────────────
+
+pub const gutter_glyph = "\u{258c}"; // ▌ left half block
+pub const gutter_ascii = "|";
+pub const marker_glyph = "\u{258c}";
+pub const marker_ascii = ">";
+pub const open_glyph = "\u{F47C}"; // ▾
+pub const closed_glyph = "\u{F460}"; // ▸
+pub const open_ascii = "v";
+pub const closed_ascii = ">";
+pub const refresh_nerd = "\u{eb37}";
+pub const refresh_ascii = "\u{21ba}";
+pub const search_nerd = "\u{F0349}";
+pub const search_ascii = "/";
+pub const close_glyph = "\u{00d7}"; // ×
+pub const close_ascii = "x";
+pub const caret_glyph = "\u{258f}"; // ▏
+pub const scroll_track = "\u{2502}"; // │
+pub const scroll_thumb = "\u{2588}"; // █
+pub const more_glyph = "\u{22ef}"; // ⋯
+pub const more_ascii = "...";
+
+pub const placeholder_unfocused = "/ filter";
+pub const placeholder_focused = "type to filter\u{2026}";
+pub const placeholder_focused_ascii = "type to filter...";
+
+/// A chip on the header's right-hand ladder.
+pub fn Chip(comptime Target: type) type {
+    return struct { text: []const u8, target: Target, active: bool = false };
+}
+
+/// One `key label` entry of the hint row. `target` makes it clickable.
+pub fn Hint(comptime Target: type) type {
+    return struct { key: []const u8, title: []const u8, target: Target };
+}
+
+/// A tab on the strip.
+pub fn Tab(comptime Target: type) type {
+    return struct { label: []const u8, target: Target, active: bool = false };
+}
+
+pub fn Painter(comptime Target: type) type {
+    return struct {
+        const Self = @This();
+        pub const ChipSpec = Chip(Target);
+        pub const HintSpec = Hint(Target);
+        pub const TabSpec = Tab(Target);
+
+        f: *Frame,
+        /// The hit map's allocator — it outlives the frame.
+        gpa: Allocator,
+        /// One frame's scratch: formatted strings die with the paint.
+        arena: Allocator,
+        hits: *hit.Map(Target),
+        th: Theme,
+        ui: Ui,
+
+        pub fn cols(p: *const Self) u16 {
+            return p.f.cols;
+        }
+
+        pub fn rows(p: *const Self) u16 {
+            return p.f.rows;
+        }
+
+        // ─── primitives ──────────────────────────────────────────────
+
+        /// Text at `(x, y)`, clipped at `max_w`; the cells used.
+        pub fn put(p: *Self, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
+            if (x >= p.cols() or y >= p.rows()) return 0;
+            return p.f.text(x, y, max_w, s, style);
+        }
+
+        /// `s` fitted with an ellipsis into `max_w`.
+        pub fn putFit(p: *Self, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
+            var buf: [512]u8 = undefined;
+            return p.put(x, y, max_w, fit(&buf, s, max_w), style);
+        }
+
+        pub fn fill(p: *Self, r: Rect, style: Style) void {
+            p.f.fill(r.x, r.y, r.w, r.h, style);
+        }
+
+        pub fn mark(p: *Self, r: Rect, target: Target) Allocator.Error!void {
+            try p.hits.add(p.gpa, r, target);
+        }
+
+        pub fn fmt(p: *Self, comptime f: []const u8, args: anytype) []const u8 {
+            return std.fmt.allocPrint(p.arena, f, args) catch "";
+        }
+
+        pub fn chevron(p: *const Self, open: bool) []const u8 {
+            if (p.ui.ascii or !p.ui.nerd) return if (open) open_ascii else closed_ascii;
+            return if (open) open_glyph else closed_glyph;
+        }
+
+        pub fn marker(p: *const Self) []const u8 {
+            return if (p.ui.ascii) marker_ascii else marker_glyph;
+        }
+
+        // ─── the app-colour left gutter ──────────────────────────────
+
+        /// The full-height stripe in the integration's own colour down
+        /// column `rect.x`: bright on the cursor's row, dim on the rest.
+        /// It is the row marker and the app's identity in one column, so
+        /// no pane spends a second column saying the same thing.
+        pub fn gutter(p: *Self, rect: Rect, cursor_row: ?u16) void {
+            if (rect.isEmpty()) return;
+            const g = if (p.ui.ascii) gutter_ascii else gutter_glyph;
+            var y = rect.y;
+            while (y < rect.bottom() and y < p.rows()) : (y += 1) {
+                const on = if (cursor_row) |c| c == y else false;
+                _ = p.put(rect.x, y, 1, g, if (on) p.th.gutterOn() else p.th.gutterOff());
+            }
+        }
+
+        // ─── the caps header ─────────────────────────────────────────
+
+        /// `JIRA WORK  (3 of 8)` at the left; the x the subtitle ended at.
+        pub fn capsTitle(p: *Self, x0: u16, y: u16, title: []const u8, sub: []const u8) u16 {
+            var x = x0;
+            x += p.put(x, y, p.cols() -| x, title, p.th.label());
+            if (sub.len > 0) x += p.put(x, y, p.cols() -| x, sub, p.th.dimText());
+            return x;
+        }
+
+        /// The right-hand chip ladder, laid right to left, each chip
+        /// dropped whole when it would cross `left_edge`. Returns the
+        /// leftmost cell a chip took.
+        pub fn rightChips(p: *Self, y: u16, left_edge: u16, chips: []const ChipSpec) Allocator.Error!u16 {
+            var right = p.cols();
+            for (chips) |c| {
+                const w = width(c.text);
+                if (right < left_edge + w + 2) break;
+                right -= w + 1;
+                _ = p.put(right, y, w, c.text, if (c.active) p.th.chipActive() else p.th.chip());
+                try p.mark(.{ .x = right, .y = y, .w = w, .h = 1 }, c.target);
+            }
+            return right;
+        }
+
+        /// The refresh glyph as a chip's text, for the ladder.
+        pub fn refreshChipText(p: *const Self) []const u8 {
+            return if (p.ui.ascii or !p.ui.nerd) " " ++ refresh_ascii ++ " " else " " ++ refresh_nerd ++ " ";
+        }
+
+        // ─── the tab strip ───────────────────────────────────────────
+
+        pub fn tabStrip(p: *Self, x0: u16, y: u16, list: []const TabSpec) Allocator.Error!void {
+            var x = x0;
+            for (list) |t| {
+                const w = width(t.label);
+                if (x + w > p.cols()) break;
+                _ = p.put(x, y, w, t.label, if (t.active) p.th.tabActive() else p.th.tabInactive());
+                try p.mark(.{ .x = x, .y = y, .w = w, .h = 1 }, t.target);
+                x += w + 1;
+            }
+        }
+
+        // ─── the filter pill ─────────────────────────────────────────
+
+        /// `󰍉 / filter` at rest, the query with a caret while it has the
+        /// keys. `caret` is a byte offset into `query`.
+        pub fn filterPill(p: *Self, rect: Rect, query: []const u8, caret: usize, editing: bool, target: Target) Allocator.Error!void {
+            if (rect.w < 6) return;
+            const th = p.th;
+            const style = if (editing) th.chipActiveSoft() else th.chip();
+            p.fill(rect, style);
+            var x = rect.x + 1;
+            x += p.put(x, rect.y, 2, p.ui.glyph(search_nerd, search_ascii), .{ .fg = th.accent, .bg = style.bg });
+            x += 1;
+            if (query.len == 0) {
+                const ph: []const u8 = if (!editing) placeholder_unfocused else if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused;
+                _ = p.put(x, rect.y, rect.w -| 4, ph, .{ .fg = th.muted, .bg = style.bg });
+                if (editing) _ = p.put(x, rect.y, 1, caret_glyph, .{ .fg = th.accent, .bg = style.bg });
+            } else {
+                const used = p.put(x, rect.y, rect.w -| 4, query, .{ .fg = th.fg, .bg = style.bg });
+                if (editing) {
+                    const caret_x = x + width(query[0..@min(caret, query.len)]);
+                    if (caret_x <= x + used) _ = p.put(caret_x, rect.y, 1, caret_glyph, .{ .fg = th.accent, .bg = style.bg });
+                }
+            }
+            try p.mark(rect, target);
+        }
+
+        // ─── the list body ───────────────────────────────────────────
+
+        /// One row's ground — `h` is 1, or 2 for a row with a sub-line —
+        /// with the gutter stripe down its left column. The row's own
+        /// hit is registered over the whole block.
+        pub fn rowGround(p: *Self, rect: Rect, selected: bool, target: Target) Allocator.Error!void {
+            if (rect.isEmpty()) return;
+            p.fill(rect, if (selected) p.th.cursorRow() else p.th.text());
+            const g = if (p.ui.ascii) gutter_ascii else gutter_glyph;
+            var y = rect.y;
+            while (y < rect.bottom()) : (y += 1) {
+                var s = if (selected) p.th.gutterOn() else p.th.gutterOff();
+                if (selected) s.bg = p.th.cursor_line;
+                _ = p.put(rect.x, y, 1, g, s);
+            }
+            try p.mark(rect, target);
+        }
+
+        /// The fold row under a capped list: `⋯  Show more (N)`, the
+        /// label in the bright foreground a key uses.
+        pub fn showMoreRow(p: *Self, rect: Rect, label_x: u16, hidden: usize, target: Target) Allocator.Error!void {
+            if (rect.isEmpty()) return;
+            _ = p.put(rect.x + 1, rect.y, 3, if (p.ui.ascii) more_ascii else more_glyph, p.th.dimText());
+            const label = p.fmt("Show more ({d})", .{hidden});
+            _ = p.putFit(label_x, rect.y, rect.right() -| label_x, label, p.th.bright());
+            try p.mark(rect, target);
+        }
+
+        // ─── the scrollbar ───────────────────────────────────────────
+
+        /// A thumb sized to the window over a dim track. The whole bar
+        /// is one hit, so a press or a drag on it can be turned back
+        /// into a position with `scrollAt`.
+        pub fn scrollbar(p: *Self, bar: Rect, total: usize, first: usize, visible: usize, target: ?Target) Allocator.Error!void {
+            if (bar.h == 0 or total == 0) return;
+            var y = bar.y;
+            while (y < bar.bottom()) : (y += 1) _ = p.put(bar.x, y, 1, scroll_track, .{ .fg = p.th.border });
+            const thumb_h: usize = @max(1, (visible * bar.h) / total);
+            const max_first = total -| visible;
+            const thumb_y: usize = if (max_first == 0) 0 else (first * (bar.h - @min(thumb_h, bar.h))) / max_first;
+            var i: usize = 0;
+            while (i < thumb_h and thumb_y + i < bar.h) : (i += 1) {
+                _ = p.put(bar.x, bar.y + @as(u16, @intCast(thumb_y + i)), 1, scroll_thumb, .{ .fg = p.th.muted });
+            }
+            if (target) |t| try p.mark(bar, t);
+        }
+
+        // ─── an overlay's frame ──────────────────────────────────────
+
+        pub fn frameBox(p: *Self, b: Rect, style: Style) void {
+            if (b.w < 2 or b.h < 2) return;
+            const right = b.x + b.w - 1;
+            const bottom = b.y + b.h - 1;
+            _ = p.put(b.x, b.y, 1, "┌", style);
+            _ = p.put(right, b.y, 1, "┐", style);
+            _ = p.put(b.x, bottom, 1, "└", style);
+            _ = p.put(right, bottom, 1, "┘", style);
+            var x = b.x + 1;
+            while (x < right) : (x += 1) {
+                _ = p.put(x, b.y, 1, "─", style);
+                _ = p.put(x, bottom, 1, "─", style);
+            }
+            var y = b.y + 1;
+            while (y < bottom) : (y += 1) {
+                _ = p.put(b.x, y, 1, "│", style);
+                _ = p.put(right, y, 1, "│", style);
+            }
+        }
+
+        /// The `×` in a panel's top-right corner. Esc still closes the
+        /// panel; this is the same door for the pointer.
+        pub fn closeChip(p: *Self, box: Rect, target: Target) Allocator.Error!void {
+            if (box.w < 3 or box.h == 0) return;
+            const x = box.right() - 1;
+            _ = p.put(x, box.y, 1, if (p.ui.ascii) close_ascii else close_glyph, p.th.mutedText());
+            try p.mark(.{ .x = x, .y = box.y, .w = 1, .h = 1 }, target);
+        }
+
+        /// A detail panel's frame: its body is one hit (the wheel
+        /// scrolls it), its corner carries the `×`.
+        pub fn detailPanel(p: *Self, box: Rect, body_target: Target, close_target: Target) Allocator.Error!void {
+            if (box.isEmpty()) return;
+            try p.mark(box, body_target);
+            try p.closeChip(box, close_target);
+        }
+
+        // ─── the hint row ────────────────────────────────────────────
+
+        /// The status on the left, the keys that apply on the right,
+        /// each `key label` a hit that runs it, and a trailing `? keys`
+        /// that opens the sheet. Entries are dropped from the front
+        /// until the row fits, so the last ones — the ones that always
+        /// apply — survive a narrow pane.
+        pub fn hintRow(p: *Self, y: u16, status: []const u8, list: []const HintSpec) Allocator.Error!void {
+            const th = p.th;
+            const sep = " \u{b7} ";
+            const sep_w: u16 = 3;
+            if (list.len == 0) {
+                if (status.len > 0) _ = p.putFit(1, y, p.cols() -| 1, status, th.mutedText());
+                return;
+            }
+            const widths = p.arena.alloc(u16, list.len) catch return;
+            var total: u16 = 0;
+            for (list, 0..) |h, i| {
+                widths[i] = width(h.key) + 1 + width(h.title);
+                total += widths[i] + if (i + 1 < list.len) sep_w else 0;
+            }
+            const status_w: u16 = @min(width(status) + 2, p.cols() / 2);
+            var first: usize = 0;
+            while (first < list.len and total + status_w > p.cols()) {
+                total -= widths[first] + if (first + 1 < list.len) sep_w else 0;
+                first += 1;
+            }
+            if (status.len > 0) _ = p.putFit(1, y, p.cols() -| 1 -| total, status, th.mutedText());
+            var x: u16 = p.cols() -| total;
+            var i = first;
+            while (i < list.len) : (i += 1) {
+                const h = list[i];
+                const start = x;
+                x += p.put(x, y, p.cols() -| x, h.key, th.bright());
+                x += p.put(x, y, p.cols() -| x, " ", th.dimText());
+                x += p.put(x, y, p.cols() -| x, h.title, th.dimText());
+                try p.mark(.{ .x = start, .y = y, .w = x -| start, .h = 1 }, h.target);
+                if (i + 1 < list.len) x += p.put(x, y, p.cols() -| x, sep, th.dimText());
+            }
+        }
+    };
+}
+
+/// Where a press at `row` on a scrollbar puts the window's first item.
+pub fn scrollAt(bar: Rect, total: usize, visible: usize, row: u16) usize {
+    if (bar.h == 0 or total <= visible) return 0;
+    const rel: usize = @min(row -| bar.y, bar.h - 1);
+    const max_first = total - visible;
+    return @min(max_first, (rel * total) / bar.h);
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+const Demo = union(enum) { row: u32, chip: u8, tab: u8, filter, hint: u8, detail, close, bar, show_more };
+const P = Painter(Demo);
+
+const Rig = struct {
+    f: Frame,
+    hits: hit.Map(Demo) = .{},
+    arena: std.heap.ArenaAllocator,
+
+    fn init(cols: u16, rows: u16) !Rig {
+        return .{ .f = try Frame.init(testing.allocator, cols, rows), .arena = std.heap.ArenaAllocator.init(testing.allocator) };
+    }
+
+    fn deinit(r: *Rig) void {
+        r.f.deinit();
+        r.hits.deinit(testing.allocator);
+        r.arena.deinit();
+    }
+
+    fn painter(r: *Rig, th: Theme, ui: Ui) P {
+        return .{ .f = &r.f, .gpa = testing.allocator, .arena = r.arena.allocator(), .hits = &r.hits, .th = th, .ui = ui };
+    }
+
+    fn rowText(r: *Rig, y: u16) ![]const u8 {
+        var out: std.ArrayList(u8) = .empty;
+        var x: u16 = 0;
+        while (x < r.f.cols) : (x += 1) {
+            const s = r.f.slots[@as(usize, y) * r.f.cols + x].symbol();
+            if (s.len == 0) continue;
+            try out.appendSlice(r.arena.allocator(), s);
+        }
+        return std.mem.trimEnd(u8, try out.toOwnedSlice(r.arena.allocator()), " ");
+    }
+};
+
+test "the gutter stripe runs the pane's whole height in the app colour, bright on the cursor's row" {
+    var r = try Rig.init(20, 5);
+    defer r.deinit();
+    const th = Theme.fromHelloBranded(.{ .blue = .{ .rgb = .{ 1, 2, 3 } } }, "blue");
+    var p = r.painter(th, .{});
+    p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = 5 }, 2);
+    var y: u16 = 0;
+    while (y < 5) : (y += 1) {
+        try testing.expectEqualStrings(gutter_glyph, r.f.slots[@as(usize, y) * 20].symbol());
+        try testing.expectEqual(theme_mod.Color{ .rgb = .{ 1, 2, 3 } }, r.f.slots[@as(usize, y) * 20].style.fg.?);
+    }
+    try testing.expect(r.f.slots[2 * 20].style.mods.bold);
+    try testing.expect(r.f.slots[0].style.mods.dim);
+}
+
+test "the header's chip ladder lays right to left and drops a chip whole rather than clipping it" {
+    var r = try Rig.init(30, 2);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    const x = p.capsTitle(1, 0, "DEMO", "  (2 of 9)");
+    const chips = [_]P.ChipSpec{
+        .{ .text = " ? ", .target = .{ .chip = 0 } },
+        .{ .text = " refresh ", .target = .{ .chip = 1 }, .active = true },
+        .{ .text = " a very wide chip indeed ", .target = .{ .chip = 2 } },
+    };
+    const left = try p.rightChips(0, x, &chips);
+    try testing.expect(left > x);
+    try testing.expect(r.hits.rectOf(.{ .chip = 0 }) != null);
+    try testing.expect(r.hits.rectOf(.{ .chip = 1 }) != null);
+    // The third does not fit: it is not painted and not a target.
+    try testing.expect(r.hits.rectOf(.{ .chip = 2 }) == null);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "a very wide chip") == null);
+}
+
+test "the filter pill: the placeholder at rest, the query with a caret while editing, one hit either way" {
+    var r = try Rig.init(30, 2);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{ .ascii = true });
+    try p.filterPill(.{ .x = 1, .y = 0, .w = 28, .h = 1 }, "", 0, false, .filter);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "/ filter") != null);
+    try p.filterPill(.{ .x = 1, .y = 1, .w = 28, .h = 1 }, "vouch", 5, true, .filter);
+    const row = try r.rowText(1);
+    try testing.expect(std.mem.indexOf(u8, row, "vouch") != null);
+    try testing.expect(std.mem.indexOf(u8, row, caret_glyph) != null);
+    try testing.expectEqual(Demo.filter, r.hits.at(4, 1).?);
+}
+
+test "a show-more row says `Show more (N)` in the bright foreground and is one hit" {
+    var r = try Rig.init(40, 2);
+    defer r.deinit();
+    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 9, 9, 9 } } });
+    var p = r.painter(th, .{});
+    try p.showMoreRow(.{ .x = 0, .y = 0, .w = 40, .h = 1 }, 10, 7, .show_more);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "Show more (7)") != null);
+    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 9, 9, 9 } }, r.f.slots[10].style.fg.?);
+    try testing.expect(r.f.slots[10].style.mods.bold);
+    try testing.expectEqual(Demo.show_more, r.hits.at(3, 0).?);
+}
+
+test "a detail panel carries a × in its corner and a scrollbar whose track is one hit" {
+    var r = try Rig.init(20, 6);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    const box: Rect = .{ .x = 8, .y = 0, .w = 12, .h = 6 };
+    try p.detailPanel(box, .detail, .close);
+    try testing.expectEqualStrings(close_glyph, r.f.slots[19].symbol());
+    try testing.expectEqual(Demo.close, r.hits.at(19, 0).?);
+    try testing.expectEqual(Demo.detail, r.hits.at(10, 2).?);
+    try p.scrollbar(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 0, 6, .bar);
+    try testing.expectEqual(Demo.bar, r.hits.at(19, 3).?);
+    // The press maps back to a window position.
+    try testing.expectEqual(@as(usize, 0), scrollAt(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 6, 0));
+    try testing.expectEqual(@as(usize, 24), scrollAt(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 6, 5));
+}
+
+test "every hint entry is a hit; the front is dropped when the row will not fit" {
+    var r = try Rig.init(20, 1);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    const hints = [_]P.HintSpec{
+        .{ .key = "t", .title = "transition", .target = .{ .hint = 0 } },
+        .{ .key = "a", .title = "assignee", .target = .{ .hint = 1 } },
+        .{ .key = "q", .title = "quit", .target = .{ .hint = 2 } },
+    };
+    try p.hintRow(0, "", &hints);
+    const row = try r.rowText(0);
+    try testing.expect(std.mem.indexOf(u8, row, "q quit") != null);
+    try testing.expect(std.mem.indexOf(u8, row, "t transition") == null);
+    const q = r.hits.rectOf(.{ .hint = 2 }).?;
+    try testing.expectEqual(Demo{ .hint = 2 }, r.hits.at(q.x, 0).?);
+    try testing.expect(r.hits.rectOf(.{ .hint = 0 }) == null);
+}

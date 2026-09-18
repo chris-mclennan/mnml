@@ -791,6 +791,8 @@ const HostEvent = union(enum) {
     key: []u8,
     paste: []u8,
     click: struct { col: u16, row: u16, button: sdk.wire.Button },
+    /// A move with a button held; a plain hover never reaches the app.
+    drag: struct { col: u16, row: u16 },
     scroll: struct { col: u16, row: u16, dy: i16 },
     resize: sdk.wire.Geometry,
     focus: bool,
@@ -827,7 +829,7 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
                 .paste => |p| .{ .paste = gpa.dupe(u8, p.text) catch continue },
                 .click => |c| .{ .click = .{ .col = c.col, .row = c.row, .button = c.button } },
                 .scroll => |s| .{ .scroll = .{ .col = s.col, .row = s.row, .dy = s.dy } },
-                .hover => .other,
+                .hover => |h| if (h.dragging) HostEvent{ .drag = .{ .col = h.col, .row = h.row } } else .other,
             },
         };
         q.putOneUncancelable(io, .{ .host = ev }) catch return;
@@ -881,11 +883,15 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
             only = .branches;
         }
     }
+    // The tab says what the manifest installed, not a lower-case
+    // shorthand: the label the user saw in INTEGRATIONS, with any
+    // qualifier after it. `spec.label` / `spec_pipelines.label` are the
+    // manifests themselves, so the two cannot drift.
     const title: []const u8 = if (only) |fam| switch (fam) {
-        .prs => if (mine) "bitbucket · mine" else "bitbucket · PRs",
-        .pipelines => "bitbucket · pipelines",
-        .branches => "bitbucket · branches",
-    } else "bitbucket";
+        .prs => if (mine) spec.label ++ " · mine" else spec.label,
+        .pipelines => spec_pipelines.label,
+        .branches => "Bitbucket Branches",
+    } else spec.label;
     try mount.setTitle(title);
 
     var why: []const u8 = "";
@@ -959,6 +965,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                     .middle => .middle,
                     .right => .right,
                 }),
+                // A drag along the detail panel's scrollbar: the same
+                // jump a press there makes, once per move.
+                .drag => |d| try app.drag(d.col, d.row),
                 .scroll => |s| try app.wheel(s.col, s.row, s.dy),
                 .resize => |g| {
                     try frame.resize(g.cols, g.rows);

@@ -8,6 +8,11 @@
 //!   manifest  `Manifest` + `write` for `--install`
 //!   ratelimit one cross-process token bucket per service, shared with
 //!             every other process on the machine
+//!   pane      the pane toolkit: mnml's chrome (caps header + chip
+//!             ladder, tab strip, filter pill, app-colour left gutter,
+//!             row ground, `Show more (N)`, a detail panel with `×` and
+//!             a scrollbar, a clickable hint row), the host theme's
+//!             roles, and the hit map
 //!
 //! A minimal integration is `sdk/examples/hello`.
 
@@ -17,6 +22,7 @@ pub const frame = @import("frame.zig");
 pub const ipc = @import("ipc.zig");
 pub const manifest = @import("manifest.zig");
 pub const ratelimit = @import("ratelimit.zig");
+pub const pane = @import("pane.zig");
 
 pub const Mount = client.Mount;
 pub const Frame = frame.Frame;
@@ -29,6 +35,10 @@ pub const SiblingMessage = wire.SiblingMessage;
 pub const Color = wire.Color;
 pub const Mods = wire.Mods;
 pub const protocol = wire.protocol;
+pub const Theme = pane.Theme;
+pub const Painter = pane.Painter;
+pub const HitMap = pane.HitMap;
+pub const Rect = pane.Rect;
 
 test {
     _ = wire;
@@ -37,4 +47,5 @@ test {
     _ = ipc;
     _ = manifest;
     _ = ratelimit;
+    _ = pane;
 }

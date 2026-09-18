@@ -101,7 +101,11 @@ pub const InputEvent = union(enum) {
     click: struct { col: u16, row: u16, button: Button = .left },
     /// A wheel notch; positive `dy` scrolls up.
     scroll: struct { col: u16, row: u16, dy: i16 },
-    hover: struct { col: u16, row: u16 },
+    /// The pointer moved over the pane. `dragging` says a button was
+    /// held while it moved — what turns a press on a scrollbar into a
+    /// drag along it. A host that predates the field sends nothing and
+    /// every hover reads as a plain move.
+    hover: struct { col: u16, row: u16, dragging: bool = false },
     paste: struct { text: []const u8 },
 };
 
@@ -349,6 +353,9 @@ test "every host message round-trips" {
     try testing.expectEqual(@as(i16, -3), scroll.input.event.scroll.dy);
     const hover = try roundTrip(HostMessage, arena, .{ .input = .{ .event = .{ .hover = .{ .col = 7, .row = 1 } } } });
     try testing.expectEqual(@as(u16, 7), hover.input.event.hover.col);
+    try testing.expect(!hover.input.event.hover.dragging);
+    const drag = try roundTrip(HostMessage, arena, .{ .input = .{ .event = .{ .hover = .{ .col = 7, .row = 1, .dragging = true } } } });
+    try testing.expect(drag.input.event.hover.dragging);
     const paste = try roundTrip(HostMessage, arena, .{ .input = .{ .event = .{ .paste = .{ .text = "a\nb\"c" } } } });
     try testing.expectEqualStrings("a\nb\"c", paste.input.event.paste.text);
 

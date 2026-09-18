@@ -12,6 +12,11 @@
 //! this binary through a real socket, so the layout is part of the
 //! contract: row 0 the header, `counter_row` the counter, `click_row`
 //! the row a click bumps, the last row the footer.
+//!
+//! The chrome is the toolkit's (`sdk.pane`): the caps header, the
+//! app-colour gutter, the row ground and the clickable hint row. Copy
+//! `paint` below into a new integration and the pane looks like mnml
+//! rather than like a table someone transplanted. See the README.
 
 const std = @import("std");
 const sdk = @import("mnml_sdk");
@@ -75,13 +80,18 @@ pub fn main(init: std.process.Init) !u8 {
     var state: State = .{
         .theme = mount.hello.theme,
         .mood = env.get("MNML_SETTING_MOOD") orelse "calm",
+        // The manifest's own chip colour becomes the pane's brand, so
+        // the gutter stripe is this integration's colour on the rail.
+        .th = sdk.pane.Theme.fromHelloBranded(mount.hello.palette, if (spec.chip) |c| c.color else ""),
     };
-    try mount.setTitle("sample");
-    paint(&frame, &state);
-    try mount.send(&frame);
+    defer state.hits.deinit(gpa);
+    try mount.setTitle(spec.label);
 
     var msg_arena = std.heap.ArenaAllocator.init(gpa);
     defer msg_arena.deinit();
+    paint(gpa, msg_arena.allocator(), &frame, &state);
+    try mount.send(&frame);
+
     while (true) {
         _ = msg_arena.reset(.retain_capacity);
         const msg = (try mount.next(msg_arena.allocator())) orelse break;
@@ -109,8 +119,20 @@ pub fn main(init: std.process.Init) !u8 {
                 .click => |c| {
                     state.events += 1;
                     state.last_click = .{ .col = c.col, .row = c.row };
-                    if (c.row == click_row) state.counter += 1;
-                    if (c.row == counter_row and c.button == .right) state.counter = 0;
+                    // One lookup on the toolkit's map: a click lands on
+                    // what the eye sees, including the hint row.
+                    switch (state.hits.at(c.col, c.row) orelse .counter) {
+                        .click_row => state.counter += 1,
+                        .counter => if (c.button == .right) {
+                            state.counter = 0;
+                        },
+                        .reset => state.counter = 0,
+                        .toast => try mount.toast(.info, "hello from the sample"),
+                        .quit => {
+                            mount.bye();
+                            return 0;
+                        },
+                    }
                 },
                 .scroll => |s| {
                     state.events += 1;
@@ -119,55 +141,61 @@ pub fn main(init: std.process.Init) !u8 {
                 .hover, .paste => {},
             },
         }
-        paint(&frame, &state);
+        paint(gpa, msg_arena.allocator(), &frame, &state);
         try mount.send(&frame);
     }
     return 0;
 }
 
+/// What a click can land on. The toolkit's hit map is generic over this,
+/// so the pane keeps its own vocabulary.
+pub const Target = union(enum) { counter, click_row, reset, toast, quit };
+
 const State = struct {
     theme: []const u8,
     mood: []const u8,
+    /// The host theme's roles, with this integration's manifest chip
+    /// colour as its brand — what the gutter stripe paints in.
+    th: sdk.pane.Theme = .{},
     counter: u32 = 0,
     events: u32 = 0,
     focused: bool = true,
+    hits: sdk.pane.HitMap(Target) = .{},
     last_click: ?struct { col: u16, row: u16 } = null,
 };
 
-fn paint(f: *sdk.Frame, st: *const State) void {
-    const accent: sdk.Style = .{ .fg = .{ .index = 6 }, .mods = .{ .bold = true } };
-    const muted: sdk.Style = .{ .mods = .{ .dim = true } };
-    var buf: [160]u8 = undefined;
-    f.clear(.none);
-    // Row 0: the header — the label, the theme mnml told us, the setting.
-    const used = f.text(1, 0, f.cols, "SAMPLE", accent);
-    const head = std.fmt.bufPrint(&buf, " · theme {s} · mood {s} · {d}×{d}", .{ st.theme, st.mood, f.cols, f.rows }) catch "";
-    _ = f.text(1 + used, 0, f.cols -| (1 + used), head, muted);
+/// Ten lines of toolkit and the pane is in mnml's chrome.
+fn paint(gpa: std.mem.Allocator, arena: std.mem.Allocator, f: *sdk.Frame, st: *State) void {
+    st.hits.reset();
+    f.clear(.{ .fg = st.th.fg, .bg = st.th.bg });
+    var p: sdk.pane.Painter(Target) = .{ .f = f, .gpa = gpa, .arena = arena, .hits = &st.hits, .th = st.th, .ui = .{} };
+    // The app-colour stripe down column 0, under everything else.
+    p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = f.rows -| 1 }, click_row);
+    // Row 0: the caps header — the label and, dim beside it, the theme
+    // mnml told us about, the setting and the geometry.
+    const sub = p.fmt(" \u{b7} theme {s} \u{b7} mood {s} \u{b7} {d}\u{d7}{d}", .{ st.theme, st.mood, f.cols, f.rows });
+    _ = p.capsTitle(1, 0, "SAMPLE", sub);
     if (f.rows > counter_row) {
-        const line = std.fmt.bufPrint(&buf, "counter: {d}", .{st.counter}) catch "";
-        _ = f.text(1, counter_row, f.cols -| 1, line, .bold);
-        const tail = std.fmt.bufPrint(&buf, "   events: {d}", .{st.events}) catch "";
-        _ = f.text(1 + 10 + digits(st.counter), counter_row, f.cols -| 12, tail, muted);
+        const line = p.fmt("counter: {d}", .{st.counter});
+        const used = p.put(1, counter_row, f.cols -| 1, line, st.th.bright());
+        _ = p.put(1 + used, counter_row, f.cols -| (1 + used), p.fmt("   events: {d}", .{st.events}), st.th.dimText());
+        p.mark(.{ .x = 0, .y = counter_row, .w = f.cols, .h = 1 }, .counter) catch {};
     }
     if (f.rows > click_row) {
-        const style: sdk.Style = if (st.focused) .reverse else .bold;
-        f.fill(0, click_row, f.cols, 1, style);
-        _ = f.text(1, click_row, f.cols -| 1, "▸ click here, or ↑ ↓ / j k / space to count", style);
+        // The row the cursor is on: the toolkit's ground plus gutter.
+        p.rowGround(.{ .x = 0, .y = click_row, .w = f.cols, .h = 1 }, st.focused, .click_row) catch {};
+        _ = p.put(2, click_row, f.cols -| 2, "click here, or \u{2191} \u{2193} / j k / space to count", st.th.cursorRow());
     }
     if (f.rows > 1) {
-        const footer = if (st.last_click) |c|
-            std.fmt.bufPrint(&buf, "r reset · h toast · q quit · last click {d},{d}", .{ c.col, c.row }) catch ""
-        else
-            "r reset · h toast · q quit";
-        _ = f.text(1, f.rows - 1, f.cols -| 1, footer, muted);
+        // The hint row: every `key label` a hit that runs it.
+        const hints = [_]sdk.pane.Painter(Target).HintSpec{
+            .{ .key = "r", .title = "reset", .target = .reset },
+            .{ .key = "h", .title = "toast", .target = .toast },
+            .{ .key = "q", .title = "quit", .target = .quit },
+        };
+        const status = if (st.last_click) |c| p.fmt("last click {d},{d}", .{ c.col, c.row }) else "";
+        p.hintRow(f.rows - 1, status, &hints) catch {};
     }
-}
-
-fn digits(n: u32) u16 {
-    var d: u16 = 1;
-    var v = n;
-    while (v >= 10) : (v /= 10) d += 1;
-    return d;
 }
 
 test "the manifest names the pane command first, with a chip, a segment, a setting and a context-menu row" {

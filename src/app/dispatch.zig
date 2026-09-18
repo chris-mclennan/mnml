@@ -2002,7 +2002,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     if (lines == 0) return;
                     return mount_pane.wheel(mp, sh.id, m, hitRect(app, m.x, m.y), lines);
                 }
-                if (m.kind == .motion) return mount_pane.hover(mp, sh.id, m, hitRect(app, m.x, m.y));
+                if (m.kind == .motion or m.kind == .drag) return mount_pane.hover(mp, sh.id, m, hitRect(app, m.x, m.y));
             };
             if (wheel) return wheelOnPane(app, sh.pane, m, count);
             if (m.kind != .press) return;

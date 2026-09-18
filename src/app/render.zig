@@ -37,6 +37,7 @@ const coverage = @import("coverage.zig");
 const menu_bar = @import("menu_bar.zig");
 const ui_menu_bar = @import("../ui/menu_bar.zig");
 const bufferline = @import("../ui/bufferline.zig");
+const brand = @import("../ui/brand.zig");
 const side_strip = @import("../ui/side_strip.zig");
 const welcome = @import("../ui/welcome.zig");
 const keymap = @import("../core/keymap.zig");
@@ -646,8 +647,13 @@ fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
     const want = app.cfg.ui.tab_bar_ai_icon;
     if (want == .none) return &.{};
     var out: std.ArrayListUnmanaged(bufferline.AiChip) = .empty;
-    if (aiChipShown(app, .claude)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = "\u{F1E00}", .fallback = "*", .live = ai_app.findSession(app, .claude) != null });
-    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = "\u{F1E01}", .fallback = ">", .live = ai_app.findSession(app, .codex) != null });
+    // The marks wear their product's colour, not the theme's accent:
+    // Claude's is Anthropic's orange (`ui/brand.zig`, the same value the
+    // statusline chip and a Claude pty tab paint), dimmed toward the
+    // muted while no session is live; Codex has no published brand, so
+    // it keeps the theme's cyan.
+    if (aiChipShown(app, .claude)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = "\u{F1E00}", .fallback = "*", .live = ai_app.findSession(app, .claude) != null, .fg_live = brand.claude, .fg_idle = brand.claudeIdle(&app.theme) });
+    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = "\u{F1E01}", .fallback = ">", .live = ai_app.findSession(app, .codex) != null, .fg_live = app.theme.palette.cyan, .fg_idle = app.theme.muted.fg });
     return out.items;
 }
 
@@ -818,6 +824,27 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
     };
 }
 
+/// The tab mark of a mounted integration: its manifest chip's glyph (or
+/// the chip's own fallback text where there is no Nerd Font) in the
+/// chip's colour. Null when the pane was not opened from a manifest, or
+/// the manifest declares no chip — the generic mount glyph then stands.
+fn mountChipIcon(app: *App, ui: Ui, mp: *const mount_pane.MountPane) ?icons.Icon {
+    const id = mp.integration orelse return null;
+    const chip = integrations.chipOf(app, id) orelse return null;
+    const color = integrations_view.paletteColor(&app.theme, chip.color);
+    if (ui.ascii or chip.glyph.len + chip.glyph_codepoint.len == 0) {
+        if (chip.fallback.len == 0) return null;
+        return .{ .glyph = chip.fallback, .color = color };
+    }
+    if (chip.glyph.len > 0) return .{ .glyph = chip.glyph, .color = color };
+    // A pinned codepoint decodes into the frame arena: the manifest
+    // holds the hex, not the bytes, and the tab outlives a stack buffer.
+    var buf: [4]u8 = undefined;
+    const g = chip.glyphText(&buf);
+    if (g.len == 0) return null;
+    return .{ .glyph = ui.arena.dupe(u8, g) catch return null, .color = color };
+}
+
 /// One pane kind's glyph in its colour, or the `--ascii` twin.
 fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color) icons.Icon {
     return .{ .glyph = if (ascii) twin else nerd, .color = color };
@@ -905,6 +932,12 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
             }
         }
         var icon = paneIcon(app, p, ui.ascii);
+        // A mounted integration's tab wears its own manifest chip — the
+        // glyph and the colour the rail and the palette bar already give
+        // it — instead of one placeholder for every integration there is.
+        if (p.* == .mount) if (mountChipIcon(app, ui, &p.mount)) |own| {
+            icon = own;
+        };
         // colors: a pty tab's glyph in the pane's accent (Rust's
         // `pty_icon` applies the session colour after the match).
         if (p.* == .pty) if (pty_pane.accentOf(app, &p.pty, ui.theme)) |accent| {

@@ -48,12 +48,18 @@ pub const refresh_glyph_ascii = "\u{21ba}";
 
 pub const Box = struct { x: u16, y: u16, w: u16, h: u16 };
 
+pub const Chrome = sdk.pane.Painter(hit.Target);
+
 /// A rectangle on the frame with the hit map alongside.
 const Painter = struct {
     f: *sdk.Frame,
     app: *App,
     th: Theme,
     nerd: bool,
+    /// The shared pane chrome — the gutter, the detail panel's `\u{d7}`
+    /// and scrollbar, the clickable hint row. Both official integrations
+    /// paint these from the same code.
+    c: Chrome,
 
     fn text(p: *Painter, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
         return p.f.text(x, y, max_w, s, style);
@@ -81,7 +87,17 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     app.rows = f.rows;
     app.hits.reset();
     if (f.rows == 0 or f.cols == 0) return;
-    var p: Painter = .{ .f = f, .app = app, .th = app.theme, .nerd = nerd_font };
+    var p: Painter = .{
+        .f = f,
+        .app = app,
+        .th = app.theme,
+        .nerd = nerd_font,
+        .c = .{ .f = f, .gpa = app.hits.gpa, .arena = arena, .hits = &app.hits.inner, .th = app.theme, .ui = .{ .nerd = nerd_font } },
+    };
+    // The app-colour stripe down column 0 — the pane's identity, from
+    // the toolkit. Painted under everything: a row that puts its own
+    // marker there still wins the cell.
+    p.c.gutter(.{ .x = 0, .y = 0, .w = 1, .h = f.rows -| 1 }, null);
     // The header's `N of M` is derived from the rows, and the header
     // paints first: resolve them once here so it reads this frame's
     // numbers rather than the last one's.
@@ -94,7 +110,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
         y += 1;
     }
     if (y < f.rows) {
-        paintFilter(&p, y);
+        try paintFilter(&p, y);
         y += 1;
     }
     const hint_y = f.rows - 1;
@@ -217,29 +233,18 @@ fn tabCount(ts: *const app_mod.TabState) usize {
 
 // ─── the filter pill ─────────────────────────────────────────────────────
 
-fn paintFilter(p: *Painter, y: u16) void {
+fn paintFilter(p: *Painter, y: u16) Allocator.Error!void {
     const app = p.app;
-    const th = p.th;
     if (p.f.cols < 6) return;
-    const editing = app.mode == .filter;
-    const pill: Box = .{ .x = 1, .y = y, .w = p.f.cols - 2, .h = 1 };
-    const style = if (editing) th.chipActiveSoft() else th.chip();
-    p.fill(pill, style);
-    var x: u16 = pill.x + 1;
-    x += p.text(x, y, 2, if (p.nerd) filter_glyph_nerd else "/", .{ .fg = th.accent, .bg = style.bg });
-    x += 1;
-    const q = app.filter.items;
-    if (q.len == 0) {
-        _ = p.text(x, y, pill.w -| 4, if (editing) "type to filter…" else "/ filter", .{ .fg = th.muted, .bg = style.bg });
-    } else {
-        const used = p.text(x, y, pill.w -| 4, q, .{ .fg = th.fg, .bg = style.bg });
-        if (editing) {
-            const caret_x = x + Painter.width(q[0..@min(app.filter_caret, q.len)]);
-            if (caret_x <= x + used) _ = p.text(caret_x, y, 1, "▏", .{ .fg = th.accent, .bg = style.bg });
-        }
-    }
-    if (editing and q.len == 0) _ = p.text(x, y, 1, "▏", .{ .fg = th.accent, .bg = style.bg });
-    p.target(pill.x, y, pill.w, .{ .chip = .filter });
+    // The pill is the toolkit's, so the glyph, the placeholder, the
+    // caret and the hit are the same ones the Jira pane paints.
+    try p.c.filterPill(
+        .{ .x = 1, .y = y, .w = p.f.cols - 2, .h = 1 },
+        app.filter.items,
+        app.filter_caret,
+        app.mode == .filter,
+        .{ .chip = .filter },
+    );
 }
 
 // ─── the body ────────────────────────────────────────────────────────────
@@ -319,19 +324,19 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         const row = v.rows[idx];
         const selected = idx == ts.selected;
         const h = row.height();
-        const ground = if (selected) th.cursorRow() else th.text();
-        p.fill(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, ground);
-        if (selected) _ = p.text(list.x, y, 1, marker, th.marker());
+        // The toolkit's row ground: the fill, the app-colour stripe in
+        // column 0 (bright on the cursor's row) and the row's own hit,
+        // in one statement — the same one the Jira tree paints.
+        try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
         const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
         paintSpans(p, list.x + 2, y, text_w -| 2, spans);
-        p.app.hits.add(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, .{ .row = idx });
         if (h == 2 and y + 1 < list.y + list.h) {
             const sub = try view.subLineSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
             paintSpans(p, list.x + 2, y + 1, text_w -| 2, sub);
         }
         y += h;
     }
-    if (needs_bar) paintScrollbar(p, .{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h);
+    if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
 }
 
 fn cellsBefore(rows: []const tabs.VisibleRow, first: usize) usize {
@@ -347,19 +352,6 @@ fn emptyMessage(kind: cfg.Kind) []const u8 {
         .branches => "(no branches in this repo)",
         .workspace_pipelines => "(no repos in scope)",
     };
-}
-
-/// A thumb sized to the window over a dim track.
-fn paintScrollbar(p: *Painter, bar: Box, total: usize, first: usize, visible: usize) void {
-    if (bar.h == 0 or total == 0) return;
-    const track: Style = .{ .fg = p.th.border };
-    var y = bar.y;
-    while (y < bar.y + bar.h) : (y += 1) p.f.put(bar.x, y, "│", track);
-    const thumb_h: usize = @max(1, (visible * bar.h) / total);
-    const max_first = total -| visible;
-    const thumb_y: usize = if (max_first == 0) 0 else (first * (bar.h - @min(thumb_h, bar.h))) / max_first;
-    var i: usize = 0;
-    while (i < thumb_h and thumb_y + i < bar.h) : (i += 1) p.f.put(bar.x, bar.y + @as(u16, @intCast(thumb_y + i)), "█", .{ .fg = p.th.muted });
 }
 
 /// Spans left to right; a span with `w` pads or clips to it.
@@ -386,7 +378,9 @@ fn paintDetail(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
     const app = p.app;
     const th = p.th;
     if (box.w < 6 or box.h == 0) return;
-    p.app.hits.add(.{ .x = box.x, .y = box.y, .w = box.w, .h = box.h }, .detail);
+    // The panel's own door for the pointer: the body takes the wheel,
+    // the `\u{d7}` in the corner closes it (Esc still does too).
+    try p.c.detailPanel(.{ .x = box.x, .y = box.y, .w = box.w, .h = box.h }, .detail, .detail_close);
     const inner_x = box.x + 1;
     const inner_w = box.w -| 2;
     const rows = (try app.visible(arena)).rows;
@@ -412,7 +406,11 @@ fn paintDetail(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         paintSpans(p, inner_x, y, inner_w, lines[i].spans);
         y += 1;
     }
-    if (lines.len > box.h) paintScrollbar(p, .{ .x = box.x + box.w - 1, .y = box.y, .w = 1, .h = box.h }, lines.len, app.detail_scroll, box.h);
+    app.detail_lines = lines.len;
+    app.detail_rows = box.h;
+    // A scrollbar that means something: the thumb says where you are,
+    // and a press or a drag on the track goes there.
+    if (lines.len > box.h) try p.c.scrollbar(.{ .x = box.x + box.w - 1, .y = box.y + 1, .w = 1, .h = box.h -| 1 }, lines.len, app.detail_scroll, box.h, .detail_bar);
 }
 
 // ─── the hint row ─────────────────────────────────────────────────────────
@@ -574,6 +572,9 @@ fn paintSheet(arena: Allocator, p: *Painter) Allocator.Error!void {
                 };
                 const line = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.title, scope });
                 _ = p.text(x + 19, ry, w -| 21, line, .{ .fg = th.fg, .bg = th.cursor_line });
+                // A row of the sheet runs what its chord runs: reading
+                // the keys and using them are the same gesture.
+                p.app.hits.add(.{ .x = x + 1, .y = ry, .w = w -| 2, .h = 1 }, .{ .sheet_row = b.action });
             },
         }
         ry += 1;
@@ -682,7 +683,7 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "#1234"));
     try t.expect(has(scr, "Fix the login redirect"));
     try t.expect(has(scr, "chris/fix-login"));
-    try t.expect(has(scr, "[ Show 1 more older ]"));
+    try t.expect(has(scr, "Show more (1)"));
     try t.expect(has(scr, "author: all"));
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
     try t.expect(has(scr, "⏎ expand"));
@@ -906,7 +907,7 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     _ = try s.draw();
     var rows = try s.rig.rows();
 
-    // The tree is api(#1234), web(#820), [ Show 1 more older ].
+    // The tree is api(#1234), web(#820), `Show more (1)`.
     try t.expect(rows[0] == .repo_header);
     try t.expect(rows[1] == .pr);
     try t.expect(rows[rows.len - 1] == .show_more);
@@ -933,7 +934,7 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try s.key("esc");
     try s.key("d");
 
-    // The `[ Show N more older ]` footer lifts the window and nothing else.
+    // The `Show more (N)` footer lifts the window and nothing else.
     try rightClickRow(s, rows.len - 1);
     try t.expectEqualSlices(app_mod.Action, &.{.activate}, menuItems(s));
     try s.key("esc");

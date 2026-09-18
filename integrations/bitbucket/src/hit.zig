@@ -8,6 +8,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const keymap = @import("keymap.zig");
+const sdk = @import("mnml_sdk");
 
 pub const Chip = enum {
     refresh,
@@ -32,67 +33,58 @@ pub const Target = union(enum) {
     hint: keymap.Action,
     /// A row of the open menu.
     menu_item: usize,
-    /// The detail panel's body (a wheel there scrolls it).
+    /// The detail panel's body (a wheel there scrolls it), its `\u{d7}`
+    /// and its scrollbar (a press or a drag on the track scrolls it).
     detail,
-    /// The key sheet (any click closes it).
+    detail_close,
+    detail_bar,
+    /// The key sheet, and one of its rows — clicking a row runs what
+    /// its chord runs.
     sheet,
+    sheet_row: keymap.Action,
 };
 
-pub const Rect = struct {
-    x: u16,
-    y: u16,
-    w: u16,
-    h: u16,
+pub const Rect = sdk.pane.Rect;
 
-    pub fn contains(r: Rect, col: u16, row: u16) bool {
-        return col >= r.x and col < r.x +| r.w and row >= r.y and row < r.y +| r.h;
-    }
-};
+/// The map itself is the SDK's (`sdk.pane.HitMap`), generic over the
+/// targets above — the same implementation the Jira pane registers into,
+/// so "the last thing painted wins" means the same thing in both.
+pub const Inner = sdk.pane.HitMap(Target);
+pub const Entry = Inner.Entry;
 
-pub const Entry = struct { rect: Rect, target: Target };
-
+/// The pane keeps its own handle so a painter can `add` without passing
+/// an allocator at every call site, the way this pane has always done.
 pub const HitMap = struct {
     gpa: Allocator,
-    entries: std.ArrayList(Entry) = .empty,
+    inner: Inner = .{},
 
     pub fn init(gpa: Allocator) HitMap {
         return .{ .gpa = gpa };
     }
 
     pub fn deinit(m: *HitMap) void {
-        m.entries.deinit(m.gpa);
+        m.inner.deinit(m.gpa);
         m.* = undefined;
     }
 
-    /// The top of a frame: nothing is registered yet.
     pub fn reset(m: *HitMap) void {
-        m.entries.clearRetainingCapacity();
+        m.inner.reset();
     }
 
-    /// Register `target` over `rect`; an empty rect registers nothing.
     pub fn add(m: *HitMap, rect: Rect, target: Target) void {
-        if (rect.w == 0 or rect.h == 0) return;
-        m.entries.append(m.gpa, .{ .rect = rect, .target = target }) catch {};
+        m.inner.add(m.gpa, rect, target) catch {};
     }
 
-    /// The target under a cell — the last one painted there.
     pub fn at(m: *const HitMap, col: u16, row: u16) ?Target {
-        var i = m.entries.items.len;
-        while (i > 0) : (i -= 1) {
-            const e = m.entries.items[i - 1];
-            if (e.rect.contains(col, row)) return e.target;
-        }
-        return null;
+        return m.inner.at(col, row);
     }
 
-    /// Where a target was painted (its first rect), for a test.
     pub fn rectOf(m: *const HitMap, target: Target) ?Rect {
-        for (m.entries.items) |e| if (std.meta.eql(e.target, target)) return e.rect;
-        return null;
+        return m.inner.rectOf(target);
     }
 
     pub fn count(m: *const HitMap) usize {
-        return m.entries.items.len;
+        return m.inner.count();
     }
 };
 
