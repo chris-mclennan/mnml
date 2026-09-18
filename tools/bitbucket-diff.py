@@ -191,7 +191,8 @@ def main():
     out_dir = args.out or os.path.join(tmp, "screens")
     os.makedirs(out_dir, exist_ok=True)
     url_file = os.path.join(tmp, "bb.url")
-    fake = subprocess.Popen([args.fake, "--port", "0", "--url-file", url_file, "--lifetime-secs", "600"], stdout=subprocess.DEVNULL)
+    # --parent-pid: a run killed half way leaves no server on the port.
+    fake = subprocess.Popen([args.fake, "--port", "0", "--url-file", url_file, "--lifetime-secs", "600", "--parent-pid", str(os.getpid())], stdout=subprocess.DEVNULL)
     try:
         for _ in range(50):
             if os.path.exists(url_file) and open(url_file).read().strip():

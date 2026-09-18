@@ -45,7 +45,8 @@ port_bin=zig-out/bin/mnml-jira
 fake_bin=zig-out/bin/mnml-fake-jira
 
 # The server on a free port, for the whole run.
-"$fake_bin" --port 0 --port-file "$out/port" --pid-file "$out/fake.pid" --life-secs 900 --quiet >/dev/null 2>&1 &
+# --parent-pid: a run killed half way leaves no server on the port.
+"$fake_bin" --port 0 --port-file "$out/port" --pid-file "$out/fake.pid" --life-secs 900 --parent-pid $$ --quiet >/dev/null 2>&1 &
 for _ in $(seq 1 50); do [ -s "$out/port" ] && break; sleep 0.1; done
 port=$(cat "$out/port" 2>/dev/null)
 [ -n "$port" ] || { echo "jira-diff: the offline server did not start" >&2; exit 1; }

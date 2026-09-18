@@ -7,6 +7,7 @@
 //!   mnml-fake-bitbucket --port 8765           a fixed port
 //!   mnml-fake-bitbucket --url-file bb.url     also write the URL there, once listening
 //!   mnml-fake-bitbucket --lifetime-secs 60    exit after a minute, whatever happens
+//!   mnml-fake-bitbucket --parent-pid 1234     exit when 1234 is gone
 //!   mnml-fake-bitbucket --rate-limit-first 2  429 the first two requests
 //!
 //! The lifetime is what makes it safe in a test script: a run that
@@ -28,6 +29,7 @@ pub fn main(init: std.process.Init) !u8 {
     var port: u16 = 0;
     var url_file: ?[]const u8 = null;
     var lifetime_secs: u64 = 0;
+    var parent_pid: i32 = 0;
     var rate_limit_first: u32 = 0;
 
     var i: usize = 1;
@@ -49,6 +51,9 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--lifetime-secs") and i + 1 < args.len) {
             i += 1;
             lifetime_secs = std.fmt.parseInt(u64, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--parent-pid") and i + 1 < args.len) {
+            i += 1;
+            parent_pid = std.fmt.parseInt(i32, args[i], 10) catch 0;
         } else if (std.mem.eql(u8, a, "--rate-limit-first") and i + 1 < args.len) {
             i += 1;
             rate_limit_first = std.fmt.parseInt(u32, args[i], 10) catch 0;
@@ -80,14 +85,25 @@ pub fn main(init: std.process.Init) !u8 {
     try stdout.print("{s}\n", .{base});
     try stdout.flush();
 
-    if (lifetime_secs == 0) {
-        // No lifetime: serve until the process is killed.
-        while (true) io.sleep(.fromMilliseconds(1000), .awake) catch break;
-    } else {
-        var left = lifetime_secs;
-        while (left > 0) : (left -= 1) io.sleep(.fromMilliseconds(1000), .awake) catch break;
+    // The deadline, and the other way a run ends: a server whose starter
+    // is gone is an orphan holding a port, so it goes too — that is what
+    // a killed test run leaves behind otherwise.
+    var left: u64 = if (lifetime_secs == 0) std.math.maxInt(u64) else lifetime_secs;
+    while (left > 0) : (left -= 1) {
+        io.sleep(.fromMilliseconds(1000), .awake) catch break;
+        if (orphaned(parent_pid)) break;
     }
     return 0;
+}
+
+/// True when the process named by `--parent-pid` is gone. Signal 0 is
+/// the POSIX liveness probe: it delivers nothing and answers ESRCH when
+/// there is nobody there.
+fn orphaned(parent_pid: i32) bool {
+    if (parent_pid <= 0) return false;
+    if (@import("builtin").os.tag == .windows) return false;
+    const rc = std.c.kill(parent_pid, @enumFromInt(0));
+    return rc != 0 and std.c._errno().* == @intFromEnum(std.c.E.SRCH);
 }
 
 const usage =
@@ -96,6 +112,7 @@ const usage =
     \\  --port N              listen here (default 0: the OS picks)
     \\  --url-file PATH       write the base URL there once listening
     \\  --lifetime-secs N     exit after N seconds (default: never)
+    \\  --parent-pid N        exit when that process is gone (an orphan holds a port)
     \\  --rate-limit-first N  answer the first N requests with 429
     \\
     \\Point the integration at it with BITBUCKET_BASE_URL=<url>, or
