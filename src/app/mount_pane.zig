@@ -269,6 +269,7 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
                         .block => .block,
                         .rule => .rule,
                         .line => .line,
+                        .quarter => .quarter,
                     },
                 },
             });

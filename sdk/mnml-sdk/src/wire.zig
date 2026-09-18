@@ -91,7 +91,7 @@ pub const Palette = struct {
 ///
 /// The host's `ui.tab_indicator`. A host that predates the field sends
 /// none and every pane draws `block`.
-pub const TabIndicator = enum { block, rule, line };
+pub const TabIndicator = enum { block, rule, line, quarter };
 
 /// The first message after connect.
 pub const Hello = struct {

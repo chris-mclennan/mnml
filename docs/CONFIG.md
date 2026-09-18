@@ -234,7 +234,7 @@ otherwise. Copy what you need; leave the rest out.
         //   .line   ─ under the active label only
         // A pane under about twelve rows spends no row on it and
         // underlines the active label instead.
-        .tab_indicator = .block, // .block | .rule | .line
+        .tab_indicator = .block, // .block | .rule | .line | .quarter
         .hover_help_height = 8, // clamped to 3..20
         .terminal_label = "terminal",
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
