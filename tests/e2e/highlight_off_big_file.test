@@ -1,0 +1,32 @@
+# The per-buffer highlight switch on a real multi-megabyte file.
+#
+# `editor.highlight_max_bytes` decides this automatically on open (0 —
+# no limit — is the shipped default, and a `.test` cannot change the
+# config the App booted with), so this drives the same switch by hand:
+# `editor.highlight_toggle_file` turns tree-sitter off for ONE buffer,
+# the statusline chip and a toast say so, and `editor.highlight_this_file`
+# turns it back on. The limit's own decision is unit-tested in
+# `src/app/syntax.zig`.
+#
+# The fixture is ~5 MB of Rust, doubled up from a seed rather than
+# committed: past `Syntax.worker_min_bytes` it is a file whose parse runs
+# on a worker, which is the case the switch exists for.
+write seed.rs // a repeated seed\npub fn one(x: u32) -> u32 {\n    let y: u32 = x + 1;\n    y\n}\n
+shell cp seed.rs big.rs; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do cat big.rs big.rs > grow.rs; mv grow.rs big.rs; done; rm seed.rs
+shell test "$(wc -c < big.rs)" -gt 4000000
+
+open big.rs
+expect pane "big.rs"
+
+# Off for this buffer: the chip appears with the size, and the toast
+# names the file.
+command editor.highlight_toggle_file
+expect screen contains "highlight off"
+expect screen contains "highlighting off for big.rs"
+
+# On again — the chip flips and the spans come back (the parse of a file
+# this size runs on a worker, so give it room beyond the poll budget).
+command editor.highlight_this_file
+expect screen contains "highlight on"
+wait 3000
+expect highlights at_least 1
