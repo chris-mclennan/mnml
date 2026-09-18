@@ -972,6 +972,21 @@ pub const App = struct {
         return e.readiness;
     }
 
+    /// File one readiness look, freeing whatever it replaces. The
+    /// commit path and the tests go through here so neither can leak
+    /// the key it overwrote.
+    pub fn putReadiness(app: *App, key: []const u8, updated_on: []const u8, r: sdk.pane.merge.Readiness) Allocator.Error!void {
+        const owned_key = try app.gpa.dupe(u8, key);
+        errdefer app.gpa.free(owned_key);
+        const owned_stamp = try app.gpa.dupe(u8, updated_on);
+        const gop = try app.readiness.getOrPut(app.gpa, owned_key);
+        if (gop.found_existing) {
+            app.gpa.free(owned_key);
+            app.gpa.free(gop.value_ptr.updated_on);
+        }
+        gop.value_ptr.* = .{ .updated_on = owned_stamp, .readiness = r };
+    }
+
     /// Ask, once, whether this pull request may merge. Only for OPEN
     /// ones, only for the row the reader is actually on, and never
     /// again while it has not moved — so a tab of twenty pull requests
@@ -1431,15 +1446,7 @@ pub const App = struct {
                 const key = prRowKey(&kbuf, rr.key.repo, rr.key.id);
                 if (app.readiness_in_flight.fetchRemove(key)) |kv| app.gpa.free(kv.key);
                 if (rr.error_text.len > 0) app.setStatus("{s}", .{rr.error_text});
-                const owned_key = try app.gpa.dupe(u8, key);
-                errdefer app.gpa.free(owned_key);
-                const owned_stamp = try app.gpa.dupe(u8, rr.updated_on);
-                const gop = try app.readiness.getOrPut(app.gpa, owned_key);
-                if (gop.found_existing) {
-                    app.gpa.free(owned_key);
-                    app.gpa.free(gop.value_ptr.updated_on);
-                }
-                gop.value_ptr.* = .{ .updated_on = owned_stamp, .readiness = rr.readiness };
+                try app.putReadiness(key, rr.updated_on, rr.readiness);
             },
             .refresh => |r| {
                 if (r.tab >= app.tabs.len) return;
@@ -2252,10 +2259,7 @@ test "a ready PR opens a named confirm, and confirming dispatches a Claude Code 
 
     // Stand the readiness up as clean: what this asserts is what the
     // pane does once it IS ready, not the judgment itself.
-    try r.app.readiness.put(t.allocator, try t.allocator.dupe(u8, "api#1234"), .{
-        .updated_on = try t.allocator.dupe(u8, pr.updated_on),
-        .readiness = .{ .approvals = 1, .required = 1, .conflicts = false, .build_green = true, .checked = true },
-    });
+    try r.app.putReadiness("api#1234", pr.updated_on, .{ .approvals = 1, .required = 1, .conflicts = false, .build_green = true, .checked = true });
     try t.expect(r.app.readinessOf("api", pr).ready());
 
     try r.app.pressMerge("api", pr);

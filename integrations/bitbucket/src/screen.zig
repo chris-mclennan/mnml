@@ -913,6 +913,60 @@ test "a PR folds out to its builds under enter, one row per run, and the detail 
     try t.expect(!has(nscr, "REPO / #PR"));
 }
 
+test "the cursor's PR row grows its buttons, the Merge is dim, and hovering it says why" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    // The cursor onto #1234.
+    try s.key("j");
+    var scr = try s.draw();
+    try t.expect(has(scr, "[ Open ] [ Merge ]"));
+    // Only the row under the cursor carries them: the table is dense,
+    // and the title is the column that would otherwise pay.
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, scr, "[ Merge ]"));
+
+    // Nothing has judged it, so the button registers `merge_blocked`
+    // rather than a `pr_button`: a stray click cannot merge anything.
+    const at = s.rig.app.hits.rectOf(.{ .merge_blocked = 1 }).?;
+    try t.expect(s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .merge } }) == null);
+    // …and the pointer resting on it puts the reason on the hint row.
+    s.rig.app.hover(at.x + 2, at.y);
+    scr = try s.draw();
+    try t.expect(has(scr, "Merge: not checked yet"));
+
+    // Judged and blocked: the reason names the condition and its count.
+    const ts = s.rig.app.activeTab();
+    const pr = ts.data.repo_pr_tree[0].prs[0];
+    try s.rig.app.putReadiness("api#1234", pr.updated_on, .{ .approvals = 1, .required = 2, .conflicts = false, .build_green = true, .checked = true });
+    s.rig.app.hover(at.x + 2, at.y);
+    scr = try s.draw();
+    try t.expect(has(scr, "Merge: 1 of 2 approvals"));
+
+    // Ready: the button becomes a real target, and the pointer moving
+    // off it takes the sentence away with it.
+    try s.rig.app.putReadiness("api#1234", pr.updated_on, .{ .approvals = 2, .required = 2, .conflicts = false, .build_green = true, .checked = true });
+    scr = try s.draw();
+    try t.expect(s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .merge } }) != null);
+    s.rig.app.hover(0, 0);
+    scr = try s.draw();
+    try t.expect(!has(scr, "Merge: "));
+
+    // Confirming it names the pull request rather than asking "are you
+    // sure?" about nothing in particular.
+    try s.rig.app.pressMerge("api", pr);
+    scr = try s.draw();
+    try t.expect(has(scr, "Merge acme/api/pull-requests/1234"));
+    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "chris/fix-login \u{2192} main"));
+    try t.expect(has(scr, "strategy: merge commit"));
+    try t.expect(has(scr, "merged by a Claude Code session, not by this pane"));
+    try t.expect(has(scr, " Merge "));
+    try t.expect(has(scr, " Cancel "));
+    // Esc takes it away without doing anything.
+    try s.key("esc");
+    scr = try s.draw();
+    try t.expect(!has(scr, "Merge acme/api/pull-requests/1234"));
+}
+
 test "the awaiting chip says its count, narrows the tab, and the header says what it narrowed" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
