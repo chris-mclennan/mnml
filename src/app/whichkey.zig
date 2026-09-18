@@ -159,6 +159,7 @@ pub const root: Node = .{
                 cmd('x', .@"git.codex_commit", "codex commit message"),
                 cmd('o', .@"git.checkout", "checkout branch"),
                 cmd('w', .@"git.worktrees", "worktrees → shell"),
+                cmd('W', .@"git.worktree_open_tab", "worktree → its own tab"),
                 cmd('S', .@"git.stash", "stash (with optional msg)"),
                 cmd('P', .@"git.stash_pop", "stash pop"),
             }),

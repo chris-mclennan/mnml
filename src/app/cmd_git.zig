@@ -117,6 +117,7 @@ pub const table = .{
     .@"git.rebase_interactive_onto" = &rebaseInteractiveOnto,
     .@"git.explain_branch" = &explainBranch,
     .@"git.push_start_pr" = &pushStartPr,
+    .@"git.worktree_open_tab" = &worktreeOpenTab,
     .@"git.fixup" = &fixup,
     .@"git.squash" = &squash,
     .@"git.drop" = &drop,
@@ -790,6 +791,14 @@ fn explainBranch(app: *App) CommandError!void {
 fn pushStartPr(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     try git.pushStartPr(app, try verbBranch(app, "push and start PR"));
+}
+
+/// `git.worktree_open_tab`: the branches panel's WORKTREES row on a tab
+/// page of its own.
+fn worktreeOpenTab(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    const w = (try git_palette.cursorWorktree(app)) orelse return app.diag.fail(arena(app), "open worktree in a new tab: put the branches panel's cursor on a WORKTREES row first", .{});
+    try git_palette.openWorktreeInTab(app, w);
 }
 
 fn fixup(app: *App) CommandError!void {

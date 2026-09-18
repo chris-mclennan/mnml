@@ -76,6 +76,8 @@ const side = @import("side.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const pty_pane = @import("pty_pane.zig");
+const cmd_tab = @import("cmd_tab.zig");
+const files_pane = @import("files_pane.zig");
 const remote_mod = @import("../git/remote.zig");
 const settings = @import("settings.zig");
 const alloc = @import("../core/alloc.zig");
@@ -912,6 +914,16 @@ pub fn cursorStash(app: *App) Allocator.Error!?[]const u8 {
     };
 }
 
+/// The worktree the cursor's row names, for the WORKTREES commands off
+/// the panel; null on any other row.
+pub fn cursorWorktree(app: *App) Allocator.Error!?parse.Worktree {
+    const row = (try rowAt(app, app.git_palette.cursor)) orelse return null;
+    return switch (row) {
+        .worktree => |w| if (w.idx < app.git.rail_worktrees.len) app.git.rail_worktrees[w.idx] else null,
+        else => null,
+    };
+}
+
 pub fn cursorStashMessage(app: *App) ?[]const u8 {
     const row = (rowAt(app, app.git_palette.cursor) catch return null) orelse return null;
     return switch (row) {
@@ -1028,20 +1040,47 @@ pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
         showRepoTab(app, i);
         return;
     };
+    const idx = (try ensureWorktreeRepo(app, w)) orelse {
+        app.toast("worktree: {s} added to the workspace", .{w.path});
+        return;
+    };
+    try git.switchTo(app, idx);
+    if (st.active) try rebuildTabs(app);
+    showRepoTab(app, idx);
+    app.toast("worktree: {s}", .{w.path});
+}
+
+/// The worktree's directory as a workspace root and a repo of its own,
+/// discovered if it was not one already: its index in `git.repos`, or
+/// null when the discovery did not find a repository there.
+fn ensureWorktreeRepo(app: *App, w: parse.Worktree) CommandError!?usize {
+    const gs = &app.git;
+    const arena = app.frame.allocator();
+    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) return i;
     _ = app.tree.addRoot(app, w.path, null) catch |err| switch (err) {
         error.AlreadyOpen => {},
         error.NotADirectory => return app.diag.fail(arena, "worktree: {s} is not a directory", .{w.path}),
         error.OutOfMemory => return error.OutOfMemory,
     };
     try git.discover(app);
-    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) {
-        try git.switchTo(app, i);
-        if (st.active) try rebuildTabs(app);
-        showRepoTab(app, i);
-        app.toast("worktree: {s}", .{w.path});
+    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) return i;
+    return null;
+}
+
+/// *Open worktree in new tab* (git-menus): the tree opens on a tab page
+/// of its own, this page left as it is — where *Open this worktree*
+/// turns THIS page's git tab to the tree's graph, per tab. The new page
+/// holds the tree's files, and the tree becomes the repo the panels
+/// read.
+pub fn openWorktreeInTab(app: *App, w: parse.Worktree) CommandError!void {
+    const idx = (try ensureWorktreeRepo(app, w)) orelse {
+        app.toast("worktree: {s} added to the workspace", .{w.path});
         return;
     };
-    app.toast("worktree: {s} added to the workspace", .{w.path});
+    try cmd_tab.tabNewEmpty(app);
+    _ = try files_pane.open(app, w.path);
+    try git.switchTo(app, idx);
+    app.toast("worktree {s}: tab {d}/{d}", .{ std.fs.path.basename(w.path), app.layouts.active + 1, app.layouts.layouts.items.len });
 }
 
 /// One row menu's rows as they are built: the labels on the arena the
@@ -1213,6 +1252,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             }
             const wt = v.worktrees[w.idx];
             try b.act("Open this worktree", .worktree_open, w.idx, false);
+            try b.act("Open worktree in new tab", .worktree_open_tab, w.idx, false);
             try b.act("Open shell here", .worktree_shell, w.idx, false);
             try b.act("Copy path", .worktree_copy_path, w.idx, false);
             try b.act("New worktree\u{2026}", .worktree_new, w.idx, false);
@@ -1295,11 +1335,12 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 app.toast("copied {s}", .{url});
                 break :blk;
             },
-            .worktree_open, .worktree_shell, .worktree_copy_path, .worktree_remove, .session_merge, .session_remove => {
+            .worktree_open, .worktree_open_tab, .worktree_shell, .worktree_copy_path, .worktree_remove, .session_merge, .session_remove => {
                 if (a.idx >= gs.rail_worktrees.len) break :blk;
                 const wt = gs.rail_worktrees[a.idx];
                 switch (a.what) {
                     .worktree_open => break :blk openWorktree(app, wt),
+                    .worktree_open_tab => break :blk openWorktreeInTab(app, wt),
                     .session_merge, .session_remove => {
                         const e = app.sessions.worktrees.byPath(wt.path) orelse break :blk app.diag.fail(arena, "{s} is no session worktree", .{wt.path});
                         break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*, false);
@@ -2232,7 +2273,7 @@ fn lastToastText(app: *App) []const u8 {
     return app.lastToast() orelse "";
 }
 
-const worktree_menu = [_][]const u8{ "Open this worktree", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}" };
+const worktree_menu = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}" };
 
 test "row menus: one shape per row kind, built from the row under the pointer while the cursor stays; the main tree and the tree on show keep Remove and are refused by name; a prefix-only remote keeps Copy URL and says so; Reset targets the row, not the cursor; a stale index opens nothing; under All repos a right-click on another repo's row switches nothing and its rows carry the repo, which the act switches to" {
     var t = try TestApp.initWith(&.{ "alpha", "beta" });
