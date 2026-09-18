@@ -255,15 +255,13 @@ fn isDark(c: Color) bool {
 
 /// A host segment: its named colour as the ground (the muted colour
 /// when it names none), dark or light text for contrast, its slot as
-/// the hit.
-fn dynSeg(ui: Ui, r: ipc.effects.Rendered, busy: bool) Seg {
+/// the hit. A poll in flight changes nothing on the chip — the hover
+/// says "refreshing"; a refresh glyph on the chip read as a button.
+fn dynSeg(ui: Ui, r: ipc.effects.Rendered) Seg {
     const p = &ui.theme.palette;
     const bg = if (r.color) |c| integrations_view.paletteColor(ui.theme, c) else p.comment;
     const fg = if (isDark(bg)) p.fg else p.bg_darker;
-    // A poll in flight: the chip says it is being asked rather than
-    // sitting there stale with an answer from ten minutes ago.
-    const spin: []const u8 = if (!busy) "" else if (ui.ascii) integration_poll.busy_glyph_ascii ++ " " else integration_poll.busy_glyph ++ " ";
-    return Seg.init(ui.fmt(" {s}{s} ", .{ spin, r.text }), fg, bg).withHit(sl.seg_dyn_base + r.index);
+    return Seg.init(ui.fmt(" {s} ", .{r.text}), fg, bg).withHit(sl.seg_dyn_base + r.index);
 }
 
 /// The counts the branch chip shows, NvChad style: a file is added,
@@ -421,7 +419,8 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
 
     // ── host segments, left lane ──
     const budget = dynamicLaneBudget(area.w);
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| try push(&left, arena, dynSeg(ui, r, app.integration_poll.segmentBusy(r.id)));
+    // A segment with no text yet (a count the poller has not filled in) paints nothing — an empty chevron is noise.
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| if (r.text.len > 0) try push(&left, arena, dynSeg(ui, r));
 
     // ── branch, PR ──
     if (try branchSeg(app, ui)) |s| try push(&left, arena, s);
@@ -480,7 +479,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
 
     // ── right lane ──
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| try push(&right, arena, dynSeg(ui, r, app.integration_poll.segmentBusy(r.id)));
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| if (r.text.len > 0) try push(&right, arena, dynSeg(ui, r));
     for (try app.script().segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
     if (tests_pane.find(app)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
@@ -1044,10 +1043,18 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph) == null);
     job.shared.in_flight.store(true, .release);
     b.app.needs_render = true;
-    try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph ++ " TE-1") != null);
-    // …and the hover now offers the way to ask again by hand.
+    // A poll in flight leaves the chip as it was: no glyph, the count still there…
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph) == null);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
+    // …and the hover says so, and offers the way to ask again by hand.
     const busy_hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expect(std.mem.indexOf(u8, busy_hover.detail orelse "", "refreshing") != null);
     try testing.expect(std.mem.indexOf(u8, busy_hover.detail orelse "", "Refresh now") != null);
+    // A segment with no text yet paints nothing at all: the row is the same with it as without.
+    const row_before = try arena_state.allocator().dupe(u8, try b.row(38));
+    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.qa", .text = "", .side = .left, .priority = 4, .max_width = 8, .color = "magenta" });
+    b.app.needs_render = true;
+    try testing.expectEqualStrings(row_before, try b.row(38));
 }
 
 // ─── the narrow rule, at four widths ─────────────────────────────────────
