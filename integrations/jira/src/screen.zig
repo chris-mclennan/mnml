@@ -216,6 +216,36 @@ pub const Painter = struct {
         if (p.a.modal != null) try p.paintModal();
         if (p.a.vars != null) try p.paintVars();
         if (p.a.help) try p.paintHelp();
+        // Last of all: the one overlay with something irreversible
+        // behind it wins every click while it is up.
+        if (p.a.merge != null) try p.paintMergeConfirm();
+    }
+
+    /// The merge confirm: what it is about, in its own words.
+    fn paintMergeConfirm(p: *Painter) Allocator.Error!void {
+        const m = p.a.merge orelse return;
+        const w: u16 = @min(p.cols() -| 6, 72);
+        const h: u16 = 8;
+        if (p.cols() < 24 or p.rows() < h + 2) return;
+        const rect: sdk.pane.Rect = .{ .x = (p.cols() -| w) / 2, .y = (p.rows() -| h) / 2, .w = w, .h = h };
+        var hbuf: [160]u8 = undefined;
+        var bbuf: [160]u8 = undefined;
+        var sbuf: [160]u8 = undefined;
+        try p.c.confirmBox(
+            rect,
+            m.confirm.heading(&hbuf),
+            &.{
+                m.confirm.title,
+                m.confirm.branchLine(&bbuf),
+                m.confirm.strategyLine(&sbuf),
+                "merged by a Claude Code session, not by this pane",
+            },
+            " Merge ",
+            .confirm_ok,
+            " Cancel ",
+            .confirm_cancel,
+            .confirm_body,
+        );
     }
 
     fn paintEmptyScope(p: *Painter) Allocator.Error!void {
@@ -606,7 +636,33 @@ pub const Painter = struct {
                     if (sw > bw + 12) {
                         sw -= bw;
                         var bx = sum_c.x + sw;
+                        const ready = a.readinessOf(iss.key, pr);
                         for (set) |b| {
+                            // `[ Merge ]` wears whatever its session
+                            // left once there is one; before that it is
+                            // dim, and not a target at all, until the
+                            // pull request may actually merge.
+                            if (b.which == .merge) {
+                                var kb: [256]u8 = undefined;
+                                const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
+                                const bst = a.actions.state(rk, "merge");
+                                var ab: [32]u8 = undefined;
+                                const cap = if (bst == .idle) b.label else sdk.pane.action.caption(&ab, bst, sdk.pane.merge.label, a.spin, p.ui.ascii);
+                                const lw = text.width(cap);
+                                if (bst != .idle) {
+                                    _ = p.put(bx, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, bst));
+                                    try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
+                                } else {
+                                    _ = p.put(bx, y, lw, cap, sdk.pane.merge.styleOf(p.ui.th, ready));
+                                    if (sdk.pane.merge.isPressable(ready)) {
+                                        try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
+                                    } else {
+                                        try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .merge_blocked = idx });
+                                    }
+                                }
+                                bx += lw + 1;
+                                continue;
+                            }
                             const lw = text.width(b.label);
                             _ = p.put(bx, y, lw, b.label, p.s.chip_style);
                             try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
@@ -896,6 +952,12 @@ pub const Painter = struct {
         if (status.len > 0) {
             x += p.putFit(x, y, w -| x, status, p.s.plain);
             x += 2;
+        }
+        // A dim `[ Merge ]` owes the reader a reason, and the hint row
+        // is where it goes: the pointer is already there.
+        if (a.hoverNote().len > 0) {
+            _ = p.putFit(x, y, w -| x, a.hoverNote(), p.s.warn_style);
+            return;
         }
         // A button that failed keeps its reason where it can be read:
         // the status moves on, the row's cross does not.
@@ -1581,7 +1643,11 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.indexOf(u8, r7, "OPEN") != null);
     try testing.expect(std.mem.indexOf(u8, r7, "[ Open ] [ Review ] [ Merge ]") != null);
     const merge_x = (try colOfText(ar, &f, 7, "[ Merge ]")).?;
-    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .merge } }, a.hits.at(merge_x + 2, 7).?);
+    // Nothing has judged this pull request, so `[ Merge ]` is dim and
+    // is NOT a `pr_button`: a stray click there cannot merge anything.
+    // It still answers, with the reason it is dim.
+    try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 7).?);
+    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 7, "[ Open ]")).? + 2, 7).?);
     // The hint row comes from the bindings, not a string.
     const last = try rowText(ar, &f, 39);
     try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select") != null);

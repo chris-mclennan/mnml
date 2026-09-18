@@ -574,8 +574,8 @@ fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     const rows = (try app.visible(arena)).rows;
     // A dim `[ Merge ]` owes the reader a reason, and the hint row is
     // where it goes: the pointer is already there.
-    if (app.hover_note.len > 0) {
-        _ = p.text(1, y, p.f.cols -| 2, app.hover_note, th.warn());
+    if (app.hoverNote().len > 0) {
+        _ = p.text(1, y, p.f.cols -| 2, app.hoverNote(), th.warn());
         return;
     }
     const ctx = app.keyContext(rows);

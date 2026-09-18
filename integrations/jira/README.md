@@ -255,6 +255,32 @@ pull request when nothing has changed — the PR detail carries
 `updated_on`, and the pipelines list is skipped whenever it has not
 moved.
 
+## Merging a PR — and why the button is usually dim
+
+`[ Merge ]` on a PR row is **dim and not a click target** until the
+pull request can actually merge. Five conditions, in the order a reader
+thinks about them: the required approvals (`required_approvals`,
+default 1) with nobody asking for changes, every task resolved, no
+conflicts, the newest run on the **source** commit green, and every
+comment resolved or replied to. Hovering a dim one — or clicking it —
+says which condition fails and its number, `Merge: 1 of 2 approvals`.
+A pull request nobody has looked at says `not checked yet` rather than
+inventing a blocker.
+
+The look costs one cached round per pull request against its own
+`updated_on`, taken when the button is pressed or the row is hovered,
+and reuses the row's builds for the pipeline half when they are already
+folded out.
+
+A ready button opens a confirm that **names** the pull request, its
+branches and the strategy (`←→` cycles). Confirming writes the same
+kind of `term` line every other action here writes: a **Claude Code
+session** that merges through the Bitbucket API with
+`$BITBUCKET_ACCESS_TOKEN` and reports the outcome on its last line.
+This pane never calls the merge API itself. The button then follows
+that session — spinner, `⏸`, `[ view ]`, red `✗` — and a merge that
+ends while the pane does not have the keyboard sends a notification.
+
 ## The dispatch queue
 
 `.` + Enter, `I` / `X` / `T` / `V` on a Fix Versions tab, or a card's

@@ -216,8 +216,10 @@ pub const App = struct {
     /// The merge confirm, when one is up.
     merge_confirm: ?MergeConfirm = null,
     /// What the pointer is over, when it is worth saying — the reason a
-    /// dim `[ Merge ]` is dim. On the frame arena, so it lasts one pass.
-    hover_note: []const u8 = "",
+    /// dim `[ Merge ]` is dim. A fixed buffer: the pointer moves many
+    /// times a second and an arena would grow with every move of it.
+    hover_buf: [192]u8 = undefined,
+    hover_len: usize = 0,
     /// The pane has the keyboard. A session that ends while it does not
     /// is worth a notification.
     focused: bool = true,
@@ -905,8 +907,12 @@ pub const App = struct {
     /// The pointer moved. Nothing here changes state; it only leaves
     /// the sentence a dim `[ Merge ]` owes the reader on the hint row,
     /// for one pass.
+    pub fn hoverNote(app: *const App) []const u8 {
+        return app.hover_buf[0..app.hover_len];
+    }
+
     pub fn hover(app: *App, col: u16, row: u16) void {
-        app.hover_note = "";
+        app.hover_len = 0;
         const target = app.hits.at(col, row) orelse return;
         const idx = switch (target) {
             .merge_blocked => |i| i,
@@ -925,8 +931,10 @@ pub const App = struct {
         const pr = repos[ref.repo].prs[ref.idx];
         const r = app.readinessOf(repos[ref.repo].slug, pr);
         var buf: [192]u8 = undefined;
-        // On the frame arena: it is one pass's worth of words.
-        app.hover_note = app.frame_arena.allocator().dupe(u8, r.hoverText(&buf)) catch "";
+        const note = r.hoverText(&buf);
+        const n = @min(note.len, app.hover_buf.len);
+        @memcpy(app.hover_buf[0..n], note[0..n]);
+        app.hover_len = n;
     }
 
     /// The strategies this workspace allows, as the toolkit spells
@@ -1025,24 +1033,29 @@ pub const App = struct {
     /// The named confirm: the title, `source → target`, the strategy.
     fn openMergeConfirm(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
         if (app.merge_confirm) |*c| c.deinit();
-        var arena = std.heap.ArenaAllocator.init(app.gpa);
-        errdefer arena.deinit();
-        const a = arena.allocator();
-        var ubuf: [256]u8 = undefined;
-        const url = try a.dupe(u8, pr.url(&ubuf, app.activeTab().spec.workspace, slug));
-        var kbuf: [256]u8 = undefined;
-        const allowed = try app.mergeStrategies(a);
+        // The arena goes into the struct FIRST, and everything is
+        // allocated through the handle taken from it THERE: an
+        // `ArenaAllocator`'s `allocator()` binds to the address it was
+        // taken from, so a local one copied into a field leaks every
+        // allocation made before the copy.
         app.merge_confirm = .{
-            .arena = arena,
-            .row_key = try a.dupe(u8, prRowKey(&kbuf, slug, pr.id)),
-            .confirm = .{
-                .title = try a.dupe(u8, pr.title),
-                .source = try a.dupe(u8, pr.source_branch),
-                .target = try a.dupe(u8, pr.dest_branch),
-                .strategy = if (allowed.len > 0) allowed[0] else .merge_commit,
-                .url = url,
-            },
-            .allowed = allowed,
+            .arena = std.heap.ArenaAllocator.init(app.gpa),
+            .row_key = "",
+            .confirm = .{ .title = "", .source = "", .target = "", .strategy = .merge_commit, .url = "" },
+            .allowed = &.{},
+        };
+        const c = &app.merge_confirm.?;
+        const a = c.arena.allocator();
+        var ubuf: [256]u8 = undefined;
+        var kbuf: [256]u8 = undefined;
+        c.allowed = try app.mergeStrategies(a);
+        c.row_key = try a.dupe(u8, prRowKey(&kbuf, slug, pr.id));
+        c.confirm = .{
+            .title = try a.dupe(u8, pr.title),
+            .source = try a.dupe(u8, pr.source_branch),
+            .target = try a.dupe(u8, pr.dest_branch),
+            .strategy = if (c.allowed.len > 0) c.allowed[0] else .merge_commit,
+            .url = try a.dupe(u8, pr.url(&ubuf, app.activeTab().spec.workspace, slug)),
         };
         app.mode = .confirm;
     }

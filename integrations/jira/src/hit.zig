@@ -48,6 +48,14 @@ pub const Target = union(enum) {
     show_more: u32,
     /// A `[ Review ]` / `[ Merge ]` / `[ Open ]` chip on a PR row.
     pr_button: struct { row: u32, which: PrButton },
+    /// A DIM `[ Merge ]`. It paints but is not a `pr_button`, so a
+    /// stray click cannot merge anything — this target only lets a
+    /// hover (or a click) say which condition fails.
+    merge_blocked: u32,
+    /// The merge confirm's two chips and its body.
+    confirm_ok,
+    confirm_cancel,
+    confirm_body,
     /// An action button on a ticket row / card.
     action: struct { issue: u32, button: u8 },
     tab: u8,

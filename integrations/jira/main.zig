@@ -411,7 +411,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                 break;
             };
             switch (msg) {
-                .hello, .focus => {},
+                .hello => {},
+                .focus => |f| app.focused = f,
                 // The host's word on a session this pane dispatched.
                 .session_state => |ss| try app.onSessionState(ss.key, ss.state, ss.session_id, ss.detail),
                 .goodbye => ended = true,
@@ -425,8 +426,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                     .scroll => |s| try app.wheel(s.col, s.row, s.dy),
                     .paste => |p| try app.paste(p.text),
                     // A drag along the detail panel's scrollbar: the
-                    // same jump a press there makes, once per move.
-                    .hover => |h| if (h.dragging) try app.drag(h.col, h.row),
+                    // same jump a press there makes, once per move. A
+                    // plain move is what makes a dim `[ Merge ]` say
+                    // why it is dim.
+                    .hover => |h| if (h.dragging) try app.drag(h.col, h.row) else try app.hover(h.col, h.row),
                 },
             }
             if (ended) break;
