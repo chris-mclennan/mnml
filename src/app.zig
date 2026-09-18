@@ -2301,6 +2301,24 @@ pub const App = struct {
 
     pub const close_choices = [_]Confirm.Choice{ .{ .key = 's', .label = "Save" }, .{ .key = 'd', .label = "Discard" }, .{ .key = 'c', .label = "Cancel" } };
 
+    /// // changed (bottom-row): the quit box's own buttons. A quit is
+    /// not a close: `Discard` says nothing about how many buffers go or
+    /// that the session ends, and `Save` reads as "save this one".
+    pub const quit_choices = [_]Confirm.Choice{ .{ .key = 's', .label = "Save all" }, .{ .key = 'q', .label = "Quit anyway" }, .{ .key = 'c', .label = "Cancel" } };
+
+    /// The dirty buffers by name, in pane order — what the quit box
+    /// lists. A count alone ("2 buffer(s) have unsaved changes") does
+    /// not tell the user whether the work about to go is the scratch
+    /// note or the file they have been on all morning.
+    pub fn dirtyBufferNames(self: *App, arena: Allocator) Allocator.Error![]const u8 {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| if (p.dirty()) {
+            if (out.items.len > 0) try out.appendSlice(arena, ", ");
+            try out.appendSlice(arena, p.title());
+        };
+        return out.items;
+    }
+
     pub fn forceClosePane(self: *App, id: PaneId) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
         // The zoomed pane going means the zoom goes: a synthetic leaf

@@ -1137,7 +1137,16 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
                 },
             }
         },
-        .confirm => |*c| switch (Confirm.handleKey(&c.state, k)) {
+        // // changed (bottom-row): a SECOND `Ctrl+Q` on the quit box
+        // quits anyway. The chord that raised it is the one the hand is
+        // already on, and pressing it again plainly means "yes, quit" —
+        // the reference editor answers it the same way, through its own
+        // box's `q` hotkey.
+        .confirm => |*c| if (c.purpose == .quit and k.mods.ctrl and k.code == .char and k.code.char == 'q') {
+            closeOverlay(app);
+            app.quit = true;
+            return;
+        } else switch (Confirm.handleKey(&c.state, k)) {
             .consumed => {},
             .cancel => closeOverlay(app),
             .choose => |i| {

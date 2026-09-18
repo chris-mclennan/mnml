@@ -152,15 +152,17 @@ fn quit(app: *App) CommandError!void {
         app.quit = true;
         return;
     }
-    var n: usize = 0;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.dirty()) {
-        n += 1;
-    };
-    const msg = try std.fmt.allocPrint(app.gpa, "{d} buffer(s) have unsaved changes.", .{n});
+    // // changed (bottom-row): the box NAMES the buffers. A count alone
+    // does not say whether the work about to go is a scratch note or
+    // the file you have been on all morning. Its buttons are the quit's
+    // own — Save all / Quit anyway / Cancel — and Cancel takes the
+    // focus, so Enter on a box you did not mean to raise is always
+    // safe (the same safety-first default the delete box uses).
+    const msg = try std.fmt.allocPrint(app.gpa, "Unsaved: {s}", .{try app.dirtyBufferNames(app.frame.allocator())});
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
-        .state = .{ .title = "Unsaved changes", .message = msg, .choices = &App.close_choices },
+        .state = .{ .title = "Quit mnml?", .message = msg, .choices = &App.quit_choices, .selected = App.quit_choices.len - 1, .buttons = .plain },
         .purpose = .quit,
         .message = msg,
     } };
@@ -216,11 +218,60 @@ test "app.quit sets quit when clean and asks first when a buffer is dirty" {
     try command.run(&app, .{ .static = .@"app.quit" });
     try t.expect(!app.quit);
     try t.expect(app.overlay == .confirm);
-    try t.expectEqualStrings("Unsaved changes", app.overlay.confirm.state.title);
+    // // changed (bottom-row): the box names what is unsaved, its
+    // buttons are the quit's own, and Cancel has the focus so Enter is
+    // safe on a box you did not mean to raise.
+    try t.expectEqualStrings("Quit mnml?", app.overlay.confirm.state.title);
+    try t.expectEqualStrings("Unsaved: [scratch]", app.overlay.confirm.state.message);
+    try t.expectEqualStrings("Cancel", app.overlay.confirm.state.choices[app.overlay.confirm.state.selected].label);
     try t.expect(app.overlay.confirm.purpose == .quit);
-    // Discard quits.
-    try app.handle(.{ .key = app_mod.Key.char('d') });
+
+    // Esc cancels; nothing is lost.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.quit);
+    try t.expect(app.activeEditor().?.buf.doc.dirty);
+
+    // A SECOND Ctrl+Q on the box quits anyway — the chord that raised it
+    // pressed again plainly means yes.
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = app_mod.Key.ctrl('q') });
     try t.expect(app.quit);
+    try t.expect(app.overlay == .none);
+
+    // `q` on its own does too.
+    app.quit = false;
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try app.handle(.{ .key = app_mod.Key.char('q') });
+    try t.expect(app.quit);
+}
+
+test "the quit box's Save all writes every dirty buffer and then quits" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "one.txt", .data = "one\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "two.txt", .data = "two\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    for ([_][]const u8{ "one.txt", "two.txt" }) |name| {
+        const p = try std.fs.path.join(app.frame.allocator(), &.{ root, name });
+        _ = try app.openEditor(p);
+        const e = app.activeEditor().?;
+        try e.buf.editor.setText("CHANGED\n");
+        e.buf.doc.dirty = true;
+    }
+    try command.run(&app, .{ .static = .@"app.quit" });
+    // Both names are on the box, in pane order.
+    try t.expectEqualStrings("Unsaved: one.txt, two.txt", app.overlay.confirm.state.message);
+    try app.handle(.{ .key = app_mod.Key.char('s') });
+    try t.expect(app.quit);
+    var got: [64]u8 = undefined;
+    for ([_][]const u8{ "one.txt", "two.txt" }) |name| {
+        try t.expectEqualStrings("CHANGED\n", try tmp.dir.readFile(t.io, name, &got));
+    }
 }
 
 // ─── the small ones ──────────────────────────────────────────────────────
