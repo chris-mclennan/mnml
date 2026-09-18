@@ -328,6 +328,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     const forge_token = if (rd.cfg.bitbucket_token_env.len > 0) env.get(rd.cfg.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
     const forge: bitbucket.Client = .{ .gpa = gpa, .io = io, .base_url = rd.cfg.bitbucket_api_url, .token = forge_token orelse "" };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
+    // The host sets this for every integration it spawns; a dispatched
+    // `term` line goes to that channel and nowhere else.
+    app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(frame.cols, frame.rows);
     var ipc = try sdk.Ipc.fromEnv(gpa, io, env);
@@ -683,6 +686,7 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     client.limiter = &limiter;
     const forge_token = if (c.bitbucket_token_env.len > 0) env.get(c.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
     var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{ .gpa = gpa, .io = io, .base_url = c.bitbucket_api_url, .token = forge_token orelse "" });
+    app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(cols, rows);
     var frame = try sdk.Frame.init(gpa, cols, rows);

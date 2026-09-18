@@ -107,6 +107,10 @@ pub const App = struct {
     family: ?config.Family,
     client: *jira.Client,
     forge: bitbucket.Client,
+    /// `$MNML_IPC_DIR`: the channel of the mnml this pane runs inside —
+    /// where a dispatched `term` line has to go. Borrowed from the
+    /// environment, empty outside a host.
+    ipc_dir: []const u8 = "",
     /// Small owned strings: keys in sets, the status, resolved JQLs.
     keys: std.heap.ArenaAllocator,
     tabs: []TabState,
@@ -164,6 +168,13 @@ pub const App = struct {
             };
         }
         return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs };
+    }
+
+    /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
+    /// inside, and the only one that will act on a dispatched `term`
+    /// line. Set by the caller right after `init`; empty outside a host.
+    pub fn setIpcDir(a: *App, dir: []const u8) void {
+        a.ipc_dir = dir;
     }
 
     pub fn deinit(a: *App) void {
@@ -1647,7 +1658,7 @@ pub const App = struct {
         const iss = a.tab().issues[idx];
         var buf: [24]u8 = undefined;
         const d = dispatch.Dispatch.forTicket(kind, iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), a.isoNow(&buf));
-        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace);
+        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
         a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
     }
 
@@ -1675,7 +1686,7 @@ pub const App = struct {
         }
         var buf: [24]u8 = undefined;
         const d = dispatch.Dispatch.forPr(iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), prs[p.pr_idx].url, a.isoNow(&buf));
-        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace);
+        const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
         a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
     }
 
@@ -2423,7 +2434,7 @@ test "Fix Versions: the release resolves to 13.16.0, status_order and bumps grou
     _ = try a.onKey("esc");
     // Dispatch on a fresh workspace: nothing to write into, and it says so.
     _ = try a.onKey("shift+i");
-    try testing.expect(std.mem.indexOf(u8, a.status.items, "no dispatch channels") != null);
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "nothing to dispatch to") != null);
     // The release-cut flag bumps Done to the top.
     a.cfg.release_cut = true;
     a.picker = null;

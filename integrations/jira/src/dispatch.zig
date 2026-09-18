@@ -123,19 +123,41 @@ pub const Dispatch = struct {
 pub const Paths = struct {
     /// `<ws>/.claude`, when it exists.
     queue_dir: ?[]const u8 = null,
-    /// `<ws>/.mnml/ipc`, when it exists.
+    /// The IPC directory of the mnml that will actually run the `term`
+    /// line, when there is one.
     ipc_dir: ?[]const u8 = null,
 };
 
-/// The two directories under `root`, each only when it is there — a
-/// fresh clone or another machine gets neither and the status says so.
-pub fn workspacePaths(arena: Allocator, io: Io, root: []const u8) Allocator.Error!Paths {
-    if (root.len == 0) return .{};
+/// The channel-directory name a Zig mnml uses under `<ws>/.mnml/`. The
+/// Rust host's is `ipc`; writing there from inside a Zig host is how a
+/// dispatch used to land in a file nothing was reading.
+pub const ipc_subdir = "ipc-zig";
+
+/// Where the two channels are.
+///
+///   * the queue: `<dispatch_workspace>/.claude`, when it exists.
+///   * the pane: **`$MNML_IPC_DIR` first** — the host sets it for every
+///     integration it spawns, and it names the channel of the mnml this
+///     pane is running inside, which is the only mnml that will act on
+///     a `term` line. Failing that, `<dispatch_workspace>/.mnml/ipc-zig`,
+///     for a run started outside a host.
+///
+/// It used to be `<dispatch_workspace>/.mnml/ipc` unconditionally: the
+/// Rust host's directory name, on a workspace no Zig instance was
+/// running. The line was written, nothing read it, and Triage looked
+/// like it did nothing.
+pub fn workspacePaths(arena: Allocator, io: Io, root: []const u8, ipc_override: []const u8) Allocator.Error!Paths {
     var out: Paths = .{};
-    const q = try std.fs.path.join(arena, &.{ root, ".claude" });
-    if (dirExists(io, q)) out.queue_dir = q;
-    const i = try std.fs.path.join(arena, &.{ root, ".mnml", "ipc" });
-    if (dirExists(io, i)) out.ipc_dir = i;
+    if (root.len > 0) {
+        const q = try std.fs.path.join(arena, &.{ root, ".claude" });
+        if (dirExists(io, q)) out.queue_dir = q;
+    }
+    if (ipc_override.len > 0 and dirExists(io, ipc_override)) {
+        out.ipc_dir = try arena.dupe(u8, ipc_override);
+    } else if (root.len > 0) {
+        const i = try std.fs.path.join(arena, &.{ root, ".mnml", ipc_subdir });
+        if (dirExists(io, i)) out.ipc_dir = i;
+    }
     return out;
 }
 
@@ -168,7 +190,9 @@ pub fn fire(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error
     if (fired.items.len > 0 and errors.items.len == 0) return std.fmt.allocPrint(arena, "{s} → {s}", .{ d.kind, fired_s });
     if (fired.items.len > 0) return std.fmt.allocPrint(arena, "{s} → {s} (also: {s})", .{ d.kind, fired_s, errors_s });
     if (errors.items.len > 0) return std.fmt.allocPrint(arena, "{s} failed: {s}", .{ d.kind, errors_s });
-    return std.fmt.allocPrint(arena, "{s}: no dispatch channels available", .{d.kind});
+    // Neither channel is there. Say which two were looked for, because
+    // "nothing happened" with no reason is what this used to look like.
+    return std.fmt.allocPrint(arena, "{s}: nothing to dispatch to — no `.claude/` under the dispatch workspace and no mnml IPC channel ($MNML_IPC_DIR, else <ws>/.mnml/" ++ ipc_subdir ++ ")", .{d.kind});
 }
 
 fn fileExists(io: Io, path: []const u8) bool {
@@ -241,23 +265,44 @@ test "fire writes the queue line and the IPC line where the directories exist, a
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
     const d = Dispatch.forTicket("implement", issue("TE-1", "To Do", "Story", "s"), "https://x/browse/TE-1", "now");
-    // Nothing there: no channels.
-    try testing.expectEqualStrings("implement: no dispatch channels available", try fire(arena, io, d, try workspacePaths(arena, io, root)));
-    try testing.expectEqualStrings("implement: no dispatch channels available", try fire(arena, io, d, try workspacePaths(arena, io, "")));
+    // Nothing there: no channels, and the line says which two it looked for.
+    const none = try fire(arena, io, d, try workspacePaths(arena, io, root, ""));
+    try testing.expect(std.mem.startsWith(u8, none, "implement: nothing to dispatch to"));
+    try testing.expect(std.mem.indexOf(u8, none, "MNML_IPC_DIR") != null);
+    try testing.expect(std.mem.indexOf(u8, none, ipc_subdir) != null);
+    try testing.expect(std.mem.startsWith(u8, try fire(arena, io, d, try workspacePaths(arena, io, "", "")), "implement: nothing to dispatch to"));
     // The queue dir: one line per fire.
     try tmp.dir.createDirPath(io, ".claude");
-    try testing.expectEqualStrings("implement → queue", try fire(arena, io, d, try workspacePaths(arena, io, root)));
-    _ = try fire(arena, io, d, try workspacePaths(arena, io, root));
+    try testing.expectEqualStrings("implement → queue", try fire(arena, io, d, try workspacePaths(arena, io, root, "")));
+    _ = try fire(arena, io, d, try workspacePaths(arena, io, root, ""));
     const q = try tmp.dir.readFileAlloc(io, ".claude/queue.jsonl", arena, .unlimited);
     try testing.expectEqual(@as(usize, 2), std.mem.count(u8, q, "\n"));
     try testing.expect(std.mem.indexOf(u8, q, "\"issue_key\":\"TE-1\"") != null);
-    // The IPC dir without a command file: the pane channel says so.
+    // The Rust host's directory name is NOT the fallback: a `.mnml/ipc`
+    // is what a Rust mnml reads, and writing there from inside a Zig
+    // host is the bug this test exists for.
     try tmp.dir.createDirPath(io, ".mnml/ipc");
-    const partial = try fire(arena, io, d, try workspacePaths(arena, io, root));
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/ipc/command", .data = "" });
+    try testing.expectEqualStrings("implement → queue", try fire(arena, io, d, try workspacePaths(arena, io, root, "")));
+    // The IPC dir without a command file: the pane channel says so.
+    try tmp.dir.createDirPath(io, ".mnml/" ++ ipc_subdir);
+    const partial = try fire(arena, io, d, try workspacePaths(arena, io, root, ""));
     try testing.expect(std.mem.startsWith(u8, partial, "implement → queue (also: pane: no mnml IPC command file"));
     // With the file, both fire.
-    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/ipc/command", .data = "" });
-    try testing.expectEqualStrings("implement → queue + pane", try fire(arena, io, d, try workspacePaths(arena, io, root)));
-    const c = try tmp.dir.readFileAlloc(io, ".mnml/ipc/command", arena, .unlimited);
-    try testing.expect(std.mem.startsWith(u8, c, "{\"cmd\":\"term\",\"args\":[\"sh\",\"-c\","));
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/" ++ ipc_subdir ++ "/command", .data = "" });
+    try testing.expectEqualStrings("implement → queue + pane", try fire(arena, io, d, try workspacePaths(arena, io, root, "")));
+    const c = try tmp.dir.readFileAlloc(io, ".mnml/" ++ ipc_subdir ++ "/command", arena, .unlimited);
+    try testing.expect(std.mem.indexOf(u8, c, "\"cmd\":\"term\"") != null);
+
+    // Inside a host, `$MNML_IPC_DIR` is the channel — the only one the
+    // mnml running this pane is reading.
+    try tmp.dir.createDirPath(io, "elsewhere");
+    try tmp.dir.writeFile(io, .{ .sub_path = "elsewhere/command", .data = "" });
+    const override = try std.fs.path.join(arena, &.{ root, "elsewhere" });
+    try testing.expectEqualStrings("implement → queue + pane", try fire(arena, io, d, try workspacePaths(arena, io, root, override)));
+    const e = try tmp.dir.readFileAlloc(io, "elsewhere/command", arena, .unlimited);
+    try testing.expect(std.mem.indexOf(u8, e, "\"cmd\":\"term\"") != null);
+    // …and the workspace's own channel did not get a second copy.
+    const c2 = try tmp.dir.readFileAlloc(io, ".mnml/" ++ ipc_subdir ++ "/command", arena, .unlimited);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, c2, "\n"));
 }
