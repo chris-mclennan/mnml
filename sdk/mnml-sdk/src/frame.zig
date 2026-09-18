@@ -113,8 +113,25 @@ pub const Frame = struct {
     /// One grapheme at `(x, y)`; outside the grid is ignored.
     pub fn put(f: *Frame, x: u16, y: u16, symbol: []const u8, style: Style) void {
         if (x >= f.cols or y >= f.rows) return;
-        f.at(x, y).set(symbol, style);
+        const st = f.overStyle(x, y, style);
+        f.at(x, y).set(symbol, st);
         f.dirty[y] = true;
+    }
+
+    /// `style` as it lands on the cell already there: a null `bg` means
+    /// "leave the ground alone", so words painted over a filled row keep
+    /// the fill instead of punching a hole back to the pane's default.
+    ///
+    /// `fill` and `clear` are what SET a ground and stay absolute — a
+    /// null `bg` there really is the pane's default. Every row-text
+    /// style the panes use (`th.text()`, `th.bright()`, `th.dimText()`)
+    /// carries no `bg` and relies on this, which is what makes a cursor
+    /// row's highlight survive the words painted on it.
+    fn overStyle(f: *Frame, x: u16, y: u16, style: Style) Style {
+        if (style.bg != null) return style;
+        var out = style;
+        out.bg = f.at(x, y).style.bg;
+        return out;
     }
 
     /// Blank `w × h` from `(x, y)` in `style`, clipped to the grid.
@@ -140,8 +157,8 @@ pub const Frame = struct {
             if (cp == '\n' or cp == '\r' or cp == '\t') continue;
             const w: u16 = if (isWide(cp)) 2 else 1;
             if (used + w > limit) break;
-            f.at(x + used, y).set(bytes, style);
-            if (w == 2) f.at(x + used + 1, y).set("", style);
+            f.at(x + used, y).set(bytes, f.overStyle(x + used, y, style));
+            if (w == 2) f.at(x + used + 1, y).set("", f.overStyle(x + used + 1, y, style));
             used += w;
         }
         if (used > 0) f.dirty[y] = true;
@@ -213,6 +230,32 @@ test "put / text / fill land in the slots; a wide glyph owns a tail" {
     f.fill(1, 1, 2, 5, .{ .bg = .{ .index = 1 } });
     try testing.expectEqual(Color{ .index = 1 }, f.at(2, 1).style.bg.?);
     try testing.expectEqualStrings(" ", f.at(2, 1).symbol());
+}
+
+test "a null bg leaves the ground alone; a real one replaces it" {
+    var f = try Frame.init(testing.allocator, 8, 2);
+    defer f.deinit();
+    const ground: Color = .{ .rgb = .{ 0x31, 0x35, 0x3d } };
+    const pane_bg: Color = .{ .rgb = .{ 0x1e, 0x22, 0x2a } };
+    f.clear(.{ .bg = pane_bg });
+    f.fill(0, 0, 8, 1, .{ .bg = ground });
+    // Row text carries a foreground and no bg — the fill stays under it.
+    _ = f.text(0, 0, 8, "ab漢", .{ .fg = .{ .index = 7 } });
+    try testing.expectEqual(ground, f.at(0, 0).style.bg.?);
+    try testing.expectEqual(ground, f.at(2, 0).style.bg.?);
+    // …including the wide glyph's tail cell, or the row would gap.
+    try testing.expectEqual(ground, f.at(3, 0).style.bg.?);
+    f.put(5, 0, "!", .{ .fg = .{ .index = 7 } });
+    try testing.expectEqual(ground, f.at(5, 0).style.bg.?);
+    // A style that names a bg still wins: a chip on a row is its own.
+    _ = f.text(6, 0, 2, "x", .{ .bg = .{ .index = 4 } });
+    try testing.expectEqual(Color{ .index = 4 }, f.at(6, 0).style.bg.?);
+    // A row that was never filled keeps the pane's ground, not a stale one.
+    _ = f.text(0, 1, 8, "cd", .{ .fg = .{ .index = 7 } });
+    try testing.expectEqual(pane_bg, f.at(0, 1).style.bg.?);
+    // And `fill` is still absolute: a null bg there means the default.
+    f.fill(0, 0, 8, 1, .{});
+    try testing.expect(f.at(0, 0).style.bg == null);
 }
 
 test "take: full first, then only the dirty rows, then nothing; resize makes the next one full" {
