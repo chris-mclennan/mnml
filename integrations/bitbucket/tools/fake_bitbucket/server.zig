@@ -638,6 +638,10 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     const bbql = (try queryParam(arena, query, "q")) orelse "";
     const author_id = predicateValue(bbql, "author.account_id");
     const reviewer_id = predicateValue(bbql, "reviewers.account_id");
+    // `author… OR reviewers…` asks for both sets in ONE request — what
+    // the statusline run does so counting "waiting on my review" costs
+    // nothing extra. Anything else joining the two is an AND.
+    const either = author_id != null and reviewer_id != null and std.mem.indexOf(u8, bbql, " OR ") != null;
 
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
@@ -646,13 +650,16 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     for (&fixtures) |*f| {
         if (!std.mem.eql(u8, f.repo, repo)) continue;
         if (!std.mem.eql(u8, effectiveState(f, st), want_state)) continue;
-        if (author_id) |a| if (!std.mem.eql(u8, f.author_id, a)) continue;
-        if (reviewer_id) |r| {
-            var is = false;
-            for (f.reviewers) |rv| if (std.mem.eql(u8, rv.id, r)) {
-                is = true;
-            };
-            if (!is) continue;
+        const by_author = if (author_id) |a| std.mem.eql(u8, f.author_id, a) else false;
+        var by_reviewer = false;
+        if (reviewer_id) |r| for (f.reviewers) |rv| {
+            if (std.mem.eql(u8, rv.id, r)) by_reviewer = true;
+        };
+        if (either) {
+            if (!by_author and !by_reviewer) continue;
+        } else {
+            if (author_id != null and !by_author) continue;
+            if (reviewer_id != null and !by_reviewer) continue;
         }
         if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
         try writePr(w, f, st, .list);

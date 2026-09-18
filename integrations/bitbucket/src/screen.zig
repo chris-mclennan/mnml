@@ -182,6 +182,14 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     switch (app.family()) {
         .prs => {
             const kind_ok = ts.spec.kind == .workspace_open_prs or ts.spec.kind == .workspace_merged_prs;
+            // What is waiting on YOU, beside what you authored. The
+            // count is off the participants already on screen, so the
+            // chip costs nothing and can say its number at rest.
+            const waiting = app.awaitingCount();
+            if (waiting > 0 or app.awaiting_only) {
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .awaiting, .active = app.awaiting_only };
+                n += 1;
+            }
             if (kind_ok) {
                 const who = if (ts.spec.mine_only) (if (app.me_display_name.len > 0) app.me_display_name else "me") else "all";
                 chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .author, .active = ts.spec.mine_only };

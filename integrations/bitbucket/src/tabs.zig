@@ -236,6 +236,12 @@ pub const VisibleCtx = struct {
     /// One entry per expanded pull request; an expanded PR missing from
     /// it is still being fetched.
     builds: []const BuildsOf = &.{},
+    /// The `awaiting:` chip is on: only the open pull requests `me` is
+    /// a reviewer on and has not voted. Read off `participants`, which
+    /// the listing already carries — the chip costs no request.
+    awaiting_only: bool = false,
+    /// The account the awaiting filter is about.
+    me: []const u8 = "",
 
     pub fn buildsOf(c: VisibleCtx, slug: []const u8, id: i64) ?BuildsOf {
         for (c.builds) |b| if (b.id == id and std.mem.eql(u8, b.slug, slug)) return b;
@@ -253,8 +259,17 @@ pub fn visiblePrs(arena: Allocator, c: VisibleCtx, prs: []const model.PullReques
     var merged_peeked = false;
     for (prs, 0..) |pr, i| {
         if (want) |s| if (!std.ascii.eqlIgnoreCase(pr.state, s)) continue;
+        // The awaiting filter narrows before anything else counts: a
+        // row it hides was never eligible, so the fold row does not
+        // offer to reveal rows the chip is deliberately keeping out.
+        if (c.awaiting_only and !pr.awaitingApproval(c.me)) continue;
         eligible += 1;
-        if (c.show_all) {
+        // The chip is an explicit ask, so it lifts the 24-hour window
+        // the tree otherwise hides old rows behind: something that has
+        // been waiting on you for three days is exactly what it is for.
+        if (c.awaiting_only) {
+            try out.append(arena, i);
+        } else if (c.show_all) {
             if (pr.isMerged()) {
                 if (merged_kept >= show_all_merged_cap) continue;
                 merged_kept += 1;

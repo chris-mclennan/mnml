@@ -14,6 +14,8 @@ pub const Chip = enum {
     refresh,
     /// The PR family's `author:` chip (mine ↔ all).
     author,
+    /// `awaiting: N` — the open pull requests waiting on YOUR review.
+    awaiting,
     /// The pipelines family's web-page actions.
     run_pipeline,
     schedules,

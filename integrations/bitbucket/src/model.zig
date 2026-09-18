@@ -82,6 +82,19 @@ pub const PullRequest = struct {
         return n;
     }
 
+    /// Is this pull request waiting on `account_id`'s review? A
+    /// reviewer who has neither approved nor asked for changes has not
+    /// answered yet, and the author's own row is never waiting on them.
+    pub fn awaitingApproval(pr: PullRequest, account_id: []const u8) bool {
+        if (account_id.len == 0) return false;
+        if (std.mem.eql(u8, pr.author_id, account_id)) return false;
+        for (pr.participants) |p| {
+            if (!std.mem.eql(u8, p.account_id, account_id)) continue;
+            return !p.approved and !std.ascii.eqlIgnoreCase(p.state, "changes_requested");
+        }
+        return false;
+    }
+
     pub fn approvedBy(pr: PullRequest, account_id: []const u8) bool {
         if (account_id.len == 0) return false;
         for (pr.participants) |p| if (p.approved and std.mem.eql(u8, p.account_id, account_id)) return true;

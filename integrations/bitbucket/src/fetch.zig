@@ -108,10 +108,24 @@ pub const PrPipelinesResult = struct {
 
 pub const ApproveResult = struct { key: PrKey, withdrew: bool, error_text: []const u8 = "" };
 
+/// The three titles a segment's hover text names. A count with no
+/// names behind it makes the reader open the pane to find out which
+/// four; three titles answer it where the pointer already is.
+pub const tooltip_titles: usize = 3;
+
 pub const ValuesResult = struct {
     open_mine: usize = 0,
     unapproved_mine: usize = 0,
     approved_mine: usize = 0,
+    /// Open pull requests where the account is a reviewer and has not
+    /// voted — what is waiting on YOU rather than on someone else.
+    /// Counted out of the same listing as `open_mine`: one BBQL asks
+    /// for both sets, so the third figure costs no extra request.
+    reviews_pending: usize = 0,
+    /// The top three by title behind each figure, newest first.
+    open_titles: []const []const u8 = &.{},
+    comment_titles: []const []const u8 = &.{},
+    awaiting_titles: []const []const u8 = &.{},
     /// Review threads across those pull requests that are still waiting
     /// on someone — not resolved and not replied to. Null when the
     /// count was not asked for (`review_cache` absent) or when every
@@ -658,8 +672,12 @@ pub const Worker = struct {
             else
                 "/2.0/user returned no account_id",
         };
+        // One predicate for both sets: the pull requests the account
+        // authored AND the ones it is a reviewer on. Asking separately
+        // would double the requests for a figure that is already in the
+        // payload.
         var q: Io.Writer.Allocating = .init(a);
-        q.writer.print("state = \"OPEN\" AND author.account_id = \"{s}\"", .{me}) catch return error.OutOfMemory;
+        q.writer.print("state = \"OPEN\" AND (author.account_id = \"{s}\" OR reviewers.account_id = \"{s}\")", .{ me, me }) catch return error.OutOfMemory;
         if (stale_after_days > 0) {
             var buf: [10]u8 = undefined;
             q.writer.print(" AND updated_on >= {s}", .{dates.writeDate(&buf, now_secs - @as(i64, stale_after_days) * 86_400)}) catch return error.OutOfMemory;
@@ -686,8 +704,11 @@ pub const Worker = struct {
         var failures: usize = 0;
         // The pull requests kept, so the comment pass can walk them
         // without a second listing.
-        const Mine = struct { repo: []const u8, id: i64, updated_on: []const u8 };
+        const Mine = struct { repo: []const u8, id: i64, updated_on: []const u8, title: []const u8 };
         var mine: std.ArrayList(Mine) = .empty;
+        var open_titles: std.ArrayList([]const u8) = .empty;
+        var awaiting_titles: std.ArrayList([]const u8) = .empty;
+        var awaiting: usize = 0;
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
@@ -702,27 +723,44 @@ pub const Worker = struct {
                             excluded = true;
                         };
                         if (excluded) continue;
-                        open += 1;
-                        approved += @intFromBool(pr.approvalCount() > 0);
-                        try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on });
+                        // The one listing carries both sets; which
+                        // figure a row belongs to is the author's id.
+                        if (std.mem.eql(u8, pr.author_id, me)) {
+                            open += 1;
+                            approved += @intFromBool(pr.approvalCount() > 0);
+                            if (open_titles.items.len < tooltip_titles) try open_titles.append(a, pr.title);
+                            try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on, .title = pr.title });
+                        } else if (pr.awaitingApproval(me)) {
+                            awaiting += 1;
+                            if (awaiting_titles.items.len < tooltip_titles) try awaiting_titles.append(a, pr.title);
+                        }
                     }
                 },
                 .failed => failures += 1,
             }
         }
         if (failures > 0 and failures == repos.len) return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
-        var out: ValuesResult = .{ .open_mine = open, .unapproved_mine = open - approved, .approved_mine = approved };
+        var out: ValuesResult = .{
+            .open_mine = open,
+            .unapproved_mine = open - approved,
+            .approved_mine = approved,
+            .reviews_pending = awaiting,
+            .open_titles = try open_titles.toOwnedSlice(a),
+            .awaiting_titles = try awaiting_titles.toOwnedSlice(a),
+        };
         // The second figure, when a cache was handed over to pay for it.
         if (w.review_cache) |rc| {
             var unresolved: usize = 0;
             var counted: usize = 0;
             var live: std.ArrayList([]const u8) = .empty;
+            var comment_titles: std.ArrayList([]const u8) = .empty;
             for (mine.items) |m| {
                 const k = try rc.key(scope.workspace, m.repo, m.id);
                 try live.append(a, k);
                 if (rc.get(k, m.updated_on)) |n| {
                     unresolved += n;
                     counted += 1;
+                    if (n > 0 and comment_titles.items.len < tooltip_titles) try comment_titles.append(a, m.title);
                     continue;
                 }
                 var reply = try w.client.prComments(w.gpa, scope.workspace, m.repo, m.id);
@@ -733,6 +771,7 @@ pub const Worker = struct {
                         const n = model.unresolvedThreads(try model.parseComments(a, v));
                         unresolved += n;
                         counted += 1;
+                        if (n > 0 and comment_titles.items.len < tooltip_titles) try comment_titles.append(a, m.title);
                         try rc.put(k, m.updated_on, n);
                     },
                     // One repo's comments failing is not a reason to
@@ -741,6 +780,7 @@ pub const Worker = struct {
                 }
             }
             rc.save(w.io, live.items);
+            out.comment_titles = try comment_titles.toOwnedSlice(a);
             out.comment_hits = rc.hits;
             out.comment_requests = rc.misses;
             if (mine.items.len == 0 or counted > 0) out.unresolved_comments = unresolved;

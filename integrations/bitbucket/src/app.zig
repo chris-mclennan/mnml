@@ -114,6 +114,9 @@ pub const Options = struct {
     only: ?cfg.Family = null,
     /// `--only prs-mine`: keep the `mode = mine` tabs, or synthesise one.
     mine: bool = false,
+    /// `--only prs-awaiting`: open with the awaiting-my-review filter
+    /// already on — what the `reviews_pending` chip's click asks for.
+    awaiting: bool = false,
     workspace_dir: []const u8 = ".",
 };
 
@@ -169,6 +172,9 @@ pub const App = struct {
     frame_arena: std.heap.ArenaAllocator,
     hits: hit.HitMap,
     last_refresh_secs: i64 = 0,
+    /// The `awaiting:` chip is on: the PR tabs show only what is
+    /// waiting on this account's review.
+    awaiting_only: bool = false,
     /// The last statusline values, for the chip.
     values: ?fetch.ValuesResult = null,
     values_at_secs: i64 = 0,
@@ -186,6 +192,7 @@ pub const App = struct {
             .config_path = config_path,
             .scope = config.scope,
             .workspace_dir = opts.workspace_dir,
+            .awaiting_only = opts.awaiting,
             .tabs = &.{},
             .only = opts.only,
             .effect_arena = std.heap.ArenaAllocator.init(gpa),
@@ -387,6 +394,8 @@ pub const App = struct {
             .show_all = ts.show_all,
             .now_secs = app.now_secs,
             .builds = try app.buildsFor(a, ts),
+            .awaiting_only = app.awaiting_only,
+            .me = app.meId(),
         });
         app.filter_total = countContent(all.rows);
         if (app.filter.items.len == 0) {
@@ -974,6 +983,51 @@ pub const App = struct {
         if (app.detail_visible) app.invalidateFocusedDetail();
     }
 
+    /// The account the `mine` and `awaiting` filters are about: what
+    /// `config.zon` says, else what `/2.0/user` answered.
+    pub fn meId(app: *const App) []const u8 {
+        return if (app.config.account_id.len > 0) app.config.account_id else app.me_account_id;
+    }
+
+    /// How many open pull requests on the active tab are waiting on
+    /// this account's review — the `awaiting:` chip's number. Off the
+    /// `participants` the listing already carries: no request.
+    pub fn awaitingCount(app: *App) usize {
+        const ts = app.activeTab();
+        const me = app.meId();
+        if (me.len == 0) return 0;
+        var n: usize = 0;
+        switch (ts.data) {
+            .repo_pr_tree => |repos| for (repos) |r| {
+                for (r.prs) |pr| n += @intFromBool(pr.isOpen() and pr.awaitingApproval(me));
+            },
+            .pull_requests => |list| for (list) |pr| {
+                n += @intFromBool(pr.isOpen() and pr.awaitingApproval(me));
+            },
+            else => {},
+        }
+        return n;
+    }
+
+    /// The `awaiting:` chip: show only what is waiting on your review,
+    /// or everything again. It narrows rows that are already loaded, so
+    /// there is nothing to refetch and nothing to pay for.
+    pub fn toggleAwaiting(app: *App) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.spec.kind == .workspace_pipelines or ts.spec.kind == .branches or ts.spec.kind == .pipelines) {
+            app.say(.warn, "Awaiting-my-review is a pull-request filter", .{});
+            return;
+        }
+        if (app.meId().len == 0) {
+            app.say(.warn, "no account to match reviewers against — set `account_id` in config.zon", .{});
+            return;
+        }
+        app.awaiting_only = !app.awaiting_only;
+        ts.selected = 0;
+        ts.scroll = 0;
+        app.say(.info, "{s}: {s}", .{ ts.spec.name, if (app.awaiting_only) "awaiting my approval" else "every pull request" });
+    }
+
     /// The `author:` chip: mine ↔ all on a workspace PR tab.
     pub fn toggleMineOnly(app: *App) Allocator.Error!void {
         const ts = app.activeTab();
@@ -1387,6 +1441,7 @@ pub const App = struct {
             .chip => |c| switch (c) {
                 .refresh => try app.refreshActive(),
                 .author => try app.toggleMineOnly(),
+                .awaiting => try app.toggleAwaiting(),
                 .filter => {
                     app.mode = .filter;
                     app.filter_caret = app.filter.items.len;
@@ -1765,6 +1820,48 @@ test "the filter narrows the rows and esc clears it; the statusline values land 
     // The values chip: my two open PRs, one still unapproved.
     try t.expectEqual(@as(usize, 2), r.app.values.?.open_mine);
     try t.expectEqual(@as(usize, 1), r.app.values.?.unapproved_mine);
+}
+
+test "the awaiting chip counts and filters what is waiting on MY review, off the rows already loaded" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    // #1198 (Dana's, me a reviewer, no vote) is the one waiting on me;
+    // my own two are not, and #1234's reviewers are other people.
+    try t.expectEqual(@as(usize, 1), r.app.awaitingCount());
+
+    const served = r.srv.state.served;
+    _ = try r.key("esc"); // nothing open; just a keystroke that changes nothing
+    try r.app.toggleAwaiting();
+    try t.expect(r.app.awaiting_only);
+    // The filter narrows rows that are already there: not one request.
+    try t.expectEqual(@as(u32, 0), r.srv.state.served - served);
+    var rows = try r.rows();
+    var prs: usize = 0;
+    for (rows) |row| prs += @intFromBool(row == .pr);
+    try t.expectEqual(@as(usize, 1), prs);
+    for (rows) |row| if (row == .pr) {
+        const pr = r.app.activeTab().data.repo_pr_tree[row.pr.repo].prs[row.pr.idx];
+        try t.expectEqual(@as(i64, 1198), pr.id);
+    };
+    // …and nothing is hidden behind a fold row that the chip is
+    // deliberately keeping out.
+    for (rows) |row| try t.expect(row != .show_more);
+
+    try r.app.toggleAwaiting();
+    try t.expect(!r.app.awaiting_only);
+    rows = try r.rows();
+    prs = 0;
+    for (rows) |row| prs += @intFromBool(row == .pr);
+    try t.expect(prs > 1);
+
+    // The statusline's third figure is the same question, counted out
+    // of the same listing the other two come from.
+    try t.expectEqual(@as(usize, 1), r.app.values.?.reviews_pending);
+    try t.expectEqual(@as(usize, 2), r.app.values.?.open_mine);
+    // And each figure's tooltip names what is behind it.
+    try t.expectEqual(@as(usize, 2), r.app.values.?.open_titles.len);
+    try t.expectEqual(@as(usize, 1), r.app.values.?.awaiting_titles.len);
+    try t.expectEqualStrings("Bump the client timeout to 30s", r.app.values.?.awaiting_titles[0]);
 }
 
 test "a click selects the row it lands on, a right-click opens its menu, the author chip toggles mine-only" {

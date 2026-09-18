@@ -144,7 +144,7 @@ does. The keys are the reference's:
 | | |
 |---|---|
 | `j` `k` `↑` `↓` · `⇞` `⇟` · `g` `G` `⇱` `⇲` | move |
-| `⏎` `␣` | expand / collapse a repo; open a merged PR's post-merge pipeline line; lift the `Show more (N)` footer |
+| `⏎` `␣` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
 | `e` `c` | expand / collapse every repo |
 | `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
@@ -157,12 +157,45 @@ does. The keys are the reference's:
 
 Mouse: every row, tab, chip and hint word is a hit target sized to what
 it paints — a click on a row selects that row (and toggles a repo
-header or a merged PR, as the reference does), a right-click opens the
-row's menu, the wheel moves the cursor or scrolls the detail under it.
+header or a pull request), a right-click opens the row's menu, the
+wheel moves the cursor or scrolls the detail under it.
+
+## Builds under a pull request
+
+Every pull request folds out to the pipeline runs on the commit it is
+about — a merged one to the runs on its merge commit, an open one to
+the runs on its **source head**, which are the builds you actually want
+before you merge it. One row per run:
+
+```
+▾ #1234    OPEN    Chris M   chris/fix-login   2026-09-18   Fix the login redirect
+      ⏵ IN_PROGRESS · chris/fix-login · 1h · #413
+      ✓ SUCCESSFUL · chris/fix-login · 5h · #412
+```
+
+State first, then the branch it ran on, then how long ago, then the
+run's number — the same line the Jira pane paints, out of the same
+toolkit code (`sdk.pane.build`). `⏎` on one opens that run's page; `h`
+folds the pull request back up.
+
+It costs **one** request per pull request, keyed by the PR's
+`updated_on`: Bitbucket moves that whenever anything on the pull
+request does, a push included, so folding the same row open twice costs
+nothing and one that has been pushed to is re-read without your having
+to know to ask.
+
+## Awaiting my approval
+
+The `awaiting: N` chip on the header counts the open pull requests you
+are a **reviewer** on and have not voted, and a click narrows the tab
+to exactly those. It reads `participants`, which every listing already
+carries, so the chip costs no request — and it lifts the 24-hour window
+the tree otherwise folds old rows behind, because something that has
+been waiting on you for three days is the whole point of it.
 
 ## The statusline chips
 
-Two, because they are two numbers about two different things.
+Three, because they are three numbers about three different things.
 
 **`bitbucket_prs.prs_mine`** — `󰂨 N(K)`: N open pull requests you
 authored in the last `chip_stale_after_days`, off the excluded
@@ -178,7 +211,15 @@ every answered thread unanswered. Blank at rest: it is published only
 once the count has been taken, because a zero before then would read as
 "nothing outstanding".
 
-Each chip's hover says what its number counts, and the review one says
+**`bitbucket_prs.reviews_pending`** — ` P`: open pull requests
+waiting on **your** review — you are a reviewer and have not approved.
+The one of the three that is your move. Counted out of the same listing
+as the first chip (one BBQL asks for both sets), so it costs no extra
+request. A click opens the pane with the awaiting filter already on.
+
+Each chip's hover says what its number counts, names the top three by
+title so you do not have to open the pane to find out which, and the
+review one says
 what the count cost — how many pull requests were answered off the
 cache. See **Prefetch** below for why that matters: the review figure is
 one `…/comments` request per pull request whose `updated_on` has
@@ -191,7 +232,7 @@ channel, with the open count on the INTEGRATIONS badge.
 pane open (a `term` child does not inherit `MNML_IPC_DIR`, so the
 workspace names the channel), and mnml's own poller runs the latter on
 the manifest's interval. `--values` also prints the JSON:
-`{"open_mine":N,"unapproved_mine":K,"approved_mine":A,"unresolved_comments":M}`,
+`{"open_mine":N,"unapproved_mine":K,"approved_mine":A,"reviews_pending":P,"unresolved_comments":M}`,
 where `unresolved_comments` is `null` when the count was not taken.
 
 ## Prefetch — and the contract a poller runs it under
