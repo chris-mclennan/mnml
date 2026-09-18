@@ -93,8 +93,6 @@ pub const Styles = struct {
     }
 };
 
-pub const marker_glyph = "\u{258c}";
-pub const marker_ascii = ">";
 pub const open_glyph = "\u{F47C}";
 pub const closed_glyph = "\u{F460}";
 pub const open_ascii = "v";
@@ -158,10 +156,6 @@ pub const Painter = struct {
     fn hitAdd(p: *Painter, r: Rect, target: hit.Target) Allocator.Error!void {
         if (r.w == 0 or r.h == 0) return;
         try p.a.hits.add(p.a.gpa, r, target);
-    }
-
-    fn marker(p: *const Painter) []const u8 {
-        return if (p.ui.ascii) marker_ascii else marker_glyph;
     }
 
     fn chevron(p: *const Painter, open: bool) []const u8 {
@@ -557,8 +551,12 @@ pub const Painter = struct {
             const is_cur = i == t.selected;
             const idx: u32 = @intCast(i);
             const base: Style = if (is_cur) p.s.bold else p.s.plain;
-            if (is_cur) _ = p.put(0, y, 1, p.marker(), p.s.accent);
-            try p.hitAdd(.{ .x = 0, .y = y, .w = w, .h = 1 }, .{ .row = idx });
+            // The toolkit's row ground: the cursor row's fill across the
+            // whole row, the app-colour stripe in column 0 (bright on
+            // the cursor's) and the row's own hit, in one statement —
+            // the same one the forge pane's list paints. The stripe IS
+            // the marker, so no row spends a column saying it twice.
+            try p.c.rowGround(.{ .x = 0, .y = y, .w = w, .h = 1 }, is_cur, .{ .row = idx });
             switch (row) {
                 .group => |g| {
                     const chev = p.chevron(g.expanded);
@@ -796,9 +794,16 @@ pub const Painter = struct {
                 const is_cur = ln.issue == t.selected;
                 const base: Style = if (is_cur) p.s.bold else p.s.plain;
                 const ix = cx + 1;
+                // The toolkit's row ground under every line a card owns:
+                // the cursor card's fill across the card's width, the
+                // app-colour stripe down its left edge, and the card's
+                // own hit. `.blank` is the gap BETWEEN cards and belongs
+                // to no card, so it stays empty.
+                if (ln.line != .blank) {
+                    try p.c.rowGround(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, is_cur, .{ .card = @intCast(ln.issue) });
+                }
                 switch (ln.line) {
                     .head => {
-                        if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
                         _ = p.put(ix + 1, y, 2, p.chevron(a.isCardExpanded(iss.key)), p.s.accent_plain);
                         try p.hitAdd(.{ .x = ix, .y = y, .w = 3, .h = 1 }, .{ .card_chevron = @intCast(ln.issue) });
                         var kx = ix + 3;
@@ -806,15 +811,12 @@ pub const Painter = struct {
                         const key_style: Style = if (a.isSelected(iss.key)) p.s.bulk else if (is_cur) p.s.accent else p.s.accent_plain;
                         kx += p.putFit(kx, y, inner_w -| (kx - ix), iss.key, key_style);
                         if (a.isSelected(iss.key)) _ = p.put(kx + 1, y, 2, if (p.ui.ascii) "+" else "✓", p.s.bulk);
-                        try p.hitAdd(.{ .x = ix + 3, .y = y, .w = inner_w -| 3, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .summary => |s| {
                         _ = p.putFit(ix + 3, y, inner_w -| 3, s, base);
-                        try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .assignee => |s| {
                         _ = p.putFit(ix + 3, y, inner_w -| 3, p.fmt("· {s}", .{s}), p.s.muted);
-                        try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .labels => {
                         // `#label` chips, four at most, the reference's way.
@@ -828,11 +830,9 @@ pub const Painter = struct {
                             if (lx + text.width(chip) > ix + inner_w) break;
                             lx += p.put(lx, y, inner_w -| (lx - ix), chip, p.s.accent_plain) + 1;
                         }
-                        try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .hint => |hint_line| {
                         _ = p.putFit(ix + 3, y, inner_w -| 3, hint_line, p.s.muted);
-                        try p.hitAdd(.{ .x = ix, .y = y, .w = inner_w, .h = 1 }, .{ .card = @intCast(ln.issue) });
                     },
                     .actions => try p.paintActions(ix + 3, y, inner_w -| 3, ln.issue, iss),
                     .blank => {},
@@ -1095,15 +1095,16 @@ pub const Painter = struct {
         }) {
             const it = pk.items[vis[k]];
             const is_cur = vis[k] == pk.selected;
-            var x = ix;
-            if (is_cur) _ = p.put(x, y, 1, p.marker(), p.s.accent);
-            x += 2;
+            // The toolkit's row ground, the same one the list rows
+            // wear: the cursor's row is a filled band, not a glyph in
+            // the margin.
+            try p.c.rowGround(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, is_cur, .{ .picker_row = @intCast(vis[k]) });
+            var x = ix + 2;
             if (pk.kind.multi()) {
                 const on = pk.isChecked(it.id);
                 x += p.put(x, y, 4, if (on) "[x] " else "[ ] ", if (on) p.s.accent_plain else p.s.muted);
             }
             _ = p.putFit(x, y, iw -| (x - ix), it.label, if (is_cur) p.s.bold else p.s.plain);
-            try p.hitAdd(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, .{ .picker_row = @intCast(vis[k]) });
         }
         if (vis.len == 0 and pk.error_text.len == 0) _ = p.put(ix, list_y, iw, "nothing matches", p.s.muted);
         const hint = if (pk.kind.multi()) "type to filter · ↑↓ move · Space toggle · Enter commit · Esc cancel" else "type to filter · ↑↓ move · Enter commit · Esc cancel";
@@ -1126,10 +1127,9 @@ pub const Painter = struct {
         for (list, 0..) |t, i| {
             if (y >= r.bottom() - 3) break;
             const is_cur = i == tp.selected;
-            if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+            try p.c.rowGround(.{ .x = ix, .y = y, .w = iw, .h = 1 }, is_cur, .{ .picker_row = @intCast(i) });
             const line = p.fmt("{d}. {s}  → {s}", .{ i + 1, t.name, t.to_name });
             _ = p.putFit(ix + 2, y, iw -| 2, line, if (is_cur) p.s.bold else p.s.plain);
-            try p.hitAdd(.{ .x = ix, .y = y, .w = iw, .h = 1 }, .{ .picker_row = @intCast(i) });
             y += 1;
         }
         if (list.len == 0 and tp.error_text.len == 0) _ = p.put(ix + 2, r.y + 1, iw, "no transitions from here", p.s.muted);
@@ -1166,7 +1166,9 @@ pub const Painter = struct {
                     continue;
                 },
                 .value => |v| {
-                    if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                    // The toolkit's row ground: the cursor's row is a
+                    // filled band with the stripe down its left edge.
+                    try p.c.rowGround(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, is_cur, .{ .vars_row = @intCast(i) });
                     if (typing) {
                         try p.paintVarField(ix + 2, y, iw -| 2, e);
                     } else {
@@ -1175,13 +1177,12 @@ pub const Painter = struct {
                     }
                 },
                 .add => {
-                    if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                    try p.c.rowGround(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, is_cur, .{ .vars_row = @intCast(i) });
                     if (typing) {
                         try p.paintVarField(ix + 2, y, iw -| 2, e);
                     } else _ = p.putFit(ix + 2, y, iw -| 2, "+ add", p.s.muted);
                 },
             }
-            try p.hitAdd(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, .{ .vars_row = @intCast(i) });
         }
         if (e.error_text.len > 0) _ = p.putFit(ix, r.bottom() - 3, iw, e.error_text, p.s.err_style);
         const save = " s save ";
@@ -1585,6 +1586,16 @@ fn findRow(arena: Allocator, f: *const Frame, needle: []const u8) Allocator.Erro
     return null;
 }
 
+/// One cell of the painted frame — the only way a test sees a colour,
+/// since the row dump carries none.
+fn cellAt(f: *const Frame, x: u16, y: u16) sdk.Slot {
+    return f.slots[@as(usize, y) * f.cols + x];
+}
+
+fn bgAt(f: *const Frame, x: u16, y: u16) ?sdk.Color {
+    return cellAt(f, x, y).style.bg;
+}
+
 fn colOfText(arena: Allocator, f: *const Frame, y: u16, needle: []const u8) Allocator.Error!?u16 {
     const row = try rowText(arena, f, y);
     const byte = std.mem.indexOf(u8, row, needle) orelse return null;
@@ -1801,10 +1812,17 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try testing.expect(std.mem.indexOf(u8, top_row, " In Progress (") != null);
     try testing.expect(std.mem.indexOf(u8, top_row, " Testing (") != null);
     try testing.expect(std.mem.indexOf(u8, top_row, " Done (") != null);
-    // The cursor's card carries the marker; its head is the chevron hit,
-    // its summary the card hit.
-    const head_y = (try findRow(ar, &f, "ENG-1")).?;
-    const head_x = (try colOfText(ar, &f, head_y, "\u{258c}")).?;
+    // The cursor's card carries the toolkit's row ground — the stripe
+    // down its left column and the cursor-line fill across it, on every
+    // line the card owns. Its head is the chevron hit, its summary the
+    // card hit. (Every card wears the stripe, dim; looking for the
+    // first one on the row would find whichever column starts leftmost,
+    // so the chevron's own rect is what locates the card.)
+    const chev = a.hits.rectOf(hit.Target{ .card_chevron = 0 }).?;
+    const head_y = chev.y;
+    const head_x = chev.x;
+    try testing.expectEqualStrings("\u{258c}", cellAt(&f, head_x, head_y).symbol());
+    try testing.expectEqual((Ui{}).th.cursor_line, bgAt(&f, head_x + 8, head_y).?);
     try testing.expectEqual(hit.Target{ .card_chevron = 0 }, a.hits.at(head_x + 1, head_y).?);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, head_y + 1), "Checkout rewrite") != null);
     try testing.expectEqual(hit.Target{ .card = 0 }, a.hits.at(head_x + 6, head_y + 1).?);
