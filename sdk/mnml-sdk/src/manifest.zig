@@ -108,6 +108,10 @@ pub const StatuslineSegment = struct {
     color: ?[]const u8 = null,
     click_command: ?[]const u8 = null,
     priority: u8 = 100,
+    /// What the chip means, on hover, before anything has counted. A
+    /// run replaces it with the live breakdown by sending `tooltip` on
+    /// its `statusline-set-segment` line.
+    tooltip: ?[]const u8 = null,
 };
 
 /// A discrete-choice row in mnml's settings overlay, under the

@@ -356,22 +356,22 @@ test "the live loop takes the tier-2 set and refuses input: a segment lands, a k
 
     // What an integration publishes. Before this landed the loop
     // answered `unsupported` and the chip never moved.
-    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"text\":\"\u{f0303} 7\",\"color\":\"#1B5DCF\"}");
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"text\":\"JIRA 7\",\"color\":\"#1B5DCF\"}");
     var buf: [8]event.AppEvent = undefined;
     var n = app.events.drain(t.io, &buf);
     try t.expectEqual(@as(usize, 1), n);
     try app.handle(buf[0]);
     try t.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
     try t.expectEqualStrings("jira_work.assigned", app.ipc_fx.segments.items[0].id);
-    try t.expectEqualStrings("\u{f0303} 7", app.ipc_fx.segments.items[0].text);
+    try t.expectEqualStrings("JIRA 7", app.ipc_fx.segments.items[0].text);
 
     // A second publish replaces it in place — the poller's next run.
-    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"text\":\"\u{f0303} 9\"}");
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"text\":\"JIRA 9\"}");
     n = app.events.drain(t.io, &buf);
     try t.expectEqual(@as(usize, 1), n);
     try app.handle(buf[0]);
     try t.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
-    try t.expectEqualStrings("\u{f0303} 9", app.ipc_fx.segments.items[0].text);
+    try t.expectEqualStrings("JIRA 9", app.ipc_fx.segments.items[0].text);
 
     // A toast and a badge come through the same arm.
     try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":4}");

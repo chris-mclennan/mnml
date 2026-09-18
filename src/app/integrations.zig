@@ -795,6 +795,7 @@ fn setSegments(app: *App) Allocator.Error!void {
                 .color = seg.color,
                 .click_command = seg.click_command,
                 .priority = seg.priority,
+                .tooltip = seg.tooltip,
             });
             try st.segment_ids.append(gpa, id);
         }

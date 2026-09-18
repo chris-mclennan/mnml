@@ -37,12 +37,16 @@ pub const Segment = struct {
     priority: u8,
     min_width: u16,
     max_width: u16,
+    /// The hover text the publisher sent: what this number counts, and
+    /// its breakdown. Null falls back to the generic line.
+    tooltip: ?[]u8,
 
     fn deinit(self: *Segment, gpa: Allocator) void {
         gpa.free(self.id);
         gpa.free(self.text);
         if (self.color) |c| gpa.free(c);
         if (self.click_command) |c| gpa.free(c);
+        if (self.tooltip) |c| gpa.free(c);
     }
 };
 
@@ -77,11 +81,13 @@ pub const State = struct {
             .priority = s.priority,
             .min_width = s.min_width,
             .max_width = s.max_width,
+            .tooltip = null,
         };
         errdefer fresh.deinit(gpa);
         fresh.text = try gpa.dupe(u8, s.text);
         if (s.color) |c| fresh.color = try gpa.dupe(u8, c);
         if (s.click_command) |c| fresh.click_command = try gpa.dupe(u8, c);
+        if (s.tooltip) |c| fresh.tooltip = try gpa.dupe(u8, c);
         if (self.find(s.id)) |i| {
             self.segments.items[i].deinit(gpa);
             self.segments.items[i] = fresh;
@@ -143,6 +149,8 @@ pub const SegmentSpec = struct {
     priority: u8 = 100,
     min_width: u16 = 4,
     max_width: u16 = 30,
+    /// The hover text: what the number counts, and its breakdown.
+    tooltip: ?[]const u8 = null,
 };
 
 /// One segment as the statusline paints it. `text` is on the frame
@@ -451,6 +459,7 @@ pub fn apply(app: *App, cmd: *const ipc_command.Command) Allocator.Error!bool {
             .priority = s.priority,
             .min_width = s.min_width,
             .max_width = s.max_width,
+            .tooltip = s.tooltip,
         }),
         .statusline_clear_segment => |id| _ = app.ipc_fx.clearSegment(app.gpa, id),
         .set_activity_badge => |b| try app.ipc_fx.setBadge(app.gpa, b.section, b.count),
