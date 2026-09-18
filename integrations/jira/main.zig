@@ -1125,3 +1125,16 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     // One item reads as one item, not "1 items".
     try testing.expect(std.mem.indexOf(u8, got, "1 open item assigned to me") != null);
 }
+
+test "one binary, three manifests, one poll: only the chip that has a segment declares a values source" {
+    // `--values` answers one question — how many items are assigned to
+    // you — whatever `--only` says. Three sources would have the host's
+    // poller ask Jira the same thing three times every five minutes and
+    // republish the same chip with each answer, on an API this user is
+    // rate-limited on.
+    try testing.expectEqual(@as(usize, 1), spec_work.values_sources.len);
+    try testing.expectEqual(@as(usize, 0), spec_fix_versions.values_sources.len);
+    try testing.expectEqual(@as(usize, 0), spec_boards.values_sources.len);
+    // The one that polls is the one with chips to feed, and vice versa.
+    for (specs) |s| try testing.expectEqual(s.statusline.len > 0, s.values_sources.len > 0);
+}
