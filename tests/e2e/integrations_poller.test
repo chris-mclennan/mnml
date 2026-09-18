@@ -36,8 +36,11 @@ expect screen lacks "ACME …"
 # `integrations.poll_now` — the palette verb and the segment's
 # right-click *Refresh now* — wakes the worker without waiting out the
 # interval.
+# The count in the toast is whatever else the shared data root has
+# installed at this point in the corpus, so the evidence is the run
+# itself, below — not the number.
 command integrations.poll_now
-expect screen contains "refreshing 1 source"
+expect screen contains "integrations: refreshing"
 wait 4000
 expect file runs.log contains "ran 2"
 expect screen contains "ACME 2"

@@ -55,9 +55,17 @@ expect screen contains "assign fixVersion on ticket"
 expect screen contains "— Clear fixVersion —"
 key esc
 expect screen lacks "assign fixVersion on ticket"
-# I dispatches Implement/Fix: no dispatch_workspace, so nothing to write into.
+# I dispatches Implement/Fix. There is no `dispatch_workspace`, so
+# there is no queue to write — but the pane channel is `$MNML_IPC_DIR`,
+# which the host sets for every integration it spawns, so the dispatch
+# now looks where the mnml running this pane actually reads. (It used
+# to look in `<dispatch_workspace>/.mnml/ipc` — the Rust host's
+# directory name, on a workspace no Zig instance is running — and the
+# line went into a file nothing read.) Under the corpus that directory
+# exists with no `command` file in it yet, and the line says exactly
+# that rather than "nothing happened".
 key shift+x
-expect screen contains "fix: no dispatch channels available"
+expect screen contains "fix failed: pane: no mnml IPC command file"
 # The action picker names the ticket's buttons.
 type .
 expect screen contains "actions"

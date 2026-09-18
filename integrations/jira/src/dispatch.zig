@@ -168,7 +168,7 @@ fn dirExists(io: Io, path: []const u8) bool {
 
 /// Fire both channels. Returns the status-line summary:
 /// `implement → queue + pane`, `… (also: pane: …)`, `… failed: …`, or
-/// `…: no dispatch channels available`.
+/// `…: nothing to dispatch to — …` naming both channels it looked for.
 pub fn fire(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error![]const u8 {
     var fired: std.ArrayList([]const u8) = .empty;
     var errors: std.ArrayList([]const u8) = .empty;
