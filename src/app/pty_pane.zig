@@ -391,9 +391,9 @@ pub fn setAccent(app: *App, id: PaneId, name: []const u8) Allocator.Error!void {
     app.needs_render = true;
 }
 
-/// Anthropic's coral — the Claude Code brand, as Rust's
-/// `brand_color_for_builtin` paints it.
-pub const claude_brand = Theme.rgb(0xD16D51);
+/// Anthropic's orange — one definition, in `ui/brand.zig`, shared with
+/// the statusline chip and the tab-bar mark.
+pub const claude_brand = @import("../ui/brand.zig").claude;
 
 /// The colour of the pane's identity strip and tab glyph, in Rust's
 /// precedence (`accent_color_for_pty`): the pane's own name first,

@@ -14,6 +14,7 @@
 const std = @import("std");
 const map = @import("map.zig");
 const dynamic = @import("Dynamic.zig");
+const brand = @import("../ui/brand.zig");
 
 pub const Map = map.Map;
 pub const Dynamic = dynamic.Dynamic;
@@ -357,7 +358,7 @@ pub const default_todo_keywords = [_][]const u8{ "TODO", "FIXME", "XXX", "HACK",
 /// two together.
 pub const default_integration_icons = [_]IntegrationIcon{
     .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
-    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = "#D16D51", .label = "Claude Code", .enabled = false, .in_palette_bar = false },
+    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = brand.claude_hex, .label = "Claude Code", .enabled = false, .in_palette_bar = false },
     .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
     .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
 };

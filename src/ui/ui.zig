@@ -14,6 +14,7 @@ pub const text = @import("text.zig");
 pub const border = @import("border.zig");
 
 pub const Theme = @import("theme.zig");
+pub const brand = @import("brand.zig");
 pub const hit = @import("hit.zig");
 pub const HitMap = hit.HitMap;
 pub const HitTarget = hit.HitTarget;

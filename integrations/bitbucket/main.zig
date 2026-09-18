@@ -881,11 +881,15 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
             only = .branches;
         }
     }
+    // The tab says what the manifest installed, not a lower-case
+    // shorthand: the label the user saw in INTEGRATIONS, with any
+    // qualifier after it. `spec.label` / `spec_pipelines.label` are the
+    // manifests themselves, so the two cannot drift.
     const title: []const u8 = if (only) |fam| switch (fam) {
-        .prs => if (mine) "bitbucket · mine" else "bitbucket · PRs",
-        .pipelines => "bitbucket · pipelines",
-        .branches => "bitbucket · branches",
-    } else "bitbucket";
+        .prs => if (mine) spec.label ++ " · mine" else spec.label,
+        .pipelines => spec_pipelines.label,
+        .branches => "Bitbucket Branches",
+    } else spec.label;
     try mount.setTitle(title);
 
     var why: []const u8 = "";

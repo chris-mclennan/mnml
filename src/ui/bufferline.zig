@@ -42,6 +42,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const brand = @import("brand.zig");
 const ids = @import("../core/ids.zig");
 
 const Style = vaxis.Style;
@@ -79,7 +80,19 @@ pub const ModeChip = struct {
     kind: enum { edit_md, preview_md, view_zon, source_zon },
 };
 
-pub const AiChip = struct { id: u32, glyph: []const u8, fallback: []const u8, live: bool };
+/// One AI mark on the tab bar's right-hand cluster. The colours come
+/// from the caller because they are the product's brand, not the
+/// theme's accent — Claude's mark is Anthropic's orange whatever theme
+/// mnml is wearing, full when a session is live and pulled toward the
+/// muted when it is not.
+pub const AiChip = struct {
+    id: u32,
+    glyph: []const u8,
+    fallback: []const u8,
+    live: bool,
+    fg_live: Color,
+    fg_idle: Color,
+};
 
 /// The split cluster's `.button` ids; `ai` paints before the four.
 /// The cluster's ids. `max` is null on the empty layout — Rust paints
@@ -464,7 +477,7 @@ fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, zoom
     var buttons: [8]Btn = undefined;
     var n: usize = 0;
     for (s.ai[0..n_ai]) |chip| {
-        buttons[n] = .{ .glyph = chip.glyph, .ascii = chip.fallback, .fg = if (chip.live) t.accent.fg else t.muted.fg, .id = chip.id };
+        buttons[n] = .{ .glyph = chip.glyph, .ascii = chip.fallback, .fg = if (chip.live) chip.fg_live else chip.fg_idle, .id = chip.id };
         n += 1;
     }
     buttons[n] = .{ .glyph = term_glyph, .ascii = term_ascii, .fg = .{ .index = 15 }, .id = s.term };
@@ -875,7 +888,12 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     var f = try Fixture.init(56, 1);
     defer f.deinit();
     const tabs = [_]Tab{.{ .id = 1, .title = "a.md", .glyph = "x", .active = true }};
-    const ai = [_]AiChip{ .{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .live = true }, .{ .id = 41, .glyph = "\u{276F}", .fallback = ">", .live = false } };
+    const live_fg = brand.claude;
+    const idle_fg = Theme.rgb(0x7a4a36);
+    const ai = [_]AiChip{
+        .{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .live = true, .fg_live = live_fg, .fg_idle = idle_fg },
+        .{ .id = 41, .glyph = "\u{276F}", .fallback = ">", .live = false, .fg_live = live_fg, .fg_idle = idle_fg },
+    };
     _ = draw(f.ui(), f.full(), &tabs, .{
         .new_tab = 9,
         .hidden_extra = 3,
@@ -889,6 +907,13 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     try testing.expect(f.bgEql(30, 0, .{ .bg = f.theme.palette.purple }));
     try testing.expectEqual(@as(u32, 40), f.hits.at(39, 0).?.button);
     try testing.expectEqual(@as(u32, 41), f.hits.at(42, 0).?.button);
+    // The marks wear their product's brand, never the theme's accent:
+    // full while a session is live, pulled toward the muted when not.
+    const live_x = f.hits.entryAt(39, 0).?.rect.x + 1;
+    const idle_x = f.hits.entryAt(42, 0).?.rect.x + 1;
+    try testing.expectEqual(live_fg, f.style(live_x, 0).fg);
+    try testing.expectEqual(idle_fg, f.style(idle_x, 0).fg);
+    try testing.expect(!std.meta.eql(f.style(live_x, 0).fg, f.theme.accent.fg));
     try testing.expectEqual(@as(u32, 4), f.hits.at(54, 0).?.button);
     // Short of room, the AI chips go before the four.
     var g = try Fixture.init(15, 1);

@@ -105,8 +105,8 @@ pub const SegId = enum(u32) {
     }
 };
 
-/// Anthropic's coral, when the icon table carries no colour.
-const claude_brand = Theme.rgb(0xd16d51);
+/// Anthropic's orange, when the icon table carries no colour.
+const claude_brand = @import("../ui/brand.zig").claude;
 /// Near-black — readable on the coral whatever the theme.
 const claude_ink = Theme.rgb(0x1a1a1a);
 

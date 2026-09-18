@@ -30,6 +30,10 @@ command jira_work.open
 command view.toggle_tree
 command view.focus_pane
 expect screen contains "JIRA WORK (3)"
+# The tab says what the manifest installed, and wears the manifest's
+# own chip glyph rather than one placeholder for every integration.
+expect pane "Jira Work"
+expect screen contains "󰌃 Jira Work"
 expect screen contains "1 Assigned"
 expect screen contains "2 Recently Done"
 # The mode chips, never clipped.
