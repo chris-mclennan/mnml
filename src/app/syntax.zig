@@ -246,9 +246,13 @@ pub const Syntax = struct {
         return self.hl.hasLanguage();
     }
 
-    /// The table key of the grammar in use (`rs`, `tsx`), or null.
+    /// The table key of the grammar for this file (`rs`, `tsx`), or
+    /// null. The file's language, not the highlighter's state: a
+    /// document whose highlighting is off still answers, so the
+    /// consumers with a no-tree path (the sticky context's line
+    /// patterns) keep working on it.
     pub fn key(self: *const Syntax) ?[]const u8 {
-        const i = self.hl.root orelse return null;
+        const i = self.lang orelse return null;
         return grammars.entries[i].key;
     }
 
