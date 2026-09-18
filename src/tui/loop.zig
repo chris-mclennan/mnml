@@ -160,9 +160,21 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     return if (app.restart) 75 else app.exit_code;
 }
 
-/// Tail `<ipc>/command` for the lifecycle lines and post them; every
-/// other command is acknowledged as unsupported here (the headless loop
-/// is the full driver). Runs until the group is cancelled.
+/// Tail `<ipc>/command` and post every line as an event. Runs until the
+/// group is cancelled.
+///
+/// It used to take `quit` and `restart` and answer everything else
+/// `unsupported`, which quietly broke the thing the SDK promises: an
+/// integration's `statusline-set-segment` worked under the headless
+/// driver and was refused in the app the user was looking at, so the
+/// `󰌃 N` chip never moved live. The tier-2 set travels now, through the
+/// same dispatcher (`App.handle`'s `.ipc` arm → `ipc.effects.applyTier2`).
+///
+/// What is still refused is INPUT — `key`, `type`, `click`, `scroll`,
+/// `drag`, `mouse_*`, `hover` — unless `ipc.allow_input` is on. A file
+/// on disk typing into someone's editor is a different kind of power
+/// from a file moving a number on their statusline. The `unsupported`
+/// ack names the switch.
 fn ipcTask(ch: *ipc.Channel, app: *App) Io.Cancelable!void {
     const io = app.io;
     var arena_state = std.heap.ArenaAllocator.init(app.gpa);
@@ -171,22 +183,37 @@ fn ipcTask(ch: *ipc.Channel, app: *App) Io.Cancelable!void {
         try io.sleep(.fromMilliseconds(ipc_poll_ms), .awake);
         _ = arena_state.reset(.retain_capacity);
         const arena = arena_state.allocator();
-        const cmds = ch.poll(arena) catch continue;
-        for (cmds) |*cmd| switch (cmd.*) {
-            .quit => {
-                ch.appendEvent("{\"event\":\"quit\"}");
-                app.events.post(io, .{ .ipc = .quit });
-            },
-            .restart => {
-                ch.appendEvent("{\"event\":\"restart\"}");
-                app.events.post(io, .{ .ipc = .restart });
-            },
-            else => {
-                const line = screen_mod.jsonEvent(arena, &.{ .{ "event", "unsupported" }, .{ "cmd", @tagName(cmd.*) }, .{ "note", "the terminal loop takes quit and restart only; drive the rest headless" } }) catch continue;
-                ch.appendEvent(line);
-            },
-        };
+        const lines = ch.pollLines(arena) catch continue;
+        for (lines) |line| dispatchIpcLine(ch, app, arena, line) catch continue;
     }
+}
+
+/// One line: refused with a note, or parsed onto its own arena and
+/// posted. Factored out of the loop so a test can drive exactly what
+/// the live terminal drives.
+pub fn dispatchIpcLine(ch: *ipc.Channel, app: *App, arena: std.mem.Allocator, line: []const u8) Allocator.Error!void {
+    const io = app.io;
+    const ev = event.IpcCommand.create(app.gpa, line) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    if (ipc.effects.isInput(&ev.cmd) and !app.cfg.ipc.allow_input) {
+        const name = @tagName(ev.cmd);
+        ev.destroy();
+        const note = screen_mod.jsonEvent(arena, &.{
+            .{ "event", "unsupported" },
+            .{ "cmd", name },
+            .{ "note", "the terminal loop does not take input from the channel; set `.ipc = .{ .allow_input = true }` in config.zon, or drive it headless" },
+        }) catch return;
+        ch.appendEvent(note);
+        return;
+    }
+    const ack = switch (ev.cmd) {
+        .quit => "{\"event\":\"quit\"}",
+        .restart => "{\"event\":\"restart\"}",
+        else => screen_mod.jsonEvent(arena, &.{ .{ "event", "accepted" }, .{ "cmd", @tagName(ev.cmd) } }) catch "{\"event\":\"accepted\"}",
+    };
+    ch.appendEvent(ack);
+    app.events.post(io, .{ .ipc = ev });
 }
 
 /// `Term` events → `AppEvent`s, until the group is cancelled.
@@ -312,4 +339,60 @@ test "translateMouse: wheel buttons become scroll kinds, coordinates clamp at ze
     const drag = translateMouse(.{ .col = -1, .row = 2, .button = .left, .mods = .{ .ctrl = true }, .type = .drag });
     try t.expect(drag.kind == .drag and drag.button == .left and drag.mods.ctrl);
     try t.expectEqual(@as(u16, 0), drag.x);
+}
+
+test "the live loop takes the tier-2 set and refuses input: a segment lands, a key is answered with the switch that would allow it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var ch = try ipc.Channel.init(t.allocator, t.io, ws, .{});
+    defer ch.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // What an integration publishes. Before this landed the loop
+    // answered `unsupported` and the chip never moved.
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"text\":\"\u{f0303} 7\",\"color\":\"#1B5DCF\"}");
+    var buf: [8]event.AppEvent = undefined;
+    var n = app.events.drain(t.io, &buf);
+    try t.expectEqual(@as(usize, 1), n);
+    try app.handle(buf[0]);
+    try t.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
+    try t.expectEqualStrings("jira_work.assigned", app.ipc_fx.segments.items[0].id);
+    try t.expectEqualStrings("\u{f0303} 7", app.ipc_fx.segments.items[0].text);
+
+    // A second publish replaces it in place — the poller's next run.
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"text\":\"\u{f0303} 9\"}");
+    n = app.events.drain(t.io, &buf);
+    try t.expectEqual(@as(usize, 1), n);
+    try app.handle(buf[0]);
+    try t.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
+    try t.expectEqualStrings("\u{f0303} 9", app.ipc_fx.segments.items[0].text);
+
+    // A toast and a badge come through the same arm.
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":4}");
+    n = app.events.drain(t.io, &buf);
+    try app.handle(buf[0]);
+    try t.expectEqual(@as(u32, 4), app.ipc_fx.badge("integrations"));
+
+    // Input is refused, and the ack says what would allow it.
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"key\",\"key\":\"ctrl+p\"}");
+    try t.expectEqual(@as(usize, 0), app.events.drain(t.io, &buf));
+    const events_path = try std.fs.path.join(arena, &.{ ch.dirPath(), "events.jsonl" });
+    const log = try std.Io.Dir.cwd().readFileAlloc(t.io, events_path, arena, .limited(1 << 16));
+    try t.expect(std.mem.indexOf(u8, log, "\"unsupported\"") != null);
+    try t.expect(std.mem.indexOf(u8, log, "allow_input") != null);
+    // …and the tier-2 lines were acknowledged as taken, not refused.
+    try t.expect(std.mem.indexOf(u8, log, "\"accepted\"") != null);
+
+    // With the switch on, the same line is taken.
+    app.cfg.ipc.allow_input = true;
+    try dispatchIpcLine(&ch, &app, arena, "{\"cmd\":\"key\",\"key\":\"ctrl+p\"}");
+    n = app.events.drain(t.io, &buf);
+    try t.expectEqual(@as(usize, 1), n);
+    buf[0].ipc.destroy();
 }

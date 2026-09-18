@@ -147,6 +147,29 @@ pub const Channel = struct {
         const text = buf[0..n];
 
         var out: std.ArrayList(Command) = .empty;
+        for (try splitLines(arena, text, &self.cmd_offset)) |line| try out.append(arena, try command.parse(arena, line));
+        return out.toOwnedSlice(arena);
+    }
+
+    /// The same tail, unparsed. The terminal loop wants the raw line so
+    /// each command can be parsed onto an arena that outlives the poll
+    /// — a posted event owns its own strings.
+    pub fn pollLines(self: *Channel, arena: Allocator) Allocator.Error![]const []const u8 {
+        const io = self.io;
+        const file = Io.Dir.cwd().openFile(io, self.cmd_path, .{}) catch return &.{};
+        defer file.close(io);
+        const len = file.length(io) catch return &.{};
+        if (len < self.cmd_offset) self.cmd_offset = 0;
+        if (len == self.cmd_offset) return &.{};
+        const buf = try arena.alloc(u8, @intCast(len - self.cmd_offset));
+        const n = file.readPositionalAll(io, buf, self.cmd_offset) catch return &.{};
+        return splitLines(arena, buf[0..n], &self.cmd_offset);
+    }
+
+    /// The complete lines in `text`, advancing `offset` past them. A
+    /// partial last line waits for its newline.
+    fn splitLines(arena: Allocator, text: []const u8, offset: *u64) Allocator.Error![]const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
         var consumed: usize = 0;
         var start: usize = 0;
         while (std.mem.indexOfScalarPos(u8, text, start, '\n')) |nl| {
@@ -155,10 +178,9 @@ pub const Channel = struct {
             consumed += line.len;
             const trimmed = std.mem.trim(u8, line, " \t\r\n");
             if (trimmed.len == 0) continue;
-            try out.append(arena, try command.parse(arena, trimmed));
+            try out.append(arena, trimmed);
         }
-        // A partial last line waits for its newline.
-        self.cmd_offset += consumed;
+        offset.* += consumed;
         return out.toOwnedSlice(arena);
     }
 

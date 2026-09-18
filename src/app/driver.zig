@@ -245,36 +245,12 @@ pub const AppDriver = struct {
     }
 
     /// The tier-2 IPC commands: toasts, and command registration.
+    /// One dispatcher, `ipc.effects.applyTier2` — the same one the
+    /// terminal loop comes through, so nothing can work in a `.test`
+    /// and be refused in the real app.
     fn vIpcCommand(p: *anyopaque, cmd: *const ipc.Command) Error!void {
         const app = &cast(p).app;
-        switch (cmd.*) {
-            .toast => |tst| try app.toastLevel(switch (tst.level) {
-                .info => .info,
-                .warn => .warn,
-                .@"error" => .err,
-            }, "{s}", .{tst.text}),
-            .toast_persistent => |tst| try app.toastPersistent(tst.id, tst.text, switch (tst.level) {
-                .info => .info,
-                .warn => .warn,
-                .@"error" => .err,
-            }),
-            .toast_dismiss => |id| app.dismissToast(id),
-            .register_command => |r| {
-                _ = app.dyn_commands.register(.{ .id = r.id, .title = r.title, .group = r.group, .keys = r.keys, .owner = .ipc }) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.ShadowsBuiltin => {
-                        app.toast("register-command: {s} shadows a built-in", .{r.id});
-                        return error.Failed;
-                    },
-                };
-                for (r.keys) |k| try app.keymap.bindNow(k, r.id);
-            },
-            .progress_start => |pr| try app.toastPersistent(pr.id, pr.label, .info),
-            .progress_update => |pr| if (pr.label) |label| try app.toastPersistent(pr.id, label, .info),
-            .progress_end => |pr| app.dismissToast(pr.id),
-            // The segment / badge / pty / native-notify family.
-            else => if (!try ipc.effects.apply(app, cmd)) app.toast("ipc {s}: not in this build", .{@tagName(cmd.*)}),
-        }
+        if (!try ipc.effects.applyTier2(app, cmd)) app.toast("ipc {s}: not in this build", .{@tagName(cmd.*)});
     }
 
     fn vPluginInvocations(p: *anyopaque, a: Allocator) Error![]const []const u8 {

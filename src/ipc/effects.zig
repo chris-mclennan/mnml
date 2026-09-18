@@ -150,6 +150,10 @@ pub const SegmentSpec = struct {
 pub const Rendered = struct {
     /// The slot in `State.segments` — the hit id's payload.
     index: u32,
+    /// The segment's own id, borrowed. `<integration>.<segment>` for a
+    /// manifest's chip, which is how the poller finds the one it is
+    /// refreshing.
+    id: []const u8,
     text: []const u8,
     color: ?[]const u8,
     clickable: bool,
@@ -189,7 +193,7 @@ pub fn pack(arena: Allocator, segments: []const Segment, side: Side, budget: usi
         if (left < need + 2) continue;
         const take = @min(desired, left - 2);
         const text: []const u8 = if (take >= natural) s.text else try truncate(arena, s.text, take, ascii);
-        try out.append(arena, .{ .index = i, .text = text, .color = s.color, .clickable = s.click_command != null });
+        try out.append(arena, .{ .index = i, .id = s.id, .text = text, .color = s.color, .clickable = s.click_command != null });
         left -= take + 2;
     }
     return out.toOwnedSlice(arena);
@@ -367,6 +371,70 @@ pub fn openPty(app: *App, p: OpenPty) Allocator.Error!void {
             if (app.diag.msg) |m| app.toast("open-pty: {s}", .{m}) else app.toast("open-pty: {s}", .{@errorName(err)});
             app.diag.clear();
         },
+    };
+}
+
+/// Whether a command drives INPUT — a key, a click, typing. These are
+/// the headless driver's, and at a live terminal they are refused
+/// unless `ipc.allow_input` says otherwise: a file on disk typing into
+/// someone's editor is a different kind of power from a file moving a
+/// number on their statusline.
+pub fn isInput(cmd: *const ipc_command.Command) bool {
+    return switch (cmd.*) {
+        .key, .type, .click, .hover, .scroll, .drag, .mouse_down, .mouse_move, .mouse_up => true,
+        else => false,
+    };
+}
+
+/// The whole tier-2 set an integration is promised: the toast family,
+/// progress, `register-command`, `run-command`, and the segment / badge
+/// / notify / pty family `apply` owns. One dispatcher — the headless
+/// driver and the terminal loop both come through here, so a command
+/// cannot work in a `.test` and be refused in the real app, which is
+/// exactly what used to happen.
+///
+/// False for a command this is not: the input set (`isInput`), `open`,
+/// and the script-runner verbs the headless driver keeps to itself.
+pub fn applyTier2(app: *App, cmd: *const ipc_command.Command) Allocator.Error!bool {
+    switch (cmd.*) {
+        .toast => |tst| try app.toastLevel(toastLevel(tst.level), "{s}", .{tst.text}),
+        .toast_persistent => |tst| try app.toastPersistent(tst.id, tst.text, toastLevel(tst.level)),
+        .toast_dismiss => |id| app.dismissToast(id),
+        .register_command => |r| {
+            _ = app.dyn_commands.register(.{ .id = r.id, .title = r.title, .group = r.group, .keys = r.keys, .owner = .ipc }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.ShadowsBuiltin => {
+                    app.toast("register-command: {s} shadows a built-in", .{r.id});
+                    return true;
+                },
+            };
+            for (r.keys) |k| try app.keymap.bindNow(k, r.id);
+        },
+        .run_command => |id| {
+            const cmd_mod = @import("../core/command.zig");
+            const ref = cmd_mod.resolve(app, id) orelse {
+                app.toast("run-command: no such command `{s}`", .{id});
+                return true;
+            };
+            cmd_mod.run(app, ref) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+        },
+        .progress_start => |pr| try app.toastPersistent(pr.id, pr.label, .info),
+        .progress_update => |pr| if (pr.label) |label| try app.toastPersistent(pr.id, label, .info),
+        .progress_end => |pr| app.dismissToast(pr.id),
+        else => return apply(app, cmd),
+    }
+    app.needs_render = true;
+    return true;
+}
+
+fn toastLevel(l: ipc_command.ToastLevel) @import("../app.zig").ToastLevel {
+    return switch (l) {
+        .info => .info,
+        .warn => .warn,
+        .@"error" => .err,
     };
 }
 

@@ -2461,9 +2461,21 @@ pub const App = struct {
             .timer => {},
             // `run.sh stop` / `restart` through the IPC command file: the
             // same exits `app.quit` / `app.restart` reach from the palette.
-            .ipc => |cmd| {
-                self.restart = cmd == .restart;
-                self.quit = true;
+            .ipc => |e| {
+                defer e.destroy();
+                switch (e.cmd) {
+                    .quit => self.quit = true,
+                    .restart => {
+                        self.restart = true;
+                        self.quit = true;
+                    },
+                    // Everything else goes through the one dispatcher
+                    // the headless driver uses, so a segment an
+                    // integration publishes lands the same either way.
+                    else => if (!try ipc.effects.applyTier2(self, &e.cmd)) {
+                        self.toast("ipc {s}: not in this build", .{@tagName(e.cmd)});
+                    },
+                }
             },
             else => event.freeEvent(self.gpa, ev),
         }
