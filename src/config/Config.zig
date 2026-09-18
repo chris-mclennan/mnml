@@ -117,6 +117,18 @@ pub const Editor = struct {
     /// prefer the tool (it can read back), then OSC 52. `.internal`:
     /// registers only.
     clipboard: Clipboard = .auto,
+    /// Opt-in ceiling on what tree-sitter is asked to parse. `0` — the
+    /// shipped default — is NO limit: every file is highlighted in full,
+    /// however large. Set it and a file that opens larger than this many
+    /// bytes gets no tree-sitter at all: no parse, no tree, no spans, no
+    /// injections. Everything else about the buffer (editing, search,
+    /// LSP, the git gutter) is untouched, and the statusline says so —
+    /// the `highlight off` chip turns it on for that one file.
+    ///
+    /// It exists for machines that cannot spare the memory: a parse tree
+    /// runs about 40× the size of the source, so a 100 MB file settles
+    /// near 4 GB, a 10 MB one near 400 MB.
+    highlight_max_bytes: u64 = 0,
 };
 
 pub const Clipboard = enum { auto, os, internal };
@@ -754,6 +766,8 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(WheelMovesCursor.auto, c.editor.wheel_moves_cursor);
     try std.testing.expectEqual(ScrollAccel.normal, c.editor.scroll_accel);
     try std.testing.expectEqual(Clipboard.auto, c.editor.clipboard);
+    // 0 = no limit: every file is highlighted in full, whatever its size.
+    try std.testing.expectEqual(@as(u64, 0), c.editor.highlight_max_bytes);
     try std.testing.expect(c.editor.inlay_hints);
     try std.testing.expect(c.editor.semantic_tokens);
     try std.testing.expect(c.editor.code_lens);

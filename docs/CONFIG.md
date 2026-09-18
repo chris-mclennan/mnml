@@ -86,6 +86,22 @@ otherwise. Copy what you need; leave the rest out.
         .scroll_accel = .normal, // .off | .gentle | .normal | .fast
         .persistent_undo = false, // keep each file's undo + redo stacks in <data root>/undo/ across launches
         .clipboard = .auto, // .auto | .os | .internal — what `"+` / `"*` / Ctrl+C reach
+        // Opt-in ceiling on what tree-sitter is asked to parse. 0 — the
+        // shipped default — is NO limit: every file is highlighted in
+        // full, however large. Set it and a file that opens larger than
+        // this many bytes gets no tree-sitter at all: no parse, no tree,
+        // no spans, no injections — editing, search, LSP and the git
+        // gutter are untouched. It is never silent: the statusline shows
+        // `highlight off · 12 MB` and a toast names the file; the chip
+        // (or `editor.highlight_this_file`) turns it on for that one
+        // file, and `editor.highlight_toggle_file` switches ANY buffer
+        // either way. Per buffer, never persisted.
+        //
+        // Rule of thumb: a tree-sitter parse tree runs about 40× the size
+        // of the source — a 100 MB file settles near 4 GB of RSS, a 10 MB
+        // one near 400 MB, a 1 MB one near 40 MB. Set it only if that
+        // matters on your machine.
+        .highlight_max_bytes = 0, // 0 = no limit; e.g. 4194304 for 4 MB
     },
 
     // ── ui ─────────────────────────────────────────────────────────────
