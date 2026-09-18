@@ -58,3 +58,15 @@ key left
 key X
 expect screen contains ":seX▏t"
 key esc
+
+# ── the echoed toast's `[name]` is a link to the pane it names ──
+# `editor.file_info` on a scratch buffer says `[scratch]: …`; the row
+# echoes it and the bracketed name is a hit that reveals that pane.
+command scratch.new
+expect pane "[scratch]"
+command editor.file_info
+expect screen contains "[scratch] · Ln 1/1"
+command buffer.next
+expect pane "notes.txt"
+click 3 39
+expect pane "[scratch]"

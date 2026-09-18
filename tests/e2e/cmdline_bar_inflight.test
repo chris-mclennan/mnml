@@ -1,0 +1,19 @@
+# width: 120
+# height: 40
+# The right end of the bottom row: `⟳  … running…` while async HTTP work
+# is in flight, and a click on it aborts. A toast fades in three seconds
+# and a bench does not, so without the indicator a long op has no signal
+# at all once its toast has gone.
+
+serve 19893 200 delay=3000 "late"
+write slow.http "GET http://127.0.0.1:19893/slow\n"
+open slow.http
+
+command http.send
+wait 300
+expect screen contains "running…"
+
+# The indicator is the click target, right-aligned one cell off the edge.
+click 112 39
+expect screen contains "http.abort: cancelled"
+expect screen lacks "running…"
