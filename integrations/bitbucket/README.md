@@ -8,17 +8,23 @@ screens are the Rust reference's (`docs/ui-spec/bitbucket/README.md`
 is the inventory), painted in mnml-zig's own chrome.
 
 ```
- BITBUCKET PRS  (2 repos · 5 PRs)                                   author: all  
-  1 Open + Draft (3)   2 Merged (2)
-  󰍉 / filter
-  REPO / #PR                   STATE      AUTHOR         BRANCH             UPDATED      TITLE
+▌BITBUCKET PRS  (2 repos · 5 PRs)                                                                        author: all
+▌ 1 Open + Draft (3)   2 Merged (2)
+▌󰍉 / filter
+▌ REPO / #PR                   STATE      AUTHOR         BRANCH             UPDATED      TITLE
 ▌ ▾ api                        2 PRs      Chris M        chris/fix-login    2026-09-01   #1234 · Fix the login redirect
-       #1234                   OPEN       Chris M        chris/fix-login    2026-09-01   Fix the login redirect
-       #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
-  ▾ web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
-                                                                                                Show more (1)
- Open + Draft · 2 repos, 5 PRs       ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
+▌      #1234                   OPEN       Chris M        chris/fix-login    2026-09-01   Fix the login redirect
+▌      #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
+▌ ▾ web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
+▌                                                                                        ⋯  Show more (1)
+ Open + Draft · 2 repos, 5 PRs   ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
+
+Column 0 is the app-colour gutter the pane toolkit paints, off this
+chip's manifest colour (PRs blue, Pipelines green); the cursor's row
+lights it up. Every colour on the screen is a role out of the host
+theme's `hello.palette` — the same toolkit, the same roles and the same
+`Show more (N)` row the Jira pane paints.
 
 ## Install
 
