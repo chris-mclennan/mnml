@@ -77,9 +77,15 @@ def facts(text):
         m = re.search(r"\[ Show (\d+) more (older|merged) \]", s)
         if m:
             out.add(f"footer:show {m.group(1)} more {m.group(2)}")
-        m = re.search(r"(✓|✗|⊘|→)\s*(SUCCESSFUL|FAILED|STOPPED|no pipeline ran|fetching pipeline)\s*(#\d+)?", s)
-        if m and s.startswith(("→", "✓", "✗", "⊘")) or (m and "on " in s and m.group(3)):
-            out.add(f"subline:{m.group(2)}:{m.group(3) or ''}")
+        # The build line under a pull request. The reference writes
+        # `✓ SUCCESSFUL #412 on main …`; the Zig pane writes the
+        # toolkit's `✓ SUCCESSFUL · main · 4h · #412`. Same facts, two
+        # orders — so the run's number is looked for anywhere on the
+        # line rather than only right after the state.
+        m = re.search(r"(✓|✗|⊘|⏵|→)\s*(SUCCESSFUL|FAILED|STOPPED|IN_PROGRESS|PENDING|no pipeline ran|no build ran|fetching pipeline|fetching builds)", s)
+        if m and (s.startswith(("→", "✓", "✗", "⊘", "⏵")) or "on " in s):
+            build = re.search(r"#(\d+)", s)
+            out.add(f"subline:{m.group(2)}:{'#' + build.group(1) if build else ''}")
         # The tab strip is chrome: the reference hides it under --only,
         # the Zig pane shows it for two tabs. Not a content fact.
         m = re.match(r"^(?:[A-Za-z]+/)?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#(\d+)\s*$", s.strip("┌┐─ "))
