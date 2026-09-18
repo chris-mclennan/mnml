@@ -55,13 +55,25 @@ pub const specs = [_]sdk.Manifest{ spec_work, spec_fix_versions, spec_boards };
 pub const spec = spec_work;
 pub const version = "0.2.0";
 
-/// The statusline segment: the manifest's `jira_work.assigned` slot,
-/// replaced live with the count.
+/// The two statusline segments the Work chip publishes — the
+/// manifest's slots, replaced live with their counts. They are two
+/// numbers about two different things, so they are two chips: one says
+/// how much is on your plate, the other how much is waiting on you to
+/// look at it.
 pub const segment_id = "jira_work.assigned";
 pub const segment_glyph = "\u{f0303}";
 pub const segment_color = "#1B5DCF";
 pub const segment_click = "jira_work.open";
 pub const segment_priority: u8 = 60;
+
+/// The second figure: the tab the user configures as "QA Actionable
+/// Now". There is no tab *kind* for it yet (that is its own track), so
+/// it is found by name; without such a tab the chip is not published
+/// at all rather than showing a zero that means "not configured".
+pub const qa_segment_id = "jira_work.qa_actionable";
+pub const qa_segment_glyph = "\u{ed7a}"; // nf-fa-clipboard_check
+pub const qa_segment_color = "#C678DD";
+pub const qa_segment_priority: u8 = 59;
 
 /// The prefetch cache mnml hands a pane.
 pub const prefetch_env = "MNML_PREFETCH_CACHE_FILE";
@@ -411,8 +423,106 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc) void 
     }
 }
 
-/// The Work chip's statusline segment: the glyph and the open count,
-/// blue, a click opens the pane — the manifest's slot, live.
+/// One status and how many of the counted issues are in it.
+pub const StatusCount = struct { status: []const u8, n: usize };
+
+/// What one `--values` run found. Two figures about two different
+/// things, each with the breakdown that makes it mean something.
+pub const Values = struct {
+    assigned_open: usize = 0,
+    assigned_by_status: []const StatusCount = &.{},
+    /// Null when no tab is configured as QA Actionable Now — the chip
+    /// is then not published at all, rather than showing a zero that
+    /// would read as "nothing to do" when it means "not set up".
+    qa_actionable: ?usize = null,
+    qa_by_status: []const StatusCount = &.{},
+    qa_tab_name: []const u8 = "",
+};
+
+/// The statuses of a set of issues, most-common first — the hover
+/// breakdown behind a bare number.
+pub fn countByStatus(arena: Allocator, issues: []const model.Issue) Allocator.Error![]const StatusCount {
+    var out: std.ArrayList(StatusCount) = .empty;
+    for (issues) |iss| {
+        const name = if (iss.status.len > 0) iss.status else "(no status)";
+        for (out.items) |*row| {
+            if (std.mem.eql(u8, row.status, name)) {
+                row.n += 1;
+                break;
+            }
+        } else try out.append(arena, .{ .status = name, .n = 1 });
+    }
+    const Ctx = struct {
+        fn lt(_: void, a: StatusCount, b: StatusCount) bool {
+            if (a.n != b.n) return a.n > b.n;
+            return std.mem.lessThan(u8, a.status, b.status);
+        }
+    };
+    std.mem.sort(StatusCount, out.items, {}, Ctx.lt);
+    return out.toOwnedSlice(arena);
+}
+
+/// `7 open items assigned to me — 3 In Progress · 2 In Review · 2 To Do`.
+pub fn breakdownText(arena: Allocator, lead: []const u8, counts: []const StatusCount) Allocator.Error![]const u8 {
+    var w: Io.Writer.Allocating = .init(arena);
+    w.writer.writeAll(lead) catch return error.OutOfMemory;
+    for (counts, 0..) |row, i| {
+        w.writer.print("{s}{d} {s}", .{ if (i == 0) " — " else " · ", row.n, row.status }) catch return error.OutOfMemory;
+    }
+    return w.toOwnedSlice() catch error.OutOfMemory;
+}
+
+/// The tab the user has set up as QA Actionable Now, by name. A tab
+/// *kind* for it is the next track; until then the name is the
+/// contract, matched loosely so "QA Actionable Now", "qa_actionable"
+/// and "QA actionable" all count.
+pub fn qaTab(tabs: []const config.Tab) ?config.Tab {
+    for (tabs) |t| if (nameIsQaActionable(t.name)) return t;
+    return null;
+}
+
+fn nameIsQaActionable(name: []const u8) bool {
+    var buf: [64]u8 = undefined;
+    var n: usize = 0;
+    for (name) |c| {
+        if (n == buf.len) break;
+        buf[n] = if (std.ascii.isAlphanumeric(c)) std.ascii.toLower(c) else ' ';
+        n += 1;
+    }
+    return std.mem.indexOf(u8, buf[0..n], "qa actionable") != null;
+}
+
+/// The Work chips' statusline segments: the glyph and the count, the
+/// breakdown on hover, a click opens the pane — the manifest's slots,
+/// live.
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
+    var buf: [32]u8 = undefined;
+    const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, v.assigned_open }) catch segment_glyph;
+    const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
+    try ipc.statuslineSetSegment(.{
+        .id = segment_id,
+        .text = label,
+        .color = segment_color,
+        .click_command = segment_click,
+        .priority = segment_priority,
+        .tooltip = try breakdownText(arena, lead, v.assigned_by_status),
+    });
+    if (v.qa_actionable) |n| {
+        var qbuf: [32]u8 = undefined;
+        const qlabel = std.fmt.bufPrint(&qbuf, "{s} {d}", .{ qa_segment_glyph, n }) catch qa_segment_glyph;
+        const qlead = try std.fmt.allocPrint(arena, "{s} · {d} actionable now", .{ if (v.qa_tab_name.len > 0) v.qa_tab_name else "QA Actionable Now", n });
+        try ipc.statuslineSetSegment(.{
+            .id = qa_segment_id,
+            .text = qlabel,
+            .color = qa_segment_color,
+            .click_command = segment_click,
+            .priority = qa_segment_priority,
+            .tooltip = try breakdownText(arena, qlead, v.qa_by_status),
+        });
+    }
+}
+
+/// The one-figure form the pane's own refresh publishes as it goes.
 pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize) sdk.ipc.Error!void {
     var buf: [32]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, assigned_open }) catch segment_glyph;
@@ -557,9 +667,16 @@ fn diag(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     return 0;
 }
 
-/// `--values`: one search, one JSON line — what a statusline poller
-/// reads; with `--workspace W`, the segment is published over that
-/// workspace's channel too.
+/// `--values`: what a statusline poller reads — two figures, each with
+/// the per-status breakdown that makes a bare number mean something.
+/// With `--workspace W` (which the host's poller always passes) the two
+/// segments are published over that workspace's channel too, so the
+/// chips move with no pane open.
+///
+/// The second figure is the tab the user has set up as QA Actionable
+/// Now. There is no tab kind for it yet, so it is found by name; with
+/// no such tab the key is `null` and the chip is not published, which
+/// is not the same as a zero.
 fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
     const c = loaded.config;
     const t: auth.Token = switch (token) {
@@ -579,24 +696,63 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     defer limiter.deinit();
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+
+    var v: Values = .{};
     const base = config.TabKind.work_assigned.defaultJql().?;
     const jql = try jira.withProjects(arena, base, c.projects);
-    const n: usize = switch (jira.search(&client, arena, jql, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
-        .ok => |items| items.len,
+    switch (jira.search(&client, arena, jql, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+        .ok => |items| {
+            v.assigned_open = items.len;
+            v.assigned_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
+        },
         .failed => |f| {
             try err.print("mnml-jira --values: {s}\n", .{f.message});
             try out.writeAll("{\"assigned_open\":null}\n");
             return 1;
         },
-    };
-    try out.print("{{\"assigned_open\":{d}}}\n", .{n});
-    if (args.workspace) |ws| {
-        const dir = try std.fs.path.join(arena, &.{ ws, ".mnml", "ipc" });
-        var ipc = try sdk.Ipc.init(gpa, io, dir);
+    }
+
+    // The second figure, when the user has a tab for it. A failure here
+    // is not a failure of the run: the first chip is still worth
+    // publishing, so this says so on stderr and leaves the key null.
+    if (qaTab(c.tabs)) |tab| {
+        v.qa_tab_name = tab.name;
+        if (try tab.staticJql(arena)) |qa_jql| {
+            const scoped = try jira.withProjects(arena, qa_jql, c.projects);
+            switch (jira.search(&client, arena, scoped, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+                .ok => |items| {
+                    v.qa_actionable = items.len;
+                    v.qa_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
+                },
+                .failed => |f| try err.print("mnml-jira --values: {s}: {s}\n", .{ tab.name, f.message }),
+            }
+        } else try err.print("mnml-jira --values: the tab `{s}` has no jql to run\n", .{tab.name});
+    }
+
+    try out.print("{{\"assigned_open\":{d}", .{v.assigned_open});
+    if (v.qa_actionable) |n| try out.print(",\"qa_actionable\":{d}", .{n}) else try out.writeAll(",\"qa_actionable\":null");
+    try out.writeAll("}\n");
+
+    if (try ipcFor(gpa, io, env, args.workspace)) |*ipc_ptr| {
+        var ipc = ipc_ptr.*;
         defer ipc.deinit();
-        publishSegment(&ipc, n) catch |e| try err.print("mnml-jira --values: could not publish the segment: {s}\n", .{@errorName(e)});
+        publishSegments(&ipc, arena, v) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
     }
     return 0;
+}
+
+/// The channel to publish on: `$MNML_IPC_DIR` when the host set it —
+/// the only mnml that will act on the line — else the workspace's own
+/// `<ws>/.mnml/ipc-zig`. Never the Rust host's `ipc` name, which is a
+/// directory a Zig instance does not read.
+fn ipcFor(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, workspace: ?[]const u8) Allocator.Error!?sdk.Ipc {
+    if (try sdk.Ipc.fromEnv(gpa, io, env)) |ipc| return ipc;
+    const ws = workspace orelse return null;
+    if (ws.len == 0) return null;
+    const dir = try std.fs.path.join(gpa, &.{ ws, ".mnml", dispatch.ipc_subdir });
+    defer gpa.free(dir);
+    if (Io.Dir.cwd().access(io, dir, .{})) |_| {} else |_| return null;
+    return try sdk.Ipc.init(gpa, io, dir);
 }
 
 /// `--prefetch --only F`: the family's tabs and their issues as JSON, the
@@ -793,10 +949,20 @@ test "the three manifests: one binary, three families, the Work chip carries the
         try testing.expectEqual(@as(usize, 3), s.auth.len);
         try sdk.manifest.validateId(s.id);
     }
-    try testing.expectEqual(@as(usize, 1), spec_work.statusline.len);
+    // Two chips, because they are two numbers about two different
+    // things: what is on my plate, and what is waiting for me to look
+    // at it. Each carries its own resting hover text.
+    try testing.expectEqual(@as(usize, 2), spec_work.statusline.len);
     try testing.expectEqualStrings("jira_work.open", spec_work.statusline[0].click_command.?);
     try testing.expectEqualStrings("#1B5DCF", spec_work.statusline[0].color.?);
     try testing.expectEqualStrings("assigned", spec_work.statusline[0].id);
+    try testing.expectEqualStrings("qa_actionable", spec_work.statusline[1].id);
+    for (spec_work.statusline) |seg| try testing.expect(seg.tooltip != null);
+    // The ids the binary publishes on are the manifest's own slots,
+    // prefixed with the manifest id — a mismatch is a chip that never
+    // moves, which is only visible by running it.
+    try testing.expectEqualStrings(segment_id, "jira_work." ++ "assigned");
+    try testing.expectEqualStrings(qa_segment_id, "jira_work." ++ "qa_actionable");
     try testing.expectEqual(@as(usize, 0), spec_boards.statusline.len);
 }
 
@@ -873,4 +1039,89 @@ test "the prefetch cache hydrates the tabs it names before any fetch" {
     try testing.expectEqual(@as(usize, 1), a.tab().issues.len);
     _ = try a.onKey("r");
     try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+}
+
+test "the breakdown is by status, most common first, and the tooltip reads as a sentence" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const issues = [_]model.Issue{
+        .{ .key = "ENG-1", .status = "In Progress" },
+        .{ .key = "ENG-2", .status = "To Do" },
+        .{ .key = "ENG-3", .status = "In Progress" },
+        .{ .key = "ENG-4", .status = "In Review" },
+        .{ .key = "ENG-5", .status = "In Progress" },
+        .{ .key = "ENG-6", .status = "" },
+    };
+    // A missing status is counted, not dropped: six issues in, six out.
+    const counts = try countByStatus(arena, &issues);
+    try testing.expectEqual(@as(usize, 4), counts.len);
+    try testing.expectEqualStrings("In Progress", counts[0].status);
+    try testing.expectEqual(@as(usize, 3), counts[0].n);
+    // A tie breaks by name, so the order is the same every run.
+    try testing.expectEqualStrings("(no status)", counts[1].status);
+    try testing.expectEqualStrings("In Review", counts[2].status);
+    try testing.expectEqualStrings("To Do", counts[3].status);
+    var total: usize = 0;
+    for (counts) |c| total += c.n;
+    try testing.expectEqual(issues.len, total);
+
+    const tip = try breakdownText(arena, "Jira · 6 open items assigned to me", counts);
+    try testing.expectEqualStrings("Jira · 6 open items assigned to me — 3 In Progress · 1 (no status) · 1 In Review · 1 To Do", tip);
+    // Nothing counted: the lead stands alone rather than trailing a dash.
+    try testing.expectEqualStrings("Jira · 0 open items assigned to me", try breakdownText(arena, "Jira · 0 open items assigned to me", &.{}));
+}
+
+test "the QA figure comes from a tab found by name, loosely, and from no other tab" {
+    try testing.expect(qaTab(&.{}) == null);
+    try testing.expect(qaTab(&.{.{ .name = "Assigned to me" }}) == null);
+    try testing.expect(qaTab(&.{.{ .name = "QA" }}) == null);
+    const tabs = [_]config.Tab{
+        .{ .name = "Assigned to me", .kind = .work_assigned },
+        .{ .name = "QA Actionable Now", .jql = "status = \"Ready for QA\"" },
+        .{ .name = "Recently done", .kind = .work_recently_done },
+    };
+    const found = qaTab(&tabs).?;
+    try testing.expectEqualStrings("QA Actionable Now", found.name);
+    // The name is the contract until a tab kind exists for it, so it is
+    // matched the way a user would write it.
+    try testing.expect(qaTab(&.{.{ .name = "qa_actionable" }}) != null);
+    try testing.expect(qaTab(&.{.{ .name = "qa-actionable-now" }}) != null);
+    try testing.expect(qaTab(&.{.{ .name = "My QA Actionable queue" }}) != null);
+}
+
+test "both chips carry their count and their breakdown; the QA one is absent when no tab is configured" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+
+    var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
+    defer ipc.deinit();
+    try publishSegments(&ipc, arena, .{
+        .assigned_open = 7,
+        .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
+    });
+    var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
+    try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\u{f0303} 7") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "7 open items assigned to me — 4 In Progress · 3 To Do") != null);
+    // No tab, no chip: a zero here would read as "nothing to do" when
+    // it means "not set up".
+    try testing.expect(std.mem.indexOf(u8, got, "jira_work.qa_actionable") == null);
+
+    try publishSegments(&ipc, arena, .{
+        .assigned_open = 1,
+        .qa_actionable = 3,
+        .qa_by_status = &.{.{ .status = "Ready for QA", .n = 3 }},
+        .qa_tab_name = "QA Actionable Now",
+    });
+    got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
+    try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "QA Actionable Now · 3 actionable now — 3 Ready for QA") != null);
+    // One item reads as one item, not "1 items".
+    try testing.expect(std.mem.indexOf(u8, got, "1 open item assigned to me") != null);
 }

@@ -179,12 +179,28 @@ toggles its selection.
 
 ## The statusline
 
-The Work chip's manifest declares a statusline segment
-(`jira_work.assigned`: `󰌃`, `#1B5DCF`, a click runs `jira_work.open`).
-The pane replaces it live with `󰌃 N` — the count of the Assigned tab —
-over mnml's Tier-2 IPC after every refresh; `mnml-jira --values
---workspace <ws>` does the same from outside the pane and prints
-`{"assigned_open": N}` for a poller.
+The Work chip's manifest declares **two** segments, because they are
+two numbers about two different things.
+
+**`jira_work.assigned`** — `󰌃 N`: open items assigned to you, the
+Assigned tab's count. A click runs `jira_work.open`.
+
+**`jira_work.qa_actionable`** — ` K`: the tab you have set up as **QA
+Actionable Now**. There is no tab *kind* for it yet (that is its own
+track), so the tab is found by name — "QA Actionable Now",
+"qa_actionable", "QA actionable" all count — and its own `jql` is what
+runs. With no such tab the key is `null` and the chip is not published
+at all, which is not the same as a zero.
+
+Each chip's hover is its breakdown by status —
+`Jira · 7 open items assigned to me — 3 In Progress · 2 In Review ·
+2 To Do` — so a number that moved says what moved.
+
+The pane publishes the first over mnml's Tier-2 IPC after every
+refresh. `mnml-jira --values --workspace <ws>` publishes both from
+outside the pane and prints `{"assigned_open":N,"qa_actionable":K}` for
+a poller; mnml's own poller runs exactly that line on the manifest's
+interval, so the chips move with no pane open.
 
 ## The dispatch queue
 
