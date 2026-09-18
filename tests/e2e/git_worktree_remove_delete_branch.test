@@ -1,0 +1,57 @@
+# A WORKTREES row's *Remove worktree and delete branch…*: a named
+# confirm with three choices — Remove, Force, Cancel — then `worktree
+# remove` and `branch -d` on the git worker, both in the command log. A
+# dirty tree is refused by the plain Remove and named by the confirm;
+# Force throws it away. Rows at 120x40: LOCAL 7, feat 8, main 9, gap 10,
+# REMOTE 11, gap 12, WORKTREES 13, main (ws) 14, feat (wt) 15.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nwt/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git worktree add -q wt -b feat
+write wt/dirty.txt "uncommitted\n"
+command view.activity_git
+wait 1200
+expect screen contains "󰐅 feat (wt)"
+# The confirm names the tree, the branch and the file it would throw away.
+rightclick 6 15
+expect screen contains "Remove worktree and delete branch…"
+key down
+key down
+key down
+key down
+key down
+key down
+key enter
+wait 400
+expect screen contains "delete branch feat?"
+expect screen contains "1 uncommitted file"
+# Remove alone refuses a dirty tree and names the way through.
+key r
+wait 600
+expect screen contains "pick Force"
+shell test -d wt
+shell git rev-parse --verify -q refs/heads/feat
+# Force takes it: the tree and its branch both go.
+rightclick 6 15
+key down
+key down
+key down
+key down
+key down
+key down
+key enter
+wait 400
+key f
+wait 2500
+expect screen contains "branch feat deleted"
+shell test ! -d wt
+shell test -z "$(git rev-parse --verify -q refs/heads/feat || true)"
+# Both children are in the command log.
+command git.command_log
+wait 600
+expect screen contains "worktree remove --force"
+expect screen contains "branch -D feat"

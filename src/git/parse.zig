@@ -1060,6 +1060,9 @@ pub const Worktree = struct {
     lock_reason: []const u8 = "",
     main: bool = false,
     dirty: bool = false,
+    /// // changed (git-menus): how many files `status --porcelain`
+    /// named in the tree, so a remove can say what it would throw away.
+    dirty_files: u32 = 0,
 
     /// The branch, or `(detached)` / `(bare)`.
     pub fn label(w: Worktree) []const u8 {

@@ -196,6 +196,10 @@ pub const Job = union(enum) {
     /// `worktree add path [-b branch] [start]`.
     worktree_add: struct { path: []u8, branch: ?[]u8, start: ?[]u8 = null },
     worktree_remove: []u8,
+    /// // changed (git-menus): a WORKTREES row's *Remove worktree and
+    /// delete branch* — `worktree remove` then `branch -d`, or both
+    /// forced when the confirm's Force choice was taken.
+    worktree_remove_branch: struct { path: []u8, branch: []u8, force: bool },
     // ── branch verbs (git-more2) ──
     /// `branch -m from to`.
     branch_rename: struct { from: []u8, to: []u8 },
@@ -310,6 +314,10 @@ pub const Job = union(enum) {
             .delete_remote => |b| {
                 gpa.free(b.remote);
                 gpa.free(b.branch);
+            },
+            .worktree_remove_branch => |w| {
+                gpa.free(w.path);
+                gpa.free(w.branch);
             },
             .checkout_force => |s| gpa.free(s),
             .push_force => {},
@@ -1254,6 +1262,25 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             } else try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
         },
         .worktree_remove => |p| try simple(repo, io, r, &.{ "worktree", "remove", "--force", p }, try std.fmt.allocPrint(arena, "worktree removed: {s}", .{p})),
+        .worktree_remove_branch => |w| {
+            const rm = if (w.force)
+                try git(repo, io, arena, &.{ "worktree", "remove", "--force", w.path }, null)
+            else
+                try git(repo, io, arena, &.{ "worktree", "remove", w.path }, null);
+            if (!rm.ok) {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "remove worktree {s}", .{w.path}), .ok = false, .msg = rm.reason() } };
+            } else {
+                const br = try git(repo, io, arena, &.{ "branch", if (w.force) "-D" else "-d", w.branch }, null);
+                r.payload = .{ .op = .{
+                    .desc = if (br.ok)
+                        try std.fmt.allocPrint(arena, "worktree removed: {s}, branch {s} deleted", .{ w.path, w.branch })
+                    else
+                        try std.fmt.allocPrint(arena, "worktree removed: {s}; branch {s} kept", .{ w.path, w.branch }),
+                    .ok = br.ok,
+                    .msg = br.reason(),
+                } };
+            }
+        },
         .op_continue => |op| switch (op) {
             .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
             .bisect => r.payload = .{ .op = .{ .desc = "bisect: mark a commit good or bad instead", .ok = false, .refresh = false } },
@@ -1531,7 +1558,14 @@ fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Worktree
     for (trees) |*w| {
         if (w.bare) continue;
         const st = try git(repo, io, arena, &.{ "-C", w.path, "status", "--porcelain" }, null);
-        w.dirty = st.ok and trimmed(st.stdout).len > 0;
+        const body = if (st.ok) trimmed(st.stdout) else "";
+        w.dirty = body.len > 0;
+        if (w.dirty) {
+            var lines = std.mem.splitScalar(u8, body, '\n');
+            while (lines.next()) |line| if (std.mem.trim(u8, line, " \t\r").len > 0) {
+                w.dirty_files += 1;
+            };
+        }
     }
     return trees;
 }

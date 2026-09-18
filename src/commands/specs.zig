@@ -1095,6 +1095,7 @@ pub const specs = [_]Spec{
     .{ .id = "git.explain_branch", .title = "Git: explain a branch's changes with Claude \u{2014} the commits it has that the checked-out branch does not, in a read-only pane", .group = "git", .keys = .{ .vim = &.{"space g e"} } },
     .{ .id = "git.push_start_pr", .title = "Git: push the branch (push -u, never a force) and open the forge's new-pull-request page", .group = "git", .keys = .{ .vim = &.{"space g r"} } },
     .{ .id = "git.worktree_open_tab", .title = "Git: open the branches panel's worktree row on a tab page of its own (the tree's files, and the panels follow it)", .group = "git", .keys = .{ .vim = &.{"space g W"} } },
+    .{ .id = "git.worktree_remove_delete_branch", .title = "Git: remove the branches panel's worktree row and delete its branch\u{2026} (confirm; Force takes a dirty tree or an unmerged branch)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },

@@ -147,6 +147,61 @@ pub const State = struct {
 
 pub const RepoColor = struct { name: []u8, color: []u8 };
 
+test "remove worktree and delete branch: the confirm names the tree, the branch and the dirty count; Remove refuses a dirty tree and names Force, Force sends it; the main tree, the tree on show and a branchless tree are refused by name" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    seed(app);
+    // The main tree (the workspace) and, with its `main` flag off, the
+    // tree the panels are showing.
+    try testing.expectError(error.Failed, confirmRemoveWorktreeBranch(app, seed_worktrees[0]));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "main worktree") != null);
+    app.diag.clear();
+    var on_show = seed_worktrees[0];
+    on_show.main = false;
+    on_show.path = app.git.activeRepo().?.path;
+    on_show.branch = "main";
+    try testing.expectError(error.Failed, confirmRemoveWorktreeBranch(app, on_show));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "tree on show") != null);
+    app.diag.clear();
+    // A detached tree has no branch to delete.
+    var detached = seed_worktrees[1];
+    detached.branch = "";
+    try testing.expectError(error.Failed, confirmRemoveWorktreeBranch(app, detached));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "no branch of its own") != null);
+    app.diag.clear();
+
+    // The linked tree: the confirm names both, and its dirty count.
+    try confirmRemoveWorktreeBranch(app, seed_worktrees[1]);
+    try testing.expect(app.overlay == .confirm);
+    try testing.expectEqualStrings("Remove worktree", app.overlay.confirm.state.title);
+    const msg = app.overlay.confirm.state.message;
+    try testing.expect(std.mem.indexOf(u8, msg, "/repo/wt-fix") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "delete branch fix") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "2 uncommitted files") != null);
+    try testing.expectEqual(@as(usize, 3), app.overlay.confirm.state.choices.len);
+    try testing.expectEqualStrings("Force", app.overlay.confirm.state.choices[1].label);
+
+    // Remove on a dirty tree refuses and names the way through.
+    const busy_before = app.git.busy;
+    try testing.expectError(error.Failed, git.acceptConfirm(app, 0));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "pick Force") != null);
+    app.diag.clear();
+    try testing.expectEqual(busy_before, app.git.busy);
+
+    // Force sends it to the worker.
+    try confirmRemoveWorktreeBranch(app, seed_worktrees[1]);
+    try git.acceptConfirm(app, 1);
+    try testing.expectEqual(busy_before + 1, app.git.busy);
+    try testing.expect(app.git.confirm == .none);
+
+    // Cancel sends nothing.
+    try confirmRemoveWorktreeBranch(app, seed_worktrees[1]);
+    try git.acceptConfirm(app, 2);
+    try testing.expectEqual(busy_before + 1, app.git.busy);
+}
+
 // ─── the accent (colors) ────────────────────────────────────────────────
 
 /// Repo accents tell repos apart, so a workspace with one repo shows
@@ -1083,6 +1138,44 @@ pub fn openWorktreeInTab(app: *App, w: parse.Worktree) CommandError!void {
     app.toast("worktree {s}: tab {d}/{d}", .{ std.fs.path.basename(w.path), app.layouts.active + 1, app.layouts.layouts.items.len });
 }
 
+/// The tree's path for a confirm: workspace-relative when it is under
+/// the workspace, through symlinks (`git worktree list` prints the real
+/// path, a workspace may be the symlinked one).
+fn treeLabel(app: *App, arena: Allocator, path: []const u8) []const u8 {
+    const rel = app.relPath(path);
+    if (rel.len < path.len) return rel;
+    const real = std.Io.Dir.realPathFileAbsoluteAlloc(app.io, app.workspace, arena) catch return path;
+    if (std.mem.startsWith(u8, path, real) and path.len > real.len and path[real.len] == '/') return path[real.len + 1 ..];
+    return path;
+}
+
+/// A WORKTREES row's *Remove worktree and delete branch…* (git-menus):
+/// the confirm names the tree, its branch and, when the tree is dirty,
+/// how many files it would throw away. The main tree, the tree on show
+/// and a tree with no branch of its own are refused by name — the row
+/// is always there, as every WORKTREES row's is.
+pub fn confirmRemoveWorktreeBranch(app: *App, wt: parse.Worktree) CommandError!void {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    if (wt.main) return app.diag.fail(arena, "remove worktree: {s} is the main worktree", .{wt.path});
+    if (app.git.activeRepo()) |r| if (samePath(app, arena, r.path, wt.path)) return app.diag.fail(arena, "remove worktree: {s} is the tree on show \u{2014} switch to another first", .{wt.path});
+    if (wt.branch.len == 0) return app.diag.fail(arena, "remove worktree: {s} has no branch of its own \u{2014} use Remove this worktree", .{wt.path});
+    const path = try gpa.dupe(u8, wt.path);
+    errdefer gpa.free(path);
+    const branch = try gpa.dupe(u8, wt.branch);
+    errdefer gpa.free(branch);
+    // The box shows one line: a long absolute path would push the
+    // branch and the count off the end, so the tree is named the way
+    // the panels name it — workspace-relative where it is under one.
+    const shown = treeLabel(app, arena, wt.path);
+    const message = if (wt.dirty_files > 0)
+        try std.fmt.allocPrint(gpa, "  Remove worktree {s} and delete branch {s}? {d} uncommitted file{s} \u{2014} Force throws {s} away.", .{ shown, wt.branch, wt.dirty_files, if (wt.dirty_files == 1) "" else "s", if (wt.dirty_files == 1) "it" else "them" })
+    else
+        try std.fmt.allocPrint(gpa, "  Remove worktree {s} and delete branch {s}? Force deletes the branch even when it is not merged.", .{ shown, wt.branch });
+    errdefer gpa.free(message);
+    try git.openConfirmWith(app, .{ .worktree_remove_branch = .{ .path = path, .branch = branch, .dirty_files = wt.dirty_files } }, "Remove worktree", message, &git.remove_branch_choices);
+}
+
 /// One row menu's rows as they are built: the labels on the arena the
 /// menu will own, every act carrying the row's repo.
 const MenuBuilder = struct {
@@ -1266,6 +1359,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 // The main tree and the tree on show keep the row; the
                 // verb refuses them by name.
                 try b.act("Remove this worktree\u{2026}", .worktree_remove, w.idx, true);
+                try b.act("Remove worktree and delete branch\u{2026}", .worktree_remove_branch, w.idx, false);
             }
             break :blk try b.fmt("{s}  {s}", .{ wt.label(), wt.path });
         },
@@ -1335,12 +1429,13 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 app.toast("copied {s}", .{url});
                 break :blk;
             },
-            .worktree_open, .worktree_open_tab, .worktree_shell, .worktree_copy_path, .worktree_remove, .session_merge, .session_remove => {
+            .worktree_open, .worktree_open_tab, .worktree_shell, .worktree_copy_path, .worktree_remove, .worktree_remove_branch, .session_merge, .session_remove => {
                 if (a.idx >= gs.rail_worktrees.len) break :blk;
                 const wt = gs.rail_worktrees[a.idx];
                 switch (a.what) {
                     .worktree_open => break :blk openWorktree(app, wt),
                     .worktree_open_tab => break :blk openWorktreeInTab(app, wt),
+                    .worktree_remove_branch => break :blk confirmRemoveWorktreeBranch(app, wt),
                     .session_merge, .session_remove => {
                         const e = app.sessions.worktrees.byPath(wt.path) orelse break :blk app.diag.fail(arena, "{s} is no session worktree", .{wt.path});
                         break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*, false);
@@ -1792,7 +1887,7 @@ var seed_branches = [_]parse.Branch{
 };
 var seed_worktrees = [_]parse.Worktree{
     .{ .path = "", .branch = "main", .head = "aaaa111", .main = true },
-    .{ .path = "/repo/wt-fix", .branch = "fix", .head = "cccc333", .locked = true, .lock_reason = "keep", .dirty = true },
+    .{ .path = "/repo/wt-fix", .branch = "fix", .head = "cccc333", .locked = true, .lock_reason = "keep", .dirty = true, .dirty_files = 2 },
 };
 var seed_remotes = [_]parse.Remote{.{ .name = "origin", .url = "git@github.com:me/thing.git", .provider = .github }};
 var seed_stashes = [_]parse.Stash{.{ .sha = "ab12cd3", .ref = "stash@{0}", .message = "On main: half done" }};
@@ -2273,7 +2368,7 @@ fn lastToastText(app: *App) []const u8 {
     return app.lastToast() orelse "";
 }
 
-const worktree_menu = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}" };
+const worktree_menu = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}", "Remove worktree and delete branch\u{2026}" };
 
 test "row menus: one shape per row kind, built from the row under the pointer while the cursor stays; the main tree and the tree on show keep Remove and are refused by name; a prefix-only remote keeps Copy URL and says so; Reset targets the row, not the cursor; a stale index opens nothing; under All repos a right-click on another repo's row switches nothing and its rows carry the repo, which the act switches to" {
     var t = try TestApp.initWith(&.{ "alpha", "beta" });

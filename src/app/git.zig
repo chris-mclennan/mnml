@@ -206,6 +206,11 @@ pub const Confirm = union(enum) {
     discard_hunk: struct { pane: PaneId },
     delete_branch: []u8,
     worktree_remove: []u8,
+    /// // changed (git-menus): a WORKTREES row's *Remove worktree and
+    /// delete branch* — the plain Remove refuses a dirty tree, the
+    /// confirm's Force choice takes it anyway (`worktree remove
+    /// --force` + `branch -D`).
+    worktree_remove_branch: struct { path: []u8, branch: []u8, dirty_files: u32 },
     /// A palette row: checkout after a yes (a tag lands detached).
     checkout: []u8,
     tag_delete: []u8,
@@ -221,6 +226,10 @@ pub const Confirm = union(enum) {
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
             .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard, .checkout_force => |s| gpa.free(s),
+            .worktree_remove_branch => |w| {
+                gpa.free(w.path);
+                gpa.free(w.branch);
+            },
             .delete_remote => |d| {
                 gpa.free(d.remote);
                 gpa.free(d.branch);
@@ -2556,12 +2565,48 @@ pub fn openConfirm(app: *App, payload: Confirm, message: []u8) Allocator.Error!v
 
 pub const confirm_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'y', .label = "Yes" }, .{ .key = 'n', .label = "No" } };
 
+/// // changed (git-menus): a confirm whose choices are not yes / no —
+/// *Remove worktree and delete branch*'s Remove / Force / Cancel. Takes
+/// `payload` and `message` the same way; `choices` is a static.
+pub fn openConfirmWith(app: *App, payload: Confirm, title: []const u8, message: []u8, choices: []const app_mod.Confirm.Choice) Allocator.Error!void {
+    const st = &app.git;
+    st.confirm.deinit(app.gpa);
+    st.confirm = payload;
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = title, .message = message, .choices = choices },
+        .purpose = .git,
+        .message = message,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+pub const remove_branch_choices = [_]app_mod.Confirm.Choice{
+    .{ .key = 'r', .label = "Remove" },
+    .{ .key = 'f', .label = "Force" },
+    .{ .key = 'c', .label = "Cancel" },
+};
+
 pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
     const payload = st.confirm;
     st.confirm = .none;
     defer payload.deinit(gpa);
+    // git-menus: the only three-way confirm — Remove (0), Force (1),
+    // Cancel (2). A dirty tree is refused unless Force was taken.
+    if (payload == .worktree_remove_branch) {
+        const w = payload.worktree_remove_branch;
+        if (choice > 1) return;
+        const force = choice == 1;
+        if (!force and w.dirty_files > 0) return app.diag.fail(app.frame.allocator(), "remove worktree: {s} has {d} uncommitted file{s} \u{2014} pick Force to throw {s} away", .{ w.path, w.dirty_files, if (w.dirty_files == 1) "" else "s", if (w.dirty_files == 1) "it" else "them" });
+        const path = try gpa.dupe(u8, w.path);
+        errdefer gpa.free(path);
+        const branch = try gpa.dupe(u8, w.branch);
+        errdefer gpa.free(branch);
+        return submitOp(app, try requireRepo(app), .{ .worktree_remove_branch = .{ .path = path, .branch = branch, .force = force } });
+    }
     if (choice != 0) return;
     switch (payload) {
         .none => {},
@@ -2588,6 +2633,8 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
             app.toast("pushing (--force-with-lease)\u{2026}", .{});
             try submitOp(app, try requireRepo(app), .push_force);
         },
+        // Handled above: its choices are not yes / no.
+        .worktree_remove_branch => unreachable,
     }
 }
 

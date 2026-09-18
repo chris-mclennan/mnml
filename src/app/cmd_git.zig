@@ -118,6 +118,7 @@ pub const table = .{
     .@"git.explain_branch" = &explainBranch,
     .@"git.push_start_pr" = &pushStartPr,
     .@"git.worktree_open_tab" = &worktreeOpenTab,
+    .@"git.worktree_remove_delete_branch" = &worktreeRemoveDeleteBranch,
     .@"git.fixup" = &fixup,
     .@"git.squash" = &squash,
     .@"git.drop" = &drop,
@@ -799,6 +800,14 @@ fn worktreeOpenTab(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     const w = (try git_palette.cursorWorktree(app)) orelse return app.diag.fail(arena(app), "open worktree in a new tab: put the branches panel's cursor on a WORKTREES row first", .{});
     try git_palette.openWorktreeInTab(app, w);
+}
+
+/// `git.worktree_remove_delete_branch`: the branches panel's WORKTREES
+/// row, behind the confirm that names the tree and its branch.
+fn worktreeRemoveDeleteBranch(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    const w = (try git_palette.cursorWorktree(app)) orelse return app.diag.fail(arena(app), "remove worktree and delete branch: put the branches panel's cursor on a WORKTREES row first", .{});
+    try git_palette.confirmRemoveWorktreeBranch(app, w);
 }
 
 fn fixup(app: *App) CommandError!void {
