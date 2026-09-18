@@ -7,29 +7,10 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const sdk = @import("mnml_sdk");
+const keymap = @import("keymap.zig");
 
-pub const Rect = struct {
-    x: u16,
-    y: u16,
-    w: u16,
-    h: u16,
-
-    pub fn contains(r: Rect, x: u16, y: u16) bool {
-        return x >= r.x and x < r.x +| r.w and y >= r.y and y < r.y +| r.h;
-    }
-
-    pub fn right(r: Rect) u16 {
-        return r.x +| r.w;
-    }
-
-    pub fn bottom(r: Rect) u16 {
-        return r.y +| r.h;
-    }
-
-    pub fn isEmpty(r: Rect) bool {
-        return r.w == 0 or r.h == 0;
-    }
-};
+pub const Rect = sdk.pane.Rect;
 
 /// The header and toolbar chips. One enum for both families' toolbars.
 pub const Chip = enum {
@@ -92,62 +73,31 @@ pub const Target = union(enum) {
     jql_body,
     /// The key sheet.
     help_body,
-    /// The detail pane's body (the wheel scrolls it).
+    /// The detail pane's body (the wheel scrolls it), its `\u{d7}` and
+    /// its scrollbar (a press or a drag on the track scrolls it).
     detail,
+    detail_close,
+    detail_bar,
+    /// A `key label` entry of the hint row, and a row of the key sheet:
+    /// clicking either runs what the key runs.
+    hint: keymap.Action,
+    help_row: keymap.Action,
     /// The comment editor.
     comment,
 };
 
-pub const Entry = struct { rect: Rect, target: Target };
-
-pub const Map = struct {
-    items: std.ArrayList(Entry) = .empty,
-
-    pub fn deinit(m: *Map, gpa: Allocator) void {
-        m.items.deinit(gpa);
-    }
-
-    pub fn reset(m: *Map) void {
-        m.items.clearRetainingCapacity();
-    }
-
-    pub fn add(m: *Map, gpa: Allocator, rect: Rect, target: Target) Allocator.Error!void {
-        if (rect.isEmpty()) return;
-        try m.items.append(gpa, .{ .rect = rect, .target = target });
-    }
-
-    /// Back to front: the last painted wins.
-    pub fn at(m: *const Map, x: u16, y: u16) ?Target {
-        var i = m.items.items.len;
-        while (i > 0) {
-            i -= 1;
-            const e = m.items.items[i];
-            if (e.rect.contains(x, y)) return e.target;
-        }
-        return null;
-    }
-
-    /// Where a target painted, for a test that clicks by meaning.
-    pub fn rectOf(m: *const Map, target: Target) ?Rect {
-        var i = m.items.items.len;
-        while (i > 0) {
-            i -= 1;
-            const e = m.items.items[i];
-            if (std.meta.eql(e.target, target)) return e.rect;
-        }
-        return null;
-    }
-
-    pub fn count(m: *const Map) usize {
-        return m.items.items.len;
-    }
-};
+/// The map itself is the SDK's (`sdk.pane.HitMap`), generic over the
+/// targets above — one implementation shared with every other mnml
+/// integration, so "the last thing painted wins" means the same thing
+/// in every pane.
+pub const Map = sdk.pane.HitMap(Target);
+pub const Entry = Map.Entry;
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
 
-test "the last thing painted wins, an empty rect is never a target, rectOf finds a target by meaning" {
+test "jira's targets over the SDK's map: the last thing painted wins, an empty rect is never a target" {
     var m: Map = .{};
     defer m.deinit(testing.allocator);
     try m.add(testing.allocator, .{ .x = 0, .y = 2, .w = 40, .h = 1 }, .{ .row = 1 });

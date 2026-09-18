@@ -53,6 +53,19 @@ pub const spec_boards: sdk.Manifest = @import("manifest_boards.zon");
 pub const specs = [_]sdk.Manifest{ spec_work, spec_fix_versions, spec_boards };
 /// The Dev tab's row.
 pub const spec = spec_work;
+
+/// The manifest chip colour of the family a launch is showing — the
+/// pane's own colour, and what the left gutter stripe paints in. Work
+/// blue, Fix Versions green, Boards magenta, as the three chips read on
+/// the rail.
+pub fn chipColorOf(family: ?config.Family) []const u8 {
+    const m = switch (family orelse .work) {
+        .work => spec_work,
+        .fix_versions => spec_fix_versions,
+        .boards => spec_boards,
+    };
+    return if (m.chip) |c| c.color else "";
+}
 pub const version = "0.2.0";
 
 /// The two statusline segments the Work chip publishes — the
@@ -279,8 +292,12 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer mount.destroy();
     var frame = try sdk.Frame.init(gpa, mount.geometry.cols, mount.geometry.rows);
     defer frame.deinit();
-    const ui: screen.Ui = .{ .ascii = mount.hello.capabilities.ascii, .nerd = mount.hello.capabilities.nerd_font };
     const family = args.only;
+    const ui: screen.Ui = .{
+        .ascii = mount.hello.capabilities.ascii,
+        .nerd = mount.hello.capabilities.nerd_font,
+        .th = sdk.pane.Theme.fromHelloBranded(mount.hello.palette, chipColorOf(family)),
+    };
     try mount.setTitle(if (family) |f| f.label() else "Jira");
 
     var box = try inbox.Inbox.init(gpa, 64);
@@ -299,7 +316,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         switch (try setup(arena, io, env, cfg_path, data_root, family)) {
             .ready => |r| break r,
             .problem => |pb| {
-                screen.paintNotice(&frame, pb.title, pb.lines, setup_hint);
+                screen.paintNotice(&frame, ui.th, pb.title, pb.lines, setup_hint);
                 mount.send(&frame) catch return 0;
                 var again = false;
                 while (!again) {
@@ -311,7 +328,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                             .goodbye => return 0,
                             .resize => |r| {
                                 try frame.resize(r.geometry.cols, r.geometry.rows);
-                                screen.paintNotice(&frame, pb.title, pb.lines, setup_hint);
+                                screen.paintNotice(&frame, ui.th, pb.title, pb.lines, setup_hint);
                                 mount.send(&frame) catch return 0;
                             },
                             .input => |in| switch (in.event) {

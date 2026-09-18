@@ -6,6 +6,7 @@
 //! does it; the loop in `main.zig` paints between them.
 
 const std = @import("std");
+const sdk = @import("mnml_sdk");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const config = @import("config.zig");
@@ -118,6 +119,10 @@ pub const App = struct {
     status: std.ArrayList(u8) = .empty,
     details_visible: bool = false,
     details_scroll: u16 = 0,
+    /// How many lines the detail pane painted last frame, and how many
+    /// fit — what turns a press on its scrollbar into a position.
+    details_lines: usize = 0,
+    details_rows: u16 = 0,
     details: std.StringHashMapUnmanaged(*DetailEntry) = .empty,
     filter: ?Filter = null,
     jql: ?TextEdit = null,
@@ -2026,6 +2031,21 @@ pub const App = struct {
                 try a.selectIssue(i);
                 try a.toggleCard(a.tab().issues[i].key);
             },
+            // A `key label` on the hint row, and a row of the key sheet,
+            // run exactly what the key runs — the pointer reaches
+            // everything the keyboard does.
+            .hint, .help_row => |action| {
+                var kb: [16]u8 = undefined;
+                const b = keymap.bindingOf(action);
+                try a.act(action, if (b) |bb| keymap.displayKey(&kb, bb.keys[0]) else "");
+            },
+            .detail_close => if (a.details_visible) try a.toggleDetails(),
+            // A press or a drag anywhere on the track goes there: the
+            // bar is a control, not a decoration.
+            .detail_bar => {
+                const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
+                a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
+            },
             .column, .detail, .comment, .help_body, .picker_row, .picker_body, .modal_close, .modal_body, .jql_text, .jql_body => {},
         }
     }
@@ -2159,7 +2179,7 @@ pub const App = struct {
         }
         switch (a.hits.at(col, row) orelse hit.Target.help_body) {
             .column => |c| a.scrollColumn(c, steps),
-            .detail => {
+            .detail, .detail_close, .detail_bar => {
                 if (steps > 0) a.details_scroll +|= 3 else a.details_scroll -|= 3;
             },
             .picker_row, .picker_body => if (a.picker) |*p| try p.move(steps) else if (a.transition) |*t| t.move(steps),

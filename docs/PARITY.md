@@ -857,7 +857,7 @@ server and prints the rows that differ per screen, by content.
 | Bumps: `pr_approved`, `no_open_prs`, `release_cut` with `top` | done | `tree.applyBumps`; `★` after the key, the real status in the STATUS column |
 | Unresolved tickets auto-expanded with their linked PRs, three per ticket, `Show all N PRs ↴` | done | `App.refreshTab` → `ensurePrs`; `tree.pr_cap` |
 | A merged PR expands to its post-merge pipelines (Bitbucket) | done | `src/bitbucket.zig` — merge commit → pipelines filtered by hash prefix; the token's absence is a row, not a crash |
-| `[ Review ] [ Merge ] [ Open ]` on an open PR, `[ Open ]` on the rest | done — beyond the reference | every chip is a hit; the reference painted Merge and Open as text |
+| `[ Open ] [ Review ] [ Merge ]` on an open PR, `[ Open ]` on the rest | done — beyond the reference | every chip is a hit; the reference painted Merge and Open as text |
 | The columns (`key` 18 / `status` 14 / `assignee` 20 / `updated` 12 / summary), `columns` per tab | done | shrink together at 80 columns, the summary keeps 20 cells, the date column keeps a date |
 | The kanban: four columns bucketed by status name, cards with the type glyph, the wrapped summary, `· assignee`, the buttons, `>` expands to `#label` chips and the hint | done | `src/kanban.zig`, `screen.paintKanban` |
 | The board path: `board_id` → Agile API with sprint and quick-filter clauses; sprints, boards, quick filters | done | `jira.boardIssues`, `sprintsForBoard`, `boardsForProject`, `quickFilters` |

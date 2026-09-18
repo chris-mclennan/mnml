@@ -51,8 +51,11 @@ pub const Button = enum {
     }
 };
 
-const implement_triage = [_]Button{ .implement, .triage };
-const fix_triage = [_]Button{ .fix, .triage };
+// Chronological, the order the work happens in: triage a ticket, then
+// implement or fix it, then test it. Every mnml pane that paints row
+// buttons reads left to right in that order.
+const implement_triage = [_]Button{ .triage, .implement };
+const fix_triage = [_]Button{ .triage, .fix };
 const test_only = [_]Button{.test_};
 const review_only = [_]Button{.review};
 const triage_only = [_]Button{.triage};
@@ -219,9 +222,9 @@ fn issue(key: []const u8, status: []const u8, t: []const u8, summary: []const u8
 }
 
 test "the buttons follow the reference's type + status table" {
-    try testing.expectEqualSlices(Button, &.{ .implement, .triage }, buttonsForTicket(issue("TE-1", "To Do", "Story", "s")));
-    try testing.expectEqualSlices(Button, &.{ .implement, .triage }, buttonsForTicket(issue("TE-1", "In Progress", "Task", "t")));
-    try testing.expectEqualSlices(Button, &.{ .fix, .triage }, buttonsForTicket(issue("TE-1", "To Do", "Bug", "b")));
+    try testing.expectEqualSlices(Button, &.{ .triage, .implement }, buttonsForTicket(issue("TE-1", "To Do", "Story", "s")));
+    try testing.expectEqualSlices(Button, &.{ .triage, .implement }, buttonsForTicket(issue("TE-1", "In Progress", "Task", "t")));
+    try testing.expectEqualSlices(Button, &.{ .triage, .fix }, buttonsForTicket(issue("TE-1", "To Do", "Bug", "b")));
     try testing.expectEqualSlices(Button, &.{.test_}, buttonsForTicket(issue("TE-1", "Testing", "Bug", "b")));
     try testing.expectEqualSlices(Button, &.{.review}, buttonsForTicket(issue("TE-1", "In PR Review", "Bug", "b")));
     try testing.expectEqualSlices(Button, &.{.triage}, buttonsForTicket(issue("TE-1", "Reopened", "Bug", "b")));

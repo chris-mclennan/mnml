@@ -306,3 +306,10 @@ test "the hint row and the sheet are read from the table, so a chord cannot drif
     try testing.expectEqualStrings(">", displayKey(&buf, "shift+."));
     try testing.expectEqualStrings("Shift+Tab", displayKey(&buf, "backtab"));
 }
+
+/// The first binding for an action, so a click on a hint or a key-sheet
+/// row can spell the chord the action would have come in as.
+pub fn bindingOf(action: Action) ?Binding {
+    for (bindings) |b| if (b.action == action) return b;
+    return null;
+}
