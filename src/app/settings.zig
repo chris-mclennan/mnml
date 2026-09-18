@@ -238,6 +238,10 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.tab_width", .label = "Tab width", .section = .editor, .scope = .workspace, .number = .{ .min = 1, .max = 16, .step = 1 } },
     .{ .path = "editor.text_width", .label = "Text width", .section = .editor, .scope = .workspace, .number = .{ .min = 20, .max = 400, .step = 10 } },
     .{ .path = "editor.chord_timeout_ms", .label = "Chord timeout (ms)", .section = .editor, .scope = .home, .number = .{ .min = config.Config.chord_timeout_ms_min, .max = config.Config.chord_timeout_ms_max, .step = 100 } },
+    // The tree-sitter size ceiling. A discrete row on a number field:
+    // the overlay is v1 (choices only) and the sizes worth picking are a
+    // short list — the raw byte count is the ZON view's to edit.
+    .{ .path = "editor.highlight_max_bytes", .label = "Highlighting size limit", .section = .editor, .scope = .home },
     // ── AI (the model is `ai.model`, free text in the config: v1 rows are
     //    discrete choices) ──
     .{ .path = "ai.inline_suggestions", .label = "Ghost text", .section = .ai, .scope = .home },
@@ -309,6 +313,27 @@ fn isTheme(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "ui.theme");
 }
 
+/// `editor.highlight_max_bytes` is an integer the overlay offers as a
+/// short list of sizes rather than a step row: stepping a byte count
+/// through four orders of magnitude is not a control. 0 is "Off" — no
+/// limit, the shipped default.
+fn isHighlightMax(comptime path: []const u8) bool {
+    return std.mem.eql(u8, path, "editor.highlight_max_bytes");
+}
+
+pub const highlight_max_labels = [_][]const u8{ "off", "1 MB", "4 MB", "16 MB", "64 MB" };
+pub const highlight_max_values = [_]u64{ 0, 1 << 20, 4 << 20, 16 << 20, 64 << 20 };
+
+/// Which choice a byte count reads as. A value set by hand that is not
+/// one of the five shows as the smallest choice above it (and adjusting
+/// the row then writes that one) — the overlay never claims a file over
+/// the limit is unlimited.
+fn highlightMaxIndex(v: u64) usize {
+    if (v == 0) return 0;
+    for (highlight_max_values, 0..) |hv, i| if (i > 0 and v <= hv) return i;
+    return highlight_max_values.len - 1;
+}
+
 /// `ai.suggest_backend` is not a typed field: the config keeps it in
 /// `ai.extra` (a string, aliases allowed) and the setup picker sets a
 /// runtime override. The row reads through `ai.suggestBackend` and
@@ -334,6 +359,7 @@ pub fn options(comptime path: []const u8) []const []const u8 {
     @setEvalBranchQuota(200_000);
     if (comptime isTheme(path)) return &theme_names;
     if (comptime isSuggestBackend(path)) return &suggest_tokens;
+    if (comptime isHighlightMax(path)) return &highlight_max_labels;
     const T = FieldType(path);
     return switch (@typeInfo(T)) {
         .bool => &bool_options,
@@ -348,6 +374,7 @@ pub fn options(comptime path: []const u8) []const []const u8 {
 /// True for the integer fields — the rows that step instead of cycle.
 pub fn isNumber(comptime path: []const u8) bool {
     if (comptime isSuggestBackend(path)) return false;
+    if (comptime isHighlightMax(path)) return false;
     return @typeInfo(FieldType(path)) == .int;
 }
 
@@ -360,6 +387,7 @@ pub fn currentIndex(cfg: *Config, comptime path: []const u8) usize {
         for (theme_names, 0..) |n, i| if (std.ascii.eqlIgnoreCase(n, name)) return i;
         return 0;
     }
+    if (comptime isHighlightMax(path)) return highlightMaxIndex(cfg.editor.highlight_max_bytes);
     if (comptime isSuggestBackend(path)) {
         const v = cfg.ai.extra.get("suggest_backend") orelse return 0;
         return switch (v) {
@@ -389,6 +417,10 @@ fn rowIndex(app: *App, comptime path: []const u8) usize {
 pub fn setIndex(cfg: *Config, comptime path: []const u8, idx: usize) void {
     @setEvalBranchQuota(200_000);
     const T = FieldType(path);
+    if (comptime isHighlightMax(path)) {
+        cfg.editor.highlight_max_bytes = highlight_max_values[idx % highlight_max_values.len];
+        return;
+    }
     if (comptime isNumber(path)) {
         fieldPtr(cfg, path).* = @intCast(@min(idx, std.math.maxInt(T)));
         return;
@@ -760,6 +792,30 @@ test "rows: every path is a bool, an enum, a number or the theme; defaults index
     try t.expectEqualStrings(theme_names[3], c.ui.theme);
     try t.expectEqual(@as(usize, 3), currentIndex(&c, "ui.theme"));
     try t.expectEqualStrings("line_numbers", (comptime keyPath("ui.line_numbers"))[1]);
+}
+
+test "the highlighting size limit is a choice row, not a step row: off is the default, and a hand-set value reads as the choice above it" {
+    // A u64 of bytes, offered as five sizes — the raw number is the ZON
+    // view's to edit.
+    try t.expect(!comptime isNumber("editor.highlight_max_bytes"));
+    try t.expectEqual(@as(usize, 5), options("editor.highlight_max_bytes").len);
+    try t.expectEqualStrings("off", options("editor.highlight_max_bytes")[0]);
+    try t.expectEqualStrings("4 MB", options("editor.highlight_max_bytes")[2]);
+    var c: Config = .{};
+    try t.expectEqual(@as(usize, 0), currentIndex(&c, "editor.highlight_max_bytes"));
+    setIndex(&c, "editor.highlight_max_bytes", 2);
+    try t.expectEqual(@as(u64, 4 << 20), c.editor.highlight_max_bytes);
+    try t.expectEqual(@as(usize, 2), currentIndex(&c, "editor.highlight_max_bytes"));
+    // Back to off, and round the row wraps.
+    setIndex(&c, "editor.highlight_max_bytes", 5);
+    try t.expectEqual(@as(u64, 0), c.editor.highlight_max_bytes);
+    // A value typed into the file by hand: never reported as "off".
+    c.editor.highlight_max_bytes = 8 << 20;
+    try t.expectEqual(@as(usize, 3), currentIndex(&c, "editor.highlight_max_bytes"));
+    c.editor.highlight_max_bytes = 1;
+    try t.expectEqual(@as(usize, 1), currentIndex(&c, "editor.highlight_max_bytes"));
+    c.editor.highlight_max_bytes = 1 << 40;
+    try t.expectEqual(@as(usize, 4), currentIndex(&c, "editor.highlight_max_bytes"));
 }
 
 test "adjust writes the row's file live; Esc restores bytes (and absence); Enter keeps; r and R reset" {

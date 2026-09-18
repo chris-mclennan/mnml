@@ -495,6 +495,14 @@ test "the config schema names every widget kind" {
     try t.expectEqual(@as(i128, 255), tab.int_max);
     try t.expectEqualStrings("u8", tab.type_name);
 
+    // The highlighting size limit: the settings overlay offers five
+    // sizes, the ZON view types the byte count itself.
+    const hl = lookup(.config, &.{ "editor", "highlight_max_bytes" }).?;
+    try t.expectEqual(Widget.int, hl.widget);
+    try t.expectEqual(@as(i128, 0), hl.int_min);
+    try t.expectEqual(@as(i128, std.math.maxInt(u64)), hl.int_max);
+    try t.expectEqualStrings("u64", hl.type_name);
+
     const theme = lookup(.config, &.{ "ui", "theme" }).?;
     try t.expectEqual(Widget.string, theme.widget);
 

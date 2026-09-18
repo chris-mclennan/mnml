@@ -51,6 +51,7 @@ const transfers = @import("transfers.zig");
 const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
 const tests_pane = @import("tests_pane.zig");
+const syntax_mod = @import("syntax.zig");
 const outline = @import("outline.zig");
 const ids = @import("../core/ids.zig");
 const command = @import("../core/command.zig");
@@ -87,6 +88,10 @@ pub const SegId = enum(u32) {
     lsp,
     wrap,
     autosave,
+    /// ` highlight off · 12 MB ` — this buffer's tree-sitter is off
+    /// (over `editor.highlight_max_bytes`, or switched off by hand).
+    /// Reads `highlight on` once the override turned it back on.
+    highlight,
     filesize,
     sel,
     stress,
@@ -240,6 +245,16 @@ pub fn modeOf(app: *App) Mode {
 // ─── building ────────────────────────────────────────────────────────────
 
 const Lane = std.ArrayListUnmanaged(Seg);
+
+/// The highlight chip's words: whether this buffer is highlighted, and
+/// the size the limit was measured against. A narrow row clips it like
+/// any other chip.
+pub fn highlightChipText(e: *const app_mod.EditorPane, ui: Ui) []const u8 {
+    var buf: [24]u8 = undefined;
+    const size = syntax_mod.Syntax.sizeLabel(&buf, e.syntax.size_bytes);
+    const dot = if (ui.ascii) "-" else "·";
+    return ui.fmt(" highlight {s} {s} {s} ", .{ if (e.syntax.off) "off" else "on", dot, size });
+}
 
 fn push(lane: *Lane, arena: Allocator, seg: Seg) Allocator.Error!void {
     try lane.append(arena, seg);
@@ -567,6 +582,12 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     if (app.cfg.editor.autosave_secs > 0) {
         try push(&right, arena, Seg.init(ui.fmt(" {s} {d}s ", .{ if (nerd) sl.autosave_glyph else sl.autosave_ascii, app.cfg.editor.autosave_secs }), p.bg_darker, p.green).withHit(SegId.autosave.raw()));
     }
+    // The size ceiling is opt-in and never silent: while a buffer it
+    // skipped (or one switched off by hand) is up, the row says so, and
+    // the chip is the click that turns it on.
+    if (editor) |e| if (e.syntax.showsChip()) {
+        try push(&right, arena, Seg.init(highlightChipText(e, ui), p.comment, p.bg2).withHit(SegId.highlight.raw()));
+    };
     if (editor) |e| {
         var buf: [16]u8 = undefined;
         try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{sl.formatByteSize(&buf, e.buf.editor.bytes().len)}), p.comment, p.bg2).withHit(SegId.filesize.raw()));
@@ -1397,4 +1418,53 @@ test "the mode chip: the standard profile's context labels, the vim profile's mo
     try command.run(&b.app, .{ .static = .@"editor.toggle_keymap" });
     b.app.cfg.ui.ascii_icons = true;
     try testing.expect(std.mem.startsWith(u8, try b.row(38), " NORMAL  "));
+}
+
+test "the highlight chip: absent by default, there with the size once a buffer's highlighting is off, and the click turns it back on" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    const text = "fn hello() -> u32 {\n    let x: u32 = 42;\n    x\n}\n";
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/code.rs", .data = text });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "code.rs" });
+    defer testing.allocator.free(path);
+    _ = try b.app.openPath(path);
+    // A file under the limit (there is none by default): no chip.
+    const row_pre = try b.row(38);
+    try testing.expect(b.colOf(38, SegId.highlight.raw()) == null);
+    try testing.expect(std.mem.indexOf(u8, row_pre, "highlight ") == null);
+    // Switched off by hand: the chip says so, with the buffer's size.
+    try command.run(&b.app, .{ .static = .@"editor.highlight_toggle_file" });
+    const row_off = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, row_off, "highlight off · 49 B") != null);
+    try testing.expect(b.colOf(38, SegId.highlight.raw()) != null);
+    // The hover names the config key and the command.
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const tip = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = SegId.highlight.raw() })).?;
+    try testing.expect(std.mem.indexOf(u8, tip.title, "Highlighting off for this file") != null);
+    try testing.expect(std.mem.indexOf(u8, tip.detail.?, "editor.highlight_max_bytes") != null);
+    try testing.expect(std.mem.indexOf(u8, tip.detail.?, "editor.highlight_toggle_file") != null);
+    // One click turns it back on — and the chip goes with the reason.
+    try b.click(38, SegId.highlight.raw(), .left);
+    try testing.expect(!b.app.activeEditor().?.syntax.off);
+    try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, "highlighting on for code.rs") != null);
+    // The hits are the last frame's: paint one more, then the chip is gone.
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), "highlight ") == null);
+    try testing.expect(b.colOf(38, SegId.highlight.raw()) == null);
+}
+
+test "the highlight chip stays, reading `on`, while the file is over the limit" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    b.app.cfg.editor.highlight_max_bytes = 1024;
+    var big: [4096]u8 = undefined;
+    @memset(&big, 'a');
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/wide.rs", .data = &big });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "wide.rs" });
+    defer testing.allocator.free(path);
+    _ = try b.app.openPath(path);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), "highlight off · 4 KB") != null);
+    try command.run(&b.app, .{ .static = .@"editor.highlight_this_file" });
+    // Over the limit either way: the chip reports the state, not the limit.
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), "highlight on · 4 KB") != null);
 }

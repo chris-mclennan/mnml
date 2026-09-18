@@ -353,4 +353,11 @@ test "a file with a syntax error pins the scope that encloses the top line, from
     try testing.expectEqual(@as(u32, 18), scopeEnd(e.buf.editor, 7, 0));
     try testing.expectEqual(@as(u32, 26), scopeEnd(e.buf.editor, 22, 1));
     try testing.expectEqual(@as(u32, 27), scopeEnd(e.buf.editor, 21, 0));
+    // Highlighting off for this buffer (the size ceiling, or by hand) is
+    // the same no-tree case: the chain still comes from the patterns.
+    try @import("../core/command.zig").run(&app, .{ .static = .@"editor.highlight_toggle_file" });
+    try testing.expect(e.syntax.off and e.syntax.keptRoot() == null);
+    e.sticky.valid = false;
+    e.view.scroll_line = 24;
+    try testing.expectEqualSlices(u32, &.{ 21, 22 }, try headerLines(&app, e, arena.allocator()));
 }

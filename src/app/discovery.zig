@@ -31,6 +31,7 @@ const Theme = @import("../ui/theme.zig");
 const tooltip = @import("../ui/tooltip.zig");
 const statusline = @import("../ui/statusline.zig");
 const statusline_app = @import("statusline.zig");
+const syntax = @import("syntax.zig");
 const toast_mod = @import("../ui/toast.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const render = @import("render.zig");
@@ -314,6 +315,21 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .lsp => .{ .title = "Language servers running", .detail = "click: which servers, on which roots · right-click: the LSP menu" },
         .wrap => .{ .title = "WRAP — long lines wrap", .detail = "click turns wrapping off" },
         .autosave => .{ .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}), .detail = "`[editor] autosave_secs` sets it" },
+        .highlight => blk: {
+            const e = app.activeEditor() orelse break :blk null;
+            var size_buf: [24]u8 = undefined;
+            var limit_buf: [24]u8 = undefined;
+            const size = syntax.Syntax.sizeLabel(&size_buf, e.syntax.size_bytes);
+            const head = if (e.syntax.off)
+                try std.fmt.allocPrint(arena, "Highlighting off for this file ({s})", .{size})
+            else
+                try std.fmt.allocPrint(arena, "Highlighting on for this file ({s})", .{size});
+            const detail = if (e.syntax.over_limit)
+                try std.fmt.allocPrint(arena, "over `editor.highlight_max_bytes` ({s}) · click toggles it for this buffer only (editor.highlight_toggle_file)", .{syntax.Syntax.sizeLabel(&limit_buf, e.syntax.limit_bytes)})
+            else
+                "switched off by hand · click toggles it for this buffer only (editor.highlight_toggle_file) · `editor.highlight_max_bytes` is the config key";
+            break :blk .{ .title = head, .detail = detail };
+        },
         .filesize => .{ .title = "File size", .detail = "the buffer's bytes in memory · click: bytes and lines" },
         .sel => .{ .title = "Selection", .detail = "characters selected" },
         .stress => blk: {

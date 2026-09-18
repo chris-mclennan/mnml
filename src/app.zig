@@ -2002,6 +2002,12 @@ pub const App = struct {
         }
         const entry = try self.docs.adopt(buf.doc);
         entry.syntax.setLanguage(path, buf.editor.bytes());
+        // The opt-in size ceiling (`editor.highlight_max_bytes`, 0 = no
+        // limit): over it the file opens with no tree-sitter at all, and
+        // is never quiet about it — a toast now, the statusline chip for
+        // as long as the buffer is up.
+        entry.syntax.applyLimit(buf.editor.len(), self.cfg.editor.highlight_max_bytes);
+        if (entry.syntax.over_limit) syntax.announceLimit(self, std.fs.path.basename(path), &entry.syntax);
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = &entry.syntax } });
         // Moved into the store: the errdefers above must not run from here.
         watch.restamp(self, self.panes.editor(id).?);

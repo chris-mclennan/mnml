@@ -2125,6 +2125,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.status"),
                     .wrap => if (right) try context_menus.openWrapMenu(app, m.x, m.y) else try runCmd(app, .@"view.toggle_wrap"),
                     .autosave => app.toast("autosave: {d}s (`[editor] autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
+                    // The one-click override for the file at hand.
+                    .highlight => try runCmd(app, .@"editor.highlight_toggle_file"),
                     .filesize => if (right) try context_menus.openSizeMenu(app, m.x, m.y) else if (app.activeEditor()) |e| {
                         const n = e.buf.editor.bytes().len;
                         app.toast("{s}: {d} byte{s} · {d} line{s}", .{ if (e.buf.doc.path) |pth| std.fs.path.basename(pth) else "[scratch]", n, if (n == 1) "" else "s", e.buf.editor.lineCount(), if (e.buf.editor.lineCount() == 1) "" else "s" });
