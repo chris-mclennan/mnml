@@ -641,6 +641,7 @@ pub const workflow = [_]Step{
 fn matches(i: *const Issue, jql: []const u8) bool {
     if (std.mem.indexOf(u8, jql, "issuekey = ''") != null) return false;
     if (std.mem.indexOf(u8, jql, "assignee = currentUser()") != null and !std.mem.eql(u8, i.assignee, account_me)) return false;
+    if (std.mem.indexOf(u8, jql, "reporter = currentUser()") != null and !std.mem.eql(u8, i.reporter, account_me)) return false;
     if (std.mem.indexOf(u8, jql, "resolution = Unresolved") != null and std.mem.eql(u8, i.category, "done")) return false;
     if (std.mem.indexOf(u8, jql, "resolution is EMPTY") != null and std.mem.eql(u8, i.category, "done")) return false;
     if (std.mem.indexOf(u8, jql, "status in (Done, Closed, Resolved)") != null and !std.mem.eql(u8, i.category, "done")) return false;
@@ -653,6 +654,10 @@ fn matches(i: *const Issue, jql: []const u8) bool {
     }
     if (std.mem.indexOf(u8, jql, "issuetype = Bug") != null and !std.mem.eql(u8, i.kind, "Bug")) return false;
     if (findQuoted(jql, "fixVersion = ")) |v| if (!std.mem.eql(u8, i.fix_version, v)) return false;
+    // `fixVersion in ("a", "b")` — what a `jql_editable` tab's version
+    // hole expands to.
+    if (findList(jql, "fixVersion in (")) |list| if (!inQuotedList(list, i.fix_version)) return false;
+    if (findQuoted(jql, "project = ")) |v| if (!std.mem.startsWith(u8, i.key, v)) return false;
     if (std.mem.indexOf(u8, jql, "filter = 10") != null and !hasLabel(i, "checkout")) return false;
     // The team clause: `("Team" = "X" OR component = "X" OR labels = "X")`
     // matches the team select, a component or a label.
@@ -668,6 +673,26 @@ fn matches(i: *const Issue, jql: []const u8) bool {
 
 fn hasLabel(i: *const Issue, v: []const u8) bool {
     for (i.labels) |l| if (std.ascii.eqlIgnoreCase(l, v)) return true;
+    return false;
+}
+
+/// The bytes between `prefix` and the `)` that closes it.
+fn findList(hay: []const u8, prefix: []const u8) ?[]const u8 {
+    const at = std.mem.indexOf(u8, hay, prefix) orelse return null;
+    const rest = hay[at + prefix.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, ')') orelse return null;
+    return rest[0..end];
+}
+
+/// Is `want` one of the quoted strings in `list`?
+fn inQuotedList(list: []const u8, want: []const u8) bool {
+    var rest = list;
+    while (std.mem.indexOfScalar(u8, rest, '"')) |open| {
+        const after = rest[open + 1 ..];
+        const close = std.mem.indexOfScalar(u8, after, '"') orelse return false;
+        if (std.mem.eql(u8, after[0..close], want)) return true;
+        rest = after[close + 1 ..];
+    }
     return false;
 }
 

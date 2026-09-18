@@ -590,7 +590,7 @@ fn noTabs(arena: Allocator, path: []const u8, f: config.Family) Allocator.Error!
     try out.append(arena, path);
     try out.append(arena, "");
     try out.append(arena, switch (f) {
-        .work => "Work tabs: work_assigned · work_recently_done · work_recent · work_unified · filter.",
+        .work => "Work tabs: work_open · work_reported · work_assigned · work_recently_done · work_recent · work_unified · jql_editable (with .jql + .vars) · filter.",
         .fix_versions => "Fix Versions tabs: fix_version_tree (with .project and .mode).",
         .boards => "Boards tabs: board_active_sprint · board_backlog (with .project, .board_id).",
     });
@@ -602,6 +602,9 @@ fn noTabs(arena: Allocator, path: []const u8, f: config.Family) Allocator.Error!
 fn kindName(k: ?config.TabKind) []const u8 {
     return if (k) |kk| switch (kk) {
         .work_assigned => "WorkAssigned",
+        .work_reported => "WorkReported",
+        .work_open => "WorkOpen",
+        .jql_editable => "JqlEditable",
         .work_recently_done => "WorkRecentlyDone",
         .work_recent => "WorkRecent",
         .work_unified => "WorkUnified",

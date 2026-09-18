@@ -95,9 +95,19 @@ pub const Family = enum {
 
 pub const TabKind = enum {
     work_assigned,
+    /// "Reported by me" — everything still open that you filed.
+    work_reported,
+    /// "My open work items" — the assigned-and-unresolved query under
+    /// the name it reads as on a tab strip. The count it publishes is
+    /// the first statusline figure.
+    work_open,
     work_recently_done,
     work_recent,
     work_unified,
+    /// A tab whose JQL is the user's, written with `{name}` holes its
+    /// `vars` fill in. The holes are what the pane's `E` editor edits,
+    /// so a fixVersion list can be changed without opening the config.
+    jql_editable,
     filter,
     fix_version_tree,
     board_active_sprint,
@@ -105,30 +115,100 @@ pub const TabKind = enum {
 
     pub fn family(k: TabKind) Family {
         return switch (k) {
-            .work_assigned, .work_recently_done, .work_recent, .work_unified, .filter => .work,
+            .work_assigned, .work_reported, .work_open, .work_recently_done, .work_recent, .work_unified, .jql_editable, .filter => .work,
             .fix_version_tree => .fix_versions,
             .board_active_sprint, .board_backlog => .boards,
         };
     }
 
     /// The reference's JQL for the kind, where it is static. Release
-    /// tabs resolve a version first; filter tabs need their id.
+    /// tabs resolve a version first; filter tabs need their id; an
+    /// editable tab's JQL is the user's own.
     pub fn defaultJql(k: TabKind) ?[]const u8 {
         return switch (k) {
-            .work_assigned => "assignee = currentUser() AND resolution = Unresolved AND status not in (\"Done\", \"Done in Staging\", \"Done in Production\") ORDER BY updated DESC",
+            .work_assigned, .work_open => "assignee = currentUser() AND resolution = Unresolved AND status not in (\"Done\", \"Done in Staging\", \"Done in Production\") ORDER BY updated DESC",
+            .work_reported => "reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
             .work_recently_done => "assignee = currentUser() AND status in (Done, Closed, Resolved) AND resolved >= -30d ORDER BY resolved DESC",
             .work_recent => "(assignee was currentUser() OR reporter = currentUser() OR worklogAuthor = currentUser() OR commentedBy = currentUser()) AND updated >= -30d ORDER BY updated DESC",
             .work_unified => "assignee = currentUser() AND (resolution is EMPTY OR resolved >= -30d) ORDER BY resolved DESC, updated DESC",
             .board_active_sprint => "sprint in openSprints() ORDER BY rank ASC",
             .board_backlog => "sprint is EMPTY AND status != Done ORDER BY rank ASC",
-            .fix_version_tree, .filter => null,
+            .fix_version_tree, .filter, .jql_editable => null,
         };
+    }
+
+    /// Which tab feeds the first statusline figure — how much is on
+    /// your plate. `work_open` is the name it is meant to be read
+    /// under; `work_assigned` is the same query under the old one.
+    pub fn isAssignedOpen(k: TabKind) bool {
+        return k == .work_assigned or k == .work_open;
     }
 
     pub fn isKanban(k: TabKind) bool {
         return k == .board_active_sprint or k == .board_backlog;
     }
 };
+
+/// One `{name}` hole in a `jql_editable` tab's JQL, and what fills it.
+///
+/// ZON has no string-keyed map, so `vars` is a list of these — the same
+/// shape `bumps.release_cut` and `detail_modal.field_alias` use. A var
+/// carries either one `value` (`project = {project}`) or a list of
+/// `values` (`fixVersion in ({versions})`, which expands to the quoted,
+/// comma-joined list). `values` wins when both are set.
+pub const Var = struct {
+    name: []const u8,
+    value: []const u8 = "",
+    values: []const []const u8 = &.{},
+
+    pub fn isList(v: Var) bool {
+        return v.values.len > 0 or v.value.len == 0;
+    }
+};
+
+/// `{name}` holes in `jql` filled from `vars`; a name with no var is
+/// left exactly as it was, so a typo shows up in the JQL rather than
+/// silently becoming an empty clause.
+pub fn expandVars(arena: Allocator, jql: []const u8, vars: []const Var) Allocator.Error![]const u8 {
+    if (vars.len == 0 or std.mem.indexOfScalar(u8, jql, '{') == null) return jql;
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < jql.len) {
+        if (jql[i] != '{') {
+            try out.append(arena, jql[i]);
+            i += 1;
+            continue;
+        }
+        const close = std.mem.indexOfScalarPos(u8, jql, i + 1, '}') orelse {
+            try out.append(arena, jql[i]);
+            i += 1;
+            continue;
+        };
+        const name = jql[i + 1 .. close];
+        const v: ?Var = blk: {
+            for (vars) |candidate| if (std.mem.eql(u8, candidate.name, name)) break :blk candidate;
+            break :blk null;
+        };
+        if (v) |found| {
+            if (found.values.len > 0) {
+                for (found.values, 0..) |one, n| {
+                    if (n > 0) try out.appendSlice(arena, ", ");
+                    try out.append(arena, '"');
+                    for (one) |c| {
+                        if (c == '"' or c == '\\') try out.append(arena, '\\');
+                        try out.append(arena, c);
+                    }
+                    try out.append(arena, '"');
+                }
+            } else try out.appendSlice(arena, found.value);
+            i = close + 1;
+        } else {
+            try out.append(arena, jql[i]);
+            i += 1;
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
 
 pub const Column = enum {
     key,
@@ -206,6 +286,8 @@ pub const Tab = struct {
     label: []const u8 = "",
     board_id: u64 = 0,
     filter_id: u64 = 0,
+    /// A `jql_editable` tab's `{name}` holes. Ignored on every other kind.
+    vars: []const Var = &.{},
 
     /// A kinded tab is a tree (or a kanban); a legacy one a flat table.
     pub fn isTree(t: Tab) bool {
@@ -227,7 +309,7 @@ pub const Tab = struct {
     /// The JQL known before any call: the explicit one, a saved filter,
     /// or the kind's default. Null means "resolve a version first".
     pub fn staticJql(t: Tab, arena: Allocator) Allocator.Error!?[]const u8 {
-        if (t.jql.len > 0) return t.jql;
+        if (t.jql.len > 0) return try expandVars(arena, t.jql, t.vars);
         if (t.kind) |k| {
             if (k == .filter) {
                 if (t.filter_id == 0) return null;
@@ -236,6 +318,10 @@ pub const Tab = struct {
             return k.defaultJql();
         }
         return null;
+    }
+
+    pub fn isEditableJql(t: Tab) bool {
+        return t.kind == .jql_editable;
     }
 
     pub fn statusOrder(t: Tab) []const []const u8 {
@@ -330,7 +416,7 @@ pub const Config = struct {
 /// The reference's built-in status order for release tabs.
 pub const default_status_order = [_][]const u8{ "Testing", "In PR Review", "Code Review", "In Progress", "To Do", "Open", "Done" };
 
-pub const ValidateError = error{ NoUrl, NoEmail, NoTabs, TabWithoutName, TabNeedsProject, FilterWithoutId, TabNeedsJqlOrMode, TabJqlAndMode };
+pub const ValidateError = error{ NoUrl, NoEmail, NoTabs, TabWithoutName, TabNeedsProject, FilterWithoutId, EditableWithoutJql, TabNeedsJqlOrMode, TabJqlAndMode };
 
 /// The reference's rules, so a converted file fails the same way.
 pub fn validate(c: Config, why: *[]const u8) ValidateError!void {
@@ -364,6 +450,10 @@ pub fn validate(c: Config, why: *[]const u8) ValidateError!void {
                 .filter => if (t.filter_id == 0) {
                     why.* = "a filter tab needs .filter_id = <n>";
                     return error.FilterWithoutId;
+                },
+                .jql_editable => if (t.jql.len == 0) {
+                    why.* = "a jql_editable tab needs .jql = \"…\" (with `{name}` holes its .vars fill in)";
+                    return error.EditableWithoutJql;
                 },
                 else => {},
             }
@@ -486,7 +576,20 @@ pub const example =
     \\    // .team_field_name = "Team",
     \\    // .dispatch_workspace = "/path/to/agent/workspace",
     \\    .tabs = .{
-    \\        .{ .name = "Assigned", .kind = .work_assigned },
+    \\        .{ .name = "My open work items", .kind = .work_open },
+    \\        .{ .name = "Reported by me", .kind = .work_reported },
+    \\        .{
+    \\            // The JQL is yours; `{name}` holes come from .vars, and
+    \\            // the pane's `E` edits the vars (not the JQL) and writes
+    \\            // them back here, comments and all.
+    \\            .name = "QA Actionable now",
+    \\            .kind = .jql_editable,
+    \\            .jql = "project = {project} AND (status = \"Testing\" OR (status = \"Done\" AND fixVersion in ({versions}))) ORDER BY status ASC, updated DESC",
+    \\            .vars = .{
+    \\                .{ .name = "project", .value = "ENG" },
+    \\                .{ .name = "versions", .values = .{ "1.2.0", "Mobile 1.0.X" } },
+    \\            },
+    \\        },
     \\        .{ .name = "Recently Done", .kind = .work_recently_done },
     \\        .{
     \\            .name = "Current Release",
@@ -520,14 +623,26 @@ test "the example parses, validates, and reads as the reference's config" {
     const c = loaded.config;
     try testing.expectEqualStrings("https://yourorg.atlassian.net", c.jira_url);
     try testing.expectEqual(@as(u32, 60), c.refresh_interval_secs);
-    try testing.expectEqual(@as(usize, 5), c.tabs.len);
-    try testing.expectEqual(TabKind.fix_version_tree, c.tabs[2].kind.?);
-    try testing.expectEqual(ResolveMode.current_release, c.tabs[2].mode.?);
-    try testing.expectEqualStrings("Testing", c.tabs[2].bumps.?.pr_approved);
-    try testing.expectEqualStrings("Done", c.tabs[2].bumps.?.release_cut[0].status);
-    try testing.expectEqualStrings("top", c.tabs[2].bumps.?.release_cut[0].target);
-    try testing.expectEqual(@as(u64, 200), c.tabs[3].board_id);
-    try testing.expectEqual(@as(usize, 5), c.tabs[2].status_order.?.len);
+    try testing.expectEqual(@as(usize, 7), c.tabs.len);
+    try testing.expectEqual(TabKind.work_open, c.tabs[0].kind.?);
+    try testing.expectEqual(TabKind.work_reported, c.tabs[1].kind.?);
+    try testing.expectEqual(TabKind.jql_editable, c.tabs[2].kind.?);
+    try testing.expectEqual(@as(usize, 2), c.tabs[2].vars.len);
+    try testing.expectEqualStrings("ENG", c.tabs[2].vars[0].value);
+    try testing.expectEqual(@as(usize, 2), c.tabs[2].vars[1].values.len);
+    try testing.expectEqualStrings("Mobile 1.0.X", c.tabs[2].vars[1].values[1]);
+    // The scaffold's holes are filled, not left in the JQL.
+    const filled = (try c.tabs[2].staticJql(a.allocator())).?;
+    try testing.expect(std.mem.indexOf(u8, filled, "{") == null);
+    try testing.expect(std.mem.indexOf(u8, filled, "project = ENG") != null);
+    try testing.expect(std.mem.indexOf(u8, filled, "fixVersion in (\"1.2.0\", \"Mobile 1.0.X\")") != null);
+    try testing.expectEqual(TabKind.fix_version_tree, c.tabs[4].kind.?);
+    try testing.expectEqual(ResolveMode.current_release, c.tabs[4].mode.?);
+    try testing.expectEqualStrings("Testing", c.tabs[4].bumps.?.pr_approved);
+    try testing.expectEqualStrings("Done", c.tabs[4].bumps.?.release_cut[0].status);
+    try testing.expectEqualStrings("top", c.tabs[4].bumps.?.release_cut[0].target);
+    try testing.expectEqual(@as(u64, 200), c.tabs[5].board_id);
+    try testing.expectEqual(@as(usize, 5), c.tabs[4].status_order.?.len);
     try testing.expectEqual(@as(usize, 7), c.tabs[0].statusOrder().len);
     var why: []const u8 = "";
     try validate(c, &why);
@@ -545,6 +660,7 @@ test "the families split the tabs the way --only does, and a legacy tab is dropp
         .{ .name = "L", .jql = "project = X" },
     };
     try testing.expectEqual(@as(usize, 2), (try tabsOfFamily(a.allocator(), &tabs, .work)).len);
+    _ = &tabs;
     try testing.expectEqual(@as(usize, 1), (try tabsOfFamily(a.allocator(), &tabs, .fix_versions)).len);
     try testing.expectEqual(@as(usize, 2), (try tabsOfFamily(a.allocator(), &tabs, .boards)).len);
     try testing.expectEqual(@as(usize, 6), (try tabsOfFamily(a.allocator(), &tabs, null)).len);
@@ -554,6 +670,45 @@ test "the families split the tabs the way --only does, and a legacy tab is dropp
     try testing.expect(Family.fromCli("bogus") == null);
     try testing.expectEqualStrings("JIRA FIX VERSIONS", Family.fix_versions.title());
     try testing.expect(tabs[3].isKanban() and !tabs[3].isTree() and tabs[0].isTree() and !tabs[5].isTree());
+}
+
+test "the two new work kinds: Reported by me is the reporter query, My open work items the assigned one" {
+    const reported = TabKind.work_reported.defaultJql().?;
+    try testing.expectEqualStrings("reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC", reported);
+    try testing.expectEqualStrings(TabKind.work_assigned.defaultJql().?, TabKind.work_open.defaultJql().?);
+    try testing.expect(TabKind.work_open.isAssignedOpen() and TabKind.work_assigned.isAssignedOpen());
+    try testing.expect(!TabKind.work_reported.isAssignedOpen() and !TabKind.jql_editable.isAssignedOpen());
+    try testing.expectEqual(Family.work, TabKind.work_reported.family());
+    try testing.expectEqual(Family.work, TabKind.work_open.family());
+    try testing.expectEqual(Family.work, TabKind.jql_editable.family());
+    try testing.expect(TabKind.jql_editable.defaultJql() == null);
+}
+
+test "expandVars fills {name} holes, quotes a list, and leaves an unknown name alone" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const vars = [_]Var{
+        .{ .name = "project", .value = "ENG" },
+        .{ .name = "versions", .values = &.{ "1.2.0", "Mobile 1.0.X" } },
+    };
+    try testing.expectEqualStrings(
+        "project = ENG AND fixVersion in (\"1.2.0\", \"Mobile 1.0.X\")",
+        try expandVars(arena, "project = {project} AND fixVersion in ({versions})", &vars),
+    );
+    // An unknown hole survives verbatim: a typo is visible in the JQL
+    // rather than quietly becoming an empty clause.
+    try testing.expectEqualStrings("a = {nope}", try expandVars(arena, "a = {nope}", &vars));
+    // A quote inside a value is escaped, not closed.
+    const q = [_]Var{.{ .name = "v", .values = &.{"say \"hi\""} }};
+    try testing.expectEqualStrings("x in (\"say \\\"hi\\\"\")", try expandVars(arena, "x in ({v})", &q));
+    // No vars, or no holes: the same bytes back.
+    try testing.expectEqualStrings("a = 1", try expandVars(arena, "a = 1", &vars));
+    try testing.expectEqualStrings("a = {b}", try expandVars(arena, "a = {b}", &.{}));
+    // An unclosed brace is not a hole.
+    try testing.expectEqualStrings("a = {project", try expandVars(arena, "a = {project", &vars));
+    try testing.expect(Var.isList(.{ .name = "v", .values = &.{"x"} }));
+    try testing.expect(!Var.isList(.{ .name = "v", .value = "x" }));
 }
 
 test "the default JQLs are the reference's, and the release kind has none" {
@@ -579,6 +734,10 @@ test "validate: the reference's rules" {
     try testing.expectError(error.TabNeedsProject, validate(c, &why));
     c.tabs = &.{.{ .name = "F", .kind = .filter }};
     try testing.expectError(error.FilterWithoutId, validate(c, &why));
+    c.tabs = &.{.{ .name = "Q", .kind = .jql_editable }};
+    try testing.expectError(error.EditableWithoutJql, validate(c, &why));
+    c.tabs = &.{.{ .name = "Q", .kind = .jql_editable, .jql = "project = {p}", .vars = &.{.{ .name = "p", .value = "TE" }} }};
+    try validate(c, &why);
     c.tabs = &.{.{ .name = "B", .kind = .work_assigned, .jql = "x", .mode = .next_release }};
     try testing.expectError(error.TabJqlAndMode, validate(c, &why));
     c.tabs = &.{.{ .name = "L" }};
