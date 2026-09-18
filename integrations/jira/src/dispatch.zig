@@ -169,10 +169,19 @@ fn dirExists(io: Io, path: []const u8) bool {
     return true;
 }
 
+/// What one fire did: the sentence for the status line, and whether a
+/// session was actually started — which is what turns a row's button
+/// into `[ view ]` rather than a red cross.
+pub const Outcome = struct { text: []const u8, fired: bool };
+
 /// Fire both channels. Returns the status-line summary:
 /// `implement → queue + pane`, `… (also: pane: …)`, `… failed: …`, or
 /// `…: nothing to dispatch to — …` naming both channels it looked for.
 pub fn fire(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error![]const u8 {
+    return (try fireOutcome(arena, io, d, paths)).text;
+}
+
+pub fn fireOutcome(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error!Outcome {
     var fired: std.ArrayList([]const u8) = .empty;
     var errors: std.ArrayList([]const u8) = .empty;
     if (paths.queue_dir) |dir| {
@@ -190,12 +199,19 @@ pub fn fire(arena: Allocator, io: Io, d: Dispatch, paths: Paths) Allocator.Error
     }
     const fired_s = try std.mem.join(arena, " + ", fired.items);
     const errors_s = try std.mem.join(arena, "; ", errors.items);
-    if (fired.items.len > 0 and errors.items.len == 0) return std.fmt.allocPrint(arena, "{s} → {s}", .{ d.kind, fired_s });
-    if (fired.items.len > 0) return std.fmt.allocPrint(arena, "{s} → {s} (also: {s})", .{ d.kind, fired_s, errors_s });
-    if (errors.items.len > 0) return std.fmt.allocPrint(arena, "{s} failed: {s}", .{ d.kind, errors_s });
+    // A session was started only when the PANE channel took the line:
+    // the queue on its own is a note for a watcher agent, not something
+    // this mnml can bring to the front.
+    var started = false;
+    for (fired.items) |f| if (std.mem.eql(u8, f, "pane")) {
+        started = true;
+    };
+    if (fired.items.len > 0 and errors.items.len == 0) return .{ .fired = started, .text = try std.fmt.allocPrint(arena, "{s} → {s}", .{ d.kind, fired_s }) };
+    if (fired.items.len > 0) return .{ .fired = started, .text = try std.fmt.allocPrint(arena, "{s} → {s} (also: {s})", .{ d.kind, fired_s, errors_s }) };
+    if (errors.items.len > 0) return .{ .fired = false, .text = try std.fmt.allocPrint(arena, "{s} failed: {s}", .{ d.kind, errors_s }) };
     // Neither channel is there. Say which two were looked for, because
     // "nothing happened" with no reason is what this used to look like.
-    return std.fmt.allocPrint(arena, "{s}: nothing to dispatch to — no `.claude/` under the dispatch workspace and no mnml IPC channel ($MNML_IPC_DIR, else <ws>/.mnml/" ++ ipc_subdir ++ ")", .{d.kind});
+    return .{ .fired = false, .text = try std.fmt.allocPrint(arena, "{s}: nothing to dispatch to — no `.claude/` under the dispatch workspace and no mnml IPC channel ($MNML_IPC_DIR, else <ws>/.mnml/" ++ ipc_subdir ++ ")", .{d.kind}) };
 }
 
 fn fileExists(io: Io, path: []const u8) bool {

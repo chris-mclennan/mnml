@@ -21,6 +21,7 @@ const hit = @import("hit.zig");
 const keymap = @import("keymap.zig");
 const pickers = @import("pickers.zig");
 const textedit = @import("textedit.zig");
+const varsedit = @import("varsedit.zig");
 const os = @import("os.zig");
 
 pub const Issue = model.Issue;
@@ -32,6 +33,13 @@ pub const AssigneeSummary = struct { account_id: []const u8, display_name: []con
 
 pub const TabState = struct {
     cfg: config.Tab,
+    /// Where this tab sits in the config FILE's `.tabs` list. `--only`
+    /// filters the App's list, so its index is not the file's, and the
+    /// file's is what a splice path has to name.
+    file_idx: usize = 0,
+    /// The tab's `{name}` holes, as they stand now. Starts as the
+    /// config's and is replaced by a saved vars edit.
+    vars: []const config.Var = &.{},
     /// The resolved JQL; replaced by the JQL editor and the tab-version picker.
     jql: []const u8,
     /// Owns the issues; reset on every refresh.
@@ -87,6 +95,51 @@ pub const TabState = struct {
     }
 };
 
+/// One ticket's linked PRs, fetched beside the search rather than after
+/// it — the per-row calls are most of a refetch's wall time and they do
+/// not belong on the loop either.
+pub const PrBatch = struct { key: []const u8, list: []const model.LinkedPr };
+
+/// Everything a refetch needs, and nothing the loop can change under it
+/// while it runs. The client is a copy: it holds no per-call state, and
+/// its limiter is the cross-process bucket, which is built to be shared.
+pub const RefreshJob = struct {
+    idx: usize,
+    client: jira.Client,
+    /// Owns `jql` and `extra_jql`; freed by whoever runs the job.
+    arena: std.heap.ArenaAllocator,
+    jql: []const u8,
+    board_id: u64,
+    extra_jql: ?[]const u8,
+    extra_fields: []const []const u8,
+    team_field_id: []const u8,
+    /// Tree tabs show linked PRs, so the job fetches them too.
+    want_prs: bool,
+
+    pub fn deinit(j: *RefreshJob) void {
+        j.arena.deinit();
+    }
+};
+
+/// What comes back. The arena owns the JSON the issues slice into, so
+/// it becomes the tab's on success and is dropped on failure — the old
+/// rows stay on screen either way until this is applied.
+pub const RefreshResult = struct {
+    idx: usize,
+    arena: std.heap.ArenaAllocator,
+    issues: []const Issue = &.{},
+    /// Empty when the search answered.
+    error_text: []const u8 = "",
+    prs: []const PrBatch = &.{},
+
+    pub fn drop(r: RefreshResult) void {
+        var arena = r.arena;
+        arena.deinit();
+    }
+};
+
+pub const RefreshSlot = sdk.pane.Slot(RefreshResult);
+
 pub const Filter = struct { edit: TextEdit, editing: bool };
 
 pub const Comment = struct { key: []const u8, edit: TextEdit, posting: bool = false, error_text: []const u8 = "" };
@@ -112,6 +165,10 @@ pub const App = struct {
     /// where a dispatched `term` line has to go. Borrowed from the
     /// environment, empty outside a host.
     ipc_dir: []const u8 = "",
+    /// The config file this pane was loaded from — where a saved vars
+    /// edit is spliced back into. Empty means the editor can still run
+    /// but cannot save, and says so.
+    cfg_path: []const u8 = "",
     /// Small owned strings: keys in sets, the status, resolved JQLs.
     keys: std.heap.ArenaAllocator,
     tabs: []TabState,
@@ -131,6 +188,7 @@ pub const App = struct {
     comment: ?Comment = null,
     selection: std.StringHashMapUnmanaged(void) = .empty,
     modal: ?Modal = null,
+    vars: ?varsedit.Editor = null,
     help: bool = false,
     help_scroll: usize = 0,
     me: ?model.User = null,
@@ -142,6 +200,24 @@ pub const App = struct {
     cols: u16 = 80,
     rows: u16 = 24,
     last_refresh_ms: i64 = 0,
+    /// The one refetch in flight, and the group it runs on. With no
+    /// group — a test, `--dump` — a refetch runs inline, which is what
+    /// makes those two deterministic.
+    refresh: RefreshSlot,
+    /// What every row's action button says now, keyed by the ticket or
+    /// the PR rather than the row, so a refetch that moves the row keeps
+    /// what was pressed on it.
+    actions: sdk.pane.ActionStore,
+    /// The channel a `[ view ]` press asks the host to focus a session
+    /// on. Null outside a host, where the button is not offered.
+    ipc: ?*const sdk.Ipc = null,
+    /// Turns the spinner on every button that is mid-dispatch.
+    spin: usize = 0,
+    group: ?*Io.Group = null,
+    /// The ticket the cursor was on when the in-flight refetch started,
+    /// so it can go back on it when the rows are swapped.
+    keep_key_buf: [64]u8 = undefined,
+    keep_key_len: usize = 0,
     quit: bool = false,
     /// The count the statusline segment shows; null until a work tab loaded.
     assigned_open: ?usize = null,
@@ -156,12 +232,27 @@ pub const App = struct {
     pub fn init(gpa: Allocator, io: Io, cfg: config.Config, family: ?config.Family, client: *jira.Client, forge: bitbucket.Client) Allocator.Error!App {
         var keys = std.heap.ArenaAllocator.init(gpa);
         errdefer keys.deinit();
-        const cfg_tabs = try config.tabsOfFamily(keys.allocator(), cfg.tabs, family);
+        // The file indices come along: `--only` drops tabs, so the
+        // position in this list is not the position in `.tabs`, and the
+        // vars editor writes through the file's.
+        var file_idx: std.ArrayList(usize) = .empty;
+        var cfg_list: std.ArrayList(config.Tab) = .empty;
+        for (cfg.tabs, 0..) |c, i| {
+            if (family) |f| {
+                const k = c.kind orelse continue;
+                if (k.family() != f) continue;
+            }
+            try cfg_list.append(keys.allocator(), c);
+            try file_idx.append(keys.allocator(), i);
+        }
+        const cfg_tabs = cfg_list.items;
         const tabs = try gpa.alloc(TabState, cfg_tabs.len);
         errdefer gpa.free(tabs);
-        for (cfg_tabs, tabs) |c, *t| {
+        for (cfg_tabs, file_idx.items, tabs) |c, fi, *t| {
             t.* = .{
                 .cfg = c,
+                .file_idx = fi,
+                .vars = c.vars,
                 .jql = (try c.staticJql(keys.allocator())) orelse "",
                 .data = std.heap.ArenaAllocator.init(gpa),
                 .meta = std.heap.ArenaAllocator.init(gpa),
@@ -172,7 +263,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -180,6 +271,31 @@ pub const App = struct {
     /// line. Set by the caller right after `init`; empty outside a host.
     pub fn setIpcDir(a: *App, dir: []const u8) void {
         a.ipc_dir = dir;
+    }
+
+    /// The group a refetch runs on. Set by the pane loop right after
+    /// `init`; left null by a test and by `--dump`, where a refetch runs
+    /// inline so the next line sees its result.
+    pub fn setGroup(a: *App, group: *Io.Group) void {
+        a.group = group;
+    }
+
+    /// The Tier-2 channel. A `[ view ]` press goes down it as a
+    /// `focus-session` line; without one the button stays on its word.
+    pub fn setIpc(a: *App, ipc: *const sdk.Ipc) void {
+        a.ipc = ipc;
+    }
+
+    /// Close the result queue. The pane calls this BEFORE cancelling the
+    /// group: a worker parked on a put into a live queue never sees the
+    /// cancel, and the cancel then never returns.
+    pub fn closeRefresh(a: *App) void {
+        a.refresh.q.close(a.io);
+    }
+
+    /// The config file a vars edit is written back into.
+    pub fn setConfigPath(a: *App, path: []const u8) void {
+        a.cfg_path = path;
     }
 
     pub fn deinit(a: *App) void {
@@ -206,10 +322,13 @@ pub const App = struct {
         if (a.picker) |*p| p.deinit();
         if (a.comment) |*c| c.edit.deinit();
         if (a.modal) |*m| m.arena.deinit();
+        if (a.vars) |*v| v.deinit();
         a.selection.deinit(a.gpa);
         a.board_names.deinit(a.gpa);
         a.kanban_expanded.deinit(a.gpa);
         a.hits.deinit(a.gpa);
+        a.refresh.deinit(a.io, RefreshResult.drop);
+        a.actions.deinit();
         a.keys.deinit();
         a.* = undefined;
     }
@@ -251,7 +370,7 @@ pub const App = struct {
 
     pub fn context(a: *const App) keymap.Context {
         const t = a.tabConst();
-        return .{ .shape = t.shape(), .fix_versions = t.cfg.isFixVersions(), .detail_open = a.details_visible };
+        return .{ .shape = t.shape(), .fix_versions = t.cfg.isFixVersions(), .editable_jql = t.cfg.isEditableJql(), .detail_open = a.details_visible };
     }
 
     pub fn isKanban(a: *const App) bool {
@@ -379,10 +498,34 @@ pub const App = struct {
         a.last_refresh_ms = a.nowMs();
     }
 
+    /// Start a refetch of `idx`. With a group it goes to a worker and
+    /// this returns at once — the pane keeps its old rows, its keys and
+    /// its repaint while the site is asked. Without one it runs inline.
     pub fn refreshTab(a: *App, idx: usize) Allocator.Error!void {
+        var job = (try a.prepareRefresh(idx)) orelse return;
+        if (a.group) |g| {
+            if (!a.refresh.claim()) {
+                // One is already in flight; a second would only race it.
+                job.deinit();
+                return;
+            }
+            g.concurrent(a.io, refreshWorker, .{ a.io, a.gpa, &a.refresh, job }) catch {
+                a.refresh.abandon();
+                job.deinit();
+                return;
+            };
+            return;
+        }
+        var res = runRefresh(job);
+        try a.applyRefresh(&res);
+    }
+
+    /// What a refetch needs, read off the tab before anything can move:
+    /// the identity to search as, the query, and where the cursor is.
+    /// Null when the tab cannot be searched at all.
+    fn prepareRefresh(a: *App, idx: usize) Allocator.Error!?RefreshJob {
         const t = &a.tabs[idx];
         try a.ensureMe();
-        // The reference seeds the assignee filter with "me" once.
         // The reference seeds the assignee filter with "me" once; on its
         // tree tabs the filter is inert, so the seed only lands where it
         // shows (flat and kanban) — here the chips work on trees too.
@@ -392,96 +535,171 @@ pub const App = struct {
         }
         if (t.jql.len == 0) try a.resolveJql(t);
         // The cursor survives a refetch: remember the ticket it is on.
-        var keep_key: ?[]const u8 = null;
-        var keep_buf: [64]u8 = undefined;
+        a.keep_key_len = 0;
         if (idx == a.active) {
             var pre = std.heap.ArenaAllocator.init(a.gpa);
             defer pre.deinit();
-            if (try a.focusedKey(pre.allocator())) |k| if (k.len <= keep_buf.len) {
-                @memcpy(keep_buf[0..k.len], k);
-                keep_key = keep_buf[0..k.len];
+            if (try a.focusedKey(pre.allocator())) |k| if (k.len <= a.keep_key_buf.len) {
+                @memcpy(a.keep_key_buf[0..k.len], k);
+                a.keep_key_len = k.len;
             };
         }
-        // The issues slice into the JSON they came from, so the fetch
-        // lands in a fresh arena that becomes the tab's on success and
-        // is dropped on failure (the old issues stay on screen).
-        var next = std.heap.ArenaAllocator.init(a.gpa);
-        errdefer next.deinit();
-        const arena = next.allocator();
-        const extra: []const []const u8 = if (a.cfg.team_field_id.len > 0) &.{a.cfg.team_field_id} else &.{};
-        const answer: jira.Answer([]const Value) = blk: {
-            if (t.board_id != 0) {
-                var clauses: std.ArrayList([]const u8) = .empty;
-                if (t.team.len > 0) try clauses.append(arena, try a.teamFilterClause(arena, t.team));
-                if (t.selected_sprint) |sp| try clauses.append(arena, try std.fmt.allocPrint(arena, "sprint = {d}", .{sp}));
-                if (t.quick_filters) |qfs| for (qfs) |qf| {
-                    for (t.active_quick_filters.items) |id| if (id == qf.id and std.mem.trim(u8, qf.jql, " ").len > 0) {
-                        try clauses.append(arena, try std.fmt.allocPrint(arena, "({s})", .{std.mem.trim(u8, qf.jql, " ")}));
-                    };
+        var job: RefreshJob = .{
+            .idx = idx,
+            .client = a.client.*,
+            .arena = std.heap.ArenaAllocator.init(a.gpa),
+            .jql = "",
+            .board_id = t.board_id,
+            .extra_jql = null,
+            .extra_fields = &.{},
+            .team_field_id = a.cfg.team_field_id,
+            .want_prs = t.cfg.isTree(),
+        };
+        errdefer job.deinit();
+        const arena = job.arena.allocator();
+        // On the job's arena, not a temporary: the job outlives this
+        // frame the moment it goes to a worker.
+        if (a.cfg.team_field_id.len > 0) {
+            const one = try arena.alloc([]const u8, 1);
+            one[0] = a.cfg.team_field_id;
+            job.extra_fields = one;
+        }
+        if (t.board_id != 0) {
+            var clauses: std.ArrayList([]const u8) = .empty;
+            if (t.team.len > 0) try clauses.append(arena, try a.teamFilterClause(arena, t.team));
+            if (t.selected_sprint) |sp| try clauses.append(arena, try std.fmt.allocPrint(arena, "sprint = {d}", .{sp}));
+            if (t.quick_filters) |qfs| for (qfs) |qf| {
+                for (t.active_quick_filters.items) |id| if (id == qf.id and std.mem.trim(u8, qf.jql, " ").len > 0) {
+                    try clauses.append(arena, try std.fmt.allocPrint(arena, "({s})", .{std.mem.trim(u8, qf.jql, " ")}));
                 };
-                const extra_jql: ?[]const u8 = if (clauses.items.len == 0) null else try std.mem.join(arena, " AND ", clauses.items);
-                break :blk jira.boardIssues(a.client, arena, t.board_id, extra_jql, extra) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.Transport => jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
-                };
-            }
-            const q = try a.teamClause(arena, t.jql, t.team);
-            break :blk jira.search(a.client, arena, q, extra) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Transport => jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } },
             };
+            if (clauses.items.len > 0) job.extra_jql = try std.mem.join(arena, " AND ", clauses.items);
+        } else {
+            job.jql = try arena.dupe(u8, try a.teamClause(arena, t.jql, t.team));
+        }
+        return job;
+    }
+
+    /// The whole of a refetch, on whichever thread runs it: the search,
+    /// then one linked-PR call per unresolved ticket on a tree tab. It
+    /// touches nothing but its own job and its own arena.
+    pub fn runRefresh(job_in: RefreshJob) RefreshResult {
+        var job = job_in;
+        // The job's arena holds the query and the extra fields, so it is
+        // freed only after the last call that reads them.
+        defer job.deinit();
+        var client = job.client;
+        var arena = std.heap.ArenaAllocator.init(job.arena.child_allocator);
+        const ar = arena.allocator();
+        const answer: jira.Answer([]const Value) = blk: {
+            if (job.board_id != 0) {
+                break :blk jira.boardIssues(&client, ar, job.board_id, job.extra_jql, job.extra_fields) catch
+                    jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
+            }
+            break :blk jira.search(&client, ar, job.jql, job.extra_fields) catch
+                jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
         };
         switch (answer) {
             .failed => |f| {
-                t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{f.message});
-                a.setStatus("error: {s}", .{f.message});
-                next.deinit();
+                const msg = ar.dupe(u8, f.message) catch "out of memory";
+                return .{ .idx = job.idx, .arena = arena, .error_text = msg };
             },
             .ok => |vals| {
-                t.issues = try jira.parseIssues(arena, vals, a.cfg.team_field_id);
-                t.data.deinit();
-                t.data = next;
-                t.fetched = true;
-                t.last_error = "";
-                // An action's message outlives the refetch it triggers;
-                // an empty status gets the tab's summary.
-                if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
-                if (t.cfg.kind == .work_assigned) {
-                    a.assigned_open = t.issues.len;
-                    a.segment_dirty = true;
-                }
-                // The reference auto-expands unresolved tickets on tree tabs
-                // and fetches their PRs; the kanban does the fetch too but
-                // never shows it, so only the tree pays for it here.
-                if (t.tree) |*st| if (t.cfg.isTree()) {
-                    for (t.issues) |iss| if (iss.isUnresolved()) {
-                        try st.setExpanded(iss.key, true);
-                        try a.ensurePrs(idx, iss.key);
-                    };
+                const issues = jira.parseIssues(ar, vals, job.team_field_id) catch {
+                    return .{ .idx = job.idx, .arena = arena, .error_text = "out of memory" };
                 };
-                if (t.sprints == null and t.board_id != 0) try a.loadSprints(idx);
-                try a.aggregateAssignees(t);
-                // Put the cursor back on the ticket it was on (its row
-                // may have moved), else on the first row.
-                if (idx == a.active) {
-                    if (t.cfg.isTree()) {
-                        t.selected = 0;
-                        if (keep_key) |k| {
-                            var post = std.heap.ArenaAllocator.init(a.gpa);
-                            defer post.deinit();
-                            if (try a.treeRows(post.allocator())) |r| if (tree.rowOfKey(r.rows, t.issues, k)) |ri| {
-                                t.selected = ri;
-                            };
+                var prs: std.ArrayList(PrBatch) = .empty;
+                if (job.want_prs) {
+                    for (issues) |iss| {
+                        if (!iss.isUnresolved() or iss.id.len == 0) continue;
+                        switch (jira.pullRequests(&client, ar, iss.id) catch continue) {
+                            .ok => |list| prs.append(ar, .{ .key = iss.key, .list = list }) catch {},
+                            .failed => {},
                         }
-                    } else {
-                        t.selected = 0;
-                        if (keep_key) |k| for (t.issues, 0..) |iss, i| if (std.mem.eql(u8, iss.key, k)) {
-                            t.selected = i;
-                        };
-                        try a.clampCursor();
                     }
                 }
+                return .{ .idx = job.idx, .arena = arena, .issues = issues, .prs = prs.items };
             },
+        }
+    }
+
+    /// The worker task. Everything it needs is in the job; the only
+    /// thing it touches of the App's is the slot, which is a channel.
+    fn refreshWorker(io: Io, gpa: Allocator, slot: *RefreshSlot, job: RefreshJob) Io.Cancelable!void {
+        _ = gpa;
+        const res = runRefresh(job);
+        slot.finish(io, res) catch |err| {
+            // The pane is going away, or this task was cancelled: the
+            // result has nowhere to go, so it is freed here rather than
+            // leaked, and a cancel is passed on rather than swallowed.
+            res.drop();
+            if (err == error.Canceled) return error.Canceled;
+            return;
+        };
+    }
+
+    /// Take a finished refetch, if one has landed, and apply it.
+    pub fn drainRefresh(a: *App) Allocator.Error!void {
+        var res = a.refresh.take(a.io) orelse return;
+        try a.applyRefresh(&res);
+    }
+
+    /// Swap a refetch's rows in. The only place the tab's data changes,
+    /// and always on the loop.
+    fn applyRefresh(a: *App, res: *RefreshResult) Allocator.Error!void {
+        const idx = res.idx;
+        if (idx >= a.tabs.len) {
+            res.drop();
+            return;
+        }
+        const t = &a.tabs[idx];
+        if (res.error_text.len > 0) {
+            t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{res.error_text});
+            a.setStatus("error: {s}", .{res.error_text});
+            res.drop();
+            return;
+        }
+        t.issues = res.issues;
+        t.data.deinit();
+        t.data = res.arena;
+        t.fetched = true;
+        t.last_error = "";
+        // An action's message outlives the refetch it triggers;
+        // an empty status gets the tab's summary.
+        if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
+        if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
+            a.assigned_open = t.issues.len;
+            a.segment_dirty = true;
+        };
+        // The reference auto-expands unresolved tickets on tree tabs and
+        // shows their linked PRs; the job fetched them alongside the
+        // search, so nothing here goes back to the site.
+        if (t.tree) |*st| if (t.cfg.isTree()) {
+            for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
+            for (res.prs) |batch| try st.putPrs(batch.key, batch.list);
+        };
+        if (t.sprints == null and t.board_id != 0) try a.loadSprints(idx);
+        try a.aggregateAssignees(t);
+        // Put the cursor back on the ticket it was on (its row may have
+        // moved), else on the first row.
+        if (idx == a.active) {
+            const keep_key: ?[]const u8 = if (a.keep_key_len > 0) a.keep_key_buf[0..a.keep_key_len] else null;
+            if (t.cfg.isTree()) {
+                t.selected = 0;
+                if (keep_key) |k| {
+                    var post = std.heap.ArenaAllocator.init(a.gpa);
+                    defer post.deinit();
+                    if (try a.treeRows(post.allocator())) |r| if (tree.rowOfKey(r.rows, t.issues, k)) |ri| {
+                        t.selected = ri;
+                    };
+                }
+            } else {
+                t.selected = 0;
+                if (keep_key) |k| for (t.issues, 0..) |iss, i| if (std.mem.eql(u8, iss.key, k)) {
+                    t.selected = i;
+                };
+                try a.clampCursor();
+            }
         }
     }
 
@@ -531,10 +749,10 @@ pub const App = struct {
                 t.last_error = "";
                 took = true;
                 n += 1;
-                if (t.cfg.kind == .work_assigned) {
+                if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
                     a.assigned_open = t.issues.len;
                     a.segment_dirty = true;
-                }
+                };
                 if (t.tree) |*st| if (t.cfg.isTree()) {
                     for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
                 };
@@ -1664,7 +1882,39 @@ pub const App = struct {
         var buf: [24]u8 = undefined;
         const d = dispatch.Dispatch.forTicket(kind, iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), a.isoNow(&buf));
         const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
-        a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
+        try a.fireAndRecord(arena, iss.key, kind, d, paths);
+    }
+
+    /// Fire a dispatch and leave the outcome on the row's button: a
+    /// `[ view ]` that focuses the session it started, or a red cross
+    /// carrying the reason into the hint row.
+    fn fireAndRecord(a: *App, arena: Allocator, row_key: []const u8, action: []const u8, d: dispatch.Dispatch, paths: dispatch.Paths) Allocator.Error!void {
+        const out = try dispatch.fireOutcome(arena, a.io, d, paths);
+        a.say("{s}", .{out.text});
+        if (out.fired) {
+            // What the pane can say about the session it started: the
+            // directory it runs in and the first line of its prompt.
+            const prompt = try d.prompt(arena);
+            const first = prompt[0 .. std.mem.indexOfScalar(u8, prompt, '\n') orelse prompt.len];
+            try a.actions.set(row_key, action, .{ .state = .view, .detail = try arena.dupe(u8, first) });
+        } else {
+            try a.actions.set(row_key, action, .{ .state = .failed, .detail = out.text });
+        }
+    }
+
+    /// A press on a button that already started a session: ask the host
+    /// to bring it to the front.
+    pub fn focusSessionFor(a: *App, row_key: []const u8, action: []const u8) Allocator.Error!void {
+        const e = a.actions.get(row_key, action);
+        const ipc = a.ipc orelse {
+            a.setStatus("view: no mnml channel to focus a session on", .{});
+            return;
+        };
+        ipc.focusSession(.{ .cwd = a.cfg.dispatch_workspace, .prompt_line = e.detail }) catch |err| {
+            a.say("view failed: {s}", .{@errorName(err)});
+            return;
+        };
+        a.say("{s} {s}: asked mnml to focus its session", .{ row_key, action });
     }
 
     pub fn dispatchReview(a: *App) Allocator.Error!void {
@@ -1693,6 +1943,79 @@ pub const App = struct {
         const d = dispatch.Dispatch.forPr(iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), prs[p.pr_idx].url, a.isoNow(&buf));
         const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
         a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
+    }
+
+    // ─── the vars editor ─────────────────────────────────────────────────
+
+    /// `E` on a `jql_editable` tab. The JQL stays where the user wrote
+    /// it; what this edits is the list of things it interpolates.
+    pub fn openVars(a: *App) Allocator.Error!void {
+        if (!a.hasTabs()) return;
+        const t = a.tab();
+        if (!t.cfg.isEditableJql()) {
+            a.setStatus("E: this tab has no vars (it is not a `jql_editable` tab)", .{});
+            return;
+        }
+        if (t.vars.len == 0) {
+            a.setStatus("E: `{s}` has no `.vars` to edit — add some beside its `.jql`", .{t.cfg.name});
+            return;
+        }
+        a.closeVars();
+        a.vars = try varsedit.Editor.init(a.gpa, a.active, t.file_idx, t.cfg.name, t.vars);
+    }
+
+    pub fn closeVars(a: *App) void {
+        if (a.vars) |*v| v.deinit();
+        a.vars = null;
+    }
+
+    /// Write every var back into the config file, one splice per var so
+    /// only those spans move and every comment around them survives,
+    /// then re-expand the tab's JQL and refetch.
+    pub fn saveVars(a: *App) Allocator.Error!void {
+        const e = &(a.vars orelse return);
+        if (a.cfg_path.len == 0) {
+            e.error_text = "no config file to save into";
+            return;
+        }
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const arena = scratch.allocator();
+        var idx_buf: [24]u8 = undefined;
+        const tab_key = std.fmt.bufPrint(&idx_buf, "[{d}]", .{e.file_idx}) catch "[0]";
+        var wrote: usize = 0;
+        for (0..e.boxes.items.len) |vi| {
+            const one = (try e.literalFor(arena, vi)) orelse continue;
+            var var_buf: [24]u8 = undefined;
+            const var_key = std.fmt.bufPrint(&var_buf, "[{d}]", .{vi}) catch continue;
+            const path = [_][]const u8{ "tabs", tab_key, "vars", var_key, one.key };
+            const outcome = sdk.zon_edit.persistScalar(a.gpa, a.io, a.cfg_path, &path, one.literal) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    e.error_text = try a.keep(try std.fmt.allocPrint(arena, "{s}: {s}", .{ e.boxes.items[vi].name, @errorName(err) }));
+                    return;
+                },
+            };
+            if (outcome == .written) wrote += 1;
+        }
+        // The tab picks the change up without a reload: its JQL is the
+        // user's own text with the new values interpolated. Everything
+        // the editor knows is read out BEFORE `closeVars` frees it —
+        // the lines below used to reach back into it afterwards.
+        const tab_idx = e.tab_idx;
+        const t = &a.tabs[tab_idx];
+        t.vars = try dupeVars(a.keys.allocator(), try e.asVars(arena));
+        var edited = t.cfg;
+        edited.vars = t.vars;
+        t.jql = (try edited.staticJql(a.keys.allocator())) orelse t.jql;
+        t.cfg = edited;
+        const name = t.cfg.name;
+        a.closeVars();
+        if (wrote == 0) a.say("{s}: vars unchanged", .{name}) else a.say("{s}: {d} var(s) saved to {s}", .{ name, wrote, a.cfg_path });
+        if (tab_idx == a.active) {
+            t.fetched = false;
+            try a.refreshActive();
+        }
     }
 
     // ─── the detail modal ────────────────────────────────────────────────
@@ -1794,6 +2117,36 @@ pub const App = struct {
         }
         if (a.modal != null) {
             if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "q")) a.closeModal() else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) a.modalScroll(2) else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) a.modalScroll(-2) else if (std.mem.eql(u8, spec, "pagedown")) a.modalScroll(10) else if (std.mem.eql(u8, spec, "pageup")) a.modalScroll(-10);
+            return true;
+        }
+        if (a.vars) |*v| {
+            if (v.edit != null) {
+                // Typing a value: the line editor owns every key but
+                // Enter (commit) and Esc (drop this one edit).
+                if (std.mem.eql(u8, spec, "esc")) {
+                    v.cancelEdit();
+                } else if (std.mem.eql(u8, spec, "enter")) {
+                    try v.commitEdit();
+                } else _ = try v.edit.?.key(spec);
+                return true;
+            }
+            if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "q")) {
+                a.closeVars();
+            } else if (std.mem.eql(u8, spec, "ctrl+s") or std.mem.eql(u8, spec, "s")) {
+                // `s` as well as Ctrl+S: Ctrl+S is the host's own save
+                // chord, and a mounted pane cannot count on seeing it.
+                try a.saveVars();
+            } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) {
+                v.move(-1);
+            } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) {
+                v.move(1);
+            } else if (std.mem.eql(u8, spec, "enter") or std.mem.eql(u8, spec, "e")) {
+                try v.beginEdit();
+            } else if (std.mem.eql(u8, spec, "a")) {
+                try v.addValue();
+            } else if (std.mem.eql(u8, spec, "d") or std.mem.eql(u8, spec, "x") or std.mem.eql(u8, spec, "delete")) {
+                try v.removeValue();
+            }
             return true;
         }
         if (a.comment) |*c| {
@@ -1908,6 +2261,7 @@ pub const App = struct {
             .detail_scroll_down => a.details_scroll +|= 4,
             .filter => try a.openFilter(),
             .jql_editor => try a.openJql(),
+            .vars_editor => try a.openVars(),
             .transition => try a.openTransition(),
             .watch => try a.toggleWatch(),
             .comment => try a.openComment(),
@@ -1942,6 +2296,10 @@ pub const App = struct {
     }
 
     pub fn paste(a: *App, text_in: []const u8) Allocator.Error!void {
+        if (a.vars) |*v| {
+            if (v.edit) |*t| try t.insert(text_in);
+            return;
+        }
         if (a.jql) |*e| try e.insert(text_in) else if (a.comment) |*c| try c.edit.insert(text_in) else if (a.filter) |*f| {
             if (f.editing) try f.edit.insert(text_in);
         } else if (a.picker) |*p| try p.insert(text_in);
@@ -2003,6 +2361,19 @@ pub const App = struct {
             }
             return;
         }
+        if (a.vars) |*v| {
+            switch (target orelse hit.Target.vars_close) {
+                .vars_row => |i| {
+                    if (v.edit != null) try v.commitEdit();
+                    v.cursor = i;
+                    try v.beginEdit();
+                },
+                .vars_save => try a.saveVars(),
+                .vars_body => {},
+                else => a.closeVars(),
+            }
+            return;
+        }
         if (a.comment != null) return;
         const tg = target orelse return;
         switch (tg) {
@@ -2016,9 +2387,14 @@ pub const App = struct {
             .action => |x| {
                 const iss = a.tab().issue(x.issue) orelse return;
                 const buttons = dispatch.buttonsForTicket(iss);
-                if (x.button < buttons.len) {
-                    try a.selectIssue(x.issue);
-                    try a.dispatchTicket(buttons[x.button].kind());
+                if (x.button >= buttons.len) return;
+                const kind = buttons[x.button].kind();
+                try a.selectIssue(x.issue);
+                // What the press means is what the button says: a word
+                // dispatches, a `[ view ]` focuses what it started.
+                switch (sdk.pane.action.pressOf(a.actions.state(iss.key, kind))) {
+                    .focus_session => try a.focusSessionFor(iss.key, kind),
+                    .dispatch, .retry => try a.dispatchTicket(kind),
                 }
             },
             .tab => |i| try a.switchTab(i),
@@ -2054,6 +2430,9 @@ pub const App = struct {
                 a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
             },
             .column, .detail, .comment, .help_body, .picker_row, .picker_body, .modal_close, .modal_body, .jql_text, .jql_body => {},
+            // Only reachable while the overlay is up, and that branch
+            // returns above.
+            .vars_row, .vars_save, .vars_close, .vars_body => {},
         }
     }
 
@@ -2154,13 +2533,11 @@ pub const App = struct {
                 if (a.jql != null) try a.closeJql(false);
             },
             .jql => try a.openJql(),
+            .vars => try a.openVars(),
             .search => try a.openFilter(),
-            .space => a.setStatus("Space: the tab's project is {s}", .{if (a.tab().cfg.project.len > 0) a.tab().cfg.project else "unset"}),
             .assignee, .overflow => try a.openAssignees(),
             .type => try a.openIssueType(),
             .status => try a.cycleScope(),
-            .more_filters => a.setStatus("More filters: not in the reference either", .{}),
-            .save_filter => a.setStatus("Save filter: not in the reference either", .{}),
             .fixv_pill, .version => try a.openTabFixVersion(),
             .fixv_remove => try a.removeFixVersionClause(),
             .board => try a.openBoard(),
@@ -2195,6 +2572,10 @@ pub const App = struct {
             if (steps > 0) a.help_scroll += 3 else a.help_scroll -|= 3;
             return;
         }
+        if (a.vars) |*v| {
+            v.move(steps);
+            return;
+        }
         switch (a.hits.at(col, row) orelse hit.Target.help_body) {
             .column => |c| a.scrollColumn(c, steps),
             .detail, .detail_close, .detail_bar => {
@@ -2211,6 +2592,18 @@ pub const App = struct {
         return @max(w -| 2, 1);
     }
 };
+
+/// `vars` copied onto `arena` — the App's `keys` arena outlives the
+/// scratch the editor rendered them on.
+fn dupeVars(arena: Allocator, vars: []const config.Var) Allocator.Error![]const config.Var {
+    const out = try arena.alloc(config.Var, vars.len);
+    for (vars, out) |src, *dst| {
+        const vals = try arena.alloc([]const u8, src.values.len);
+        for (src.values, vals) |v, *d| d.* = try arena.dupe(u8, v);
+        dst.* = .{ .name = try arena.dupe(u8, src.name), .value = try arena.dupe(u8, src.value), .values = vals };
+    }
+    return out;
+}
 
 /// The reference's `strip_fix_version`: drop `fixVersion = "…"` and the
 /// connector beside it.
@@ -2314,6 +2707,22 @@ pub const fixv_tabs = [_]config.Tab{
     .{ .name = "Current Release", .kind = .fix_version_tree, .project = "ENG", .mode = .current_release, .status_order = &.{ "Testing", "In PR Review", "In Progress", "To Do", "Done" }, .bumps = .{ .pr_approved = "Testing", .no_open_prs = "Testing", .release_cut = &.{.{ .status = "Done", .target = "top" }} } },
 };
 
+/// A Work family with the three kinds the pane ships: the open-work
+/// count, what you filed, and an editable-JQL tab with two holes.
+pub const editable_tabs = [_]config.Tab{
+    .{ .name = "My open work items", .kind = .work_open },
+    .{ .name = "Reported by me", .kind = .work_reported },
+    .{
+        .name = "QA Actionable now",
+        .kind = .jql_editable,
+        .jql = "project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC",
+        .vars = &.{
+            .{ .name = "project", .value = "ENG" },
+            .{ .name = "versions", .values = &.{ "13.16.0", "13.15.0" } },
+        },
+    },
+};
+
 pub const board_tabs = [_]config.Tab{
     .{ .name = "Sprint", .kind = .board_active_sprint, .project = "ENG", .board_id = 7 },
     .{ .name = "Backlog", .kind = .board_backlog, .project = "ENG" },
@@ -2335,8 +2744,9 @@ test "Work: the assigned tab loads the three tickets, auto-expands them with the
     try testing.expectEqualStrings("In PR Review", r.rows[0].group.status);
     try testing.expect(!r.rows[1].ticket.bumped);
     try testing.expect(r.rows[2] == .pr and r.rows[3] == .pr);
-    // The last auto-expanded ticket's PR count is the status, as in the reference.
-    try testing.expect(std.mem.endsWith(u8, a.status.items, "linked PR(s)"));
+    // The linked PRs now arrive with the search rather than after it, so
+    // the status a refetch leaves is the tab's summary.
+    try testing.expectEqualStrings("Assigned · 3 issues", a.status.items);
     // The focused row starts on the first group; j reaches the ticket.
     _ = try a.onKey("j");
     try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
@@ -2477,6 +2887,219 @@ test "Work: the assignee picker assigns, the fixVersion picker sets, watching to
     try testing.expectEqual(comments + 1, h.store.find("ENG-1").?.comments.items.len);
     const d = a.detailOf("ENG-1").?;
     try testing.expect(std.mem.indexOf(u8, d.comments[d.comments.len - 1].body, "on it") != null);
+}
+
+test "a row's action button keeps what its press left, by ticket, across a refetch" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const h = try Harness.start(.{ .tabs = &work_tabs, .dispatch_workspace = root }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    // Nothing pressed: every button is on its own word.
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state("ENG-5", "triage"));
+    // With nowhere to dispatch to, the press leaves a cross and the
+    // reason on the button rather than a status that scrolls away.
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    _ = try a.onKey("j");
+    // Copied: `focusedKey` borrows from the tab's data arena, which the
+    // refetch below replaces.
+    const key = try arena.allocator().dupe(u8, (try a.focusedKey(arena.allocator())).?);
+    try a.dispatchTicket("triage");
+    try testing.expectEqual(sdk.pane.ActionState.failed, a.actions.state(key, "triage"));
+    try testing.expect(std.mem.indexOf(u8, a.actions.get(key, "triage").detail, "nothing to dispatch to") != null);
+
+    // With both channels there, the press starts a session and the
+    // button becomes the door to it.
+    try tmp.dir.createDirPath(testing.io, ".claude");
+    try tmp.dir.createDirPath(testing.io, ".mnml/" ++ dispatch.ipc_subdir);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/" ++ dispatch.ipc_subdir ++ "/command", .data = "" });
+    try a.dispatchTicket("triage");
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    // What it remembers is the prompt's first line — all a `term` line
+    // can say about the session it started.
+    try testing.expect(std.mem.startsWith(u8, a.actions.get(key, "triage").detail, "/agents:developer "));
+    // A second action on the same ticket is its own button.
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state(key, "fix"));
+
+    // A refetch moves the rows; the button follows its ticket.
+    try a.refreshActive();
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    // And a press on it now asks for the session rather than dispatching
+    // again — without a channel it says so instead of pretending.
+    try a.focusSessionFor(key, "triage");
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "no mnml channel") != null);
+}
+
+test "a refetch on the group keeps the old rows, the keys and the cursor, and lands on a later tick" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    // Put the cursor on a ticket, then refetch on a worker.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    _ = try a.onKey("j");
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+
+    var group: Io.Group = .init;
+    a.setGroup(&group);
+    defer {
+        // The queue closes before the group is cancelled, the way the
+        // pane's own shutdown does it.
+        a.closeRefresh();
+        group.cancel(testing.io);
+        a.group = null;
+    }
+    try a.refreshActive();
+    try testing.expect(a.refresh.busy());
+    // The rows on screen are still the old ones, and the keys still work.
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expect(a.tab().fetched);
+    _ = try a.onKey("d");
+    try testing.expect(a.details_visible);
+    _ = try a.onKey("d");
+    // A second refresh while one is in flight is refused rather than raced.
+    try a.refreshActive();
+    try testing.expect(a.refresh.busy());
+
+    // It lands on a later tick, with the cursor back on its ticket.
+    var spins: usize = 0;
+    while (a.refresh.busy() and spins < 2000) : (spins += 1) {
+        try a.drainRefresh();
+        if (!a.refresh.busy()) break;
+        testing.io.sleep(.fromMilliseconds(2), .awake) catch break;
+    }
+    try testing.expect(!a.refresh.busy());
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+    // The PRs came with the search: the tree has them without another call.
+    try testing.expect(a.tab().tree.?.prs("ENG-2") != null);
+}
+
+test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {
+    const h = try Harness.start(.{ .tabs = &editable_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // `work_open` is the same query as `work_assigned` under the name it
+    // reads as, and it is what the statusline chip counts.
+    try testing.expectEqual(@as(usize, 3), a.tab().issues.len);
+    try testing.expectEqual(@as(?usize, 3), a.assigned_open);
+    try testing.expect(std.mem.indexOf(u8, a.tab().jql, "assignee = currentUser()") != null);
+    try testing.expectEqual(@as(usize, 3), a.tabs.len);
+    // The file indices survive `--only`: all three are work tabs here.
+    try testing.expectEqual(@as(usize, 2), a.tabs[2].file_idx);
+
+    try a.switchTab(1);
+    try testing.expect(std.mem.indexOf(u8, a.tab().jql, "reporter = currentUser()") != null);
+
+    // The editable tab's JQL is the user's, with the holes filled.
+    try a.switchTab(2);
+    try testing.expectEqualStrings(
+        "project = ENG AND fixVersion in (\"13.16.0\", \"13.15.0\") ORDER BY updated DESC",
+        a.tab().jql,
+    );
+}
+
+test "E on an editable tab edits the vars, saves them into the config file's own spans, and the JQL follows" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const cfg_path = try std.fs.path.join(testing.allocator, &.{ root, "config.zon" });
+    defer testing.allocator.free(cfg_path);
+    // A hand-written file, comments and all — what a save must not eat.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "config.zon", .data =
+        \\// my jira config — keep my comments
+        \\.{
+        \\    .jira_url = "https://x",
+        \\    .email = "me@acme.com",
+        \\    .tabs = .{
+        \\        .{ .name = "My open work items", .kind = .work_open },
+        \\        .{ .name = "Reported by me", .kind = .work_reported },
+        \\        .{
+        \\            // the one that changes every release
+        \\            .name = "QA Actionable now",
+        \\            .kind = .jql_editable,
+        \\            .jql = "project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC",
+        \\            .vars = .{
+        \\                .{ .name = "project", .value = "ENG" },
+        \\                .{ .name = "versions", .values = .{ "13.16.0", "13.15.0" } },
+        \\            },
+        \\        },
+        \\    },
+        \\}
+        \\
+    });
+
+    const h = try Harness.start(.{ .tabs = &editable_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    a.setConfigPath(cfg_path);
+    try a.ensureLoaded();
+    try a.switchTab(2);
+
+    // E opens the editor on the vars, not on the JQL.
+    _ = try a.onKey("shift+e");
+    try testing.expect(a.vars != null);
+    try testing.expect(a.jql == null);
+    const e = &(a.vars.?);
+    // project, ENG, versions, 13.16.0, 13.15.0, + add
+    try testing.expectEqual(@as(usize, 6), e.rows.items.len);
+
+    // Add a version: `a` lands on the add line and types into it.
+    e.cursor = 3;
+    _ = try a.onKey("a");
+    try testing.expect(a.vars.?.edit != null);
+    for ("14.0.0") |c| _ = try a.onKey(if (c == '.') "." else &[_]u8{c});
+    _ = try a.onKey("enter");
+    try testing.expectEqual(@as(usize, 3), a.vars.?.boxes.items[1].values.items.len);
+
+    // Remove the first one.
+    a.vars.?.cursor = 3;
+    _ = try a.onKey("d");
+    try testing.expectEqual(@as(usize, 2), a.vars.?.boxes.items[1].values.items.len);
+
+    // s (and Ctrl+S) writes it back and closes.
+    _ = try a.onKey("s");
+    try testing.expect(a.vars == null);
+    const after = try tmp.dir.readFileAlloc(testing.io, "config.zon", testing.allocator, .unlimited);
+    defer testing.allocator.free(after);
+    try testing.expect(std.mem.indexOf(u8, after, ".values = .{ \"13.15.0\", \"14.0.0\" }") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "13.16.0") == null);
+    // Both comments survived, and so did everything the edit did not name.
+    try testing.expect(std.mem.indexOf(u8, after, "// my jira config — keep my comments") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "// the one that changes every release") != null);
+    try testing.expect(std.mem.indexOf(u8, after, ".value = \"ENG\"") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "{project}") != null);
+
+    // And the live tab is already running the new query.
+    try testing.expectEqualStrings(
+        "project = ENG AND fixVersion in (\"13.15.0\", \"14.0.0\") ORDER BY updated DESC",
+        a.tab().jql,
+    );
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "var(s) saved") != null);
+    // The save refetched the tab it edited — the count is the new
+    // query's, not the old one's. (This is what reading the editor
+    // after closing it used to skip.)
+    try testing.expect(a.tab().fetched);
+
+    // Esc on a tab without vars says so rather than opening an empty box.
+    try a.switchTab(0);
+    _ = try a.onKey("shift+e");
+    try testing.expect(a.vars == null);
+    try testing.expect(a.jql != null);
+    _ = try a.onKey("esc");
 }
 
 test "Fix Versions: the release resolves to 13.16.0, status_order and bumps group the tree, f switches the release, F assigns" {

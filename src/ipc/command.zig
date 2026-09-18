@@ -46,6 +46,9 @@ pub const Raw = struct {
     /// `open-pty`: argv.
     command: []const []const u8 = &.{},
     cwd: ?[]const u8 = null,
+    /// `focus-session`: the first line of the prompt the session was
+    /// started with.
+    prompt_line: ?[]const u8 = null,
     /// `set-activity-badge`.
     section: ?[]const u8 = null,
     count: ?Num(u32) = null,
@@ -158,6 +161,12 @@ pub const Command = union(enum) {
     },
     open_pty: struct { cwd: ?[]const u8, command: []const []const u8 },
     set_activity_badge: struct { section: []const u8, count: u32 },
+    /// `focus-session`: bring a session mnml is running to the front.
+    /// A pane that dispatched one names it by the host's id when it was
+    /// given one, else by the directory it runs in and the first line
+    /// of the prompt it was started with — which is all a dispatched
+    /// `term` line can actually say about it.
+    focus_session: struct { id: ?[]const u8, cwd: ?[]const u8, prompt_line: ?[]const u8 },
     dump_rects,
     ghost: []const u8,
     quit,
@@ -203,6 +212,7 @@ fn fromRaw(raw: Raw) ?Command {
         notify,
         @"open-pty",
         @"set-activity-badge",
+        @"focus-session",
         @"dump-rects",
         ghost,
         quit,
@@ -281,6 +291,13 @@ fn fromRaw(raw: Raw) ?Command {
         .@"set-activity-badge" => .{ .set_activity_badge = .{
             .section = raw.section orelse return null,
             .count = val(u32, raw.count) orelse return null,
+        } },
+        // Nothing to go on is not a focus: refuse it rather than
+        // raising whichever session happens to be first.
+        .@"focus-session" => if (raw.id == null and raw.cwd == null and raw.prompt_line == null) null else .{ .focus_session = .{
+            .id = raw.id,
+            .cwd = raw.cwd,
+            .prompt_line = raw.prompt_line,
         } },
         .@"dump-rects" => .dump_rects,
         // An empty ghost would be a silent no-op — easy to miss in a script.
@@ -421,6 +438,14 @@ test "the command table: every cmd resolves to its variant" {
     const pty = (try parseT(a, "{\"cmd\":\"open-pty\",\"command\":[\"ls\",\"-la\"],\"cwd\":\"/tmp\"}")).open_pty;
     try t.expectEqualStrings("-la", pty.command[1]);
     try t.expectEqualStrings("/tmp", pty.cwd.?);
+    // `focus-session`: the host's id when a pane has one, else the two
+    // things a dispatched `term` line can actually say about a session.
+    const f = (try parseT(a, "{\"cmd\":\"focus-session\",\"cwd\":\"/w\",\"prompt_line\":\"/agents:developer ENG-2\"}")).focus_session;
+    try t.expectEqualStrings("/w", f.cwd.?);
+    try t.expectEqualStrings("/agents:developer ENG-2", f.prompt_line.?);
+    try t.expect(f.id == null);
+    const fid = (try parseT(a, "{\"cmd\":\"focus-session\",\"id\":\"abc\"}")).focus_session;
+    try t.expectEqualStrings("abc", fid.id.?);
     const badge = (try parseT(a, "{\"cmd\":\"set-activity-badge\",\"section\":\"agents\",\"count\":3}")).set_activity_badge;
     try t.expectEqual(@as(u32, 3), badge.count);
     try t.expectEqual(Command.dump_rects, try parseT(a, "{\"cmd\":\"dump-rects\"}"));
@@ -444,6 +469,8 @@ test "malformed and incomplete lines are unknown, carrying the raw line" {
         "{\"cmd\":\"open-pty\",\"command\":[]}",
         "{\"cmd\":\"ghost\",\"text\":\"\"}",
         "{\"cmd\":\"set-activity-badge\",\"section\":\"agents\"}",
+        // Nothing to go on is not a focus.
+        "{\"cmd\":\"focus-session\"}",
         "{\"cmd\":\"wait_ms\"}",
         "{\"cmd\":\"register-command\",\"keys\":[\"a\"]}",
     };

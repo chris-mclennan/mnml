@@ -29,6 +29,17 @@ pub const Segment = struct {
 
 pub const Error = error{ NoChannel, WriteFailed } || Allocator.Error;
 
+/// How a pane names the session it wants focused.
+pub const SessionSelector = struct {
+    /// The host's own id, when the pane was told one.
+    id: []const u8 = "",
+    /// Failing that: the directory the session runs in…
+    cwd: []const u8 = "",
+    /// …and the first line of the prompt it was started with, which is
+    /// what a dispatched `term` line puts on screen.
+    prompt_line: []const u8 = "",
+};
+
 pub const Ipc = struct {
     gpa: Allocator,
     io: Io,
@@ -112,6 +123,20 @@ pub const Ipc = struct {
     /// `section`: explorer, search, git, debug, integrations, sessions, agents, cloud_agents.
     pub fn setActivityBadge(self: *const Ipc, section: []const u8, count: u32) Error!void {
         return self.line(.{ .cmd = "set-activity-badge", .section = section, .count = count });
+    }
+
+    /// Bring a session mnml is running to the front — what a `[ view ]`
+    /// button asks for after its dispatch started one. The host matches
+    /// the session by the id it gave, else by the working directory and
+    /// the prompt's first line, which is what a dispatched `term` line
+    /// can actually name.
+    pub fn focusSession(self: *const Ipc, sel: SessionSelector) Error!void {
+        try self.line(.{
+            .cmd = "focus-session",
+            .id = if (sel.id.len > 0) sel.id else null,
+            .cwd = if (sel.cwd.len > 0) sel.cwd else null,
+            .prompt_line = if (sel.prompt_line.len > 0) sel.prompt_line else null,
+        });
     }
 
     pub fn notify(self: *const Ipc, title: []const u8, body: []const u8, level: ToastLevel, sound: bool) Error!void {

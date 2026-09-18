@@ -17,6 +17,13 @@ key i
 expect screen contains "installed jira_work from"
 wait 4000
 command jira_work.open
+# The pane is a separate process whose first search is synchronous:
+# it spawns, is handed its geometry, searches, and fetches each
+# unresolved ticket's linked PRs before it can paint a count. On a
+# loaded machine that outlasts an expect's own 3 s budget, so the
+# wait is what covers the startup and the expects below only cover
+# the jitter.
+wait 8000
 command view.toggle_tree
 command view.focus_pane
 expect screen contains "JIRA WORK (3)"
@@ -51,7 +58,7 @@ expect screen lacks "ENG-2"
 # The scope chip and the assignee chip are on the toolbar as mode chips.
 expect screen contains " status: All "
 expect screen contains " assignee: All "
-expect screen contains " space: — "
+expect screen lacks " space: "
 # r refetches and the cursor stays on its ticket.
 key j
 key r

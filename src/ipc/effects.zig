@@ -19,6 +19,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const builtin = @import("builtin");
 const ipc_command = @import("command.zig");
+const sessions_table = @import("../app/sessions_table.zig");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const pty_pane = @import("../app/pty_pane.zig");
@@ -465,6 +466,14 @@ pub fn apply(app: *App, cmd: *const ipc_command.Command) Allocator.Error!bool {
         .set_activity_badge => |b| try app.ipc_fx.setBadge(app.gpa, b.section, b.count),
         .notify => |n| try notify(app, .{ .title = n.title, .body = n.body, .level = n.level, .sound = n.sound, .source = n.source }),
         .open_pty => |p| try openPty(app, .{ .cwd = p.cwd, .command = p.command }),
+        .focus_session => |f| _ = sessions_table.focusSession(app, .{
+            .id = f.id,
+            .cwd = f.cwd,
+            .prompt_line = f.prompt_line,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         else => return false,
     }
     app.needs_render = true;

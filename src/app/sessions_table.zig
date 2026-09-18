@@ -281,6 +281,61 @@ pub fn openCmd(app: *App) CommandError!void {
     try sessions.refresh(app);
 }
 
+/// `focus-session` over the IPC channel: show the table and put the
+/// cursor on the session a pane named. A pane that dispatched a session
+/// can only say what a `term` line could carry — the directory it runs
+/// in and the first line of its prompt — so those match too, newest
+/// first. Returns the id it landed on, or null when nothing matched.
+pub fn focusSession(app: *App, sel: Selector) CommandError!?[]const u8 {
+    try openCmd(app);
+    const tp = find(app) orelse return null;
+    const pane = get(app, tp) orelse return null;
+    var best: ?Item = null;
+    for (app.sessions.items) |it| {
+        if (!sel.matches(it)) continue;
+        // Several can match a cwd + prompt pair; the newest is the one
+        // the press just started.
+        if (best) |b| if (b.last_activity_s >= it.last_activity_s) continue;
+        best = it;
+    }
+    const want = best orelse return null;
+    for (pane.visible.items, 0..) |e, i| {
+        const it = switch (e) {
+            .item => |idx| if (idx < app.sessions.items.len) app.sessions.items[idx] else continue,
+            else => continue,
+        };
+        if (!std.mem.eql(u8, it.session_id, want.session_id)) continue;
+        pane.list.cursor = i;
+        pane.list.on_new = false;
+        app.needs_render = true;
+        return it.session_id;
+    }
+    return null;
+}
+
+/// How a pane names the session it wants focused.
+pub const Selector = struct {
+    id: ?[]const u8 = null,
+    cwd: ?[]const u8 = null,
+    prompt_line: ?[]const u8 = null,
+
+    pub fn matches(sel: Selector, it: Item) bool {
+        if (sel.id) |id| return std.mem.eql(u8, it.session_id, id);
+        var ok = false;
+        if (sel.cwd) |c| {
+            const have = it.cwd orelse return false;
+            if (!std.mem.eql(u8, have, c)) return false;
+            ok = true;
+        }
+        if (sel.prompt_line) |line| {
+            const msg = it.last_user_msg orelse return false;
+            if (std.mem.indexOf(u8, msg, line) == null) return false;
+            ok = true;
+        }
+        return ok;
+    }
+};
+
 /// Before the section swaps its snapshot: every table pane notes the
 /// session under its cursor (the indices in `visible` go stale).
 pub fn noteSelection(app: *App) Allocator.Error!void {
@@ -815,6 +870,25 @@ fn row(id: []const u8, state: AgentState, at: i64, ws: []const u8, cwd: ?[]const
     var it = sessions.testItem(id, state, at, ws, msg);
     it.cwd = cwd;
     return it;
+}
+
+test "a focus-session selector matches the host's id, else the cwd and the prompt line together" {
+    const it = sessions.testItem("s1", .streaming, 100, "ws", "/agents:developer ENG-2 — please");
+    var with_cwd = it;
+    with_cwd.cwd = "/w/acme";
+    // The id alone decides when there is one.
+    try std.testing.expect((Selector{ .id = "s1" }).matches(with_cwd));
+    try std.testing.expect(!(Selector{ .id = "s2" }).matches(with_cwd));
+    // Without one: the cwd must match, and the prompt line must be in
+    // the session's first user message.
+    try std.testing.expect((Selector{ .cwd = "/w/acme" }).matches(with_cwd));
+    try std.testing.expect(!(Selector{ .cwd = "/w/other" }).matches(with_cwd));
+    try std.testing.expect((Selector{ .cwd = "/w/acme", .prompt_line = "/agents:developer ENG-2" }).matches(with_cwd));
+    try std.testing.expect(!(Selector{ .cwd = "/w/acme", .prompt_line = "/agents:developer ENG-9" }).matches(with_cwd));
+    // Nothing to go on matches nothing, rather than the first row.
+    try std.testing.expect(!(Selector{}).matches(with_cwd));
+    // A session with no cwd cannot be matched by one.
+    try std.testing.expect(!(Selector{ .cwd = "/w/acme" }).matches(it));
 }
 
 test "the table groups by cwd with the workspace first, sorts by state within, hides ended past a day until the chip, follows the session under the cursor" {

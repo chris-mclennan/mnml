@@ -13,7 +13,7 @@ port was built against.
 ```
 ▌JIRA WORK (3)                                                                                                      ?
 ▌1 Assigned   2 Recently Done
-▌ basic   jql   󰍉 / filter   space: —   assignee: All   type: —   status: All
+▌ basic   jql   󰍉 / filter   assignee: All   type: —   status: All
 ▌ KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
 ▌ In PR Review (1)
 ▌    ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form validates on blur                [ Review ]
@@ -74,7 +74,8 @@ example.
 | `[detail_modal] fields = [...]` | `.detail_modal = .{ .fields = .{ .{ .id = "type" }, .{ .id = "customfield_1", .label = "Severity" } } }` | a bare TOML string becomes `.{ .id = … }` |
 | `[detail_modal.field_alias] Severity = "customfield_1"` | `.detail_modal = .{ .field_alias = .{ .{ .name = "Severity", .id = "customfield_1" } } }` | |
 | `[[tabs]] name` | `.tabs = .{ .{ .name = "…", … } }` | |
-| `kind = "work_assigned"` | `.kind = .work_assigned` | `work_assigned` · `work_recently_done` · `work_recent` · `work_unified` · `filter` · `fix_version_tree` · `board_active_sprint` · `board_backlog` |
+| `kind = "work_assigned"` | `.kind = .work_assigned` | `work_open` · `work_reported` · `work_assigned` · `work_recently_done` · `work_recent` · `work_unified` · `jql_editable` · `filter` · `fix_version_tree` · `board_active_sprint` · `board_backlog` |
+| — | `.vars = .{ .{ .name = "project", .value = "ENG" }, .{ .name = "versions", .values = .{ "1.2.0" } } }` | a `jql_editable` tab's `{name}` holes. ZON has no string-keyed map, so this is a list of small structs — the shape `bumps.release_cut` and `field_alias` already use. `E` on the tab edits these and writes them back here |
 | `mode = "current_release"` | `.mode = .current_release` | or `.next_release`; needs `.project` |
 | `jql = "…"` | `.jql = "…"` | a custom query |
 | `project`, `component` | `.project`, `.component` | |
@@ -104,7 +105,7 @@ the box works without copying it.
 **Jira Work / Jira Fix Versions — the tree.** The caps header with the
 count (`JIRA WORK (3)`, `(1 of 3)` under a filter), the tab strip with
 the marker on the active tab, the toolbar as mode chips (`basic`,
-`jql`, the search pill, `space: TE`, `assignee: Me`, `type: —`,
+`jql`, the search pill, `assignee: Me`, `type: —`,
 `status: All`, and on a release tab `fixVersion: 13.16.0` with its `ⓧ`)
 that wrap to a second row instead of clipping, the column header, then
 one group per status in the tab's `status_order`, each ticket under it
@@ -183,20 +184,45 @@ Every row, chip, tab, picker entry and button is a click target sized
 to what it paints (`src/hit.zig`); a right click on a ticket row
 toggles its selection.
 
+### The three Work tabs the scaffold ships
+
+`--write-config` writes three tabs, because these are the three
+questions a working day asks:
+
+| tab | kind | what it answers |
+| --- | --- | --- |
+| **My open work items** | `work_open` | what is on my plate — the count the `󰌃` chip carries |
+| **Reported by me** | `work_reported` | what I filed that is still open (`reporter = currentUser() AND resolution = Unresolved`) |
+| **QA Actionable now** | `jql_editable` | your own JQL, with the parts that change per release pulled out into `.vars` |
+
+An editable tab wears its vars as header chips (`project: ENG`,
+`versions: 1.2.0 +1`). **`E`**, or a click on any of them, opens a small
+editor: `↑↓` move, `⏎` types into the focused value, `a` adds one, `d`
+removes one, `s` (or `Ctrl+S`) saves, `Esc` cancels. `s` as well as
+`Ctrl+S` because `Ctrl+S` is the host's own save chord and a mounted
+pane cannot count on seeing it. A save splices each var back into
+`config.zon` one span at a time, so every comment and every key the edit
+did not name is left exactly where it was — and the tab re-runs its
+query without a reload. The JQL itself is not editable here on purpose:
+a release list changes every few weeks, the query around it almost
+never.
+
 ## The statusline
 
 The Work chip's manifest declares **two** segments, because they are
 two numbers about two different things.
 
-**`jira_work.assigned`** — `󰌃 N`: open items assigned to you, the
-Assigned tab's count. A click runs `jira_work.open`.
+**`jira_work.assigned`** — `󰌃 N`: open items assigned to you — the
+count of the `work_open` (or `work_assigned`) tab. A click runs
+`jira_work.open`.
 
 **`jira_work.qa_actionable`** — ` K`: the tab you have set up as **QA
-Actionable Now**. There is no tab *kind* for it yet (that is its own
-track), so the tab is found by name — "QA Actionable Now",
-"qa_actionable", "QA actionable" all count — and its own `jql` is what
-runs. With no such tab the key is `null` and the chip is not published
-at all, which is not the same as a zero.
+Actionable Now** — the first `.kind = .jql_editable` tab, whatever it is
+called. A config written before that kind existed still works: failing a
+kinded tab, one is found by name ("QA Actionable Now", "qa_actionable",
+"QA actionable" all count). Its own `jql` — holes filled from `.vars` —
+is what runs. With no such tab the key is `null` and the chip is not
+published at all, which is not the same as a zero.
 
 Each chip's hover is its breakdown by status —
 `Jira · 7 open items assigned to me — 3 In Progress · 2 In Review ·

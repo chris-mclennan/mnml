@@ -47,7 +47,9 @@
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
 //! at that width only), `# height: 14` (that height only — a menu taller
 //! than the screen needs a short one), `# env: NAME=value` (set in the App's environment
-//! for this file — `MNML_NOW_PLAYING` for the statusline's cluster).
+//! for this file — `MNML_NOW_PLAYING` for the statusline's cluster), and
+//! `# shared-data-root` (this file wants the run's one data root instead
+//! of the private one every file gets).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -106,6 +108,11 @@ pub const Header = struct {
     /// Option-as-Alt fix writes ghostty's `macos-option-as-alt`, which
     /// exists nowhere else, so elsewhere the row says there is no fix.
     requires_os: ?std.Target.Os.Tag = null,
+    /// `# shared-data-root`: this file wants the run's one data root
+    /// rather than the private one every file otherwise gets. Nothing in
+    /// the corpus asks for it; it exists so a file that genuinely needs
+    /// to see another's installs can say so out loud.
+    shared_data_root: bool = false,
     width: ?u16 = null,
     height: ?u16 = null,
     /// `# env: NAME=value` lines, in order; slices of the text parsed.
@@ -379,6 +386,7 @@ pub fn parseHeader(text: []const u8) Header {
             if (std.ascii.eqlIgnoreCase(what, "linux")) h.requires_os = .linux;
             if (std.ascii.eqlIgnoreCase(what, "windows")) h.requires_os = .windows;
         }
+        if (std.ascii.eqlIgnoreCase(after_hash, "shared-data-root")) h.shared_data_root = true;
         if (std.ascii.startsWithIgnoreCase(after_hash, "height:")) {
             h.height = std.fmt.parseInt(u16, trim(after_hash["height:".len..]), 10) catch null;
         }
@@ -596,6 +604,10 @@ test "header directives come only from the leading comment block" {
     try t.expectEqual(@as(?std.Target.Os.Tag, .linux), parseHeader("#  Requires: Linux \nopen x\n").requires_os);
     try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("# requires: network\nopen x\n").requires_os);
     try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("open x\n# requires: macos\n").requires_os);
+    try t.expect(parseHeader("# shared-data-root\nopen x\n").shared_data_root);
+    try t.expect(parseHeader("#  Shared-Data-Root  \nopen x\n").shared_data_root);
+    try t.expect(!parseHeader("# width: 120\nopen x\n").shared_data_root);
+    try t.expect(!parseHeader("open x\n# shared-data-root\n").shared_data_root);
     try t.expectEqual(@as(?u16, 120), parseHeader("# width: 120\n").width);
     try t.expectEqual(@as(?u16, null), parseHeader("# width: wide\n").width);
     try t.expectEqual(@as(?u16, 14), parseHeader("# height: 14\n").height);

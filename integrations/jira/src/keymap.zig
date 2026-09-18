@@ -32,6 +32,8 @@ pub const Action = enum {
     detail_scroll_down,
     filter,
     jql_editor,
+    /// The vars editor, on a `jql_editable` tab (the same `E`).
+    vars_editor,
     transition,
     watch,
     comment,
@@ -55,7 +57,7 @@ pub const Action = enum {
 
 /// Where a binding applies. A tab is a tree (Work / Fix Versions), a
 /// kanban (Boards) or a flat table (a legacy no-kind tab).
-pub const Where = enum { any, tree, kanban, flat, fix_versions, work_or_boards, detail_open };
+pub const Where = enum { any, tree, kanban, flat, fix_versions, work_or_boards, detail_open, editable_jql, fixed_jql };
 
 pub const Section = enum {
     navigation,
@@ -129,7 +131,8 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{"shift+t"}, .action = .dispatch_triage, .label = "dispatch: triage", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"shift+v"}, .action = .dispatch_review, .label = "dispatch: review the PR", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"/"}, .action = .filter, .label = "filter", .section = .filters, .hint = 8 },
-    .{ .keys = &.{"shift+e"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters },
+    .{ .keys = &.{"shift+e"}, .action = .vars_editor, .label = "edit the tab's vars", .section = .filters, .where = .editable_jql },
+    .{ .keys = &.{"shift+e"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters, .where = .fixed_jql },
     .{ .keys = &.{"f"}, .action = .tab_fix_version, .label = "switch the release", .section = .filters, .where = .fix_versions, .hint = 4 },
     .{ .keys = &.{"shift+v"}, .action = .tab_fix_version, .label = "switch the fix version", .section = .filters, .where = .work_or_boards },
     .{ .keys = &.{"shift+t"}, .action = .team, .label = "team", .section = .filters, .where = .work_or_boards },
@@ -144,6 +147,9 @@ pub const TabShape = enum { tree, kanban, flat };
 pub const Context = struct {
     shape: TabShape,
     fix_versions: bool,
+    /// A `jql_editable` tab, where `E` edits the vars rather than the
+    /// JQL those vars fill in.
+    editable_jql: bool = false,
     detail_open: bool,
 };
 
@@ -156,6 +162,8 @@ fn applies(b: Binding, ctx: Context) bool {
         .fix_versions => ctx.fix_versions,
         .work_or_boards => !ctx.fix_versions,
         .detail_open => ctx.detail_open,
+        .editable_jql => ctx.editable_jql,
+        .fixed_jql => !ctx.editable_jql,
     };
 }
 
@@ -244,6 +252,7 @@ pub const modal_rows = [_]struct { keys: []const u8, label: []const u8 }{
     .{ .keys = "j k PgUp PgDn Esc", .label = "detail modal: scroll · close" },
     .{ .keys = "Enter Enter Ctrl+S Esc", .label = "comment: newline · an empty line or Ctrl+S sends · cancel" },
     .{ .keys = "Ctrl+A/E Alt+←/→", .label = "JQL editor: line ends · words; Ctrl+U/K/W kill; Enter runs, Esc cancels" },
+    .{ .keys = "↑↓ ⏎ a d s Esc", .label = "vars editor: move · edit a value · add · remove · save (Ctrl+S too) · cancel" },
 };
 
 // ─── tests ───────────────────────────────────────────────────────────────
@@ -251,6 +260,7 @@ pub const modal_rows = [_]struct { keys: []const u8, label: []const u8 }{
 const testing = std.testing;
 
 const tree_ctx: Context = .{ .shape = .tree, .fix_versions = false, .detail_open = false };
+const editable_ctx: Context = .{ .shape = .tree, .fix_versions = false, .editable_jql = true, .detail_open = false };
 const fixv_ctx: Context = .{ .shape = .tree, .fix_versions = true, .detail_open = false };
 const kanban_ctx: Context = .{ .shape = .kanban, .fix_versions = false, .detail_open = false };
 const flat_ctx: Context = .{ .shape = .flat, .fix_versions = false, .detail_open = false };
@@ -279,6 +289,15 @@ test "the reference's chords resolve per context: f / F / V / T / space / > / c"
     try testing.expectEqual(Action.help, resolve("?", kanban_ctx).?);
     try testing.expectEqual(Action.quit, resolve("ctrl+c", kanban_ctx).?);
     try testing.expect(resolve("z", kanban_ctx) == null);
+    // E is the JQL editor everywhere but a jql_editable tab, where the
+    // JQL is the user's own text and the vars are the part worth typing.
+    try testing.expectEqual(Action.jql_editor, resolve("shift+e", tree_ctx).?);
+    try testing.expectEqual(Action.vars_editor, resolve("shift+e", editable_ctx).?);
+    var saw_jql = false;
+    for (bindings) |b| if (b.action == .jql_editor and applies(b, editable_ctx)) {
+        saw_jql = true;
+    };
+    try testing.expect(!saw_jql);
 }
 
 test "the hint row and the sheet are read from the table, so a chord cannot drift out of them" {

@@ -22,6 +22,7 @@ const dispatch = @import("dispatch.zig");
 const hit = @import("hit.zig");
 const keymap = @import("keymap.zig");
 const pickers = @import("pickers.zig");
+const varsedit = @import("varsedit.zig");
 const text = @import("text.zig");
 const filters = @import("filters.zig");
 
@@ -213,6 +214,7 @@ pub const Painter = struct {
         if (p.a.transition != null) try p.paintTransition();
         if (p.a.picker != null) try p.paintPicker();
         if (p.a.modal != null) try p.paintModal();
+        if (p.a.vars != null) try p.paintVars();
         if (p.a.help) try p.paintHelp();
     }
 
@@ -222,7 +224,7 @@ pub const Painter = struct {
         _ = p.put(1, 2, p.cols() -| 1, "No tabs for this scope.", p.s.bold);
         const cli = if (p.a.family) |f| f.cli() else "work";
         _ = p.putFit(1, 3, p.cols() -| 1, p.fmt("Add a `.tabs` entry whose kind belongs to `--only {s}` in the config, then press r.", .{cli}), p.s.muted);
-        _ = p.putFit(1, 4, p.cols() -| 1, "Kinds: work_assigned · work_recently_done · work_recent · work_unified · filter · fix_version_tree · board_active_sprint · board_backlog.", p.s.muted);
+        _ = p.putFit(1, 4, p.cols() -| 1, "Kinds: work_open · work_reported · work_assigned · work_recently_done · work_recent · work_unified · jql_editable · filter · fix_version_tree · board_active_sprint · board_backlog.", p.s.muted);
         try p.hitAdd(.{ .x = 0, .y = 0, .w = p.cols(), .h = p.rows() -| 1 }, .help_body);
     }
 
@@ -244,6 +246,12 @@ pub const Painter = struct {
         else
             " (loading…)";
         x += p.put(x, y, p.cols() -| x, sub, p.s.muted);
+        // A refetch runs on a worker: the rows on screen are the ones
+        // from last time, and this says so rather than letting them read
+        // as current.
+        if (p.a.refresh.busy() and t.fetched) {
+            x += p.put(x, y, p.cols() -| x, if (p.ui.ascii) " refreshing..." else " refreshing…", p.s.muted);
+        }
         if (p.a.selection.count() > 0) {
             x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
         }
@@ -323,8 +331,15 @@ pub const Painter = struct {
         }
         try out.append(arena, .{ .text_ = " basic ", .target = .basic, .style = if (!t.show_jql) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = " jql ", .target = .jql, .style = if (t.show_jql) p.s.chip_active else p.s.chip_style });
+        // An editable tab wears its vars: the values the JQL
+        // interpolates are what changes, so they are on the header
+        // rather than a level down, and `E` (or any of them) opens the
+        // editor.
+        if (t.cfg.isEditableJql()) {
+            for (t.vars) |v| try out.append(arena, .{ .text_ = try chipText(arena, v.name, try varSummary(arena, v)), .target = .vars, .style = p.s.chip_style });
+            try out.append(arena, .{ .text_ = " E edit ", .target = .vars, .style = p.s.chip_style });
+        }
         try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
-        try out.append(arena, .{ .text_ = try chipText(arena, "space", if (t.cfg.project.len > 0) t.cfg.project else "—"), .target = .space, .style = p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "status", t.scope.label()), .target = .status, .style = if (t.scope != .all) p.s.chip_active else p.s.chip_style });
@@ -626,12 +641,20 @@ pub const Painter = struct {
         }
     }
 
+    /// The row's action buttons, each wearing what its last press left:
+    /// its word, a spinner, the `[ view ]` that focuses the session it
+    /// started, or a red cross. The state is keyed by the ticket, so a
+    /// refetch that moves the row brings it along.
     fn paintActions(p: *Painter, x0: u16, y: u16, max_w: u16, issue_idx: usize, iss: model.Issue) Allocator.Error!void {
         var x = x0;
         for (dispatch.buttonsForTicket(iss), 0..) |b, bi| {
-            const lw = text.width(b.label());
+            const st = p.a.actions.state(iss.key, b.kind());
+            var buf: [48]u8 = undefined;
+            const word = std.mem.trim(u8, b.label(), "[] ");
+            const cap = sdk.pane.action.caption(&buf, st, word, p.a.spin, p.ui.ascii);
+            const lw = text.width(cap);
             if (x + lw > x0 + max_w) break;
-            _ = p.put(x, y, lw, b.label(), p.s.chip_style);
+            _ = p.put(x, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, st));
             try p.hitAdd(.{ .x = x, .y = y, .w = lw, .h = 1 }, .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } });
             x += lw + 1;
         }
@@ -856,6 +879,24 @@ pub const Painter = struct {
             x += p.putFit(x, y, w -| x, status, p.s.plain);
             x += 2;
         }
+        // A button that failed keeps its reason where it can be read:
+        // the status moves on, the row's cross does not.
+        if (a.hasTabs() and status.len == 0) {
+            var scratch = std.heap.ArenaAllocator.init(a.gpa);
+            defer scratch.deinit();
+            if (a.focusedKey(scratch.allocator()) catch null) |k| {
+                const iss = for (a.tabConst().issues) |i| {
+                    if (std.mem.eql(u8, i.key, k)) break i;
+                } else null;
+                if (iss) |i| for (dispatch.buttonsForTicket(i)) |b| {
+                    const e = a.actions.get(i.key, b.kind());
+                    if (e.state != .failed or e.detail.len == 0) continue;
+                    x += p.putFit(x, y, w -| x, p.fmt("{s}: {s}", .{ i.key, e.detail }), p.s.err_style);
+                    x += 2;
+                    break;
+                };
+            }
+        }
         if (hint.len > 0) {
             _ = p.putFit(x, y, w -| x, hint, p.s.muted);
             return;
@@ -865,20 +906,25 @@ pub const Painter = struct {
         // each one a click target that runs what its key runs, and a
         // trailing `? keys` that opens the sheet.
         const list = try keymap.hints(p.arena, a.context());
+        const keys_entry = "\u{b7} ? keys";
+        const kw = text.width(keys_entry);
+        // `? keys` is the one entry that has to survive: it is the door
+        // to every chord the row could not fit. Its room is taken out
+        // first, so which of the others fit no longer turns on how long
+        // the status happens to be.
+        const room = w -| kw;
         for (list, 0..) |b, i| {
             var kb: [16]u8 = undefined;
             const label = if (b.short.len > 0) b.short else b.label;
             const key = keymap.displayKey(&kb, b.keys[0]);
             const entry = if (i == 0) p.fmt("{s} {s}", .{ key, label }) else p.fmt("· {s} {s}", .{ key, label });
             const ew = text.width(entry);
-            if (x + ew > w) break;
+            if (x + ew > room) break;
             const at = x;
             x += p.put(x, y, ew, entry, p.s.muted) + 1;
             const lead: u16 = if (i == 0) 0 else 2;
             try p.hitAdd(.{ .x = at + lead, .y = y, .w = ew -| lead, .h = 1 }, .{ .hint = b.action });
         }
-        const keys_entry = "\u{b7} ? keys";
-        const kw = text.width(keys_entry);
         if (x + kw <= w) {
             _ = p.put(x, y, kw, keys_entry, p.s.muted);
             try p.hitAdd(.{ .x = x + 2, .y = y, .w = kw - 2, .h = 1 }, .{ .hint = .help });
@@ -1004,6 +1050,71 @@ pub const Painter = struct {
         if (list.len == 0 and tp.error_text.len == 0) _ = p.put(ix + 2, r.y + 1, iw, "no transitions from here", p.s.muted);
         if (tp.error_text.len > 0) _ = p.putFit(ix + 2, r.bottom() - 3, iw -| 2, tp.error_text, p.s.err_style);
         _ = p.putFit(ix + 2, r.bottom() - 2, iw -| 2, "1-9 jump · ↑↓/jk move · Enter commit · Esc cancel", p.s.muted);
+    }
+
+    /// The vars editor. One line per value under its var's name, an
+    /// `+ add` line under a list, and the line under the cursor turns
+    /// into a text field when it is being typed into.
+    fn paintVars(p: *Painter) Allocator.Error!void {
+        const e = &(p.a.vars.?);
+        const rows_needed: u16 = @intCast(@min(@as(usize, 40), e.rows.items.len + 6));
+        const r = p.centred(62, @max(rows_needed, 8));
+        try p.box(r, p.fmt(" vars — {s} ", .{e.tab_name}), p.s.border);
+        try p.hitAdd(r, .vars_body);
+        const ix = r.x + 2;
+        const iw = r.w -| 4;
+        const list_y = r.y + 1;
+        const list_h: usize = r.h -| 4;
+        const start = if (e.cursor >= list_h) e.cursor + 1 - list_h else 0;
+        var y = list_y;
+        var i = start;
+        while (i < e.rows.items.len and y < list_y + list_h) : ({
+            i += 1;
+            y += 1;
+        }) {
+            const row = e.rows.items[i];
+            const is_cur = i == e.cursor;
+            const typing = is_cur and e.edit != null;
+            switch (row) {
+                .name => |vi| {
+                    _ = p.putFit(ix, y, iw, e.boxes.items[vi].name, p.s.bold);
+                    continue;
+                },
+                .value => |v| {
+                    if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                    if (typing) {
+                        try p.paintVarField(ix + 2, y, iw -| 2, e);
+                    } else {
+                        const txt = e.valueText(v.v, v.i);
+                        _ = p.putFit(ix + 2, y, iw -| 2, if (txt.len > 0) txt else "(empty)", if (txt.len > 0) p.s.plain else p.s.muted);
+                    }
+                },
+                .add => {
+                    if (is_cur) _ = p.put(ix, y, 1, p.marker(), p.s.accent);
+                    if (typing) {
+                        try p.paintVarField(ix + 2, y, iw -| 2, e);
+                    } else _ = p.putFit(ix + 2, y, iw -| 2, "+ add", p.s.muted);
+                },
+            }
+            try p.hitAdd(.{ .x = r.x + 1, .y = y, .w = r.w -| 2, .h = 1 }, .{ .vars_row = @intCast(i) });
+        }
+        if (e.error_text.len > 0) _ = p.putFit(ix, r.bottom() - 3, iw, e.error_text, p.s.err_style);
+        const save = " s save ";
+        const sw = text.width(save);
+        _ = p.put(r.right() -| (sw + 2), r.bottom() - 2, sw, save, p.s.chip_style);
+        try p.hitAdd(.{ .x = r.right() -| (sw + 2), .y = r.bottom() - 2, .w = sw, .h = 1 }, .vars_save);
+        // The save is the chip beside this row, so the words here are the
+        // ones that have nowhere else to be said.
+        _ = p.putFit(ix, r.bottom() - 2, iw -| (sw + 2), "↑↓ move · ⏎ edit · a add · d remove · Esc cancel", p.s.muted);
+    }
+
+    /// The line being typed into, with the caret where the cursor is.
+    fn paintVarField(p: *Painter, x: u16, y: u16, w: u16, e: *const varsedit.Editor) Allocator.Error!void {
+        const t = &(e.edit.?);
+        const txt = t.text();
+        _ = p.put(x, y, w, txt, p.s.plain);
+        const caret_x = x + text.width(txt[0..@min(t.cursor, txt.len)]);
+        if (caret_x < x + w) _ = p.put(caret_x, y, 1, "▏", p.s.accent_plain);
     }
 
     fn paintModal(p: *Painter) Allocator.Error!void {
@@ -1214,6 +1325,14 @@ fn pipelineStyle(th: Theme, pipe: model.Pipeline) Style {
 /// ` key: value ` — mnml's mode chip.
 pub fn chipText(arena: Allocator, key: []const u8, value: []const u8) Allocator.Error![]const u8 {
     return std.fmt.allocPrint(arena, " {s}: {s} ", .{ key, value });
+}
+
+/// What a var chip says: the one value, or how many are in the list and
+/// the first of them — the header has room for the shape, not the set.
+fn varSummary(arena: Allocator, v: config.Var) Allocator.Error![]const u8 {
+    if (v.values.len == 0) return if (v.value.len > 0) v.value else "—";
+    if (v.values.len == 1) return v.values[0];
+    return std.fmt.allocPrint(arena, "{s} +{d}", .{ v.values[0], v.values.len - 1 });
 }
 
 pub fn upperOf(arena: Allocator, s: []const u8) []const u8 {
@@ -1536,7 +1655,8 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     const r2 = try rowText(ar, &f, 2);
     try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 13.16.0 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " ⓧ") != null);
-    try testing.expect(std.mem.indexOf(u8, r2, " space: ENG ") != null);
+    // The `space:` placeholder is gone: it named the tab's project and did nothing.
+    try testing.expect(std.mem.indexOf(u8, r2, " space: ") == null);
     const star_y = (try findRow(ar, &f, "ENG-2 ★")).?;
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, star_y), "Testing") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "f switch the release") != null);

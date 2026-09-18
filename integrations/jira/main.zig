@@ -40,6 +40,7 @@ pub const pickers = @import("src/pickers.zig");
 pub const inbox = @import("src/inbox.zig");
 pub const app_mod = @import("src/app.zig");
 pub const textedit = @import("src/textedit.zig");
+pub const varsedit = @import("src/varsedit.zig");
 pub const screen = @import("src/screen.zig");
 pub const bitbucket = @import("src/bitbucket.zig");
 pub const json = @import("src/json.zig");
@@ -80,9 +81,10 @@ pub const segment_click = "jira_work.open";
 pub const segment_priority: u8 = 60;
 
 /// The second figure: the tab the user configures as "QA Actionable
-/// Now". There is no tab *kind* for it yet (that is its own track), so
-/// it is found by name; without such a tab the chip is not published
-/// at all rather than showing a zero that means "not configured".
+/// Now" — a `jql_editable` tab, or, for a config written before that
+/// kind existed, one found by name. Without such a tab the chip is not
+/// published at all rather than showing a zero that means "not
+/// configured".
 pub const qa_segment_id = "jira_work.qa_actionable";
 pub const qa_segment_glyph = "\u{ed7a}"; // nf-fa-clipboard_check
 pub const qa_segment_color = "#C678DD";
@@ -262,7 +264,7 @@ pub fn configPath(arena: Allocator, io: Io, env: *const std.process.Environ.Map,
 // ─── the pane ────────────────────────────────────────────────────────────
 
 const Setup = union(enum) {
-    ready: struct { cfg: config.Config, token: auth.Token },
+    ready: struct { cfg: config.Config, token: auth.Token, path: []const u8 },
     /// A setup screen: its title and its lines.
     problem: struct { title: []const u8, lines: []const []const u8 },
 };
@@ -281,7 +283,7 @@ fn setup(arena: Allocator, io: Io, env: *const std.process.Environ.Map, cfg_path
     }
     const token = try auth.resolve(arena, io, env, .{ .config_path = loaded.config.token_file, .env_name = loaded.config.token_env, .data_root = data_root });
     switch (token) {
-        .ok => |t| return .{ .ready = .{ .cfg = loaded.config, .token = t } },
+        .ok => |t| return .{ .ready = .{ .cfg = loaded.config, .token = t, .path = loaded.path } },
         .missing => |m| return .{ .problem = .{ .title = "No Jira API token.", .lines = try auth.explain(arena, m) } },
     }
 }
@@ -304,7 +306,6 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer box.deinit(io);
     var group: Io.Group = .init;
     try group.concurrent(io, inbox.Inbox.reader, .{ io, &box, mount });
-    defer group.cancel(io);
 
     // The setup screens first: a config or a token missing paints what
     // to do and waits for r (try again) or q. The config's strings live
@@ -360,10 +361,25 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
-    defer app.deinit();
+    // Where a saved vars edit is spliced back into.
+    app.setConfigPath(rd.path);
+    // Refetches go to a task on this group, so a search and its per-row
+    // calls never hold the loop.
+    app.setGroup(&group);
+    defer {
+        // The order matters: a worker parked on a put into a live queue
+        // never sees the cancel, and the cancel then never returns. The
+        // queue closes first, the group stops, and only then is
+        // anything the workers were writing into freed.
+        app.closeRefresh();
+        group.cancel(io);
+        app.deinit();
+    }
     app.resize(frame.cols, frame.rows);
     var ipc = try sdk.Ipc.fromEnv(gpa, io, env);
     defer if (ipc) |*i| i.deinit();
+    // The channel a `[ view ]` press asks for a session on.
+    if (ipc) |*i| app.setIpc(i);
 
     // A prefetch cache paints before any fetch.
     if (env.get(prefetch_env)) |cache| if (cache.len > 0) {
@@ -377,7 +393,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer paint_arena.deinit();
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    // The first fetch, after the first paint.
+    // The first fetch is started after the first paint and lands on a
+    // later tick; until it does the pane paints its empty rows and
+    // answers keys, rather than freezing on a socket.
     try app.ensureLoaded();
     app.last_refresh_ms = app.nowMs();
     try repaint(&paint_arena, &frame, &app, ui);
@@ -416,11 +434,18 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             mount.bye();
             break;
         }
+        try app.drainRefresh();
+        // One spinner counter for the whole pane, so every button that
+        // is mid-dispatch turns together.
+        if (app.actions.anyRunning()) app.spin +%= 1;
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
         publishSide(&app, mount, if (ipc) |*i| i else null);
-        _ = box.wait(io, 500);
+        // While a refetch is in flight the loop wakes sooner, so its
+        // rows land as soon as they arrive rather than up to half a
+        // second later.
+        _ = box.wait(io, if (app.refresh.busy()) 60 else 500);
     }
     return 0;
 }
@@ -491,11 +516,13 @@ pub fn breakdownText(arena: Allocator, lead: []const u8, counts: []const StatusC
     return w.toOwnedSlice() catch error.OutOfMemory;
 }
 
-/// The tab the user has set up as QA Actionable Now, by name. A tab
-/// *kind* for it is the next track; until then the name is the
-/// contract, matched loosely so "QA Actionable Now", "qa_actionable"
-/// and "QA actionable" all count.
+/// The tab the second figure counts: the first `jql_editable` tab —
+/// the kind that exists for exactly this — else one whose name says so,
+/// matched loosely so "QA Actionable Now", "qa_actionable" and "QA
+/// actionable" all count. The name match is what keeps a config written
+/// before the kind existed working.
 pub fn qaTab(tabs: []const config.Tab) ?config.Tab {
+    for (tabs) |t| if (t.isEditableJql()) return t;
     for (tabs) |t| if (nameIsQaActionable(t.name)) return t;
     return null;
 }
@@ -590,7 +617,7 @@ fn noTabs(arena: Allocator, path: []const u8, f: config.Family) Allocator.Error!
     try out.append(arena, path);
     try out.append(arena, "");
     try out.append(arena, switch (f) {
-        .work => "Work tabs: work_assigned · work_recently_done · work_recent · work_unified · filter.",
+        .work => "Work tabs: work_open · work_reported · work_assigned · work_recently_done · work_recent · work_unified · jql_editable (with .jql + .vars) · filter.",
         .fix_versions => "Fix Versions tabs: fix_version_tree (with .project and .mode).",
         .boards => "Boards tabs: board_active_sprint · board_backlog (with .project, .board_id).",
     });
@@ -602,6 +629,9 @@ fn noTabs(arena: Allocator, path: []const u8, f: config.Family) Allocator.Error!
 fn kindName(k: ?config.TabKind) []const u8 {
     return if (k) |kk| switch (kk) {
         .work_assigned => "WorkAssigned",
+        .work_reported => "WorkReported",
+        .work_open => "WorkOpen",
+        .jql_editable => "JqlEditable",
         .work_recently_done => "WorkRecentlyDone",
         .work_recent => "WorkRecent",
         .work_unified => "WorkUnified",
@@ -693,9 +723,9 @@ fn diag(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
 /// chips move with no pane open.
 ///
 /// The second figure is the tab the user has set up as QA Actionable
-/// Now. There is no tab kind for it yet, so it is found by name; with
-/// no such tab the key is `null` and the chip is not published, which
-/// is not the same as a zero.
+/// Now — a `jql_editable` tab, else one found by name; with no such tab
+/// the key is `null` and the chip is not published, which is not the
+/// same as a zero.
 fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
     const c = loaded.config;
     const t: auth.Token = switch (token) {
@@ -1091,6 +1121,16 @@ test "the breakdown is by status, most common first, and the tooltip reads as a 
     try testing.expectEqualStrings("Jira · 0 open items assigned to me", try breakdownText(arena, "Jira · 0 open items assigned to me", &.{}));
 }
 
+test "the QA figure prefers the jql_editable tab, then a name, and comes from no other tab" {
+    // The kind wins wherever there is one, whatever the tab is called.
+    const kinded = [_]config.Tab{
+        .{ .name = "Assigned to me", .kind = .work_open },
+        .{ .name = "Whatever I called it", .kind = .jql_editable, .jql = "project = {p}", .vars = &.{.{ .name = "p", .value = "ENG" }} },
+        .{ .name = "QA Actionable Now", .jql = "status = \"Ready for QA\"" },
+    };
+    try testing.expectEqualStrings("Whatever I called it", qaTab(&kinded).?.name);
+}
+
 test "the QA figure comes from a tab found by name, loosely, and from no other tab" {
     try testing.expect(qaTab(&.{}) == null);
     try testing.expect(qaTab(&.{.{ .name = "Assigned to me" }}) == null);
@@ -1102,8 +1142,8 @@ test "the QA figure comes from a tab found by name, loosely, and from no other t
     };
     const found = qaTab(&tabs).?;
     try testing.expectEqualStrings("QA Actionable Now", found.name);
-    // The name is the contract until a tab kind exists for it, so it is
-    // matched the way a user would write it.
+    // A config written before `jql_editable` existed still works: the
+    // name is matched the way a user would write it.
     try testing.expect(qaTab(&.{.{ .name = "qa_actionable" }}) != null);
     try testing.expect(qaTab(&.{.{ .name = "qa-actionable-now" }}) != null);
     try testing.expect(qaTab(&.{.{ .name = "My QA Actionable queue" }}) != null);

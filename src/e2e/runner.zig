@@ -2,8 +2,13 @@
 //! same files drive Rust mnml, so every timing and every message here is
 //! the one that runner uses.
 //!
-//! Per file: a fresh temp workspace, a driver on its own leak-checking
-//! allocator, a fixed 120×40 screen. Every step is followed by a render
+//! Per file: a fresh temp workspace, a fresh data root, a driver on its
+//! own leak-checking allocator, a fixed 120×40 screen. The data root is
+//! per file because it is what persists — an integration a file installs
+//! and does not uninstall used to stay installed for every later file,
+//! so one file skipping a step under load turned into six unrelated
+//! failures. A file that genuinely wants the run's shared root says
+//! `# shared-data-root`. Every step is followed by a render
 //! cycle — tick, 50 ms, expire any pending chord chain, tick, draw — so
 //! async work started by the step has a chance to land before the next
 //! statement. An expectation that fails is retried every 40 ms for up to
@@ -195,9 +200,29 @@ const Run = struct {
         // value can name a directory inside it (`HOME=`, a PATH entry a
         // shim's "installer" drops a fake binary into).
         const header = parser.parseHeader(text);
+        // The data root is what OUTLIVES the file: an integration a
+        // script installs stays installed in it. Shared across the run,
+        // one file that skipped its uninstall changed what every later
+        // file counted, so a single flake became a cascade. Each file
+        // gets its own directory under the run's root — which is still
+        // the one tree `mnml-zig test` creates and removes — unless the
+        // file asks for the shared one by name.
+        const data_root: []const u8 = if (header.shared_data_root or self.opts.data_root.len == 0)
+            self.opts.data_root
+        else
+            makeDataRoot(gpa, io, self.opts.data_root, stemOf(self.path)) catch |e| return self.fail("data root: {s}", .{@errorName(e)});
+        defer if (data_root.ptr != self.opts.data_root.ptr) {
+            Io.Dir.cwd().deleteTree(io, data_root) catch {};
+            gpa.free(@constCast(data_root));
+        };
         var file_env: std.process.Environ.Map = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
         defer file_env.deinit();
         file_env.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
+        // The same root the driver persists into, so a `shell` step and
+        // any child can name it — and so a child that resolves its own
+        // data root from the environment lands in this file's, not the
+        // run's.
+        file_env.put("MNML_DATA_ROOT", data_root) catch return self.fail("out of memory", .{});
         for (header.envPairs()) |pair| {
             const value = expandEnv(gpa, pair.value, &file_env) catch return self.fail("out of memory", .{});
             defer gpa.free(value);
@@ -208,7 +233,7 @@ const Run = struct {
         const outcome = blk: {
             const d = self.factory.make(dbg.allocator(), io, .{
                 .workspace = self.workspace,
-                .data_root = self.opts.data_root,
+                .data_root = data_root,
                 .cols = self.size.cols,
                 .rows = self.size.rows,
                 .env = &file_env,
@@ -620,6 +645,19 @@ pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
     var bytes: [3]u8 = undefined;
     io.random(&bytes);
     const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{s}", .{ std.mem.trimEnd(u8, tmp_root, "/"), &std.fmt.bytesToHex(bytes, .lower) });
+    errdefer gpa.free(name);
+    try Io.Dir.cwd().createDirPath(io, name);
+    return name;
+}
+
+/// `<run_root>/<stem>-<random>`, created. One file's private
+/// `MNML_DATA_ROOT`: it sits inside the run's root, so the run still
+/// creates and removes exactly one tree, and the name says which file
+/// owns it when a run is inspected after the fact.
+fn makeDataRoot(gpa: Allocator, io: Io, run_root: []const u8, stem: []const u8) ![]u8 {
+    var bytes: [4]u8 = undefined;
+    io.random(&bytes);
+    const name = try std.fmt.allocPrint(gpa, "{s}/{s}-{s}", .{ std.mem.trimEnd(u8, run_root, "/"), stem, &std.fmt.bytesToHex(bytes, .lower) });
     errdefer gpa.free(name);
     try Io.Dir.cwd().createDirPath(io, name);
     return name;
@@ -1137,6 +1175,41 @@ test "shell steps run in the workspace when allowed, and a non-zero exit fails w
     defer t.allocator.free(bad_path);
     var o2 = runFile(t.allocator, t.io, sf.factory(), bad_path, content_size, opts);
     try expectFailed(&o2, "line 1: shell `echo oops >&2; exit 3` exited exit status: 3: oops");
+}
+
+test "each file persists into its own data root, so one that leaves something installed cannot reach the next" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var opts = env.opts();
+    opts.allow_shell = true;
+    var sf: StubFactory = .{};
+    // The first file "installs" and never cleans up.
+    const installs = try env.script("d1.test", "shell mkdir -p \"$MNML_DATA_ROOT/integrations\" && touch \"$MNML_DATA_ROOT/integrations/left-behind\"\n");
+    defer t.allocator.free(installs);
+    var o1 = runFile(t.allocator, t.io, sf.factory(), installs, content_size, opts);
+    try expectPassed(&o1);
+    // The second asserts a clean panel. Sharing a root, it would find
+    // the first file's leftovers and fail.
+    const clean = try env.script("d2.test", "shell test ! -e \"$MNML_DATA_ROOT/integrations/left-behind\"\n");
+    defer t.allocator.free(clean);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), clean, content_size, opts);
+    try expectPassed(&o2);
+    // Both directories lived under the run's one root and were removed.
+    var dir = try Io.Dir.cwd().openDir(t.io, env.data_root, .{ .iterate = true });
+    defer dir.close(t.io);
+    var it = dir.iterate();
+    try t.expect((try it.next(t.io)) == null);
+    // `# shared-data-root` opts back in: the file sees the run's root,
+    // where the same `shell` line left nothing, so the marker it makes
+    // there is still there for the next shared-root file.
+    const shared_a = try env.script("d3.test", "# shared-data-root\nshell touch \"$MNML_DATA_ROOT/shared-marker\"\n");
+    defer t.allocator.free(shared_a);
+    var o3 = runFile(t.allocator, t.io, sf.factory(), shared_a, content_size, opts);
+    try expectPassed(&o3);
+    const shared_b = try env.script("d4.test", "# shared-data-root\nshell test -e \"$MNML_DATA_ROOT/shared-marker\"\n");
+    defer t.allocator.free(shared_b);
+    var o4 = runFile(t.allocator, t.io, sf.factory(), shared_b, content_size, opts);
+    try expectPassed(&o4);
 }
 
 test "parse errors and unreadable files are outcomes, never panics" {
