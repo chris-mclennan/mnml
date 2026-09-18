@@ -1151,6 +1151,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 try b.act("Revert commit", .revert, br.idx, false);
                 try b.act(try b.fmt("Rename {s}\u{2026}", .{name}), .rename, br.idx, true);
                 try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
+                try b.act("Explain branch changes (AI)", .explain_branch, br.idx, true);
                 try b.copies(br.idx);
                 try b.tags(br.idx);
                 break :blk try b.fmt("\u{25CF} {s}", .{name});
@@ -1172,6 +1173,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
             try b.act(try b.fmt("Force checkout {s}\u{2026}", .{name}), .checkout_force, br.idx, false);
             try b.act(try b.fmt("Diff against {s}", .{head}), .diff_current, br.idx, false);
+            try b.act("Explain branch changes (AI)", .explain_branch, br.idx, false);
             try b.copies(br.idx);
             try b.tags(br.idx);
             break :blk name;
@@ -1190,6 +1192,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Revert commit", .revert, m.idx, false);
             try b.act(try b.fmt("Delete {s}\u{2026}", .{m.name}), .delete_remote, m.idx, true);
             try b.act(try b.fmt("Diff against {s}", .{head}), .diff_current, m.idx, false);
+            try b.act("Explain branch changes (AI)", .explain_branch, m.idx, false);
             try b.copies(m.idx);
             try b.tags(m.idx);
             break :blk m.name;
@@ -1400,6 +1403,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 try app.clipboard.setYank(link, false);
                 app.toast("copied {s}", .{link});
             },
+            .explain_branch => break :blk git.explainBranch(app, name),
             .rename => break :blk git.branchRename(app, name),
             .fast_forward => break :blk git.fastForward(app, name),
             .set_upstream => break :blk git.setUpstream(app, name),
@@ -2243,7 +2247,7 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try expectMenu(app, 0, &.{ "Fold", "Refresh" });
     try testing.expectEqualStrings("LOCAL", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Interactive rebase main onto feature\u{2026}", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Interactive rebase main onto feature\u{2026}", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("feature", app.overlay.menu.title);
     // The Reset row opens to the right: soft / mixed / hard, each an
     // act on feature; the row itself runs nothing.
@@ -2254,12 +2258,12 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try testing.expectEqual(command.GitPaletteWhat.reset_hard, reset_row.submenu[2].action.git_palette.what);
     try testing.expectEqual(@as(u32, 1), reset_row.submenu[2].action.git_palette.idx);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 2, &.{ "Pull (fast-forward if possible)", "Push", "Push --force-with-lease\u{2026}", "Set upstream\u{2026}", "Open worktree from main\u{2026}", "Create branch here\u{2026}", "Revert commit", "Rename main\u{2026}", "Delete on the remote\u{2026}", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 2, &.{ "Pull (fast-forward if possible)", "Push", "Push --force-with-lease\u{2026}", "Set upstream\u{2026}", "Open worktree from main\u{2026}", "Create branch here\u{2026}", "Revert commit", "Rename main\u{2026}", "Delete on the remote\u{2026}", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("\u{25CF} main", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
     try expectMenu(app, 5, &.{ "Fetch", "Copy URL" });
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 6, &.{ "Merge origin/feature into main", "Rebase main onto origin/feature", "Checkout origin/feature", "Create worktree from origin/feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Delete origin/feature\u{2026}", "Diff against main", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 6, &.{ "Merge origin/feature into main", "Rebase main onto origin/feature", "Checkout origin/feature", "Create worktree from origin/feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Delete origin/feature\u{2026}", "Diff against main", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try app.handle(.{ .key = Key.named(.esc) });
     // The main tree (the workspace, on show) and the locked linked tree:
     // the same five rows.

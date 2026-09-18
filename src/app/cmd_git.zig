@@ -115,6 +115,7 @@ pub const table = .{
     .@"git.op_skip" = &opSkip,
     .@"git.rebase_plan" = &rebasePlan,
     .@"git.rebase_interactive_onto" = &rebaseInteractiveOnto,
+    .@"git.explain_branch" = &explainBranch,
     .@"git.fixup" = &fixup,
     .@"git.squash" = &squash,
     .@"git.drop" = &drop,
@@ -774,6 +775,13 @@ fn rebaseInteractiveOnto(app: *App) CommandError!void {
     }
     const c = g.selected() orelse return app.diag.fail(arena(app), "rebase: select a commit, or a branch row in the branches panel", .{});
     try git.openPlanOnto(app, g, c.hash);
+}
+
+/// `git.explain_branch`: the branches panel's row when the panel has
+/// the focus, else the checked-out branch.
+fn explainBranch(app: *App) CommandError!void {
+    _ = try git.requireRepo(app);
+    try git.explainBranch(app, try verbBranch(app, "explain"));
 }
 
 fn fixup(app: *App) CommandError!void {

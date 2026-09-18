@@ -31,6 +31,7 @@ const parse = @import("../git/parse.zig");
 const sequence_editor = @import("../git/sequence_editor.zig");
 const remote_mod = @import("../git/remote.zig");
 const ai_app = @import("ai.zig");
+const api = @import("../ai/api_client.zig");
 const cmd_app = @import("cmd_app.zig");
 const builtin = @import("builtin");
 const Rect = @import("../ui/rect.zig");
@@ -1007,6 +1008,57 @@ pub fn askAi(app: *App, what: client.AiContext, product: ai_app.Product) Command
     app.toast("{s}: reading the {s}…", .{ if (product == .claude) "claude" else "codex", if (what == .staged) "staged diff" else "HEAD patch" });
 }
 
+/// `git.explain_branch` (git-menus): the commits a branch has that its
+/// base does not, summarised by the AI into a read-only pane titled
+/// `explain: <branch>`. The base is the checked-out branch, or — on the
+/// checked-out branch itself — its upstream. The git runs on the
+/// worker; the answer streams into the pane, so neither blocks a frame.
+pub fn explainBranch(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    const repo = try requireRepo(app);
+    const head = app.git.branchLabel() orelse "";
+    var base: []const u8 = "";
+    if (head.len > 0 and !std.mem.eql(u8, name, head)) {
+        base = head;
+    } else if (railBranch(app, name)) |b| {
+        base = b.upstream;
+    }
+    if (base.len == 0) return app.diag.fail(arena, "explain {s}: it is the checked-out branch and has no upstream \u{2014} nothing to compare it against", .{name});
+    // Fail on a route that cannot run before any git does.
+    switch (ai_app.route(app, .claude)) {
+        .off => return app.diag.fail(arena, "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+        .api => if (app.env.get(api.env_key) == null) return app.diag.fail(arena, "AI: ${s} not set (the API backend needs it)", .{api.env_key}),
+        .cli => {},
+    }
+    const branch = try gpa.dupe(u8, name);
+    errdefer gpa.free(branch);
+    const b = try gpa.dupe(u8, base);
+    errdefer gpa.free(b);
+    try submit(app, repo, .{ .branch_explain = .{ .branch = branch, .base = b } });
+    app.toast("explain {s}: reading {s}..{s}\u{2026}", .{ name, base, name });
+}
+
+const explain_log_cap: usize = 24_000;
+
+/// The worker read the range: the prompt goes to the AI, whose pane is
+/// the answer.
+fn branchExplainReady(app: *App, branch: []const u8, base: []const u8, text: []const u8) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) {
+        app.toast("explain {s}: nothing {s} does not already have", .{ branch, base });
+        return;
+    }
+    const cut = text[0..@min(text.len, explain_log_cap)];
+    const tail: []const u8 = if (text.len > explain_log_cap) "\n\u{2026}(log truncated)\u{2026}" else "";
+    const prompt = try std.fmt.allocPrint(arena, "Summarise what the branch `{s}` changes relative to `{s}`, for a reviewer who has not read the commits. Lead with one sentence saying what the branch is for. Then the themes of the work, grouped, largest first, each naming the files it touches. End with anything risky or surprising. No preamble, no code fences.\n\n```\n{s}{s}\n```", .{ branch, base, cut, tail });
+    const title = try std.fmt.allocPrint(arena, "explain: {s}", .{branch});
+    _ = ai_app.askProduct(app, .claude, title, prompt, .git, null) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        runToast(app, err);
+    };
+}
+
 const ai_diff_cap: usize = 24_000;
 
 fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: []const u8, message: []const u8) Allocator.Error!void {
@@ -1363,6 +1415,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             app.toast("{s} at {s} (a scratch copy)", .{ ft.path, ft.rev[0..@min(7, ft.rev.len)] });
         },
         .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
+        .branch_explain => |e| try branchExplainReady(app, e.branch, e.base, e.text),
         .conflict_text => |c| try conflicts.aiContextReady(app, c.path, c.base, c.ours, c.theirs),
         .rail => |rail| {
             const active = st.activeRepo();
@@ -5814,6 +5867,31 @@ test "openPlanOnto: a branch row's interactive rebase plans everything HEAD has 
     try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "first-parent") != null);
     f.app.diag.clear();
     try testing.expect(g.plan == null);
+}
+
+test "explainBranch: the base is the checked-out branch, or its upstream on the checked-out branch itself; with neither it refuses by name, and an empty range says so instead of asking the model" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.sh(&.{ "branch", "feature" });
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+
+    // The checked-out branch with no upstream: nothing to compare against.
+    try testing.expectError(error.Failed, explainBranch(&f.app, "main"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "no upstream") != null);
+    f.app.diag.clear();
+
+    // A range the worker found empty: said, not sent to the model — no
+    // AI pane opens.
+    const before = f.app.panes.count();
+    try branchExplainReady(&f.app, "feature", "main", "");
+    try testing.expect(std.mem.indexOf(u8, f.app.lastToast().?, "nothing main does not already have") != null);
+    try testing.expectEqual(before, f.app.panes.count());
 }
 
 test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {

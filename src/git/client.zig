@@ -220,6 +220,10 @@ pub const Job = union(enum) {
     commit_detail: []u8,
     /// The text an AI commit-message prompt is built from.
     ai_context: AiContext,
+    /// // changed (git-menus): the text *Explain branch changes* builds
+    /// its prompt from — `log --stat base..branch`, capped by the
+    /// worker so a long-lived branch cannot flood the model.
+    branch_explain: struct { branch: []u8, base: []u8 },
     /// The branch rail: branches with tracking counts, worktrees with
     /// their lock and dirty state, remotes with their forge, stashes,
     /// tags, and open PRs through `gh` when the UI found it on PATH.
@@ -336,6 +340,10 @@ pub const Job = union(enum) {
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
+            .branch_explain => |e| {
+                gpa.free(e.branch);
+                gpa.free(e.base);
+            },
             .rail => {},
             .op_continue, .op_abort, .op_skip => {},
             .rebase_plan => |p| {
@@ -395,6 +403,9 @@ pub const Result = struct {
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
+        /// `log --stat base..branch`; `text` is empty when the branch has
+        /// nothing the base does not.
+        branch_explain: struct { branch: []const u8, base: []const u8, text: []const u8 },
         /// A conflicted file's stages; a side git does not have (an
         /// add/add conflict has no base) is empty.
         conflict_text: struct { path: []const u8, base: []const u8, ours: []const u8, theirs: []const u8 },
@@ -964,6 +975,15 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 const m = try git(repo, io, arena, &.{ "log", "-1", "--format=%B" }, null);
                 r.payload = .{ .ai_context = .{ .what = what, .diff = if (d.ok) d.stdout else "", .message = if (m.ok) trimmed(m.stdout) else "" } };
             },
+        },
+        .branch_explain => |e| {
+            const range = try std.fmt.allocPrint(arena, "{s}..{s}", .{ e.base, e.branch });
+            const out = try git(repo, io, arena, &.{ "log", "--no-color", "--stat", "--date=short", "--format=%h %ad %an%n%s%n%b", "-n", "60", range }, null);
+            r.payload = .{ .branch_explain = .{
+                .branch = try arena.dupe(u8, e.branch),
+                .base = try arena.dupe(u8, e.base),
+                .text = if (out.ok) trimmed(out.stdout) else "",
+            } };
         },
         .amend => |msg| {
             const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);

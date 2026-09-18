@@ -1,0 +1,41 @@
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
+# `git.explain_branch` — the branches panel's *Explain branch changes
+# (AI)*. The worker reads `log --stat main..feature` off the UI thread;
+# the commits it finds become the prompt of a read-only pane titled
+# `explain: feature`. `tools/shims/ai/claude` stands in for the CLI, so
+# the pane is about the chrome, never about a transcript.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git checkout -q -b feature
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "add the widget"
+shell git checkout -q main
+command view.activity_git
+wait 1200
+expect screen contains "󰘬 feature"
+# LOCAL: feature at row 8, main (checked out) at row 9.
+rightclick 6 8
+expect screen contains "Explain branch changes (AI)"
+key esc
+# The checked-out branch with no upstream has nothing to compare
+# against, and says so rather than opening a pane.
+rightclick 6 9
+expect screen contains "Explain branch changes (AI)"
+key esc
+command git.explain_branch
+wait 400
+expect screen contains "explain main: it is the checked-out branch and has no"
+# The feature row: the range is read on the worker, then the pane opens.
+click 6 8
+key down
+command git.explain_branch
+wait 600
+expect screen contains "explain feature: reading main..feature"
+wait 2500
+expect screen contains "explain: feature"
