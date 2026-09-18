@@ -18,6 +18,7 @@ const key_mod = @import("../core/key.zig");
 const config = @import("../config/root.zig");
 const ipc = @import("../ipc/root.zig");
 const screen_mod = @import("../ipc/screen.zig");
+const integrations = @import("../app/integrations.zig");
 const build_options = @import("build_options");
 const tasks = @import("../app/tasks.zig");
 const clipboard_os = @import("../core/clipboard_os.zig");
@@ -104,6 +105,16 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         const abs = try app.absPath(f);
         _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ f, @errorName(err) });
     }
+    // The manifests' chips, their commands and the statusline poller all
+    // come out of this scan, and it used to wait until someone opened
+    // the INTEGRATIONS section — so a chip whose whole job is to sit on
+    // the statusline was blank until you went looking for it, and the
+    // poller that keeps its count live did not exist yet. A directory of
+    // small `.zon` files is cheap; being wrong at rest is not.
+    //
+    // Only here, in the real terminal: a headless run and the corpus
+    // scan when they ask to, and their counts are written against that.
+    integrations.refresh(&app) catch |err| app.toast("integrations: {s}", .{@errorName(err)});
     app.hooks.emit(&app, .startup);
     // Once, until Enter says the setup is done (after the trust dialog).
     try @import("../app/first_launch.zig").showIfPending(&app);
