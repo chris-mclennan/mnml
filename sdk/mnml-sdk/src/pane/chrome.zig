@@ -270,6 +270,50 @@ pub fn Painter(comptime Target: type) type {
             _ = p.putFit(x, rect.y, rect.right() -| x, text, if (bad) p.th.bad() else p.th.dimText());
         }
 
+        /// A named confirm: a framed box with a heading, its lines, and
+        /// two chips. The heading and the lines are the caller's — a
+        /// confirm that says "are you sure?" and nothing else is a
+        /// confirm nobody reads, so the toolkit takes the words rather
+        /// than inventing them.
+        ///
+        /// The whole box is a hit under `body_target`, so a click
+        /// outside the chips does not fall through to the row beneath.
+        pub fn confirmBox(
+            p: *Self,
+            box: Rect,
+            heading: []const u8,
+            lines: []const []const u8,
+            ok_label: []const u8,
+            ok_target: Target,
+            cancel_label: []const u8,
+            cancel_target: Target,
+            body_target: Target,
+        ) Allocator.Error!void {
+            if (box.w < 8 or box.h < 4) return;
+            p.fill(box, p.th.overlayBg());
+            p.frameBox(box, p.th.overlayBorder());
+            _ = p.putFit(box.x + 2, box.y, box.w -| 4, heading, p.th.bright());
+            var y = box.y + 2;
+            for (lines) |line| {
+                if (y >= box.bottom() - 2) break;
+                _ = p.putFit(box.x + 2, y, box.w -| 4, line, p.th.text());
+                y += 1;
+            }
+            // The two chips, right-anchored on the last inner row, the
+            // affirmative one last so it sits where the eye ends up.
+            const row = box.bottom() - 2;
+            const okw = width(ok_label);
+            const cw = width(cancel_label);
+            if (box.w < okw + cw + 6) return;
+            const ok_x = box.right() - 2 - okw;
+            const cancel_x = ok_x - 1 - cw;
+            _ = p.put(cancel_x, row, cw, cancel_label, p.th.chip());
+            try p.mark(.{ .x = cancel_x, .y = row, .w = cw, .h = 1 }, cancel_target);
+            _ = p.put(ok_x, row, okw, ok_label, p.th.chipActive());
+            try p.mark(.{ .x = ok_x, .y = row, .w = okw, .h = 1 }, ok_target);
+            try p.mark(box, body_target);
+        }
+
         // ─── the scrollbar ───────────────────────────────────────────
 
         /// A thumb sized to the window over a dim track. The whole bar

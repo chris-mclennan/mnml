@@ -14,6 +14,7 @@ const frame_mod = @import("../frame.zig");
 const chrome = @import("chrome.zig");
 const action_mod = @import("action.zig");
 const build_mod = @import("build.zig");
+const merge_mod = @import("merge.zig");
 const hit = @import("hit.zig");
 const theme_mod = @import("theme.zig");
 
@@ -35,6 +36,10 @@ const TrackerTarget = union(enum) {
     hint: u8,
     build: u32,
     action: struct { row: u32, button: u8 },
+    merge: u32,
+    confirm_ok,
+    confirm_cancel,
+    confirm_body,
 };
 
 /// A forge pane's vocabulary — the Bitbucket pane's shape. A different
@@ -54,6 +59,10 @@ const ForgeTarget = union(enum) {
     sheet,
     build: struct { repo: usize, run: usize },
     action: struct { key: usize, which: u8 },
+    merge: struct { repo: usize, idx: usize },
+    confirm_ok,
+    confirm_cancel,
+    confirm_body,
 };
 
 fn Rig(comptime Target: type) type {
@@ -117,7 +126,7 @@ fn demoTheme() Theme {
 }
 
 const cols: u16 = 60;
-const rows: u16 = 16;
+const rows: u16 = 24;
 
 /// The clock every build line's age is measured against, so the two
 /// sides say the same thing rather than the same *shape*.
@@ -129,6 +138,63 @@ const demo_run: build_mod.Run = .{
     .created_on = "2026-09-15T15:20:00+00:00",
     .number = 412,
 };
+
+/// Ready, and blocked on the first condition a reader should fix. Both
+/// are painted, because "dim" only means something next to the one
+/// that is not.
+const ready_pr: merge_mod.Readiness = .{
+    .approvals = 2,
+    .required = 2,
+    .conflicts = false,
+    .build_green = true,
+    .checked = true,
+};
+const blocked_pr: merge_mod.Readiness = .{
+    .approvals = 1,
+    .required = 2,
+    .conflicts = false,
+    .build_green = true,
+    .checked = true,
+};
+
+/// A ready `[ Merge ]` takes its hit; a blocked one paints and does
+/// not, so a stray click cannot merge anything.
+fn paintMergeRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, ready_target: Target, blocked_target: Target) void {
+    var buf: [16]u8 = undefined;
+    const cap = merge_mod.caption(&buf);
+    const w = chrome.width(cap);
+    _ = p.put(1, y, w, cap, merge_mod.styleOf(p.th, ready_pr));
+    if (merge_mod.isPressable(ready_pr)) p.mark(.{ .x = 1, .y = y, .w = w, .h = 1 }, ready_target) catch {};
+    _ = p.put(1 + w + 1, y, w, cap, merge_mod.styleOf(p.th, blocked_pr));
+    if (merge_mod.isPressable(blocked_pr)) p.mark(.{ .x = 1 + w + 1, .y = y, .w = w, .h = 1 }, blocked_target) catch {};
+    // The reason the dim one is dim, where a hover puts it.
+    var rbuf: [160]u8 = undefined;
+    _ = p.putFit(1 + 2 * (w + 1), y, cols -| (1 + 2 * (w + 1)), blocked_pr.hoverText(&rbuf), p.th.mutedText());
+}
+
+const demo_confirm: merge_mod.Confirm = .{
+    .title = "Fix the login redirect",
+    .source = "chris/fix-login",
+    .target = "main",
+    .strategy = .squash,
+    .url = "https://bitbucket.org/acme/api/pull-requests/1234",
+};
+
+fn paintConfirm(comptime Target: type, p: *chrome.Painter(Target), ok: Target, cancel: Target, body: Target) !void {
+    var hbuf: [96]u8 = undefined;
+    var bbuf: [96]u8 = undefined;
+    var sbuf: [96]u8 = undefined;
+    try p.confirmBox(
+        .{ .x = 2, .y = 16, .w = cols - 4, .h = 7 },
+        demo_confirm.heading(&hbuf),
+        &.{ demo_confirm.title, demo_confirm.branchLine(&bbuf), demo_confirm.strategyLine(&sbuf) },
+        " Merge ",
+        ok,
+        " Cancel ",
+        cancel,
+        body,
+    );
+}
 
 /// The five states an action button wears, painted side by side so a
 /// change to any one of them shows up as a differing cell rather than
@@ -175,6 +241,8 @@ fn paintTracker(r: *Rig(TrackerTarget)) !void {
         .{ .action = .{ .row = 0, .button = 3 } },
         .{ .action = .{ .row = 0, .button = 4 } },
     });
+    paintMergeRow(TrackerTarget, &p, 14, .{ .merge = 0 }, .{ .merge = 1 });
+    try paintConfirm(TrackerTarget, &p, .confirm_ok, .confirm_cancel, .confirm_body);
     try p.hintRow(rows - 1, "ENG-2", &.{
         .{ .key = "d", .title = "detail", .target = .{ .hint = 0 } },
         .{ .key = "q", .title = "quit", .target = .{ .hint = 1 } },
@@ -208,6 +276,8 @@ fn paintForge(r: *Rig(ForgeTarget)) !void {
         .{ .action = .{ .key = 0, .which = 3 } },
         .{ .action = .{ .key = 0, .which = 4 } },
     });
+    paintMergeRow(ForgeTarget, &p, 14, .{ .merge = .{ .repo = 0, .idx = 0 } }, .{ .merge = .{ .repo = 0, .idx = 1 } });
+    try paintConfirm(ForgeTarget, &p, .confirm_ok, .confirm_cancel, .confirm_body);
     try p.hintRow(rows - 1, "ENG-2", &.{
         .{ .key = "d", .title = "detail", .target = .{ .hint = .{ .action = 0 } } },
         .{ .key = "q", .title = "quit", .target = .{ .hint = .{ .action = 1 } } },
@@ -277,6 +347,15 @@ test "the elements the panes share are actually on the screen, so the comparison
     try testing.expect(std.mem.indexOf(u8, scr, "[ \u{23f8} ]") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "[ view ]") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "[ \u{2717} ]") != null);
+    // The Merge button, and the reason the dim one is dim.
+    try testing.expect(std.mem.indexOf(u8, scr, "[ Merge ]") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "Merge: 1 of 2 approvals") != null);
+    // The confirm names the pull request rather than asking "are you
+    // sure?" about nothing in particular.
+    try testing.expect(std.mem.indexOf(u8, scr, "Merge acme/api/pull-requests/1234") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "chris/fix-login \u{2192} main") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "strategy: squash") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "Cancel") != null);
     // And every one of them answers a click.
     try testing.expect(r.hits.rectOf(.filter) != null);
     try testing.expect(r.hits.rectOf(.{ .show_more = 1 }) != null);
@@ -286,4 +365,10 @@ test "the elements the panes share are actually on the screen, so the comparison
     try testing.expect(r.hits.rectOf(.{ .tab = 1 }) != null);
     try testing.expect(r.hits.rectOf(.{ .build = 0 }) != null);
     try testing.expect(r.hits.rectOf(.{ .action = .{ .row = 0, .button = 2 } }) != null);
+    try testing.expect(r.hits.rectOf(.confirm_ok) != null);
+    try testing.expect(r.hits.rectOf(.confirm_cancel) != null);
+    // The ready Merge answers a click; the blocked one is not there at
+    // all, which is what keeps a stray click from merging anything.
+    try testing.expect(r.hits.rectOf(.{ .merge = 0 }) != null);
+    try testing.expect(r.hits.rectOf(.{ .merge = 1 }) == null);
 }
