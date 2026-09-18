@@ -324,12 +324,12 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         const row = v.rows[idx];
         const selected = idx == ts.selected;
         const h = row.height();
-        const ground = if (selected) th.cursorRow() else th.text();
-        p.fill(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, ground);
-        if (selected) _ = p.text(list.x, y, 1, marker, th.marker());
+        // The toolkit's row ground: the fill, the app-colour stripe in
+        // column 0 (bright on the cursor's row) and the row's own hit,
+        // in one statement — the same one the Jira tree paints.
+        try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
         const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
         paintSpans(p, list.x + 2, y, text_w -| 2, spans);
-        p.app.hits.add(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, .{ .row = idx });
         if (h == 2 and y + 1 < list.y + list.h) {
             const sub = try view.subLineSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected });
             paintSpans(p, list.x + 2, y + 1, text_w -| 2, sub);
