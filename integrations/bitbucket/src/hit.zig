@@ -25,12 +25,24 @@ pub const Chip = enum {
     filter,
 };
 
+pub const PrButton = enum { open, merge };
+
 pub const Target = union(enum) {
     /// A tab on the strip.
     tab: usize,
     chip: Chip,
     /// A row of the list, by its index in this frame's `VisibleRow`s.
     row: usize,
+    /// A chip on a pull-request row. A DIM `[ Merge ]` registers no
+    /// target at all, so a stray click there cannot merge anything —
+    /// but it does register `merge_blocked`, which is what lets a
+    /// hover say why without letting a click do anything.
+    pr_button: struct { row: usize, which: PrButton },
+    merge_blocked: usize,
+    /// The merge confirm's two chips and its body.
+    confirm_ok,
+    confirm_cancel,
+    confirm_body,
     /// A key label on the hint row.
     hint: keymap.Action,
     /// A row of the open menu.

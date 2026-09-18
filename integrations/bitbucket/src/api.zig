@@ -338,6 +338,13 @@ pub const Client = struct {
         return self.prPath(gpa, .GET, workspace, repo, id, "/comments?pagelen=50", null, .read);
     }
 
+    /// `GET …/diffstat` — the per-file summary. Its STATUS is what
+    /// readiness reads: Bitbucket answers a pull request that no longer
+    /// merges cleanly with a 555, so a 2xx here is "it still applies".
+    pub fn prDiffstat(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
+        return self.prPath(gpa, .GET, workspace, repo, id, "/diffstat?pagelen=50", null, .read);
+    }
+
     /// `POST …/approve` — the one write. `DELETE` withdraws it.
     pub fn approve(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
         return self.prPath(gpa, .POST, workspace, repo, id, "/approve", "", .write);

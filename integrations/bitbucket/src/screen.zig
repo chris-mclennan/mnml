@@ -121,6 +121,7 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     try paintHintRow(arena, &p, hint_y);
     if (app.mode == .menu) try paintMenu(arena, &p);
     if (app.mode == .help) try paintSheet(arena, &p);
+    if (app.mode == .confirm) try paintMergeConfirm(&p);
 }
 
 // ─── the header ──────────────────────────────────────────────────────────
@@ -348,10 +349,93 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // in one statement — the same one the Jira tree paints.
         try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
         const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected, .ascii = !p.nerd });
-        paintSpans(p, list.x + 2, y, text_w -| 2, spans);
+        // The buttons take their cells off the row's right end BEFORE
+        // the words are painted, so a title is shortened rather than
+        // painted over.
+        const bw = rowButtonsWidth(p, text_w, row, selected);
+        paintSpans(p, list.x + 2, y, text_w -| 2 -| bw, spans);
+        if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
         y += h;
     }
     if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
+}
+
+/// `[ Open ] [ Merge ]` at the right end of a pull-request row.
+///
+/// `[ Merge ]` is dim and registers NO `pr_button` target until the
+/// pull request may actually merge — only `merge_blocked`, which a
+/// hover reads for its reason and a click answers with the same
+/// sentence. A button that is always pressable teaches nothing.
+const open_caption = "[ Open ]";
+
+/// What one row's buttons will take, or 0 when the row has none.
+///
+/// Only the row under the CURSOR carries them. This table is dense —
+/// at eighty or a hundred and twenty columns the title is the column
+/// that would pay for them — and a reader reaches any row's buttons by
+/// moving onto it, which is the same key that fetches its readiness.
+fn rowButtonsWidth(p: *Painter, w: u16, row: tabs.VisibleRow, selected: bool) u16 {
+    const app = p.app;
+    if (!selected or row != .pr) return 0;
+    const repos = switch (app.activeTab().data) {
+        .repo_pr_tree => |r| r,
+        else => return 0,
+    };
+    if (row.pr.repo >= repos.len or row.pr.idx >= repos[row.pr.repo].prs.len) return 0;
+    const pr = repos[row.pr.repo].prs[row.pr.idx];
+    var total = Painter.width(open_caption);
+    if (pr.isOpen()) {
+        var kbuf: [256]u8 = undefined;
+        const row_key = app_mod.App.prRowKey(&kbuf, repos[row.pr.repo].slug, pr.id);
+        var abuf: [32]u8 = undefined;
+        var mbuf: [16]u8 = undefined;
+        const state = app.actions.state(row_key, "merge");
+        const shown = if (state == .idle) sdk.pane.merge.caption(&mbuf) else sdk.pane.action.caption(&abuf, state, sdk.pane.merge.label, app.spin, !p.nerd);
+        total += 1 + Painter.width(shown);
+    }
+    // Below this the row keeps its words instead.
+    if (w < total + 30) return 0;
+    return total + 1;
+}
+
+fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, row: tabs.VisibleRow) Allocator.Error!void {
+    const app = p.app;
+    const repos = switch (app.activeTab().data) {
+        .repo_pr_tree => |r| r,
+        else => return,
+    };
+    const slug = repos[row.pr.repo].slug;
+    const pr = repos[row.pr.repo].prs[row.pr.idx];
+    var kbuf: [256]u8 = undefined;
+    const row_key = app_mod.App.prRowKey(&kbuf, slug, pr.id);
+
+    var x = x0 + w -| bw + 1;
+    const ow = Painter.width(open_caption);
+    _ = p.text(x, y, ow, open_caption, p.th.chip());
+    p.target(x, y, ow, .{ .pr_button = .{ .row = idx, .which = .open } });
+    x += ow + 1;
+    // A merged or declined pull request has nothing to merge.
+    if (!pr.isOpen()) return;
+    const state = app.actions.state(row_key, "merge");
+    var abuf: [32]u8 = undefined;
+    var mbuf: [16]u8 = undefined;
+    const shown = if (state == .idle) sdk.pane.merge.caption(&mbuf) else sdk.pane.action.caption(&abuf, state, sdk.pane.merge.label, app.spin, !p.nerd);
+    const mw = Painter.width(shown);
+    if (state != .idle) {
+        // Once a merge session exists the button follows IT: the
+        // spinner, the `⏸`, the `[ view ]`, the `✗` — readiness has
+        // had its say.
+        _ = p.text(x, y, mw, shown, sdk.pane.action.styleOf(p.th, state));
+        p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
+        return;
+    }
+    const r = app.readinessOf(slug, pr);
+    _ = p.text(x, y, mw, shown, sdk.pane.merge.styleOf(p.th, r));
+    if (sdk.pane.merge.isPressable(r)) {
+        p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
+    } else {
+        p.target(x, y, mw, .{ .merge_blocked = idx });
+    }
 }
 
 fn cellsBefore(rows: []const tabs.VisibleRow, first: usize) usize {
@@ -385,6 +469,38 @@ fn paintSpans(p: *Painter, x0: u16, y: u16, max_w: u16, spans: []const view.Span
             x += w;
         }
     }
+}
+
+/// The merge confirm: what it is about, in its own words.
+fn paintMergeConfirm(p: *Painter) Allocator.Error!void {
+    const c = p.app.merge_confirm orelse return;
+    const w: u16 = @min(p.f.cols -| 6, 72);
+    const h: u16 = 8;
+    if (p.f.cols < 24 or p.f.rows < h + 2) return;
+    const box: sdk.pane.Rect = .{
+        .x = (p.f.cols -| w) / 2,
+        .y = (p.f.rows -| h) / 2,
+        .w = w,
+        .h = h,
+    };
+    var hbuf: [160]u8 = undefined;
+    var bbuf: [160]u8 = undefined;
+    var sbuf: [160]u8 = undefined;
+    try p.c.confirmBox(
+        box,
+        c.confirm.heading(&hbuf),
+        &.{
+            c.confirm.title,
+            c.confirm.branchLine(&bbuf),
+            c.confirm.strategyLine(&sbuf),
+            "merged by a Claude Code session, not by this pane",
+        },
+        " Merge ",
+        .confirm_ok,
+        " Cancel ",
+        .confirm_cancel,
+        .confirm_body,
+    );
 }
 
 // ─── the detail ──────────────────────────────────────────────────────────
@@ -439,6 +555,7 @@ fn modeHint(app: *App) ?[]const u8 {
         .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
         .menu => "↑↓ / jk move · ⏎ run · esc close",
         .help => "j k scroll · any other key closes",
+        .confirm => "⏎ merge through Claude Code · ←→ strategy · esc cancel",
     };
 }
 
@@ -455,6 +572,12 @@ fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         return;
     }
     const rows = (try app.visible(arena)).rows;
+    // A dim `[ Merge ]` owes the reader a reason, and the hint row is
+    // where it goes: the pointer is already there.
+    if (app.hover_note.len > 0) {
+        _ = p.text(1, y, p.f.cols -| 2, app.hover_note, th.warn());
+        return;
+    }
     const ctx = app.keyContext(rows);
     const hs = try view.hints(arena, ctx);
     // The status on the left takes what the hints leave.

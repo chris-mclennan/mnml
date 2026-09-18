@@ -125,6 +125,12 @@ pub const Fixture = struct {
     draft: bool = false,
     /// `updated_on` is this many hours before `State.now_secs`.
     age_hours: u32 = 3,
+    /// Tasks still open on the pull request — Bitbucket's `task_count`
+    /// counts the UNRESOLVED ones, which is what readiness reads.
+    open_tasks: u32 = 0,
+    /// It no longer merges cleanly into its target. Bitbucket says so
+    /// by answering the diffstat with a 555.
+    conflicts: bool = false,
     /// The merge commit's hash on a MERGED fixture.
     merge_sha: []const u8 = "",
     reviewers: []const Reviewer,
@@ -168,6 +174,7 @@ pub const fixtures = [_]Fixture{
         .author_name = me_display_name,
         .source_branch = "chris/fix-login",
         .source_sha = "abc1234def5678",
+        .open_tasks = 1,
         .description = "Fixes ENG-4210. The redirect dropped the query string when the session had expired.",
         .reviewers = &.{
             .{ .id = "acct-dana", .name = "Dana R", .vote = .approved },
@@ -242,6 +249,7 @@ pub const fixtures = [_]Fixture{
         .author_name = me_display_name,
         .source_branch = "chris/empty-state",
         .source_sha = "ddd4444eee5555",
+        .conflicts = true,
         .description = "Part of ENG-4300.",
         .draft = true,
         .reviewers = &.{},
@@ -693,7 +701,7 @@ fn writePr(w: *std.Io.Writer, f: *const Fixture, st: *const State, shape: Shape)
     }) catch return error.OutOfMemory;
     writeIso(w, st.now_secs - @as(i64, f.age_hours) * 3600) catch return error.OutOfMemory;
     w.writeAll("\"") catch return error.OutOfMemory;
-    w.print(",\"comment_count\":{d},\"task_count\":0", .{f.activity.len}) catch return error.OutOfMemory;
+    w.print(",\"comment_count\":{d},\"task_count\":{d}", .{ f.activity.len, f.open_tasks }) catch return error.OutOfMemory;
     w.print(",\"author\":{{\"display_name\":\"{s}\",\"account_id\":\"{s}\"}}", .{ f.author_name, f.author_id }) catch return error.OutOfMemory;
     w.print(",\"source\":{{\"branch\":{{\"name\":\"{s}\"}},\"commit\":{{\"hash\":\"{s}\"}},\"repository\":{{\"full_name\":\"{s}/{s}\"}}}}", .{
         f.source_branch, f.source_sha, workspace, f.repo,
@@ -840,6 +848,10 @@ fn comments(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Rep
 }
 
 fn diffstat(arena: Allocator, f: *const Fixture) Allocator.Error!Reply {
+    // Bitbucket answers the diffstat of a pull request that no longer
+    // applies with a 555, which is the only machine-readable "this
+    // conflicts" its v2 API offers.
+    if (f.conflicts) return .{ .status = 555, .body = try arena.dupe(u8, "{\"type\":\"error\",\"error\":{\"message\":\"Merge conflict\"}}") };
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
     w.writeAll("{\"values\":[") catch return error.OutOfMemory;

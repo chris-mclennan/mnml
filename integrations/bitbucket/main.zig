@@ -836,8 +836,11 @@ const HostEvent = union(enum) {
     key: []u8,
     paste: []u8,
     click: struct { col: u16, row: u16, button: sdk.wire.Button },
-    /// A move with a button held; a plain hover never reaches the app.
+    /// A move with a button held.
     drag: struct { col: u16, row: u16 },
+    /// A plain move: what a dim button's reason hangs off.
+    hover: struct { col: u16, row: u16 },
+    session_state: struct { key: []u8, state: sdk.wire.SessionState, session_id: []u8, detail: []u8 },
     scroll: struct { col: u16, row: u16, dy: i16 },
     resize: sdk.wire.Geometry,
     focus: bool,
@@ -865,9 +868,14 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
             return;
         };
         const ev: HostEvent = switch (msg) {
-            // The forge pane dispatches nothing, so it watches no
-            // session and is told about none.
-            .hello, .session_state => .other,
+            .hello => .other,
+            // The host's word on the merge session this pane started.
+            .session_state => |ss| .{ .session_state = .{
+                .key = gpa.dupe(u8, ss.key) catch continue,
+                .state = ss.state,
+                .session_id = gpa.dupe(u8, ss.session_id) catch continue,
+                .detail = gpa.dupe(u8, ss.detail) catch continue,
+            } },
             .focus => |f| .{ .focus = f },
             .goodbye => .goodbye,
             .resize => |r| .{ .resize = r.geometry },
@@ -876,7 +884,9 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
                 .paste => |p| .{ .paste = gpa.dupe(u8, p.text) catch continue },
                 .click => |c| .{ .click = .{ .col = c.col, .row = c.row, .button = c.button } },
                 .scroll => |s| .{ .scroll = .{ .col = s.col, .row = s.row, .dy = s.dy } },
-                .hover => |h| if (h.dragging) HostEvent{ .drag = .{ .col = h.col, .row = h.row } } else .other,
+                // A plain move matters now: the pointer resting on a
+                // dim `[ Merge ]` is what makes it say why.
+                .hover => |h| if (h.dragging) HostEvent{ .drag = .{ .col = h.col, .row = h.row } } else HostEvent{ .hover = .{ .col = h.col, .row = h.row } },
             },
         };
         q.putOneUncancelable(io, .{ .host = ev }) catch return;
@@ -1021,6 +1031,13 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 // A drag along the detail panel's scrollbar: the same
                 // jump a press there makes, once per move.
                 .drag => |d| try app.drag(d.col, d.row),
+                .hover => |hv| app.hover(hv.col, hv.row),
+                .session_state => |ss| {
+                    defer gpa.free(ss.key);
+                    defer gpa.free(ss.session_id);
+                    defer gpa.free(ss.detail);
+                    try app.onSessionState(ss.key, ss.state, ss.session_id, ss.detail);
+                },
                 .scroll => |s| try app.wheel(s.col, s.row, s.dy),
                 .resize => |g| {
                     try frame.resize(g.cols, g.rows);
@@ -1028,7 +1045,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                     app.rows = g.rows;
                 },
                 .goodbye => running = false,
-                .focus, .other => {},
+                .focus => |f| app.focused = f,
+                .other => {},
             },
             .result => |r| {
                 app.now_secs = nowSecs(io);
@@ -1070,6 +1088,12 @@ fn dispatchJobs(gpa: Allocator, io: Io, app: *app_mod.App, jobs: *JobQueue) Allo
 /// channel. False when the app asked to quit.
 fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, ipc_opt: *?sdk.Ipc, app: *app_mod.App) bool {
     var alive = true;
+    // The sessions this pane just started and wants told about. They
+    // go out before the effects that started them are freed.
+    for (app.watch_out.items) |w| {
+        mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
+    }
+    app.watch_out.clearRetainingCapacity();
     const taken = app.takeEffects();
     defer app.freeEffects(taken);
     for (taken) |e| switch (e) {
@@ -1085,11 +1109,43 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
             if (os.copy(gpa, io, env, text)) |whynot| mount.toast(.warn, whynot) catch {};
         },
         .segment => if (ipc_opt.*) |*ipc| {
-            if (app.values) |v| publishSegment(ipc, v) catch {};
+            if (app.values) |v| {
+                var arena_state = std.heap.ArenaAllocator.init(gpa);
+                defer arena_state.deinit();
+                // All three chips, the way `--values` publishes them.
+                // Only the first used to move from inside the pane, so
+                // the other two sat at whatever the last poll left.
+                publishSegments(ipc, arena_state.allocator(), v) catch {};
+            }
+        },
+        // The one destructive action either pane offers goes through a
+        // Claude Code session, so it is a `term` line like any other
+        // dispatch — and the pane then watches what it does.
+        .dispatch => |d| {
+            if (ipc_opt.*) |*ipc| {
+                dispatchSession(gpa, ipc, d.prompt) catch {
+                    mount.toast(.warn, "could not write the dispatch") catch {};
+                };
+            } else mount.toast(.warn, "no mnml channel to dispatch a session on") catch {};
+        },
+        .focus_session => |f| if (ipc_opt.*) |*ipc| {
+            ipc.focusSession(.{ .id = f.id, .cwd = f.cwd, .prompt_line = f.prompt_line }) catch {};
+        },
+        .notify => |n| if (ipc_opt.*) |*ipc| {
+            ipc.notify(n.title, n.text, if (n.bad) .@"error" else .info, n.bad) catch {};
         },
         .quit => alive = false,
     };
     return alive;
+}
+
+/// One `term` line: `claude` seeded with the prompt over a heredoc,
+/// the same shape the tracker's dispatch queue writes.
+fn dispatchSession(gpa: Allocator, ipc: *const sdk.Ipc, prompt: []const u8) !void {
+    const shell = try std.fmt.allocPrint(gpa, "claude <<'MNML_EOF'\n{s}\nMNML_EOF", .{prompt});
+    defer gpa.free(shell);
+    const argv = [_][]const u8{ "sh", "-c", shell };
+    try ipc.line(.{ .cmd = "term", .args = &argv });
 }
 
 /// A pane with no config or no token paints the setup screen and

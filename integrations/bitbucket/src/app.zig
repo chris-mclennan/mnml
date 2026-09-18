@@ -40,10 +40,34 @@ pub const Effect = union(enum) {
     copy: []const u8,
     /// The statusline chip: `󰂨 4(2)`, or the reference's `!` / `…`.
     segment: struct { text: []const u8, tooltip: []const u8 },
+    /// Start a Claude Code session with this prompt. The pane never
+    /// merges anything itself; this is how a confirmed merge happens.
+    dispatch: struct { prompt: []const u8, row_key: []const u8, action: []const u8 },
+    /// Bring a session mnml is running to the front.
+    focus_session: struct { id: []const u8, cwd: []const u8, prompt_line: []const u8 },
+    /// A desktop notification: the merge ended while the pane did not
+    /// have the keyboard.
+    notify: struct { title: []const u8, text: []const u8, bad: bool },
     quit,
 };
 
-pub const Mode = enum { list, filter, help, menu };
+pub const Mode = enum { list, filter, help, menu, confirm };
+
+/// What one readiness look found, and the `updated_on` it was true at.
+pub const ReadinessEntry = struct { updated_on: []const u8, readiness: sdk.pane.merge.Readiness };
+
+/// The merge confirm that is up: everything it names, owned.
+pub const MergeConfirm = struct {
+    arena: std.heap.ArenaAllocator,
+    row_key: []const u8,
+    confirm: sdk.pane.merge.Confirm,
+    allowed: []const sdk.pane.merge.Strategy,
+
+    pub fn deinit(c: *MergeConfirm) void {
+        c.arena.deinit();
+        c.* = undefined;
+    }
+};
 
 pub const TabState = struct {
     spec: tabs.TabSpec,
@@ -90,6 +114,9 @@ pub const DetailEntry = struct {
     comments: []const model.Comment,
     error_text: []const u8 = "",
 };
+
+/// One queued `watch_session`, in the wire's own shape.
+pub const WatchRequest = struct { key: []const u8, cwd: []const u8, prompt_line: []const u8 };
 
 pub const PrPipelines = struct {
     arena: std.heap.ArenaAllocator,
@@ -175,6 +202,29 @@ pub const App = struct {
     /// The `awaiting:` chip is on: the PR tabs show only what is
     /// waiting on this account's review.
     awaiting_only: bool = false,
+    /// May each open pull request merge, keyed `slug#id`. Filled for
+    /// the row the cursor lands on, one cached look each.
+    readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
+    /// A readiness look already asked for, so moving the cursor back
+    /// and forth over a row does not ask twice.
+    readiness_in_flight: std.StringHashMapUnmanaged(void) = .empty,
+    /// What every row's `[ Merge ]` says now, keyed by the pull
+    /// request rather than the row.
+    actions: sdk.pane.ActionStore,
+    /// Turns the spinner on every button whose session is running.
+    spin: usize = 0,
+    /// The merge confirm, when one is up.
+    merge_confirm: ?MergeConfirm = null,
+    /// What the pointer is over, when it is worth saying — the reason a
+    /// dim `[ Merge ]` is dim. On the frame arena, so it lasts one pass.
+    hover_note: []const u8 = "",
+    /// The pane has the keyboard. A session that ends while it does not
+    /// is worth a notification.
+    focused: bool = true,
+    /// Sessions this pane started and wants told about, waiting to go
+    /// out over the mount.
+    watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,
+    watch_arena: std.heap.ArenaAllocator,
     /// The last statusline values, for the chip.
     values: ?fetch.ValuesResult = null,
     values_at_secs: i64 = 0,
@@ -198,6 +248,8 @@ pub const App = struct {
             .effect_arena = std.heap.ArenaAllocator.init(gpa),
             .frame_arena = std.heap.ArenaAllocator.init(gpa),
             .hits = hit.HitMap.init(gpa),
+            .actions = sdk.pane.ActionStore.init(gpa),
+            .watch_arena = std.heap.ArenaAllocator.init(gpa),
         };
         errdefer app.deinit();
         for (config.hidden_repos) |h| try app.hidden.append(gpa, try gpa.dupe(u8, h));
@@ -252,6 +304,19 @@ pub const App = struct {
             gpa.destroy(e.value_ptr.*);
         }
         app.pr_pipelines.deinit(gpa);
+        var rit = app.readiness.iterator();
+        while (rit.next()) |e| {
+            gpa.free(e.key_ptr.*);
+            gpa.free(e.value_ptr.updated_on);
+        }
+        app.readiness.deinit(gpa);
+        var fit = app.readiness_in_flight.keyIterator();
+        while (fit.next()) |k| gpa.free(k.*);
+        app.readiness_in_flight.deinit(gpa);
+        if (app.merge_confirm) |*c| c.deinit();
+        app.actions.deinit();
+        app.watch_out.deinit(gpa);
+        app.watch_arena.deinit();
         app.filter.deinit(gpa);
         app.status.deinit(gpa);
         app.effects.deinit(gpa);
@@ -356,9 +421,18 @@ pub const App = struct {
     }
 
     /// Every second from the loop: the auto-refresh and the values
-    /// cadence.
+    /// cadence. Also the one readiness look the row under the cursor
+    /// is owed, and the spinner on a merge that is running.
     pub fn tick(app: *App, now_secs: i64) Allocator.Error!void {
         app.now_secs = now_secs;
+        if (app.actions.anyRunning()) app.spin +%= 1;
+        {
+            var scratch = std.heap.ArenaAllocator.init(app.gpa);
+            defer scratch.deinit();
+            if (app.visible(scratch.allocator())) |v| {
+                if (app.focusedPr(v.rows)) |f| try app.ensureReadiness(f.slug, f.pr);
+            } else |_| {}
+        }
         const every: i64 = app.config.refresh_interval_secs;
         if (every > 0 and now_secs - app.last_refresh_secs >= every and !app.activeTab().loading) {
             try app.refreshActive();
@@ -492,7 +566,18 @@ pub const App = struct {
         const ts = app.activeTab();
         if (ts.selected >= rows.len) return null;
         return switch (rows[ts.selected]) {
-            .pr => |p| .{ .slug = ts.data.repo_pr_tree[p.repo].slug, .pr = ts.data.repo_pr_tree[p.repo].prs[p.idx] },
+            // A build line belongs to the pull request it hangs under,
+            // so the detail and the readiness follow the cursor onto it
+            // rather than going blank.
+            .pr, .build, .build_note => blk: {
+                const ref = tabs.prOf(rows[ts.selected]).?;
+                const repos = switch (ts.data) {
+                    .repo_pr_tree => |r| r,
+                    else => break :blk null,
+                };
+                if (ref.repo >= repos.len or ref.idx >= repos[ref.repo].prs.len) break :blk null;
+                break :blk .{ .slug = repos[ref.repo].slug, .pr = repos[ref.repo].prs[ref.idx] };
+            },
             .flat => |i| switch (ts.data) {
                 .pull_requests => |list| .{ .slug = list[i].repoSlug(), .pr = list[i] },
                 else => null,
@@ -588,6 +673,16 @@ pub const App = struct {
         const a = app.frame_arena.allocator();
         switch (app.mode) {
             .filter => return app.filterKey(spec),
+            .confirm => {
+                if (std.mem.eql(u8, spec, "enter")) {
+                    try app.acceptMergeConfirm();
+                } else if (std.mem.eql(u8, spec, "left") or std.mem.eql(u8, spec, "h") or std.mem.eql(u8, spec, "right") or std.mem.eql(u8, spec, "l")) {
+                    app.cycleMergeStrategy();
+                } else {
+                    app.closeMergeConfirm();
+                }
+                return true;
+            },
             .help => {
                 if (std.mem.eql(u8, spec, "j") or std.mem.eql(u8, spec, "down")) {
                     app.help_scroll += 1;
@@ -803,6 +898,217 @@ pub const App = struct {
             },
             else => {},
         }
+    }
+
+    // ─── may it merge? ───────────────────────────────────────────────
+
+    /// The pointer moved. Nothing here changes state; it only leaves
+    /// the sentence a dim `[ Merge ]` owes the reader on the hint row,
+    /// for one pass.
+    pub fn hover(app: *App, col: u16, row: u16) void {
+        app.hover_note = "";
+        const target = app.hits.at(col, row) orelse return;
+        const idx = switch (target) {
+            .merge_blocked => |i| i,
+            else => return,
+        };
+        var scratch = std.heap.ArenaAllocator.init(app.gpa);
+        defer scratch.deinit();
+        const v = app.visible(scratch.allocator()) catch return;
+        if (idx >= v.rows.len) return;
+        const ref = tabs.prOf(v.rows[idx]) orelse return;
+        const repos = switch (app.activeTab().data) {
+            .repo_pr_tree => |r| r,
+            else => return,
+        };
+        if (ref.repo >= repos.len or ref.idx >= repos[ref.repo].prs.len) return;
+        const pr = repos[ref.repo].prs[ref.idx];
+        const r = app.readinessOf(repos[ref.repo].slug, pr);
+        var buf: [192]u8 = undefined;
+        // On the frame arena: it is one pass's worth of words.
+        app.hover_note = app.frame_arena.allocator().dupe(u8, r.hoverText(&buf)) catch "";
+    }
+
+    /// The strategies this workspace allows, as the toolkit spells
+    /// them. Both enums carry the same three words on purpose, so the
+    /// config reads like the API the strategy ends up in.
+    pub fn mergeStrategies(app: *App, a: Allocator) Allocator.Error![]const sdk.pane.merge.Strategy {
+        const src = app.config.merge_strategies;
+        if (src.len == 0) return &.{.merge_commit};
+        const out = try a.alloc(sdk.pane.merge.Strategy, src.len);
+        for (src, out) |c, *o| o.* = switch (c) {
+            .merge_commit => .merge_commit,
+            .squash => .squash,
+            .fast_forward => .fast_forward,
+        };
+        return out;
+    }
+
+    /// The key both the readiness cache and the `[ Merge ]` button are
+    /// filed under: the pull request, never the row.
+    pub fn prRowKey(buf: []u8, slug: []const u8, id: i64) []const u8 {
+        return std.fmt.bufPrint(buf, "{s}#{d}", .{ slug, id }) catch buf[0..0];
+    }
+
+    /// What is known about this pull request's readiness. A pull
+    /// request that has moved since the look is unchecked again, which
+    /// is the whole point of keying it by `updated_on`.
+    pub fn readinessOf(app: *App, slug: []const u8, pr: model.PullRequest) sdk.pane.merge.Readiness {
+        var buf: [256]u8 = undefined;
+        const key = prRowKey(&buf, slug, pr.id);
+        const e = app.readiness.get(key) orelse return .{};
+        if (!std.mem.eql(u8, e.updated_on, pr.updated_on)) return .{};
+        return e.readiness;
+    }
+
+    /// Ask, once, whether this pull request may merge. Only for OPEN
+    /// ones, only for the row the reader is actually on, and never
+    /// again while it has not moved — so a tab of twenty pull requests
+    /// does not fire twenty looks at the bucket on arrival.
+    pub fn ensureReadiness(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
+        if (!pr.isOpen()) return;
+        var buf: [256]u8 = undefined;
+        const key = prRowKey(&buf, slug, pr.id);
+        if (app.readiness.get(key)) |e| if (std.mem.eql(u8, e.updated_on, pr.updated_on)) return;
+        if (app.readiness_in_flight.contains(key)) return;
+        const owned = try app.gpa.dupe(u8, key);
+        errdefer app.gpa.free(owned);
+        try app.readiness_in_flight.put(app.gpa, owned, {});
+        // The runs on the source commit, when the row's builds are
+        // already open and fresh: the look then never asks for the
+        // pipelines list a second time.
+        var known: ?bool = null;
+        if (app.prPipelinesOf(slug, pr.id)) |runs| {
+            if (std.mem.eql(u8, runs.updated_on, pr.updated_on) and runs.error_text.len == 0) {
+                known = runs.pipelines.len > 0 and std.ascii.eqlIgnoreCase(runs.pipelines[0].stateLabel(), "SUCCESSFUL");
+            }
+        }
+        const ts = app.activeTab();
+        try app.enqueue(.{ .readiness = .{
+            .tab = app.active,
+            .key = .{ .workspace = ts.spec.workspace, .repo = slug, .id = pr.id },
+            .updated_on = pr.updated_on,
+            .source_commit = pr.buildCommit(),
+            .required = @max(app.config.required_approvals, 1),
+            .known_build = known,
+        } });
+    }
+
+    /// After the cursor moves: the row it landed on gets its one look.
+    pub fn onCursorRow(app: *App, rows: []const tabs.VisibleRow) Allocator.Error!void {
+        const f = app.focusedPr(rows) orelse return;
+        try app.ensureReadiness(f.slug, f.pr);
+    }
+
+    /// A press on a row's `[ Merge ]`. A dim button is not a hit, so
+    /// reaching here at all means it is ready — except by the keyboard,
+    /// which says why instead.
+    pub fn pressMerge(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
+        var kbuf: [256]u8 = undefined;
+        const row_key = prRowKey(&kbuf, slug, pr.id);
+        // A button that already started a session opens it rather than
+        // starting a second one.
+        switch (sdk.pane.action.pressOf(app.actions.state(row_key, "merge"))) {
+            .focus_session => return app.focusMergeSession(row_key),
+            .dispatch, .retry => {},
+        }
+        const r = app.readinessOf(slug, pr);
+        if (!r.ready()) {
+            var rbuf: [192]u8 = undefined;
+            app.say(.warn, "{s}", .{r.hoverText(&rbuf)});
+            try app.ensureReadiness(slug, pr);
+            return;
+        }
+        try app.openMergeConfirm(slug, pr);
+    }
+
+    /// The named confirm: the title, `source → target`, the strategy.
+    fn openMergeConfirm(app: *App, slug: []const u8, pr: model.PullRequest) Allocator.Error!void {
+        if (app.merge_confirm) |*c| c.deinit();
+        var arena = std.heap.ArenaAllocator.init(app.gpa);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+        var ubuf: [256]u8 = undefined;
+        const url = try a.dupe(u8, pr.url(&ubuf, app.activeTab().spec.workspace, slug));
+        var kbuf: [256]u8 = undefined;
+        const allowed = try app.mergeStrategies(a);
+        app.merge_confirm = .{
+            .arena = arena,
+            .row_key = try a.dupe(u8, prRowKey(&kbuf, slug, pr.id)),
+            .confirm = .{
+                .title = try a.dupe(u8, pr.title),
+                .source = try a.dupe(u8, pr.source_branch),
+                .target = try a.dupe(u8, pr.dest_branch),
+                .strategy = if (allowed.len > 0) allowed[0] else .merge_commit,
+                .url = url,
+            },
+            .allowed = allowed,
+        };
+        app.mode = .confirm;
+    }
+
+    pub fn closeMergeConfirm(app: *App) void {
+        if (app.merge_confirm) |*c| c.deinit();
+        app.merge_confirm = null;
+        app.mode = .list;
+    }
+
+    /// Confirmed: dispatch the Claude Code session that does the merge,
+    /// and start watching it. No pane ever calls the merge API itself —
+    /// the one destructive action goes through the thing the user
+    /// already supervises.
+    pub fn acceptMergeConfirm(app: *App) Allocator.Error!void {
+        const c = app.merge_confirm orelse return;
+        const a = app.effect_arena.allocator();
+        const prompt = try sdk.pane.merge.prompt(a, c.confirm);
+        const first = prompt[0 .. std.mem.indexOfScalar(u8, prompt, '\n') orelse prompt.len];
+        const row_key = try a.dupe(u8, c.row_key);
+        app.effect(.{ .dispatch = .{ .prompt = prompt, .row_key = row_key, .action = "merge" } });
+        try app.actions.set(row_key, "merge", .{ .state = .running, .prompt_line = first });
+        var wbuf: [320]u8 = undefined;
+        const wkey = sdk.pane.actionWatchKey(&wbuf, row_key, "merge");
+        const wa = app.watch_arena.allocator();
+        try app.watch_out.append(app.gpa, .{
+            .key = try wa.dupe(u8, wkey),
+            .cwd = try wa.dupe(u8, app.workspace_dir),
+            .prompt_line = try wa.dupe(u8, first),
+        });
+        app.say(.info, "merging {s} through Claude Code ({s})", .{ sdk.pane.merge.shortUrlTail(c.confirm.url), c.confirm.strategy.title() });
+        app.closeMergeConfirm();
+    }
+
+    /// The strategy the confirm offers, cycled through what the repo
+    /// allows.
+    pub fn cycleMergeStrategy(app: *App) void {
+        const c = &(app.merge_confirm orelse return);
+        c.confirm.strategy = c.confirm.strategy.next(c.allowed);
+    }
+
+    fn focusMergeSession(app: *App, row_key: []const u8) Allocator.Error!void {
+        const e = app.actions.get(row_key, "merge");
+        app.effect(.{ .focus_session = .{
+            .id = try app.effect_arena.allocator().dupe(u8, e.session),
+            .cwd = try app.effect_arena.allocator().dupe(u8, app.workspace_dir),
+            .prompt_line = try app.effect_arena.allocator().dupe(u8, e.prompt_line),
+        } });
+        app.say(.info, "{s}: asked mnml to bring its merge session up", .{row_key});
+    }
+
+    /// A `session_state` line from the host: the button it names takes
+    /// the host's word. A merge that ENDS while the pane is not focused
+    /// is worth a notification — it is the one thing here that changed
+    /// a repository.
+    pub fn onSessionState(app: *App, key: []const u8, state: sdk.wire.SessionState, session_id: []const u8, detail: []const u8) Allocator.Error!void {
+        if (!try app.actions.applyState(key, sdk.pane.actionStateOf(state), session_id, detail)) return;
+        const ended = state == .done or state == .failed;
+        if (!ended or app.focused) return;
+        const pair = sdk.pane.action.splitWatchKey(key) orelse return;
+        const a = app.effect_arena.allocator();
+        app.effect(.{ .notify = .{
+            .title = try std.fmt.allocPrint(a, "Merge {s}", .{if (state == .done) "finished" else "failed"}),
+            .text = try std.fmt.allocPrint(a, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" }),
+            .bad = state == .failed,
+        } });
     }
 
     /// A pull request's builds: fold them out (fetching the runs on
@@ -1103,6 +1409,21 @@ pub const App = struct {
                     app.gpa.free(app.me_display_name);
                     app.me_display_name = try app.gpa.dupe(u8, w.display_name);
                 }
+            },
+            .readiness => |rr| {
+                var kbuf: [256]u8 = undefined;
+                const key = prRowKey(&kbuf, rr.key.repo, rr.key.id);
+                if (app.readiness_in_flight.fetchRemove(key)) |kv| app.gpa.free(kv.key);
+                if (rr.error_text.len > 0) app.setStatus("{s}", .{rr.error_text});
+                const owned_key = try app.gpa.dupe(u8, key);
+                errdefer app.gpa.free(owned_key);
+                const owned_stamp = try app.gpa.dupe(u8, rr.updated_on);
+                const gop = try app.readiness.getOrPut(app.gpa, owned_key);
+                if (gop.found_existing) {
+                    app.gpa.free(owned_key);
+                    app.gpa.free(gop.value_ptr.updated_on);
+                }
+                gop.value_ptr.* = .{ .updated_on = owned_stamp, .readiness = rr.readiness };
             },
             .refresh => |r| {
                 if (r.tab >= app.tabs.len) return;
@@ -1449,6 +1770,30 @@ pub const App = struct {
                 },
                 .run_pipeline, .schedules, .caches, .usage => try app.openPipelinesPage(c),
             },
+            // A dim `[ Merge ]` registers only `merge_blocked`, so a
+            // click that lands on one says why rather than doing
+            // anything.
+            .merge_blocked => |i| {
+                app.select(view.rows, i);
+                const f = app.focusedPr(view.rows) orelse return true;
+                var buf: [192]u8 = undefined;
+                app.say(.warn, "{s}", .{app.readinessOf(f.slug, f.pr).hoverText(&buf)});
+                try app.ensureReadiness(f.slug, f.pr);
+            },
+            .pr_button => |b| {
+                app.select(view.rows, b.row);
+                const f = app.focusedPr(view.rows) orelse return true;
+                switch (b.which) {
+                    // `[ Open ]` opens the ROW — its builds — not a
+                    // browser. The pull request itself is still the
+                    // row's Enter and the row menu's "open on the web".
+                    .open => try app.togglePrBuilds(f.slug, f.pr),
+                    .merge => try app.pressMerge(f.slug, f.pr),
+                }
+            },
+            .confirm_ok => try app.acceptMergeConfirm(),
+            .confirm_cancel => app.closeMergeConfirm(),
+            .confirm_body => {},
             .row => |i| {
                 app.select(view.rows, i);
                 if (button == .right) {
@@ -1821,6 +2166,144 @@ test "the filter narrows the rows and esc clears it; the statusline values land 
     // The values chip: my two open PRs, one still unapproved.
     try t.expectEqual(@as(usize, 2), r.app.values.?.open_mine);
     try t.expectEqual(@as(usize, 1), r.app.values.?.unapproved_mine);
+}
+
+test "readiness is one cached look per open PR, and a blocked Merge says which condition fails" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Nothing looked at: the button is dim and says exactly that,
+    // rather than claiming a blocker nobody checked.
+    const ts = r.app.activeTab();
+    const pr = ts.data.repo_pr_tree[0].prs[0]; // acme/api#1234, OPEN
+    try t.expectEqual(@as(i64, 1234), pr.id);
+    var buf: [192]u8 = undefined;
+    try t.expect(!r.app.readinessOf("api", pr).ready());
+    try t.expectEqualStrings("Merge: not checked yet \u{2014} open the row to look", r.app.readinessOf("api", pr).hoverText(&buf));
+
+    const before = r.srv.state.served;
+    try r.app.ensureReadiness("api", pr);
+    try r.drain();
+    // The detail, the diffstat, the comments, the pipelines: one look,
+    // and it is the only look this pull request costs until it moves.
+    const spent = r.srv.state.served - before;
+    try t.expect(spent > 0 and spent <= 4);
+    try r.app.ensureReadiness("api", pr);
+    try r.drain();
+    try t.expectEqual(spent, r.srv.state.served - before);
+
+    // #1234 has one task open and a FAILED deploy build, and Sam asked
+    // for changes — the earliest unmet condition is the one named.
+    const got = r.app.readinessOf("api", pr);
+    try t.expect(got.checked);
+    try t.expect(!got.ready());
+    try t.expect(got.changes_requested);
+    try t.expectEqualStrings("Merge: a reviewer asked for changes", got.hoverText(&buf));
+    try t.expectEqual(@as(usize, 1), got.open_tasks);
+    // It still applies cleanly: the diffstat came back 2xx.
+    try t.expect(!got.conflicts);
+
+    // A pull request that has moved is unchecked again — that is what
+    // keying the look by `updated_on` is for.
+    var moved = pr;
+    moved.updated_on = "2099-01-01T00:00:00+00:00";
+    try t.expect(!r.app.readinessOf("api", moved).checked);
+
+    // #820 on web conflicts, and says so.
+    const web = ts.data.repo_pr_tree[1].prs[0];
+    try t.expectEqual(@as(i64, 820), web.id);
+    try r.app.ensureReadiness("web", web);
+    try r.drain();
+    try t.expect(r.app.readinessOf("web", web).conflicts);
+
+    // A press on a blocked button starts nothing and says why.
+    try r.app.pressMerge("api", pr);
+    try t.expect(r.app.merge_confirm == null);
+    try t.expect(std.mem.indexOf(u8, r.app.status.items, "asked for changes") != null);
+    try t.expectEqual(sdk.pane.ActionState.idle, r.app.actions.state("api#1234", "merge"));
+    _ = a;
+}
+
+test "a ready PR opens a named confirm, and confirming dispatches a Claude Code session rather than merging" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    const ts = r.app.activeTab();
+    const pr = ts.data.repo_pr_tree[0].prs[0];
+    const merged_before = r.srv.state.merged_count;
+
+    // Stand the readiness up as clean: what this asserts is what the
+    // pane does once it IS ready, not the judgment itself.
+    try r.app.readiness.put(t.allocator, try t.allocator.dupe(u8, "api#1234"), .{
+        .updated_on = try t.allocator.dupe(u8, pr.updated_on),
+        .readiness = .{ .approvals = 1, .required = 1, .conflicts = false, .build_green = true, .checked = true },
+    });
+    try t.expect(r.app.readinessOf("api", pr).ready());
+
+    try r.app.pressMerge("api", pr);
+    try t.expectEqual(Mode.confirm, r.app.mode);
+    const c = r.app.merge_confirm.?;
+    // Named: the title, the branches, the strategy.
+    try t.expectEqualStrings("Fix the login redirect", c.confirm.title);
+    try t.expectEqualStrings("chris/fix-login", c.confirm.source);
+    try t.expectEqualStrings("main", c.confirm.target);
+    try t.expectEqual(sdk.pane.merge.Strategy.merge_commit, c.confirm.strategy);
+    // The strategy cycles through what the workspace allows.
+    r.app.cycleMergeStrategy();
+    try t.expectEqual(sdk.pane.merge.Strategy.squash, r.app.merge_confirm.?.confirm.strategy);
+
+    try r.app.acceptMergeConfirm();
+    try t.expectEqual(Mode.list, r.app.mode);
+    // The button follows the session from here.
+    try t.expectEqual(sdk.pane.ActionState.running, r.app.actions.state("api#1234", "merge"));
+    // …and a watch went out under the button's own key.
+    try t.expectEqual(@as(usize, 1), r.app.watch_out.items.len);
+    var kbuf: [320]u8 = undefined;
+    try t.expectEqualStrings(sdk.pane.actionWatchKey(&kbuf, "api#1234", "merge"), r.app.watch_out.items[0].key);
+
+    const fx = r.app.takeEffects();
+    defer r.app.freeEffects(fx);
+    var dispatched: ?[]const u8 = null;
+    for (fx) |e| switch (e) {
+        .dispatch => |d| dispatched = d.prompt,
+        else => {},
+    };
+    const prompt = dispatched orelse return error.NoDispatch;
+    try t.expect(std.mem.indexOf(u8, prompt, "https://bitbucket.org/acme/api/pull-requests/1234") != null);
+    try t.expect(std.mem.indexOf(u8, prompt, "merge_strategy: squash") != null);
+    try t.expect(std.mem.indexOf(u8, prompt, "$BITBUCKET_ACCESS_TOKEN") != null);
+    // THE POINT: the pane merged nothing. The fake server saw no write.
+    try t.expectEqual(merged_before, r.srv.state.merged_count);
+    try t.expect(!r.srv.state.last_auth_was_write);
+
+    // The host's word moves the button, and an end while the pane does
+    // not have the keyboard is worth telling the user about.
+    r.app.focused = false;
+    try r.app.onSessionState(sdk.pane.actionWatchKey(&kbuf, "api#1234", "merge"), .done, "sid-9", "merged acme/api/pull-requests/1234 as squash");
+    try t.expectEqual(sdk.pane.ActionState.view, r.app.actions.state("api#1234", "merge"));
+    const fx2 = r.app.takeEffects();
+    defer r.app.freeEffects(fx2);
+    var notified = false;
+    for (fx2) |e| switch (e) {
+        .notify => |n| {
+            notified = true;
+            try t.expect(std.mem.indexOf(u8, n.text, "api#1234") != null);
+            try t.expect(!n.bad);
+        },
+        else => {},
+    };
+    try t.expect(notified);
+
+    // Focused, the same edge is not worth a notification: the reader
+    // is looking at it.
+    r.app.focused = true;
+    try r.app.onSessionState(sdk.pane.actionWatchKey(&kbuf, "api#1234", "merge"), .failed, "sid-9", "refused: it conflicts");
+    const fx3 = r.app.takeEffects();
+    defer r.app.freeEffects(fx3);
+    for (fx3) |e| try t.expect(e != .notify);
+    try t.expectEqual(sdk.pane.ActionState.failed, r.app.actions.state("api#1234", "merge"));
 }
 
 test "the awaiting chip counts and filters what is waiting on MY review, off the rows already loaded" {

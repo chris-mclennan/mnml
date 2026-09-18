@@ -151,6 +151,7 @@ does. The keys are the reference's:
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the detail · scroll it |
 | `a` | approve / withdraw (with the detail open) |
+| `[ Open ]` `[ Merge ]` | on the cursor's PR row: fold out its builds · merge it through Claude Code (dim until it can) |
 | `A` · `m` · `⇥` `⇤` · `1`–`9` | awaiting my review · open ↔ merged · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
@@ -183,6 +184,50 @@ It costs **one** request per pull request, keyed by the PR's
 request does, a push included, so folding the same row open twice costs
 nothing and one that has been pushed to is re-read without your having
 to know to ask.
+
+## Merging — and why the button is usually dim
+
+The row under the cursor carries `[ Open ]` and, on an open pull
+request, `[ Merge ]`. Only that row: the table is dense, and the title
+is the column that would otherwise pay for them.
+
+`[ Merge ]` is **dim and not a click target** until the pull request can
+actually merge. Five conditions, in the order a reader thinks about
+them:
+
+| | |
+|---|---|
+| approvals | the required reviewers have approved (`required_approvals`, default 1) and nobody has asked for changes |
+| tasks | every task on the pull request is resolved |
+| conflicts | it still applies to its target (the diffstat answers 555 when it does not) |
+| build | the newest run on the **source** commit is green |
+| comments | every comment is resolved or replied to — the same rule the review chip counts by |
+
+Hovering a dim button, or clicking one, says which condition fails and
+its number: `Merge: 1 of 2 approvals`, `Merge: 2 tasks still open`.
+Every field starts in the state that blocks, so a pull request nobody
+has looked at is never ready by accident — it says `not checked yet`.
+
+The look costs **one cached round per open pull request**, keyed by its
+`updated_on`, taken for the row the cursor lands on and never again
+while the pull request has not moved: the PR detail, the diffstat, the
+comments (through the same cache the review chip uses, so an unmoved
+pull request pays nothing for them) and — only when the row's builds
+are not already open and fresh — the pipelines list. `--values` never
+does any of this: the statusline run counts, it does not judge.
+
+A ready button opens a confirm that **names** what it is about — the
+title, `source → target`, and the strategy (`←→` cycles the ones
+`merge_strategies` allows). Confirming does not call the merge API.
+It dispatches a **Claude Code session** whose prompt carries the pull
+request's URL and the chosen strategy and asks it to merge through the
+Bitbucket API with `$BITBUCKET_ACCESS_TOKEN` (the variable's name, never
+its value) and to report the outcome on its last line. The one
+destructive action this pane offers goes through the thing you already
+supervise — and the button then follows that session: a spinner while
+it runs, `⏸` when it stops to ask you something, `[ view ]` when it
+ends, a red `✗` with the reason when it fails. A merge that ends while
+the pane does not have the keyboard sends a notification.
 
 ## Awaiting my approval
 
