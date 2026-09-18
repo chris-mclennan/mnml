@@ -154,17 +154,39 @@ it paints — a click on a row selects that row (and toggles a repo
 header or a merged PR, as the reference does), a right-click opens the
 row's menu, the wheel moves the cursor or scrolls the detail under it.
 
-## The statusline chip
+## The statusline chips
 
-The PRs manifest declares the segment `bitbucket_prs.prs_mine`
-(`󰂨 …` at rest, click → the mine-only tab). The pane recounts it every
-five minutes and publishes `󰂨 N(K)` — N open PRs you authored in the
-last `chip_stale_after_days`, off the excluded branches, K still
-without an approval — over the Tier-2 file channel, with the count on
-the INTEGRATIONS badge; `󰂨 !` in red on a failure. `bitbucket_prs.refresh`
-does the same with no pane open (`--refresh --workspace {{workspace}}`;
-a `term` child does not inherit `MNML_IPC_DIR`, so the workspace names
-the channel). `--values` prints the reference's JSON for a poller.
+Two, because they are two numbers about two different things.
+
+**`bitbucket_prs.prs_mine`** — `󰂨 N(K)`: N open pull requests you
+authored in the last `chip_stale_after_days`, off the excluded
+branches, K of them still without an approval. `󰂨 …` at rest, `󰂨 !` in
+red on a failure. A click opens the mine-only tab.
+
+**`bitbucket_prs.reviews_mine`** — ` M`: review threads across those
+pull requests that are still **waiting on someone** — neither marked
+resolved nor replied to. A reply is an answer whoever wrote it ("I
+disagree" closes a loop as surely as a fix does) and the resolve button
+is used unevenly across teams, so counting only `resolution` would call
+every answered thread unanswered. Blank at rest: it is published only
+once the count has been taken, because a zero before then would read as
+"nothing outstanding".
+
+Each chip's hover says what its number counts, and the review one says
+what the count cost — how many pull requests were answered off the
+cache. See **Prefetch** below for why that matters: the review figure is
+one `…/comments` request per pull request whose `updated_on` has
+changed since the last run, and none for the rest, which is what keeps
+a five-minute poll inside the bucket.
+
+The pane recounts and publishes every five minutes over the Tier-2 file
+channel, with the open count on the INTEGRATIONS badge.
+`bitbucket_prs.refresh` and `--values --workspace W` do the same with no
+pane open (a `term` child does not inherit `MNML_IPC_DIR`, so the
+workspace names the channel), and mnml's own poller runs the latter on
+the manifest's interval. `--values` also prints the JSON:
+`{"open_mine":N,"unapproved_mine":K,"approved_mine":A,"unresolved_comments":M}`,
+where `unresolved_comments` is `null` when the count was not taken.
 
 ## Prefetch — and the contract a poller runs it under
 

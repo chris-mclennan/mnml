@@ -37,6 +37,7 @@ const auth = @import("src/auth.zig");
 const api = @import("src/api.zig");
 const ratelimit = @import("src/ratelimit.zig");
 const cache_mod = @import("src/cache.zig");
+const review_cache = @import("src/review_cache.zig");
 const fetch = @import("src/fetch.zig");
 const app_mod = @import("src/app.zig");
 const screen = @import("src/screen.zig");
@@ -53,6 +54,13 @@ pub const spec_pipelines: sdk.Manifest = @import("manifest_pipelines.zon");
 pub const segment_id = "bitbucket_prs.prs_mine";
 pub const segment_color = "green";
 pub const segment_click = "bitbucket_prs.open_mine";
+
+/// The second figure: review threads across those pull requests that
+/// are still waiting on someone. Its own chip, because it answers a
+/// different question from "how many are open".
+pub const review_segment_id = "bitbucket_prs.reviews_mine";
+pub const review_segment_glyph = "\u{f075}"; // nf-fa-comment
+pub const review_segment_color = "yellow";
 
 const Opts = struct {
     install: bool = false,
@@ -419,9 +427,13 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
 
 // ─── --values / --refresh ────────────────────────────────────────────────
 
-fn computeValues(gpa: Allocator, io: Io, s: *Session) !fetch.Result {
+/// `review_cache` non-null asks for the second figure: the unresolved
+/// review threads, one comments request per pull request that has
+/// moved since the last run.
+fn computeValues(gpa: Allocator, io: Io, s: *Session, rc: ?*review_cache.Cache) !fetch.Result {
     var progress: fetch.Progress = .{};
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id, s.loaded.config.workspace);
+    worker.review_cache = rc;
     defer worker.deinit();
     const c = s.loaded.config;
     var job = try fetch.makeJob(gpa, nowSecs(io), .{ .values = .{
@@ -447,17 +459,26 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
-    var res = try computeValues(gpa, io, &s);
+    // The unresolved-comment count is the poller's figure, and it is
+    // paid for out of the same bucket — the cache is what keeps it to
+    // one request per pull request that actually moved.
+    var rc = try review_cache.Cache.open(gpa, io, s.loaded.path);
+    defer rc.deinit();
+    var res = try computeValues(gpa, io, &s, &rc);
     defer res.deinit();
     const v = res.payload.values;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
     var ipc = try ipcFor(gpa, io, env, workspace);
     defer if (ipc) |*x| x.deinit();
-    if (ipc) |*x| publishSegment(x, v) catch {};
+    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
         return 1;
     }
-    try out.print("{{\"open_mine\":{d},\"unapproved_mine\":{d},\"approved_mine\":{d}}}\n", .{ v.open_mine, v.unapproved_mine, v.approved_mine });
+    try out.print("{{\"open_mine\":{d},\"unapproved_mine\":{d},\"approved_mine\":{d},\"unresolved_comments\":", .{ v.open_mine, v.unapproved_mine, v.approved_mine });
+    if (v.unresolved_comments) |n| try out.print("{d}", .{n}) else try out.writeAll("null");
+    try out.writeAll("}\n");
     return 0;
 }
 
@@ -467,9 +488,66 @@ pub fn segmentText(buf: []u8, v: fetch.ValuesResult) []const u8 {
     return std.fmt.bufPrint(buf, app_mod.App.chip_glyph ++ " {d}({d})", .{ v.open_mine, v.unapproved_mine }) catch app_mod.App.chip_glyph;
 }
 
-/// The Tier-2 lines that put the chip on the statusline and the
-/// count on the INTEGRATIONS badge — what the pane and `--refresh`
-/// both send. The unit test below pins the JSON.
+/// The review chip's text: `󰅺 3`, the threads still waiting on someone.
+pub fn reviewText(buf: []u8, unresolved: usize) []const u8 {
+    return std.fmt.bufPrint(buf, review_segment_glyph ++ " {d}", .{unresolved}) catch review_segment_glyph;
+}
+
+/// What the PR chip means, on hover. A number with no sentence behind
+/// it makes the reader guess, and these two are easy to mix up.
+pub fn segmentTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error![]const u8 {
+    if (v.error_text.len > 0) return std.fmt.allocPrint(arena, "Bitbucket: {s}", .{v.error_text});
+    return std.fmt.allocPrint(
+        arena,
+        "Bitbucket · {d} open pull request{s} you authored — {d} still unapproved, {d} approved",
+        .{ v.open_mine, if (v.open_mine == 1) "" else "s", v.unapproved_mine, v.approved_mine },
+    );
+}
+
+/// What the review chip means, and what it cost: a reader who is
+/// rate-limit-shy wants to know how much of the bucket a poll spends.
+pub fn reviewTooltip(arena: Allocator, v: fetch.ValuesResult, unresolved: usize) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(
+        arena,
+        "Bitbucket · {d} review thread{s} across your open pull requests still waiting on someone (neither resolved nor replied to) — {d} of {d} counted off the cache",
+        .{ unresolved, if (unresolved == 1) "" else "s", v.comment_hits, v.comment_hits + v.comment_requests },
+    );
+}
+
+/// The Tier-2 lines that put the chips on the statusline and the count
+/// on the INTEGRATIONS badge — what the pane, `--refresh` and
+/// `--values` all send. The unit test below pins the JSON.
+///
+/// Two chips, because they are two numbers about two different things:
+/// how much of yours is open, and how much of it is waiting on a human.
+/// The review chip is published only when the count was taken — a zero
+/// there would read as "nothing outstanding" when it may mean "not
+/// counted this run".
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesResult) !void {
+    var buf: [64]u8 = undefined;
+    try ipc.statuslineSetSegment(.{
+        .id = segment_id,
+        .text = segmentText(&buf, v),
+        .color = if (v.error_text.len > 0) "red" else segment_color,
+        .click_command = segment_click,
+        .priority = 60,
+        .tooltip = try segmentTooltip(arena, v),
+    });
+    if (v.unresolved_comments) |n| {
+        var rbuf: [64]u8 = undefined;
+        try ipc.statuslineSetSegment(.{
+            .id = review_segment_id,
+            .text = reviewText(&rbuf, n),
+            .color = if (n > 0) review_segment_color else "green",
+            .click_command = segment_click,
+            .priority = 59,
+            .tooltip = try reviewTooltip(arena, v, n),
+        });
+    }
+    try ipc.setActivityBadge("integrations", @intCast(@min(v.open_mine, std.math.maxInt(u32))));
+}
+
+/// The one-chip form, for callers with no arena to spare.
 pub fn publishSegment(ipc: *const sdk.Ipc, v: fetch.ValuesResult) sdk.ipc.Error!void {
     var buf: [64]u8 = undefined;
     try ipc.statuslineSetSegment(.{
@@ -502,17 +580,23 @@ fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
-    var res = try computeValues(gpa, io, &s);
+    var rc = try review_cache.Cache.open(gpa, io, s.loaded.path);
+    defer rc.deinit();
+    var res = try computeValues(gpa, io, &s, &rc);
     defer res.deinit();
     const v = res.payload.values;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
     var ipc = try ipcFor(gpa, io, env, workspace);
     defer if (ipc) |*x| x.deinit();
-    if (ipc) |*x| publishSegment(x, v) catch {};
+    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --refresh: {s}\n", .{v.error_text});
         return 1;
     }
-    try out.print("{d} open pull requests you authored, {d} still unapproved{s}\n", .{ v.open_mine, v.unapproved_mine, if (ipc == null) " (no IPC channel found — pass --workspace)" else "" });
+    try out.print("{d} open pull requests you authored, {d} still unapproved", .{ v.open_mine, v.unapproved_mine });
+    if (v.unresolved_comments) |n| try out.print(", {d} review thread{s} waiting on someone ({d} of {d} off the cache)", .{ n, if (n == 1) "" else "s", v.comment_hits, v.comment_hits + v.comment_requests });
+    try out.print("{s}\n", .{if (ipc == null) " (no IPC channel found — pass --workspace)" else ""});
     return 0;
 }
 
@@ -1018,7 +1102,16 @@ test "both manifests name the reference's ids, chips and commands, and validate"
     try t.expectEqualStrings("bitbucket_pipelines.open", spec_pipelines.commands[0].id);
     try t.expectEqualStrings("BP", spec.chip.?.fallback);
     try t.expectEqualStrings("BL", spec_pipelines.chip.?.fallback);
+    // Two chips: how many of mine are open, and how many threads on
+    // them are waiting on a human. The ids the binary publishes on are
+    // the manifest's slots prefixed with the manifest id — a mismatch
+    // is a chip that never moves, and only running it would show that.
+    try t.expectEqual(@as(usize, 2), spec.statusline.len);
     try t.expectEqualStrings("prs_mine", spec.statusline[0].id);
+    try t.expectEqualStrings("reviews_mine", spec.statusline[1].id);
+    for (spec.statusline) |seg| try t.expect(seg.tooltip != null);
+    try t.expectEqualStrings(segment_id, spec.id ++ "." ++ "prs_mine");
+    try t.expectEqualStrings(review_segment_id, spec.id ++ "." ++ "reviews_mine");
     try t.expectEqualStrings(segment_click, spec.statusline[0].click_command.?);
     try t.expectEqual(@as(usize, 3), spec.auth.len);
     var why: []const u8 = "";
@@ -1053,6 +1146,52 @@ test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment and the
             "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":0}\n",
         got,
     );
+}
+
+test "the two chips carry their counts and what they mean; the review chip is absent when it was not counted" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(t.allocator, t.io, dir);
+    defer ipc.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Counted: both chips, each with the sentence behind its number.
+    try publishSegments(&ipc, arena, .{
+        .open_mine = 4,
+        .unapproved_mine = 2,
+        .approved_mine = 2,
+        .unresolved_comments = 3,
+        .comment_hits = 3,
+        .comment_requests = 1,
+    });
+    var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
+    try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
+    try t.expect(std.mem.indexOf(u8, got, "4 open pull requests you authored — 2 still unapproved, 2 approved") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.reviews_mine\"") != null);
+    try t.expect(std.mem.indexOf(u8, got, review_segment_glyph ++ " 3") != null);
+    try t.expect(std.mem.indexOf(u8, got, "3 review threads across your open pull requests still waiting on someone") != null);
+    // What it cost is part of the sentence: the reader is the one
+    // paying the rate limit.
+    try t.expect(std.mem.indexOf(u8, got, "3 of 4 counted off the cache") != null);
+
+    // Not counted: the second chip is not published at all. A zero
+    // there would read as "nothing outstanding".
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
+    try publishSegments(&ipc, arena, .{ .open_mine = 1, .unapproved_mine = 0, .approved_mine = 1 });
+    got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
+    try t.expect(std.mem.indexOf(u8, got, "bitbucket_prs.reviews_mine") == null);
+    // One reads as one.
+    try t.expect(std.mem.indexOf(u8, got, "1 open pull request you authored") != null);
+
+    // A failure says so on the chip it belongs to.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
+    try publishSegments(&ipc, arena, .{ .error_text = "HTTP 401: auth" });
+    got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
+    try t.expect(std.mem.indexOf(u8, got, "Bitbucket: HTTP 401: auth") != null);
 }
 
 test "--only spells the reference's families; the last one wins; an unknown flag is refused" {

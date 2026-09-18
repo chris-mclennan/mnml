@@ -145,6 +145,11 @@ pub const Fixture = struct {
         path: []const u8 = "",
         line: i64 = 0,
         parent: u32 = 0,
+        /// Someone marked the thread resolved — Bitbucket sends a
+        /// `resolution` object and omits the key otherwise.
+        resolved: bool = false,
+        /// A deleted comment keeps its slot in the page with no content.
+        deleted: bool = false,
     };
 };
 
@@ -799,6 +804,11 @@ fn comments(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Rep
         w.writeAll("}") catch return error.OutOfMemory;
         if (c.parent != 0) w.print(",\"parent\":{{\"id\":{d}}}", .{c.parent}) catch return error.OutOfMemory;
         if (c.path.len > 0) w.print(",\"inline\":{{\"path\":\"{s}\",\"from\":null,\"to\":{d}}}", .{ c.path, c.line }) catch return error.OutOfMemory;
+        // The two keys the unresolved-thread count reads. Bitbucket
+        // omits `resolution` entirely on an open thread, which is what
+        // "present means resolved" rests on.
+        if (c.resolved) w.print(",\"resolution\":{{\"type\":\"pullrequest_comment_resolution\",\"user\":{{\"display_name\":\"{s}\"}}}}", .{c.author}) catch return error.OutOfMemory;
+        if (c.deleted) w.writeAll(",\"deleted\":true") catch return error.OutOfMemory;
         w.writeAll("}") catch return error.OutOfMemory;
         n += 1;
     }
