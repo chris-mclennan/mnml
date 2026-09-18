@@ -175,7 +175,8 @@ and its right-to-left chip ladder, the tab strip, the filter pill, the
 app-colour left gutter, the row ground (one row, or two for a row with
 a sub-line), the `Show more (N)` fold row, a detail panel with its `×`
 and a scrollbar, and a hint row where every `key label` is a click
-target. The hit map is generic over your own target union, so you keep
+target. It also owns the two elements a pull-request row hangs off: the
+build lines under it and the action button on it, below. The hit map is generic over your own target union, so you keep
 your vocabulary and share the bookkeeping.
 
 ```zig
@@ -214,6 +215,33 @@ Two rules:
 from two different target vocabularies and compares the frames cell for
 cell — the test that notices when a change moves one pane and not the
 other.
+
+### Build lines under a pull-request row
+
+`sdk.pane.build` is the one line both official panes paint for a
+pipeline run, so a reader who learns one reads the other:
+
+```
+✓ SUCCESSFUL · main · 4h · #412
+```
+
+State first (it is what the eye is after), then the branch it ran on,
+then how long ago — an age rather than a date, because "did this run
+since I pushed" is the question — then the run's number.
+
+```zig
+try p.buildRow(.{ .x = 0, .y = y, .w = cols, .h = 1 }, indent, .{
+    .state = run.stateLabel(), .branch = run.branch,
+    .created_on = run.created_on, .number = run.build_number,
+}, now_secs, .{ .build = i });
+p.buildNote(.{ .x = 0, .y = y, .w = cols, .h = 1 }, indent, "no build ran on abc1234", false);
+```
+
+`buildRow` registers the hit with the paint, so clicking the line can
+open that run (`sdk.pane.build.pageUrl`). `buildNote` is the line where
+a build line would be — fetching, none, or why not — dim, or in the bad
+colour when `bad`. `sdk.pane.build.parseEpoch` reads an ISO-8601 stamp
+with its offset, which is all the age needs.
 
 ### Action buttons, and the session behind one
 

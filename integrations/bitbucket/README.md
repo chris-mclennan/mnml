@@ -151,7 +151,7 @@ does. The keys are the reference's:
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the detail · scroll it |
 | `a` | approve / withdraw (with the detail open) |
-| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged · next / previous tab · a tab |
+| `A` · `m` · `⇥` `⇤` · `1`–`9` | awaiting my review · open ↔ merged · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
 

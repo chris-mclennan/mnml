@@ -146,6 +146,10 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         const done = app.progressDone();
         const total = app.progressTotal();
         sub = if (total > 0) try std.fmt.allocPrint(arena, "  loading… {d}/{d} repos", .{ done, total }) else "  loading…";
+    } else if (app.awaiting_only) {
+        // The chip is narrowing the tab: say so, or the header goes on
+        // claiming a count the rows plainly do not add up to.
+        sub = try std.fmt.allocPrint(arena, "  ({d} of {d} awaiting my review)", .{ app.awaitingCount(), ts.items });
     } else if (app.narrowed()) {
         // Narrowed: the count says how much of the tab is hidden, the
         // way the sibling integrations' caps headers do.
@@ -780,6 +784,37 @@ test "a PR folds out to its builds under enter, one row per run, and the detail 
     try t.expect(has(nscr, "○ not approved · 1 total"));
     try t.expect(has(nscr, "Nice catch"));
     try t.expect(!has(nscr, "REPO / #PR"));
+}
+
+test "the awaiting chip says its count, narrows the tab, and the header says what it narrowed" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    var scr = try s.draw();
+    // At rest: the chip carries its number beside `author:`.
+    try t.expect(has(scr, "awaiting: 1"));
+    try t.expect(has(scr, "author: all"));
+    try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
+    try t.expect(has(scr, "#1234"));
+
+    // `A` is the same door the chip is — a chip nobody can reach from
+    // the keyboard is half a feature. (mnml spells it `shift+a`.)
+    try s.key("shift+a");
+    scr = try s.draw();
+    try t.expect(has(scr, "(1 of 3 awaiting my review)"));
+    // Only Dana's #1198, which I am a reviewer on and have not voted.
+    try t.expect(has(scr, "#1198"));
+    try t.expect(!has(scr, "Fix the login redirect"));
+    // …and it is 30 hours old, so the 24-hour window the tree usually
+    // folds it behind is lifted rather than hiding the very thing the
+    // chip is for.
+    try t.expect(!has(scr, "Show more"));
+
+    // The chip itself toggles it back.
+    const chip = s.rig.app.hits.rectOf(.{ .chip = .awaiting }).?;
+    try s.click(chip.x + 1, chip.y, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
+    try t.expect(has(scr, "Fix the login redirect"));
 }
 
 test "an OPEN PR folds out to the builds on its branch head; a second open costs nothing while it has not moved" {

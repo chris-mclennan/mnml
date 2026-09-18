@@ -12,6 +12,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const frame_mod = @import("../frame.zig");
 const chrome = @import("chrome.zig");
+const action_mod = @import("action.zig");
+const build_mod = @import("build.zig");
 const hit = @import("hit.zig");
 const theme_mod = @import("theme.zig");
 
@@ -31,6 +33,8 @@ const TrackerTarget = union(enum) {
     detail_close,
     detail_bar,
     hint: u8,
+    build: u32,
+    action: struct { row: u32, button: u8 },
 };
 
 /// A forge pane's vocabulary — the Bitbucket pane's shape. A different
@@ -48,6 +52,8 @@ const ForgeTarget = union(enum) {
     filter,
     show_more: usize,
     sheet,
+    build: struct { repo: usize, run: usize },
+    action: struct { key: usize, which: u8 },
 };
 
 fn Rig(comptime Target: type) type {
@@ -111,7 +117,35 @@ fn demoTheme() Theme {
 }
 
 const cols: u16 = 60;
-const rows: u16 = 12;
+const rows: u16 = 16;
+
+/// The clock every build line's age is measured against, so the two
+/// sides say the same thing rather than the same *shape*.
+const build_now: i64 = 1_789_500_000;
+
+const demo_run: build_mod.Run = .{
+    .state = "SUCCESSFUL",
+    .branch = "chris/fix-login",
+    .created_on = "2026-09-15T15:20:00+00:00",
+    .number = 412,
+};
+
+/// The five states an action button wears, painted side by side so a
+/// change to any one of them shows up as a differing cell rather than
+/// hiding behind the four that did not move.
+const action_states = [_]action_mod.State{ .idle, .running, .waiting, .view, .failed };
+
+fn paintActionRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, targets: [5]Target) void {
+    var x: u16 = 1;
+    for (action_states, targets) |st, target| {
+        var buf: [32]u8 = undefined;
+        const cap = action_mod.caption(&buf, st, "Merge", 2, false);
+        const w = chrome.width(cap);
+        _ = p.put(x, y, w, cap, action_mod.styleOf(p.th, st));
+        p.mark(.{ .x = x, .y = y, .w = w, .h = 1 }, target) catch {};
+        x += w + 1;
+    }
+}
 
 /// Every shared element, once, at fixed coordinates.
 fn paintTracker(r: *Rig(TrackerTarget)) !void {
@@ -132,6 +166,15 @@ fn paintTracker(r: *Rig(TrackerTarget)) !void {
     try p.showMoreRow(.{ .x = 0, .y = 7, .w = cols, .h = 1 }, 12, 7, .{ .show_more = 1 });
     try p.detailPanel(.{ .x = 40, .y = 8, .w = 20, .h = 3 }, .detail, .detail_close);
     try p.scrollbar(.{ .x = 59, .y = 9, .w = 1, .h = 2 }, 30, 6, 2, .detail_bar);
+    try p.buildRow(.{ .x = 0, .y = 11, .w = cols, .h = 1 }, 6, demo_run, build_now, .{ .build = 0 });
+    p.buildNote(.{ .x = 0, .y = 12, .w = cols, .h = 1 }, 6, "no build ran on abc1234", false);
+    paintActionRow(TrackerTarget, &p, 13, .{
+        .{ .action = .{ .row = 0, .button = 0 } },
+        .{ .action = .{ .row = 0, .button = 1 } },
+        .{ .action = .{ .row = 0, .button = 2 } },
+        .{ .action = .{ .row = 0, .button = 3 } },
+        .{ .action = .{ .row = 0, .button = 4 } },
+    });
     try p.hintRow(rows - 1, "ENG-2", &.{
         .{ .key = "d", .title = "detail", .target = .{ .hint = 0 } },
         .{ .key = "q", .title = "quit", .target = .{ .hint = 1 } },
@@ -156,6 +199,15 @@ fn paintForge(r: *Rig(ForgeTarget)) !void {
     try p.showMoreRow(.{ .x = 0, .y = 7, .w = cols, .h = 1 }, 12, 7, .{ .show_more = 1 });
     try p.detailPanel(.{ .x = 40, .y = 8, .w = 20, .h = 3 }, .detail, .detail_close);
     try p.scrollbar(.{ .x = 59, .y = 9, .w = 1, .h = 2 }, 30, 6, 2, .detail_bar);
+    try p.buildRow(.{ .x = 0, .y = 11, .w = cols, .h = 1 }, 6, demo_run, build_now, .{ .build = .{ .repo = 0, .run = 0 } });
+    p.buildNote(.{ .x = 0, .y = 12, .w = cols, .h = 1 }, 6, "no build ran on abc1234", false);
+    paintActionRow(ForgeTarget, &p, 13, .{
+        .{ .action = .{ .key = 0, .which = 0 } },
+        .{ .action = .{ .key = 0, .which = 1 } },
+        .{ .action = .{ .key = 0, .which = 2 } },
+        .{ .action = .{ .key = 0, .which = 3 } },
+        .{ .action = .{ .key = 0, .which = 4 } },
+    });
     try p.hintRow(rows - 1, "ENG-2", &.{
         .{ .key = "d", .title = "detail", .target = .{ .hint = .{ .action = 0 } } },
         .{ .key = "q", .title = "quit", .target = .{ .hint = .{ .action = 1 } } },
@@ -216,6 +268,15 @@ test "the elements the panes share are actually on the screen, so the comparison
     try testing.expect(std.mem.indexOf(u8, scr, chrome.close_glyph) != null);
     try testing.expect(std.mem.indexOf(u8, scr, chrome.gutter_glyph) != null);
     try testing.expect(std.mem.indexOf(u8, scr, "q quit") != null);
+    // The build line: state, branch, age, number, in that order.
+    try testing.expect(std.mem.indexOf(u8, scr, "\u{2713} SUCCESSFUL \u{b7} chris/fix-login \u{b7} 4h \u{b7} #412") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "no build ran on abc1234") != null);
+    // Every action state, including the two the host's word supplies.
+    try testing.expect(std.mem.indexOf(u8, scr, "[ Merge ]") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "[ \u{2819} ]") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "[ \u{23f8} ]") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "[ view ]") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "[ \u{2717} ]") != null);
     // And every one of them answers a click.
     try testing.expect(r.hits.rectOf(.filter) != null);
     try testing.expect(r.hits.rectOf(.{ .show_more = 1 }) != null);
@@ -223,4 +284,6 @@ test "the elements the panes share are actually on the screen, so the comparison
     try testing.expect(r.hits.rectOf(.detail_bar) != null);
     try testing.expect(r.hits.rectOf(.{ .hint = 1 }) != null);
     try testing.expect(r.hits.rectOf(.{ .tab = 1 }) != null);
+    try testing.expect(r.hits.rectOf(.{ .build = 0 }) != null);
+    try testing.expect(r.hits.rectOf(.{ .action = .{ .row = 0, .button = 2 } }) != null);
 }

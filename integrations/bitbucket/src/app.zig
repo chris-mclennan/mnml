@@ -669,6 +669,7 @@ pub const App = struct {
             .detail_up => app.detail_scroll -|= 4,
             .detail_down => app.detail_scroll += 4,
             .toggle_approval => try app.toggleApproval(rows),
+            .toggle_awaiting => try app.toggleAwaiting(),
             .filter => {
                 app.mode = .filter;
                 app.filter_caret = app.filter.items.len;

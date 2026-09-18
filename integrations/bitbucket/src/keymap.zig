@@ -45,6 +45,8 @@ pub const Action = enum {
     detail_up,
     detail_down,
     toggle_approval,
+    /// The `awaiting:` chip — show only what is waiting on my review.
+    toggle_awaiting,
     expand,
     collapse,
     expand_all,
@@ -115,6 +117,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .detail, .hint = true, .section = "row" },
     .{ .keys = &.{"ctrl+d"}, .action = .detail_down, .title = "scroll the detail down", .scope = .detail, .section = "row" },
     .{ .keys = &.{"ctrl+u"}, .action = .detail_up, .title = "scroll the detail up", .scope = .detail, .section = "row" },
+    .{ .keys = &.{"shift+a"}, .action = .toggle_awaiting, .title = "only what is awaiting my review", .section = "tabs" },
     .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .hint = true, .section = "tabs" },
     .{ .keys = &.{"tab"}, .action = .next_tab, .title = "next tab", .section = "tabs" },
     .{ .keys = &.{ "backtab", "shift+tab" }, .action = .prev_tab, .title = "previous tab", .section = "tabs" },
@@ -234,6 +237,9 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     // `a` only while the detail is open, as in the reference.
     try t.expect(lookup("a", .{}) == null);
     try t.expectEqual(Action.toggle_approval, lookup("a", .{ .detail_open = true }).?);
+    // The chip and the key are the same door: a chip nobody can reach
+    // from the keyboard is half a feature.
+    try t.expectEqual(Action.toggle_awaiting, lookup("shift+a", .{}).?);
     try t.expect(lookup("z", tree) == null);
 }
 
