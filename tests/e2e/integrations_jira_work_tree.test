@@ -23,8 +23,12 @@ drag 30 5 60 5
 expect screen contains "[dev] Jira Work  0.2.0  not installed"
 key i
 expect screen contains "installed jira_work from"
-# The install toasts sit over the pane's last row for a moment.
-wait 4000
+# The install toasts sit over the pane's last row until they expire, and
+# the rows under them are only trustworthy once they are gone. The wait
+# only covers the part of the 4 s toast life the expect's own 3 s poll
+# budget cannot; the expect is what decides when to go on.
+wait 1200
+expect screen lacks "installed jira_work from"
 # The pane mounts, searches the offline Jira and paints.
 command jira_work.open
 command view.toggle_tree
@@ -88,9 +92,10 @@ key q
 wait 500
 key x
 expect screen lacks "1 Assigned"
-# Uninstall before leaving: `--install` wrote the three manifests into
-# the corpus's one shared data root, and x removes one row at a time —
-# the first manifest row each time, alphabetically.
+# Uninstall before leaving. The data root is this file's own, so nothing
+# here reaches another file; the removals are here because the remove
+# flow is worth exercising. x removes one row at a time — the last
+# manifest row each time, alphabetically.
 command integrations.show_installed
 expect screen contains "Installed (7)"
 # The three manifests sort last: End reaches each in turn.
