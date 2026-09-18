@@ -50,4 +50,7 @@ test {
     _ = theme;
     _ = chrome;
     _ = text;
+    // The anti-drift test: the shared elements painted from two panes'
+    // target vocabularies must come out cell for cell identical.
+    _ = @import("pane/consistency_test.zig");
 }
