@@ -31,6 +31,7 @@ const parse = @import("../git/parse.zig");
 const sequence_editor = @import("../git/sequence_editor.zig");
 const remote_mod = @import("../git/remote.zig");
 const ai_app = @import("ai.zig");
+const api = @import("../ai/api_client.zig");
 const cmd_app = @import("cmd_app.zig");
 const builtin = @import("builtin");
 const Rect = @import("../ui/rect.zig");
@@ -134,6 +135,9 @@ pub const PromptKind = enum {
     stash_branch,
     /// A stash's new message (`State.verb_branch` is its ref).
     stash_rename,
+    /// // changed (git-menus): `worktree lock --reason` — the note, if
+    /// any (`State.verb_branch` holds the tree's path).
+    worktree_lock,
 };
 
 /// What the next stash prompt pushes (`git.stash_staged` / `_file` /
@@ -205,6 +209,11 @@ pub const Confirm = union(enum) {
     discard_hunk: struct { pane: PaneId },
     delete_branch: []u8,
     worktree_remove: []u8,
+    /// // changed (git-menus): a WORKTREES row's *Remove worktree and
+    /// delete branch* — the plain Remove refuses a dirty tree, the
+    /// confirm's Force choice takes it anyway (`worktree remove
+    /// --force` + `branch -D`).
+    worktree_remove_branch: struct { path: []u8, branch: []u8, dirty_files: u32 },
     /// A palette row: checkout after a yes (a tag lands detached).
     checkout: []u8,
     tag_delete: []u8,
@@ -220,6 +229,10 @@ pub const Confirm = union(enum) {
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
             .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard, .checkout_force => |s| gpa.free(s),
+            .worktree_remove_branch => |w| {
+                gpa.free(w.path);
+                gpa.free(w.branch);
+            },
             .delete_remote => |d| {
                 gpa.free(d.remote);
                 gpa.free(d.branch);
@@ -1007,6 +1020,57 @@ pub fn askAi(app: *App, what: client.AiContext, product: ai_app.Product) Command
     app.toast("{s}: reading the {s}…", .{ if (product == .claude) "claude" else "codex", if (what == .staged) "staged diff" else "HEAD patch" });
 }
 
+/// `git.explain_branch` (git-menus): the commits a branch has that its
+/// base does not, summarised by the AI into a read-only pane titled
+/// `explain: <branch>`. The base is the checked-out branch, or — on the
+/// checked-out branch itself — its upstream. The git runs on the
+/// worker; the answer streams into the pane, so neither blocks a frame.
+pub fn explainBranch(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    const repo = try requireRepo(app);
+    const head = app.git.branchLabel() orelse "";
+    var base: []const u8 = "";
+    if (head.len > 0 and !std.mem.eql(u8, name, head)) {
+        base = head;
+    } else if (railBranch(app, name)) |b| {
+        base = b.upstream;
+    }
+    if (base.len == 0) return app.diag.fail(arena, "explain {s}: it is the checked-out branch and has no upstream \u{2014} nothing to compare it against", .{name});
+    // Fail on a route that cannot run before any git does.
+    switch (ai_app.route(app, .claude)) {
+        .off => return app.diag.fail(arena, "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+        .api => if (app.env.get(api.env_key) == null) return app.diag.fail(arena, "AI: ${s} not set (the API backend needs it)", .{api.env_key}),
+        .cli => {},
+    }
+    const branch = try gpa.dupe(u8, name);
+    errdefer gpa.free(branch);
+    const b = try gpa.dupe(u8, base);
+    errdefer gpa.free(b);
+    try submit(app, repo, .{ .branch_explain = .{ .branch = branch, .base = b } });
+    app.toast("explain {s}: reading {s}..{s}\u{2026}", .{ name, base, name });
+}
+
+const explain_log_cap: usize = 24_000;
+
+/// The worker read the range: the prompt goes to the AI, whose pane is
+/// the answer.
+fn branchExplainReady(app: *App, branch: []const u8, base: []const u8, text: []const u8) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) {
+        app.toast("explain {s}: nothing {s} does not already have", .{ branch, base });
+        return;
+    }
+    const cut = text[0..@min(text.len, explain_log_cap)];
+    const tail: []const u8 = if (text.len > explain_log_cap) "\n\u{2026}(log truncated)\u{2026}" else "";
+    const prompt = try std.fmt.allocPrint(arena, "Summarise what the branch `{s}` changes relative to `{s}`, for a reviewer who has not read the commits. Lead with one sentence saying what the branch is for. Then the themes of the work, grouped, largest first, each naming the files it touches. End with anything risky or surprising. No preamble, no code fences.\n\n```\n{s}{s}\n```", .{ branch, base, cut, tail });
+    const title = try std.fmt.allocPrint(arena, "explain: {s}", .{branch});
+    _ = ai_app.askProduct(app, .claude, title, prompt, .git, null) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        runToast(app, err);
+    };
+}
+
 const ai_diff_cap: usize = 24_000;
 
 fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: []const u8, message: []const u8) Allocator.Error!void {
@@ -1277,6 +1341,12 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             } else {
                 app.toast("{s}", .{op.desc});
             }
+            // git-menus: *Push and start PR* — the forge's page opens
+            // once the push landed, never before it.
+            if (op.ok and op.url.len > 0) {
+                openExternal(app, op.url);
+                app.toast("{s}", .{op.url});
+            }
             if (op.refresh) try afterChange(app, repo);
         },
         .log_line => |l| {
@@ -1363,6 +1433,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             app.toast("{s} at {s} (a scratch copy)", .{ ft.path, ft.rev[0..@min(7, ft.rev.len)] });
         },
         .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
+        .branch_explain => |e| try branchExplainReady(app, e.branch, e.base, e.text),
         .conflict_text => |c| try conflicts.aiContextReady(app, c.path, c.base, c.ours, c.theirs),
         .rail => |rail| {
             const active = st.activeRepo();
@@ -2417,6 +2488,13 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
             const ref = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "stash rename: the stash is gone", .{});
             try submitOp(app, try requireRepo(app), .{ .stash_rename = .{ .ref = try gpa.dupe(u8, ref), .msg = try gpa.dupe(u8, text) } });
         },
+        .worktree_lock => {
+            // The reason is optional: an empty box locks the tree plain.
+            const path = st.verb_branch orelse return app.diag.fail(app.frame.allocator(), "lock worktree: the tree is gone", .{});
+            const p_owned = try gpa.dupe(u8, path);
+            errdefer gpa.free(p_owned);
+            try submitOp(app, try requireRepo(app), .{ .worktree_lock = .{ .path = p_owned, .reason = try gpa.dupe(u8, text) } });
+        },
         .new_branch => {
             if (text.len == 0) return;
             const start: ?[]u8 = if (takeVerbStart(app)) |s| s else null;
@@ -2497,12 +2575,48 @@ pub fn openConfirm(app: *App, payload: Confirm, message: []u8) Allocator.Error!v
 
 pub const confirm_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'y', .label = "Yes" }, .{ .key = 'n', .label = "No" } };
 
+/// // changed (git-menus): a confirm whose choices are not yes / no —
+/// *Remove worktree and delete branch*'s Remove / Force / Cancel. Takes
+/// `payload` and `message` the same way; `choices` is a static.
+pub fn openConfirmWith(app: *App, payload: Confirm, title: []const u8, message: []u8, choices: []const app_mod.Confirm.Choice) Allocator.Error!void {
+    const st = &app.git;
+    st.confirm.deinit(app.gpa);
+    st.confirm = payload;
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = title, .message = message, .choices = choices },
+        .purpose = .git,
+        .message = message,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+pub const remove_branch_choices = [_]app_mod.Confirm.Choice{
+    .{ .key = 'r', .label = "Remove" },
+    .{ .key = 'f', .label = "Force" },
+    .{ .key = 'c', .label = "Cancel" },
+};
+
 pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
     const payload = st.confirm;
     st.confirm = .none;
     defer payload.deinit(gpa);
+    // git-menus: the only three-way confirm — Remove (0), Force (1),
+    // Cancel (2). A dirty tree is refused unless Force was taken.
+    if (payload == .worktree_remove_branch) {
+        const w = payload.worktree_remove_branch;
+        if (choice > 1) return;
+        const force = choice == 1;
+        if (!force and w.dirty_files > 0) return app.diag.fail(app.frame.allocator(), "remove worktree: {s} has {d} uncommitted file{s} \u{2014} pick Force to throw {s} away", .{ w.path, w.dirty_files, if (w.dirty_files == 1) "" else "s", if (w.dirty_files == 1) "it" else "them" });
+        const path = try gpa.dupe(u8, w.path);
+        errdefer gpa.free(path);
+        const branch = try gpa.dupe(u8, w.branch);
+        errdefer gpa.free(branch);
+        return submitOp(app, try requireRepo(app), .{ .worktree_remove_branch = .{ .path = path, .branch = branch, .force = force } });
+    }
     if (choice != 0) return;
     switch (payload) {
         .none => {},
@@ -2529,6 +2643,8 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
             app.toast("pushing (--force-with-lease)\u{2026}", .{});
             try submitOp(app, try requireRepo(app), .push_force);
         },
+        // Handled above: its choices are not yes / no.
+        .worktree_remove_branch => unreachable,
     }
 }
 
@@ -2714,6 +2830,22 @@ pub fn logEnter(app: *App, e: app_mod.ListPane.Entry) CommandError!void {
 
 // ─── the branch verbs (git-more2) ───────────────────────────────────────
 
+/// A WORKTREES row's *Lock worktree…* (git-menus): the reason box, whose
+/// accept locks the tree (an empty box locks it plain). A locked tree
+/// refuses `worktree remove` and `worktree prune`, and the panel paints
+/// the lock the porcelain reports.
+pub fn lockWorktreePrompt(app: *App, path: []const u8, label: []const u8) CommandError!void {
+    _ = try requireRepo(app);
+    try setVerbBranch(app, path);
+    try openPromptOwned(app, .worktree_lock, try std.fmt.allocPrint(app.frame.allocator(), "Lock {s} \u{2014} a reason (optional)", .{label}));
+}
+
+/// *Unlock worktree*: no prompt, nothing to lose.
+pub fn unlockWorktree(app: *App, path: []const u8) CommandError!void {
+    const repo = try requireRepo(app);
+    try submitOp(app, repo, .{ .worktree_unlock = try app.gpa.dupe(u8, path) });
+}
+
 fn setVerbBranch(app: *App, name: []const u8) Allocator.Error!void {
     if (app.git.verb_branch) |b| app.gpa.free(b);
     app.git.verb_branch = try app.gpa.dupe(u8, name);
@@ -2843,6 +2975,51 @@ pub fn pushBranch(app: *App, name: []const u8) CommandError!void {
     errdefer gpa.free(r);
     app.toast("pushing {s} to {s}\u{2026}", .{ name, remote });
     try submitOp(app, repo, .{ .push_branch = .{ .remote = r, .branch = try gpa.dupe(u8, name) } });
+}
+
+/// `git.push_start_pr` (git-menus): the branch goes up (`push -u`, never
+/// a force), and when the remote's host has a new-pull-request page the
+/// push's success opens it in the browser. A host with no shape on file
+/// is pushed and said — never sent to a guessed URL.
+pub const PrTarget = struct { remote: []const u8, url: []const u8 };
+
+/// Which remote *Push and start PR* pushes to, and the forge's new-PR
+/// page it opens after — both read off the rail. `url` is empty when
+/// the remote's host has no shape on file (`git/remote.zig`), and the
+/// verb then pushes and says so rather than guessing one. Allocates on
+/// `arena`.
+pub fn prTarget(app: *App, arena: Allocator, name: []const u8) CommandError!PrTarget {
+    const b = railBranch(app, name);
+    if (b) |br| if (br.remote) return app.diag.fail(arena, "push and start PR: {s} is a remote branch \u{2014} start from the local one", .{name});
+    var remote: []const u8 = "";
+    if (b) |br| if (br.upstream.len > 0) if (std.mem.indexOfScalar(u8, br.upstream, '/')) |sl| {
+        remote = br.upstream[0..sl];
+    };
+    if (remote.len == 0 and app.git.rail_remotes.len > 0) remote = app.git.rail_remotes[0].name;
+    if (remote.len == 0) return app.diag.fail(arena, "push and start PR: {s} has no remote \u{2014} add one first", .{name});
+    var url: []const u8 = "";
+    for (app.git.rail_remotes) |r| if (std.mem.eql(u8, r.name, remote)) {
+        url = (try remote_mod.newPrUrl(arena, r.url, name)) orelse "";
+    };
+    return .{ .remote = remote, .url = url };
+}
+
+pub fn pushStartPr(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    const repo = try requireRepo(app);
+    const t = try prTarget(app, app.frame.allocator(), name);
+    const r_owned = try gpa.dupe(u8, t.remote);
+    errdefer gpa.free(r_owned);
+    const b_owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(b_owned);
+    const u_owned = try gpa.dupe(u8, t.url);
+    errdefer gpa.free(u_owned);
+    if (t.url.len == 0) {
+        app.toast("pushing {s} to {s}\u{2026} (no new-PR page for that host \u{2014} open it yourself)", .{ name, t.remote });
+    } else {
+        app.toast("pushing {s} to {s}, then the new PR page\u{2026}", .{ name, t.remote });
+    }
+    try submitOp(app, repo, .{ .push_start_pr = .{ .remote = r_owned, .branch = b_owned, .url = u_owned } });
 }
 
 /// `Push --force-with-lease…`: the confirm names the risk. Rust refused
@@ -3776,6 +3953,45 @@ pub fn openPlan(app: *App, g: *GraphPane) CommandError!void {
     app.needs_render = true;
 }
 
+/// The commit `onto` names: a ref on one of the graph's rows
+/// (`feature`, `origin/feature`, `v1.0`) first, then a hash prefix.
+fn ontoIndex(g: *const GraphPane, onto: []const u8) ?usize {
+    for (g.commits, 0..) |c, i| if (refsName(c.refs, onto)) return i;
+    return graph_view.findByHashPrefix(g.commits, onto);
+}
+
+/// `git.rebase_interactive_onto`: the same plan modal `git.rebase_plan`
+/// opens, over the commits between `onto` and HEAD rather than over
+/// whatever is selected — the branches panel's *Interactive rebase HEAD
+/// onto <branch>* and the graph's *Interactive rebase onto this
+/// commit*. `onto` itself stays put and becomes the plan's base, so
+/// Enter runs `rebase -i <onto>` with the todo the modal holds.
+pub fn openPlanOnto(app: *App, g: *GraphPane, onto: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const base = ontoIndex(g, onto) orelse return app.diag.fail(arena, "rebase: `{s}` is not in the open graph", .{onto});
+    const head = headIndex(app, g) orelse return app.diag.fail(arena, "rebase: HEAD is not in the list", .{});
+    if (base == head) return app.diag.fail(arena, "rebase: `{s}` is HEAD \u{2014} there is nothing to replay onto it", .{onto});
+    var sel: std.ArrayListUnmanaged(usize) = .empty;
+    var at = head;
+    while (at != base) {
+        try sel.append(arena, at);
+        const c = g.commits[at];
+        const parent = if (c.parents.len > 0) indexOfSha(g, c.parents[0]) else null;
+        at = parent orelse return app.diag.fail(arena, "rebase: `{s}` is not on HEAD's first-parent line", .{onto});
+    }
+    const plan = try buildPlan(app, g, sel.items);
+    g.closePlan();
+    g.plan = plan;
+    g.detail_focus = false;
+    g.wip_focused = false;
+    // Asked from the branches panel, the focus is the panel's: the modal
+    // would paint and take no keys. The graph's pane takes it back.
+    if (app.active) |id| if (activeGraph(app)) |ag| if (ag == g) {
+        app.focus = .{ .pane = id };
+    };
+    app.needs_render = true;
+}
+
 /// A direct verb on the selection — no modal. `fixup` / `squash` fold
 /// each selected commit into the commit before it (the plan reaches
 /// one commit further down for that); `drop` drops; `reword` takes
@@ -4288,6 +4504,7 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Cherry-pick onto HEAD", .action = .{ .command = .@"git.cherry_pick" }, .separator_before = true },
         .{ .label = "Revert", .action = .{ .command = .@"git.revert" } },
         .{ .label = "Rebase plan\u{2026}", .action = .{ .command = .@"git.rebase_plan" }, .separator_before = true },
+        .{ .label = "Interactive rebase onto this commit\u{2026}", .action = .{ .command = .@"git.rebase_interactive_onto" } },
         .{ .label = "Fixup into the commit before", .action = .{ .command = .@"git.fixup" } },
         .{ .label = "Squash into the commit before", .action = .{ .command = .@"git.squash" } },
         .{ .label = "Reword\u{2026}", .action = .{ .command = .@"git.reword" } },
@@ -5714,6 +5931,149 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expect(refsName("HEAD -> main, origin/main, tag: v1", "origin/main"));
     try testing.expect(refsName("HEAD -> main", "main"));
     try testing.expect(!refsName("HEAD -> main, origin/main", "main2"));
+}
+
+test "openPlanOnto: a branch row's interactive rebase plans everything HEAD has that the row does not, oldest first, with the row as the base; a hash reaches the same plan; HEAD itself, an unknown ref and a commit off the first-parent line each refuse by name" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    // `base` stays on the first commit: the plan replays what came after.
+    try f.sh(&.{ "branch", "base" });
+    try f.write("b.txt", "two\n");
+    try f.sh(&.{ "add", "b.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "second" });
+    try f.write("c.txt", "three\n");
+    try f.sh(&.{ "add", "c.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "third" });
+    // A side branch, off main's first-parent line.
+    try f.sh(&.{ "checkout", "-q", "-b", "side", "HEAD~1" });
+    try f.write("d.txt", "four\n");
+    try f.sh(&.{ "add", "d.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "aside" });
+    try f.sh(&.{ "checkout", "-q", "main" });
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    try f.settle(4000);
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+    const g = activeGraph(&f.app).?;
+
+    try openPlanOnto(&f.app, g, "base");
+    try testing.expect(g.plan != null);
+    try testing.expectEqual(@as(usize, 2), g.plan.?.rows.items.len);
+    try testing.expectEqualStrings("second", g.commits[g.plan.?.rows.items[0].ci].subject);
+    try testing.expectEqualStrings("third", g.commits[g.plan.?.rows.items[1].ci].subject);
+    // The base is `base`'s own commit — `rebase -i <base>` replays the two.
+    const base_ci = ontoIndex(g, "base").?;
+    try testing.expectEqualStrings(g.commits[base_ci].hash, g.plan.?.base.?);
+    for (g.plan.?.rows.items) |r| try testing.expect(r.marked);
+    g.closePlan();
+
+    // The same commit by hash prefix.
+    try openPlanOnto(&f.app, g, g.commits[base_ci].hash[0..7]);
+    try testing.expectEqual(@as(usize, 2), g.plan.?.rows.items.len);
+    g.closePlan();
+
+    // HEAD itself: nothing to replay.
+    try testing.expectError(error.Failed, openPlanOnto(&f.app, g, "main"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "is HEAD") != null);
+    f.app.diag.clear();
+    // A ref the graph does not carry.
+    try testing.expectError(error.Failed, openPlanOnto(&f.app, g, "no-such-branch"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "not in the open graph") != null);
+    f.app.diag.clear();
+    // `side` is off main's first-parent line.
+    try testing.expectError(error.Failed, openPlanOnto(&f.app, g, "side"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "first-parent") != null);
+    f.app.diag.clear();
+    try testing.expect(g.plan == null);
+}
+
+test "explainBranch: the base is the checked-out branch, or its upstream on the checked-out branch itself; with neither it refuses by name, and an empty range says so instead of asking the model" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.sh(&.{ "branch", "feature" });
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(4000);
+
+    // The checked-out branch with no upstream: nothing to compare against.
+    try testing.expectError(error.Failed, explainBranch(&f.app, "main"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "no upstream") != null);
+    f.app.diag.clear();
+
+    // A range the worker found empty: said, not sent to the model — no
+    // AI pane opens.
+    const before = f.app.panes.count();
+    try branchExplainReady(&f.app, "feature", "main", "");
+    try testing.expect(std.mem.indexOf(u8, f.app.lastToast().?, "nothing main does not already have") != null);
+    try testing.expectEqual(before, f.app.panes.count());
+}
+
+test "push and start PR: the remote and the forge page come off the rail, a remote row is refused, an unknown host has no page; the page opens only once the push landed" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    const app = &f.app;
+    const arena = app.frame.allocator();
+    var branches = [_]parse.Branch{
+        .{ .name = "main", .time = 0, .current = true, .remote = false, .sha = "aaaa111" },
+        .{ .name = "feat/eng-12", .time = 0, .current = false, .remote = false, .sha = "bbbb222", .upstream = "fork/feat/eng-12" },
+        .{ .name = "origin/main", .time = 0, .current = false, .remote = true, .sha = "aaaa111" },
+    };
+    var remotes = [_]parse.Remote{
+        .{ .name = "origin", .url = "git@github.com:acme/widget.git", .provider = .github },
+        .{ .name = "fork", .url = "https://git.acme-corp.example/~me/widget", .provider = .other },
+    };
+    app.git.rail_branches = &branches;
+    app.git.rail_remotes = &remotes;
+
+    // No upstream: the first remote, and its forge's page.
+    const main_t = try prTarget(app, arena, "main");
+    try testing.expectEqualStrings("origin", main_t.remote);
+    try testing.expectEqualStrings("https://github.com/acme/widget/compare/main?expand=1", main_t.url);
+    // An upstream names the remote — here one whose host has no shape.
+    const feat_t = try prTarget(app, arena, "feat/eng-12");
+    try testing.expectEqualStrings("fork", feat_t.remote);
+    try testing.expectEqualStrings("", feat_t.url);
+    // A remote row is not a branch to push.
+    try testing.expectError(error.Failed, prTarget(app, arena, "origin/main"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "is a remote branch") != null);
+    app.diag.clear();
+    // With no remote at all there is nowhere to push.
+    app.git.rail_remotes = &.{};
+    try testing.expectError(error.Failed, prTarget(app, arena, "main"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "no remote") != null);
+    app.diag.clear();
+    app.git.rail_remotes = &remotes;
+
+    // The page opens on the push's own result, never before it. A
+    // browser that cannot start says so — which is the proof it was
+    // reached; a failed push carries no page at all.
+    app.cfg.ui.external_browser = "mnml-test-no-such-browser";
+    const repo = try requireRepo(app);
+    const failed = try client.Result.create(testing.allocator, repo.id);
+    failed.payload = .{ .op = .{ .desc = "pushed main to origin", .ok = false, .msg = "rejected", .url = "https://github.com/acme/widget/compare/main?expand=1" } };
+    try handle(app, failed);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "github.com") == null);
+    const landed = try client.Result.create(testing.allocator, repo.id);
+    landed.payload = .{ .op = .{ .desc = "pushed main to origin", .ok = true, .url = "https://github.com/acme/widget/compare/main?expand=1" } };
+    try handle(app, landed);
+    try testing.expectEqualStrings("https://github.com/acme/widget/compare/main?expand=1", app.lastToast().?);
+    app.git.rail_branches = &.{};
+    app.git.rail_remotes = &.{};
 }
 
 test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {

@@ -1090,6 +1090,14 @@ pub const specs = [_]Spec{
     // git-more2: the graph's detail file rows (audit #101).
     .{ .id = "git.graph_detail_open", .title = "Graph: open the detail column's file — its diff in the commit, or the working tree's (Enter)", .group = "git" },
     .{ .id = "git.graph_file_at_rev", .title = "Graph: open the detail column's file as the selected commit had it (a scratch copy)", .group = "git" },
+    // git-menus: the branches panel's GitKraken rows.
+    .{ .id = "git.rebase_interactive_onto", .title = "Git: interactive rebase onto the panel's branch row / the graph's commit — the plan modal over everything HEAD has that it does not", .group = "git", .keys = .{ .vim = &.{"space g i"} } },
+    .{ .id = "git.explain_branch", .title = "Git: explain a branch's changes with Claude \u{2014} the commits it has that the checked-out branch does not, in a read-only pane", .group = "git", .keys = .{ .vim = &.{"space g e"} } },
+    .{ .id = "git.push_start_pr", .title = "Git: push the branch (push -u, never a force) and open the forge's new-pull-request page", .group = "git", .keys = .{ .vim = &.{"space g r"} } },
+    .{ .id = "git.worktree_open_tab", .title = "Git: open the branches panel's worktree row on a tab page of its own (the tree's files, and the panels follow it)", .group = "git", .keys = .{ .vim = &.{"space g W"} } },
+    .{ .id = "git.worktree_remove_delete_branch", .title = "Git: remove the branches panel's worktree row and delete its branch\u{2026} (confirm; Force takes a dirty tree or an unmerged branch)", .group = "git" },
+    .{ .id = "git.worktree_lock", .title = "Git: lock the branches panel's worktree row\u{2026} (worktree lock, with an optional reason \u{2014} a locked tree refuses remove and prune)", .group = "git" },
+    .{ .id = "git.worktree_unlock", .title = "Git: unlock the branches panel's worktree row (worktree unlock)", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -1146,7 +1154,7 @@ pub const specs = [_]Spec{
     .{ .id = "zon.source", .title = "ZON: back to the raw source of the tree", .group = "zon" },
 };
 
-test "1068 specs, unique ids" {
+test "1075 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1169,6 +1177,6 @@ test "1068 specs, unique ids" {
     // + six SEARCH section commands (refresh / open / open_split /
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice).
-    try std.testing.expectEqual(@as(usize, 1069), specs.len);
+    try std.testing.expectEqual(@as(usize, 1076), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

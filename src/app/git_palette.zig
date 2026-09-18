@@ -76,6 +76,8 @@ const side = @import("side.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const pty_pane = @import("pty_pane.zig");
+const cmd_tab = @import("cmd_tab.zig");
+const files_pane = @import("files_pane.zig");
 const remote_mod = @import("../git/remote.zig");
 const settings = @import("settings.zig");
 const alloc = @import("../core/alloc.zig");
@@ -144,6 +146,61 @@ pub const State = struct {
 };
 
 pub const RepoColor = struct { name: []u8, color: []u8 };
+
+test "remove worktree and delete branch: the confirm names the tree, the branch and the dirty count; Remove refuses a dirty tree and names Force, Force sends it; the main tree, the tree on show and a branchless tree are refused by name" {
+    var t = try TestApp.init();
+    defer t.deinit();
+    const app = &t.app;
+    try git.discover(app);
+    seed(app);
+    // The main tree (the workspace) and, with its `main` flag off, the
+    // tree the panels are showing.
+    try testing.expectError(error.Failed, confirmRemoveWorktreeBranch(app, seed_worktrees[0]));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "main worktree") != null);
+    app.diag.clear();
+    var on_show = seed_worktrees[0];
+    on_show.main = false;
+    on_show.path = app.git.activeRepo().?.path;
+    on_show.branch = "main";
+    try testing.expectError(error.Failed, confirmRemoveWorktreeBranch(app, on_show));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "tree on show") != null);
+    app.diag.clear();
+    // A detached tree has no branch to delete.
+    var detached = seed_worktrees[1];
+    detached.branch = "";
+    try testing.expectError(error.Failed, confirmRemoveWorktreeBranch(app, detached));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "no branch of its own") != null);
+    app.diag.clear();
+
+    // The linked tree: the confirm names both, and its dirty count.
+    try confirmRemoveWorktreeBranch(app, seed_worktrees[1]);
+    try testing.expect(app.overlay == .confirm);
+    try testing.expectEqualStrings("Remove worktree", app.overlay.confirm.state.title);
+    const msg = app.overlay.confirm.state.message;
+    try testing.expect(std.mem.indexOf(u8, msg, "/repo/wt-fix") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "delete branch fix") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "2 uncommitted files") != null);
+    try testing.expectEqual(@as(usize, 3), app.overlay.confirm.state.choices.len);
+    try testing.expectEqualStrings("Force", app.overlay.confirm.state.choices[1].label);
+
+    // Remove on a dirty tree refuses and names the way through.
+    const busy_before = app.git.busy;
+    try testing.expectError(error.Failed, git.acceptConfirm(app, 0));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "pick Force") != null);
+    app.diag.clear();
+    try testing.expectEqual(busy_before, app.git.busy);
+
+    // Force sends it to the worker.
+    try confirmRemoveWorktreeBranch(app, seed_worktrees[1]);
+    try git.acceptConfirm(app, 1);
+    try testing.expectEqual(busy_before + 1, app.git.busy);
+    try testing.expect(app.git.confirm == .none);
+
+    // Cancel sends nothing.
+    try confirmRemoveWorktreeBranch(app, seed_worktrees[1]);
+    try git.acceptConfirm(app, 2);
+    try testing.expectEqual(busy_before + 1, app.git.busy);
+}
 
 // ─── the accent (colors) ────────────────────────────────────────────────
 
@@ -912,6 +969,16 @@ pub fn cursorStash(app: *App) Allocator.Error!?[]const u8 {
     };
 }
 
+/// The worktree the cursor's row names, for the WORKTREES commands off
+/// the panel; null on any other row.
+pub fn cursorWorktree(app: *App) Allocator.Error!?parse.Worktree {
+    const row = (try rowAt(app, app.git_palette.cursor)) orelse return null;
+    return switch (row) {
+        .worktree => |w| if (w.idx < app.git.rail_worktrees.len) app.git.rail_worktrees[w.idx] else null,
+        else => null,
+    };
+}
+
 pub fn cursorStashMessage(app: *App) ?[]const u8 {
     const row = (rowAt(app, app.git_palette.cursor) catch return null) orelse return null;
     return switch (row) {
@@ -1028,20 +1095,85 @@ pub fn openWorktree(app: *App, w: parse.Worktree) CommandError!void {
         showRepoTab(app, i);
         return;
     };
+    const idx = (try ensureWorktreeRepo(app, w)) orelse {
+        app.toast("worktree: {s} added to the workspace", .{w.path});
+        return;
+    };
+    try git.switchTo(app, idx);
+    if (st.active) try rebuildTabs(app);
+    showRepoTab(app, idx);
+    app.toast("worktree: {s}", .{w.path});
+}
+
+/// The worktree's directory as a workspace root and a repo of its own,
+/// discovered if it was not one already: its index in `git.repos`, or
+/// null when the discovery did not find a repository there.
+fn ensureWorktreeRepo(app: *App, w: parse.Worktree) CommandError!?usize {
+    const gs = &app.git;
+    const arena = app.frame.allocator();
+    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) return i;
     _ = app.tree.addRoot(app, w.path, null) catch |err| switch (err) {
         error.AlreadyOpen => {},
         error.NotADirectory => return app.diag.fail(arena, "worktree: {s} is not a directory", .{w.path}),
         error.OutOfMemory => return error.OutOfMemory,
     };
     try git.discover(app);
-    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) {
-        try git.switchTo(app, i);
-        if (st.active) try rebuildTabs(app);
-        showRepoTab(app, i);
-        app.toast("worktree: {s}", .{w.path});
+    for (gs.repos.items, 0..) |r, i| if (samePath(app, arena, r.path, w.path)) return i;
+    return null;
+}
+
+/// *Open worktree in new tab* (git-menus): the tree opens on a tab page
+/// of its own, this page left as it is — where *Open this worktree*
+/// turns THIS page's git tab to the tree's graph, per tab. The new page
+/// holds the tree's files, and the tree becomes the repo the panels
+/// read.
+pub fn openWorktreeInTab(app: *App, w: parse.Worktree) CommandError!void {
+    const idx = (try ensureWorktreeRepo(app, w)) orelse {
+        app.toast("worktree: {s} added to the workspace", .{w.path});
         return;
     };
-    app.toast("worktree: {s} added to the workspace", .{w.path});
+    try cmd_tab.tabNewEmpty(app);
+    _ = try files_pane.open(app, w.path);
+    try git.switchTo(app, idx);
+    app.toast("worktree {s}: tab {d}/{d}", .{ std.fs.path.basename(w.path), app.layouts.active + 1, app.layouts.layouts.items.len });
+}
+
+/// The tree's path for a confirm: workspace-relative when it is under
+/// the workspace, through symlinks (`git worktree list` prints the real
+/// path, a workspace may be the symlinked one).
+fn treeLabel(app: *App, arena: Allocator, path: []const u8) []const u8 {
+    const rel = app.relPath(path);
+    if (rel.len < path.len) return rel;
+    const real = std.Io.Dir.realPathFileAbsoluteAlloc(app.io, app.workspace, arena) catch return path;
+    if (std.mem.startsWith(u8, path, real) and path.len > real.len and path[real.len] == '/') return path[real.len + 1 ..];
+    return path;
+}
+
+/// A WORKTREES row's *Remove worktree and delete branch…* (git-menus):
+/// the confirm names the tree, its branch and, when the tree is dirty,
+/// how many files it would throw away. The main tree, the tree on show
+/// and a tree with no branch of its own are refused by name — the row
+/// is always there, as every WORKTREES row's is.
+pub fn confirmRemoveWorktreeBranch(app: *App, wt: parse.Worktree) CommandError!void {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    if (wt.main) return app.diag.fail(arena, "remove worktree: {s} is the main worktree", .{wt.path});
+    if (app.git.activeRepo()) |r| if (samePath(app, arena, r.path, wt.path)) return app.diag.fail(arena, "remove worktree: {s} is the tree on show \u{2014} switch to another first", .{wt.path});
+    if (wt.branch.len == 0) return app.diag.fail(arena, "remove worktree: {s} has no branch of its own \u{2014} use Remove this worktree", .{wt.path});
+    const path = try gpa.dupe(u8, wt.path);
+    errdefer gpa.free(path);
+    const branch = try gpa.dupe(u8, wt.branch);
+    errdefer gpa.free(branch);
+    // The box shows one line: a long absolute path would push the
+    // branch and the count off the end, so the tree is named the way
+    // the panels name it — workspace-relative where it is under one.
+    const shown = treeLabel(app, arena, wt.path);
+    const message = if (wt.dirty_files > 0)
+        try std.fmt.allocPrint(gpa, "  Remove worktree {s} and delete branch {s}? {d} uncommitted file{s} \u{2014} Force throws {s} away.", .{ shown, wt.branch, wt.dirty_files, if (wt.dirty_files == 1) "" else "s", if (wt.dirty_files == 1) "it" else "them" })
+    else
+        try std.fmt.allocPrint(gpa, "  Remove worktree {s} and delete branch {s}? Force deletes the branch even when it is not merged.", .{ shown, wt.branch });
+    errdefer gpa.free(message);
+    try git.openConfirmWith(app, .{ .worktree_remove_branch = .{ .path = path, .branch = branch, .dirty_files = wt.dirty_files } }, "Remove worktree", message, &git.remove_branch_choices);
 }
 
 /// One row menu's rows as they are built: the labels on the arena the
@@ -1145,12 +1277,14 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 try b.act("Pull (fast-forward if possible)", .pull, br.idx, false);
                 try b.act("Push", .push, br.idx, false);
                 try b.act("Push --force-with-lease\u{2026}", .push_force, br.idx, false);
+                try b.act("Push and start PR", .push_start_pr, br.idx, false);
                 try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
                 try b.act(try b.fmt("Open worktree from {s}\u{2026}", .{name}), .branch_worktree, br.idx, true);
                 try b.act("Create branch here\u{2026}", .new_branch, br.idx, true);
                 try b.act("Revert commit", .revert, br.idx, false);
                 try b.act(try b.fmt("Rename {s}\u{2026}", .{name}), .rename, br.idx, true);
                 try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
+                try b.act("Explain branch changes (AI)", .explain_branch, br.idx, true);
                 try b.copies(br.idx);
                 try b.tags(br.idx);
                 break :blk try b.fmt("\u{25CF} {s}", .{name});
@@ -1158,9 +1292,11 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act(try b.fmt("Checkout {s}", .{name}), .checkout, br.idx, false);
             try b.act("Pull (fast-forward if possible)", .fast_forward, br.idx, true);
             try b.act("Push", .push_branch, br.idx, false);
+            try b.act("Push and start PR", .push_start_pr, br.idx, false);
             try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
             try b.act(try b.fmt("Merge {s} into {s}", .{ name, head }), .merge, br.idx, true);
             try b.act(try b.fmt("Rebase {s} onto {s}", .{ head, name }), .rebase, br.idx, false);
+            try b.act(try b.fmt("Interactive rebase {s} onto {s}\u{2026}", .{ head, name }), .rebase_interactive, br.idx, false);
             try b.act(try b.fmt("Open worktree from {s}\u{2026}", .{name}), .branch_worktree, br.idx, true);
             try b.act("Create branch here\u{2026}", .new_branch, br.idx, true);
             try b.act("Cherry pick commit", .cherry_pick, br.idx, false);
@@ -1171,6 +1307,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
             try b.act(try b.fmt("Force checkout {s}\u{2026}", .{name}), .checkout_force, br.idx, false);
             try b.act(try b.fmt("Diff against {s}", .{head}), .diff_current, br.idx, false);
+            try b.act("Explain branch changes (AI)", .explain_branch, br.idx, false);
             try b.copies(br.idx);
             try b.tags(br.idx);
             break :blk name;
@@ -1189,6 +1326,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Revert commit", .revert, m.idx, false);
             try b.act(try b.fmt("Delete {s}\u{2026}", .{m.name}), .delete_remote, m.idx, true);
             try b.act(try b.fmt("Diff against {s}", .{head}), .diff_current, m.idx, false);
+            try b.act("Explain branch changes (AI)", .explain_branch, m.idx, false);
             try b.copies(m.idx);
             try b.tags(m.idx);
             break :blk m.name;
@@ -1207,7 +1345,13 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             }
             const wt = v.worktrees[w.idx];
             try b.act("Open this worktree", .worktree_open, w.idx, false);
+            try b.act("Open worktree in new tab", .worktree_open_tab, w.idx, false);
             try b.act("Open shell here", .worktree_shell, w.idx, false);
+            if (wt.locked) {
+                try b.act("Unlock worktree", .worktree_unlock, w.idx, false);
+            } else {
+                try b.act("Lock worktree\u{2026}", .worktree_lock, w.idx, false);
+            }
             try b.act("Copy path", .worktree_copy_path, w.idx, false);
             try b.act("New worktree\u{2026}", .worktree_new, w.idx, false);
             // sessions-worktree: a session's tree merges and removes
@@ -1220,6 +1364,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
                 // The main tree and the tree on show keep the row; the
                 // verb refuses them by name.
                 try b.act("Remove this worktree\u{2026}", .worktree_remove, w.idx, true);
+                try b.act("Remove worktree and delete branch\u{2026}", .worktree_remove_branch, w.idx, false);
             }
             break :blk try b.fmt("{s}  {s}", .{ wt.label(), wt.path });
         },
@@ -1289,11 +1434,15 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 app.toast("copied {s}", .{url});
                 break :blk;
             },
-            .worktree_open, .worktree_shell, .worktree_copy_path, .worktree_remove, .session_merge, .session_remove => {
+            .worktree_open, .worktree_open_tab, .worktree_shell, .worktree_copy_path, .worktree_remove, .worktree_remove_branch, .worktree_lock, .worktree_unlock, .session_merge, .session_remove => {
                 if (a.idx >= gs.rail_worktrees.len) break :blk;
                 const wt = gs.rail_worktrees[a.idx];
                 switch (a.what) {
                     .worktree_open => break :blk openWorktree(app, wt),
+                    .worktree_open_tab => break :blk openWorktreeInTab(app, wt),
+                    .worktree_remove_branch => break :blk confirmRemoveWorktreeBranch(app, wt),
+                    .worktree_lock => break :blk git.lockWorktreePrompt(app, wt.path, wt.label()),
+                    .worktree_unlock => break :blk git.unlockWorktree(app, wt.path),
                     .session_merge, .session_remove => {
                         const e = app.sessions.worktrees.byPath(wt.path) orelse break :blk app.diag.fail(arena, "{s} is no session worktree", .{wt.path});
                         break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*, false);
@@ -1355,6 +1504,9 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .checkout => break :blk if (b.remote) checkoutTracking(app, name) else git.submitOp(app, repo, .{ .checkout = try gpa.dupe(u8, name) }),
             .merge => break :blk git.submitOp(app, repo, .{ .merge = try gpa.dupe(u8, name) }),
             .rebase => break :blk git.submitOp(app, repo, .{ .rebase = try gpa.dupe(u8, name) }),
+            // The plan modal over `name..HEAD`; the graph must be open,
+            // which in git mode it is (one tab per repo).
+            .rebase_interactive => break :blk git.openPlanOnto(app, git.activeGraph(app) orelse break :blk app.diag.fail(arena, "rebase: open the commit graph first (git.graph)", .{}), name),
             // From the row's branch, not HEAD (the current row's is HEAD).
             .new_branch => break :blk git.newBranchFrom(app, name),
             .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{name})),
@@ -1368,6 +1520,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .tag_here => break :blk git.tagAt(app, name, false),
             .tag_annotated_here => break :blk git.tagAt(app, name, true),
             .push_branch => break :blk git.pushBranch(app, name),
+            .push_start_pr => break :blk git.pushStartPr(app, name),
             .copy_sha => {
                 if (b.sha.len == 0) break :blk app.diag.fail(arena, "copy sha: {s} has none on the rail yet", .{name});
                 try app.clipboard.setYank(b.sha, false);
@@ -1396,6 +1549,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 try app.clipboard.setYank(link, false);
                 app.toast("copied {s}", .{link});
             },
+            .explain_branch => break :blk git.explainBranch(app, name),
             .rename => break :blk git.branchRename(app, name),
             .fast_forward => break :blk git.fastForward(app, name),
             .set_upstream => break :blk git.setUpstream(app, name),
@@ -1740,7 +1894,7 @@ var seed_branches = [_]parse.Branch{
 };
 var seed_worktrees = [_]parse.Worktree{
     .{ .path = "", .branch = "main", .head = "aaaa111", .main = true },
-    .{ .path = "/repo/wt-fix", .branch = "fix", .head = "cccc333", .locked = true, .lock_reason = "keep", .dirty = true },
+    .{ .path = "/repo/wt-fix", .branch = "fix", .head = "cccc333", .locked = true, .lock_reason = "keep", .dirty = true, .dirty_files = 2 },
 };
 var seed_remotes = [_]parse.Remote{.{ .name = "origin", .url = "git@github.com:me/thing.git", .provider = .github }};
 var seed_stashes = [_]parse.Stash{.{ .sha = "ab12cd3", .ref = "stash@{0}", .message = "On main: half done" }};
@@ -2221,7 +2375,10 @@ fn lastToastText(app: *App) []const u8 {
     return app.lastToast() orelse "";
 }
 
-const worktree_menu = [_][]const u8{ "Open this worktree", "Open shell here", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}" };
+/// The WORKTREES menu, whose lock row reads the tree's own state: the
+/// seed's main tree is unlocked, its linked tree locked.
+const worktree_menu_unlocked = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Lock worktree\u{2026}", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}", "Remove worktree and delete branch\u{2026}" };
+const worktree_menu_locked = [_][]const u8{ "Open this worktree", "Open worktree in new tab", "Open shell here", "Unlock worktree", "Copy path", "New worktree\u{2026}", "Remove this worktree\u{2026}", "Remove worktree and delete branch\u{2026}" };
 
 test "row menus: one shape per row kind, built from the row under the pointer while the cursor stays; the main tree and the tree on show keep Remove and are refused by name; a prefix-only remote keeps Copy URL and says so; Reset targets the row, not the cursor; a stale index opens nothing; under All repos a right-click on another repo's row switches nothing and its rows carry the repo, which the act switches to" {
     var t = try TestApp.initWith(&.{ "alpha", "beta" });
@@ -2239,30 +2396,30 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     try expectMenu(app, 0, &.{ "Fold", "Refresh" });
     try testing.expectEqualStrings("LOCAL", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 1, &.{ "Checkout feature", "Pull (fast-forward if possible)", "Push", "Push and start PR", "Set upstream\u{2026}", "Merge feature into main", "Rebase main onto feature", "Interactive rebase main onto feature\u{2026}", "Open worktree from feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Rename feature\u{2026}", "Delete feature\u{2026}", "Delete on the remote\u{2026}", "Force checkout feature\u{2026}", "Diff against main", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("feature", app.overlay.menu.title);
     // The Reset row opens to the right: soft / mixed / hard, each an
     // act on feature; the row itself runs nothing.
-    const reset_row = app.overlay.menu.items[9];
+    const reset_row = app.overlay.menu.items[11];
     try testing.expect(reset_row.action == .none);
     try testing.expectEqual(@as(usize, 3), reset_row.submenu.len);
     try testing.expectEqual(command.GitPaletteWhat.reset_soft, reset_row.submenu[0].action.git_palette.what);
     try testing.expectEqual(command.GitPaletteWhat.reset_hard, reset_row.submenu[2].action.git_palette.what);
     try testing.expectEqual(@as(u32, 1), reset_row.submenu[2].action.git_palette.idx);
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 2, &.{ "Pull (fast-forward if possible)", "Push", "Push --force-with-lease\u{2026}", "Set upstream\u{2026}", "Open worktree from main\u{2026}", "Create branch here\u{2026}", "Revert commit", "Rename main\u{2026}", "Delete on the remote\u{2026}", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 2, &.{ "Pull (fast-forward if possible)", "Push", "Push --force-with-lease\u{2026}", "Push and start PR", "Set upstream\u{2026}", "Open worktree from main\u{2026}", "Create branch here\u{2026}", "Revert commit", "Rename main\u{2026}", "Delete on the remote\u{2026}", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try testing.expectEqualStrings("\u{25CF} main", app.overlay.menu.title);
     try app.handle(.{ .key = Key.named(.esc) });
     try expectMenu(app, 5, &.{ "Fetch", "Copy URL" });
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 6, &.{ "Merge origin/feature into main", "Rebase main onto origin/feature", "Checkout origin/feature", "Create worktree from origin/feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Delete origin/feature\u{2026}", "Diff against main", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
+    try expectMenu(app, 6, &.{ "Merge origin/feature into main", "Rebase main onto origin/feature", "Checkout origin/feature", "Create worktree from origin/feature\u{2026}", "Create branch here\u{2026}", "Cherry pick commit", "Reset main to this commit", "Revert commit", "Delete origin/feature\u{2026}", "Diff against main", "Explain branch changes (AI)", "Copy branch name", "Copy commit sha", "Copy link to branch", "Copy link to this commit on remote", "Create tag here\u{2026}", "Create annotated tag here\u{2026}" });
     try app.handle(.{ .key = Key.named(.esc) });
     // The main tree (the workspace, on show) and the locked linked tree:
     // the same five rows.
-    try expectMenu(app, 11, &worktree_menu);
+    try expectMenu(app, 11, &worktree_menu_unlocked);
     try testing.expect(std.mem.startsWith(u8, app.overlay.menu.title, "main  "));
     try app.handle(.{ .key = Key.named(.esc) });
-    try expectMenu(app, 12, &worktree_menu);
+    try expectMenu(app, 12, &worktree_menu_locked);
     try testing.expect(std.mem.startsWith(u8, app.overlay.menu.title, "fix  /repo/wt-fix"));
     try app.handle(.{ .key = Key.named(.esc) });
     try expectMenu(app, 15, &.{ "Show files (Enter)", "Apply (keep)", "Pop (apply + drop)", "Drop\u{2026}", "Branch from stash\u{2026}", "Rename\u{2026}" });
@@ -2296,7 +2453,7 @@ test "row menus: one shape per row kind, built from the row under the pointer wh
     // menu was opened on feature, the confirm names feature.
     try testing.expectEqual(@as(usize, 0), st.cursor);
     try openRowMenu(app, 1, 3, 3);
-    const hard = app.overlay.menu.items[9].submenu[2];
+    const hard = app.overlay.menu.items[11].submenu[2];
     try testing.expectEqualStrings("Hard (discard the changes)\u{2026}", hard.label);
     try dispatch.runMenuActionForTest(app, hard.action);
     try testing.expect(app.git.confirm == .reset_hard);
@@ -2570,7 +2727,7 @@ test "a row menu keeps its labels while open: the frame arena's reuse cannot scr
     seed(app);
     app.frame.deinit();
     app.frame = alloc.FrameArena.init(fba.allocator());
-    // Row 1 is the `feature` branch: fifteen of its rows name it.
+    // Row 1 is the `feature` branch: most of its rows name it.
     try openRowMenu(app, 1, 3, 3);
     try testing.expect(app.overlay == .menu);
     app.frame.begin();
@@ -2579,8 +2736,8 @@ test "a row menu keeps its labels while open: the frame arena's reuse cannot scr
         @memset(chunk, 'X');
     }
     try testing.expectEqualStrings("Checkout feature", app.overlay.menu.items[0].label);
-    try testing.expectEqualStrings("Merge feature into main", app.overlay.menu.items[4].label);
-    try testing.expectEqualStrings("Delete feature\u{2026}", app.overlay.menu.items[12].label);
+    try testing.expectEqualStrings("Merge feature into main", app.overlay.menu.items[5].label);
+    try testing.expectEqualStrings("Delete feature\u{2026}", app.overlay.menu.items[14].label);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
     app.frame.deinit();

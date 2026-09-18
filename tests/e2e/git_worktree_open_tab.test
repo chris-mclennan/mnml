@@ -1,0 +1,29 @@
+# A WORKTREES row's *Open worktree in new tab*: where *Open this
+# worktree* turns THIS page's git tab to the tree (`git_palette_open_
+# worktree.test`), this one leaves the page where it is and opens a
+# page of its own holding the tree's files, the panels following the
+# tree. Rows at 120x40: LOCAL 7, feat 8, main 9, gap 10, REMOTE 11, gap
+# 12, WORKTREES 13, main (ws) 14, feat (wt) 15.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nwt/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git worktree add -q wt -b feat
+write wt/b.txt "two\n"
+command view.activity_git
+wait 1200
+expect screen contains "󰐅 feat (wt)"
+expect screen lacks "TABS  1  2"
+rightclick 6 15
+expect screen contains "Open worktree in new tab"
+key down
+key enter
+wait 1500
+# A second tab page, showing the tree's own files.
+expect screen contains "TABS  1  2"
+expect screen contains "b.txt"
+# The panels follow the tree: its branch is the checked-out one.
+expect screen contains "󱓏 feat"

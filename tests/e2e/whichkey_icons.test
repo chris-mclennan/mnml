@@ -12,7 +12,7 @@ command editor.use_standard
 key ctrl+k
 # Group rows: the rail's SEARCH / GIT / INTEGRATIONS / SESSIONS faces.
 expect screen contains "󰍉 f → +find (7)"
-expect screen contains "󰊢 g → +git (18)"
+expect screen contains "󰊢 g → +git (22)"
 expect screen contains "󰐱 i → +integrations (5)"
 expect screen contains "󰎒 b → +buffer (5)"
 expect screen contains " L → +lang/run (19)"

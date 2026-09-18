@@ -163,6 +163,10 @@ pub const Job = union(enum) {
     /// `push -u remote branch`: a branch that is not checked out, to its
     /// remote (git-panel).
     push_branch: struct { remote: []u8, branch: []u8 },
+    /// // changed (git-menus): *Push and start PR* — the same `push -u`
+    /// as `push_branch`, and on success the forge's new-PR page, which
+    /// the handler opens in the browser. Never a force push.
+    push_start_pr: struct { remote: []u8, branch: []u8, url: []u8 },
     /// `stash push`: everything (with untracked files), the index only,
     /// some paths, or the tree with the index kept (`stashArgs`).
     stash: StashPush,
@@ -192,6 +196,15 @@ pub const Job = union(enum) {
     /// `worktree add path [-b branch] [start]`.
     worktree_add: struct { path: []u8, branch: ?[]u8, start: ?[]u8 = null },
     worktree_remove: []u8,
+    /// // changed (git-menus): a WORKTREES row's *Remove worktree and
+    /// delete branch* — `worktree remove` then `branch -d`, or both
+    /// forced when the confirm's Force choice was taken.
+    worktree_remove_branch: struct { path: []u8, branch: []u8, force: bool },
+    /// // changed (git-menus): `worktree lock [--reason <r>]` /
+    /// `worktree unlock` — a locked tree refuses `worktree remove` and
+    /// `prune`, and the panel paints the lock the porcelain reports.
+    worktree_lock: struct { path: []u8, reason: []u8 },
+    worktree_unlock: []u8,
     // ── branch verbs (git-more2) ──
     /// `branch -m from to`.
     branch_rename: struct { from: []u8, to: []u8 },
@@ -220,6 +233,10 @@ pub const Job = union(enum) {
     commit_detail: []u8,
     /// The text an AI commit-message prompt is built from.
     ai_context: AiContext,
+    /// // changed (git-menus): the text *Explain branch changes* builds
+    /// its prompt from — `log --stat base..branch`, capped by the
+    /// worker so a long-lived branch cannot flood the model.
+    branch_explain: struct { branch: []u8, base: []u8 },
     /// The branch rail: branches with tracking counts, worktrees with
     /// their lock and dirty state, remotes with their forge, stashes,
     /// tags, and open PRs through `gh` when the UI found it on PATH.
@@ -303,6 +320,15 @@ pub const Job = union(enum) {
                 gpa.free(b.remote);
                 gpa.free(b.branch);
             },
+            .worktree_remove_branch => |w| {
+                gpa.free(w.path);
+                gpa.free(w.branch);
+            },
+            .worktree_lock => |w| {
+                gpa.free(w.path);
+                gpa.free(w.reason);
+            },
+            .worktree_unlock => |p| gpa.free(p),
             .checkout_force => |s| gpa.free(s),
             .push_force => {},
             .rerun => |argv| {
@@ -333,9 +359,18 @@ pub const Job = union(enum) {
                 gpa.free(p.remote);
                 gpa.free(p.branch);
             },
+            .push_start_pr => |p| {
+                gpa.free(p.remote);
+                gpa.free(p.branch);
+                gpa.free(p.url);
+            },
             .commit_detail => |s| gpa.free(s),
             .amend => |s| gpa.free(s),
             .ai_context => {},
+            .branch_explain => |e| {
+                gpa.free(e.branch);
+                gpa.free(e.base);
+            },
             .rail => {},
             .op_continue, .op_abort, .op_skip => {},
             .rebase_plan => |p| {
@@ -380,7 +415,9 @@ pub const Result = struct {
         list: struct { kind: ListKind, items: []const []const u8 },
         /// A mutating command finished. `desc` is the past-tense toast
         /// (`staged src/a.zig`); `msg` is git's own words when it failed.
-        op: struct { desc: []const u8, ok: bool, msg: []const u8 = "", refresh: bool = true },
+        /// `url` (git-menus) is a page a successful op opens in the
+        /// browser — *Push and start PR*'s new-pull-request page.
+        op: struct { desc: []const u8, ok: bool, msg: []const u8 = "", refresh: bool = true, url: []const u8 = "" },
         url: []const u8,
         head_sha: []const u8,
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
@@ -395,6 +432,9 @@ pub const Result = struct {
         /// `diff` is empty when there is nothing to summarise; `message`
         /// is HEAD's current message for `.head`.
         ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
+        /// `log --stat base..branch`; `text` is empty when the branch has
+        /// nothing the base does not.
+        branch_explain: struct { branch: []const u8, base: []const u8, text: []const u8 },
         /// A conflicted file's stages; a side git does not have (an
         /// add/add conflict has no base) is empty.
         conflict_text: struct { path: []const u8, base: []const u8, ours: []const u8, theirs: []const u8 },
@@ -965,6 +1005,15 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 r.payload = .{ .ai_context = .{ .what = what, .diff = if (d.ok) d.stdout else "", .message = if (m.ok) trimmed(m.stdout) else "" } };
             },
         },
+        .branch_explain => |e| {
+            const range = try std.fmt.allocPrint(arena, "{s}..{s}", .{ e.base, e.branch });
+            const out = try git(repo, io, arena, &.{ "log", "--no-color", "--stat", "--date=short", "--format=%h %ad %an%n%s%n%b", "-n", "60", range }, null);
+            r.payload = .{ .branch_explain = .{
+                .branch = try arena.dupe(u8, e.branch),
+                .base = try arena.dupe(u8, e.base),
+                .text = if (out.ok) trimmed(out.stdout) else "",
+            } };
+        },
         .amend => |msg| {
             const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
             const out = try git(repo, io, arena, &.{ "commit", "-q", "--amend", "-m", msg }, null);
@@ -1147,6 +1196,15 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         else
             try simple(repo, io, r, &.{ "tag", t.name, t.start }, try std.fmt.allocPrint(arena, "tagged {s} at {s}", .{ t.name, t.start })),
         .push_branch => |p| try simple(repo, io, r, &.{ "push", "-u", p.remote, p.branch }, try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote })),
+        .push_start_pr => |p| {
+            const out = try git(repo, io, arena, &.{ "push", "-u", p.remote, p.branch }, null);
+            r.payload = .{ .op = .{
+                .desc = try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote }),
+                .ok = out.ok,
+                .msg = out.reason(),
+                .url = if (out.ok) try arena.dupe(u8, p.url) else "",
+            } };
+        },
         .tag_delete => |name| try simple(repo, io, r, &.{ "tag", "-d", name }, try std.fmt.allocPrint(arena, "deleted tag {s}", .{name})),
         .cherry_pick => |sha| try simple(repo, io, r, &.{ "cherry-pick", sha }, try std.fmt.allocPrint(arena, "cherry-picked {s}", .{sha[0..@min(7, sha.len)]})),
         .revert => |sha| try simple(repo, io, r, &.{ "revert", "--no-edit", sha }, try std.fmt.allocPrint(arena, "reverted {s}", .{sha[0..@min(7, sha.len)]})),
@@ -1214,6 +1272,33 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             } else try simple(repo, io, r, args, try std.fmt.allocPrint(arena, "worktree added at {s}", .{w.path}));
         },
         .worktree_remove => |p| try simple(repo, io, r, &.{ "worktree", "remove", "--force", p }, try std.fmt.allocPrint(arena, "worktree removed: {s}", .{p})),
+        .worktree_lock => |w| {
+            if (w.reason.len > 0) {
+                try simple(repo, io, r, &.{ "worktree", "lock", "--reason", w.reason, w.path }, try std.fmt.allocPrint(arena, "worktree locked: {s} ({s})", .{ w.path, w.reason }));
+            } else {
+                try simple(repo, io, r, &.{ "worktree", "lock", w.path }, try std.fmt.allocPrint(arena, "worktree locked: {s}", .{w.path}));
+            }
+        },
+        .worktree_unlock => |p| try simple(repo, io, r, &.{ "worktree", "unlock", p }, try std.fmt.allocPrint(arena, "worktree unlocked: {s}", .{p})),
+        .worktree_remove_branch => |w| {
+            const rm = if (w.force)
+                try git(repo, io, arena, &.{ "worktree", "remove", "--force", w.path }, null)
+            else
+                try git(repo, io, arena, &.{ "worktree", "remove", w.path }, null);
+            if (!rm.ok) {
+                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "remove worktree {s}", .{w.path}), .ok = false, .msg = rm.reason() } };
+            } else {
+                const br = try git(repo, io, arena, &.{ "branch", if (w.force) "-D" else "-d", w.branch }, null);
+                r.payload = .{ .op = .{
+                    .desc = if (br.ok)
+                        try std.fmt.allocPrint(arena, "worktree removed: {s}, branch {s} deleted", .{ w.path, w.branch })
+                    else
+                        try std.fmt.allocPrint(arena, "worktree removed: {s}; branch {s} kept", .{ w.path, w.branch }),
+                    .ok = br.ok,
+                    .msg = br.reason(),
+                } };
+            }
+        },
         .op_continue => |op| switch (op) {
             .none => r.payload = .{ .op = .{ .desc = "nothing in progress", .ok = false, .refresh = false } },
             .bisect => r.payload = .{ .op = .{ .desc = "bisect: mark a commit good or bad instead", .ok = false, .refresh = false } },
@@ -1491,7 +1576,14 @@ fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Worktree
     for (trees) |*w| {
         if (w.bare) continue;
         const st = try git(repo, io, arena, &.{ "-C", w.path, "status", "--porcelain" }, null);
-        w.dirty = st.ok and trimmed(st.stdout).len > 0;
+        const body = if (st.ok) trimmed(st.stdout) else "";
+        w.dirty = body.len > 0;
+        if (w.dirty) {
+            var lines = std.mem.splitScalar(u8, body, '\n');
+            while (lines.next()) |line| if (std.mem.trim(u8, line, " \t\r").len > 0) {
+                w.dirty_files += 1;
+            };
+        }
     }
     return trees;
 }

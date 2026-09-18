@@ -167,6 +167,41 @@ pub fn branchUrl(arena: Allocator, remote: []const u8, branch: []const u8) Alloc
     };
 }
 
+/// The forge's *new pull request* page for `branch`, or null when the
+/// host is not one this knows the shape of (git-menus: *Push and start
+/// PR* then pushes and says so rather than guessing a URL — an
+/// unrecognised host is the one case where GitHub's shape is likelier
+/// to 404 than to work).
+pub fn newPrUrl(arena: Allocator, remote: []const u8, branch: []const u8) Allocator.Error!?[]const u8 {
+    const r = parseRemote(remote) orelse return null;
+    const w = try webBase(arena, r);
+    const q = try percentEncode(arena, branch);
+    return switch (providerOfHost(r.host)) {
+        .github => try std.fmt.allocPrint(arena, "https://{s}/{s}/compare/{s}?expand=1", .{ w.host, w.path, branch }),
+        .gitlab => try std.fmt.allocPrint(arena, "https://{s}/{s}/-/merge_requests/new?merge_request%5Bsource_branch%5D={s}", .{ w.host, w.path, q }),
+        .bitbucket => if (try bitbucketServer(arena, w.path)) |web|
+            try std.fmt.allocPrint(arena, "https://{s}/{s}/pull-requests?create&sourceBranch=refs%2Fheads%2F{s}", .{ w.host, web, q })
+        else
+            try std.fmt.allocPrint(arena, "https://{s}/{s}/pull-requests/new?source={s}", .{ w.host, w.path, q }),
+        .azure => try std.fmt.allocPrint(arena, "https://{s}/{s}/pullrequestcreate?sourceRef={s}", .{ w.host, w.path, q }),
+        .other, .none => null,
+    };
+}
+
+/// A branch name in a query value: everything but the unreserved set
+/// goes as `%XX`, so `feat/a b` reaches the forge whole.
+fn percentEncode(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (text) |c| {
+        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~') {
+            try out.append(arena, c);
+        } else {
+            try out.print(arena, "%{X:0>2}", .{c});
+        }
+    }
+    return out.items;
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -220,6 +255,45 @@ test "remote → browse URL table: file, line and commit on every forge shape" {
     }
     // A local remote comes back as itself.
     try testing.expectEqualStrings("/srv/git/repo.git", try fileUrl(arena, "/srv/git/repo.git", "main", "f", 1));
+}
+
+test "newPrUrl: the new-pull-request page per forge, the branch percent-encoded in a query; an unknown host has none" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    try testing.expectEqualStrings(
+        "https://github.com/acme/widget/compare/feat/eng-12?expand=1",
+        (try newPrUrl(arena, "git@github.com:acme/widget.git", "feat/eng-12")).?,
+    );
+    try testing.expectEqualStrings(
+        "https://github.acme-corp.example/platform/gateway/compare/main?expand=1",
+        (try newPrUrl(arena, "https://github.acme-corp.example/platform/gateway", "main")).?,
+    );
+    try testing.expectEqualStrings(
+        "https://gitlab.com/acme/sub/widget/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat%2Feng-12",
+        (try newPrUrl(arena, "git@gitlab.com:acme/sub/widget.git", "feat/eng-12")).?,
+    );
+    try testing.expectEqualStrings(
+        "https://bitbucket.org/acme/widget/pull-requests/new?source=feat%2Feng-12",
+        (try newPrUrl(arena, "git@bitbucket.org:acme/widget.git", "feat/eng-12")).?,
+    );
+    // A Bitbucket Server clone path is `scm/PROJ/repo`.
+    try testing.expectEqualStrings(
+        "https://bitbucket.acme-corp.example/projects/PLAT/repos/widget/pull-requests?create&sourceBranch=refs%2Fheads%2Ffeat%2Feng-12",
+        (try newPrUrl(arena, "https://bitbucket.acme-corp.example/scm/PLAT/widget.git", "feat/eng-12")).?,
+    );
+    try testing.expectEqualStrings(
+        "https://dev.azure.com/acme/platform/_git/widget/pullrequestcreate?sourceRef=feat%2Feng-12",
+        (try newPrUrl(arena, "git@ssh.dev.azure.com:v3/acme/platform/widget", "feat/eng-12")).?,
+    );
+    // A host with no shape on file, and a local remote: no URL at all.
+    try testing.expect((try newPrUrl(arena, "https://git.acme-corp.example/~me/widget", "main")) == null);
+    try testing.expect((try newPrUrl(arena, "/srv/git/widget.git", "main")) == null);
+    // A branch name needing no escape comes through as it is.
+    try testing.expectEqualStrings(
+        "https://bitbucket.org/acme/widget/pull-requests/new?source=main",
+        (try newPrUrl(arena, "https://acme@bitbucket.org/acme/widget.git", "main")).?,
+    );
 }
 
 test "branchUrl: the branch page on every forge shape" {

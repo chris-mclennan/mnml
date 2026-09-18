@@ -773,6 +773,19 @@ pub const GitPaletteWhat = enum {
     tag_here,
     tag_annotated_here,
     push_branch,
+    /// // changed (git-menus): the GitKraken rows the branches panel
+    /// was missing — the plan modal over `row..HEAD`, an AI summary of
+    /// the commits the row has that its base does not, and a push that
+    /// opens the forge's new-PR page.
+    rebase_interactive,
+    explain_branch,
+    push_start_pr,
+    /// // changed (git-menus): a WORKTREES row — the tree on a new tab
+    /// page, removed with its branch, locked / unlocked.
+    worktree_open_tab,
+    worktree_remove_branch,
+    worktree_lock,
+    worktree_unlock,
 };
 
 pub const MenuItem = struct {
@@ -796,7 +809,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1069), count);
+    try std.testing.expectEqual(@as(usize, 1076), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

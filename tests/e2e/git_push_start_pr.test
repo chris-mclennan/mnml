@@ -1,0 +1,35 @@
+# `git.push_start_pr` — the branches panel's *Push and start PR*: the
+# branch goes up with `push -u` (never a force), and the forge's
+# new-pull-request page follows once the push has landed. The remote
+# here is a bare repository on disk, whose host has no shape on file, so
+# the verb pushes and says so rather than guessing a URL — the URL
+# shapes themselves are `git/remote.zig`'s own table.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nremote.git/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git init -q --bare remote.git
+shell git remote add origin ./remote.git
+shell git checkout -q -b feature
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "add the widget"
+command view.activity_git
+wait 1200
+expect screen contains "󱓏 feature"
+# The checked-out branch's own row: Push and start PR sits under the
+# two pushes, never replacing them.
+rightclick 6 8
+expect screen contains "Push --force-with-lease…"
+expect screen contains "Push and start PR"
+key down
+key down
+key down
+key enter
+wait 2500
+expect screen contains "no new-PR page for that host"
+shell test "$(git --git-dir=remote.git rev-parse --verify refs/heads/feature)" = "$(git rev-parse HEAD)"
+shell test "$(git rev-parse --abbrev-ref feature@{upstream})" = "origin/feature"
