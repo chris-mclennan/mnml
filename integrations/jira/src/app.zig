@@ -2193,7 +2193,7 @@ pub const Harness = struct {
         const authorization = try auth.basicHeader(testing.allocator, "fake@acme.com", "fake-token");
         defer testing.allocator.free(authorization);
         h.client = try testing.allocator.create(jira.Client);
-        h.client.* = jira.Client.init(testing.allocator, io, h.base, try testing.allocator.dupe(u8, authorization), .v3, .{ .per_sec = 10_000, .burst = 1000 });
+        h.client.* = jira.Client.init(testing.allocator, io, h.base, try testing.allocator.dupe(u8, authorization), .v3);
         var cfg = cfg_in;
         cfg.jira_url = h.base;
         cfg.email = "fake@acme.com";

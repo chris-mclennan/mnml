@@ -891,8 +891,8 @@ server and prints the rows that differ per screen, by content.
 | Token from a file, from the environment, from the data root, from the reference's `~/.config/mnml-tracker-jira/token` | done | `src/auth.zig`; quotes stripped |
 | `POST /rest/api/3/search/jql`, `nextPageToken`, the 500 cap | done | `jira.search` |
 | Issue, transitions, comment, assignee, fixVersion, watchers, myself, assignable users, project versions, dev-status, Agile board / issue / sprint / quickfilter | done | `src/jira.zig`, each against the fake server over a real socket |
-| Rate limiting — the reference's numbers (0.33/s, burst 60, 45 s cooldown, 120 s ceiling) | done | `src/ratelimit.zig`, in-process |
-| Rate limiting — the cross-process state file (`$TATTLE_ARTIFACTS_ROOT/jira-ratelimit.json`) | not done | see "needs a decision" in the hand-off |
+| Rate limiting — the reference's numbers (0.33/s, burst 60, 45 s cooldown, 120 s ceiling) | done | `src/ratelimit.zig` → `mnml_sdk.ratelimit`, cross-process |
+| Rate limiting — the cross-process state file (`$TATTLE_ARTIFACTS_ROOT/jira-ratelimit.json`) | done | `mnml_sdk.ratelimit`, the same bucket the Bitbucket side uses |
 | `Retry-After` | cut | `std.http.Client.fetch` hands back a status and a body, not the headers; a `429` takes `cooldown_secs` |
 | Synchronous fetches | as the reference | every fetch runs in the loop; the pane paints between them, not during |
 

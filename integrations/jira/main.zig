@@ -207,10 +207,10 @@ pub fn main(init: std.process.Init) !u8 {
         const loaded = try config.load(arena, io, cfg_path);
         const token = try auth.resolve(arena, io, env, .{ .config_path = loaded.config.token_file, .env_name = loaded.config.token_env, .data_root = data_root });
         if (args.check) return check(arena, stdout, loaded, token);
-        if (args.diag) return diag(gpa, io, arena, stdout, loaded, token);
-        if (args.values) return values(gpa, io, arena, stdout, stderr, loaded, token, args);
+        if (args.diag) return diag(gpa, io, env, arena, stdout, loaded, token);
+        if (args.values) return values(gpa, io, env, arena, stdout, stderr, loaded, token, args);
         if (args.dump) return dump(gpa, io, env, arena, stdout, stderr, loaded, token, args);
-        return prefetch(gpa, io, arena, stdout, stderr, loaded, token, args);
+        return prefetch(gpa, io, env, arena, stdout, stderr, loaded, token, args);
     }
 
     const mount = sdk.Mount.connectEnv(gpa, io, env) catch |err| switch (err) {
@@ -321,7 +321,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         }
     };
     const authorization = try auth.basicHeader(arena, rd.cfg.email, rd.token.value);
-    var client = jira.Client.init(gpa, io, rd.cfg.jira_url, authorization, rd.cfg.api, rd.cfg.rate);
+    var limiter = try openLimiter(gpa, io, env, rd.cfg.rate);
+    defer limiter.deinit();
+    var client = jira.Client.init(gpa, io, rd.cfg.jira_url, authorization, rd.cfg.api);
+    client.limiter = &limiter;
     const forge_token = if (rd.cfg.bitbucket_token_env.len > 0) env.get(rd.cfg.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
     const forge: bitbucket.Client = .{ .gpa = gpa, .io = io, .base_url = rd.cfg.bitbucket_api_url, .token = forge_token orelse "" };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
@@ -484,6 +487,15 @@ fn tabLine(arena: Allocator, t: config.Tab) Allocator.Error![]const u8 {
 
 /// `--check`: the reference's report — the config, the tabs, and where
 /// the token is (present / missing), never the token.
+/// The bucket this process draws on: one file per service, shared with
+/// every other mnml-jira on the machine, the statusline poller and the
+/// Rust tracker. The caller owns it and hands the client a pointer.
+fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate: config.Rate) Allocator.Error!ratelimit.Limiter {
+    const p = try ratelimit.statePath(gpa, io, env);
+    defer gpa.free(p);
+    return ratelimit.Limiter.init(gpa, io, p, ratelimit.configFrom(rate));
+}
+
 fn check(arena: Allocator, w: *Io.Writer, loaded: config.Loaded, token: auth.Result) !u8 {
     const c = loaded.config;
     try w.print("config: {s}{s}\n", .{ loaded.path, if (loaded.missing) "  (not there yet — --write-config makes one)" else "" });
@@ -506,7 +518,7 @@ fn check(arena: Allocator, w: *Io.Writer, loaded: config.Loaded, token: auth.Res
 }
 
 /// `--diag`: the reference's tree, with the live /myself probe.
-fn diag(gpa: Allocator, io: Io, arena: Allocator, w: *Io.Writer, loaded: config.Loaded, token: auth.Result) !u8 {
+fn diag(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, w: *Io.Writer, loaded: config.Loaded, token: auth.Result) !u8 {
     const c = loaded.config;
     try w.writeAll("mnml-jira · diagnostics\n\nAuth\n");
     switch (token) {
@@ -520,7 +532,10 @@ fn diag(gpa: Allocator, io: Io, arena: Allocator, w: *Io.Writer, loaded: config.
     try w.print("  ├─ jira_url: {s}\n", .{if (c.jira_url.len > 0) c.jira_url else "(unset)"});
     if (token == .ok and c.jira_url.len > 0) {
         const authorization = try auth.basicHeader(arena, c.email, token.ok.value);
-        var client = jira.Client.init(gpa, io, c.jira_url, authorization, c.api, c.rate);
+        var limiter = try openLimiter(gpa, io, env, c.rate);
+        defer limiter.deinit();
+        var client = jira.Client.init(gpa, io, c.jira_url, authorization, c.api);
+        client.limiter = &limiter;
         switch (jira.myself(&client, arena) catch jira.Answer(model.User){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
             .ok => |u| try w.print("  └─ /myself: ✓ account_id={s}\n", .{u.account_id}),
             .failed => |f| try w.print("  └─ /myself: ✗ {s}\n", .{f.message}),
@@ -542,7 +557,7 @@ fn diag(gpa: Allocator, io: Io, arena: Allocator, w: *Io.Writer, loaded: config.
 /// `--values`: one search, one JSON line — what a statusline poller
 /// reads; with `--workspace W`, the segment is published over that
 /// workspace's channel too.
-fn values(gpa: Allocator, io: Io, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
+fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
     const c = loaded.config;
     const t: auth.Token = switch (token) {
         .ok => |v| v,
@@ -557,7 +572,10 @@ fn values(gpa: Allocator, io: Io, arena: Allocator, out: *Io.Writer, err: *Io.Wr
         try out.writeAll("{\"assigned_open\":null}\n");
         return 1;
     }
-    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api, c.rate);
+    var limiter = try openLimiter(gpa, io, env, c.rate);
+    defer limiter.deinit();
+    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
+    client.limiter = &limiter;
     const base = config.TabKind.work_assigned.defaultJql().?;
     const jql = try jira.withProjects(arena, base, c.projects);
     const n: usize = switch (jira.search(&client, arena, jql, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
@@ -580,7 +598,7 @@ fn values(gpa: Allocator, io: Io, arena: Allocator, out: *Io.Writer, err: *Io.Wr
 
 /// `--prefetch --only F`: the family's tabs and their issues as JSON, the
 /// shape the pane hydrates from (`{"generated_at":…,"tabs":[{"name","issues"}]}`).
-fn prefetch(gpa: Allocator, io: Io, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
+fn prefetch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, loaded: config.Loaded, token: auth.Result, args: Args) !u8 {
     const c = loaded.config;
     const t: auth.Token = switch (token) {
         .ok => |v| v,
@@ -589,7 +607,10 @@ fn prefetch(gpa: Allocator, io: Io, arena: Allocator, out: *Io.Writer, err: *Io.
             return 1;
         },
     };
-    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api, c.rate);
+    var limiter = try openLimiter(gpa, io, env, c.rate);
+    defer limiter.deinit();
+    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
+    client.limiter = &limiter;
     const tabs = try config.tabsOfFamily(arena, c.tabs, args.only);
     var w: std.json.Stringify = .{ .writer = out, .options = .{} };
     try w.beginObject();
@@ -656,7 +677,10 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         rows = std.fmt.parseInt(u16, sz[x + 1 ..], 10) catch rows;
     };
     const steps_src = if (args.steps) |p| try Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1 << 20)) else "snap screen\n";
-    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api, c.rate);
+    var limiter = try openLimiter(gpa, io, env, c.rate);
+    defer limiter.deinit();
+    var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
+    client.limiter = &limiter;
     const forge_token = if (c.bitbucket_token_env.len > 0) env.get(c.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
     var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{ .gpa = gpa, .io = io, .base_url = c.bitbucket_api_url, .token = forge_token orelse "" });
     defer app.deinit();

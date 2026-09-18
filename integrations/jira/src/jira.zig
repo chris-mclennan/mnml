@@ -63,7 +63,7 @@ pub fn Answer(comptime T: type) type {
 pub const Raw = struct {
     status: u16,
     body: []u8,
-    retry_after_ms: ?u64,
+    retry_after_secs: ?f64,
 };
 
 pub const Client = struct {
@@ -74,28 +74,20 @@ pub const Client = struct {
     /// `Basic …`, built once by `auth.basicHeader`.
     authorization: []const u8,
     api: ApiVersion = .v3,
-    limiter: ratelimit.Limiter,
-    /// Milliseconds since the process started; the limiter's clock.
-    clock_ms: u64 = 0,
-    /// Set in tests so a wait is counted, not slept.
-    sleep_enabled: bool = true,
-    /// What the last `gate` made us wait — the tests read it.
-    waited_ms: u64 = 0,
+    /// The bucket every call passes through, shared with every other
+    /// process on this machine (`ratelimit.zig`). Null in a test, which
+    /// talks to a fake server and has no budget to spend; the caller
+    /// owns it otherwise.
+    limiter: ?*ratelimit.Limiter = null,
     user_agent: []const u8 = "mnml-jira",
 
-    pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion, rate: config.Rate) Client {
+    pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
         return .{
             .gpa = gpa,
             .io = io,
             .base_url = base_url,
             .authorization = authorization,
             .api = api,
-            .limiter = ratelimit.Limiter.init(.{
-                .rate_per_sec = rate.per_sec,
-                .burst = rate.burst,
-                .max_backoff_ms = @as(u64, rate.max_block_secs) * 1000,
-                .default_retry_after_ms = @as(u64, rate.cooldown_secs) * 1000,
-            }, 0),
         };
     }
 
@@ -107,28 +99,11 @@ pub const Client = struct {
         };
     }
 
-    fn now(c: *Client) u64 {
-        return c.clock_ms;
-    }
-
-    /// Wait for a permit. Returns the milliseconds spent waiting.
-    fn gate(c: *Client) u64 {
-        var waited: u64 = 0;
-        while (true) {
-            const wait = c.limiter.acquire(c.now());
-            if (wait == 0) break;
-            waited += wait;
-            c.clock_ms += wait;
-            if (c.sleep_enabled) c.io.sleep(.fromMilliseconds(@intCast(@min(wait, std.math.maxInt(i32)))), .awake) catch break;
-            if (!c.sleep_enabled and waited > c.limiter.opts.max_backoff_ms) break;
-        }
-        c.waited_ms = waited;
-        return waited;
-    }
-
     /// One request, gated, with the body read into `arena`.
     pub fn request(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) CallError!Raw {
-        _ = c.gate();
+        // The bucket is shared, so this waits on every other process
+        // too — and fails open rather than leaving the pane hung.
+        if (c.limiter) |l| _ = l.acquire();
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();
         var out: Io.Writer.Allocating = .init(arena);
@@ -136,7 +111,7 @@ pub const Client = struct {
         // response headers, so a `Retry-After` cannot be read here: a 429
         // takes `rate.cooldown_secs` instead (the Rust tracker parses the
         // header nowhere either — its 429 path is unreached).
-        const retry_after: ?u64 = null;
+        const retry_after: ?f64 = null;
         const headers = [_]std.http.Header{
             .{ .name = "authorization", .value = c.authorization },
             .{ .name = "accept", .value = "application/json" },
@@ -156,12 +131,12 @@ pub const Client = struct {
             else => return error.Transport,
         };
         const status: u16 = @intFromEnum(res.status);
-        if (ratelimit.Limiter.shouldPenalise(status)) {
-            c.limiter.penalise(c.now(), retry_after);
-        } else {
-            c.limiter.succeeded();
+        // A 429 or a 5xx parks every process on the bucket, not just
+        // this one.
+        if (ratelimit.shouldPenalise(status)) {
+            if (c.limiter) |l| l.penalize(retry_after);
         }
-        return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_ms = retry_after };
+        return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_secs = retry_after };
     }
 };
 
@@ -1004,7 +979,7 @@ test "the client against a real socket: search, detail, the full issue, transiti
 
     const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
     const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
-    var c = Client.init(testing.allocator, io, base, authorization, .v3, .{ .per_sec = 10_000, .burst = 100 });
+    var c = Client.init(testing.allocator, io, base, authorization, .v3);
 
     const all = try okOr([]const model.Issue, try searchIssues(&c, arena, "project = ENG ORDER BY rank", &.{"customfield_10056"}, "customfield_10056"));
     try testing.expectEqual(@as(usize, fake.issue_count), all.len);
@@ -1084,7 +1059,7 @@ test "the client against a real socket: the Agile API — board issues, the boar
     defer group.cancel(io);
     const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
     const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
-    var c = Client.init(testing.allocator, io, base, authorization, .v3, .{ .per_sec = 10_000, .burst = 100 });
+    var c = Client.init(testing.allocator, io, base, authorization, .v3);
 
     const sprint_issues = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, null, &.{}));
     try testing.expectEqual(@as(usize, fake.sprint_issue_count), sprint_issues.len);
@@ -1109,7 +1084,7 @@ test "the client against a real socket: the Agile API — board issues, the boar
     try group.await(io);
 }
 
-test "a refusal comes back as Jira's own sentence, and the limiter pauses after a 429" {
+test "a refusal comes back as Jira's own sentence, and a 429 parks the shared bucket for every process" {
     const io = testing.io;
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -1124,8 +1099,18 @@ test "a refusal comes back as Jira's own sentence, and the limiter pauses after 
     try group.concurrent(io, Loopback.serve, .{ io, &lb });
     defer group.cancel(io);
     const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
-    var c = Client.init(testing.allocator, io, base, "Basic bm9wZQ==", .v3, .{ .per_sec = 10_000, .burst = 100 });
-    c.sleep_enabled = false;
+    var c = Client.init(testing.allocator, io, base, "Basic bm9wZQ==", .v3);
+    // A bucket of its own, in a temporary directory: the real one is
+    // shared with the user's running panes and must never be touched by
+    // a test.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const bucket_path = try std.fs.path.join(arena, &.{ dir, "jira-ratelimit.json" });
+    var bucket = try ratelimit.Limiter.init(testing.allocator, io, bucket_path, .{ .max_block_secs = 0.1 });
+    defer bucket.deinit();
+    c.limiter = &bucket;
     switch (try search(&c, arena, "project = ENG", &.{})) {
         .ok => return error.TestUnexpectedResult,
         .failed => |f| {
@@ -1136,12 +1121,15 @@ test "a refusal comes back as Jira's own sentence, and the limiter pauses after 
     store.require_auth = false;
     store.fail_with = 429;
     _ = try search(&c, arena, "project = ENG", &.{});
-    try testing.expect(c.limiter.strikes > 0);
-    try testing.expect(c.limiter.acquire(c.clock_ms) > 0);
+    // The 429 landed in the file, so a second process — another pane,
+    // the statusline poller — is parked by it too.
+    const st = bucket.status().?;
+    try testing.expectEqual(@as(u32, 1), st.throttles);
+    try testing.expect(st.cooldown_remaining_secs > 1.0);
+    var other = try ratelimit.Limiter.init(testing.allocator, io, bucket_path, .{ .max_block_secs = 0.1 });
+    defer other.deinit();
+    try testing.expect(!other.acquire());
     store.fail_with = null;
-    c.limiter.blocked_until_ms = 0;
-    _ = try search(&c, arena, "project = ENG", &.{});
-    try testing.expectEqual(@as(u32, 0), c.limiter.strikes);
     try lb.finish(&c, arena);
     try group.await(io);
 }

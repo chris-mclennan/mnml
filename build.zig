@@ -531,7 +531,7 @@ pub fn build(b: *std.Build) void {
     // `sdk/mnml-sdk` is the package an integration depends on; the host
     // imports the same module so the wire (`wire.zig`) and the manifest
     // schema (`manifest.zig`) have one definition. Its unit tests run
-    // under `zig build test` through `src/bridge/wire.zig`'s test block.
+    // under `zig build test` as their own binary (`sdk-tests`).
     // `mnml-hello` is the sample integration: `zig build sdk-example`
     // installs it, and the host's integration test spawns it through a
     // real mount socket (the path travels as a build option).
@@ -541,6 +541,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     root_module.addImport("mnml_sdk", sdk_mod);
+    // The SDK's own tests — `ratelimit.zig`'s shared bucket among them,
+    // which no integration's test binary would reach on its own (tests
+    // in a dependency module are not run).
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .name = "sdk-tests", .root_module = sdk_mod, .filters = test_filters, .test_runner = test_runner })).step);
     const hello_mod = b.createModule(.{
         .root_source_file = b.path("sdk/examples/hello/main.zig"),
         .target = target,
