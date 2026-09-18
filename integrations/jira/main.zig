@@ -412,6 +412,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             };
             switch (msg) {
                 .hello, .focus => {},
+                // The host's word on a session this pane dispatched.
+                .session_state => |ss| try app.onSessionState(ss.key, ss.state, ss.session_id, ss.detail),
                 .goodbye => ended = true,
                 .resize => |r| {
                     try frame.resize(r.geometry.cols, r.geometry.rows);
@@ -445,7 +447,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         // While a refetch is in flight the loop wakes sooner, so its
         // rows land as soon as they arrive rather than up to half a
         // second later.
-        _ = box.wait(io, if (app.refresh.busy()) 60 else 500);
+        // A spinner that only moves twice a second reads as stuck, so
+        // a pane with a session running wakes at the spinner's pace.
+        _ = box.wait(io, if (app.refresh.busy()) 60 else if (app.actions.anyRunning()) 120 else 500);
     }
     return 0;
 }
@@ -455,8 +459,13 @@ fn repaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_m
     try screen.paint(paint_arena.allocator(), frame, app, ui);
 }
 
-/// The toast and the statusline segment, when the app has news.
+/// The toast, the statusline segment, and the sessions this pane just
+/// started and wants told about.
 fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc) void {
+    for (app.watch_out.items) |w| {
+        mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
+    }
+    app.watch_out.clearRetainingCapacity();
     if (app.toast_pending) {
         app.toast_pending = false;
         mount.toast(.info, app.toast.items) catch {};

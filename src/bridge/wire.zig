@@ -23,6 +23,8 @@ pub const Row = wire.Row;
 pub const Cursor = wire.Cursor;
 pub const ToastLevel = wire.ToastLevel;
 pub const SiblingMessage = wire.SiblingMessage;
+pub const SessionState = wire.SessionState;
+pub const SessionSelector = wire.SessionSelector;
 
 pub const readMessage = wire.readMessage;
 pub const writeMessage = wire.writeMessage;

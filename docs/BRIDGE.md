@@ -64,6 +64,7 @@ fields. An unknown **tag** is an error.
 | `resize` | `{geometry}` | the pane's body changed size |
 | `input` | `{event}` | the user did something (below) |
 | `focus` | `true` / `false` | the pane gained / lost the keyboard |
+| `session_state` | `{key, state, session_id?, detail?}` | a session you asked to watch moved (below) |
 | `goodbye` | `{}` | leave now |
 
 ```json
@@ -81,6 +82,34 @@ cares can pick indices itself. `nerd_font=false` / `ascii=true` say to
 use plain glyphs.
 
 `geometry` is the pane's **body** in cells: the tab strip is not yours.
+
+### `session_state` — what happened to a session you started
+
+A pane that dispatches Claude Code (an `[ Implement ]`, a `[ Merge ]`)
+used to lose track of it the moment the line was written: the Bridge
+carried input one way and nothing about the host's own state back, so a
+button could only say "a session was started", never "it is running" or
+"it finished". `watch_session` (below) asks to be told; this is the
+answer, one line per **edge**:
+
+| `state` | what the host saw |
+|---|---|
+| `running` | a process behind it, getting on with the work |
+| `waiting` | a tool use with no result and the transcript quiet: it is asking the user something |
+| `done` | no process any more, and the transcript did not end on an error |
+| `failed` | no process, and it ended on an error |
+
+`key` is the string the `watch_session` carried, echoed back untouched,
+so a pane with many buttons knows which one moved. `session_id` is the
+host's own name for the session once it has matched one — keep it and
+send it back on a `focus-session`. `detail` is the session's last
+output line, clipped: the question when it is `waiting`, the reason
+when it `failed`.
+
+```json
+{"session_state":{"key":"acme/api#1234\u001fmerge","state":"waiting",
+                  "session_id":"6f1c…","detail":"Shall I squash these?"}}
+```
 
 `hello.palette` (optional) carries the host theme's roles as colours —
 `fg`, `bg`, `muted`, `accent`, `border`, `panel_bg`, `cursor_line`,
@@ -122,6 +151,7 @@ are mnml's — the same rule as a terminal pane.
 | `cursor` | `{x, y}` or `null` | where the terminal cursor goes while focused; `null` hides it |
 | `command` | `{id}` | run an mnml command by id (a built-in, or one you registered) |
 | `toast` | `{level, text}` | `level` ∈ `info`, `warn`, `error` |
+| `watch_session` | `{key, selector}` | "I started this session; tell me what it does" |
 | `bye` | `{}` | a clean exit |
 
 ```json
@@ -129,7 +159,18 @@ are mnml's — the same rule as a terminal pane.
 {"cursor":{"x":4,"y":1}}
 {"command":{"id":"file.save"}}
 {"toast":{"level":"warn","text":"token expires in 2 days"}}
+{"watch_session":{"key":"ENG-2\u001ftriage",
+                  "selector":{"cwd":"/Users/me/proj","prompt_line":"/agents:developer ENG-2"}}}
 ```
+
+`selector` names the session the way the `focus-session` IPC verb does,
+because they must find the same one: `id` when the host has already
+given you one, else `cwd` **and** `prompt_line` together — the only two
+names a dispatched `term` line can carry. The host matches the newest
+session that fits, then sticks to it, so a second dispatch with the
+same prompt does not steal the first button's answers. A second
+`watch_session` under the same `key` replaces the first, which is what
+a button pressed twice wants.
 
 ### `Cell`
 

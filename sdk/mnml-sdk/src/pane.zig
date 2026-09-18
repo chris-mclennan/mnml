@@ -14,7 +14,9 @@
 //!   work    the one-job channel a pane refetches through, so a slow
 //!           fetch never freezes its keys or its repaint
 //!   action  a row's action button and what a press leaves behind on
-//!           it — the spinner, the `view` it becomes, the ✗ it wears
+//!           it — the spinner it turns while its session runs, the
+//!           `⏸` when that session stops to ask something, the `view`
+//!           it becomes when it ends, the ✗ it wears when it failed
 //!
 //! Ten lines put a pane in mnml's chrome:
 //!
@@ -53,6 +55,8 @@ pub const scrollAt = chrome.scrollAt;
 pub const Slot = work.Slot;
 pub const ActionState = action.State;
 pub const ActionStore = action.Store;
+pub const actionStateOf = action.fromSessionState;
+pub const actionWatchKey = action.watchKey;
 
 test {
     _ = hit;

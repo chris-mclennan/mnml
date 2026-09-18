@@ -820,7 +820,9 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
             return;
         };
         const ev: HostEvent = switch (msg) {
-            .hello => .other,
+            // The forge pane dispatches nothing, so it watches no
+            // session and is told about none.
+            .hello, .session_state => .other,
             .focus => |f| .{ .focus = f },
             .goodbye => .goodbye,
             .resize => |r| .{ .resize = r.geometry },

@@ -215,6 +215,55 @@ from two different target vocabularies and compares the frames cell for
 cell — the test that notices when a change moves one pane and not the
 other.
 
+### Action buttons, and the session behind one
+
+A row can carry a button — `[ Triage ]`, `[ Review ]`, `[ Merge ]` —
+that dispatches a Claude Code session. `sdk.pane.action` is the button:
+
+```zig
+var actions = sdk.pane.ActionStore.init(gpa);       // keyed by ROW KEY, not row index
+defer actions.deinit();
+
+const st = actions.state(pr_key, "merge");
+var buf: [32]u8 = undefined;
+_ = p.put(x, y, w, sdk.pane.action.caption(&buf, st, "Merge", spin, ascii),
+          sdk.pane.action.styleOf(th, st));
+```
+
+Five states, and the last four are the **host's word**, not a guess:
+
+| state | paints | means |
+|---|---|---|
+| `idle` | `[ Merge ]` | nothing pressed |
+| `running` | `[ ⠙ ]`, turning | its session is working |
+| `waiting` | `[ ⏸ ]`, warning colour | its session is asking the user something |
+| `view` | `[ view ]` | its session ended |
+| `failed` | `[ ✗ ]`, bad colour | the dispatch itself failed, or the session did |
+
+A press writes the dispatch, sets `running`, and sends one
+`watch_session` naming the button:
+
+```zig
+var kbuf: [320]u8 = undefined;
+const key = sdk.pane.actionWatchKey(&kbuf, pr_key, "merge");
+try mount.watchSession(key, .{ .cwd = workspace, .prompt_line = first_line_of_prompt });
+```
+
+Every `session_state` line that comes back goes straight in:
+
+```zig
+.session_state => |ss| _ = try actions.applyState(
+    ss.key, sdk.pane.actionStateOf(ss.state), ss.session_id, ss.detail),
+```
+
+`sdk.pane.action.pressOf(state)` says what a second press means —
+`dispatch` only from `idle`, `focus_session` while it is running,
+waiting or finished (so a button can never fork a duplicate session),
+`retry` after a failure. Keep `Entry.detail` for the hint row: it holds
+the question while `waiting` and the reason after a `failed`. The
+spinner needs a counter of your own, bumped once per pass while
+`actions.anyRunning()`, so every button on screen turns together.
+
 ## `--install` — the manifest
 
 mnml learns about an integration from
@@ -297,6 +346,12 @@ Each call appends one JSON line to `$MNML_IPC_DIR/command`; the shapes
 are in `docs/BRIDGE.md`. Over a mount, prefer `mount.toast` and
 `mount.command` — they need no file.
 
+`ipc.focusSession(.{ .id = e.session, .cwd = ws, .prompt_line = e.prompt_line })`
+brings a session mnml is running to the front — what a `[ view ]` press
+asks for. It names the session the same way `watch_session` does, on
+purpose: a button that can watch a session must be able to open the
+same one.
+
 ## A second one, with a network behind it
 
 `integrations/bitbucket` is the other official integration: Bitbucket
@@ -318,10 +373,12 @@ things it ran into are worth knowing before you write one:
   takes one event at a time. A pane that fetches inline freezes for as
   long as the network takes — minutes, under a shared rate bucket.
 * **There is no host→sibling command.** `HostMessage` is hello / resize /
-  input / focus / goodbye: mnml can start your binary for a command, but
-  it cannot send one into a mount that is already running. A command
-  that has to act on a *live* pane needs a key, or a second headless
-  invocation that writes to the Tier-2 channel.
+  input / focus / session_state / goodbye: mnml can start your binary
+  for a command, but it cannot send one into a mount that is already
+  running. A command that has to act on a *live* pane needs a key, or a
+  second headless invocation that writes to the Tier-2 channel.
+  `session_state` is the one thing the host volunteers, and only about
+  a session the pane asked it to watch.
 * **A `pty` child does not inherit `MNML_IPC_DIR`.** A mount child does
   (`src/bridge/host.zig`'s `envFor`); a `:term` one gets the app's own
   environment. If a headless `run` line has to publish a segment or a

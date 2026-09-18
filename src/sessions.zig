@@ -87,6 +87,7 @@ const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
 const session_worktree = @import("app/session_worktree.zig");
+const mount_pane_mod = @import("app/mount_pane.zig");
 
 pub const Source = agents.Source;
 pub const AgentState = agents.AgentState;
@@ -636,6 +637,10 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
     if (st.adopted_once) try announceEdges(app, edges);
     st.adopted_once = true;
     try sessions_table.onSnapshot(app);
+    // A mounted pane that dispatched a session hears what it is doing:
+    // its `[ Triage ]` turns a spinner while it runs, says so when it
+    // stops to ask something, and becomes `[ view ]` when it ends.
+    mount_pane_mod.notifySessionWatches(app);
     app.needs_render = true;
 }
 

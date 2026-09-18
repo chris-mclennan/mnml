@@ -164,6 +164,14 @@ pub const Mount = struct {
         return m.sendMessage(.{ .toast = .{ .level = level, .text = text } });
     }
 
+    /// "I started this session; keep me posted." `key` is the pane's
+    /// own name for the button that started it — `sdk.pane.action`'s
+    /// `watchKey` builds one — and comes back on every `session_state`
+    /// line so the answer lands on the right button.
+    pub fn watchSession(m: *Mount, key: []const u8, selector: wire.SessionSelector) SendError!void {
+        return m.sendMessage(.{ .watch_session = .{ .key = key, .selector = selector } });
+    }
+
     /// Ask the host to run a command by id.
     pub fn command(m: *Mount, id: []const u8) SendError!void {
         return m.sendMessage(.{ .command = .{ .id = id } });

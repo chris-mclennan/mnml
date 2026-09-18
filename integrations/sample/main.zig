@@ -96,7 +96,7 @@ pub fn main(init: std.process.Init) !u8 {
         _ = msg_arena.reset(.retain_capacity);
         const msg = (try mount.next(msg_arena.allocator())) orelse break;
         switch (msg) {
-            .hello => {},
+            .hello, .session_state => {},
             .focus => |f| state.focused = f,
             .goodbye => break,
             .resize => |r| try frame.resize(r.geometry.cols, r.geometry.rows),

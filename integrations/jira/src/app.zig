@@ -211,6 +211,13 @@ pub const App = struct {
     /// The channel a `[ view ]` press asks the host to focus a session
     /// on. Null outside a host, where the button is not offered.
     ipc: ?*const sdk.Ipc = null,
+    /// Sessions this pane started and wants told about, waiting to go
+    /// out over the mount; the loop drains them after each pass. The
+    /// arena owns their strings for the life of the pane — a watch is
+    /// small and there is one per press, so it is never freed
+    /// individually.
+    watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,
+    watch_arena: std.heap.ArenaAllocator,
     /// Turns the spinner on every button that is mid-dispatch.
     spin: usize = 0,
     group: ?*Io.Group = null,
@@ -228,6 +235,9 @@ pub const App = struct {
     toast_pending: bool = false,
 
     const DetailEntry = struct { arena: std.heap.ArenaAllocator, detail: model.IssueDetail };
+
+    /// One queued `watch_session`, in the wire's own shape.
+    pub const WatchRequest = struct { key: []const u8, cwd: []const u8, prompt_line: []const u8 };
 
     pub fn init(gpa: Allocator, io: Io, cfg: config.Config, family: ?config.Family, client: *jira.Client, forge: bitbucket.Client) Allocator.Error!App {
         var keys = std.heap.ArenaAllocator.init(gpa);
@@ -263,7 +273,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa) };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa), .watch_arena = std.heap.ArenaAllocator.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -329,6 +339,8 @@ pub const App = struct {
         a.hits.deinit(a.gpa);
         a.refresh.deinit(a.io, RefreshResult.drop);
         a.actions.deinit();
+        a.watch_out.deinit(a.gpa);
+        a.watch_arena.deinit();
         a.keys.deinit();
         a.* = undefined;
     }
@@ -1886,8 +1898,13 @@ pub const App = struct {
     }
 
     /// Fire a dispatch and leave the outcome on the row's button: a
-    /// `[ view ]` that focuses the session it started, or a red cross
-    /// carrying the reason into the hint row.
+    /// spinner that turns for as long as the session runs, or a red
+    /// cross carrying the reason into the hint row.
+    ///
+    /// The button starts on `running` rather than `view` because that
+    /// is what it is — a session was started and has not ended. What
+    /// happens to it after is the host's to say: the watch queued here
+    /// goes out on the next pass and `session_state` lines come back.
     fn fireAndRecord(a: *App, arena: Allocator, row_key: []const u8, action: []const u8, d: dispatch.Dispatch, paths: dispatch.Paths) Allocator.Error!void {
         const out = try dispatch.fireOutcome(arena, a.io, d, paths);
         a.say("{s}", .{out.text});
@@ -1896,21 +1913,44 @@ pub const App = struct {
             // directory it runs in and the first line of its prompt.
             const prompt = try d.prompt(arena);
             const first = prompt[0 .. std.mem.indexOfScalar(u8, prompt, '\n') orelse prompt.len];
-            try a.actions.set(row_key, action, .{ .state = .view, .detail = try arena.dupe(u8, first) });
+            try a.actions.set(row_key, action, .{ .state = .running, .prompt_line = try arena.dupe(u8, first) });
+            try a.watchSession(row_key, action, first);
         } else {
             try a.actions.set(row_key, action, .{ .state = .failed, .detail = out.text });
         }
     }
 
-    /// A press on a button that already started a session: ask the host
-    /// to bring it to the front.
+    /// Queue a `watch_session` for the button that just dispatched. The
+    /// pane loop sends it over the mount; the host matches the session
+    /// the same way `focus-session` does and answers on every edge.
+    fn watchSession(a: *App, row_key: []const u8, action: []const u8, prompt_line: []const u8) Allocator.Error!void {
+        var buf: [320]u8 = undefined;
+        const key = sdk.pane.actionWatchKey(&buf, row_key, action);
+        if (key.len == 0) return;
+        const arena = a.watch_arena.allocator();
+        try a.watch_out.append(a.gpa, .{
+            .key = try arena.dupe(u8, key),
+            .cwd = try arena.dupe(u8, a.cfg.dispatch_workspace),
+            .prompt_line = try arena.dupe(u8, prompt_line),
+        });
+    }
+
+    /// A `session_state` line from the host: the button it names takes
+    /// the host's word for what its session is doing.
+    pub fn onSessionState(a: *App, key: []const u8, state: sdk.wire.SessionState, session_id: []const u8, detail: []const u8) Allocator.Error!void {
+        _ = try a.actions.applyState(key, sdk.pane.actionStateOf(state), session_id, detail);
+    }
+
+    /// A press on a button whose session is live or finished: ask the
+    /// host to bring it to the front. The host's own id when it has
+    /// given one, else the two names a dispatched `term` line carries.
     pub fn focusSessionFor(a: *App, row_key: []const u8, action: []const u8) Allocator.Error!void {
         const e = a.actions.get(row_key, action);
         const ipc = a.ipc orelse {
             a.setStatus("view: no mnml channel to focus a session on", .{});
             return;
         };
-        ipc.focusSession(.{ .cwd = a.cfg.dispatch_workspace, .prompt_line = e.detail }) catch |err| {
+        ipc.focusSession(.{ .id = e.session, .cwd = a.cfg.dispatch_workspace, .prompt_line = e.prompt_line }) catch |err| {
             a.say("view failed: {s}", .{@errorName(err)});
             return;
         };
@@ -2923,12 +2963,35 @@ test "a row's action button keeps what its press left, by ticket, across a refet
     try tmp.dir.createDirPath(testing.io, ".mnml/" ++ dispatch.ipc_subdir);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/" ++ dispatch.ipc_subdir ++ "/command", .data = "" });
     try a.dispatchTicket("triage");
-    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    // A session was STARTED, not finished: the button turns a spinner
+    // and waits for the host to say what happened to it.
+    try testing.expectEqual(sdk.pane.ActionState.running, a.actions.state(key, "triage"));
     // What it remembers is the prompt's first line — all a `term` line
     // can say about the session it started.
-    try testing.expect(std.mem.startsWith(u8, a.actions.get(key, "triage").detail, "/agents:developer "));
+    try testing.expect(std.mem.startsWith(u8, a.actions.get(key, "triage").prompt_line, "/agents:developer "));
+    // …and the same two names go out as a `watch_session`, so the host
+    // can find the session it just started.
+    try testing.expectEqual(@as(usize, 1), a.watch_out.items.len);
+    var kbuf: [320]u8 = undefined;
+    try testing.expectEqualStrings(sdk.pane.actionWatchKey(&kbuf, key, "triage"), a.watch_out.items[0].key);
+    try testing.expectEqualStrings(root, a.watch_out.items[0].cwd);
+    try testing.expect(std.mem.startsWith(u8, a.watch_out.items[0].prompt_line, "/agents:developer "));
     // A second action on the same ticket is its own button.
     try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state(key, "fix"));
+
+    // The host's word moves it: the session stops to ask something,
+    // then ends. The question lands where the reason for a failure
+    // does — on the button, for the hint row.
+    const watch_key = try arena.allocator().dupe(u8, a.watch_out.items[0].key);
+    try a.onSessionState(watch_key, .waiting, "sid-77", "Do you want me to run the migration?");
+    try testing.expectEqual(sdk.pane.ActionState.waiting, a.actions.state(key, "triage"));
+    try testing.expectEqualStrings("Do you want me to run the migration?", a.actions.get(key, "triage").detail);
+    try a.onSessionState(watch_key, .done, "sid-77", "");
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(key, "triage"));
+    try testing.expectEqualStrings("sid-77", a.actions.get(key, "triage").session);
+    // A line for a button this pane does not have changes nothing.
+    try a.onSessionState(sdk.pane.actionWatchKey(&kbuf, "ENG-999", "triage"), .failed, "", "boom");
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state("ENG-999", "triage"));
 
     // A refetch moves the rows; the button follows its ticket.
     try a.refreshActive();
