@@ -46,6 +46,7 @@ const scripts_panel = @import("scripts_panel.zig");
 const script_list = @import("script_list.zig");
 const script_section = @import("script_section.zig");
 const settings_app = @import("settings.zig");
+const SettingsUi = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
 const Confirm = app_mod.Confirm;
@@ -1626,7 +1627,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 closeOverlay(app);
                 return;
             },
-            .settings => if (target != .overlay_item) settings_app.close(app),
+            .settings => if (target != .overlay_item and target != .scrollbar) settings_app.close(app),
             .picker => if (target != .overlay_item and target != .scrollbar) {
                 cmd_picker.cancel(app);
                 closeOverlay(app);
@@ -1665,6 +1666,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         Picker.wheel(&p.state, signed(down, app.cfg.ui.wheel_lines * count), p.filtered.items.len);
                         return cmd_picker.preview(app);
                     }
+                    if (id == SettingsUi.scrollbar_owner and app.overlay == .settings) return settings_app.wheel(app, signed(down, count));
                     return wheelOnPane(app, id, m, count);
                 },
             },
@@ -2741,6 +2743,7 @@ fn paneBarJump(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Error!void 
         cmd_picker.preview(app);
         return;
     }
+    if (id == SettingsUi.scrollbar_owner and app.overlay == .settings) return settings_app.barJump(app, off, h);
     const pane = app.panes.get(id) orelse return;
     switch (pane.*) {
         .outline => |*o| {
