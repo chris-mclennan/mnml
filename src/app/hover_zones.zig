@@ -56,6 +56,10 @@ pub const Id = enum {
     sidebar_left,
     /// The right column's, ditto.
     sidebar_right,
+    /// // changed (launcher-dock): the launcher dock's edge — the
+    /// outermost row or column of `ui.dock.edge`, and the strip itself
+    /// once it is up (`app/launcher_dock.zig`).
+    launcher_dock,
 };
 
 pub const Zone = struct {
@@ -69,11 +73,19 @@ pub const Zone = struct {
 
 /// The menu bar owns the top-left cell; a column's edge outranks the
 /// rail, which is carved out of that column in the first place.
+/// // changed (launcher-dock): **the outer-band rule.** A launcher
+/// dock on a side edge takes the OUTERMOST column of the frame and
+/// nothing else does: it outranks every other zone on the cells it
+/// claims, and `registerGeometric` moves the side column's own reveal
+/// edge one cell inwards so both surfaces stay reachable rather than
+/// one of them being unsummonable. The dock never claims the top row
+/// (there is no `.top` edge), so the menu bar is never in contest.
+pub const prio_dock: u8 = 4;
 pub const prio_menu_bar: u8 = 3;
 pub const prio_sidebar: u8 = 2;
 pub const prio_rail: u8 = 1;
 
-/// Four surfaces × two pieces each is the ceiling today; a zone past it
+/// Five surfaces × two pieces each is the ceiling today; a zone past it
 /// is dropped rather than growing the frame's state.
 const max_zones = 16;
 
@@ -113,11 +125,40 @@ fn registerGeometric(app: *App, full: Rect) void {
     // The rail's reveal cell is column 0, whatever the row — the rule
     // `activity_bar.shown` shipped with.
     if (cfg.activity_bar == .auto) add(app, .{ .rect = Rect.init(full.x, full.y, 1, full.h), .id = .rail_left, .priority = prio_rail });
+    // // changed (launcher-dock): the dock's edge, and the outer-band
+    // rule it imposes on a side column that wants the same screen edge.
+    const dock_band: ?Rect = dockBand(app, full);
+    if (dock_band) |band| add(app, .{ .rect = band, .id = .launcher_dock, .dwell_ms = cfg.dock.reveal_ms, .priority = prio_dock });
+    const dock_side: ?Config.ColumnSide = if (dock_band == null) null else switch (cfg.dock.edge) {
+        .bottom => null,
+        .left => .left,
+        .right => .right,
+    };
     if (cfg.sidebar == .auto and !app.zen) {
         const dwell = cfg.sidebar_reveal_ms;
-        add(app, .{ .rect = Rect.init(full.x, full.y, 1, full.h), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
-        add(app, .{ .rect = Rect.init(full.right() -| 1, full.y, 1, full.h), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
+        // A side dock owns the outermost cell, so the column's own
+        // reveal edge is the cell one step in.
+        const left_x = full.x + @as(u16, if (dock_side == .left) 1 else 0);
+        const right_x = full.right() -| @as(u16, if (dock_side == .right) 2 else 1);
+        add(app, .{ .rect = Rect.init(left_x, full.y, 1, full.h), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
+        add(app, .{ .rect = Rect.init(right_x, full.y, 1, full.h), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
     }
+}
+
+/// The one-cell band the launcher dock reveals through, or null when
+/// it is `hidden` (or zen, where no chrome shows). It runs along
+/// `ui.dock.edge` of the frame's editor area — never the top row,
+/// which is the menu bar's — so the geometry is the bare `upper`
+/// `frameRects` would hand out with no columns and no dock at all.
+pub fn dockBand(app: *const App, full: Rect) ?Rect {
+    if (app.zen or app.cfg.ui.dock.mode == .hidden or full.isEmpty()) return null;
+    const upper = @import("render.zig").frameRects(full, .{}).upper;
+    if (upper.isEmpty()) return null;
+    return switch (app.cfg.ui.dock.edge) {
+        .bottom => Rect.init(upper.x, upper.bottom() -| 1, upper.w, 1),
+        .left => Rect.init(upper.x, upper.y, 1, upper.h),
+        .right => Rect.init(upper.right() -| 1, upper.y, 1, upper.h),
+    };
 }
 
 /// The row `render.frameRects` gives the palette bar, or null when the

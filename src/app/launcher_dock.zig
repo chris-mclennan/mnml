@@ -1,0 +1,879 @@
+//! The launcher dock — macOS's Dock, in a terminal. A strip of the
+//! things you *start*: the installed integrations, the terminals (a
+//! *New terminal* item and one per open pty, which the click focuses),
+//! the launchers, and any command pinned onto it. It lives along one
+//! edge of the editor area and it is hideable, revealable on hover, or
+//! always on, the way the menu bar at the top is.
+//!
+//! **Three names that are not this one.** mnml already says "dock" in
+//! two other places and this file is neither. `app/bottom.zig` is the
+//! BOTTOM PANEL, which hosts sections and panes under the editor
+//! (`ui.bottom_panel_*`, `Ctrl-W J` / `K`). `app/dock.zig` is the dock
+//! WIDGETS, the small panels pinned to a corner of the buffer. This
+//! file is the LAUNCHER dock, `ui.dock`, and when it and the bottom
+//! panel are both at the bottom the launcher dock is the outermost row
+//! — the panel is inside it, as the editor is.
+//!
+//! **It draws over; it never re-lays-out** — the rule
+//! `app/sidebar_auto.zig` already lives by. Under `ui.dock.mode =
+//! .always` the strip is carved out of the frame like any other chrome
+//! and `render.chrome` reports it; under `.auto_hide` the reveal is
+//! paint alone, so no pane moves and no pty is resized when the
+//! pointer brushes an edge.
+//!
+//! **The outer-band rule** (written down in `app/hover_zones.zig`,
+//! where it is enforced). A dock on a side edge takes the OUTERMOST
+//! column of the frame, always, and the side column's own reveal edge
+//! moves one cell inwards to make room. So a left dock and a left
+//! auto-hiding sidebar are both reachable — the outer cell summons the
+//! dock, the next cell in summons the column — instead of one of them
+//! silently winning the screen edge. The top row is never the dock's:
+//! there is no `.top` edge, because that row is the menu bar's.
+//!
+//! The reveal is a dwell (`ui.dock.reveal_ms`) arbitrated by
+//! `hover_zones`; the hide is `ui.dock.hide_ms` after the pointer
+//! leaves, refused while the keyboard is in the strip. `view.dock_pin`
+//! ends the game for the session: `mode` then reads `.always` and the
+//! strip docks like any other chrome (the pin, unlike the mode, IS
+//! remembered — `session.zon` carries it).
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const PaneId = app_mod.PaneId;
+const Config = @import("../config/Config.zig");
+const command = @import("../core/command.zig");
+const CommandError = command.CommandError;
+const Key = app_mod.Key;
+const Mouse = @import("../core/key.zig").Mouse;
+const Rect = @import("../ui/rect.zig");
+const Ui = @import("../ui/context.zig");
+const view = @import("../ui/launcher_dock_view.zig");
+const hover_zones = @import("hover_zones.zig");
+const tooltip = @import("../ui/tooltip.zig");
+const integrations = @import("integrations.zig");
+const terminal_glyph = @import("terminal_glyph.zig");
+const menu_glyph = @import("../ui/menu_glyph.zig");
+const settings = @import("settings.zig");
+
+pub const Mode = Config.DockMode;
+pub const Edge = Config.DockEdge;
+pub const Part = @import("../ui/hit.zig").LauncherDockPart;
+
+pub const table = .{
+    .@"view.dock_toggle" = &toggleCmd,
+    .@"view.dock_pin" = &pinCmd,
+    .@"view.dock_cycle_mode" = &cycleModeCmd,
+    .@"view.dock_move" = &moveCmd,
+    .@"view.focus_dock" = &focusCmd,
+    .@"view.dock_unpin_item" = &unpinItemCmd,
+};
+
+/// A side dock's width in cells — the activity bar's, so the two rails
+/// read as one family.
+pub const width: u16 = view.width;
+/// A bottom dock's height in rows.
+pub const height: u16 = 1;
+
+pub const State = struct {
+    /// The strip is revealed over the editor (never set under `always`,
+    /// where it is carved instead).
+    open: bool = false,
+    /// A command opened it, so it is allowed under `.hidden` and does
+    /// not start its hide clock until the pointer has been on it once.
+    by_key: bool = false,
+    /// The pointer has been on the strip since it opened.
+    touched: bool = false,
+    /// The pointer left the strip at this ms; null while it is on it.
+    left_at_ms: ?i64 = null,
+    /// Pinned for the session — `mode` reads `.always`. Remembered in
+    /// `session.zon`, not in the config.
+    pinned: bool = false,
+    /// The keyboard is in the strip (`view.focus_dock`).
+    kb: bool = false,
+    /// The keyboard cursor's item.
+    cursor: u16 = 0,
+    /// The strip's rect at the last paint — the painter registers it as
+    /// the zone's second piece, so resting on it keeps it up.
+    rect: Rect = .empty,
+    /// How many items the last paint had; the cursor clamps to it.
+    count: u16 = 0,
+};
+
+// ─── mode and geometry ──────────────────────────────────────────────────
+
+/// `ui.dock.mode`, with the session's pin on top of it.
+pub fn mode(app: *const App) Mode {
+    if (app.launcher_dock.pinned) return .always;
+    return app.cfg.ui.dock.mode;
+}
+
+pub fn edge(app: *const App) Edge {
+    return app.cfg.ui.dock.edge;
+}
+
+/// The strip is carved out of the frame this frame — `render.chrome`'s
+/// one question.
+pub fn docked(app: *const App) bool {
+    return !app.zen and mode(app) == .always;
+}
+
+/// The strip is painted as an overlay over the editor this frame.
+pub fn revealed(app: *const App) bool {
+    return !app.zen and mode(app) != .always and app.launcher_dock.open;
+}
+
+/// The strip is on screen at all, carved or revealed.
+pub fn shown(app: *const App) bool {
+    return docked(app) or revealed(app);
+}
+
+/// The frame needs this many columns before a side dock is worth
+/// carving or revealing — its own cells plus the 21 the panes are
+/// never squeezed below (`render.frameRects`' own floor).
+pub const side_min_width: u16 = width + 21;
+
+/// Where a revealed strip paints: the band `hover_zones` watches,
+/// grown to the strip's own size. Empty when there is no room.
+pub fn overlayRect(app: *const App, full: Rect) Rect {
+    const band = hover_zones.dockBand(app, full) orelse return .empty;
+    return switch (edge(app)) {
+        .bottom => band,
+        .left => if (full.w >= side_min_width) Rect.init(band.x, band.y, width, band.h) else .empty,
+        .right => if (full.w >= side_min_width) Rect.init(band.right() -| width, band.y, width, band.h) else .empty,
+    };
+}
+
+// ─── the dwell ──────────────────────────────────────────────────────────
+
+/// Advance the reveal / hide clock. Called from `App.tick` and from the
+/// top of `render`, both idempotent at one `now`.
+pub fn tick(app: *App, now: i64) void {
+    const st = &app.launcher_dock;
+    if (app.zen) {
+        close(app);
+        return;
+    }
+    // A docked strip has no reveal to run down; the keyboard may still
+    // be in it, so `kb` is left exactly as it was.
+    if (mode(app) == .always) {
+        st.open = false;
+        st.by_key = false;
+        st.left_at_ms = null;
+        return;
+    }
+    if (!st.open) {
+        if (mode(app) == .auto_hide and hover_zones.dwelled(app, .launcher_dock)) {
+            st.open = true;
+            st.by_key = false;
+            st.touched = true;
+            st.left_at_ms = null;
+        }
+        return;
+    }
+    // The keyboard holds it open outright.
+    if (st.kb) {
+        st.left_at_ms = null;
+        return;
+    }
+    if (hover_zones.inZone(app, .launcher_dock)) {
+        st.touched = true;
+        st.left_at_ms = null;
+        return;
+    }
+    // Summoned by a command and never touched: it waits for a hand
+    // rather than vanishing because the mouse was nudged on the way.
+    if (st.by_key and !st.touched) return;
+    if (st.left_at_ms == null) st.left_at_ms = now;
+    if (now -| st.left_at_ms.? >= app.cfg.ui.dock.hide_ms) close(app);
+}
+
+/// A frame is due the moment the hide clock runs out.
+pub fn nextDeadlineMs(app: *const App) ?i64 {
+    const st = &app.launcher_dock;
+    if (!st.open or st.kb) return null;
+    const left = st.left_at_ms orelse return null;
+    const due = left + app.cfg.ui.dock.hide_ms;
+    return if (due > app.now_ms) due else null;
+}
+
+pub fn close(app: *App) void {
+    const st = &app.launcher_dock;
+    st.open = false;
+    st.by_key = false;
+    st.touched = false;
+    st.kb = false;
+    st.left_at_ms = null;
+    app.needs_render = true;
+}
+
+fn reveal(app: *App, by_key: bool) void {
+    const st = &app.launcher_dock;
+    st.open = true;
+    st.by_key = by_key;
+    st.touched = !by_key;
+    st.left_at_ms = null;
+    app.needs_render = true;
+}
+
+// ─── the model ──────────────────────────────────────────────────────────
+
+pub const Kind = enum { integration, launcher, terminal_new, terminal, pin };
+
+pub const Action = union(enum) {
+    static: command.CommandId,
+    named: []const u8,
+    dyn: u32,
+    pane: PaneId,
+    none,
+};
+
+pub const Item = struct {
+    kind: Kind,
+    /// The chip id, the command id, or the pane's title — what the
+    /// menu and `dock.pins` name this row by.
+    id: []const u8,
+    glyph: []const u8,
+    fallback: []const u8,
+    color: []const u8,
+    label: []const u8,
+    running: bool,
+    action: Action,
+};
+
+/// Every item the strip shows, in paint order, on `arena`:
+/// integrations, then launchers that declared no chip, then the
+/// terminals, then `ui.dock.pins`.
+pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
+    var out: std.ArrayListUnmanaged(Item) = .empty;
+    // ── integrations ──
+    for (try integrations.allChips(app, arena)) |c| {
+        if (!c.enabled) continue;
+        try out.append(arena, .{
+            .kind = .integration,
+            .id = c.id,
+            .glyph = c.glyph,
+            .fallback = c.fallback,
+            .color = c.color,
+            .label = c.tooltip,
+            .running = integrationOpen(app, c.id),
+            .action = switch (c.action) {
+                .dyn => |slot| .{ .dyn = slot },
+                .named => |n| .{ .named = n },
+                .none => .none,
+            },
+        });
+    }
+    // ── launchers: an installed manifest that asked for no chip still
+    //    has commands, and the dock is where you start things ──
+    for (app.integrations.list) |*inst| {
+        if (inst.manifest.chip != null or inst.slots.len == 0) continue;
+        try out.append(arena, .{
+            .kind = .launcher,
+            .id = inst.id(),
+            .glyph = launcher_glyph,
+            .fallback = launcher_ascii,
+            .color = "purple",
+            .label = if (inst.manifest.label.len > 0) inst.manifest.label else inst.id(),
+            .running = integrationOpen(app, inst.id()),
+            .action = .{ .dyn = inst.slots[0] },
+        });
+    }
+    // ── terminals: a new one, then every open pty ──
+    const term = terminal_glyph.mark(app);
+    try out.append(arena, .{
+        .kind = .terminal_new,
+        .id = "term.shell",
+        .glyph = term.glyph,
+        .fallback = term.fallback,
+        .color = "green",
+        .label = "New terminal",
+        .running = false,
+        .action = .{ .static = .@"term.shell" },
+    });
+    var pid: PaneId = 0;
+    while (pid < app.panes.capacity()) : (pid += 1) {
+        const p = app.panes.get(pid) orelse continue;
+        if (p.* != .pty) continue;
+        try out.append(arena, .{
+            .kind = .terminal,
+            .id = "term",
+            .glyph = term.glyph,
+            .fallback = term.fallback,
+            .color = "green",
+            .label = p.title(),
+            .running = true,
+            .action = .{ .pane = pid },
+        });
+    }
+    // ── pinned commands ──
+    for (app.cfg.ui.dock.pins) |id| {
+        const ref = command.resolve(app, id) orelse continue;
+        const title = switch (ref) {
+            .static => |c| command.title(c),
+            .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.title else continue,
+        };
+        try out.append(arena, .{
+            .kind = .pin,
+            .id = id,
+            .glyph = menu_glyph.forCommandName(id, false),
+            .fallback = menu_glyph.forCommandName(id, true),
+            .color = "blue",
+            .label = title,
+            .running = false,
+            .action = switch (ref) {
+                .static => |c| .{ .static = c },
+                .dyn => |slot| .{ .dyn = slot },
+            },
+        });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// A generic launcher's mark: the rocket, in the Nerd Font's own plane.
+pub const launcher_glyph = "\u{f135}"; //  nf-fa-rocket
+pub const launcher_ascii = "^";
+
+/// Whether an integration has a pane open — the dot macOS puts under a
+/// running app. A mounted pane names the manifest it came from; the
+/// browser is the one first-party surface with a pane of its own.
+fn integrationOpen(app: *App, id: []const u8) bool {
+    var pid: PaneId = 0;
+    while (pid < app.panes.capacity()) : (pid += 1) {
+        const p = app.panes.get(pid) orelse continue;
+        switch (p.*) {
+            .mount => |*m| if (m.integration) |owner| {
+                if (std.mem.eql(u8, owner, id)) return true;
+            },
+            .browser => if (std.mem.eql(u8, id, "browser")) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// Run item `i` — the one door a click, Enter and a menu row share.
+pub fn activate(app: *App, i: usize) Allocator.Error!void {
+    const list = try items(app, app.frame.allocator());
+    if (i >= list.len) return;
+    const it = list[i];
+    switch (it.action) {
+        .static => |id| run(app, .{ .static = id }),
+        .dyn => |slot| run(app, .{ .dyn = slot }),
+        .named => |id| command.runNamed(app, id) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .pane => |id| {
+            app.showPane(id);
+            app.focus = .{ .pane = id };
+        },
+        .none => app.toast("{s}: nothing to run", .{it.label}),
+    }
+    // Picking something puts a revealed strip away at once: the
+    // pointer is about to be somewhere else (`sidebar_auto`'s rule).
+    if (!app.launcher_dock.pinned and app.launcher_dock.open) close(app);
+    app.needs_render = true;
+}
+
+fn run(app: *App, ref: command.CommandRef) void {
+    command.run(app, ref) catch {};
+}
+
+// ─── the paint ──────────────────────────────────────────────────────────
+
+/// The strip. `area` is the carved rect under `always`, or the overlay
+/// band under a reveal. Registers the strip as the zone's second piece
+/// so the pointer resting on it keeps it up.
+pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    if (area.isEmpty()) return;
+    const st = &app.launcher_dock;
+    const list = try items(app, ui.arena);
+    st.rect = area;
+    st.count = @intCast(list.len);
+    if (st.cursor >= list.len) st.cursor = if (list.len == 0) 0 else @intCast(list.len - 1);
+    const props_items = try ui.arena.alloc(view.Item, list.len);
+    for (list, props_items) |it, *v| v.* = .{
+        .glyph = it.glyph,
+        .fallback = it.fallback,
+        .color = it.color,
+        .label = it.label,
+        .running = it.running,
+    };
+    view.draw(ui, area, .{
+        .items = props_items,
+        .edge = switch (edge(app)) {
+            .bottom => .bottom,
+            .left => .left,
+            .right => .right,
+        },
+        .cursor = if (st.kb) st.cursor else null,
+        .pinned = st.pinned,
+    });
+    if (mode(app) != .always) hover_zones.register(app, .{
+        .rect = area,
+        .id = .launcher_dock,
+        .dwell_ms = app.cfg.ui.dock.reveal_ms,
+        .priority = hover_zones.prio_dock,
+    });
+}
+
+// ─── the mouse ──────────────────────────────────────────────────────────
+
+pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
+    if (m.kind != .press) return;
+    switch (part) {
+        .pin => switch (m.button) {
+            .left => run(app, .{ .static = .@"view.dock_pin" }),
+            .right => try openDockMenu(app, m.x, m.y),
+            else => {},
+        },
+        .item => |i| switch (m.button) {
+            .left => try activate(app, i),
+            .right => try openItemMenu(app, i, m.x, m.y),
+            else => {},
+        },
+    }
+}
+
+/// The strip's own menu (the pin chip's right click): the three modes
+/// and the three edges.
+pub fn openDockMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var list: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer list.deinit(app.gpa);
+    try list.append(app.gpa, .{ .label = if (app.launcher_dock.pinned) "Unpin dock" else "Pin dock open", .action = .{ .command = .@"view.dock_pin" } });
+    try list.append(app.gpa, .{ .label = "Cycle mode (always / auto-hide / hidden)", .action = .{ .command = .@"view.dock_cycle_mode" }, .separator_before = true });
+    try list.append(app.gpa, .{ .label = "Move to the next edge (bottom / left / right)", .action = .{ .command = .@"view.dock_move" } });
+    try list.append(app.gpa, .{ .label = "Settings…", .action = .{ .command = .@"view.settings" }, .separator_before = true });
+    try app.openMenu("Launcher dock", try list.toOwnedSlice(app.gpa), x, y);
+}
+
+/// An item's menu. A left click already runs it, so the rows here are
+/// the ones a click cannot be: pin, unpin, and the strip's own verbs.
+pub fn openItemMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
+    const list = try items(app, app.frame.allocator());
+    if (i >= list.len) return;
+    const it = list[i];
+    app.launcher_dock.cursor = @intCast(i);
+    var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    switch (it.kind) {
+        .pin => try rows.append(app.gpa, .{ .label = "Unpin from dock", .action = .{ .command = .@"view.dock_unpin_item" } }),
+        .integration, .launcher => {
+            const on = integrations.isPinnedToDock(app, commandIdOf(app, it) orelse "");
+            try rows.append(app.gpa, .{
+                .label = if (on) "Unpin from dock" else "Pin to dock",
+                .action = .{ .command = if (on) .@"integrations.unpin_from_dock" else .@"integrations.pin_to_dock" },
+            });
+            try integrations.setDockMenuChip(app, it.id);
+        },
+        else => {},
+    }
+    try rows.append(app.gpa, .{ .label = if (app.launcher_dock.pinned) "Unpin dock" else "Pin dock open", .action = .{ .command = .@"view.dock_pin" }, .separator_before = true });
+    try rows.append(app.gpa, .{ .label = "Cycle mode (always / auto-hide / hidden)", .action = .{ .command = .@"view.dock_cycle_mode" } });
+    try rows.append(app.gpa, .{ .label = "Move to the next edge (bottom / left / right)", .action = .{ .command = .@"view.dock_move" } });
+    try app.openMenu(it.label, try rows.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The command id an item names — what `ui.dock.pins` stores.
+pub fn commandIdOf(app: *App, it: Item) ?[]const u8 {
+    return switch (it.action) {
+        .named => |id| id,
+        .static => |id| command.name(id),
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.id else null,
+        else => null,
+    };
+}
+
+/// The command id of the item the cursor is parked at — the menu rows'
+/// target.
+pub fn focusedCommandId(app: *App) Allocator.Error!?[]const u8 {
+    const list = try items(app, app.frame.allocator());
+    if (app.launcher_dock.cursor >= list.len) return null;
+    return commandIdOf(app, list[app.launcher_dock.cursor]);
+}
+
+// ─── the keyboard ───────────────────────────────────────────────────────
+
+/// The strip's keys while it has them (`view.focus_dock`): `h` / `l` or
+/// the arrows along a bottom strip, `j` / `k` along a side one, Enter
+/// runs, Esc leaves. Anything else leaves and is handled below.
+pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
+    const st = &app.launcher_dock;
+    if (!st.kb) return false;
+    const horizontal = edge(app) == .bottom;
+    switch (k.code) {
+        .esc => {
+            leave(app);
+            return true;
+        },
+        .enter => {
+            const at = st.cursor;
+            leave(app);
+            try activate(app, at);
+            return true;
+        },
+        .left, .up => {
+            step(app, -1);
+            return true;
+        },
+        .right, .down => {
+            step(app, 1);
+            return true;
+        },
+        .char => |c| {
+            if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+            switch (c) {
+                'h' => if (horizontal) {
+                    step(app, -1);
+                    return true;
+                },
+                'l' => if (horizontal) {
+                    step(app, 1);
+                    return true;
+                },
+                'k' => if (!horizontal) {
+                    step(app, -1);
+                    return true;
+                },
+                'j' => if (!horizontal) {
+                    step(app, 1);
+                    return true;
+                },
+                ' ' => {
+                    const at = st.cursor;
+                    leave(app);
+                    try activate(app, at);
+                    return true;
+                },
+                'q' => {
+                    leave(app);
+                    return true;
+                },
+                else => {},
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+fn step(app: *App, by: i32) void {
+    const st = &app.launcher_dock;
+    if (st.count == 0) return;
+    const n: i32 = @intCast(st.count);
+    var at: i32 = @as(i32, @intCast(st.cursor)) + by;
+    if (at < 0) at = n - 1;
+    if (at >= n) at = 0;
+    st.cursor = @intCast(at);
+    app.needs_render = true;
+}
+
+fn leave(app: *App) void {
+    const st = &app.launcher_dock;
+    st.kb = false;
+    if (!st.pinned and st.open) close(app);
+    app.needs_render = true;
+}
+
+// ─── hover copy ─────────────────────────────────────────────────────────
+
+/// The tooltip (`ui/tooltip.zig`), the same mechanism the rail uses. A
+/// side dock paints no label, so the tip is where the name lives.
+pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip.Tip {
+    switch (part) {
+        .pin => return .{
+            .title = if (app.launcher_dock.pinned) "Dock pinned" else "Pin the dock",
+            .detail = "click keeps the dock open · right-click: mode, edge, settings",
+        },
+        .item => |i| {
+            const list = try items(app, arena);
+            if (i >= list.len) return .{ .title = "Dock", .detail = "click runs this item" };
+            const it = list[i];
+            return .{
+                .title = try std.fmt.allocPrint(arena, "{s}{s}", .{ it.label, if (it.running) " · running" else "" }),
+                .detail = switch (it.kind) {
+                    .integration => "click opens the integration · right-click: pin / unpin",
+                    .launcher => "click runs the launcher · right-click: pin / unpin",
+                    .terminal_new => "click opens a new shell",
+                    .terminal => "click focuses this terminal",
+                    .pin => "click runs the pinned command · right-click: unpin",
+                },
+            };
+        },
+    }
+}
+
+// ─── the runners ────────────────────────────────────────────────────────
+
+/// `view.dock_toggle`: put a revealed strip away, or summon one — the
+/// keyboard's door, which works under `.hidden` too.
+fn toggleCmd(app: *App) CommandError!void {
+    if (mode(app) == .always) {
+        app.toast("the dock is always on (`view.dock_cycle_mode` to change)", .{});
+        return;
+    }
+    if (app.launcher_dock.open) {
+        close(app);
+        return;
+    }
+    reveal(app, true);
+}
+
+/// `view.dock_pin`: a revealed strip docks for the session, and
+/// `mode` reads `.always` until it is unpinned. Remembered in the
+/// session file, never written to the config.
+fn pinCmd(app: *App) CommandError!void {
+    const st = &app.launcher_dock;
+    if (st.pinned) {
+        st.pinned = false;
+        st.open = false;
+        st.kb = false;
+        app.toast("dock: {s}", .{@tagName(app.cfg.ui.dock.mode)});
+        app.needs_render = true;
+        return;
+    }
+    st.pinned = true;
+    st.open = false;
+    app.toast("dock pinned", .{});
+    app.needs_render = true;
+}
+
+/// `view.dock_cycle_mode`: always → auto-hide → hidden → always, persisted.
+fn cycleModeCmd(app: *App) CommandError!void {
+    const next: Mode = switch (app.cfg.ui.dock.mode) {
+        .always => .auto_hide,
+        .auto_hide => .hidden,
+        .hidden => .always,
+    };
+    try setMode(app, next);
+}
+
+pub fn setMode(app: *App, next: Mode) CommandError!void {
+    app.cfg.ui.dock.mode = next;
+    app.launcher_dock.pinned = false;
+    if (next != .auto_hide) close(app);
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "mode" }, next);
+    app.toast("dock: {s}", .{@tagName(next)});
+    app.needs_render = true;
+}
+
+/// `view.dock_move`: bottom → left → right → bottom, persisted.
+fn moveCmd(app: *App) CommandError!void {
+    const next: Edge = switch (app.cfg.ui.dock.edge) {
+        .bottom => .left,
+        .left => .right,
+        .right => .bottom,
+    };
+    try setEdge(app, next);
+}
+
+pub fn setEdge(app: *App, next: Edge) CommandError!void {
+    app.cfg.ui.dock.edge = next;
+    // The band moved: whatever was revealed at the old edge is stale.
+    if (app.launcher_dock.open) close(app);
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "edge" }, next);
+    app.toast("dock: {s} edge", .{@tagName(next)});
+    app.needs_render = true;
+}
+
+/// `view.focus_dock`: the keys go into the strip, revealing it first
+/// when it is not already up.
+fn focusCmd(app: *App) CommandError!void {
+    const st = &app.launcher_dock;
+    if (!shown(app)) reveal(app, true);
+    st.kb = true;
+    st.touched = true;
+    st.left_at_ms = null;
+    app.needs_render = true;
+}
+
+/// `view.dock_unpin_item`: the focused item leaves `ui.dock.pins`.
+fn unpinItemCmd(app: *App) CommandError!void {
+    const id = (try focusedCommandId(app)) orelse
+        return app.diag.fail(app.frame.allocator(), "dock: nothing focused to unpin", .{});
+    return integrations.unpinDockId(app, id);
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+const render = @import("render.zig");
+
+fn testApp(tmp: *std.testing.TmpDir, buf: []u8) !App {
+    const n = try tmp.dir.realPath(t.io, buf);
+    return App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .data_root = buf[0..n], .cols = 120, .rows = 40 });
+}
+
+test "the model: the enabled integrations come first, then the New terminal item, then `ui.dock.pins` — an id nothing answers to is skipped rather than painted dead" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.pins = &.{ "picker.files", "no.such.command" };
+    try app.render();
+    const list = try items(&app, app.frame.allocator());
+    // Browser is the one first-party chip enabled out of the box.
+    try t.expectEqualStrings("Browser", list[0].label);
+    try t.expectEqual(Kind.integration, list[0].kind);
+    // The terminals, then the pins — the unresolvable id is skipped, so
+    // the strip is exactly Browser, New terminal, picker.files.
+    try t.expectEqual(@as(usize, 3), list.len);
+    try t.expectEqual(Kind.terminal_new, list[1].kind);
+    try t.expectEqualStrings("New terminal", list[1].label);
+    try t.expectEqual(Kind.pin, list[2].kind);
+    try t.expectEqualStrings(command.title(.@"picker.files"), list[2].label);
+    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[2]).?);
+    // A pin that resolves to nothing never becomes a row.
+    for (list) |it| try t.expect(!std.mem.eql(u8, it.id, "no.such.command"));
+}
+
+test "mode transitions: the cycle walks always → auto-hide → hidden and writes the key; a pin makes mode read always and unpinning gives it back" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try t.expectEqual(Mode.auto_hide, mode(&app));
+    try cycleModeCmd(&app);
+    try t.expectEqual(Mode.hidden, app.cfg.ui.dock.mode);
+    try cycleModeCmd(&app);
+    try t.expectEqual(Mode.always, app.cfg.ui.dock.mode);
+    try t.expect(docked(&app));
+    try cycleModeCmd(&app);
+    try t.expectEqual(Mode.auto_hide, app.cfg.ui.dock.mode);
+    try t.expect(!docked(&app));
+    // The pin overrides the config without changing it.
+    try pinCmd(&app);
+    try t.expectEqual(Mode.always, mode(&app));
+    try t.expectEqual(Mode.auto_hide, app.cfg.ui.dock.mode);
+    try pinCmd(&app);
+    try t.expectEqual(Mode.auto_hide, mode(&app));
+    // The edge cycle, and the strip it leaves behind.
+    try t.expectEqual(Edge.bottom, edge(&app));
+    try moveCmd(&app);
+    try t.expectEqual(Edge.left, edge(&app));
+    try moveCmd(&app);
+    try t.expectEqual(Edge.right, edge(&app));
+    try moveCmd(&app);
+    try t.expectEqual(Edge.bottom, edge(&app));
+}
+
+test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the pointer is on the strip, and hides hide_ms after it leaves" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.reveal_ms = 250;
+    app.cfg.ui.dock.hide_ms = 400;
+    const full = Rect.init(0, 0, 120, 40);
+    const band = hover_zones.dockBand(&app, full).?;
+    // The bottom band is the editor area's last row, never the
+    // statusline's and never the `:` line's.
+    try t.expectEqual(render.frameRects(full, .{}).upper.bottom() - 1, band.y);
+
+    app.now_ms = 1000;
+    app.hover = .{ .x = 60, .y = band.y };
+    hover_zones.begin(&app, full, 1000);
+    tick(&app, 1000);
+    try t.expect(!revealed(&app));
+    app.now_ms = 1250;
+    hover_zones.begin(&app, full, 1250);
+    tick(&app, 1250);
+    try t.expect(revealed(&app));
+    // The painter's own zone keeps it up while the pointer rests on it.
+    hover_zones.register(&app, .{ .rect = band, .id = .launcher_dock, .dwell_ms = 250, .priority = hover_zones.prio_dock });
+    app.now_ms = 2000;
+    hover_zones.begin(&app, full, 2000);
+    tick(&app, 2000);
+    try t.expect(revealed(&app));
+    // Away: the hide clock starts, and runs out 400 ms later.
+    app.hover = .{ .x = 60, .y = 10 };
+    app.now_ms = 2100;
+    hover_zones.begin(&app, full, 2100);
+    tick(&app, 2100);
+    try t.expect(revealed(&app));
+    try t.expectEqual(@as(i64, 2500), nextDeadlineMs(&app).?);
+    app.now_ms = 2499;
+    hover_zones.begin(&app, full, 2499);
+    tick(&app, 2499);
+    try t.expect(revealed(&app));
+    app.now_ms = 2500;
+    hover_zones.begin(&app, full, 2500);
+    tick(&app, 2500);
+    try t.expect(!revealed(&app));
+}
+
+test "zone arbitration: a left dock owns the outermost column and pushes the auto-hiding sidebar's reveal edge one cell in; hidden gives the edge back" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.sidebar = .auto;
+    app.cfg.ui.dock.edge = .left;
+    app.now_ms = 1000;
+    const full = Rect.init(0, 0, 120, 40);
+    // Column 0 is the dock's; column 1 summons the sidebar.
+    app.hover = .{ .x = 0, .y = 10 };
+    hover_zones.begin(&app, full, 1000);
+    try t.expectEqual(@as(?hover_zones.Id, .launcher_dock), hover_zones.winner(&app));
+    app.hover = .{ .x = 1, .y = 10 };
+    hover_zones.begin(&app, full, 1000);
+    try t.expectEqual(@as(?hover_zones.Id, .sidebar_left), hover_zones.winner(&app));
+    // A hidden dock claims nothing, and column 0 is the sidebar's again.
+    app.cfg.ui.dock.mode = .hidden;
+    app.hover = .{ .x = 0, .y = 10 };
+    hover_zones.begin(&app, full, 1000);
+    try t.expectEqual(@as(?hover_zones.Id, .sidebar_left), hover_zones.winner(&app));
+    // The top row stays the menu bar's whatever the dock's edge is:
+    // the band never reaches it.
+    app.cfg.ui.dock.mode = .always;
+    try t.expect(hover_zones.dockBand(&app, full).?.y > 0);
+}
+
+test "the keyboard: h / l walk a bottom strip and wrap, j / k do not; Enter runs and leaves; Esc leaves" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try focusCmd(&app);
+    try app.render();
+    try t.expect(app.launcher_dock.kb);
+    try t.expect(app.launcher_dock.count >= 2);
+    try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
+    try t.expect(try interceptKey(&app, Key.char('l')));
+    try t.expectEqual(@as(u16, 1), app.launcher_dock.cursor);
+    // `j` is the SIDE strip's key: a bottom dock does not take it.
+    try t.expect(!try interceptKey(&app, Key.char('j')));
+    try t.expect(try interceptKey(&app, Key.char('h')));
+    try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
+    // Wrapping backwards from the first lands on the last.
+    try t.expect(try interceptKey(&app, Key.char('h')));
+    try t.expectEqual(app.launcher_dock.count - 1, app.launcher_dock.cursor);
+    // Esc hands the keys back.
+    try t.expect(try interceptKey(&app, .{ .code = .esc }));
+    try t.expect(!app.launcher_dock.kb);
+    try t.expect(!try interceptKey(&app, Key.char('l')));
+}
+
+test "a side dock on a narrow screen paints nothing rather than eating the editor; a right dock's cells end at the frame's far column" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.edge = .left;
+    try t.expect(overlayRect(&app, Rect.init(0, 0, side_min_width - 1, 20)).isEmpty());
+    const left = overlayRect(&app, Rect.init(0, 0, 120, 40));
+    try t.expectEqual(@as(u16, width), left.w);
+    try t.expectEqual(@as(u16, 0), left.x);
+    app.cfg.ui.dock.edge = .right;
+    const right = overlayRect(&app, Rect.init(0, 0, 120, 40));
+    try t.expectEqual(@as(u16, 120), right.right());
+    try t.expectEqual(@as(u16, width), right.w);
+}

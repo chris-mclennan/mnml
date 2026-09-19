@@ -493,15 +493,19 @@ test "pinned icons: pinning an installed launcher paints its chip after the sect
     try press(&app, 1, y, .left);
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "htop is not on PATH") != null);
     try t.expectEqual(@as(usize, 0), app.panes.count());
-    // The right click: the chip's menu, its four rows.
+    // The right click: the chip's menu, its five rows.
+    // // changed (launcher-dock): *Pin to dock* joined them, between
+    // the rail's own Remove row and Copy id.
     try press(&app, 1, y, .right);
     try t.expect(app.overlay == .menu);
     try t.expectEqualStrings("htop", app.overlay.menu.title);
     try t.expectEqualStrings("Disable", app.overlay.menu.items[0].label);
     try t.expectEqualStrings("Show on top bar", app.overlay.menu.items[1].label);
     try t.expectEqualStrings("Remove from activity bar", app.overlay.menu.items[2].label);
-    try t.expectEqualStrings("Copy id", app.overlay.menu.items[3].label);
+    try t.expectEqualStrings("Pin to dock", app.overlay.menu.items[3].label);
+    try t.expectEqualStrings("Copy id", app.overlay.menu.items[4].label);
     try t.expectEqual(command.CommandId.@"integrations.unpin_from_activity_bar", app.overlay.menu.items[2].action.command);
+    try t.expectEqual(command.CommandId.@"integrations.pin_to_dock", app.overlay.menu.items[3].action.command);
     // Choose Remove: the pin goes from the config, the file and the rail.
     var steps: usize = 0;
     while (!std.mem.eql(u8, app.overlay.menu.items[app.overlay.menu.cursor].label, "Remove from activity bar") or !app.overlay.menu.highlight) : (steps += 1) {

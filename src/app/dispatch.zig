@@ -61,6 +61,7 @@ const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const CellHit = @FieldType(@import("../ui/hit.zig").HitTarget, "editor_cell");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
+const launcher_dock = @import("launcher_dock.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
@@ -174,6 +175,11 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     if (app.flash != null and flash.interceptKey(app, k)) return;
     // F10 / Alt+<letter> summon a menu-bar menu (`app/menu_bar.zig`).
     if (try menu_bar.interceptKey(app, k)) return;
+    // // changed (launcher-dock): the launcher strip takes its own keys
+    // while `view.focus_dock` has put the keyboard in it — the same
+    // shape the menu bar's open menu uses, so no `Focus` variant is
+    // needed for a surface that holds the keys for one pick.
+    if (try launcher_dock.interceptKey(app, k)) return;
     // The completion / hover / peek popups take their keys first: an
     // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
     // accept that edited the text leaves any ghost stale — drop it.
@@ -2191,6 +2197,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
+        .launcher_dock => |part| try launcher_dock.mouse(app, part, m),
         .rail => |part| try activity_bar.mouse(app, part, m),
         .git_palette => |part| try git_palette.partMouse(app, part, m),
         .font_update => |row| try font_scan.updateChipMouse(app, row, m),
@@ -4425,6 +4432,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .gutter = .here,
     .overlay_item = .here,
     .dock = .{ .delegated = "dock.mouse" },
+    .launcher_dock = .{ .delegated = "launcher_dock.mouse" },
     .rail = .{ .delegated = "activity_bar.mouse" },
     .welcome = .here,
     .git_palette = .{ .delegated = "git_palette.partMouse" },

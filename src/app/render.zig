@@ -133,6 +133,7 @@ const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
 const hover_zones = @import("hover_zones.zig");
 const sidebar_auto = @import("sidebar_auto.zig");
+const launcher_dock = @import("launcher_dock.zig");
 const side_mod = @import("side.zig");
 const bottom_mod = @import("bottom.zig");
 const rail_mod = @import("../ui/activity_bar.zig");
@@ -297,6 +298,13 @@ pub const FrameRects = struct {
     bottom: Rect = Rect.empty,
     /// The one-row resize divider above the dock (`bottom_divider_id`).
     bottom_divider: Rect = Rect.empty,
+    /// // changed (launcher-dock): the launcher dock's strip
+    /// (`app/launcher_dock.zig`) when `ui.dock.mode = .always` — the
+    /// OUTERMOST band of `upper`, carved before the bottom panel and
+    /// before the columns, so a bottom dock is the last row of the
+    /// editor area and the panel sits inside it. Empty when the dock
+    /// hides, reveals as an overlay, or there is no room.
+    launcher_dock: Rect = Rect.empty,
     /// What `upper` leaves for the panes and the dock widgets.
     body: Rect,
 };
@@ -313,6 +321,10 @@ pub const Chrome = struct {
     bottom: ?u16 = null,
     /// Whether the activity bar paints (`activity_bar.shown`).
     rail: bool = true,
+    /// // changed (launcher-dock): which edge the launcher dock claims
+    /// this frame, or null when it is hidden or only revealed as an
+    /// overlay (`launcher_dock.docked`).
+    dock: ?Config.DockEdge = null,
 };
 
 /// `ui.auto_hide_narrow_width`: below that many columns both side
@@ -340,6 +352,10 @@ pub fn chrome(app: *const App) Chrome {
         .right = if (!app.zen and !narrow and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
         .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
+        // // changed (launcher-dock): only an `always` dock is carved;
+        // a revealed one is paint over the editor, as the sidebar
+        // overlay is, so nothing reflows when the pointer brushes an edge.
+        .dock = if (launcher_dock.docked(app)) app.cfg.ui.dock.edge else null,
     };
 }
 
@@ -379,6 +395,30 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     }
     const s = r.splitBottom(1);
     var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top };
+    // ── launcher dock ──
+    // The outermost band of the editor area: everything else — the
+    // bottom panel, both columns, the splits — is carved out of what
+    // is left, so the dock reads as the frame's own edge.
+    if (ch.dock) |dock_edge| switch (dock_edge) {
+        .bottom => if (fr.upper.h >= launcher_dock.height + 4) {
+            const rows = fr.upper.splitBottom(launcher_dock.height);
+            fr.upper = rows.top;
+            fr.launcher_dock = rows.rest;
+            fr.body = fr.upper;
+        },
+        .left => if (fr.upper.w >= launcher_dock.side_min_width) {
+            const cols = fr.upper.splitLeft(launcher_dock.width);
+            fr.launcher_dock = cols.left;
+            fr.upper = cols.rest;
+            fr.body = fr.upper;
+        },
+        .right => if (fr.upper.w >= launcher_dock.side_min_width) {
+            const cols = fr.upper.splitRight(launcher_dock.width);
+            fr.upper = cols.left;
+            fr.launcher_dock = cols.rest;
+            fr.body = fr.upper;
+        },
+    };
     // ── bottom dock ──
     if (ch.bottom) |bh| if (fr.upper.h >= bottom_upper_min) {
         // Rust's two-thirds cap, and — since the Zig dock also spends a
@@ -451,6 +491,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // that only renders still advances it (`App.tick` calls this too;
     // both are idempotent at one `now`).
     sidebar_auto.tick(app, app.now_ms);
+    launcher_dock.tick(app, app.now_ms);
     // The info view reads the previous frame's hits: they are what the
     // pointer is resting on until this frame replaces them.
     const help_copy: ?info_view_ui.Copy = if (app.cfg.ui.hover_help and side_mod.shown(app, .left) != null and !app.zen) try info_view_app.pick(app, app.frame.allocator()) else null;
@@ -556,6 +597,14 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // the hits it registers here are the last word on every cell it
     // covers (`HitMap.at` scans back to front).
     if (!app.zen) try drawSidebarOverlay(app, ui, fr);
+    // ── the launcher dock ──
+    // Over the panes, the dock widgets AND the revealed side column:
+    // the strip owns the frame's outermost band, so nothing paints on
+    // top of it (`app/launcher_dock.zig`, the outer-band rule).
+    if (!app.zen) {
+        const strip = if (!fr.launcher_dock.isEmpty()) fr.launcher_dock else if (launcher_dock.revealed(app)) launcher_dock.overlayRect(app, screenRect(screen)) else Rect.empty;
+        if (!strip.isEmpty()) try launcher_dock.draw(app, ui, strip) else app.launcher_dock.rect = .empty;
+    }
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     try drawCmdline(app, ui, fr.cmdline);
     // The stack sits on the panes' last row, against the statusline, as

@@ -68,6 +68,7 @@ const sessions = @import("sessions.zig");
 const dock = @import("app/dock.zig");
 const hover_zones = @import("app/hover_zones.zig");
 const sidebar_auto = @import("app/sidebar_auto.zig");
+const launcher_dock_mod = @import("app/launcher_dock.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -1069,6 +1070,11 @@ pub const App = struct {
     /// column the overlay is carrying, where it is in its slide, and
     /// the session's pin (`app/sidebar_auto.zig`).
     sidebar_auto: sidebar_auto.State = .{},
+    /// // changed (launcher-dock): `ui.dock` — the launcher strip's
+    /// reveal, its session pin and its keyboard cursor
+    /// (`app/launcher_dock.zig`). Neither the bottom panel (`bottom`)
+    /// nor the dock widgets (`dock`).
+    launcher_dock: launcher_dock_mod.State = .{},
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
     last_click: ?LastClick = null,
@@ -2852,6 +2858,7 @@ pub const App = struct {
         trash.tick(self, now);
         discovery_app.tick(self, now);
         sidebar_auto.tick(self, now);
+        launcher_dock_mod.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -2886,6 +2893,7 @@ pub const App = struct {
         if (idle.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (hover_zones.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (launcher_dock_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
         };

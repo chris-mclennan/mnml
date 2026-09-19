@@ -1167,6 +1167,7 @@ pub const Vim = struct {
                     'j' => runCmd(.@"view.focus_down"),
                     'k' => runCmd(.@"view.focus_up"),
                     'l' => runCmd(.@"view.focus_right"),
+                    'D' => runCmd(.@"view.focus_dock"),
                     'H' => runCmd(.@"view.move_split_left"),
                     'J' => runCmd(.@"view.move_split_down"),
                     'K' => runCmd(.@"view.move_split_up"),

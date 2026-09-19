@@ -284,6 +284,9 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     // the columns on every screen.
     cfg.ui.sidebar_reveal_ms = @min(cfg.ui.sidebar_reveal_ms, Config.sidebar_dwell_ms_max);
     cfg.ui.sidebar_hide_ms = @min(cfg.ui.sidebar_hide_ms, Config.sidebar_dwell_ms_max);
+    // // changed (launcher-dock): the dock's dwells borrow the same ceiling.
+    cfg.ui.dock.reveal_ms = @min(cfg.ui.dock.reveal_ms, Config.sidebar_dwell_ms_max);
+    cfg.ui.dock.hide_ms = @min(cfg.ui.dock.hide_ms, Config.sidebar_dwell_ms_max);
     if (cfg.ui.auto_hide_narrow_width != 0) cfg.ui.auto_hide_narrow_width = std.math.clamp(cfg.ui.auto_hide_narrow_width, 40, 300);
     cfg.ui.projects_dir = try expandTilde(arena, cfg.ui.projects_dir, home);
     if (cfg.startup.default_workspace) |ws| cfg.startup.default_workspace = try expandTilde(arena, ws, home);
