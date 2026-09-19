@@ -30,10 +30,11 @@
 //! expect screen lacks <text>     # …does not
 //! expect status contains <text>  # `status.json` contains the substring —
 //!                                #   focus, the editor cursor's line/col, the
-//!                                #   mode, and `cursorShape` (block | bar |
+//!                                #   mode, `cursorShape` (block | bar |
 //!                                #   underline | hidden), which is the only
 //!                                #   way a headless script sees which surface
-//!                                #   owns the terminal cursor
+//!                                #   owns the terminal cursor, and `cmdline`,
+//!                                #   whether the app's own `:` line is open
 //! expect status lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
 //! expect pane <text>             # the active pane's title contains the substring
@@ -92,9 +93,10 @@ pub const Check = union(enum) {
     file_lacks: struct { rel: []const u8, text: []const u8 },
     highlights_at_least: usize,
     /// A substring of `status.json`. That file is the host's view of the
-    /// app — focus, the editor cursor's line and column, the mode, and
+    /// app — focus, the editor cursor's line and column, the mode,
     /// `cursorShape`, which is the only way a headless script can see
-    /// which surface owns the terminal cursor (nothing draws one).
+    /// which surface owns the terminal cursor (nothing draws one), and
+    /// `cmdline`, whether the app's own `:` line is open.
     status_contains: []const u8,
     status_lacks: []const u8,
     /// A cell's foreground or background, as a theme resolves it: the

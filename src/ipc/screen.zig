@@ -98,6 +98,13 @@ pub const Status = struct {
     /// script can see the answer. Additive — every key before it is the
     /// shape Rust mnml writes.
     cursor_shape: []const u8 = "hidden",
+    /// The app's own bottom-row `:` line is open (`app/cmdline.zig`) —
+    /// not a buffer's vim `:`, which belongs to whichever editor holds
+    /// it. The row paints the same either way, so a script that wants
+    /// to assert the app's line (a click on the bottom row opens it; a
+    /// click elsewhere closes an empty one) has no other way to see it.
+    /// Additive, after `cursorShape`.
+    cmdline: bool = false,
 };
 
 pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
@@ -125,6 +132,7 @@ pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
     }
     try w.print("],\"quit\":{},\"cursorShape\":", .{s.quit});
     try jsonStr(w, s.cursor_shape);
+    try w.print(",\"cmdline\":{}", .{s.cmdline});
     try w.writeAll("}");
 }
 
@@ -229,10 +237,11 @@ test "toTestText keeps every column and has no trailing newline" {
 
 test "status.json matches the bytes mnml 0.2.21 writes, plus the cursor shape" {
     // Captured from `mnml --headless` (target/debug, 2026-09-04) after
-    // `open hello.txt` in a 60×12 screen. `cursorShape` is mnml-zig's
-    // own, appended last so every byte before it still matches Rust.
+    // `open hello.txt` in a 60×12 screen. `cursorShape` and `cmdline`
+    // are mnml-zig's own, appended in that order after Rust's last key
+    // so every byte before them still matches Rust.
     const want =
-        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\"}";
+        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false}";
     const got = try statusJson(t.allocator, .{
         .focus = .tree,
         .active_pane = 0,
@@ -270,10 +279,11 @@ test "status.json: null activePane, several right-panel panes, a dirty pane" {
         .panes = &.{ .{ .title = "a \"q\"", .dirty = true, .preview = true }, .{ .title = "b", .dirty = false } },
         .quit = true,
         .cursor_shape = "bar",
+        .cmdline = true,
     });
     defer t.allocator.free(got);
     try t.expectEqualStrings(
-        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\"}",
+        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true}",
         got,
     );
 }
