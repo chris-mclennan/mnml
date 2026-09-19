@@ -44,6 +44,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const broker = @import("broker.zig");
 const ratelimit = @import("ratelimit.zig");
 const request_log = @import("request_log.zig");
 const store_mod = @import("store.zig");
@@ -66,6 +67,43 @@ pub const Priority = enum {
 /// queueing against one bucket agree about which of them yields.
 pub fn priorityOf(r: request_log.Reason) Priority {
     return if (r.interactive()) .interactive else .background;
+}
+
+/// The broker CLASS a reason queues in — the same ordering as
+/// `priorityOf`, told apart one step further because the broker can
+/// afford four queues where a pacer can only afford "yield or do not".
+///
+///   * `interactive` — a person is waiting on this pane: `pane_open`,
+///     `detail`, `user`, `dispatch`, `readiness`.
+///   * `refresh` — wanted soon, nobody watching a spinner: the `r`
+///     key and the interval (`refresh`), the statusline poller's
+///     `--values` run (`poll`), the runs on a row already on screen
+///     (`builds`), and a conditional round trip standing in for one of
+///     those (`revalidate`).
+///   * `warm` — speculative: `warm`, `delta`, `prefetch`.
+///   * `batch` is reached by nothing here on purpose. It is the class
+///     a shell script names on the command line; no pane ever queues
+///     in it, and that is what makes it the back of the queue.
+///
+/// `cache_hit` never takes a token, so its class is only ever the
+/// default a caller would not use — `warm`, the cheapest thing it
+/// could be mistaken for.
+pub fn classOf(r: request_log.Reason) broker.Class {
+    return switch (r) {
+        .pane_open, .detail, .user, .dispatch, .readiness => .interactive,
+        .refresh, .poll, .builds, .revalidate => .refresh,
+        .warm, .delta, .prefetch, .cache_hit => .warm,
+    };
+}
+
+/// The class a `Priority` alone implies, for a caller that has a
+/// priority and no reason: the coarse mapping, so a background job
+/// with nothing more to say queues as `warm` rather than as a pane.
+pub fn classOfPriority(p: Priority) broker.Class {
+    return switch (p) {
+        .interactive => .interactive,
+        .background => .warm,
+    };
 }
 
 // ─── pacing ──────────────────────────────────────────────────────────────
@@ -812,4 +850,37 @@ test "a lock whose holder is a pid nobody is, or nonsense on disk, is free" {
         try t.expect(!pidAlive(0x7FFF_FFFE));
         try t.expect(isStale(.{ .pid = 0x7FFF_FFFE, .program = "x", .ts = now }, now));
     }
+}
+
+test "every reason has a broker class, and the classes agree with the pacer's two priorities" {
+    // The reasons a person is waiting on go to the front.
+    for ([_]request_log.Reason{ .pane_open, .detail, .user, .dispatch, .readiness }) |r| {
+        try t.expectEqual(broker.Class.interactive, classOf(r));
+        try t.expectEqual(Priority.interactive, priorityOf(r));
+    }
+    // A pane refresh and the `--values` poller share a class: wanted
+    // soon, nobody watching a spinner.
+    for ([_]request_log.Reason{ .refresh, .poll, .builds, .revalidate }) |r| {
+        try t.expectEqual(broker.Class.refresh, classOf(r));
+    }
+    // Speculative work is last of the four that panes use.
+    for ([_]request_log.Reason{ .warm, .delta, .prefetch }) |r| {
+        try t.expectEqual(broker.Class.warm, classOf(r));
+        try t.expectEqual(Priority.background, priorityOf(r));
+    }
+    // `refresh` is the one place the two mappings differ, and on
+    // purpose: the pacer lets a refresh through as interactive because
+    // the user pressed `r`; the broker has a class between them.
+    try t.expectEqual(Priority.interactive, priorityOf(.refresh));
+    try t.expectEqual(broker.Class.refresh, classOf(.refresh));
+
+    // Nothing a pane does ever queues as `batch`. That class is what a
+    // shell script names on the command line, and it is the back of
+    // the queue because nothing else can reach it.
+    inline for (@typeInfo(request_log.Reason).@"enum".fields) |f| {
+        try t.expect(classOf(@field(request_log.Reason, f.name)) != .batch);
+    }
+
+    try t.expectEqual(broker.Class.interactive, classOfPriority(.interactive));
+    try t.expectEqual(broker.Class.warm, classOfPriority(.background));
 }

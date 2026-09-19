@@ -230,9 +230,11 @@ pub const Client = struct {
             if (hold_ms > 0) c.io.sleep(.fromMilliseconds(@intCast(hold_ms)), .awake) catch {};
             if (prio == .interactive) g.leave();
         }
+        // The forge's own broker queue when mnml is hosting one; the
+        // shared file when it is not.
         const gate: shared_rate.Acquired = if (c.limiter) |l| blk: {
             l.reason = @tagName(c.reason);
-            break :blk l.acquireDetailed();
+            break :blk l.acquireVia(sdk.warm.classOf(c.reason));
         } else .{ .ok = true };
         if (c.notice) |n| n.record(gate);
         const started = Io.Timestamp.now(c.io, .real);
@@ -289,6 +291,7 @@ pub const Client = struct {
             .wait_ms = gate.wait_ms,
             .waited_for = gate.waited_for,
             .tokens_after = gate.tokens_after,
+            .via = gate.via,
         });
     }
 };

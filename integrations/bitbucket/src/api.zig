@@ -261,9 +261,13 @@ pub const Client = struct {
                 if (hold_ms > 0) self.io.sleep(.fromMilliseconds(@intCast(hold_ms)), .awake) catch {};
                 if (prio == .interactive) g.leave();
             }
+            // Through the local broker when mnml is hosting one, so a
+            // pane queues ahead of the warmers and the batch scripts
+            // on the machine — and straight off the shared file when
+            // it is not, which is every run with no mnml open.
             const gate: ratelimit.Acquired = if (self.limiter) |l| blk: {
                 l.reason = @tagName(self.reason);
-                break :blk l.acquireDetailed();
+                break :blk l.acquireVia(sdk.warm.classOf(self.reason));
             } else .{ .ok = true };
             if (self.notice) |n| n.record(gate);
             self.sent += 1;
@@ -354,6 +358,7 @@ pub const Client = struct {
             .wait_ms = gate.wait_ms,
             .waited_for = gate.waited_for,
             .tokens_after = gate.tokens_after,
+            .via = gate.via,
             .retry_of = retry_of,
             .cache = cache,
             .rate_limit = rate_limit,
