@@ -2,7 +2,11 @@
 # with the name, size, pixels and format, and — headless has no
 # transport — the text fallback that names the protocols.
 shell printf '\211PNG\r\n\032\n\000\000\000\015IHDR\000\000\000\050\000\000\000\024\010\006\000\000\000\000\000\000\000' > shot.png
-open shot.png
+# A glance (the tree's single click) opens the image as a preview tab;
+# `open` is the explicit path and keeps its tab.
+command tree.refresh
+click 5 2
+command view.focus_pane
 expect pane "shot.png [PNG]"
 expect screen contains "shot.png"
 expect screen contains "40×20"
@@ -13,8 +17,10 @@ key i
 expect screen lacks "40×20"
 key r
 expect screen contains "reloaded shot.png"
-# The next image replaces the preview tab in place.
+# The next glance replaces the preview tab in place (other.gif sorts
+# before shot.png in the tree).
 shell printf 'GIF89a' > other.gif
-open other.gif
+command tree.refresh
+click 5 2
 expect pane "other.gif [GIF]"
 expect screen lacks "shot.png [PNG]"
