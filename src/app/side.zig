@@ -337,6 +337,14 @@ pub fn toggleColumn(app: *App, side: Side) CommandError!void {
     const s = app.side.last.get(side) orelse (if (here.len > 0) here[0] else null) orelse
         return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} — right-click a rail icon: Move to {s}", .{ sideLabel(side), sideLabel(side) });
     try open(app, s, false);
+    // // changed (sidebar-autohide): auto-hidden, the column that just
+    // opened has nowhere docked to appear — `render.chrome` carves no
+    // column at all under `ui.sidebar = .auto` / `.hidden` — so the
+    // toggle has to bring up the overlay that carries it. `open` alone
+    // does not: it goes through `place(…, false)`, which never reveals,
+    // and that is what keeps a `.auto` launch from starting with the
+    // panel up. Docked, this is a no-op.
+    if (side != .bottom) _ = sidebar_auto.keyboardReach(app, if (side == .left) .left else .right, false);
 }
 
 /// The next / previous section along `side`'s list, opened; the keys

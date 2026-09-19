@@ -170,11 +170,8 @@ const runner_tables = .{
     @import("../app/transfers.zig"),
     @import("../app/search_section.zig"),
     @import("../app/syntax.zig"),
-<<<<<<< HEAD
     @import("../app/terminal_glyph.zig"),
-=======
     @import("../app/sidebar_auto.zig"),
->>>>>>> e39821b (feat(ui): ui.sidebar = auto — the side column hides itself and slides back OVER the editor)
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
@@ -815,7 +812,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1086), count);
+    try std.testing.expectEqual(@as(usize, 1090), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

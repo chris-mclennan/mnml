@@ -6,21 +6,20 @@
 # and the marker goes with them. Unpinning gives them back.
 #
 # (The click that OPENS a file and takes the panel with it is pinned by
-# the unit test in src/app/sidebar_auto.zig, which can find the tree
-# row by the hit its paint registered instead of guessing a cell.)
-write .mnml/config.zon .{ .ui = .{ .sidebar = .auto, .sidebar_reveal_ms = 40, .sidebar_hide_ms = 4000 } }
+# the unit test in src/app/sidebar_auto.zig, which finds the tree row by
+# the hit its paint registered instead of guessing a cell.)
 write wide.txt "...............................................................................................ENDMARK\n"
 write zz_marker.txt "nothing opens this\n"
 open wide.txt
+command view.sidebar_mode_auto
 expect screen contains "ENDMARK"
 hover 0 10
-wait 200
+wait 500
 expect screen contains "󰐃"
 expect screen contains "zz_marker"
 expect screen contains "ENDMARK"
 # Pinned: the column is docked now, so the editor really is narrower.
 command view.sidebar_pin
-wait 200
 expect screen contains "sidebar pinned"
 expect screen contains "zz_marker"
 expect screen lacks "ENDMARK"
@@ -32,7 +31,7 @@ expect screen lacks "󰐃"
 # again the moment the pin comes off.)
 hover 90 20
 command view.sidebar_pin
-wait 200
 expect screen contains "sidebar: auto-hide on"
+wait 700
 expect screen lacks "zz_marker"
 expect screen contains "ENDMARK"

@@ -224,10 +224,23 @@ pub fn tick(app: *App, now: i64) void {
     if (mode(app) != .auto) return;
     for ([_]ColumnSide{ .left, .right }) |s| {
         if (!hover_zones.dwelled(app, zoneOf(s))) continue;
-        if (side_mod.shown(app, sideOf(s)) == null) continue;
+        if (!ensureSection(app, s)) continue;
         reveal(app, s, false);
         return;
     }
+}
+
+/// Whether the column has a section to show, opening the one it showed
+/// last when it has none. A column closed with `Ctrl+B` (or one the
+/// `.test` harness starts closed) must still answer the screen edge —
+/// the pointer is asking for the sidebar, not for whatever was on it.
+/// `toggleColumn` reveals as it opens, which `reveal` below then
+/// re-stamps as a pointer reveal rather than a keyboard one.
+fn ensureSection(app: *App, s: ColumnSide) bool {
+    const sd = sideOf(s);
+    if (side_mod.shown(app, sd) != null) return true;
+    side_mod.toggleColumn(app, sd) catch return false;
+    return side_mod.shown(app, sd) != null;
 }
 
 /// Bring the column up as an overlay. `by_key`: a command asked, so it

@@ -2727,9 +2727,9 @@ pub const App = struct {
         const active_before = self.active;
         try dispatch.mouse(self, m, count);
         if (on_overlay) {
-            const opened = (self.focus == .pane and !std.meta.eql(focus_before, self.focus)) or
+            const did_open = (self.focus == .pane and !std.meta.eql(focus_before, self.focus)) or
                 (self.active != null and !std.meta.eql(active_before, self.active));
-            sidebar_auto.afterClick(self, opened);
+            sidebar_auto.afterClick(self, did_open);
         }
     }
 

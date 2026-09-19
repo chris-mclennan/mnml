@@ -1203,20 +1203,11 @@ test "1086 specs, unique ids" {
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
     // + `app.command_line` (the bottom row's `:` line) and
-<<<<<<< HEAD
     // `toast.run_action` (bottom-row)
-    // + three terminal-icon commands (terminal-icon).
-=======
-    // `toast.run_action` (bottom-row).
+    // + three terminal-icon commands (terminal-icon)
     // + `view.sidebar_pin` and the three `ui.sidebar` mode commands
-<<<<<<< HEAD
-    // (sidebar-autohide).
->>>>>>> e39821b (feat(ui): ui.sidebar = auto — the side column hides itself and slides back OVER the editor)
-    try std.testing.expectEqual(@as(usize, 1084), specs.len);
-=======
     // (sidebar-autohide) + the two `integrations.open_as` commands
     // (integration-split).
-    try std.testing.expectEqual(@as(usize, 1086), specs.len);
->>>>>>> e43ce47 (feat(integrations): a mounted integration opens beside the active pane, and the splits even out)
+    try std.testing.expectEqual(@as(usize, 1090), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
