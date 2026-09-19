@@ -1172,7 +1172,7 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     const stop = std.mem.startsWith(u8, pathOf(target), "/__shutdown");
     const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
         Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
-    logRequest(io, store, arena, request.head.method, target, res.status);
+    logRequest(io, store, arena, request.head.method, target, res.status, res.body.len, body_store[0..n]);
     request.respond(res.body, .{
         .status = @enumFromInt(res.status),
         .extra_headers = &.{.{ .name = "content-type", .value = res.content_type }},
@@ -1180,17 +1180,40 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     return stop;
 }
 
+/// The `jql` a search body carries, verbatim; empty for anything else.
+/// A crude scan rather than a parse: this runs on every request and
+/// the body is the fake's own client's.
+fn jqlOf(body: []const u8) []const u8 {
+    const at = std.mem.indexOf(u8, body, "\"jql\"") orelse return "";
+    const rest = body[at + 5 ..];
+    const open = std.mem.indexOfScalar(u8, rest, '"') orelse return "";
+    var i = open + 1;
+    while (i < rest.len) : (i += 1) {
+        if (rest[i] == '\\') {
+            i += 1;
+            continue;
+        }
+        if (rest[i] == '"') return rest[open + 1 .. i];
+    }
+    return "";
+}
+
 /// One JSON line appended to `--log-file`: what arrived on the wire,
 /// which is the only account of a tab's cost that owes nothing to what
 /// the client believes it sent. Best effort — a server that cannot
 /// write its log still serves.
-fn logRequest(io: Io, store: *Store, arena: Allocator, method: std.http.Method, target: []const u8, status: u16) void {
+fn logRequest(io: Io, store: *Store, arena: Allocator, method: std.http.Method, target: []const u8, status: u16, bytes: usize, body: []const u8) void {
     const path = store.log_path orelse return;
-    const line = std.fmt.allocPrint(arena, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d}}}\n", .{
+    // A Jira search puts its query in the POST body, so a log of paths
+    // alone cannot say what was asked for — and what was asked for is
+    // exactly what a delta-window test has to assert on.
+    const line = std.fmt.allocPrint(arena, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d},\"bytes\":{d},\"jql\":\"{f}\"}}\n", .{
         @tagName(method),
         std.zig.fmtString(pathOf(target)),
         std.zig.fmtString(queryOf(target)),
         status,
+        bytes,
+        std.zig.fmtString(jqlOf(body)),
     }) catch return;
     const file = Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
     defer file.close(io);

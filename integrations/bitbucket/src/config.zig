@@ -347,6 +347,12 @@ pub const template =
     \\    // Auto-refresh in seconds; 0 disables (`r` still works).
     \\    .refresh_interval_secs = 60,
     \\
+    \\    // How often each kind of thing is kept fresh. A listing
+    \\    // drifts; a pipeline mid-run does not wait; whether a pull
+    \\    // request may merge is only asked about the row under the
+    \\    // cursor, so `readiness_secs = 0` means on demand only.
+    \\    .intervals = .{ .listing_secs = 300, .builds_secs = 90, .readiness_secs = 0 },
+    \\
     \\    // Which repos the workspace-wide tabs see: .all, .recent (touched
     \\    // in the last `recent_window_days`), or .explicit (only
     \\    // `explicit_repos`). `s` in the pane cycles this.

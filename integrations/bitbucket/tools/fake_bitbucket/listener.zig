@@ -24,6 +24,8 @@ pub const Server = struct {
     state_lock: Io.Mutex = .init,
     /// The arena the replies are built on, reset per request.
     arena: std.heap.ArenaAllocator,
+    /// The clock has been taken. See `serveOne`.
+    clock_set: bool = false,
     /// Where `--log-file` appends one JSON line per request served;
     /// null is no log. Borrowed from the argv, which outlives us.
     log_path: ?[]const u8 = null,
@@ -151,8 +153,18 @@ pub const Server = struct {
 
         self.state_lock.lockUncancelable(self.io);
         _ = self.arena.reset(.retain_capacity);
-        // Every relative date is written against the real clock.
-        self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
+        // Every relative date is written against the clock as it stood
+        // when the server answered its FIRST request, not against the
+        // clock now.
+        //
+        // A pull request's `updated_on` does not move by itself, and a
+        // fake whose bodies drift a second at a time can never be
+        // answered `304 Not Modified` — which would make a conditional
+        // GET untestable and, worse, quietly wrong in a measurement.
+        if (!self.clock_set) {
+            self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
+            self.clock_set = true;
+        }
         const reply = bb.handle(self.arena.allocator(), &self.state, .{
             .method = method,
             .target = target,
@@ -174,7 +186,7 @@ pub const Server = struct {
             extra[n_extra] = .{ .name = "etag", .value = reply.etag };
             n_extra += 1;
         }
-        self.logRequest(method, target, reply.status);
+        self.logRequest(method, target, reply.status, reply.body.len);
         request.respond(reply.body, .{
             .status = @enumFromInt(reply.status),
             .extra_headers = extra[0..n_extra],
@@ -186,15 +198,16 @@ pub const Server = struct {
     /// wire, which is the only account of a tab's cost that owes
     /// nothing to what the client believes it sent. Best effort — a
     /// server that cannot write its log still serves.
-    fn logRequest(self: *Server, method: bb.Method, target: []const u8, status: u16) void {
+    fn logRequest(self: *Server, method: bb.Method, target: []const u8, status: u16, bytes: usize) void {
         const path = self.log_path orelse return;
         const cut = std.mem.indexOfScalar(u8, target, '?') orelse target.len;
         var buf: [3072]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d}}}\n", .{
+        const line = std.fmt.bufPrint(&buf, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d},\"bytes\":{d}}}\n", .{
             @tagName(method),
             std.zig.fmtString(target[0..cut]),
             std.zig.fmtString(if (cut < target.len) target[cut + 1 ..] else ""),
             status,
+            bytes,
         }) catch return;
         const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
         defer file.close(self.io);

@@ -582,6 +582,11 @@ pub const example =
     \\    // The token is never written here: $JIRA_API_TOKEN, or .token_file.
     \\    // .token_file = "~/.config/mnml-tracker-jira/token",
     \\    .refresh_interval_secs = 60,
+    \\    // How often each kind of thing is kept fresh. A listing
+    \\    // drifts; a pipeline mid-run does not wait; whether a pull
+    \\    // request may merge is only asked about the row under the
+    \\    // cursor, so `readiness_secs = 0` means on demand only.
+    \\    .intervals = .{ .listing_secs = 300, .builds_secs = 90, .readiness_secs = 0 },
     \\    .release_cut = false,
     \\    // .team_field_id = "customfield_10056",
     \\    // .team_field_name = "Team",

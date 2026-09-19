@@ -1,0 +1,55 @@
+# The warmer, on the tracker pane: `r` asks only about what has moved
+# since the last whole listing, `R` asks for the listing again, and the
+# header says how old the rows are either way.
+#
+# The assertion that matters is not on the screen — it is on the wire.
+# The fake's `--log-file` records the `jql` of every search it served,
+# which is the only account of what the pane asked for that owes
+# nothing to what the pane believes it sent.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+shell "$MNML_FAKE_JIRA" --port 18733 --life-secs 180 --quiet --pid-file fake-jira.pid --log-file wire.jsonl >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18733\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+command integrations.open_as_tab
+command jira_work.open
+wait 8000
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK"
+# The listing says how old it is. Nothing else in the header carries
+# the word, so the substring is the chip.
+expect screen contains "as of "
+# The first load is the whole listing: no window, because nothing has
+# been synced yet to measure one from.
+expect file wire.jsonl contains "assignee = currentUser()"
+expect file wire.jsonl lacks "updated >= -"
+
+# `r` — the window. The tab's own query, narrowed to what has moved
+# since the listing came back whole.
+key r
+wait 3000
+expect file wire.jsonl contains "updated >= -"
+expect screen contains "JIRA WORK"
+
+# `R` — the listing again. The window is gone from the newest line,
+# which is what makes it a full refresh rather than a second delta.
+shell cp wire.jsonl before-full.jsonl
+shell : > wire.jsonl
+key shift+r
+wait 3000
+expect file wire.jsonl contains "assignee = currentUser()"
+expect file wire.jsonl lacks "updated >= -"
+
+key q
+wait 500
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

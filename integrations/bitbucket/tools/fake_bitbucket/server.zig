@@ -497,7 +497,29 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
     if (!seg.eat("pullrequests")) return notFound(arena);
     const id_text = seg.next() orelse return listPrs(arena, st, repo, query);
     const id = std.fmt.parseInt(u32, id_text, 10) catch return notFound(arena);
-    const fx = find(repo, id) orelse return notFound(arena);
+    const fx = find(repo, id) orelse {
+        // A `--extra-prs` pull request exists on the listing and has no
+        // fixture behind it. Answering its sub-routes 404 would make a
+        // measurement read as a wall of failures — and a failure is
+        // never cached, so the poller would re-ask for every one of
+        // them on every cycle. It has no comments and no tasks, and it
+        // says so.
+        if (id >= 9000 and st.extra_prs > 0 and id < 9000 + st.extra_prs) {
+            if (std.mem.eql(u8, seg.rest, "comments") or std.mem.eql(u8, seg.rest, "activity")) {
+                return .{ .body = "{\"pagelen\":50,\"values\":[],\"size\":0}" };
+            }
+            if (std.mem.eql(u8, seg.rest, "diffstat")) {
+                return .{ .body = "{\"pagelen\":50,\"values\":[],\"size\":0}" };
+            }
+            if (seg.rest.len == 0) {
+                const f = try syntheticPr(arena, id - 9000);
+                var out: std.Io.Writer.Allocating = .init(arena);
+                try writePr(&out.writer, &f, st, .detail);
+                return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+            }
+        }
+        return notFound(arena);
+    };
 
     const tail = seg.next();
     if (tail == null) return prDetail(arena, st, fx);

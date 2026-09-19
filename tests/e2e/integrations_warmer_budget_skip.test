@@ -1,0 +1,41 @@
+# Under a quarter of the shared bucket, the poller gives way.
+#
+# Nothing is watching a `--values` run, and what is left of the budget
+# belongs to whoever is. Both integrations skip the cycle and say
+# `poll_skipped_budget` rather than leaving a chip that stopped moving
+# unexplained — and, crucially, make no request at all, which is what
+# the fake's own log proves.
+# env: JIRA_API_TOKEN=fake-token
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_JIRA" --port 18734 --life-secs 120 --quiet --pid-file fake-jira.pid --log-file jira-wire.jsonl >/dev/null 2>&1 &
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 120 --log-file bb-wire.jsonl >/dev/null 2>&1 &
+wait 1000
+write jira.zon ".{ .jira_url = \"http://127.0.0.1:18734\", .email = \"fake@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\" }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+
+# A bucket with a tenth of its capacity left. The six keys are the ones
+# the Rust crate and the Python script write, so this is the same file
+# every process on a real machine shares — and `ts` has to be NOW,
+# because the first thing anything does with this file is refill it
+# from the wall clock.
+shell printf '{"ts":%s,"tokens":6,"rate":0.33,"cooldown_until":0,"throttles":3,"last_429":0}' "$(date +%s)" > jira-bucket.json
+shell printf '{"ts":%s,"tokens":4,"rate":0.22,"cooldown_until":0,"throttles":3,"last_429":0}' "$(date +%s)" > bb-bucket.json
+
+shell JIRA_RATELIMIT_STATE=jira-bucket.json MNML_JIRA_CONFIG=jira.zon "$MNML_JIRA" --values --only work > jira-values.txt 2>&1
+expect file jira-values.txt contains "poll_skipped_budget"
+# It gave way before it asked for anything: the wire is empty.
+expect file jira-wire.jsonl lacks "search"
+
+shell BITBUCKET_RATELIMIT_STATE=bb-bucket.json BITBUCKET_BASE_URL="@bb.url" MNML_BITBUCKET_CONFIG=bitbucket.zon "$MNML_BITBUCKET_INTEGRATION" --values > bb-values.txt 2>&1
+expect file bb-values.txt contains "poll_skipped_budget"
+expect file bb-wire.jsonl lacks "pullrequests"
+
+# A full bucket does not give way: the same run, with the budget there,
+# reaches the wire.
+shell printf '{"ts":%s,"tokens":60,"rate":0.33,"cooldown_until":0,"throttles":0,"last_429":0}' "$(date +%s)" > jira-bucket.json
+shell JIRA_RATELIMIT_STATE=jira-bucket.json MNML_JIRA_CONFIG=jira.zon "$MNML_JIRA" --values --only work > jira-values2.txt 2>&1
+expect file jira-values2.txt lacks "poll_skipped_budget"
+expect file jira-wire.jsonl contains "search"
+
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

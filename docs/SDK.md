@@ -461,8 +461,18 @@ gets the log: the point of it is to be there when the slow morning
 happens, not to be switched on afterwards.
 
 Every call site passes a **reason** — `pane_open`, `refresh`, `poll`,
-`prefetch`, `detail`, `builds`, `readiness`, `dispatch`, `user` —
-because a line that cannot be read back to a cause is only a route.
+`prefetch`, `detail`, `builds`, `readiness`, `dispatch`, `user`,
+`warm`, `delta`, `revalidate`, `cache_hit` — because a line that
+cannot be read back to a cause is only a route.
+
+The last four are the warmer's. `warm` is filling a cache for a tab
+nobody is looking at; `delta` is a window since the last successful
+sync; `revalidate` is a conditional GET that came back `304`; and
+`cache_hit` is **not a request at all** — a local cache answered, and
+`Log.noteCacheHit` writes the line anyway so the pane shows the whole
+story. A `cache_hit` line carries `status: null`, `wait_ms: 0` and
+`tokens_after: 0`, which is what lets a reader keep counting requests
+by counting lines with a status.
 
 Nothing that could carry a credential has a field to arrive in.
 `Entry` names what it holds; the only header shape it takes is
@@ -474,6 +484,66 @@ still says it was sent. `splitUrl` also drops a `user:password@`
 authority outright.
 
 mnml's own REQUESTS pane (`integrations.requests`) reads these files.
+
+## The warmer — pacing, one warmer per service, windows
+
+`mnml_sdk.warm` is the part `ratelimit` and `store` do not own: **when**
+a request may go, **who** may make the speculative ones, and **how
+little** of a listing has to be asked for. It lives in the SDK because
+two integrations drawing on one bucket have to agree about it.
+
+```zig
+var gate: sdk.warm.Gate = .forConfig(sdk.ratelimit.configFor("bitbucket"));
+client.gate = &gate;
+```
+
+**Pacing.** `Gate` spaces a service's requests at one per
+`1/rate + margin` and hands out send times rather than blocking.
+`Gate.hold(priority, now_ms)` gives a background caller the wait and an
+interactive caller **zero** — a person is watching, the bucket already
+bounds how fast they can spend, and holding them saves no tokens. Their
+reservation still moves the slot, so background work steps behind them.
+
+**Priority** comes off the reason every request already carries.
+`warm.priorityOf` sorts `Reason` into the two that matter: somebody is
+waiting (`pane_open`, `refresh`, `detail`, `user`, `readiness`,
+`dispatch`) or nobody is (`poll`, `prefetch`, `builds`, `warm`,
+`delta`, `revalidate`, `cache_hit`).
+
+**One warmer per service.** Speculative work is worth doing once on a
+machine, not once per pane. `warm.Lock` is a file beside the ratelimit
+state naming the process doing it; everyone else reads the cache.
+
+```zig
+var lock = try sdk.warm.Lock.forService(gpa, io, env, "bitbucket", sdk.warm.selfPid(), "mnml-bitbucket");
+defer lock.deinit();
+if (lock.acquire(now_secs)) { … warm the tabs nobody is looking at … }
+```
+
+The lock **heartbeats** rather than recording a start time: a paced
+sweep is slow on purpose, so the holder rewrites `ts` as it works and a
+lock nobody has touched for `Lock.stale_secs` is taken whatever its pid
+says — which is what covers a reused pid and a platform with no
+liveness probe.
+
+**Windows.** `warm.windowStart(last_sync, now)` reaches back
+`overlap_secs` further than the gap, because two clocks are never the
+same clock; `sinceText` renders it as Jira's `-15m` and `isoStamp` as
+Bitbucket's `2026-09-19T08:30:00+00:00`. `SyncMarks` keeps the mark in
+an ordinary `Store` — the entry's own `fetched_at` IS the mark, so
+nothing new goes on disk.
+
+**Intervals and the floor.** `warm.Intervals` states the three
+cadences an integration's config carries — listings 300 s, in-progress
+builds 90 s, readiness 0 (on demand only) — and `warm.underBudget`
+answers whether the shared bucket has too little left for speculative
+work (under `budget_floor`, a quarter, or parked by a 429). A poller
+that gives way says `warm.skipped_budget` — `poll_skipped_budget` — so
+a chip that stopped moving is explained rather than mysterious.
+
+**The freshness both families wear.** `warm.asOfText` and the pane
+toolkit's `Painter.asOf` put `as of 4m ago` after the caps subtitle in
+the same muted ink, so two panes say it the same way.
 
 ## Who is spending the budget — the draws file
 
@@ -542,6 +612,11 @@ sdk/mnml-sdk/src/
   frame.zig      Frame: the cell grid + dirty-row tracking
   ipc.zig        Ipc: the tier-2 lines
   manifest.zig   Manifest + write/remove + the data-root rule
+  ratelimit.zig  one cross-process token bucket per service
+  request_log.zig  one JSON line per request, with its reason
+  store.zig      bodies kept between runs, keyed by the server's stamp
+  warm.zig       the warmer: pacing with priority, one warmer per
+                 service, delta windows, intervals, the budget floor
   pane.zig       the pane toolkit's barrel (Theme, Painter, HitMap)
   pane/theme.zig   the host theme's roles, the brand colour, state colours
   pane/chrome.zig  Painter: header, tabs, pill, gutter, rows, detail, hints

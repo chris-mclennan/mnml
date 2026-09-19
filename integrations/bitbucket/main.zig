@@ -993,6 +993,15 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
     session.client.limiter = &session.limiter;
     session.client.log = &session.log;
     session.client.now_secs = nowSecs(io);
+    // A dump takes the same tag store a pane does, so what it measures
+    // is what a pane would have spent: the second run of the same dump
+    // is a run of conditional GETs.
+    var etags = try openEtagStore(gpa, io, env);
+    defer {
+        etags.save();
+        etags.deinit();
+    }
+    session.client.etags = &etags;
 
     var cols: u16 = 120;
     var rows: u16 = 40;

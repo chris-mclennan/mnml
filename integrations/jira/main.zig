@@ -1097,6 +1097,11 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     var pr_store = try openPrStore(gpa, io, env);
     defer pr_store.deinit();
     app.setPrStore(&pr_store);
+    // A dump takes the same two caches the pane does, so what it
+    // measures is what a pane would have spent.
+    var sync_store = try openSyncStore(gpa, io, env);
+    defer sync_store.deinit();
+    app.setSyncStore(&sync_store);
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(cols, rows);
