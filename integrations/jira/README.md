@@ -100,6 +100,13 @@ The token is never in the config. It comes, in order, from
 own file `~/.config/mnml-tracker-jira/token` — so a token already on
 the box works without copying it.
 
+One key can be overridden from the environment: `$JIRA_BASE_URL` wins
+over `.jira_url`, either literally or as `@<path>` naming a file that
+holds the URL. It is there for the test double — `mnml-fake-jira
+--port 0 --url-file jira.url` writes the port it was actually given, so
+a script never picks a number and two runs never collide. Bitbucket's
+`$BITBUCKET_BASE_URL` is the same shape.
+
 ## The screens
 
 **Jira Work / Jira Fix Versions — the tree.** The caps header with the
@@ -310,5 +317,8 @@ tools/jira-diff.sh [work|fix-versions|boards]  # the reference vs the port, by c
 `tools/fake_jira/` is a deterministic Jira on the loopback (project
 ENG, twelve issues, a scrum board with sprints and quick filters,
 versions, users, the dev-status panel, a forge corner for pipelines);
-every test runs against it, no network. `mnml-jira --dump --steps FILE`
+every test runs against it, no network. It takes `--port 0` and writes
+where it landed — the bare number to `--port-file`, the whole
+`http://127.0.0.1:NNNNN` to `--url-file` — which is what the corpus
+reads back through `JIRA_BASE_URL=@<path>`. `mnml-jira --dump --steps FILE`
 plays a step script at the pane with no mnml and prints every `snap`.

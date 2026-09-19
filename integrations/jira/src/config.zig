@@ -30,6 +30,12 @@
 //! Where the file lives, first hit wins: `--config PATH`,
 //! `$MNML_JIRA_CONFIG`, `<workspace>/.mnml/integrations/jira/config.zon`,
 //! `<data root>/integrations/jira/config.zon`.
+//!
+//! One key can be overridden from the environment: `$JIRA_BASE_URL`
+//! wins over `.jira_url`, literally or as `@<path>` naming a file that
+//! holds it. That is how a test points the pane at a server on a port
+//! nobody chose — `mnml-fake-jira --port 0 --url-file jira.url` — the
+//! same shape as Bitbucket's `$BITBUCKET_BASE_URL`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -39,6 +45,8 @@ const sdk = @import("mnml_sdk");
 pub const file_name = "config.zon";
 pub const dir_name = "jira";
 pub const env_path = "MNML_JIRA_CONFIG";
+/// The base URL override — see `envBaseUrl`.
+pub const base_url_env = "JIRA_BASE_URL";
 pub const max_file_bytes = 1 << 20;
 
 pub const ApiVersion = enum { v3, v2 };
@@ -539,6 +547,45 @@ fn exists(io: Io, path: []const u8) bool {
     return true;
 }
 
+/// `$JIRA_BASE_URL` overrides the config's `.jira_url` — literally, or
+/// as `@<path>` naming a file that holds it. The fake server writes the
+/// port it was actually given to `--url-file`, so a test script names
+/// the server without ever picking a number and two runs of the corpus
+/// never collide. Bitbucket's `$BITBUCKET_BASE_URL` is the same shape.
+///
+/// The file is written once the socket is listening, and a script may
+/// start the server and the pane in either order, so a missing or
+/// empty file is waited out rather than failed on. Nothing set: the
+/// config stands.
+pub fn envBaseUrl(arena: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!?[]const u8 {
+    const raw = env.get(base_url_env) orelse return null;
+    const v = std.mem.trim(u8, raw, " \t\r\n");
+    if (v.len == 0) return null;
+    if (v[0] != '@') return try arena.dupe(u8, v);
+    var attempts: u32 = 0;
+    while (attempts < 50) : (attempts += 1) {
+        if (Io.Dir.cwd().readFileAlloc(io, v[1..], arena, .limited(4096))) |text| {
+            const trimmed = std.mem.trim(u8, text, " \t\r\n");
+            if (trimmed.len > 0) return try arena.dupe(u8, trimmed);
+        } else |_| {}
+        io.sleep(.fromMilliseconds(100), .awake) catch {};
+    }
+    return null;
+}
+
+/// `load`, then `$JIRA_BASE_URL` over the top. Every entry point that
+/// reaches the network goes through this rather than `load`, so the
+/// pane, `--values`, `--check` and `--prefetch` all answer about the
+/// same server.
+pub fn loadWithEnv(arena: Allocator, io: Io, env: *const std.process.Environ.Map, path: []const u8) Allocator.Error!Loaded {
+    var loaded = try load(arena, io, path);
+    if (loaded.missing or loaded.parse_error != null) return loaded;
+    if (try envBaseUrl(arena, io, env)) |u| {
+        loaded.config.jira_url = std.mem.trimEnd(u8, u, "/");
+    }
+    return loaded;
+}
+
 pub fn load(arena: Allocator, io: Io, path: []const u8) Allocator.Error!Loaded {
     const src = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(max_file_bytes), .of(u8), 0) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -807,4 +854,35 @@ test "resolvePath prefers the workspace file, then the data root, and names the 
     try testing.expect(std.mem.endsWith(u8, try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "ws/.mnml/integrations/jira/config.zon"));
     try testing.expectEqualStrings("/from/env.zon", try resolvePath(arena, testing.io, .{ .workspace = ws }, "/from/env.zon"));
     try testing.expectEqualStrings("/flag.zon", try resolvePath(arena, testing.io, .{ .explicit = "/flag.zon" }, "/from/env.zon"));
+}
+
+test "$JIRA_BASE_URL wins over .jira_url, literally or as @<file>" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const cfg_path = try std.fs.path.join(arena, &.{ root, "config.zon" });
+    try tmp.dir.writeFile(testing.io, .{
+        .sub_path = "config.zon",
+        .data = ".{ .jira_url = \"https://acme.atlassian.net\", .email = \"me@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }",
+    });
+
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+
+    // Nothing set: the config stands.
+    try testing.expectEqualStrings("https://acme.atlassian.net", (try loadWithEnv(arena, testing.io, &env, cfg_path)).config.jira_url);
+
+    // A literal, with the trailing slash trimmed the way `.jira_url` is.
+    try env.put(base_url_env, "http://127.0.0.1:1234/");
+    try testing.expectEqualStrings("http://127.0.0.1:1234", (try loadWithEnv(arena, testing.io, &env, cfg_path)).config.jira_url);
+
+    // `@<path>`: the file the fake server writes its port into.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "jira.url", .data = "http://127.0.0.1:54321" });
+    const at = try std.fmt.allocPrint(arena, "@{s}/jira.url", .{root});
+    try env.put(base_url_env, at);
+    try testing.expectEqualStrings("http://127.0.0.1:54321", (try loadWithEnv(arena, testing.io, &env, cfg_path)).config.jira_url);
 }
