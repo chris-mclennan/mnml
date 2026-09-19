@@ -1160,6 +1160,8 @@ pub const specs = [_]Spec{
     // ── the bottom row (bottom-row) ──
     .{ .id = "app.command_line", .title = "Open the `:` command line (any focus, either keymap profile)", .group = "app", .keys = .{ .both = &.{"ctrl+;"} } },
     .{ .id = "toast.run_action", .title = "Toast: take up the newest message's offer (the ` Install ` button)", .group = "toast", .keys = .{ .both = &.{"ctrl+shift+a"} } },
+    // ── preview tabs (preview-tabs) ──
+    .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
 test "1077 specs, unique ids" {
@@ -1186,7 +1188,7 @@ test "1077 specs, unique ids" {
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
     // + `app.command_line` (the bottom row's `:` line) and
-    // `toast.run_action` (bottom-row).
-    try std.testing.expectEqual(@as(usize, 1080), specs.len);
+    // `toast.run_action` (bottom-row) + `view.keep_tab` (preview-tabs).
+    try std.testing.expectEqual(@as(usize, 1081), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

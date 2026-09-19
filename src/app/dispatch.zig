@@ -1901,6 +1901,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .middle => try app.closePane(pane, false),
                 .right => try context_menus.openTabMenu(app, pane, m.x, m.y),
                 else => {
+                    // A double-click on the tab keeps a preview, as in
+                    // VS Code — the same gesture as on the tree row.
+                    if (clickCount(app, m) >= 2) if (app.panes.get(pane)) |p| p.setPreview(false);
                     app.showPane(pane);
                     app.drag = .{ .tab = .{ .pane = pane, .x = m.x, .y = m.y } };
                 },
@@ -2094,7 +2097,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                             try app.tree.activate(app, idx);
                         } else {
                             // A file opens on release, so a hold becomes a drag.
-                            app.drag = .{ .tree = .{ .idx = idx, .copy = m.mods.alt } };
+                            // The press's place in a run of clicks decides how
+                            // it opens: one is a glance (VS Code's preview tab),
+                            // two keeps the tab.
+                            app.drag = .{ .tree = .{ .idx = idx, .copy = m.mods.alt, .clicks = clickCount(app, m) } };
                         }
                     },
                     else => app.tree.cursor = idx,
@@ -2895,7 +2901,12 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             const pane = tb.pane;
             const moved = tb.moved;
             app.drag = null;
-            if (moved) try dropTab(app, pane, m.x, m.y);
+            if (moved) {
+                // Dragging a tab somewhere is commitment: the preview
+                // becomes a tab of its own before it moves or splits.
+                if (app.panes.get(pane)) |p| p.setPreview(false);
+                try dropTab(app, pane, m.x, m.y);
+            }
             return;
         },
         .tree => |*tr| {
@@ -2911,8 +2922,9 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             const idx = tr.idx;
             const moved = tr.moved;
             const copy = tr.copy or m.mods.alt;
+            const clicks = tr.clicks;
             app.drag = null;
-            if (!moved) return app.tree.activate(app, idx);
+            if (!moved) return if (clicks >= 2) app.tree.activate(app, idx) else app.tree.activateGlance(app, idx);
             return dropTreeFile(app, idx, m.x, m.y, copy);
         },
     }

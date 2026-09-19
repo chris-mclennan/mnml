@@ -14,7 +14,7 @@ key ctrl+k
 expect screen contains "󰍉 f → +find (7)"
 expect screen contains "󰊢 g → +git (22)"
 expect screen contains "󰐱 i → +integrations (5)"
-expect screen contains "󰎒 b → +buffer (5)"
+expect screen contains "󰎒 b → +buffer (6)"
 expect screen contains " L → +lang/run (19)"
 expect screen contains "󰓂 P → +pr (2)"
 expect screen contains "󰚩 a → +ai/term (14)"

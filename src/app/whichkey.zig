@@ -92,6 +92,7 @@ pub const root: Node = .{
                 cmd('d', .@"buffer.close", "delete"),
                 cmd('r', .@"buffer.reopen", "reopen closed"),
                 cmd('b', .@"picker.buffers", "switch"),
+                cmd('k', .@"view.keep_tab", "keep preview tab"),
             }),
             group('s', "+split", &.{
                 cmd('v', .@"view.split_right", "split right"),

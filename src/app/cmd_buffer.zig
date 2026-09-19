@@ -84,6 +84,8 @@ fn pinToggle(app: *App) CommandError!void {
     const pane = app.panes.get(id) orelse return error.NoActivePane;
     const e = pane.asEditor() orelse return app.diag.fail(arena, "buffer.pin_toggle: not an editor pane", .{});
     e.pinned = !e.pinned;
+    // Pinning is the opposite of glancing: a preview stops being one.
+    e.preview = false;
     if (e.pinned) app.layouts.current().reorderTab(id, 0);
     app.toast("{s} {s}", .{ if (e.pinned) "pinned" else "unpinned", pane.title() });
     app.needs_render = true;
