@@ -340,10 +340,69 @@ Not a backfill item; a protocol item.
 
 ## 5. What is closed in this pass
 
-D1, D2, D3, D4, D5, D6, D8 — each as its own commit, each guarded by a
-`consistency_test.zig` case that paints the shared element from both
-vocabularies AND by per-integration unit tests plus `.test` scripts
-that assert the element on the real panes. The toolkit being
-self-consistent has never been the risk; a pane not calling it is.
+### The table, after
 
-D7, D9, D10, D11 and O1 are recommendations above, unimplemented.
+| # | Standard element | Jira Work | Jira Boards | Jira FixV | BB PRs | BB Pipelines | sample |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 3 | Caps header title | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ✓ |
+| 4 | Right-hand chip ladder | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | n/a |
+| 5 | Refresh chip | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ✗ |
+| 6 | `?` chip on the header | ~ → ✓ | ~ → ✓ | ~ → ✓ | ✗ → ✓ | ✗ → ✓ | ✗ |
+| 16 | **List** scrollbar | ✗ → ✓ | n/a | ✗ → ✓ | ✓ | ✓ | n/a |
+| 17 | `Show more (N)` fold row | ✓ | n/a | ✓ | ~ → ✓ | n/a | n/a |
+| 23 | Chevrons | ~ → ✓ | n/a | ~ → ✓ | ✓ | ✓ | n/a |
+
+Every other row is unchanged from §1.
+
+The screens, after, at 120×40:
+
+```
+▌JIRA WORK (43)  as of 13s ago                                                     ?
+▌BITBUCKET PRS  (2 repos · 33 PRs)  as of 9s ago      author: all   awaiting: 1      ?
+```
+
+— the refresh glyph and `?` at columns 113 and 117 on both, both on
+`chip_bg`, which is what `tests/e2e/integrations_pane_chrome.test`
+pins with `expect color` rather than with the glyph's text.
+
+```
+▌    ENG-101     In Progress Ada Lovelace  2026-09-15 Checkout follow-up 1     █
+▌   ▸ #9000      OPEN       2026-09-19   Tidy the widget cache (           █
+```
+
+— the same bar, from the same `Painter.scrollbar`, on both.
+
+```
+▌                                                      ⋯  Show more (7)
+```
+
+— one phrase, on both, where the tracker pane used to put the `⋯` at
+column 1.
+
+### The guards
+
+Each closed drift has three:
+
+1. `sdk.pane.expect` — one assertion, in the SDK, so the two families
+   cannot check two different things;
+2. each integration's own unit suite, pointing that assertion at its
+   own painted frame;
+3. `tests/e2e/integrations_pane_chrome.test` — both panes really
+   mounted against the fakes.
+
+Each was break-checked: the fix reverted on a scratch copy, the
+failure read, the file restored from the copy rather than from git.
+
+### Not closed
+
+D7, D9, D10, D11 and O1 are the recommendations in §2 and §4,
+unimplemented and waiting on a call.
+
+### One more thing the audit turned up
+
+The e2e runner shared one rule between a file's own `# width:` /
+`# height:` and the `--gate --sizes` sweep, so every assertion in a
+file that declared its own size was evaluated once and discarded.
+Thirty-three checks across four corpus files had never been read, and
+two of the four were wrong. Fixed in `730f680`, which is why this pass
+could capture the 80×24 half of the table at all.
