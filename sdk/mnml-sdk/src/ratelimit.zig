@@ -57,6 +57,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const broker = @import("broker.zig");
 
 pub const Config = struct {
     /// Tokens per second the bucket refills at. Set BELOW the service's
@@ -139,6 +140,22 @@ pub const Wait = enum {
     }
 };
 
+/// Which side of the machine handed the token over. Both spend from
+/// the same bucket; the difference is whether anything was ahead of
+/// this request in a queue, and the request log writes it down so a
+/// slow morning can be read back to whether the broker was up.
+pub const Via = enum {
+    /// Through the local broker's queue (`broker.zig`).
+    broker,
+    /// Straight off the shared state file — no broker, or its socket
+    /// was not there.
+    file,
+
+    pub fn tag(v: Via) []const u8 {
+        return @tagName(v);
+    }
+};
+
 /// One `acquire`, with what it cost. `ok` is the old boolean: false
 /// means the limiter gave up and the caller should send anyway.
 pub const Acquired = struct {
@@ -149,6 +166,7 @@ pub const Acquired = struct {
     /// Tokens left in the shared bucket after this one took its token;
     /// what the hover and the log both read.
     tokens_after: f64 = 0,
+    via: Via = .file,
 };
 
 /// The last wait worth telling the reader about.
@@ -274,9 +292,33 @@ pub const Limiter = struct {
     reason: []const u8 = "user",
     /// Off only in a test that must leave no file behind.
     draws: bool = true,
+    /// Where the local broker for this service listens, when one was
+    /// resolved (`forService` does it; `useBroker` is the test's way
+    /// in). Owned. Empty means the socket is never tried and
+    /// `acquireVia` is exactly `acquireDetailed`.
+    broker_socket: []u8 = &.{},
+    /// Until when a failed connect stops us trying the socket again,
+    /// on the wall clock in seconds. A machine with no broker — which
+    /// is most of the time, since mnml hosts it — must not pay a
+    /// failed connect per request.
+    broker_quiet_until: f64 = 0,
+
+    /// How long one failed connect keeps `acquireVia` off the socket.
+    /// Short enough that a pane opened moments after mnml starts finds
+    /// the broker; long enough that a machine without one pays the
+    /// failed connect twice a second rather than every request.
+    pub const broker_retry_secs: f64 = 2.0;
 
     pub fn init(gpa: Allocator, io: Io, path: []const u8, cfg: Config) Allocator.Error!Limiter {
         return .{ .gpa = gpa, .io = io, .path = try gpa.dupe(u8, path), .cfg = cfg };
+    }
+
+    /// Point this limiter at a broker socket. `forService` does it
+    /// from the environment; a test names the path itself.
+    pub fn useBroker(self: *Limiter, path: []const u8) Allocator.Error!void {
+        self.gpa.free(self.broker_socket);
+        self.broker_socket = try self.gpa.dupe(u8, path);
+        self.broker_quiet_until = 0;
     }
 
     /// Name this process in the draw lines: `program` is argv[0]'s
@@ -295,12 +337,19 @@ pub const Limiter = struct {
     pub fn forService(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, service: []const u8) Allocator.Error!Limiter {
         const p = try statePath(gpa, io, env, service);
         defer gpa.free(p);
-        return init(gpa, io, p, configFor(service));
+        var l = try init(gpa, io, p, configFor(service));
+        errdefer l.deinit();
+        // Resolved once, whether or not anything is listening: the
+        // broker comes and goes with mnml, so the answer to "is there
+        // one" belongs to `acquireVia`, not to startup.
+        l.broker_socket = broker.socketPath(gpa, io, env, service) catch &.{};
+        return l;
     }
 
     pub fn deinit(self: *Limiter) void {
         self.gpa.free(self.path);
         self.gpa.free(self.service);
+        self.gpa.free(self.broker_socket);
         self.* = undefined;
     }
 
@@ -359,6 +408,84 @@ pub const Limiter = struct {
     /// should send anyway and let its own 429 handling decide.
     pub fn acquire(self: *Limiter) bool {
         return self.acquireDetailed().ok;
+    }
+
+    /// A token, through the local broker if there is one and off the
+    /// shared file if there is not.
+    ///
+    /// The broker (`broker.zig`) is what puts the pane you are looking
+    /// at in front of a batch script that asked first; the file bucket
+    /// is first-come and cannot. So every request tries the socket —
+    /// and every request works without it, because mnml hosts the
+    /// broker and mnml is not always running.
+    ///
+    /// Falling back is never an error the caller sees. A socket that
+    /// is missing, refused, or answering for another service is a
+    /// `.file` acquire and a two-second quiet period, so a machine
+    /// with no broker pays one failed connect every two seconds rather
+    /// than one per request.
+    ///
+    /// A brokered reply of `ok:false` is the SAME fail-open the file
+    /// bucket gives: the caller should send anyway and let its own 429
+    /// handling decide. It is not a reason to ask the file bucket for
+    /// a second token — that would spend two.
+    pub fn acquireVia(self: *Limiter, class: broker.Class) Acquired {
+        if (self.brokered(class)) |got| return got;
+        return self.acquireDetailed();
+    }
+
+    /// The broker half of `acquireVia`. Null means "there is no broker
+    /// here": the caller falls through to the file bucket.
+    fn brokered(self: *Limiter, class: broker.Class) ?Acquired {
+        if (!broker.supported or self.broker_socket.len == 0) return null;
+        const now = nowSecs(self.io);
+        if (now < self.broker_quiet_until) return null;
+        var name_buf: [96]u8 = undefined;
+        // The broker's own wait is bounded by what this limiter would
+        // have waited on the file: one policy, two paths.
+        const timeout_ms: u32 = @intFromFloat(@min(@max(self.cfg.max_block_secs, 0) * 1000.0, 3_600_000));
+        const rp = broker.ask(self.io, self.broker_socket, .{
+            .op = .acquire,
+            .service = self.service,
+            .class = class,
+            .client = broker.clientName(&name_buf, self.program, self.pid),
+            .reason = self.reason,
+            .timeout_ms = timeout_ms,
+        }) orelse {
+            self.broker_quiet_until = now + broker_retry_secs;
+            return null;
+        };
+        if (rp.why) |why| switch (why) {
+            // Not our broker, or not a version we speak. The file
+            // bucket is the right answer and the socket is not worth
+            // asking again for a while.
+            .bad_request, .wrong_service => {
+                self.broker_quiet_until = now + broker_retry_secs;
+                return null;
+            },
+            // It queued us and could not serve us. That is the file
+            // bucket's `gave_up`, not a reason to spend twice.
+            .timeout, .closed => {
+                return .{ .ok = false, .wait_ms = rp.wait_ms, .waited_for = .gave_up, .tokens_after = rp.remaining, .via = .broker };
+            },
+        };
+        if (!rp.ok) return .{ .ok = false, .wait_ms = rp.wait_ms, .waited_for = .gave_up, .tokens_after = rp.remaining, .via = .broker };
+        self.acquired += 1;
+        const got: Acquired = .{
+            .ok = true,
+            .wait_ms = rp.wait_ms,
+            // The reply says how long, never whether a 429 was the
+            // reason — the broker's queue and the bucket's cooldown
+            // both read as a wait from out here.
+            .waited_for = if (rp.wait_ms > 0) .tokens else .nothing,
+            .tokens_after = rp.remaining,
+            .via = .broker,
+        };
+        // The broker writes no draw line, so this does: one line per
+        // token, named for whoever spent it, whichever path it came
+        // down. `<service>-draws.jsonl` reads the same either way.
+        self.noteDraw(got);
+        return got;
     }
 
     /// The same wait, with an account of it: how long, on what, and
@@ -1036,4 +1163,104 @@ test "the state path follows the Rust crate's resolution order, per service" {
     // A service name cannot walk out of the directory it is given.
     var svc_buf: [16]u8 = undefined;
     try t.expectEqualStrings("___x", sanitize(&svc_buf, "../x"));
+}
+
+test "acquireVia falls back to the file bucket when there is no broker, and says so" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "jira-ratelimit.json" });
+    defer t.allocator.free(path);
+    var l = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 2.0, .rate = 0.5, .max_block_secs = 0.2 });
+    defer l.deinit();
+    l.draws = false;
+
+    // No socket named at all: `acquireVia` is exactly `acquireDetailed`.
+    const bare = l.acquireVia(.interactive);
+    try t.expect(bare.ok);
+    try t.expectEqual(Via.file, bare.via);
+
+    // A socket named but nothing listening: the same answer, and the
+    // failed connect is remembered so the next request does not pay
+    // for it again.
+    const nowhere = try std.fs.path.join(t.allocator, &.{ dir, "jira-broker.sock" });
+    defer t.allocator.free(nowhere);
+    try l.useBroker(nowhere);
+    try t.expectEqual(@as(f64, 0), l.broker_quiet_until);
+    const fell_back = l.acquireVia(.interactive);
+    try t.expect(fell_back.ok);
+    try t.expectEqual(Via.file, fell_back.via);
+    try t.expect(l.broker_quiet_until > nowSecs(t.io));
+
+    // Two tokens between them, taken through whichever path: the
+    // fallback is not a second bucket.
+    try t.expect(!l.acquireVia(.interactive).ok);
+    try t.expectEqual(@as(u32, 2), l.acquired);
+}
+
+test "a limiter for a service resolves its broker socket beside the bucket, listening or not" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/nonexistent-home");
+    try env.put("MNML_DATA_ROOT", "/data");
+    var l = try Limiter.forService(t.allocator, t.io, &env, "bitbucket");
+    defer l.deinit();
+    try t.expectEqualStrings("/data/ratelimit/bitbucket.json", l.path);
+    // Resolved at startup, tried per request — the broker comes and
+    // goes with mnml.
+    if (broker.supported) try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.sock", l.broker_socket);
+}
+
+test "a brokered acquire is one token off the same bucket, marked broker, with its draw line written" {
+    if (!broker.supported) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const state = try std.fs.path.join(t.allocator, &.{ dir, "bitbucket-ratelimit.json" });
+    defer t.allocator.free(state);
+
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("BITBUCKET_RATELIMIT_STATE", state);
+    const server = broker.Server.start(t.allocator, t.io, &env, .{
+        .service = "bitbucket",
+        .program = "mnml-zig",
+        .pid = 1,
+        .config = .{ .capacity = 4.0, .rate = 8.0, .max_block_secs = 5.0 },
+    }) catch return error.SkipZigTest;
+    defer {
+        server.stop();
+        server.destroy();
+    }
+
+    var l = try Limiter.forService(t.allocator, t.io, &env, "bitbucket");
+    defer l.deinit();
+    l.cfg = .{ .capacity = 4.0, .rate = 8.0, .max_block_secs = 5.0 };
+    try l.identify("bitbucket", "mnml-bitbucket", 99);
+    l.reason = "pane_open";
+    try t.expectEqualStrings(server.path(), l.broker_socket);
+
+    const got = l.acquireVia(.interactive);
+    try t.expect(got.ok);
+    try t.expectEqual(Via.broker, got.via);
+    try t.expectEqual(@as(u32, 1), l.acquired);
+
+    // One bucket: the file says the token went.
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, state, t.allocator, .limited(4096));
+    defer t.allocator.free(text);
+    const st = parseState(text).?;
+    try t.expect(st.tokens < 4.0);
+
+    // And one draw line, written by the CLIENT — so the machine-wide
+    // file still says who spent the budget rather than saying the
+    // broker did.
+    const draws = (try l.drawsPath(t.allocator)).?;
+    defer t.allocator.free(draws);
+    const lines = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(4096));
+    defer t.allocator.free(lines);
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, lines, "\n"));
+    try t.expect(std.mem.indexOf(u8, lines, "\"program\":\"mnml-bitbucket\"") != null);
+    try t.expect(std.mem.indexOf(u8, lines, "\"reason\":\"pane_open\"") != null);
 }
