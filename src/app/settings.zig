@@ -956,9 +956,17 @@ test "the overlay renders the sections and the footer names the target file" {
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, " Settings ") != null);
     try t.expect(std.mem.indexOf(u8, text, "── UI ──") != null);
-    try t.expect(std.mem.indexOf(u8, text, "── Editor ──") != null);
     try t.expect(std.mem.indexOf(u8, text, "▸ Line numbers:") != null);
     try t.expect(std.mem.indexOf(u8, text, " Settings · → .mnml/config.zon ") != null);
+    // The box caps at ~70 % of the screen and UI is the longest section,
+    // so no terminal this side of 90 rows shows a second header on open;
+    // the section below UI has to be scrolled to before it renders.
+    try openAt(&app, .editor);
+    try app.render();
+    const scrolled = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(scrolled);
+    try t.expect(std.mem.indexOf(u8, scrolled, "── Editor ──") != null);
+    try t.expect(std.mem.indexOf(u8, scrolled, "▸ Input style:") != null);
     // click outside closes and keeps
     try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
