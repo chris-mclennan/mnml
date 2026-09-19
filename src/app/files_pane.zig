@@ -602,6 +602,11 @@ pub fn preview(app: *App, id: PaneId, f: *FilesPane) CommandError!void {
             try cmd_view.splitWith(app, .horizontal, opened);
         }
     }
+    // `p` is the same gesture as a tree click — "show me this, I am
+    // still browsing" — so the tab it leaves is a preview, italic like
+    // the tree's. The leaf it lands in is this pane's own bookkeeping
+    // above, not `leafPreview`'s.
+    if (app.panes.get(opened)) |p| if (app.previewTabs()) p.setPreview(true);
     // `f` points into `panes.slots`, which `openPath` may have grown:
     // re-fetch the pane rather than write through a stale pointer.
     if (app.panes.get(id)) |p| if (p.asFiles()) |ff| {
@@ -1565,6 +1570,8 @@ test "preview: p opens the file in its own leaf and keeps the browser focused; a
     try t.expectEqual(id, app.active.?);
     const first = app.panes.get(id).?.files.preview_pane.?;
     try t.expectEqualStrings("README.md", app.panes.get(first).?.title());
+    // The same gesture as a tree click, so the same italic tab.
+    try t.expect(app.panes.get(first).?.preview());
     const layout = app.layouts.current();
     try t.expect(layout.leafOf(first).? != layout.leafOf(id).?);
     try app.handle(.{ .key = Key.char('k') });
