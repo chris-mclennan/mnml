@@ -349,7 +349,7 @@ pub const Reply = struct {
         const trimmed = std.mem.trim(u8, line, " \t\r\n");
         if (trimmed.len < 2 or trimmed[0] != '{') return null;
         return .{
-            .ok = std.mem.indexOf(u8, trimmed, "\"ok\":true") != null,
+            .ok = jsonTrue(trimmed, "ok"),
             .wait_ms = @intFromFloat(@max(jsonNumber(trimmed, "wait_ms") orelse 0, 0)),
             .remaining = jsonNumber(trimmed, "remaining") orelse 0,
             .why = if (jsonString(trimmed, "why")) |s| Why.parse(s) else null,
@@ -404,7 +404,7 @@ pub const StatusReply = struct {
     pub fn parse(line: []const u8) ?StatusReply {
         const trimmed = std.mem.trim(u8, line, " \t\r\n");
         if (trimmed.len < 2 or trimmed[0] != '{') return null;
-        if (std.mem.indexOf(u8, trimmed, "\"ok\":true") == null) return null;
+        if (!jsonTrue(trimmed, "ok")) return null;
         return .{
             .service = jsonString(trimmed, "service") orelse "",
             .tokens = jsonNumber(trimmed, "tokens") orelse 0,
@@ -488,14 +488,35 @@ pub fn lockPath(gpa: Allocator, socket: []const u8) Allocator.Error![]u8 {
 
 // ─── the one-line JSON readers ───────────────────────────────────────────
 
+/// What follows `"key":` in one line, whitespace skipped — or null
+/// when the key is not there.
+///
+/// **The space matters.** Python's `json.dumps` writes `"op": "acquire"`
+/// by default, and this protocol exists to be readable from twenty
+/// lines of Python stdlib. A reader that insists on `"op":"acquire"`
+/// parses every field of such a line as missing and takes its default,
+/// which for `acquire` is a timeout of zero — so the caller is refused
+/// instantly and told nothing useful. Skip the whitespace.
+fn jsonAfter(line: []const u8, key: []const u8) ?[]const u8 {
+    var kbuf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&kbuf, "\"{s}\":", .{key}) catch return null;
+    const at = std.mem.indexOf(u8, line, needle) orelse return null;
+    var rest = line[at + needle.len ..];
+    while (rest.len > 0 and (rest[0] == ' ' or rest[0] == '\t')) rest = rest[1..];
+    return rest;
+}
+
+/// Whether `"key"` is `true`, whitespace and all.
+fn jsonTrue(line: []const u8, key: []const u8) bool {
+    const rest = jsonAfter(line, key) orelse return false;
+    return std.mem.startsWith(u8, rest, "true");
+}
+
 /// `"key":<number>` out of one line, without parsing the whole thing —
 /// these are single-shape messages on a hot path, and the other end of
 /// the wire is as likely to be Python as it is to be this file.
 fn jsonNumber(line: []const u8, key: []const u8) ?f64 {
-    var kbuf: [32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&kbuf, "\"{s}\":", .{key}) catch return null;
-    const at = std.mem.indexOf(u8, line, needle) orelse return null;
-    const rest = line[at + needle.len ..];
+    const rest = jsonAfter(line, key) orelse return null;
     var end: usize = 0;
     while (end < rest.len and (std.ascii.isDigit(rest[end]) or rest[end] == '.' or rest[end] == '-')) : (end += 1) {}
     if (end == 0) return null;
@@ -505,10 +526,9 @@ fn jsonNumber(line: []const u8, key: []const u8) ?f64 {
 /// `"key":"…"` out of one line. No escapes are decoded: a service or a
 /// program name that needed them would not be one.
 fn jsonString(line: []const u8, key: []const u8) ?[]const u8 {
-    var kbuf: [32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&kbuf, "\"{s}\":\"", .{key}) catch return null;
-    const at = std.mem.indexOf(u8, line, needle) orelse return null;
-    const rest = line[at + needle.len ..];
+    const rest0 = jsonAfter(line, key) orelse return null;
+    if (rest0.len == 0 or rest0[0] != '"') return null;
+    const rest = rest0[1..];
     const end = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
     return rest[0..end];
 }
@@ -1102,6 +1122,33 @@ test "a request goes out as one line and comes back the same request" {
     try t.expectEqualStrings("mnml-jira:1234", back.client);
     try t.expectEqualStrings("pane_open", back.reason);
     try t.expectEqual(@as(u32, 5000), back.timeout_ms);
+}
+
+test "a line Python wrote parses: json.dumps puts a space after every colon" {
+    // `json.dumps` writes `", "` and `": "` by default, and the whole
+    // reason this protocol is one line of JSON is that the other end
+    // may be twenty lines of Python stdlib. A reader that needs
+    // `"op":"acquire"` sees every field of this line as missing and
+    // hands the caller a `timeout_ms` of zero — refused instantly,
+    // with nothing in the reply to say why.
+    const pythonic = "{\"v\": 1, \"op\": \"acquire\", \"service\": \"bitbucket\", \"class\": \"interactive\", " ++
+        "\"client\": \"bb.py:1234\", \"reason\": \"sweep\", \"timeout_ms\": 120000}";
+    const r = Request.parse(pythonic).?;
+    try t.expectEqual(@as(u8, 1), r.v);
+    try t.expectEqual(Op.acquire, r.op);
+    try t.expectEqualStrings("bitbucket", r.service);
+    try t.expectEqual(Class.interactive, r.class);
+    try t.expectEqualStrings("bb.py:1234", r.client);
+    try t.expectEqualStrings("sweep", r.reason);
+    try t.expectEqual(@as(u32, 120_000), r.timeout_ms);
+    // And the other direction, so a Python reader of our replies is
+    // symmetric with a Python writer of our requests.
+    const st = StatusReply.parse("{\"ok\": true, \"service\": \"jira\", \"tokens\": 3.5, \"capacity\": 60, " ++
+        "\"queue\": {\"interactive\": 1, \"refresh\": 0, \"warm\": 0, \"batch\": 2}, \"served\": 9}").?;
+    try t.expectEqualStrings("jira", st.service);
+    try t.expectApproxEqAbs(@as(f64, 3.5), st.tokens, 1e-6);
+    try t.expectEqual([4]u32{ 1, 0, 0, 2 }, st.queue);
+    try t.expectEqual(@as(u64, 9), st.served);
 }
 
 test "a request that is not one is null, and an unknown op or class is refused rather than guessed" {
