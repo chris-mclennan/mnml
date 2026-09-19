@@ -49,6 +49,19 @@ const j = @import("src/json.zig");
 pub const spec: sdk.Manifest = @import("manifest.zon");
 pub const spec_pipelines: sdk.Manifest = @import("manifest_pipelines.zon");
 
+/// The manifest chip colour of the family a pane was opened on — the
+/// pane's brand, which the gutter stripe and the tab indicator paint
+/// in. The pane used to take `fromHello`, so its "app colour" was the
+/// host theme's accent and every integration mounted in mnml wore the
+/// same stripe; the tracker pane has always taken its own.
+pub fn chipColorOf(family: ?cfg.Family) []const u8 {
+    const m: sdk.Manifest = switch (family orelse .prs) {
+        .pipelines => spec_pipelines,
+        .prs, .branches => spec,
+    };
+    return if (m.chip) |c| c.color else "";
+}
+
 /// The segment the pane and `--refresh` republish: the manifest's
 /// entry keyed by mnml as `<id>.<segment id>`.
 pub const segment_id = "bitbucket_prs.prs_mine";
@@ -931,7 +944,7 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
         try err.print("mnml-bitbucket --dump: no tabs of that family in {s}\n", .{session.loaded.path});
         return 1;
     }
-    app.theme = theme_mod.Theme.fromHelloBranded(dump_palette, if (spec.chip) |c| c.color else "");
+    app.theme = theme_mod.Theme.fromHelloBranded(dump_palette, chipColorOf(only));
     app.now_secs = session.client.now_secs;
     var progress: fetch.Progress = .{};
     app.progress = &progress;
@@ -1190,7 +1203,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
         defer gpa.free(msg);
         return setupLoop(gpa, mount, &frame, msg, false);
     }
-    app.theme = theme_mod.Theme.fromHello(mount.hello.palette);
+    app.theme = theme_mod.Theme.fromHelloBranded(mount.hello.palette, chipColorOf(only));
     app.cols = frame.cols;
     app.rows = frame.rows;
     app.now_secs = nowSecs(io);
@@ -1470,6 +1483,26 @@ test "both manifests name the reference's ids, chips and commands, and validate"
         const back = try std.zon.parse.fromSliceAlloc(sdk.Manifest, arena_state.allocator(), z, null, .{ .free_on_error = false });
         try t.expectEqualStrings(m.id, back.id);
     }
+}
+
+test "the pane's brand is its OWN family's chip colour, not the host's accent" {
+    // The stripe down column 0 is the app saying which app this is, so
+    // it has to come off the manifest the pane was opened on. The pane
+    // used to take `fromHello`, which leaves `brand` as the theme's
+    // accent — every integration mounted in mnml wore the same one.
+    try t.expectEqualStrings("blue", chipColorOf(.prs));
+    try t.expectEqualStrings("blue", chipColorOf(.branches));
+    try t.expectEqualStrings("green", chipColorOf(.pipelines));
+    try t.expectEqualStrings("blue", chipColorOf(null));
+    const pal: sdk.wire.Palette = .{
+        .accent = .{ .rgb = .{ 9, 9, 9 } },
+        .blue = .{ .rgb = .{ 1, 2, 3 } },
+        .green = .{ .rgb = .{ 4, 5, 6 } },
+    };
+    try t.expectEqual(sdk.wire.Color{ .rgb = .{ 1, 2, 3 } }, theme_mod.Theme.fromHelloBranded(pal, chipColorOf(.prs)).brand);
+    // The two families are two colours, or the tab indicator and the
+    // gutter say nothing about which one you are looking at.
+    try t.expectEqual(sdk.wire.Color{ .rgb = .{ 4, 5, 6 } }, theme_mod.Theme.fromHelloBranded(pal, chipColorOf(.pipelines)).brand);
 }
 
 test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment and the badge" {
