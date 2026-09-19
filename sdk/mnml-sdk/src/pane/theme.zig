@@ -47,7 +47,7 @@ pub const Theme = struct {
         if (pal.accent) |c| th.accent = c;
         if (pal.border) |c| th.border = c;
         if (pal.panel_bg) |c| th.panel_bg = c;
-        if (pal.cursor_line) |c| th.cursor_line = c;
+        th.cursor_line = cursorLine(pal.bg, pal.cursor_line) orelse th.cursor_line;
         if (pal.chip_fg) |c| th.chip_fg = c;
         if (pal.chip_bg) |c| th.chip_bg = c;
         if (pal.chip_active_fg) |c| th.chip_active_fg = c;
@@ -62,6 +62,52 @@ pub const Theme = struct {
         if (pal.comment) |c| th.comment = c;
         th.brand = th.accent;
         return th;
+    }
+
+    /// The ground a filled cursor row paints in, given the host's
+    /// `bg` and its `cursor_line`.
+    ///
+    /// The host derives `cursor_line` from its theme's `line` role, and
+    /// a theme that names no `line` falls back to a black that is the
+    /// ground again — so the row fills with the colour it is sitting on
+    /// and the highlight is invisible. The same goes for a host too old
+    /// to send the role at all. Either way the row still has to READ as
+    /// a row, so the fallback is the ground stepped one notch away from
+    /// itself: about 8% of the range lighter on a dark ground, the same
+    /// darker on a light one.
+    ///
+    /// Null when there is nothing to work from (no `bg` and no
+    /// `cursor_line`) — the caller keeps its own default, since a
+    /// guessed band on an unknown ground is as likely to be worse.
+    pub fn cursorLine(bg: ?Color, cursor_line: ?Color) ?Color {
+        if (cursor_line) |c| {
+            const b = bg orelse return c;
+            if (!eql(c, b)) return c;
+        }
+        return step(bg orelse return null);
+    }
+
+    fn eql(a: Color, b: Color) bool {
+        return switch (a) {
+            .index => |i| b == .index and b.index == i,
+            .rgb => |v| b == .rgb and std.mem.eql(u8, &v, &b.rgb),
+        };
+    }
+
+    /// One notch away from `c`: ~8% of the channel range, away from
+    /// whichever end `c` is nearer. An indexed ground has no arithmetic
+    /// to do, so it steps to the grey beside it instead.
+    fn step(c: Color) Color {
+        switch (c) {
+            .index => |i| return .{ .index = if (i >= 8) 7 else 8 },
+            .rgb => |v| {
+                const luma = (@as(u32, v[0]) * 299 + @as(u32, v[1]) * 587 + @as(u32, v[2]) * 114) / 1000;
+                const d: u8 = 20;
+                var out: [3]u8 = v;
+                for (&out) |*ch| ch.* = if (luma < 128) ch.* +| d else ch.* -| d;
+                return .{ .rgb = out };
+            },
+        }
     }
 
     /// The same, with the integration's manifest chip colour resolved
@@ -253,6 +299,32 @@ test "a hello without a palette paints with indices; one with it paints the them
     try testing.expectEqual(themed.red, themed.pipelineState("FAILED").fg.?);
     try testing.expectEqual(themed.green, themed.ticketStatus("done").fg.?);
     try testing.expectEqual(themed.blue, themed.ticketStatus("indeterminate").fg.?);
+}
+
+test "a cursor_line that is the ground again steps off it, so a filled row still reads" {
+    const dark: Color = .{ .rgb = .{ 0x1e, 0x22, 0x2a } };
+    const light: Color = .{ .rgb = .{ 0xfa, 0xfa, 0xfa } };
+    // The theme's own band, when it has one that differs: untouched.
+    const band: Color = .{ .rgb = .{ 0x31, 0x35, 0x3d } };
+    try testing.expectEqual(band, Theme.fromHello(.{ .bg = dark, .cursor_line = band }).cursor_line);
+    // The host's `line` role fell back to the ground: step off it.
+    try testing.expectEqual(Color{ .rgb = .{ 0x32, 0x36, 0x3e } }, Theme.fromHello(.{ .bg = dark, .cursor_line = dark }).cursor_line);
+    // No role at all (an older host, a theme that leaves it out).
+    try testing.expectEqual(Color{ .rgb = .{ 0x32, 0x36, 0x3e } }, Theme.fromHello(.{ .bg = dark }).cursor_line);
+    // A light ground steps the other way, or the band would be white.
+    try testing.expectEqual(Color{ .rgb = .{ 0xe6, 0xe6, 0xe6 } }, Theme.fromHello(.{ .bg = light, .cursor_line = light }).cursor_line);
+    // An indexed ground has no arithmetic: the grey beside it.
+    try testing.expectEqual(Color{ .index = 8 }, Theme.fromHello(.{ .bg = .{ .index = 0 }, .cursor_line = .{ .index = 0 } }).cursor_line);
+    try testing.expectEqual(Color{ .index = 7 }, Theme.fromHello(.{ .bg = .{ .index = 15 } }).cursor_line);
+    // Nothing to work from: the pane keeps its own default rather than
+    // banding an unknown ground with a guess.
+    try testing.expect(Theme.cursorLine(null, null) == null);
+    try testing.expectEqual(Color{ .index = 0 }, Theme.fromHello(.{ .accent = dark }).cursor_line);
+    // The step saturates rather than wrapping at either end.
+    const near_black: Color = .{ .rgb = .{ 4, 4, 4 } };
+    try testing.expectEqual(Color{ .rgb = .{ 24, 24, 24 } }, Theme.cursorLine(near_black, near_black).?);
+    const white: Color = .{ .rgb = .{ 255, 255, 255 } };
+    try testing.expectEqual(Color{ .rgb = .{ 235, 235, 235 } }, Theme.cursorLine(white, white).?);
 }
 
 test "the manifest chip colour becomes the pane's brand: a role name, a hex literal, or the accent" {

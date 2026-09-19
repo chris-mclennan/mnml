@@ -1254,3 +1254,73 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try s.key("esc");
     try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
 }
+
+/// The theme a colour test paints in: a `cursor_line` that is nothing
+/// else on the screen, so "this cell is on the cursor row" is a fact
+/// and not a coincidence.
+fn bandedTheme() theme_mod.Theme {
+    return theme_mod.Theme.fromHelloBranded(.{
+        .fg = .{ .rgb = .{ 200, 200, 200 } },
+        .bg = .{ .rgb = .{ 10, 10, 10 } },
+        .muted = .{ .rgb = .{ 90, 90, 90 } },
+        .accent = .{ .rgb = .{ 97, 175, 239 } },
+        .cursor_line = .{ .rgb = .{ 44, 50, 60 } },
+        .chip_bg = .{ .rgb = .{ 45, 45, 45 } },
+        .chip_active_bg = .{ .rgb = .{ 152, 195, 121 } },
+    }, "blue");
+}
+
+fn bgAt(f: *const sdk.Frame, x: u16, y: u16) ?sdk.Color {
+    return f.slots[@as(usize, y) * f.cols + x].style.bg;
+}
+
+/// Every cell of `y` between `x0` and `x1` carries `want` as its
+/// ground, bar the ones in `allow` — a chip on a row brings its own,
+/// and that is the one thing that may sit on top of the band.
+fn expectBand(f: *const sdk.Frame, y: u16, x0: u16, x1: u16, want: sdk.Color, allow: []const sdk.Color) !void {
+    var x = x0;
+    while (x < x1) : (x += 1) {
+        const got = bgAt(f, x, y);
+        if (got != null and std.meta.eql(got.?, want)) continue;
+        if (got != null) {
+            var ok = false;
+            for (allow) |c| ok = ok or std.meta.eql(got.?, c);
+            if (ok) continue;
+        }
+        std.debug.print("row {d} breaks at column {d}: `{s}` on {any}, wanted {any}\n", .{ y, x, f.slots[@as(usize, y) * f.cols + x].symbol(), got, want });
+        return error.RowNotBanded;
+    }
+}
+
+fn expectNoBand(f: *const sdk.Frame, y: u16, x0: u16, x1: u16, want: sdk.Color) !void {
+    var x = x0;
+    while (x < x1) : (x += 1) {
+        const got = bgAt(f, x, y);
+        if (got != null and std.meta.eql(got.?, want)) {
+            std.debug.print("row {d} is banded at column {d}, and should not be\n", .{ y, x });
+            return error.RowBanded;
+        }
+    }
+}
+
+test "the cursor row is a filled band across the whole row, and no row at rest is" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    const th = bandedTheme();
+    s.rig.app.theme = th;
+    const band = th.cursor_line;
+    // A cursor row's `[ Open ]` / `[ Merge ]` chips paint on their own
+    // ground; everything else on the row belongs to the band.
+    const chip_grounds = [_]sdk.Color{ th.chip_bg, th.chip_active_bg };
+    _ = try s.draw();
+    const first = s.rig.app.hits.inner.rectOf(hit.Target{ .row = 0 }).?;
+    try expectBand(&s.frame, first.y, first.x, first.x + first.w, band, &chip_grounds);
+    const second = s.rig.app.hits.inner.rectOf(hit.Target{ .row = 1 }).?;
+    try expectNoBand(&s.frame, second.y, second.x, second.x + second.w, band);
+    // The band moves with the cursor rather than staying on row 0.
+    try s.key("j");
+    _ = try s.draw();
+    try expectNoBand(&s.frame, first.y, first.x, first.x + first.w, band);
+    const now = s.rig.app.hits.inner.rectOf(hit.Target{ .row = 1 }).?;
+    try expectBand(&s.frame, now.y, now.x, now.x + now.w, band, &chip_grounds);
+}

@@ -213,6 +213,16 @@ fn paintActionRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, tar
     }
 }
 
+/// A row's words, in the three foreground roles a pane's rows are
+/// painted in — none of which names a background of its own. A ground
+/// the words punch a hole back through is the bug this exists to catch,
+/// and it is invisible to a comparison that paints rows empty.
+fn paintRowWords(comptime Target: type, p: *chrome.Painter(Target), y: u16) void {
+    _ = p.put(2, y, 10, "ENG-1234", p.th.bright());
+    _ = p.put(12, y, 20, "Fix the login redirect", p.th.text());
+    _ = p.put(40, y, 12, "2026-09-15", p.th.dimText());
+}
+
 /// Every shared element, once, at fixed coordinates.
 fn paintTracker(r: *Rig(TrackerTarget)) !void {
     var p = r.painter(demoTheme());
@@ -228,7 +238,10 @@ fn paintTracker(r: *Rig(TrackerTarget)) !void {
     });
     try p.filterPill(.{ .x = 1, .y = 3, .w = cols - 2, .h = 1 }, "vouch", 5, true, .filter);
     try p.rowGround(.{ .x = 0, .y = 4, .w = cols, .h = 1 }, false, .{ .row = 0 });
+    paintRowWords(TrackerTarget, &p, 4);
     try p.rowGround(.{ .x = 0, .y = 5, .w = cols, .h = 2 }, true, .{ .row = 1 });
+    paintRowWords(TrackerTarget, &p, 5);
+    paintRowWords(TrackerTarget, &p, 6);
     try p.showMoreRow(.{ .x = 0, .y = 7, .w = cols, .h = 1 }, 12, 7, .{ .show_more = 1 });
     try p.detailPanel(.{ .x = 40, .y = 8, .w = 20, .h = 3 }, .detail, .detail_close);
     try p.scrollbar(.{ .x = 59, .y = 9, .w = 1, .h = 2 }, 30, 6, 2, .detail_bar);
@@ -263,7 +276,10 @@ fn paintForge(r: *Rig(ForgeTarget)) !void {
     });
     try p.filterPill(.{ .x = 1, .y = 3, .w = cols - 2, .h = 1 }, "vouch", 5, true, .filter);
     try p.rowGround(.{ .x = 0, .y = 4, .w = cols, .h = 1 }, false, .{ .row = 0 });
+    paintRowWords(ForgeTarget, &p, 4);
     try p.rowGround(.{ .x = 0, .y = 5, .w = cols, .h = 2 }, true, .{ .row = 1 });
+    paintRowWords(ForgeTarget, &p, 5);
+    paintRowWords(ForgeTarget, &p, 6);
     try p.showMoreRow(.{ .x = 0, .y = 7, .w = cols, .h = 1 }, 12, 7, .{ .show_more = 1 });
     try p.detailPanel(.{ .x = 40, .y = 8, .w = 20, .h = 3 }, .detail, .detail_close);
     try p.scrollbar(.{ .x = 59, .y = 9, .w = 1, .h = 2 }, 30, 6, 2, .detail_bar);
@@ -376,4 +392,60 @@ test "the elements the panes share are actually on the screen, so the comparison
     // all, which is what keeps a stray click from merging anything.
     try testing.expect(r.hits.rectOf(.{ .merge = 0 }) != null);
     try testing.expect(r.hits.rectOf(.{ .merge = 1 }) == null);
+}
+
+test "the cursor row carries the cursor-line ground edge to edge, in both panes, under its own words" {
+    var tracker = try Rig(TrackerTarget).init(cols, rows);
+    defer tracker.deinit();
+    var forge = try Rig(ForgeTarget).init(cols, rows);
+    defer forge.deinit();
+    try paintTracker(&tracker);
+    try paintForge(&forge);
+    const cursor_line = demoTheme().cursor_line;
+    // Row 4 is a row at rest, rows 5 and 6 are the two lines of the row
+    // under the cursor; all three carry the same words.
+    for ([_]*Frame{ &tracker.f, &forge.f }, [_][]const u8{ "tracker", "forge" }) |f, who| {
+        for ([_]u16{ 5, 6 }) |y| {
+            var x: u16 = 0;
+            while (x < cols) : (x += 1) {
+                const got = f.slots[@as(usize, y) * cols + x].style.bg;
+                if (got == null or !std.meta.eql(got.?, cursor_line)) {
+                    std.debug.print("{s}: the cursor row breaks at {d},{d} — `{s}` on {any}, wanted {any}\n", .{ who, x, y, f.slots[@as(usize, y) * cols + x].symbol(), got, cursor_line });
+                    return error.CursorRowNotFilled;
+                }
+            }
+        }
+        // …and a row at rest is not banded anywhere along it, or the
+        // cursor would have nothing to stand out from.
+        var x: u16 = 0;
+        while (x < cols) : (x += 1) {
+            const got = f.slots[@as(usize, 4) * cols + x].style.bg;
+            if (got != null and std.meta.eql(got.?, cursor_line)) {
+                std.debug.print("{s}: a row at rest is banded at {d},4\n", .{ who, x });
+                return error.RestingRowFilled;
+            }
+        }
+    }
+}
+
+test "the hint row says a chord once, however many times the pane passes it" {
+    var r = try Rig(TrackerTarget).init(cols, rows);
+    defer r.deinit();
+    var p = r.painter(demoTheme());
+    // A pane whose bindings already carry `? keys` and which appends
+    // its own gets one entry, not `? keys · ? keys`.
+    try p.hintRow(0, "", &.{
+        .{ .key = "r", .title = "refresh", .target = .{ .hint = 0 } },
+        .{ .key = "?", .title = "keys", .target = .{ .hint = 1 } },
+        .{ .key = "?", .title = "keys", .target = .{ .hint = 1 } },
+    });
+    const arena = r.arena.allocator();
+    var text: std.ArrayList(u8) = .empty;
+    var x: u16 = 0;
+    while (x < cols) : (x += 1) try text.appendSlice(arena, r.f.slots[x].symbol());
+    const row = text.items;
+    try testing.expect(std.mem.indexOf(u8, row, "? keys") != null);
+    const first = std.mem.indexOf(u8, row, "? keys").?;
+    try testing.expect(std.mem.indexOf(u8, row[first + 6 ..], "? keys") == null);
+    try testing.expect(std.mem.indexOf(u8, row, "r refresh") != null);
 }

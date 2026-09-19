@@ -31,6 +31,9 @@ pub const zon_edit = @import("zon_edit.zig");
 pub const Mount = client.Mount;
 pub const Frame = frame.Frame;
 pub const Style = frame.Style;
+/// One painted cell — what a test reads when it needs the colour a
+/// row came out in, which the text dump does not carry.
+pub const Slot = frame.Slot;
 pub const Ipc = ipc.Ipc;
 pub const Manifest = manifest.Manifest;
 pub const Limiter = ratelimit.Limiter;

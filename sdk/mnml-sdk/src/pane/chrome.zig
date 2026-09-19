@@ -449,30 +449,62 @@ pub fn Painter(comptime Target: type) type {
                 if (status.len > 0) _ = p.putFit(1, y, p.cols() -| 1, status, th.mutedText());
                 return;
             }
-            const widths = p.arena.alloc(u16, list.len) catch return;
+            // One entry per chord, whatever the caller passed. A pane
+            // whose bindings already carry `? keys` and which appends
+            // its own paints it twice — the Jira pane did, for as long
+            // as its hint row was hand-rolled — so the row that has to
+            // read cleanly is the one that decides, not the caller.
+            const hints = dedupe(p.arena, list) orelse list;
+            const widths = p.arena.alloc(u16, hints.len) catch return;
             var total: u16 = 0;
-            for (list, 0..) |h, i| {
+            for (hints, 0..) |h, i| {
                 widths[i] = width(h.key) + 1 + width(h.title);
-                total += widths[i] + if (i + 1 < list.len) sep_w else 0;
+                total += widths[i] + if (i + 1 < hints.len) sep_w else 0;
             }
             const status_w: u16 = @min(width(status) + 2, p.cols() / 2);
             var first: usize = 0;
-            while (first < list.len and total + status_w > p.cols()) {
-                total -= widths[first] + if (first + 1 < list.len) sep_w else 0;
+            while (first < hints.len and total + status_w > p.cols()) {
+                total -= widths[first] + if (first + 1 < hints.len) sep_w else 0;
                 first += 1;
             }
             if (status.len > 0) _ = p.putFit(1, y, p.cols() -| 1 -| total, status, th.mutedText());
             var x: u16 = p.cols() -| total;
             var i = first;
-            while (i < list.len) : (i += 1) {
-                const h = list[i];
+            while (i < hints.len) : (i += 1) {
+                const h = hints[i];
                 const start = x;
                 x += p.put(x, y, p.cols() -| x, h.key, th.bright());
                 x += p.put(x, y, p.cols() -| x, " ", th.dimText());
                 x += p.put(x, y, p.cols() -| x, h.title, th.dimText());
                 try p.mark(.{ .x = start, .y = y, .w = x -| start, .h = 1 }, h.target);
-                if (i + 1 < list.len) x += p.put(x, y, p.cols() -| x, sep, th.dimText());
+                if (i + 1 < hints.len) x += p.put(x, y, p.cols() -| x, sep, th.dimText());
             }
+        }
+
+        /// `list` with any repeat of a `key title` pair it already
+        /// carries dropped, keeping the first of each and their order.
+        /// Null when nothing repeats (the common case) or the arena
+        /// cannot answer, so the caller paints its own slice.
+        fn dedupe(arena: Allocator, list: []const HintSpec) ?[]const HintSpec {
+            var repeats = false;
+            for (list, 0..) |h, i| {
+                for (list[0..i]) |prev| {
+                    if (std.mem.eql(u8, prev.key, h.key) and std.mem.eql(u8, prev.title, h.title)) repeats = true;
+                }
+            }
+            if (!repeats) return null;
+            var out = arena.alloc(HintSpec, list.len) catch return null;
+            var n: usize = 0;
+            for (list) |h| {
+                var seen = false;
+                for (out[0..n]) |kept| {
+                    if (std.mem.eql(u8, kept.key, h.key) and std.mem.eql(u8, kept.title, h.title)) seen = true;
+                }
+                if (seen) continue;
+                out[n] = h;
+                n += 1;
+            }
+            return out[0..n];
         }
     };
 }

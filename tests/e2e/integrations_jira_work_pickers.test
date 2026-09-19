@@ -3,13 +3,19 @@
 # assignment lands on the site and the tab drops the ticket), f (the
 # project's versions, unreleased first), . (the ticket's actions), and
 # a bulk selection carried into a picker's title.
+# The pane's token bucket, private to this file. Without it the
+# bucket resolves to a machine-wide shared file (the fleet's
+# ~/.tattle-claude-artifacts/jira-ratelimit.json), where anything
+# else on the machine can drain it and leave the pane on
+# `loading…` for a minute — a flake with no cause on screen.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
 # env: JIRA_API_TOKEN=fake-token
 shell "$MNML_FAKE_JIRA" --port 18724 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
 wait 500
 write sdk/mnml-sdk/build.zig ""
 write integrations/jira/build.zig ""
 write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
-write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18724\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18724\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
 command integrations.show_in_dev
 expect screen contains "INTEGRATIONS"
 drag 30 5 60 5
