@@ -54,7 +54,9 @@
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
 //! at that width only), `# height: 14` (that height only — a menu taller
 //! than the screen needs a short one), `# env: NAME=value` (set in the App's environment
-//! for this file — `MNML_NOW_PLAYING` for the statusline's cluster), and
+//! for this file — `MNML_NOW_PLAYING` for the statusline's cluster; at
+//! most `Header.max_env` of them, and one more is a parse error rather
+//! than a line that disappears), and
 //! `# shared-data-root` (this file wants the run's one data root instead
 //! of the private one every file gets).
 
@@ -131,8 +133,14 @@ pub const Header = struct {
     /// `# env: NAME=value` lines, in order; slices of the text parsed.
     env: [max_env]EnvPair = undefined,
     env_len: usize = 0,
+    /// More `# env:` lines than `max_env`. They used to be dropped where
+    /// they stood, and a file whose last line went missing failed a long
+    /// way from the cause — the pane reached the real API instead of the
+    /// test double, with nothing on screen to say why. `parse` turns
+    /// this into a syntax error.
+    env_overflow: bool = false,
 
-    pub const max_env = 8;
+    pub const max_env = 16;
     pub const EnvPair = struct { key: []const u8, value: []const u8 };
 
     pub fn envPairs(h: *const Header) []const EnvPair {
@@ -171,6 +179,8 @@ pub const Diagnostic = struct {
 pub const Error = error{ Syntax, OutOfMemory };
 
 pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
+    const header = parseHeader(text);
+    if (header.env_overflow) return diag.set("more than {d} `# env:` lines; the rest would be dropped", .{Header.max_env});
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
     const a = arena.allocator();
@@ -266,7 +276,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
         try lines.append(a, .{ .ln = ln, .stmt = stmt });
     }
 
-    return .{ .arena = arena, .header = parseHeader(text), .lines = try lines.toOwnedSlice(a) };
+    return .{ .arena = arena, .header = header, .lines = try lines.toOwnedSlice(a) };
 }
 
 const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, expect };
@@ -416,7 +426,11 @@ pub fn parseHeader(text: []const u8) Header {
             const spec = trim(after_hash["env:".len..]);
             const eq = std.mem.indexOfScalar(u8, spec, '=') orelse continue;
             const name = trim(spec[0..eq]);
-            if (name.len == 0 or h.env_len == Header.max_env) continue;
+            if (name.len == 0) continue;
+            if (h.env_len == Header.max_env) {
+                h.env_overflow = true;
+                continue;
+            }
             h.env[h.env_len] = .{ .key = name, .value = spec[eq + 1 ..] };
             h.env_len += 1;
         }
@@ -638,6 +652,19 @@ test "header directives come only from the leading comment block" {
     try t.expectEqualStrings("Song|playing|spotify", env.envPairs()[0].value);
     try t.expectEqualStrings("", env.envPairs()[1].value);
     try t.expectEqual(@as(usize, 0), parseHeader("open x\n# env: A=b\n").envPairs().len);
+}
+
+test "one `# env:` line past the cap is a parse error, not a line that quietly vanishes" {
+    var src: std.ArrayListUnmanaged(u8) = .empty;
+    defer src.deinit(t.allocator);
+    for (0..Header.max_env) |i| try src.print(t.allocator, "# env: K{d}=v\n", .{i});
+    try src.appendSlice(t.allocator, "open x\n");
+    var full = try parseOk(src.items);
+    full.deinit();
+    try t.expectEqual(@as(usize, Header.max_env), parseHeader(src.items).envPairs().len);
+
+    try src.insertSlice(t.allocator, 0, "# env: ONE_TOO_MANY=v\n");
+    try expectErr(src.items, "more than 16 `# env:` lines; the rest would be dropped");
 }
 
 test "CRLF and blank lines are tolerated" {
