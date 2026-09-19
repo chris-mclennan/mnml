@@ -99,8 +99,6 @@ pub const TabState = struct {
 /// One ticket's linked PRs, fetched beside the search rather than after
 /// it — the per-row calls are most of a refetch's wall time and they do
 /// not belong on the loop either.
-pub const PrBatch = struct { key: []const u8, list: []const model.LinkedPr };
-
 /// Everything a refetch needs, and nothing the loop can change under it
 /// while it runs. The client is a copy: it holds no per-call state, and
 /// its limiter is the cross-process bucket, which is built to be shared.
@@ -114,8 +112,6 @@ pub const RefreshJob = struct {
     extra_jql: ?[]const u8,
     extra_fields: []const []const u8,
     team_field_id: []const u8,
-    /// Tree tabs show linked PRs, so the job fetches them too.
-    want_prs: bool,
     /// What the request log calls this fetch — the first load of a tab
     /// and a refetch of one cost the same requests and mean different
     /// things when the log is read back.
@@ -135,7 +131,6 @@ pub const RefreshResult = struct {
     issues: []const Issue = &.{},
     /// Empty when the search answered.
     error_text: []const u8 = "",
-    prs: []const PrBatch = &.{},
 
     pub fn drop(r: RefreshResult) void {
         var arena = r.arena;
@@ -144,6 +139,44 @@ pub const RefreshResult = struct {
 };
 
 pub const RefreshSlot = sdk.pane.Slot(RefreshResult);
+
+/// One ticket's linked pull requests, fetched on its own rather than
+/// with the search. A tree tab's twenty-five dev-status calls used to
+/// happen BEFORE the first paint, which is the minute of `loading…`
+/// this exists to end: the search paints, and these arrive behind it,
+/// one at a time, in the order the rows are on screen.
+pub const PrJob = struct {
+    /// Owns `key` and `issue_id`.
+    arena: std.heap.ArenaAllocator,
+    client: jira.Client,
+    key: []const u8,
+    issue_id: []const u8,
+    /// The ticket's `updated` when the job was made — the stamp the
+    /// answer is filed under, so the next run can skip it.
+    updated: []const u8,
+
+    pub fn deinit(j: *PrJob) void {
+        j.arena.deinit();
+    }
+};
+
+pub const PrResult = struct {
+    /// Owns everything below.
+    arena: std.heap.ArenaAllocator,
+    key: []const u8 = "",
+    updated: []const u8 = "",
+    list: []const model.LinkedPr = &.{},
+    /// The response verbatim, for the cache. Empty on a failure, which
+    /// is never cached: a failure must cost one retry, not a run.
+    body: []const u8 = "",
+
+    pub fn drop(r: PrResult) void {
+        var arena = r.arena;
+        arena.deinit();
+    }
+};
+
+pub const PrSlot = sdk.pane.Slot(PrResult);
 
 pub const Filter = struct { edit: TextEdit, editing: bool };
 
@@ -213,6 +246,15 @@ pub const App = struct {
     /// group — a test, `--dump` — a refetch runs inline, which is what
     /// makes those two deterministic.
     refresh: RefreshSlot,
+    /// One linked-PR fetch at a time, behind the paint.
+    prs: PrSlot,
+    /// Tickets whose linked PRs are not known yet, in the order their
+    /// rows are on screen. `pumpPrs` takes the front one.
+    pr_queue: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// What the last run learned, keyed by each ticket's own `updated`
+    /// stamp (`mnml_sdk.store`). A ticket that has not moved costs no
+    /// request at all, this run or any later one. Null in a test.
+    pr_store: ?*sdk.Store = null,
     /// What every row's action button says now, keyed by the ticket or
     /// the PR rather than the row, so a refetch that moves the row keeps
     /// what was pressed on it.
@@ -308,7 +350,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa), .watch_arena = std.heap.ArenaAllocator.init(gpa) };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .prs = try PrSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa), .watch_arena = std.heap.ArenaAllocator.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -336,6 +378,14 @@ pub const App = struct {
     /// cancel, and the cancel then never returns.
     pub fn closeRefresh(a: *App) void {
         a.refresh.q.close(a.io);
+        a.prs.q.close(a.io);
+    }
+
+    /// Where a ticket's linked PRs are remembered between runs. Set by
+    /// the pane loop right after `init`; left null by a test, which
+    /// then simply pays for every one.
+    pub fn setPrStore(a: *App, st: *sdk.Store) void {
+        a.pr_store = st;
     }
 
     /// The config file a vars edit is written back into.
@@ -353,6 +403,7 @@ pub const App = struct {
             t.active_epics.deinit(a.gpa);
         }
         a.gpa.free(a.tabs);
+        a.pr_queue.deinit(a.gpa);
         a.status.deinit(a.gpa);
         a.toast.deinit(a.gpa);
         var it = a.details.valueIterator();
@@ -374,6 +425,7 @@ pub const App = struct {
         a.kanban_expanded.deinit(a.gpa);
         a.hits.deinit(a.gpa);
         a.refresh.deinit(a.io, RefreshResult.drop);
+        a.prs.deinit(a.io, PrResult.drop);
         a.actions.deinit();
         a.watch_out.deinit(a.gpa);
         a.watch_arena.deinit();
@@ -584,6 +636,10 @@ pub const App = struct {
         }
         var res = runRefresh(job);
         try a.applyRefresh(&res);
+        // No group is no loop to spread the linked-PR calls over — a
+        // test and `--dump` want the rows the pane reaches a moment
+        // later, so they all happen here.
+        try a.drainPrQueue();
     }
 
     /// What a refetch needs, read off the tab before anything can move:
@@ -619,7 +675,6 @@ pub const App = struct {
             .extra_jql = null,
             .extra_fields = &.{},
             .team_field_id = a.cfg.team_field_id,
-            .want_prs = t.cfg.isTree(),
             .reason = if (t.fetched) .refresh else .pane_open,
         };
         errdefer job.deinit();
@@ -675,17 +730,14 @@ pub const App = struct {
                 const issues = jira.parseIssues(ar, vals, job.team_field_id) catch {
                     return .{ .idx = job.idx, .arena = arena, .error_text = "out of memory" };
                 };
-                var prs: std.ArrayList(PrBatch) = .empty;
-                if (job.want_prs) {
-                    for (issues) |iss| {
-                        if (!iss.isUnresolved() or iss.id.len == 0) continue;
-                        switch (jira.pullRequests(&client, ar, iss.id, job.reason) catch continue) {
-                            .ok => |list| prs.append(ar, .{ .key = iss.key, .list = list }) catch {},
-                            .failed => {},
-                        }
-                    }
-                }
-                return .{ .idx = job.idx, .arena = arena, .issues = issues, .prs = prs.items };
+                // The linked PRs are NOT fetched here. One dev-status
+                // call per unresolved ticket used to happen before the
+                // first paint — twenty-five of them on a real tab, each
+                // waiting its turn on the bucket, which is the minute
+                // of `loading…` this pane was reported for. They are
+                // seeded from the cache and queued behind the paint
+                // instead (`applyRefresh`, `pumpPrs`).
+                return .{ .idx = job.idx, .arena = arena, .issues = issues };
             },
         }
     }
@@ -703,6 +755,157 @@ pub const App = struct {
             if (err == error.Canceled) return error.Canceled;
             return;
         };
+    }
+
+    // ─── linked PRs, behind the paint ────────────────────────────────
+
+    /// Auto-expand the unresolved tickets, paint whatever the cache
+    /// still stands behind, and queue the rest in screen order.
+    ///
+    /// The cache is keyed on the ticket's OWN `updated` stamp, which
+    /// the search already carried: a ticket that has not moved since
+    /// the last run needs no request at all, this run or any later
+    /// one. That is what turns a refetch with nothing changed from
+    /// twenty-six requests into one.
+    fn seedPrs(a: *App, t: *TabState, st: *tree.State) Allocator.Error!void {
+        a.pr_queue.clearRetainingCapacity();
+        var still_shown: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer still_shown.deinit(a.gpa);
+        for (t.issues) |iss| {
+            if (!iss.isUnresolved()) continue;
+            try st.setExpanded(iss.key, true);
+            if (iss.id.len == 0) continue;
+            try still_shown.append(a.gpa, iss.key);
+            if (st.prs(iss.key) != null) continue;
+            if (a.pr_store) |store| {
+                if (store.fresh(iss.key, iss.updated)) |body| {
+                    if (a.applyPrBody(st, iss.key, body)) continue else |err| if (err == error.OutOfMemory) return err;
+                }
+            }
+            try a.pr_queue.append(a.gpa, try a.keep(iss.key));
+        }
+        // The file tracks the tickets the tab still shows rather than
+        // every ticket ever seen.
+        if (a.pr_store) |store| {
+            store.retain(still_shown.items);
+            store.save();
+        }
+    }
+
+    /// One cached dev-status answer onto the tree.
+    fn applyPrBody(a: *App, st: *tree.State, key: []const u8, body: []const u8) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const list = try jira.parsePullRequests(scratch.allocator(), body);
+        try st.putPrs(key, list);
+    }
+
+    /// Start the next queued linked-PR fetch, if the slot is free and
+    /// the tab it belongs to is the one on screen. One at a time: the
+    /// point is to spend the budget in the order the reader will look,
+    /// not to fire twenty-five at once.
+    pub fn pumpPrs(a: *App) Allocator.Error!void {
+        if (a.pr_queue.items.len == 0 or a.prs.busy()) return;
+        const t = a.tab();
+        const st = &(t.tree orelse {
+            a.pr_queue.clearRetainingCapacity();
+            return;
+        });
+        // Drop anything the tab no longer shows, or already has.
+        while (a.pr_queue.items.len > 0) {
+            const key = a.pr_queue.items[0];
+            const iss = blk: {
+                for (t.issues) |i| if (std.mem.eql(u8, i.key, key)) break :blk i;
+                break :blk null;
+            };
+            if (iss == null or st.prs(key) != null) {
+                _ = a.pr_queue.orderedRemove(0);
+                continue;
+            }
+            return a.startPrFetch(key, iss.?);
+        }
+    }
+
+    /// Fetch every queued linked-PR row now, inline — what `--dump`
+    /// and a test use, where there is no loop to spread them over.
+    pub fn drainPrQueue(a: *App) Allocator.Error!void {
+        var guard: usize = 0;
+        while (a.pr_queue.items.len > 0 and guard < 1000) : (guard += 1) try a.pumpPrs();
+    }
+
+    fn startPrFetch(a: *App, key: []const u8, iss: Issue) Allocator.Error!void {
+        var job: PrJob = .{
+            .arena = std.heap.ArenaAllocator.init(a.gpa),
+            .client = a.client.*,
+            .key = "",
+            .issue_id = "",
+            .updated = "",
+        };
+        errdefer job.deinit();
+        const ar = job.arena.allocator();
+        job.key = try ar.dupe(u8, key);
+        job.issue_id = try ar.dupe(u8, iss.id);
+        job.updated = try ar.dupe(u8, iss.updated);
+        _ = a.pr_queue.orderedRemove(0);
+        if (a.group) |g| {
+            if (!a.prs.claim()) {
+                job.deinit();
+                return;
+            }
+            g.concurrent(a.io, prWorker, .{ a.io, &a.prs, job }) catch {
+                a.prs.abandon();
+                job.deinit();
+                return;
+            };
+            return;
+        }
+        var res = runPrJob(job);
+        try a.applyPrResult(&res);
+    }
+
+    /// The whole of one dev-status call, on whichever thread runs it.
+    pub fn runPrJob(job_in: PrJob) PrResult {
+        var job = job_in;
+        defer job.deinit();
+        var client = job.client;
+        var arena = std.heap.ArenaAllocator.init(job.arena.child_allocator);
+        const ar = arena.allocator();
+        const key = ar.dupe(u8, job.key) catch "";
+        const updated = ar.dupe(u8, job.updated) catch "";
+        const raw = jira.pullRequestsRaw(&client, ar, job.issue_id, .refresh) catch
+            return .{ .arena = arena, .key = key, .updated = updated };
+        const body = raw orelse return .{ .arena = arena, .key = key, .updated = updated };
+        const list = jira.parsePullRequests(ar, body) catch &.{};
+        return .{ .arena = arena, .key = key, .updated = updated, .list = list, .body = body };
+    }
+
+    fn prWorker(io: Io, slot: *PrSlot, job: PrJob) Io.Cancelable!void {
+        const res = runPrJob(job);
+        slot.finish(io, res) catch |err| {
+            res.drop();
+            if (err == error.Canceled) return error.Canceled;
+            return;
+        };
+    }
+
+    /// Take a finished linked-PR fetch, if one has landed.
+    pub fn drainPrs(a: *App) Allocator.Error!void {
+        var res = a.prs.take(a.io) orelse return;
+        try a.applyPrResult(&res);
+    }
+
+    fn applyPrResult(a: *App, res: *PrResult) Allocator.Error!void {
+        defer res.drop();
+        const t = a.tab();
+        const st = &(t.tree orelse return);
+        try st.putPrs(res.key, res.list);
+        // A failure is never cached: it must cost one retry, not a run.
+        if (res.body.len > 0 and res.updated.len > 0) {
+            if (a.pr_store) |store| {
+                try store.put(res.key, res.updated, res.body, Io.Timestamp.now(a.io, .real).toSeconds());
+                store.save();
+            }
+        }
     }
 
     /// Take a finished refetch, if one has landed, and apply it.
@@ -738,13 +941,12 @@ pub const App = struct {
             a.assigned_open = t.issues.len;
             a.segment_dirty = true;
         };
-        // The reference auto-expands unresolved tickets on tree tabs and
-        // shows their linked PRs; the job fetched them alongside the
-        // search, so nothing here goes back to the site.
-        if (t.tree) |*st| if (t.cfg.isTree()) {
-            for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
-            for (res.prs) |batch| try st.putPrs(batch.key, batch.list);
-        };
+        // The reference auto-expands unresolved tickets on tree tabs
+        // and shows their linked PRs. What is already known — because
+        // the ticket has not moved since the last run — is painted
+        // now, for nothing; the rest is queued to arrive behind the
+        // paint rather than in front of it.
+        if (t.tree) |*st| if (t.cfg.isTree()) try a.seedPrs(t, st);
         if (t.sprints == null and t.board_id != 0) try a.loadSprints(idx);
         try a.aggregateAssignees(t);
         // Put the cursor back on the ticket it was on (its row may have
@@ -3887,4 +4089,83 @@ test "the dispatch queue writes the reference's line into the configured workspa
     const q = try tmp.dir.readFileAlloc(testing.io, ".claude/queue.jsonl", arena.allocator(), .unlimited);
     try testing.expect(std.mem.indexOf(u8, q, "\"kind\":\"review\",\"issue_key\":\"ENG-2\"") != null);
     try testing.expect(std.mem.indexOf(u8, q, "\"kind\":\"test\",\"issue_key\":\"ENG-6\"") != null);
+}
+
+test "a ticket that has not moved costs no dev-status call, this run or the next" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const cache_path = try std.fs.path.join(testing.allocator, &.{ dir, "dev-status.json" });
+    defer testing.allocator.free(cache_path);
+
+    // The first run: the search, then one dev-status per unresolved
+    // ticket — behind the paint rather than in front of it, which is
+    // what `pr_queue` is, and cached under each ticket's `updated`.
+    {
+        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        defer h.stop();
+        var cache = try sdk.Store.openAt(testing.allocator, testing.io, cache_path);
+        defer cache.deinit();
+        h.app.setPrStore(&cache);
+        const before = h.store.requests;
+        try h.app.ensureLoaded();
+        const spent = h.store.requests - before;
+        // /myself, the search, and one dev-status for each of the three
+        // unresolved tickets.
+        try testing.expectEqual(@as(usize, 5), spent);
+        try testing.expectEqual(@as(usize, 0), h.app.pr_queue.items.len);
+        // The rows are on screen, off the wire.
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const r = (try h.app.treeRows(arena.allocator())).?;
+        try testing.expect(r.rows[2] == .pr and r.rows[3] == .pr);
+        // And three tickets are now remembered, each under the stamp
+        // the search already carried.
+        try testing.expectEqual(@as(usize, 3), cache.entries.items.len);
+        try testing.expect(cache.get("ENG-2").?.stamp.len > 0);
+    }
+
+    // The next run, against the same unchanged Jira: the search still
+    // costs one request, and the linked PRs cost NONE — which is the
+    // difference between a Work tab that opens and one that spends a
+    // minute of the machine's budget doing it again.
+    {
+        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        defer h.stop();
+        var cache = try sdk.Store.openAt(testing.allocator, testing.io, cache_path);
+        defer cache.deinit();
+        try testing.expectEqual(@as(usize, 3), cache.entries.items.len);
+        h.app.setPrStore(&cache);
+        const before = h.store.requests;
+        try h.app.ensureLoaded();
+        // /myself and the search. Nothing else.
+        try testing.expectEqual(@as(usize, 2), h.store.requests - before);
+        try testing.expectEqual(@as(usize, 0), h.app.pr_queue.items.len);
+        try testing.expectEqual(@as(u32, 3), cache.hits);
+        // The rows are the same rows, painted off the cache.
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const r = (try h.app.treeRows(arena.allocator())).?;
+        try testing.expect(r.rows[2] == .pr and r.rows[3] == .pr);
+        // A refetch with nothing changed costs the search and no more.
+        const mid = h.store.requests;
+        _ = try h.app.onKey("r");
+        try testing.expectEqual(@as(usize, 1), h.store.requests - mid);
+    }
+
+    // A ticket the site has since moved is asked about again: the
+    // cache is keyed on the SERVER's stamp, not on our own clock.
+    {
+        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        defer h.stop();
+        var cache = try sdk.Store.openAt(testing.allocator, testing.io, cache_path);
+        defer cache.deinit();
+        h.app.setPrStore(&cache);
+        h.store.find("ENG-2").?.updated = "2026-09-20T10:00:00.000+0000";
+        const before = h.store.requests;
+        try h.app.ensureLoaded();
+        // /myself, the search, and ENG-2's dev-status — only ENG-2's.
+        try testing.expectEqual(@as(usize, 3), h.store.requests - before);
+    }
 }

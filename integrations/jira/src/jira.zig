@@ -583,12 +583,37 @@ pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8, reason: 
     const raw = try c.request(arena, .GET, url, null, reason);
     if (raw.status == 404) return .{ .ok = &.{} };
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
-    const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
+    return .{ .ok = try parsePullRequests(arena, raw.body) };
+}
+
+/// The same call, handing back the RESPONSE rather than the parsed
+/// list — what a cache files under the ticket's `updated` stamp so the
+/// next run can paint it without asking. Null when the site refused;
+/// a failure is never worth caching.
+pub fn pullRequestsRaw(c: *Client, arena: Allocator, issue_id: []const u8, reason: Reason) CallError!?[]const u8 {
+    const url = try std.fmt.allocPrint(
+        arena,
+        "{s}/rest/dev-status/latest/issue/detail?issueId={s}&applicationType=bitbucket&dataType=pullrequest",
+        .{ c.base_url, issue_id },
+    );
+    const raw = try c.request(arena, .GET, url, null, reason);
+    // A 404 is "no dev info", not a failure — and it is worth
+    // remembering, because it is the answer for most tickets.
+    if (raw.status == 404) return "{\"detail\":[{\"pullRequests\":[]}]}";
+    if (raw.status < 200 or raw.status >= 300) return null;
+    return raw.body;
+}
+
+/// A dev-status response as the tree's rows. The same parse whether it
+/// came off the wire or off the cache, which is what makes the cached
+/// path paint identically.
+pub fn parsePullRequests(arena: Allocator, body: []const u8) Allocator.Error![]const model.LinkedPr {
+    const doc = std.json.parseFromSliceLeaky(Value, arena, body, .{}) catch Value{ .null = {} };
     var out: std.ArrayList(model.LinkedPr) = .empty;
     for (json.array(doc, "detail")) |d| {
         for (json.array(d, "pullRequests")) |p| try out.append(arena, try model.LinkedPr.fromJson(arena, p));
     }
-    return .{ .ok = try out.toOwnedSlice(arena) };
+    return out.toOwnedSlice(arena);
 }
 
 // ─── people and versions ─────────────────────────────────────────────────

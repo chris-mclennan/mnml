@@ -391,6 +391,12 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // copy of the client carries stays good for the whole run.
     client.notice = &app.wait_notice;
     app.forge.notice = &app.wait_notice;
+    // What the last run learned about each ticket's linked PRs, keyed
+    // by the ticket's own `updated` stamp: a tab that has not moved
+    // paints them on open for nothing.
+    var pr_store = try openPrStore(gpa, io, env);
+    defer pr_store.deinit();
+    app.setPrStore(&pr_store);
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
@@ -480,6 +486,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             break;
         }
         try app.drainRefresh();
+        // The linked PRs arrive behind the paint, one at a time, in
+        // the order the rows are on screen.
+        try app.drainPrs();
+        try app.pumpPrs();
         // One spinner counter for the whole pane, so every button that
         // is mid-dispatch turns together.
         if (app.actions.anyRunning()) app.spin +%= 1;
@@ -769,6 +779,15 @@ fn openForgeLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map)
     return l;
 }
 
+/// Where a ticket's linked PRs are remembered between runs
+/// (`mnml_sdk.store`). Under the host's data root, beside everything
+/// else this integration keeps.
+fn openPrStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.Store {
+    const root = try sdk.request_log.dataRoot(gpa, env);
+    defer gpa.free(root);
+    return sdk.Store.open(gpa, io, root, ratelimit.service, "dev-status");
+}
+
 /// The two request logs a Jira pane writes: its own service's, and the
 /// forge's, because a call to Bitbucket belongs in Bitbucket's file
 /// however it was started.
@@ -1039,6 +1058,9 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     });
     client.notice = &app.wait_notice;
     app.forge.notice = &app.wait_notice;
+    var pr_store = try openPrStore(gpa, io, env);
+    defer pr_store.deinit();
+    app.setPrStore(&pr_store);
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(cols, rows);
@@ -1048,6 +1070,10 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer paint_arena.deinit();
     const ui: screen.Ui = .{ .th = sdk.pane.Theme.fromHelloBranded(dump_palette, chipColorOf(args.only)) };
     try app.ensureLoaded();
+    // A dump has no loop to spread the linked-PR calls over, so they
+    // all happen here — the rows a dump asserts on are the rows a pane
+    // reaches a moment later.
+    try app.drainPrQueue();
     try repaint(&paint_arena, &frame, &app, ui);
     var lines = std.mem.splitScalar(u8, steps_src, '\n');
     while (lines.next()) |raw| {
