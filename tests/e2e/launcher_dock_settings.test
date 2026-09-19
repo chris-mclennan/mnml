@@ -1,5 +1,5 @@
 # width: 120
-# The settings overlay's two launcher-dock rows (src/app/settings.zig)
+# The settings overlay's three launcher-dock rows (src/app/settings.zig)
 # read the live config and write it: the bracket is `[auto_hide]` on a
 # fresh workspace and `[always]` once the mode has been changed, so a
 # row that stopped reading `ui.dock.mode` would show the stale value.
@@ -18,4 +18,15 @@ key esc
 ex dock left
 command view.settings
 expect screen contains "[left]"
+key esc
+# The labels row, the same way: `[icon_label]` out of the box, `[icon]`
+# once the strip has been narrowed.
+command view.settings
+expect screen contains "Launcher dock labels"
+expect screen contains "[icon_label]"
+key esc
+ex dock icons
+command view.settings
+expect screen contains "[icon]"
+expect screen lacks "[icon_label]"
 key esc

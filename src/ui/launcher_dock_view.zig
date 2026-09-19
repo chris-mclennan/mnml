@@ -9,6 +9,12 @@
 //! cell, the glyph, a padding cell, the activity bar's own column — and
 //! the label lives in the tooltip instead.
 //!
+//! `Props.labels` (`ui.dock.labels`) narrows the bottom row to the side
+//! form: `.icon` gives each item the same three cells a side dock has,
+//! laid left to right, and the name moves to the tooltip. A side dock
+//! is icon-only by geometry and ignores the field — three cells is all
+//! it has.
+//!
 //! An item carries its integration's category colour, the way a pinned
 //! rail icon does, because the colour is the integration's identity. A
 //! running one wears the small dot macOS puts under an open app:
@@ -46,6 +52,8 @@ pub const cursor_glyph = "\u{25b8}"; // ▸
 pub const cursor_ascii = ">";
 
 pub const Edge = enum { bottom, left, right };
+/// `ui.dock.labels` — how much of an item a bottom strip paints.
+pub const Labels = enum { icon, icon_label };
 
 pub const Item = struct {
     glyph: []const u8,
@@ -60,6 +68,9 @@ pub const Item = struct {
 pub const Props = struct {
     items: []const Item,
     edge: Edge,
+    /// How much of an item a bottom strip paints; a side one is
+    /// icon-only whatever this says.
+    labels: Labels = .icon_label,
     /// The keyboard cursor's item, when the dock has the keys.
     cursor: ?u16 = null,
     /// The pin chip is lit (the dock is pinned open).
@@ -75,9 +86,14 @@ pub fn pinRect(area: Rect, edge: Edge) Rect {
     };
 }
 
-/// The cells an item takes on a bottom strip: the glyph, its dot, a
-/// space, the label, and one cell of air either side.
-fn itemWidth(ui: Ui, it: Item) u16 {
+/// The cells an item takes on a bottom strip. Under `.icon_label`:
+/// the glyph, its dot, a space, the label, and one cell of air either
+/// side. Under `.icon` it is the side form's three — a padding cell
+/// (the dot's, or the keyboard cursor's), the glyph, a padding cell —
+/// whether or not it is running, so the row does not shuffle when a
+/// thing opens.
+fn itemWidth(ui: Ui, it: Item, labels: Labels) u16 {
+    if (labels == .icon) return width;
     return 1 + 1 + @as(u16, if (it.running) 1 else 0) + 1 + ui.width(it.label) + 1;
 }
 
@@ -114,10 +130,10 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
     const right_edge = if (limit.isEmpty()) area.right() else limit.x;
     var x: u16 = area.x + 1;
     for (props.items, 0..) |it, i| {
-        const w = itemWidth(ui, it);
+        const w = itemWidth(ui, it, props.labels);
         if (x + w > right_edge) break;
         const cell = Rect.init(x, area.y, w, 1);
-        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, true);
+        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, props.labels == .icon_label);
         ui.hit(cell, .{ .launcher_dock = .{ .item = @intCast(i) } });
         x += w;
     }
@@ -136,8 +152,10 @@ fn drawColumn(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis
     }
 }
 
-/// One item in its own cell run. `with_label` is the bottom strip; a
-/// side dock paints the glyph alone and leaves the label to the tip.
+/// One item in its own cell run. `with_label` is the bottom strip's
+/// `.icon_label` form; the icon form — a side dock, or a bottom one
+/// under `.icon` — paints the glyph alone and leaves the label to the
+/// tip.
 fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover_bg: vaxis.Color, with_label: bool) void {
     const th = ui.theme;
     const pal = th.palette;
@@ -166,7 +184,7 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
         _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, label_style);
         return;
     }
-    // A side dock: the dot takes the padding cell before the glyph,
+    // The icon form: the dot takes the padding cell before the glyph,
     // and the keyboard cursor takes it when both want it.
     if (focused) {
         _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
@@ -281,4 +299,68 @@ test "a strip too narrow for the next item drops it whole rather than painting h
     try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
     try t.expect(std.mem.indexOf(u8, row, "HTTP") == null);
     try t.expect(fx.hits.at(12, 5) == null or fx.hits.at(12, 5).?.launcher_dock == .pin);
+}
+
+test "itemWidth: the label form pays for its label and its dot; the icon form is the side dock's three cells, running or not" {
+    var fx = try test_fixture.init(20, 2);
+    defer fx.deinit();
+    const ui = fx.ui();
+    // ` ▸/pad <glyph> <label> ` — 1 + glyph + space + label + 1, plus
+    // the dot's cell when it is running.
+    try t.expectEqual(@as(u16, 11), itemWidth(ui, sample[0], .icon_label)); // "Browser" = 7
+    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[1], .icon_label)); // "HTTP" = 4, + the dot
+    // The icon form does not resize with the label or with the dot, so
+    // the row cannot shuffle under a pointer when a thing opens.
+    try t.expectEqual(width, itemWidth(ui, sample[0], .icon));
+    try t.expectEqual(width, itemWidth(ui, sample[1], .icon));
+    const long = Item{ .glyph = "\u{EB01}", .fallback = "B", .label = "a much longer label than any of these" };
+    try t.expectEqual(width, itemWidth(ui, long, .icon));
+    try t.expect(itemWidth(ui, long, .icon_label) > itemWidth(ui, sample[0], .icon_label));
+}
+
+test "bottom under .icon: the glyph alone in the side form's three cells, no label text, the dot in the padding cell, and the hits match the painted run" {
+    var fx = try test_fixture.init(60, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 60, 1);
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon });
+    var buf: [256]u8 = undefined;
+    const row = fx.row(5, &buf);
+    try t.expect(std.mem.indexOf(u8, row, "Browser") == null);
+    try t.expect(std.mem.indexOf(u8, row, "HTTP") == null);
+    // Item 0 starts at x=1: padding, glyph, padding. Item 1 follows at 4.
+    try t.expectEqualStrings("\u{EB01}", fx.cell(2, 5).char.grapheme);
+    try t.expectEqualStrings("\u{F1D8}", fx.cell(5, 5).char.grapheme);
+    // The running dot keeps its place — the padding cell before the
+    // glyph, exactly as a side dock puts it.
+    try t.expectEqualStrings(running_dot, fx.cell(4, 5).char.grapheme);
+    try t.expectEqualStrings(" ", fx.cell(1, 5).char.grapheme);
+    // Every painted cell of a run is that item's hit, and no more.
+    for ([_]u16{ 1, 2, 3 }) |x| try t.expectEqual(@as(u16, 0), fx.hits.at(x, 5).?.launcher_dock.item);
+    for ([_]u16{ 4, 5, 6 }) |x| try t.expectEqual(@as(u16, 1), fx.hits.at(x, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(7, 5) == null);
+}
+
+test "bottom under .icon: the keyboard cursor and the hover still read, on the same cells the icons take" {
+    var fx = try test_fixture.init(60, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 60, 1);
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon });
+    const cold = fx.style(2, 5);
+    try t.expect(cold.dim);
+
+    // The pointer on the item's run brightens it and keeps its colour.
+    fx.hits.reset();
+    fx.hover = .{ .x = 2, .y = 5 };
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon });
+    const hot = fx.style(2, 5);
+    try t.expect(!hot.dim);
+    try t.expect(!vaxis.Color.eql(cold.bg, hot.bg));
+    try t.expect(vaxis.Color.eql(cold.fg, hot.fg));
+
+    // The cursor paints ▸ in the padding cell — the dot's cell, which
+    // it takes when both want it.
+    fx.hits.reset();
+    fx.hover = null;
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .cursor = 1 });
+    try t.expectEqualStrings(cursor_glyph, fx.cell(4, 5).char.grapheme);
 }

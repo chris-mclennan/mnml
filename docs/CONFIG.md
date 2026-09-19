@@ -151,6 +151,7 @@ otherwise. Copy what you need; leave the rest out.
         .dock = .{ // the LAUNCHER dock (`app/launcher_dock.zig`) — integrations, terminals, launchers and pinned commands along one edge of the editor area. Not the bottom panel (`ui.bottom_panel_*`) and not the dock widgets
             .mode = .auto_hide, // .always (the strip is carved out of the frame) | .auto_hide (nothing until the pointer rests at the edge, then it is painted OVER the editor) | .hidden (never on hover; `view.dock_toggle` still gives a one-shot reveal)
             .edge = .bottom, // .bottom (one row, icon + label) | .left | .right (three cells, icon only — the label moves into the tooltip). There is no .top: that row is the menu bar's
+            .labels = .icon_label, // how much of an item a BOTTOM strip paints: .icon_label (` glyph label `, today's row) | .icon (the glyph alone in the side form's three cells — padding, glyph, padding — with the name in the tooltip). A side edge is icon-only by geometry and ignores this
             .pins = .{}, // command ids pinned onto the strip, in this order — a built-in id or an integration's (`jira.open`). An id nothing answers to is skipped
             .reveal_ms = 250, // how long the pointer rests in the dock's edge band before an `auto_hide` strip appears (0..5000)
             .hide_ms = 400, // how long after the pointer leaves before it goes again (0..5000)
@@ -802,6 +803,7 @@ outermost row and the panel sits inside it, as the editor does.
 | keep it up | `view.dock_pin`, or the 󰐃 chip at the strip's end. The pin lasts the session and rides in `session.zon`; it never edits the config |
 | change the mode | `view.dock_cycle_mode`, `:dock always\|auto\|hidden`, or the *Launcher dock* row in Settings |
 | move it | `view.dock_move`, `:dock bottom\|left\|right`, or the *Launcher dock edge* row in Settings |
+| icon only, or icon + label | `:dock icons` / `:dock labels`, the *Launcher dock labels* row in Settings, or the *Show:* rows on the strip's right-click menu. `ui.dock.labels` is the file form. It is the BOTTOM strip's question — a side dock is three cells wide and paints the glyph alone whatever the key says |
 | use the keyboard | `view.focus_dock` (vim `Ctrl-W D`, or `:dock focus`): `h` / `l` walk a bottom strip, `j` / `k` a side one, Enter runs, Esc leaves |
 | pin a command | a chip's right-click menu grows *Pin to dock*, and a pinned row's own menu takes it off again; `ui.dock.pins` is the file form |
 

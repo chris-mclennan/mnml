@@ -1208,9 +1208,11 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
 /// // changed (bottom-dock): `bottom` names the dock. It runs
 /// `side.move` rather than a command id: the dock's two command ids
 /// are Rust's `toggle` and `host_active`, and there is no third.
-/// `:dock bottom|left|right|always|auto|hidden|pin|focus|toggle` — the
-/// launcher dock (`app/launcher_dock.zig`), not the bottom panel
-/// (`:sidebar bottom`) and not the widgets.
+/// `:dock bottom|left|right|always|auto|hidden|icons|labels|pin|focus|toggle`
+/// — the launcher dock (`app/launcher_dock.zig`), not the bottom panel
+/// (`:sidebar bottom`) and not the widgets. `icons` / `labels` is
+/// `ui.dock.labels`, the bottom strip's two forms; `l` stays `left`,
+/// so the label words are spelled out.
 fn launcherDock(app: *App, args: []const u8) CommandError!void {
     const a = std.mem.trim(u8, args, " \t");
     if (eqAny(a, &.{ "b", "bot", "bottom" })) return launcher_dock.setEdge(app, .bottom);
@@ -1219,10 +1221,12 @@ fn launcherDock(app: *App, args: []const u8) CommandError!void {
     if (eqAny(a, &.{"always"})) return launcher_dock.setMode(app, .always);
     if (eqAny(a, &.{ "auto", "auto_hide", "autohide" })) return launcher_dock.setMode(app, .auto_hide);
     if (eqAny(a, &.{ "hidden", "hide", "off" })) return launcher_dock.setMode(app, .hidden);
+    if (eqAny(a, &.{ "icon", "icons" })) return launcher_dock.setLabels(app, .icon);
+    if (eqAny(a, &.{ "label", "labels" })) return launcher_dock.setLabels(app, .icon_label);
     if (eqAny(a, &.{"pin"})) return command.run(app, .{ .static = .@"view.dock_pin" });
     if (eqAny(a, &.{ "focus", "f" })) return command.run(app, .{ .static = .@"view.focus_dock" });
     if (a.len == 0 or eqAny(a, &.{"toggle"})) return command.run(app, .{ .static = .@"view.dock_toggle" });
-    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|always|auto|hidden|pin|focus|toggle", .{});
+    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|always|auto|hidden|icons|labels|pin|focus|toggle", .{});
 }
 
 fn sidebar(app: *App, args: []const u8) CommandError!void {
