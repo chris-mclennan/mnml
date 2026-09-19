@@ -66,7 +66,7 @@ pub const more_ascii = "...";
 pub const tab_block = "\u{2580}"; // ▀
 pub const tab_rule_active = "\u{2501}"; // ━
 pub const tab_rule = "\u{2500}"; // ─
-pub const tab_quarter = "\u{2582}"; // ▂ — a slim bar at the foot of the row
+pub const tab_quarter = "\u{1FB82}"; // 🬂 — a quarter-height bar at the head of the row, flush under the label
 pub const tab_block_ascii = "=";
 pub const tab_rule_active_ascii = "=";
 pub const tab_rule_ascii = "-";
@@ -544,7 +544,7 @@ test "the tab indicator draws each shape under the active label, and only `rule`
         defer gpa.free(r[1]);
         try std.testing.expectEqualStrings(" " ++ (tab_rule ** 7) ++ " " ** 32, r[1]);
     }
-    // `quarter`: a slim bar at the foot of the row, under the active label only.
+    // `quarter`: a quarter-height bar at the head of the row, flush under the active label only.
     {
         const r = try stripRows(gpa, .quarter, false, 20);
         defer gpa.free(r[0]);
