@@ -1850,6 +1850,10 @@ pub const App = struct {
             .tab => |i| try app.switchTab(i),
             .chip => |c| switch (c) {
                 .refresh => try app.refreshActive(),
+                .help => {
+                    app.mode = .help;
+                    app.help_scroll = 0;
+                },
                 .author => try app.toggleMineOnly(),
                 .awaiting => try app.toggleAwaiting(),
                 .filter => {

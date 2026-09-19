@@ -77,6 +77,12 @@ pub const tab_quarter_ascii = "_";
 /// active label wears the terminal's underline attribute instead.
 pub const tab_rule_min_rows: u16 = 12;
 
+/// The `?` chip's caption. Every pane in the family has a key sheet
+/// and every pane's hint row ends in `? keys` — but the hint row is
+/// what a narrow pane drops first, so the chip on the header ladder is
+/// the door that stays. One caption, so it is the same door.
+pub const help_chip_text = " ? ";
+
 pub const placeholder_unfocused = "/ filter";
 pub const placeholder_focused = "type to filter\u{2026}";
 pub const placeholder_focused_ascii = "type to filter...";

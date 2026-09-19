@@ -24,6 +24,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
+const chrome = sdk.pane.chrome;
 const app_mod = @import("app.zig");
 const tabs = @import("tabs.zig");
 const view = @import("view.zig");
@@ -43,8 +44,6 @@ pub const list_share_pct: u16 = 55;
 
 pub const marker = "▌";
 pub const filter_glyph_nerd = "\u{F0349}";
-pub const refresh_glyph_nerd = "\u{eb37}";
-pub const refresh_glyph_ascii = "\u{21ba}";
 
 pub const Box = struct { x: u16, y: u16, w: u16, h: u16 };
 
@@ -135,11 +134,8 @@ fn familyLabel(app: *App) []const u8 {
 
 fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     const app = p.app;
-    const th = p.th;
     const ts = app.activeTab();
-    var x: u16 = 1;
     const label = familyLabel(app);
-    x += p.text(x, y, p.f.cols -| x, label, th.label());
     // The subtitle: the reference's status count, dim.
     var sub: []const u8 = "";
     if (ts.loading and !ts.fetched) {
@@ -170,19 +166,19 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     if (ts.loading and ts.fetched) {
         sub = try std.fmt.allocPrint(arena, "{s}{s}", .{ sub, if (p.nerd) "  refreshing…" else "  refreshing..." });
     }
-    // The chips, laid right to left, each dropped whole when it would
-    // cross the title.
-    const refresh_text = if (p.nerd) " " ++ refresh_glyph_nerd ++ " " else " " ++ refresh_glyph_ascii ++ " ";
-    var right = p.f.cols;
-    const rw = Painter.width(refresh_text);
-    if (right >= x + rw + 2) {
-        right -= rw;
-        _ = p.text(right, y, rw, refresh_text, th.refresh());
-        p.target(right, y, rw, .{ .chip = .refresh });
-    }
-    const Chip = struct { text: []const u8, target: hit.Chip, active: bool };
-    var chips: [6]Chip = undefined;
+    // The caps title and its count, from the toolkit, so the tracker
+    // pane's header is the same ink as this one.
+    const x = p.c.capsTitle(1, y, label, sub);
+    // The chips, laid right to left by the toolkit, each dropped whole
+    // when it would cross the title, each a hit registered with its
+    // cells. `?` first, so it lands at the very end — it is the one
+    // chip that applies on every family and in every state.
+    var chips: [8]Chrome.ChipSpec = undefined;
     var n: usize = 0;
+    chips[n] = .{ .text = chrome.help_chip_text, .target = .{ .chip = .help } };
+    n += 1;
+    chips[n] = .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } };
+    n += 1;
     switch (app.family()) {
         .prs => {
             const kind_ok = ts.spec.kind == .workspace_open_prs or ts.spec.kind == .workspace_merged_prs;
@@ -191,37 +187,28 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             // chip costs nothing and can say its number at rest.
             const waiting = app.awaitingCount();
             if (waiting > 0 or app.awaiting_only) {
-                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .awaiting, .active = app.awaiting_only };
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .{ .chip = .awaiting }, .active = app.awaiting_only };
                 n += 1;
             }
             if (kind_ok) {
                 const who = if (ts.spec.mine_only) (if (app.me_display_name.len > 0) app.me_display_name else "me") else "all";
-                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .author, .active = ts.spec.mine_only };
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .{ .chip = .author }, .active = ts.spec.mine_only };
                 n += 1;
             }
         },
         .pipelines => {
-            chips[n] = .{ .text = " usage ", .target = .usage, .active = false };
+            chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false };
             n += 1;
-            chips[n] = .{ .text = " caches ", .target = .caches, .active = false };
+            chips[n] = .{ .text = " caches ", .target = .{ .chip = .caches }, .active = false };
             n += 1;
-            chips[n] = .{ .text = " schedules ", .target = .schedules, .active = false };
+            chips[n] = .{ .text = " schedules ", .target = .{ .chip = .schedules }, .active = false };
             n += 1;
-            chips[n] = .{ .text = " run pipeline ", .target = .run_pipeline, .active = false };
+            chips[n] = .{ .text = " run pipeline ", .target = .{ .chip = .run_pipeline }, .active = false };
             n += 1;
         },
         .branches => {},
     }
-    var i: usize = 0;
-    while (i < n) : (i += 1) {
-        const c = chips[i];
-        const w = Painter.width(c.text);
-        if (right < x + w + 2) break;
-        right -= w + 1;
-        _ = p.text(right, y, w, c.text, if (c.active) th.chipActive() else th.chip());
-        p.target(right, y, w, .{ .chip = c.target });
-    }
-    if (sub.len > 0) x += p.text(x, y, right -| x -| 1, sub, th.dimText());
+    _ = try p.c.rightChips(y, x, chips[0..n]);
     // How old the rows are, in the toolkit's words and ink — the same
     // line the tracker pane wears, so the two families read alike.
     _ = p.c.asOf(x, y, ts.fetched_at, app.now_secs);
@@ -836,6 +823,13 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "chris/fix-login"));
     try t.expect(has(scr, "Show more (1)"));
     try t.expect(has(scr, "author: all"));
+    // The caps header is the TOOLKIT's, not a copy of it: the title in
+    // `label()` and the ladder ending in the refresh chip then `?`,
+    // both on the chip ground. Asserted through `sdk.pane.expect`, the
+    // same function the tracker pane's own suite calls, so the two
+    // families cannot drift into checking two different things.
+    try sdk.pane.expect.capsTitleInk(&s.frame, s.rig.app.theme, 1, 0, "BITBUCKET PRS");
+    try sdk.pane.expect.headerLadderTail(&s.frame, s.rig.app.theme, 0, true, false);
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
     try t.expect(has(scr, "⏎ expand"));
     try t.expect(has(scr, "q quit"));

@@ -105,6 +105,7 @@ pub const refresh_nerd = Ch.refresh_nerd;
 pub const refresh_ascii = Ch.refresh_ascii;
 pub const search_nerd = Ch.search_nerd;
 pub const search_ascii = Ch.search_ascii;
+pub const help_chip_text = Ch.help_chip_text;
 pub const placeholder_unfocused = Ch.placeholder_unfocused;
 pub const placeholder_focused = Ch.placeholder_focused;
 pub const placeholder_focused_ascii = Ch.placeholder_focused_ascii;
@@ -265,8 +266,6 @@ pub const Painter = struct {
         const y = p.lay.header_y;
         const t = p.a.tab();
         const title = upperOf(p.arena, if (p.a.family) |f| f.label() else "Jira");
-        var x: u16 = 1;
-        x += p.put(x, y, p.cols() -| x, title, p.s.accent);
         var arena_mask = std.heap.ArenaAllocator.init(p.a.gpa);
         defer arena_mask.deinit();
         const shown = filters.countTrue(try p.a.mask(arena_mask.allocator(), t));
@@ -276,7 +275,12 @@ pub const Painter = struct {
             " (error)"
         else
             " (loading…)";
-        x += p.put(x, y, p.cols() -| x, sub, p.s.muted);
+        // The caps title and its count are the toolkit's, so the two
+        // families' headers are the same ink: the title muted and bold,
+        // the count dim beside it. This pane used to paint the title in
+        // the accent, which made the same header two colours depending
+        // on which integration you were looking at.
+        var x = p.c.capsTitle(1, y, title, sub);
         // A refetch runs on a worker: the rows on screen are the ones
         // from last time, and this says so rather than letting them read
         // as current.
@@ -291,20 +295,14 @@ pub const Painter = struct {
         if (p.a.selection.count() > 0) {
             x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
         }
-        // The right-end chips, dropped whole when they do not fit.
-        const help_t = " ? ";
-        const refresh_t = if (p.ui.ascii or !p.ui.nerd) " " ++ refresh_ascii ++ " " else " " ++ refresh_nerd ++ " ";
-        const hw = text.width(help_t);
-        const rw = text.width(refresh_t);
-        var rx = p.cols();
-        if (rx >= x + hw + rw + 3) {
-            rx -= hw + 1;
-            _ = p.put(rx, y, hw, help_t, p.s.chip_style);
-            try p.hitAdd(.{ .x = rx, .y = y, .w = hw, .h = 1 }, .{ .chip = .help });
-            rx -= rw + 1;
-            _ = p.put(rx, y, rw, refresh_t, p.s.chip_style);
-            try p.hitAdd(.{ .x = rx, .y = y, .w = rw, .h = 1 }, .{ .chip = .refresh });
-        }
+        // The right-end ladder, from the toolkit: laid right to left,
+        // each chip dropped whole when it would cross the title, each
+        // one a hit registered with its cells. `?` sits at the end
+        // because it is the one that always applies.
+        _ = try p.c.rightChips(y, x, &.{
+            .{ .text = help_chip_text, .target = .{ .chip = .help } },
+            .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } },
+        });
     }
 
     /// The strip, from the toolkit — the same two rows the forge pane
@@ -1697,6 +1695,14 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.indexOf(u8, r2, " assignee: All ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " status: All") != null);
     try testing.expect(std.mem.indexOf(u8, r0, "\u{eb37}") != null);
+    // The caps header is the TOOLKIT's, not a copy of it: the title in
+    // `label()` and the ladder ending in the refresh chip then `?`,
+    // both on the chip ground. Asserted through `sdk.pane.expect`, the
+    // same function the forge pane's own suite calls, so the two
+    // families cannot drift into checking two different things.
+    const ui: Ui = .{};
+    try sdk.pane.expect.capsTitleInk(&f, ui.th, 1, 0, "JIRA WORK");
+    try sdk.pane.expect.headerLadderTail(&f, ui.th, 0, ui.nerd, ui.ascii);
     try testing.expect(std.mem.indexOf(u8, r2, "/ filter") != null);
     const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.startsWith(u8, r3, "▌ KEY"));
