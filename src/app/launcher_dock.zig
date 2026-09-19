@@ -327,7 +327,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .glyph = menu_glyph.forCommandName(id, false),
             .fallback = menu_glyph.forCommandName(id, true),
             .color = "blue",
-            .label = title,
+            .label = shortTitle(title),
             .running = false,
             .action = switch (ref) {
                 .static => |c| .{ .static = c },
@@ -336,6 +336,30 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
         });
     }
     return out.toOwnedSlice(arena);
+}
+
+/// A command title is written for the palette, where a line is long:
+/// *Browser: open Chrome (CDP) — console / nav / eval*. A bottom strip
+/// is one row for every item there is, so a pin wears the part before
+/// the first parenthetical or dash, clipped to `pin_label_max`. The
+/// whole title is still in the tooltip.
+pub const pin_label_max: usize = 24;
+
+pub fn shortTitle(title: []const u8) []const u8 {
+    var out = title;
+    if (std.mem.indexOf(u8, out, " \u{2014} ")) |i| out = out[0..i];
+    if (std.mem.indexOf(u8, out, " (")) |i| out = out[0..i];
+    if (std.mem.indexOf(u8, out, " \u{00b7} ")) |i| out = out[0..i];
+    out = std.mem.trimEnd(u8, out, " \t");
+    if (out.len <= pin_label_max) return out;
+    // Back off to the last word boundary, then to a codepoint boundary,
+    // so the clip never splits a word or a character.
+    var end = pin_label_max;
+    if (std.mem.lastIndexOfScalar(u8, out[0..end], ' ')) |sp| {
+        if (sp > 0) end = sp;
+    }
+    while (end > 0 and (out[end] & 0xc0) == 0x80) end -= 1;
+    return std.mem.trimEnd(u8, out[0..end], " \t");
 }
 
 /// A generic launcher's mark: the rocket, in the Nerd Font's own plane.
@@ -483,6 +507,15 @@ pub fn openItemMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu(it.label, try rows.toOwnedSlice(app.gpa), x, y);
 }
 
+/// A pinned command's whole title, for the tooltip.
+fn fullTitle(app: *App, it: Item) []const u8 {
+    const ref = command.resolve(app, it.id) orelse return it.label;
+    return switch (ref) {
+        .static => |c| command.title(c),
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.title else it.label,
+    };
+}
+
 /// The command id an item names — what `ui.dock.pins` stores.
 pub fn commandIdOf(app: *App, it: Item) ?[]const u8 {
     return switch (it.action) {
@@ -622,6 +655,9 @@ pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip
                     .terminal => "click focuses this terminal",
                     .pin => "click runs the pinned command · right-click: unpin",
                 },
+                // The strip clips a pin's label; the tip carries the
+                // whole command title.
+                .lines = if (it.kind == .pin) try arena.dupe([]const u8, &.{fullTitle(app, it)}) else &.{},
             };
         },
     }
@@ -746,10 +782,28 @@ test "the model: the enabled integrations come first, then the New terminal item
     try t.expectEqual(Kind.terminal_new, list[1].kind);
     try t.expectEqualStrings("New terminal", list[1].label);
     try t.expectEqual(Kind.pin, list[2].kind);
-    try t.expectEqualStrings(command.title(.@"picker.files"), list[2].label);
+    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[2].label);
     try t.expectEqualStrings("picker.files", commandIdOf(&app, list[2]).?);
     // A pin that resolves to nothing never becomes a row.
     for (list) |it| try t.expect(!std.mem.eql(u8, it.id, "no.such.command"));
+}
+
+test "a pinned command wears the part of its title before the first parenthetical or dash, clipped to the strip's own width" {
+    // Rust's palette titles are written for a wide line; the strip is
+    // one row for every item there is.
+    try t.expectEqualStrings("Browser: open Chrome", shortTitle("Browser: open Chrome (CDP) \u{2014} console / nav / eval"));
+    try t.expectEqualStrings("Quit mnml", shortTitle("Quit mnml"));
+    try t.expectEqualStrings("Terminal: open a NEW", shortTitle("Terminal: open a NEW shell (split beside)"));
+    // Each cut earns its keep on a title short enough that the length
+    // clip would not have made it: a parenthetical, a dash, a middle dot.
+    try t.expectEqualStrings("Git: push", shortTitle("Git: push (force)"));
+    try t.expectEqualStrings("Findings: rescan", shortTitle("Findings: rescan \u{2014} the .mnml/findings folder"));
+    try t.expectEqualStrings("Sessions: table", shortTitle("Sessions: table \u{00b7} every run"));
+    // A long title with nothing to cut at is clipped, never split
+    // through a codepoint.
+    const long = shortTitle("\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}");
+    try t.expect(long.len <= pin_label_max);
+    try t.expect(std.unicode.utf8ValidateSlice(long));
 }
 
 test "mode transitions: the cycle walks always → auto-hide → hidden and writes the key; a pin makes mode read always and unpinning gives it back" {
