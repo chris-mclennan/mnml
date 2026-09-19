@@ -221,7 +221,10 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         _ = p.text(right, y, w, c.text, if (c.active) th.chipActive() else th.chip());
         p.target(right, y, w, .{ .chip = c.target });
     }
-    if (sub.len > 0) _ = p.text(x, y, right -| x -| 1, sub, th.dimText());
+    if (sub.len > 0) x += p.text(x, y, right -| x -| 1, sub, th.dimText());
+    // How old the rows are, in the toolkit's words and ink — the same
+    // line the tracker pane wears, so the two families read alike.
+    _ = p.c.asOf(x, y, ts.fetched_at, app.now_secs);
 }
 
 // ─── the tab strip ───────────────────────────────────────────────────────
@@ -1185,7 +1188,10 @@ test "the `/` filter: the header reads N of M while narrowed and the hint row ch
     // row is the keymap's.
     var scr = try s.draw();
     try t.expect(has(scr, "(2 repos · 3 PRs)"));
-    try t.expect(!has(scr, " of "));
+    // No `N of M`: the tab is not narrowed. (`as of …`, the freshness
+    // the header now wears, carries an "of" of its own — hence the
+    // closing bracket in the needle rather than a bare " of ".)
+    try t.expect(!has(scr, " of 3)"));
     try t.expect(has(scr, "q quit"));
 
     // `/` opens the pill and hands the keyboard to the filter: the row

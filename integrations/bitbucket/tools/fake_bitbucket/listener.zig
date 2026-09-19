@@ -111,11 +111,17 @@ pub const Server = struct {
 
         var auth_buf: [1024]u8 = undefined;
         var auth: []const u8 = "";
+        var inm_buf: [256]u8 = undefined;
+        var inm: []const u8 = "";
         var it = request.iterateHeaders();
         while (it.next()) |h| {
             if (std.ascii.eqlIgnoreCase(h.name, "authorization") and h.value.len <= auth_buf.len) {
                 @memcpy(auth_buf[0..h.value.len], h.value);
                 auth = auth_buf[0..h.value.len];
+            }
+            if (std.ascii.eqlIgnoreCase(h.name, "if-none-match") and h.value.len <= inm_buf.len) {
+                @memcpy(inm_buf[0..h.value.len], h.value);
+                inm = inm_buf[0..h.value.len];
             }
         }
         var body_buf: [64 * 1024]u8 = undefined;
@@ -144,16 +150,21 @@ pub const Server = struct {
             .target = target,
             .body = body,
             .authorization = auth,
+            .if_none_match = inm,
         }) catch bb.Reply{ .status = 500, .body = "{\"error\":{\"message\":\"out of memory\"}}" };
         self.state_lock.unlock(self.io);
 
-        var extra: [2]std.http.Header = undefined;
+        var extra: [3]std.http.Header = undefined;
         var n_extra: usize = 1;
         extra[0] = .{ .name = "content-type", .value = reply.content_type };
         var ra_buf: [8]u8 = undefined;
         if (reply.retry_after_secs) |secs| {
-            extra[1] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
-            n_extra = 2;
+            extra[n_extra] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
+            n_extra += 1;
+        }
+        if (reply.etag.len > 0) {
+            extra[n_extra] = .{ .name = "etag", .value = reply.etag };
+            n_extra += 1;
         }
         self.logRequest(method, target, reply.status);
         request.respond(reply.body, .{

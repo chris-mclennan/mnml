@@ -22,6 +22,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const sdk = @import("mnml_sdk");
 
 pub const Kind = enum {
     workspace_open_prs,
@@ -149,6 +150,12 @@ pub const Config = struct {
     /// `$BITBUCKET_BASE_URL` wins over this.
     base_url: []const u8 = "",
     rate: Rate = .{},
+    /// How often each kind of thing is kept fresh. A listing drifts,
+    /// a pipeline mid-run does not wait, and whether a pull request
+    /// may merge is only ever asked about the row under the cursor —
+    /// so they move at three speeds rather than one.
+    /// `readiness_secs = 0` means what it says: on demand only.
+    intervals: sdk.warm.Intervals = .{},
 
     pub fn isHidden(c: Config, slug: []const u8) bool {
         return contains(c.hidden_repos, slug);

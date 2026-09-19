@@ -56,6 +56,9 @@ pub const Job = struct {
     /// only where the kind cannot tell — the first load of a tab and a
     /// refetch of one are both `.refresh` jobs.
     reason: ?api.Reason = null,
+    /// Ask the server outright rather than `If-None-Match`, and ignore
+    /// the prefetch cache. What `R` means.
+    full: bool = false,
 
     pub const Kind = union(enum) {
         whoami,
@@ -268,6 +271,9 @@ pub const Worker = struct {
         // Every request this job makes is written down under this
         // reason — a job is a reason, so it is set once, here.
         w.client.reason = job.reasonOf();
+        // `R` asks outright; everything else lets a held tag make the ask
+        // cheap.
+        w.client.conditional = !job.full;
         const payload: Result.Payload = switch (job.kind) {
             .whoami => .{ .whoami = try w.whoami(a) },
             .refresh => |r| .{ .refresh = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs) },

@@ -372,6 +372,16 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
 /// `$BITBUCKET_BASE_URL` — literally, or `@<path>` naming a file that
 /// holds it (the fake server writes its port there) — then the
 /// config's, then the real API.
+/// Bodies already held, filed under the server's own `ETag`
+/// (`mnml_sdk.store`). Shared between every process on the machine
+/// because it lives under the data root, which is the point: a second
+/// pane's first ask is conditional too.
+fn openEtagStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.Store {
+    const root = try sdk.request_log.dataRoot(gpa, env);
+    defer gpa.free(root);
+    return sdk.Store.open(gpa, io, root, ratelimit.service, "etags");
+}
+
 fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c: cfg.Config) Allocator.Error![]u8 {
     if (cfg.nonEmpty(env.get("BITBUCKET_BASE_URL"))) |v| {
         if (v[0] == '@') {
@@ -518,6 +528,23 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
     s.client.log = &s.log;
+    // Under a quarter of the shared bucket, a poll is the thing that
+    // gives way: nothing is watching this run, and what is left
+    // belongs to whoever is. The line says so rather than leaving a
+    // chip that stopped moving unexplained.
+    if (sdk.warm.underBudget(s.limiter.status())) {
+        try err.print("mnml-bitbucket --values: {s}\n", .{sdk.warm.skipped_budget});
+        try out.print("{{\"skipped\":\"{s}\"}}\n", .{sdk.warm.skipped_budget});
+        return 0;
+    }
+    var gate: sdk.warm.Gate = .forConfig(.{ .rate = s.loaded.config.rate.rate_per_sec, .capacity = s.loaded.config.rate.capacity });
+    s.client.gate = &gate;
+    var etags = try openEtagStore(gpa, io, env);
+    defer {
+        etags.save();
+        etags.deinit();
+    }
+    s.client.etags = &etags;
     // The unresolved-comment count is the poller's figure, and it is
     // paid for out of the same bucket — the cache is what keeps it to
     // one request per pull request that actually moved.
@@ -1250,9 +1277,33 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     defer cache.deinit();
     session.client.cache = &cache;
     session.client.now_secs = nowSecs(io);
+    // The server's own tags for the bodies already held: every GET
+    // that has one goes out conditional, and a 304 is a round trip
+    // that costs a token and no bytes.
+    var etags = try openEtagStore(gpa, io, env);
+    defer {
+        etags.save();
+        etags.deinit();
+    }
+    session.client.etags = &etags;
+    // One pacer for this service, so a burst of warm work is spread
+    // one per `1/rate + margin` rather than draining the bucket in
+    // front of a click.
+    var gate: sdk.warm.Gate = .forConfig(.{
+        .rate = session.loaded.config.rate.rate_per_sec,
+        .capacity = session.loaded.config.rate.capacity,
+    });
+    session.client.gate = &gate;
+    // Speculative work is worth doing once on a machine, not once per
+    // pane: whoever holds the lock warms the inactive tabs, and
+    // everyone else reads what they left in the cache.
+    var warm_lock = try sdk.warm.Lock.forService(gpa, io, env, ratelimit.service, sdk.warm.selfPid(), "mnml-bitbucket");
+    defer warm_lock.deinit();
+    const may_warm = warm_lock.acquire(@floatFromInt(nowSecs(io)));
 
     var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
     defer app.deinit();
+    app.may_warm = may_warm;
     // The worker leaves a long wait where the paint loop finds it.
     // `app` is a local that is never moved, so the pointer the worker
     // thread's client carries stays good for the whole run.

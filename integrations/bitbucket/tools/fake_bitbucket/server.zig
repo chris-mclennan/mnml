@@ -31,6 +31,12 @@ pub const Reply = struct {
     body: []const u8 = "",
     /// Sent on a 429 so the client's backoff has something to read.
     retry_after_secs: ?u32 = null,
+    /// The body's `ETag`, when the route offers one. Bitbucket Cloud
+    /// sends one on the read routes and honours `If-None-Match` on
+    /// them, which is the whole reason a poll can be cheap; the fake
+    /// does the same so a test can prove the client uses it. Owned by
+    /// the arena.
+    etag: []const u8 = "",
 };
 
 pub const Method = enum { GET, POST, PUT, DELETE, other };
@@ -62,6 +68,9 @@ pub const State = struct {
     deny_user: bool = false,
     /// Requests served, 429s included.
     served: u32 = 0,
+    /// Of those, the ones answered `304 Not Modified` — what a test
+    /// counts to prove a conditional GET was conditional.
+    not_modified: u32 = 0,
     /// Requests that arrived with no (or a bad) Authorization header.
     unauthorized: u32 = 0,
     /// Set when a write arrived; the corpus proves the write token
@@ -371,10 +380,38 @@ pub const Request = struct {
     body: []const u8 = "",
     /// The `Authorization` header as it arrived.
     authorization: []const u8 = "",
+    /// The `If-None-Match` header as it arrived. A GET whose tag still
+    /// matches what the route would answer with gets a 304 and no
+    /// body.
+    if_none_match: []const u8 = "",
 };
 
 /// Answer one request. `arena` owns the reply body.
 pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
+    var reply = try route(arena, st, req);
+    // Every 2xx answer to a GET carries a tag over its own bytes, and
+    // a GET that arrives holding that tag is told there is nothing
+    // new. Bitbucket Cloud does this on its read routes; the cheap
+    // poll depends on it, so the fake has to be able to prove it.
+    if (req.method == .GET and reply.status >= 200 and reply.status < 300) {
+        reply.etag = try etagOf(arena, reply.body);
+        if (req.if_none_match.len > 0 and std.mem.eql(u8, std.mem.trim(u8, req.if_none_match, " \t"), reply.etag)) {
+            st.not_modified += 1;
+            return .{ .status = 304, .body = "", .etag = reply.etag };
+        }
+    }
+    return reply;
+}
+
+/// A weak tag over the bytes: the same body always gets the same one,
+/// and a body that moved never does.
+fn etagOf(arena: Allocator, body: []const u8) Allocator.Error![]const u8 {
+    var h = std.hash.Wyhash.init(0);
+    h.update(body);
+    return std.fmt.allocPrint(arena, "\"{x}\"", .{h.final()});
+}
+
+fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
     st.served += 1;
     const cred = classify(req.authorization);
     st.last_credential = cred;
