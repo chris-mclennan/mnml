@@ -166,9 +166,6 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     if (ts.loading and ts.fetched) {
         sub = try std.fmt.allocPrint(arena, "{s}{s}", .{ sub, if (p.nerd) "  refreshing…" else "  refreshing..." });
     }
-    // The caps title and its count, from the toolkit, so the tracker
-    // pane's header is the same ink as this one.
-    const x = p.c.capsTitle(1, y, label, sub);
     // The chips, laid right to left by the toolkit, each dropped whole
     // when it would cross the title, each a hit registered with its
     // cells. `?` first, so it lands at the very end — it is the one
@@ -208,10 +205,10 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
         },
         .branches => {},
     }
-    _ = try p.c.rightChips(y, x, chips[0..n]);
-    // How old the rows are, in the toolkit's words and ink — the same
-    // line the tracker pane wears, so the two families read alike.
-    _ = p.c.asOf(x, y, ts.fetched_at, app.now_secs);
+    // The whole row from the toolkit: the title and its count, the
+    // `as of …` line in the same words and ink the tracker pane wears,
+    // and the ladder — laid so the two runs cannot land on each other.
+    _ = try p.c.capsHeader(1, y, label, sub, ts.fetched_at, app.now_secs, chips[0..n]);
 }
 
 // ─── the tab strip ───────────────────────────────────────────────────────

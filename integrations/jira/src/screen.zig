@@ -293,34 +293,28 @@ pub const Painter = struct {
             " (error)"
         else
             " (loading…)";
-        // The caps title and its count are the toolkit's, so the two
-        // families' headers are the same ink: the title muted and bold,
-        // the count dim beside it. This pane used to paint the title in
-        // the accent, which made the same header two colours depending
-        // on which integration you were looking at.
-        var x = p.c.capsTitle(1, y, title, sub);
         // A refetch runs on a worker: the rows on screen are the ones
-        // from last time, and this says so rather than letting them read
-        // as current.
-        if (p.a.refresh.busy() and t.fetched) {
-            x += p.put(x, y, p.cols() -| x, if (p.ui.ascii) " refreshing..." else " refreshing…", p.s.muted);
-        }
-        // How old the rows are. A screenful with nothing above it reads
-        // as now, and on a pane that painted from cache it is not. The
-        // wording and the ink are the toolkit's, so the Bitbucket pane
-        // says it the same way.
-        x = p.c.asOf(x, y, t.fetched_at, p.a.nowSecs());
-        if (p.a.selection.count() > 0) {
-            x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
-        }
-        // The right-end ladder, from the toolkit: laid right to left,
-        // each chip dropped whole when it would cross the title, each
-        // one a hit registered with its cells. `?` sits at the end
-        // because it is the one that always applies.
-        _ = try p.c.rightChips(y, x, &.{
+        // from last time, and the count says so rather than letting
+        // them read as current. Same ink as the count, so it is one
+        // phrase and the toolkit can clip the pair as one.
+        const sub_all = if (p.a.refresh.busy() and t.fetched)
+            p.fmt("{s}{s}", .{ sub, if (p.ui.ascii) " refreshing..." else " refreshing…" })
+        else
+            sub;
+        // The whole row from the toolkit: the title muted and bold, the
+        // count dim beside it, `as of …` after that, and the ladder at
+        // the right with `?` at the very end. This pane used to paint
+        // its title in the ACCENT, which made the same header two
+        // colours depending on which integration you were looking at,
+        // and laid its own ladder beside the forge pane's copy of the
+        // same geometry.
+        const head = try p.c.capsHeader(1, y, title, sub_all, t.fetched_at, p.a.nowSecs(), &.{
             .{ .text = help_chip_text, .target = .{ .chip = .help } },
             .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } },
         });
+        if (p.a.selection.count() > 0) {
+            _ = p.put(head.x + 1, y, head.edge -| (head.x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk);
+        }
     }
 
     /// The strip, from the toolkit — the same two rows the forge pane
