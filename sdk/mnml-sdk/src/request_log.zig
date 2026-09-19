@@ -78,9 +78,34 @@ pub const Reason = enum {
     /// The user asked for this one outright — a transition, a comment,
     /// an approval.
     user,
+    /// The warmer filling a cache for a tab nobody is looking at, paced
+    /// so it never races an interactive request for the same bucket.
+    warm,
+    /// A window since the last successful sync — `updated >= -15m`
+    /// rather than the whole listing.
+    delta,
+    /// A conditional GET: the body is already held, and the server is
+    /// only being asked whether it still stands (`If-None-Match`).
+    revalidate,
+    /// **Not a request.** A local cache answered, and the line is
+    /// written anyway so the log reads as the whole story rather than
+    /// only the part that cost something. A `cache_hit` line never
+    /// took a token.
+    cache_hit,
 
     pub fn tag(r: Reason) []const u8 {
         return @tagName(r);
+    }
+
+    /// Whether a reason is a person waiting on an answer. An
+    /// interactive request outranks warm and delta work for the next
+    /// slot in the pacer — that ordering is `warm.priorityOf`, and
+    /// this is the half of it the log owns.
+    pub fn interactive(r: Reason) bool {
+        return switch (r) {
+            .pane_open, .detail, .user, .readiness, .dispatch, .refresh => true,
+            .poll, .prefetch, .builds, .warm, .delta, .revalidate, .cache_hit => false,
+        };
     }
 };
 
@@ -248,6 +273,26 @@ pub const Log = struct {
         defer file.close(self.io);
         file.writePositionalAll(self.io, line, end) catch return;
         self.written += 1;
+    }
+
+    /// A local cache answered instead of the network. The line is
+    /// written so the log reads as the whole story rather than only
+    /// the part that cost something — but nothing here implies a
+    /// token: `status` stays null, `wait_ms` and `tokens_after` stay
+    /// zero, and the reason is `cache_hit`. That is what lets a reader
+    /// count requests by counting lines with a status.
+    pub fn noteCacheHit(self: *Log, method: []const u8, host: []const u8, url_path: []const u8, bytes: usize) void {
+        self.append(.{
+            .service = "",
+            .integration = "",
+            .method = method,
+            .host = host,
+            .path = url_path,
+            .status = null,
+            .bytes = bytes,
+            .reason = .cache_hit,
+            .cache = .hit,
+        });
     }
 
     /// `<service>.jsonl` → `<service>.1.jsonl`, the old `.1` dropped.
@@ -674,4 +719,47 @@ test "the host's `integrations.request_log` reaches the SDK as two variables" {
         defer log.deinit();
         try t.expectEqual(default_max_bytes, log.max_bytes);
     }
+}
+
+test "a cache hit is a line too — with no status, no wait and no tokens, so counting requests still counts requests" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var log = try Log.openAt(t.allocator, t.io, dir, "bitbucket", "mnml-bitbucket");
+    defer log.deinit();
+
+    log.noteCacheHit("GET", "api.bitbucket.org", "/2.0/repositories/acme/web/pullrequests/12", 4096);
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+
+    try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"cache_hit\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"cache\":\"hit\"") != null);
+    // The three that say "this did not cost anything". A reader counts
+    // requests by counting lines with a status, so a cache hit must not
+    // have one.
+    try t.expect(std.mem.indexOf(u8, text, "\"status\":null") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"wait_ms\":0") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"tokens_after\":0.000") != null);
+    // The service and the integration are still filled in from the log.
+    try t.expect(std.mem.indexOf(u8, text, "\"service\":\"bitbucket\"") != null);
+    try t.expectEqual(@as(u32, 1), log.written);
+}
+
+test "the reasons the warmer added, and which of them yield to a reader" {
+    // Somebody is waiting on the answer.
+    for ([_]Reason{ .pane_open, .refresh, .detail, .readiness, .dispatch, .user }) |r| {
+        try t.expect(r.interactive());
+    }
+    // Nobody is.
+    for ([_]Reason{ .poll, .prefetch, .builds, .warm, .delta, .revalidate, .cache_hit }) |r| {
+        try t.expect(!r.interactive());
+    }
+    // The tags are what the REQUESTS pane groups on, so they are pinned.
+    try t.expectEqualStrings("warm", Reason.warm.tag());
+    try t.expectEqualStrings("delta", Reason.delta.tag());
+    try t.expectEqualStrings("revalidate", Reason.revalidate.tag());
+    try t.expectEqualStrings("cache_hit", Reason.cache_hit.tag());
 }
