@@ -85,6 +85,7 @@ const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
+const requests_pane = @import("requests.zig");
 const toast_mod = @import("../ui/toast.zig");
 const discovery = @import("discovery.zig");
 const help_app = @import("help.zig");
@@ -360,6 +361,11 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .flaky => |*fp| {
             if (try flaky.handleKey(app, id, fp, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .requests => |*rp| {
+            if (try requests_pane.handleKey(app, id, rp, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1021,7 +1027,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // right-click: a string-carrying row's bytes belong to the menu's
     // own arena, which the close frees — copy them out first.
     const text: ?[]const u8 = switch (action) {
-        .copy_text, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install => |s| try app.frame.allocator().dupe(u8, s),
+        .copy_text, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install, .requests_for => |s| try app.frame.allocator().dupe(u8, s),
         else => null,
     };
     closeOverlay(app);
@@ -1067,6 +1073,12 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             app.toast("copied {s}", .{text.?});
         },
         .open_url => git_app.openExternal(app, text.?),
+        // The chip's own service, so the view opens on the requests
+        // that chip's number was paid for.
+        .requests_for => requests_pane.showFiltered(app, text.?) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .open_path => try openPathRow(app, text.?),
         .set_theme => cmd_view.acceptTheme(app, text.?) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -2077,6 +2089,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
+                .requests => |*rp| requests_pane.click(app, rp, sh.id, m),
                 .files => |*f| try files_pane.click(app, sh.pane, f, sh.id, m),
                 .zon => |*z| try zon_pane.click(app, sh.pane, z, sh.id, m),
                 .outline, .md_preview, .image, .pty, .ai => {},
@@ -2646,6 +2659,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .requests => |*rp| requests_pane.scrollBy(rp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .files => |*f| files_pane.scrollBy(f, signed(down, scroll_mod.listStep(lines, app.cfg.editor.scroll_accel))),
         .image => {},
     }

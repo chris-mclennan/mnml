@@ -107,6 +107,7 @@ const tests_pane = @import("tests_pane.zig");
 const tests_view = @import("../ui/tests_view.zig");
 const flaky = @import("flaky.zig");
 const flaky_view = @import("../ui/flaky_view.zig");
+const requests_view = @import("../ui/requests_view.zig");
 const grep_view = @import("../ui/grep_view.zig");
 const dap = @import("dap.zig");
 const debug_toolbar = @import("../ui/debug_toolbar.zig");
@@ -991,6 +992,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .browser => kindIcon(ascii, "\u{25C9}", "\u{F059F}", p.blue),
         .grep => kindIcon(ascii, "\u{2315}", "\u{F0349}", p.yellow),
         .flaky => kindIcon(ascii, "\u{224B}", "\u{F0668}", p.purple),
+        .requests => kindIcon(ascii, "\u{2194}", "\u{F0AEE}", p.cyan),
         .outline => kindIcon(ascii, "\u{2325}", "\u{F01BD}", p.purple),
         .files => kindIcon(ascii, "\u{25A4}", "\u{F0770}", p.blue),
         .list => |*l| switch (l.kind) {
@@ -1448,6 +1450,10 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, rect: Rect) Allocator.Erro
         .flaky => |*fp| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
             flaky_view.draw(ui, id, rect, fp, app.active == id and app.focus == .pane);
+        },
+        .requests => |*rp| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            requests_view.draw(ui, id, rect, rp, app.active == id and app.focus == .pane);
         },
         .files => |*f| try files_pane.draw(app, ui, id, f, rect),
         .image => |*im| try image_pane.draw(app, ui, id, im, rect),

@@ -765,6 +765,22 @@ pub const Integrations = struct {
     /// The statusline poller (`app/integration_poll.zig`): what keeps a
     /// manifest's chip counts live with no pane open.
     poll: Poll = .{},
+    /// What every integration's requests cost, written down where a
+    /// person can read them (`integrations.requests` opens the view).
+    request_log: RequestLog = .{},
+};
+
+/// `<data root>/requests/<service>.jsonl` — one JSON line per request
+/// an integration makes. Reaches every integration mnml starts as
+/// `MNML_REQUEST_LOG` / `MNML_REQUEST_LOG_MAX_MB`; the SDK
+/// (`mnml_sdk.request_log`) is what reads them there.
+pub const RequestLog = struct {
+    /// On, because the point of it is to be there when the slow
+    /// morning happens rather than to be switched on afterwards.
+    enabled: bool = true,
+    /// The ceiling before a file rotates, in megabytes. One older
+    /// generation is kept beside it.
+    max_mb: u32 = 4,
 };
 
 pub const Poll = struct {
@@ -925,6 +941,10 @@ test "defaults are the shipped values" {
     try std.testing.expect(!c.integrations.auto_update_cargo);
     try std.testing.expectEqual(IntegrationOpenAs.split, c.integrations.open_as);
     try std.testing.expect(c.integrations.equalize_on_open);
+    // The request log is on by default: it has to be there when the
+    // slow morning happens, not be switched on afterwards.
+    try std.testing.expect(c.integrations.request_log.enabled);
+    try std.testing.expectEqual(@as(u32, 4), c.integrations.request_log.max_mb);
     try std.testing.expectEqual(@as(usize, 0), c.integrations.dev_roots.len);
     try std.testing.expect(c.marketplace.enabled);
     try std.testing.expectEqual(@as(u32, 3600), c.marketplace.cache_ttl_secs);

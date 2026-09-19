@@ -321,6 +321,13 @@ fn buildJob(
     try env.put("MNML_IPC_DIR", try mount_pane.ipcDir(app));
     try env.put("MNML_THEME", app.theme.name);
     if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
+    // The poller's child writes to the same request log a pane does:
+    // a `poll` line beside a `pane_open` one is half the point of the
+    // log, since they draw on one bucket.
+    const rl = app.cfg.integrations.request_log;
+    try env.put("MNML_REQUEST_LOG", if (rl.enabled) "1" else "0");
+    var mbuf: [12]u8 = undefined;
+    try env.put("MNML_REQUEST_LOG_MAX_MB", std.fmt.bufPrint(&mbuf, "{d}", .{rl.max_mb}) catch "4");
     for (inst.manifest.settings) |setting| {
         const name = try std.fmt.allocPrint(arena, "MNML_SETTING_{s}", .{setting.key});
         for (name["MNML_SETTING_".len..]) |*c| c.* = std.ascii.toUpper(c.*);

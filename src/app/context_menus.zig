@@ -1123,10 +1123,24 @@ pub fn openIntegrationSegmentMenu(app: *App, slot: u32, x: u16, y: u16) Allocato
     var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
     if (polled) try rows.append(a, .{ .label = "Refresh now", .action = .{ .command = .@"integrations.poll_now" } });
     if (seg.click_command != null) try rows.append(a, .{ .label = "Open", .action = .{ .dyn = slot }, .separator_before = polled });
-    try rows.append(a, .{ .label = "Integrations…", .action = .{ .command = .@"integrations.show_installed" }, .separator_before = rows.items.len > 0 });
+    // What this chip's number cost: the REQUESTS view, filtered to the
+    // service behind it. A chip that is stale or slow is the place the
+    // question gets asked, so it is the place the answer is offered.
+    try rows.append(a, .{ .label = "Requests…", .action = .{ .requests_for = serviceOfSegment(seg.id) }, .separator_before = rows.items.len > 0 });
+    try rows.append(a, .{ .label = "Integrations…", .action = .{ .command = .@"integrations.show_installed" }, .separator_before = true });
     const built = try items(app, rows.items);
     errdefer app.gpa.free(built);
     try app.openMenu(seg.id, built, x, y);
+}
+
+/// The service behind a segment id (`jira_work.assigned` → `jira`,
+/// `bitbucket_prs.reviews_mine` → `bitbucket`). The prefix before the
+/// first `_` or `.` is the integration's family, which is what the
+/// request log files are named for. An id that names neither filters
+/// to nothing in particular, which is the whole view.
+pub fn serviceOfSegment(id: []const u8) []const u8 {
+    const cut = std.mem.indexOfAny(u8, id, "_.") orelse id.len;
+    return id[0..cut];
 }
 
 /// The test chip (Rust `statusline_test_chip`).
@@ -2146,4 +2160,39 @@ test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top 
     try openNewTabMenu(&again, 4, 1);
     try t.expectEqualStrings("Trash", again.overlay.menu.items[0].label);
     try t.expectEqual(@as(usize, 4), again.overlay.menu.items[2].submenu.len);
+}
+
+test "an integration chip's menu offers the requests behind its number, filtered to that chip's service" {
+    // `jira_work.assigned` is paid for out of the `jira` bucket and
+    // logged to `jira.jsonl`; the prefix is what names both.
+    try t.expectEqualStrings("jira", serviceOfSegment("jira_work.assigned"));
+    try t.expectEqualStrings("bitbucket", serviceOfSegment("bitbucket_prs.reviews_mine"));
+    try t.expectEqualStrings("jira", serviceOfSegment("jira.x"));
+    try t.expectEqualStrings("plain", serviceOfSegment("plain"));
+    try t.expectEqualStrings("", serviceOfSegment(""));
+
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try app.ipc_fx.segments.append(app.gpa, .{
+        .id = try app.gpa.dupe(u8, "jira_work.assigned"),
+        .side = .right,
+        .text = try app.gpa.dupe(u8, "jira 25"),
+        .color = null,
+        .click_command = null,
+        .priority = 60,
+        .min_width = 0,
+        .max_width = 0,
+        .tooltip = null,
+    });
+    try openIntegrationSegmentMenu(&app, 0, 4, 1);
+    var found: ?[]const u8 = null;
+    for (app.overlay.menu.items) |item| {
+        if (std.mem.eql(u8, item.label, "Requests…")) found = switch (item.action) {
+            .requests_for => |svc| svc,
+            else => null,
+        };
+    }
+    // The row is there, and it names the service rather than opening
+    // the whole machine's log.
+    try t.expectEqualStrings("jira", found orelse return error.TestExpectedEqual);
 }
