@@ -127,12 +127,25 @@ pub fn build(b: *std.Build) void {
     const mem_report = b.option(bool, "mem-report", "Count live bytes per subsystem; a headless session prints the table to stderr as it ends") orelse false;
     build_options.addOption(bool, "mem_report", mem_report);
 
-    // ── e2e: IPC namespacing ──
-    // Where the file-IPC channel lives under `<ws>/.mnml/`. Rust mnml owns
-    // `ipc`; dev builds of the Zig host use `ipc-zig` so both can run on
-    // one workspace until cutover, when the default flips back.
-    const ipc_subdir = b.option([]const u8, "ipc-subdir", "IPC directory name under <ws>/.mnml/ (default: ipc-zig)") orelse "ipc-zig";
+    // ── the side-by-side names: -Dinstall-names ──
+    // The two names a second mnml on one machine would collide on: the
+    // file-IPC mailbox under `<ws>/.mnml/` and the running-instance
+    // marker under TMPDIR. A shipped mnml owns `ipc` / `mnml-running-…`
+    // (Rust mnml's names — it is frozen); this repo's own builds keep
+    // `ipc-zig` / `mnml-zig-running-…` so a dev build and the installed
+    // one can run side by side (docs/DESIGN.md, "Side-by-side
+    // mechanics"). `run.sh install` and `release` pass -Dinstall-names.
+    //
+    // Both name the STABLE profile only: `MNML_PROFILE=dev` always
+    // takes `ipc-zig` / `mnml-zig-running-…` (src/config/profile.zig),
+    // so a dev launch of an installed mnml is still its own instance.
+    const install_names = b.option(bool, "install-names", "Name the IPC mailbox and the marker the way a shipped mnml does (ipc, mnml-running-)") orelse false;
+    const ipc_subdir_opt = b.option([]const u8, "ipc-subdir", "IPC directory name under <ws>/.mnml/ (default: ipc-zig; ipc with -Dinstall-names)");
+    const ipc_subdir = ipc_subdir_opt orelse if (install_names) "ipc" else "ipc-zig";
     build_options.addOption([]const u8, "ipc_subdir", ipc_subdir);
+    const marker_prefix_opt = b.option([]const u8, "marker-prefix", "Running-instance marker prefix under TMPDIR (default: mnml-zig-running-; mnml-running- with -Dinstall-names)");
+    const marker_prefix = marker_prefix_opt orelse if (install_names) "mnml-running-" else "mnml-zig-running-";
+    build_options.addOption([]const u8, "marker_prefix", marker_prefix);
 
     // ── main executable ──
     const root_module = b.createModule(.{
@@ -524,7 +537,11 @@ pub fn build(b: *std.Build) void {
             "-Dcpu=baseline",
             "-Doptimize=ReleaseSafe",
             b.fmt("-Dversion={s}", .{version}),
-            b.fmt("-Dipc-subdir={s}", .{ipc_subdir}),
+            // A shipped mnml is the one you live in: it owns `ipc` and
+            // `mnml-running-…` whatever this tree's own builds are
+            // named. An explicit -Dipc-subdir / -Dmarker-prefix still
+            // wins, and is forwarded below.
+            "-Dinstall-names=true",
             b.fmt("-Dpartial={}", .{partial}),
             b.fmt("-Dpty-simd={}", .{pty_simd}),
             "--prefix",
@@ -534,6 +551,8 @@ pub fn build(b: *std.Build) void {
             "--global-cache-dir",
             b.graph.global_cache_root.path orelse ".",
         });
+        if (ipc_subdir_opt) |v| nested.addArg(b.fmt("-Dipc-subdir={s}", .{v}));
+        if (marker_prefix_opt) |v| nested.addArg(b.fmt("-Dmarker-prefix={s}", .{v}));
         nested.setCwd(b.path("."));
         nested.setName(b.fmt("zig build release-one ({s})", .{rt.rust}));
         // Its outputs land under the prefix, not in the cache — always run it.

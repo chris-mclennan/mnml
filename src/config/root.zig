@@ -20,6 +20,8 @@ pub const trust = @import("trust.zig");
 pub const trusted = @import("trusted.zig");
 pub const TrustPrompt = load.TrustPrompt;
 pub const data_root = @import("data_root.zig");
+pub const profile = @import("profile.zig");
+pub const Profile = profile.Profile;
 pub const persist = @import("persist.zig");
 pub const zon_tree = @import("zon_tree.zig");
 pub const zon_schema = @import("zon_schema.zig");
@@ -35,6 +37,7 @@ test {
     _ = @import("trust.zig");
     _ = @import("trusted.zig");
     _ = @import("data_root.zig");
+    _ = @import("profile.zig");
     _ = @import("persist.zig");
     _ = @import("zon_tree.zig");
     _ = @import("zon_schema.zig");
