@@ -17,13 +17,14 @@ goes on to the file bucket exactly as before.
 
 How `bb_ratelimit.py` would use it — two lines, nothing else changed:
 
-    from ratelimit_broker import acquire_via_broker
+    from ratelimit_broker import try_broker
 
     class _Bucket:
         def acquire(self, timeout: float = MAX_BLOCK) -> bool:
-            if acquire_via_broker("bitbucket", "batch", "sweep", timeout):
-                return True
-            ...                       # the existing file-bucket loop
+            answer = try_broker("bitbucket", "batch", "sweep", timeout)
+            if answer is not None:    # a broker answered: its word is final
+                return answer
+            ...                       # no broker: the existing file-bucket loop
 
 Pick the class by who is waiting: "interactive" (a human is), "refresh"
 (wanted soon), "warm" (speculative), "batch" (a script — the default, and
@@ -59,12 +60,19 @@ def broker_socket(service: str) -> str:
     return path if len(path) <= 100 else f"/tmp/mnml-broker-{service}.sock"
 
 
-def acquire_via_broker(service: str, cls: str = "batch", reason: str = "batch",
-                       timeout: float = 120.0) -> bool:
-    """True if the broker granted a token. False means fall back."""
+def try_broker(service: str, cls: str = "batch", reason: str = "batch",
+               timeout: float = 120.0):
+    """Ask the broker. True: a token was granted. False: the broker
+    answered and refused (its timeout -- the same fail-open the file
+    bucket gives, so send anyway). None: there is no broker to ask, and
+    the caller should draw from the file bucket instead.
+
+    The three answers matter: a False must not be followed by a file
+    draw, or a queued script waits its timeout twice and then spends a
+    token the broker already counted."""
     path = broker_socket(service)
     if not path or not hasattr(socket, "AF_UNIX"):
-        return False
+        return None
     req = {"v": 1, "op": "acquire", "service": service, "class": cls,
            "client": f"{os.path.basename(__file__)}:{os.getpid()}",
            "reason": reason, "timeout_ms": int(timeout * 1000)}
@@ -73,9 +81,18 @@ def acquire_via_broker(service: str, cls: str = "batch", reason: str = "batch",
             s.settimeout(timeout + 5.0)
             s.connect(path)
             s.sendall((json.dumps(req) + "\n").encode())
-            return json.loads(s.makefile("r").readline() or "{}").get("ok", False)
+            reply = json.loads(s.makefile("r").readline() or "{}")
     except (OSError, ValueError):
-        return False                                  # no broker: use the file
+        return None                                   # no broker: use the file
+    if reply.get("ok"):
+        return True
+    return None if reply.get("why") in ("bad_request", "wrong_service") else False
+
+
+def acquire_via_broker(service: str, cls: str = "batch", reason: str = "batch",
+                       timeout: float = 120.0) -> bool:
+    """True if the broker granted a token. False means fall back."""
+    return try_broker(service, cls, reason, timeout) is True
 
 
 def broker_status(service: str) -> dict:
