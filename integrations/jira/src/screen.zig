@@ -996,9 +996,14 @@ pub const Painter = struct {
         // `? keys` is the one entry that has to survive: it is the door
         // to every chord the row could not fit. Its room is taken out
         // first, so which of the others fit no longer turns on how long
-        // the status happens to be.
+        // the status happens to be — and the binding that says the same
+        // thing is skipped in the loop, or the row ends `? keys · ? keys`.
         const room = w -| kw;
-        for (list, 0..) |b, i| {
+        var n: usize = 0;
+        for (list) |b| {
+            if (b.action == .help) continue;
+            const i = n;
+            n += 1;
             var kb: [16]u8 = undefined;
             const label = if (b.short.len > 0) b.short else b.label;
             const key = keymap.displayKey(&kb, b.keys[0]);
@@ -2147,4 +2152,29 @@ test "the cursor row is a filled band across the whole row, on the tree, the kan
         }
         try expectNoBand(&f, other.?.y, other.?.x, other.?.x + other.?.w, band);
     }
+}
+
+test "the hint row says `? keys` once: the entry it reserves room for, not that one and its binding too" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // Wide enough that every binding fits: below this the row drops the
+    // last of them for room, and a row that never paints the help
+    // binding cannot show it twice — which is why the duplicate
+    // survived so long in a suite that only ever painted 120 columns.
+    var f = try Frame.init(testing.allocator, 200, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const row = std.mem.trimEnd(u8, try rowText(ar, &f, 39), " ");
+    try testing.expect(std.mem.indexOf(u8, row, "r refresh") != null);
+    try testing.expect(std.mem.endsWith(u8, row, "? keys"));
+    try testing.expect(std.mem.indexOf(u8, row, "? keys \u{b7} ? keys") == null);
+    // …and the one that is painted is the door to the sheet.
+    const keys = a.hits.rectOf(hit.Target{ .hint = .help }) orelse return error.NoKeysHint;
+    try a.click(keys.x, keys.y, false);
+    try testing.expect(a.help);
 }

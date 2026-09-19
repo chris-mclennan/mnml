@@ -1,0 +1,80 @@
+# width: 120
+# height: 40
+# The cursor row's GROUND, in both official panes, end to end: the
+# host's theme → `hello.palette` → the pane's `cursor_line` → the fill
+# `Painter.rowGround` lays across the row → the cells the host paints.
+# Every other check in the corpus reads the pane's words, and a cursor
+# row with no fill at all reads exactly like one with it — which is how
+# the Jira pane shipped for so long with only a stripe in the margin.
+# `expect color` is the only way a script sees a colour.
+#
+# The row indices are counted from the top of the screen and so depend
+# on how many rows the pane's own chrome takes: at 80 columns the Jira
+# toolbar wraps to two rows and everything below it moves down, which
+# is why this file pins its width rather than running at every size.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_JIRA" --port 18732 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18732\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned }, .{ .name = \"Recently Done\", .kind = .work_recently_done } } }"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+expect screen lacks "installed jira_work from"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+wait 1200
+
+# ── the Jira Work tree ───────────────────────────────────────────────
+command jira_work.open
+wait 8000
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK (3)"
+# Row 7 is the first tree row — the header, the strip and its
+# indicator, the toolbar and the column header take rows 2-6, under the
+# host's own two.
+expect screen contains "In PR Review (1)"
+# The cursor starts on it: the band runs the whole width, the gutter
+# stripe in column 0 included, and the theme's `cursor_line` is what it
+# is painted in (onedark's `line`, the host's default theme).
+expect color 0 7 bg #31353d
+expect color 20 7 bg #31353d
+expect color 119 7 bg #31353d
+# The row under it is not banded, or the cursor would not read as one.
+expect color 20 8 bg not #31353d
+# And the band follows the cursor rather than staying at the top.
+key j
+expect color 20 7 bg not #31353d
+expect color 20 8 bg #31353d
+expect color 119 8 bg #31353d
+
+# ── the Bitbucket PRs tree, the same rows, the same ground ───────────
+command bitbucket_prs.open
+wait 6000
+command view.focus_pane
+expect screen contains "BITBUCKET PRS"
+expect screen contains "REPO / #PR"
+expect color 0 7 bg #31353d
+expect color 20 7 bg #31353d
+expect color 119 7 bg #31353d
+expect color 20 8 bg not #31353d
+key j
+expect color 20 7 bg not #31353d
+expect color 20 8 bg #31353d

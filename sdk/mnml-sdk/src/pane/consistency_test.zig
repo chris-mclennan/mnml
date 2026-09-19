@@ -427,3 +427,25 @@ test "the cursor row carries the cursor-line ground edge to edge, in both panes,
         }
     }
 }
+
+test "the hint row says a chord once, however many times the pane passes it" {
+    var r = try Rig(TrackerTarget).init(cols, rows);
+    defer r.deinit();
+    var p = r.painter(demoTheme());
+    // A pane whose bindings already carry `? keys` and which appends
+    // its own gets one entry, not `? keys · ? keys`.
+    try p.hintRow(0, "", &.{
+        .{ .key = "r", .title = "refresh", .target = .{ .hint = 0 } },
+        .{ .key = "?", .title = "keys", .target = .{ .hint = 1 } },
+        .{ .key = "?", .title = "keys", .target = .{ .hint = 1 } },
+    });
+    const arena = r.arena.allocator();
+    var text: std.ArrayList(u8) = .empty;
+    var x: u16 = 0;
+    while (x < cols) : (x += 1) try text.appendSlice(arena, r.f.slots[x].symbol());
+    const row = text.items;
+    try testing.expect(std.mem.indexOf(u8, row, "? keys") != null);
+    const first = std.mem.indexOf(u8, row, "? keys").?;
+    try testing.expect(std.mem.indexOf(u8, row[first + 6 ..], "? keys") == null);
+    try testing.expect(std.mem.indexOf(u8, row, "r refresh") != null);
+}
