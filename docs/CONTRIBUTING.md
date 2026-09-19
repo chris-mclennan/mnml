@@ -201,7 +201,18 @@ matched against the fully qualified name, `<module>.test.<name>` —
 `app.update.test.isNewer: semver order …` — so a module or file name
 narrows it as well as words from the test's name. Every test binary
 prints `filter <substring>: K of M tests matched`; a `K` of 0 in all
-of them is a filter that hit nothing, not a pass.
+of them is a filter that hit nothing, not a pass. There are around
+twenty binaries and most hold nothing a given filter matches, so a wall
+of `0 of M` above the one that matched is the normal shape — read the
+last summary, not the first.
+
+The verdict lines name their test, so `grep -E "FAIL|passed;"` over a
+trace reads straight. Do not attribute a failure to the `▶` start line
+nearest it in a *filtered* stream: the two can be thousands of lines
+apart in the real output. Exactly one test name contains the word FAIL
+(`runPath: skips, sizes, names, and the ok/FAIL/N-M report`), so it was
+the name every such grep window kept pairing with somebody else's
+failure.
 
 Do not reach for `-Dtest-filter=<substring>` to run one test. It is
 the compiler's own filter and it is applied while files are scanned,
