@@ -21,6 +21,7 @@
 //! chip's command and a right click opens the chip's menu.
 
 const std = @import("std");
+const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -235,13 +236,24 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
     const muted = dim(Theme.withFg(Theme.onBg(th.muted, bg), pal.comment));
     const lit = bold(Theme.withFg(Theme.onBg(th.fg, bg), pal.blue));
     const badge = bold(Theme.withFg(Theme.onBg(th.fg, bg), pal.orange));
+    // // changed (rail-hover): the row under the pointer brightens —
+    // the glyph loses its `dim` and takes the theme's full foreground,
+    // on a ground one step lighter — the way VS Code lights an
+    // activity-bar icon you are about to click. The marked section is
+    // already at full weight and is left exactly as it was, so the
+    // mark never moves under the pointer. Nothing new is registered:
+    // the rows' hits below are the same ones a click uses, and
+    // `app/hover_zones.zig` documents the rule for the dock to follow.
+    const hover_bg = pal.bg2;
     ui.fill(area, Theme.onBg(th.fg, bg));
     const glyph_x = area.x + 1;
     const glyph_w = area.w -| 1;
     const lay = layout(area, props.pins.len + props.scripts.len);
     if (lay.gear_y) |gy| {
         const row = Rect.init(area.x, gy, area.w, 1);
-        _ = ui.putStr(glyph_x, gy, glyph_w, if (ui.ascii) gear_ascii else gear_nerd, muted);
+        const hot = ui.hovered(row);
+        if (hot) ui.fill(row, Theme.onBg(th.fg, hover_bg));
+        _ = ui.putStr(glyph_x, gy, glyph_w, if (ui.ascii) gear_ascii else gear_nerd, if (hot) bold(Theme.onBg(th.fg, hover_bg)) else muted);
         ui.hit(row, .{ .rail = .gear });
     }
     var default_rows: [Section.rail.len]RailRow = undefined;
@@ -258,8 +270,10 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
             .section => |sec| if (ui.ascii) sec.meta().fallback else sec.meta().glyph,
             .script => |si| if (si < props.scripts.len) (if (ui.ascii) props.scripts[si].fallback else props.scripts[si].glyph) else "",
         };
+        const hot = !is_active and ui.hovered(row);
+        if (hot) ui.fill(row, Theme.onBg(th.fg, hover_bg));
         if (is_active) _ = ui.putStr(area.x, y, 1, if (ui.ascii) indicator_ascii else indicator, Theme.withFg(Theme.onBg(th.fg, bg), pal.blue));
-        _ = ui.putStr(glyph_x, y, glyph_w, glyph, if (is_active) lit else muted);
+        _ = ui.putStr(glyph_x, y, glyph_w, glyph, if (is_active) lit else if (hot) bold(Theme.onBg(th.fg, hover_bg)) else muted);
         // The badge pulses over the glyph (Rust): the strip is too
         // narrow for a superscript beside a glyph.
         const count: u32 = switch (rr) {
@@ -282,7 +296,12 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
         const row = Rect.init(area.x, y, area.w, 1);
         const glyph = if (ui.ascii or !ui.nerd_font or p.glyph.len == 0) p.fallback else p.glyph;
         if (glyph.len == 0) continue;
-        _ = ui.putStr(glyph_x, y, glyph_w, glyph, dim(Theme.withFg(Theme.onBg(th.fg, bg), paletteColor(th, p.color))));
+        // A pin keeps its chip's colour when it lights — the colour IS
+        // the integration's identity — and only sheds the `dim`.
+        const hot = ui.hovered(row);
+        if (hot) ui.fill(row, Theme.onBg(th.fg, hover_bg));
+        const pin_style = Theme.withFg(Theme.onBg(th.fg, if (hot) hover_bg else bg), paletteColor(th, p.color));
+        _ = ui.putStr(glyph_x, y, glyph_w, glyph, if (hot) bold(pin_style) else dim(pin_style));
         ui.hit(row, .{ .rail = .{ .pin = @intCast(i) } });
     }
 }
@@ -447,4 +466,72 @@ test "draw: the pinned icons follow the sections on the same step, each a hit, i
     draw(short.ui(), Rect.init(0, 1, width, 11), .{ .active = .explorer, .pins = &pins });
     try t.expect(layout(Rect.init(0, 1, width, 11), pins.len).pinY(0) == null);
     try t.expect(short.hits.at(1, 10).?.rail == .gear);
+}
+
+test "draw: the row under the pointer brightens — the glyph sheds its dim onto a lighter ground — while the marked section and every other row are untouched" {
+    var fx = try test_fixture.init(10, 40);
+    defer fx.deinit();
+    const pins = [_]Pin{.{ .glyph = "\u{F1D00}", .fallback = "H", .color = "green" }};
+    const props: Props = .{ .active = .git, .pins = &pins };
+    const area = Rect.init(0, 1, width, 37);
+    const lay = layout(area, pins.len);
+    const explorer_y = lay.sectionY(.explorer).?;
+    const git_y = lay.sectionY(.git).?;
+    const gear_y = lay.gear_y.?;
+    const pin_y = lay.pinYAfter(Section.rail.len, 0).?;
+
+    // Cold: every unmarked row is dim on the rail's own ground.
+    draw(fx.ui(), area, props);
+    const cold_explorer = fx.style(1, explorer_y);
+    const cold_git = fx.style(1, git_y);
+    const cold_gear = fx.style(1, gear_y);
+    const cold_pin = fx.style(1, pin_y);
+    try t.expect(cold_explorer.dim);
+    try t.expect(!cold_git.dim);
+
+    // The pointer on the explorer row: that row alone changes, and it
+    // changes in both ways — no dim, a lighter ground.
+    fx.hits.reset();
+    fx.hover = .{ .x = 1, .y = explorer_y };
+    draw(fx.ui(), area, props);
+    const hot = fx.style(1, explorer_y);
+    try t.expect(!hot.dim);
+    try t.expect(!vaxis.Color.eql(cold_explorer.bg, hot.bg));
+    // The whole three-cell row lights, not just the glyph's cell.
+    try t.expect(vaxis.Color.eql(hot.bg, fx.style(0, explorer_y).bg));
+    try t.expect(vaxis.Color.eql(hot.bg, fx.style(2, explorer_y).bg));
+    // Its neighbours, the marked section and the gear are as they were.
+    try t.expect(std.meta.eql(cold_git, fx.style(1, git_y)));
+    try t.expect(std.meta.eql(cold_gear, fx.style(1, gear_y)));
+    try t.expect(std.meta.eql(cold_pin, fx.style(1, pin_y)));
+    // The glyph itself did not change — only its weight.
+    try t.expectEqualStrings(Section.explorer.meta().glyph, fx.cell(1, explorer_y).char.grapheme);
+
+    // The marked row refuses to light: its mark must not move under
+    // the pointer.
+    fx.hits.reset();
+    fx.hover = .{ .x = 1, .y = git_y };
+    draw(fx.ui(), area, props);
+    try t.expect(std.meta.eql(cold_git, fx.style(1, git_y)));
+    try t.expectEqualStrings(indicator, fx.cell(0, git_y).char.grapheme);
+
+    // The gear and a pinned launcher light the same way; a pin keeps
+    // its chip's colour.
+    fx.hits.reset();
+    fx.hover = .{ .x = 1, .y = gear_y };
+    draw(fx.ui(), area, props);
+    try t.expect(!fx.style(1, gear_y).dim);
+    fx.hits.reset();
+    fx.hover = .{ .x = 1, .y = pin_y };
+    draw(fx.ui(), area, props);
+    const hot_pin = fx.style(1, pin_y);
+    try t.expect(!hot_pin.dim);
+    try t.expect(vaxis.Color.eql(cold_pin.fg, hot_pin.fg));
+
+    // The pointer leaves the rail: everything is cold again.
+    fx.hits.reset();
+    fx.hover = null;
+    draw(fx.ui(), area, props);
+    try t.expect(std.meta.eql(cold_explorer, fx.style(1, explorer_y)));
+    try t.expect(std.meta.eql(cold_pin, fx.style(1, pin_y)));
 }

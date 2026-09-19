@@ -28,6 +28,16 @@
 //! `activity_bar.shown` already lived by.
 //!
 //! State lives in `App.hover_zones`; nothing here allocates.
+//!
+//! **The family rule for a hovered icon** (`ui/activity_bar.zig`, and
+//! the dock when it lands): the row under the pointer sheds its `dim`,
+//! takes the theme's full foreground — a coloured icon keeps its own
+//! colour, which is its identity — and its whole cell row is filled one
+//! step lighter (`palette.bg2`). The marked / active row is already at
+//! full weight and is left exactly as it is, so a mark never moves
+//! under the pointer, and nothing new is registered in the hit map: a
+//! painter that can light a row already knows the row's rect, because
+//! that is the rect it registered the click on.
 
 const std = @import("std");
 const app_mod = @import("../app.zig");
