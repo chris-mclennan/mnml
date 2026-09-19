@@ -980,6 +980,8 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
             .active = active,
             .dirty = p.dirty(),
             .pinned = p.pinned(),
+            // VS Code's italic: a tab the user is only glancing at.
+            .preview = p.preview(),
             .diag = diag_text,
             .diag_severity = diag,
         });

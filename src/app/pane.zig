@@ -77,6 +77,13 @@ pub const EditorPane = struct {
     /// a pin glyph and survives close-others / close-right / close-all.
     /// Saved with the session.
     pinned: bool = false,
+    /// VS Code's preview tab: a file the user is only glancing at. The
+    /// name paints italic and the next glance in this leaf takes the
+    /// tab over. A double-click (on the tree row or on the tab), the
+    /// first edit, `view.keep_tab`, a pin and a drag all make it a
+    /// tab of its own. Never saved with the session — a restored tab
+    /// is one the user kept.
+    preview: bool = false,
     /// The sticky context's chain for the last top line / text / parse
     /// (`sticky.headerLines`).
     sticky: sticky.Cache = .{},
@@ -311,6 +318,31 @@ pub const Pane = union(enum) {
             .editor => |*e| e.pinned,
             else => false,
         };
+    }
+
+    /// A preview tab (VS Code's): opened by a glance, painted italic,
+    /// and taken over by the next glance in the same leaf. The four
+    /// kinds a glance can land on carry the flag; everything else is
+    /// always a tab of its own.
+    pub fn preview(self: *const Pane) bool {
+        return switch (self.*) {
+            .editor => |*e| e.preview,
+            .md_preview => |*m| m.is_preview,
+            .image => |*im| im.is_preview,
+            .request => |*r| r.is_preview,
+            else => false,
+        };
+    }
+
+    /// Set (or clear) the preview flag on the kinds that carry one.
+    pub fn setPreview(self: *Pane, on: bool) void {
+        switch (self.*) {
+            .editor => |*e| e.preview = on,
+            .md_preview => |*m| m.is_preview = on,
+            .image => |*im| im.is_preview = on,
+            .request => |*r| r.is_preview = on,
+            else => {},
+        }
     }
 
     pub fn asEditor(self: *Pane) ?*EditorPane {
