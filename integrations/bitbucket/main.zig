@@ -87,7 +87,8 @@ const Opts = struct {
     /// `--dump --steps FILE [--size WxH]`: the headless driver — the
     /// same App and the same paint as the pane, driven by a step
     /// script, with every `snap` printed as text. `--dump-style` adds
-    /// each snap's row backgrounds, which the text cannot carry.
+    /// each snap's row backgrounds and foregrounds, which the text
+    /// cannot carry.
     dump: bool = false,
     dump_style: bool = false,
     steps: ?[]const u8 = null,
@@ -256,8 +257,9 @@ const usage =
     \\  --dump --steps FILE [--size WxH] [--only F]
     \\                           play a step script at the pane with no mnml and
     \\                           print every `snap` as text
-    \\  --dump-style             the same, plus each snap's row backgrounds
-    \\                           run-length coded (`bg  6: 0-119 #31353d`)
+    \\  --dump-style             the same, plus each snap's row backgrounds and
+    \\                           foregrounds, run-length coded
+    \\                           (`bg  6: 0-119 #31353d`, `fg  6: 0-7 #61afef+b`)
     \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
     \\  --only prs|prs-mine|prs-awaiting|pipelines|branches   one family of tabs
     \\
@@ -885,7 +887,8 @@ const dump_palette: sdk.wire.Palette = .{
 /// dump uses (`key`, `type`, `click`, `rclick`, `clickon`, `rclickon`,
 /// `scroll`, `snap`, `expect`, `quit`; the waits are no-ops since every
 /// fetch runs inline here). Each `snap NAME` prints `=== NAME` and the
-/// screen, one row per line; `--dump-style` adds the row backgrounds,
+/// screen, one row per line; `--dump-style` adds the row backgrounds and
+/// foregrounds,
 /// which the text cannot carry.
 fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, out: *Io.Writer, err: *Io.Writer, opts: Opts) !u8 {
     var why: []const u8 = "";
@@ -987,6 +990,8 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
             if (opts.dump_style) {
                 try out.writeAll("\n--- bg\n");
                 try out.writeAll(try sdk.frame.bgDump(arena, &frame));
+                try out.writeAll("\n--- fg\n");
+                try out.writeAll(try sdk.frame.fgDump(arena, &frame));
             }
         } else if (std.mem.eql(u8, verb, "expect")) {
             try dumpDrain(gpa, &app, &worker);

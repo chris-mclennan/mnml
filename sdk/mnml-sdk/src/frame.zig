@@ -236,6 +236,52 @@ pub fn bgDump(arena: Allocator, f: *const Frame) Allocator.Error![]const u8 {
     return out.toOwnedSlice(arena);
 }
 
+/// Every row's FOREGROUNDS, the same way — one line per row, the
+/// modifiers of a run appended to its colour:
+///
+/// ```text
+/// fg  7: 0-0 #61afef+b | 1-8 #5c6370 | 9-119 -
+/// ```
+///
+/// `+b` bold, `+d` dim, `+u` underline. A chip whose whole point is
+/// its colour is invisible to a screen dump and invisible to a
+/// background dump too — its ground is the row's. This is where
+/// `[ Merge ]` being green and `[ Open ]` being grey is checkable
+/// from outside the process.
+pub fn fgDump(arena: Allocator, f: *const Frame) Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var buf: [64]u8 = undefined;
+    var y: u16 = 0;
+    while (y < f.rows) : (y += 1) {
+        try out.appendSlice(arena, std.fmt.bufPrint(&buf, "fg {d:>3}:", .{y}) catch "fg ?:");
+        var x: u16 = 0;
+        var first = true;
+        while (x < f.cols) {
+            const here = f.slots[@as(usize, y) * f.cols + x].style;
+            var run = x + 1;
+            while (run < f.cols and sameInk(f.slots[@as(usize, y) * f.cols + run].style, here)) run += 1;
+            if (!first) try out.appendSlice(arena, " |");
+            try out.appendSlice(arena, std.fmt.bufPrint(&buf, " {d}-{d} ", .{ x, run - 1 }) catch " ");
+            const word: []const u8 = if (here.fg) |c| switch (c) {
+                .rgb => |v| std.fmt.bufPrint(&buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ v[0], v[1], v[2] }) catch "#??????",
+                .index => |i| std.fmt.bufPrint(&buf, "i{d}", .{i}) catch "i?",
+            } else "-";
+            try out.appendSlice(arena, word);
+            if (here.mods.bold) try out.appendSlice(arena, "+b");
+            if (here.mods.dim) try out.appendSlice(arena, "+d");
+            if (here.mods.underline) try out.appendSlice(arena, "+u");
+            first = false;
+            x = run;
+        }
+        try out.append(arena, '\n');
+    }
+    return out.toOwnedSlice(arena);
+}
+
+fn sameInk(a: Style, b: Style) bool {
+    return std.meta.eql(a.fg, b.fg) and a.mods.bits() == b.mods.bits();
+}
+
 /// The wide ranges a terminal renders two cells wide.
 pub fn isWide(cp: u21) bool {
     return (cp >= 0x1100 and cp <= 0x115F) or
