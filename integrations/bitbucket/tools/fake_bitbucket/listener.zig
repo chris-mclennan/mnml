@@ -69,6 +69,14 @@ pub const Server = struct {
         self.state.rate_limit_next = n;
     }
 
+    /// N more generated OPEN pull requests on `acme/api`, so a
+    /// measurement runs against a workspace the size of a real one.
+    pub fn setExtraPrs(self: *Server, n: u32) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.extra_prs = n;
+    }
+
     /// Answer `/2.0/user` with a 403 from now on.
     pub fn denyUser(self: *Server, on: bool) void {
         self.state_lock.lockUncancelable(self.io);
