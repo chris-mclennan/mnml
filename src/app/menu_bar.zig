@@ -37,6 +37,7 @@ const zen = @import("zen.zig");
 pub const table = .{
     .@"view.menu_bar_cycle" = &cycleCmd,
     .@"view.menu_bar_open" = &openFirstCmd,
+    .@"view.menu_bar_pin" = &pinCmd,
 };
 
 pub const Menu = enum(u8) {
@@ -101,6 +102,10 @@ pub const State = struct {
     keyboard: bool = false,
     /// The ` » ` chip's list of hidden menus is the open overlay.
     overflow_open: bool = false,
+    /// Pinned for this session: an auto-hiding bar keeps its words
+    /// wherever the pointer goes and `mode` reads `.always`. Never
+    /// written to the config — unpinning is meant to be one click.
+    pinned: bool = false,
     /// Owns the rows built per open: the recent-files submenu.
     mem: ?std.heap.ArenaAllocator = null,
 
@@ -110,6 +115,13 @@ pub const State = struct {
     }
 };
 
+/// `ui.menu_bar`, with the session's pin on top of it — the shape
+/// `sidebar_auto.mode` already has. // changed (menu-bar-pin).
+pub fn mode(app: *const App) Config.MenuBar {
+    if (app.menu_bar.pinned) return .always;
+    return app.cfg.ui.menu_bar;
+}
+
 /// Whether the words paint this frame on the bar at `bar_y`.
 /// // changed (sidebar-autohide): the bar's row is a `hover_zones`
 /// zone now, registered from the geometry rather than compared here,
@@ -117,12 +129,22 @@ pub const State = struct {
 /// `bar_y` is kept as the caller's assertion that it is asking about
 /// the row the zone was cut from.
 pub fn shown(app: *const App, bar_y: u16) bool {
-    return switch (app.cfg.ui.menu_bar) {
+    return switch (mode(app)) {
         .always => true,
         .hidden => false,
         .auto => app.menu_bar.open != null or
             (hover_zones.dwelled(app, .menu_bar_top) and app.hover != null and app.hover.?.y == bar_y),
     };
+}
+
+/// Whether the pin chip paints at the end of the words this frame.
+/// // changed (menu-bar-pin): only a bar that CAN hide itself wears
+/// one — under `ui.menu_bar = .always` there is nothing to pin, so
+/// the shipped default's chrome row is exactly what it was. The words
+/// have to be up for it, which under `.auto` means revealed or pinned
+/// and under `.hidden` means pinned.
+pub fn pinShown(app: *const App, bar_y: u16) bool {
+    return app.cfg.ui.menu_bar != .always and shown(app, bar_y);
 }
 
 /// What the painter reports back: where the words landed.
@@ -417,7 +439,7 @@ pub fn hoverSwitch(app: *App, id: u32, r: Rect) Allocator.Error!bool {
 /// while an overlay is up, in a terminal pane, or (F10) while a debug
 /// session owns step-over. True when a menu opened.
 pub fn interceptKey(app: *App, k: key_mod.Key) Allocator.Error!bool {
-    if (app.cfg.ui.menu_bar == .hidden or app.overlay != .none) return false;
+    if (mode(app) == .hidden or app.overlay != .none) return false;
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .pty) return false;
     switch (k.code) {
         .f => |n| if (n == 10 and k.mods.eql(.none) and app.dap.session == null) {
@@ -458,7 +480,7 @@ pub fn menuKey(app: *App, k: key_mod.Key) Allocator.Error!bool {
 
 /// `view.menu_bar_open`: the File menu, under its word.
 fn openFirstCmd(app: *App) CommandError!void {
-    if (app.cfg.ui.menu_bar == .hidden) return app.diag.fail(app.frame.allocator(), "the menu bar is hidden (ui.menu_bar)", .{});
+    if (mode(app) == .hidden) return app.diag.fail(app.frame.allocator(), "the menu bar is hidden (ui.menu_bar)", .{});
     try openIndex(app, @intFromEnum(Menu.file));
 }
 
@@ -475,6 +497,33 @@ fn cycleCmd(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+/// `view.menu_bar_pin`: the words stay wherever the pointer goes and
+/// `mode` reads `.always` for the rest of the session; again hands the
+/// bar back to `ui.menu_bar`. Nothing is persisted — the pin is a
+/// session, not an edit to the config file, the rule
+/// `sidebar_auto.togglePin` set. A bar that is already `.always` has
+/// nothing to pin, and says so rather than toggling a flag that would
+/// change nothing on screen.
+fn pinCmd(app: *App) CommandError!void {
+    return togglePin(app);
+}
+
+pub fn togglePin(app: *App) CommandError!void {
+    const s = &app.menu_bar;
+    if (s.pinned) {
+        s.pinned = false;
+        app.toast("menu bar: auto-hide on (ui.menu_bar = .{s})", .{@tagName(app.cfg.ui.menu_bar)});
+        app.needs_render = true;
+        return;
+    }
+    if (app.cfg.ui.menu_bar == .always) {
+        return app.diag.fail(app.frame.allocator(), "the menu bar is already always on (ui.menu_bar = .always)", .{});
+    }
+    s.pinned = true;
+    app.toast("menu bar pinned \u{2014} shown for this session", .{});
+    app.needs_render = true;
+}
+
 // ─── hover help ─────────────────────────────────────────────────────────
 
 const Tip = @import("discovery.zig").Tip;
@@ -487,6 +536,10 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         .detail = try std.fmt.allocPrint(arena, "click: open menu · Alt+{c}", .{std.ascii.toUpper(m.accelerator())}),
     };
     if (id == overflow_button) return .{ .title = "More menus", .detail = "click lists the menus that did not fit" };
+    if (id == @intFromEnum(render.Button.menu_bar_pin)) return .{
+        .title = if (app.menu_bar.pinned) "Menu bar pinned" else "Pin the menu bar",
+        .detail = "click keeps the words up for this session (view.menu_bar_pin) \u{b7} right-click: the bar's modes",
+    };
     if (render.Button.tabPageOf(id)) |page| return .{
         .title = try std.fmt.allocPrint(arena, "Tab page {d} of {d}{s}", .{ page + 1, app.layouts.layouts.items.len, if (page == app.layouts.active) " (active)" else "" }),
         .detail = if (page < 9) try std.fmt.allocPrint(arena, "click: switch tab page · Alt+{d}", .{page + 1}) else "click: switch tab page",
@@ -819,4 +872,138 @@ test "the » list is a dropdown: no title row, no blank row above the bottom bor
         marked = true;
     };
     try t.expect(marked);
+}
+
+// ─── the pin (menu-bar-pin) ─────────────────────────────────────────────
+
+const pin_chip = @import("../ui/pin_chip.zig");
+
+/// The pin chip's rect this frame, by the hit its paint registered —
+/// the same question the sidebar's own pin test asks, so a chip that
+/// paints without a hit fails rather than passing on the glyph alone.
+fn pinHit(app: *const App) ?Rect {
+    for (app.hits.items.items) |h| {
+        if (h.target == .button and h.target.button == @intFromEnum(render.Button.menu_bar_pin)) return h.rect;
+    }
+    return null;
+}
+
+test "the pin: ui.menu_bar reads always while pinned, the config is untouched, and unpinning gives the mode back" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.menu_bar = .auto;
+    try t.expectEqual(Config.MenuBar.auto, mode(&app));
+    // Nothing revealed it: the words are down.
+    app.hover = null;
+    try app.render();
+    try t.expect(!shown(&app, app.menu_bar.bar_y));
+    try togglePin(&app);
+    try t.expect(app.menu_bar.pinned);
+    try t.expectEqual(Config.MenuBar.always, mode(&app));
+    // The words stay with the pointer nowhere near the row.
+    try app.render();
+    try t.expect(shown(&app, app.menu_bar.bar_y));
+    // A pin is a session, not an edit: the config still says auto.
+    try t.expectEqual(Config.MenuBar.auto, app.cfg.ui.menu_bar);
+    try togglePin(&app);
+    try t.expect(!app.menu_bar.pinned);
+    try t.expectEqual(Config.MenuBar.auto, mode(&app));
+    try app.render();
+    try t.expect(!shown(&app, app.menu_bar.bar_y));
+    // Already always on: refused out loud rather than flipping a flag
+    // that would change nothing on screen.
+    app.cfg.ui.menu_bar = .always;
+    try t.expectError(error.Failed, togglePin(&app));
+    try t.expect(!app.menu_bar.pinned);
+    // Pinned under `.hidden`, the words come up — that is the only
+    // thing a pin can mean there, and it is how they go away again.
+    app.cfg.ui.menu_bar = .hidden;
+    try app.render();
+    try t.expect(!shown(&app, app.menu_bar.bar_y));
+    try togglePin(&app);
+    try app.render();
+    try t.expect(shown(&app, app.menu_bar.bar_y));
+}
+
+test "the pin chip paints under auto — revealed or pinned — and never under always, where there is nothing to pin" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const screen = @import("../ipc/screen.zig");
+    app.tree.visible = false;
+
+    // `.always`, as mnml ships: the words are up and there is no chip.
+    try app.render();
+    try t.expect(!pinShown(&app, app.menu_bar.bar_y));
+    try t.expect(pinHit(&app) == null);
+    const always = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(always);
+    try t.expect(std.mem.indexOf(u8, always, pin_chip.pin_glyph) == null);
+
+    // `.auto` with the pointer away: no words, so no chip either.
+    app.cfg.ui.menu_bar = .auto;
+    app.hover = null;
+    try app.render();
+    try t.expect(!pinShown(&app, app.menu_bar.bar_y));
+    try t.expect(pinHit(&app) == null);
+
+    // Revealed: the chip is there, past the words, and it is a hit.
+    app.hover = .{ .x = 5, .y = 0 };
+    try app.render();
+    try t.expect(pinShown(&app, app.menu_bar.bar_y));
+    const chip = pinHit(&app) orelse return error.NoPinChip;
+    try t.expectEqual(@as(u16, pin_chip.width), chip.w);
+    try t.expectEqual(app.menu_bar.bar_y, chip.y);
+    try t.expect(chip.x >= app.menu_bar.words_end);
+    const revealed = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(revealed);
+    try t.expect(std.mem.indexOf(u8, revealed, pin_chip.pin_glyph) != null);
+
+    // A click on it pins, and the chip survives the pointer leaving —
+    // which is the whole point of the pin.
+    try app.handle(.{ .mouse = .{ .x = chip.x + 1, .y = chip.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = chip.x + 1, .y = chip.y, .kind = .release, .button = .left } });
+    try t.expect(app.menu_bar.pinned);
+    app.hover = null;
+    try app.render();
+    try t.expect(pinHit(&app) != null);
+    const pinned = try screen.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(pinned);
+    try t.expect(std.mem.indexOf(u8, pinned, pin_chip.pin_glyph) != null);
+
+    // Back to `.always` with the pin on: the bar cannot hide, so the
+    // chip goes even though `pinned` is still set.
+    app.cfg.ui.menu_bar = .always;
+    try app.render();
+    try t.expect(!pinShown(&app, app.menu_bar.bar_y));
+    try t.expect(pinHit(&app) == null);
+}
+
+test "the pin chip's menus: the bar's word menu grows a pin row, and the chip's own right press is the pin and the mode" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const context_menus = @import("context_menus.zig");
+    app.cfg.ui.menu_bar = .auto;
+    app.hover = .{ .x = 5, .y = 0 };
+    try app.render();
+    const chip = pinHit(&app) orelse return error.NoPinChip;
+    try t.expect(try context_menus.openButtonMenu(&app, @intFromEnum(render.Button.menu_bar_pin), chip.x, chip.y));
+    try t.expectEqualStrings("Menu bar", app.overlay.menu.title);
+    try t.expectEqualStrings("Pin menu bar", app.overlay.menu.items[0].label);
+    try t.expectEqual(command.CommandId.@"view.menu_bar_pin", app.overlay.menu.items[0].action.command);
+    try t.expectEqualStrings("Menu bar: auto \u{2192} hidden", app.overlay.menu.items[1].label);
+    // Run the row: the bar is pinned and the row now reads the way out.
+    try command.run(&app, .{ .static = app.overlay.menu.items[0].action.command });
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try t.expect(app.menu_bar.pinned);
+    try app.render();
+    try t.expect(try context_menus.openButtonMenu(&app, @intFromEnum(render.Button.menu_bar_pin), chip.x, chip.y));
+    try t.expectEqualStrings("Unpin menu bar", app.overlay.menu.items[0].label);
+    try t.expect(app.overlay.menu.items[0].checked);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // A word's own right-click menu carries the same row after Open.
+    try t.expect(try context_menus.openButtonMenu(&app, button_base + @intFromEnum(Menu.file), 12, 0));
+    try t.expectEqualStrings("Open", app.overlay.menu.items[0].label);
+    try t.expectEqualStrings("Unpin menu bar", app.overlay.menu.items[1].label);
 }
