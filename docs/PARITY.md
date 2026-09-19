@@ -881,6 +881,9 @@ server and prints the rows that differ per screen, by content.
 | The key sheet (`?`) | done | the built-in sections' shape from the bindings that apply |
 | Auto-refresh every `refresh_interval_secs`; the cursor keeps its ticket; an action's message survives the refetch | done | `App.tick` from the inbox loop's timed wait |
 | The first frame before the first fetch | done — beyond the reference | the reference waits on the whole fetch (note 6) |
+| The header's caps title, its chip ladder and its `?` | done | `Painter.capsTitle` + `Painter.rightChips` since the 2026-09-19 backfill. The title was painted in the ACCENT here and muted on the forge pane, so the same header was two colours depending on which integration you were looking at; the ladder's geometry was a second copy of the toolkit's |
+| The list's scrollbar when the rows outrun the body | done | added 2026-09-19 — the forge pane has always had one and this pane had none, so forty-three issues in a thirty-row body said nothing about where in them you were. `Layout.list_bar` reserves the column before the header row is laid out; a press or a drag is `sdk.pane.scrollAt`, as the detail panel's |
+| `⋯  Show more (N)` as one phrase | done | 2026-09-19: the toolkit used to pin the ellipsis to the row's left edge and paint its words in the summary column, forty cells away |
 | Click targets | done — beyond the reference | rows, chevrons, show-all rows, PR chips, action buttons, tabs, chips, avatars, cards, card chevrons, columns, picker rows, the modal's `×`, the JQL text — registered in the same statement they paint (`src/hit.zig`); the reference's are rows at fixed offsets (note 10) |
 | The dispatch queue: `queue.jsonl` + the `term` line, the prompts per kind, the buttons by type and status | done | `src/dispatch.zig`; kanban buttons click (note 9) |
 | The statusline segment `󰌃 N` | done | the manifest's `jira_work.assigned` slot, replaced live over Tier-2 IPC after every refresh and by `--values --workspace`; the exact IPC line is under test |
@@ -955,7 +958,8 @@ both trees, and a row is `done` only when a Zig file names it.
 | `o` open on the web, `y` copy the URL, per row kind | done | `app.zig` `focusedUrl`, `src/os.zig` | |
 | The detail (`d`): state · branches, author · updated, the approval line, title, description, comments most-recent first; `ctrl+u`/`ctrl+d`; follows the cursor | done | `fetch.zig` `detail`, `view.zig` `detailLines`, `src/screen.zig` `paintDetail` | beside the list at 100 columns, over it below |
 | Approve / withdraw (`a`, detail open) | done | `api.zig` `approve` / `unapprove`, `app.zig` `toggleApproval` | the one write; `BITBUCKET_ACCESS_TOKEN` is used for it when set, else the read token as the reference |
-| Tabs: `m` open↔merged, `tab` `backtab` `1`–`9`, the Author chip (mine ↔ all), the refresh chip | done | `app.zig` `switchTab` / `toggleMineOnly`, `screen.zig` `paintHeader` | the reference's `Status` chip is the strip / `m` |
+| Tabs: `m` open↔merged, `tab` `backtab` `1`–`9`, the Author chip (mine ↔ all), the refresh chip | done | `app.zig` `switchTab` / `toggleMineOnly`, `screen.zig` `paintHeader` | the reference's `Status` chip is the strip / `m`. Since the 2026-09-19 backfill the header is `Painter.capsTitle` + `Painter.rightChips`: the ladder is laid once for both families and the refresh chip wears `Theme.chip()` like every other chip (it was bare accent ink here) |
+| The header's `?` chip | done | `screen.zig` `paintHeader`, `hit.zig` `Chip.help` | added 2026-09-19 — the tracker pane has always had one and this pane had none, so the sheet's only door was the hint row's `? keys`, which is the first entry a narrow pane drops |
 | The pipelines pages: run pipeline / schedules / caches / usage | done | `app.zig` `openPipelinesPage` | header chips, as the reference's toolbar |
 | `r` refresh, auto-refresh every `refresh_interval_secs` | done | `app.zig` `refreshActive` / `tick`, `main.zig` `tickerThread` | a real clock: the ticker wakes the loop every second |
 | Progress while a fetch runs | done | `fetch.zig` `Progress`, `screen.zig` `paintHeader` | new: the reference freezes for the minutes a prefetch takes |
@@ -966,6 +970,8 @@ both trees, and a row is `done` only when a Zig file names it.
 | The statusline chip `󰂨 N(K)` (`!` on failure), the INTEGRATIONS badge | done | `main.zig` `publishSegment`, `app.zig` `commit(.values)` | over Tier-2 from the pane every 300 s and from `--refresh`; the reference had the Rust mnml poll `--values` |
 | The key sheet (`?`) and the hint row, generated from the one keymap table | done | `src/keymap.zig`, `view.zig` `hints`, `screen.zig` `paintSheet` | the reference's footer was hand-written and had no sheet |
 | Every row / tab / chip / hint word a hit target sized to its cells | done | `src/hit.zig`, `screen.zig` | tests click through the map |
+| The list's scrollbar when the rows outrun the body | done | `screen.zig` `paintList`, `sdk.pane.Painter.scrollbar` | the tracker pane gained one in the same backfill; both are guarded by `sdk.pane.expect.listScrollbar` |
+| `⋯  Show more (N)` as one phrase | done | `screen.zig` `paintList`, `view.zig` `lastColumnX`, `sdk.pane.Painter.showMoreRow` | 2026-09-19: the row left this pane's table renderer for the toolkit's, so the ellipsis sits beside its own words on both panes |
 | A `/` filter | done | `app.zig` `filterKey` | new — the reference's Search chip is a dead placeholder (listed for the user's decision) |
 | A right-click row menu | done | `app.zig` `menuFor`, `screen.zig` `paintMenu` | new (listed for the user's decision) |
 | The four placeholder chips (`Target branch`, `Branch`, `Pipeline type`, `Trigger type`) | cut | — | they do nothing in the reference (`filter not wired yet`); listed for the user's decision |
@@ -973,5 +979,5 @@ both trees, and a row is `done` only when a Zig file names it.
 | The reference's `Status` chip | folded | — | the tab strip and `m` |
 | Merge / decline / request changes / comment / checkout | absent by design | — | the reference has none of them |
 
-Counts: 27 `done`, 2 `cut`, 1 folded — none of the `done` rows is a
+Counts: 30 `done`, 2 `cut`, 1 folded — none of the `done` rows is a
 write the reference lacks.

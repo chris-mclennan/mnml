@@ -175,7 +175,7 @@ and its right-to-left chip ladder, the tab strip, the filter pill, the
 app-colour left gutter, the row ground (one row, or two for a row with
 a sub-line), the `Show more (N)` fold row, a detail panel with its `×`
 and a scrollbar, and a hint row where every `key label` is a click
-target. It also owns the two elements a pull-request row hangs off: the
+target. The full list is the table below. It also owns the two elements a pull-request row hangs off: the
 build lines under it and the action button on it, below. The hit map is generic over your own target union, so you keep
 your vocabulary and share the bookkeeping.
 
@@ -215,6 +215,61 @@ Two rules:
 from two different target vocabularies and compares the frames cell for
 cell — the test that notices when a change moves one pane and not the
 other.
+
+### The design language, in full
+
+The toolkit is the list. A pane that paints all of it belongs beside
+the ones that shipped before it; one that paints most of it is the one
+the next backfill has to come back for.
+
+| element | the toolkit's |
+|---|---|
+| Host palette roles, never ANSI indices | `Theme.fromHelloBranded` |
+| The app-colour left gutter, full height | `Painter.gutter` |
+| The caps header's title and count | `Painter.capsTitle` |
+| The right-to-left chip ladder, ending in the refresh chip then `?` | `Painter.rightChips`, `Painter.refreshChipText`, `chrome.help_chip_text` |
+| `as of 4m ago` after the count | `Painter.asOf` |
+| The tab strip and its indicator | `Painter.tabStrip` |
+| The filter pill — glyph, placeholder, caret | `Painter.filterPill` |
+| A row's ground, its stripe and its hit, in one statement | `Painter.rowGround` |
+| The cursor row's band | `Theme.cursorLine` |
+| The list's scrollbar when the rows outrun the body | `Painter.scrollbar` + `pane.scrollAt` |
+| `⋯  Show more (N)`, one phrase, the words bright | `Painter.showMoreRow` |
+| The detail panel's `×` and its own scrollbar | `Painter.detailPanel`, `Painter.scrollbar` |
+| A build line under a pull request, and the line where one would be | `Painter.buildRow`, `Painter.buildNote` |
+| An action button: the word in its role colour, the brackets muted | `Painter.actionChip`, `pane.action.chipOf` |
+| What a press left on a button — spinner, `⏸`, `[ view ]`, `✗` | `pane.action.caption` |
+| Whether a pull request may merge, and why not | `pane.merge` |
+| A named confirm | `Painter.confirmBox` |
+| The hint row, every `key label` a hit | `Painter.hintRow` |
+| State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
+| A chevron that folds under the mouse | `Painter.chevron` |
+
+Keys and chrome that are not the toolkit's but ARE the family's: `r`
+refreshes and `R` refreshes past every cache; `?` opens the key sheet;
+the statusline segment carries the pane's figure and a hover that
+breaks it down; the tab wears the manifest's chip glyph.
+
+### Proving your pane CALLS the toolkit
+
+`consistency_test.zig` proves the toolkit is consistent with itself. It
+cannot prove your pane uses it — and that is the drift that actually
+happens. Point `sdk.pane.expect` at your own painted frame from your
+own tests:
+
+```zig
+try sdk.pane.expect.capsTitleInk(&frame, theme, 1, 0, "SAMPLE");
+try sdk.pane.expect.headerLadderTail(&frame, theme, 0, nerd, ascii);
+try sdk.pane.expect.listScrollbar(&frame, frame.cols - 1, 0, frame.rows);
+try sdk.pane.expect.foldRow(&frame, theme, fold_y, ascii);
+```
+
+Both official integrations call these, which is the point: one
+expectation, checked from two packages, rather than two suites each
+checking whatever they happened to be written against. The 2026-09-19
+audit (`docs/research/pane-drift-audit-2026-09-19.md`) found seven
+elements that had come apart precisely where no shared assertion
+existed.
 
 ### Build lines under a pull-request row
 
