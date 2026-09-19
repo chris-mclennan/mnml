@@ -261,7 +261,9 @@ test "seeding copies the setup, never a token, never a cache, and never twice" {
     try t.expect(try isEmpty(t.io, into, t.allocator));
     const r = try seed(t.allocator, t.io, from, into, false);
     try t.expectEqual(Outcome.seeded, r.outcome);
-    try t.expectEqual(@as(usize, 5), r.copied);
+    // config.zon, integration-settings.zon, the manifest, the jira
+    // config, the theme, the launcher — and nothing else in the tree.
+    try t.expectEqual(@as(usize, 6), r.copied);
 
     try t.expect(f.has("dev/config.zon"));
     try t.expect(f.has("dev/integration-settings.zon"));

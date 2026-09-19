@@ -683,8 +683,10 @@ test "file counts: a file is added, changed or removed once, by its staged side;
 test "SegId.of covers the app's ids and nothing else" {
     try testing.expectEqual(SegId.branch, SegId.of(sl.seg_app_base).?);
     try testing.expectEqual(SegId.workspace, SegId.of(SegId.workspace.raw()).?);
+    try testing.expectEqual(SegId.dev_profile, SegId.of(SegId.dev_profile.raw()).?);
     try testing.expect(SegId.of(sl.seg_mode) == null);
-    try testing.expect(SegId.of(SegId.workspace.raw() + 1) == null);
+    // `dev_profile` is the last one; one past it is nobody's.
+    try testing.expect(SegId.of(SegId.dev_profile.raw() + 1) == null);
     try testing.expect(SegId.of(sl.seg_dyn_base) == null);
 }
 

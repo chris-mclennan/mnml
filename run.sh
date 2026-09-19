@@ -486,6 +486,7 @@ case "${1:-start}" in
         "test — zig build test"
         "check — the verification sequence"
         "status — the running instance"
+        "install — install this build as the mnml you live in"
         "quit"
     )
     select choice in "${options[@]}"; do
@@ -498,7 +499,8 @@ case "${1:-start}" in
             6) exec "$0" test ;;
             7) exec "$0" check ;;
             8) exec "$0" status ;;
-            9) echo "bye"; exit 0 ;;
+            9) exec "$0" install ;;
+            10) echo "bye"; exit 0 ;;
             *) printf '  %sunknown choice %q — try again%s\n' "$GREY" "$REPLY" "$RST" ;;
         esac
     done
