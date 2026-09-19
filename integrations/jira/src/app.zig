@@ -51,6 +51,17 @@ pub const TabState = struct {
     /// A row index on a tree tab, an issue index otherwise.
     selected: usize = 0,
     fetched: bool = false,
+    /// Unix seconds the rows on screen last came back — what the
+    /// header's `as of 4m ago` reads, and what a delta window is
+    /// measured from.
+    fetched_at: i64 = 0,
+    /// A delta refetch cannot swap the tab's arena: the rows it did
+    /// NOT return are still on the old one. So each one keeps its
+    /// arena here and the merged `issues` slice points into all of
+    /// them; a full refetch frees the lot. Capped at
+    /// `max_delta_generations`, past which a refetch is full whatever
+    /// was asked for — an unbounded chain is a leak with a nicer name.
+    deltas: std.ArrayListUnmanaged(std.heap.ArenaAllocator) = .empty,
     last_error: []const u8 = "",
     tree: ?tree.State = null,
     sprints: ?[]const model.Sprint = null,
@@ -69,6 +80,13 @@ pub const TabState = struct {
     label: []const u8,
     board_id: u64,
     scroll: usize = 0,
+
+    /// Free every delta generation. The base arena is untouched: this
+    /// is what a full refetch does before it swaps that one out.
+    pub fn dropDeltas(t: *TabState) void {
+        for (t.deltas.items) |*d| d.deinit();
+        t.deltas.clearRetainingCapacity();
+    }
 
     pub fn shape(t: *const TabState) keymap.TabShape {
         if (t.cfg.isKanban()) return .kanban;
@@ -102,6 +120,24 @@ pub const TabState = struct {
 /// Everything a refetch needs, and nothing the loop can change under it
 /// while it runs. The client is a copy: it holds no per-call state, and
 /// its limiter is the cross-process bucket, which is built to be shared.
+/// How many delta refetches may stack on one full one before the next
+/// is forced to be full. Each keeps its own arena, so this is the
+/// ceiling on how much a tab that is only ever delta-refreshed can
+/// hold — and a full refetch is also the only thing that notices a
+/// ticket which has dropped OUT of the query, so it is worth making
+/// sure one happens.
+pub const max_delta_generations: usize = 8;
+
+/// What a refetch is allowed to be.
+pub const RefreshMode = enum {
+    /// A delta where one is possible, a full listing otherwise. What
+    /// `r`, the interval and a tab switch all ask for.
+    delta,
+    /// The whole listing, whatever is cached. What `R` asks for, and
+    /// what anything that changed the QUERY has to ask for.
+    full,
+};
+
 pub const RefreshJob = struct {
     idx: usize,
     client: jira.Client,
@@ -112,6 +148,10 @@ pub const RefreshJob = struct {
     extra_jql: ?[]const u8,
     extra_fields: []const []const u8,
     team_field_id: []const u8,
+    /// `-15m` when this is a delta window since the last successful
+    /// sync, empty when the whole listing is being asked for. Already
+    /// spliced into `jql`; kept so the result can say which it was.
+    delta_since: []const u8 = "",
     /// What the request log calls this fetch — the first load of a tab
     /// and a refetch of one cost the same requests and mean different
     /// things when the log is read back.
@@ -129,6 +169,9 @@ pub const RefreshResult = struct {
     idx: usize,
     arena: std.heap.ArenaAllocator,
     issues: []const Issue = &.{},
+    /// This was a window, not the whole listing: `issues` is what
+    /// MOVED, and what did not is still on the tab.
+    delta: bool = false,
     /// Empty when the search answered.
     error_text: []const u8 = "",
 
@@ -255,6 +298,10 @@ pub const App = struct {
     /// stamp (`mnml_sdk.store`). A ticket that has not moved costs no
     /// request at all, this run or any later one. Null in a test.
     pr_store: ?*sdk.Store = null,
+    /// When each tab's listing last came back WHOLE, kept between
+    /// runs so a delta window survives a restart. The entry's own
+    /// `fetched_at` is the mark (`sdk.warm.SyncMarks`).
+    sync_store: ?*sdk.Store = null,
     /// What every row's action button says now, keyed by the ticket or
     /// the PR rather than the row, so a refetch that moves the row keeps
     /// what was pressed on it.
@@ -388,6 +435,35 @@ pub const App = struct {
         a.pr_store = st;
     }
 
+    /// Where each tab's last WHOLE listing is dated. Without it every
+    /// refetch is a full one, which is the old behaviour and not
+    /// wrong — only dearer.
+    pub fn setSyncStore(a: *App, st: *sdk.Store) void {
+        a.sync_store = st;
+    }
+
+    /// The window a delta refetch of `t` should ask for, or null when
+    /// it must ask for everything: nothing synced yet, no store, or
+    /// the chain of generations is as long as it may get.
+    fn deltaWindow(a: *App, arena: Allocator, t: *const TabState) Allocator.Error!?[]const u8 {
+        if (!t.fetched or t.issues.len == 0) return null;
+        if (t.deltas.items.len >= max_delta_generations) return null;
+        const store = a.sync_store orelse return null;
+        const marks: sdk.warm.SyncMarks = .{ .store = store };
+        var buf: [32]u8 = undefined;
+        const since = marks.jiraSince(&buf, t.cfg.name, a.nowSecs()) orelse return null;
+        return try arena.dupe(u8, since);
+    }
+
+    /// Say a tab's listing came back whole, so the next delta has a
+    /// window to measure from.
+    fn markSynced(a: *App, t: *const TabState, at: i64) void {
+        const store = a.sync_store orelse return;
+        const marks: sdk.warm.SyncMarks = .{ .store = store };
+        marks.mark(t.cfg.name, at) catch return;
+        store.save();
+    }
+
     /// The config file a vars edit is written back into.
     pub fn setConfigPath(a: *App, path: []const u8) void {
         a.cfg_path = path;
@@ -395,6 +471,8 @@ pub const App = struct {
 
     pub fn deinit(a: *App) void {
         for (a.tabs) |*t| {
+            t.dropDeltas();
+            t.deltas.deinit(a.gpa);
             t.data.deinit();
             t.meta.deinit();
             if (t.tree) |*tr| tr.deinit();
@@ -611,8 +689,14 @@ pub const App = struct {
     }
 
     pub fn refreshActive(a: *App) Allocator.Error!void {
+        try a.refreshActiveMode(.delta);
+    }
+
+    /// The active tab, as a delta where one is possible (`r`, the
+    /// interval) or as the whole listing (`R`).
+    pub fn refreshActiveMode(a: *App, mode: RefreshMode) Allocator.Error!void {
         if (!a.hasTabs()) return;
-        try a.refreshTab(a.active);
+        try a.refreshTabMode(a.active, mode);
         a.last_refresh_ms = a.nowMs();
     }
 
@@ -620,7 +704,11 @@ pub const App = struct {
     /// this returns at once — the pane keeps its old rows, its keys and
     /// its repaint while the site is asked. Without one it runs inline.
     pub fn refreshTab(a: *App, idx: usize) Allocator.Error!void {
-        var job = (try a.prepareRefresh(idx)) orelse return;
+        try a.refreshTabMode(idx, .delta);
+    }
+
+    pub fn refreshTabMode(a: *App, idx: usize, mode: RefreshMode) Allocator.Error!void {
+        var job = (try a.prepareRefresh(idx, mode)) orelse return;
         if (a.group) |g| {
             if (!a.refresh.claim()) {
                 // One is already in flight; a second would only race it.
@@ -645,7 +733,7 @@ pub const App = struct {
     /// What a refetch needs, read off the tab before anything can move:
     /// the identity to search as, the query, and where the cursor is.
     /// Null when the tab cannot be searched at all.
-    fn prepareRefresh(a: *App, idx: usize) Allocator.Error!?RefreshJob {
+    fn prepareRefresh(a: *App, idx: usize, mode: RefreshMode) Allocator.Error!?RefreshJob {
         const t = &a.tabs[idx];
         try a.ensureMe();
         // The reference seeds the assignee filter with "me" once; on its
@@ -679,6 +767,16 @@ pub const App = struct {
         };
         errdefer job.deinit();
         const arena = job.arena.allocator();
+        // A board tab is fetched through the agile endpoint, whose
+        // query is a list of clauses rather than one JQL string — the
+        // window would have to be spliced somewhere else, so it is not
+        // offered there rather than offered and silently ignored.
+        if (mode == .delta and t.board_id == 0) {
+            if (try a.deltaWindow(arena, t)) |since| {
+                job.delta_since = since;
+                job.reason = .delta;
+            }
+        }
         // On the job's arena, not a temporary: the job outlives this
         // frame the moment it goes to a worker.
         if (a.cfg.team_field_id.len > 0) {
@@ -697,7 +795,8 @@ pub const App = struct {
             };
             if (clauses.items.len > 0) job.extra_jql = try std.mem.join(arena, " AND ", clauses.items);
         } else {
-            job.jql = try arena.dupe(u8, try a.teamClause(arena, t.jql, t.team));
+            const base = try a.teamClause(arena, t.jql, t.team);
+            job.jql = try arena.dupe(u8, try jira.withUpdatedSince(arena, base, job.delta_since));
         }
         return job;
     }
@@ -737,7 +836,7 @@ pub const App = struct {
                 // of `loading…` this pane was reported for. They are
                 // seeded from the cache and queued behind the paint
                 // instead (`applyRefresh`, `pumpPrs`).
-                return .{ .idx = job.idx, .arena = arena, .issues = issues };
+                return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = job.delta_since.len > 0 };
             },
         }
     }
@@ -908,6 +1007,36 @@ pub const App = struct {
         }
     }
 
+    /// The rows a delta leaves on screen: everything the tab already
+    /// had, with the ones that moved replaced in place, and the ones
+    /// that are new appended. Order is the old order — a window says
+    /// nothing about where a new ticket belongs in the server's sort,
+    /// and re-sorting on a guess is worse than the next full refetch
+    /// putting it right.
+    ///
+    /// The slice is built on `arena` (the delta generation's own);
+    /// every string in it still lives on whichever arena it came from,
+    /// which is why those are kept until a full refetch.
+    fn mergeDelta(arena: Allocator, old: []const Issue, moved: []const Issue) Allocator.Error![]const Issue {
+        var out: std.ArrayListUnmanaged(Issue) = .empty;
+        try out.ensureTotalCapacity(arena, old.len + moved.len);
+        for (old) |o| {
+            var replaced = o;
+            for (moved) |m| {
+                if (m.key.len > 0 and std.mem.eql(u8, m.key, o.key)) replaced = m;
+            }
+            out.appendAssumeCapacity(replaced);
+        }
+        for (moved) |m| {
+            var seen = false;
+            for (old) |o| {
+                if (m.key.len > 0 and std.mem.eql(u8, m.key, o.key)) seen = true;
+            }
+            if (!seen) out.appendAssumeCapacity(m);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// Take a finished refetch, if one has landed, and apply it.
     pub fn drainRefresh(a: *App) Allocator.Error!void {
         var res = a.refresh.take(a.io) orelse return;
@@ -929,10 +1058,23 @@ pub const App = struct {
             res.drop();
             return;
         }
-        t.issues = res.issues;
-        t.data.deinit();
-        t.data = res.arena;
+        if (res.delta and t.fetched) {
+            // A window: what came back is what MOVED, and the rest is
+            // still on the arenas already held. Merge by key onto the
+            // new arena and keep the old ones alive under it.
+            t.issues = try mergeDelta(res.arena.allocator(), t.issues, res.issues);
+            try t.deltas.append(a.gpa, res.arena);
+        } else {
+            t.issues = res.issues;
+            t.dropDeltas();
+            t.data.deinit();
+            t.data = res.arena;
+            // Only a whole listing dates the tab: a window says nothing
+            // about the rows it did not ask about.
+            a.markSynced(t, a.nowSecs());
+        }
         t.fetched = true;
+        t.fetched_at = a.nowSecs();
         t.last_error = "";
         // An action's message outlives the refetch it triggers;
         // an empty status gets the tab's summary.
@@ -2816,13 +2958,17 @@ pub const App = struct {
                     try a.toggleDetails();
                 } else a.quit = true;
             },
-            .refresh => {
+            .refresh, .refresh_full => {
                 if (a.details_visible) {
                     var scratch = std.heap.ArenaAllocator.init(a.gpa);
                     defer scratch.deinit();
                     if (try a.focusedKey(scratch.allocator())) |k| a.invalidateDetail(k);
                 }
-                try a.refreshActive();
+                // `r` asks only about what has moved since the last
+                // whole listing; `R` asks for the listing again, which
+                // is also the only thing that notices a ticket that
+                // has dropped out of the query.
+                try a.refreshActiveMode(if (action == .refresh_full) .full else .delta);
                 if (a.details_visible) try a.ensureFocusedDetail();
             },
             .up => try a.move(-1),
@@ -4167,5 +4313,103 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
         try h.app.ensureLoaded();
         // /myself, the search, and ENG-2's dev-status — only ENG-2's.
         try testing.expectEqual(@as(usize, 3), h.store.requests - before);
+    }
+}
+
+test "`r` asks only about what has moved since the last whole listing; `R` asks for the listing again" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const sync_path = try std.fs.path.join(testing.allocator, &.{ dir, "sync.json" });
+    defer testing.allocator.free(sync_path);
+
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    var sync = try sdk.Store.openAt(testing.allocator, testing.io, sync_path);
+    defer sync.deinit();
+    a.setSyncStore(&sync);
+
+    // The first load is the whole listing — there is no window to ask
+    // for yet — and it dates the tab.
+    try a.ensureLoaded();
+    const all = a.tab().issues.len;
+    try testing.expect(all > 0);
+    try testing.expect(a.tab().fetched_at > 0);
+    try testing.expectEqual(@as(usize, 0), a.tab().deltas.items.len);
+
+    // Nothing has moved. `r` is a window, it comes back empty, and the
+    // rows on screen are the rows that were on screen.
+    var before = h.store.requests;
+    _ = try a.onKey("r");
+    try testing.expectEqual(@as(usize, 1), h.store.requests - before);
+    try testing.expectEqual(all, a.tab().issues.len);
+    try testing.expectEqual(@as(usize, 1), a.tab().deltas.items.len);
+
+    // Move two tickets behind the pane's back, the way a colleague
+    // would. The window now names exactly those two, and they are
+    // merged into the rows rather than replacing them.
+    h.store.issues.items[0].moved = true;
+    h.store.issues.items[0].status = "Done";
+    h.store.issues.items[1].moved = true;
+    before = h.store.requests;
+    _ = try a.onKey("r");
+    try testing.expectEqual(@as(usize, 1), h.store.requests - before);
+    try testing.expectEqual(all, a.tab().issues.len);
+    try testing.expectEqual(@as(usize, 2), a.tab().deltas.items.len);
+    var done: usize = 0;
+    for (a.tab().issues) |iss| {
+        if (std.mem.eql(u8, iss.key, h.store.issues.items[0].key)) {
+            try testing.expectEqualStrings("Done", iss.status);
+            done += 1;
+        }
+    }
+    // Merged in place: one row, not a duplicate beside the old one.
+    try testing.expectEqual(@as(usize, 1), done);
+
+    // `R` throws the generations away and asks for the listing again.
+    before = h.store.requests;
+    _ = try a.onKey("shift+r");
+    try testing.expectEqual(@as(usize, 1), h.store.requests - before);
+    try testing.expectEqual(@as(usize, 0), a.tab().deltas.items.len);
+}
+
+test "a delta window survives a restart, and the chain of them is bounded" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const sync_path = try std.fs.path.join(testing.allocator, &.{ dir, "sync.json" });
+    defer testing.allocator.free(sync_path);
+
+    {
+        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        defer h.stop();
+        var sync = try sdk.Store.openAt(testing.allocator, testing.io, sync_path);
+        defer sync.deinit();
+        h.app.setSyncStore(&sync);
+        try h.app.ensureLoaded();
+        // A whole listing dates the tab on disk, not only in memory.
+        try testing.expect(sync.stale("Assigned").?.fetched_at > 0);
+    }
+    {
+        // A second run reads that mark back, so its FIRST refetch is a
+        // window rather than the whole listing again.
+        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        defer h.stop();
+        var sync = try sdk.Store.openAt(testing.allocator, testing.io, sync_path);
+        defer sync.deinit();
+        h.app.setSyncStore(&sync);
+        try h.app.ensureLoaded();
+        const all = h.app.tab().issues.len;
+        // A chain of windows is bounded: past `max_delta_generations`
+        // the next one is full whatever was asked for, so a tab that is
+        // only ever delta-refreshed does not grow without end — and
+        // something eventually notices a ticket that dropped OUT.
+        var i: usize = 0;
+        while (i < max_delta_generations + 2) : (i += 1) _ = try h.app.onKey("r");
+        try testing.expect(h.app.tab().deltas.items.len <= max_delta_generations);
+        try testing.expectEqual(all, h.app.tab().issues.len);
     }
 }

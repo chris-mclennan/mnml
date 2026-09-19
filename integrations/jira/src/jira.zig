@@ -89,6 +89,10 @@ pub const Client = struct {
     /// Where a wait long enough for a person to notice is left for the
     /// paint loop to say something about.
     notice: ?*ratelimit.Notice = null,
+    /// The pacer for this service, shared by every copy of the client
+    /// (a job takes one by value). Null leaves requests unpaced, which
+    /// is what a test that counts requests wants.
+    gate: ?*sdk.warm.Gate = null,
     user_agent: []const u8 = "mnml-jira",
 
     pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
@@ -119,6 +123,18 @@ pub const Client = struct {
         // The bucket's own draw line carries the reason too, so the
         // machine-wide file says not just which program spent the
         // budget but on what.
+        // Spacing, before the bucket: a burst of warm work spread one
+        // per gap never drains what an interactive request needs a
+        // moment later. A reader waits for nothing (`Gate.hold`) — the
+        // reservation still moves the slot, so background work steps
+        // behind them.
+        if (c.gate) |g| {
+            const prio = sdk.warm.priorityOf(reason);
+            if (prio == .interactive) g.enter();
+            const hold_ms = g.hold(prio, Io.Timestamp.now(c.io, .real).toMilliseconds());
+            if (hold_ms > 0) c.io.sleep(.fromMilliseconds(@intCast(hold_ms)), .awake) catch {};
+            if (prio == .interactive) g.leave();
+        }
         const gate: ratelimit.Acquired = if (c.limiter) |l| blk: {
             l.reason = @tagName(reason);
             break :blk l.acquireDetailed();
@@ -312,6 +328,19 @@ pub fn withTeam(arena: Allocator, jql: []const u8, team: []const u8, field_name:
 
 /// `project in (A, B) AND (<where>) <order>` — the statusline count's
 /// scoping. An empty list leaves the JQL alone.
+/// `(<where>) AND updated >= -15m <ORDER BY …>` — the delta window, in
+/// the one place the ORDER BY surgery is already done. Jira rejects
+/// `(<where> ORDER BY x) AND <extra>`, which is why this cannot be a
+/// `std.fmt.allocPrint` at the call site.
+///
+/// An empty `since` is no window: the caller wanted the whole listing.
+pub fn withUpdatedSince(arena: Allocator, jql: []const u8, since: []const u8) Allocator.Error![]const u8 {
+    if (since.len == 0 or jql.len == 0) return jql;
+    const parts = splitOrderBy(jql);
+    if (parts.order.len == 0) return std.fmt.allocPrint(arena, "({s}) AND updated >= {s}", .{ parts.where, since });
+    return std.fmt.allocPrint(arena, "({s}) AND updated >= {s} {s}", .{ parts.where, since, parts.order });
+}
+
 pub fn withProjects(arena: Allocator, jql: []const u8, projects: []const []const u8) Allocator.Error![]const u8 {
     if (projects.len == 0) return jql;
     const parts = splitOrderBy(jql);
@@ -1218,4 +1247,28 @@ test "a refusal comes back as Jira's own sentence, and a 429 parks the shared bu
     store.fail_with = null;
     try lb.finish(&c, arena);
     try group.await(io);
+}
+
+test "a delta window wraps the where and keeps the ORDER BY, and an empty window is the whole listing" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings(
+        "(assignee = currentUser() AND resolution = Unresolved) AND updated >= -7m ORDER BY updated DESC",
+        try withUpdatedSince(a, "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC", "-7m"),
+    );
+    // No ORDER BY to keep.
+    try testing.expectEqualStrings(
+        "(project = ENG) AND updated >= -30m",
+        try withUpdatedSince(a, "project = ENG", "-30m"),
+    );
+    // No window is the query untouched — a caller that has never
+    // synced asks for everything.
+    try testing.expectEqualStrings("project = ENG", try withUpdatedSince(a, "project = ENG", ""));
+    try testing.expectEqualStrings("", try withUpdatedSince(a, "", "-5m"));
+    // An `order by` inside a quoted value is not the ORDER BY.
+    try testing.expectEqualStrings(
+        "(summary ~ \"order by rank\") AND updated >= -5m ORDER BY rank",
+        try withUpdatedSince(a, "summary ~ \"order by rank\" ORDER BY rank", "-5m"),
+    );
 }

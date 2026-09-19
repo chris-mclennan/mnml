@@ -105,6 +105,18 @@ pub const Issue = struct {
     comments: std.ArrayList([]const u8) = .empty,
     /// Account ids.
     watchers: std.ArrayList([]const u8) = .empty,
+    /// Has this ticket moved since the server started?
+    ///
+    /// The fixture's stamps are fixed strings, so "moved recently"
+    /// cannot be arithmetic on them without making the fixture depend
+    /// on today's date. It is a flag instead: false for everything
+    /// the fixture loads, true for anything this run has
+    /// transitioned, commented on, assigned, re-versioned or watched.
+    /// An `updated >= -<window>` query matches exactly the tickets
+    /// with it set — which is what a delta poll is FOR, and makes
+    /// "nothing changed" and "two things changed" reproducible rather
+    /// than a function of the clock.
+    moved: bool = false,
 };
 
 const User = struct { id: []const u8, name: []const u8 };
@@ -381,6 +393,7 @@ pub const Store = struct {
         for (workflow) |t| if (std.mem.eql(u8, t.id, id)) {
             i.status = t.to;
             i.category = t.category;
+            i.moved = true;
             return .{ .status = 204, .body = "" };
         };
         return err(arena, 400, "Transition id is not valid for this issue's workflow.");
@@ -395,6 +408,7 @@ pub const Store = struct {
         if (text.len == 0) return err(arena, 400, "comment: body is required");
         const line = try std.fmt.allocPrint(s.owned.allocator(), "Ada Lovelace\x002026-09-15T12:00:00.000+0000\x00{s}", .{text});
         try i.comments.append(s.gpa, line);
+        i.moved = true;
         return .{ .status = 201, .body = try std.fmt.allocPrint(arena, "{{\"id\":\"{d}\",\"body\":{{}}}}", .{i.comments.items.len}) };
     }
 
@@ -402,6 +416,7 @@ pub const Store = struct {
         _ = arena;
         for (i.watchers.items) |wv| if (std.mem.eql(u8, wv, account_me)) return .{ .status = 204, .body = "" };
         try i.watchers.append(s.gpa, account_me);
+        i.moved = true;
         return .{ .status = 204, .body = "" };
     }
 
@@ -462,6 +477,7 @@ pub const Store = struct {
             },
             else => return err(arena, 400, "fixVersions: bad shape"),
         };
+        i.moved = true;
         return .{ .status = 204, .body = "" };
     }
 
@@ -759,6 +775,8 @@ pub const workflow = [_]Step{
 /// The JQL the fixture understands: the clauses the integration sends.
 /// Anything else matches everything, which is what a test wants.
 fn matches(i: *const Issue, jql: []const u8) bool {
+    // The delta window: only what this run has moved.
+    if (std.mem.indexOf(u8, jql, "updated >= -") != null and !i.moved) return false;
     if (std.mem.indexOf(u8, jql, "issuekey = ''") != null) return false;
     if (std.mem.indexOf(u8, jql, "assignee = currentUser()") != null and !std.mem.eql(u8, i.assignee, account_me)) return false;
     if (std.mem.indexOf(u8, jql, "reporter = currentUser()") != null and !std.mem.eql(u8, i.reporter, account_me)) return false;

@@ -16,6 +16,7 @@ pub const Action = enum {
     /// The cascade: selection → filter → detail → quit.
     escape,
     refresh,
+    refresh_full,
     up,
     down,
     page_up,
@@ -141,6 +142,7 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{"shift+v"}, .action = .tab_fix_version, .label = "switch the fix version", .section = .filters, .where = .work_or_boards },
     .{ .keys = &.{"shift+t"}, .action = .team, .label = "team", .section = .filters, .where = .work_or_boards },
     .{ .keys = &.{"r"}, .action = .refresh, .label = "refresh", .section = .view, .hint = 9 },
+    .{ .keys = &.{"shift+r"}, .action = .refresh_full, .label = "full refresh", .section = .view },
     .{ .keys = &.{ "?", "f1" }, .action = .help, .label = "keys", .section = .view, .hint = 10 },
     .{ .keys = &.{"esc"}, .action = .escape, .label = "clear the selection · the filter · close the detail", .section = .view },
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .label = "quit", .section = .view },

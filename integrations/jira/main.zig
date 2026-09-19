@@ -376,6 +376,13 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     var client = jira.Client.init(gpa, io, rd.cfg.jira_url, authorization, rd.cfg.api);
     client.limiter = &limiter;
     client.log = &logs.jira;
+    // One pacer per service, so a burst of background work is spread
+    // one per `1/rate + margin` and never drains the bucket in front
+    // of a click. Locals that are never moved: the copy of the client
+    // a worker carries holds the pointer for the whole run.
+    var jira_gate: sdk.warm.Gate = .forConfig(ratelimit.configFrom(rd.cfg.rate));
+    var forge_gate: sdk.warm.Gate = .forConfig(sdk.ratelimit.configFor("bitbucket"));
+    client.gate = &jira_gate;
     const forge_token = if (rd.cfg.bitbucket_token_env.len > 0) env.get(rd.cfg.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
     const forge: bitbucket.Client = .{
         .gpa = gpa,
@@ -384,6 +391,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .token = forge_token orelse "",
         .limiter = &forge_limiter,
         .log = &logs.forge,
+        .gate = &forge_gate,
     };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
     // Both clients leave a long wait where the paint loop finds it.
@@ -397,6 +405,11 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     var pr_store = try openPrStore(gpa, io, env);
     defer pr_store.deinit();
     app.setPrStore(&pr_store);
+    // And when each tab last came back whole, so `r` can ask only
+    // about what has moved since.
+    var sync_store = try openSyncStore(gpa, io, env);
+    defer sync_store.deinit();
+    app.setSyncStore(&sync_store);
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
@@ -790,6 +803,15 @@ fn openPrStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allo
     return sdk.Store.open(gpa, io, root, ratelimit.service, "dev-status");
 }
 
+/// When each tab's listing last came back WHOLE — the mark a delta
+/// window is measured from, kept between runs so the first refetch
+/// after a restart is a window and not the whole thing again.
+fn openSyncStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.Store {
+    const root = try sdk.request_log.dataRoot(gpa, env);
+    defer gpa.free(root);
+    return sdk.Store.open(gpa, io, root, ratelimit.service, "sync");
+}
+
 /// The two request logs a Jira pane writes: its own service's, and the
 /// forge's, because a call to Bitbucket belongs in Bitbucket's file
 /// however it was started.
@@ -893,6 +915,18 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
     client.log = &log;
+
+    // Under a quarter of the shared bucket, a poll is the thing that
+    // gives way: nothing is watching this run, and what is left
+    // belongs to whoever is. The line says so rather than leaving a
+    // chip that stopped moving unexplained.
+    if (sdk.warm.underBudget(limiter.status())) {
+        try err.print("mnml-jira --values: {s}\n", .{sdk.warm.skipped_budget});
+        try out.print("{{\"assigned_open\":null,\"skipped\":\"{s}\"}}\n", .{sdk.warm.skipped_budget});
+        return 0;
+    }
+    var gate: sdk.warm.Gate = .forConfig(ratelimit.configFrom(c.rate));
+    client.gate = &gate;
 
     var v: Values = .{};
     const base = config.TabKind.work_assigned.defaultJql().?;

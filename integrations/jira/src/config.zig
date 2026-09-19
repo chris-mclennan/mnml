@@ -34,6 +34,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const sdk = @import("mnml_sdk");
 
 pub const file_name = "config.zon";
 pub const dir_name = "jira";
@@ -400,6 +401,12 @@ pub const Config = struct {
     token_env: []const u8 = "",
     api: ApiVersion = .v3,
     rate: Rate = .{},
+    /// How often each kind of thing is kept fresh. A listing drifts,
+    /// a pipeline mid-run does not wait, and whether a pull request
+    /// may merge is only ever asked about the row under the cursor —
+    /// so they move at three speeds rather than one.
+    /// `readiness_secs = 0` means what it says: on demand only.
+    intervals: sdk.warm.Intervals = .{},
     /// The forge the post-merge pipeline rows come from.
     bitbucket_api_url: []const u8 = "https://api.bitbucket.org/2.0",
     /// Approvals a pull request needs before its `[ Merge ]` stops

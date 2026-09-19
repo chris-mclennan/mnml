@@ -142,6 +142,20 @@ pub const Gate = struct {
         }
     }
 
+    /// The slot, and what the caller actually waits for it.
+    ///
+    /// A background caller waits the whole hold: nobody is watching,
+    /// and spacing is the entire point. An interactive caller waits
+    /// **nothing** — a person is looking at the pane, the token bucket
+    /// already bounds how fast they can spend, and holding them on top
+    /// of it makes the pane slower without saving a single token. The
+    /// reservation still happens, so background work steps behind them
+    /// exactly as if they had waited.
+    pub fn hold(self: *Gate, p: Priority, now_ms: i64) u64 {
+        const ms = self.reserve(p, now_ms);
+        return if (p == .interactive) 0 else ms;
+    }
+
     /// An interactive request is queued: background reservations step
     /// behind it until `leave`.
     pub fn enter(self: *Gate) void {
@@ -569,8 +583,16 @@ test "a burst is spread one per gap, and an interactive request never queues beh
     // Once it has gone out, background work is spaced normally again.
     try t.expectEqual(@as(u64, 25_000), g.reserve(.background, 1_010_000));
 
-    try t.expectEqual(@as(u32, 1), g.reserved_interactive.load(.acquire));
-    try t.expectEqual(@as(u32, 6), g.reserved_background.load(.acquire));
+    // A person waits for nothing: their reservation moves the slot so
+    // background work steps behind them, and then they go.
+    g.enter();
+    try t.expectEqual(@as(u64, 0), g.hold(.interactive, 1_010_000));
+    g.leave();
+    // A background caller waits the whole thing.
+    try t.expect(g.hold(.background, 1_010_000) > 0);
+
+    try t.expectEqual(@as(u32, 2), g.reserved_interactive.load(.acquire));
+    try t.expectEqual(@as(u32, 7), g.reserved_background.load(.acquire));
     // `leave` under a zero count is a no-op, not an underflow.
     g.leave();
     try t.expectEqual(@as(u32, 0), g.interactive_waiting.load(.acquire));

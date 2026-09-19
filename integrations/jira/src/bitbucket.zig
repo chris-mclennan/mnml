@@ -100,6 +100,10 @@ pub const Client = struct {
     log: ?*request_log.Log = null,
     /// Where a wait long enough for a person to notice is left.
     notice: ?*shared_rate.Notice = null,
+    /// The forge's own pacer — a Bitbucket request out of a Jira pane
+    /// still spends Bitbucket's budget, so it queues in Bitbucket's
+    /// line.
+    gate: ?*sdk.warm.Gate = null,
     /// Why these calls are being made — the row's builds, or its
     /// merge readiness. Set by the caller that starts the flow.
     reason: request_log.Reason = .builds,
@@ -217,6 +221,15 @@ pub const Client = struct {
     const Got = union(enum) { ok: Value, failed: []const u8 };
 
     fn get(c: *Client, arena: Allocator, url: []const u8) Allocator.Error!Got {
+        // The forge's own spacing. A readiness call is a reader on a
+        // row and goes now; a `builds` sweep is background and waits.
+        if (c.gate) |g| {
+            const prio = sdk.warm.priorityOf(c.reason);
+            if (prio == .interactive) g.enter();
+            const hold_ms = g.hold(prio, Io.Timestamp.now(c.io, .real).toMilliseconds());
+            if (hold_ms > 0) c.io.sleep(.fromMilliseconds(@intCast(hold_ms)), .awake) catch {};
+            if (prio == .interactive) g.leave();
+        }
         const gate: shared_rate.Acquired = if (c.limiter) |l| blk: {
             l.reason = @tagName(c.reason);
             break :blk l.acquireDetailed();
