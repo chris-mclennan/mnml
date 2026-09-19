@@ -763,15 +763,24 @@ test "the filter pill: the placeholder at rest, the query with a caret while edi
     try testing.expectEqual(Demo.filter, r.hits.at(4, 1).?);
 }
 
-test "a show-more row says `Show more (N)` in the bright foreground and is one hit" {
+test "a show-more row is one phrase: the ellipsis leads its own words, and the row is one hit" {
     var r = try Rig.init(40, 2);
     defer r.deinit();
-    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 9, 9, 9 } } });
+    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 9, 9, 9 } }, .muted = .{ .rgb = .{ 5, 5, 5 } } });
     var p = r.painter(th, .{});
     try p.showMoreRow(.{ .x = 0, .y = 0, .w = 40, .h = 1 }, 10, 7, .show_more);
-    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "Show more (7)") != null);
-    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 9, 9, 9 } }, r.f.slots[10].style.fg.?);
-    try testing.expect(r.f.slots[10].style.mods.bold);
+    // `\u{22ef}  Show more (7)` from `label_x`, contiguous. The ellipsis
+    // used to be pinned to the row's left edge while its words sat at
+    // `label_x`, which at any real width read as two things.
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "\u{22ef}  Show more (7)") != null);
+    try testing.expectEqualStrings(more_glyph, r.f.slots[10].symbol());
+    // Punctuation stays dim; only the words are bright.
+    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 5, 5, 5 } }, r.f.slots[10].style.fg.?);
+    try testing.expect(!r.f.slots[10].style.mods.bold);
+    try testing.expectEqualStrings("S", r.f.slots[13].symbol());
+    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 9, 9, 9 } }, r.f.slots[13].style.fg.?);
+    try testing.expect(r.f.slots[13].style.mods.bold);
+    // The whole row is the press, not just the words.
     try testing.expectEqual(Demo.show_more, r.hits.at(3, 0).?);
 }
 
