@@ -564,6 +564,18 @@ otherwise. Copy what you need; leave the rest out.
             // poller's own 30-second floor still applies underneath.
             .min_interval_secs = 60,
         },
+        // Host the API broker while mnml runs: one queue per service
+        // in front of the shared token bucket, so the pane you are
+        // looking at gets the next token before a warmer or a batch
+        // script that asked earlier. One broker per service across
+        // every mnml on the machine (a second window becomes its
+        // client), and the REQUESTS header shows it.
+        //
+        // Off puts everything back on the file bucket and its
+        // first-come order — including the integrations mnml starts,
+        // which are told so rather than left to open a socket nobody
+        // is on. Unix sockets only: Windows has the file bucket.
+        .broker = true,
     },
 
     // ── workspaces ─────────────────────────────────────────────────────
