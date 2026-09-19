@@ -250,6 +250,14 @@ pub fn lines(app: *App, arena: Allocator) Allocator.Error![]const Line {
             break :blk s.path;
         };
         if (path.len == 0) continue;
+        // Ask the election lock before the socket. A socket file
+        // outlives the process that bound it, so its presence says
+        // nothing — and connecting to a dead one is an undeclared
+        // errno, which a safe build answers with a stack trace across
+        // the terminal the pane is painting on.
+        const lock_path = sdk.broker.lockPath(app.gpa, path) catch continue;
+        defer app.gpa.free(lock_path);
+        if (!sdk.warm.heldBySomeone(app.io, lock_path, nowSecs(app.io))) continue;
         const snap = sdk.broker.askStatus(app.io, path, s.service) orelse continue;
         line.where = .client;
         line.queue = snap.total();

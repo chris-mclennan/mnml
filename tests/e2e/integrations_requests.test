@@ -10,12 +10,16 @@
 # real one. Two of them, a `jira` and a `bitbucket`, because the view
 # has to read every file in the directory rather than one. Invented
 # data throughout.
-shell mkdir -p "$MNML_DATA_ROOT/requests" && printf '%s\n%s\n' '{"ts":51723.0,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/api/3/search/jql","status":200,"ms":412,"bytes":18244,"reason":"pane_open","wait_ms":3030,"waited_for":"tokens","tokens_after":0.240,"retry_of":0,"cache":"miss"}' '{"ts":51722.0,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/dev-status/latest/issue/detail?issueId=10002","status":429,"ms":90,"bytes":40,"reason":"refresh","wait_ms":30000,"waited_for":"cooldown","tokens_after":0.0,"retry_of":1,"cache":"none"}' > "$MNML_DATA_ROOT/requests/jira.jsonl"
-shell printf '%s\n' '{"ts":51721.0,"service":"bitbucket","integration":"mnml-bitbucket","method":"GET","host":"api.bitbucket.org","path":"/2.0/repositories/acme/api/pullrequests","status":200,"ms":1500,"bytes":900,"reason":"poll","wait_ms":0,"waited_for":"nothing","tokens_after":8.0,"retry_of":0,"cache":"hit"}' > "$MNML_DATA_ROOT/requests/bitbucket.jsonl"
+shell mkdir -p "$MNML_DATA_ROOT/requests" && printf '%s\n%s\n' '{"ts":51723.0,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/api/3/search/jql","status":200,"ms":412,"bytes":18244,"reason":"pane_open","wait_ms":3030,"waited_for":"tokens","tokens_after":0.240,"retry_of":0,"cache":"miss","via":"broker"}' '{"ts":51722.0,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/dev-status/latest/issue/detail?issueId=10002","status":429,"ms":90,"bytes":40,"reason":"refresh","wait_ms":30000,"waited_for":"cooldown","tokens_after":0.0,"retry_of":1,"cache":"none","via":"broker"}' > "$MNML_DATA_ROOT/requests/jira.jsonl"
+shell printf '%s\n' '{"ts":51721.0,"service":"bitbucket","integration":"mnml-bitbucket","method":"GET","host":"api.bitbucket.org","path":"/2.0/repositories/acme/api/pullrequests","status":200,"ms":1500,"bytes":900,"reason":"poll","wait_ms":0,"waited_for":"nothing","tokens_after":8.0,"retry_of":0,"cache":"hit","via":"file"}' > "$MNML_DATA_ROOT/requests/bitbucket.jsonl"
 # The tree away, so the view has the width its columns were drawn for.
 command view.toggle_tree
 command integrations.requests
 expect screen contains "REQUESTS (3)"
+# No broker in this file — it does not ask for one — so every client
+# on the machine is on the file bucket and its first-come order, and
+# the header says so rather than leaving the line blank.
+expect screen contains "broker — jira off   bitbucket off"
 # The hint row, and every column of every row: the clock, which
 # integration asked, WHY, the path, and what it cost.
 expect screen contains "/ filter   r reload"
@@ -31,6 +35,21 @@ expect screen contains "mnml-bitbucket  poll       GET  /2.0/repositories/acme/a
 expect screen contains "cached"
 # Every file in the directory, not one.
 expect screen contains "/rest/dev-status/latest/issue/detail"
+# `via` is on every line whatever the reason was, so `/` narrows the
+# view to what queued at a broker and what went straight at the
+# bucket. Two of these three were brokered.
+key /
+type broker
+expect screen contains "REQUESTS (2)"
+expect screen lacks "/2.0/repositories/acme/api/pullrequests"
+key enter
+key esc
+key /
+type file
+expect screen contains "REQUESTS (1)"
+expect screen contains "/2.0/repositories/acme/api/pullrequests"
+key enter
+key esc
 # `/` narrows to a service.
 key /
 type bitbucket

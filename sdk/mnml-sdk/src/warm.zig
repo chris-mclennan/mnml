@@ -541,6 +541,22 @@ pub const Lock = struct {
     }
 };
 
+/// Is anybody holding the lock at `path` right now? Read-only, no
+/// allocator, and false for a file that is missing, unreadable or
+/// nonsense — the same "nonsense is free" rule `acquire` follows.
+///
+/// What this is for: a socket file outlives the process that bound it,
+/// so "the file is there" is not "somebody is serving". Asking the
+/// lock first is both cheaper than a connect and quieter — a refused
+/// connect to a dead socket is an undeclared errno, which a safe build
+/// answers with a stack trace on the user's terminal.
+pub fn heldBySomeone(io: Io, path: []const u8, now_secs: f64) bool {
+    var buf: [512]u8 = undefined;
+    const text = Io.Dir.cwd().readFile(io, path, &buf) catch return false;
+    const h = parseHolder(text) orelse return false;
+    return !isStale(h, now_secs);
+}
+
 /// A holder that is gone: no such process, or a heartbeat nobody has
 /// touched for `Lock.stale_secs`. The age test is the one that holds
 /// everywhere — `pidAlive` cannot answer on Windows and can be wrong
