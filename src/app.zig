@@ -184,6 +184,11 @@ pub const InitOptions = struct {
     /// `notify-send` / PowerShell). The terminal loop says yes; headless
     /// and the tests never spawn a notifier.
     native_notify: bool = false,
+    /// Whether a real terminal will draw the cursor a frame asks for
+    /// (`Screen.cursor_vis` / `cursor_shape` out through vaxis). The
+    /// terminal loop says yes; headless and the tests have no such
+    /// cursor, so the focused pty pane paints its own into the cells.
+    term_cursor: bool = false,
 };
 
 /// How long an ordinary toast stays.
@@ -1021,6 +1026,9 @@ pub const App = struct {
     /// The workspace's Playwright outcome history (`app/flaky.zig`).
     flaky: flaky.State = .{},
     native_notify: bool = false,
+    /// A real terminal is drawing the cursor this frame asks for. The
+    /// terminal loop says yes; headless and the tests paint their own.
+    term_cursor: bool = false,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -1294,6 +1302,7 @@ pub const App = struct {
         opts.loaded = null; // owned by `app` from here
         app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
         app.native_notify = opts.native_notify;
+        app.term_cursor = opts.term_cursor;
         // The `g<letter>` operator table is process-global (the vim
         // handler has no App). A state reopening clears only its own
         // claims, so a fresh App wipes the whole table once — otherwise

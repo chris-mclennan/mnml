@@ -63,10 +63,20 @@ pub const Cell = struct {
 pub const Cursor = struct {
     x: u16,
     y: u16,
-    shape: enum { block, bar, underline },
+    shape: Shape,
     /// The cursor sits on the tail half of a wide char; renderers usually
     /// draw it one cell to the left.
     wide_tail: bool,
+    /// The child asked for a blinking cursor (DEC mode 12, or the odd
+    /// DECSCUSR codes). Whose clock does the blinking is the host's
+    /// business: a renderer that cannot blink paints the steady shape.
+    blinking: bool = false,
+
+    /// The three shapes DECSCUSR can ask for. ghostty's own renderer
+    /// adds a hollow block for an unfocused surface — that is a
+    /// painting decision, never something the child requests, so it is
+    /// not one of these.
+    pub const Shape = enum { block, bar, underline };
 };
 
 pub const Grid = struct {
@@ -168,12 +178,20 @@ pub const Grid = struct {
             .x = vp.x,
             .y = vp.y,
             .wide_tail = vp.wide_tail,
+            .blinking = cur.blinking,
             .shape = switch (cur.visual_style) {
                 .bar => .bar,
                 .underline => .underline,
                 else => .block,
             },
         };
+    }
+
+    /// The colour the child asked its cursor to be (OSC 12), or null
+    /// when it never said — the host then picks, as a terminal does.
+    pub fn cursorColor(self: *const Grid) ?Color.Rgb {
+        const c = self.state.colors.cursor orelse return null;
+        return .{ .r = c.r, .g = c.g, .b = c.b };
     }
 
     pub fn foreground(self: *const Grid) Color.Rgb {
@@ -271,6 +289,39 @@ test "cursor position and dirty tracking follow the terminal" {
     s.nextSlice("\x1b[?25l"); // hide the cursor
     try f.grid.update(testing.allocator, &f.term);
     try testing.expect(f.grid.cursor() == null);
+}
+
+test "DECSCUSR maps each code to its shape, and the odd codes ask to blink" {
+    const Case = struct { seq: []const u8, shape: Cursor.Shape, blink: bool };
+    // `\x1b[N q`: 0/1 blinking block, 2 steady block, 3 blinking
+    // underline, 4 steady underline, 5 blinking bar, 6 steady bar.
+    const cases = [_]Case{
+        .{ .seq = "\x1b[1 q", .shape = .block, .blink = true },
+        .{ .seq = "\x1b[2 q", .shape = .block, .blink = false },
+        .{ .seq = "\x1b[3 q", .shape = .underline, .blink = true },
+        .{ .seq = "\x1b[4 q", .shape = .underline, .blink = false },
+        .{ .seq = "\x1b[5 q", .shape = .bar, .blink = true },
+        .{ .seq = "\x1b[6 q", .shape = .bar, .blink = false },
+    };
+    for (cases) |c| {
+        var f = try Fixture.init(8, 2, c.seq);
+        defer f.deinit();
+        const cur = f.grid.cursor() orelse return error.CursorHidden;
+        try testing.expectEqual(c.shape, cur.shape);
+        try testing.expectEqual(c.blink, cur.blinking);
+    }
+}
+
+test "OSC 12 is the cursor colour; unasked it is null" {
+    var f = try Fixture.init(8, 2, "");
+    defer f.deinit();
+    try testing.expectEqual(@as(?Color.Rgb, null), f.grid.cursorColor());
+
+    var s = f.term.vtStream();
+    defer s.deinit();
+    s.nextSlice("\x1b]12;rgb:ab/cd/ef\x07");
+    try f.grid.update(testing.allocator, &f.term);
+    try testing.expectEqual(Color.Rgb{ .r = 0xab, .g = 0xcd, .b = 0xef }, f.grid.cursorColor());
 }
 
 test "palette resolves through the terminal's colour table, OSC 4 included" {

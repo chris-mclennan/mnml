@@ -436,6 +436,9 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);
     screen.cursor_vis = false;
+    // Back to the terminal's own shape unless this frame asks for one
+    // (`drawPty` does, for the focused pty pane).
+    screen.cursor_shape = .default;
     app.cursor_pos = null;
 
     // Zen: the panes fill everything above the `:` line — no bar, no
@@ -1340,14 +1343,39 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     };
     p.fit(body.w, body.h);
     try p.grid.update(app.gpa, p.session.terminal());
-    const cursor = pty_view.draw(ui, body, &p.grid, .{ .focused = focused, .exit_label = exit_label });
+    const cursor = pty_view.draw(ui, body, &p.grid, .{
+        .focused = focused,
+        .exit_label = exit_label,
+        // A real terminal draws the focused pane's cursor itself, from
+        // the DECSCUSR below — so the cells carry only the stand-in for
+        // the OTHER pty panes. Headless has no such cursor and paints
+        // the focused one too.
+        .paint_focused = !app.term_cursor,
+        .unfocused = switch (app.cfg.ui.pty_cursor.unfocused) {
+            .hollow => .hollow,
+            .dim => .dim,
+            .none => .none,
+        },
+        .blink = app.cfg.ui.pty_cursor.blink,
+    });
     if (app.active == id) {
         app.pane_rows = @max(body.h, 1);
         app.pane_cols = @max(body.w, 1);
-        if (focused) if (cursor) |c| {
-            app.cursor_pos = .{ .x = c.x, .y = c.y };
-        };
     }
+    // The host's own cursor goes on the focused pty pane's cell: Ghostty
+    // then blinks it and hollows it out when the mnml window itself
+    // loses focus, exactly as it does for a bare shell.
+    if (focused) if (cursor) |c| {
+        app.cursor_pos = .{ .x = c.x, .y = c.y };
+        const screen = ui.canvas.screen;
+        screen.cursor_vis = true;
+        screen.cursor = .{ .row = c.y, .col = c.x };
+        screen.cursor_shape = switch (c.shape) {
+            .block => if (c.blink) .block_blink else .block,
+            .bar => if (c.blink) .beam_blink else .beam,
+            .underline => if (c.blink) .underline_blink else .underline,
+        };
+    };
 }
 
 /// The AI answer pane; the scroll is clamped to what overflowed.

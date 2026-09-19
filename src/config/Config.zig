@@ -185,6 +185,22 @@ pub const TopBarClusterMode = enum { auto, expanded, compact };
 pub const TabBarAiIcon = enum { none, claude_code, codex, both };
 pub const AiLayoutMode = enum { grid, tabs };
 
+/// How a terminal pane draws the cursor its child asked for.
+pub const PtyCursor = struct {
+    /// A pty pane that is not the focused one. A terminal emulator
+    /// draws a hollow block there; a cell grid cannot draw an outline,
+    /// so `hollow` keeps the cell's own glyph readable and repaints it
+    /// in the cursor colour, `dim` is a muted filled block, and `none`
+    /// leaves the cell alone.
+    unfocused: Unfocused = .hollow,
+    /// Pass the child's blink request (DECSCUSR / DEC mode 12) out to
+    /// the host terminal, which owns the clock. Off keeps every cursor
+    /// steady. An unfocused pane's cursor never blinks either way.
+    blink: bool = true,
+
+    pub const Unfocused = enum { hollow, dim, none };
+};
+
 /// `.builtin` / `.glow` / `.pandoc` are vetted paths; `.{ .custom = "cmd" }`
 /// runs `cmd` and is therefore exec-bearing (see `trust.zig`).
 pub const MdEngine = union(enum) {
@@ -316,6 +332,8 @@ pub const Ui = struct {
     /// Clamped to `hover_help_height_min..max` on load.
     hover_help_height: u16 = 8,
     terminal_label: []const u8 = "terminal",
+    /// How a terminal pane draws its child's cursor.
+    pty_cursor: PtyCursor = .{},
     /// A program mnml spawns — exec-bearing. Empty = the OS default.
     external_browser: []const u8 = "",
     terminal_glyph_svg: []const u8 = "",

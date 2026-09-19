@@ -7,6 +7,31 @@
 //! A cell with the terminal's default colours takes the theme's, so a
 //! shell sits on the same ground as an editor pane. An `exit_label`
 //! paints a one-row banner over the bottom of the pane.
+//!
+//! ── the child's cursor ──
+//! The child asks for a shape (DECSCUSR), a blink and a visibility
+//! (DECTCEM); `pty.Grid` reads all three back. A terminal emulator then
+//! draws the focused surface's cursor filled and every other one as a
+//! hollow block — which is the shape the user recognises, and what
+//! ghostty's own renderer does (`renderer/cursor.zig`: not focused →
+//! `block_hollow`, hidden → nothing at all).
+//!
+//! mnml paints into cells, so there is no outline to draw: a hollow
+//! block cannot be expressed in one cell without losing the glyph under
+//! it. What CAN be expressed is the property that actually distinguishes
+//! the two — a filled cursor swallows its character (fg and bg swap), a
+//! hollow one leaves it readable. So `hollow` keeps the cell's glyph and
+//! repaints it in the cursor colour (a blank cell gets `□`, so a shell
+//! prompt still shows one), and `dim` is the other honest answer: a
+//! filled block at half strength. `none` opts out.
+//!
+//! The FOCUSED pane is different again: in a real terminal the host's
+//! own cursor is put on that cell (`render.zig` hands the position and
+//! shape to vaxis, which emits DECSCUSR), so Ghostty draws it — with its
+//! blink, and with its own hollow-when-the-window-is-away behaviour for
+//! free. `paint_focused` is then off and nothing is painted underneath.
+//! Headless has no terminal cursor, so there it stays on and the cells
+//! carry the filled cursor themselves.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -14,17 +39,45 @@ const pty = @import("pty");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const blendOver = @import("diff_view.zig").blendOver;
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
 
-pub const Cursor = struct { x: u16, y: u16, shape: enum { block, bar, underline } };
+/// Where the host should put its own cursor, and how it should look.
+pub const Cursor = struct {
+    x: u16,
+    y: u16,
+    shape: Shape,
+    /// The child asked for a blinking cursor and the config lets it
+    /// through. The host's terminal owns the clock.
+    blink: bool = false,
+
+    pub const Shape = enum { block, bar, underline };
+};
+
+/// The stand-in a pty pane that is not the focused one gets
+/// (`ui.pty_cursor.unfocused`).
+pub const Unfocused = enum { hollow, dim, none };
 
 pub const Props = struct {
     focused: bool,
     /// `[exited 0]` — painted on the last row when set.
     exit_label: ?[]const u8 = null,
+    /// Paint the focused pane's cursor into the cells. Off when the
+    /// host draws a real terminal cursor over them instead.
+    paint_focused: bool = true,
+    unfocused: Unfocused = .hollow,
+    /// Pass the child's blink request out in the returned `Cursor`.
+    blink: bool = true,
 };
+
+/// A blank cell under a hollow cursor still has to show one.
+const hollow_glyph = "□";
+const hollow_ascii = "[";
+/// The bar cursor: a left-edge sliver, as a terminal draws it.
+const bar_glyph = "▏";
+const bar_ascii = "|";
 
 /// One-byte graphemes without allocating: ASCII cells point here.
 const ascii_table: [128][1]u8 = blk: {
@@ -83,6 +136,70 @@ fn graphemeOf(ui: Ui, cell: pty.grid.Cell) ?[]const u8 {
     return buf[0..n];
 }
 
+/// The colour a terminal draws the cursor in: what the child asked for
+/// (OSC 12), else the theme's foreground — the default every terminal
+/// falls back to.
+fn cursorColor(grid: *const pty.Grid, th: *const Theme) Color {
+    const c = grid.cursorColor() orelse return th.fg.fg;
+    return .{ .rgb = .{ c.r, c.g, c.b } };
+}
+
+/// The cursor cell, painted. `focused` picks the filled look the child
+/// asked for; otherwise `props.unfocused` picks the stand-in.
+fn paintCursor(ui: Ui, area: Rect, grid: *const pty.Grid, cur: pty.grid.Cursor, props: Props) void {
+    const th = ui.theme;
+    const cell = grid.cell(cur.x, cur.y);
+    const base = styleOf(cell, th);
+    const ground = colorOf(cell.bg, th.bg.bg);
+    const ink = cursorColor(grid, th);
+    const glyph = graphemeOf(ui, cell) orelse " ";
+    const width: u8 = if (cell.wide == .wide) 2 else 1;
+    const x = area.x + cur.x;
+    const y = area.y + cur.y;
+
+    if (props.focused) {
+        switch (cur.shape) {
+            // Filled: fg and bg swap, so the glyph is read out of the
+            // cursor's block.
+            .block => ui.canvas.put(x, y, .{ .char = .{ .grapheme = glyph, .width = width }, .style = .{ .fg = ground, .bg = ink, .bold = base.bold, .italic = base.italic } }),
+            // A bar sits on the cell's left edge. One cell holds one
+            // grapheme, so the sliver takes it — the cell under a bar
+            // cursor is the one past the text, and blank, nearly always.
+            .bar => ui.canvas.put(x, y, .{ .char = .{ .grapheme = if (ui.ascii) bar_ascii else bar_glyph, .width = 1 }, .style = .{ .fg = ink, .bg = ground } }),
+            // An underline keeps the glyph and rules under it.
+            .underline => {
+                var s = base;
+                s.ul = ink;
+                s.ul_style = .single;
+                ui.canvas.put(x, y, .{ .char = .{ .grapheme = glyph, .width = width }, .style = s });
+            },
+        }
+        return;
+    }
+    switch (props.unfocused) {
+        .none => {},
+        // The glyph stays readable — that is what makes a hollow cursor
+        // hollow — and takes the cursor colour. A blank cell would show
+        // nothing at all, so it gets the outlined box instead.
+        .hollow => {
+            const blank = cell.isEmpty();
+            var s = base;
+            s.fg = ink;
+            s.bold = true;
+            ui.canvas.put(x, y, .{
+                .char = .{ .grapheme = if (blank) (if (ui.ascii) hollow_ascii else hollow_glyph) else glyph, .width = if (blank) 1 else width },
+                .style = s,
+            });
+        },
+        // A filled block at half strength: the cursor colour half-way to
+        // the ground it sits on.
+        .dim => {
+            const muted = blendOver(ink, ground, 128, ink);
+            ui.canvas.put(x, y, .{ .char = .{ .grapheme = glyph, .width = width }, .style = .{ .fg = ground, .bg = muted } });
+        },
+    }
+}
+
 /// Paint `grid` into `area`. Returns the terminal cursor's screen
 /// position when it is visible and inside the area.
 pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
@@ -115,19 +232,49 @@ pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
         _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(label, r.w -| 1), Theme.onBg(th.accent, th.statusline.bg));
         return null;
     }
+    // `grid.cursor()` is null while the child has it hidden (DECTCEM)
+    // or scrolled out of the viewport: then there is nothing to draw,
+    // focused or not — the same order ghostty's own renderer uses.
     const cur = grid.cursor() orelse return null;
-    if (cur.x >= area.w or cur.y >= area.h) return null;
-    return .{ .x = area.x + cur.x, .y = area.y + cur.y, .shape = switch (cur.shape) {
-        .block => .block,
-        .bar => .bar,
-        .underline => .underline,
-    } };
+    if (cur.x >= cols or cur.y >= rows) return null;
+    if (!props.focused or props.paint_focused) paintCursor(ui, area, grid, cur, props);
+    if (!props.focused) return null;
+    return .{
+        .x = area.x + cur.x,
+        .y = area.y + cur.y,
+        .blink = props.blink and cur.blinking,
+        .shape = switch (cur.shape) {
+            .block => .block,
+            .bar => .bar,
+            .underline => .underline,
+        },
+    };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
+
+/// A grid fed `bytes`, with the terminal kept alive beside it.
+const GridFixture = struct {
+    term: pty.vt.Terminal,
+    grid: pty.Grid = .{},
+
+    fn init(cols: u16, rows: u16, bytes: []const u8) !GridFixture {
+        var g: GridFixture = .{ .term = try .init(testing.io, testing.allocator, .{ .cols = cols, .rows = rows }) };
+        var s = g.term.vtStream();
+        defer s.deinit();
+        s.nextSlice(bytes);
+        try g.grid.update(testing.allocator, &g.term);
+        return g;
+    }
+
+    fn deinit(g: *GridFixture) void {
+        g.grid.deinit(testing.allocator);
+        g.term.deinit(testing.allocator);
+    }
+};
 
 test "a coloured line lands in the cells with its style; wide chars keep their tail" {
     var term: pty.vt.Terminal = try .init(testing.io, testing.allocator, .{ .cols = 12, .rows = 2 });
@@ -167,4 +314,146 @@ test "the exit banner takes the last row and hides the cursor" {
     const cur = draw(f.ui(), Rect.init(0, 0, 12, 2), &grid, .{ .focused = true, .exit_label = "[exited 3]" });
     try testing.expect(cur == null);
     try f.expectRow(1, " [exited 3]");
+}
+
+test "focused: the block cursor swallows its glyph — the cell's ink and ground swap" {
+    var g = try GridFixture.init(10, 2, "ab");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    const th = f.theme;
+    const cur = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = true });
+    // After "ab", on the blank third cell.
+    try testing.expectEqual(@as(u16, 2), cur.?.x);
+    try testing.expectEqual(Cursor.Shape.block, cur.?.shape);
+    try testing.expect(!cur.?.blink);
+    const c = f.cell(2, 0);
+    // The cursor colour (the theme's fg, unasked) is the ground; the
+    // cell's own ground is the ink.
+    try testing.expect(Color.eql(th.fg.fg, c.style.bg));
+    try testing.expect(Color.eql(th.bg.bg, c.style.fg));
+    // The cell beside it is untouched.
+    try testing.expect(Color.eql(th.bg.bg, f.cell(1, 0).style.bg));
+}
+
+test "focused: a bar takes the left-edge sliver, an underline rules under the glyph" {
+    var bar = try GridFixture.init(10, 2, "\x1b[6 qx\x1b[D");
+    defer bar.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    const cur = draw(f.ui(), Rect.init(0, 0, 10, 2), &bar.grid, .{ .focused = true });
+    try testing.expectEqual(Cursor.Shape.bar, cur.?.shape);
+    try testing.expectEqualStrings("▏", f.cell(0, 0).char.grapheme);
+    try testing.expect(Color.eql(f.theme.fg.fg, f.cell(0, 0).style.fg));
+
+    var ul = try GridFixture.init(10, 2, "\x1b[4 qx\x1b[D");
+    defer ul.deinit();
+    var f2 = try Fixture.init(10, 2);
+    defer f2.deinit();
+    const cur2 = draw(f2.ui(), Rect.init(0, 0, 10, 2), &ul.grid, .{ .focused = true });
+    try testing.expectEqual(Cursor.Shape.underline, cur2.?.shape);
+    // The glyph stays; the rule is the cursor colour.
+    try testing.expectEqualStrings("x", f2.cell(0, 0).char.grapheme);
+    try testing.expectEqual(vaxis.Style.Underline.single, f2.cell(0, 0).style.ul_style);
+    try testing.expect(Color.eql(f2.theme.fg.fg, f2.cell(0, 0).style.ul));
+}
+
+test "focused: the blink the child asked for reaches the host, and only when the config allows" {
+    var g = try GridFixture.init(10, 2, "\x1b[5 q"); // blinking bar
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    try testing.expect(draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = true }).?.blink);
+    try testing.expect(!draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = true, .blink = false }).?.blink);
+}
+
+test "focused: with a real terminal cursor on top, the cells are left alone" {
+    var g = try GridFixture.init(10, 2, "ab");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    const cur = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = true, .paint_focused = false });
+    // The host is still told where to put its own cursor…
+    try testing.expectEqual(@as(u16, 2), cur.?.x);
+    // …but the cell under it is the pane's ordinary ground.
+    try testing.expect(Color.eql(f.theme.bg.bg, f.cell(2, 0).style.bg));
+}
+
+test "unfocused: hollow keeps the glyph readable in the cursor colour; a blank cell shows the box" {
+    var g = try GridFixture.init(10, 2, "ab\x1b[D"); // back onto the 'b'
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    const th = f.theme;
+    try testing.expect(draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false }) == null);
+    const c = f.cell(1, 0);
+    try testing.expectEqualStrings("b", c.char.grapheme);
+    try testing.expect(Color.eql(th.fg.fg, c.style.fg));
+    // Hollow, not filled: the ground is the pane's, not the cursor's.
+    try testing.expect(Color.eql(th.bg.bg, c.style.bg));
+
+    // A blank cell has no glyph to keep, so the box stands in for one.
+    var blank = try GridFixture.init(10, 2, "ab");
+    defer blank.deinit();
+    var f2 = try Fixture.init(10, 2);
+    defer f2.deinit();
+    _ = draw(f2.ui(), Rect.init(0, 0, 10, 2), &blank.grid, .{ .focused = false });
+    try testing.expectEqualStrings("□", f2.cell(2, 0).char.grapheme);
+}
+
+test "unfocused: dim is a filled block half-way to the ground; none paints nothing" {
+    var g = try GridFixture.init(10, 2, "ab");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    const th = f.theme;
+    _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false, .unfocused = .dim });
+    const c = f.cell(2, 0);
+    try testing.expect(Color.eql(th.bg.bg, c.style.fg));
+    // Between the cursor colour and the ground, and neither of them.
+    try testing.expect(!Color.eql(th.fg.fg, c.style.bg));
+    try testing.expect(!Color.eql(th.bg.bg, c.style.bg));
+
+    var f2 = try Fixture.init(10, 2);
+    defer f2.deinit();
+    _ = draw(f2.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false, .unfocused = .none });
+    try testing.expect(Color.eql(th.bg.bg, f2.cell(2, 0).style.bg));
+    try testing.expectEqualStrings(" ", f2.cell(2, 0).char.grapheme);
+}
+
+test "a hidden cursor is nothing at all, focused or not" {
+    var g = try GridFixture.init(10, 2, "ab\x1b[?25l");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    const th = f.theme;
+    try testing.expect(draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = true }) == null);
+    try testing.expect(Color.eql(th.bg.bg, f.cell(2, 0).style.bg));
+    _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false });
+    try testing.expect(Color.eql(th.bg.bg, f.cell(2, 0).style.bg));
+    try testing.expectEqualStrings(" ", f.cell(2, 0).char.grapheme);
+}
+
+test "OSC 12 wins over the theme for the cursor's colour" {
+    var g = try GridFixture.init(10, 2, "\x1b]12;rgb:10/20/30\x07ab");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = true });
+    try testing.expect(Color.eql(.{ .rgb = .{ 0x10, 0x20, 0x30 } }, f.cell(2, 0).style.bg));
+}
+
+test "--ascii swaps the box and the sliver for characters a plain font has" {
+    var g = try GridFixture.init(10, 2, "ab");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    f.ascii = true;
+    _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false });
+    try testing.expectEqualStrings("[", f.cell(2, 0).char.grapheme);
+
+    var bar = try GridFixture.init(10, 2, "\x1b[6 q");
+    defer bar.deinit();
+    _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &bar.grid, .{ .focused = true });
+    try testing.expectEqualStrings("|", f.cell(0, 0).char.grapheme);
 }

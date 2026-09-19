@@ -1438,3 +1438,78 @@ test "an AI pane's tab wears its product's mark: two Claude panes, the same glyp
     const t1b = (rectsOf(&app, c1)).tab orelse return error.TestUnexpectedResult;
     try t.expect(Theme.Color.eql(app.screen.readCell(t1b.x + 1, t1b.y).?.style.fg, app.theme.palette.red));
 }
+
+/// The screen cell just past `needle`, which is where a shell that has
+/// printed it leaves its cursor. Null when the text is not on screen.
+fn cellAfter(app: *App, needle: []const u8) ?struct { x: u16, y: u16 } {
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        while (x + needle.len <= app.screen.width) : (x += 1) {
+            var i: usize = 0;
+            while (i < needle.len) : (i += 1) {
+                const c = app.screen.readCell(x + @as(u16, @intCast(i)), y) orelse break;
+                if (c.char.grapheme.len != 1 or c.char.grapheme[0] != needle[i]) break;
+            } else return .{ .x = x + @as(u16, @intCast(needle.len)), .y = y };
+        }
+    }
+    return null;
+}
+
+test "two terminals in a split: one filled cursor on the focused pane, a hollow one on the other" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const left = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf LL; sleep 30" }, .label = "left", .kind = .command });
+    const right = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf RR; sleep 30" }, .label = "right", .kind = .command, .placement = .right });
+    try t.expect(try tickUntilScreen(&app, "LL", 5000));
+    try t.expect(try tickUntilScreen(&app, "RR", 5000));
+    app.active = right;
+    app.focus = .{ .pane = right };
+    try app.render();
+    const th = &app.theme;
+
+    // The focused pane: a filled block — the cursor colour is the
+    // ground, the cell's own ground the ink.
+    const hot = cellAfter(&app, "RR") orelse return error.TestUnexpectedResult;
+    const hot_cell = app.screen.readCell(hot.x, hot.y).?;
+    try t.expect(Theme.Color.eql(th.fg.fg, hot_cell.style.bg));
+    // And the host's own cursor is put on that same cell.
+    try t.expect(app.screen.cursor_vis);
+    try t.expectEqual(hot.x, app.screen.cursor.col);
+    try t.expectEqual(hot.y, app.screen.cursor.row);
+    try t.expect(app.screen.cursor_shape == .block);
+
+    // The other pane: hollow — the box in the cursor colour, on the
+    // pane's own ground, never filled.
+    const cold = cellAfter(&app, "LL") orelse return error.TestUnexpectedResult;
+    const cold_cell = app.screen.readCell(cold.x, cold.y).?;
+    try t.expectEqualStrings("\u{25a1}", cold_cell.char.grapheme);
+    try t.expect(Theme.Color.eql(th.fg.fg, cold_cell.style.fg));
+    try t.expect(!Theme.Color.eql(th.fg.fg, cold_cell.style.bg));
+
+    // Focus the other way round and the two swap.
+    app.active = left;
+    app.focus = .{ .pane = left };
+    try app.render();
+    try t.expect(Theme.Color.eql(th.fg.fg, app.screen.readCell(cold.x, cold.y).?.style.bg));
+    try t.expectEqualStrings("\u{25a1}", app.screen.readCell(hot.x, hot.y).?.char.grapheme);
+    try t.expectEqual(cold.x, app.screen.cursor.col);
+
+    // `.none` leaves the unfocused pane's cell alone; the focused one
+    // is unchanged.
+    app.cfg.ui.pty_cursor.unfocused = .none;
+    try app.render();
+    try t.expectEqualStrings(" ", app.screen.readCell(hot.x, hot.y).?.char.grapheme);
+    try t.expect(Theme.Color.eql(th.fg.fg, app.screen.readCell(cold.x, cold.y).?.style.bg));
+
+    // With a real terminal drawing it, the focused cell stays the
+    // pane's own ground — the host's cursor is what is seen.
+    app.term_cursor = true;
+    try app.render();
+    try t.expect(!Theme.Color.eql(th.fg.fg, app.screen.readCell(cold.x, cold.y).?.style.bg));
+    try t.expect(app.screen.cursor_vis);
+    try t.expectEqual(cold.x, app.screen.cursor.col);
+}

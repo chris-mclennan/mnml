@@ -237,6 +237,24 @@ otherwise. Copy what you need; leave the rest out.
         .tab_indicator = .block, // .block (half-block) | .rule (heavy + track) | .line (thin) | .quarter (quarter-height, flush under the label) | .quarter_track (the same bar across the whole strip, the active tab in colour)
         .hover_help_height = 8, // clamped to 3..20
         .terminal_label = "terminal",
+        // A terminal pane paints the cursor its child asked for
+        // (DECSCUSR block / bar / underline, hidden by DECTCEM). The
+        // focused pane's is filled and, in a real terminal, is the
+        // host's OWN cursor — so Ghostty blinks it, and hollows it out
+        // when the mnml window itself loses focus. Every other pty pane
+        // gets a painted stand-in, which is what `unfocused` picks:
+        //   .hollow the cell keeps its glyph, repainted in the cursor
+        //           colour — a cell grid cannot draw a true outline, so
+        //           a blank cell shows □ and the cursor is still there
+        //   .dim    a muted filled block: the cursor colour half-way to
+        //           the pane's ground
+        //   .none   nothing
+        // `blink` passes the child's blink request out to the host,
+        // which owns the clock. An unfocused pane never blinks.
+        .pty_cursor = .{
+            .unfocused = .hollow, // .hollow | .dim | .none
+            .blink = true,
+        },
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
         .terminal_glyph_svg = "",
         .top_bar_cluster_mode = .auto, // .auto | .expanded | .compact
