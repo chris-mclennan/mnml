@@ -27,6 +27,8 @@ const json = @import("json.zig");
 const model = @import("model.zig");
 const sdk = @import("mnml_sdk");
 const merge = sdk.pane.merge;
+const shared_rate = sdk.ratelimit;
+const request_log = sdk.request_log;
 
 pub const Value = std.json.Value;
 
@@ -89,6 +91,16 @@ pub const Client = struct {
     base_url: []const u8,
     /// Empty = no token.
     token: []const u8,
+    /// The FORGE's bucket, not Jira's. These calls used to go out with
+    /// no bucket at all: a Work tab quietly spent the machine's
+    /// Bitbucket allowance from the Jira pane, and the forge pane in
+    /// the next window paid for it with a 429. Null only in a test.
+    limiter: ?*shared_rate.Limiter = null,
+    /// Where every one of them is written down. Null in a test.
+    log: ?*request_log.Log = null,
+    /// Why these calls are being made — the row's builds, or its
+    /// merge readiness. Set by the caller that starts the flow.
+    reason: request_log.Reason = .builds,
 
     /// The whole flow for one PR URL. `known_updated_on` is the stamp
     /// the caller already has runs for — empty when it has none.
@@ -203,6 +215,8 @@ pub const Client = struct {
     const Got = union(enum) { ok: Value, failed: []const u8 };
 
     fn get(c: *Client, arena: Allocator, url: []const u8) Allocator.Error!Got {
+        const gate: shared_rate.Acquired = if (c.limiter) |l| l.acquireDetailed() else .{ .ok = true };
+        const started = Io.Timestamp.now(c.io, .real);
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();
         var out: Io.Writer.Allocating = .init(arena);
@@ -220,12 +234,43 @@ pub const Client = struct {
             .keep_alive = false,
         }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return .{ .failed = try std.fmt.allocPrint(arena, "request failed ({s})", .{@errorName(err)}) },
+            else => {
+                c.note(arena, url, null, 0, started, gate);
+                return .{ .failed = try std.fmt.allocPrint(arena, "request failed ({s})", .{@errorName(err)}) };
+            },
         };
         const status: u16 = @intFromEnum(res.status);
+        c.note(arena, url, status, out.written().len, started, gate);
+        // A 429 or a 5xx from the forge parks every process on the
+        // forge's bucket, the same as one from Jira parks Jira's.
+        if (status == 429 or (status >= 500 and status <= 599)) {
+            if (c.limiter) |l| l.penalize(null);
+        }
         if (status < 200 or status >= 300) return .{ .failed = try std.fmt.allocPrint(arena, "{d}: {s}", .{ status, out.written() }) };
         const doc = std.json.parseFromSliceLeaky(Value, arena, out.written(), .{}) catch return .{ .failed = "the answer was not JSON" };
         return .{ .ok = doc };
+    }
+
+    /// One line in the request log. Best effort: a log is never a
+    /// reason a request fails.
+    fn note(c: *Client, arena: Allocator, url: []const u8, status: ?u16, bytes: usize, started: Io.Timestamp, gate: shared_rate.Acquired) void {
+        const log = c.log orelse return;
+        const split = request_log.splitUrl(arena, url) catch return;
+        const ms: u64 = @intCast(@max(Io.Timestamp.now(c.io, .real).toMilliseconds() - started.toMilliseconds(), 0));
+        log.append(.{
+            .service = "",
+            .integration = "",
+            .method = "GET",
+            .host = split.host,
+            .path = split.path,
+            .status = status,
+            .ms = ms,
+            .bytes = bytes,
+            .reason = c.reason,
+            .wait_ms = gate.wait_ms,
+            .waited_for = gate.waited_for,
+            .tokens_after = gate.tokens_after,
+        });
     }
 };
 

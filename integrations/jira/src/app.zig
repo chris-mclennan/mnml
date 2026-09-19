@@ -115,6 +115,10 @@ pub const RefreshJob = struct {
     team_field_id: []const u8,
     /// Tree tabs show linked PRs, so the job fetches them too.
     want_prs: bool,
+    /// What the request log calls this fetch — the first load of a tab
+    /// and a refetch of one cost the same requests and mean different
+    /// things when the log is read back.
+    reason: jira.Reason = .pane_open,
 
     pub fn deinit(j: *RefreshJob) void {
         j.arena.deinit();
@@ -601,6 +605,7 @@ pub const App = struct {
             .extra_fields = &.{},
             .team_field_id = a.cfg.team_field_id,
             .want_prs = t.cfg.isTree(),
+            .reason = if (t.fetched) .refresh else .pane_open,
         };
         errdefer job.deinit();
         const arena = job.arena.allocator();
@@ -640,10 +645,10 @@ pub const App = struct {
         const ar = arena.allocator();
         const answer: jira.Answer([]const Value) = blk: {
             if (job.board_id != 0) {
-                break :blk jira.boardIssues(&client, ar, job.board_id, job.extra_jql, job.extra_fields) catch
+                break :blk jira.boardIssues(&client, ar, job.board_id, job.extra_jql, job.extra_fields, job.reason) catch
                     jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
             }
-            break :blk jira.search(&client, ar, job.jql, job.extra_fields) catch
+            break :blk jira.search(&client, ar, job.jql, job.extra_fields, job.reason) catch
                 jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
         };
         switch (answer) {
@@ -659,7 +664,7 @@ pub const App = struct {
                 if (job.want_prs) {
                     for (issues) |iss| {
                         if (!iss.isUnresolved() or iss.id.len == 0) continue;
-                        switch (jira.pullRequests(&client, ar, iss.id) catch continue) {
+                        switch (jira.pullRequests(&client, ar, iss.id, job.reason) catch continue) {
                             .ok => |list| prs.append(ar, .{ .key = iss.key, .list = list }) catch {},
                             .failed => {},
                         }
@@ -903,7 +908,7 @@ pub const App = struct {
         }
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        switch (jira.pullRequests(a.client, scratch.allocator(), issue_id) catch |err| switch (err) {
+        switch (jira.pullRequests(a.client, scratch.allocator(), issue_id, .detail) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Transport => {
                 a.setStatus("{s}: linked-PR fetch failed", .{key});
@@ -936,6 +941,7 @@ pub const App = struct {
         defer scratch.deinit();
         a.setStatus("fetching builds for {s} {s}…", .{ key, pr.id });
         const known = if (st.pipelineMeta(key, pr.id)) |m| m.updated_on else "";
+        a.forge.reason = .builds;
         switch (try a.forge.pipelinesForPrUrl(scratch.allocator(), pr.url, known)) {
             .ok => |runs| {
                 try st.putPipelines(key, pr.id, runs.pipelines);
@@ -1174,6 +1180,7 @@ pub const App = struct {
         };
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
+        a.forge.reason = .readiness;
         switch (try a.forge.readinessForPrUrl(scratch.allocator(), pr.url, known, @max(a.cfg.required_approvals, 1), known_build)) {
             .ok => |got| try st.putReadiness(key, pr.id, .{ .updated_on = got.updated_on, .readiness = got.readiness }),
             // It has not moved: what is on screen still stands.

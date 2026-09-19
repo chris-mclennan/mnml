@@ -27,6 +27,10 @@ const text = @import("text.zig");
 const ratelimit = @import("ratelimit.zig");
 const config = @import("config.zig");
 const model = @import("model.zig");
+const sdk = @import("mnml_sdk");
+const request_log = sdk.request_log;
+
+pub const Reason = request_log.Reason;
 
 pub const Value = std.json.Value;
 pub const ApiVersion = config.ApiVersion;
@@ -79,6 +83,9 @@ pub const Client = struct {
     /// talks to a fake server and has no budget to spend; the caller
     /// owns it otherwise.
     limiter: ?*ratelimit.Limiter = null,
+    /// Where every request is written down (`mnml_sdk.request_log`).
+    /// Null in a test, which has no data root to write into.
+    log: ?*request_log.Log = null,
     user_agent: []const u8 = "mnml-jira",
 
     pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
@@ -99,11 +106,15 @@ pub const Client = struct {
         };
     }
 
-    /// One request, gated, with the body read into `arena`.
-    pub fn request(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) CallError!Raw {
+    /// One request, gated, with the body read into `arena`. `reason`
+    /// is why this call is being made — it goes into the request log,
+    /// where it is the difference between "the tab asked for forty
+    /// things" and "the poller did".
+    pub fn request(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Raw {
         // The bucket is shared, so this waits on every other process
         // too — and fails open rather than leaving the pane hung.
-        if (c.limiter) |l| _ = l.acquire();
+        const gate: ratelimit.Acquired = if (c.limiter) |l| l.acquireDetailed() else .{ .ok = true };
+        const started = Io.Timestamp.now(c.io, .real);
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();
         var out: Io.Writer.Allocating = .init(arena);
@@ -128,7 +139,13 @@ pub const Client = struct {
             .keep_alive = false,
         }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return error.Transport,
+            // A request that never reached a status is still a line in
+            // the log: a wedged socket and a throttled bucket look the
+            // same on screen and must not look the same here.
+            else => {
+                c.note(arena, method, url, null, 0, started, gate, reason);
+                return error.Transport;
+            },
         };
         const status: u16 = @intFromEnum(res.status);
         // A 429 or a 5xx parks every process on the bucket, not just
@@ -136,7 +153,40 @@ pub const Client = struct {
         if (ratelimit.shouldPenalise(status)) {
             if (c.limiter) |l| l.penalize(retry_after);
         }
+        c.note(arena, method, url, status, out.written().len, started, gate, reason);
         return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_secs = retry_after };
+    }
+
+    /// One line in the request log. Best effort: a log is never a
+    /// reason a request fails.
+    fn note(
+        c: *Client,
+        arena: Allocator,
+        method: std.http.Method,
+        url: []const u8,
+        status: ?u16,
+        bytes: usize,
+        started: Io.Timestamp,
+        gate: ratelimit.Acquired,
+        reason: Reason,
+    ) void {
+        const log = c.log orelse return;
+        const split = request_log.splitUrl(arena, url) catch return;
+        const ms: u64 = @intCast(@max(Io.Timestamp.now(c.io, .real).toMilliseconds() - started.toMilliseconds(), 0));
+        log.append(.{
+            .service = "",
+            .integration = "",
+            .method = @tagName(method),
+            .host = split.host,
+            .path = split.path,
+            .status = status,
+            .ms = ms,
+            .bytes = bytes,
+            .reason = reason,
+            .wait_ms = gate.wait_ms,
+            .waited_for = gate.waited_for,
+            .tokens_after = gate.tokens_after,
+        });
     }
 };
 
@@ -286,7 +336,7 @@ pub const Page = struct {
 
 /// One page of a JQL search. `token` is the previous page's
 /// `next_page_token` (v3) or the row offset as a decimal string (v2).
-pub fn searchPage(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8, limit: u32, token: ?[]const u8) CallError!Answer(Page) {
+pub fn searchPage(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8, limit: u32, token: ?[]const u8, reason: Reason) CallError!Answer(Page) {
     var fields: std.ArrayListUnmanaged([]const u8) = .empty;
     try fields.appendSlice(arena, &search_fields);
     for (extra_fields) |f| if (f.len > 0) try fields.append(arena, f);
@@ -308,14 +358,14 @@ pub fn searchPage(c: *Client, arena: Allocator, jql: []const u8, extra_fields: [
             }
             s.endObject() catch return error.OutOfMemory;
             const url = try std.fmt.allocPrint(arena, "{s}{s}/search/jql", .{ c.base_url, c.apiRoot() });
-            break :blk try c.request(arena, .POST, url, body.written());
+            break :blk try c.request(arena, .POST, url, body.written(), reason);
         },
         .v2 => blk: {
             const start = if (token) |t| std.fmt.parseInt(u32, t, 10) catch 0 else 0;
             const encoded = try text.urlEncode(arena, jql);
             const field_csv = try std.mem.join(arena, ",", fields.items);
             const url = try std.fmt.allocPrint(arena, "{s}{s}/search?jql={s}&maxResults={d}&startAt={d}&fields={s}", .{ c.base_url, c.apiRoot(), encoded, limit, start, field_csv });
-            break :blk try c.request(arena, .GET, url, null);
+            break :blk try c.request(arena, .GET, url, null, reason);
         },
     };
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
@@ -341,11 +391,11 @@ pub fn searchPage(c: *Client, arena: Allocator, jql: []const u8, extra_fields: [
 }
 
 /// Every page, up to `max_issues`.
-pub fn search(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8) CallError!Answer([]const Value) {
+pub fn search(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8, reason: Reason) CallError!Answer([]const Value) {
     var all: std.ArrayListUnmanaged(Value) = .empty;
     var token: ?[]const u8 = null;
     while (true) {
-        switch (try searchPage(c, arena, jql, extra_fields, page_size, token)) {
+        switch (try searchPage(c, arena, jql, extra_fields, page_size, token, reason)) {
             .failed => |f| return .{ .failed = f },
             .ok => |p| {
                 try all.appendSlice(arena, p.issues);
@@ -371,7 +421,7 @@ pub fn issueDetail(c: *Client, arena: Allocator, key: []const u8) CallError!Answ
         "{s}{s}/issue/{s}?fields=description,comment,watches,summary,status,assignee,issuetype,priority,fixVersions,updated,reporter",
         .{ c.base_url, c.apiRoot(), key },
     );
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .detail)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| return .{ .ok = try model.IssueDetail.fromJson(arena, doc) },
     }
@@ -382,12 +432,12 @@ pub fn issueDetail(c: *Client, arena: Allocator, key: []const u8) CallError!Answ
 pub fn issueFull(c: *Client, arena: Allocator, key: []const u8, fields: []const []const u8) CallError!Answer(Value) {
     const csv = if (fields.len == 0) "*all" else try std.mem.join(arena, ",", fields);
     const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}?fields={s}", .{ c.base_url, c.apiRoot(), key, csv });
-    return getJson(c, arena, url);
+    return getJson(c, arena, url, .detail);
 }
 
 /// The tickets a JQL finds, parsed. `extra_fields` is the team select's id.
-pub fn searchIssues(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8, team_field_id: []const u8) CallError!Answer([]const model.Issue) {
-    switch (try search(c, arena, jql, extra_fields)) {
+pub fn searchIssues(c: *Client, arena: Allocator, jql: []const u8, extra_fields: []const []const u8, team_field_id: []const u8, reason: Reason) CallError!Answer([]const model.Issue) {
+    switch (try search(c, arena, jql, extra_fields, reason)) {
         .failed => |f| return .{ .failed = f },
         .ok => |vals| return .{ .ok = try parseIssues(arena, vals, team_field_id) },
     }
@@ -401,7 +451,7 @@ pub fn parseIssues(arena: Allocator, vals: []const Value, team_field_id: []const
 
 pub fn transitions(c: *Client, arena: Allocator, key: []const u8) CallError!Answer([]const model.Transition) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/transitions", .{ c.base_url, c.apiRoot(), key });
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .user)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| {
             var out: std.ArrayList(model.Transition) = .empty;
@@ -418,7 +468,7 @@ pub fn transitions(c: *Client, arena: Allocator, key: []const u8) CallError!Answ
 pub fn doTransition(c: *Client, arena: Allocator, key: []const u8, id: []const u8) CallError!Answer(void) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/transitions", .{ c.base_url, c.apiRoot(), key });
     const body = try std.fmt.allocPrint(arena, "{{\"transition\":{{\"id\":\"{s}\"}}}}", .{id});
-    return voidCall(c, arena, .POST, url, body);
+    return voidCall(c, arena, .POST, url, body, .user);
 }
 
 /// A comment. v3 takes an ADF document; v2 takes the text.
@@ -433,7 +483,7 @@ pub fn addComment(c: *Client, arena: Allocator, key: []const u8, plain: []const 
         .v2 => s.write(plain) catch return error.OutOfMemory,
     }
     s.endObject() catch return error.OutOfMemory;
-    return voidCall(c, arena, .POST, url, body.written());
+    return voidCall(c, arena, .POST, url, body.written(), .user);
 }
 
 /// `plain` as an ADF doc: one paragraph per line, a bare paragraph for a
@@ -475,7 +525,7 @@ pub fn setAssignee(c: *Client, arena: Allocator, key: []const u8, account_id: []
         try arena.dupe(u8, "{\"fields\":{\"assignee\":null}}")
     else
         try std.fmt.allocPrint(arena, "{{\"fields\":{{\"assignee\":{{\"accountId\":\"{s}\"}}}}}}", .{account_id});
-    return voidCall(c, arena, .PUT, url, body);
+    return voidCall(c, arena, .PUT, url, body, .user);
 }
 
 /// The one version this ticket is for; an empty name clears the list.
@@ -497,30 +547,30 @@ pub fn setFixVersion(c: *Client, arena: Allocator, key: []const u8, name: []cons
     s.endArray() catch return error.OutOfMemory;
     s.endObject() catch return error.OutOfMemory;
     s.endObject() catch return error.OutOfMemory;
-    return voidCall(c, arena, .PUT, url, body.written());
+    return voidCall(c, arena, .PUT, url, body.written(), .user);
 }
 
 /// Watch as the token's user: an empty JSON string as the body.
 pub fn watch(c: *Client, arena: Allocator, key: []const u8) CallError!Answer(void) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/watchers", .{ c.base_url, c.apiRoot(), key });
-    return voidCall(c, arena, .POST, url, "\"\"");
+    return voidCall(c, arena, .POST, url, "\"\"", .user);
 }
 
 /// Unwatch needs the account id (`myself`).
 pub fn unwatch(c: *Client, arena: Allocator, key: []const u8, account_id: []const u8) CallError!Answer(void) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/issue/{s}/watchers?accountId={s}", .{ c.base_url, c.apiRoot(), key, account_id });
-    return voidCall(c, arena, .DELETE, url, null);
+    return voidCall(c, arena, .DELETE, url, null, .user);
 }
 
 /// The PRs Atlassian's dev panel links to the issue (by numeric id).
 /// A 404 is "no dev info", not a failure.
-pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8) CallError!Answer([]const model.LinkedPr) {
+pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8, reason: Reason) CallError!Answer([]const model.LinkedPr) {
     const url = try std.fmt.allocPrint(
         arena,
         "{s}/rest/dev-status/latest/issue/detail?issueId={s}&applicationType=bitbucket&dataType=pullrequest",
         .{ c.base_url, issue_id },
     );
-    const raw = try c.request(arena, .GET, url, null);
+    const raw = try c.request(arena, .GET, url, null, reason);
     if (raw.status == 404) return .{ .ok = &.{} };
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
@@ -538,7 +588,7 @@ pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8) CallErro
 /// cost the "me" features — never the pane.
 pub fn myself(c: *Client, arena: Allocator) CallError!Answer(model.User) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/myself", .{ c.base_url, c.apiRoot() });
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .pane_open)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| return .{ .ok = .{
             .account_id = json.getStrOr(doc, "accountId", ""),
@@ -550,7 +600,8 @@ pub fn myself(c: *Client, arena: Allocator) CallError!Answer(model.User) {
 pub fn assignableUsers(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const model.User) {
     const p = try text.urlEncode(arena, project);
     const url = try std.fmt.allocPrint(arena, "{s}{s}/user/assignable/search?project={s}&query=&maxResults=50", .{ c.base_url, c.apiRoot(), p });
-    const raw = try c.request(arena, .GET, url, null);
+    // A picker the user opened.
+    const raw = try c.request(arena, .GET, url, null, .user);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
     const items: []const Value = switch (doc) {
@@ -568,7 +619,7 @@ pub fn assignableUsers(c: *Client, arena: Allocator, project: []const u8) CallEr
 
 pub fn projectVersions(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const model.Version) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/project/{s}/versions", .{ c.base_url, c.apiRoot(), project });
-    const raw = try c.request(arena, .GET, url, null);
+    const raw = try c.request(arena, .GET, url, null, .pane_open);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch Value{ .null = {} };
     const items: []const Value = switch (doc) {
@@ -652,7 +703,7 @@ pub const agile_root = "/rest/agile/1.0";
 
 /// The board's issues (its saved filter + active sprint), paged by
 /// `startAt`, with `extra_jql` ANDed in, capped at `max_issues`.
-pub fn boardIssues(c: *Client, arena: Allocator, board_id: u64, extra_jql: ?[]const u8, extra_fields: []const []const u8) CallError!Answer([]const Value) {
+pub fn boardIssues(c: *Client, arena: Allocator, board_id: u64, extra_jql: ?[]const u8, extra_fields: []const []const u8, reason: Reason) CallError!Answer([]const Value) {
     var fields: std.ArrayList([]const u8) = .empty;
     try fields.appendSlice(arena, &search_fields);
     for (extra_fields) |f| if (f.len > 0) try fields.append(arena, f);
@@ -664,7 +715,7 @@ pub fn boardIssues(c: *Client, arena: Allocator, board_id: u64, extra_jql: ?[]co
         if (extra_jql) |j| if (std.mem.trim(u8, j, " ").len > 0) {
             url = try std.fmt.allocPrint(arena, "{s}&jql={s}", .{ url, try text.urlEncode(arena, j) });
         };
-        const raw = try c.request(arena, .GET, url, null);
+        const raw = try c.request(arena, .GET, url, null, reason);
         if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
         const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
             return .{ .failed = .{ .status = raw.status, .message = "the board answer was not JSON" } };
@@ -686,7 +737,7 @@ pub fn boardIssues(c: *Client, arena: Allocator, board_id: u64, extra_jql: ?[]co
 
 pub fn board(c: *Client, arena: Allocator, board_id: u64) CallError!Answer(model.Board) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}", .{ c.base_url, agile_root, board_id });
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .pane_open)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| return .{ .ok = .{
             .id = @intCast(@max(json.getInt(doc, "id") orelse 0, 0)),
@@ -698,7 +749,7 @@ pub fn board(c: *Client, arena: Allocator, board_id: u64) CallError!Answer(model
 
 pub fn boardsForProject(c: *Client, arena: Allocator, project: []const u8) CallError!Answer([]const model.Board) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/board?projectKeyOrId={s}&maxResults=100", .{ c.base_url, agile_root, try text.urlEncode(arena, project) });
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .user)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| {
             var out: std.ArrayList(model.Board) = .empty;
@@ -745,7 +796,7 @@ const SprintPage = struct { values: []const model.Sprint, total: i64 };
 
 fn sprintPage(c: *Client, arena: Allocator, board_id: u64, state: []const u8, start: u32, max: u32) CallError!Answer(SprintPage) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}/sprint?state={s}&startAt={d}&maxResults={d}", .{ c.base_url, agile_root, board_id, state, start, max });
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .pane_open)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| {
             var out: std.ArrayList(model.Sprint) = .empty;
@@ -764,7 +815,7 @@ fn sprintPage(c: *Client, arena: Allocator, board_id: u64, state: []const u8, st
 
 pub fn quickFilters(c: *Client, arena: Allocator, board_id: u64) CallError!Answer([]const model.QuickFilter) {
     const url = try std.fmt.allocPrint(arena, "{s}{s}/board/{d}/quickfilter?maxResults=50", .{ c.base_url, agile_root, board_id });
-    switch (try getJson(c, arena, url)) {
+    switch (try getJson(c, arena, url, .pane_open)) {
         .failed => |f| return .{ .failed = f },
         .ok => |doc| {
             var out: std.ArrayList(model.QuickFilter) = .empty;
@@ -780,8 +831,8 @@ pub fn quickFilters(c: *Client, arena: Allocator, board_id: u64) CallError!Answe
 
 // ─── shared shapes ───────────────────────────────────────────────────────
 
-fn getJson(c: *Client, arena: Allocator, url: []const u8) CallError!Answer(Value) {
-    const raw = try c.request(arena, .GET, url, null);
+fn getJson(c: *Client, arena: Allocator, url: []const u8, reason: Reason) CallError!Answer(Value) {
+    const raw = try c.request(arena, .GET, url, null, reason);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
         return .{ .failed = .{ .status = raw.status, .message = "the answer was not JSON" } };
@@ -789,8 +840,8 @@ fn getJson(c: *Client, arena: Allocator, url: []const u8) CallError!Answer(Value
     return .{ .ok = doc };
 }
 
-fn voidCall(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) CallError!Answer(void) {
-    const raw = try c.request(arena, method, url, body);
+fn voidCall(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Answer(void) {
+    const raw = try c.request(arena, method, url, body, reason);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     return .{ .ok = {} };
 }
@@ -947,7 +998,7 @@ pub const Loopback = struct {
     pub fn finish(lb: *Loopback, c: *Client, arena: Allocator) !void {
         _ = lb;
         const url = try std.fmt.allocPrint(arena, "{s}/__done", .{c.base_url});
-        _ = c.request(arena, .GET, url, null) catch {};
+        _ = c.request(arena, .GET, url, null, .user) catch {};
     }
 };
 
@@ -981,7 +1032,7 @@ test "the client against a real socket: search, detail, the full issue, transiti
     const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
     var c = Client.init(testing.allocator, io, base, authorization, .v3);
 
-    const all = try okOr([]const model.Issue, try searchIssues(&c, arena, "project = ENG ORDER BY rank", &.{"customfield_10056"}, "customfield_10056"));
+    const all = try okOr([]const model.Issue, try searchIssues(&c, arena, "project = ENG ORDER BY rank", &.{"customfield_10056"}, "customfield_10056", .pane_open));
     try testing.expectEqual(@as(usize, fake.issue_count), all.len);
     try testing.expectEqualStrings("ENG-1", all[0].key);
     try testing.expectEqualStrings("Checkout rewrite", all[0].summary);
@@ -989,7 +1040,7 @@ test "the client against a real socket: search, detail, the full issue, transiti
     try testing.expectEqualStrings("ENG-1", all[1].epicKey().?);
     try testing.expectEqualStrings("Sprint 4", all[1].sprint);
 
-    const mine = try okOr([]const model.Issue, try searchIssues(&c, arena, TabKindJql(.work_assigned), &.{}, ""));
+    const mine = try okOr([]const model.Issue, try searchIssues(&c, arena, TabKindJql(.work_assigned), &.{}, "", .pane_open));
     try testing.expectEqual(@as(usize, 3), mine.len);
 
     const d = try okOr(model.IssueDetail, try issueDetail(&c, arena, "ENG-2"));
@@ -1023,12 +1074,12 @@ test "the client against a real socket: search, detail, the full issue, transiti
     try testing.expect((try unwatch(&c, arena, "ENG-3", me.account_id)) == .ok);
     try testing.expect(!(try okOr(model.IssueDetail, try issueDetail(&c, arena, "ENG-3"))).watching);
 
-    const prs = try okOr([]const model.LinkedPr, try pullRequests(&c, arena, "10002"));
+    const prs = try okOr([]const model.LinkedPr, try pullRequests(&c, arena, "10002", .refresh));
     try testing.expectEqual(@as(usize, 2), prs.len);
     try testing.expectEqualStrings("#2023", prs[0].id);
     try testing.expectEqualStrings("checkout", prs[0].repo);
     try testing.expectEqual(@as(u16, 2), prs[0].approvals());
-    try testing.expectEqual(@as(usize, 0), (try okOr([]const model.LinkedPr, try pullRequests(&c, arena, "10001"))).len);
+    try testing.expectEqual(@as(usize, 0), (try okOr([]const model.LinkedPr, try pullRequests(&c, arena, "10001", .refresh))).len);
 
     const users = try okOr([]const model.User, try assignableUsers(&c, arena, "ENG"));
     try testing.expectEqual(@as(usize, fake.user_count), users.len);
@@ -1061,9 +1112,9 @@ test "the client against a real socket: the Agile API — board issues, the boar
     const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
     var c = Client.init(testing.allocator, io, base, authorization, .v3);
 
-    const sprint_issues = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, null, &.{}));
+    const sprint_issues = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, null, &.{}, .pane_open));
     try testing.expectEqual(@as(usize, fake.sprint_issue_count), sprint_issues.len);
-    const bugs = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, "(issuetype = Bug)", &.{}));
+    const bugs = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, "(issuetype = Bug)", &.{}, .pane_open));
     try testing.expectEqual(@as(usize, 2), bugs.len);
     const b = try okOr(model.Board, try board(&c, arena, fake.board_scrum));
     try testing.expectEqualStrings("Checkout board", b.name);
@@ -1111,7 +1162,7 @@ test "a refusal comes back as Jira's own sentence, and a 429 parks the shared bu
     var bucket = try ratelimit.Limiter.init(testing.allocator, io, bucket_path, .{ .max_block_secs = 0.1 });
     defer bucket.deinit();
     c.limiter = &bucket;
-    switch (try search(&c, arena, "project = ENG", &.{})) {
+    switch (try search(&c, arena, "project = ENG", &.{}, .pane_open)) {
         .ok => return error.TestUnexpectedResult,
         .failed => |f| {
             try testing.expectEqual(@as(u16, 401), f.status);
@@ -1120,7 +1171,7 @@ test "a refusal comes back as Jira's own sentence, and a 429 parks the shared bu
     }
     store.require_auth = false;
     store.fail_with = 429;
-    _ = try search(&c, arena, "project = ENG", &.{});
+    _ = try search(&c, arena, "project = ENG", &.{}, .pane_open);
     // The 429 landed in the file, so a second process — another pane,
     // the statusline poller — is parked by it too.
     const st = bucket.status().?;

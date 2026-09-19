@@ -323,11 +323,15 @@ const Session = struct {
     loaded: cfg.Loaded,
     tokens: auth.Tokens,
     limiter: ratelimit.Limiter,
+    /// Where every request this run makes is written down. Held by the
+    /// session so it outlives the client that points at it.
+    log: sdk.RequestLog,
     client: api.Client,
     base_url: []u8,
 
     fn deinit(s: *Session, gpa: Allocator) void {
         s.client.deinit();
+        s.log.deinit();
         s.limiter.deinit();
         s.tokens.deinit();
         s.loaded.deinit();
@@ -354,9 +358,11 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
     defer gpa.free(state_path);
     var limiter = try ratelimit.Limiter.init(gpa, io, state_path, .{ .rate = loaded.config.rate.rate_per_sec, .capacity = loaded.config.rate.capacity });
     errdefer limiter.deinit();
+    var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-bitbucket");
+    errdefer log.deinit();
     var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, if (tokens.write_source == .env) tokens.write else "", loaded.config.rate);
     errdefer client.deinit();
-    return .{ .loaded = loaded, .tokens = tokens, .limiter = limiter, .client = client, .base_url = base_url };
+    return .{ .loaded = loaded, .tokens = tokens, .limiter = limiter, .log = log, .client = client, .base_url = base_url };
 }
 
 /// `$BITBUCKET_BASE_URL` — literally, or `@<path>` naming a file that
@@ -405,6 +411,7 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
+    s.client.log = &s.log;
     const c = s.loaded.config;
     const tk = try auth.describe(gpa, &s.tokens);
     defer gpa.free(tk);
@@ -506,6 +513,7 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
+    s.client.log = &s.log;
     // The unresolved-comment count is the poller's figure, and it is
     // paid for out of the same bucket — the cache is what keeps it to
     // one request per pull request that actually moved.
@@ -665,6 +673,7 @@ fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
+    s.client.log = &s.log;
     var rc = try review_cache.Cache.open(gpa, io, s.loaded.path);
     defer rc.deinit();
     var res = try computeValues(gpa, io, &s, &rc);
@@ -711,6 +720,7 @@ fn listPrsCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
+    s.client.log = &s.log;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -768,6 +778,7 @@ fn findPipelineCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, 
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
+    s.client.log = &s.log;
     var reply = try s.client.listPipelines(gpa, owner, repo, 50);
     defer reply.deinit(gpa);
     switch (reply) {
@@ -814,6 +825,7 @@ fn prefetchCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out:
     };
     defer s.deinit(gpa);
     s.client.limiter = &s.limiter;
+    s.client.log = &s.log;
     var cache = try cache_mod.Cache.init(gpa, io, s.loaded.path, .fill);
     defer cache.deinit();
     // A repo that left the config must not keep answering from a file.
@@ -911,6 +923,7 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
     };
     defer session.deinit(gpa);
     session.client.limiter = &session.limiter;
+    session.client.log = &session.log;
     session.client.now_secs = nowSecs(io);
 
     var cols: u16 = 120;
@@ -1189,6 +1202,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     };
     defer session.deinit(gpa);
     session.client.limiter = &session.limiter;
+    session.client.log = &session.log;
     // Whatever `--prefetch` last left behind answers the startup fetch
     // — each URL once, so the first refresh after it is live.
     var cache = try cache_mod.Cache.init(gpa, io, session.loaded.path, .prime);

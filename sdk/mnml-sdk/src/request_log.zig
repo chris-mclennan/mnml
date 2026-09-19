@@ -31,6 +31,15 @@
 //! **A log is never a reason a request fails.** Every file operation
 //! here is best effort: a log that cannot be written costs a line, not
 //! a fetch.
+//!
+//! **Whether it is on** is the host's to say. mnml's own
+//! `integrations.request_log` block reaches every integration it
+//! starts as two environment variables — `MNML_REQUEST_LOG`
+//! (`0` / `off` / `false` / `no` turns it off) and
+//! `MNML_REQUEST_LOG_MAX_MB` — which is what `open` reads. An
+//! integration run by hand with neither set gets the log: the point of
+//! it is to be there when the slow morning happens, not to be switched
+//! on afterwards.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -41,6 +50,11 @@ const ratelimit = @import("ratelimit.zig");
 pub const default_max_bytes: u64 = 4 * 1024 * 1024;
 /// Older generations kept beside the live file. One: `<service>.1.jsonl`.
 pub const kept_generations: usize = 1;
+/// What the host sets from `integrations.request_log`: `0` / `off` /
+/// `false` / `no` turns the log off, anything else leaves it on.
+pub const enabled_env = "MNML_REQUEST_LOG";
+/// The ceiling before a rotate, in megabytes.
+pub const max_mb_env = "MNML_REQUEST_LOG_MAX_MB";
 
 /// Why a request was made. Every call site passes one; a line without
 /// a reason cannot be read back to a cause, which is the whole point.
@@ -169,6 +183,8 @@ pub const Log = struct {
             .dir = dir,
             .service = svc,
             .integration = try gpa.dupe(u8, integration),
+            .enabled = enabledIn(env),
+            .max_bytes = maxBytesIn(env),
         };
     }
 
@@ -355,6 +371,24 @@ pub fn dataRoot(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.E
     if (nonEmpty(env.get("XDG_CONFIG_HOME"))) |xdg| return std.fs.path.join(gpa, &.{ xdg, "mnml" });
     if (nonEmpty(env.get("HOME") orelse env.get("USERPROFILE"))) |home| return std.fs.path.join(gpa, &.{ home, ".config", "mnml" });
     return gpa.dupe(u8, "mnml");
+}
+
+/// `MNML_REQUEST_LOG`: off only when the host says so outright.
+pub fn enabledIn(env: *const std.process.Environ.Map) bool {
+    const v = nonEmpty(env.get(enabled_env)) orelse return true;
+    for ([_][]const u8{ "0", "off", "false", "no" }) |no| {
+        if (std.ascii.eqlIgnoreCase(v, no)) return false;
+    }
+    return true;
+}
+
+/// `MNML_REQUEST_LOG_MAX_MB`, as bytes. A nonsense value keeps the
+/// default rather than turning the ceiling off.
+pub fn maxBytesIn(env: *const std.process.Environ.Map) u64 {
+    const v = nonEmpty(env.get(max_mb_env)) orelse return default_max_bytes;
+    const mb = std.fmt.parseInt(u32, std.mem.trim(u8, v, " \t"), 10) catch return default_max_bytes;
+    if (mb == 0) return default_max_bytes;
+    return @as(u64, mb) * 1024 * 1024;
 }
 
 fn nonEmpty(v: ?[]const u8) ?[]const u8 {
@@ -601,4 +635,43 @@ test "the data root is the host's, and the file is one per service" {
     const p = try log.path(t.allocator);
     defer t.allocator.free(p);
     try t.expectEqualStrings("/data/requests/bitbucket.jsonl", p);
+    // Neither variable set is ON: the log has to be there when the
+    // slow morning happens, not be switched on afterwards.
+    try t.expect(log.enabled);
+    try t.expectEqual(default_max_bytes, log.max_bytes);
+}
+
+test "the host's `integrations.request_log` reaches the SDK as two variables" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_DATA_ROOT", "/data");
+    for ([_][]const u8{ "0", "off", "false", "no", "OFF", "False" }) |off| {
+        try env.put(enabled_env, off);
+        var log = try Log.open(t.allocator, t.io, &env, "jira", "mnml-jira");
+        defer log.deinit();
+        t.expect(!log.enabled) catch |err| {
+            std.debug.print("{s} did not turn the log off\n", .{off});
+            return err;
+        };
+    }
+    for ([_][]const u8{ "1", "on", "true", "" }) |on| {
+        try env.put(enabled_env, on);
+        var log = try Log.open(t.allocator, t.io, &env, "jira", "mnml-jira");
+        defer log.deinit();
+        try t.expect(log.enabled);
+    }
+    try env.put(enabled_env, "1");
+    try env.put(max_mb_env, "8");
+    {
+        var log = try Log.open(t.allocator, t.io, &env, "jira", "mnml-jira");
+        defer log.deinit();
+        try t.expectEqual(@as(u64, 8 * 1024 * 1024), log.max_bytes);
+    }
+    // Nonsense keeps the default rather than removing the ceiling.
+    for ([_][]const u8{ "nonsense", "0", "-3" }) |bad| {
+        try env.put(max_mb_env, bad);
+        var log = try Log.open(t.allocator, t.io, &env, "jira", "mnml-jira");
+        defer log.deinit();
+        try t.expectEqual(default_max_bytes, log.max_bytes);
+    }
 }

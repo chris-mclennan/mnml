@@ -25,6 +25,8 @@ pub const Config = shared.Config;
 pub const State = shared.State;
 pub const Status = shared.Status;
 pub const Limiter = shared.Limiter;
+pub const Acquired = shared.Acquired;
+pub const Wait = shared.Wait;
 pub const parseState = shared.parseState;
 pub const renderState = shared.renderState;
 

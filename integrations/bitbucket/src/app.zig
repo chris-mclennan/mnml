@@ -369,7 +369,9 @@ pub const App = struct {
         if (app.config.account_id.len == 0) try app.enqueue(.whoami);
         for (app.tabs, 0..) |*ts, i| {
             ts.loading = true;
-            try app.enqueue(.{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } });
+            // The startup chain is the pane opening, whatever the job
+            // kind says; a refetch of the same tab later is not.
+            try app.enqueueFor(.{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } }, .pane_open);
         }
         try app.requestValues();
         app.last_refresh_secs = app.now_secs;
@@ -382,6 +384,11 @@ pub const App = struct {
 
     fn enqueue(app: *App, kind: fetch.Job.Kind) Allocator.Error!void {
         try app.jobs.append(app.gpa, try fetch.makeJob(app.gpa, app.now_secs, kind));
+    }
+
+    /// The same, saying what the request log should call it.
+    fn enqueueFor(app: *App, kind: fetch.Job.Kind, reason: api.Reason) Allocator.Error!void {
+        try app.jobs.append(app.gpa, try fetch.makeJobFor(app.gpa, app.now_secs, kind, reason));
     }
 
     /// The jobs queued since the last take; the caller owns them.

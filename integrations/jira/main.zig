@@ -366,10 +366,25 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     const authorization = try auth.basicHeader(arena, rd.cfg.email, rd.token.value);
     var limiter = try openLimiter(gpa, io, env, rd.cfg.rate);
     defer limiter.deinit();
+    var forge_limiter = try openForgeLimiter(gpa, io, env);
+    defer forge_limiter.deinit();
+    var logs = try openLogs(gpa, io, env);
+    defer {
+        logs.jira.deinit();
+        logs.forge.deinit();
+    }
     var client = jira.Client.init(gpa, io, rd.cfg.jira_url, authorization, rd.cfg.api);
     client.limiter = &limiter;
+    client.log = &logs.jira;
     const forge_token = if (rd.cfg.bitbucket_token_env.len > 0) env.get(rd.cfg.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
-    const forge: bitbucket.Client = .{ .gpa = gpa, .io = io, .base_url = rd.cfg.bitbucket_api_url, .token = forge_token orelse "" };
+    const forge: bitbucket.Client = .{
+        .gpa = gpa,
+        .io = io,
+        .base_url = rd.cfg.bitbucket_api_url,
+        .token = forge_token orelse "",
+        .limiter = &forge_limiter,
+        .log = &logs.forge,
+    };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
@@ -683,6 +698,25 @@ fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate
     return ratelimit.Limiter.init(gpa, io, p, ratelimit.configFrom(rate));
 }
 
+/// The FORGE's bucket — `bitbucket`, not `jira`. The pipeline and
+/// readiness calls a Work tab makes are Bitbucket requests and come out
+/// of Bitbucket's allowance; they used to go out with no bucket at all,
+/// so a Jira pane quietly spent it and the forge pane in the next
+/// window paid with a 429.
+fn openForgeLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.ratelimit.Limiter {
+    return sdk.ratelimit.Limiter.forService(gpa, io, env, "bitbucket");
+}
+
+/// The two request logs a Jira pane writes: its own service's, and the
+/// forge's, because a call to Bitbucket belongs in Bitbucket's file
+/// however it was started.
+fn openLogs(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!struct { jira: sdk.RequestLog, forge: sdk.RequestLog } {
+    return .{
+        .jira = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira"),
+        .forge = try sdk.RequestLog.open(gpa, io, env, "bitbucket", "mnml-jira"),
+    };
+}
+
 fn check(arena: Allocator, w: *Io.Writer, loaded: config.Loaded, token: auth.Result) !u8 {
     const c = loaded.config;
     try w.print("config: {s}{s}\n", .{ loaded.path, if (loaded.missing) "  (not there yet — --write-config makes one)" else "" });
@@ -721,8 +755,11 @@ fn diag(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         const authorization = try auth.basicHeader(arena, c.email, token.ok.value);
         var limiter = try openLimiter(gpa, io, env, c.rate);
         defer limiter.deinit();
+        var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira");
+        defer log.deinit();
         var client = jira.Client.init(gpa, io, c.jira_url, authorization, c.api);
         client.limiter = &limiter;
+        client.log = &log;
         switch (jira.myself(&client, arena) catch jira.Answer(model.User){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
             .ok => |u| try w.print("  └─ /myself: ✓ account_id={s}\n", .{u.account_id}),
             .failed => |f| try w.print("  └─ /myself: ✗ {s}\n", .{f.message}),
@@ -768,13 +805,16 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     }
     var limiter = try openLimiter(gpa, io, env, c.rate);
     defer limiter.deinit();
+    var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira");
+    defer log.deinit();
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+    client.log = &log;
 
     var v: Values = .{};
     const base = config.TabKind.work_assigned.defaultJql().?;
     const jql = try jira.withProjects(arena, base, c.projects);
-    switch (jira.search(&client, arena, jql, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+    switch (jira.search(&client, arena, jql, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
         .ok => |items| {
             v.assigned_open = items.len;
             v.assigned_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
@@ -793,7 +833,7 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
         v.qa_tab_name = tab.name;
         if (try tab.staticJql(arena)) |qa_jql| {
             const scoped = try jira.withProjects(arena, qa_jql, c.projects);
-            switch (jira.search(&client, arena, scoped, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+            switch (jira.search(&client, arena, scoped, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| {
                     v.qa_actionable = items.len;
                     v.qa_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
@@ -842,8 +882,11 @@ fn prefetch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: 
     };
     var limiter = try openLimiter(gpa, io, env, c.rate);
     defer limiter.deinit();
+    var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira");
+    defer log.deinit();
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+    client.log = &log;
     const tabs = try config.tabsOfFamily(arena, c.tabs, args.only);
     var w: std.json.Stringify = .{ .writer = out, .options = .{} };
     try w.beginObject();
@@ -860,13 +903,13 @@ fn prefetch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: 
         try w.beginArray();
         const jql = (try tab.staticJql(arena)) orelse "";
         if (tab.board_id != 0) {
-            switch (jira.boardIssues(&client, arena, tab.board_id, null, extra) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+            switch (jira.boardIssues(&client, arena, tab.board_id, null, extra, .prefetch) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| for (items) |v| try w.write(v),
                 .failed => |f| try err.print("mnml-jira --prefetch: {s}: {s}\n", .{ tab.name, f.message }),
             }
         } else if (jql.len > 0) {
             const q = if (tab.team.len > 0) try jira.withTeam(arena, jql, tab.team, c.team_field_name, c.team_field_id) else jql;
-            switch (jira.search(&client, arena, q, extra) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+            switch (jira.search(&client, arena, q, extra, .prefetch) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| for (items) |v| try w.write(v),
                 .failed => |f| try err.print("mnml-jira --prefetch: {s}: {s}\n", .{ tab.name, f.message }),
             }
@@ -912,10 +955,25 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     const steps_src = if (args.steps) |p| try Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1 << 20)) else "snap screen\n";
     var limiter = try openLimiter(gpa, io, env, c.rate);
     defer limiter.deinit();
+    var forge_limiter = try openForgeLimiter(gpa, io, env);
+    defer forge_limiter.deinit();
+    var logs = try openLogs(gpa, io, env);
+    defer {
+        logs.jira.deinit();
+        logs.forge.deinit();
+    }
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+    client.log = &logs.jira;
     const forge_token = if (c.bitbucket_token_env.len > 0) env.get(c.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
-    var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{ .gpa = gpa, .io = io, .base_url = c.bitbucket_api_url, .token = forge_token orelse "" });
+    var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{
+        .gpa = gpa,
+        .io = io,
+        .base_url = c.bitbucket_api_url,
+        .token = forge_token orelse "",
+        .limiter = &forge_limiter,
+        .log = &logs.forge,
+    });
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(cols, rows);
