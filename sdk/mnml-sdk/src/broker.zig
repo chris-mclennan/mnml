@@ -846,6 +846,11 @@ fn serve(s: *Server, stream: Io.net.Stream) Io.Cancelable!void {
         // caller that could have gone to the file bucket instead.
         return reply(&w, (Reply{ .why = .closed }).render(&out));
     };
+    // The ticket lives on this frame, and the queue holds a pointer to
+    // it. Every way out of here — served, timed out, the broker going
+    // down, a cancel landing in the sleep below — has to take it back
+    // out first, so a `defer` rather than a line at the end.
+    defer _ = s.shared.withdraw(&tk);
     const deadline = started + @as(i64, req.timeout_ms);
     while (!tk.done.load(.acquire)) {
         if (s.shared.stopping.load(.acquire)) break;
@@ -861,7 +866,6 @@ fn serve(s: *Server, stream: Io.net.Stream) Io.Cancelable!void {
         }
         try s.io.sleep(.fromMilliseconds(poll_ms), .awake);
     }
-    _ = s.shared.withdraw(&tk);
     const waited: u64 = @intCast(@max(Io.Timestamp.now(s.io, .real).toMilliseconds() - started, 0));
     if (!tk.done.load(.acquire) or !tk.ok) {
         return reply(&w, (Reply{ .ok = false, .wait_ms = waited, .why = .closed }).render(&out));
