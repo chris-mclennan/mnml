@@ -24,6 +24,8 @@ pub const Server = struct {
     state_lock: Io.Mutex = .init,
     /// The arena the replies are built on, reset per request.
     arena: std.heap.ArenaAllocator,
+    /// The clock has been taken. See `serveOne`.
+    clock_set: bool = false,
     /// Where `--log-file` appends one JSON line per request served;
     /// null is no log. Borrowed from the argv, which outlives us.
     log_path: ?[]const u8 = null,
@@ -69,6 +71,14 @@ pub const Server = struct {
         self.state.rate_limit_next = n;
     }
 
+    /// N more generated OPEN pull requests on `acme/api`, so a
+    /// measurement runs against a workspace the size of a real one.
+    pub fn setExtraPrs(self: *Server, n: u32) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.extra_prs = n;
+    }
+
     /// Answer `/2.0/user` with a 403 from now on.
     pub fn denyUser(self: *Server, on: bool) void {
         self.state_lock.lockUncancelable(self.io);
@@ -111,11 +121,17 @@ pub const Server = struct {
 
         var auth_buf: [1024]u8 = undefined;
         var auth: []const u8 = "";
+        var inm_buf: [256]u8 = undefined;
+        var inm: []const u8 = "";
         var it = request.iterateHeaders();
         while (it.next()) |h| {
             if (std.ascii.eqlIgnoreCase(h.name, "authorization") and h.value.len <= auth_buf.len) {
                 @memcpy(auth_buf[0..h.value.len], h.value);
                 auth = auth_buf[0..h.value.len];
+            }
+            if (std.ascii.eqlIgnoreCase(h.name, "if-none-match") and h.value.len <= inm_buf.len) {
+                @memcpy(inm_buf[0..h.value.len], h.value);
+                inm = inm_buf[0..h.value.len];
             }
         }
         var body_buf: [64 * 1024]u8 = undefined;
@@ -137,25 +153,40 @@ pub const Server = struct {
 
         self.state_lock.lockUncancelable(self.io);
         _ = self.arena.reset(.retain_capacity);
-        // Every relative date is written against the real clock.
-        self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
+        // Every relative date is written against the clock as it stood
+        // when the server answered its FIRST request, not against the
+        // clock now.
+        //
+        // A pull request's `updated_on` does not move by itself, and a
+        // fake whose bodies drift a second at a time can never be
+        // answered `304 Not Modified` — which would make a conditional
+        // GET untestable and, worse, quietly wrong in a measurement.
+        if (!self.clock_set) {
+            self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
+            self.clock_set = true;
+        }
         const reply = bb.handle(self.arena.allocator(), &self.state, .{
             .method = method,
             .target = target,
             .body = body,
             .authorization = auth,
+            .if_none_match = inm,
         }) catch bb.Reply{ .status = 500, .body = "{\"error\":{\"message\":\"out of memory\"}}" };
         self.state_lock.unlock(self.io);
 
-        var extra: [2]std.http.Header = undefined;
+        var extra: [3]std.http.Header = undefined;
         var n_extra: usize = 1;
         extra[0] = .{ .name = "content-type", .value = reply.content_type };
         var ra_buf: [8]u8 = undefined;
         if (reply.retry_after_secs) |secs| {
-            extra[1] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
-            n_extra = 2;
+            extra[n_extra] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
+            n_extra += 1;
         }
-        self.logRequest(method, target, reply.status);
+        if (reply.etag.len > 0) {
+            extra[n_extra] = .{ .name = "etag", .value = reply.etag };
+            n_extra += 1;
+        }
+        self.logRequest(method, target, reply.status, reply.body.len);
         request.respond(reply.body, .{
             .status = @enumFromInt(reply.status),
             .extra_headers = extra[0..n_extra],
@@ -167,15 +198,16 @@ pub const Server = struct {
     /// wire, which is the only account of a tab's cost that owes
     /// nothing to what the client believes it sent. Best effort — a
     /// server that cannot write its log still serves.
-    fn logRequest(self: *Server, method: bb.Method, target: []const u8, status: u16) void {
+    fn logRequest(self: *Server, method: bb.Method, target: []const u8, status: u16, bytes: usize) void {
         const path = self.log_path orelse return;
         const cut = std.mem.indexOfScalar(u8, target, '?') orelse target.len;
         var buf: [3072]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d}}}\n", .{
+        const line = std.fmt.bufPrint(&buf, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d},\"bytes\":{d}}}\n", .{
             @tagName(method),
             std.zig.fmtString(target[0..cut]),
             std.zig.fmtString(if (cut < target.len) target[cut + 1 ..] else ""),
             status,
+            bytes,
         }) catch return;
         const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
         defer file.close(self.io);

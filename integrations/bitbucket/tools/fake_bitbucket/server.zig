@@ -31,6 +31,12 @@ pub const Reply = struct {
     body: []const u8 = "",
     /// Sent on a 429 so the client's backoff has something to read.
     retry_after_secs: ?u32 = null,
+    /// The body's `ETag`, when the route offers one. Bitbucket Cloud
+    /// sends one on the read routes and honours `If-None-Match` on
+    /// them, which is the whole reason a poll can be cheap; the fake
+    /// does the same so a test can prove the client uses it. Owned by
+    /// the arena.
+    etag: []const u8 = "",
 };
 
 pub const Method = enum { GET, POST, PUT, DELETE, other };
@@ -62,6 +68,14 @@ pub const State = struct {
     deny_user: bool = false,
     /// Requests served, 429s included.
     served: u32 = 0,
+    /// Of those, the ones answered `304 Not Modified` — what a test
+    /// counts to prove a conditional GET was conditional.
+    not_modified: u32 = 0,
+    /// `--extra-prs N`: N more OPEN pull requests on `acme/api`,
+    /// authored by the account the fixture calls you, so a measurement
+    /// runs against a workspace the size of a real one rather than the
+    /// three the fixture needs to make its points.
+    extra_prs: u32 = 0,
     /// Requests that arrived with no (or a bad) Authorization header.
     unauthorized: u32 = 0,
     /// Set when a write arrived; the corpus proves the write token
@@ -371,10 +385,38 @@ pub const Request = struct {
     body: []const u8 = "",
     /// The `Authorization` header as it arrived.
     authorization: []const u8 = "",
+    /// The `If-None-Match` header as it arrived. A GET whose tag still
+    /// matches what the route would answer with gets a 304 and no
+    /// body.
+    if_none_match: []const u8 = "",
 };
 
 /// Answer one request. `arena` owns the reply body.
 pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
+    var reply = try route(arena, st, req);
+    // Every 2xx answer to a GET carries a tag over its own bytes, and
+    // a GET that arrives holding that tag is told there is nothing
+    // new. Bitbucket Cloud does this on its read routes; the cheap
+    // poll depends on it, so the fake has to be able to prove it.
+    if (req.method == .GET and reply.status >= 200 and reply.status < 300) {
+        reply.etag = try etagOf(arena, reply.body);
+        if (req.if_none_match.len > 0 and std.mem.eql(u8, std.mem.trim(u8, req.if_none_match, " \t"), reply.etag)) {
+            st.not_modified += 1;
+            return .{ .status = 304, .body = "", .etag = reply.etag };
+        }
+    }
+    return reply;
+}
+
+/// A weak tag over the bytes: the same body always gets the same one,
+/// and a body that moved never does.
+fn etagOf(arena: Allocator, body: []const u8) Allocator.Error![]const u8 {
+    var h = std.hash.Wyhash.init(0);
+    h.update(body);
+    return std.fmt.allocPrint(arena, "\"{x}\"", .{h.final()});
+}
+
+fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
     st.served += 1;
     const cred = classify(req.authorization);
     st.last_credential = cred;
@@ -455,7 +497,29 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
     if (!seg.eat("pullrequests")) return notFound(arena);
     const id_text = seg.next() orelse return listPrs(arena, st, repo, query);
     const id = std.fmt.parseInt(u32, id_text, 10) catch return notFound(arena);
-    const fx = find(repo, id) orelse return notFound(arena);
+    const fx = find(repo, id) orelse {
+        // A `--extra-prs` pull request exists on the listing and has no
+        // fixture behind it. Answering its sub-routes 404 would make a
+        // measurement read as a wall of failures — and a failure is
+        // never cached, so the poller would re-ask for every one of
+        // them on every cycle. It has no comments and no tasks, and it
+        // says so.
+        if (id >= 9000 and st.extra_prs > 0 and id < 9000 + st.extra_prs) {
+            if (std.mem.eql(u8, seg.rest, "comments") or std.mem.eql(u8, seg.rest, "activity")) {
+                return .{ .body = "{\"pagelen\":50,\"values\":[],\"size\":0}" };
+            }
+            if (std.mem.eql(u8, seg.rest, "diffstat")) {
+                return .{ .body = "{\"pagelen\":50,\"values\":[],\"size\":0}" };
+            }
+            if (seg.rest.len == 0) {
+                const f = try syntheticPr(arena, id - 9000);
+                var out: std.Io.Writer.Allocating = .init(arena);
+                try writePr(&out.writer, &f, st, .detail);
+                return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+            }
+        }
+        return notFound(arena);
+    };
 
     const tail = seg.next();
     if (tail == null) return prDetail(arena, st, fx);
@@ -673,8 +737,52 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
         try writePr(w, f, st, .list);
         n += 1;
     }
+    // `--extra-prs`: the same shape, generated, so a measurement has a
+    // workspace the size of a real one. OPEN and on `api` only —
+    // everything else about them is derived from the index, so two
+    // runs of the same server answer identically.
+    if (st.extra_prs > 0 and std.mem.eql(u8, repo, "api") and std.mem.eql(u8, want_state, "OPEN")) {
+        var k: u32 = 0;
+        while (k < st.extra_prs) : (k += 1) {
+            const f = try syntheticPr(arena, k);
+            if (author_id) |a| if (!std.mem.eql(u8, f.author_id, a) and !either) continue;
+            if (reviewer_id != null and !either) continue;
+            if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
+            try writePr(w, &f, st, .list);
+            n += 1;
+        }
+    }
     w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
     return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+/// The nth generated pull request. Invented people, invented branches,
+/// derived entirely from `n`: the same server always answers the same
+/// thing, which is what a measurement needs.
+fn syntheticPr(arena: Allocator, n: u32) Allocator.Error!Fixture {
+    const authors = [_]struct { id: []const u8, name: []const u8 }{
+        .{ .id = "acct-chris", .name = "Chris M" },
+        .{ .id = "acct-dev", .name = "Robin Vale" },
+        .{ .id = "acct-kim", .name = "Kim Okonjo" },
+    };
+    const a = authors[n % authors.len];
+    return .{
+        .repo = "api",
+        .id = 9000 + n,
+        .title = try std.fmt.allocPrint(arena, "Tidy the widget cache ({d})", .{n + 1}),
+        .state = "OPEN",
+        .author_id = a.id,
+        .author_name = a.name,
+        .source_branch = try std.fmt.allocPrint(arena, "feature/widget-{d}", .{n + 1}),
+        .source_sha = try std.fmt.allocPrint(arena, "{x:0>12}", .{@as(u64, n) * 0x9E3779B1}),
+        .description = "Generated for a size measurement.",
+        .age_hours = 1 + n % 48,
+        .reviewers = &.{},
+        .builds = &.{},
+        .files = &.{},
+        .diff = "",
+        .activity = &.{},
+    };
 }
 
 /// `author.account_id = "acct-chris"` → `acct-chris`.
@@ -1300,4 +1408,50 @@ test "writeIso spells the epoch the way Bitbucket does" {
     var w2: std.Io.Writer = .fixed(&buf);
     try writeIso(&w2, 1_789_500_000);
     try t.expectEqualStrings("2026-09-15T19:20:00.000000+00:00", w2.buffered());
+}
+
+test "`--extra-prs` grows the workspace to the size a measurement needs, and answers the same way twice" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var st: State = .{ .extra_prs = 20 };
+    const first = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN", "");
+    try t.expectEqual(@as(u16, 200), first.status);
+    try t.expect(std.mem.indexOf(u8, first.body, "\"id\":9000") != null);
+    try t.expect(std.mem.indexOf(u8, first.body, "\"id\":9019") != null);
+    try t.expect(std.mem.indexOf(u8, first.body, "\"id\":9020") == null);
+    // Nothing is random: the same server answers the same bytes, which
+    // is what makes a cold-vs-warm count worth reading.
+    const second = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN", "");
+    try t.expectEqualStrings(first.body, second.body);
+    // MERGED is untouched — the generated ones are all open.
+    const merged = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=MERGED", "");
+    try t.expect(std.mem.indexOf(u8, merged.body, "\"id\":9000") == null);
+}
+
+test "a GET carrying the tag it was given is answered 304 with no body" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var st: State = .{};
+    const first = try handle(a, &st, .{ .method = .GET, .target = "/2.0/repositories/acme/api/pullrequests?state=OPEN", .authorization = "Bearer ATCTT-x" });
+    try t.expectEqual(@as(u16, 200), first.status);
+    try t.expect(first.etag.len > 0);
+
+    const again = try handle(a, &st, .{ .method = .GET, .target = "/2.0/repositories/acme/api/pullrequests?state=OPEN", .authorization = "Bearer ATCTT-x", .if_none_match = first.etag });
+    try t.expectEqual(@as(u16, 304), again.status);
+    try t.expectEqualStrings("", again.body);
+    try t.expectEqual(@as(u32, 1), st.not_modified);
+
+    // A tag that no longer matches the body gets the body.
+    const stale = try handle(a, &st, .{ .method = .GET, .target = "/2.0/repositories/acme/api/pullrequests?state=OPEN", .authorization = "Bearer ATCTT-x", .if_none_match = "\"nonsense\"" });
+    try t.expectEqual(@as(u16, 200), stale.status);
+    try t.expect(stale.body.len > 0);
+    try t.expectEqual(@as(u32, 1), st.not_modified);
+
+    // A write is never conditional — it carries no tag and is never
+    // answered 304, whatever it arrives holding.
+    const wrote = try handle(a, &st, .{ .method = .POST, .target = "/2.0/repositories/acme/api/pullrequests/1198/approve", .authorization = "Bearer ATCTT-x", .if_none_match = first.etag });
+    try t.expect(wrote.status != 304);
+    try t.expectEqualStrings("", wrote.etag);
 }

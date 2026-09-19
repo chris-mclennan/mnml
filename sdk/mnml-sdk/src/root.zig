@@ -8,6 +8,9 @@
 //!   manifest  `Manifest` + `write` for `--install`
 //!   ratelimit one cross-process token bucket per service, shared with
 //!             every other process on the machine
+//!   warm      the warmer: paced sending with interactive priority,
+//!             one warmer per service across processes, delta windows,
+//!             per-kind intervals and the budget floor
 //!   store     what an integration already knows, kept between runs:
 //!             `<data root>/cache/<service>/` keyed by the SERVER's
 //!             own `updated` stamp, so a pane paints on open and only
@@ -35,6 +38,7 @@ pub const manifest = @import("manifest.zig");
 pub const ratelimit = @import("ratelimit.zig");
 pub const request_log = @import("request_log.zig");
 pub const store = @import("store.zig");
+pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
 
@@ -49,6 +53,8 @@ pub const Manifest = manifest.Manifest;
 pub const Limiter = ratelimit.Limiter;
 pub const RequestLog = request_log.Log;
 pub const Store = store.Store;
+pub const Gate = warm.Gate;
+pub const WarmLock = warm.Lock;
 pub const HostMessage = wire.HostMessage;
 pub const SiblingMessage = wire.SiblingMessage;
 pub const Color = wire.Color;
@@ -68,6 +74,7 @@ test {
     _ = ratelimit;
     _ = request_log;
     _ = store;
+    _ = warm;
     _ = pane;
     _ = zon_edit;
 }

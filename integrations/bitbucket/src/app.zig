@@ -79,6 +79,9 @@ pub const TabState = struct {
     selected: usize = 0,
     scroll: usize = 0,
     fetched: bool = false,
+    /// Unix seconds the rows on screen last came back — what the
+    /// header's `as of 4m ago` reads.
+    fetched_at: i64 = 0,
     /// The PR the cursor was on when the refetch started — `ws/repo#id`,
     /// so the cursor can go back on it when the rows are swapped even
     /// though its row moved. Empty when it was not on one.
@@ -163,6 +166,11 @@ pub const App = struct {
     workspace_dir: []const u8,
     tabs: []TabState,
     active: usize = 0,
+    /// This process holds the machine's warm lock for Bitbucket
+    /// (`mnml_sdk.warm.Lock`), so it is the one that fills the cache
+    /// for the tabs nobody is looking at. False: another pane is
+    /// already doing it, and a tab that is switched to is fetched then.
+    may_warm: bool = true,
     /// `--only` was given: the strip shows only when it still has two.
     only: ?cfg.Family,
     me_account_id: []u8 = &.{},
@@ -371,11 +379,20 @@ pub const App = struct {
     /// reference prefetches all of them), then the statusline values.
     pub fn startup(app: *App) Allocator.Error!void {
         if (app.config.account_id.len == 0) try app.enqueue(.whoami);
+        // The tab that is on screen is what somebody is waiting for.
+        // Every other tab used to be fetched before the first paint
+        // too — three tabs of pull requests, of which two nobody had
+        // asked to see — so the pane opened at the cost of all of
+        // them. The rest are warmed behind the paint, paced, and at a
+        // priority that steps aside for anything a reader does.
         for (app.tabs, 0..) |*ts, i| {
+            const mine = i == app.active;
+            if (!mine and !app.may_warm) continue;
             ts.loading = true;
-            // The startup chain is the pane opening, whatever the job
-            // kind says; a refetch of the same tab later is not.
-            try app.enqueueFor(.{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } }, .pane_open);
+            try app.enqueueFor(
+                .{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } },
+                if (mine) .pane_open else .warm,
+            );
         }
         try app.requestValues();
         app.last_refresh_secs = app.now_secs;
@@ -393,6 +410,13 @@ pub const App = struct {
     /// The same, saying what the request log should call it.
     fn enqueueFor(app: *App, kind: fetch.Job.Kind, reason: api.Reason) Allocator.Error!void {
         try app.jobs.append(app.gpa, try fetch.makeJobFor(app.gpa, app.now_secs, kind, reason));
+    }
+
+    /// The same, saying whether the caches may answer.
+    fn enqueueFull(app: *App, kind: fetch.Job.Kind, full: bool) Allocator.Error!void {
+        var job = try fetch.makeJob(app.gpa, app.now_secs, kind);
+        job.full = full;
+        try app.jobs.append(app.gpa, job);
     }
 
     /// The jobs queued since the last take; the caller owns them.
@@ -736,6 +760,7 @@ pub const App = struct {
                 return false;
             },
             .refresh => try app.refreshActive(),
+            .refresh_full => try app.refreshActiveMode(true),
             .up => app.move(rows, -1),
             .down => app.move(rows, 1),
             .page_up => app.move(rows, -10),
@@ -1319,11 +1344,23 @@ pub const App = struct {
     }
 
     pub fn refreshActive(app: *App) Allocator.Error!void {
-        try app.refreshTab(app.active);
+        try app.refreshActiveMode(false);
+    }
+
+    /// `r` (`full = false`) lets a held `ETag` make the ask cheap: the
+    /// server answers 304 and no bytes when nothing has moved. `R`
+    /// (`full = true`) asks outright and ignores every cache, which is
+    /// how a tag that has somehow gone wrong is cleared.
+    pub fn refreshActiveMode(app: *App, full: bool) Allocator.Error!void {
+        try app.refreshTabMode(app.active, full);
         app.last_refresh_secs = app.now_secs;
     }
 
     pub fn refreshTab(app: *App, idx: usize) Allocator.Error!void {
+        try app.refreshTabMode(idx, false);
+    }
+
+    pub fn refreshTabMode(app: *App, idx: usize, full: bool) Allocator.Error!void {
         const ts = &app.tabs[idx];
         if (ts.loading) return;
         // The cursor survives the swap: remember the PR it is on, since
@@ -1341,7 +1378,7 @@ pub const App = struct {
         }
         ts.loading = true;
         app.setStatus("refreshing {s}…", .{ts.spec.name});
-        try app.enqueue(.{ .refresh = .{ .tab = idx, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } });
+        try app.enqueueFull(.{ .refresh = .{ .tab = idx, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } }, full);
         if (app.detail_visible) app.invalidateFocusedDetail();
     }
 
@@ -1483,6 +1520,7 @@ pub const App = struct {
                     keep_arena = true;
                     ts.data = data;
                     ts.fetched = true;
+                    ts.fetched_at = app.now_secs;
                     ts.show_all = false;
                     ts.repos = r.repos;
                     ts.items = r.items;
@@ -2448,3 +2486,59 @@ test "a click selects the row it lands on, a right-click opens its menu, the aut
 }
 
 const server = @import("../tools/fake_bitbucket/server.zig");
+
+test "the pane opens on the tab somebody is looking at; the rest are warmed behind the paint" {
+    var app = try App.init(t.allocator, t.io, .{ .workspace = "acme", .account_id = "acct-chris", .tabs = &.{
+        .{ .name = "Open + Draft", .kind = .workspace_open_prs },
+        .{ .name = "Merged", .kind = .workspace_merged_prs },
+        .{ .name = "Pipelines", .kind = .workspace_pipelines },
+    } }, "/nowhere/config.zon", .{});
+    defer app.deinit();
+    try app.startup();
+    const jobs = app.takeJobs();
+    defer {
+        for (jobs) |*j| {
+            var job = j.*;
+            job.deinit();
+        }
+        t.allocator.free(jobs);
+    }
+    // One `pane_open` — the tab on screen — and the other two behind
+    // it as `warm`, which is what makes them give way to a click.
+    var pane_open: usize = 0;
+    var warm: usize = 0;
+    for (jobs) |j| switch (j.reasonOf()) {
+        .pane_open => pane_open += 1,
+        .warm => warm += 1,
+        else => {},
+    };
+    try t.expectEqual(@as(usize, 1), pane_open);
+    try t.expectEqual(@as(usize, 2), warm);
+}
+
+test "a pane that does not hold the machine's warm lock fetches only its own tab" {
+    var app = try App.init(t.allocator, t.io, .{ .workspace = "acme", .account_id = "acct-chris", .tabs = &.{
+        .{ .name = "Open + Draft", .kind = .workspace_open_prs },
+        .{ .name = "Merged", .kind = .workspace_merged_prs },
+        .{ .name = "Pipelines", .kind = .workspace_pipelines },
+    } }, "/nowhere/config.zon", .{});
+    defer app.deinit();
+    // Another process is already warming this service's cache. Warming
+    // it a second time is the same answer at twice the price.
+    app.may_warm = false;
+    try app.startup();
+    const jobs = app.takeJobs();
+    defer {
+        for (jobs) |*j| {
+            var job = j.*;
+            job.deinit();
+        }
+        t.allocator.free(jobs);
+    }
+    var refreshes: usize = 0;
+    for (jobs) |j| switch (j.kind) {
+        .refresh => refreshes += 1,
+        else => {},
+    };
+    try t.expectEqual(@as(usize, 1), refreshes);
+}

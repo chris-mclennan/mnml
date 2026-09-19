@@ -103,6 +103,13 @@ pub const Failure = struct {
 pub const Head = struct {
     retry_after: ?u32 = null,
     rate_limit: request_log.RateLimit = .{},
+    /// The response's `ETag`, duped onto the caller's allocator — the
+    /// header buffer it came out of does not outlive the request.
+    /// Empty when the endpoint sent none.
+    etag: []const u8 = "",
+    /// The server answered 304: it has nothing new, and the body we
+    /// already hold still stands.
+    not_modified: bool = false,
 };
 
 pub const Body = struct {
@@ -156,6 +163,18 @@ pub const Client = struct {
     cache: ?*cache_mod.Cache = null,
     /// The clock the cache ages entries against; the pane sets it.
     now_secs: i64 = 0,
+    /// Bodies already held, filed under the server's own `ETag`
+    /// (`mnml_sdk.store`). A GET with an entry goes out carrying
+    /// `If-None-Match`; a 304 hands the held body back, which is a
+    /// round trip that costs a token and no bytes rather than a
+    /// listing. Null simply means every GET is unconditional.
+    etags: ?*sdk.Store = null,
+    /// The pacer for this service — see `mnml_sdk.warm`.
+    gate: ?*sdk.warm.Gate = null,
+    /// Send `If-None-Match` where a tag is held. False is the full
+    /// refresh: ask unconditionally, so a tag that has somehow gone
+    /// wrong is always one keypress from being replaced.
+    conditional: bool = true,
     /// Requests actually sent, retries included — the diagnostics and
     /// the rate-limit tests both read it.
     sent: u32 = 0,
@@ -207,20 +226,41 @@ pub const Client = struct {
         defer gpa.free(url);
         // A prefetched GET is answered off the disk: no token spent, no
         // round trip, so the pane's first paint is the prefetch's.
-        if (method == .GET) {
+        if (method == .GET and self.conditional) {
             if (self.cache) |c| {
                 if (try c.take(gpa, url, self.now_secs)) |bytes| {
                     // A request that cost nothing is still worth a
                     // line: "the prefetch paid for this" is the answer
                     // to half the questions the log is read with.
-                    self.note(gpa, method, url, 200, bytes.len, 0, .{ .ok = true }, 0, .hit, .{});
+                    self.note(gpa, method, url, null, bytes.len, 0, .{ .ok = true }, 0, .hit, .{}, .cache_hit);
                     return .{ .ok = .{ .status = 200, .bytes = bytes } };
                 }
+            }
+        }
+        // What the server last said about this URL. A GET with an
+        // `ETag` in hand goes out conditional: a 304 is a round trip
+        // that costs a token and no bytes, where the unconditional
+        // form costs a token and the whole listing.
+        var if_none_match: []const u8 = "";
+        if (method == .GET and self.conditional) {
+            if (self.etags) |st| {
+                if (st.stale(url)) |e| if (e.stamp.len > 0) {
+                    if_none_match = e.stamp;
+                };
             }
         }
         var attempt: u8 = 0;
         while (true) {
             attempt += 1;
+            // Spacing, before the bucket. A reader waits for nothing;
+            // a warm sweep waits its turn (`mnml_sdk.warm.Gate`).
+            if (self.gate) |g| {
+                const prio = sdk.warm.priorityOf(self.reason);
+                if (prio == .interactive) g.enter();
+                const hold_ms = g.hold(prio, Io.Timestamp.now(self.io, .real).toMilliseconds());
+                if (hold_ms > 0) self.io.sleep(.fromMilliseconds(@intCast(hold_ms)), .awake) catch {};
+                if (prio == .interactive) g.leave();
+            }
             const gate: ratelimit.Acquired = if (self.limiter) |l| blk: {
                 l.reason = @tagName(self.reason);
                 break :blk l.acquireDetailed();
@@ -229,18 +269,44 @@ pub const Client = struct {
             self.sent += 1;
             const started = Io.Timestamp.now(self.io, .real);
             var head: Head = .{};
-            var reply = try self.once(gpa, method, url, payload, side, &head);
+            var reply = try self.once(gpa, method, url, payload, side, if_none_match, &head);
+            defer if (head.etag.len > 0) gpa.free(head.etag);
             const ms: u64 = @intCast(@max(Io.Timestamp.now(self.io, .real).toMilliseconds() - started.toMilliseconds(), 0));
+            // Nothing new. The body already held still stands, so it
+            // is handed back as if it had been sent — and the line
+            // says `revalidate` + `hit`, which is how the REQUESTS
+            // pane tells a cheap round trip from a dear one.
+            if (head.not_modified) {
+                reply.deinit(gpa);
+                if (self.etags) |st| {
+                    if (st.stale(url)) |e| {
+                        const kept = try gpa.dupe(u8, e.body);
+                        self.note(gpa, method, url, 304, kept.len, ms, gate, attempt - 1, .hit, head.rate_limit, .revalidate);
+                        return .{ .ok = .{ .status = 200, .bytes = kept } };
+                    }
+                }
+                // A 304 with nothing held is a server being odd; the
+                // next unconditional GET fixes it.
+                self.note(gpa, method, url, 304, 0, ms, gate, attempt - 1, .miss, head.rate_limit, .revalidate);
+                return .{ .ok = .{ .status = 200, .bytes = try gpa.dupe(u8, "{}") } };
+            }
             switch (reply) {
                 .ok => |body| {
-                    self.note(gpa, method, url, body.status, body.bytes.len, ms, gate, attempt - 1, if (self.cache == null) .none else .miss, head.rate_limit);
+                    self.note(gpa, method, url, body.status, body.bytes.len, ms, gate, attempt - 1, if (self.cache == null) .none else .miss, head.rate_limit, null);
                     if (method == .GET) {
                         if (self.cache) |c| c.put(url, body.bytes, self.now_secs);
+                        // File the body under the server's own tag, so
+                        // the next ask for this URL can be conditional.
+                        if (head.etag.len > 0) {
+                            if (self.etags) |st| {
+                                st.put(url, head.etag, body.bytes, self.now_secs) catch {};
+                            }
+                        }
                     }
                     return reply;
                 },
                 .failed => |f| {
-                    self.note(gpa, method, url, f.status, 0, ms, gate, attempt - 1, .none, head.rate_limit);
+                    self.note(gpa, method, url, f.status, 0, ms, gate, attempt - 1, .none, head.rate_limit, null);
                     if (!f.isRateLimited()) return reply;
                     const wait = @min(f.retry_after_secs orelse self.rate.default_backoff_secs, self.rate.max_backoff_secs);
                     if (self.limiter) |l| l.penalize(@floatFromInt(wait));
@@ -266,6 +332,10 @@ pub const Client = struct {
         retry_of: u32,
         cache: request_log.Cache,
         rate_limit: request_log.RateLimit,
+        /// Overrides the client's own reason: a conditional round trip
+        /// is a `revalidate` and an answer off the disk is a
+        /// `cache_hit`, whatever the job that asked for it was.
+        as_reason: ?request_log.Reason,
     ) void {
         const log = self.log orelse return;
         var scratch = std.heap.ArenaAllocator.init(gpa);
@@ -280,7 +350,7 @@ pub const Client = struct {
             .status = status,
             .ms = ms,
             .bytes = bytes,
-            .reason = self.reason,
+            .reason = as_reason orelse self.reason,
             .wait_ms = gate.wait_ms,
             .waited_for = gate.waited_for,
             .tokens_after = gate.tokens_after,
@@ -290,18 +360,22 @@ pub const Client = struct {
         });
     }
 
-    fn once(self: *Client, gpa: Allocator, method: Method, url: []const u8, payload: ?[]const u8, side: Side, head: *Head) Allocator.Error!Reply {
+    fn once(self: *Client, gpa: Allocator, method: Method, url: []const u8, payload: ?[]const u8, side: Side, if_none_match: []const u8, head: *Head) Allocator.Error!Reply {
         var client: std.http.Client = .{ .allocator = gpa, .io = self.io };
         defer client.deinit();
         const uri = std.Uri.parse(url) catch return transportFailure(gpa, "the base URL does not parse");
 
-        var extra: [3]std.http.Header = undefined;
+        var extra: [4]std.http.Header = undefined;
         var n_extra: usize = 2;
         extra[0] = .{ .name = "authorization", .value = self.header(side) };
         extra[1] = .{ .name = "accept", .value = "application/json" };
         if (payload != null) {
-            extra[2] = .{ .name = "content-type", .value = "application/json" };
-            n_extra = 3;
+            extra[n_extra] = .{ .name = "content-type", .value = "application/json" };
+            n_extra += 1;
+        }
+        if (if_none_match.len > 0) {
+            extra[n_extra] = .{ .name = "if-none-match", .value = if_none_match };
+            n_extra += 1;
         }
 
         var req = client.request(method.stdMethod(), uri, .{
@@ -335,11 +409,17 @@ pub const Client = struct {
             if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
                 retry_after = std.fmt.parseInt(u32, std.mem.trim(u8, h.value, " \t"), 10) catch null;
             }
+            // The tag, duped: `h.value` points into the header buffer,
+            // which does not outlive this request.
+            if (std.ascii.eqlIgnoreCase(h.name, "etag") and head.etag.len == 0) {
+                head.etag = gpa.dupe(u8, std.mem.trim(u8, h.value, " \t")) catch "";
+            }
             // The budget headers, by name — an allow-list, so nothing
             // a response carries can reach the log by accident.
             request_log.rateLimitHeader(&head.rate_limit, h.name, h.value);
         }
         head.retry_after = retry_after;
+        head.not_modified = status == 304;
 
         var transfer: [4096]u8 = undefined;
         var sink: Io.Writer.Allocating = .init(gpa);
@@ -677,4 +757,65 @@ test "a prefetched GET answers the first ask off the disk and the refresh goes o
     var other = try pane_client.listPipelines(t.allocator, "acme", "api", 100);
     defer other.deinit(t.allocator);
     try t.expectEqual(@as(u32, 2), pane_client.sent);
+}
+
+test "a GET that already holds the server's tag goes out conditional, and a 304 costs a token and no bytes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
+    defer t.allocator.free(store_path);
+    const log_dir = try std.fs.path.join(t.allocator, &.{ dir, "requests" });
+    defer t.allocator.free(log_dir);
+
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+
+    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
+    defer etags.deinit();
+    var log = try sdk.RequestLog.openAt(t.allocator, t.io, log_dir, "bitbucket", "mnml-bitbucket");
+    defer log.deinit();
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{});
+    defer client.deinit();
+    client.etags = &etags;
+    client.log = &log;
+
+    // The first ask is unconditional: nothing is held, so the whole
+    // listing comes back and is filed under the server's tag.
+    var first = try client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    defer first.deinit(t.allocator);
+    try t.expect(first == .ok);
+    try t.expect(first.ok.bytes.len > 0);
+    try t.expectEqual(@as(u32, 0), srv.snapshot().not_modified);
+    const held = etags.stale(etags.entries.items[0].key).?;
+    try t.expect(held.stamp.len > 0);
+
+    // The second ask carries `If-None-Match`. The server says there is
+    // nothing new; the client hands back the body it already had, so
+    // the caller cannot tell — which is the whole point.
+    var second = try client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    defer second.deinit(t.allocator);
+    try t.expect(second == .ok);
+    try t.expectEqualStrings(first.ok.bytes, second.ok.bytes);
+    try t.expectEqual(@as(u32, 1), srv.snapshot().not_modified);
+
+    // `R` — `conditional = false` — asks outright, so a tag that has
+    // somehow gone wrong is always one keypress from being replaced.
+    client.conditional = false;
+    var third = try client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    defer third.deinit(t.allocator);
+    try t.expect(third == .ok);
+    try t.expectEqual(@as(u32, 1), srv.snapshot().not_modified);
+
+    // The cheap round trip is in the log under its own name, so the
+    // REQUESTS pane can tell it from the dear one.
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 20));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"revalidate\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"status\":304") != null);
 }

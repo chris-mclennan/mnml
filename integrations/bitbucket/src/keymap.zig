@@ -17,6 +17,7 @@ const std = @import("std");
 pub const Action = enum {
     quit,
     refresh,
+    refresh_full,
     up,
     down,
     page_up,
@@ -136,6 +137,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{"9"}, .action = .tab_9, .title = "tab 9", .section = "tabs" },
     .{ .keys = &.{"/"}, .action = .filter, .title = "filter the rows", .section = "pane" },
     .{ .keys = &.{"r"}, .action = .refresh, .title = "refresh this tab", .hint = true, .section = "pane" },
+    .{ .keys = &.{"shift+r"}, .action = .refresh_full, .title = "full refresh (ignore every cache)", .section = "pane" },
     .{ .keys = &.{"?"}, .action = .help, .title = "this key sheet", .hint = true, .section = "pane" },
     .{ .keys = &.{"esc"}, .action = .escape, .title = "close the sheet / clear the filter", .section = "pane" },
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .title = "quit", .hint = true, .section = "pane" },

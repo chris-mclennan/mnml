@@ -283,6 +283,11 @@ pub const Painter = struct {
         if (p.a.refresh.busy() and t.fetched) {
             x += p.put(x, y, p.cols() -| x, if (p.ui.ascii) " refreshing..." else " refreshing…", p.s.muted);
         }
+        // How old the rows are. A screenful with nothing above it reads
+        // as now, and on a pane that painted from cache it is not. The
+        // wording and the ink are the toolkit's, so the Bitbucket pane
+        // says it the same way.
+        x = p.c.asOf(x, y, t.fetched_at, p.a.nowSecs());
         if (p.a.selection.count() > 0) {
             x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
         }

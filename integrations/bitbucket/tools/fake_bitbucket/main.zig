@@ -33,6 +33,7 @@ pub fn main(init: std.process.Init) !u8 {
     var parent_pid: i32 = 0;
     var rate_limit_first: u32 = 0;
     var log_file: ?[]const u8 = null;
+    var extra_prs: u32 = 0;
 
     var i: usize = 1;
     var out_buf: [512]u8 = undefined;
@@ -50,7 +51,12 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--url-file") and i + 1 < args.len) {
             i += 1;
             url_file = args[i];
-        } else if (std.mem.eql(u8, a, "--lifetime-secs") and i + 1 < args.len) {
+        } else if (std.mem.eql(u8, a, "--extra-prs") and i + 1 < args.len) {
+            i += 1;
+            extra_prs = std.fmt.parseInt(u32, args[i], 10) catch 0;
+            // The tracker's fake spells the deadline `--life-secs`; a
+            // test script should not have to remember which is which.
+        } else if ((std.mem.eql(u8, a, "--lifetime-secs") or std.mem.eql(u8, a, "--life-secs")) and i + 1 < args.len) {
             i += 1;
             lifetime_secs = std.fmt.parseInt(u64, args[i], 10) catch 0;
         } else if (std.mem.eql(u8, a, "--parent-pid") and i + 1 < args.len) {
@@ -76,6 +82,7 @@ pub fn main(init: std.process.Init) !u8 {
     };
     defer srv.stop();
     if (rate_limit_first > 0) srv.rateLimitNext(rate_limit_first);
+    if (extra_prs > 0) srv.setExtraPrs(extra_prs);
     // A fresh log per run: the measurement is one tab load's worth, not
     // everything this file has ever seen.
     if (log_file) |p| {
@@ -122,7 +129,8 @@ const usage =
     \\
     \\  --port N              listen here (default 0: the OS picks)
     \\  --url-file PATH       write the base URL there once listening
-    \\  --lifetime-secs N     exit after N seconds (default: never)
+    \\  --lifetime-secs N     exit after N seconds (default: never; --life-secs also works)
+    \\  --extra-prs N         N more generated OPEN pull requests on acme/api
     \\  --parent-pid N        exit when that process is gone (an orphan holds a port)
     \\  --rate-limit-first N  answer the first N requests with 429
     \\  --log-file PATH       append one JSON line per request served
