@@ -630,6 +630,9 @@ test {
     _ = @import("http/sources.zig");
     _ = @import("tui/loop.zig");
     _ = @import("ui/ui.zig");
+    _ = @import("glyph/svg.zig");
+    _ = @import("glyph/ttf.zig");
+    _ = @import("glyph/builder.zig");
 }
 
 test "version string is set" {
