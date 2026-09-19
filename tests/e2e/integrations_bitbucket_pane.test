@@ -32,6 +32,9 @@ expect screen contains "bitbucket_prs.open"
 # The pane mounts on the PR family — two tabs, the strip — resolves
 # the account and paints the open tree with both repos opened, the way
 # the reference's first fetch does.
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command bitbucket_prs.open
 command view.toggle_tree
 command view.focus_pane

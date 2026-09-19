@@ -36,6 +36,9 @@ expect screen contains "installed jira_work from"
 wait 1200
 expect screen lacks "installed jira_work from"
 # The pane mounts, searches the offline Jira and paints.
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command jira_work.open
 # The pane is a separate process whose first search is synchronous:
 # it spawns, is handed its geometry, searches, and fetches each

@@ -10,6 +10,9 @@
 # env: MNML_JIRA_CONFIG=
 write .mnml/integrations/jira_work.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
 command integrations.refresh
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command jira_work.open
 command view.toggle_tree
 command view.focus_pane

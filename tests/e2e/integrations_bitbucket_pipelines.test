@@ -14,6 +14,9 @@ write market/bitbucket_pipelines.zon ".{ .id = \"bitbucket_pipelines\", .label =
 command integrations.show_marketplace
 key i
 expect screen contains "installed bitbucket_pipelines"
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command bitbucket_pipelines.open
 command view.toggle_tree
 command view.focus_pane

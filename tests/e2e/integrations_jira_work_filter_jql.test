@@ -22,6 +22,9 @@ expect screen contains "[dev] Jira Work  0.2.0  not installed"
 key i
 expect screen contains "installed jira_work from"
 wait 4000
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command jira_work.open
 # The pane is a separate process whose first search is synchronous:
 # it spawns, is handed its geometry, searches, and fetches each

@@ -9,6 +9,9 @@ write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket
 command integrations.show_marketplace
 key i
 expect screen contains "installed bitbucket_prs"
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command bitbucket_prs.open
 command view.focus_pane
 wait 900

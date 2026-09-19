@@ -35,6 +35,9 @@ key i
 expect screen contains "installed jira_work from"
 wait 1200
 expect screen lacks "installed jira_work from"
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command jira_work.open
 # The pane spawns and mounts; its first search runs on a worker, so the
 # rows land on a later tick. The pickers and the detail are still

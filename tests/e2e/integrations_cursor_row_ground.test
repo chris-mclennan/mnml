@@ -42,6 +42,9 @@ expect screen contains "installed bitbucket_prs"
 wait 1200
 
 # ── the Jira Work tree ───────────────────────────────────────────────
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command jira_work.open
 wait 8000
 command view.toggle_tree

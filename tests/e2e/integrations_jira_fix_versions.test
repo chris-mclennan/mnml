@@ -22,6 +22,9 @@ expect screen contains "[dev] Jira Fix Versions  0.2.0  not installed"
 key i
 expect screen contains "installed jira_fix_versions from"
 wait 4000
+# The corpus lays its screens out at full width: the pane opens as a tab,
+# not beside whatever the install left active (`integrations.open_as`).
+command integrations.open_as_tab
 command jira_fix_versions.open
 command view.toggle_tree
 command view.focus_pane
